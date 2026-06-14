@@ -725,7 +725,10 @@ class _ChatBotSheetState extends State<ChatBotSheet>
           updatedAt: now,
         );
 
-        await ConversationService.updateConversation(updatedConversation);
+        await ConversationService.updateConversation(
+          updatedConversation,
+          preserveUserMetadata: true,
+        );
         _currentConversation = updatedConversation;
         for (final message in _messages.where((item) {
           final cardData = item.cardData;

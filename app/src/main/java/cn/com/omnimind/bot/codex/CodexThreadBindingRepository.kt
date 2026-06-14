@@ -49,14 +49,16 @@ internal class CodexThreadBindingRepository(
                 }
             }
             val conversation = DatabaseHelper.getConversationById(existingBinding.conversationId)
-            val updatedConversation = conversation?.let {
-                val titleForUpdate = if (conversationId != null && it.title.isNotBlank()) {
-                    null
-                } else {
-                    title
+            val updatedConversation = conversation?.let { existingConversation ->
+                val titleForUpdate = title?.takeIf { incomingTitle ->
+                    shouldApplyIncomingTitle(
+                        conversation = existingConversation,
+                        threadId = existingBinding.threadId,
+                        incomingTitle = incomingTitle
+                    )
                 }
                 buildUpdatedConversation(
-                    conversation = it,
+                    conversation = existingConversation,
                     title = titleForUpdate,
                     archived = archived,
                     updatedAt = now
@@ -145,11 +147,18 @@ internal class CodexThreadBindingRepository(
         return conversationId
     }
 
-    suspend fun updateTitle(threadId: String, title: String?) {
+    suspend fun updateTitle(
+        threadId: String,
+        title: String?,
+        force: Boolean = false
+    ) {
         val binding = getBindingByThreadId(threadId.trim()) ?: return
         val conversation = DatabaseHelper.getConversationById(binding.conversationId) ?: return
         val normalizedTitle = title?.trim().orEmpty()
         if (normalizedTitle.isEmpty() || normalizedTitle == conversation.title) {
+            return
+        }
+        if (!force && !shouldApplyIncomingTitle(conversation, threadId, normalizedTitle)) {
             return
         }
         val updated = conversation.copy(
@@ -213,6 +222,22 @@ internal class CodexThreadBindingRepository(
             isArchived = archived ?: conversation.isArchived,
             updatedAt = updatedAt
         )
+    }
+
+    private fun shouldApplyIncomingTitle(
+        conversation: Conversation,
+        threadId: String,
+        incomingTitle: String
+    ): Boolean {
+        val normalizedIncomingTitle = incomingTitle.trim()
+        if (normalizedIncomingTitle.isEmpty()) {
+            return false
+        }
+        val currentTitle = conversation.title.trim()
+        if (currentTitle.isEmpty() || currentTitle == normalizedIncomingTitle) {
+            return true
+        }
+        return currentTitle == "Codex" || currentTitle == defaultConversationTitle(threadId)
     }
 
     private fun publishConversationEvent(eventName: String, conversation: Conversation) {

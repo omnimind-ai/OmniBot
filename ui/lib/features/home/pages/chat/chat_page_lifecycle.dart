@@ -355,7 +355,7 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
       conversation = null;
     }
 
-    final resolvedConversation = inMemoryConversation ?? conversation;
+    final resolvedConversation = conversation ?? inMemoryConversation;
     final resolvedMessages =
         inMemoryMessages ??
         await ConversationHistoryService.getConversationMessages(

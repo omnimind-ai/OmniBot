@@ -289,7 +289,7 @@ class CodexAppServerManager private constructor(
             mapOf("threadId" to threadId, "name" to name)
         ) as Map<String, Any?>
         if (shouldSyncLocalThreadBindings()) {
-            bindingRepository.updateTitle(threadId, name)
+            bindingRepository.updateTitle(threadId, name, force = true)
         }
         return response.withLocalIds(
             threadId = threadId,

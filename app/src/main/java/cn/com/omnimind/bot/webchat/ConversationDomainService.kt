@@ -66,7 +66,8 @@ class ConversationDomainService(
     }
 
     suspend fun updateConversationFromPayload(
-        conversationMap: Map<String, Any?>
+        conversationMap: Map<String, Any?>,
+        preserveUserMetadata: Boolean = false
     ): Map<String, Any?> {
         val conversationId = conversationMap.readLong("id")
             ?: throw IllegalArgumentException("conversation.id is invalid")
@@ -74,20 +75,40 @@ class ConversationDomainService(
             ?: throw IllegalArgumentException("Conversation not found")
         val incomingContextSummary = conversationMap["contextSummary"]?.toString()?.trim()
         val updated = existing.copy(
-            title = conversationMap["title"]?.toString()?.trim()?.ifEmpty {
+            title = if (preserveUserMetadata) {
                 existing.title
-            } ?: existing.title,
-            mode = normalizeConversationMode(
-                conversationMap["mode"]?.toString() ?: existing.mode
-            ),
-            isArchived = conversationMap.readBoolean("isArchived") ?: existing.isArchived,
-            isPinned = conversationMap.readBoolean("isPinned") ?: existing.isPinned,
-            parentConversationId = if (conversationMap.containsKey("parentConversationId")) {
+            } else {
+                conversationMap["title"]?.toString()?.trim()?.ifEmpty {
+                    existing.title
+                } ?: existing.title
+            },
+            mode = if (preserveUserMetadata) {
+                existing.mode
+            } else {
+                normalizeConversationMode(
+                    conversationMap["mode"]?.toString() ?: existing.mode
+                )
+            },
+            isArchived = if (preserveUserMetadata) {
+                existing.isArchived
+            } else {
+                conversationMap.readBoolean("isArchived") ?: existing.isArchived
+            },
+            isPinned = if (preserveUserMetadata) {
+                existing.isPinned
+            } else {
+                conversationMap.readBoolean("isPinned") ?: existing.isPinned
+            },
+            parentConversationId = if (preserveUserMetadata) {
+                existing.parentConversationId
+            } else if (conversationMap.containsKey("parentConversationId")) {
                 conversationMap.readLong("parentConversationId")?.takeIf { it > 0L }
             } else {
                 existing.parentConversationId
             },
-            parentConversationMode = if (conversationMap.containsKey("parentConversationMode")) {
+            parentConversationMode = if (preserveUserMetadata) {
+                existing.parentConversationMode
+            } else if (conversationMap.containsKey("parentConversationMode")) {
                 conversationMap["parentConversationMode"]
                     ?.toString()
                     ?.let(::normalizeConversationMode)
@@ -95,7 +116,9 @@ class ConversationDomainService(
             } else {
                 existing.parentConversationMode
             },
-            scheduledTaskId = if (conversationMap.containsKey("scheduledTaskId")) {
+            scheduledTaskId = if (preserveUserMetadata) {
+                existing.scheduledTaskId
+            } else if (conversationMap.containsKey("scheduledTaskId")) {
                 conversationMap["scheduledTaskId"]?.toString()?.trim()?.takeIf { it.isNotEmpty() }
             } else {
                 existing.scheduledTaskId
@@ -119,7 +142,11 @@ class ConversationDomainService(
                 ?: existing.promptTokenThreshold.coerceAtLeast(1),
             latestPromptTokensUpdatedAt = conversationMap.readLong("latestPromptTokensUpdatedAt")
                 ?: existing.latestPromptTokensUpdatedAt,
-            createdAt = conversationMap.readLong("createdAt") ?: existing.createdAt,
+            createdAt = if (preserveUserMetadata) {
+                existing.createdAt
+            } else {
+                conversationMap.readLong("createdAt") ?: existing.createdAt
+            },
             updatedAt = System.currentTimeMillis()
         )
         DatabaseHelper.updateConversation(updated)
