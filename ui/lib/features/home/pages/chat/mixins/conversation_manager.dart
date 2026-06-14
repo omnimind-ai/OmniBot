@@ -567,15 +567,28 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
           DateTime.now().millisecondsSinceEpoch;
       final updatedAt = newest?.createAt.millisecondsSinceEpoch ?? createdAt;
 
-      final recovered = ConversationModel(
-        id: conversationId,
+      final latestConversation = await ConversationService.getConversationById(
+        conversationId,
         mode: mode,
-        title: title,
-        summary: currentConversation?.summary,
-        status: currentConversation?.status ?? 0,
+        includeArchived: true,
+      );
+      final recoveredBase =
+          latestConversation ??
+          currentConversation ??
+          ConversationModel(
+            id: conversationId,
+            mode: mode,
+            title: title,
+            summary: currentConversation?.summary,
+            status: currentConversation?.status ?? 0,
+            lastMessage: lastText,
+            messageCount: savedMessages.length,
+            createdAt: createdAt,
+            updatedAt: updatedAt,
+          );
+      final recovered = recoveredBase.copyWith(
         lastMessage: lastText,
         messageCount: savedMessages.length,
-        createdAt: createdAt,
         updatedAt: updatedAt,
       );
 
@@ -771,7 +784,14 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
           );
         }
 
+        final latestConversation =
+            await ConversationService.getConversationById(
+              targetId,
+              mode: snapshotMode,
+              includeArchived: true,
+            );
         final baseConversation =
+            latestConversation ??
             snapshotConversation ??
             ConversationModel(
               id: targetId,

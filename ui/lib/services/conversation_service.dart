@@ -128,6 +128,23 @@ class ConversationService {
     }
   }
 
+  static Future<ConversationModel?> getConversationById(
+    int conversationId, {
+    ConversationMode? mode,
+    bool includeArchived = false,
+  }) async {
+    final conversations = await getAllConversations(
+      includeArchived: includeArchived,
+    );
+    for (final conversation in conversations) {
+      if (conversation.id == conversationId &&
+          (mode == null || conversation.mode == mode)) {
+        return conversation;
+      }
+    }
+    return null;
+  }
+
   static Future<bool> updateConversationPromptTokenThreshold({
     required int conversationId,
     required int promptTokenThreshold,
@@ -283,15 +300,10 @@ class ConversationService {
     int conversationId, {
     bool includeArchived = false,
   }) async {
-    final conversations = await getAllConversations(
+    return getConversationById(
+      conversationId,
       includeArchived: includeArchived,
     );
-    for (final conversation in conversations) {
-      if (conversation.id == conversationId) {
-        return conversation;
-      }
-    }
-    return null;
   }
 
   static Future<List<ConversationModel>> _filterHiddenCodexConversations(
@@ -352,6 +364,19 @@ class ConversationService {
           conversationId: conversationId,
           name: newTitle,
         );
+        final localConversation = await getConversationById(
+          conversationId,
+          mode: mode,
+          includeArchived: true,
+        );
+        if (localConversation != null) {
+          final localUpdated = await updateConversation(
+            localConversation.copyWith(title: newTitle),
+          );
+          if (!localUpdated) {
+            debugPrint('同步 Codex 本地对话标题失败');
+          }
+        }
         return true;
       } catch (e) {
         debugPrint('更新 Codex 对话标题失败: $e');

@@ -658,6 +658,28 @@ extension _HomeDrawerConversationList on HomeDrawerState {
         : palette.accentPrimary.withValues(alpha: 0.045);
   }
 
+  bool _isActiveConversation(ConversationModel conversation) {
+    final activeConversationId = widget.activeConversationId;
+    final activeConversationMode = widget.activeConversationMode;
+    return activeConversationId != null &&
+        conversation.id == activeConversationId &&
+        (activeConversationMode == null ||
+            conversation.mode == activeConversationMode);
+  }
+
+  Color get _activeConversationBackgroundColor {
+    final palette = context.omniPalette;
+    return context.isDarkTheme
+        ? Color.lerp(palette.surfaceSecondary, palette.accentPrimary, 0.22)!
+        : palette.accentPrimary.withValues(alpha: 0.1);
+  }
+
+  Color get _activeConversationBorderColor {
+    return context.omniPalette.accentPrimary.withValues(
+      alpha: context.isDarkTheme ? 0.38 : 0.24,
+    );
+  }
+
   Widget _buildScheduledConversationGroup(
     _ScheduledConversationGroup group, {
     required bool showDivider,
@@ -720,6 +742,8 @@ extension _HomeDrawerConversationList on HomeDrawerState {
     final childCount = group.children.length;
     final countText = childCount > 0 ? '$childCount' : '${group.taskCount}';
     final isEditing = _editingThreadKey == group.parent.threadKey;
+    final isActive = _isActiveConversation(group.parent);
+    final itemRadius = BorderRadius.circular(8);
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -727,60 +751,99 @@ extension _HomeDrawerConversationList on HomeDrawerState {
             ? null
             : () => _openConversationFromDrawer(group.parent),
         onLongPress: isEditing ? null : () => _startEditingTitle(group.parent),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: itemRadius,
         splashColor: palette.accentPrimary.withValues(alpha: 0.08),
         highlightColor: Colors.transparent,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(4, 8, 2, 8),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: onToggle,
-                child: SizedBox(
-                  width: 24,
-                  height: 24,
-                  child: Center(
-                    child: AnimatedRotation(
-                      turns: expanded ? 0 : -0.25,
-                      duration: HomeDrawerState._sectionToggleDuration,
-                      curve: Curves.easeInOutCubicEmphasized,
-                      child: SvgPicture.asset(
-                        'assets/common/chevron-down.svg',
-                        width: 16,
-                        height: 16,
-                        colorFilter: ColorFilter.mode(
-                          palette.textTertiary,
-                          BlendMode.srcIn,
-                        ),
-                      ),
+        child: Semantics(
+          selected: isActive,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 160),
+            curve: Curves.easeOutCubic,
+            decoration: BoxDecoration(
+              color: isActive
+                  ? _activeConversationBackgroundColor
+                  : Colors.transparent,
+              borderRadius: itemRadius,
+              border: Border.all(
+                color: isActive
+                    ? _activeConversationBorderColor
+                    : Colors.transparent,
+              ),
+            ),
+            child: Stack(
+              children: [
+                Positioned(
+                  left: 0,
+                  top: 8,
+                  bottom: 8,
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 160),
+                    curve: Curves.easeOutCubic,
+                    width: 3,
+                    decoration: BoxDecoration(
+                      color: isActive
+                          ? palette.accentPrimary
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(999),
                     ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 2),
-              Expanded(
-                child: _buildEditableConversationTitle(
-                  title: title,
-                  isEditing: isEditing,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                countText,
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: AppFontEffectScope.resolveNonChatWeight(
-                    context,
-                    FontWeight.w500,
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(8, 8, 6, 8),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: onToggle,
+                        child: SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: Center(
+                            child: AnimatedRotation(
+                              turns: expanded ? 0 : -0.25,
+                              duration: HomeDrawerState._sectionToggleDuration,
+                              curve: Curves.easeInOutCubicEmphasized,
+                              child: SvgPicture.asset(
+                                'assets/common/chevron-down.svg',
+                                width: 16,
+                                height: 16,
+                                colorFilter: ColorFilter.mode(
+                                  palette.textTertiary,
+                                  BlendMode.srcIn,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 2),
+                      Expanded(
+                        child: _buildEditableConversationTitle(
+                          title: title,
+                          isEditing: isEditing,
+                          fontWeight: FontWeight.w600,
+                          isActive: isActive,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        countText,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: AppFontEffectScope.resolveNonChatWeight(
+                            context,
+                            FontWeight.w500,
+                          ),
+                          color: palette.textTertiary,
+                          fontFamily: 'PingFang SC',
+                        ),
+                      ),
+                    ],
                   ),
-                  color: palette.textTertiary,
-                  fontFamily: 'PingFang SC',
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
@@ -996,6 +1059,8 @@ extension _HomeDrawerConversationList on HomeDrawerState {
     final title = _resolveConversationTitle(conversation);
     final showArchivedBadge = _isSearchActive && conversation.isArchived;
     final isEditing = _editingThreadKey == conversation.threadKey;
+    final isActive = _isActiveConversation(conversation);
+    final itemRadius = BorderRadius.circular(10);
 
     return ConversationSlidable(
       itemKey: conversation.threadKey,
@@ -1020,51 +1085,92 @@ extension _HomeDrawerConversationList on HomeDrawerState {
               onLongPress: isEditing
                   ? null
                   : () => _startEditingTitle(conversation),
-              borderRadius: BorderRadius.circular(14),
+              borderRadius: itemRadius,
               splashColor: context.omniPalette.accentPrimary.withValues(
                 alpha: 0.08,
               ),
               highlightColor: Colors.transparent,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(4, 9, 2, 9),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        Expanded(
-                          child: _buildEditableConversationTitle(
-                            title: title,
-                            isEditing: isEditing,
+              child: Semantics(
+                selected: isActive,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 160),
+                  curve: Curves.easeOutCubic,
+                  decoration: BoxDecoration(
+                    color: isActive
+                        ? _activeConversationBackgroundColor
+                        : Colors.transparent,
+                    borderRadius: itemRadius,
+                    border: Border.all(
+                      color: isActive
+                          ? _activeConversationBorderColor
+                          : Colors.transparent,
+                    ),
+                  ),
+                  child: Stack(
+                    children: [
+                      Positioned(
+                        left: 0,
+                        top: 9,
+                        bottom: 9,
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 160),
+                          curve: Curves.easeOutCubic,
+                          width: 3,
+                          decoration: BoxDecoration(
+                            color: isActive
+                                ? context.omniPalette.accentPrimary
+                                : Colors.transparent,
+                            borderRadius: BorderRadius.circular(999),
                           ),
                         ),
-                        if (showArchivedBadge) ...[
-                          const SizedBox(width: 10),
-                          _buildArchivedBadge(),
-                        ],
-                      ],
-                    ),
-                    _buildConversationImagePreviewStrip(conversation),
-                    if (_isSearchActive && result.matchedPreview != null) ...[
-                      const SizedBox(height: 4),
-                      Text(
-                        result.matchedPreview!,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: AppFontEffectScope.resolveNonChatWeight(
-                            context,
-                            FontWeight.w400,
-                          ),
-                          color: _drawerSecondaryTextColor,
-                          height: 1.4,
-                          fontFamily: 'PingFang SC',
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(8, 9, 6, 9),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              children: [
+                                Expanded(
+                                  child: _buildEditableConversationTitle(
+                                    title: title,
+                                    isEditing: isEditing,
+                                    isActive: isActive,
+                                  ),
+                                ),
+                                if (showArchivedBadge) ...[
+                                  const SizedBox(width: 10),
+                                  _buildArchivedBadge(),
+                                ],
+                              ],
+                            ),
+                            _buildConversationImagePreviewStrip(conversation),
+                            if (_isSearchActive &&
+                                result.matchedPreview != null) ...[
+                              const SizedBox(height: 4),
+                              Text(
+                                result.matchedPreview!,
+                                maxLines: 2,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: AppFontEffectScope
+                                      .resolveNonChatWeight(
+                                    context,
+                                    FontWeight.w400,
+                                  ),
+                                  color: _drawerSecondaryTextColor,
+                                  height: 1.4,
+                                  fontFamily: 'PingFang SC',
+                                ),
+                              ),
+                            ],
+                          ],
                         ),
                       ),
                     ],
-                  ],
+                  ),
                 ),
               ),
             ),
@@ -1079,7 +1185,11 @@ extension _HomeDrawerConversationList on HomeDrawerState {
     required String title,
     required bool isEditing,
     FontWeight fontWeight = FontWeight.w500,
+    bool isActive = false,
   }) {
+    final titleColor = isActive
+        ? context.omniPalette.accentPrimary
+        : _drawerTextColor;
     if (isEditing) {
       return TextField(
         controller: _titleEditingController,
@@ -1093,7 +1203,7 @@ extension _HomeDrawerConversationList on HomeDrawerState {
             context,
             fontWeight,
           ),
-          color: _drawerTextColor,
+          color: titleColor,
           height: 1.35,
           fontFamily: 'PingFang SC',
         ),
@@ -1122,7 +1232,7 @@ extension _HomeDrawerConversationList on HomeDrawerState {
           context,
           fontWeight,
         ),
-        color: _drawerTextColor,
+        color: titleColor,
         height: 1.35,
         fontFamily: 'PingFang SC',
       ),

@@ -1570,6 +1570,9 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
                               newConversationMode: _conversationModeForPageMode(
                                 _activeMode,
                               ),
+                              activeConversationId: _currentConversationId,
+                              activeConversationMode:
+                                  activeConversationModeValue,
                               onThreadTargetSelected:
                                   _handleEmbeddedDrawerThreadTargetSelected,
                             ),
@@ -1816,6 +1819,8 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
                         newConversationMode: _conversationModeForPageMode(
                           _activeMode,
                         ),
+                        activeConversationId: _currentConversationId,
+                        activeConversationMode: activeConversationModeValue,
                       ),
                 onDrawerChanged: (isOpen) {
                   if (isHdPadLandscape) {
