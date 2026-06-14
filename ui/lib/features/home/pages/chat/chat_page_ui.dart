@@ -934,6 +934,8 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
           translucentSurfaces: AppBackgroundService.current.isActive,
           showBreadcrumbHeader: true,
           showHeaderTitle: false,
+          onSendFileToCurrentConversation:
+              _sendWorkspaceFileToCurrentConversation,
           onCanGoUpChanged: (canGoUp) {
             if (_workspaceBrowserCanGoUp == canGoUp || !mounted) return;
             setState(() {
@@ -972,6 +974,8 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
       translucentSurfaces: translucentSurfaces,
       showBreadcrumbHeader: true,
       showHeaderTitle: false,
+      onSendFileToCurrentConversation:
+          _sendRemoteWorkspaceFileToCurrentConversation,
       onCanGoUpChanged: (canGoUp) {
         if (_workspaceBrowserCanGoUp == canGoUp || !mounted) return;
         setState(() {
@@ -1485,6 +1489,8 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
           showHeaderTitle: false,
           enableInlineDirectoryExpansion: false,
           inlineFilePreview: true,
+          onSendFileToCurrentConversation:
+              _sendWorkspaceFileToCurrentConversation,
           onCanGoUpChanged: (canGoUp) {
             if (_workspaceBrowserCanGoUp == canGoUp || !mounted) return;
             setState(() {

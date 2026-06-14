@@ -20,7 +20,14 @@ class _RemoteWorkspaceBreadcrumbSegment {
   final bool isCurrent;
 }
 
-enum _RemoteWorkspaceEntryAction { open, edit, rename, delete, copyPath }
+enum _RemoteWorkspaceEntryAction {
+  sendToCurrentConversation,
+  open,
+  edit,
+  rename,
+  delete,
+  copyPath,
+}
 
 class CodexRemoteWorkspaceBrowser extends StatefulWidget {
   const CodexRemoteWorkspaceBrowser({
@@ -33,6 +40,7 @@ class CodexRemoteWorkspaceBrowser extends StatefulWidget {
     this.onCanGoUpChanged,
     this.showBreadcrumbHeader = true,
     this.showHeaderTitle = false,
+    this.onSendFileToCurrentConversation,
   });
 
   final String workspacePath;
@@ -43,6 +51,8 @@ class CodexRemoteWorkspaceBrowser extends StatefulWidget {
   final ValueChanged<bool>? onCanGoUpChanged;
   final bool showBreadcrumbHeader;
   final bool showHeaderTitle;
+  final FutureOr<void> Function(CodexRemoteDirectoryEntry entry)?
+      onSendFileToCurrentConversation;
 
   @override
   State<CodexRemoteWorkspaceBrowser> createState() =>
@@ -225,6 +235,8 @@ class CodexRemoteWorkspaceBrowserState
   Future<void> _showEntryActionSheet(CodexRemoteDirectoryEntry entry) async {
     final palette = context.omniPalette;
     final isDirectory = entry.isDirectory;
+    final canSendToConversation =
+        !isDirectory && widget.onSendFileToCurrentConversation != null;
     final action = await showModalBottomSheet<_RemoteWorkspaceEntryAction>(
       context: context,
       backgroundColor: _surfaceColor(opacity: 0.92),
@@ -259,6 +271,16 @@ class CodexRemoteWorkspaceBrowserState
                   ),
                 ),
                 const SizedBox(height: 12),
+                if (canSendToConversation) ...[
+                  _buildActionTile(
+                    context: sheetContext,
+                    icon: Icons.add_comment_outlined,
+                    label: _isEnglish ? 'Send to chat' : '发送至对话',
+                    action:
+                        _RemoteWorkspaceEntryAction.sendToCurrentConversation,
+                  ),
+                  const SizedBox(height: 8),
+                ],
                 if (!isDirectory) ...[
                   _buildActionTile(
                     context: sheetContext,
@@ -324,6 +346,8 @@ class CodexRemoteWorkspaceBrowserState
     );
     if (!mounted || action == null) return;
     switch (action) {
+      case _RemoteWorkspaceEntryAction.sendToCurrentConversation:
+        await _sendEntryToCurrentConversation(entry);
       case _RemoteWorkspaceEntryAction.open:
         await _openFileEntry(entry);
       case _RemoteWorkspaceEntryAction.edit:
@@ -334,6 +358,30 @@ class CodexRemoteWorkspaceBrowserState
         await _confirmAndDeleteEntry(entry);
       case _RemoteWorkspaceEntryAction.copyPath:
         await _copyRemotePath(entry);
+    }
+  }
+
+  Future<void> _sendEntryToCurrentConversation(
+    CodexRemoteDirectoryEntry entry,
+  ) async {
+    final callback = widget.onSendFileToCurrentConversation;
+    if (callback == null) return;
+    if (entry.isDirectory) {
+      showToast(
+        _isEnglish
+            ? 'Only files can be sent to the current chat'
+            : '只能发送文件到当前对话',
+        type: ToastType.warning,
+      );
+      return;
+    }
+    try {
+      await callback(entry);
+    } catch (error) {
+      showToast(
+        _isEnglish ? 'Failed to send file: $error' : '发送文件失败：$error',
+        type: ToastType.error,
+      );
     }
   }
 

@@ -918,10 +918,11 @@ mixin _ChatPageCodexMixin on _ChatPageStateBase {
           });
         }
       }
+      final turnText = _messageTextWithLatestAttachmentPrompt(messageText);
       final response = await CodexAppServerService.startTurn(
         conversationId: remoteCodex ? null : resolvedConversationId,
         threadId: _activeCodexThreadId,
-        text: messageText,
+        text: turnText,
         approvalPolicy: _codexPermissionMode.approvalPolicy,
         approvalsReviewer: _codexPermissionMode.approvalsReviewer,
         sandboxPolicy: _codexPermissionMode.sandboxPolicy,
