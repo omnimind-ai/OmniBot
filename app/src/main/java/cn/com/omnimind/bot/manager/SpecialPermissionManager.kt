@@ -12,6 +12,7 @@ import cn.com.omnimind.baselib.permission.PermissionRequest
 import cn.com.omnimind.baselib.shizuku.ShizukuCapabilityManager
 import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.agent.AgentWorkspaceManager
+import cn.com.omnimind.bot.codex.CodexAppServerManager
 import cn.com.omnimind.bot.terminal.EmbeddedTerminalAutoStartManager
 import cn.com.omnimind.bot.terminal.EmbeddedTerminalInitCoordinator
 import cn.com.omnimind.bot.terminal.EmbeddedTerminalLaunchHelper
@@ -703,6 +704,11 @@ class SpecialPermissionManager(private val context: Context) {
                     variables[key] = value
                 }
                 val normalized = OmnibotTerminalEnvironment.saveUserVariables(context, variables)
+                runCatching {
+                    CodexAppServerManager.getInstance(context).invalidateLocalTerminalEnvironment()
+                }.onFailure { error ->
+                    OmniLog.w(TAG, "Failed to invalidate Codex environment: ${error.message}")
+                }
                 withContext(Dispatchers.Main) {
                     result.success(
                         mapOf(

@@ -9,6 +9,8 @@ import com.ai.assistance.operit.terminal.setup.EnvironmentSetupLogic
 import cn.com.omnimind.baselib.database.DatabaseHelper
 import cn.com.omnimind.bot.BuildConfig
 import cn.com.omnimind.bot.agent.AgentWorkspaceManager
+import cn.com.omnimind.bot.agent.SkillIndexEntry
+import cn.com.omnimind.bot.agent.SkillIndexService
 import cn.com.omnimind.bot.agent.WorkspaceMemoryService
 import cn.com.omnimind.bot.util.TaskRuntimeSettings
 import com.rk.libcommons.OmnibotTerminalEnvironment
@@ -125,6 +127,17 @@ class CodexAppServerManager private constructor(
             activeTurnsByThreadId.clear()
         }
         return status()
+    }
+
+    suspend fun invalidateLocalTerminalEnvironment() {
+        sessionMutex.withLock {
+            if (activeRuntime == CodexRuntimeKind.LOCAL) {
+                session?.disconnect()
+                session = null
+                activeRuntime = null
+                activeTurnsByThreadId.clear()
+            }
+        }
     }
 
     suspend fun handleMethod(method: String, args: Map<String, Any?>): Any? {
@@ -631,8 +644,9 @@ class CodexAppServerManager private constructor(
     }
 
     private fun buildCodexContextInjectionTextForTurn(): String? {
+        val workspaceManager = AgentWorkspaceManager(appContext)
         val memoryContext = runCatching {
-            WorkspaceMemoryService(appContext).buildPromptContext()
+            WorkspaceMemoryService(appContext, workspaceManager).buildPromptContext()
         }.onFailure { error ->
             Log.w(
                 "CodexAppServerManager",
@@ -649,12 +663,28 @@ class CodexAppServerManager private constructor(
                 error
             )
         }.getOrDefault(emptyMap())
+        val skillsContext = runCatching {
+            val skillsRoot = workspaceManager.skillsRoot()
+            buildCodexSkillsContextText(
+                skillsRootShellPath = workspaceManager.shellPathForAndroid(skillsRoot)
+                    ?: "${AgentWorkspaceManager.SHELL_ROOT_PATH}/.omnibot/skills",
+                skillsRootAndroidPath = skillsRoot.absolutePath,
+                skills = SkillIndexService(appContext, workspaceManager).listSkillsForManagement()
+            )
+        }.onFailure { error ->
+            Log.w(
+                "CodexAppServerManager",
+                "Failed to load skills index for Codex context injection.",
+                error
+            )
+        }.getOrNull()
 
         return buildCodexContextInjectionText(
             soul = memoryContext?.soul.orEmpty(),
             longTermMemory = memoryContext?.longTermMemory.orEmpty(),
             todayShortMemory = memoryContext?.todayShortMemory.orEmpty(),
-            terminalVariables = terminalVariables
+            terminalVariables = terminalVariables,
+            skillsContext = skillsContext.orEmpty()
         )
     }
 
@@ -1052,6 +1082,8 @@ private data class CodexThreadListEntry(
 )
 
 private const val MAX_CODEX_CONTEXT_VARIABLE_NAMES = 80
+private const val MAX_CODEX_CONTEXT_SKILLS = 80
+private const val MAX_CODEX_CONTEXT_SKILL_DESCRIPTION_CHARS = 220
 
 internal fun Map<String, Any?>.withLocalIds(
     threadId: String?,
@@ -1115,7 +1147,8 @@ internal fun buildCodexContextInjectionText(
     soul: String,
     longTermMemory: String,
     todayShortMemory: String,
-    terminalVariables: Map<String, String>
+    terminalVariables: Map<String, String>,
+    skillsContext: String = ""
 ): String? {
     val sections = mutableListOf<String>()
 
@@ -1134,6 +1167,7 @@ internal fun buildCodexContextInjectionText(
     addTextSection("workspace_soul", soul)
     addTextSection("long_term_memory", longTermMemory)
     addTextSection("today_short_memory", todayShortMemory)
+    addTextSection("skills", skillsContext)
 
     val variableNames = terminalVariables.keys
         .map { it.trim() }
@@ -1172,6 +1206,63 @@ internal fun buildCodexContextInjectionText(
         appendLine()
         append("[/omnibot_context]")
     }
+}
+
+internal fun buildCodexSkillsContextText(
+    skillsRootShellPath: String,
+    skillsRootAndroidPath: String,
+    skills: List<SkillIndexEntry>
+): String? {
+    val installedSkills = skills
+        .filter { it.installed }
+        .sortedWith(
+            compareBy<SkillIndexEntry> { it.source }
+                .thenBy { it.name.lowercase() }
+        )
+    if (installedSkills.isEmpty()) {
+        return buildString {
+            appendLine("Omnibot skills root (shell): $skillsRootShellPath")
+            appendLine("Omnibot skills root (android): $skillsRootAndroidPath")
+            appendLine("To create a skill that appears in Omnibot Skill Store, create it at:")
+            appendLine("- $skillsRootShellPath/<skill-id>/SKILL.md")
+            appendLine("Use lowercase kebab-case for <skill-id>. The directory may include scripts/, references/, assets/, or evals/.")
+            append("No installed Omnibot skills are currently indexed.")
+        }
+    }
+
+    return buildString {
+        appendLine("Omnibot skills root (shell): $skillsRootShellPath")
+        appendLine("Omnibot skills root (android): $skillsRootAndroidPath")
+        appendLine("APK built-in skills are copied into this workspace root before indexing; Codex cannot read APK assets directly.")
+        appendLine("To create a skill that appears in Omnibot Skill Store, create it at:")
+        appendLine("- $skillsRootShellPath/<skill-id>/SKILL.md")
+        appendLine("Use lowercase kebab-case for <skill-id>. The directory may include scripts/, references/, assets/, or evals/.")
+        appendLine("When the user asks to create or update a skill, read the indexed skill-creator SKILL.md first if it is available.")
+        appendLine()
+        appendLine("Indexed skills:")
+        installedSkills.take(MAX_CODEX_CONTEXT_SKILLS).forEach { skill ->
+            val capabilities = buildList {
+                if (skill.hasScripts) add("scripts")
+                if (skill.hasReferences) add("references")
+                if (skill.hasAssets) add("assets")
+                if (skill.hasEvals) add("evals")
+            }.ifEmpty { listOf("none") }.joinToString(",")
+            val enabledLabel = if (skill.enabled) "enabled" else "disabled"
+            val description = skill.description
+                .replace('\n', ' ')
+                .trim()
+                .take(MAX_CODEX_CONTEXT_SKILL_DESCRIPTION_CHARS)
+            append("- id=${skill.id} | name=${skill.name} | source=${skill.source} | state=$enabledLabel | path=${skill.shellSkillFilePath} | capabilities=$capabilities")
+            if (description.isNotBlank()) {
+                append(" | description=$description")
+            }
+            appendLine()
+        }
+        val omitted = installedSkills.size - MAX_CODEX_CONTEXT_SKILLS
+        if (omitted > 0) {
+            append("- ... ($omitted more)")
+        }
+    }.trim()
 }
 
 internal fun buildDefaultCodexSandboxPolicy(cwd: String): Map<String, Any?> {
