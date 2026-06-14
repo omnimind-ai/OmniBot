@@ -256,6 +256,174 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
   }
 
   @override
+  Future<void> _sendWorkspaceFileToCurrentConversation(
+    OmnibotResourceMetadata metadata,
+  ) async {
+    if (!mounted) return;
+    final path = metadata.path.trim();
+    if (path.isEmpty || metadata.isDirectory || !File(path).existsSync()) {
+      _showSnackBar(
+        LegacyTextLocalizer.isEnglish ? 'File not found' : '文件不存在',
+      );
+      return;
+    }
+
+    try {
+      final stat = await File(path).stat();
+      await _addWorkspacePathAttachmentToCurrentConversation(
+        name: metadata.title.trim().isNotEmpty
+            ? metadata.title.trim()
+            : _fileNameFromPath(path),
+        path: path,
+        promptPath: metadata.shellPath.trim().isNotEmpty
+            ? metadata.shellPath.trim()
+            : path,
+        size: stat.size > 0 ? stat.size : null,
+        mimeType: metadata.mimeType.trim().isNotEmpty
+            ? metadata.mimeType.trim()
+            : _mimeTypeFromExtension(path),
+        isImage: _isImageFilePath(path, mimeType: metadata.mimeType),
+      );
+    } catch (error) {
+      _showSnackBar(
+        LegacyTextLocalizer.isEnglish
+            ? 'Failed to add file: $error'
+            : '添加文件失败：$error',
+      );
+    }
+  }
+
+  @override
+  Future<void> _sendRemoteWorkspaceFileToCurrentConversation(
+    CodexRemoteDirectoryEntry entry,
+  ) async {
+    if (!mounted) return;
+    if (entry.isDirectory) {
+      _showSnackBar(
+        LegacyTextLocalizer.isEnglish
+            ? 'Only files can be sent to the current chat'
+            : '只能发送文件到当前对话',
+      );
+      return;
+    }
+    final path = entry.path.trim();
+    if (path.isEmpty) {
+      _showSnackBar(
+        LegacyTextLocalizer.isEnglish ? 'File path is empty' : '文件路径为空',
+      );
+      return;
+    }
+    await _addWorkspacePathAttachmentToCurrentConversation(
+      name: entry.name.trim().isNotEmpty
+          ? entry.name.trim()
+          : _fileNameFromPath(path),
+      path: path,
+      promptPath: path,
+      mimeType: _mimeTypeFromExtension(path),
+      isImage: false,
+    );
+  }
+
+  Future<void> _addWorkspacePathAttachmentToCurrentConversation({
+    required String name,
+    required String path,
+    required String promptPath,
+    int? size,
+    String? mimeType,
+    bool isImage = false,
+  }) async {
+    if (!mounted) return;
+    final targetMode = _activeMode;
+    final attachments = _pendingAttachmentsByMode[targetMode]!;
+    final normalizedPath = path.trim();
+    final normalizedPromptPath = promptPath.trim();
+    final exists = attachments.any((item) {
+      if (item.path == normalizedPath) return true;
+      final itemPromptPath = item.promptPath?.trim();
+      return itemPromptPath != null &&
+          itemPromptPath.isNotEmpty &&
+          itemPromptPath == normalizedPromptPath;
+    });
+    if (exists) {
+      _showSnackBar(
+        LegacyTextLocalizer.isEnglish
+            ? 'File is already attached'
+            : '文件已添加到当前对话',
+      );
+      await _switchChatMode(ChatSurfaceMode.normal);
+      return;
+    }
+
+    setState(() {
+      attachments.add(
+        ChatInputAttachment(
+          id: '${normalizedPath}_${DateTime.now().microsecondsSinceEpoch}',
+          name: name.trim().isNotEmpty ? name.trim() : _fileNameFromPath(path),
+          path: normalizedPath,
+          size: size,
+          mimeType: mimeType,
+          isImage: isImage,
+          promptPath: normalizedPromptPath.isNotEmpty
+              ? normalizedPromptPath
+              : normalizedPath,
+        ),
+      );
+    });
+
+    await _switchChatMode(ChatSurfaceMode.normal);
+    if (!mounted) return;
+    _showSnackBar(
+      LegacyTextLocalizer.isEnglish
+          ? 'Added to current chat'
+          : '已添加到当前对话',
+    );
+  }
+
+  @override
+  String _messageTextWithLatestAttachmentPrompt(String text) {
+    final prompt = _latestUserAttachmentPathPrompt();
+    if (prompt.isEmpty) return text;
+    final trimmedText = text.trim();
+    if (trimmedText.isEmpty) return prompt;
+    return '$text\n$prompt';
+  }
+
+  String _latestUserAttachmentPathPrompt() {
+    for (final message in _messages) {
+      if (message.user != 1) continue;
+      final raw = message.content?['attachments'];
+      if (raw is! List) return '';
+      final lines = raw
+          .whereType<Map>()
+          .map(
+            (item) =>
+                item.map((key, value) => MapEntry(key.toString(), value)),
+          )
+          .map((attachment) {
+            final path = _attachmentPromptPath(attachment);
+            if (path.isEmpty) return '';
+            final rawName = attachment['name'];
+            final name = rawName is String ? rawName.trim() : '';
+            return name.isEmpty ? '- $path' : '- $name: $path';
+          })
+          .where((line) => line.isNotEmpty)
+          .toList();
+      if (lines.isEmpty) return '';
+      return '已添加到 workspace，可通过以下路径读取：\n${lines.join('\n')}';
+    }
+    return '';
+  }
+
+  String _attachmentPromptPath(Map<String, dynamic> attachment) {
+    final promptPath = attachment['promptPath']?.toString().trim() ?? '';
+    if (promptPath.isNotEmpty) return promptPath;
+    final workspacePath = attachment['workspacePath']?.toString().trim() ?? '';
+    if (workspacePath.isNotEmpty) return workspacePath;
+    if (_attachmentShouldSendToModel(attachment)) return '';
+    return attachment['path']?.toString().trim() ?? '';
+  }
+
+  @override
   void _removePendingAttachment(String id) {
     if (!mounted) return;
     setState(() {

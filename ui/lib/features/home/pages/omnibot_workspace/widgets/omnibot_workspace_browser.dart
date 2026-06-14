@@ -27,7 +27,13 @@ class _WorkspaceBreadcrumbSegment {
   final bool isFile;
 }
 
-enum _WorkspaceEntryAction { edit, rename, delete, unmount }
+enum _WorkspaceEntryAction {
+  sendToCurrentConversation,
+  edit,
+  rename,
+  delete,
+  unmount,
+}
 
 class _WorkspaceDragPayload {
   const _WorkspaceDragPayload({
@@ -49,6 +55,8 @@ class OmnibotWorkspaceBrowser extends StatefulWidget {
   final bool showHeaderTitle;
   final bool enableInlineDirectoryExpansion;
   final bool inlineFilePreview;
+  final FutureOr<void> Function(OmnibotResourceMetadata metadata)?
+      onSendFileToCurrentConversation;
 
   const OmnibotWorkspaceBrowser({
     super.key,
@@ -61,6 +69,7 @@ class OmnibotWorkspaceBrowser extends StatefulWidget {
     this.showHeaderTitle = true,
     this.enableInlineDirectoryExpansion = true,
     this.inlineFilePreview = false,
+    this.onSendFileToCurrentConversation,
   });
 
   @override
@@ -1234,6 +1243,9 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
     final name = _entryNameFromPath(entry.path);
     final mountEntry = _workspaceMountEntryFor(entry);
     final editable = _canEditEntry(entry);
+    final canSendToConversation =
+        widget.onSendFileToCurrentConversation != null &&
+        FileSystemEntity.typeSync(entry.path) == FileSystemEntityType.file;
     final action = await showModalBottomSheet<_WorkspaceEntryAction>(
       context: context,
       backgroundColor: _surfaceColor(opacity: 0.92),
@@ -1281,6 +1293,30 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
                   ),
                 ),
                 const SizedBox(height: 12),
+                if (canSendToConversation) ...[
+                  ListTile(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    tileColor: _secondarySurfaceColor(),
+                    leading: Icon(
+                      Icons.add_comment_outlined,
+                      color: palette.textPrimary,
+                    ),
+                    title: Text(
+                      _isEnglish ? 'Send to chat' : '发送至对话',
+                      style: TextStyle(
+                        color: palette.textPrimary,
+                        fontWeight: FontWeight.w600,
+                        fontFamily: 'PingFang SC',
+                      ),
+                    ),
+                    onTap: () => Navigator.of(sheetContext).pop(
+                      _WorkspaceEntryAction.sendToCurrentConversation,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                ],
                 if (mountEntry == null && editable) ...[
                   ListTile(
                     shape: RoundedRectangleBorder(
@@ -1382,6 +1418,10 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
     );
 
     if (!mounted || action == null) return;
+    if (action == _WorkspaceEntryAction.sendToCurrentConversation) {
+      await _sendEntryToCurrentConversation(entry);
+      return;
+    }
     if (action == _WorkspaceEntryAction.unmount) {
       if (mountEntry != null) {
         await _confirmAndUnmountWorkspaceMount(mountEntry);
@@ -1397,6 +1437,36 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
       return;
     }
     await _confirmAndDeleteEntry(entry);
+  }
+
+  Future<void> _sendEntryToCurrentConversation(FileSystemEntity entry) async {
+    final callback = widget.onSendFileToCurrentConversation;
+    if (callback == null) return;
+
+    final path = _normalizePath(entry.path);
+    if (FileSystemEntity.typeSync(path) != FileSystemEntityType.file) {
+      showToast(
+        _isEnglish
+            ? 'Only files can be sent to the current chat'
+            : '只能发送文件到当前对话',
+        type: ToastType.warning,
+      );
+      return;
+    }
+
+    try {
+      await callback(
+        OmnibotResourceService.describePath(
+          path,
+          title: _entryNameFromPath(path),
+        ),
+      );
+    } catch (error) {
+      showToast(
+        _isEnglish ? 'Failed to send file: $error' : '发送文件失败：$error',
+        type: ToastType.error,
+      );
+    }
   }
 
   bool _canEditEntry(FileSystemEntity entry) {
