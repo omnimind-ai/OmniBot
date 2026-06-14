@@ -43,8 +43,8 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       ),
       conversation:
           conversation ??
-          runtime?.conversation ??
-          _currentConversationByMode[mode],
+          _currentConversationByMode[mode] ??
+          runtime?.conversation,
       isAiResponding:
           runtime?.isAiResponding ?? (_isAiRespondingByMode[mode] ?? false),
       isContextCompressing:

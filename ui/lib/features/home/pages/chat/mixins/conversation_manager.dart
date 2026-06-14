@@ -596,7 +596,10 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
         updatedAt: updatedAt,
       );
 
-      await ConversationService.updateConversation(recovered);
+      await ConversationService.updateConversation(
+        recovered,
+        preserveUserMetadata: true,
+      );
       if (!_isConversationOperationCurrent(token)) {
         return false;
       }
@@ -816,7 +819,10 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
           updatedAt: now,
         );
 
-        await ConversationService.updateConversation(updatedConversation);
+        await ConversationService.updateConversation(
+          updatedConversation,
+          preserveUserMetadata: true,
+        );
 
         await _persistDeepThinkingCardsForConversation(
           targetId,

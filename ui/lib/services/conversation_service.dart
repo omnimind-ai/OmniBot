@@ -112,11 +112,18 @@ class ConversationService {
     }
   }
 
-  static Future<bool> updateConversation(ConversationModel conversation) async {
+  static Future<bool> updateConversation(
+    ConversationModel conversation, {
+    bool preserveUserMetadata = false,
+  }) async {
     try {
       final result = await _assistCore.invokeMethod<dynamic>(
         'updateConversation',
-        {'conversation': conversation.toJson()},
+        {
+          'conversation': conversation.toJson(),
+          if (preserveUserMetadata)
+            'preserveUserMetadata': preserveUserMetadata,
+        },
       );
       return result == 'SUCCESS';
     } on PlatformException catch (e) {

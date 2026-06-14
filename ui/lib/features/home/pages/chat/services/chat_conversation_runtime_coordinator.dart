@@ -774,7 +774,10 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
       updatedAt: now,
     );
 
-    await ConversationService.updateConversation(updatedConversation);
+    await ConversationService.updateConversation(
+      updatedConversation,
+      preserveUserMetadata: true,
+    );
     if (persistMessages) {
       await ConversationHistoryService.saveConversationMessages(
         conversationId,

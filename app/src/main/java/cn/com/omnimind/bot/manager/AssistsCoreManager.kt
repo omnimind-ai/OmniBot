@@ -6012,12 +6012,14 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
      */
     fun updateConversation(call: MethodCall, result: MethodChannel.Result) {
         val conversationMap = call.argument<Map<String, Any>>("conversation")
+        val preserveUserMetadata = call.argument<Boolean>("preserveUserMetadata") ?: false
 
         workJob.launch {
             try {
                 if (conversationMap != null) {
                     conversationDomainService.updateConversationFromPayload(
-                        conversationMap.mapValues { it.value }
+                        conversationMap.mapValues { it.value },
+                        preserveUserMetadata = preserveUserMetadata
                     )
                     withContext(Dispatchers.Main) {
                         result.success("SUCCESS")
