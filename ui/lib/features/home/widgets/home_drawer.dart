@@ -88,6 +88,8 @@ class HomeDrawer extends ConsumerStatefulWidget {
     this.newConversationMode = ConversationMode.normal,
     this.embedded = false,
     this.closeOnNavigate = true,
+    this.activeConversationId,
+    this.activeConversationMode,
     this.onThreadTargetSelected,
   });
 
@@ -95,6 +97,8 @@ class HomeDrawer extends ConsumerStatefulWidget {
   final ConversationMode newConversationMode;
   final bool embedded;
   final bool closeOnNavigate;
+  final int? activeConversationId;
+  final ConversationMode? activeConversationMode;
   final ValueChanged<ConversationThreadTarget>? onThreadTargetSelected;
 
   @override
