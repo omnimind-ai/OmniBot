@@ -7,6 +7,7 @@ import com.google.gson.JsonElement
 import com.google.gson.JsonNull
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import com.rk.libcommons.OmnibotTerminalEnvironment
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.TimeoutCancellationException
@@ -207,15 +208,21 @@ internal class CodexAppServerSession(
     }
 
     private fun buildStartEnvironment(): Map<String, String> {
-        return mapOf(
-            "OMNIBOT_HEADLESS" to "1",
-            "CODEX_HOME" to CodexAppServerDefaults.CODEX_HOME,
-            "OMNIBOT_SESSION_CWD" to CodexAppServerDefaults.FALLBACK_CWD
-        )
+        return linkedMapOf<String, String>().apply {
+            if (context != null) {
+                putAll(OmnibotTerminalEnvironment.buildTerminalEnvironment(context))
+            }
+            put("OMNIBOT_HEADLESS", "1")
+            put("CODEX_HOME", CodexAppServerDefaults.CODEX_HOME)
+            put("OMNIBOT_SESSION_CWD", CodexAppServerDefaults.FALLBACK_CWD)
+        }
     }
 
     private fun buildStartCommand(): String {
         return """
+            if [ -n "${'$'}{OMNIBOT_USER_ENV_FILE:-}" ] && [ -f "${'$'}OMNIBOT_USER_ENV_FILE" ]; then
+              . "${'$'}OMNIBOT_USER_ENV_FILE"
+            fi
             export CODEX_HOME=${CodexAppServerDefaults.CODEX_HOME}
             export PATH="/root/.npm-global/bin:${'$'}PATH"
             mkdir -p "${'$'}CODEX_HOME"

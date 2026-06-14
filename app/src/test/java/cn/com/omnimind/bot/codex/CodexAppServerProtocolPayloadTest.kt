@@ -1,5 +1,6 @@
 package cn.com.omnimind.bot.codex
 
+import cn.com.omnimind.bot.agent.SkillIndexEntry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -64,7 +65,8 @@ class CodexAppServerProtocolPayloadTest {
             soul = "SOUL identity",
             longTermMemory = "- Prefers concise answers",
             todayShortMemory = "- Working on Codex mode",
-            terminalVariables = mapOf("OPENAI_API_KEY" to "sk-secret")
+            terminalVariables = mapOf("OPENAI_API_KEY" to "sk-secret"),
+            skillsContext = "Omnibot skills root (shell): /workspace/.omnibot/skills"
         )!!
 
         assertTrue(text.contains("[omnibot_context]"))
@@ -72,6 +74,8 @@ class CodexAppServerProtocolPayloadTest {
         assertTrue(text.contains("SOUL identity"))
         assertTrue(text.contains("[long_term_memory]"))
         assertTrue(text.contains("[today_short_memory]"))
+        assertTrue(text.contains("[skills]"))
+        assertTrue(text.contains("/workspace/.omnibot/skills"))
         assertTrue(text.contains("- OPENAI_API_KEY=(configured, value hidden)"))
         assertEquals(false, text.contains("sk-secret"))
     }
@@ -86,6 +90,35 @@ class CodexAppServerProtocolPayloadTest {
                 terminalVariables = emptyMap()
             )
         )
+    }
+
+    @Test
+    fun buildCodexSkillsContextTextExplainsWorkspaceSkillLocation() {
+        val text = buildCodexSkillsContextText(
+            skillsRootShellPath = "/workspace/.omnibot/skills",
+            skillsRootAndroidPath = "/sdcard/Omnibot/.omnibot/skills",
+            skills = listOf(
+                SkillIndexEntry(
+                    id = "skill-creator",
+                    name = "skill-creator",
+                    description = "Create Omnibot skills.",
+                    rootPath = "/sdcard/Omnibot/.omnibot/skills/skill-creator",
+                    shellRootPath = "/workspace/.omnibot/skills/skill-creator",
+                    skillFilePath = "/sdcard/Omnibot/.omnibot/skills/skill-creator/SKILL.md",
+                    shellSkillFilePath = "/workspace/.omnibot/skills/skill-creator/SKILL.md",
+                    hasScripts = false,
+                    hasReferences = true,
+                    hasAssets = false,
+                    hasEvals = false,
+                    source = "builtin",
+                    installed = true
+                )
+            )
+        )!!
+
+        assertTrue(text.contains("/workspace/.omnibot/skills/<skill-id>/SKILL.md"))
+        assertTrue(text.contains("id=skill-creator"))
+        assertTrue(text.contains("capabilities=references"))
     }
 
     @Test

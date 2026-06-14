@@ -248,9 +248,9 @@ mixin _ChatPageBrowserMixin on _ChatPageStateBase {
     ChatPageMode mode,
     ChatIslandDisplayLayer layer,
   ) {
-    final resolvedLayer = mode == ChatPageMode.normal
-        ? layer
-        : ChatIslandDisplayLayer.mode;
+    final resolvedLayer = mode == ChatPageMode.openclaw
+        ? ChatIslandDisplayLayer.mode
+        : layer;
     _chatIslandDisplayLayerByMode[mode] = resolvedLayer;
     final runtime = _runtimeForMode(mode);
     if (runtime != null) {
@@ -260,11 +260,12 @@ mixin _ChatPageBrowserMixin on _ChatPageStateBase {
 
   @override
   void _handleChatIslandDisplayLayerChanged(ChatIslandDisplayLayer layer) {
-    if (_activeSurfaceMode != ChatSurfaceMode.normal) {
+    if (_activeSurfaceMode != ChatSurfaceMode.normal ||
+        _activeMode == ChatPageMode.openclaw) {
       return;
     }
     setState(() {
-      _setChatIslandDisplayLayerForMode(ChatPageMode.normal, layer);
+      _setChatIslandDisplayLayerForMode(_activeMode, layer);
       if (layer != ChatIslandDisplayLayer.tools) {
         _isBrowserOverlayVisible = false;
       }
@@ -273,12 +274,13 @@ mixin _ChatPageBrowserMixin on _ChatPageStateBase {
 
   @override
   Future<void> _handleTerminalToolTap() async {
-    if (_activeSurfaceMode != ChatSurfaceMode.normal) {
+    if (_activeSurfaceMode != ChatSurfaceMode.normal ||
+        _activeMode == ChatPageMode.openclaw) {
       return;
     }
     setState(() {
       _setChatIslandDisplayLayerForMode(
-        ChatPageMode.normal,
+        _activeMode,
         ChatIslandDisplayLayer.tools,
       );
     });
@@ -294,7 +296,8 @@ mixin _ChatPageBrowserMixin on _ChatPageStateBase {
 
   @override
   Future<void> _handleBrowserToolTap() async {
-    if (_activeSurfaceMode != ChatSurfaceMode.normal) {
+    if (_activeSurfaceMode != ChatSurfaceMode.normal ||
+        _activeMode == ChatPageMode.openclaw) {
       return;
     }
     if (!Platform.isAndroid) {
@@ -312,7 +315,7 @@ mixin _ChatPageBrowserMixin on _ChatPageStateBase {
     }
     setState(() {
       _setChatIslandDisplayLayerForMode(
-        ChatPageMode.normal,
+        _activeMode,
         ChatIslandDisplayLayer.tools,
       );
       _isBrowserOverlayVisible = true;

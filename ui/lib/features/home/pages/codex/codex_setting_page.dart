@@ -906,8 +906,8 @@ class _CodexSettingPageState extends State<CodexSettingPage> {
                         Text(
                           _contextInjectionEnabled
                               ? _localeText(
-                                  zh: '已开启：Codex 每轮会收到 SOUL、长期记忆、今日短期记忆和终端变量名；变量值不会明文注入。',
-                                  en: 'Enabled: each Codex turn receives SOUL, long-term memory, today memory, and terminal variable names. Values are hidden.',
+                                  zh: '已开启：Codex 每轮会收到 SOUL、长期记忆、今日短期记忆、Skills 索引和终端变量名；变量值不会明文注入。',
+                                  en: 'Enabled: each Codex turn receives SOUL, memory, skills index, and terminal variable names. Values are hidden.',
                                 )
                               : _localeText(
                                   zh: '已关闭：Codex 使用干净上下文。',
