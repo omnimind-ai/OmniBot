@@ -128,6 +128,7 @@ void main() {
         'model': 'gpt-5.5',
         'apiKey': 'key',
         'codexHome': '/root/.codex',
+        'contextInjectionEnabled': true,
       };
     });
 
@@ -136,12 +137,15 @@ void main() {
       baseUrl: ' https://example.com/v1 ',
       model: ' gpt-5.5 ',
       apiKey: ' key ',
+      contextInjectionEnabled: true,
     );
 
     expect(read.baseUrl, 'https://example.com/v1');
     expect(read.model, 'gpt-5.5');
     expect(read.apiKey, 'key');
+    expect(read.contextInjectionEnabled, isTrue);
     expect(written.codexHome, '/root/.codex');
+    expect(written.contextInjectionEnabled, isTrue);
     expect(calls.map((call) => call.method), [
       'config/local/read',
       'config/local/write',
@@ -154,6 +158,7 @@ void main() {
       'remoteBridgeUrl': '',
       'remoteBridgeToken': '',
       'remoteCwd': '',
+      'contextInjectionEnabled': true,
     });
   });
 

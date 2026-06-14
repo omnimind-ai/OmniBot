@@ -36,6 +36,59 @@ class CodexAppServerProtocolPayloadTest {
     }
 
     @Test
+    fun buildCodexInputWithOptionalContextPrependsContextText() {
+        val userInput = buildCodexTextInput("implement the change")
+
+        val input = buildCodexInputWithOptionalContext(
+            userInput,
+            "workspace memory"
+        )
+
+        assertEquals(2, input.size)
+        assertEquals("workspace memory", input[0]["text"])
+        assertEquals("implement the change", input[1]["text"])
+    }
+
+    @Test
+    fun buildCodexInputWithOptionalContextLeavesInputUntouchedWhenBlank() {
+        val userInput = buildCodexTextInput("implement the change")
+
+        val input = buildCodexInputWithOptionalContext(userInput, " ")
+
+        assertEquals(userInput, input)
+    }
+
+    @Test
+    fun buildCodexContextInjectionTextIncludesMemoryAndHidesVariableValues() {
+        val text = buildCodexContextInjectionText(
+            soul = "SOUL identity",
+            longTermMemory = "- Prefers concise answers",
+            todayShortMemory = "- Working on Codex mode",
+            terminalVariables = mapOf("OPENAI_API_KEY" to "sk-secret")
+        )!!
+
+        assertTrue(text.contains("[omnibot_context]"))
+        assertTrue(text.contains("[workspace_soul]"))
+        assertTrue(text.contains("SOUL identity"))
+        assertTrue(text.contains("[long_term_memory]"))
+        assertTrue(text.contains("[today_short_memory]"))
+        assertTrue(text.contains("- OPENAI_API_KEY=(configured, value hidden)"))
+        assertEquals(false, text.contains("sk-secret"))
+    }
+
+    @Test
+    fun buildCodexContextInjectionTextReturnsNullForEmptyContext() {
+        assertNull(
+            buildCodexContextInjectionText(
+                soul = "",
+                longTermMemory = "",
+                todayShortMemory = "",
+                terminalVariables = emptyMap()
+            )
+        )
+    }
+
+    @Test
     fun buildDefaultCodexSandboxPolicyUsesAbsoluteWritableRoot() {
         val policy = buildDefaultCodexSandboxPolicy("noise\n/workspace")
 

@@ -183,6 +183,7 @@ mixin _ChatPageCodexMixin on _ChatPageStateBase {
         remoteBridgeUrl: config.remoteBridgeUrl,
         remoteBridgeToken: config.remoteBridgeToken,
         remoteCwd: nextCwd,
+        contextInjectionEnabled: config.contextInjectionEnabled,
       );
       final status = await CodexAppServerService.status();
       if (!mounted) return;
