@@ -22,6 +22,46 @@ enum GlassPopupHorizontalPlacement {
   centerOnScreen,
 }
 
+class GlassPopupAnchorLayout extends StatelessWidget {
+  const GlassPopupAnchorLayout({
+    super.key,
+    required this.anchor,
+    required this.child,
+    this.preferBelow = true,
+    this.verticalGap = 6,
+    this.screenPadding = const EdgeInsets.all(8),
+    this.unfoldAlignment,
+    this.horizontalPlacement = GlassPopupHorizontalPlacement.edgeAlign,
+  });
+
+  final Rect anchor;
+  final Widget child;
+  final bool preferBelow;
+  final double verticalGap;
+  final EdgeInsets screenPadding;
+  final Alignment? unfoldAlignment;
+  final GlassPopupHorizontalPlacement horizontalPlacement;
+
+  @override
+  Widget build(BuildContext context) {
+    final mediaQuery = MediaQuery.of(context);
+    return CustomSingleChildLayout(
+      delegate: _GlassPopupLayoutDelegate(
+        anchor: anchor,
+        preferBelow: preferBelow,
+        verticalGap: verticalGap,
+        screenPadding: screenPadding,
+        mediaPadding: mediaQuery.padding,
+        textDirection: Directionality.of(context),
+        explicitUnfoldAlignment: unfoldAlignment,
+        horizontalPlacement: horizontalPlacement,
+        onAlignmentResolved: (_) {},
+      ),
+      child: child,
+    );
+  }
+}
+
 /// 玻璃风格 popup 的统一入口。
 ///
 /// 设计目标：还原 Android 原生 PopupMenu 的"从 anchor 一侧的角先展宽、再展高、
@@ -53,6 +93,7 @@ Future<T?> showGlassPopup<T>({
   Color? barrierColor,
   String? barrierLabel,
   RouteSettings? routeSettings,
+  bool? requestFocus,
 
   /// 设置为 true 时不播放展开/收起动画——直接瞬间出现 / 瞬间消失。
   /// 用于长按消息气泡这类"系统级 context menu"——动画反而显得拖沓。
@@ -81,6 +122,7 @@ Future<T?> showGlassPopup<T>({
       barrierLabel:
           barrierLabel ?? MaterialLocalizations.of(context).modalBarrierDismissLabel,
       settings: routeSettings,
+      requestFocus: requestFocus,
     ),
   );
 }
@@ -102,6 +144,7 @@ class GlassPopupRoute<T> extends PopupRoute<T> {
     required this.barrierLabel,
     required this.instant,
     Color? barrierColor,
+    super.requestFocus,
     super.settings,
   }) : _barrierColor = barrierColor;
 

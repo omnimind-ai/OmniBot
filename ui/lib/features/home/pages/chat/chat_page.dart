@@ -137,6 +137,7 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   final GlobalKey<HomeDrawerState> _drawerKey = GlobalKey<HomeDrawerState>();
   final GlobalKey _browserOverlayKey = GlobalKey();
   final GlobalKey _slashCommandStripKey = GlobalKey();
+  OverlayEntry? _conversationModelSelectorOverlayEntry;
 
   // ===================== State =====================
   bool _isPopupVisible = false;

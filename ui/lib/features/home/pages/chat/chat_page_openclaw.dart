@@ -169,6 +169,7 @@ mixin _ChatPageOpenClawMixin on _ChatPageStateBase {
       return;
     }
     if (insideInputArea || insideInputAuxiliarySurface) {
+      _suppressNextOutsideTapKeyboardHide = false;
       return;
     }
     if (_openClawPanelExpanded) {

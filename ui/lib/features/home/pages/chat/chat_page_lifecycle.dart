@@ -593,6 +593,8 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
   @override
   void dispose() {
     unawaited(_clearVisibleChatConversation());
+    _conversationModelSelectorOverlayEntry?.remove();
+    _conversationModelSelectorOverlayEntry = null;
     WidgetsBinding.instance.removeObserver(this);
     unawaited(_runtimeCoordinator.flushAllPendingPersistence());
     _conversationListChangedSubscription?.cancel();

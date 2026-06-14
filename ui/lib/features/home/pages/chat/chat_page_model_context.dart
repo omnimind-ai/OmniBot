@@ -429,6 +429,63 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
     );
   }
 
+  void _removeConversationModelSelectorOverlay() {
+    _suppressNextOutsideTapKeyboardHide = false;
+    final entry = _conversationModelSelectorOverlayEntry;
+    if (entry == null) {
+      return;
+    }
+    _conversationModelSelectorOverlayEntry = null;
+    entry.remove();
+  }
+
+  void _showConversationModelSelectorOverlay({
+    required Rect anchorRect,
+    required double popupWidth,
+    required double popupMaxHeight,
+  }) {
+    _removeConversationModelSelectorOverlay();
+    final overlay = Overlay.of(context, rootOverlay: true);
+    _conversationModelSelectorOverlayEntry = OverlayEntry(
+      builder: (overlayContext) {
+        return Material(
+          color: Colors.transparent,
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onTap: _removeConversationModelSelectorOverlay,
+                  child: const SizedBox.expand(),
+                ),
+              ),
+              GlassPopupAnchorLayout(
+                anchor: anchorRect,
+                child: _ConversationModelSelectorContent(
+                  width: popupWidth,
+                  maxHeight: popupMaxHeight,
+                  profiles: _modelProviderProfiles,
+                  providerModelsByProfileId: _modelOptionsByProfileId,
+                  currentSelection: _activeDispatchSceneSelection,
+                  onSelect: (selected) {
+                    _removeConversationModelSelectorOverlay();
+                    unawaited(
+                      _applyDispatchSceneModelSelection(
+                        providerProfileId: selected.providerProfileId,
+                        modelId: selected.modelId,
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    overlay.insert(_conversationModelSelectorOverlayEntry!);
+  }
+
   @override
   Future<void> _openConversationModelSelector(
     BuildContext anchorContext,
@@ -448,10 +505,13 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
     if (!_hasSelectableNormalChatModels) {
       return;
     }
-    _inputFocusNode.unfocus();
+    _suppressNextOutsideTapKeyboardHide = true;
+    // Keep the active input focus so the composer does not drop before the
+    // popup is anchored from the current button position.
     final anchorBox = anchorContext.findRenderObject() as RenderBox?;
     final anchorRect = glassPopupAnchorFromContext(anchorContext);
     if (anchorBox == null || !anchorBox.hasSize || anchorRect == null) {
+      _suppressNextOutsideTapKeyboardHide = false;
       return;
     }
     final popupWidth = math
@@ -459,23 +519,10 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
         .clamp(260.0, 320.0)
         .toDouble();
     const popupMaxHeight = 360.0;
-    final selected = await showGlassPopup<_ChatModelOverrideSelection>(
-      context: context,
-      anchor: anchorRect,
-      child: _ConversationModelSelectorContent(
-        width: popupWidth,
-        maxHeight: popupMaxHeight,
-        profiles: _modelProviderProfiles,
-        providerModelsByProfileId: _modelOptionsByProfileId,
-        currentSelection: _activeDispatchSceneSelection,
-      ),
-    );
-    if (selected == null) {
-      return;
-    }
-    await _applyDispatchSceneModelSelection(
-      providerProfileId: selected.providerProfileId,
-      modelId: selected.modelId,
+    _showConversationModelSelectorOverlay(
+      anchorRect: anchorRect,
+      popupWidth: popupWidth,
+      popupMaxHeight: popupMaxHeight,
     );
   }
 
@@ -1051,6 +1098,7 @@ class _ConversationModelSelectorContent extends StatefulWidget {
     required this.profiles,
     required this.providerModelsByProfileId,
     required this.currentSelection,
+    this.onSelect,
   });
 
   final double width;
@@ -1058,6 +1106,7 @@ class _ConversationModelSelectorContent extends StatefulWidget {
   final List<ModelProviderProfileSummary> profiles;
   final Map<String, List<ProviderModelOption>> providerModelsByProfileId;
   final _ChatModelOverrideSelection? currentSelection;
+  final ValueChanged<_ChatModelOverrideSelection>? onSelect;
 
   @override
   State<_ConversationModelSelectorContent> createState() =>
@@ -1451,12 +1500,16 @@ class _ConversationModelSelectorContentState
         modelId: model.id,
         child: InkWell(
           onTap: () {
-            Navigator.of(context).pop(
-              _ChatModelOverrideSelection(
-                providerProfileId: profile.id,
-                modelId: model.id,
-              ),
+            final selection = _ChatModelOverrideSelection(
+              providerProfileId: profile.id,
+              modelId: model.id,
             );
+            final onSelect = widget.onSelect;
+            if (onSelect != null) {
+              onSelect(selection);
+              return;
+            }
+            Navigator.of(context).pop(selection);
           },
           borderRadius: BorderRadius.circular(12),
           child: Container(

@@ -65,11 +65,13 @@ class ChatModelPickerSettings {
     required this.modelId,
     required this.hasSelectableModels,
     required this.onOpen,
+    this.onPointerDown,
   });
 
   final String modelId;
   final bool hasSelectableModels;
   final FutureOr<void> Function(BuildContext anchorContext) onOpen;
+  final VoidCallback? onPointerDown;
 }
 
 class ChatInputAttachment {

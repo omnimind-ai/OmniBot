@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:ui/features/home/pages/command_overlay/widgets/chat_input_area.dart';
+import 'package:ui/widgets/glass_popup.dart';
 import 'package:ui/widgets/provider_vendor_icon.dart';
 
 void main() {
@@ -295,6 +296,45 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
 
     expect(opened, isFalse);
+  });
+
+  testWidgets('normal chat model picker popup can keep input focus', (
+    tester,
+  ) async {
+    final focusNode = FocusNode();
+    addTearDown(focusNode.dispose);
+
+    await tester.pumpWidget(
+      _buildTestApp(
+        contextUsageRatio: null,
+        useLargeComposerStyle: true,
+        focusNode: focusNode,
+        modelPickerSettings: ChatModelPickerSettings(
+          modelId: 'gpt-5.4',
+          hasSelectableModels: true,
+          onOpen: (anchorContext) {
+            final anchor = glassPopupAnchorFromContext(anchorContext)!;
+            return showGlassPopup<void>(
+              context: anchorContext,
+              anchor: anchor,
+              requestFocus: false,
+              child: const SizedBox(width: 120, height: 80),
+            );
+          },
+        ),
+      ),
+    );
+    await tester.pump();
+
+    focusNode.requestFocus();
+    await tester.pump();
+    expect(focusNode.hasFocus, isTrue);
+
+    await tester.tap(find.byKey(const ValueKey('chat-input-model-picker-button')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(focusNode.hasFocus, isTrue);
   });
 
   testWidgets('large composer codex controls fit on narrow screens', (

@@ -771,11 +771,15 @@ mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
       await Future<void>.sync(() => settings.onOpen(anchorContext));
     }
 
-    return SizedBox(
+    return TextFieldTapRegion(
+      child: SizedBox(
       key: _modelPickerButtonKey,
       width: compact ? 24 : 28,
       height: compact ? 24 : 28,
-      child: Tooltip(
+      child: Listener(
+        behavior: HitTestBehavior.opaque,
+        onPointerDown: (_) => settings.onPointerDown?.call(),
+        child: Tooltip(
         message: modelId.isEmpty
             ? (english ? 'Select model' : '选择模型')
             : modelId,
@@ -801,6 +805,8 @@ mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
               ),
             ),
           ),
+        ),
+      ),
         ),
       ),
     );
