@@ -183,6 +183,7 @@ mixin _ChatPageCodexMixin on _ChatPageStateBase {
         remoteBridgeUrl: config.remoteBridgeUrl,
         remoteBridgeToken: config.remoteBridgeToken,
         remoteCwd: nextCwd,
+        contextInjectionEnabled: config.contextInjectionEnabled,
       );
       final status = await CodexAppServerService.status();
       if (!mounted) return;
@@ -1301,7 +1302,9 @@ mixin _ChatPageCodexMixin on _ChatPageStateBase {
       mode: kChatRuntimeModeCodex,
       initialMessages: messages,
       conversation: conversation,
-      initialChatIslandDisplayLayer: ChatIslandDisplayLayer.mode,
+      initialChatIslandDisplayLayer: _chatIslandDisplayLayerForMode(
+        ChatPageMode.codex,
+      ),
     );
     _runtimeCoordinator.replaceConversationSnapshot(
       conversationId: runtimeId,
@@ -1317,7 +1320,9 @@ mixin _ChatPageCodexMixin on _ChatPageStateBase {
           ? ThinkingStage.thinking.value
           : ThinkingStage.complete.value,
       lastAgentTaskId: activeTaskId,
-      chatIslandDisplayLayer: ChatIslandDisplayLayer.mode,
+      chatIslandDisplayLayer: _chatIslandDisplayLayerForMode(
+        ChatPageMode.codex,
+      ),
       preserveLiveStreamingState: preserveLiveStreamingState,
     );
     if (activeTaskId != null) {
@@ -1406,7 +1411,9 @@ mixin _ChatPageCodexMixin on _ChatPageStateBase {
         _messagesByMode[ChatPageMode.codex]!,
       ),
       conversation: _currentConversationByMode[ChatPageMode.codex],
-      initialChatIslandDisplayLayer: ChatIslandDisplayLayer.mode,
+      initialChatIslandDisplayLayer: _chatIslandDisplayLayerForMode(
+        ChatPageMode.codex,
+      ),
     );
     return runtimeId;
   }
@@ -1433,9 +1440,11 @@ mixin _ChatPageCodexMixin on _ChatPageStateBase {
             status: 0,
             messageCount: 0,
             createdAt: now,
-            updatedAt: now,
-          ),
-      initialChatIslandDisplayLayer: ChatIslandDisplayLayer.mode,
+              updatedAt: now,
+            ),
+      initialChatIslandDisplayLayer: _chatIslandDisplayLayerForMode(
+        ChatPageMode.codex,
+      ),
     );
     return runtimeId;
   }

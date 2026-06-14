@@ -9,7 +9,11 @@ import com.ai.assistance.operit.terminal.setup.EnvironmentSetupLogic
 import cn.com.omnimind.baselib.database.DatabaseHelper
 import cn.com.omnimind.bot.BuildConfig
 import cn.com.omnimind.bot.agent.AgentWorkspaceManager
+import cn.com.omnimind.bot.agent.SkillIndexEntry
+import cn.com.omnimind.bot.agent.SkillIndexService
+import cn.com.omnimind.bot.agent.WorkspaceMemoryService
 import cn.com.omnimind.bot.util.TaskRuntimeSettings
+import com.rk.libcommons.OmnibotTerminalEnvironment
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -28,6 +32,7 @@ class CodexAppServerManager private constructor(
     private val mainHandler = Handler(Looper.getMainLooper())
     private val bindingRepository = CodexThreadBindingRepository(appContext)
     private val remoteConfigStore = CodexRemoteBridgeConfigStore(appContext)
+    private val contextInjectionConfigStore = CodexContextInjectionConfigStore(appContext)
     private val activeTurnsByThreadId = ConcurrentHashMap<String, String>()
 
     @Volatile
@@ -122,6 +127,17 @@ class CodexAppServerManager private constructor(
             activeTurnsByThreadId.clear()
         }
         return status()
+    }
+
+    suspend fun invalidateLocalTerminalEnvironment() {
+        sessionMutex.withLock {
+            if (activeRuntime == CodexRuntimeKind.LOCAL) {
+                session?.disconnect()
+                session = null
+                activeRuntime = null
+                activeTurnsByThreadId.clear()
+            }
+        }
     }
 
     suspend fun handleMethod(method: String, args: Map<String, Any?>): Any? {
@@ -413,6 +429,7 @@ class CodexAppServerManager private constructor(
 
     private suspend fun readLocalConfig(): Map<String, Any?> {
         val remoteConfig = remoteConfigStore.read()
+        val contextInjectionConfig = contextInjectionConfigStore.read()
         val command = """
             mkdir -p ${shellQuote(CodexAppServerDefaults.CODEX_HOME)}
             printf '__OMNI_CODEX_CONFIG_START__\n'
@@ -459,14 +476,18 @@ class CodexAppServerManager private constructor(
             baseUrl = extractTomlString(configToml, "base_url").orEmpty(),
             apiKey = extractOpenAiApiKey(authJson).orEmpty(),
             remoteConfig = remoteConfig,
-            runtime = resolveRuntime().kind.payloadValue
+            runtime = resolveRuntime().kind.payloadValue,
+            contextInjectionEnabled = contextInjectionConfig.enabled
         )
     }
 
     private suspend fun writeLocalConfig(args: Map<String, Any?>): Map<String, Any?> {
+        val storedContextInjectionConfig = contextInjectionConfigStore.read()
         val baseUrl = args.stringValue("baseUrl").orEmpty()
         val model = args.stringValue("model").orEmpty()
         val apiKey = args.stringValue("apiKey").orEmpty()
+        val contextInjectionEnabled = args.booleanValue("contextInjectionEnabled")
+            ?: storedContextInjectionConfig.enabled
         val remoteConfig = CodexRemoteBridgeConfig(
             enabled = args["remoteEnabled"] == true,
             bridgeUrl = args.stringValue("remoteBridgeUrl").orEmpty(),
@@ -479,6 +500,9 @@ class CodexAppServerManager private constructor(
         }
 
         val savedRemoteConfig = remoteConfigStore.write(remoteConfig)
+        val savedContextInjectionConfig = contextInjectionConfigStore.write(
+            CodexContextInjectionConfig(enabled = contextInjectionEnabled)
+        )
         if (localComplete) {
             val configToml = buildCodexConfigToml(baseUrl = baseUrl, model = model)
             val authJson = JSONObject()
@@ -517,7 +541,8 @@ class CodexAppServerManager private constructor(
             baseUrl = baseUrl,
             apiKey = apiKey,
             remoteConfig = savedRemoteConfig,
-            runtime = resolveRuntime().kind.payloadValue
+            runtime = resolveRuntime().kind.payloadValue,
+            contextInjectionEnabled = savedContextInjectionConfig.enabled
         )
     }
 
@@ -598,9 +623,15 @@ class CodexAppServerManager private constructor(
         cwd: String,
         threadId: String
     ): MutableMap<String, Any?> {
+        val input = resolveInput(args)
+        val contextText = if (contextInjectionConfigStore.read().enabled) {
+            buildCodexContextInjectionTextForTurn()
+        } else {
+            null
+        }
         val params = linkedMapOf<String, Any?>(
             "threadId" to threadId,
-            "input" to resolveInput(args),
+            "input" to buildCodexInputWithOptionalContext(input, contextText),
             "cwd" to cwd,
             "approvalPolicy" to (args.stringValue("approvalPolicy") ?: "on-request"),
             "sandboxPolicy" to (args["sandboxPolicy"] ?: buildDefaultCodexSandboxPolicy(cwd))
@@ -610,6 +641,51 @@ class CodexAppServerManager private constructor(
         }
         addCodexOptionalRunParams(params, args)
         return params
+    }
+
+    private fun buildCodexContextInjectionTextForTurn(): String? {
+        val workspaceManager = AgentWorkspaceManager(appContext)
+        val memoryContext = runCatching {
+            WorkspaceMemoryService(appContext, workspaceManager).buildPromptContext()
+        }.onFailure { error ->
+            Log.w(
+                "CodexAppServerManager",
+                "Failed to load workspace memory for Codex context injection.",
+                error
+            )
+        }.getOrNull()
+        val terminalVariables = runCatching {
+            OmnibotTerminalEnvironment.loadUserVariables(appContext)
+        }.onFailure { error ->
+            Log.w(
+                "CodexAppServerManager",
+                "Failed to load terminal variables for Codex context injection.",
+                error
+            )
+        }.getOrDefault(emptyMap())
+        val skillsContext = runCatching {
+            val skillsRoot = workspaceManager.skillsRoot()
+            buildCodexSkillsContextText(
+                skillsRootShellPath = workspaceManager.shellPathForAndroid(skillsRoot)
+                    ?: "${AgentWorkspaceManager.SHELL_ROOT_PATH}/.omnibot/skills",
+                skillsRootAndroidPath = skillsRoot.absolutePath,
+                skills = SkillIndexService(appContext, workspaceManager).listSkillsForManagement()
+            )
+        }.onFailure { error ->
+            Log.w(
+                "CodexAppServerManager",
+                "Failed to load skills index for Codex context injection.",
+                error
+            )
+        }.getOrNull()
+
+        return buildCodexContextInjectionText(
+            soul = memoryContext?.soul.orEmpty(),
+            longTermMemory = memoryContext?.longTermMemory.orEmpty(),
+            todayShortMemory = memoryContext?.todayShortMemory.orEmpty(),
+            terminalVariables = terminalVariables,
+            skillsContext = skillsContext.orEmpty()
+        )
     }
 
     private fun buildReviewStartParams(
@@ -1005,6 +1081,10 @@ private data class CodexThreadListEntry(
     val archived: Boolean?
 )
 
+private const val MAX_CODEX_CONTEXT_VARIABLE_NAMES = 80
+private const val MAX_CODEX_CONTEXT_SKILLS = 80
+private const val MAX_CODEX_CONTEXT_SKILL_DESCRIPTION_CHARS = 220
+
 internal fun Map<String, Any?>.withLocalIds(
     threadId: String?,
     conversationId: Long?,
@@ -1050,6 +1130,139 @@ internal fun buildCodexTextInput(text: String): List<Map<String, Any?>> {
             "text_elements" to emptyList<Map<String, Any?>>()
         )
     )
+}
+
+internal fun buildCodexInputWithOptionalContext(
+    input: List<Map<String, Any?>>,
+    contextText: String?
+): List<Map<String, Any?>> {
+    val trimmedContext = contextText?.trim().orEmpty()
+    if (trimmedContext.isEmpty()) {
+        return input
+    }
+    return buildCodexTextInput(trimmedContext) + input
+}
+
+internal fun buildCodexContextInjectionText(
+    soul: String,
+    longTermMemory: String,
+    todayShortMemory: String,
+    terminalVariables: Map<String, String>,
+    skillsContext: String = ""
+): String? {
+    val sections = mutableListOf<String>()
+
+    fun addTextSection(tag: String, text: String) {
+        val trimmed = text.trim()
+        if (trimmed.isEmpty()) {
+            return
+        }
+        sections += buildString {
+            appendLine("[$tag]")
+            appendLine(trimmed)
+            append("[/$tag]")
+        }
+    }
+
+    addTextSection("workspace_soul", soul)
+    addTextSection("long_term_memory", longTermMemory)
+    addTextSection("today_short_memory", todayShortMemory)
+    addTextSection("skills", skillsContext)
+
+    val variableNames = terminalVariables.keys
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+        .distinct()
+        .sorted()
+    if (variableNames.isNotEmpty()) {
+        val visibleNames = variableNames.take(MAX_CODEX_CONTEXT_VARIABLE_NAMES)
+        sections += buildString {
+            appendLine("[terminal_variables]")
+            appendLine("Values are hidden. These variable names are configured in Omnibot terminal sessions:")
+            visibleNames.forEach { name ->
+                appendLine("- $name=(configured, value hidden)")
+            }
+            val omitted = variableNames.size - visibleNames.size
+            if (omitted > 0) {
+                appendLine("- ... ($omitted more)")
+            }
+            append("[/terminal_variables]")
+        }
+    }
+
+    if (sections.isEmpty()) {
+        return null
+    }
+    return buildString {
+        appendLine("[omnibot_context]")
+        appendLine("This background context is injected by Omnibot because the user enabled Codex context injection. Use it as persistent user/workspace context, not as the current task request.")
+        sections.forEachIndexed { index, section ->
+            appendLine()
+            append(section)
+            if (index != sections.lastIndex) {
+                appendLine()
+            }
+        }
+        appendLine()
+        append("[/omnibot_context]")
+    }
+}
+
+internal fun buildCodexSkillsContextText(
+    skillsRootShellPath: String,
+    skillsRootAndroidPath: String,
+    skills: List<SkillIndexEntry>
+): String? {
+    val installedSkills = skills
+        .filter { it.installed }
+        .sortedWith(
+            compareBy<SkillIndexEntry> { it.source }
+                .thenBy { it.name.lowercase() }
+        )
+    if (installedSkills.isEmpty()) {
+        return buildString {
+            appendLine("Omnibot skills root (shell): $skillsRootShellPath")
+            appendLine("Omnibot skills root (android): $skillsRootAndroidPath")
+            appendLine("To create a skill that appears in Omnibot Skill Store, create it at:")
+            appendLine("- $skillsRootShellPath/<skill-id>/SKILL.md")
+            appendLine("Use lowercase kebab-case for <skill-id>. The directory may include scripts/, references/, assets/, or evals/.")
+            append("No installed Omnibot skills are currently indexed.")
+        }
+    }
+
+    return buildString {
+        appendLine("Omnibot skills root (shell): $skillsRootShellPath")
+        appendLine("Omnibot skills root (android): $skillsRootAndroidPath")
+        appendLine("APK built-in skills are copied into this workspace root before indexing; Codex cannot read APK assets directly.")
+        appendLine("To create a skill that appears in Omnibot Skill Store, create it at:")
+        appendLine("- $skillsRootShellPath/<skill-id>/SKILL.md")
+        appendLine("Use lowercase kebab-case for <skill-id>. The directory may include scripts/, references/, assets/, or evals/.")
+        appendLine("When the user asks to create or update a skill, read the indexed skill-creator SKILL.md first if it is available.")
+        appendLine()
+        appendLine("Indexed skills:")
+        installedSkills.take(MAX_CODEX_CONTEXT_SKILLS).forEach { skill ->
+            val capabilities = buildList {
+                if (skill.hasScripts) add("scripts")
+                if (skill.hasReferences) add("references")
+                if (skill.hasAssets) add("assets")
+                if (skill.hasEvals) add("evals")
+            }.ifEmpty { listOf("none") }.joinToString(",")
+            val enabledLabel = if (skill.enabled) "enabled" else "disabled"
+            val description = skill.description
+                .replace('\n', ' ')
+                .trim()
+                .take(MAX_CODEX_CONTEXT_SKILL_DESCRIPTION_CHARS)
+            append("- id=${skill.id} | name=${skill.name} | source=${skill.source} | state=$enabledLabel | path=${skill.shellSkillFilePath} | capabilities=$capabilities")
+            if (description.isNotBlank()) {
+                append(" | description=$description")
+            }
+            appendLine()
+        }
+        val omitted = installedSkills.size - MAX_CODEX_CONTEXT_SKILLS
+        if (omitted > 0) {
+            append("- ... ($omitted more)")
+        }
+    }.trim()
 }
 
 internal fun buildDefaultCodexSandboxPolicy(cwd: String): Map<String, Any?> {
@@ -1132,7 +1345,8 @@ private fun buildCodexLocalConfigPayload(
     baseUrl: String,
     apiKey: String,
     remoteConfig: CodexRemoteBridgeConfig,
-    runtime: String
+    runtime: String,
+    contextInjectionEnabled: Boolean
 ): Map<String, Any?> {
     return linkedMapOf(
         "codexHome" to CodexAppServerDefaults.CODEX_HOME,
@@ -1144,7 +1358,8 @@ private fun buildCodexLocalConfigPayload(
         "remoteBridgeToken" to remoteConfig.authToken,
         "remoteCwd" to remoteConfig.cwd,
         "remoteConfigured" to remoteConfig.isConfigured,
-        "runtime" to runtime
+        "runtime" to runtime,
+        "contextInjectionEnabled" to contextInjectionEnabled
     )
 }
 
@@ -1247,6 +1462,20 @@ private fun shellQuote(value: String): String {
 
 private fun Map<String, Any?>.stringValue(key: String): String? {
     return this[key]?.toString()?.trim()?.takeIf { it.isNotEmpty() }
+}
+
+private fun Map<String, Any?>.booleanValue(key: String): Boolean? {
+    val raw = this[key] ?: return null
+    return when (raw) {
+        is Boolean -> raw
+        is String -> when (raw.trim().lowercase()) {
+            "true", "1", "yes", "on" -> true
+            "false", "0", "no", "off" -> false
+            else -> null
+        }
+        is Number -> raw.toInt() != 0
+        else -> null
+    }
 }
 
 private fun Map<String, Any?>.longValue(key: String): Long? {

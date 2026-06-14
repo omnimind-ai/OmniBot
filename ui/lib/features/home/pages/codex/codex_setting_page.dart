@@ -39,11 +39,13 @@ class _CodexSettingPageState extends State<CodexSettingPage> {
   bool _obscureApiKey = true;
   bool _obscureBridgeToken = true;
   bool _remoteEnabled = false;
+  bool _contextInjectionEnabled = false;
   String _codexHome = _defaultCodexHome;
   String _runtime = 'local';
   String? _error;
   String? _status;
   String? _lastSavedSignature;
+  String? _lastSavedConfigFieldsSignature;
 
   bool get _isEnglish => Localizations.localeOf(context).languageCode == 'en';
   bool get _isDarkTheme => context.isDarkTheme;
@@ -122,12 +124,13 @@ class _CodexSettingPageState extends State<CodexSettingPage> {
       _setControllerText(_bridgeTokenController, config.remoteBridgeToken);
       _setControllerText(_bridgeCwdController, config.remoteCwd);
       _remoteEnabled = config.remoteEnabled;
+      _contextInjectionEnabled = config.contextInjectionEnabled;
     } finally {
       _isSyncing = false;
     }
   }
 
-  String _signature({
+  String _configFieldsSignature({
     required String baseUrl,
     required String model,
     required String apiKey,
@@ -147,6 +150,42 @@ class _CodexSettingPageState extends State<CodexSettingPage> {
     ].join('\n');
   }
 
+  String _signature({
+    required String baseUrl,
+    required String model,
+    required String apiKey,
+    required String remoteBridgeUrl,
+    required String remoteBridgeToken,
+    required String remoteCwd,
+    required bool remoteEnabled,
+    required bool contextInjectionEnabled,
+  }) {
+    return [
+      _configFieldsSignature(
+        baseUrl: baseUrl,
+        model: model,
+        apiKey: apiKey,
+        remoteBridgeUrl: remoteBridgeUrl,
+        remoteBridgeToken: remoteBridgeToken,
+        remoteCwd: remoteCwd,
+        remoteEnabled: remoteEnabled,
+      ),
+      contextInjectionEnabled ? 'context:on' : 'context:off',
+    ].join('\n');
+  }
+
+  String _currentConfigFieldsSignature() {
+    return _configFieldsSignature(
+      baseUrl: _baseUrlController.text,
+      model: _modelController.text,
+      apiKey: _apiKeyController.text,
+      remoteBridgeUrl: _bridgeUrlController.text,
+      remoteBridgeToken: _bridgeTokenController.text,
+      remoteCwd: _bridgeCwdController.text,
+      remoteEnabled: _remoteEnabled,
+    );
+  }
+
   String _currentSignature() {
     return _signature(
       baseUrl: _baseUrlController.text,
@@ -156,6 +195,7 @@ class _CodexSettingPageState extends State<CodexSettingPage> {
       remoteBridgeToken: _bridgeTokenController.text,
       remoteCwd: _bridgeCwdController.text,
       remoteEnabled: _remoteEnabled,
+      contextInjectionEnabled: _contextInjectionEnabled,
     );
   }
 
@@ -189,11 +229,22 @@ class _CodexSettingPageState extends State<CodexSettingPage> {
 
   bool get _isRemoteIncomplete => _remoteEnabled && !_hasCompleteRemoteInput;
 
+  bool get _onlyContextInjectionChanged =>
+      _lastSavedConfigFieldsSignature != null &&
+      _currentConfigFieldsSignature() == _lastSavedConfigFieldsSignature &&
+      _currentSignature() != _lastSavedSignature;
+
+  bool get _canSaveCurrentConfig =>
+      !_isRemoteIncomplete && (_hasCompleteInput || _onlyContextInjectionChanged);
+
   void _handleEdited() {
     if (_isSyncing || !mounted) return;
     _saveDebounce?.cancel();
     final signature = _currentSignature();
-    final anyInput = _hasAnyLocalInput || _hasAnyRemoteInput || _remoteEnabled;
+    final anyInput = _hasAnyLocalInput ||
+        _hasAnyRemoteInput ||
+        _remoteEnabled ||
+        _contextInjectionEnabled;
     setState(() {
       _error = null;
       if (_isRemoteIncomplete) {
@@ -203,7 +254,7 @@ class _CodexSettingPageState extends State<CodexSettingPage> {
         );
       } else if (!anyInput) {
         _status = null;
-      } else if (!_hasCompleteInput) {
+      } else if (!_canSaveCurrentConfig) {
         _status = _localeText(
           zh: _remoteEnabled ? '填写完整后将自动保存。' : '本地配置填写完整后将自动保存。',
           en: _remoteEnabled
@@ -216,7 +267,7 @@ class _CodexSettingPageState extends State<CodexSettingPage> {
         _status = _localeText(zh: '即将自动保存...', en: 'Autosave pending...');
       }
     });
-    if (_hasCompleteInput && signature != _lastSavedSignature) {
+    if (_canSaveCurrentConfig && signature != _lastSavedSignature) {
       _scheduleAutoSave();
     }
   }
@@ -236,9 +287,18 @@ class _CodexSettingPageState extends State<CodexSettingPage> {
               en: 'Remote mode is disabled. Codex will use local Alpine.',
             );
     });
-    if (_hasCompleteInput && _currentSignature() != _lastSavedSignature) {
+    if (_canSaveCurrentConfig && _currentSignature() != _lastSavedSignature) {
       _scheduleAutoSave(delay: const Duration(milliseconds: 300));
     }
+  }
+
+  void _setContextInjectionEnabled(bool value) {
+    if (_contextInjectionEnabled == value) return;
+    setState(() {
+      _contextInjectionEnabled = value;
+      _error = null;
+    });
+    _handleEdited();
   }
 
   void _scheduleAutoSave({Duration delay = _autoSaveDelay}) {
@@ -264,6 +324,7 @@ class _CodexSettingPageState extends State<CodexSettingPage> {
         _error = null;
         _status = null;
         _lastSavedSignature = _currentSignature();
+        _lastSavedConfigFieldsSignature = _currentConfigFieldsSignature();
       });
     } catch (error) {
       if (!mounted) return;
@@ -279,7 +340,7 @@ class _CodexSettingPageState extends State<CodexSettingPage> {
 
   Future<void> _saveConfig() async {
     if (_isSaving) return;
-    if (_isRemoteIncomplete || !_hasCompleteInput) {
+    if (!_canSaveCurrentConfig) {
       if (!mounted) return;
       setState(() {
         _status = _isRemoteIncomplete
@@ -319,9 +380,10 @@ class _CodexSettingPageState extends State<CodexSettingPage> {
         remoteBridgeUrl: _bridgeUrlController.text.trim(),
         remoteBridgeToken: _bridgeTokenController.text.trim(),
         remoteCwd: _bridgeCwdController.text.trim(),
+        contextInjectionEnabled: _contextInjectionEnabled,
       );
       if (!mounted) return;
-      final savedSignature = _signature(
+      final savedConfigFieldsSignature = _configFieldsSignature(
         baseUrl: saved.baseUrl,
         model: saved.model,
         apiKey: saved.apiKey,
@@ -330,6 +392,16 @@ class _CodexSettingPageState extends State<CodexSettingPage> {
         remoteCwd: saved.remoteCwd,
         remoteEnabled: saved.remoteEnabled,
       );
+      final savedSignature = _signature(
+        baseUrl: saved.baseUrl,
+        model: saved.model,
+        apiKey: saved.apiKey,
+        remoteBridgeUrl: saved.remoteBridgeUrl,
+        remoteBridgeToken: saved.remoteBridgeToken,
+        remoteCwd: saved.remoteCwd,
+        remoteEnabled: saved.remoteEnabled,
+        contextInjectionEnabled: saved.contextInjectionEnabled,
+      );
       if (_currentSignature() == savingSignature) {
         _syncControllers(saved);
       }
@@ -337,6 +409,7 @@ class _CodexSettingPageState extends State<CodexSettingPage> {
         _codexHome = saved.codexHome ?? _defaultCodexHome;
         _runtime = saved.runtime ?? 'local';
         _lastSavedSignature = savedSignature;
+        _lastSavedConfigFieldsSignature = savedConfigFieldsSignature;
         _error = null;
         _status = _currentSignature() == savedSignature
             ? _localeText(
@@ -361,7 +434,7 @@ class _CodexSettingPageState extends State<CodexSettingPage> {
     } finally {
       if (mounted) {
         setState(() => _isSaving = false);
-        if (_hasCompleteInput && _currentSignature() != savingSignature) {
+        if (_canSaveCurrentConfig && _currentSignature() != savingSignature) {
           _scheduleAutoSave(delay: const Duration(milliseconds: 300));
         }
       }
@@ -535,6 +608,36 @@ class _CodexSettingPageState extends State<CodexSettingPage> {
               borderRadius: 28.75,
               value: _remoteEnabled,
               onToggle: _setRemoteEnabled,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildContextInjectionSwitch() {
+    final palette = context.omniPalette;
+    final enabled = !_isSaving;
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: enabled
+          ? () => _setContextInjectionEnabled(!_contextInjectionEnabled)
+          : null,
+      child: Padding(
+        padding: const EdgeInsets.only(left: 12),
+        child: AbsorbPointer(
+          child: Opacity(
+            opacity: enabled ? 1 : 0.5,
+            child: FlutterSwitch(
+              width: 32,
+              height: 18.67,
+              toggleSize: 11.3,
+              padding: 3,
+              activeColor: palette.accentPrimary,
+              inactiveColor: palette.borderStrong,
+              borderRadius: 28.75,
+              value: _contextInjectionEnabled,
+              onToggle: _setContextInjectionEnabled,
             ),
           ),
         ),
@@ -777,6 +880,45 @@ class _CodexSettingPageState extends State<CodexSettingPage> {
                               ),
                             ),
                           ],
+                        ),
+                        const SizedBox(height: 14),
+                        Divider(height: 1, color: borderColor),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Text(
+                                _localeText(
+                                  zh: '注入 Omnibot 上下文',
+                                  en: 'Inject Omnibot Context',
+                                ),
+                                style: TextStyle(
+                                  color: _primaryTextColor,
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  fontFamily: 'PingFang SC',
+                                ),
+                              ),
+                            ),
+                            _buildContextInjectionSwitch(),
+                          ],
+                        ),
+                        Text(
+                          _contextInjectionEnabled
+                              ? _localeText(
+                                  zh: '已开启：Codex 每轮会收到 SOUL、长期记忆、今日短期记忆、Skills 索引和终端变量名；变量值不会明文注入。',
+                                  en: 'Enabled: each Codex turn receives SOUL, memory, skills index, and terminal variable names. Values are hidden.',
+                                )
+                              : _localeText(
+                                  zh: '已关闭：Codex 使用干净上下文。',
+                                  en: 'Disabled: Codex uses a clean context.',
+                                ),
+                          style: TextStyle(
+                            color: _secondaryTextColor,
+                            fontSize: 12,
+                            height: 1.35,
+                            fontFamily: 'PingFang SC',
+                          ),
                         ),
                         const SizedBox(height: 14),
                         Divider(height: 1, color: borderColor),

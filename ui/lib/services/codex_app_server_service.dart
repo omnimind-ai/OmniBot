@@ -76,6 +76,7 @@ class CodexLocalConfig {
     this.remoteCwd = '',
     this.remoteConfigured = false,
     this.runtime,
+    this.contextInjectionEnabled = false,
   });
 
   final String baseUrl;
@@ -88,6 +89,7 @@ class CodexLocalConfig {
   final String remoteCwd;
   final bool remoteConfigured;
   final String? runtime;
+  final bool contextInjectionEnabled;
 
   factory CodexLocalConfig.fromMap(Map<dynamic, dynamic>? map) {
     final source = map ?? const <dynamic, dynamic>{};
@@ -102,6 +104,7 @@ class CodexLocalConfig {
       remoteCwd: _stringOrNull(source['remoteCwd']) ?? '',
       remoteConfigured: source['remoteConfigured'] == true,
       runtime: _stringOrNull(source['runtime']),
+      contextInjectionEnabled: source['contextInjectionEnabled'] == true,
     );
   }
 }
@@ -438,6 +441,7 @@ class CodexAppServerService {
     String remoteBridgeUrl = '',
     String remoteBridgeToken = '',
     String remoteCwd = '',
+    bool? contextInjectionEnabled,
   }) async {
     final result = await _invokeMap('config/local/write', {
       'baseUrl': baseUrl.trim(),
@@ -447,6 +451,8 @@ class CodexAppServerService {
       'remoteBridgeUrl': remoteBridgeUrl.trim(),
       'remoteBridgeToken': remoteBridgeToken.trim(),
       'remoteCwd': remoteCwd.trim(),
+      if (contextInjectionEnabled != null)
+        'contextInjectionEnabled': contextInjectionEnabled,
     });
     return CodexLocalConfig.fromMap(result);
   }

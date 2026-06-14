@@ -29,6 +29,9 @@ mixin _ChatPageTerminalEnvMixin on _ChatPageStateBase {
       setState(() {
         _terminalEnvironmentVariables = normalized;
       });
+      if (_activeMode == ChatPageMode.codex) {
+        unawaited(_refreshCodexStatus());
+      }
     } catch (error) {
       if (mounted) {
         showToast('保存环境变量失败: $error', type: ToastType.error);
@@ -40,7 +43,7 @@ mixin _ChatPageTerminalEnvMixin on _ChatPageStateBase {
   Future<void> _openTerminalEnvironmentEditor(
     BuildContext anchorContext,
   ) async {
-    if (_activeMode != ChatPageMode.normal) {
+    if (_activeMode == ChatPageMode.openclaw) {
       return;
     }
     if (_showSlashCommandPanel ||
