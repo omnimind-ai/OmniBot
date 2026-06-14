@@ -321,7 +321,11 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
       } catch (_) {
         conversation = null;
       }
-      final resolvedConversation = inMemoryConversation ?? conversation;
+      // Keep in-memory messages while taking the latest conversation metadata
+      // from storage. Drawer actions such as rename/pin update the stored
+      // conversation first; preferring the runtime copy here can rehydrate a
+      // stale title and later write it back during persistence.
+      final resolvedConversation = conversation ?? inMemoryConversation;
 
       if (resolvedConversation != null) {
         if (!_isConversationOperationCurrent(token)) {
