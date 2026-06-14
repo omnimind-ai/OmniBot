@@ -1935,6 +1935,16 @@ abstract class _ChatPageStateBase extends State<ChatPage>
 
   Future<void> _pickAttachments();
 
+  Future<void> _sendWorkspaceFileToCurrentConversation(
+    OmnibotResourceMetadata metadata,
+  );
+
+  Future<void> _sendRemoteWorkspaceFileToCurrentConversation(
+    CodexRemoteDirectoryEntry entry,
+  );
+
+  String _messageTextWithLatestAttachmentPrompt(String text);
+
   void _removePendingAttachment(String id);
 
   String _fileNameFromPath(String path);
