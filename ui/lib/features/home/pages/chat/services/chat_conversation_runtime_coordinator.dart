@@ -743,10 +743,17 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
             );
     }
 
+    final latestConversation = await ConversationService.getConversationById(
+      conversationId,
+      mode: conversationMode,
+      includeArchived: true,
+    );
+    final snapshotBase = snapshotConversation?.mode == conversationMode
+        ? snapshotConversation
+        : snapshotConversation?.copyWith(mode: conversationMode);
     final baseConversation =
-        (snapshotConversation?.mode == conversationMode
-            ? snapshotConversation
-            : snapshotConversation?.copyWith(mode: conversationMode)) ??
+        latestConversation ??
+        snapshotBase ??
         ConversationModel(
           id: conversationId,
           mode: conversationMode,
