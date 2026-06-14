@@ -60,7 +60,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          yes | sdkmanager --licenses >/dev/null
+          yes | sdkmanager --licenses >/dev/null || true
           sdkmanager \
             "platforms;android-${ANDROID_PLATFORM_VERSION}" \
             "build-tools;${ANDROID_BUILD_TOOLS_VERSION}" \
