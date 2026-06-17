@@ -130,7 +130,7 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     final normalizedPreferredMode = preferredMode == ConversationMode.openclaw
         ? ConversationMode.normal
         : preferredMode;
-    final normalizedIncomingTarget = _normalizeVisibleThreadTarget(
+    final normalizedIncomingTarget = await _normalizeVisibleThreadTarget(
       incomingTarget,
     );
     if (normalizedIncomingTarget != null) {
@@ -146,7 +146,7 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     if (normalizedPreferredMode == null) {
       final lastVisible =
           await ConversationHistoryService.getLastVisibleThreadTarget();
-      final normalizedLastVisible = _normalizeVisibleThreadTarget(
+      final normalizedLastVisible = await _normalizeVisibleThreadTarget(
         lastVisible,
         freshCodexOnImplicitRestore: true,
       );
@@ -160,7 +160,9 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
         await ConversationHistoryService.getCurrentConversationTarget(
           mode: resolvedMode,
         );
-    final normalizedSavedTarget = _normalizeVisibleThreadTarget(savedTarget);
+    final normalizedSavedTarget = await _normalizeVisibleThreadTarget(
+      savedTarget,
+    );
     if (normalizedSavedTarget != null) {
       return normalizedSavedTarget;
     }
@@ -168,7 +170,9 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     final latestTarget = await ConversationService.getLatestConversationTarget(
       mode: resolvedMode,
     );
-    final normalizedLatestTarget = _normalizeVisibleThreadTarget(latestTarget);
+    final normalizedLatestTarget = await _normalizeVisibleThreadTarget(
+      latestTarget,
+    );
     if (normalizedLatestTarget != null) {
       return normalizedLatestTarget;
     }
@@ -176,14 +180,27 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     return ConversationThreadTarget.newConversation(mode: resolvedMode);
   }
 
-  ConversationThreadTarget? _normalizeVisibleThreadTarget(
+  Future<ConversationThreadTarget?> _normalizeVisibleThreadTarget(
     ConversationThreadTarget? target, {
     bool freshCodexOnImplicitRestore = false,
-  }) {
+  }) async {
     if (target == null) {
       return null;
     }
     if (target.mode == ConversationMode.openclaw) {
+      return null;
+    }
+    final conversationId = target.conversationId;
+    if (!target.isNewConversation &&
+        conversationId != null &&
+        await ConversationService.isConversationDeleted(
+          conversationId,
+          mode: target.mode,
+        )) {
+      await ConversationHistoryService.clearConversationThreadReferences(
+        conversationId,
+        mode: target.mode,
+      );
       return null;
     }
     if (freshCodexOnImplicitRestore && target.mode == ConversationMode.codex) {
@@ -328,6 +345,20 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     if (conversationId == null) {
       return;
     }
+    final conversationMode = _conversationModeForPageMode(mode);
+    if (await ConversationService.isConversationDeleted(
+      conversationId,
+      mode: conversationMode,
+    )) {
+      await ConversationHistoryService.clearConversationThreadReferences(
+        conversationId,
+        mode: conversationMode,
+      );
+      return;
+    }
+    if (!mounted || !isConversationLifecycleTokenCurrent(lifecycleToken)) {
+      return;
+    }
 
     final runtime = _runtimeCoordinator.runtimeFor(
       conversationId: conversationId,
@@ -348,8 +379,7 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     try {
       conversation = conversations.firstWhere(
         (item) =>
-            item.id == conversationId &&
-            item.mode == _conversationModeForPageMode(mode),
+            item.id == conversationId && item.mode == conversationMode,
       );
     } catch (_) {
       conversation = null;
@@ -360,7 +390,7 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
         inMemoryMessages ??
         await ConversationHistoryService.getConversationMessages(
           conversationId,
-          mode: _conversationModeForPageMode(mode),
+          mode: conversationMode,
           expectedMessageCount: resolvedConversation?.messageCount,
         );
     if (!mounted || !isConversationLifecycleTokenCurrent(lifecycleToken)) {

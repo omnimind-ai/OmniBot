@@ -114,7 +114,7 @@ extension _HomeDrawerImagePreviews on HomeDrawerState {
       if (rawConversations is! List) {
         return;
       }
-      final conversations = rawConversations
+      final restoredConversations = rawConversations
           .whereType<Map>()
           .map(
             (item) => ConversationModel.fromJson(
@@ -122,6 +122,28 @@ extension _HomeDrawerImagePreviews on HomeDrawerState {
             ),
           )
           .toList(growable: false);
+      final deletedKeys = (StorageService.getStringList(
+                ConversationService.deletedConversationKeysKey,
+                defaultValue: const <String>[],
+              ) ??
+              const <String>[])
+          .map((key) => key.trim())
+          .where((key) => key.isNotEmpty)
+          .toSet();
+      final hiddenCodexIds = (StorageService.getStringList(
+                ConversationService.hiddenCodexConversationIdsKey,
+                defaultValue: const <String>[],
+              ) ??
+              const <String>[])
+          .map((id) => id.trim())
+          .map(int.tryParse)
+          .whereType<int>()
+          .toSet();
+      final conversations = ConversationService.filterDeletedConversationsSync(
+        restoredConversations,
+        deletedKeys: deletedKeys,
+        hiddenCodexConversationIds: hiddenCodexIds,
+      );
       if (conversations.isEmpty) {
         return;
       }

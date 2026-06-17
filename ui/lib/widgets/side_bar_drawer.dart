@@ -460,7 +460,7 @@ class _SidebarDrawerState extends State<SidebarDrawer> {
     });
   }
 
-  void _deleteConversation(ConversationModel conversation) async {
+  Future<void> _deleteConversation(ConversationModel conversation) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (BuildContext context) {
@@ -491,15 +491,36 @@ class _SidebarDrawerState extends State<SidebarDrawer> {
     );
 
     if (confirmed == true) {
-      final success = await ConversationService.deleteConversation(
+      final originalIndex = conversations.indexWhere(
+        (c) => c.threadKey == conversation.threadKey,
+      );
+      await ConversationService.markConversationDeleted(
         conversation.id,
         mode: conversation.mode,
       );
-      if (success) {
+      if (mounted) {
         setState(() {
           conversations.removeWhere(
             (c) => c.threadKey == conversation.threadKey,
           );
+        });
+      }
+
+      final success = await ConversationService.deleteConversation(
+        conversation.id,
+        mode: conversation.mode,
+      );
+      if (!mounted) {
+        return;
+      }
+      if (!success) {
+        setState(() {
+          final restoredIndex = originalIndex >= 0 &&
+                  originalIndex <= conversations.length
+              ? originalIndex
+              : conversations.length;
+          conversations = List<ConversationModel>.from(conversations)
+            ..insert(restoredIndex, conversation);
         });
       }
     }

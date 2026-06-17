@@ -190,17 +190,24 @@ extension _HomeDrawerActions on HomeDrawerState {
     }
 
     final originalIndex = _allConversations.indexWhere(
-      (item) => item.id == conversation.id,
+      (item) => item.threadKey == conversation.threadKey,
     );
     if (originalIndex < 0) {
       return;
     }
 
-    setState(() {
-      _busyConversationKeys.add(conversation.threadKey);
-      _removeConversationFromState(conversation);
-    });
-    _persistCurrentConversationSnapshot();
+    await ConversationService.markConversationDeleted(
+      conversation.id,
+      mode: conversation.mode,
+    );
+
+    if (mounted) {
+      setState(() {
+        _busyConversationKeys.add(conversation.threadKey);
+        _removeConversationFromState(conversation);
+      });
+      _persistCurrentConversationSnapshot();
+    }
 
     final deleted = await ConversationService.deleteConversation(
       conversation.id,

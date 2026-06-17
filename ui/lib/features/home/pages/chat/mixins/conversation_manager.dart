@@ -125,6 +125,20 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
 
       final conversationId = target.conversationId;
       if (conversationId != null) {
+        if (await ConversationService.isConversationDeleted(
+          conversationId,
+          mode: target.mode,
+        )) {
+          await ConversationHistoryService.clearConversationThreadReferences(
+            conversationId,
+            mode: target.mode,
+          );
+          if (!_isConversationOperationCurrent(token)) {
+            return;
+          }
+          await _restoreLatestConversationOrReset(lifecycleToken: token);
+          return;
+        }
         await loadConversation(
           conversationId,
           mode: target.mode,
@@ -180,8 +194,24 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
         return;
       }
 
+      final savedConversationId = savedTarget.conversationId!;
+      if (await ConversationService.isConversationDeleted(
+        savedConversationId,
+        mode: savedTarget.mode,
+      )) {
+        await ConversationHistoryService.clearConversationThreadReferences(
+          savedConversationId,
+          mode: savedTarget.mode,
+        );
+        if (!_isConversationOperationCurrent(token)) {
+          return;
+        }
+        await _restoreLatestConversationOrReset(lifecycleToken: token);
+        return;
+      }
+
       await loadConversation(
-        savedTarget.conversationId!,
+        savedConversationId,
         mode: savedTarget.mode,
         lifecycleToken: token,
       );
@@ -297,6 +327,15 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
       return;
     }
     final operationMode = mode ?? activeConversationModeValue;
+    if (await ConversationService.isConversationDeleted(
+      conversationId,
+      mode: operationMode,
+    )) {
+      return;
+    }
+    if (!_isConversationOperationCurrent(token)) {
+      return;
+    }
     try {
       final inMemoryConversation = preferInMemory
           ? getInMemoryConversationForConversation(
@@ -400,6 +439,15 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
     final conversationId = currentConversationId;
     if (conversationId == null) return;
     if (isEphemeralConversation(conversationId, operationMode)) return;
+    if (await ConversationService.isConversationDeleted(
+      conversationId,
+      mode: operationMode,
+    )) {
+      return;
+    }
+    if (!_isConversationOperationCurrent(token)) {
+      return;
+    }
 
     setState(() {
       isLoadingMore = true;
@@ -441,6 +489,23 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
     final activeConversationId = currentConversationId;
     if (activeConversationId == null) return;
     if (isEphemeralConversation(activeConversationId, operationMode)) return;
+    if (await ConversationService.isConversationDeleted(
+      activeConversationId,
+      mode: operationMode,
+    )) {
+      await ConversationHistoryService.clearConversationThreadReferences(
+        activeConversationId,
+        mode: operationMode,
+      );
+      if (!_isConversationOperationCurrent(token)) {
+        return;
+      }
+      invalidateConversationLifecycle();
+      final transitionToken = captureConversationLifecycleToken();
+      onConversationMissing(operationMode, activeConversationId);
+      await _restoreLatestConversationOrReset(lifecycleToken: transitionToken);
+      return;
+    }
 
     try {
       final allConversations = await ConversationService.getAllConversations(
@@ -542,6 +607,15 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
     int? lifecycleToken,
   }) async {
     final token = lifecycleToken ?? captureConversationLifecycleToken();
+    if (await ConversationService.isConversationDeleted(
+      conversationId,
+      mode: mode,
+    )) {
+      return false;
+    }
+    if (!_isConversationOperationCurrent(token)) {
+      return false;
+    }
     try {
       final savedMessages =
           await ConversationHistoryService.getConversationMessages(
@@ -696,6 +770,16 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
     final snapshotMode = activeConversationModeValue;
     if (snapshotConversationId != null &&
         isEphemeralConversation(snapshotConversationId, snapshotMode)) {
+      return;
+    }
+    if (snapshotConversationId != null &&
+        await ConversationService.isConversationDeleted(
+          snapshotConversationId,
+          mode: snapshotMode,
+        )) {
+      return;
+    }
+    if (!_isConversationOperationCurrent(token)) {
       return;
     }
 

@@ -16,12 +16,14 @@ void main() {
   late List<Map<String, dynamic>> nativeConversations;
   late List<MethodCall> codexCalls;
   late bool codexArchiveShouldThrow;
+  late bool nativeDeleteShouldFail;
 
   setUp(() async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     nativeConversations = <Map<String, dynamic>>[];
     codexCalls = <MethodCall>[];
     codexArchiveShouldThrow = false;
+    nativeDeleteShouldFail = false;
     messenger.setMockMethodCallHandler(channel, (call) async {
       final args = Map<String, dynamic>.from(
         (call.arguments as Map?) ?? const {},
@@ -85,6 +87,9 @@ void main() {
           }
           return 'SUCCESS';
         case 'deleteConversation':
+          if (nativeDeleteShouldFail) {
+            return 'FAILURE';
+          }
           final conversationId = (args['conversationId'] as num?)?.toInt();
           nativeConversations.removeWhere(
             (item) => item['id'] == conversationId,
@@ -295,8 +300,90 @@ void main() {
       expect(remaining, hasLength(1));
       expect(remaining.single.id, 1);
       expect(remaining.single.mode, ConversationMode.normal);
+
+      final prefs = await SharedPreferences.getInstance();
+      expect(
+        prefs.getStringList(ConversationService.deletedConversationKeysKey),
+        contains('${ConversationMode.openclaw.storageValue}:2'),
+      );
     },
   );
+
+  test('filters conversations marked as deleted', () async {
+    nativeConversations = <Map<String, dynamic>>[
+      {
+        'id': 5,
+        'title': 'normal thread',
+        'mode': ConversationMode.normal.storageValue,
+        'summary': null,
+        'status': 0,
+        'lastMessage': null,
+        'messageCount': 0,
+        'createdAt': 1,
+        'updatedAt': 1,
+      },
+      {
+        'id': 6,
+        'title': 'chat only thread',
+        'mode': ConversationMode.chatOnly.storageValue,
+        'summary': null,
+        'status': 0,
+        'lastMessage': null,
+        'messageCount': 0,
+        'createdAt': 2,
+        'updatedAt': 2,
+      },
+    ];
+
+    await ConversationService.markConversationDeleted(
+      5,
+      mode: ConversationMode.normal,
+    );
+
+    final visible = await ConversationService.getAllConversations(
+      includeArchived: true,
+    );
+    expect(visible.map((conversation) => conversation.id), [6]);
+
+    final all = await ConversationService.getAllConversations(
+      includeArchived: true,
+      includeDeleted: true,
+    );
+    expect(all.map((conversation) => conversation.id), [6, 5]);
+  });
+
+  test('failed native delete removes deleted marker', () async {
+    nativeConversations = <Map<String, dynamic>>[
+      {
+        'id': 7,
+        'title': 'normal thread',
+        'mode': ConversationMode.normal.storageValue,
+        'summary': null,
+        'status': 0,
+        'lastMessage': null,
+        'messageCount': 0,
+        'createdAt': 1,
+        'updatedAt': 1,
+      },
+    ];
+    nativeDeleteShouldFail = true;
+
+    final deleted = await ConversationService.deleteConversation(
+      7,
+      mode: ConversationMode.normal,
+    );
+
+    expect(deleted, isFalse);
+    expect(
+      await ConversationService.getAllConversations(includeArchived: true),
+      hasLength(1),
+    );
+    final prefs = await SharedPreferences.getInstance();
+    expect(
+      prefs.getStringList(ConversationService.deletedConversationKeysKey),
+      isNot(contains('${ConversationMode.normal.storageValue}:7')),
+    );
+  });
 
   test('creates conversations with chat_only mode', () async {
     final conversationId = await ConversationService.createConversation(

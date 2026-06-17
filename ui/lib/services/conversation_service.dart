@@ -10,8 +10,10 @@ class ConversationService {
   static const MethodChannel _assistCore = MethodChannel(
     'cn.com.omnimind.bot/AssistCoreEvent',
   );
-  static const String _hiddenCodexConversationIdsKey =
+  static const String hiddenCodexConversationIdsKey =
       'hidden_codex_conversation_ids';
+  static const String deletedConversationKeysKey =
+      'deleted_conversation_keys_v1';
 
   static List<ConversationModel> _normalizeConversations(List<dynamic> raw) {
     final conversations = raw
@@ -37,15 +39,17 @@ class ConversationService {
   static Future<List<ConversationModel>> getAllConversations({
     bool includeArchived = false,
     bool archivedOnly = false,
+    bool includeDeleted = false,
   }) async {
     try {
       final result = await _assistCore.invokeMethod<List<dynamic>>(
         'getConversations',
       );
       if (result == null) return [];
-      final conversations = await _filterHiddenCodexConversations(
-        _normalizeConversations(result),
-      );
+      final normalizedConversations = _normalizeConversations(result);
+      final conversations = includeDeleted
+          ? normalizedConversations
+          : await _filterDeletedConversations(normalizedConversations);
       if (archivedOnly) {
         return conversations.where((item) => item.isArchived).toList();
       }
@@ -139,9 +143,11 @@ class ConversationService {
     int conversationId, {
     ConversationMode? mode,
     bool includeArchived = false,
+    bool includeDeleted = false,
   }) async {
     final conversations = await getAllConversations(
       includeArchived: includeArchived,
+      includeDeleted: includeDeleted,
     );
     for (final conversation in conversations) {
       if (conversation.id == conversationId &&
@@ -150,6 +156,65 @@ class ConversationService {
       }
     }
     return null;
+  }
+
+  static Future<void> markConversationDeleted(
+    int conversationId, {
+    required ConversationMode mode,
+  }) async {
+    if (conversationId <= 0) {
+      return;
+    }
+    await _addDeletedConversationKey(_conversationKey(conversationId, mode));
+    if (mode == ConversationMode.codex) {
+      await _markCodexConversationHidden(conversationId);
+    }
+  }
+
+  static Future<void> unmarkConversationDeleted(
+    int conversationId, {
+    required ConversationMode mode,
+  }) async {
+    if (conversationId <= 0) {
+      return;
+    }
+    await _removeDeletedConversationKey(_conversationKey(conversationId, mode));
+    if (mode == ConversationMode.codex) {
+      await _unmarkCodexConversationHidden(conversationId);
+    }
+  }
+
+  static Future<bool> isConversationDeleted(
+    int conversationId, {
+    required ConversationMode mode,
+  }) async {
+    if (conversationId <= 0) {
+      return false;
+    }
+    final deletedKeys = await _getDeletedConversationKeys();
+    return deletedKeys.contains(_conversationKey(conversationId, mode));
+  }
+
+  static List<ConversationModel> filterDeletedConversationsSync(
+    List<ConversationModel> conversations, {
+    required Set<String> deletedKeys,
+    Set<int> hiddenCodexConversationIds = const <int>{},
+  }) {
+    if (conversations.isEmpty ||
+        (deletedKeys.isEmpty && hiddenCodexConversationIds.isEmpty)) {
+      return conversations;
+    }
+    return conversations
+        .where((conversation) {
+          if (conversation.mode == ConversationMode.codex &&
+              hiddenCodexConversationIds.contains(conversation.id)) {
+            return false;
+          }
+          return !deletedKeys.contains(
+            _conversationKey(conversation.id, conversation.mode),
+          );
+        })
+        .toList(growable: false);
   }
 
   static Future<bool> updateConversationPromptTokenThreshold({
@@ -176,6 +241,8 @@ class ConversationService {
     int conversationId, {
     ConversationMode? mode,
   }) async {
+    final resolvedMode = mode ?? ConversationMode.normal;
+    await markConversationDeleted(conversationId, mode: resolvedMode);
     if (mode == ConversationMode.codex) {
       final appServerArchived = await _setCodexThreadArchivedBestEffort(
         conversationId: conversationId,
@@ -183,7 +250,9 @@ class ConversationService {
       );
       final conversation = await _getConversationById(
         conversationId,
+        mode: ConversationMode.codex,
         includeArchived: true,
+        includeDeleted: true,
       );
       var localArchived = conversation == null;
       if (conversation != null) {
@@ -192,9 +261,9 @@ class ConversationService {
             await updateConversation(conversation.copyWith(isArchived: true));
       }
       if (!appServerArchived && !localArchived) {
+        await unmarkConversationDeleted(conversationId, mode: resolvedMode);
         return false;
       }
-      await _markCodexConversationHidden(conversationId);
       await ConversationHistoryService.clearConversationThreadReferences(
         conversationId,
         mode: ConversationMode.codex,
@@ -214,6 +283,7 @@ class ConversationService {
       );
       final deleted = result == 'SUCCESS';
       if (!deleted) {
+        await unmarkConversationDeleted(conversationId, mode: resolvedMode);
         return false;
       }
       await ConversationHistoryService.clearConversationMessages(
@@ -230,9 +300,11 @@ class ConversationService {
       return true;
     } on PlatformException catch (e) {
       debugPrint('删除对话失败: ${e.message}');
+      await unmarkConversationDeleted(conversationId, mode: resolvedMode);
       return false;
     } catch (e) {
       debugPrint('删除对话失败: $e');
+      await unmarkConversationDeleted(conversationId, mode: resolvedMode);
       return false;
     }
   }
@@ -305,37 +377,80 @@ class ConversationService {
 
   static Future<ConversationModel?> _getConversationById(
     int conversationId, {
+    ConversationMode? mode,
     bool includeArchived = false,
+    bool includeDeleted = false,
   }) async {
     return getConversationById(
       conversationId,
+      mode: mode,
       includeArchived: includeArchived,
+      includeDeleted: includeDeleted,
     );
   }
 
-  static Future<List<ConversationModel>> _filterHiddenCodexConversations(
+  static Future<List<ConversationModel>> _filterDeletedConversations(
     List<ConversationModel> conversations,
   ) async {
     if (conversations.isEmpty) {
       return conversations;
     }
-    final hiddenIds = await _getHiddenCodexConversationIds();
-    if (hiddenIds.isEmpty) {
+    final hiddenCodexIds = await _getHiddenCodexConversationIds();
+    final deletedKeys = await _getDeletedConversationKeys();
+    if (hiddenCodexIds.isEmpty && deletedKeys.isEmpty) {
       return conversations;
     }
-    return conversations
-        .where(
-          (conversation) =>
-              conversation.mode != ConversationMode.codex ||
-              !hiddenIds.contains(conversation.id),
-        )
-        .toList();
+    return filterDeletedConversationsSync(
+      conversations,
+      deletedKeys: deletedKeys,
+      hiddenCodexConversationIds: hiddenCodexIds,
+    );
+  }
+
+  static Future<Set<String>> _getDeletedConversationKeys() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      return (prefs.getStringList(deletedConversationKeysKey) ??
+              const <String>[])
+          .map((key) => key.trim())
+          .where((key) => key.isNotEmpty)
+          .toSet();
+    } catch (e) {
+      debugPrint('[ConversationService] 读取已删除会话标记失败: $e');
+      return const <String>{};
+    }
+  }
+
+  static Future<void> _addDeletedConversationKey(String key) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final deletedKeys = await _getDeletedConversationKeys();
+      if (!deletedKeys.add(key)) {
+        return;
+      }
+      await prefs.setStringList(deletedConversationKeysKey, _sorted(deletedKeys));
+    } catch (e) {
+      debugPrint('[ConversationService] 保存已删除会话标记失败: $e');
+    }
+  }
+
+  static Future<void> _removeDeletedConversationKey(String key) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final deletedKeys = await _getDeletedConversationKeys();
+      if (!deletedKeys.remove(key)) {
+        return;
+      }
+      await prefs.setStringList(deletedConversationKeysKey, _sorted(deletedKeys));
+    } catch (e) {
+      debugPrint('[ConversationService] 移除已删除会话标记失败: $e');
+    }
   }
 
   static Future<Set<int>> _getHiddenCodexConversationIds() async {
     try {
       final prefs = await SharedPreferences.getInstance();
-      return (prefs.getStringList(_hiddenCodexConversationIdsKey) ??
+      return (prefs.getStringList(hiddenCodexConversationIdsKey) ??
               const <String>[])
           .map(int.tryParse)
           .whereType<int>()
@@ -353,11 +468,37 @@ class ConversationService {
       if (!hiddenIds.add(conversationId)) {
         return;
       }
-      final encoded = hiddenIds.map((id) => id.toString()).toList()..sort();
-      await prefs.setStringList(_hiddenCodexConversationIdsKey, encoded);
+      await prefs.setStringList(
+        hiddenCodexConversationIdsKey,
+        _sorted(hiddenIds.map((id) => id.toString())),
+      );
     } catch (e) {
       debugPrint('[ConversationService] 保存 Codex 隐藏会话失败: $e');
     }
+  }
+
+  static Future<void> _unmarkCodexConversationHidden(int conversationId) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final hiddenIds = await _getHiddenCodexConversationIds();
+      if (!hiddenIds.remove(conversationId)) {
+        return;
+      }
+      await prefs.setStringList(
+        hiddenCodexConversationIdsKey,
+        _sorted(hiddenIds.map((id) => id.toString())),
+      );
+    } catch (e) {
+      debugPrint('[ConversationService] 移除 Codex 隐藏会话失败: $e');
+    }
+  }
+
+  static String _conversationKey(int conversationId, ConversationMode mode) {
+    return '${mode.storageValue}:$conversationId';
+  }
+
+  static List<String> _sorted(Iterable<String> values) {
+    return values.toList()..sort();
   }
 
   static Future<bool> updateConversationTitle({

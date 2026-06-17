@@ -125,17 +125,24 @@ class _ChatHistoryPageState extends State<ChatHistoryPage> {
     }
 
     final originalIndex = _conversations.indexWhere(
-      (item) => item.id == conversation.id,
+      (item) => item.threadKey == conversation.threadKey,
     );
     if (originalIndex < 0) {
       return;
     }
 
-    setState(() {
-      _busyKeys.add(conversation.threadKey);
-      _conversations = List<ConversationModel>.from(_conversations)
-        ..removeAt(originalIndex);
-    });
+    await ConversationService.markConversationDeleted(
+      conversation.id,
+      mode: conversation.mode,
+    );
+
+    if (mounted) {
+      setState(() {
+        _busyKeys.add(conversation.threadKey);
+        _conversations = List<ConversationModel>.from(_conversations)
+          ..removeAt(originalIndex);
+      });
+    }
 
     final deleted = await ConversationService.deleteConversation(
       conversation.id,
