@@ -2,7 +2,8 @@ package cn.com.omnimind.bot.im
 
 enum class ImChannelType(val id: String, val title: String) {
     TELEGRAM("telegram", "Telegram"),
-    WECHAT("wechat", "WeChat");
+    WECHAT("wechat", "WeChat"),
+    DISCORD("discord", "Discord");
 
     companion object {
         fun fromId(id: String?): ImChannelType? {
@@ -29,7 +30,6 @@ data class TelegramImConfig(
             chunkSize = chunkSize.coerceIn(500, 3900)
         )
     }
-
     fun toMap(): Map<String, Any?> {
         val config = normalized()
         return linkedMapOf(
@@ -60,7 +60,6 @@ data class WechatImConfig(
             chunkSize = chunkSize.coerceIn(500, 8000)
         )
     }
-
     fun toMap(): Map<String, Any?> {
         val config = normalized()
         return linkedMapOf(
@@ -74,23 +73,56 @@ data class WechatImConfig(
     }
 }
 
+data class DiscordImConfig(
+    val enabled: Boolean = false,
+    val botToken: String = "",
+    val allowedUserIds: Set<String> = emptySet(),
+    val allowedChannelIds: Set<String> = emptySet(),
+    val gatewayUrl: String = "wss://gateway.discord.gg/?v=10&encoding=json",
+    val chunkSize: Int = 3900
+) {
+    fun normalized(): DiscordImConfig {
+        return copy(
+            botToken = botToken.trim(),
+            gatewayUrl = gatewayUrl.trim().ifEmpty { "wss://gateway.discord.gg/?v=10&encoding=json" },
+            allowedUserIds = allowedUserIds.map { it.trim() }.filter { it.isNotEmpty() }.toSet(),
+            allowedChannelIds = allowedChannelIds.map { it.trim() }.filter { it.isNotEmpty() }.toSet(),
+            chunkSize = chunkSize.coerceIn(500, 3900)
+        )
+    }
+    fun toMap(): Map<String, Any?> {
+        val config = normalized()
+        return linkedMapOf(
+            "enabled" to config.enabled,
+            "botToken" to config.botToken,
+            "allowedUserIds" to config.allowedUserIds.joinToString("\n"),
+            "allowedChannelIds" to config.allowedChannelIds.joinToString("\n"),
+            "gatewayUrl" to config.gatewayUrl,
+            "chunkSize" to config.chunkSize
+        )
+    }
+}
+
 data class ImChannelSettings(
     val telegram: TelegramImConfig = TelegramImConfig(),
-    val wechat: WechatImConfig = WechatImConfig()
+    val wechat: WechatImConfig = WechatImConfig(),
+    val discord: DiscordImConfig = DiscordImConfig()
 ) {
-    fun anyEnabled(): Boolean = telegram.enabled || wechat.enabled
+    fun anyEnabled(): Boolean = telegram.enabled || wechat.enabled || discord.enabled
 
     fun chunkSizeFor(channel: ImChannelType): Int {
         return when (channel) {
             ImChannelType.TELEGRAM -> telegram.normalized().chunkSize
             ImChannelType.WECHAT -> wechat.normalized().chunkSize
+            ImChannelType.DISCORD -> discord.normalized().chunkSize
         }
     }
 
     fun toMap(): Map<String, Any?> {
         return linkedMapOf(
             "telegram" to telegram.toMap(),
-            "wechat" to wechat.toMap()
+            "wechat" to wechat.toMap(),
+            "discord" to discord.toMap()
         )
     }
 }
@@ -130,7 +162,6 @@ data class ImPeerSession(
     val updatedAt: Long = System.currentTimeMillis()
 ) {
     val key: String get() = "${channel.id}:$peerId"
-
     fun toMap(): Map<String, Any?> {
         return linkedMapOf(
             "channel" to channel.id,
