@@ -26,6 +26,7 @@ object ImChannelManager {
         ConcurrentHashMap<String, ImAgentTaskStreamState>()
     private val typingJobs = ConcurrentHashMap<String, Job>()
     private val telegramConnector = TelegramImConnector()
+    private val discordConnector = DiscordImConnector()
     private val wechatConnector = OpenILinkWechatConnector { token, baseUrl, botId ->
         appContext?.let { context ->
             ImChannelStore(context).saveWechatCredentials(token, baseUrl)
@@ -37,7 +38,8 @@ object ImChannelManager {
     }
     private val connectors: Map<ImChannelType, ImConnector> = mapOf(
         ImChannelType.TELEGRAM to telegramConnector,
-        ImChannelType.WECHAT to wechatConnector
+        ImChannelType.WECHAT to wechatConnector,
+        ImChannelType.DISCORD to discordConnector
     )
 
     @Volatile
