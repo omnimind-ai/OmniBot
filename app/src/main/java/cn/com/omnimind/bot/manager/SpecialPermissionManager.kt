@@ -13,6 +13,7 @@ import cn.com.omnimind.baselib.shizuku.ShizukuCapabilityManager
 import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.agent.AgentWorkspaceManager
 import cn.com.omnimind.bot.terminal.EmbeddedTerminalAutoStartManager
+import cn.com.omnimind.bot.terminal.EmbeddedTerminalBackupManager
 import cn.com.omnimind.bot.terminal.EmbeddedTerminalInitCoordinator
 import cn.com.omnimind.bot.terminal.EmbeddedTerminalLaunchHelper
 import cn.com.omnimind.bot.terminal.EmbeddedTerminalRuntime
@@ -36,6 +37,7 @@ class SpecialPermissionManager(private val context: Context) {
     }
     private val embeddedTerminalSetupManager = EmbeddedTerminalSetupManager(context)
     private val embeddedTerminalAutoStartManager = EmbeddedTerminalAutoStartManager(context)
+    private val embeddedTerminalBackupManager = EmbeddedTerminalBackupManager(context)
     private val shizukuCapabilityManager = ShizukuCapabilityManager.get(context)
 
     fun isAccessibilityServiceEnabled(result: MethodChannel.Result) {
@@ -684,6 +686,67 @@ class SpecialPermissionManager(private val context: Context) {
                     result.error(
                         "RUN_AUTO_START_TASK_FAILED",
                         "Failed to run embedded terminal auto-start task.",
+                        e.message
+                    )
+                }
+            }
+        }
+    }
+
+    fun getEmbeddedTerminalBackupStatus(result: MethodChannel.Result) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val status = embeddedTerminalBackupManager.getStatus()
+                withContext(Dispatchers.Main) {
+                    result.success(status.toMap())
+                }
+            } catch (e: Exception) {
+                OmniLog.e(TAG, "Error reading embedded terminal backup status", e)
+                withContext(Dispatchers.Main) {
+                    result.error(
+                        "READ_BACKUP_STATUS_FAILED",
+                        "Failed to read embedded terminal backup status.",
+                        e.message
+                    )
+                }
+            }
+        }
+    }
+
+    fun setEmbeddedTerminalBackupEnabled(call: MethodCall, result: MethodChannel.Result) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val enabled = call.argument<Boolean>("enabled") == true
+                val status = embeddedTerminalBackupManager.setEnabled(enabled)
+                withContext(Dispatchers.Main) {
+                    result.success(status.toMap())
+                }
+            } catch (e: Exception) {
+                OmniLog.e(TAG, "Error updating embedded terminal backup state", e)
+                withContext(Dispatchers.Main) {
+                    result.error(
+                        "UPDATE_BACKUP_STATE_FAILED",
+                        "Failed to update embedded terminal backup state.",
+                        e.message
+                    )
+                }
+            }
+        }
+    }
+
+    fun runEmbeddedTerminalBackupNow(result: MethodChannel.Result) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val runResult = embeddedTerminalBackupManager.runBackupNow()
+                withContext(Dispatchers.Main) {
+                    result.success(runResult.toMap())
+                }
+            } catch (e: Exception) {
+                OmniLog.e(TAG, "Error running embedded terminal backup", e)
+                withContext(Dispatchers.Main) {
+                    result.error(
+                        "RUN_BACKUP_FAILED",
+                        "Failed to run embedded terminal backup.",
                         e.message
                     )
                 }

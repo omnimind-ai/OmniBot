@@ -338,6 +338,95 @@ class EmbeddedTerminalAutoStartTaskRunResult {
   }
 }
 
+class EmbeddedTerminalBackupStatus {
+  const EmbeddedTerminalBackupStatus({
+    required this.configured,
+    required this.enabled,
+    required this.toolPath,
+    required this.source,
+    required this.repository,
+    required this.passwordFile,
+    required this.publicStorageGranted,
+    required this.resticReady,
+    required this.schedulerRunning,
+    required this.watchdogRunning,
+    required this.lastSuccessEpoch,
+    required this.lastSuccessLocal,
+    required this.rawOutput,
+    required this.message,
+  });
+
+  final bool configured;
+  final bool enabled;
+  final String toolPath;
+  final String source;
+  final String repository;
+  final String passwordFile;
+  final bool publicStorageGranted;
+  final bool resticReady;
+  final bool schedulerRunning;
+  final bool watchdogRunning;
+  final int? lastSuccessEpoch;
+  final String? lastSuccessLocal;
+  final String rawOutput;
+  final String? message;
+
+  factory EmbeddedTerminalBackupStatus.fromMap(Map<dynamic, dynamic>? map) {
+    return EmbeddedTerminalBackupStatus(
+      configured: map?['configured'] == true,
+      enabled: map?['enabled'] == true,
+      toolPath: (map?['toolPath'] as String? ?? '').trim(),
+      source: (map?['source'] as String? ?? '').trim(),
+      repository: (map?['repository'] as String? ?? '').trim(),
+      passwordFile: (map?['passwordFile'] as String? ?? '').trim(),
+      publicStorageGranted: map?['publicStorageGranted'] == true,
+      resticReady: map?['resticReady'] == true,
+      schedulerRunning: map?['schedulerRunning'] == true,
+      watchdogRunning: map?['watchdogRunning'] == true,
+      lastSuccessEpoch: (map?['lastSuccessEpoch'] as num?)?.toInt(),
+      lastSuccessLocal: (map?['lastSuccessLocal'] as String?)?.trim(),
+      rawOutput: (map?['rawOutput'] as String? ?? '').trim(),
+      message: (map?['message'] as String?)?.trim(),
+    );
+  }
+}
+
+class EmbeddedTerminalBackupCommandResult {
+  const EmbeddedTerminalBackupCommandResult({
+    required this.success,
+    required this.timedOut,
+    required this.exitCode,
+    required this.message,
+    required this.output,
+    required this.status,
+  });
+
+  final bool success;
+  final bool timedOut;
+  final int? exitCode;
+  final String message;
+  final String output;
+  final EmbeddedTerminalBackupStatus? status;
+
+  factory EmbeddedTerminalBackupCommandResult.fromMap(
+    Map<dynamic, dynamic>? map,
+  ) {
+    final rawStatus = map?['status'];
+    return EmbeddedTerminalBackupCommandResult(
+      success: map?['success'] == true,
+      timedOut: map?['timedOut'] == true,
+      exitCode: (map?['exitCode'] as num?)?.toInt(),
+      message: (map?['message'] as String? ?? '').trim(),
+      output: (map?['output'] as String? ?? '').trim(),
+      status: rawStatus is Map
+          ? EmbeddedTerminalBackupStatus.fromMap(
+              Map<dynamic, dynamic>.from(rawStatus),
+            )
+          : null,
+    );
+  }
+}
+
 Stream<EmbeddedTerminalInitProgress> get embeddedTerminalInitProgressStream {
   return _specialPermissionEvents.receiveBroadcastStream().map((event) {
     final payload = event is Map
@@ -451,6 +540,31 @@ Future<EmbeddedTerminalAutoStartTaskRunResult> runEmbeddedTerminalAutoStartTask(
     <String, dynamic>{'id': id},
   );
   return EmbeddedTerminalAutoStartTaskRunResult.fromMap(result ?? const {});
+}
+
+Future<EmbeddedTerminalBackupStatus> getEmbeddedTerminalBackupStatus() async {
+  final result = await spePermission.invokeMethod<Map<dynamic, dynamic>>(
+    'getEmbeddedTerminalBackupStatus',
+  );
+  return EmbeddedTerminalBackupStatus.fromMap(result ?? const {});
+}
+
+Future<EmbeddedTerminalBackupStatus> setEmbeddedTerminalBackupEnabled(
+  bool enabled,
+) async {
+  final result = await spePermission.invokeMethod<Map<dynamic, dynamic>>(
+    'setEmbeddedTerminalBackupEnabled',
+    <String, dynamic>{'enabled': enabled},
+  );
+  return EmbeddedTerminalBackupStatus.fromMap(result ?? const {});
+}
+
+Future<EmbeddedTerminalBackupCommandResult>
+runEmbeddedTerminalBackupNow() async {
+  final result = await spePermission.invokeMethod<Map<dynamic, dynamic>>(
+    'runEmbeddedTerminalBackupNow',
+  );
+  return EmbeddedTerminalBackupCommandResult.fromMap(result ?? const {});
 }
 
 Future<void> openNativeTerminal({

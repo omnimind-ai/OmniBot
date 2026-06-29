@@ -75,6 +75,23 @@ class EnvironmentSetupLogicTest {
     }
 
     @Test
+    fun buildInstallCommands_resticInstallsAndValidatesBackupEngine() {
+        val commands = EnvironmentSetupLogic.buildInstallCommands(
+            selectedPackageIds = listOf("restic"),
+            repositorySetupCommand = ""
+        )
+        val apkAdd = commands.first { it.startsWith("apk add ") }
+        assertTrue(apkAdd.contains("restic"))
+
+        val probe = EnvironmentSetupLogic.buildInventoryProbeCommand(listOf("restic"))
+        assertTrue(probe.contains("command -v restic"))
+        assertTrue(probe.contains("restic version"))
+
+        val validation = EnvironmentSetupLogic.buildValidationCommands(listOf("restic"))
+        assertTrue(validation.any { it.contains("restic version") })
+    }
+
+    @Test
     fun buildInventoryProbeCommand_validatesRuntimeCwdForNodeAndPython() {
         val command = EnvironmentSetupLogic.buildInventoryProbeCommand(listOf("nodejs", "python", "pip"))
 

@@ -155,6 +155,12 @@ class SpecialPermissionChannel {
                         .deleteEmbeddedTerminalAutoStartTask(call, result)
                     "runEmbeddedTerminalAutoStartTask" -> specialPermissionManager!!
                         .runEmbeddedTerminalAutoStartTask(call, result)
+                    "getEmbeddedTerminalBackupStatus" -> specialPermissionManager!!
+                        .getEmbeddedTerminalBackupStatus(result)
+                    "setEmbeddedTerminalBackupEnabled" -> specialPermissionManager!!
+                        .setEmbeddedTerminalBackupEnabled(call, result)
+                    "runEmbeddedTerminalBackupNow" -> specialPermissionManager!!
+                        .runEmbeddedTerminalBackupNow(result)
                     "syncTerminalEnvironmentVariables" -> specialPermissionManager!!
                         .syncTerminalEnvironmentVariables(call, result)
                     "openNativeTerminal" -> specialPermissionManager!!

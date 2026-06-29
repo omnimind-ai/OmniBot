@@ -17,6 +17,7 @@ object EnvironmentSetupLogic {
         PackageDefinition("uv", "uv --version", "dev"),
         PackageDefinition("pip", "pip3 --version", "dev"),
         PackageDefinition("codex", "codex --version", "ai"),
+        PackageDefinition("restic", "restic version", "backup"),
         PackageDefinition("ssh_client", "ssh -V 2>&1", "ssh"),
         PackageDefinition("sshpass", "sshpass -V 2>&1", "ssh"),
         PackageDefinition("openssh_server", "sshd -V 2>&1", "ssh")
@@ -45,6 +46,7 @@ object EnvironmentSetupLogic {
         "python" to listOf("python3"),
         "pip" to listOf("py3-pip"),
         "uv" to listOf("python3", "py3-pip"),
+        "restic" to listOf("restic"),
         "ssh_client" to listOf("openssh-client-default"),
         "sshpass" to listOf("sshpass"),
         "openssh_server" to listOf("openssh-server")
@@ -205,6 +207,11 @@ object EnvironmentSetupLogic {
                     commandCheck = "PATH=\"/root/.npm-global/bin:${'$'}PATH\"; export PATH; command -v codex >/dev/null 2>&1 && codex app-server --help >/dev/null 2>&1",
                     versionCommand = "codex --version"
                 )
+                "restic" -> buildProbeSnippet(
+                    packageId = packageId,
+                    commandCheck = "command -v restic >/dev/null 2>&1",
+                    versionCommand = "restic version"
+                )
                 "ssh_client" -> buildProbeSnippet(
                     packageId = packageId,
                     commandCheck = "command -v ssh >/dev/null 2>&1",
@@ -257,6 +264,7 @@ object EnvironmentSetupLogic {
             "pip" -> "command -v pip3 && pip3 --version"
             "uv" -> "command -v uv && uv --version"
             "codex" -> "PATH=\"/root/.npm-global/bin:${'$'}PATH\"; export PATH; command -v codex && codex app-server --help"
+            "restic" -> "command -v restic && restic version"
             "ripgrep" -> "command -v rg"
             "tmux" -> "command -v tmux"
             "xz" -> "command -v xz"
@@ -325,6 +333,9 @@ object EnvironmentSetupLogic {
                 "Codex CLI",
                 "PATH=\"/root/.npm-global/bin:${'$'}PATH\"; export PATH; codex app-server --help >/dev/null 2>&1"
             )
+        }
+        if ("restic" in requested) {
+            add("restic", "restic version >/dev/null 2>&1")
         }
         if ("ssh_client" in requested) {
             add("SSH client", "ssh -V >/dev/null 2>&1")

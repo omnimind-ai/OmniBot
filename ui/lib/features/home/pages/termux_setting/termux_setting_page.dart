@@ -84,6 +84,12 @@ const List<_EnvironmentDefinition> _environmentDefinitions =
         groupKey: 'alpineAiAgent',
       ),
       _EnvironmentDefinition(
+        id: 'restic',
+        title: 'restic',
+        descriptionKey: 'alpineRestic',
+        groupKey: 'alpineBackup',
+      ),
+      _EnvironmentDefinition(
         id: 'ssh_client',
         title: 'ssh',
         descriptionKey: 'alpineSshClient',
@@ -118,16 +124,20 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
   bool _isDetecting = true;
   bool _isAutoStartLoading = true;
   bool _isAutoStartBusy = false;
+  bool _isBackupLoading = true;
+  bool _isBackupBusy = false;
   bool _isMountsLoading = true;
   bool _isMountsBusy = false;
   bool _hasInitializedSelection = false;
   String? _detectError;
   String? _autoStartError;
+  String? _backupError;
   String? _mountsError;
   Map<String, EmbeddedTerminalSetupInventoryItem> _inventory =
       const <String, EmbeddedTerminalSetupInventoryItem>{};
   List<EmbeddedTerminalAutoStartTask> _autoStartTasks =
       const <EmbeddedTerminalAutoStartTask>[];
+  EmbeddedTerminalBackupStatus? _backupStatus;
   List<WorkspaceMountEntry> _workspaceMounts = const <WorkspaceMountEntry>[];
   Set<String> _selectedPackageIds = <String>{};
 
@@ -198,6 +208,32 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
       _isEnglish ? 'Mounted as /workspace/$alias' : '已挂载到 /workspace/$alias';
   String _workspaceUnmountedToast(String alias) =>
       _isEnglish ? 'Unmounted /workspace/$alias' : '已卸载 /workspace/$alias';
+  String get _backupSectionTitle => _isEnglish ? 'Automatic backup' : '自动备份';
+  String get _backupSectionDesc => _isEnglish
+      ? 'Back up Omnibot app data with restic to local storage. The scheduler adds a daily cron job, a catch-up check, and a local watchdog. After a phone reboot it resumes when Omnibot or Alpine starts again.'
+      : '使用 restic 把 Omnibot 应用数据备份到本地存储。调度会添加每日 cron、漏跑补偿和本地看门狗；手机重启后，需要 Omnibot 或 Alpine 再次启动才会恢复。';
+  String get _backupEnableLabel => _isEnglish ? 'Enable backup' : '启用备份';
+  String get _backupRunNowLabel => _isEnglish ? 'Back up now' : '立即备份';
+  String get _backupStorageAction =>
+      _isEnglish ? 'Open settings' : '打开权限设置';
+  String get _backupNotConfiguredLabel =>
+      _isEnglish ? 'not configured' : '未配置';
+  String get _backupEnabledLabel => _isEnglish ? 'enabled' : '已启用';
+  String get _backupDisabledLabel => _isEnglish ? 'disabled' : '未启用';
+  String get _backupSchedulerLabel => _isEnglish ? 'scheduled' : '已调度';
+  String get _backupSchedulerIdleLabel => _isEnglish ? 'idle' : '未运行';
+  String get _backupWatchdogLabel => _isEnglish ? 'watchdog' : '看门狗';
+  String get _backupResticMissing => _isEnglish
+      ? 'restic is not ready. Install it from the environment list or enable backup to let Alpine try installing it.'
+      : 'restic 尚未就绪。可在环境列表安装，或启用备份时让 Alpine 尝试自动安装。';
+  String get _backupStorageMissing => _isEnglish
+      ? 'Public storage access is required for the default /sdcard backup repository.'
+      : '默认 /sdcard 备份仓库需要公共文件访问权限。';
+  String get _backupEnableFailed =>
+      _isEnglish ? 'Failed to update backup state' : '更新备份状态失败';
+  String get _backupRunFailed => _isEnglish ? 'Backup failed' : '备份失败';
+  String get _backupRunFinished =>
+      _isEnglish ? 'Backup command finished' : '备份命令已完成';
 
   String _resolveL10nKey(String key) {
     // Returns the localized string for a given ARB key.
@@ -217,6 +253,10 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
         return l10n.alpinePipInstall;
       case 'alpineCodex':
         return l10n.alpineCodex;
+      case 'alpineRestic':
+        return _isEnglish
+            ? 'Encrypted snapshot backup engine.'
+            : '加密快照备份引擎。';
       case 'alpineSshClient':
         return l10n.alpineSshClient;
       case 'alpineSshpass':
@@ -227,6 +267,8 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
         return l10n.alpineDevEnv;
       case 'alpineAiAgent':
         return l10n.alpineAiAgent;
+      case 'alpineBackup':
+        return _isEnglish ? 'Backup' : '备份';
       case 'alpineSsh':
         return 'SSH';
       default:
@@ -240,6 +282,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
     WidgetsBinding.instance.addObserver(this);
     unawaited(_refreshInventory(selectMissingByDefault: true));
     unawaited(_refreshAutoStartTasks());
+    unawaited(_refreshBackupStatus());
     unawaited(_refreshWorkspaceMounts());
   }
 
@@ -254,6 +297,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
     if (state == AppLifecycleState.resumed) {
       unawaited(_refreshInventory());
       unawaited(_refreshAutoStartTasks());
+      unawaited(_refreshBackupStatus());
       unawaited(_refreshWorkspaceMounts());
     }
   }
@@ -355,6 +399,133 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
         _isAutoStartLoading = false;
         _autoStartError = context.l10n.alpineBootTasksLoadFailed;
       });
+    }
+  }
+
+  Future<void> _refreshBackupStatus() async {
+    if (mounted) {
+      setState(() {
+        _isBackupLoading = true;
+        _backupError = null;
+      });
+    }
+    try {
+      final status = await getEmbeddedTerminalBackupStatus();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _backupStatus = status;
+        _isBackupLoading = false;
+      });
+    } on PlatformException catch (e) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _backupStatus = null;
+        _isBackupLoading = false;
+        _backupError = e.message ?? _backupEnableFailed;
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _backupStatus = null;
+        _isBackupLoading = false;
+        _backupError = error.toString();
+      });
+    }
+  }
+
+  Future<void> _setBackupEnabled(bool enabled) async {
+    if (_isBackupBusy) {
+      return;
+    }
+    setState(() {
+      _isBackupBusy = true;
+      _backupError = null;
+    });
+    try {
+      final status = await setEmbeddedTerminalBackupEnabled(enabled);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _backupStatus = status;
+      });
+      showToast(enabled ? _backupEnabledLabel : _backupDisabledLabel);
+    } on PlatformException catch (e) {
+      if (!mounted) {
+        return;
+      }
+      showToast(e.message ?? _backupEnableFailed, type: ToastType.error);
+      await _refreshBackupStatus();
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      showToast(error.toString(), type: ToastType.error);
+      await _refreshBackupStatus();
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isBackupBusy = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _runBackupNow() async {
+    if (_isBackupBusy) {
+      return;
+    }
+    setState(() {
+      _isBackupBusy = true;
+      _backupError = null;
+    });
+    try {
+      final result = await runEmbeddedTerminalBackupNow();
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _backupStatus = result.status ?? _backupStatus;
+      });
+      showToast(
+        result.message.isNotEmpty ? result.message : _backupRunFinished,
+        type: result.success ? ToastType.success : ToastType.error,
+      );
+    } on PlatformException catch (e) {
+      if (!mounted) {
+        return;
+      }
+      showToast(e.message ?? _backupRunFailed, type: ToastType.error);
+      await _refreshBackupStatus();
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      showToast(error.toString(), type: ToastType.error);
+      await _refreshBackupStatus();
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isBackupBusy = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _openBackupStorageSettings() async {
+    try {
+      await openPublicStorageSettings();
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      showToast(error.toString(), type: ToastType.error);
     }
   }
 
@@ -685,6 +856,8 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
           onRefresh: () async {
             await _refreshInventory();
             await _refreshAutoStartTasks();
+            await _refreshBackupStatus();
+            await _refreshWorkspaceMounts();
           },
           child: ListView(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
@@ -740,6 +913,8 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
                 ),
               ),
               const SizedBox(height: 14),
+              _buildBackupSection(),
+              const SizedBox(height: 14),
               _buildAutoStartSection(),
               const SizedBox(height: 14),
               _buildWorkspaceMountSection(),
@@ -769,6 +944,272 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
             ),
           ),
           const SizedBox(height: 12),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBackupSection() {
+    final status = _backupStatus;
+    final enabled = status?.enabled == true;
+    final configured = status?.configured == true;
+    final lastSuccess = status?.lastSuccessLocal?.trim();
+
+    return _buildSectionCard(
+      title: _backupSectionTitle,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            _backupSectionDesc,
+            style: TextStyle(
+              color: _secondaryTextColor,
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+              height: 1.6,
+            ),
+          ),
+          const SizedBox(height: 14),
+          if (_backupError != null) ...[
+            _buildErrorCard(_backupError!),
+            const SizedBox(height: 14),
+          ],
+          if (_isBackupLoading) ...[
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.symmetric(vertical: 16),
+                child: CircularProgressIndicator(strokeWidth: 2.2),
+              ),
+            ),
+          ] else ...[
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _buildLegendTag(
+                  label: configured
+                      ? (enabled ? _backupEnabledLabel : _backupDisabledLabel)
+                      : _backupNotConfiguredLabel,
+                  backgroundColor: enabled
+                      ? const Color(0xFFE8F7EE)
+                      : const Color(0xFFF1F5F9),
+                  foregroundColor: enabled
+                      ? const Color(0xFF17803D)
+                      : const Color(0xFF64748B),
+                  darkBackgroundColor: enabled
+                      ? Color.lerp(
+                          context.omniPalette.surfaceSecondary,
+                          const Color(0xFF72A778),
+                          0.22,
+                        )
+                      : context.omniPalette.surfaceSecondary,
+                  darkForegroundColor: enabled
+                      ? const Color(0xFFD6E7D6)
+                      : context.omniPalette.textSecondary,
+                ),
+                if (status != null)
+                  _buildLegendTag(
+                    label: status.schedulerRunning
+                        ? _backupSchedulerLabel
+                        : _backupSchedulerIdleLabel,
+                    backgroundColor: status.schedulerRunning
+                        ? const Color(0xFFEAF2FF)
+                        : const Color(0xFFFFF7ED),
+                    foregroundColor: status.schedulerRunning
+                        ? const Color(0xFF2563EB)
+                        : const Color(0xFFC2410C),
+                    darkBackgroundColor: context.omniPalette.surfaceSecondary,
+                    darkForegroundColor: status.schedulerRunning
+                        ? const Color(0xFFD7DADF)
+                        : const Color(0xFFE7D2B6),
+                  ),
+                if (status?.watchdogRunning == true)
+                  _buildLegendTag(
+                    label: _backupWatchdogLabel,
+                    backgroundColor: const Color(0xFFE8F7EE),
+                    foregroundColor: const Color(0xFF17803D),
+                    darkBackgroundColor: Color.lerp(
+                      context.omniPalette.surfaceSecondary,
+                      const Color(0xFF72A778),
+                      0.22,
+                    ),
+                    darkForegroundColor: const Color(0xFFD6E7D6),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            SwitchListTile.adaptive(
+              contentPadding: EdgeInsets.zero,
+              value: enabled,
+              onChanged: _isBackupBusy ? null : _setBackupEnabled,
+              title: Text(
+                _backupEnableLabel,
+                style: TextStyle(
+                  color: _primaryTextColor,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              subtitle: Text(
+                status?.message?.trim().isNotEmpty == true
+                    ? status!.message!.trim()
+                    : (lastSuccess?.isNotEmpty == true
+                          ? (_isEnglish
+                                ? 'Last success: $lastSuccess'
+                                : '最近成功：$lastSuccess')
+                          : (_isEnglish ? 'No successful backup yet.' : '暂无成功备份记录。')),
+                style: TextStyle(
+                  color: _secondaryTextColor,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  height: 1.5,
+                ),
+              ),
+            ),
+            if (status != null && !status.publicStorageGranted) ...[
+              const SizedBox(height: 8),
+              _buildBackupNotice(
+                message: _backupStorageMissing,
+                actionLabel: _backupStorageAction,
+                onPressed: _openBackupStorageSettings,
+              ),
+            ],
+            if (status != null && configured && !status.resticReady) ...[
+              const SizedBox(height: 8),
+              _buildBackupNotice(message: _backupResticMissing),
+            ],
+            if (status != null) ...[
+              const SizedBox(height: 12),
+              _buildBackupInfoRow(
+                _isEnglish ? 'Source' : '源目录',
+                status.source,
+              ),
+              _buildBackupInfoRow(
+                _isEnglish ? 'Repository' : '仓库',
+                status.repository,
+              ),
+              _buildBackupInfoRow(
+                _isEnglish ? 'Password file' : '密码文件',
+                status.passwordFile,
+              ),
+              if (lastSuccess?.isNotEmpty == true)
+                _buildBackupInfoRow(
+                  _isEnglish ? 'Last success' : '最近成功',
+                  lastSuccess!,
+                ),
+            ],
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _isBackupBusy || !enabled
+                        ? null
+                        : _runBackupNow,
+                    icon: _isBackupBusy
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2.2),
+                          )
+                        : const Icon(Icons.backup_outlined),
+                    label: Text(_backupRunNowLabel),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _isBackupBusy ? null : () => openNativeTerminal(),
+                    icon: const Icon(Icons.terminal_rounded),
+                    label: Text(context.l10n.alpineOpenTerminal),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBackupNotice({
+    required String message,
+    String? actionLabel,
+    VoidCallback? onPressed,
+  }) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: _isDarkTheme
+            ? context.omniPalette.surfaceSecondary
+            : const Color(0xFFFFFBEB),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: _isDarkTheme
+              ? context.omniPalette.borderSubtle
+              : const Color(0xFFFCD34D),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Text(
+              message,
+              style: TextStyle(
+                color: _isDarkTheme
+                    ? context.omniPalette.textSecondary
+                    : const Color(0xFF92400E),
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                height: 1.5,
+              ),
+            ),
+          ),
+          if (actionLabel != null && onPressed != null) ...[
+            const SizedBox(width: 8),
+            TextButton(
+              onPressed: onPressed,
+              child: Text(actionLabel),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBackupInfoRow(String label, String value) {
+    if (value.trim().isEmpty) {
+      return const SizedBox.shrink();
+    }
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 96,
+            child: Text(
+              label,
+              style: TextStyle(
+                color: _tertiaryTextColor,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: TextStyle(
+                color: _secondaryTextColor,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                height: 1.4,
+              ),
+            ),
+          ),
         ],
       ),
     );

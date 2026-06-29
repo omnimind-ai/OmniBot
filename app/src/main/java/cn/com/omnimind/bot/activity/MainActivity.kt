@@ -11,6 +11,7 @@ import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.App
 import cn.com.omnimind.bot.localmodel.LocalModelFeature
 import cn.com.omnimind.bot.terminal.EmbeddedTerminalAutoStartManager
+import cn.com.omnimind.bot.terminal.EmbeddedTerminalBackupManager
 import cn.com.omnimind.bot.terminal.EmbeddedTerminalInitCoordinator
 import cn.com.omnimind.bot.terminal.EmbeddedTerminalRuntime
 import cn.com.omnimind.bot.quicklog.QuickLogWidgetActionRouter
@@ -35,6 +36,9 @@ class MainActivity : FlutterActivity() {
     private var channelManager: ChannelManager = ChannelManager()
     private val embeddedTerminalAutoStartManager by lazy {
         EmbeddedTerminalAutoStartManager(this)
+    }
+    private val embeddedTerminalBackupManager by lazy {
+        EmbeddedTerminalBackupManager(this)
     }
 
     private lateinit var halfScreenListenerImpl: HalfScreenListenerImpl
@@ -84,6 +88,13 @@ class MainActivity : FlutterActivity() {
                 embeddedTerminalAutoStartManager.runEnabledTasksOnAppOpen()
             }.onFailure { error ->
                 OmniLog.e(TAG, "MainActivity auto-start Alpine tasks failed", error)
+            }
+        }
+        lifecycleScope.launch {
+            runCatching {
+                embeddedTerminalBackupManager.ensureOnAppOpen()
+            }.onFailure { error ->
+                OmniLog.e(TAG, "MainActivity auto-start backup scheduler failed", error)
             }
         }
         lifecycleScope.launch {

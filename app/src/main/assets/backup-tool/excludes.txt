@@ -1,0 +1,49 @@
+# The backup runtime should not back up its own logs, locks, or state.
+/workspace/.omnibot/backup/logs
+/workspace/.omnibot/backup/state
+/workspace/.omnibot/backup/backup.lock
+/workspace/.omnibot/backup/scheduler.lock
+/workspace/.omnibot/backup/startup.lock
+/workspace/.omnibot/backup/watchdog.lock
+/workspace/.omnibot/backup/watchdog.pid
+/data/user/0/*/workspace/.omnibot/backup/logs
+/data/user/0/*/workspace/.omnibot/backup/state
+/data/user/0/*/workspace/.omnibot/backup/backup.lock
+/data/user/0/*/workspace/.omnibot/backup/scheduler.lock
+/data/user/0/*/workspace/.omnibot/backup/startup.lock
+/data/user/0/*/workspace/.omnibot/backup/watchdog.lock
+/data/user/0/*/workspace/.omnibot/backup/watchdog.pid
+/data/data/*/workspace/.omnibot/backup/logs
+/data/data/*/workspace/.omnibot/backup/state
+/data/data/*/workspace/.omnibot/backup/backup.lock
+/data/data/*/workspace/.omnibot/backup/scheduler.lock
+/data/data/*/workspace/.omnibot/backup/startup.lock
+/data/data/*/workspace/.omnibot/backup/watchdog.lock
+/data/data/*/workspace/.omnibot/backup/watchdog.pid
+
+# Common generated dependency/cache directories. Remove lines if exact full
+# workspace restores matter more than backup size.
+**/.cache
+**/node_modules
+**/__pycache__
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/dist
+**/build
+
+# Some mobile/sandboxed filesystems expose transient git pack helper files as
+# problematic symlinks. Keep .git itself, only skip temporary artifacts.
+**/.git/objects/pack/.l2s*
+
+# Android/proot compatibility-layer artifacts can appear after package installs
+# and are not reliable backup inputs.
+**/.l2s*
+
+# Runtime-only temp directories can contain unreadable Android/proot entries.
+/data/user/0/*/local/alpine/root/.codex/.tmp
+/data/user/0/*/local/alpine/tmp
+/data/user/0/*/tmp/omnibot-skills-clone.*
+/data/data/*/local/alpine/root/.codex/.tmp
+/data/data/*/local/alpine/tmp
+/data/data/*/tmp/omnibot-skills-clone.*
