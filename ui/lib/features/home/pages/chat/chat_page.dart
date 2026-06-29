@@ -671,9 +671,18 @@ abstract class _ChatPageStateBase extends State<ChatPage>
       }
       return _newThreadTargetForConversationMode(conversationMode);
     }
+    final localCodexThreadId = _activeMode == ChatPageMode.codex
+        ? _activeCodexThreadId?.trim()
+        : null;
     return ConversationThreadTarget.existing(
       conversationId: conversationId,
       mode: conversationMode,
+      codexThreadId: localCodexThreadId == null || localCodexThreadId.isEmpty
+          ? null
+          : localCodexThreadId,
+      codexRuntime: localCodexThreadId == null || localCodexThreadId.isEmpty
+          ? null
+          : 'local',
     );
   }
 

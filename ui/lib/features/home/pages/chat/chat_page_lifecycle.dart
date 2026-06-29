@@ -146,10 +146,7 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     if (normalizedPreferredMode == null) {
       final lastVisible =
           await ConversationHistoryService.getLastVisibleThreadTarget();
-      final normalizedLastVisible = _normalizeVisibleThreadTarget(
-        lastVisible,
-        freshCodexOnImplicitRestore: true,
-      );
+      final normalizedLastVisible = _normalizeVisibleThreadTarget(lastVisible);
       if (normalizedLastVisible != null) {
         return normalizedLastVisible;
       }
@@ -177,17 +174,13 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
   }
 
   ConversationThreadTarget? _normalizeVisibleThreadTarget(
-    ConversationThreadTarget? target, {
-    bool freshCodexOnImplicitRestore = false,
-  }) {
+    ConversationThreadTarget? target,
+  ) {
     if (target == null) {
       return null;
     }
     if (target.mode == ConversationMode.openclaw) {
       return null;
-    }
-    if (freshCodexOnImplicitRestore && target.mode == ConversationMode.codex) {
-      return _newCodexThreadTarget();
     }
     return target;
   }
@@ -268,6 +261,7 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
       _isSurfacePageScrolling = false;
     });
     _resetLocalConversationState(targetMode);
+    _restoreLocalCodexThreadIdFromTarget(effectiveTarget);
     _vlmAnswerController.clear();
     _applyDraftForConversationMode(targetMode);
     if (effectiveTarget.isRemoteCodexSessionTarget) {
@@ -288,6 +282,18 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     if (syncPage) {
       _jumpToCurrentModePage(animate: false);
     }
+  }
+
+  void _restoreLocalCodexThreadIdFromTarget(ConversationThreadTarget target) {
+    if (target.mode != ConversationMode.codex ||
+        target.isRemoteCodexSessionTarget) {
+      return;
+    }
+    final threadId = target.codexThreadId?.trim();
+    if (threadId == null || threadId.isEmpty) {
+      return;
+    }
+    _activeCodexThreadId = threadId;
   }
 
   @override

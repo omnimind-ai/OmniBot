@@ -676,6 +676,9 @@ mixin _ChatPageCodexMixin on _ChatPageStateBase {
       _activeCodexThreadId = resolvedThreadId ?? _activeCodexThreadId;
       _activeCodexTurnId =
           _asCodexString(response['turnId']) ?? _activeCodexTurnId;
+      if (!remoteCodex) {
+        await _persistVisibleThreadTargetIfNeeded();
+      }
       await _writeCodexCommandPreferencesForCurrentConversation();
     } catch (error) {
       if (!mounted) return;
@@ -959,6 +962,9 @@ mixin _ChatPageCodexMixin on _ChatPageStateBase {
             'instead of mismatched native conversation $localConversationId',
           );
         }
+      }
+      if (!remoteCodex) {
+        await _persistVisibleThreadTargetIfNeeded();
       }
       await _writeCodexCommandPreferencesForCurrentConversation();
     } catch (error) {
