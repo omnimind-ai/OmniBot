@@ -6,6 +6,7 @@ import 'package:flutter_switch/flutter_switch.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 import 'package:ui/features/home/pages/codex/codex_bridge_qr_scanner_page.dart';
 import 'package:ui/features/home/pages/codex/codex_remote_directory_picker.dart';
+import 'package:ui/features/home/pages/codex/alpine_file_system_page.dart';
 import 'package:ui/l10n/legacy_text_localizer.dart';
 import 'package:ui/services/codex_app_server_service.dart';
 import 'package:ui/theme/app_colors.dart';
@@ -1210,6 +1211,26 @@ class _CodexSettingPageState extends State<CodexSettingPage> {
                           ),
                         ),
                         const SizedBox(height: 8),
+                        OutlinedButton.icon(
+                          key: const Key('codex-open-alpine-filesystem-button'),
+                          onPressed: () {
+                            Navigator.of(context).push<void>(
+                              MaterialPageRoute<void>(
+                                builder: (_) => const AlpineFileSystemPage(
+                                  initialPath: '/',
+                                ),
+                              ),
+                            );
+                          },
+                          icon: const Icon(Icons.folder_open_rounded, size: 18),
+                          label: Text(
+                            _localeText(
+                              zh: '管理 Alpine 文件系统',
+                              en: 'Manage Alpine filesystem',
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 12),
                         _buildLocalAuthModeSelector(),
                         const SizedBox(height: 12),
                         if (_isChatGptMode) ...[

@@ -28,6 +28,7 @@ class ChannelManager {
     private var browserSessionChannel: BrowserSessionChannel = BrowserSessionChannel()
     private var storageUsageChannel: StorageUsageChannel = StorageUsageChannel()
     private var codexAppServerChannel: CodexAppServerChannel = CodexAppServerChannel()
+    private var alpineFileSystemChannel: AlpineFileSystemChannel = AlpineFileSystemChannel()
     fun getUIRouterChannel(): UIRouterChannel {
         return uiRouterChannel
     }
@@ -55,6 +56,7 @@ class ChannelManager {
         browserSessionChannel.setChannel(flutterEngine)
         storageUsageChannel.setChannel(flutterEngine)
         codexAppServerChannel.setChannel(flutterEngine)
+        alpineFileSystemChannel.setChannel(flutterEngine)
     }
 
     fun onCreate(context: Context) {
@@ -72,6 +74,7 @@ class ChannelManager {
         overlayChannel.onCreate(context)
         storageUsageChannel.onCreate(context)
         codexAppServerChannel.onCreate(context)
+        alpineFileSystemChannel.onCreate(context)
     }
 
     fun clearChannel() {
@@ -93,6 +96,7 @@ class ChannelManager {
         browserSessionChannel.clear()
         storageUsageChannel.clear()
         codexAppServerChannel.clear()
+        alpineFileSystemChannel.clear()
     }
 
 
