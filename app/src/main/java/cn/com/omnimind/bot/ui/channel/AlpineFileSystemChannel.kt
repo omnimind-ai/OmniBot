@@ -74,7 +74,7 @@ class AlpineFileSystemChannel {
     }
 
     private fun MethodCall.requiredPath(): String {
-        return argument<String>("path")?.trim().orEmpty().also {
+        return argument<String>("path").orEmpty().also {
             require(it.isNotEmpty()) { "path is required" }
         }
     }

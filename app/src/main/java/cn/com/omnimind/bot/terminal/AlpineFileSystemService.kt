@@ -5,6 +5,8 @@ import com.ai.assistance.operit.terminal.TerminalManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.nio.ByteBuffer
+import java.nio.charset.CodingErrorAction
 import java.nio.charset.StandardCharsets
 import java.util.Base64
 import java.util.UUID
@@ -15,37 +17,7 @@ class AlpineFileSystemService(context: Context) {
 
     suspend fun list(path: String): Map<String, Any?> {
         val normalizedPath = normalizeAbsolutePath(path)
-        val command = """
-            set -eu
-            target=${shellQuote(normalizedPath)}
-            [ -d "${'$'}target" ]
-            find "${'$'}target" -mindepth 1 -maxdepth 1 -exec sh -c '
-              encode() { printf %s "${'$'}1" | base64 | tr -d "\n"; }
-              for item do
-                is_dir=0
-                is_file=0
-                is_link=0
-                [ -d "${'$'}item" ] && is_dir=1
-                [ -f "${'$'}item" ] && is_file=1
-                [ -L "${'$'}item" ] && is_link=1
-                size=${'$'}(stat -c %s -- "${'$'}item" 2>/dev/null || printf 0)
-                modified=${'$'}(stat -c %Y -- "${'$'}item" 2>/dev/null || printf 0)
-                mode=${'$'}(stat -c %a -- "${'$'}item" 2>/dev/null || printf "")
-                readable=0
-                writable=0
-                [ -r "${'$'}item" ] && readable=1
-                [ -w "${'$'}item" ] && writable=1
-                name=${'$'}{item##*/}
-                link_target=""
-                [ "${'$'}is_link" = 1 ] && link_target=${'$'}(readlink -- "${'$'}item" 2>/dev/null || true)
-                printf "%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n" \
-                  "${'$'}is_dir" "${'$'}is_file" "${'$'}is_link" "${'$'}size" \
-                  "${'$'}modified" "${'$'}mode" "${'$'}readable" "${'$'}writable" \
-                  "${'$'}(encode "${'$'}item")" "${'$'}(encode "${'$'}name")" \
-                  "${'$'}(encode "${'$'}link_target")"
-              done
-            ' sh {} +
-        """.trimIndent()
+        val command = buildListCommand(normalizedPath)
         val output = execute(command, "alpine-fs-list", LIST_TIMEOUT_MS)
         return mapOf(
             "path" to normalizedPath,
@@ -61,24 +33,37 @@ class AlpineFileSystemService(context: Context) {
             target=${shellQuote(normalizedPath)}
             [ -f "${'$'}target" ]
             size=${'$'}(stat -c %s -- "${'$'}target")
-            printf "%s\n" "${'$'}size"
+            is_link=0
+            writable=0
+            [ -L "${'$'}target" ] && is_link=1
+            [ -w "${'$'}target" ] && writable=1
+            printf "%s|%s|%s\n" "${'$'}size" "${'$'}is_link" "${'$'}writable"
             head -c $safeLimit -- "${'$'}target" | base64
         """.trimIndent()
         val output = execute(command, "alpine-fs-read", READ_TIMEOUT_MS)
         val firstBreak = output.indexOf('\n')
         require(firstBreak >= 0) { "Invalid Alpine file response." }
-        val size = output.substring(0, firstBreak).trim().toLongOrNull() ?: 0L
+        val metadata = output.substring(0, firstBreak).split('|', limit = 3)
+        require(metadata.size == 3) { "Invalid Alpine file metadata." }
+        val size = metadata[0].toLongOrNull() ?: 0L
+        val isLink = metadata[1] == "1"
+        val writable = metadata[2] == "1"
         val encoded = output.substring(firstBreak + 1).filterNot(Char::isWhitespace)
         val bytes = if (encoded.isEmpty()) {
             ByteArray(0)
         } else {
             Base64.getMimeDecoder().decode(encoded)
         }
+        val content = decodeEditableUtf8(bytes)
+        val truncated = size > safeLimit
         return mapOf(
             "path" to normalizedPath,
             "size" to size,
-            "truncated" to (size > safeLimit),
-            "content" to bytes.toString(StandardCharsets.UTF_8)
+            "truncated" to truncated,
+            "isLink" to isLink,
+            "binary" to (content == null),
+            "editable" to (content != null && writable && !isLink && !truncated),
+            "content" to content.orEmpty()
         )
     }
 
@@ -88,6 +73,7 @@ class AlpineFileSystemService(context: Context) {
         require(bytes.size <= MAX_WRITE_BYTES) {
             "Text files larger than $MAX_WRITE_BYTES bytes are not supported by the editor."
         }
+        ensureWriteTargetEditable(normalizedPath)
         val parent = parentPath(normalizedPath)
         val transferDir = File(appContext.cacheDir, "alpine-fs-transfer").apply { mkdirs() }
         val transferFile = File(transferDir, UUID.randomUUID().toString())
@@ -104,9 +90,8 @@ class AlpineFileSystemService(context: Context) {
                 [ -r "${'$'}source" ]
                 mkdir -p "${'$'}parent"
                 if [ -L "${'$'}target" ]; then
-                  cat -- "${'$'}source" > "${'$'}target"
-                  stat -c %s -- "${'$'}target"
-                  exit 0
+                  printf "Refusing to replace a symbolic link: %s\n" "${'$'}target" >&2
+                  exit 73
                 fi
                 temporary="${'$'}target.omnibot-tmp-${'$'}${'$'}"
                 mode=""
@@ -128,6 +113,47 @@ class AlpineFileSystemService(context: Context) {
             withContext(Dispatchers.IO) {
                 transferFile.delete()
             }
+        }
+    }
+
+    private suspend fun ensureWriteTargetEditable(path: String) {
+        val command = """
+            set -eu
+            target=${shellQuote(path)}
+            if [ -L "${'$'}target" ]; then
+              printf "Refusing to replace a symbolic link: %s\n" "${'$'}target" >&2
+              exit 73
+            fi
+            if [ ! -e "${'$'}target" ]; then
+              printf "new\n"
+              exit 0
+            fi
+            [ -f "${'$'}target" ]
+            size=${'$'}(stat -c %s -- "${'$'}target")
+            if [ "${'$'}size" -gt $MAX_WRITE_BYTES ]; then
+              printf "Existing file is too large for text editing: %s\n" "${'$'}target" >&2
+              exit 73
+            fi
+            printf "existing|%s\n" "${'$'}size"
+            base64 < "${'$'}target"
+        """.trimIndent()
+        val output = execute(command, "alpine-fs-write-check", READ_TIMEOUT_MS)
+        val firstBreak = output.indexOf('\n')
+        val header = if (firstBreak >= 0) output.substring(0, firstBreak) else output.trimEnd()
+        if (header == "new") return
+        require(header.startsWith("existing|")) { "Invalid Alpine write preflight response." }
+        val encoded = if (firstBreak >= 0) {
+            output.substring(firstBreak + 1).filterNot(Char::isWhitespace)
+        } else {
+            ""
+        }
+        val existingBytes = if (encoded.isEmpty()) {
+            ByteArray(0)
+        } else {
+            Base64.getMimeDecoder().decode(encoded)
+        }
+        require(decodeEditableUtf8(existingBytes) != null) {
+            "Existing file is not valid UTF-8 text."
         }
     }
 
@@ -159,12 +185,11 @@ class AlpineFileSystemService(context: Context) {
     suspend fun move(sourcePath: String, targetPath: String): Map<String, Any?> {
         val source = normalizeMutablePath(sourcePath)
         val target = normalizeMutablePath(targetPath)
+        if (source == target) {
+            return mapOf("sourcePath" to source, "path" to target)
+        }
         execute(
-            """
-                set -eu
-                mkdir -p -- ${shellQuote(parentPath(target))}
-                mv -- ${shellQuote(source)} ${shellQuote(target)}
-            """.trimIndent(),
+            buildMoveCommand(source, target),
             "alpine-fs-move",
             MUTATION_TIMEOUT_MS
         )
@@ -207,13 +232,12 @@ class AlpineFileSystemService(context: Context) {
         private const val MUTATION_TIMEOUT_MS = 30_000L
 
         internal fun normalizeAbsolutePath(path: String): String {
-            val trimmed = path.trim().replace('\\', '/')
-            require(trimmed.startsWith('/')) { "An absolute Alpine path is required." }
-            require('\u0000' !in trimmed && '\n' !in trimmed && '\r' !in trimmed) {
+            require(path.startsWith('/')) { "An absolute Alpine path is required." }
+            require('\u0000' !in path && '\n' !in path && '\r' !in path) {
                 "Invalid Alpine path."
             }
             val segments = ArrayDeque<String>()
-            trimmed.split('/').forEach { segment ->
+            path.split('/').forEach { segment ->
                 when (segment) {
                     "", "." -> Unit
                     ".." -> if (segments.isNotEmpty()) segments.removeLast()
@@ -221,6 +245,76 @@ class AlpineFileSystemService(context: Context) {
                 }
             }
             return if (segments.isEmpty()) "/" else segments.joinToString(prefix = "/", separator = "/")
+        }
+
+        internal fun decodeEditableUtf8(bytes: ByteArray): String? {
+            if (bytes.any { it == 0.toByte() }) return null
+            return runCatching {
+                StandardCharsets.UTF_8
+                    .newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(bytes))
+                    .toString()
+            }.getOrNull()
+        }
+
+        internal fun buildListCommand(path: String): String {
+            return """
+                set -eu
+                target=${shellQuote(normalizeAbsolutePath(path))}
+                [ -d "${'$'}target" ]
+                find -H "${'$'}target" -mindepth 1 -maxdepth 1 -exec sh -c '
+                  encode() { printf %s "${'$'}1" | base64 | tr -d "\n"; }
+                  for item do
+                    is_dir=0
+                    is_file=0
+                    is_link=0
+                    [ -d "${'$'}item" ] && is_dir=1
+                    [ -f "${'$'}item" ] && is_file=1
+                    [ -L "${'$'}item" ] && is_link=1
+                    size=${'$'}(stat -c %s -- "${'$'}item" 2>/dev/null || printf 0)
+                    modified=${'$'}(stat -c %Y -- "${'$'}item" 2>/dev/null || printf 0)
+                    mode=${'$'}(stat -c %a -- "${'$'}item" 2>/dev/null || printf "")
+                    readable=0
+                    writable=0
+                    [ -r "${'$'}item" ] && readable=1
+                    [ -w "${'$'}item" ] && writable=1
+                    name=${'$'}{item##*/}
+                    link_target=""
+                    [ "${'$'}is_link" = 1 ] && link_target=${'$'}(readlink -- "${'$'}item" 2>/dev/null || true)
+                    printf "%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n" \
+                      "${'$'}is_dir" "${'$'}is_file" "${'$'}is_link" "${'$'}size" \
+                      "${'$'}modified" "${'$'}mode" "${'$'}readable" "${'$'}writable" \
+                      "${'$'}(encode "${'$'}item")" "${'$'}(encode "${'$'}name")" \
+                      "${'$'}(encode "${'$'}link_target")"
+                  done
+                ' sh {} +
+            """.trimIndent()
+        }
+
+        internal fun buildMoveCommand(sourcePath: String, targetPath: String): String {
+            val source = normalizeMutablePath(sourcePath)
+            val target = normalizeMutablePath(targetPath)
+            return """
+                set -eu
+                source=${shellQuote(source)}
+                target=${shellQuote(target)}
+                if [ ! -e "${'$'}source" ] && [ ! -L "${'$'}source" ]; then
+                  printf "Source does not exist: %s\n" "${'$'}source" >&2
+                  exit 72
+                fi
+                if [ -e "${'$'}target" ] || [ -L "${'$'}target" ]; then
+                  printf "Target already exists: %s\n" "${'$'}target" >&2
+                  exit 73
+                fi
+                mkdir -p -- ${shellQuote(parentPath(target))}
+                mv -n -- "${'$'}source" "${'$'}target"
+                if [ -e "${'$'}source" ] || [ -L "${'$'}source" ]; then
+                  printf "Target already exists: %s\n" "${'$'}target" >&2
+                  exit 73
+                fi
+            """.trimIndent()
         }
 
         internal fun parseListOutput(output: String): List<Map<String, Any?>> {

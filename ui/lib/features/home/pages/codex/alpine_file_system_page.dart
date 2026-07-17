@@ -19,6 +19,7 @@ class _AlpineFileSystemPageState extends State<AlpineFileSystemPage> {
   List<AlpineFileEntry> _entries = const <AlpineFileEntry>[];
   bool _loading = true;
   String? _error;
+  int _loadGeneration = 0;
 
   bool get _isEnglish => Localizations.localeOf(context).languageCode == 'en';
   String _text({required String zh, required String en}) =>
@@ -27,30 +28,38 @@ class _AlpineFileSystemPageState extends State<AlpineFileSystemPage> {
   @override
   void initState() {
     super.initState();
-    _path = _normalizePath(widget.initialPath);
+    _path = AlpineFileSystemService.normalizePath(widget.initialPath);
     unawaited(_load());
   }
 
   Future<void> _load() async {
+    final requestedPath = _path;
+    final generation = ++_loadGeneration;
     setState(() {
       _loading = true;
       _error = null;
     });
     try {
-      final entries = await AlpineFileSystemService.list(_path);
-      if (!mounted) return;
+      final entries = await AlpineFileSystemService.list(requestedPath);
+      if (!mounted || generation != _loadGeneration || requestedPath != _path) {
+        return;
+      }
       setState(() {
         _entries = entries;
         _loading = false;
       });
     } on PlatformException catch (error) {
-      if (!mounted) return;
+      if (!mounted || generation != _loadGeneration || requestedPath != _path) {
+        return;
+      }
       setState(() {
         _loading = false;
         _error = error.message ?? error.code;
       });
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted || generation != _loadGeneration || requestedPath != _path) {
+        return;
+      }
       setState(() {
         _loading = false;
         _error = error.toString();
@@ -59,7 +68,8 @@ class _AlpineFileSystemPageState extends State<AlpineFileSystemPage> {
   }
 
   void _openDirectory(String path) {
-    setState(() => _path = _normalizePath(path));
+    final normalizedPath = AlpineFileSystemService.normalizePath(path);
+    setState(() => _path = normalizedPath);
     unawaited(_load());
   }
 
@@ -94,9 +104,15 @@ class _AlpineFileSystemPageState extends State<AlpineFileSystemPage> {
         ],
       ),
     );
-    controller.dispose();
-    if (selected == null || selected.trim().isEmpty || !mounted) return;
-    _openDirectory(selected);
+    WidgetsBinding.instance.addPostFrameCallback((_) => controller.dispose());
+    if (selected == null || selected.isEmpty || !mounted) return;
+    try {
+      _openDirectory(selected);
+    } on FormatException catch (error) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message)));
+    }
   }
 
   Future<void> _createEntry({required bool directory}) async {
@@ -106,7 +122,7 @@ class _AlpineFileSystemPageState extends State<AlpineFileSystemPage> {
           : _text(zh: '新建文件', en: 'New file'),
     );
     if (name == null) return;
-    final target = _joinPath(_path, name);
+    final target = AlpineFileSystemService.joinPath(_path, name);
     await _runMutation(() async {
       if (directory) {
         await AlpineFileSystemService.createDirectory(target);
@@ -123,7 +139,10 @@ class _AlpineFileSystemPageState extends State<AlpineFileSystemPage> {
     );
     if (name == null || name == entry.name) return;
     await _runMutation(
-      () => AlpineFileSystemService.move(entry.path, _joinPath(_path, name)),
+      () => AlpineFileSystemService.move(
+        entry.path,
+        AlpineFileSystemService.joinPath(_path, name),
+      ),
     );
   }
 
@@ -183,16 +202,11 @@ class _AlpineFileSystemPageState extends State<AlpineFileSystemPage> {
         ],
       ),
     );
-    controller.dispose();
-    final normalized = value?.trim();
-    if (normalized == null ||
-        normalized.isEmpty ||
-        normalized == '.' ||
-        normalized == '..' ||
-        normalized.contains('/')) {
+    WidgetsBinding.instance.addPostFrameCallback((_) => controller.dispose());
+    if (value == null || !AlpineFileSystemService.isValidEntryName(value)) {
       return null;
     }
-    return normalized;
+    return value;
   }
 
   Future<void> _runMutation(Future<void> Function() action) async {
@@ -410,22 +424,6 @@ class _AlpineFileSystemPageState extends State<AlpineFileSystemPage> {
     return parts.join(' · ');
   }
 
-  static String _normalizePath(String value) {
-    final parts = <String>[];
-    for (final segment in value.trim().replaceAll('\\', '/').split('/')) {
-      if (segment.isEmpty || segment == '.') continue;
-      if (segment == '..') {
-        if (parts.isNotEmpty) parts.removeLast();
-      } else {
-        parts.add(segment);
-      }
-    }
-    return parts.isEmpty ? '/' : '/${parts.join('/')}';
-  }
-
-  static String _joinPath(String parent, String name) =>
-      parent == '/' ? '/$name' : '$parent/$name';
-
   static String _formatBytes(int bytes) {
     if (bytes < 1024) return '$bytes B';
     if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
@@ -447,6 +445,9 @@ class _AlpineTextFilePageState extends State<_AlpineTextFilePage> {
   bool _loading = true;
   bool _saving = false;
   bool _truncated = false;
+  bool _editable = false;
+  bool _binary = false;
+  bool _isLink = false;
   String? _error;
 
   bool get _isEnglish => Localizations.localeOf(context).languageCode == 'en';
@@ -473,6 +474,9 @@ class _AlpineTextFilePageState extends State<_AlpineTextFilePage> {
       setState(() {
         _loading = false;
         _truncated = value.truncated;
+        _editable = value.editable;
+        _binary = value.binary;
+        _isLink = value.isLink;
       });
     } on PlatformException catch (error) {
       if (!mounted) return;
@@ -518,7 +522,7 @@ class _AlpineTextFilePageState extends State<_AlpineTextFilePage> {
           IconButton(
             key: const Key('alpine-fs-save-button'),
             tooltip: _text(zh: '保存', en: 'Save'),
-            onPressed: _loading || _saving || _truncated ? null : _save,
+            onPressed: _loading || _saving || !_editable ? null : _save,
             icon: _saving
                 ? const SizedBox(
                     width: 18,
@@ -550,11 +554,31 @@ class _AlpineTextFilePageState extends State<_AlpineTextFilePage> {
                     ),
                     actions: const <Widget>[SizedBox.shrink()],
                   ),
+                if (_binary)
+                  MaterialBanner(
+                    content: Text(
+                      _text(
+                        zh: '该文件不是有效 UTF-8 文本，已按只读方式打开。',
+                        en: 'This file is not valid UTF-8 text and is opened read-only.',
+                      ),
+                    ),
+                    actions: const <Widget>[SizedBox.shrink()],
+                  ),
+                if (_isLink)
+                  MaterialBanner(
+                    content: Text(
+                      _text(
+                        zh: '该路径是软链接，为避免覆盖链接目标，仅提供只读查看。',
+                        en: 'This path is a symbolic link and is read-only to protect its target.',
+                      ),
+                    ),
+                    actions: const <Widget>[SizedBox.shrink()],
+                  ),
                 Expanded(
                   child: TextField(
                     key: const Key('alpine-fs-editor'),
                     controller: _controller,
-                    readOnly: _truncated || !widget.entry.writable,
+                    readOnly: !_editable,
                     expands: true,
                     maxLines: null,
                     minLines: null,

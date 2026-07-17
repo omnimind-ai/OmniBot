@@ -50,12 +50,18 @@ class AlpineFileContent {
     required this.content,
     required this.size,
     required this.truncated,
+    required this.editable,
+    required this.binary,
+    required this.isLink,
   });
 
   final String path;
   final String content;
   final int size;
   final bool truncated;
+  final bool editable;
+  final bool binary;
+  final bool isLink;
 
   factory AlpineFileContent.fromMap(Map<dynamic, dynamic> map) {
     return AlpineFileContent(
@@ -63,6 +69,9 @@ class AlpineFileContent {
       content: (map['content'] ?? '').toString(),
       size: (map['size'] as num?)?.toInt() ?? 0,
       truncated: map['truncated'] == true,
+      editable: map['editable'] == true,
+      binary: map['binary'] == true,
+      isLink: map['isLink'] == true,
     );
   }
 }
@@ -131,5 +140,44 @@ class AlpineFileSystemService {
     await _channel.invokeMethod<Object?>('delete', <String, dynamic>{
       'path': path,
     });
+  }
+
+  static String normalizePath(String value) {
+    if (!value.startsWith('/')) {
+      throw const FormatException('An absolute Alpine path is required.');
+    }
+    if (value.contains('\u0000') ||
+        value.contains('\n') ||
+        value.contains('\r')) {
+      throw const FormatException('Invalid Alpine path.');
+    }
+    final parts = <String>[];
+    for (final segment in value.split('/')) {
+      if (segment.isEmpty || segment == '.') continue;
+      if (segment == '..') {
+        if (parts.isNotEmpty) parts.removeLast();
+      } else {
+        parts.add(segment);
+      }
+    }
+    return parts.isEmpty ? '/' : '/${parts.join('/')}';
+  }
+
+  static String joinPath(String parent, String name) {
+    final normalizedParent = normalizePath(parent);
+    if (!isValidEntryName(name)) {
+      throw const FormatException('Invalid Alpine file name.');
+    }
+    return normalizedParent == '/' ? '/$name' : '$normalizedParent/$name';
+  }
+
+  static bool isValidEntryName(String value) {
+    return value.isNotEmpty &&
+        value != '.' &&
+        value != '..' &&
+        !value.contains('/') &&
+        !value.contains('\u0000') &&
+        !value.contains('\n') &&
+        !value.contains('\r');
   }
 }
