@@ -136,9 +136,11 @@ object OkHttpManager {
     // 流式执行请求 - 协程方式，基于SSE实现
     suspend fun enqueueWithStream(request: Request, event: EventSourceListener): EventSource {
         val streamClient = OkHttpClient.Builder()
-            .connectTimeout(DEFAULT_TIMEOUT, TimeUnit.SECONDS)
-            .readTimeout(DEFAULT_TIMEOUT, TimeUnit.SECONDS)
-            .writeTimeout(DEFAULT_TIMEOUT, TimeUnit.SECONDS)
+            .connectTimeout(60, TimeUnit.SECONDS)
+            .readTimeout(120, TimeUnit.SECONDS)
+            .writeTimeout(60, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
+            .addInterceptor(cn.com.omnimind.baselib.http.interceptor.RetryInterceptor())
             .build()
 
         return EventSources.createFactory(streamClient)
