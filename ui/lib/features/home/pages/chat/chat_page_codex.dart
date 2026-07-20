@@ -565,6 +565,17 @@ mixin _ChatPageCodexMixin on _ChatPageStateBase {
         : _activateCodexPlanMode(dismissPanel: dismissPanel);
   }
 
+  void exitPlanMode() {
+    _deactivateCodexPlanMode();
+  }
+
+  void resetToNormalMode() {
+    if (_isCodexPlanMode(_activeCodexCollaborationMode)) {
+      exitPlanMode();
+    }
+    _messageController.clear();
+  }
+
   void _syncCodexCollaborationModeFromServer(String? mode) {
     final normalized = mode?.trim();
     if (normalized == null || normalized.isEmpty) {
