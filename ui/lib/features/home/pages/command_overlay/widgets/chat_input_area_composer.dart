@@ -158,6 +158,7 @@ mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
             widget.hasExternalSendPayload;
         return Row(
           children: [
+            const ModelSwitcher(),
             Expanded(child: _buildTextField()),
             const SizedBox(width: 9),
             _buildAnimatedButtonRow(

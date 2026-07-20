@@ -16,6 +16,7 @@ import 'package:ui/widgets/glass_popup.dart';
 import 'package:ui/widgets/image_preview_overlay.dart';
 import 'package:ui/widgets/omni_glass.dart';
 import 'package:ui/widgets/text_input_context_menu.dart';
+import 'model_switcher.dart';
 
 part 'chat_input_area_composer.dart';
 part 'chat_input_area_popup.dart';
