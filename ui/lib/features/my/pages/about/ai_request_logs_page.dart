@@ -635,7 +635,7 @@ class _AiRequestLogsPageState extends State<AiRequestLogsPage> {
         primary: true,
         actions: [
           IconButton(
-            onPressed: _loadLogs,
+            tooltip: \'Action\', onPressed: _loadLogs,
             icon: const Icon(Icons.refresh),
             tooltip: LegacyTextLocalizer.localize('刷新'),
           ),

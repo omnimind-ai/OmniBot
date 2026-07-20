@@ -314,7 +314,7 @@ class _ChatHistoryPageState extends State<ChatHistoryPage> {
         trailing: widget.archivedOnly
             ? _buildArchiveDateToggleButton()
             : IconButton(
-                icon: Icon(
+                tooltip: \'Action\', icon: Icon(
                   Icons.add,
                   color: context.isDarkTheme
                       ? palette.textSecondary

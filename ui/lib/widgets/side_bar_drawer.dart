@@ -475,7 +475,7 @@ class _SidebarDrawerState extends State<SidebarDrawer> {
       child: Align(
         alignment: Alignment.centerRight,
         child: IconButton(
-          icon: Icon(
+          tooltip: \'Action\', icon: Icon(
             Icons.settings_outlined,
             color: Colors.grey[600],
             size: 24,

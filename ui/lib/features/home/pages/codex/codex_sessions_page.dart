@@ -1013,7 +1013,7 @@ class _CodexSessionsPageState extends State<CodexSessionsPage> {
                 ),
               ),
               IconButton(
-                visualDensity: VisualDensity.compact,
+                tooltip: \'Action\', visualDensity: VisualDensity.compact,
                 constraints: const BoxConstraints.tightFor(
                   width: 28,
                   height: 28,
@@ -1287,7 +1287,7 @@ class _CodexSessionsPageState extends State<CodexSessionsPage> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : IconButton(
-                          visualDensity: VisualDensity.compact,
+                          tooltip: \'Action\', visualDensity: VisualDensity.compact,
                           constraints: const BoxConstraints.tightFor(
                             width: 34,
                             height: 34,

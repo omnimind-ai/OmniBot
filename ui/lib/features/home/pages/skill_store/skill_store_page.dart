@@ -266,7 +266,7 @@ class _SkillStorePageState extends State<SkillStorePage> {
             child: Tooltip(
               message: context.l10n.skillSyncOfficialTooltip,
               child: IconButton(
-                onPressed: _syncingOfficial ? null : _syncOfficialSkills,
+                tooltip: \'Action\', onPressed: _syncingOfficial ? null : _syncOfficialSkills,
                 icon: _syncingOfficial
                     ? SizedBox(
                         width: 18,

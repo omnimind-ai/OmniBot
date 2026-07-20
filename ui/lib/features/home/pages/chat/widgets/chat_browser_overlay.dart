@@ -932,7 +932,7 @@ class _ChatBrowserOverlayState extends State<ChatBrowserOverlay> {
                     overflow: TextOverflow.ellipsis,
                   ),
                   trailing: IconButton(
-                    onPressed: () async {
+                    tooltip: \'Action\', onPressed: () async {
                       Navigator.of(context).pop();
                       await _runCommand(
                         AgentBrowserSessionService.closeTab(tab.tabId),
@@ -1158,7 +1158,7 @@ class _ChatBrowserOverlayState extends State<ChatBrowserOverlay> {
                     overflow: TextOverflow.ellipsis,
                   ),
                   trailing: IconButton(
-                    onPressed: () async {
+                    tooltip: \'Action\', onPressed: () async {
                       Navigator.of(context).pop();
                       await _runCommand(
                         AgentBrowserSessionService.removeBookmark(entry.url),
@@ -1466,14 +1466,14 @@ class _ChatBrowserOverlayState extends State<ChatBrowserOverlay> {
         mainAxisSize: MainAxisSize.min,
         children: [
           IconButton(
-            onPressed: () => _runCommand(
+            tooltip: \'Action\', onPressed: () => _runCommand(
               AgentBrowserSessionService.checkUserscriptUpdate(script.id),
             ),
             icon: const Icon(Icons.system_update_alt_rounded),
             tooltip: _text('检查更新', 'Check update'),
           ),
           IconButton(
-            onPressed: () => _runCommand(
+            tooltip: \'Action\', onPressed: () => _runCommand(
               AgentBrowserSessionService.deleteUserscript(script.id),
             ),
             icon: const Icon(Icons.delete_outline_rounded),

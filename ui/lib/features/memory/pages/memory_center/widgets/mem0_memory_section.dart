@@ -157,7 +157,7 @@ class _Mem0MemorySectionState extends State<Mem0MemorySection> {
         const Spacer(),
         if (widget.snapshot.configured || widget.snapshot.hasData)
           IconButton(
-            onPressed: widget.isMutating ? null : widget.onAddTap,
+            tooltip: \'Action\', onPressed: widget.isMutating ? null : widget.onAddTap,
             icon: const Icon(
               Icons.add_circle_outline_rounded,
               color: AppColors.buttonPrimary,
@@ -170,7 +170,7 @@ class _Mem0MemorySectionState extends State<Mem0MemorySection> {
           ),
         if (widget.snapshot.configured || widget.snapshot.hasData)
           IconButton(
-            onPressed: widget.isMutating || widget.onRefresh == null
+            tooltip: \'Action\', onPressed: widget.isMutating || widget.onRefresh == null
                 ? null
                 : () async {
                     await widget.onRefresh!.call();

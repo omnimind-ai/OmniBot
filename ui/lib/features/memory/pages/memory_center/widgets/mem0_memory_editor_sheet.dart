@@ -125,7 +125,7 @@ class _Mem0MemoryEditorSheetState extends State<Mem0MemoryEditorSheet> {
                           ),
                         ),
                         IconButton(
-                          onPressed: () => Navigator.of(context).pop(),
+                          tooltip: \'Action\', onPressed: () => Navigator.of(context).pop(),
                           icon: const Icon(
                             Icons.close_rounded,
                             color: AppColors.text70,

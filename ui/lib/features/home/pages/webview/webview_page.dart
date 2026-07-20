@@ -294,7 +294,7 @@ class _WebViewPageState extends State<WebViewPage> {
                 onBackPressed: _handleAppBarBackPress,
                 trailing: widget.showRefreshButton
                     ? IconButton(
-                        icon: const Icon(Icons.refresh),
+                        tooltip: \'Action\', icon: const Icon(Icons.refresh),
                         onPressed: _reload,
                         tooltip: '刷新',
                       )

@@ -1030,7 +1030,7 @@ class _CodexSettingPageState extends State<CodexSettingPage> {
                               ),
                             ),
                             IconButton(
-                              key: const Key('codex-config-refresh-button'),
+                              tooltip: \'Action\', key: const Key('codex-config-refresh-button'),
                               visualDensity: VisualDensity.compact,
                               constraints: const BoxConstraints.tightFor(
                                 width: 28,

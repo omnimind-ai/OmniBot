@@ -646,7 +646,7 @@ class _RuntimeLogsPageState extends State<RuntimeLogsPage> {
           ),
         ),
         IconButton(
-          onPressed: _exportLogs,
+          tooltip: \'Action\', onPressed: _exportLogs,
           icon: const Icon(Icons.content_copy_rounded),
           tooltip: LegacyTextLocalizer.localize('导出运行日志'),
           color: palette.textPrimary,
@@ -671,13 +671,13 @@ class _RuntimeLogsPageState extends State<RuntimeLogsPage> {
         primary: true,
         actions: [
           IconButton(
-            onPressed: _loadLogs,
+            tooltip: \'Action\', onPressed: _loadLogs,
             icon: const Icon(Icons.refresh),
             tooltip: LegacyTextLocalizer.localize('刷新'),
           ),
           if (_logs.isNotEmpty)
             IconButton(
-              onPressed: _clearLogs,
+              tooltip: \'Action\', onPressed: _clearLogs,
               icon: const Icon(Icons.delete_outline),
               tooltip: LegacyTextLocalizer.localize('清除'),
             ),

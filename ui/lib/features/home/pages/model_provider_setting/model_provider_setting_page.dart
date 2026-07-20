@@ -3013,7 +3013,7 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
                             label: 'API Key',
                             hint: 'e.g., sk-xxxx',
                             suffixIcon: IconButton(
-                              splashRadius: 18,
+                              tooltip: \'Action\', splashRadius: 18,
                               onPressed: () {
                                 setState(() {
                                   _obscureApiKey = !_obscureApiKey;

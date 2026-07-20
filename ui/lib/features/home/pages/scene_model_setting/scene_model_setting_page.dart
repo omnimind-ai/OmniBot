@@ -1148,7 +1148,7 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
                     Expanded(child: _buildSceneLabel(scene)),
                     const SizedBox(width: 6),
                     IconButton(
-                      key: const Key('voice-scene-expand-button'),
+                      tooltip: \'Action\', key: const Key('voice-scene-expand-button'),
                       visualDensity: VisualDensity.compact,
                       padding: EdgeInsets.zero,
                       constraints: const BoxConstraints.tightFor(

@@ -1444,7 +1444,7 @@ class MessageBubble extends StatelessWidget {
           ),
         };
         return IconButton(
-          visualDensity: VisualDensity.compact,
+          tooltip: \'Action\', visualDensity: VisualDensity.compact,
           padding: EdgeInsets.zero,
           constraints: const BoxConstraints.tightFor(width: 22, height: 22),
           splashRadius: 12,

@@ -865,7 +865,7 @@ class _OmnibotVideoSurfaceState extends State<_OmnibotVideoSurface> {
                               ),
                               const SizedBox(width: 2),
                               IconButton(
-                                onPressed: widget.onFullscreenPressed,
+                                tooltip: \'Action\', onPressed: widget.onFullscreenPressed,
                                 icon: Icon(
                                   widget.fullscreenButtonIcon,
                                   color: Colors.white,

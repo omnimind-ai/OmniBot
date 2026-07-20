@@ -333,7 +333,7 @@ mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
 
   Widget _buildLargeAddButton() {
     return IconButton(
-      padding: EdgeInsets.zero,
+      tooltip: \'Action\', padding: EdgeInsets.zero,
       iconSize: 20,
       icon: _addSvg,
       onPressed: () {
@@ -357,7 +357,7 @@ mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
 
   Widget _buildSlashTriggerButton({required double iconSize}) {
     return IconButton(
-      key: const ValueKey('chat-input-trigger-slash-button'),
+      tooltip: \'Action\', key: const ValueKey('chat-input-trigger-slash-button'),
       padding: EdgeInsets.zero,
       iconSize: iconSize,
       icon: _commandSvg,
@@ -385,7 +385,7 @@ mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
       curve: _buttonAnimationCurve,
       opacity: canTap ? 1 : 0.38,
       child: IconButton(
-        key: const ValueKey('chat-input-send-or-stop-button'),
+        tooltip: \'Action\', key: const ValueKey('chat-input-send-or-stop-button'),
         padding: EdgeInsets.zero,
         iconSize: 20,
         icon: AnimatedSwitcher(
@@ -1352,7 +1352,7 @@ mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
         width: 24,
         height: 24,
         child: IconButton(
-          padding: EdgeInsets.zero,
+          tooltip: \'Action\', padding: EdgeInsets.zero,
           iconSize: 20,
           icon: AnimatedSwitcher(
             duration: _buttonAnimationDuration,
@@ -1423,7 +1423,7 @@ mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
       width: 24,
       height: 24,
       child: IconButton(
-        padding: EdgeInsets.zero,
+        tooltip: \'Action\', padding: EdgeInsets.zero,
         iconSize: 20,
         icon: AnimatedSwitcher(
           duration: _buttonAnimationDuration,

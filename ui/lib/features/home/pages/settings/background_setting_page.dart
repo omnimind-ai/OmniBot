@@ -2167,7 +2167,7 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
                   Tooltip(
                     message: context.trLegacy('刷新'),
                     child: IconButton(
-                      onPressed: _petBusy ? null : _refreshPetOptions,
+                      tooltip: \'Action\', onPressed: _petBusy ? null : _refreshPetOptions,
                       icon: const Icon(Icons.refresh_rounded),
                       color: palette.textSecondary,
                     ),
