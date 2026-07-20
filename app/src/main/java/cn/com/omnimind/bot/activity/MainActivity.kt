@@ -85,9 +85,19 @@ class MainActivity : FlutterActivity() {
         }
         if (savedInstanceState == null) {
             prepareEmbeddedTerminalOnFirstLaunchIfNeeded()
+            requestNotificationPermission()
         }
 
         OmniLog.d(TAG, "MainActivity onCreate total cost: ${System.currentTimeMillis() - mainActivityStart}ms")
+    }
+
+    private fun requestNotificationPermission() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            requestPermissions(arrayOf(
+                android.Manifest.permission.POST_NOTIFICATIONS,
+                "android.permission.READ_NOTIFICATION"
+            ), 1001)
+        }
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
