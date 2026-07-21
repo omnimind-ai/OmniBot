@@ -291,6 +291,74 @@ void main() {
     expect(find.textContaining('Target already exists'), findsOneWidget);
     expect(calls.where((call) => call.method == 'list').length, 1);
   });
+
+  testWidgets(
+    'disables invalid UTF-8 paths without aliasing replacement-character names',
+    (tester) async {
+      final calls = <MethodCall>[];
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        calls.add(call);
+        if (call.method == 'read') {
+          return <String, dynamic>{
+            'path': '/root/\uFFFD',
+            'content': 'literal replacement character',
+            'size': 29,
+            'truncated': false,
+            'editable': true,
+            'binary': false,
+            'isLink': false,
+          };
+        }
+        return <String, dynamic>{
+          'path': '/root',
+          'entries': <Map<String, dynamic>>[
+            _entry(
+              path: '',
+              name: '',
+              directory: false,
+              pathToken: 'L3Jvb3Qv/w==',
+              nameToken: '/w==',
+              hasValidUtf8Path: false,
+            ),
+            _entry(path: '/root/\uFFFD', name: '\uFFFD', directory: false),
+          ],
+        };
+      });
+
+      await tester.pumpWidget(
+        const MaterialApp(home: AlpineFileSystemPage(initialPath: '/root')),
+      );
+      await tester.pumpAndSettle();
+
+      final invalidEntry = find.byKey(
+        const ValueKey('alpine-fs-entry-L3Jvb3Qv/w=='),
+      );
+      expect(
+        find.descendant(
+          of: invalidEntry,
+          matching: find.textContaining('Non-UTF-8 filename'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: invalidEntry,
+          matching: find.byType(PopupMenuButton<String>),
+        ),
+        findsNothing,
+      );
+
+      await tester.tap(invalidEntry);
+      await tester.pumpAndSettle();
+      expect(calls.where((call) => call.method == 'read'), isEmpty);
+
+      await tester.tap(find.text('\uFFFD'));
+      await tester.pumpAndSettle();
+      final readCall = calls.singleWhere((call) => call.method == 'read');
+      expect((readCall.arguments as Map)['path'], '/root/\uFFFD');
+      expect(find.text('literal replacement character'), findsOneWidget);
+    },
+  );
 }
 
 Map<String, dynamic> _entry({
@@ -299,6 +367,9 @@ Map<String, dynamic> _entry({
   required bool directory,
   bool isLink = false,
   String linkTarget = '',
+  String? pathToken,
+  String nameToken = '',
+  bool hasValidUtf8Path = true,
 }) {
   return <String, dynamic>{
     'path': path,
@@ -312,5 +383,8 @@ Map<String, dynamic> _entry({
     'readable': true,
     'writable': true,
     'linkTarget': linkTarget,
+    'pathToken': pathToken ?? path,
+    'nameToken': nameToken,
+    'hasValidUtf8Path': hasValidUtf8Path,
   };
 }

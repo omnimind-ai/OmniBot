@@ -13,6 +13,9 @@ class AlpineFileEntry {
     required this.readable,
     required this.writable,
     required this.linkTarget,
+    required this.pathToken,
+    required this.nameToken,
+    required this.hasValidUtf8Path,
   });
 
   final String path;
@@ -26,6 +29,11 @@ class AlpineFileEntry {
   final bool readable;
   final bool writable;
   final String linkTarget;
+  final String pathToken;
+  final String nameToken;
+  final bool hasValidUtf8Path;
+
+  String get entryId => hasValidUtf8Path ? path : pathToken;
 
   factory AlpineFileEntry.fromMap(Map<dynamic, dynamic> map) {
     return AlpineFileEntry(
@@ -40,6 +48,9 @@ class AlpineFileEntry {
       readable: map['readable'] == true,
       writable: map['writable'] == true,
       linkTarget: (map['linkTarget'] ?? '').toString(),
+      pathToken: (map['pathToken'] ?? map['path'] ?? '').toString(),
+      nameToken: (map['nameToken'] ?? '').toString(),
+      hasValidUtf8Path: map['hasValidUtf8Path'] != false,
     );
   }
 }

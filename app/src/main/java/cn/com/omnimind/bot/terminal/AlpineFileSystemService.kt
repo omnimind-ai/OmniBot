@@ -169,13 +169,8 @@ class AlpineFileSystemService(context: Context) {
 
     suspend fun createFile(path: String): Map<String, Any?> {
         val normalizedPath = normalizeMutablePath(path)
-        val parent = parentPath(normalizedPath)
         execute(
-            """
-                set -eu
-                mkdir -p -- ${shellQuote(parent)}
-                [ -e ${shellQuote(normalizedPath)} ] || : > ${shellQuote(normalizedPath)}
-            """.trimIndent(),
+            buildCreateFileCommand(normalizedPath),
             "alpine-fs-touch",
             MUTATION_TIMEOUT_MS
         )
@@ -249,6 +244,10 @@ class AlpineFileSystemService(context: Context) {
 
         internal fun decodeEditableUtf8(bytes: ByteArray): String? {
             if (bytes.any { it == 0.toByte() }) return null
+            return decodeStrictUtf8(bytes)
+        }
+
+        private fun decodeStrictUtf8(bytes: ByteArray): String? {
             return runCatching {
                 StandardCharsets.UTF_8
                     .newDecoder()
@@ -293,6 +292,23 @@ class AlpineFileSystemService(context: Context) {
             """.trimIndent()
         }
 
+        internal fun buildCreateFileCommand(path: String): String {
+            val target = normalizeMutablePath(path)
+            return """
+                set -eu
+                target=${shellQuote(target)}
+                mkdir -p -- ${shellQuote(parentPath(target))}
+                if [ -e "${'$'}target" ] || [ -L "${'$'}target" ]; then
+                  printf "Target already exists: %s\n" "${'$'}target" >&2
+                  exit 73
+                fi
+                (
+                  set -C
+                  : > "${'$'}target"
+                )
+            """.trimIndent()
+        }
+
         internal fun buildMoveCommand(sourcePath: String, targetPath: String): String {
             val source = normalizeMutablePath(sourcePath)
             val target = normalizeMutablePath(targetPath)
@@ -324,6 +340,9 @@ class AlpineFileSystemService(context: Context) {
                 .mapNotNull { line ->
                     val fields = line.split('|', limit = 11)
                     if (fields.size != 11) return@mapNotNull null
+                    val path = decodeField(fields[8])
+                    val name = decodeField(fields[9])
+                    val hasValidUtf8Path = path != null && name != null
                     mapOf(
                         "isDirectory" to (fields[0] == "1"),
                         "isFile" to (fields[1] == "1"),
@@ -331,11 +350,14 @@ class AlpineFileSystemService(context: Context) {
                         "size" to (fields[3].toLongOrNull() ?: 0L),
                         "modifiedAt" to (fields[4].toLongOrNull() ?: 0L),
                         "mode" to fields[5],
-                        "readable" to (fields[6] == "1"),
-                        "writable" to (fields[7] == "1"),
-                        "path" to decodeField(fields[8]),
-                        "name" to decodeField(fields[9]),
-                        "linkTarget" to decodeField(fields[10])
+                        "readable" to (hasValidUtf8Path && fields[6] == "1"),
+                        "writable" to (hasValidUtf8Path && fields[7] == "1"),
+                        "path" to path.orEmpty(),
+                        "name" to name.orEmpty(),
+                        "pathToken" to fields[8],
+                        "nameToken" to fields[9],
+                        "hasValidUtf8Path" to hasValidUtf8Path,
+                        "linkTarget" to decodeField(fields[10]).orEmpty()
                     )
                 }
                 .toList()
@@ -353,11 +375,11 @@ class AlpineFileSystemService(context: Context) {
             return if (separator <= 0) "/" else normalized.substring(0, separator)
         }
 
-        private fun decodeField(value: String): String {
+        private fun decodeField(value: String): String? {
             if (value.isEmpty()) return ""
             return runCatching {
-                Base64.getDecoder().decode(value).toString(StandardCharsets.UTF_8)
-            }.getOrDefault("")
+                Base64.getDecoder().decode(value)
+            }.getOrNull()?.let(::decodeStrictUtf8)
         }
 
         private fun shellQuote(value: String): String {

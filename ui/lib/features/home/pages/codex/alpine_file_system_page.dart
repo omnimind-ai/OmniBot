@@ -361,7 +361,7 @@ class _AlpineFileSystemPageState extends State<AlpineFileSystemPage> {
         itemBuilder: (context, index) {
           final entry = _entries[index];
           return ListTile(
-            key: ValueKey('alpine-fs-entry-${entry.path}'),
+            key: ValueKey('alpine-fs-entry-${entry.entryId}'),
             leading: Icon(
               entry.isDirectory
                   ? Icons.folder_rounded
@@ -370,7 +370,12 @@ class _AlpineFileSystemPageState extends State<AlpineFileSystemPage> {
                   : Icons.insert_drive_file_outlined,
             ),
             title: Text(
-              entry.name,
+              entry.hasValidUtf8Path
+                  ? entry.name
+                  : _text(
+                      zh: '非 UTF-8 文件名（${entry.nameToken}）',
+                      en: 'Non-UTF-8 filename (${entry.nameToken})',
+                    ),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
@@ -379,36 +384,46 @@ class _AlpineFileSystemPageState extends State<AlpineFileSystemPage> {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
-            onTap: entry.isDirectory
+            onTap: !entry.hasValidUtf8Path
+                ? null
+                : entry.isDirectory
                 ? () => _openDirectory(entry.path)
                 : entry.readable
                 ? () => unawaited(_openFile(entry))
                 : null,
-            trailing: PopupMenuButton<String>(
-              onSelected: (value) {
-                if (value == 'copy') {
-                  Clipboard.setData(ClipboardData(text: entry.path));
-                } else if (value == 'rename') {
-                  unawaited(_rename(entry));
-                } else if (value == 'delete') {
-                  unawaited(_delete(entry));
-                }
-              },
-              itemBuilder: (context) => [
-                PopupMenuItem(
-                  value: 'copy',
-                  child: Text(_text(zh: '复制路径', en: 'Copy path')),
-                ),
-                PopupMenuItem(
-                  value: 'rename',
-                  child: Text(_text(zh: '重命名', en: 'Rename')),
-                ),
-                PopupMenuItem(
-                  value: 'delete',
-                  child: Text(_text(zh: '删除', en: 'Delete')),
-                ),
-              ],
-            ),
+            trailing: entry.hasValidUtf8Path
+                ? PopupMenuButton<String>(
+                    onSelected: (value) {
+                      if (value == 'copy') {
+                        Clipboard.setData(ClipboardData(text: entry.path));
+                      } else if (value == 'rename') {
+                        unawaited(_rename(entry));
+                      } else if (value == 'delete') {
+                        unawaited(_delete(entry));
+                      }
+                    },
+                    itemBuilder: (context) => [
+                      PopupMenuItem(
+                        value: 'copy',
+                        child: Text(_text(zh: '复制路径', en: 'Copy path')),
+                      ),
+                      PopupMenuItem(
+                        value: 'rename',
+                        child: Text(_text(zh: '重命名', en: 'Rename')),
+                      ),
+                      PopupMenuItem(
+                        value: 'delete',
+                        child: Text(_text(zh: '删除', en: 'Delete')),
+                      ),
+                    ],
+                  )
+                : Tooltip(
+                    message: _text(
+                      zh: '文件名不是有效 UTF-8，已禁用文件操作',
+                      en: 'File operations are disabled for non-UTF-8 names',
+                    ),
+                    child: const Icon(Icons.block_rounded),
+                  ),
           );
         },
       ),
@@ -417,6 +432,8 @@ class _AlpineFileSystemPageState extends State<AlpineFileSystemPage> {
 
   String _entrySubtitle(AlpineFileEntry entry) {
     final parts = <String>[
+      if (!entry.hasValidUtf8Path)
+        _text(zh: '文件操作已禁用', en: 'File operations disabled'),
       if (entry.mode.isNotEmpty) entry.mode,
       if (!entry.isDirectory) _formatBytes(entry.size),
       if (entry.isLink && entry.linkTarget.isNotEmpty) '→ ${entry.linkTarget}',
