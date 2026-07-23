@@ -401,26 +401,47 @@ class _SidebarDrawerState extends State<SidebarDrawer> {
     );
 
     if (!mounted) return;
-    final normalizedTitle = newTitle?.trim();
+    var normalizedTitle = newTitle?.trim();
     if (normalizedTitle == null || normalizedTitle.isEmpty) {
-      return;
+      normalizedTitle = 'Untitled Conversation';
     }
+    // Keep a copy of the original conversation for possible rollback
+    final originalConversation = conversation;
+    final now = DateTime.now().millisecondsSinceEpoch;
 
-    final success = await ConversationService.updateConversationTitle(
-      conversationId: conversation.id,
-      newTitle: normalizedTitle,
-      mode: conversation.mode,
-    );
-    if (!mounted || !success) return;
-
+    // Optimistically update UI
     setState(() {
-      final index = conversations.indexWhere(
-        (c) => c.threadKey == conversation.threadKey,
-      );
-      if (index != -1) {
-        conversations[index] = conversation.copyWith(title: normalizedTitle);
+      final idx = conversations.indexWhere((c) => c.threadKey == conversation.threadKey);
+      if (idx != -1) {
+        conversations[idx] = conversation.copyWith(
+          title: normalizedTitle,
+          updatedAt: now,
+        );
+        conversations.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
       }
     });
+
+    // Persist the change in the background
+    final persisted = await ConversationService.updateConversation(
+      conversation.copyWith(
+        title: normalizedTitle,
+        updatedAt: now,
+      ),
+    );
+    if (!mounted) return;
+    if (!persisted) {
+      // Revert UI on failure
+      setState(() {
+        final idx = conversations.indexWhere((c) => c.threadKey == originalConversation.threadKey);
+        if (idx != -1) {
+          conversations[idx] = originalConversation;
+          conversations.sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+        }
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Rename failed – please try again')),
+      );
+    }
   }
 
   void _deleteConversation(ConversationModel conversation) async {
