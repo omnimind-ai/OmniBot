@@ -29,6 +29,7 @@ class AgentScheduleBridgeService {
                   raw['subagentParentConversationMode'])
               ?.toString(),
       subagentPrompt: subagentPrompt,
+      subagentModelId: raw['subagentModelId']?.toString(),
       notificationEnabled: raw['notificationEnabled'] != false,
       type: type,
       fixedTime: type == ScheduledTaskType.fixedTime
@@ -119,6 +120,9 @@ class AgentScheduleBridgeService {
           ? raw['parentConversationMode']?.toString()
           : existing.parentConversationMode,
       subagentPrompt: subagentPrompt,
+      subagentModelId: raw.containsKey('subagentModelId')
+          ? raw['subagentModelId']?.toString()
+          : existing.subagentModelId,
       notificationEnabled: raw.containsKey('notificationEnabled')
           ? raw['notificationEnabled'] == true
           : existing.notificationEnabled,

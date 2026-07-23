@@ -57,6 +57,9 @@ class ScheduledTask {
   /// 下次执行时间（毫秒时间戳）
   final int? nextExecutionTime;
 
+  /// 独立配置的模型ID
+  final String? subagentModelId;
+
   ScheduledTask({
     required this.id,
     required this.title,
@@ -65,6 +68,7 @@ class ScheduledTask {
     this.parentConversationId,
     this.parentConversationMode,
     this.subagentPrompt,
+    this.subagentModelId,
     this.notificationEnabled = true,
     required this.type,
     this.fixedTime,
@@ -89,6 +93,7 @@ class ScheduledTask {
               ?.toString(),
       parentConversationMode: json['parentConversationMode'] as String?,
       subagentPrompt: json['subagentPrompt'] as String?,
+      subagentModelId: json['subagentModelId'] as String?,
       notificationEnabled: json['notificationEnabled'] as bool? ?? true,
       type: ScheduledTaskType.values.firstWhere(
         (e) => e.name == json['type'],
@@ -113,6 +118,7 @@ class ScheduledTask {
       'parentConversationId': parentConversationId,
       'parentConversationMode': parentConversationMode,
       'subagentPrompt': subagentPrompt,
+      'subagentModelId': subagentModelId,
       'notificationEnabled': notificationEnabled,
       'type': type.name,
       'fixedTime': fixedTime,
@@ -133,6 +139,7 @@ class ScheduledTask {
     String? parentConversationId,
     String? parentConversationMode,
     String? subagentPrompt,
+    String? subagentModelId,
     bool? notificationEnabled,
     ScheduledTaskType? type,
     String? fixedTime,
@@ -152,6 +159,7 @@ class ScheduledTask {
       parentConversationMode:
           parentConversationMode ?? this.parentConversationMode,
       subagentPrompt: subagentPrompt ?? this.subagentPrompt,
+      subagentModelId: subagentModelId ?? this.subagentModelId,
       notificationEnabled: notificationEnabled ?? this.notificationEnabled,
       type: type ?? this.type,
       fixedTime: fixedTime ?? this.fixedTime,

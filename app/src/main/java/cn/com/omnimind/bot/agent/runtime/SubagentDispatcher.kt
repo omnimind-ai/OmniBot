@@ -45,7 +45,8 @@ class SubagentDispatcher(
     data class SubagentTaskSpec(
         val profileId: String,
         val instruction: String,
-        val budgetRounds: Int? = null
+        val budgetRounds: Int? = null,
+        val modelId: String? = null
     )
 
     data class SubagentRunResult(
@@ -177,7 +178,7 @@ class SubagentDispatcher(
                 toolRegistry = filteredCatalog,
                 toolRouter = toolExecutorProvider(),
                 eventAdapter = eventAdapter,
-                model = model,
+                model = spec.modelId ?: model,
                 toolImageContinuationPolicy = toolImageContinuationPolicy
             )
             val result = orchestrator.run(
