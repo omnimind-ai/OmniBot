@@ -167,11 +167,19 @@ class _StreamingTextState extends State<StreamingText> {
       return _wrapSelectable(child);
     }
 
+    Widget content;
     if (widget.enableMarkdown) {
-      return _buildMarkdownContent();
+      content = _buildMarkdownContent();
+    } else {
+      content = _buildPlainAnimatedContent();
     }
 
-    return _buildPlainAnimatedContent();
+    return AnimatedSize(
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOutCubic,
+      alignment: Alignment.topCenter,
+      child: content,
+    );
   }
 
   // ── Markdown 路径 ──
