@@ -1,10 +1,97 @@
 package cn.com.omnimind.bot.update
 
+import kotlinx.coroutines.runBlocking
+import org.json.JSONArray
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AppUpdateManagerTest {
+    @Test
+    fun updateCheckCoordinatorSharesOneFlightPerGeneration() = runBlocking {
+        val coordinator = AppUpdateCheckCoordinator()
+        val leader = coordinator.acquire(force = true)
+        val follower = coordinator.acquire(force = false)
+        val state = AppUpdateState(
+            currentVersion = "1.0.0",
+            latestVersion = "1.1.0",
+            hasUpdate = true,
+            checkedAt = 1L,
+            publishedAt = 2L,
+            releaseUrl = "https://example.test/release",
+            releaseNotes = "",
+            apkName = "OpenOmniBot-v1.1.0-standard.apk",
+            apkDownloadUrl = "https://example.test/app.apk",
+            apkSha256 = "a".repeat(64)
+        )
+
+        assertTrue(leader.isLeader)
+        assertFalse(follower.isLeader)
+        assertSame(leader.completion, follower.completion)
+
+        coordinator.complete(leader, Result.success(state))
+
+        assertEquals(state, coordinator.await(follower))
+        assertTrue(coordinator.acquire(force = false).isLeader)
+    }
+
+    @Test
+    fun updateCheckCoordinatorRejectsLateResultAfterConfigurationChange() {
+        val coordinator = AppUpdateCheckCoordinator()
+        val oldLease = coordinator.acquire(force = false)
+        var oldResultApplied = false
+
+        coordinator.invalidate()
+        val newLease = coordinator.acquire(force = false)
+
+        assertFalse(
+            coordinator.applyIfCurrent(oldLease) {
+                oldResultApplied = true
+            }
+        )
+        assertFalse(oldResultApplied)
+        assertTrue(newLease.isLeader)
+        assertTrue(coordinator.applyIfCurrent(newLease) {})
+    }
+
+    @Test
+    fun forcedCheckSupersedesPassiveInFlightCheck() {
+        val coordinator = AppUpdateCheckCoordinator()
+        val passive = coordinator.acquire(force = false)
+        val forced = coordinator.acquire(force = true)
+
+        assertTrue(passive.isLeader)
+        assertTrue(forced.isLeader)
+        assertFalse(coordinator.applyIfCurrent(passive) {})
+        assertTrue(coordinator.applyIfCurrent(forced) {})
+    }
+
+    @Test
+    fun selfUpdateIsLimitedToExplicitlyEnabledStandardDistribution() {
+        assertTrue(
+            AppUpdateManager.isSelfUpdateEnabledForDistribution(
+                edition = "standard",
+                enabled = true
+            )
+        )
+        assertFalse(
+            AppUpdateManager.isSelfUpdateEnabledForDistribution(
+                edition = "play",
+                enabled = true
+            )
+        )
+        assertFalse(
+            AppUpdateManager.isSelfUpdateEnabledForDistribution(
+                edition = "standard",
+                enabled = false
+            )
+        )
+    }
+
     @Test
     fun normalizeVersionStripsLeadingV() {
         assertEquals("0.0.1", AppUpdateManager.normalizeVersion("v0.0.1"))
@@ -158,7 +245,7 @@ class AppUpdateManagerTest {
     }
 
     @Test
-    fun buildWorkerCheckUrlAppendsNonBlankDeviceStatsParameters() {
+    fun buildWorkerCheckUrlOnlyAppendsAllowedOptionalStatistic() {
         val url = AppUpdateManager.buildWorkerCheckUrl(
             workerUrl = "https://updates.example.workers.dev",
             currentVersion = "1.6.1",
@@ -175,12 +262,205 @@ class AppUpdateManagerTest {
             )
         )
 
-        assertEquals("OPPO", url?.queryParameter("deviceBrand"))
-        assertEquals("PJD110", url?.queryParameter("deviceModel"))
-        assertEquals("15", url?.queryParameter("osVersion"))
-        assertEquals("35", url?.queryParameter("sdkInt"))
+        assertNull(url?.queryParameter("deviceBrand"))
+        assertNull(url?.queryParameter("deviceModel"))
+        assertNull(url?.queryParameter("osVersion"))
+        assertNull(url?.queryParameter("sdkInt"))
         assertEquals("11111111-2222-3333-4444-555555555555", url?.queryParameter("installId"))
-        assertEquals(null, url?.queryParameter("blankValueIsSkipped"))
+        assertNull(url?.queryParameter("blankValueIsSkipped"))
+    }
+
+    @Test
+    fun workerResponseRejectsNonMatchingEditionEvenWithGenericApk() {
+        val payload = JSONObject()
+            .put("version", "1.1.0")
+            .put("track", "stable")
+            .put("edition", "enterprise")
+            .put("apkName", "OpenOmniBot-v1.1.0.apk")
+            .put("downloadUrl", "https://updates.example.test/app.apk")
+            .put("sha256", "a".repeat(64))
+
+        val state = AppUpdateManager.parseWorkerUpdateState(
+            payload = payload,
+            currentVersion = "1.0.0",
+            includeBeta = false,
+            downloadSource = ApkDownloadSource.WORKER,
+            edition = "standard",
+            checkedAt = 10L
+        )
+
+        assertFalse(state.hasUpdate)
+        assertEquals("1.0.0", state.latestVersion)
+        assertEquals("", state.apkDownloadUrl)
+    }
+
+    @Test
+    fun topLevelApkFallbackCannotCrossInstallAnotherEdition() {
+        val payload = JSONObject()
+            .put("version", "1.1.0")
+            .put("track", "stable")
+            .put("edition", "standard")
+            .put("apkName", "OpenOmniBot-v1.1.0-enterprise.apk")
+            .put("downloadUrl", "https://updates.example.test/enterprise.apk")
+            .put("sha256", "b".repeat(64))
+
+        val state = AppUpdateManager.parseWorkerUpdateState(
+            payload = payload,
+            currentVersion = "1.0.0",
+            includeBeta = false,
+            downloadSource = ApkDownloadSource.WORKER,
+            edition = "standard",
+            checkedAt = 11L
+        )
+
+        assertFalse(state.hasUpdate)
+        assertEquals("", state.apkName)
+        assertEquals("", state.apkDownloadUrl)
+    }
+
+    @Test
+    fun genericFallbackIsRejectedWhenEditionSpecificAssetsMismatch() {
+        val wrongEditionAsset = JSONObject()
+            .put("name", "OpenOmniBot-v1.1.0-enterprise.apk")
+            .put("downloadUrl", "https://updates.example.test/enterprise.apk")
+            .put("sha256", "c".repeat(64))
+        val payload = JSONObject()
+            .put("version", "1.1.0")
+            .put("track", "stable")
+            .put("edition", "standard")
+            .put("assets", JSONArray().put(wrongEditionAsset))
+            .put("apkName", "OpenOmniBot-v1.1.0.apk")
+            .put("downloadUrl", "https://updates.example.test/generic.apk")
+            .put("sha256", "d".repeat(64))
+
+        val state = AppUpdateManager.parseWorkerUpdateState(
+            payload = payload,
+            currentVersion = "1.0.0",
+            includeBeta = false,
+            downloadSource = ApkDownloadSource.WORKER,
+            edition = "standard",
+            checkedAt = 12L
+        )
+
+        assertFalse(state.hasUpdate)
+        assertEquals("", state.apkDownloadUrl)
+    }
+
+    @Test
+    fun workerResponseAcceptsOnlyMatchingEditionAsset() {
+        val matchingAsset = JSONObject()
+            .put("name", "OpenOmniBot-v1.1.0-standard.apk")
+            .put("downloadUrl", "https://updates.example.test/standard.apk")
+            .put("sha256", "e".repeat(64))
+        val payload = JSONObject()
+            .put("version", "1.1.0")
+            .put("track", "stable")
+            .put("edition", "standard")
+            .put("assets", JSONArray().put(matchingAsset))
+
+        val state = AppUpdateManager.parseWorkerUpdateState(
+            payload = payload,
+            currentVersion = "1.0.0",
+            includeBeta = false,
+            downloadSource = ApkDownloadSource.WORKER,
+            edition = "standard",
+            checkedAt = 13L
+        )
+
+        assertTrue(state.hasUpdate)
+        assertEquals("OpenOmniBot-v1.1.0-standard.apk", state.apkName)
+        assertEquals("e".repeat(64), state.apkSha256)
+    }
+
+    @Test
+    fun optionalUpdateStatisticsRequireConsentBeforeGeneratingInstallId() {
+        var installIdReadCount = 0
+        val withoutConsent = AppUpdateManager.buildDeviceStatsParams(
+            hasOptionalTelemetryConsent = false,
+            installIdProvider = {
+                installIdReadCount += 1
+                "should-not-be-read"
+            }
+        )
+
+        assertTrue(withoutConsent.isEmpty())
+        assertEquals(0, installIdReadCount)
+
+        val withConsent = AppUpdateManager.buildDeviceStatsParams(
+            hasOptionalTelemetryConsent = true,
+            installIdProvider = {
+                installIdReadCount += 1
+                "11111111-2222-3333-4444-555555555555"
+            }
+        )
+
+        assertEquals(
+            mapOf("installId" to "11111111-2222-3333-4444-555555555555"),
+            withConsent
+        )
+        assertEquals(1, installIdReadCount)
+    }
+
+    @Test
+    fun buildWorkerCheckUrlRejectsCleartextEndpoint() {
+        val url = AppUpdateManager.buildWorkerCheckUrl(
+            workerUrl = "http://updates.example.test",
+            currentVersion = "1.0.0",
+            includeBeta = false,
+            downloadSource = ApkDownloadSource.WORKER,
+            edition = "standard",
+        )
+
+        assertNull(url)
+    }
+
+    @Test
+    fun installableUpdateRequiresHttpsNewerVersionAndValidSha256() {
+        val digest = "a".repeat(64)
+        val validAsset = ReleaseAsset(
+            name = "OpenOmniBot-v1.1.0-standard.apk",
+            downloadUrl = "https://updates.example.test/app.apk",
+            sha256 = digest,
+        )
+
+        assertTrue(
+            AppUpdateManager.isInstallableUpdate(
+                version = "1.1.0",
+                currentVersion = "1.0.0",
+                asset = validAsset,
+                downloadUrl = validAsset.downloadUrl,
+            )
+        )
+        assertFalse(
+            AppUpdateManager.isInstallableUpdate(
+                version = "1.1.0",
+                currentVersion = "1.0.0",
+                asset = validAsset.copy(sha256 = ""),
+                downloadUrl = validAsset.downloadUrl,
+            )
+        )
+        assertFalse(
+            AppUpdateManager.isInstallableUpdate(
+                version = "1.1.0",
+                currentVersion = "1.0.0",
+                asset = validAsset,
+                downloadUrl = "http://updates.example.test/app.apk",
+            )
+        )
+        assertFalse(
+            AppUpdateManager.isInstallableUpdate(
+                version = "1.0.0",
+                currentVersion = "1.0.0",
+                asset = validAsset,
+                downloadUrl = validAsset.downloadUrl,
+            )
+        )
+    }
+
+    @Test
+    fun normalizeSha256RejectsMalformedDigest() {
+        assertEquals("b".repeat(64), AppUpdateManager.normalizeSha256("  ${"B".repeat(64)} "))
+        assertEquals("", AppUpdateManager.normalizeSha256("not-a-digest"))
     }
 
 }

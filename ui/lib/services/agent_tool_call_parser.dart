@@ -151,9 +151,6 @@ String normalizeAgentToolStatus(
     return 'error';
   }
   final success = raw['success'];
-  if (success == false) {
-    return 'error';
-  }
   final exitCode = _asInt(raw['exitCode'] ?? raw['exit_code']);
   final explicit = _firstString([raw['status'], raw['state']]);
   final normalized = explicit?.trim().toLowerCase();
@@ -165,7 +162,7 @@ String normalizeAgentToolStatus(
         normalized == 'in_progress' ||
         normalized == 'executing' ||
         normalized == 'started') {
-      return 'running';
+      return success == false ? 'error' : 'running';
     }
     if (normalized == 'success' ||
         normalized == 'succeeded' ||
@@ -173,7 +170,7 @@ String normalizeAgentToolStatus(
         normalized == 'complete' ||
         normalized == 'applied' ||
         normalized == 'done') {
-      if (exitCode != null && exitCode != 0) {
+      if (success == false || (exitCode != null && exitCode != 0)) {
         return 'error';
       }
       return 'success';
@@ -194,6 +191,9 @@ String normalizeAgentToolStatus(
     if (normalized == 'timeout' || normalized == 'timedout') {
       return 'timeout';
     }
+  }
+  if (success == false) {
+    return 'error';
   }
   if (exitCode != null && exitCode != 0) {
     return 'error';

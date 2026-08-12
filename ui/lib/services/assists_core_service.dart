@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/services.dart';
+import 'package:ui/services/special_permission.dart';
 import 'package:ui/models/agent_stream_event.dart';
 import 'package:ui/services/agent_schedule_bridge_service.dart';
 import 'package:ui/services/agent_tool_call_parser.dart';
@@ -319,7 +320,9 @@ class AssistsMessageService {
           )) {
             try {
               callback(data);
-            } catch (_) {}
+            } catch (_) {
+              // Ignore malformed streamed task payloads.
+            }
           }
           break;
         case 'onBrowserSessionSnapshotUpdated':
@@ -332,9 +335,6 @@ class AssistsMessageService {
         case 'onChatMessage':
           final Map<String, dynamic> data = Map<String, dynamic>.from(
             call.arguments,
-          );
-          print(
-            'onChatMessage content: ${data['content']}, type: ${data['type']}',
           );
           _onChatTaskMessageCallBack?.call(
             data['taskID'],
@@ -449,10 +449,8 @@ class AssistsMessageService {
           );
 
         default:
-          print('未处理的方法: ${call.method}');
       }
-    } catch (e) {
-      print('处理方法调用时出错: $e');
+    } catch (_) {
       rethrow;
     }
   }
@@ -591,8 +589,7 @@ class AssistsMessageService {
         'isNeedPermission': isNeedPermission,
       });
       return result == "SUCCESS";
-    } on PlatformException catch (e) {
-      print('发送按钮点击事件失败: ${e.message}');
+    } on PlatformException catch (_) {
       return false;
     }
   }
@@ -605,8 +602,7 @@ class AssistsMessageService {
         taskId == null ? null : {'taskId': taskId},
       );
       return result == "SUCCESS";
-    } on PlatformException catch (e) {
-      print('取消运行中任务失败: ${e.message}');
+    } on PlatformException catch (_) {
       return false;
     }
   }
@@ -622,8 +618,7 @@ class AssistsMessageService {
         <String, String>{'taskId': taskId, 'cardId': cardId},
       );
       return result == "SUCCESS";
-    } on PlatformException catch (e) {
-      print('停止工具调用失败: ${e.message}');
+    } on PlatformException catch (_) {
       return false;
     }
   }
@@ -635,8 +630,7 @@ class AssistsMessageService {
         <String, String>{'taskId': taskId},
       );
       return result == "SUCCESS";
-    } on PlatformException catch (e) {
-      print('retryAgentTask failed: ${e.message}');
+    } on PlatformException catch (_) {
       return false;
     }
   }
@@ -648,8 +642,7 @@ class AssistsMessageService {
         <String, String>{'taskId': taskId},
       );
       return result == "SUCCESS";
-    } on PlatformException catch (e) {
-      print('continueAgentTask failed: ${e.message}');
+    } on PlatformException catch (_) {
       return false;
     }
   }
@@ -669,8 +662,7 @@ class AssistsMessageService {
         'text': text,
       });
       return result == "SUCCESS";
-    } on PlatformException catch (e) {
-      print('复制到剪贴板失败: ${e.message}');
+    } on PlatformException catch (_) {
       return false;
     }
   }
@@ -679,8 +671,7 @@ class AssistsMessageService {
     try {
       final result = await assistCore.invokeMethod<String>('getClipboardText');
       return result;
-    } on PlatformException catch (e) {
-      print('读取剪贴板失败: ${e.message}');
+    } on PlatformException catch (_) {
       return null;
     }
   }
@@ -699,7 +690,6 @@ class AssistsMessageService {
     List<Map<String, dynamic>> userAttachments = const [],
   }) async {
     try {
-      print('createChatTask taskID: $taskID content: $content');
       final args = {'taskID': taskID, 'content': content};
       if (provider != null) {
         args['provider'] = provider;
@@ -727,8 +717,7 @@ class AssistsMessageService {
       }
       final result = await assistCore.invokeMethod('createChatTask', args);
       return result == "SUCCESS";
-    } on PlatformException catch (e) {
-      print('createChatTask failed: ${e.message}');
+    } on PlatformException catch (_) {
       return false;
     }
   }
@@ -736,6 +725,8 @@ class AssistsMessageService {
   /// 获取已安装应用（包含中文应用名和包名）
   static Future<List<Map<String, dynamic>>> getInstalledApplications() async {
     try {
+      final capabilities = await refreshAppEditionCapabilitySnapshot();
+      if (!capabilities.installedAppsQuery) return const [];
       final result = await assistCore.invokeMethod<List<dynamic>>(
         'getInstalledApplications',
       );
@@ -743,8 +734,7 @@ class AssistsMessageService {
         return result.map((e) => Map<String, dynamic>.from(e as Map)).toList();
       }
       return [];
-    } on PlatformException catch (e) {
-      print('获取已安装应用失败: ${e.message}');
+    } on PlatformException catch (_) {
       return [];
     }
   }
@@ -753,6 +743,8 @@ class AssistsMessageService {
   static Future<List<Map<String, dynamic>>>
   getInstalledApplicationsWithIconUpdate() async {
     try {
+      final capabilities = await refreshAppEditionCapabilitySnapshot();
+      if (!capabilities.installedAppsQuery) return const [];
       final result = await assistCore.invokeMethod<List<dynamic>>(
         'getInstalledApplicationsWithIconUpdate',
       );
@@ -760,8 +752,7 @@ class AssistsMessageService {
         return result.map((e) => Map<String, dynamic>.from(e as Map)).toList();
       }
       return [];
-    } on PlatformException catch (e) {
-      print('获取已安装应用(附带图标更新)失败: ${e.message}');
+    } on PlatformException catch (_) {
       return [];
     }
   }
@@ -784,8 +775,7 @@ class AssistsMessageService {
         }
         return <String, dynamic>{};
       }).toList();
-    } on PlatformException catch (e) {
-      print('查询应用内闹钟失败: ${e.message}');
+    } on PlatformException catch (_) {
       return [];
     }
   }
@@ -798,8 +788,7 @@ class AssistsMessageService {
         {'alarmId': alarmId},
       );
       return result?['success'] == true;
-    } on PlatformException catch (e) {
-      print('删除应用内闹钟失败: ${e.message}');
+    } on PlatformException catch (_) {
       return false;
     }
   }
@@ -810,8 +799,7 @@ class AssistsMessageService {
         'getAlarmSettings',
       );
       return Map<String, dynamic>.from(result ?? const {});
-    } on PlatformException catch (e) {
-      print('读取闹钟设置失败: ${e.message}');
+    } on PlatformException catch (_) {
       return {};
     }
   }
@@ -828,7 +816,6 @@ class AssistsMessageService {
       );
       return Map<String, dynamic>.from(result ?? const {});
     } on PlatformException catch (e) {
-      print('保存闹钟设置失败: ${e.message}');
       return {'success': false, 'message': e.message ?? '保存失败'};
     }
   }
@@ -838,8 +825,7 @@ class AssistsMessageService {
     try {
       final result = await assistCore.invokeMethod<int>('getNanoTime');
       return result;
-    } on PlatformException catch (e) {
-      print('获取nanoTime失败: ${e.message}');
+    } on PlatformException catch (_) {
       return null;
     }
   }
@@ -856,8 +842,7 @@ class AssistsMessageService {
         'model': model,
       });
       return result;
-    } on PlatformException catch (e) {
-      print('调用LLM chat失败: ${e.message}');
+    } on PlatformException catch (_) {
       return null;
     }
   }
@@ -882,8 +867,7 @@ class AssistsMessageService {
         {'model': model, 'records': payloadRecords},
       );
       return result;
-    } on PlatformException catch (e) {
-      print('生成记忆中心问候语失败: ${e.message}');
+    } on PlatformException catch (_) {
       return null;
     }
   }
@@ -947,8 +931,7 @@ class AssistsMessageService {
         ...args,
       });
       return result == "SUCCESS";
-    } on PlatformException catch (e) {
-      print('创建 Agent 任务失败: ${e.message}');
+    } on PlatformException catch (_) {
       return false;
     }
   }
@@ -970,7 +953,6 @@ class AssistsMessageService {
           });
       return Map<String, dynamic>.from(result ?? const {});
     } on PlatformException catch (e) {
-      print('手动压缩上下文失败: ${e.message}');
       return {
         'compacted': false,
         'reason': 'failed',
@@ -989,8 +971,7 @@ class AssistsMessageService {
       );
       if (result == null) return null;
       return result.map((k, v) => MapEntry(k.toString(), v));
-    } on PlatformException catch (e) {
-      print('更新原生定时任务失败: ${e.message}');
+    } on PlatformException catch (_) {
       return null;
     }
   }
@@ -1003,8 +984,7 @@ class AssistsMessageService {
       );
       if (result == null) return false;
       return result['deleted'] == true;
-    } on PlatformException catch (e) {
-      print('删除原生定时任务失败: ${e.message}');
+    } on PlatformException catch (_) {
       return false;
     }
   }
@@ -1022,8 +1002,7 @@ class AssistsMessageService {
       if (count is int) return count;
       if (count is String) return int.tryParse(count) ?? 0;
       return 0;
-    } on PlatformException catch (e) {
-      print('同步原生定时任务失败: ${e.message}');
+    } on PlatformException catch (_) {
       return 0;
     }
   }
@@ -1037,8 +1016,7 @@ class AssistsMessageService {
           .whereType<Map>()
           .map((item) => item.map((k, v) => MapEntry(k.toString(), v)))
           .toList();
-    } on PlatformException catch (e) {
-      print('读取 Agent skills 失败: ${e.message}');
+    } on PlatformException catch (_) {
       return const [];
     }
   }
@@ -1053,8 +1031,7 @@ class AssistsMessageService {
       );
       if (result == null) return null;
       return result.map((k, v) => MapEntry(k.toString(), v));
-    } on PlatformException catch (e) {
-      print('安装 Agent skill 失败: ${e.message}');
+    } on PlatformException catch (_) {
       return null;
     }
   }
@@ -1070,8 +1047,7 @@ class AssistsMessageService {
       );
       if (result == null) return null;
       return result.map((k, v) => MapEntry(k.toString(), v));
-    } on PlatformException catch (e) {
-      print('切换 Agent skill 启用状态失败: ${e.message}');
+    } on PlatformException catch (_) {
       return null;
     }
   }
@@ -1084,8 +1060,7 @@ class AssistsMessageService {
       );
       if (result == null) return false;
       return result['deleted'] == true;
-    } on PlatformException catch (e) {
-      print('删除 Agent skill 失败: ${e.message}');
+    } on PlatformException catch (_) {
       return false;
     }
   }
@@ -1100,8 +1075,7 @@ class AssistsMessageService {
       );
       if (result == null) return null;
       return result.map((k, v) => MapEntry(k.toString(), v));
-    } on PlatformException catch (e) {
-      print('安装内置 Agent skill 失败: ${e.message}');
+    } on PlatformException catch (_) {
       return null;
     }
   }
@@ -1113,8 +1087,7 @@ class AssistsMessageService {
       );
       if (result == null) return null;
       return result.map((k, v) => MapEntry(k.toString(), v));
-    } on PlatformException catch (e) {
-      print('同步官方 Agent skills 失败: ${e.message}');
+    } on PlatformException catch (_) {
       return null;
     }
   }
@@ -1126,8 +1099,7 @@ class AssistsMessageService {
         'packageName': packageName,
       });
       return result;
-    } on PlatformException catch (e) {
-      print('调用openAPPMarket失败: ${e.message}');
+    } on PlatformException catch (_) {
       return null;
     }
   }
@@ -1135,6 +1107,8 @@ class AssistsMessageService {
   /// 获取桌面包名
   static Future<List<String>?> getDeskTopPackageName() async {
     try {
+      final capabilities = await refreshAppEditionCapabilitySnapshot();
+      if (!capabilities.installedAppsQuery) return const <String>[];
       final result = await assistCore.invokeMethod<List<dynamic>>(
         'getDeskTopPackageName',
       );
@@ -1142,8 +1116,7 @@ class AssistsMessageService {
         return result.map((e) => e.toString()).toList();
       }
       return null;
-    } on PlatformException catch (e) {
-      print('获取桌面包名失败: ${e.message}');
+    } on PlatformException catch (_) {
       return null;
     }
   }
@@ -1157,8 +1130,7 @@ class AssistsMessageService {
         {'enabled': enabled},
       );
       return result == 'SUCCESS';
-    } on PlatformException catch (e) {
-      print('Failed to sync prevent sleep setting: ${e.message}');
+    } on PlatformException catch (_) {
       return false;
     }
   }
@@ -1170,10 +1142,7 @@ class AssistsMessageService {
         {'enabled': enabled},
       );
       return result == 'SUCCESS';
-    } on PlatformException catch (e) {
-      print(
-        'Failed to sync task completion notification setting: ${e.message}',
-      );
+    } on PlatformException catch (_) {
       return false;
     }
   }
@@ -1191,8 +1160,7 @@ class AssistsMessageService {
             if (conversationMode != null) 'mode': conversationMode,
           });
       return result == 'SUCCESS';
-    } on PlatformException catch (e) {
-      print('Failed to sync visible chat conversation: ${e.message}');
+    } on PlatformException catch (_) {
       return false;
     }
   }
@@ -1212,8 +1180,7 @@ class AssistsMessageService {
             if (conversationMode != null) 'conversationMode': conversationMode,
           });
       return result == 'SUCCESS';
-    } on PlatformException catch (e) {
-      print('Failed to show task completion notification: ${e.message}');
+    } on PlatformException catch (_) {
       return false;
     }
   }
@@ -1226,8 +1193,7 @@ class AssistsMessageService {
         {'route': route},
       );
       return result == 'SUCCESS';
-    } on PlatformException catch (e) {
-      print('跳转到主引擎路由失败: ${e.message}');
+    } on PlatformException catch (_) {
       return false;
     }
   }
@@ -1248,8 +1214,7 @@ class AssistsMessageService {
         },
       );
       return result == 'SUCCESS';
-    } on PlatformException catch (e) {
-      print('显示定时任务提醒失败: ${e.message}');
+    } on PlatformException catch (_) {
       return false;
     }
   }
@@ -1259,8 +1224,7 @@ class AssistsMessageService {
     try {
       final result = await assistCore.invokeMethod('hideScheduledTaskReminder');
       return result == 'SUCCESS';
-    } on PlatformException catch (e) {
-      print('隐藏定时任务提醒失败: ${e.message}');
+    } on PlatformException catch (_) {
       return false;
     }
   }
@@ -1270,8 +1234,7 @@ class AssistsMessageService {
     try {
       final result = await assistCore.invokeMethod('reopenChatBotAfterAuth');
       return result == 'SUCCESS';
-    } on PlatformException catch (e) {
-      print('重新打开ChatBot失败: ${e.message}');
+    } on PlatformException catch (_) {
       return false;
     }
   }

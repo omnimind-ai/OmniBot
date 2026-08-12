@@ -1,10 +1,11 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:ui/features/home/pages/agent/codex_bridge_qr_scanner_page.dart';
 import 'package:ui/features/home/pages/agent/codex_remote_directory_picker.dart';
 import 'package:ui/services/agent_runtime_service.dart';
+import 'package:ui/services/data_destination_confirmation.dart';
+import 'package:ui/theme/app_colors.dart';
 import 'package:ui/theme/theme_context.dart';
 import 'package:ui/utils/ui.dart';
 import 'package:ui/widgets/common_app_bar.dart';
@@ -18,19 +19,17 @@ class RemoteCodexSettingPage extends StatefulWidget {
 }
 
 class _RemoteCodexSettingPageState extends State<RemoteCodexSettingPage> {
-  static const Duration _autoSaveDelay = Duration(milliseconds: 700);
-
   late final TextEditingController _bridgeUrlController;
   late final TextEditingController _bridgeTokenController;
   late final TextEditingController _bridgeCwdController;
 
-  Timer? _saveDebounce;
   bool _loading = true;
   bool _saving = false;
   bool _testing = false;
   bool _syncing = false;
   bool _enabled = false;
   bool _obscureToken = true;
+  bool _hasStoredToken = false;
   String? _error;
   String? _status;
   String? _lastSavedSignature;
@@ -70,7 +69,6 @@ class _RemoteCodexSettingPageState extends State<RemoteCodexSettingPage> {
 
   @override
   void dispose() {
-    _saveDebounce?.cancel();
     for (final controller in [
       _bridgeUrlController,
       _bridgeTokenController,
@@ -94,6 +92,7 @@ class _RemoteCodexSettingPageState extends State<RemoteCodexSettingPage> {
     try {
       _setText(_bridgeUrlController, config.remoteBridgeUrl);
       _setText(_bridgeTokenController, config.remoteBridgeToken);
+      _hasStoredToken = config.hasRemoteBridgeToken;
       _setText(_bridgeCwdController, config.remoteCwd);
       _enabled = config.remoteEnabled;
     } finally {
@@ -126,7 +125,6 @@ class _RemoteCodexSettingPageState extends State<RemoteCodexSettingPage> {
 
   void _handleEdited() {
     if (_syncing || !mounted) return;
-    _saveDebounce?.cancel();
     setState(() {
       _error = null;
       _status = !_complete
@@ -135,12 +133,9 @@ class _RemoteCodexSettingPageState extends State<RemoteCodexSettingPage> {
               'Bridge URL and remote cwd are required when Remote mode is enabled.',
             )
           : _signature == _lastSavedSignature
-          ? _text('已自动保存。', 'Autosaved.')
-          : _text('即将自动保存…', 'Autosave pending…');
+          ? _text('已保存。', 'Saved.')
+          : _text('有尚未保存的更改。', 'Unsaved changes.');
     });
-    if (_complete && _signature != _lastSavedSignature) {
-      _saveDebounce = Timer(_autoSaveDelay, () => unawaited(_save()));
-    }
   }
 
   void _setEnabled(bool value) {
@@ -156,15 +151,45 @@ class _RemoteCodexSettingPageState extends State<RemoteCodexSettingPage> {
     setState(() {
       _saving = true;
       _error = null;
-      _status = _text('正在自动保存…', 'Autosaving…');
+      _status = _text('等待确认接收方…', 'Waiting for destination confirmation…');
     });
     try {
-      final saved = await AgentRuntimeService.writeRemoteBridgeConfig(
-        remoteEnabled: _enabled,
-        remoteBridgeUrl: _bridgeUrlController.text.trim(),
-        remoteBridgeToken: _bridgeTokenController.text.trim(),
-        remoteCwd: _bridgeCwdController.text.trim(),
-      );
+      final endpoint = _bridgeUrlController.text.trim();
+      final outcome =
+          await confirmDataDestinationAndRun<CodexRemoteBridgeConfig>(
+            context: context,
+            rawEndpoint: endpoint,
+            capability: 'Remote Codex Bridge',
+            operation: _text('保存配置', 'Save configuration'),
+            dataTypes: [
+              _text('Bridge 认证凭据（如已配置）', 'Bridge credential, when configured'),
+              _text('远程工作目录路径', 'Remote workspace path'),
+              if (_enabled)
+                _text(
+                  '启用后发送的提示词、对话、附件和工作区文件操作',
+                  'Future prompts, conversations, attachments, and workspace file operations',
+                ),
+            ],
+            action: () => AgentRuntimeService.writeRemoteBridgeConfig(
+              remoteEnabled: _enabled,
+              remoteBridgeUrl: endpoint,
+              remoteBridgeToken: _bridgeTokenController.text.trim(),
+              remoteCwd: _bridgeCwdController.text.trim(),
+            ),
+          );
+      if (!outcome.confirmed || outcome.value == null) {
+        if (mounted) {
+          setState(() {
+            _status = _text(
+              '未保存；你没有确认本次接收方。远程模式不会被启用。',
+              'Not saved; the destination was not confirmed. Remote mode was not enabled.',
+            );
+            _enabled = _lastSavedSignature?.startsWith('enabled\n') == true;
+          });
+        }
+        return false;
+      }
+      final saved = outcome.value!;
       if (!mounted) return false;
       if (_signature == signature) {
         _sync(saved);
@@ -177,8 +202,8 @@ class _RemoteCodexSettingPageState extends State<RemoteCodexSettingPage> {
           saved.remoteCwd,
         ].join('\n');
         _status = _signature == _lastSavedSignature
-            ? _text('已自动保存。', 'Autosaved.')
-            : _text('即将自动保存…', 'Autosave pending…');
+            ? _text('已保存。', 'Saved.')
+            : _text('有尚未保存的更改。', 'Unsaved changes.');
       });
       return true;
     } catch (error) {
@@ -212,11 +237,23 @@ class _RemoteCodexSettingPageState extends State<RemoteCodexSettingPage> {
     }
     setState(() => _testing = true);
     try {
-      final result = await AgentRuntimeService.testRemoteConfig(
-        remoteBridgeUrl: url,
-        remoteBridgeToken: _bridgeTokenController.text.trim(),
-        remoteCwd: cwd,
+      final outcome = await confirmDataDestinationAndRun<Map<String, dynamic>>(
+        context: context,
+        rawEndpoint: url,
+        capability: 'Remote Codex Bridge',
+        operation: _text('测试连接', 'Test connection'),
+        dataTypes: [
+          _text('Bridge 认证凭据（如已配置）', 'Bridge credential, when configured'),
+          _text('远程工作目录路径和连接探测信息', 'Remote workspace path and connection probe'),
+        ],
+        action: () => AgentRuntimeService.testRemoteConfig(
+          remoteBridgeUrl: url,
+          remoteBridgeToken: _bridgeTokenController.text.trim(),
+          remoteCwd: cwd,
+        ),
       );
+      if (!outcome.confirmed || outcome.value == null) return;
+      final result = outcome.value!;
       if (!mounted) return;
       final ok = result['ok'] == true || result['ready'] == true;
       showToast(
@@ -248,12 +285,24 @@ class _RemoteCodexSettingPageState extends State<RemoteCodexSettingPage> {
       );
       return;
     }
-    final selected = await showCodexRemoteDirectoryPicker(
+    final outcome = await confirmDataDestinationAndRun<String?>(
       context: context,
-      remoteBridgeUrl: url,
-      remoteBridgeToken: _bridgeTokenController.text.trim(),
-      initialPath: _bridgeCwdController.text.trim(),
+      rawEndpoint: url,
+      capability: 'Remote Codex Bridge',
+      operation: _text('浏览远程目录', 'Browse remote directories'),
+      dataTypes: [
+        _text('Bridge 认证凭据（如已配置）', 'Bridge credential, when configured'),
+        _text('当前目录路径和远程目录列表请求', 'Current path and remote directory listing request'),
+      ],
+      action: () => showCodexRemoteDirectoryPicker(
+        context: context,
+        remoteBridgeUrl: url,
+        remoteBridgeToken: _bridgeTokenController.text.trim(),
+        initialPath: _bridgeCwdController.text.trim(),
+      ),
     );
+    if (!outcome.confirmed) return;
+    final selected = outcome.value;
     if (!mounted || selected == null || selected.trim().isEmpty) return;
     _setText(_bridgeCwdController, selected.trim());
     _handleEdited();
@@ -316,9 +365,11 @@ class _RemoteCodexSettingPageState extends State<RemoteCodexSettingPage> {
   Widget build(BuildContext context) {
     final palette = context.omniPalette;
     final dark = context.isDarkTheme;
+    final background = dark ? palette.pageBackground : AppColors.background;
     final card = dark ? palette.surfacePrimary : Colors.white;
+    final border = dark ? palette.borderSubtle : const Color(0x1A000000);
     return Scaffold(
-      backgroundColor: palette.pageBackground,
+      backgroundColor: background,
       appBar: CommonAppBar(
         title: _text('远程 PC Bridge', 'Remote PC Bridge'),
         primary: true,
@@ -342,11 +393,11 @@ class _RemoteCodexSettingPageState extends State<RemoteCodexSettingPage> {
                     ),
                   ),
                   Container(
-                    key: const Key('remote-pc-bridge-settings-card'),
                     padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
                       color: card,
                       borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: border),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -406,7 +457,10 @@ class _RemoteCodexSettingPageState extends State<RemoteCodexSettingPage> {
                           suffix: IconButton(
                             tooltip: _text('选择目录', 'Choose directory'),
                             onPressed: _chooseDirectory,
-                            icon: const Icon(LucideIcons.folderOpen, size: 18),
+                            icon: const Icon(
+                              Icons.folder_open_rounded,
+                              size: 18,
+                            ),
                           ),
                         ),
                         const SizedBox(height: 12),
@@ -417,7 +471,12 @@ class _RemoteCodexSettingPageState extends State<RemoteCodexSettingPage> {
                             'Bridge Token（可选）',
                             'Bridge Token (optional)',
                           ),
-                          hint: 'OMNIBOT_BRIDGE_TOKEN',
+                          hint: _hasStoredToken
+                              ? _text(
+                                  '已安全保存；留空保留，输入新值替换',
+                                  'Stored securely; leave blank to keep it, or enter a replacement',
+                                )
+                              : 'OMNIBOT_BRIDGE_TOKEN',
                           obscure: _obscureToken,
                           suffix: IconButton(
                             tooltip: _obscureToken
@@ -427,8 +486,8 @@ class _RemoteCodexSettingPageState extends State<RemoteCodexSettingPage> {
                                 setState(() => _obscureToken = !_obscureToken),
                             icon: Icon(
                               _obscureToken
-                                  ? LucideIcons.eye
-                                  : LucideIcons.eyeOff,
+                                  ? Icons.visibility_outlined
+                                  : Icons.visibility_off_outlined,
                               size: 18,
                             ),
                           ),
@@ -438,13 +497,28 @@ class _RemoteCodexSettingPageState extends State<RemoteCodexSettingPage> {
                           spacing: 8,
                           runSpacing: 8,
                           children: [
+                            FilledButton.icon(
+                              key: const Key('codex-config-save-button'),
+                              onPressed:
+                                  _saving || !_complete || _signature == _lastSavedSignature
+                                  ? null
+                                  : _save,
+                              icon: _saving
+                                  ? const SizedBox(
+                                      width: 14,
+                                      height: 14,
+                                      child: CircularProgressIndicator(strokeWidth: 2),
+                                    )
+                                  : const Icon(Icons.save_outlined, size: 17),
+                              label: Text(_text('保存', 'Save')),
+                            ),
                             OutlinedButton.icon(
                               key: const Key(
                                 'codex-config-scan-bridge-qr-button',
                               ),
                               onPressed: _saving ? null : _scanQr,
                               icon: const Icon(
-                                LucideIcons.scanQrCode,
+                                Icons.qr_code_scanner_rounded,
                                 size: 17,
                               ),
                               label: Text(_text('扫码连接', 'Scan QR')),
@@ -460,7 +534,7 @@ class _RemoteCodexSettingPageState extends State<RemoteCodexSettingPage> {
                                       ),
                                     )
                                   : const Icon(
-                                      LucideIcons.radioTower,
+                                      Icons.wifi_tethering_rounded,
                                       size: 17,
                                     ),
                               label: Text(

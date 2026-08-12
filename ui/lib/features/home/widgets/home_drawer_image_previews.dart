@@ -131,7 +131,6 @@ extension _HomeDrawerImagePreviews on HomeDrawerState {
       );
       _rememberConversationSnapshotCache(conversations);
     } catch (error) {
-      debugPrint('[HomeDrawer] Failed to restore drawer snapshot: $error');
     }
   }
 
@@ -289,7 +288,6 @@ extension _HomeDrawerImagePreviews on HomeDrawerState {
         }),
       );
     } catch (error) {
-      debugPrint('[HomeDrawer] Failed to persist drawer snapshot: $error');
     }
   }
 
@@ -351,9 +349,6 @@ extension _HomeDrawerImagePreviews on HomeDrawerState {
       }
       return previews;
     } catch (error) {
-      debugPrint(
-        '[HomeDrawer] Failed to load image previews for $threadKey: $error',
-      );
       if (mounted &&
           _conversationImagePreviewSignatures[threadKey] == signature) {
         void commit() {

@@ -1,6 +1,11 @@
 package cn.com.omnimind.bot.agent
 
 import cn.com.omnimind.assists.controller.http.HttpController
+import cn.com.omnimind.baselib.account.PlatformModelsUnavailableException
+import cn.com.omnimind.baselib.llm.ChatCompletionMessage
+import cn.com.omnimind.baselib.llm.ChatCompletionRequest
+import cn.com.omnimind.baselib.llm.OmniOfficialProvider
+import cn.com.omnimind.bot.media.PlatformMediaProtocol
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -9,6 +14,11 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.Response
@@ -25,6 +35,202 @@ class HttpAgentLlmClientTest {
         isLenient = true
         encodeDefaults = true
         explicitNulls = false
+    }
+
+    @Test
+    fun `platform image input uses catalog vision model`() = runBlocking {
+        val scope = CoroutineScope(Job() + Dispatchers.Default)
+        var requestedModel: String? = null
+        var requestJson: String? = null
+        try {
+            val client = HttpAgentLlmClient(
+                scope = scope,
+                modelOverride = testOverride(),
+                streamRequestOp = { model, body, listener, _, _, _, _, _, _, _ ->
+                    requestedModel = model
+                    requestJson = body
+                    val source = dummyEventSource()
+                    listener.onOpen(source, okResponse())
+                    listener.onEvent(
+                        source,
+                        null,
+                        "message",
+                        """{"choices":[{"delta":{"content":"seen"},"finish_reason":"stop"}]}"""
+                    )
+                    listener.onEvent(source, null, "message", "[DONE]")
+                    source
+                },
+                resolvePlatformVisionModelOp = { "official-vision-model" },
+                streamIdleWatchdogMs = 5_000L,
+                json = json,
+            )
+            val request = ChatCompletionRequest(
+                model = "scene.dispatch.model",
+                messages = listOf(
+                    ChatCompletionMessage(
+                        role = "user",
+                        content = json.parseToJsonElement(
+                            """[{"type":"text","text":"what is this"},{"type":"image_url","image_url":{"url":"data:image/jpeg;base64,AA=="}}]"""
+                        )
+                    )
+                ),
+                stream = true,
+            )
+
+            val turn = client.streamTurn(request)
+
+            assertEquals("seen", turn.message.contentText())
+            assertEquals("official-vision-model", requestedModel)
+            assertEquals(
+                "official-vision-model",
+                json.parseToJsonElement(requireNotNull(requestJson))
+                    .jsonObject["model"]
+                    ?.jsonPrimitive
+                    ?.content
+            )
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `platform image input fails closed when catalog has no vision model`() = runBlocking {
+        val scope = CoroutineScope(Job() + Dispatchers.Default)
+        var requestCount = 0
+        try {
+            val client = HttpAgentLlmClient(
+                scope = scope,
+                modelOverride = testOverride(),
+                streamRequestOp = { _, _, _, _, _, _, _, _, _, _ ->
+                    requestCount += 1
+                    dummyEventSource()
+                },
+                resolvePlatformVisionModelOp = {
+                    throw PlatformModelsUnavailableException("no official vision model")
+                },
+                streamIdleWatchdogMs = 5_000L,
+                json = json,
+            )
+            val request = ChatCompletionRequest(
+                model = "scene.dispatch.model",
+                messages = listOf(
+                    ChatCompletionMessage(
+                        role = "user",
+                        content = json.parseToJsonElement(
+                            """[{"type":"input_image","image_url":"https://example.com/image.jpg"}]"""
+                        )
+                    )
+                ),
+                stream = true,
+            )
+
+            val error = runCatching { client.streamTurn(request) }.exceptionOrNull()
+
+            assertTrue(error is PlatformModelsUnavailableException)
+            assertEquals(0, requestCount)
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `platform multi image request over safe JSON limit is rejected before send`() = runBlocking {
+        val scope = CoroutineScope(Job() + Dispatchers.Default)
+        var requestCount = 0
+        try {
+            val client = HttpAgentLlmClient(
+                scope = scope,
+                modelOverride = testOverride(),
+                resolveRouteInfoOp = { model, _, _, _, _, protocolType, _ ->
+                    routeInfo(
+                        requestedModel = model,
+                        resolvedModel = model,
+                        protocolType = protocolType ?: "openai_compatible",
+                        requiresReasoningEcho = false,
+                        providerProfileId = OmniOfficialProvider.PROFILE_ID,
+                    )
+                },
+                streamRequestOp = { _, _, _, _, _, _, _, _, _, _ ->
+                    requestCount += 1
+                    dummyEventSource()
+                },
+                resolvePlatformVisionModelOp = { "official-vision-model" },
+                json = json,
+            )
+            val imageData = "A".repeat(4 * 1024 * 1024)
+            val blocks = buildList {
+                add(JsonObject(mapOf("type" to JsonPrimitive("text"), "text" to JsonPrimitive("分析这些图片"))))
+                repeat(4) {
+                    add(
+                        JsonObject(
+                            mapOf(
+                                "type" to JsonPrimitive("image_url"),
+                                "image_url" to JsonObject(
+                                    mapOf(
+                                        "url" to JsonPrimitive("data:image/jpeg;base64,$imageData")
+                                    )
+                                ),
+                            )
+                        )
+                    )
+                }
+            }
+            val request = ChatCompletionRequest(
+                model = "scene.dispatch.model",
+                messages = listOf(ChatCompletionMessage("user", JsonArray(blocks))),
+                stream = true,
+            )
+
+            val error = runCatching { client.streamTurn(request) }.exceptionOrNull()
+
+            assertTrue(error?.message.orEmpty().contains("请求内容过大"))
+            assertEquals(0, requestCount)
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `platform long unicode context is measured as final UTF8 and rejected before send`() = runBlocking {
+        val scope = CoroutineScope(Job() + Dispatchers.Default)
+        var requestCount = 0
+        try {
+            val client = HttpAgentLlmClient(
+                scope = scope,
+                modelOverride = testOverride(),
+                resolveRouteInfoOp = { model, _, _, _, _, protocolType, _ ->
+                    routeInfo(
+                        requestedModel = model,
+                        resolvedModel = model,
+                        protocolType = protocolType ?: "openai_compatible",
+                        requiresReasoningEcho = false,
+                        providerProfileId = OmniOfficialProvider.PROFILE_ID,
+                    )
+                },
+                streamRequestOp = { _, _, _, _, _, _, _, _, _, _ ->
+                    requestCount += 1
+                    dummyEventSource()
+                },
+                json = json,
+            )
+            val longUnicodeContext = "你".repeat(
+                (PlatformMediaProtocol.MAX_PLATFORM_JSON_UTF8_BYTES / 3L).toInt() + 1
+            )
+            val request = ChatCompletionRequest(
+                model = "official-text-model",
+                messages = listOf(
+                    ChatCompletionMessage("user", JsonPrimitive(longUnicodeContext))
+                ),
+                stream = true,
+            )
+
+            val error = runCatching { client.streamTurn(request) }.exceptionOrNull()
+
+            assertTrue(error?.message.orEmpty().contains("15 MiB"))
+            assertEquals(0, requestCount)
+        } finally {
+            scope.cancel()
+        }
     }
 
     @Test
@@ -386,12 +592,13 @@ class HttpAgentLlmClientTest {
         resolvedModel: String,
         protocolType: String,
         requiresReasoningEcho: Boolean,
-        apiBase: String = "https://example.com"
+        apiBase: String = "https://example.com",
+        providerProfileId: String = "test",
     ) = HttpController.ChatCompletionRouteInfo(
         requestedModel = requestedModel,
         resolvedModel = resolvedModel,
         apiBase = apiBase,
-        providerProfileId = "test",
+        providerProfileId = providerProfileId,
         providerProfileName = "Test",
         routeTag = "test",
         bindingApplied = false,

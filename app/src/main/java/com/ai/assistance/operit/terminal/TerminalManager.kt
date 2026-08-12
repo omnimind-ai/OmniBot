@@ -3,7 +3,8 @@ package com.ai.assistance.operit.terminal
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
-import android.util.Log
+import cn.com.omnimind.baselib.util.OmniLog
+import cn.com.omnimind.bot.BuildConfig
 import cn.com.omnimind.bot.agent.AgentWorkspaceManager
 import com.ai.assistance.operit.terminal.data.CommandHistoryItem
 import com.ai.assistance.operit.terminal.data.SessionInitState
@@ -110,7 +111,11 @@ class TerminalManager private constructor(
             ensureShellScripts()
             true
         }.getOrElse {
-            Log.e(TAG, "Failed to prepare shell scripts", it)
+            if (BuildConfig.DEBUG) {
+                OmniLog.e(TAG, "Failed to prepare shell scripts", it)
+            } else {
+                OmniLog.e(TAG, "Failed to prepare shell scripts type=${it.javaClass.simpleName}")
+            }
             false
         }
     }
@@ -147,7 +152,7 @@ class TerminalManager private constructor(
         val terminalSession = withContext(Dispatchers.Main) {
             val shell = ShellArgv.SYSTEM_SH
             val args = ShellArgv.buildShellScriptArgv(ensureShellScripts().absolutePath)
-            Log.d(TAG, "Creating local session ${ShellArgv.formatExecSpec(shell, args, "/")}")
+            OmniLog.d(TAG, "Creating local terminal session")
             TerminalSession(
                 shell,
                 "/",
@@ -280,7 +285,14 @@ class TerminalManager private constructor(
                             throw error
                         }
                         if (!isExpectedHiddenExecReaderTermination(error)) {
-                            Log.w(TAG, "Hidden exec reader terminated unexpectedly", error)
+                            if (BuildConfig.DEBUG) {
+                                OmniLog.w(TAG, "Hidden exec reader terminated unexpectedly", error)
+                            } else {
+                                OmniLog.w(
+                                    TAG,
+                                    "Hidden exec reader stopped type=${error.javaClass.simpleName}",
+                                )
+                            }
                         }
                     } finally {
                         outputChannel.close()
@@ -551,31 +563,35 @@ class TerminalManager private constructor(
         }
 
         override fun logError(tag: String, message: String) {
-            Log.e(tag, message)
+            if (BuildConfig.DEBUG) OmniLog.e(tag, message)
+            else OmniLog.e(tag, "Terminal component error messageChars=${message.length}")
         }
 
         override fun logWarn(tag: String, message: String) {
-            Log.w(tag, message)
+            if (BuildConfig.DEBUG) OmniLog.w(tag, message)
+            else OmniLog.w(tag, "Terminal component warning messageChars=${message.length}")
         }
 
         override fun logInfo(tag: String, message: String) {
-            Log.i(tag, message)
+            if (BuildConfig.DEBUG) OmniLog.i(tag, message)
         }
 
         override fun logDebug(tag: String, message: String) {
-            Log.d(tag, message)
+            if (BuildConfig.DEBUG) OmniLog.d(tag, message)
         }
 
         override fun logVerbose(tag: String, message: String) {
-            Log.v(tag, message)
+            if (BuildConfig.DEBUG) OmniLog.v(tag, message)
         }
 
         override fun logStackTraceWithMessage(tag: String, message: String, e: Exception) {
-            Log.e(tag, message, e)
+            if (BuildConfig.DEBUG) OmniLog.e(tag, message, e)
+            else OmniLog.e(tag, "Terminal exception type=${e.javaClass.simpleName}")
         }
 
         override fun logStackTrace(tag: String, e: Exception) {
-            Log.e(tag, e.message, e)
+            if (BuildConfig.DEBUG) OmniLog.e(tag, e.message.orEmpty(), e)
+            else OmniLog.e(tag, "Terminal exception type=${e.javaClass.simpleName}")
         }
     }
 }

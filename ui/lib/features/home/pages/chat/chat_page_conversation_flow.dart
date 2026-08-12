@@ -372,6 +372,73 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
         override.modelId.trim().isNotEmpty;
   }
 
+  Future<bool> _ensureByokDestinationConfirmedForSend() async {
+    final selection = _effectiveNormalModelSelection(null);
+    ModelProviderProfileSummary? profile;
+    if (selection != null) {
+      profile = _findProviderProfile(selection.providerProfileId);
+    }
+    profile ??= _modelProviderProfiles.length == 1
+        ? _modelProviderProfiles.first
+        : null;
+    if (profile == null ||
+        profile.readOnly ||
+        profile.sourceType == 'omnibot_official') {
+      return profile != null;
+    }
+    final endpoint = profile.baseUrl.trim();
+    if (endpoint.isEmpty) return false;
+    try {
+      if (DataDestinationSessionApprovals.isConfirmed(
+        subject: profile.id,
+        rawEndpoint: endpoint,
+        capability: 'BYOK model provider',
+        operation: 'send chat content',
+      )) {
+        return true;
+      }
+      final outcome = await confirmDataDestinationAndRun<bool>(
+        context: context,
+        rawEndpoint: endpoint,
+        capability: 'BYOK model provider',
+        operation: LegacyTextLocalizer.isEnglish
+            ? 'Send chat content'
+            : '发送聊天内容',
+        dataTypes: [
+          LegacyTextLocalizer.isEnglish
+              ? 'Prompt, conversation history, and model settings'
+              : '提示词、对话历史和模型设置',
+          LegacyTextLocalizer.isEnglish
+              ? 'Attachments and their metadata, when present'
+              : '附件及其元数据（如有）',
+          if (profile.hasApiKey || profile.hasCustomHeaders)
+            LegacyTextLocalizer.isEnglish
+                ? 'Stored provider credentials'
+                : '已安全保存的提供商凭据',
+        ],
+        action: () async => true,
+      );
+      if (!outcome.confirmed) return false;
+      DataDestinationSessionApprovals.remember(
+        subject: profile.id,
+        rawEndpoint: endpoint,
+        capability: 'BYOK model provider',
+        operation: 'send chat content',
+      );
+      return true;
+    } catch (_) {
+      if (mounted) {
+        showToast(
+          LegacyTextLocalizer.isEnglish
+              ? 'The provider destination is unsafe or invalid.'
+              : '提供商接收地址不安全或格式无效。',
+          type: ToastType.error,
+        );
+      }
+      return false;
+    }
+  }
+
   @override
   Future<bool> _ensureNormalChatModelConfigurationForSend() async {
     if (_activeMode != ChatPageMode.normal || _isOpenClawSurface) {
@@ -391,11 +458,11 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
         }
         return false;
       }
-    } on PlatformException catch (error) {
-      debugPrint('读取账号 AI 路由失败，继续检查本机模型配置: ${error.code}');
+    } on PlatformException catch (_) {
+      // Fall back to the locally configured provider below.
     }
     if (_hasConfiguredNormalChatProviderModel()) {
-      return true;
+      return _ensureByokDestinationConfirmedForSend();
     }
     if (_isCheckingSendModelConfiguration) {
       return false;
@@ -436,10 +503,10 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
         _sceneCatalog = catalog;
       });
       if (hasConfiguredModel) {
-        return true;
+        return _ensureByokDestinationConfirmedForSend();
       }
-    } catch (e) {
-      debugPrint('检查聊天模型配置失败: $e');
+    } catch (_) {
+      // Model-configuration checks fail closed below.
     } finally {
       _isCheckingSendModelConfiguration = false;
     }
@@ -747,12 +814,18 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
     final history = buildConversationHistory();
     final userMessage = latestUserUtterance();
     final userAttachments = await _latestUserAttachments();
-    final openClawConfig = {
-      'baseUrl': _openClawBaseUrl,
-      if (_openClawToken.isNotEmpty) 'token': _openClawToken,
-      if (_openClawUserId.isNotEmpty) 'userId': _openClawUserId,
-      'sessionKey': _buildOpenClawSessionKey(conversationId),
-    };
+    final configuration = _openClawConfiguration;
+    if (configuration == null ||
+        !await OpenClawCredentialService.isAuthorized(configuration)) {
+      if (mounted) {
+        setState(() => _openClawConfiguration = null);
+        handleAgentError('OpenClaw 配置已停用或过期，请重新确认接收方。');
+      }
+      return;
+    }
+    final openClawConfig = configuration.taskPayload(
+      sessionKey: _buildOpenClawSessionKey(conversationId),
+    );
     _showOpenClawWaitingCard(aiMessageId);
     _syncRuntimeSnapshotForMode(_activeMode);
     _registerActiveTaskBinding(aiMessageId);
@@ -912,9 +985,8 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       }
 
       return success;
-    } catch (e) {
+    } catch (_) {
       _runtimeCoordinator.unregisterTask(aiMessageId);
-      debugPrint('Agent flow error: $e');
       return false;
     }
   }
@@ -1061,10 +1133,8 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
           (msg) => msg.isLoading || _isOpenClawWaitingCardMessage(msg),
         );
       });
-
-      debugPrint('Task cancelled, all states reset');
-    } catch (e) {
-      debugPrint('onCancelTask error: $e');
+    } catch (_) {
+      // Cancellation cleanup is best effort.
     }
   }
 
@@ -1103,8 +1173,8 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
           (msg) => msg.isLoading || _isOpenClawWaitingCardMessage(msg),
         );
       });
-    } catch (e) {
-      debugPrint('onCancelTaskFromCard error: $e');
+    } catch (_) {
+      // Cancellation cleanup is best effort.
     }
   }
 

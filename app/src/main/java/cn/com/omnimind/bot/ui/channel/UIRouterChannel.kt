@@ -28,19 +28,11 @@ class UIRouterChannel {
             "options" to options.toMap()
         )
 
-        channel?.invokeMethod("setInitialRouteAndNavigate", arguments, object : MethodChannel.Result {
-            override fun success(result: Any?) {
-                println("$TAG setInitialRouteAndNavigate successful: $result")
-            }
-
-            override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) {
-                println("$TAG setInitialRouteAndNavigate error: $errorCode - $errorMessage")
-            }
-
-            override fun notImplemented() {
-                println("$TAG setInitialRouteAndNavigate method not implemented")
-            }
-        })
+        channel?.invokeMethod(
+            "setInitialRouteAndNavigate",
+            arguments,
+            metadataOnlyResult("setInitialRouteAndNavigate"),
+        )
     }
 
     fun go(route: String, extra: Any? = null, queryParams: Map<String, Any>? = null, options: RouteOptions = RouteOptions()) {
@@ -51,19 +43,7 @@ class UIRouterChannel {
             "options" to options.toMap()
         )
 
-        channel?.invokeMethod("go", arguments, object : MethodChannel.Result {
-            override fun success(result: Any?) {
-                println("$TAG go successful: $result")
-            }
-
-            override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) {
-                println("$TAG go error: $errorCode - $errorMessage")
-            }
-
-            override fun notImplemented() {
-                println("$TAG go method not implemented")
-            }
-        })
+        channel?.invokeMethod("go", arguments, metadataOnlyResult("go"))
     }
 
     // 清理路由栈并跳转到指定路由
@@ -80,19 +60,11 @@ class UIRouterChannel {
             "options" to options.toMap()
         )
 
-        channel?.invokeMethod("clearAndNavigateTo", arguments, object : MethodChannel.Result {
-            override fun success(result: Any?) {
-                println("Navigation successful: $result")
-            }
-
-            override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) {
-                println("Navigation error: $errorCode - $errorMessage")
-            }
-
-            override fun notImplemented() {
-                println("Method not implemented")
-            }
-        })
+        channel?.invokeMethod(
+            "clearAndNavigateTo",
+            arguments,
+            metadataOnlyResult("clearAndNavigateTo"),
+        )
     }
 
     // 推送新路由（不清理栈）
@@ -104,19 +76,7 @@ class UIRouterChannel {
             "options" to options.toMap()
         )
 
-        channel?.invokeMethod("push", arguments, object : MethodChannel.Result {
-            override fun success(result: Any?) {
-                println("Push successful: $result")
-            }
-
-            override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) {
-                println("Push error: $errorCode - $errorMessage")
-            }
-
-            override fun notImplemented() {
-                println("Method not implemented")
-            }
-        })
+        channel?.invokeMethod("push", arguments, metadataOnlyResult("push"))
     }
 
     // 重置到首页并推送新路由
@@ -128,38 +88,21 @@ class UIRouterChannel {
             "options" to options.toMap()
         )
 
-        OmniLog.d(TAG, "resetToHomeAndPush: $arguments")
+        OmniLog.d(
+            TAG,
+            "resetToHomeAndPush requested hasExtra=${extra != null} queryCount=${queryParams?.size ?: 0}",
+        )
 
-        channel?.invokeMethod("resetToHomeAndPush", arguments, object : MethodChannel.Result {
-            override fun success(result: Any?) {
-                println("ResetToHomeAndPush successful: $result")
-            }
-
-            override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) {
-                println("ResetToHomeAndPush error: $errorCode - $errorMessage")
-            }
-
-            override fun notImplemented() {
-                println("Method not implemented")
-            }
-        })
+        channel?.invokeMethod(
+            "resetToHomeAndPush",
+            arguments,
+            metadataOnlyResult("resetToHomeAndPush"),
+        )
     }
 
     // 返回上一页
     fun popRoute(result: Any? = null) {
-        channel?.invokeMethod("pop", result, object : MethodChannel.Result {
-            override fun success(result: Any?) {
-                println("Pop successful: $result")
-            }
-
-            override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) {
-                println("Pop error: $errorCode - $errorMessage")
-            }
-
-            override fun notImplemented() {
-                println("Method not implemented")
-            }
-        })
+        channel?.invokeMethod("pop", result, metadataOnlyResult("pop"))
     }
 
     // 检查是否可以返回
@@ -174,11 +117,11 @@ class UIRouterChannel {
             }
 
             override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) {
-                println("CanPop error: $errorCode - $errorMessage")
+                OmniLog.w(TAG, "canPop failed code=$errorCode")
             }
 
             override fun notImplemented() {
-                println("Method not implemented")
+                OmniLog.w(TAG, "canPop not implemented")
             }
         })
 
@@ -188,6 +131,22 @@ class UIRouterChannel {
     fun clear() {
         channel?.setMethodCallHandler(null)
         channel = null
+    }
+
+    private fun metadataOnlyResult(action: String): MethodChannel.Result {
+        return object : MethodChannel.Result {
+            override fun success(result: Any?) {
+                OmniLog.d(TAG, "$action succeeded")
+            }
+
+            override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) {
+                OmniLog.w(TAG, "$action failed code=$errorCode")
+            }
+
+            override fun notImplemented() {
+                OmniLog.w(TAG, "$action not implemented")
+            }
+        }
     }
 
 }

@@ -1,5 +1,6 @@
 package cn.com.omnimind.baselib.llm
 
+import cn.com.omnimind.baselib.util.CredentialEndpointSecurity
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -58,6 +59,132 @@ class ModelProviderConfigStoreTest {
         assertEquals(
             setOf(DeepSeekProvider.OFFICIAL_PROFILE_ID, MoonshotProvider.OFFICIAL_PROFILE_ID),
             decoded
+        )
+    }
+
+    @Test
+    fun hydrateDropsCredentialsForPublicCleartextEndpoint() {
+        CredentialEndpointSecurity.configureDebugLoopback(false)
+        val hydrated = ModelProviderConfigStore.mergeProfileSecrets(
+            ModelProviderProfile(
+                id = "unsafe",
+                name = "Unsafe",
+                baseUrl = "http://192.168.1.20:8080/v1",
+            ),
+            ModelProviderSecrets(
+                apiKey = "secret",
+                customHeaders = mapOf("X-Custom-Token" to "secret-2"),
+            ),
+        )
+
+        assertEquals("", hydrated.apiKey)
+        assertTrue(hydrated.customHeaders.isEmpty())
+    }
+
+    @Test
+    fun hydrateDropsSensitiveEndpointMetadataWithoutSeparateCredentials() {
+        val hydrated = ModelProviderConfigStore.mergeProfileSecrets(
+            ModelProviderProfile(
+                id = "embedded-secret",
+                name = "Embedded secret",
+                baseUrl = "https://provider.example/v1?access_token=embedded",
+            ),
+            null,
+        )
+
+        assertEquals("", hydrated.baseUrl)
+        assertEquals("", hydrated.apiKey)
+        assertTrue(hydrated.customHeaders.isEmpty())
+    }
+
+    @Test
+    fun damagedProfileJsonContainingSecretNamesIsRejectedInsteadOfRetained() {
+        val damaged = """[{"id":"profile-1","apiKey":"plaintext-secret","customHeaders":{ """
+
+        assertEquals(null, ModelProviderConfigStore.sanitizeProfilesMetadataJson(damaged))
+    }
+
+    @Test
+    fun validProfileJsonIsReencodedWithoutSecretFields() {
+        val sanitized = ModelProviderConfigStore.sanitizeProfilesMetadataJson(
+            """[{"id":"profile-1","name":"Provider","baseUrl":"https://api.example/v1","apiKey":"plaintext-secret","customHeaders":{"Authorization":"secret"}}]"""
+        ).orEmpty()
+
+        assertTrue(sanitized.contains("profile-1"))
+        assertFalse(sanitized.contains("plaintext-secret"))
+        assertFalse(sanitized.contains("Authorization"))
+    }
+
+    @Test
+    fun legacyProviderRemainsVisibleButInactiveUntilDestinationIsConfirmed() {
+        val profile = ModelProviderConfigStore.decodeProfilesJson(
+            """[{"id":"legacy","name":"Legacy","baseUrl":"https://api.example.com/v1"}]"""
+        ).single()
+
+        assertEquals("https://api.example.com/v1", profile.baseUrl)
+        assertFalse(profile.destinationConsentValid)
+        assertFalse(profile.isConfigured())
+    }
+
+    @Test
+    fun consentRoundTripIsBoundToRevisionAndCanonicalOrigin() {
+        val encoded = ModelProviderConfigStore.encodeProfilesJson(
+            listOf(
+                ModelProviderProfile(
+                    id = "confirmed",
+                    name = "Confirmed",
+                    baseUrl = "https://api.example.com/v1",
+                    revision = 4L,
+                    consentVersion = 1,
+                    consentOrigin = "https://api.example.com:443",
+                    consentRevision = 4L,
+                    destinationConsentValid = true,
+                )
+            )
+        )
+        val profile = ModelProviderConfigStore.decodeProfilesJson(encoded).single()
+
+        assertTrue(profile.destinationConsentValid)
+        assertTrue(profile.isConfigured())
+        assertFalse(
+            ModelProviderConfigStore.hasCurrentDestinationConsent(
+                profile,
+                "https://api.example.com/another/path",
+            )
+        )
+        assertTrue(
+            ModelProviderConfigStore.hasCurrentDestinationConsent(
+                profile,
+                "https://api.example.com/v1",
+            )
+        )
+        assertFalse(
+            ModelProviderConfigStore.hasCurrentDestinationConsent(
+                profile,
+                "https://api.example.com:8443/v1",
+            )
+        )
+    }
+
+    @Test
+    fun providerFetchSnapshotRequiresTheSameCanonicalEndpoint() {
+        assertTrue(
+            ModelProviderConfigStore.sameCanonicalEndpoint(
+                "https://api.example.com/v1/",
+                "https://api.example.com/v1"
+            )
+        )
+        assertFalse(
+            ModelProviderConfigStore.sameCanonicalEndpoint(
+                "https://api.example.com/v1",
+                "https://api.example.com:8443/v1"
+            )
+        )
+        assertFalse(
+            ModelProviderConfigStore.sameCanonicalEndpoint(
+                "https://api.example.com/v1",
+                "https://other.example.com/v1"
+            )
         )
     }
 }

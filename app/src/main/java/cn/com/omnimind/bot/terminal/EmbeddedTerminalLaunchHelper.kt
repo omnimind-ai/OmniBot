@@ -2,7 +2,7 @@ package cn.com.omnimind.bot.terminal
 
 import android.content.Context
 import android.content.Intent
-import android.util.Log
+import cn.com.omnimind.baselib.util.OmniLog
 import com.ai.assistance.operit.terminal.setup.EnvironmentSetupLogic
 import com.ai.assistance.operit.terminal.utils.SourceManager
 import com.rk.libcommons.OMNIBOT_SETUP_SESSION_ID
@@ -83,10 +83,7 @@ object EmbeddedTerminalLaunchHelper {
             terminatePreviousSession = true,
             workingDir = "/"
         )
-        Log.d(
-            TAG,
-            "Prepared setup session ${ShellArgv.formatExecSpec(ShellArgv.SYSTEM_SH, pendingCommand!!.args, "/")}"
-        )
+        OmniLog.d(TAG, "Prepared terminal setup session")
     }
 
     private fun prepareTerminalSession(context: Context, workingMode: Int) {

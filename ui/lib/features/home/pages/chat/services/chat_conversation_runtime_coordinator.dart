@@ -1560,6 +1560,7 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
               renderMarkdown: true,
               markdownRenderedLength: batch?.lastFlushedText.length,
               isStreamingMarkdown: true,
+              emitVoiceUpdate: true,
             );
           }
         }
@@ -1634,7 +1635,23 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     if (thinkingCardId != null) {
       runtime.currentThinkingStage = ThinkingStage.complete.value;
       runtime.isDeepThinking = false;
-      _finalizeThinkingCardsForTask(runtime, taskId);
+      final hasVisibleThinking = runtime.messages.any((message) {
+        final cardData = message.cardData;
+        return message.type == 2 &&
+            cardData?['type'] == 'deep_thinking' &&
+            (cardData?['taskID'] ?? '').toString().trim() == taskId &&
+            (cardData?['thinkingContent'] ?? '').toString().trim().isNotEmpty;
+      });
+      if (hasVisibleThinking) {
+        _finalizeThinkingCardsForTask(runtime, taskId);
+      } else {
+        runtime.messages.removeWhere((message) {
+          final cardData = message.cardData;
+          return message.type == 2 &&
+              cardData?['type'] == 'deep_thinking' &&
+              (cardData?['taskID'] ?? '').toString().trim() == taskId;
+        });
+      }
       runtime.currentThinkingMessages.remove(taskId);
       runtime.deepThinkingContent = '';
       runtime.lastAgentTaskId = null;
@@ -2804,6 +2821,13 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
       nextText: merged,
       initialLatestText: previous.isNotEmpty ? previous : visibleThinking,
       initialFlushedText: visibleThinking,
+    );
+    _applyThinkingUpdate(
+      runtime,
+      binding,
+      taskId,
+      merged,
+      schedulePersistence: false,
     );
     if (shouldFlush) {
       _flushThinkingBatch(

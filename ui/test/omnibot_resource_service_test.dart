@@ -17,6 +17,7 @@ void main() {
   });
 
   tearDown(() {
+    debugResetAppEditionCapabilitySnapshot();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(spePermission, null);
   });
@@ -160,6 +161,33 @@ void main() {
         ),
         '/data/user/0/cn.com.omnimind.bot.debug/workspace/docs/spec.pdf',
       );
+    },
+  );
+
+  test(
+    'Play public resources fail before any permission settings request',
+    () async {
+      final calls = <String>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(spePermission, (call) async {
+            calls.add(call.method);
+            if (call.method == 'getAppEditionCapabilitySnapshot') {
+              return <String, dynamic>{
+                'schemaVersion': 1,
+                'edition': 'play',
+                'installedAppsQuery': false,
+                'publicStorageAccess': false,
+              };
+            }
+            return null;
+          });
+
+      final granted = await OmnibotResourceService.ensureResourceAccess(
+        path: '/storage/emulated/0/Download/report.pdf',
+      );
+
+      expect(granted, isFalse);
+      expect(calls, <String>['getAppEditionCapabilitySnapshot']);
     },
   );
 }

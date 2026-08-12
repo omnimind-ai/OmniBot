@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 class TokenUsageRecord {
@@ -98,8 +97,7 @@ class TokenUsageService {
                 TokenUsageRecord.fromJson(Map<String, dynamic>.from(item)),
           )
           .toList();
-    } on PlatformException catch (e) {
-      debugPrint('[TokenUsageService] Failed to get records: ${e.message}');
+    } on PlatformException catch (_) {
       return [];
     }
   }

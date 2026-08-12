@@ -29,6 +29,8 @@ import cn.com.omnimind.baselib.llm.ModelProviderConfigStore
 import cn.com.omnimind.baselib.llm.ModelSceneRegistry
 import cn.com.omnimind.baselib.llm.ProviderModelOption
 import cn.com.omnimind.baselib.llm.ProviderCustomHeaderUtils
+import cn.com.omnimind.baselib.llm.OmniOfficialProvider
+import cn.com.omnimind.baselib.llm.PlatformAiProvisioner
 import cn.com.omnimind.baselib.llm.SceneModelCatalogResolver
 import cn.com.omnimind.baselib.llm.SceneCatalogItem
 import cn.com.omnimind.baselib.llm.SceneModelBindingEntry
@@ -43,9 +45,11 @@ import cn.com.omnimind.baselib.util.RuntimeLogStore
 import cn.com.omnimind.baselib.util.exception.PermissionException
 import cn.com.omnimind.bot.R
 import cn.com.omnimind.bot.activity.MainActivity
+import cn.com.omnimind.bot.distribution.AppEditionCapabilities
 import cn.com.omnimind.bot.ui.scheduled.ScheduledTaskReminderLoader
 import cn.com.omnimind.bot.util.AssistsUtil
 import cn.com.omnimind.assists.controller.http.HttpController
+import cn.com.omnimind.assists.openclaw.OpenClawConfigurationStore
 import cn.com.omnimind.baselib.util.SchemeUtil
 import cn.com.omnimind.bot.util.TaskRuntimeSettings
 import cn.com.omnimind.bot.agent.AgentCallback
@@ -531,6 +535,172 @@ private fun extractTextPayload(raw: JsonElement?): String {
     }
 }
 
+internal data class AssistsCoreChannelFailure(
+    val code: String,
+    val message: String,
+    val details: Any? = null,
+)
+
+/**
+ * Converts native failures into a small, stable MethodChannel contract. Exception text and
+ * Throwable objects are deliberately excluded because they may contain URLs, paths, request
+ * bodies, provider responses, credentials, or user content.
+ */
+internal object AssistsCoreChannelErrorPrivacy {
+    private val genericFailureCodes = setOf(
+        "ADD_QUICK_LOG_ERROR",
+        "AGENT_CALLBACK_FAILED",
+        "AGENT_SKILL_DELETE_ERROR",
+        "AGENT_SKILL_INSTALL_BUILTIN_ERROR",
+        "AGENT_SKILL_INSTALL_ERROR",
+        "AGENT_SKILL_LIST_ERROR",
+        "AGENT_SKILL_SET_ENABLED_ERROR",
+        "AGENT_SKILL_SYNC_OFFICIAL_ERROR",
+        "AGENT_STARTUP_FAILURE_DISPATCH_FAILED",
+        "AGENT_STARTUP_FAILURE_PERSIST_FAILED",
+        "AGENT_STREAM_SEED_FAILED",
+        "CANCEL_MESSAGE_ERROR",
+        "CANCEL_RUNNING_TASK_ERROR",
+        "CHAT_COMPACTION_FAILED",
+        "CHAT_MESSAGE_END_PERSIST_FAILED",
+        "CHAT_MESSAGE_PERSIST_FAILED",
+        "CLEAR_AI_REQUEST_LOGS_ERROR",
+        "CLEAR_CONVERSATION_MESSAGES_ERROR",
+        "CLEAR_MODEL_PROVIDER_CONFIG_ERROR",
+        "CLEAR_RUNTIME_LOGS_ERROR",
+        "CLEAR_SCENE_MODEL_BINDING_ERROR",
+        "CLEAR_SCENE_MODEL_OVERRIDE_ERROR",
+        "COMPACT_CONVERSATION_CONTEXT_ERROR",
+        "COMPLETE_CONVERSATION_ERROR",
+        "CONTINUE_AGENT_TASK_ERROR",
+        "CONVERSATION_MESSAGE_PUBLISH_FAILED",
+        "COPY_TO_CLIPBOARD_ERROR",
+        "CREATE_AGENT_TASK_ERROR",
+        "CREATE_CONVERSATION_ERROR",
+        "DELETE_AGENT_EXACT_ALARM_ERROR",
+        "DELETE_CONVERSATION_ERROR",
+        "DELETE_MODEL_PROVIDER_PROFILE_ERROR",
+        "DELETE_QUICK_LOG_ERROR",
+        "DELETE_WORKSPACE_SCHEDULED_TASK_ERROR",
+        "DO_TASK_ERROR",
+        "FLUTTER_EVENT_DISPATCH_FAILED",
+        "GENERATE_MEMORY_GREETING_ERROR",
+        "GENERATE_SUMMARY_ERROR",
+        "GET_AGENT_SOUL_SETTING_ERROR",
+        "GET_ALARM_SETTINGS_ERROR",
+        "GET_CHAT_PROMPT_SETTING_ERROR",
+        "GET_CLIPBOARD_ERROR",
+        "GET_CONVERSATION_MESSAGES_ERROR",
+        "GET_CONVERSATION_MESSAGES_PAGED_ERROR",
+        "GET_CONVERSATIONS_BY_PAGE_ERROR",
+        "GET_CONVERSATIONS_ERROR",
+        "GET_MEMORY_EMBEDDING_CONFIG_ERROR",
+        "GET_MEMORY_ROLLUP_STATUS_ERROR",
+        "GET_MODEL_PROVIDER_CONFIG_ERROR",
+        "GET_SCENE_MODEL_BINDINGS_ERROR",
+        "GET_SCENE_MODEL_CATALOG_ERROR",
+        "GET_SCENE_MODEL_OVERRIDES_ERROR",
+        "GET_SCENE_VOICE_CONFIG_ERROR",
+        "GET_TOKEN_USAGE_RECORDS_ERROR",
+        "GET_WORKSPACE_MEMORY_ERROR",
+        "GET_WORKSPACE_SHORT_MEMORY_ERROR",
+        "HIDE_SCHEDULED_TASK_REMINDER_ERROR",
+        "LIST_AGENT_EXACT_ALARMS_ERROR",
+        "LIST_MODEL_PROVIDER_PROFILES_ERROR",
+        "LIST_QUICK_LOGS_ERROR",
+        "LIST_RECENT_AI_REQUEST_LOGS_ERROR",
+        "LIST_RUNTIME_LOGS_ERROR",
+        "MANUAL_TOOL_STOP_FAILED",
+        "MEMORY_GREETING_ARGUMENT_PARSE_FAILED",
+        "MEMORY_GREETING_LEGACY_REQUEST_FAILED",
+        "MEMORY_GREETING_TOOL_CALL_FAILED",
+        "MEMORY_ROLLUP_SCHEDULE_FAILED",
+        "NAVIGATE_ERROR",
+        "NOTIFY_SCHEDULED_TASK_EVENT_FAILED",
+        "ON_CHAT_MESSAGE_END_FAILED",
+        "ON_CHAT_MESSAGE_FAILED",
+        "OPEN_APP_MARKET_ERROR",
+        "POST_LLM_CHAT_ERROR",
+        "PROVIDER_MODEL_AVAILABILITY_CHECK_FAILED",
+        "PUBLISH_MANUAL_AGENT_CANCELLATION_FAILED",
+        "REOPEN_ERROR",
+        "REPLACE_CONVERSATION_MESSAGES_ERROR",
+        "RETRY_AGENT_TASK_ERROR",
+        "RUN_MEMORY_ROLLUP_ERROR",
+        "SAVE_AGENT_SOUL_SETTING_ERROR",
+        "SAVE_ALARM_SETTINGS_ERROR",
+        "SAVE_CHAT_PROMPT_SETTING_ERROR",
+        "SAVE_MEMORY_EMBEDDING_CONFIG_ERROR",
+        "SAVE_MEMORY_ROLLUP_STATUS_ERROR",
+        "SAVE_MODEL_PROVIDER_CONFIG_ERROR",
+        "SAVE_MODEL_PROVIDER_PROFILE_ERROR",
+        "SAVE_PREVENT_SLEEP_SETTING_FAILED",
+        "SAVE_SCENE_MODEL_BINDING_ERROR",
+        "SAVE_SCENE_MODEL_OVERRIDE_ERROR",
+        "SAVE_SCENE_VOICE_CONFIG_ERROR",
+        "SAVE_TASK_NOTIFICATION_SETTING_FAILED",
+        "SAVE_WORKSPACE_MEMORY_ERROR",
+        "SCHEDULED_SUBAGENT_COMPLETION_NOTIFY_FAILED",
+        "SCHEDULED_SUBAGENT_ERROR_NOTIFY_FAILED",
+        "SCHEDULED_SUBAGENT_FAILURE_NOTIFY_FAILED",
+        "SET_EDITING_MODEL_PROVIDER_PROFILE_ERROR",
+        "SHOW_SCHEDULED_TASK_REMINDER_ERROR",
+        "SHOW_TASK_NOTIFICATION_FAILED",
+        "STOP_AGENT_TOOL_CALL_ERROR",
+        "SYNC_WORKSPACE_SCHEDULED_TASKS_ERROR",
+        "UPDATE_CONVERSATION_ERROR",
+        "UPDATE_CONVERSATION_THRESHOLD_ERROR",
+        "UPDATE_CONVERSATION_TITLE_ERROR",
+        "UPDATE_QUICK_LOG_ERROR",
+        "UPSERT_CONVERSATION_UI_CARD_ERROR",
+        "UPSERT_WORKSPACE_SCHEDULED_TASK_ERROR",
+    )
+
+    private val stableMessages = genericFailureCodes.associateWith {
+        "The requested operation failed."
+    } + mapOf(
+        "AGENT_EXACT_ALARM_NOT_FOUND" to "The requested alarm was not found.",
+        "CREATE_AGENT_TASK_ERROR" to "Agent execution failed.",
+        "INVALID_ARGUMENTS" to "The request arguments are invalid.",
+        "PERMISSION_ERROR" to "A required permission is unavailable.",
+        "WORKSPACE_STORAGE_PERMISSION_REQUIRED" to
+            "Workspace storage permission is required.",
+    )
+
+    internal fun deliver(
+        result: MethodChannel.Result,
+        tag: String,
+        requestedCode: String,
+        error: Exception,
+        reporter: (String) -> Unit = { message -> OmniLog.e(tag, message) },
+    ) {
+        val failure = failure(requestedCode, error, reporter)
+        result.error(failure.code, failure.message, failure.details)
+    }
+
+    internal fun record(
+        tag: String,
+        requestedCode: String,
+        error: Exception,
+        reporter: (String) -> Unit = { message -> OmniLog.w(tag, message) },
+    ): AssistsCoreChannelFailure = failure(requestedCode, error, reporter)
+
+    internal fun failure(
+        requestedCode: String,
+        error: Exception,
+        reporter: (String) -> Unit,
+    ): AssistsCoreChannelFailure {
+        if (error is CancellationException) throw error
+        val safeCode = requestedCode.takeIf(stableMessages::containsKey)
+            ?: "ASSISTS_OPERATION_FAILED"
+        reporter("channel_failure code=$safeCode")
+        return AssistsCoreChannelFailure(
+            code = safeCode,
+            message = stableMessages[safeCode] ?: "The requested operation failed.",
+        )
+    }
+}
+
 class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
     private val TAG = "[AssistsCoreManager]"
 
@@ -769,10 +939,16 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 currentStopAction = stopAction
                 currentJob = job
             }
-            runCatching {
+            try {
                 currentStopAction?.invoke()
-            }.onFailure {
-                OmniLog.w("[AssistsCoreManager]", "manual tool stop action failed: ${it.message}")
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (error: Exception) {
+                AssistsCoreChannelErrorPrivacy.record(
+                    "[AssistsCoreManager]",
+                    "MANUAL_TOOL_STOP_FAILED",
+                    error,
+                )
             }
             currentJob?.cancel(ManualToolStopCancellationException())
             return true
@@ -799,16 +975,54 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
     private val failedAgentContinueContexts: MutableMap<String, FailedAgentContinueContext> = mutableMapOf()
     private val chatTaskPersistenceStates: MutableMap<String, ChatTaskPersistenceState> =
         mutableMapOf()
+    private var conversationHistoryMaintenance = false
+    private var pendingConversationHistoryTaskStarts = 0
     private val conversationDomainService by lazy { ConversationDomainService(context) }
 
     // 当前活跃的对话ID
     private var currentConversationId: Long? = null
     private var currentConversationMode: String = "normal"
 
-    private fun registerActiveAgentRun(taskId: String, context: ActiveAgentRunContext) {
-        synchronized(activeAgentLock) {
+    private fun registerActiveAgentRun(taskId: String, context: ActiveAgentRunContext): Boolean {
+        return synchronized(activeAgentLock) {
+            if (conversationHistoryMaintenance) {
+                return@synchronized false
+            }
             activeAgentRuns[taskId] = context
+            true
         }
+    }
+
+    private fun reserveConversationHistoryTaskStart(): Boolean = synchronized(activeAgentLock) {
+        if (conversationHistoryMaintenance) {
+            false
+        } else {
+            pendingConversationHistoryTaskStarts += 1
+            true
+        }
+    }
+
+    private fun releaseConversationHistoryTaskStart() = synchronized(activeAgentLock) {
+        pendingConversationHistoryTaskStarts =
+            (pendingConversationHistoryTaskStarts - 1).coerceAtLeast(0)
+    }
+
+    fun beginConversationHistoryMaintenance(): Boolean = synchronized(activeAgentLock) {
+        if (
+            conversationHistoryMaintenance ||
+            pendingConversationHistoryTaskStarts > 0 ||
+            activeAgentRuns.isNotEmpty() ||
+            chatTaskPersistenceStates.isNotEmpty()
+        ) {
+            false
+        } else {
+            conversationHistoryMaintenance = true
+            true
+        }
+    }
+
+    fun endConversationHistoryMaintenance() = synchronized(activeAgentLock) {
+        conversationHistoryMaintenance = false
     }
 
     private fun registerChatTaskPersistenceState(taskId: String, state: ChatTaskPersistenceState) {
@@ -885,7 +1099,7 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
             }
         }
         if (runsToCancel.isNotEmpty()) {
-            OmniLog.i(TAG, "Cancelling active agent run(s): $reason taskId=$taskId")
+            OmniLog.i(TAG, "active_agent_runs_cancelled count=${runsToCancel.size}")
             runsToCancel.forEach { run ->
                 publishManualAgentCancellation(run)
                 run.job.cancel(CancellationException(reason))
@@ -903,7 +1117,7 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
         val now = System.currentTimeMillis()
         val streamMeta = buildAgentManualCancellationStreamMeta(run.taskId, entryId)
         workJob.launch {
-            runCatching {
+            try {
                 val repository = conversationHistoryRepository()
                 repository.upsertAssistantMessage(
                     conversationId = conversationId,
@@ -932,43 +1146,60 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                         )
                     )
                 }
-            }.onFailure {
-                OmniLog.w(TAG, "publish manual agent cancellation failed: ${it.message}", it)
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (error: Exception) {
+                AssistsCoreChannelErrorPrivacy.record(
+                    TAG,
+                    "PUBLISH_MANUAL_AGENT_CANCELLATION_FAILED",
+                    error,
+                )
             }
         }
     }
 
     private fun ModelProviderConfig.toMap(): Map<String, Any?> {
+        val official = OmniOfficialProvider.isOfficialProfile(id)
         return mapOf(
             "id" to id,
             "name" to name,
-            "baseUrl" to baseUrl,
-            "apiKey" to apiKey,
-            "customHeaders" to customHeaders,
+            "baseUrl" to if (official) "" else baseUrl,
+            // BYOK credentials are write-only from Flutter. Only presence
+            // flags cross the channel; native runtime hydrates the values.
+            "apiKey" to "",
+            "customHeaders" to emptyMap<String, String>(),
+            "hasApiKey" to (!official && apiKey.isNotBlank()),
+            "hasCustomHeaders" to (!official && customHeaders.isNotEmpty()),
             "source" to source,
             "providerType" to providerType,
             "readOnly" to readOnly,
             "ready" to ready,
             "statusText" to statusText,
             "configured" to isConfigured(),
-            "wireApi" to wireApi
+            "wireApi" to wireApi,
+            "destinationConsentValid" to destinationConsentValid,
         )
     }
 
     private fun ModelProviderProfile.toMap(): Map<String, Any?> {
+        val official = OmniOfficialProvider.isOfficialProfile(id)
         return mapOf(
             "id" to id,
             "name" to name,
-            "baseUrl" to baseUrl,
-            "apiKey" to apiKey,
-            "customHeaders" to customHeaders,
+            "baseUrl" to if (official) "" else baseUrl,
+            "apiKey" to "",
+            "customHeaders" to emptyMap<String, String>(),
+            "hasApiKey" to (!official && apiKey.isNotBlank()),
+            "hasCustomHeaders" to (!official && customHeaders.isNotEmpty()),
             "sourceType" to sourceType,
             "readOnly" to readOnly,
             "ready" to ready,
             "statusText" to statusText,
             "configured" to isConfigured(),
             "protocolType" to protocolType,
-            "wireApi" to wireApi
+            "wireApi" to wireApi,
+            "revision" to revision,
+            "destinationConsentValid" to destinationConsentValid,
         )
     }
 
@@ -1037,7 +1268,10 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
             "stylePreset" to stylePreset,
             "customStyle" to customStyle,
             "ttsMode" to ttsMode,
-            "customCurlCommand" to customCurlCommand
+            // Custom curl commands may contain Authorization headers. They are
+            // write-only across Flutter/native and remain in encrypted storage.
+            "customCurlCommand" to "",
+            "hasCustomCurlCommand" to customCurlCommand.isNotBlank(),
         )
     }
 
@@ -1062,23 +1296,25 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
         val main = mainEngineChannel
         val channels = listOfNotNull(current, main).distinct()
         if (channels.isEmpty()) {
-            OmniLog.w(TAG, "skip invoke $method: flutter channel unavailable")
+            OmniLog.w(TAG, "flutter_channel_unavailable")
             return
         }
 
-        var lastError: Exception? = null
         var delivered = false
         for (target in channels) {
             try {
                 target.invokeMethod(method, arguments)
                 delivered = true
             } catch (e: Exception) {
-                lastError = e
-                OmniLog.e(TAG, "invoke $method failed on one channel: ${e.message}")
+                AssistsCoreChannelErrorPrivacy.record(
+                    TAG,
+                    "FLUTTER_EVENT_DISPATCH_FAILED",
+                    e,
+                )
             }
         }
         if (!delivered) {
-            OmniLog.e(TAG, "invoke $method failed on all channels: ${lastError?.message}")
+            OmniLog.e(TAG, "channel_failure code=FLUTTER_EVENT_DISPATCH_FAILED delivered=false")
         }
     }
 
@@ -1524,9 +1760,13 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     result.success("SUCCESS")
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "cancelRunningTask error: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("CANCEL_RUNNING_TASK_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "CANCEL_RUNNING_TASK_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -1560,15 +1800,19 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     } else {
                         result.error(
                             "NO_MATCHING_ACTIVE_TOOL",
-                            "No running tool matches cardId=$cardId",
+                            "No running tool matches the request.",
                             null
                         )
                     }
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "stopAgentToolCall error: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("STOP_AGENT_TOOL_CALL_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "STOP_AGENT_TOOL_CALL_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -1592,7 +1836,7 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     withContext(Dispatchers.Main) {
                         result.error(
                             "NO_RETRY_CONTEXT",
-                            "No retryable agent context found for taskId=$taskId",
+                            "No retryable agent context was found.",
                             null
                         )
                     }
@@ -1603,9 +1847,13 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     result
                 )
             } catch (e: Exception) {
-                OmniLog.e(TAG, "retryAgentTask error: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("RETRY_AGENT_TASK_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "RETRY_AGENT_TASK_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -1671,7 +1919,7 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     withContext(Dispatchers.Main) {
                         result.error(
                             "NO_CONTINUE_CONTEXT",
-                            "No resumable assistant turn found for taskId=$taskId",
+                            "No resumable assistant turn was found.",
                             null
                         )
                     }
@@ -1730,9 +1978,13 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     isContinue = true
                 )
             } catch (e: Exception) {
-                OmniLog.e(TAG, "continueAgentTask error: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("CONTINUE_AGENT_TASK_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "CONTINUE_AGENT_TASK_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -1754,7 +2006,12 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    result.error("CANCEL_MESSAGE_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "CANCEL_MESSAGE_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -1793,20 +2050,33 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
         )
         val openClawConfigMap = call.argument<Map<String, Any>>("openClawConfig")
         val openClawConfig = openClawConfigMap?.let { map ->
-            val baseUrl = map["baseUrl"] as? String ?: ""
-            if (baseUrl.isBlank()) {
-                null
-            } else {
-                cn.com.omnimind.assists.api.bean.TaskParams.OpenClawConfig(
-                    baseUrl = baseUrl,
-                    token = map["token"] as? String,
-                    userId = map["userId"] as? String,
-                    sessionKey = map["sessionKey"] as? String
-                )
-            }
+            OpenClawConfigurationStore.resolveTaskConfig(
+                expectedGeneration = (map["generation"] as? Number)?.toLong() ?: -1L,
+                expectedOrigin = map["canonicalOrigin"] as? String ?: "",
+                suppliedBaseUrl = map["baseUrl"] as? String ?: "",
+                suppliedUserId = map["userId"] as? String,
+                sessionKey = map["sessionKey"] as? String,
+            )
+        }
+        if (provider?.trim()?.equals("openclaw", ignoreCase = true) == true && openClawConfig == null) {
+            result.error(
+                "OPENCLAW_AUTHORIZATION_REQUIRED",
+                "OpenClaw is disabled or the configuration is stale",
+                null,
+            )
+            return
         }
 
+        if (!reserveConversationHistoryTaskStart()) {
+            result.error(
+                "CONVERSATION_HISTORY_BUSY",
+                "Conversation history maintenance is in progress",
+                null,
+            )
+            return
+        }
         mainJob.launch {
+            var historyStartReserved = true
             try {
                 TaskRuntimeSettings.onTaskStarted(context)
                 val workspaceMemoryService = WorkspaceMemoryService(context)
@@ -1865,6 +2135,8 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                         finalizeInterruptedEntries = false
                     )
                 }
+                releaseConversationHistoryTaskStart()
+                historyStartReserved = false
                 AssistsUtil.Core.createChatTask(
                     taskID,
                     preparedContent,
@@ -1885,13 +2157,27 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 removeChatTaskPersistenceState(taskID)
                 TaskRuntimeSettings.onTaskFinished(context)
                 withContext(Dispatchers.Main) {
-                    result.error("PERMISSION_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "PERMISSION_ERROR",
+                        e,
+                    )
                 }
             } catch (e: Exception) {
                 removeChatTaskPersistenceState(taskID)
                 TaskRuntimeSettings.onTaskFinished(context)
                 withContext(Dispatchers.Main) {
-                    result.error("DO_TASK_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "DO_TASK_ERROR",
+                        e,
+                    )
+                }
+            } finally {
+                if (historyStartReserved) {
+                    releaseConversationHistoryTaskStart()
                 }
             }
         }
@@ -1997,7 +2283,7 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     )
                 )
             } catch (e: Exception) {
-                OmniLog.e(TAG, "onChatMessage error: ${e.message}")
+                AssistsCoreChannelErrorPrivacy.record(TAG, "ON_CHAT_MESSAGE_FAILED", e)
             }
 
         }
@@ -2061,7 +2347,7 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     )
                 )
             } catch (e: Exception) {
-                OmniLog.e(TAG, "onChatMessageEnd error: ${e.message}")
+                AssistsCoreChannelErrorPrivacy.record(TAG, "ON_CHAT_MESSAGE_END_FAILED", e)
             }
 
         }
@@ -2136,7 +2422,7 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
             @Suppress("UNCHECKED_CAST")
             conversationPayload = payload["conversation"] as? Map<String, Any?>
         } catch (e: Exception) {
-            OmniLog.w(TAG, "纯聊天自动压缩失败: ${e.message}")
+            AssistsCoreChannelErrorPrivacy.record(TAG, "CHAT_COMPACTION_FAILED", e)
         } finally {
             withContext(Dispatchers.Main) {
                 invokeFlutterEventSafely(
@@ -2159,6 +2445,14 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
      * 获取已安装应用（包名与应用名）
      */
     fun getInstalledApplications(call: MethodCall, result: MethodChannel.Result) {
+        if (!AppEditionCapabilities.canQueryInstalledApps) {
+            result.error(
+                "CAPABILITY_UNAVAILABLE",
+                "Installed apps access is unavailable in this app edition.",
+                null,
+            )
+            return
+        }
         workJob.launch {
             try {
                 val pm = context.packageManager
@@ -2177,10 +2471,16 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 withContext(Dispatchers.Main) {
                     result.success(list)
                 }
-            } catch (e: Exception) {
-                OmniLog.e(TAG, "获取已安装应用失败: ${e.message}")
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                OmniLog.e(TAG, "Installed apps query failed")
                 withContext(Dispatchers.Main) {
-                    result.error("GET_INSTALLED_APPS_ERROR", e.message, null)
+                    result.error(
+                        "GET_INSTALLED_APPS_ERROR",
+                        "Unable to query installed apps.",
+                        null,
+                    )
                 }
             }
         }
@@ -2190,6 +2490,14 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
      * 获取已安装应用（包名与应用名，附带图标更新）
      */
     fun getInstalledApplicationsWithIconUpdate(call: MethodCall, result: MethodChannel.Result) {
+        if (!AppEditionCapabilities.canQueryInstalledApps) {
+            result.error(
+                "CAPABILITY_UNAVAILABLE",
+                "Installed apps access is unavailable in this app edition.",
+                null,
+            )
+            return
+        }
         workJob.launch {
             try {
                 val pm = context.packageManager
@@ -2231,10 +2539,16 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 withContext(Dispatchers.Main) {
                     result.success(list)
                 }
-            } catch (e: Exception) {
-                OmniLog.e(TAG, "获取已安装应用失败: ${e.message}")
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                OmniLog.e(TAG, "Installed apps query failed")
                 withContext(Dispatchers.Main) {
-                    result.error("GET_INSTALLED_APPS_ERROR", e.message, null)
+                    result.error(
+                        "GET_INSTALLED_APPS_ERROR",
+                        "Unable to query installed apps.",
+                        null,
+                    )
                 }
             }
         }
@@ -2251,9 +2565,13 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     result.success(alarms)
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "listAgentExactAlarms error: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("LIST_AGENT_EXACT_ALARMS_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "LIST_AGENT_EXACT_ALARMS_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -2275,14 +2593,22 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     result.success(payload)
                 }
             } catch (e: IllegalArgumentException) {
-                OmniLog.e(TAG, "deleteAgentExactAlarm not found: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("AGENT_EXACT_ALARM_NOT_FOUND", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "AGENT_EXACT_ALARM_NOT_FOUND",
+                        e,
+                    )
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "deleteAgentExactAlarm error: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("DELETE_AGENT_EXACT_ALARM_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "DELETE_AGENT_EXACT_ALARM_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -2293,8 +2619,12 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
             val payload = AgentAlarmToolService(context).getAlarmSettings()
             result.success(payload)
         } catch (e: Exception) {
-            OmniLog.e(TAG, "getAlarmSettings error: ${e.message}")
-            result.error("GET_ALARM_SETTINGS_ERROR", e.message, null)
+            AssistsCoreChannelErrorPrivacy.deliver(
+                result,
+                TAG,
+                "GET_ALARM_SETTINGS_ERROR",
+                e,
+            )
         }
     }
 
@@ -2314,11 +2644,14 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
             )
             result.success(payload)
         } catch (e: IllegalArgumentException) {
-            OmniLog.e(TAG, "saveAlarmSettings invalid: ${e.message}")
-            result.error("INVALID_ARGUMENTS", e.message, null)
+            AssistsCoreChannelErrorPrivacy.deliver(result, TAG, "INVALID_ARGUMENTS", e)
         } catch (e: Exception) {
-            OmniLog.e(TAG, "saveAlarmSettings error: ${e.message}")
-            result.error("SAVE_ALARM_SETTINGS_ERROR", e.message, null)
+            AssistsCoreChannelErrorPrivacy.deliver(
+                result,
+                TAG,
+                "SAVE_ALARM_SETTINGS_ERROR",
+                e,
+            )
         }
     }
 
@@ -2358,8 +2691,12 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     result.error("OVERLAY_NOT_READY", "Scheduled task overlay is not ready", null)
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "showScheduledTaskReminder failed: ${e.message}")
-                result.error("SHOW_SCHEDULED_TASK_REMINDER_ERROR", e.message, null)
+                AssistsCoreChannelErrorPrivacy.deliver(
+                    result,
+                    TAG,
+                    "SHOW_SCHEDULED_TASK_REMINDER_ERROR",
+                    e,
+                )
             }
         }
     }
@@ -2373,8 +2710,12 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 ScheduledTaskReminderLoader.hide()
                 result.success("SUCCESS")
             } catch (e: Exception) {
-                OmniLog.e(TAG, "hideScheduledTaskReminder failed: ${e.message}")
-                result.error("HIDE_SCHEDULED_TASK_REMINDER_ERROR", e.message, null)
+                AssistsCoreChannelErrorPrivacy.deliver(
+                    result,
+                    TAG,
+                    "HIDE_SCHEDULED_TASK_REMINDER_ERROR",
+                    e,
+                )
             }
         }
     }
@@ -2385,14 +2726,22 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
             try {
                 channel.invokeMethod(method, payload)
             } catch (e: Exception) {
-                OmniLog.e(TAG, "notifyScheduledTaskEvent via current channel failed: ${e.message}")
+                AssistsCoreChannelErrorPrivacy.record(
+                    TAG,
+                    "NOTIFY_SCHEDULED_TASK_EVENT_FAILED",
+                    e,
+                )
                 try {
                     val mainChannel = mainEngineChannel
                     if (mainChannel != null && mainChannel != channel) {
                         mainChannel.invokeMethod(method, payload)
                     }
                 } catch (fallbackError: Exception) {
-                    OmniLog.e(TAG, "notifyScheduledTaskEvent fallback failed: ${fallbackError.message}")
+                    AssistsCoreChannelErrorPrivacy.record(
+                        TAG,
+                        "NOTIFY_SCHEDULED_TASK_EVENT_FAILED",
+                        fallbackError,
+                    )
                 }
             }
         }
@@ -2410,7 +2759,12 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
             }
         } catch (e: Exception) {
             mainJob.launch(Dispatchers.Main) {
-                result.error("COPY_TO_CLIPBOARD_ERROR", e.message, null)
+                AssistsCoreChannelErrorPrivacy.deliver(
+                    result,
+                    TAG,
+                    "COPY_TO_CLIPBOARD_ERROR",
+                    e,
+                )
             }
         }
     }
@@ -2430,7 +2784,12 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
             }
         } catch (e: Exception) {
             mainJob.launch(Dispatchers.Main) {
-                result.error("GET_CLIPBOARD_ERROR", e.message, null)
+                AssistsCoreChannelErrorPrivacy.deliver(
+                    result,
+                    TAG,
+                    "GET_CLIPBOARD_ERROR",
+                    e,
+                )
             }
         }
     }
@@ -2451,9 +2810,13 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     result.success(response.message)
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "postLLMChat error: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("POST_LLM_CHAT_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "POST_LLM_CHAT_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -2477,9 +2840,13 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     result.success(greeting)
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "generateMemoryGreeting error: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("GENERATE_MEMORY_GREETING_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "GENERATE_MEMORY_GREETING_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -2488,14 +2855,30 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
     fun getModelProviderConfig(call: MethodCall, result: MethodChannel.Result) {
         workJob.launch {
             try {
-                val config = ModelProviderConfigStore.getConfig()
+                val config = PlatformAiProvisioner.officialProfileOrNull()?.let { profile ->
+                    ModelProviderConfig(
+                        id = profile.id,
+                        name = profile.name,
+                        baseUrl = profile.baseUrl,
+                        source = "platform",
+                        providerType = profile.sourceType,
+                        readOnly = profile.readOnly,
+                        ready = profile.ready,
+                        statusText = profile.statusText,
+                        wireApi = profile.wireApi,
+                    )
+                } ?: ModelProviderConfigStore.getConfig()
                 withContext(Dispatchers.Main) {
                     result.success(config.toMap())
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "getModelProviderConfig error: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("GET_MODEL_PROVIDER_CONFIG_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "GET_MODEL_PROVIDER_CONFIG_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -2507,9 +2890,18 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
     ): String {
         val recordBlock = buildMemoryGreetingRecordsBlock(records)
         val request = buildMemoryGreetingToolRequest(model, recordBlock)
-        val toolResponse = runCatching { HttpController.postSceneChatCompletion(request) }
-            .onFailure { OmniLog.w(TAG, "memory greeting tool-call failed: ${it.message}") }
-            .getOrNull()
+        val toolResponse = try {
+            HttpController.postSceneChatCompletion(request)
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (error: Exception) {
+            AssistsCoreChannelErrorPrivacy.record(
+                TAG,
+                "MEMORY_GREETING_TOOL_CALL_FAILED",
+                error,
+            )
+            null
+        }
 
         if (toolResponse != null && toolResponse.success) {
             parseMemoryGreetingFromToolCalls(toolResponse.toolCalls)?.let { parsed ->
@@ -2525,11 +2917,18 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
         }
 
         val fallbackPrompt = buildMemoryGreetingLegacyPrompt(recordBlock)
-        val legacyResponse = runCatching {
+        val legacyResponse = try {
             HttpController.postLLMRequest(model, fallbackPrompt).message
-        }.onFailure {
-            OmniLog.w(TAG, "memory greeting legacy request failed: ${it.message}")
-        }.getOrNull().orEmpty()
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (error: Exception) {
+            AssistsCoreChannelErrorPrivacy.record(
+                TAG,
+                "MEMORY_GREETING_LEGACY_REQUEST_FAILED",
+                error,
+            )
+            ""
+        }
 
         return sanitizeMemoryGreeting(legacyResponse).ifEmpty { defaultMemoryGreeting() }
     }
@@ -2684,9 +3083,16 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
             return null
         }
         val jsonText = extractFirstJsonObject(argsRaw) ?: argsRaw
-        val payload = runCatching { JSONObject(jsonText) }
-            .onFailure { OmniLog.w(TAG, "parse memory greeting tool args failed: ${it.message}") }
-            .getOrNull() ?: return null
+        val payload = try {
+            JSONObject(jsonText)
+        } catch (error: Exception) {
+            AssistsCoreChannelErrorPrivacy.record(
+                TAG,
+                "MEMORY_GREETING_ARGUMENT_PARSE_FAILED",
+                error,
+            )
+            return null
+        }
         return payload.optString("greeting").trim().ifEmpty {
             payload.optString("message").trim()
         }.ifEmpty {
@@ -2760,19 +3166,33 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
     fun listModelProviderProfiles(call: MethodCall, result: MethodChannel.Result) {
         workJob.launch {
             try {
-                val profiles = ModelProviderConfigStore.listProfiles()
+                val allProfiles = ModelProviderConfigStore.listProfiles()
+                val official = PlatformAiProvisioner.officialProfileOrNull()
+                val profiles = if (official != null) {
+                    listOf(official)
+                } else {
+                    allProfiles.filterNot {
+                        OmniOfficialProvider.isOfficialProfile(it.id)
+                    }
+                }
                 withContext(Dispatchers.Main) {
                     result.success(
                         mapOf(
                             "profiles" to profiles.map { it.toMap() },
-                            "editingProfileId" to ModelProviderConfigStore.getEditingProfileId()
+                            "editingProfileId" to (
+                                official?.id ?: ModelProviderConfigStore.getEditingProfileId()
+                                )
                         )
                     )
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "listModelProviderProfiles error: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("LIST_MODEL_PROVIDER_PROFILES_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "LIST_MODEL_PROVIDER_PROFILES_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -2787,9 +3207,33 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     result.success(logs.map { it.toMap() })
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "listRecentAiRequestLogs error: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("LIST_RECENT_AI_REQUEST_LOGS_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "LIST_RECENT_AI_REQUEST_LOGS_ERROR",
+                        e,
+                    )
+                }
+            }
+        }
+    }
+
+    fun clearAiRequestLogs(call: MethodCall, result: MethodChannel.Result) {
+        workJob.launch {
+            try {
+                AiRequestLogStore.clear()
+                withContext(Dispatchers.Main) {
+                    result.success(true)
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "CLEAR_AI_REQUEST_LOGS_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -2804,9 +3248,13 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     result.success(logs.map { it.toMap() })
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "listRuntimeLogs error: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("LIST_RUNTIME_LOGS_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "LIST_RUNTIME_LOGS_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -2820,9 +3268,13 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     result.success(true)
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "clearRuntimeLogs error: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("CLEAR_RUNTIME_LOGS_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "CLEAR_RUNTIME_LOGS_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -2832,16 +3284,34 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
         val profileId = call.argument<String>("id")?.trim()
         val name = call.argument<String>("name")?.trim().orEmpty()
         val baseUrl = call.argument<String>("baseUrl")?.trim().orEmpty()
-        val apiKey = call.argument<String>("apiKey")?.trim().orEmpty()
-        val customHeaders = ProviderCustomHeaderUtils.coerceStringMap(
+        val apiKeyReplacement = call.argument<String>("apiKey")?.trim().orEmpty()
+        val customHeadersReplacement = ProviderCustomHeaderUtils.coerceStringMap(
             call.argument<Map<*, *>>("customHeaders")
         )
+        val replaceApiKey = call.argument<Boolean>("replaceApiKey") == true
+        val clearApiKey = call.argument<Boolean>("clearApiKey") == true
+        val replaceCustomHeaders = call.argument<Boolean>("replaceCustomHeaders") == true
+        val clearCustomHeaders = call.argument<Boolean>("clearCustomHeaders") == true
         val sourceType = call.argument<String>("sourceType")?.trim()
         val protocolType = call.argument<String>("protocolType")?.trim() ?: "openai_compatible"
         val wireApi = call.argument<String>("wireApi")?.trim().orEmpty()
+        val destinationConfirmed = call.argument<Boolean>("destinationConfirmed") == true
 
         workJob.launch {
             try {
+                val existing = profileId?.let(ModelProviderConfigStore::getProfile)
+                val apiKey = when {
+                    clearApiKey -> ""
+                    replaceApiKey -> apiKeyReplacement
+                    existing != null -> existing.apiKey
+                    else -> ""
+                }
+                val customHeaders = when {
+                    clearCustomHeaders -> emptyMap()
+                    replaceCustomHeaders -> customHeadersReplacement
+                    existing != null -> existing.customHeaders
+                    else -> emptyMap()
+                }
                 val saved = ModelProviderConfigStore.saveProfile(
                     id = profileId,
                     name = name,
@@ -2850,15 +3320,20 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     customHeaders = customHeaders,
                     sourceType = sourceType,
                     protocolType = protocolType,
-                    wireApi = wireApi
+                    wireApi = wireApi,
+                    destinationConfirmed = destinationConfirmed,
                 )
                 withContext(Dispatchers.Main) {
                     result.success(saved.toMap())
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "saveModelProviderProfile error: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("SAVE_MODEL_PROVIDER_PROFILE_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "SAVE_MODEL_PROVIDER_PROFILE_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -2879,9 +3354,13 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     )
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "deleteModelProviderProfile error: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("DELETE_MODEL_PROVIDER_PROFILE_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "DELETE_MODEL_PROVIDER_PROFILE_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -2897,9 +3376,13 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     result.success(selected.toMap())
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "setEditingModelProviderProfile error: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("SET_EDITING_MODEL_PROVIDER_PROFILE_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "SET_EDITING_MODEL_PROVIDER_PROFILE_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -2907,22 +3390,47 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
 
     fun saveModelProviderConfig(call: MethodCall, result: MethodChannel.Result) {
         val baseUrl = call.argument<String>("baseUrl")?.trim() ?: ""
-        val apiKey = call.argument<String>("apiKey")?.trim() ?: ""
-        val customHeaders = ProviderCustomHeaderUtils.coerceStringMap(
+        val apiKeyReplacement = call.argument<String>("apiKey")?.trim().orEmpty()
+        val customHeadersReplacement = ProviderCustomHeaderUtils.coerceStringMap(
             call.argument<Map<*, *>>("customHeaders")
         )
+        val replaceApiKey = call.argument<Boolean>("replaceApiKey") == true
+        val clearApiKey = call.argument<Boolean>("clearApiKey") == true
+        val replaceCustomHeaders = call.argument<Boolean>("replaceCustomHeaders") == true
+        val clearCustomHeaders = call.argument<Boolean>("clearCustomHeaders") == true
+        val destinationConfirmed = call.argument<Boolean>("destinationConfirmed") == true
 
         workJob.launch {
             try {
-                ModelProviderConfigStore.saveConfig(baseUrl, apiKey, customHeaders)
+                val current = ModelProviderConfigStore.getEditingProfile()
+                val apiKey = when {
+                    clearApiKey -> ""
+                    replaceApiKey -> apiKeyReplacement
+                    else -> current.apiKey
+                }
+                val customHeaders = when {
+                    clearCustomHeaders -> emptyMap()
+                    replaceCustomHeaders -> customHeadersReplacement
+                    else -> current.customHeaders
+                }
+                ModelProviderConfigStore.saveConfig(
+                    baseUrl,
+                    apiKey,
+                    customHeaders,
+                    destinationConfirmed = destinationConfirmed,
+                )
                 val saved = ModelProviderConfigStore.getConfig()
                 withContext(Dispatchers.Main) {
                     result.success(saved.toMap())
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "saveModelProviderConfig error: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("SAVE_MODEL_PROVIDER_CONFIG_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "SAVE_MODEL_PROVIDER_CONFIG_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -2936,9 +3444,13 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     result.success(ModelProviderConfigStore.getConfig().toMap())
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "clearModelProviderConfig error: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("CLEAR_MODEL_PROVIDER_CONFIG_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "CLEAR_MODEL_PROVIDER_CONFIG_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -2950,20 +3462,49 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
         val customHeadersArg = ProviderCustomHeaderUtils.coerceStringMap(
             call.argument<Map<*, *>>("customHeaders")
         )
+        val useProvidedApiKey = call.argument<Boolean>("useProvidedApiKey") == true
+        val useProvidedCustomHeaders = call.argument<Boolean>("useProvidedCustomHeaders") == true
+        val destinationConfirmed = call.argument<Boolean>("destinationConfirmed") == true
         val profileId = call.argument<String>("profileId")?.trim()
+        val expectedProfileRevision = call.argument<Number>("expectedProfileRevision")?.toLong()
+        val expectedProfileBaseUrl = call.argument<String>("expectedProfileBaseUrl")?.trim().orEmpty()
 
         workJob.launch {
             try {
-                val currentConfig = ModelProviderConfigStore.getConfig()
-                val apiBase = if (baseUrlArg.isNotEmpty()) baseUrlArg else currentConfig.baseUrl
-                val apiKey = if (baseUrlArg.isNotEmpty()) apiKeyArg else currentConfig.apiKey
+                if (OmniOfficialProvider.isOfficialProfile(profileId)) {
+                    val models = PlatformAiProvisioner.ensureReadyAndGetModels()
+                    withContext(Dispatchers.Main) {
+                        result.success(models.map { it.toMap() })
+                    }
+                    return@launch
+                }
                 val profile = profileId?.let(ModelProviderConfigStore::getProfile)
                     ?: ModelProviderConfigStore.getEditingProfile()
-                val customHeaders = if (baseUrlArg.isNotEmpty()) {
-                    customHeadersArg
-                } else {
-                    profile.customHeaders
+                require(expectedProfileRevision != null && expectedProfileRevision >= 0L) {
+                    "provider profile revision is required"
                 }
+                require(expectedProfileBaseUrl.isNotEmpty()) {
+                    "provider profile endpoint is required"
+                }
+                require(
+                    profile.revision == expectedProfileRevision &&
+                        ModelProviderConfigStore.sameCanonicalEndpoint(
+                            profile.baseUrl,
+                            expectedProfileBaseUrl
+                        )
+                ) { "provider profile changed" }
+                val apiBase = if (baseUrlArg.isNotEmpty()) baseUrlArg else profile.baseUrl
+                if (!destinationConfirmed) {
+                    require(
+                        ModelProviderConfigStore.sameCanonicalEndpoint(profile.baseUrl, apiBase)
+                    ) { "provider profile changed" }
+                }
+                check(
+                    destinationConfirmed ||
+                        ModelProviderConfigStore.hasCurrentDestinationConsent(profile, apiBase)
+                ) { "Provider destination confirmation is required" }
+                val apiKey = if (useProvidedApiKey) apiKeyArg else profile.apiKey
+                val customHeaders = if (useProvidedCustomHeaders) customHeadersArg else profile.customHeaders
                 val models = HttpController.fetchProviderModels(
                     apiBase = apiBase,
                     apiKey = apiKey,
@@ -2971,13 +3512,28 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     protocolType = profile.protocolType,
                     wireApi = profile.wireApi
                 )
+                val currentProfile = profileId?.let(ModelProviderConfigStore::getProfile)
+                require(
+                    currentProfile != null &&
+                        currentProfile.revision == expectedProfileRevision &&
+                        ModelProviderConfigStore.sameCanonicalEndpoint(
+                            currentProfile.baseUrl,
+                            expectedProfileBaseUrl
+                        )
+                ) { "provider profile changed" }
                 withContext(Dispatchers.Main) {
                     result.success(models.map { it.toMap() })
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                OmniLog.e(TAG, "fetchProviderModels error: ${e.message}")
+                OmniLog.e(TAG, "fetchProviderModels failed")
                 withContext(Dispatchers.Main) {
-                    result.error("FETCH_PROVIDER_MODELS_ERROR", e.message, null)
+                    result.error(
+                        "FETCH_PROVIDER_MODELS_ERROR",
+                        "Provider model fetch failed.",
+                        null
+                    )
                 }
             }
         }
@@ -2990,20 +3546,42 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
         val customHeadersArg = ProviderCustomHeaderUtils.coerceStringMap(
             call.argument<Map<*, *>>("customHeaders")
         )
+        val useProvidedApiKey = call.argument<Boolean>("useProvidedApiKey") == true
+        val useProvidedCustomHeaders = call.argument<Boolean>("useProvidedCustomHeaders") == true
+        val destinationConfirmed = call.argument<Boolean>("destinationConfirmed") == true
         val profileId = call.argument<String>("profileId")?.trim()
 
         workJob.launch {
             try {
-                val currentConfig = ModelProviderConfigStore.getConfig()
-                val apiBase = if (baseUrlArg.isNotEmpty()) baseUrlArg else currentConfig.baseUrl
-                val apiKey = if (baseUrlArg.isNotEmpty()) apiKeyArg else currentConfig.apiKey
+                if (OmniOfficialProvider.isOfficialProfile(profileId)) {
+                    val available = PlatformAiProvisioner.ensureReadyAndGetModels()
+                        .any { it.id == model }
+                    withContext(Dispatchers.Main) {
+                        result.success(
+                            mapOf(
+                                "available" to available,
+                                "code" to if (available) 200 else 404,
+                                "message" to if (available) {
+                                    "OK"
+                                } else {
+                                    "该模型不在当前官方模型列表中"
+                                }
+                            )
+                        )
+                    }
+                    return@launch
+                }
                 val profile = profileId?.let(ModelProviderConfigStore::getProfile)
                     ?: ModelProviderConfigStore.getEditingProfile()
-                val customHeaders = if (baseUrlArg.isNotEmpty()) {
+                val apiBase = if (baseUrlArg.isNotEmpty()) baseUrlArg else profile.baseUrl
+                check(
+                    destinationConfirmed ||
+                        ModelProviderConfigStore.hasCurrentDestinationConsent(profile, apiBase)
+                ) { "Provider destination confirmation is required" }
+                val apiKey = if (useProvidedApiKey) apiKeyArg else profile.apiKey
+                val customHeaders = if (useProvidedCustomHeaders) {
                     customHeadersArg
-                } else {
-                    profile.customHeaders
-                }
+                } else profile.customHeaders
                 val checkResult = HttpController.checkProviderModelAvailability(
                     model = model,
                     apiBase = apiBase,
@@ -3023,13 +3601,17 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     )
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "checkProviderModelAvailability error: ${e.message}")
+                val failure = AssistsCoreChannelErrorPrivacy.record(
+                    TAG,
+                    "PROVIDER_MODEL_AVAILABILITY_CHECK_FAILED",
+                    e,
+                )
                 withContext(Dispatchers.Main) {
                     result.success(
                         mapOf(
                             "available" to false,
                             "code" to null,
-                            "message" to (e.message ?: "检测失败")
+                            "message" to failure.message,
                         )
                     )
                 }
@@ -3045,9 +3627,13 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     result.success(catalog.map { it.toMap() })
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "getSceneModelCatalog error: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("GET_SCENE_MODEL_CATALOG_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "GET_SCENE_MODEL_CATALOG_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -3060,9 +3646,13 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     result.success(SceneModelBindingStore.getBindingEntries().map { it.toMap() })
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "getSceneModelBindings error: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("GET_SCENE_MODEL_BINDINGS_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "GET_SCENE_MODEL_BINDINGS_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -3080,9 +3670,13 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     result.success(SceneModelBindingStore.getBindingEntries().map { it.toMap() })
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "saveSceneModelBinding error: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("SAVE_SCENE_MODEL_BINDING_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "SAVE_SCENE_MODEL_BINDING_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -3098,9 +3692,13 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     result.success(SceneModelBindingStore.getBindingEntries().map { it.toMap() })
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "clearSceneModelBinding error: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("CLEAR_SCENE_MODEL_BINDING_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "CLEAR_SCENE_MODEL_BINDING_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -3113,9 +3711,13 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     result.success(SceneVoiceConfigStore.getConfig().toMap())
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "getSceneVoiceConfig error: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("GET_SCENE_VOICE_CONFIG_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "GET_SCENE_VOICE_CONFIG_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -3128,6 +3730,8 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
         val customStyle = call.argument<String>("customStyle")?.trim().orEmpty()
         val ttsMode = call.argument<String>("ttsMode")?.trim().orEmpty()
         val customCurlCommand = call.argument<String>("customCurlCommand")?.trim().orEmpty()
+        val replaceCustomCurlCommand = call.argument<Boolean>("replaceCustomCurlCommand") == true
+        val clearCustomCurlCommand = call.argument<Boolean>("clearCustomCurlCommand") == true
 
         workJob.launch {
             try {
@@ -3139,15 +3743,21 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                         customStyle = customStyle,
                         ttsMode = ttsMode,
                         customCurlCommand = customCurlCommand
-                    )
+                    ),
+                    replaceCustomCurlCommand = replaceCustomCurlCommand,
+                    clearCustomCurlCommand = clearCustomCurlCommand,
                 )
                 withContext(Dispatchers.Main) {
                     result.success(saved.toMap())
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "saveSceneVoiceConfig error: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("SAVE_SCENE_VOICE_CONFIG_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "SAVE_SCENE_VOICE_CONFIG_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -3160,9 +3770,13 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     result.success(SceneModelOverrideStore.getOverrideEntries().map { it.toMap() })
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "getSceneModelOverrides error: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("GET_SCENE_MODEL_OVERRIDES_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "GET_SCENE_MODEL_OVERRIDES_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -3179,9 +3793,13 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     result.success(SceneModelOverrideStore.getOverrideEntries().map { it.toMap() })
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "saveSceneModelOverride error: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("SAVE_SCENE_MODEL_OVERRIDE_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "SAVE_SCENE_MODEL_OVERRIDE_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -3197,9 +3815,13 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     result.success(SceneModelOverrideStore.getOverrideEntries().map { it.toMap() })
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "clearSceneModelOverride error: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("CLEAR_SCENE_MODEL_OVERRIDE_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "CLEAR_SCENE_MODEL_OVERRIDE_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -3219,7 +3841,12 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    result.error("GET_AGENT_SOUL_SETTING_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "GET_AGENT_SOUL_SETTING_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -3239,7 +3866,12 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    result.error("GET_CHAT_PROMPT_SETTING_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "GET_CHAT_PROMPT_SETTING_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -3260,7 +3892,12 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    result.error("SAVE_AGENT_SOUL_SETTING_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "SAVE_AGENT_SOUL_SETTING_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -3281,7 +3918,12 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    result.error("SAVE_CHAT_PROMPT_SETTING_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "SAVE_CHAT_PROMPT_SETTING_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -3301,7 +3943,12 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    result.error("GET_WORKSPACE_MEMORY_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "GET_WORKSPACE_MEMORY_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -3333,7 +3980,12 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    result.error("GET_WORKSPACE_SHORT_MEMORY_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "GET_WORKSPACE_SHORT_MEMORY_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -3355,7 +4007,12 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    result.error("LIST_QUICK_LOGS_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "LIST_QUICK_LOGS_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -3379,7 +4036,12 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    result.error("ADD_QUICK_LOG_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "ADD_QUICK_LOG_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -3404,7 +4066,12 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    result.error("UPDATE_QUICK_LOG_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "UPDATE_QUICK_LOG_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -3424,7 +4091,12 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    result.error("DELETE_QUICK_LOG_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "DELETE_QUICK_LOG_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -3453,7 +4125,12 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    result.error("SAVE_WORKSPACE_MEMORY_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "SAVE_WORKSPACE_MEMORY_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -3479,7 +4156,12 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    result.error("GET_MEMORY_EMBEDDING_CONFIG_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "GET_MEMORY_EMBEDDING_CONFIG_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -3512,7 +4194,12 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    result.error("SAVE_MEMORY_EMBEDDING_CONFIG_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "SAVE_MEMORY_EMBEDDING_CONFIG_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -3536,7 +4223,12 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    result.error("GET_MEMORY_ROLLUP_STATUS_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "GET_MEMORY_ROLLUP_STATUS_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -3560,7 +4252,12 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    result.error("SAVE_MEMORY_ROLLUP_STATUS_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "SAVE_MEMORY_ROLLUP_STATUS_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -3570,21 +4267,29 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
         workJob.launch {
             try {
                 val payload = WorkspaceMemoryService(context).rollupDay().toMutableMap()
-                runCatching {
+                try {
                     WorkspaceMemoryRollupScheduler(context).ensureScheduledIfEnabled()
-                }.onFailure { throwable ->
-                    OmniLog.w(
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (error: Exception) {
+                    val failure = AssistsCoreChannelErrorPrivacy.record(
                         TAG,
-                        "runWorkspaceMemoryRollupNow schedule failed: ${throwable.message}"
+                        "MEMORY_ROLLUP_SCHEDULE_FAILED",
+                        error,
                     )
-                    payload["scheduleWarning"] = throwable.message
+                    payload["scheduleWarning"] = failure.message
                 }
                 withContext(Dispatchers.Main) {
                     result.success(payload)
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    result.error("RUN_MEMORY_ROLLUP_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "RUN_MEMORY_ROLLUP_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -3600,7 +4305,12 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    result.error("UPSERT_WORKSPACE_SCHEDULED_TASK_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "UPSERT_WORKSPACE_SCHEDULED_TASK_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -3621,7 +4331,12 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    result.error("DELETE_WORKSPACE_SCHEDULED_TASK_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "DELETE_WORKSPACE_SCHEDULED_TASK_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -3637,7 +4352,12 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    result.error("SYNC_WORKSPACE_SCHEDULED_TASKS_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "SYNC_WORKSPACE_SCHEDULED_TASKS_ERROR",
+                        e,
+                    )
                 }
             }
         }
@@ -3657,7 +4377,7 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
             }
 
         } catch (e: Exception) {
-            result.error("OPEN_APP_MARKET_ERROR", e.message, null)
+            AssistsCoreChannelErrorPrivacy.deliver(result, TAG, "OPEN_APP_MARKET_ERROR", e)
         }
     }
 
@@ -3665,6 +4385,14 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
      * 获取桌面包名
      */
     fun getDeskTopPackageName(call: MethodCall, result: MethodChannel.Result){
+        if (!AppEditionCapabilities.canQueryInstalledApps) {
+            result.error(
+                "CAPABILITY_UNAVAILABLE",
+                "Installed apps access is unavailable in this app edition.",
+                null,
+            )
+            return
+        }
         try {
             val homeIntent = Intent(Intent.ACTION_MAIN).apply {
                 addCategory(Intent.CATEGORY_HOME)
@@ -3674,8 +4402,12 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 .map { it.activityInfo.packageName }
                 .distinct()
             result.success(packages)
-        } catch (e: Exception) {
-            result.error("GET_DESK_TOP_PACKAGE_NAME_ERROR", e.message, null)
+        } catch (_: Exception) {
+            result.error(
+                "GET_DESK_TOP_PACKAGE_NAME_ERROR",
+                "Unable to query launcher applications.",
+                null,
+            )
         }
     }
 
@@ -3691,9 +4423,13 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     result.success("SUCCESS")
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "navigateToMainEngineRoute failed: ${e.message}")
                 mainJob.launch(Dispatchers.Main) {
-                    result.error("NAVIGATE_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "NAVIGATE_ERROR",
+                        e,
+                    )
                 }
             }
         } else {
@@ -3977,7 +4713,7 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
         if (legacyConversationHistory.isNotEmpty()) {
             OmniLog.d(
                 TAG,
-                "Ignoring legacy conversationHistory for createAgentTask taskId=$taskId size=${legacyConversationHistory.size}"
+                "legacy_conversation_history_ignored count=${legacyConversationHistory.size}"
             )
         }
         val retryArguments = sanitizeInteropMap(
@@ -4006,7 +4742,15 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
             conversationId = conversationId,
             conversationMode = resolvedConversationMode
         )
-        registerActiveAgentRun(taskId, agentRunContext)
+        if (!registerActiveAgentRun(taskId, agentRunContext)) {
+            agentRunJob.cancel()
+            result.error(
+                "CONVERSATION_HISTORY_BUSY",
+                "Conversation history maintenance is in progress",
+                null,
+            )
+            return
+        }
         TaskRuntimeSettings.onTaskStarted(context)
 
         agentRunScope.launch {
@@ -4072,12 +4816,11 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 var initialStreamSequence = 0L
                 var initialEntrySequence = 0L
                 if (conversationId != null) {
-                    runCatching {
-                        repository.listConversationMessages(
+                    try {
+                        val existingMessages = repository.listConversationMessages(
                             conversationId = conversationId,
                             conversationMode = resolvedConversationMode
                         )
-                    }.onSuccess { existingMessages ->
                         existingMessages.forEach { message ->
                             val streamMeta = toStringAnyMap(message["streamMeta"])
                             if (streamMeta["parentTaskId"]?.toString()?.trim() != taskId) {
@@ -4098,10 +4841,12 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                                 }
                             }
                         }
-                    }.onFailure { error ->
-                        OmniLog.w(
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (error: Exception) {
+                        AssistsCoreChannelErrorPrivacy.record(
                             TAG,
-                            "seed agent stream sequence failed for taskId=$taskId: ${error.message}",
+                            "AGENT_STREAM_SEED_FAILED",
                             error
                         )
                     }
@@ -4212,9 +4957,9 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     } catch (error: CancellationException) {
                         throw error
                     } catch (error: Exception) {
-                        OmniLog.w(
+                        AssistsCoreChannelErrorPrivacy.record(
                             TAG,
-                            "publish conversation messages failed: ${error.message}",
+                            "CONVERSATION_MESSAGE_PUBLISH_FAILED",
                             error
                         )
                     }
@@ -4231,7 +4976,11 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     } catch (error: CancellationException) {
                         throw error
                     } catch (error: Exception) {
-                        OmniLog.w(TAG, "$description failed: ${error.message}", error)
+                        AssistsCoreChannelErrorPrivacy.record(
+                            TAG,
+                            "AGENT_CALLBACK_FAILED",
+                            error
+                        )
                         false
                     }
                     if (persisted && publish) {
@@ -5124,13 +5873,15 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                                     t("任务已结束，请点击查看详情。", "Task ended. Tap to view details.")
                                 }
                             }
-                            runCatching {
+                            try {
                                 notifyScheduledSubagentCompletion(meta, notificationText)
-                            }.onFailure {
-                                OmniLog.w(
+                            } catch (error: CancellationException) {
+                                throw error
+                            } catch (error: Exception) {
+                                AssistsCoreChannelErrorPrivacy.record(
                                     TAG,
-                                    "notify scheduled subagent completion failed: ${it.message}",
-                                    it
+                                    "SCHEDULED_SUBAGENT_COMPLETION_NOTIFY_FAILED",
+                                    error
                                 )
                             }
                         }
@@ -5301,13 +6052,15 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                             removeFailedAgentContinueContext(taskId)
                         }
                         scheduledSubagentMeta?.let { meta ->
-                            runCatching {
+                            try {
                                 notifyScheduledSubagentCompletion(meta, finalText)
-                            }.onFailure {
-                                OmniLog.w(
+                            } catch (notificationError: CancellationException) {
+                                throw notificationError
+                            } catch (notificationError: Exception) {
+                                AssistsCoreChannelErrorPrivacy.record(
                                     TAG,
-                                    "notify scheduled subagent error failed: ${it.message}",
-                                    it
+                                    "SCHEDULED_SUBAGENT_ERROR_NOTIFY_FAILED",
+                                    notificationError
                                 )
                             }
                         }
@@ -5497,18 +6250,22 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     continueMode = continueMode
                 )
             } catch (e: CancellationException) {
-                OmniLog.i(TAG, "createAgentTask cancelled: ${e.message}")
+                OmniLog.i(TAG, "create_agent_task_cancelled")
+                throw e
             } catch (e: Exception) {
                 removeFailedAgentRetryContext(taskId)
-                OmniLog.e(TAG, "createAgentTask error: ${e.message}")
-                val errorMessage = e.message?.trim()?.takeIf { it.isNotEmpty() }?.let {
-                    "Agent execution failed: $it"
-                } ?: "Agent execution failed"
+                val failure = AssistsCoreChannelErrorPrivacy.record(
+                    TAG,
+                    "CREATE_AGENT_TASK_ERROR",
+                    e
+                )
+                val errorMessage = failure.message
                 var failureTextSeq = 1L
                 var failureErrorSeq = 2L
                 var failureTextStreamMeta: Map<String, Any?>? = null
-                runCatching {
-                    val normalizedConversationId = conversationId ?: return@runCatching
+                try {
+                    val normalizedConversationId = conversationId
+                    if (normalizedConversationId != null) {
                     val failureRepository =
                         historyRepository ?: conversationHistoryRepository().also {
                             historyRepository = it
@@ -5570,17 +6327,30 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                         mode = resolvedConversationMode,
                         reason = "messages_replaced"
                     )
-                }.onFailure {
-                    OmniLog.w(TAG, "persist agent startup failure failed: ${it.message}")
+                    }
+                } catch (persistenceError: CancellationException) {
+                    throw persistenceError
+                } catch (persistenceError: Exception) {
+                    AssistsCoreChannelErrorPrivacy.record(
+                        TAG,
+                        "AGENT_STARTUP_FAILURE_PERSIST_FAILED",
+                        persistenceError
+                    )
                 }
                 scheduledSubagentMeta?.let { meta ->
-                    runCatching {
+                    try {
                         notifyScheduledSubagentCompletion(meta, errorMessage)
-                    }.onFailure {
-                        OmniLog.w(TAG, "notify scheduled subagent failure failed: ${it.message}")
+                    } catch (notificationError: CancellationException) {
+                        throw notificationError
+                    } catch (notificationError: Exception) {
+                        AssistsCoreChannelErrorPrivacy.record(
+                            TAG,
+                            "SCHEDULED_SUBAGENT_FAILURE_NOTIFY_FAILED",
+                            notificationError
+                        )
                     }
                 }
-                runCatching {
+                try {
                     val failureEntryId = "$taskId-text"
                     val failureRoundIndex = 1
                     val textPayload = sanitizeInteropMap(
@@ -5629,8 +6399,14 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                         invokeFlutterEventSafely("onAgentStreamEvent", textPayload)
                         invokeFlutterEventSafely("onAgentStreamEvent", errorPayload)
                     }
-                }.onFailure {
-                    OmniLog.w(TAG, "dispatch agent startup failure failed: ${it.message}")
+                } catch (dispatchError: CancellationException) {
+                    throw dispatchError
+                } catch (dispatchError: Exception) {
+                    AssistsCoreChannelErrorPrivacy.record(
+                        TAG,
+                        "AGENT_STARTUP_FAILURE_DISPATCH_FAILED",
+                        dispatchError
+                    )
                 }
             } finally {
                 TaskRuntimeSettings.onTaskFinished(context)
@@ -5647,7 +6423,7 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     withContext(Dispatchers.Main) {
                         result.error(
                             "WORKSPACE_STORAGE_PERMISSION_REQUIRED",
-                            WorkspaceStorageAccess.REQUIRED_PERMISSION_NAME,
+                            "Workspace storage permission is required.",
                             null
                         )
                     }
@@ -5663,19 +6439,12 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 withContext(Dispatchers.Main) {
                     val isWorkspacePermissionError =
                         WorkspaceStorageAccess.looksLikePermissionError(e)
-                    result.error(
-                        if (isWorkspacePermissionError) {
+                    val code = if (isWorkspacePermissionError) {
                             "WORKSPACE_STORAGE_PERMISSION_REQUIRED"
                         } else {
                             "AGENT_SKILL_LIST_ERROR"
-                        },
-                        if (isWorkspacePermissionError) {
-                            WorkspaceStorageAccess.REQUIRED_PERMISSION_NAME
-                        } else {
-                            e.message
-                        },
-                        null
-                    )
+                        }
+                    AssistsCoreChannelErrorPrivacy.deliver(result, TAG, code, e)
                 }
             }
         }
@@ -5714,7 +6483,7 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     withContext(Dispatchers.Main) {
                         result.error(
                             "WORKSPACE_STORAGE_PERMISSION_REQUIRED",
-                            WorkspaceStorageAccess.REQUIRED_PERMISSION_NAME,
+                            "Workspace storage permission is required.",
                             null
                         )
                     }
@@ -5730,19 +6499,12 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 withContext(Dispatchers.Main) {
                     val isWorkspacePermissionError =
                         WorkspaceStorageAccess.looksLikePermissionError(e)
-                    result.error(
-                        if (isWorkspacePermissionError) {
+                    val code = if (isWorkspacePermissionError) {
                             "WORKSPACE_STORAGE_PERMISSION_REQUIRED"
                         } else {
                             "AGENT_SKILL_INSTALL_ERROR"
-                        },
-                        if (isWorkspacePermissionError) {
-                            WorkspaceStorageAccess.REQUIRED_PERMISSION_NAME
-                        } else {
-                            e.message
-                        },
-                        null
-                    )
+                        }
+                    AssistsCoreChannelErrorPrivacy.deliver(result, TAG, code, e)
                 }
             }
         }
@@ -5761,7 +6523,7 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     withContext(Dispatchers.Main) {
                         result.error(
                             "WORKSPACE_STORAGE_PERMISSION_REQUIRED",
-                            WorkspaceStorageAccess.REQUIRED_PERMISSION_NAME,
+                            "Workspace storage permission is required.",
                             null
                         )
                     }
@@ -5777,19 +6539,12 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 withContext(Dispatchers.Main) {
                     val isWorkspacePermissionError =
                         WorkspaceStorageAccess.looksLikePermissionError(e)
-                    result.error(
-                        if (isWorkspacePermissionError) {
+                    val code = if (isWorkspacePermissionError) {
                             "WORKSPACE_STORAGE_PERMISSION_REQUIRED"
                         } else {
                             "AGENT_SKILL_SET_ENABLED_ERROR"
-                        },
-                        if (isWorkspacePermissionError) {
-                            WorkspaceStorageAccess.REQUIRED_PERMISSION_NAME
-                        } else {
-                            e.message
-                        },
-                        null
-                    )
+                        }
+                    AssistsCoreChannelErrorPrivacy.deliver(result, TAG, code, e)
                 }
             }
         }
@@ -5807,7 +6562,7 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     withContext(Dispatchers.Main) {
                         result.error(
                             "WORKSPACE_STORAGE_PERMISSION_REQUIRED",
-                            WorkspaceStorageAccess.REQUIRED_PERMISSION_NAME,
+                            "Workspace storage permission is required.",
                             null
                         )
                     }
@@ -5823,19 +6578,12 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 withContext(Dispatchers.Main) {
                     val isWorkspacePermissionError =
                         WorkspaceStorageAccess.looksLikePermissionError(e)
-                    result.error(
-                        if (isWorkspacePermissionError) {
+                    val code = if (isWorkspacePermissionError) {
                             "WORKSPACE_STORAGE_PERMISSION_REQUIRED"
                         } else {
                             "AGENT_SKILL_DELETE_ERROR"
-                        },
-                        if (isWorkspacePermissionError) {
-                            WorkspaceStorageAccess.REQUIRED_PERMISSION_NAME
-                        } else {
-                            e.message
-                        },
-                        null
-                    )
+                        }
+                    AssistsCoreChannelErrorPrivacy.deliver(result, TAG, code, e)
                 }
             }
         }
@@ -5853,7 +6601,7 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     withContext(Dispatchers.Main) {
                         result.error(
                             "WORKSPACE_STORAGE_PERMISSION_REQUIRED",
-                            WorkspaceStorageAccess.REQUIRED_PERMISSION_NAME,
+                            "Workspace storage permission is required.",
                             null
                         )
                     }
@@ -5869,19 +6617,12 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 withContext(Dispatchers.Main) {
                     val isWorkspacePermissionError =
                         WorkspaceStorageAccess.looksLikePermissionError(e)
-                    result.error(
-                        if (isWorkspacePermissionError) {
+                    val code = if (isWorkspacePermissionError) {
                             "WORKSPACE_STORAGE_PERMISSION_REQUIRED"
                         } else {
                             "AGENT_SKILL_INSTALL_BUILTIN_ERROR"
-                        },
-                        if (isWorkspacePermissionError) {
-                            WorkspaceStorageAccess.REQUIRED_PERMISSION_NAME
-                        } else {
-                            e.message
-                        },
-                        null
-                    )
+                        }
+                    AssistsCoreChannelErrorPrivacy.deliver(result, TAG, code, e)
                 }
             }
         }
@@ -5894,7 +6635,7 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     withContext(Dispatchers.Main) {
                         result.error(
                             "WORKSPACE_STORAGE_PERMISSION_REQUIRED",
-                            WorkspaceStorageAccess.REQUIRED_PERMISSION_NAME,
+                            "Workspace storage permission is required.",
                             null
                         )
                     }
@@ -5920,19 +6661,12 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 withContext(Dispatchers.Main) {
                     val isWorkspacePermissionError =
                         WorkspaceStorageAccess.looksLikePermissionError(e)
-                    result.error(
-                        if (isWorkspacePermissionError) {
+                    val code = if (isWorkspacePermissionError) {
                             "WORKSPACE_STORAGE_PERMISSION_REQUIRED"
                         } else {
                             "AGENT_SKILL_SYNC_OFFICIAL_ERROR"
-                        },
-                        if (isWorkspacePermissionError) {
-                            WorkspaceStorageAccess.REQUIRED_PERMISSION_NAME
-                        } else {
-                            e.message
-                        },
-                        null
-                    )
+                        }
+                    AssistsCoreChannelErrorPrivacy.deliver(result, TAG, code, e)
                 }
             }
         }
@@ -5960,9 +6694,13 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     result.success(jsonList)
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "Failed to get token usage records: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("GET_TOKEN_USAGE_RECORDS_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "GET_TOKEN_USAGE_RECORDS_ERROR",
+                        e
+                    )
                 }
             }
         }
@@ -5980,13 +6718,17 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 )
                 OmniLog.d(TAG, "[getConversations] 从数据库获取到 ${jsonList.size} 条对话记录")
                 withContext(Dispatchers.Main) {
-                    OmniLog.d(TAG, "[getConversations] 返回 Flutter: $jsonList")
+                    OmniLog.d(TAG, "[getConversations] returning ${jsonList.size} records")
                     result.success(jsonList)
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "[getConversations] 获取对话列表失败: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("GET_CONVERSATIONS_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "GET_CONVERSATIONS_ERROR",
+                        e
+                    )
                 }
             }
         }
@@ -6011,9 +6753,13 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     result.success(messages)
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "获取对话消息失败: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("GET_CONVERSATION_MESSAGES_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "GET_CONVERSATION_MESSAGES_ERROR",
+                        e
+                    )
                 }
             }
         }
@@ -6042,9 +6788,13 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     result.success(pagedResult)
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "分页获取对话消息失败: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("GET_CONVERSATION_MESSAGES_PAGED_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "GET_CONVERSATION_MESSAGES_PAGED_ERROR",
+                        e
+                    )
                 }
             }
         }
@@ -6071,9 +6821,13 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     result.success("SUCCESS")
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "替换对话消息失败: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("REPLACE_CONVERSATION_MESSAGES_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "REPLACE_CONVERSATION_MESSAGES_ERROR",
+                        e
+                    )
                 }
             }
         }
@@ -6108,9 +6862,13 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     result.success("SUCCESS")
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "保存 UI 卡片失败: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("UPSERT_CONVERSATION_UI_CARD_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "UPSERT_CONVERSATION_UI_CARD_ERROR",
+                        e
+                    )
                 }
             }
         }
@@ -6146,9 +6904,13 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     result.success(payload)
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "手动压缩上下文失败: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("COMPACT_CONVERSATION_CONTEXT_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "COMPACT_CONVERSATION_CONTEXT_ERROR",
+                        e
+                    )
                 }
             }
         }
@@ -6173,9 +6935,13 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     result.success("SUCCESS")
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "清理对话消息失败: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("CLEAR_CONVERSATION_MESSAGES_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "CLEAR_CONVERSATION_MESSAGES_ERROR",
+                        e
+                    )
                 }
             }
         }
@@ -6202,9 +6968,13 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     result.success(jsonList)
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "分页获取对话列表失败: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("GET_CONVERSATIONS_BY_PAGE_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "GET_CONVERSATIONS_BY_PAGE_ERROR",
+                        e
+                    )
                 }
             }
         }
@@ -6237,9 +7007,13 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     result.success((conversation["id"] as? Number)?.toLong())
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "创建对话失败: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("CREATE_CONVERSATION_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "CREATE_CONVERSATION_ERROR",
+                        e
+                    )
                 }
             }
         }
@@ -6266,9 +7040,13 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     }
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "更新对话失败: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("UPDATE_CONVERSATION_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "UPDATE_CONVERSATION_ERROR",
+                        e
+                    )
                 }
             }
         }
@@ -6287,9 +7065,13 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     result.success("SUCCESS")
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "删除对话失败: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("DELETE_CONVERSATION_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "DELETE_CONVERSATION_ERROR",
+                        e
+                    )
                 }
             }
         }
@@ -6319,9 +7101,13 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     result.success("SUCCESS")
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "更新对话压缩阈值失败: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("UPDATE_CONVERSATION_THRESHOLD_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "UPDATE_CONVERSATION_THRESHOLD_ERROR",
+                        e
+                    )
                 }
             }
         }
@@ -6344,9 +7130,13 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     result.success("SUCCESS")
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "更新对话标题失败: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("UPDATE_CONVERSATION_TITLE_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "UPDATE_CONVERSATION_TITLE_ERROR",
+                        e
+                    )
                 }
             }
         }
@@ -6387,9 +7177,13 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     result.success(summary)
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "生成对话摘要失败: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("GENERATE_SUMMARY_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "GENERATE_SUMMARY_ERROR",
+                        e
+                    )
                 }
             }
         }
@@ -6420,8 +7214,12 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 result.error("SAVE_PREVENT_SLEEP_SETTING_FAILED", "Failed to save prevent sleep setting", null)
             }
         } catch (e: Exception) {
-            OmniLog.e(TAG, "save prevent sleep setting failed: ${e.message}")
-            result.error("SAVE_PREVENT_SLEEP_SETTING_FAILED", e.message, null)
+            AssistsCoreChannelErrorPrivacy.deliver(
+                result,
+                TAG,
+                "SAVE_PREVENT_SLEEP_SETTING_FAILED",
+                e
+            )
         }
     }
 
@@ -6438,8 +7236,12 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 result.error("SAVE_TASK_NOTIFICATION_SETTING_FAILED", "Failed to save task notification setting", null)
             }
         } catch (e: Exception) {
-            OmniLog.e(TAG, "save task notification setting failed: ${e.message}")
-            result.error("SAVE_TASK_NOTIFICATION_SETTING_FAILED", e.message, null)
+            AssistsCoreChannelErrorPrivacy.deliver(
+                result,
+                TAG,
+                "SAVE_TASK_NOTIFICATION_SETTING_FAILED",
+                e
+            )
         }
     }
 
@@ -6465,8 +7267,12 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
             )
             result.success("SUCCESS")
         } catch (e: Exception) {
-            OmniLog.e(TAG, "show task completion notification failed: ${e.message}")
-            result.error("SHOW_TASK_NOTIFICATION_FAILED", e.message, null)
+            AssistsCoreChannelErrorPrivacy.deliver(
+                result,
+                TAG,
+                "SHOW_TASK_NOTIFICATION_FAILED",
+                e
+            )
         }
     }
 
@@ -6500,9 +7306,13 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                     result.success("SUCCESS")
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "完成对话失败: ${e.message}")
                 withContext(Dispatchers.Main) {
-                    result.error("COMPLETE_CONVERSATION_ERROR", e.message, null)
+                    AssistsCoreChannelErrorPrivacy.deliver(
+                        result,
+                        TAG,
+                        "COMPLETE_CONVERSATION_ERROR",
+                        e
+                    )
                 }
             }
         }
@@ -6530,8 +7340,7 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 UIKit.uiChatEvent?.showChatBotHalfScreen("resume_after_auth")
                 result.success("SUCCESS")
             } catch (e: Exception) {
-                OmniLog.e(TAG, "reopenChatBotAfterAuth failed: ${e.message}")
-                result.error("REOPEN_ERROR", e.message, null)
+                AssistsCoreChannelErrorPrivacy.deliver(result, TAG, "REOPEN_ERROR", e)
             }
         }
     }

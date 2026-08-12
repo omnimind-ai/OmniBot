@@ -41,7 +41,6 @@ class GoRouterManager {
       RouteObserver<ModalRoute<void>>();
 
   static void setInitialRoute(String? route) {
-    print('[GoRouterManager] setInitialRoute: $route');
     _initialRoute = route;
   }
 
@@ -195,7 +194,6 @@ class GoRouterManager {
         .map(_wrapRoute)
         .toList();
 
-    print('initialLocation: $_initialRoute');
 
     // Determine effective initial location with onboarding guard
     final welcomeCompleted =
@@ -294,10 +292,6 @@ class GoRouterManager {
     Map<String, dynamic>? queryParams,
     RouteOptions? options,
   }) {
-    print(
-      '[GoRouterManager] go: $route, extra: $extra, queryParams: $queryParams, options: $options',
-    );
-    print('[GoRouterManager] go 调用堆栈: ${StackTrace.current}');
     final context = _rootNavigatorKey.currentContext;
     if (context != null) {
       final finalRoute = _normalizeHomeRoute(
@@ -314,10 +308,6 @@ class GoRouterManager {
     Map<String, dynamic>? queryParams,
     RouteOptions? options,
   }) {
-    print(
-      '[GoRouterManager] clearAndNavigateTo: $route, extra: $extra, queryParams: $queryParams, options: $options',
-    );
-    print('[GoRouterManager] clearAndNavigateTo 调用堆栈: ${StackTrace.current}');
     final context = _rootNavigatorKey.currentContext;
     if (context != null) {
       final finalRoute = _normalizeHomeRoute(
@@ -335,10 +325,6 @@ class GoRouterManager {
     RouteOptions? options,
   }) {
     final context = _rootNavigatorKey.currentContext;
-    print(
-      '[GoRouterManager] push route: $route, extra: $extra, queryParams: $queryParams, options: $options',
-    );
-    print('[GoRouterManager] push context: $context');
     if (context != null) {
       final finalRoute = _normalizeHomeRoute(
         _buildRouteWithQueryParams(route, queryParams),
@@ -360,10 +346,6 @@ class GoRouterManager {
     RouteOptions? options,
   }) async {
     final context = _rootNavigatorKey.currentContext;
-    print(
-      '[GoRouterManager] push route(for result): $route, extra: $extra, queryParams: $queryParams, options: $options',
-    );
-    print('[GoRouterManager] push context: $context');
     if (context != null) {
       final finalRoute = _normalizeHomeRoute(
         _buildRouteWithQueryParams(route, queryParams),
@@ -375,7 +357,6 @@ class GoRouterManager {
   }
 
   static void pop([Object? result]) {
-    print('[GoRouterManager] pop: $result');
     final context = _rootNavigatorKey.currentContext;
     if (context != null && context.canPop()) {
       context.pop(result);
@@ -390,9 +371,6 @@ class GoRouterManager {
     RouteOptions? options,
   }) {
     final context = _rootNavigatorKey.currentContext;
-    print(
-      '[GoRouterManager] pushReplacement route: $route, extra: $extra, queryParams: $queryParams, options: $options',
-    );
     if (context != null) {
       final finalRoute = _normalizeHomeRoute(
         _buildRouteWithQueryParams(route, queryParams),
@@ -405,7 +383,6 @@ class GoRouterManager {
   static bool canPop() {
     final context = _rootNavigatorKey.currentContext;
     final canPop = context?.canPop() ?? false;
-    print('[GoRouterManager] canPop: $canPop');
     return canPop;
   }
 
@@ -432,9 +409,6 @@ class GoRouterManager {
     RouteOptions? options,
   }) {
     final context = _rootNavigatorKey.currentContext;
-    print(
-      '[GoRouterManager] resetToHomeAndPush route: $route, extra: $extra, queryParams: $queryParams, options: $options',
-    );
     if (context == null) return;
 
     final finalRoute = _normalizeHomeRoute(
@@ -443,9 +417,6 @@ class GoRouterManager {
 
     // 如果目标是聊天主页（包含 query 参数场景），直接替换到目标路由，不再 push
     if (_isHomeChatRoute(finalRoute)) {
-      print(
-        '[GoRouterManager] resetToHomeAndPush: target is home, only clearAndNavigateTo',
-      );
       clearAndNavigateTo(finalRoute, extra: extra, options: options);
       return;
     }

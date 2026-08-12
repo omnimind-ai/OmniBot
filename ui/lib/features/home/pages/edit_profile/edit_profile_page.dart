@@ -17,8 +17,8 @@ class EditProfilePage extends StatefulWidget {
 }
 
 class _EditProfilePageState extends State<EditProfilePage> {
-  int? selectedAvatarIndex;
-  String? nickname;
+  int selectedAvatarIndex = 0;
+  String nickname = '';
   bool isLoading = true; // 添加加载状态
 
   @override
@@ -29,17 +29,20 @@ class _EditProfilePageState extends State<EditProfilePage> {
 
   Future<void> _loadUserData() async {
     final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    final storedAvatarIndex =
+        widget.initialAvatarIndex ?? prefs.getInt('avatarIndex');
     setState(() {
-      selectedAvatarIndex = widget.initialAvatarIndex ?? prefs.getInt('avatarIndex');
-      nickname = widget.initialNickname ?? prefs.getString('nickname');
+      selectedAvatarIndex = _validAvatarIndex(storedAvatarIndex);
+      nickname = widget.initialNickname ?? prefs.getString('nickname') ?? '';
       isLoading = false; // 加载完成
     });
   }
 
   Future<void> _saveUserData() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt('avatarIndex', selectedAvatarIndex!);
-    await prefs.setString('nickname', nickname!);
+    await prefs.setInt('avatarIndex', selectedAvatarIndex);
+    await prefs.setString('nickname', nickname);
   }
   
   // 预设头像列表
@@ -51,6 +54,16 @@ class _EditProfilePageState extends State<EditProfilePage> {
     'assets/avatar/default_avatar5.png',
     'assets/avatar/default_avatar6.png',
   ];
+
+  int _validAvatarIndex(int? candidate) {
+    if (candidate == null || candidate < 0) {
+      return 0;
+    }
+    if (candidate >= presetAvatars.length) {
+      return presetAvatars.length - 1;
+    }
+    return candidate;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -71,18 +84,11 @@ class _EditProfilePageState extends State<EditProfilePage> {
                     child: CircleAvatar(
                       radius: 60,
                       backgroundColor: Colors.grey[300],
-                      backgroundImage: selectedAvatarIndex != null
-                          ? AssetImage(presetAvatars[selectedAvatarIndex!])
-                          : null,
-                        onBackgroundImageError: (_, __) {},
-                        child: selectedAvatarIndex != null
-                            ? null
-                            : Icon(
-                                Icons.person,
-                                size: 60,
-                                color: Colors.grey[600],
-                              ),
+                      backgroundImage: AssetImage(
+                        presetAvatars[selectedAvatarIndex],
                       ),
+                      onBackgroundImageError: (_, __) {},
+                    ),
                   ),
                   const SizedBox(height: 60),
                   // 昵称区域
@@ -183,6 +189,7 @@ class _EditProfilePageState extends State<EditProfilePage> {
                           ? null
                           : () async {
                               await _saveUserData();
+                              if (!context.mounted) return;
                               Navigator.pop(context, {
                                 'avatarIndex': selectedAvatarIndex,
                                 'nickname': nickname,

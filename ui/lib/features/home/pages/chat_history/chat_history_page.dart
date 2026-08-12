@@ -63,7 +63,6 @@ class _ChatHistoryPageState extends State<ChatHistoryPage> {
       }
       await HapticFeedback.mediumImpact();
     } catch (error) {
-      debugPrint('[ChatHistoryPage] failed to trigger delete haptic: $error');
     }
   }
 
@@ -109,7 +108,6 @@ class _ChatHistoryPageState extends State<ChatHistoryPage> {
         _isLoading = false;
       });
     } catch (error) {
-      debugPrint('[ChatHistoryPage] failed to load conversations: $error');
       if (!mounted) {
         return;
       }

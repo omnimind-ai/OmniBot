@@ -6,6 +6,7 @@ import cn.com.omnimind.bot.agent.AgentExecutionEnvironment
 import cn.com.omnimind.bot.agent.AgentToolExecutionHandle
 import cn.com.omnimind.bot.agent.AgentToolRegistry
 import cn.com.omnimind.bot.agent.ToolExecutionResult
+import cn.com.omnimind.bot.distribution.AppEditionCapabilities
 import cn.com.omnimind.bot.util.AssistsUtil
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.JsonObject
@@ -39,6 +40,12 @@ class ContextToolHandler(
     ): ToolExecutionResult {
         val toolName = "context_apps_query"
         return try {
+            if (!AppEditionCapabilities.canQueryInstalledApps) {
+                return ToolExecutionResult.Error(
+                    toolName,
+                    helper.localized("当前应用版本不提供已安装应用查询。")
+                )
+            }
             if (!AssistsUtil.Setting.isInstalledAppsPermissionGranted(helper.context)) {
                 val missing = listOf("应用列表读取权限")
                 return helper.permissionRequiredResult(callback, missing)
@@ -73,8 +80,11 @@ class ContextToolHandler(
             )
         } catch (e: CancellationException) {
             throw e
-        } catch (error: Exception) {
-            helper.errorResult(toolName, error.message, "查询已安装应用失败")
+        } catch (_: Exception) {
+            ToolExecutionResult.Error(
+                toolName,
+                helper.localized("查询已安装应用失败")
+            )
         }
     }
 }

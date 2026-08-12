@@ -93,4 +93,26 @@ class SceneVoiceConfigStoreTest {
         assertEquals(SceneVoiceConfigStore.STYLE_PROFESSIONAL_BROADCAST, parsed.stylePreset)
         assertEquals("节奏慢一点", parsed.customStyle)
     }
+
+    @Test
+    fun persistenceNeverContainsCustomCurlCredential() {
+        val safe = SceneVoiceConfigStore.forPersistence(
+            SceneVoiceConfig(
+                ttsMode = SceneVoiceConfigStore.TTS_MODE_CUSTOM_CURL,
+                customCurlCommand = "curl -H 'Authorization: Bearer secret' https://tts.example.com",
+            ),
+        )
+
+        assertEquals("", safe.customCurlCommand)
+        assertTrue(
+            SceneVoiceConfigStore.isCustomCurlTransportSafe(
+                "curl -H 'Authorization: Bearer secret' https://tts.example.com",
+            ),
+        )
+        assertTrue(
+            !SceneVoiceConfigStore.isCustomCurlTransportSafe(
+                "curl -H 'Authorization: Bearer secret' http://tts.example.com",
+            ),
+        )
+    }
 }

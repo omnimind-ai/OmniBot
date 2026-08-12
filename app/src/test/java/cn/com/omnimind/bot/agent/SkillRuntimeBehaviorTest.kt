@@ -10,6 +10,7 @@ import cn.com.omnimind.bot.agent.tool.handlers.decodeImageWriteContentForFileNam
 import cn.com.omnimind.bot.agent.tool.handlers.ImageGenerationToolHandler
 import cn.com.omnimind.bot.agent.tool.handlers.normalizeSvgWriteContentForFileName
 import java.io.File
+import java.net.InetAddress
 import java.nio.file.Files
 
 class SkillRuntimeBehaviorTest {
@@ -92,19 +93,26 @@ class SkillRuntimeBehaviorTest {
         val skillFile = File("src/main/assets/builtin_skills/install-codex-pet/SKILL.md")
         val text = skillFile.readText()
 
-        assertTrue(text.contains("export CODEX_HOME=/workspace/.omnibot"))
-        assertTrue(text.contains("npx --yes codex-pets add claude-pixel"))
+        assertTrue(text.contains("CODEX_HOME=/workspace/.omnibot"))
+        assertFalse(text.contains("npx --yes"))
+        assertTrue(text.contains("AGENT_RUNTIME_CODEX_PETS_LOCK_REQUIRED"))
         assertTrue(text.contains("validate_codex_pet.sh"))
         assertTrue(File("src/main/assets/builtin_skills/install-codex-pet/scripts/validate_codex_pet.sh").isFile)
         assertFalse(File("src/main/assets/builtin_skills/hatch-pet").exists())
     }
 
     @Test
-    fun imageGenerationDefaultsUseOmnimindImageProvider() {
-        assertEquals(
-            "https://cloud.omnimind.com.cn",
-            ImageGenerationToolHandler.DEFAULT_IMAGE_BASE_URL
-        )
+    fun builtinSkillDiscoveryFailsClosedWithoutAuditedCliLock() {
+        val skillFile = File("src/main/assets/builtin_skills/find-install-skills/SKILL.md")
+        val text = skillFile.readText()
+
+        assertTrue(text.contains("AGENT_RUNTIME_SKILLS_CLI_LOCK_REQUIRED"))
+        assertFalse(text.contains("npx", ignoreCase = true))
+        assertTrue(text.contains("skills_list"))
+    }
+
+    @Test
+    fun byokImageGenerationKeepsItsDocumentedDefaultModel() {
         assertEquals("gpt-image-2", ImageGenerationToolHandler.DEFAULT_IMAGE_MODEL)
         assertTrue(AgentToolDefinitions.imageGenerateTool.toString().contains("gpt-image-2"))
     }
@@ -135,23 +143,29 @@ class SkillRuntimeBehaviorTest {
     }
 
     @Test
-    fun imageGenerationUsesBundledProviderOnlyWhenUserProviderHasNoKey() {
-        assertFalse(
-            ImageGenerationToolHandler.shouldUseBundledImageProvider(
-                profileApiKey = "dashscope-user-key",
-                bundledApiKey = "sk-bundled"
-            )
-        )
+    fun officialImageDownloadRejectsInsecureAndPrivateUrls() {
         assertTrue(
-            ImageGenerationToolHandler.shouldUseBundledImageProvider(
-                profileApiKey = "",
-                bundledApiKey = "sk-bundled"
+            ImageGenerationToolHandler.isSafePlatformDownloadUrl(
+                "https://cdn.example.com/generated/image.png"
+            )
+        )
+        assertFalse(ImageGenerationToolHandler.isSafePlatformDownloadUrl("http://cdn.example.com/a.png"))
+        assertFalse(ImageGenerationToolHandler.isSafePlatformDownloadUrl("https://127.0.0.1/a.png"))
+        assertFalse(ImageGenerationToolHandler.isSafePlatformDownloadUrl("https://192.168.1.8/a.png"))
+        assertFalse(ImageGenerationToolHandler.isSafePlatformDownloadUrl("https://device.local/a.png"))
+        assertTrue(
+            ImageGenerationToolHandler.isPublicPlatformAddress(
+                InetAddress.getByName("8.8.8.8")
             )
         )
         assertFalse(
-            ImageGenerationToolHandler.shouldUseBundledImageProvider(
-                profileApiKey = "",
-                bundledApiKey = ""
+            ImageGenerationToolHandler.isPublicPlatformAddress(
+                InetAddress.getByName("100.64.0.1")
+            )
+        )
+        assertFalse(
+            ImageGenerationToolHandler.isPublicPlatformAddress(
+                InetAddress.getByName("fc00::1")
             )
         )
     }

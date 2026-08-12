@@ -98,7 +98,6 @@ class ImageUtil {
         iconProviders[pkg] = null;
       }
     } catch (e) {
-      print('批量获取应用图标失败: $e');
       // 发生错误时，确保所有包名都有对应的 null 值
       for (final pkg in packageNames) {
         iconProviders[pkg] ??= null;
@@ -113,7 +112,6 @@ class ImageUtil {
           try {
             await precacheImage(provider, context);
           } catch (e) {
-            print('预缓存图标失败 (${entry.key}): $e');
           }
         }
       }
@@ -132,7 +130,6 @@ class ImageUtil {
     try {
       return base64Decode(cleaned);
     } catch (e) {
-      print('Base64 解码失败: $e');
       // 返回空字节数组作为降级方案
       return Uint8List(0);
     }

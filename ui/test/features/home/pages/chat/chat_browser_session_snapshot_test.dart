@@ -59,6 +59,13 @@ void main() {
         'title': 'Open app',
         'target': 'intent://demo',
       },
+      'permissionPrompt': <String, dynamic>{
+        'requestId': 'permission-1',
+        'kind': 'web',
+        'origin': 'https://media.example',
+        'recipient': 'media.example',
+        'capabilities': <String>['camera', 'microphone'],
+      },
       'userscriptSummary': <String, dynamic>{
         'installedScripts': <Map<String, dynamic>>[
           <String, dynamic>{
@@ -94,6 +101,12 @@ void main() {
     expect(snapshot.downloads.single.fileName, 'demo.pdf');
     expect(snapshot.downloadSummary.overallProgress, 0.5);
     expect(snapshot.externalOpenPrompt?.target, 'intent://demo');
+    expect(snapshot.permissionPrompt?.recipient, 'media.example');
+    expect(
+      snapshot.permissionPrompt?.capabilities,
+      <String>['camera', 'microphone'],
+    );
+    expect(snapshot.permissionPrompt?.toMap(), isNot(contains('resources')));
     expect(snapshot.userscriptSummary.installedScripts.single.name, 'Demo Script');
     expect(snapshot.userscriptSummary.pendingInstall?.isUpdate, isTrue);
   });

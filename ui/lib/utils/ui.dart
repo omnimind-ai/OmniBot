@@ -27,9 +27,6 @@ class Loading {
 
     final navigatorState = GoRouterManager.rootNavigatorKey.currentState;
     if (navigatorState == null) {
-      debugPrint(
-        'Warning: Navigator state is null, cannot show loading overlay',
-      );
       return;
     }
 
@@ -116,7 +113,6 @@ class AppToast {
 
     final nav = GoRouterManager.rootNavigatorKey.currentState;
     if (nav == null || nav.overlay == null) {
-      debugPrint('AppToast: navigator is null, skip show');
       return AppToastHandle._(token);
     }
 

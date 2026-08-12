@@ -52,6 +52,8 @@ class SpecialPermissionChannel {
         }
         methodChannel?.setMethodCallHandler { call, result ->
                 when (call.method) {
+                    "getAppEditionCapabilitySnapshot" -> specialPermissionManager!!
+                        .getAppEditionCapabilitySnapshot(result)
                     "isIgnoringBatteryOptimizations" -> specialPermissionManager!!.isIgnoringBatteryOptimizations(
                         result
                     )

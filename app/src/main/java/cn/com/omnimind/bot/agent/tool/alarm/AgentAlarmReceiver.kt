@@ -13,6 +13,8 @@ import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import cn.com.omnimind.bot.R
 import cn.com.omnimind.bot.activity.MainActivity
+import cn.com.omnimind.bot.update.PrivacyConsentDecision
+import cn.com.omnimind.bot.update.PrivacyConsentStore
 
 class AgentAlarmReceiver : BroadcastReceiver() {
 
@@ -36,6 +38,13 @@ class AgentAlarmReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent?) {
         val action = intent?.action.orEmpty()
+        if (!AgentAlarmReceiverConsentPolicy.shouldHandle(
+                action,
+                PrivacyConsentStore.getDecision(context),
+            )
+        ) {
+            return
+        }
         val alarmId = intent?.getStringExtra(EXTRA_ALARM_ID).orEmpty()
         if (alarmId.isBlank()) return
 
@@ -210,5 +219,14 @@ class AgentAlarmReceiver : BroadcastReceiver() {
         Handler(Looper.getMainLooper()).post {
             Toast.makeText(context.applicationContext, message, Toast.LENGTH_SHORT).show()
         }
+    }
+}
+
+/** Existing trigger intents can survive a consent change, so check again at delivery time. */
+internal object AgentAlarmReceiverConsentPolicy {
+    fun shouldHandle(action: String, decision: PrivacyConsentDecision): Boolean {
+        val isAutomaticTrigger = action == AgentAlarmReceiver.ACTION_AGENT_ALARM_PRE_ALERT_TRIGGER ||
+            action == AgentAlarmReceiver.ACTION_AGENT_ALARM_RING_TRIGGER
+        return !isAutomaticTrigger || WorkspaceScheduleConsentPolicy.allowsAutomaticRun(decision)
     }
 }

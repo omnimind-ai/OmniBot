@@ -2,6 +2,8 @@ package cn.com.omnimind.bot.agent
 
 import android.content.Context
 import cn.com.omnimind.baselib.util.OmniLog
+import cn.com.omnimind.bot.distribution.AppEditionCapabilities
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -22,6 +24,9 @@ class AgentRuntimeContextRepository(
     private var appNameToPackageCache: Map<String, String>? = null
 
     suspend fun getAppNameToPackageMap(): Map<String, String> {
+        check(AppEditionCapabilities.canQueryInstalledApps) {
+            "Installed apps access is unavailable in this app edition."
+        }
         appNameToPackageCache?.let { return it }
         return appsLoadMutex.withLock {
             appNameToPackageCache?.let { return@withLock it }
@@ -40,7 +45,7 @@ class AgentRuntimeContextRepository(
     }
 
     private suspend fun loadInstalledApps(): Map<String, String> = withContext(Dispatchers.IO) {
-        runCatching {
+        try {
             val pm = context.packageManager
             val apps = pm.getInstalledApplications(0)
             val normalized = linkedMapOf<String, String>()
@@ -58,9 +63,12 @@ class AgentRuntimeContextRepository(
                 }
             }
             normalized
-        }.onFailure {
-            OmniLog.w(tag, "loadInstalledApps failed: ${it.message}")
-        }.getOrDefault(emptyMap())
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            OmniLog.w(tag, "Installed apps query failed")
+            emptyMap()
+        }
     }
 }
 

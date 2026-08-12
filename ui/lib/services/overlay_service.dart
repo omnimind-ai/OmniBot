@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 /// Overlay服务，用于与原生OverlayChannel通信
@@ -16,10 +15,7 @@ class OverlayService {
         'message': message,
       });
       return result == true;
-    } on PlatformException catch (e) {
-      if (kDebugMode) {
-        print('显示消息失败: ${e.message}');
-      }
+    } on PlatformException catch (_) {
       return false;
     }
   }
@@ -34,10 +30,7 @@ class OverlayService {
         {'path': path, 'selectedId': selectedId},
       );
       return result == true;
-    } on PlatformException catch (e) {
-      if (kDebugMode) {
-        print('Failed to set pet overlay image: ${e.message}');
-      }
+    } on PlatformException catch (_) {
       return false;
     }
   }
@@ -46,10 +39,7 @@ class OverlayService {
     try {
       final result = await _channel.invokeMethod<bool>('showPetOverlay');
       return result == true;
-    } on PlatformException catch (e) {
-      if (kDebugMode) {
-        print('Failed to show pet overlay: ${e.message}');
-      }
+    } on PlatformException catch (_) {
       return false;
     }
   }
@@ -61,10 +51,7 @@ class OverlayService {
         'loop': loop,
       });
       return result == true;
-    } on PlatformException catch (e) {
-      if (kDebugMode) {
-        print('Failed to play pet action: ${e.message}');
-      }
+    } on PlatformException catch (_) {
       return false;
     }
   }
@@ -73,10 +60,7 @@ class OverlayService {
     try {
       final result = await _channel.invokeMethod<bool>('hidePetOverlay');
       return result == true;
-    } on PlatformException catch (e) {
-      if (kDebugMode) {
-        print('Failed to hide pet overlay: ${e.message}');
-      }
+    } on PlatformException catch (_) {
       return false;
     }
   }
@@ -85,10 +69,7 @@ class OverlayService {
     try {
       final result = await _channel.invokeMethod<bool>('isPetOverlayShowing');
       return result == true;
-    } on PlatformException catch (e) {
-      if (kDebugMode) {
-        print('Failed to query pet overlay state: ${e.message}');
-      }
+    } on PlatformException catch (_) {
       return false;
     }
   }
@@ -99,10 +80,7 @@ class OverlayService {
         'getPetOverlayState',
       );
       return Map<String, dynamic>.from(result ?? const {});
-    } on PlatformException catch (e) {
-      if (kDebugMode) {
-        print('Failed to get pet overlay state: ${e.message}');
-      }
+    } on PlatformException catch (_) {
       return const {};
     }
   }

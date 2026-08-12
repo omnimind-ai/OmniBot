@@ -48,7 +48,7 @@ object APPPackageUtil {
             val byteArray = byteArrayOutputStream.toByteArray()
             base64 = Base64.encodeToString(byteArray, Base64.DEFAULT)
         } catch (e: Exception) {
-            e.printStackTrace()
+            OmniLog.w("APPPackageUtil", "Unable to render app icon type=${e.javaClass.simpleName}")
 
         }
 
@@ -69,7 +69,7 @@ object APPPackageUtil {
             }
             filePath = file.absolutePath
         } catch (e: Exception) {
-            e.printStackTrace()
+            OmniLog.w("APPPackageUtil", "Unable to persist app icon type=${e.javaClass.simpleName}")
         }
 
         return filePath

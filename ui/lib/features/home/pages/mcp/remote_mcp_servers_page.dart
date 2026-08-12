@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:ui/models/remote_mcp_server.dart';
+import 'package:ui/services/data_destination_confirmation.dart';
 import 'package:ui/services/remote_mcp_config_service.dart';
 import 'package:ui/theme/app_colors.dart';
 import 'package:ui/theme/theme_context.dart';
@@ -51,10 +52,38 @@ class _RemoteMcpServersPageState extends State<RemoteMcpServersPage> {
   Future<void> _toggleServer(RemoteMcpServer server, bool enabled) async {
     _setBusy(server.id, true);
     try {
-      final updated = await RemoteMcpConfigService.setServerEnabled(
-        server.id,
-        enabled,
-      );
+      final RemoteMcpServer? updated;
+      if (enabled) {
+        final outcome =
+            await confirmDataDestinationAndRun<RemoteMcpServer?>(
+              context: context,
+              rawEndpoint: server.endpointUrl,
+              capability: 'Remote MCP',
+              operation: _englishText('Enable service', '启用服务'),
+              dataTypes: [
+                _englishText(
+                  'MCP tool names, arguments, and returned content',
+                  'MCP 工具名称、调用参数和返回内容',
+                ),
+                if (server.hasBearerToken)
+                  _englishText(
+                    'The stored Bearer credential',
+                    '已安全保存的 Bearer 凭据',
+                  ),
+              ],
+              action: () => RemoteMcpConfigService.setServerEnabled(
+                server,
+                true,
+              ),
+            );
+        if (!outcome.confirmed) return;
+        updated = outcome.value;
+      } else {
+        updated = await RemoteMcpConfigService.setServerEnabled(
+          server,
+          false,
+        );
+      }
       if (!mounted) return;
       setState(() {
         _servers = _servers.map((item) {
@@ -63,6 +92,7 @@ class _RemoteMcpServersPageState extends State<RemoteMcpServersPage> {
         }).toList();
       });
     } catch (e) {
+      if (!mounted) return;
       showToast(
         Localizations.localeOf(context).languageCode == 'en'
             ? 'Toggle failed'
@@ -77,9 +107,23 @@ class _RemoteMcpServersPageState extends State<RemoteMcpServersPage> {
   Future<void> _refreshTools(RemoteMcpServer server) async {
     _setBusy(server.id, true);
     try {
-      final updated = await RemoteMcpConfigService.refreshServerTools(
-        server.id,
+      final outcome = await confirmDataDestinationAndRun<RemoteMcpServer?>(
+        context: context,
+        rawEndpoint: server.endpointUrl,
+        capability: 'Remote MCP',
+        operation: _englishText('Refresh tool catalog', '刷新工具目录'),
+        dataTypes: [
+          _englishText(
+            'MCP protocol metadata and tool discovery request',
+            'MCP 协议元数据和工具发现请求',
+          ),
+          if (server.hasBearerToken)
+            _englishText('The stored Bearer credential', '已安全保存的 Bearer 凭据'),
+        ],
+        action: () => RemoteMcpConfigService.refreshServerTools(server),
       );
+      if (!outcome.confirmed) return;
+      final updated = outcome.value;
       if (!mounted) return;
       setState(() {
         _servers = _servers.map((item) {
@@ -93,6 +137,7 @@ class _RemoteMcpServersPageState extends State<RemoteMcpServersPage> {
             : '工具列表已刷新',
       );
     } on PlatformException catch (e) {
+      if (!mounted) return;
       showToast(
         e.message ??
             (Localizations.localeOf(context).languageCode == 'en'
@@ -101,6 +146,7 @@ class _RemoteMcpServersPageState extends State<RemoteMcpServersPage> {
         type: ToastType.error,
       );
     } catch (_) {
+      if (!mounted) return;
       showToast(
         Localizations.localeOf(context).languageCode == 'en'
             ? 'Refresh failed'
@@ -142,7 +188,7 @@ class _RemoteMcpServersPageState extends State<RemoteMcpServersPage> {
         ],
       ),
     );
-    if (confirmed != true) return;
+    if (!mounted || confirmed != true) return;
 
     _setBusy(server.id, true);
     try {
@@ -157,6 +203,7 @@ class _RemoteMcpServersPageState extends State<RemoteMcpServersPage> {
             : '已删除',
       );
     } catch (e) {
+      if (!mounted) return;
       showToast(
         Localizations.localeOf(context).languageCode == 'en'
             ? 'Delete failed'
@@ -181,9 +228,30 @@ class _RemoteMcpServersPageState extends State<RemoteMcpServersPage> {
       builder: (_) => _RemoteMcpServerEditorSheet(server: server),
     );
 
-    if (saved == null) return;
+    if (!mounted || saved == null) return;
     try {
-      final result = await RemoteMcpConfigService.upsertServer(saved);
+      final outcome = await confirmDataDestinationAndRun<RemoteMcpServer?>(
+        context: context,
+        rawEndpoint: saved.endpointUrl,
+        capability: 'Remote MCP',
+        operation: _englishText('Save configuration', '保存配置'),
+        dataTypes: [
+          _englishText('Service name and endpoint configuration', '服务名称和端点配置'),
+          if (saved.bearerToken.isNotEmpty || saved.hasBearerToken)
+            _englishText(
+              'Bearer credential used for this receiver',
+              '用于此接收方的 Bearer 凭据',
+            ),
+          if (saved.enabled)
+            _englishText(
+              'Future MCP tool names, arguments, and returned content',
+              '启用后发送的 MCP 工具名称、调用参数和返回内容',
+            ),
+        ],
+        action: () => RemoteMcpConfigService.upsertServer(saved),
+      );
+      if (!outcome.confirmed) return;
+      final result = outcome.value;
       if (result == null || !mounted) return;
       setState(() {
         final index = _servers.indexWhere((item) => item.id == result.id);
@@ -197,6 +265,7 @@ class _RemoteMcpServersPageState extends State<RemoteMcpServersPage> {
         Localizations.localeOf(context).languageCode == 'en' ? 'Saved' : '已保存',
       );
     } catch (e) {
+      if (!mounted) return;
       showToast(
         Localizations.localeOf(context).languageCode == 'en'
             ? 'Save failed'
@@ -215,6 +284,17 @@ class _RemoteMcpServersPageState extends State<RemoteMcpServersPage> {
         _busyIds.remove(id);
       }
     });
+  }
+
+  String _englishText(String english, String chinese) =>
+      Localizations.localeOf(context).languageCode == 'en' ? english : chinese;
+
+  String _safeEndpointLabel(String endpoint) {
+    try {
+      return DataDestination.parse(endpoint).displayOrigin;
+    } on FormatException {
+      return _englishText('Invalid or insecure endpoint', '无效或不安全的端点');
+    }
   }
 
   @override
@@ -308,7 +388,7 @@ class _RemoteMcpServersPageState extends State<RemoteMcpServersPage> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    server.endpointUrl,
+                    _safeEndpointLabel(server.endpointUrl),
                     style: TextStyle(
                       fontSize: 12,
                       color: context.omniPalette.textSecondary,
@@ -399,12 +479,14 @@ class _InputField extends StatelessWidget {
   final FocusNode? focusNode;
   final String label;
   final String? hint;
+  final bool obscureText;
 
   const _InputField({
     required this.controller,
     this.focusNode,
     required this.label,
     this.hint,
+    this.obscureText = false,
   });
 
   @override
@@ -412,6 +494,7 @@ class _InputField extends StatelessWidget {
     return TextField(
       controller: controller,
       focusNode: focusNode,
+      obscureText: obscureText,
       decoration: InputDecoration(
         labelText: label,
         hintText: hint,
@@ -438,6 +521,7 @@ class _RemoteMcpServerEditorSheetState
   late final TextEditingController _tokenController;
   final FocusNode _nameFocusNode = FocusNode();
   late bool _enabled;
+  bool _clearStoredToken = false;
 
   @override
   void initState() {
@@ -446,9 +530,7 @@ class _RemoteMcpServerEditorSheetState
     _endpointController = TextEditingController(
       text: widget.server?.endpointUrl ?? '',
     );
-    _tokenController = TextEditingController(
-      text: widget.server?.bearerToken ?? '',
-    );
+    _tokenController = TextEditingController();
     _enabled = widget.server?.enabled ?? true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
@@ -498,6 +580,7 @@ class _RemoteMcpServerEditorSheetState
             name: name,
             endpointUrl: endpoint,
             bearerToken: _tokenController.text.trim(),
+            clearBearerToken: _clearStoredToken,
             enabled: _enabled,
           ),
     );
@@ -546,7 +629,27 @@ class _RemoteMcpServerEditorSheetState
             label: Localizations.localeOf(context).languageCode == 'en'
                 ? 'Bearer Token (Optional)'
                 : 'Bearer Token（可选）',
+            obscureText: true,
           ),
+          if (widget.server?.hasBearerToken == true)
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton(
+                onPressed: () {
+                  _tokenController.clear();
+                  setState(() => _clearStoredToken = !_clearStoredToken);
+                },
+                child: Text(
+                  _clearStoredToken
+                      ? (Localizations.localeOf(context).languageCode == 'en'
+                            ? 'Keep stored token'
+                            : '保留已存 Token')
+                      : (Localizations.localeOf(context).languageCode == 'en'
+                            ? 'Remove stored token'
+                            : '清除已存 Token'),
+                ),
+              ),
+            ),
           const SizedBox(height: 12),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,

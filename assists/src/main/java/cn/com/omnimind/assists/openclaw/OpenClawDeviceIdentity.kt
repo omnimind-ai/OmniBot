@@ -1,6 +1,10 @@
 package cn.com.omnimind.assists.openclaw
 
 import android.util.Base64
+import cn.com.omnimind.baselib.util.AppSecretStoreBackend
+import cn.com.omnimind.baselib.util.FailClosedSecretRepository
+import cn.com.omnimind.baselib.util.LegacySecretSnapshot
+import cn.com.omnimind.baselib.util.LegacySecretStore
 import cn.com.omnimind.baselib.util.OmniLog
 import com.tencent.mmkv.MMKV
 import org.bouncycastle.crypto.generators.Ed25519KeyPairGenerator
@@ -19,6 +23,10 @@ import java.security.SecureRandom
  * 2. 从公钥派生稳定的设备指纹（device.id）
  * 3. 对 Gateway challenge nonce 使用 v3 canonical payload 签名
  * 4. 提供 Base64URL 编码的 raw 公钥（32 字节）
+ *
+ * The existing gateway protocol signs with Bouncy Castle's raw Ed25519 seed, so the seed is
+ * encrypted by [cn.com.omnimind.baselib.util.AppSecretStore]'s Android-Keystore-backed master key.
+ * It is never persisted in ordinary MMKV and never exposed by this API.
  */
 object OpenClawDeviceIdentity {
     private const val TAG = "OpenClawDeviceIdentity"
@@ -26,6 +34,7 @@ object OpenClawDeviceIdentity {
     // 使用新的 MMKV key，避免与旧 ECDSA 密钥冲突
     private const val KEY_PRIVATE = "openclaw_ed25519_private_key"
     private const val KEY_FINGERPRINT = "openclaw_ed25519_fingerprint"
+    private const val SECRET_PRIVATE = "openclaw.device_identity.ed25519.private.v1"
 
     private var cachedPrivateKey: Ed25519PrivateKeyParameters? = null
     private var cachedPublicKey: Ed25519PublicKeyParameters? = null
@@ -33,27 +42,95 @@ object OpenClawDeviceIdentity {
 
     private val mmkv: MMKV by lazy { MMKV.defaultMMKV() }
 
+    private val privateKeyRepository by lazy {
+        FailClosedSecretRepository(
+            key = SECRET_PRIVATE,
+            secureStore = AppSecretStoreBackend,
+            legacyStore = object : LegacySecretStore {
+                override fun snapshot(): LegacySecretSnapshot {
+                    val legacyBytes = mmkv.decodeBytes(KEY_PRIVATE)
+                        ?: return LegacySecretSnapshot(existed = false, candidates = emptyList())
+                    return try {
+                        LegacySecretSnapshot(
+                            existed = true,
+                            candidates = if (legacyBytes.size == PRIVATE_KEY_SIZE_BYTES) {
+                                listOf(encodePrivateKey(legacyBytes))
+                            } else {
+                                emptyList()
+                            },
+                        )
+                    } finally {
+                        legacyBytes.fill(0)
+                    }
+                }
+
+                override fun erase() {
+                    mmkv.remove(KEY_PRIVATE)
+                }
+            },
+            isValid = { encoded -> decodePrivateKey(encoded)?.also { it.fill(0) } != null },
+        )
+    }
+
+    private val verifiedReset by lazy {
+        OpenClawVerifiedIdentityReset(
+            repository = privateKeyRepository,
+            metadataStore = object : OpenClawResetMetadataStore {
+                override fun clear(): Boolean {
+                    mmkv.removeValueForKey(KEY_FINGERPRINT)
+                    return !mmkv.containsKey(KEY_FINGERPRINT)
+                }
+
+                override fun isClear(): Boolean = !mmkv.containsKey(KEY_FINGERPRINT)
+            },
+            clearCaches = {
+                cachedPrivateKey = null
+                cachedPublicKey = null
+                cachedFingerprint = null
+            },
+        )
+    }
+
+    /** Migrates an old raw MMKV seed without creating an identity for users who never enabled it. */
+    fun migrateLegacyIfPresent(): Boolean {
+        if (!mmkv.containsKey(KEY_PRIVATE)) return true
+        return privateKeyRepository.loadExisting() != null
+    }
+
+    /** Checks secure storage without generating a new key pair. */
+    @Synchronized
+    fun hasExistingIdentity(): Boolean = verifiedReset.hasExistingIdentity()
+
+    /**
+     * Deletes and verifies the private identity, public fingerprint metadata, and in-memory cache.
+     * A Keystore or metadata failure is reported as false and never creates a replacement key.
+     */
+    @Synchronized
+    fun resetVerified(): Boolean = verifiedReset.reset()
+
     /**
      * 获取（或首次生成）Ed25519 私钥
      */
     @Synchronized
     private fun getPrivateKey(): Ed25519PrivateKeyParameters {
         cachedPrivateKey?.let { return it }
-
-        val privBytes = mmkv.decodeBytes(KEY_PRIVATE)
-        if (privBytes != null && privBytes.size == 32) {
-            try {
-                val priv = Ed25519PrivateKeyParameters(privBytes, 0)
-                cachedPrivateKey = priv
-                cachedPublicKey = priv.generatePublicKey()
-                OmniLog.i(TAG, "loaded existing Ed25519 keypair")
-                return priv
-            } catch (e: Exception) {
-                OmniLog.e(TAG, "failed to load Ed25519 key, regenerating: ${e.message}")
-            }
+        val encoded = privateKeyRepository.loadOrCreate(::generatePrivateKey)
+            ?: throw IllegalStateException("OpenClaw device identity unavailable")
+        val privateBytes = decodePrivateKey(encoded)
+            ?: throw IllegalStateException("OpenClaw device identity unavailable")
+        return try {
+            val privateKey = Ed25519PrivateKeyParameters(privateBytes, 0)
+            val publicKey = privateKey.generatePublicKey()
+            val fingerprint = deriveFingerprint(publicKey.encoded)
+            cachedPrivateKey = privateKey
+            cachedPublicKey = publicKey
+            cachedFingerprint = fingerprint
+            mmkv.encode(KEY_FINGERPRINT, fingerprint)
+            OmniLog.i(TAG, "OpenClaw device identity ready")
+            privateKey
+        } finally {
+            privateBytes.fill(0)
         }
-
-        return generateAndPersistKeyPair()
     }
 
     /**
@@ -72,13 +149,8 @@ object OpenClawDeviceIdentity {
     @Synchronized
     fun getFingerprint(): String {
         cachedFingerprint?.let { return it }
-
-        val stored = mmkv.decodeString(KEY_FINGERPRINT)
-        if (!stored.isNullOrBlank()) {
-            cachedFingerprint = stored
-            return stored
-        }
-
+        // Always bind the fingerprint to the secured private key. A stale public MMKV value
+        // must never be paired with signatures from a different identity.
         val pubBytes = getPublicKey().encoded // 32 bytes
         val fp = deriveFingerprint(pubBytes)
         mmkv.encode(KEY_FINGERPRINT, fp)
@@ -89,9 +161,9 @@ object OpenClawDeviceIdentity {
     /**
      * 获取 Base64URL 编码的公钥（raw 32 字节）
      */
+    @Synchronized
     fun getPublicKeyBase64Url(): String {
         val pubBytes = getPublicKey().encoded // 32 bytes
-        OmniLog.d(TAG, "publicKey raw Ed25519: ${pubBytes.size} bytes")
         return Base64.encodeToString(
             pubBytes,
             Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP
@@ -116,6 +188,7 @@ object OpenClawDeviceIdentity {
      * @param deviceFamily 设备类型，如 "mobile"
      * @return Base64URL 编码的签名（raw 64 字节）
      */
+    @Synchronized
     fun signChallenge(
         nonce: String,
         signedAt: Long,
@@ -156,38 +229,36 @@ object OpenClawDeviceIdentity {
         signer.update(payloadBytes, 0, payloadBytes.size)
         val signatureBytes = signer.generateSignature() // 64 bytes
 
-        OmniLog.d(TAG, "Ed25519 signature: ${signatureBytes.size} bytes")
-
         return Base64.encodeToString(
             signatureBytes,
             Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP
         )
     }
 
-    /**
-     * 生成新的 Ed25519 密钥对并持久化
-     */
-    private fun generateAndPersistKeyPair(): Ed25519PrivateKeyParameters {
+    /** Creates an encoded seed; persistence is handled and verified by the secure repository. */
+    private fun generatePrivateKey(): String {
         val kpg = Ed25519KeyPairGenerator()
         kpg.init(Ed25519KeyGenerationParameters(SecureRandom()))
         val pair = kpg.generateKeyPair()
-
         val priv = pair.private as Ed25519PrivateKeyParameters
-        val pub = pair.public as Ed25519PublicKeyParameters
+        val privateBytes = priv.encoded
+        return try {
+            encodePrivateKey(privateBytes)
+        } finally {
+            privateBytes.fill(0)
+        }
+    }
 
-        val privBytes = priv.encoded // 32 bytes
-        val pubBytes = pub.encoded // 32 bytes
+    private fun encodePrivateKey(value: ByteArray): String = Base64.encodeToString(
+        value,
+        Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP,
+    )
 
-        mmkv.encode(KEY_PRIVATE, privBytes)
-        val fp = deriveFingerprint(pubBytes)
-        mmkv.encode(KEY_FINGERPRINT, fp)
-
-        cachedPrivateKey = priv
-        cachedPublicKey = pub
-        cachedFingerprint = fp
-
-        OmniLog.i(TAG, "generated new Ed25519 keypair fingerprint=$fp pubKeySize=${pubBytes.size}")
-        return priv
+    private fun decodePrivateKey(value: String): ByteArray? = try {
+        Base64.decode(value, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
+            .takeIf { it.size == PRIVATE_KEY_SIZE_BYTES }
+    } catch (_: Exception) {
+        null
     }
 
     /**
@@ -198,4 +269,6 @@ object OpenClawDeviceIdentity {
         val hash = digest.digest(publicKeyBytes)
         return hash.joinToString("") { "%02x".format(it) }
     }
+
+    private const val PRIVATE_KEY_SIZE_BYTES = 32
 }

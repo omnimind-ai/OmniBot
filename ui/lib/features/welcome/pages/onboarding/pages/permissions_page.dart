@@ -30,8 +30,12 @@ class OnboardingPermissionsPage extends StatelessWidget {
       title: onbTr(context, '开启应用权限', 'Enable app permissions'),
       description: onbTr(
         context,
-        '这些授权用于悬浮提醒、后台运行和识别应用，之后可随时在“设置-应用权限授权”中调整。',
-        'These permissions power floating reminders, background execution, and app detection. Adjust them anytime in settings.',
+        controller.installedAppsAvailable
+            ? '这些授权用于悬浮提醒、后台运行和识别应用，之后可随时在“设置-应用权限授权”中调整。'
+            : '这些授权用于悬浮提醒和后台运行，之后可随时在“设置-应用权限授权”中调整。',
+        controller.installedAppsAvailable
+            ? 'These permissions power floating reminders, background execution, and app detection. Adjust them anytime in settings.'
+            : 'These permissions power floating reminders and background execution. Adjust them anytime in settings.',
       ),
       scrollController: scrollController,
       children: [
@@ -65,35 +69,37 @@ class OnboardingPermissionsPage extends StatelessWidget {
           actionLabel: onbTr(context, '去开启', 'Enable'),
           onTap: controller.openOverlaySettings,
         ),
-        _PermissionRow(
-          tapKey: const ValueKey('tutorial-permission-apps'),
-          icon: LucideIcons.layoutGrid,
-          title: onbTr(context, '应用列表读取', 'Installed apps access'),
-          subtitle: onbTr(
-            context,
-            '用于识别设备已安装应用，并提供应用上下文。',
-            'Used to identify installed apps and provide app context.',
+        if (controller.installedAppsAvailable)
+          _PermissionRow(
+            tapKey: const ValueKey('tutorial-permission-apps'),
+            icon: LucideIcons.layoutGrid,
+            title: onbTr(context, '应用列表读取', 'Installed apps access'),
+            subtitle: onbTr(
+              context,
+              '用于识别设备已安装应用，并提供应用上下文。',
+              'Used to identify installed apps and provide app context.',
+            ),
+            granted: controller.installedApps,
+            actionLabel: onbTr(context, '去开启', 'Enable'),
+            onTap: controller.openInstalledAppsSettings,
           ),
-          granted: controller.installedApps,
-          actionLabel: onbTr(context, '去开启', 'Enable'),
-          onTap: controller.openInstalledAppsSettings,
-        ),
         const SizedBox(height: 26),
         _SectionLabel(label: onbTr(context, '扩展能力', 'Advanced access')),
         const SizedBox(height: 6),
-        _PermissionRow(
-          tapKey: const ValueKey('tutorial-permission-storage'),
-          icon: LucideIcons.folderOpen,
-          title: onbTr(context, '所有文件访问权限', 'All files access'),
-          subtitle: onbTr(
-            context,
-            '允许小万访问设备公共存储中的文件与文件夹，用于文件读取、整理和下载等操作。',
-            'Allow Omnibot to read and manage files in shared device storage for file tasks and downloads.',
+        if (controller.publicStorageAvailable)
+          _PermissionRow(
+            tapKey: const ValueKey('tutorial-permission-storage'),
+            icon: LucideIcons.folderOpen,
+            title: onbTr(context, '所有文件访问权限', 'All files access'),
+            subtitle: onbTr(
+              context,
+              '允许小万访问设备公共存储中的文件与文件夹，用于文件读取、整理和下载等操作。',
+              'Allow Omnibot to read and manage files in shared device storage for file tasks and downloads.',
+            ),
+            granted: controller.publicStorage,
+            actionLabel: onbTr(context, '去开启', 'Enable'),
+            onTap: controller.openStorageSettings,
           ),
-          granted: controller.publicStorage,
-          actionLabel: onbTr(context, '去开启', 'Enable'),
-          onTap: controller.openStorageSettings,
-        ),
         _PermissionRow(
           tapKey: const ValueKey('tutorial-permission-shizuku'),
           icon: LucideIcons.shieldPlus,
@@ -142,7 +148,7 @@ class _CoreProgressOverview extends StatelessWidget {
     final reduceMotion =
         MediaQuery.maybeOf(context)?.disableAnimations ?? false;
     final ready = controller.coreReadyCount;
-    const total = OnboardingPermissionController.coreTotal;
+    final total = controller.coreTotal;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [

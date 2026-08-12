@@ -31,23 +31,19 @@ class BrowserSessionChannel {
             ?.associate { (key, value) -> key.toString() to value }
             .orEmpty()
         scope.launch {
-            runCatching {
-                LiveAgentBrowserSessionManager.handleCurrentCall(
+            try {
+                val payload = LiveAgentBrowserSessionManager.handleCurrentCall(
                     method = call.method,
                     arguments = arguments
                 )
-            }.onSuccess {
-                result.success(it)
-            }.onFailure { error ->
-                if (error is NoSuchMethodError) {
-                    result.notImplemented()
-                } else {
-                    result.error(
-                        "BROWSER_SESSION_CALL_FAILED",
-                        error.message ?: "browser_session_call_failed",
-                        null
-                    )
-                }
+                result.success(payload)
+            } catch (error: Exception) {
+                NativeChannelErrorPrivacy.deliver(
+                    result,
+                    "BrowserSessionChannel",
+                    "BROWSER_SESSION_CALL_FAILED",
+                    error,
+                )
             }
         }
     }

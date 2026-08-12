@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ui/features/home/pages/omnibot_workspace/omnibot_artifact_preview_page.dart';
+import 'package:ui/l10n/generated/app_localizations.dart';
 import 'package:ui/theme/app_theme.dart';
 import 'package:ui/theme/omni_theme_palette.dart';
 import 'package:ui/widgets/image_preview_overlay.dart';
@@ -59,8 +60,15 @@ void main() {
   testWidgets('collapses file actions into a single more-actions button', (
     tester,
   ) async {
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    });
     await tester.pumpWidget(
       MaterialApp(
+        locale: const Locale('zh'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
         home: DefaultAssetBundle(
           bundle: _SvgTestAssetBundle(),
           child: OmnibotArtifactPreviewPage(
@@ -73,11 +81,18 @@ void main() {
       ),
     );
 
-    await tester.pump();
-    await tester.runAsync(() async {
-      await Future<void>.delayed(const Duration(milliseconds: 50));
-    });
-    await tester.pump();
+    for (
+      var attempt = 0;
+      attempt < 20 &&
+          find.byType(CircularProgressIndicator).evaluate().isNotEmpty;
+      attempt++
+    ) {
+      await tester.runAsync(() async {
+        await Future<void>.delayed(const Duration(milliseconds: 25));
+      });
+      await tester.pump();
+    }
+    expect(find.byType(CircularProgressIndicator), findsNothing);
 
     expect(
       find.byKey(const ValueKey('artifact-preview-more-actions')),
@@ -86,14 +101,19 @@ void main() {
     expect(find.byIcon(Icons.more_horiz_rounded), findsOneWidget);
     expect(find.byIcon(Icons.share_outlined), findsNothing);
 
-    await tester.tap(
-      find.byKey(const ValueKey('artifact-preview-more-actions')),
-    );
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 250));
+    await tester.tap(find.byIcon(Icons.more_horiz_rounded));
+    await tester.pumpAndSettle();
 
-    expect(find.text('系统打开'), findsOneWidget);
-    expect(find.text('分享文件'), findsOneWidget);
+    final menuItems = find.bySubtype<PopupMenuItem>();
+    expect(menuItems, findsNWidgets(2));
+    expect(
+      find.descendant(of: menuItems, matching: find.text('系统打开')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: menuItems, matching: find.text('分享文件')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('artifact preview keeps path and editor surfaces dark', (

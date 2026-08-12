@@ -691,20 +691,26 @@ class BrowserPermissionPrompt {
     required this.requestId,
     required this.kind,
     required this.origin,
-    this.resources = const <String>[],
+    this.recipient = '',
+    this.capabilities = const <String>[],
   });
 
   final String requestId;
   final String kind;
   final String origin;
-  final List<String> resources;
+  final String recipient;
+  final List<String> capabilities;
 
   factory BrowserPermissionPrompt.fromMap(Map<dynamic, dynamic> raw) {
+    final capabilities = _browserStringList(raw['capabilities']);
     return BrowserPermissionPrompt(
       requestId: _browserString(raw['requestId']),
       kind: _browserString(raw['kind']),
       origin: _browserString(raw['origin']),
-      resources: _browserStringList(raw['resources']),
+      recipient: _browserString(raw['recipient']),
+      capabilities: capabilities.isNotEmpty
+          ? capabilities
+          : _browserStringList(raw['resources']),
     );
   }
 
@@ -712,7 +718,8 @@ class BrowserPermissionPrompt {
     'requestId': requestId,
     'kind': kind,
     'origin': origin,
-    'resources': resources,
+    'recipient': recipient,
+    'capabilities': capabilities,
   };
 }
 

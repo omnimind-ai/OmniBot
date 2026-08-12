@@ -40,9 +40,9 @@ class _WelcomePageState extends State<WelcomePage> {
   /// 请求读取应用列表权限（未授权时拉起设置页）
   Future<void> _requestInstalledAppsPermission() async {
     try {
-      await spePermission.invokeMethod('isInstalledAppsPermissionGranted');
-    } catch (e) {
-      debugPrint('请求读取应用列表权限失败: $e');
+      await isInstalledAppsPermissionGranted();
+    } catch (_) {
+      // Starting the app must remain possible when the native channel is absent.
     }
   }
 

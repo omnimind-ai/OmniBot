@@ -1,6 +1,5 @@
 package cn.com.omnimind.baselib.util
 
-import android.util.Log
 import com.tencent.mmkv.MMKV
 
 /**
@@ -41,11 +40,11 @@ object MMKVUtil {
         return try {
             // MMKV 提供了 removeValuesForKeys 方法用于批量删除
             mmkv.removeValuesForKeys(keysToRemove.toTypedArray())
-            Log.d(TAG, "批量删除 ${keysToRemove.size} 个带前缀 '$prefix' 的 key")
+            OmniLog.d(TAG, "Removed ${keysToRemove.size} stored values")
             keysToRemove.size
         } catch (e: Exception) {
             // 如果批量删除失败，逐个删除
-            Log.w(TAG, "批量删除失败，改为逐个删除", e)
+            OmniLog.w(TAG, "Bulk removal failed; using fallback type=${e.javaClass.simpleName}")
             var count = 0
             keysToRemove.forEach { key ->
                 mmkv.removeValueForKey(key)
@@ -75,7 +74,7 @@ object MMKVUtil {
                 count++
             }
         }
-        Log.d(TAG, "批量设置 $count/${values.size} 个带前缀 '$prefix' 的 key-value")
+        OmniLog.d(TAG, "Stored $count/${values.size} values")
         return count
     }
 
@@ -121,7 +120,7 @@ object MMKVUtil {
             }
         }
         
-        Log.d(TAG, "批量设置 $count 个带前缀 '$prefix' 的 key-value")
+        OmniLog.d(TAG, "Stored $count values")
         return count
     }
 

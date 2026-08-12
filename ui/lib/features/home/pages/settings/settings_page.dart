@@ -56,7 +56,6 @@ class _SettingsPageState extends State<SettingsPage> {
         enabled,
       );
     } catch (e) {
-      debugPrint('Load MCP state failed: $e');
     }
   }
 
@@ -79,7 +78,6 @@ class _SettingsPageState extends State<SettingsPage> {
         ),
       );
     } catch (e) {
-      debugPrint('Load workspace memory state failed: $e');
     }
   }
 

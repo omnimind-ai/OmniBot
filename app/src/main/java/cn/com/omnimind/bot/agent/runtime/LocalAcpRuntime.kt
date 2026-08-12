@@ -4,7 +4,8 @@ package cn.com.omnimind.bot.agent.runtime
 
 import android.content.Context
 import android.util.Base64
-import android.util.Log
+import cn.com.omnimind.baselib.util.OmniLog
+import cn.com.omnimind.baselib.util.SensitiveDataSanitizer
 import cn.com.omnimind.bot.BuildConfig
 import cn.com.omnimind.bot.agent.AgentWorkspaceAttachmentSupport
 import cn.com.omnimind.bot.agent.AgentWorkspaceManager
@@ -273,13 +274,27 @@ internal class LocalAcpRuntime(
     }
 
     private suspend fun requireLaunchCommand(profile: AcpAgentProfile) {
+        val managedPackage = AcpAgentProfileStore.officialRuntime(profile)
+            ?.managedAdapterPackage
+        val command = if (managedPackage != null) {
+            buildManagedAcpReadyProbeCommand(
+                payload = loadManagedAcpInstallPayload(appContext),
+                packageSpec = managedPackage,
+                command = profile.command
+            )
+        } else {
+            "$MANAGED_ACP_PATH_PREFIX " +
+                "command -v ${shellQuoteAcp(profile.command)} >/dev/null 2>&1"
+        }
         val result = TerminalManager.getInstance(appContext).executeHiddenCommand(
-            command = "$MANAGED_NPM_PATH_PREFIX " +
-                "command -v ${shellQuoteAcp(profile.command)} >/dev/null 2>&1",
+            command = command,
             executorKey = "acp-launch-command-${profile.id}",
             timeoutMs = COMMAND_PROBE_TIMEOUT_MS
         )
         if (!result.isOk || result.exitCode != 0) {
+            if (managedPackage != null) {
+                throw ManagedAcpInstallException(AGENT_RUNTIME_ADAPTER_INSTALL_FAILED)
+            }
             throw IllegalStateException(
                 "ACP launch command not found: ${profile.command}. " +
                     "Open Agent mode settings to configure the command or install its adapter."
@@ -497,10 +512,12 @@ internal class LocalAcpRuntime(
     private suspend fun refreshAgentAvailability() {
         val profiles = profileStore.list()
         if (profiles.isEmpty()) return
-        val command = MANAGED_NPM_PATH_PREFIX + "\n" + profiles.flatMap { profile ->
+        val command = MANAGED_ACP_PATH_PREFIX + "\n" + profiles.flatMap { profile ->
             val id = shellQuoteAcp(profile.id)
             val runtime = AcpAgentProfileStore.officialRuntime(profile)
-            buildList {
+            if (runtime?.managedAdapterPackage != null) {
+                emptyList()
+            } else buildList {
                 add("launch" to profile.command)
                 runtime?.discoveryCommand
                     ?.takeIf { it != profile.command }
@@ -541,6 +558,12 @@ internal class LocalAcpRuntime(
                     installed = installed,
                     error = "Agent is disabled."
                 )
+                runtime?.managedAdapterPackage != null -> AcpAgentHealth(
+                    status = AcpAgentHealth.STATUS_UNCHECKED,
+                    installed = previous.installed,
+                    error = "Managed ACP adapter will be verified or prepared during Initialize.",
+                    checkedAt = checkedAt
+                )
                 !installed -> AcpAgentHealth(
                     status = AcpAgentHealth.STATUS_MISSING,
                     installed = false,
@@ -548,13 +571,6 @@ internal class LocalAcpRuntime(
                         (runtime?.discoveryCommand ?: profile.command),
                     checkedAt = checkedAt
                 )
-                !launchInstalled && runtime?.managedAdapterPackage != null ->
-                    AcpAgentHealth(
-                        status = AcpAgentHealth.STATUS_UNCHECKED,
-                        installed = true,
-                        error = "ACP adapter will be prepared during Initialize.",
-                        checkedAt = checkedAt
-                    )
                 previous.installed != true ||
                     previous.status == AcpAgentHealth.STATUS_MISSING -> AcpAgentHealth(
                     status = AcpAgentHealth.STATUS_UNCHECKED,
@@ -871,14 +887,18 @@ internal class LocalAcpRuntime(
                             handleSessionUpdate(threadId, turnId, event.update)
                         is Event.PromptResponseEvent -> {
                             stopReason = event.response.stopReason.name.lowercase()
-                            Log.i(TAG, "ACP prompt response for turn=$turnId stopReason=$stopReason")
+                            OmniLog.i(TAG, "ACP prompt completed stopReason=$stopReason")
                         }
                     }
                 }
             } catch (error: CancellationException) {
                 cancelled = true
             } catch (error: Throwable) {
-                Log.e(TAG, "ACP prompt failed", error)
+                if (BuildConfig.DEBUG) {
+                    OmniLog.e(TAG, "ACP prompt failed", error)
+                } else {
+                    OmniLog.e(TAG, "ACP prompt failed type=${error.javaClass.simpleName}")
+                }
                 failure = error
             } finally {
                 // The terminal event is emitted here rather than from the
@@ -908,11 +928,9 @@ internal class LocalAcpRuntime(
                 delay(STALL_CHECK_INTERVAL_MS)
                 val last = lastTurnActivityAt[threadId] ?: return@launch
                 if (System.currentTimeMillis() - last >= STALL_DEADLINE_MS) {
-                    Log.w(
+                    OmniLog.w(
                         TAG,
-                        "ACP turn=$turnId on session=$threadId produced no updates for " +
-                            "$STALL_DEADLINE_MS ms; finalizing because the adapter did not " +
-                            "send a session/prompt response."
+                        "ACP prompt produced no updates for $STALL_DEADLINE_MS ms; finalizing"
                     )
                     finishTurn(threadId = threadId, turnId = turnId, status = "end_turn")
                     runCatching { job.cancelAndJoin() }
@@ -1379,7 +1397,7 @@ internal class LocalAcpRuntime(
             ?: activeTurnIds[threadId]
             ?: lastTurnIds[threadId]
         if (resolvedTurnId == null && update.isTurnScoped()) {
-            Log.w(TAG, "Dropping turn-scoped ACP update with no resolvable turn: $update")
+            OmniLog.w(TAG, "Dropping ACP update without a turn type=${update.javaClass.simpleName}")
             return
         }
 
@@ -1570,8 +1588,17 @@ private class AcpProcessConnection(
     suspend fun start() {
         if (isRunning) return
         closing = false
-        val command = buildString {
-            append(MANAGED_NPM_PATH_PREFIX)
+        val managedPackage = AcpAgentProfileStore.officialRuntime(profile)
+            ?.managedAdapterPackage
+        val command = if (managedPackage != null) {
+            buildManagedAcpLaunchCommand(
+                payload = loadManagedAcpInstallPayload(context),
+                packageSpec = managedPackage,
+                command = profile.command,
+                arguments = profile.arguments
+            )
+        } else buildString {
+            append(MANAGED_ACP_PATH_PREFIX)
             append(' ')
             append("exec ")
             append(shellQuoteAcp(profile.command))
@@ -1606,7 +1633,12 @@ private class AcpProcessConnection(
                     lines.forEach { line ->
                         if (line.isNotBlank()) {
                             appendDiagnostic(line)
-                            Log.d("LocalAcpRuntime", "[${profile.name}] $line")
+                            if (BuildConfig.DEBUG) {
+                                OmniLog.d(
+                                    "LocalAcpRuntime",
+                                    "adapter stderr=${SensitiveDataSanitizer.sanitize(line)}",
+                                )
+                            }
                         }
                     }
                 }
@@ -1634,8 +1666,9 @@ private class AcpProcessConnection(
     }
 
     private fun appendDiagnostic(message: String) {
+        val safeMessage = SensitiveDataSanitizer.sanitize(message, MAX_STDERR_CHARS)
         synchronized(stderrLock) {
-            stderrTail.addLast(message)
+            stderrTail.addLast(safeMessage)
             while (
                 stderrTail.size > MAX_STDERR_LINES ||
                 stderrTail.sumOf(String::length) > MAX_STDERR_CHARS
@@ -1663,7 +1696,14 @@ private class AcpProcessConnection(
         val detail = "$streamName reader failed: " +
             (error.message ?: error.javaClass.simpleName)
         appendDiagnostic(detail)
-        Log.w("LocalAcpRuntime", "[${profile.name}] $detail", error)
+        if (BuildConfig.DEBUG) {
+            OmniLog.w("LocalAcpRuntime", detail, error)
+        } else {
+            OmniLog.w(
+                "LocalAcpRuntime",
+                "$streamName reader failed type=${error.javaClass.simpleName}",
+            )
+        }
         if (terminateProcess) {
             exitSignal.complete(null)
             runCatching { started.destroy() }
@@ -1786,9 +1826,6 @@ private fun capabilitiesPayload(info: AgentInfo?): Map<String, Any?> {
         "steering" to steering
     )
 }
-
-private const val MANAGED_NPM_PATH_PREFIX =
-    "PATH=\"/root/.npm-global/bin:\$PATH\"; export PATH;"
 
 internal fun shouldSuppressAcpStreamReadFailure(
     closing: Boolean,

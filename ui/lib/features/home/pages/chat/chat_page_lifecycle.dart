@@ -94,10 +94,6 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
   void didUpdateWidget(covariant ChatPage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (_threadTargetChanged(oldWidget.threadTarget, widget.threadTarget)) {
-      debugPrint(
-        '[ChatPage] thread target changed: '
-        '${oldWidget.threadTarget} -> ${widget.threadTarget}',
-      );
       unawaited(_reloadConversationForCurrentTarget());
     }
   }
@@ -364,10 +360,6 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
       unawaited(_loadAgentModelOptionsWhenReady(force: true));
       unawaited(_persistVisibleThreadTargetIfNeeded());
     } catch (error) {
-      debugPrint(
-        '[ChatPage] Failed to restore ACP agent for conversation '
-        '$conversationId: $error',
-      );
     }
   }
 
@@ -553,7 +545,6 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
       }
       _setPetOverlayShowing(true);
     } catch (error) {
-      debugPrint('${isHidingPet ? '收起' : '唤起'}宠物失败: $error');
       if (mounted) {
         showToast(
           LegacyTextLocalizer.localize(
@@ -574,7 +565,6 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
       final isShowing = await OverlayService.isPetOverlayShowing();
       _setPetOverlayShowing(isShowing);
     } catch (error) {
-      debugPrint('同步宠物悬浮窗状态失败: $error');
     }
   }
 

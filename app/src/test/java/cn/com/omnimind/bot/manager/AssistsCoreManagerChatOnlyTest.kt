@@ -53,7 +53,8 @@ class AssistsCoreManagerChatOnlyTest {
                 name = "Provider One",
                 baseUrl = "https://example.com/v1",
                 apiKey = "secret",
-                protocolType = "openai_compatible"
+                protocolType = "openai_compatible",
+                destinationConsentValid = true
             )
         }
 
@@ -80,7 +81,8 @@ class AssistsCoreManagerChatOnlyTest {
                 name = "Provider One",
                 baseUrl = "https://api.anthropic.com",
                 apiKey = "secret",
-                protocolType = "anthropic"
+                protocolType = "anthropic",
+                destinationConsentValid = true
             )
         }
 

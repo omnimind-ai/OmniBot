@@ -3,14 +3,14 @@ import 'dart:async';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:ui/l10n/legacy_text_localizer.dart';
-import 'package:ui/services/assists_core_service.dart';
 import 'package:ui/services/image_prewarm_cache_service.dart';
 import 'package:ui/services/screen_dialog_service.dart';
-import 'package:ui/services/storage_service.dart';
-import 'package:ui/constants/openclaw/openclaw_keys.dart';
+import 'package:ui/services/openclaw_credential_service.dart';
+import 'package:ui/services/data_destination_confirmation.dart';
 import 'package:ui/features/home/pages/common/openclaw_connection_checker.dart';
 import 'package:ui/theme/theme_context.dart';
 import 'package:ui/utils/ui.dart';
+import 'package:ui/widgets/openclaw_identity_reset_dialog.dart';
 
 import 'chat_bot_sheet.dart';
 import 'widgets/chat_input_area.dart';
@@ -75,43 +75,21 @@ class _CommandOverlayState extends State<CommandOverlay> {
 
   Future<void> _loadOpenClawConfig() async {
     try {
-      final enabled =
-          StorageService.getBool(kOpenClawEnabledKey, defaultValue: false) ??
-          false;
-      final baseUrl =
-          StorageService.getString(kOpenClawBaseUrlKey, defaultValue: '') ?? '';
-      final token =
-          StorageService.getString(kOpenClawTokenKey, defaultValue: '') ?? '';
-      final userId =
-          StorageService.getString(kOpenClawUserIdKey, defaultValue: '') ?? '';
-      final effectiveEnabled = enabled && baseUrl.trim().isNotEmpty;
-      if (enabled && !effectiveEnabled) {
-        await StorageService.setBool(kOpenClawEnabledKey, false);
-      }
+      final configuration = await OpenClawCredentialService.initializeAndLoad();
       if (!mounted) return;
       setState(() {
-        _openClawEnabled = effectiveEnabled;
-        _openClawBaseUrl = baseUrl;
-        _openClawToken = token;
-        _openClawUserId = userId;
+        _openClawEnabled = configuration.enabled;
+        _openClawBaseUrl = configuration.baseUrl;
+        _openClawToken = '';
+        _openClawUserId = configuration.userId;
       });
       await _ensureOpenClawUserId();
-    } catch (e) {
-      debugPrint('加载OpenClaw配置失败: $e');
-    }
+    } catch (e) {}
   }
 
   Future<void> _ensureOpenClawUserId() async {
     if (_openClawUserId.isNotEmpty) return;
-    final existing =
-        StorageService.getString(kOpenClawUserIdKey, defaultValue: '') ?? '';
-    if (existing.isNotEmpty) {
-      if (!mounted) return;
-      setState(() => _openClawUserId = existing);
-      return;
-    }
     final generated = DateTime.now().microsecondsSinceEpoch.toString();
-    await StorageService.setString(kOpenClawUserIdKey, generated);
     if (!mounted) return;
     setState(() => _openClawUserId = generated);
   }
@@ -122,74 +100,47 @@ class _CommandOverlayState extends State<CommandOverlay> {
       _showOpenClawCommandPanel(expand: true);
       return;
     }
-    if (!mounted) return;
-    setState(() => _openClawEnabled = enabled);
-    await StorageService.setBool(kOpenClawEnabledKey, enabled);
-  }
-
-  Future<void> _showOpenClawConfigDialog() async {
-    final result = await showDialog<_OpenClawConfigDraft>(
-      context: context,
-      useRootNavigator: false,
-      builder: (_) => _OpenClawConfigDialog(
-        initialBaseUrl: _openClawBaseUrl,
-        initialToken: _openClawToken,
-        initialUserId: _openClawUserId,
-      ),
-    );
-    if (!mounted || result == null) return;
-    final baseUrl = result.baseUrl.trim();
-    final token = result.token.trim();
-    final userId = result.userId.trim();
-    await StorageService.setString(kOpenClawBaseUrlKey, baseUrl);
-    await StorageService.setString(kOpenClawTokenKey, token);
-    if (userId.isNotEmpty) {
-      await StorageService.setString(kOpenClawUserIdKey, userId);
+    if (!enabled) {
+      if (!mounted) return;
+      final disabled = await OpenClawCredentialService.disable();
+      if (!disabled.success || !mounted) return;
+      setState(() {
+        _openClawEnabled = false;
+      });
+      return;
     }
+    final plan = await OpenClawCredentialService.prepareDestination(
+      _openClawBaseUrl,
+    );
     if (!mounted) return;
+    final outcome =
+        await confirmDataDestinationAndRun<OpenClawConfigurationMutationResult>(
+          context: context,
+          rawEndpoint: plan.baseUrl,
+          capability: 'OpenClaw Gateway',
+          operation: LegacyTextLocalizer.isEnglish ? 'Enable' : '启用',
+          dataTypes: [
+            LegacyTextLocalizer.isEnglish
+                ? 'Future prompts, conversation history, attachments, and device pairing metadata'
+                : '启用后发送的提示词、对话历史、附件和设备配对元数据',
+          ],
+          action: () => OpenClawCredentialService.saveConfirmed(
+            plan: plan,
+            baseUrl: plan.baseUrl,
+            userId: _openClawUserId,
+            enable: true,
+          ),
+        );
+    if (!outcome.confirmed || outcome.value?.success != true || !mounted)
+      return;
     setState(() {
-      _openClawBaseUrl = baseUrl;
-      _openClawToken = token;
-      _openClawUserId = userId.isNotEmpty ? userId : _openClawUserId;
+      _openClawEnabled = outcome.value!.configuration?.enabled == true;
     });
-    await _ensureOpenClawUserId();
-
-    // 配置保存后检查连接
-    _checkOpenClawConnection();
   }
 
   /// 检查 OpenClaw 服务连接状态
   Future<void> _checkOpenClawConnection() async {
-    await OpenClawConnectionChecker.checkAndToast(_openClawBaseUrl);
-  }
-
-  Widget _buildOpenClawToggle() {
-    final palette = context.omniPalette;
-    final labelColor = context.isDarkTheme
-        ? palette.textSecondary
-        : const Color(0xFF666666);
-    return Row(
-      children: [
-        Text('OpenClaw', style: TextStyle(fontSize: 12, color: labelColor)),
-        const SizedBox(width: 8),
-        Switch.adaptive(
-          value: _openClawEnabled,
-          onChanged: (value) => _setOpenClawEnabled(value),
-          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-        ),
-        const Spacer(),
-        TextButton.icon(
-          onPressed: _showOpenClawConfigDialog,
-          icon: Icon(Icons.settings, size: 16, color: labelColor),
-          label: Text('配置', style: TextStyle(fontSize: 12, color: labelColor)),
-          style: TextButton.styleFrom(
-            visualDensity: VisualDensity.compact,
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            foregroundColor: labelColor,
-          ),
-        ),
-      ],
-    );
+    await OpenClawConnectionChecker.checkAndToast(context, _openClawBaseUrl);
   }
 
   void _handleSlashCommandInput() {
@@ -244,39 +195,67 @@ class _CommandOverlayState extends State<CommandOverlay> {
       return;
     }
     if (_openClawPanelExpanded) {
-      await _applyOpenClawConfig(
+      final saved = await _applyOpenClawConfig(
         baseUrl: _openClawBaseUrlController.text.trim(),
         token: _openClawTokenController.text.trim(),
         userId: _openClawUserIdController.text.trim(),
         enable: _openClawEnabled,
       );
-      _checkOpenClawConnection();
+      if (saved) _checkOpenClawConnection();
     }
     _hideSlashCommandPanel();
   }
 
-  Future<void> _applyOpenClawConfig({
+  Future<bool> _applyOpenClawConfig({
     required String baseUrl,
     required String token,
     String? userId,
     bool enable = true,
   }) async {
-    await StorageService.setString(kOpenClawBaseUrlKey, baseUrl);
-    await StorageService.setString(kOpenClawTokenKey, token);
-    if (userId != null && userId.isNotEmpty) {
-      await StorageService.setString(kOpenClawUserIdKey, userId);
-    }
-    if (!mounted) return;
+    final plan = await OpenClawCredentialService.prepareDestination(baseUrl);
+    if (!mounted) return false;
+    final effectiveUserId = userId?.trim().isNotEmpty == true
+        ? userId!.trim()
+        : _openClawUserId.trim();
+    final outcome =
+        await confirmDataDestinationAndRun<OpenClawConfigurationMutationResult>(
+          context: context,
+          rawEndpoint: plan.baseUrl,
+          capability: 'OpenClaw Gateway',
+          operation: LegacyTextLocalizer.isEnglish
+              ? 'Save or enable configuration'
+              : '保存或启用配置',
+          dataTypes: [
+            LegacyTextLocalizer.isEnglish
+                ? 'Gateway credential, when configured'
+                : 'Gateway 凭据（如已配置）',
+            LegacyTextLocalizer.isEnglish
+                ? 'Future prompts, conversation history, attachments, and device pairing metadata'
+                : '启用后发送的提示词、对话历史、附件和设备配对元数据',
+          ],
+          action: () async {
+            return OpenClawCredentialService.saveConfirmed(
+              plan: plan,
+              baseUrl: plan.baseUrl,
+              userId: effectiveUserId,
+              enable: enable,
+              replacementToken: token,
+            );
+          },
+        );
+    final mutation = outcome.value;
+    if (!outcome.confirmed || mutation?.success != true || !mounted)
+      return false;
+    final configuration = mutation!.configuration;
+    if (configuration == null) return false;
     setState(() {
-      _openClawBaseUrl = baseUrl;
-      _openClawToken = token;
-      if (userId != null && userId.isNotEmpty) {
-        _openClawUserId = userId;
-      }
-      _openClawEnabled = enable && baseUrl.trim().isNotEmpty;
+      _openClawBaseUrl = configuration.baseUrl;
+      _openClawToken = '';
+      _openClawTokenController.clear();
+      _openClawUserId = configuration.userId;
+      _openClawEnabled = configuration.enabled;
     });
-    await StorageService.setBool(kOpenClawEnabledKey, _openClawEnabled);
-    await _ensureOpenClawUserId();
+    return true;
   }
 
   Future<bool> _tryHandleSlashCommand(String messageText) async {
@@ -318,17 +297,40 @@ class _CommandOverlayState extends State<CommandOverlay> {
       return true;
     }
 
-    await _applyOpenClawConfig(
+    final saved = await _applyOpenClawConfig(
       baseUrl: baseUrl.trim(),
       token: token.trim(),
       userId: userId?.trim(),
       enable: true,
     );
+    if (!saved) {
+      AppToast.show('未确认接收方，OpenClaw 未启用');
+      return true;
+    }
     _messageController.clear();
     _inputFocusNode.unfocus();
     _hideSlashCommandPanel();
     AppToast.show('OpenClaw 已配置并启用');
     return true;
+  }
+
+  Future<void> _resetOpenClawDeviceIdentity() async {
+    final result = await showOpenClawIdentityResetFlow(
+      context: context,
+      onLocalDisabled: () {
+        if (mounted) setState(() => _openClawEnabled = false);
+      },
+    );
+    if (!mounted || result == null) return;
+    AppToast.show(
+      result.success
+          ? (LegacyTextLocalizer.isEnglish
+                ? 'Device identity reset. Restart or reconnect OpenClaw.'
+                : '设备身份已重置，请重启或重新连接 OpenClaw。')
+          : (LegacyTextLocalizer.isEnglish
+                ? 'Reset was not verified; OpenClaw remains disabled.'
+                : '无法验证重置结果；OpenClaw 保持停用。'),
+    );
   }
 
   @override
@@ -596,6 +598,7 @@ class _CommandOverlayState extends State<CommandOverlay> {
                         const SizedBox(height: 6),
                         TextField(
                           controller: _openClawTokenController,
+                          obscureText: true,
                           decoration: const InputDecoration(
                             labelText: 'Token（可选）',
                             hintText: '为空表示无需 token',
@@ -608,6 +611,25 @@ class _CommandOverlayState extends State<CommandOverlay> {
                           decoration: const InputDecoration(
                             labelText: 'User ID（可选）',
                             isDense: true,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: OutlinedButton.icon(
+                            key: const Key(
+                              'overlay-openclaw-reset-device-identity-button',
+                            ),
+                            onPressed: _resetOpenClawDeviceIdentity,
+                            icon: const Icon(
+                              Icons.phonelink_erase_outlined,
+                              size: 17,
+                            ),
+                            label: Text(
+                              LegacyTextLocalizer.isEnglish
+                                  ? 'Reset device identity'
+                                  : '重置设备身份',
+                            ),
                           ),
                         ),
                       ],
@@ -737,117 +759,6 @@ class _CommandOverlayState extends State<CommandOverlay> {
               ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _OpenClawConfigDraft {
-  const _OpenClawConfigDraft({
-    required this.baseUrl,
-    required this.token,
-    required this.userId,
-  });
-
-  final String baseUrl;
-  final String token;
-  final String userId;
-}
-
-class _OpenClawConfigDialog extends StatefulWidget {
-  const _OpenClawConfigDialog({
-    required this.initialBaseUrl,
-    required this.initialToken,
-    required this.initialUserId,
-  });
-
-  final String initialBaseUrl;
-  final String initialToken;
-  final String initialUserId;
-
-  @override
-  State<_OpenClawConfigDialog> createState() => _OpenClawConfigDialogState();
-}
-
-class _OpenClawConfigDialogState extends State<_OpenClawConfigDialog> {
-  late final TextEditingController _baseUrlController;
-  late final TextEditingController _tokenController;
-  late final TextEditingController _userIdController;
-  final FocusNode _baseUrlFocusNode = FocusNode();
-
-  @override
-  void initState() {
-    super.initState();
-    _baseUrlController = TextEditingController(text: widget.initialBaseUrl);
-    _tokenController = TextEditingController(text: widget.initialToken);
-    _userIdController = TextEditingController(text: widget.initialUserId);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        _baseUrlFocusNode.requestFocus();
-      }
-    });
-  }
-
-  @override
-  void dispose() {
-    _baseUrlFocusNode.dispose();
-    _baseUrlController.dispose();
-    _tokenController.dispose();
-    _userIdController.dispose();
-    super.dispose();
-  }
-
-  void _close([_OpenClawConfigDraft? value]) {
-    FocusScope.of(context).unfocus();
-    Navigator.of(context).pop(value);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return PopScope(
-      canPop: false,
-      onPopInvokedWithResult: (didPop, _) {
-        if (didPop) return;
-        _close();
-      },
-      child: AlertDialog(
-        title: const Text('OpenClaw 配置'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: _baseUrlController,
-              focusNode: _baseUrlFocusNode,
-              decoration: const InputDecoration(
-                labelText: 'Base URL',
-                hintText: 'http://192.168.1.10:18789',
-              ),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _tokenController,
-              decoration: const InputDecoration(labelText: 'Token（可选）'),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _userIdController,
-              decoration: const InputDecoration(labelText: 'User ID（可选）'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => _close(), child: const Text('取消')),
-          ElevatedButton(
-            onPressed: () => _close(
-              _OpenClawConfigDraft(
-                baseUrl: _baseUrlController.text,
-                token: _tokenController.text,
-                userId: _userIdController.text,
-              ),
-            ),
-            child: const Text('保存'),
-          ),
-        ],
       ),
     );
   }

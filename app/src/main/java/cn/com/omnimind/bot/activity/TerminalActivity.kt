@@ -2,9 +2,9 @@ package cn.com.omnimind.bot.activity
 
 import android.content.Intent
 import android.os.Bundle
-import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.lifecycle.lifecycleScope
+import cn.com.omnimind.baselib.util.OmniLog
 import com.ai.assistance.operit.terminal.TerminalManager
 import com.ai.assistance.operit.terminal.setup.EnvironmentSetupLogic
 import com.ai.assistance.operit.terminal.utils.SourceManager
@@ -78,10 +78,7 @@ class TerminalActivity : ComponentActivity() {
             terminatePreviousSession = false,
             workingDir = "/"
         )
-        Log.d(
-            TAG,
-            "Prepared setup session ${ShellArgv.formatExecSpec(ShellArgv.SYSTEM_SH, pendingCommand!!.args, "/")}"
-        )
+        OmniLog.d(TAG, "Prepared terminal setup session")
     }
 
     private fun prepareSetupScript(

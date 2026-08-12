@@ -528,9 +528,17 @@ class _ChatBrowserOverlayState extends State<ChatBrowserOverlay> {
   }
 
   Widget _buildPermissionPrompt(BrowserPermissionPrompt prompt) {
-    final resourceLabel = prompt.resources.isEmpty
-        ? prompt.kind
-        : prompt.resources.join(', ');
+    final capabilityLabels = prompt.capabilities
+        .map(_permissionCapabilityLabel)
+        .toSet()
+        .toList(growable: false);
+    final capabilityLabel = capabilityLabels.isEmpty
+        ? _text('网站功能', 'website capability')
+        : capabilityLabels.join(_text('、', ', '));
+    final parsedHost = Uri.tryParse(prompt.origin)?.host ?? '';
+    final recipient = prompt.recipient.trim().isNotEmpty
+        ? prompt.recipient.trim()
+        : (parsedHost.isNotEmpty ? parsedHost : _text('当前网站', 'current website'));
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
@@ -542,7 +550,7 @@ class _ChatBrowserOverlayState extends State<ChatBrowserOverlay> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            _text('页面请求权限', 'Page requests permission'),
+            _text('网站请求敏感权限', 'Website requests sensitive access'),
             style: const TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w700,
@@ -551,8 +559,24 @@ class _ChatBrowserOverlayState extends State<ChatBrowserOverlay> {
           ),
           const SizedBox(height: 4),
           Text(
-            '${prompt.origin}\n$resourceLabel',
+            _text('接收方：$recipient', 'Recipient: $recipient'),
             style: const TextStyle(fontSize: 12, color: Color(0xFF334155)),
+          ),
+          const SizedBox(height: 3),
+          Text(
+            _text(
+              '用途：允许该网站使用$capabilityLabel。',
+              'Purpose: let this website use $capabilityLabel.',
+            ),
+            style: const TextStyle(fontSize: 12, color: Color(0xFF334155)),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            _text(
+              '数据由该网站处理，不是 OmniBot AI。授权仅对本次请求有效，不会保存为“始终允许”。',
+              'The website processes this data, not OmniBot AI. Access applies only to this request and is never saved as “always allow”.',
+            ),
+            style: const TextStyle(fontSize: 11, color: Color(0xFF64748B)),
           ),
           const SizedBox(height: 8),
           Row(
@@ -565,7 +589,7 @@ class _ChatBrowserOverlayState extends State<ChatBrowserOverlay> {
               ),
               const SizedBox(width: 8),
               _primaryActionButton(
-                label: _text('允许', 'Allow'),
+                label: _text('仅此次允许', 'Allow once'),
                 onPressed: () => _runCommand(
                   AgentBrowserSessionService.grantPermission(prompt.requestId),
                 ),
@@ -575,6 +599,25 @@ class _ChatBrowserOverlayState extends State<ChatBrowserOverlay> {
         ],
       ),
     );
+  }
+
+  String _permissionCapabilityLabel(String rawCapability) {
+    switch (rawCapability.trim().toLowerCase()) {
+      case 'location':
+      case 'android.permission.access_coarse_location':
+      case 'android.permission.access_fine_location':
+        return _text('位置', 'location');
+      case 'camera':
+      case 'android.permission.camera':
+      case 'android.webkit.resource.video_capture':
+        return _text('相机', 'camera');
+      case 'microphone':
+      case 'android.permission.record_audio':
+      case 'android.webkit.resource.audio_capture':
+        return _text('麦克风', 'microphone');
+      default:
+        return _text('网站功能', 'website capability');
+    }
   }
 
   Widget _buildDialogPrompt(BrowserDialogPrompt prompt) {

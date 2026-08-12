@@ -3,16 +3,20 @@ import 'dart:io';
 
 import 'package:archive/archive.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/widgets.dart';
+import 'package:ui/l10n/legacy_text_localizer.dart';
 import 'package:ui/services/office_preview_service.dart';
 
 void main() {
   late Directory tempDir;
 
   setUp(() {
+    LegacyTextLocalizer.setResolvedLocale(const Locale('zh'));
     tempDir = Directory.systemTemp.createTempSync('office-preview-test-');
   });
 
   tearDown(() {
+    LegacyTextLocalizer.clearResolvedLocale();
     tempDir.deleteSync(recursive: true);
   });
 

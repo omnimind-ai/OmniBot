@@ -2412,10 +2412,15 @@ class _ChatMessageListState extends State<ChatMessageList> {
               ),
             )
           : const SizedBox.expand();
+      final paddedContent = Padding(
+        key: const ValueKey('chat-empty-bottom-overlay-padding'),
+        padding: EdgeInsets.only(bottom: reservedBottomInset),
+        child: content,
+      );
       if (pageBackgroundColor == null) {
-        return content;
+        return paddedContent;
       }
-      return ColoredBox(color: pageBackgroundColor, child: content);
+      return ColoredBox(color: pageBackgroundColor, child: paddedContent);
     }
 
     String? latestUserMessageId;

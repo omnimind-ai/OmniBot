@@ -175,6 +175,33 @@ class SystemToolHandler(
 
     private suspend fun executeCalendarTool(toolName: String, args: JsonObject, callback: AgentCallback): ToolExecutionResult {
         return try {
+            when (
+                LocalUserConfirmationStore.requestAndConsume(
+                    operationName = toolName,
+                    arguments = args,
+                    title = CalendarMutationConfirmationPolicy.title(toolName, helper.isEnglishLocale),
+                    message = CalendarMutationConfirmationPolicy.question(
+                        toolName = toolName,
+                        arguments = args,
+                        english = helper.isEnglishLocale,
+                    ),
+                    english = helper.isEnglishLocale,
+                )
+            ) {
+                LocalUserConfirmationDecision.APPROVED -> Unit
+                LocalUserConfirmationDecision.DENIED -> {
+                    return ToolExecutionResult.Error(
+                        toolName,
+                        CalendarMutationConfirmationPolicy.deniedMessage(helper.isEnglishLocale),
+                    )
+                }
+                LocalUserConfirmationDecision.UNAVAILABLE -> {
+                    return ToolExecutionResult.Error(
+                        toolName,
+                        CalendarMutationConfirmationPolicy.unavailableMessage(helper.isEnglishLocale),
+                    )
+                }
+            }
             if (!calendarToolService.hasCalendarPermissions()) {
                 helper.reportToolProgress(callback, toolName, "正在请求日历权限")
                 val granted = calendarToolService.requestCalendarPermissions()
@@ -277,7 +304,10 @@ class SystemToolHandler(
                 else -> ToolExecutionResult.Error(toolName, "Unknown calendar tool")
             }
         } catch (e: CancellationException) { throw e }
-        catch (e: Exception) { ToolExecutionResult.Error(toolName, helper.localized(e.message ?: "Calendar tool failed")) }
+        catch (_: Exception) {
+            // Calendar provider exceptions can contain event/account details; never echo them to the model.
+            ToolExecutionResult.Error(toolName, helper.localized("Calendar tool failed"))
+        }
     }
 
     private suspend fun executeMusicTool(args: JsonObject, workspace: AgentWorkspaceDescriptor, callback: AgentCallback): ToolExecutionResult {

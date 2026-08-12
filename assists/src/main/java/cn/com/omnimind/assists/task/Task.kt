@@ -19,6 +19,7 @@ abstract class Task(open val taskChangeListener: TaskChangeListener,open val tas
     private val TAG = "[Task]"
 
     open var id: String = ""
+    @Volatile
     var isRunning: Boolean = false
     open var taskScope = CoroutineScope( Dispatchers.IO)
     open val cancelScope = CoroutineScope( Dispatchers.IO)

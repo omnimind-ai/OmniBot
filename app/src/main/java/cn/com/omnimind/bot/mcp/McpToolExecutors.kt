@@ -99,36 +99,26 @@ object McpToolExecutors {
     }
     
     private fun buildFileTransferResponse(record: McpFileRecord): Map<String, Any?> {
-        val issued = McpFileInbox.issueDownloadToken(record)
-        val state = McpServerManager.currentState()
-        val host = state.host ?: McpNetworkUtils.currentLanIp()
-        if (host.isNullOrBlank()) {
-            return McpResponseBuilder.buildErrorText("LAN IP not available. Please ensure the device is on a LAN-accessible network.")
-        }
-        val url = "http://$host:${state.port}/mcp/file/${issued.id}?token=${issued.downloadToken}"
         val text = buildString {
-            appendLine("File ready for download.")
+            appendLine("File is available in the OmniBot inbox.")
             appendLine("")
-            appendLine("File ID: ${issued.id}")
-            appendLine("Name: ${issued.fileName}")
-            appendLine("Size: ${issued.sizeBytes} bytes")
-            appendLine("MIME: ${issued.mimeType ?: "unknown"}")
-            appendLine("ReceivedAt: ${issued.createdAt}")
+            appendLine("File ID: ${record.id}")
+            appendLine("Name: ${record.fileName}")
+            appendLine("Size: ${record.sizeBytes} bytes")
+            appendLine("MIME: ${record.mimeType ?: "unknown"}")
+            appendLine("ReceivedAt: ${record.createdAt}")
             appendLine("")
-            appendLine("Download URL (valid ~15 minutes):")
-            appendLine(url)
+            appendLine("Authenticated file download is not exposed until the MCP client has a non-persistent credential transport.")
         }
         return mapOf(
             "content" to listOf(mapOf("type" to "text", "text" to text)),
             "file" to mapOf(
-                "id" to issued.id,
-                "name" to issued.fileName,
-                "mimeType" to issued.mimeType,
-                "sizeBytes" to issued.sizeBytes,
-                "receivedAt" to issued.createdAt,
-                "downloadUrl" to url,
-                "tokenExpiresAt" to issued.tokenExpiresAt,
-            )
+                "id" to record.id,
+                "name" to record.fileName,
+                "mimeType" to record.mimeType,
+                "sizeBytes" to record.sizeBytes,
+                "receivedAt" to record.createdAt,
+            ),
         )
     }
 }

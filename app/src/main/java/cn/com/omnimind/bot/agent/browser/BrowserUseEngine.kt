@@ -355,7 +355,10 @@ class BrowserUseEngine(
         var riskChallengeKind: String? = null,
         var recommendedNextAction: String? = null,
         var pendingFileChooserCallback: ValueCallback<Array<Uri>>? = null,
-        val pageMenuCommands: LinkedHashMap<String, BrowserUserscriptMenuCommand> = linkedMapOf()
+        val pageMenuCommands: LinkedHashMap<String, BrowserUserscriptMenuCommand> = linkedMapOf(),
+        var bridgeToken: String = UUID.randomUUID().toString(),
+        var navigationGeneration: Long = 0L,
+        val activeUserscriptIds: MutableSet<Long> = linkedSetOf(),
     )
 
     private data class PendingExternalOpen(
@@ -378,9 +381,14 @@ class BrowserUseEngine(
         val requestId: String,
         val kind: String,
         val origin: String,
-        val resources: List<String>,
+        val displayHost: String,
+        val capabilities: List<String>,
+        val webResources: List<String> = emptyList(),
+        val tabId: Int,
+        val navigationGeneration: Long,
         val webPermissionRequest: WebPermissionRequest? = null,
-        val geolocationCallback: GeolocationPermissions.Callback? = null
+        val geolocationCallback: GeolocationPermissions.Callback? = null,
+        val geolocationCallbackOrigin: String? = null,
     )
 
     private val json = Json {
@@ -895,7 +903,9 @@ class BrowserUseEngine(
                     "requestId" to prompt.requestId,
                     "kind" to prompt.kind,
                     "origin" to prompt.origin,
-                    "resources" to prompt.resources
+                    "recipient" to prompt.displayHost,
+                    "capabilities" to prompt.capabilities,
+                    "resources" to prompt.capabilities
                 )
             },
             "userscriptSummary" to linkedMapOf(
@@ -1060,6 +1070,9 @@ class BrowserUseEngine(
     private suspend fun hostSelectTab(tabId: Int?) {
         val resolvedTabId = tabId ?: throw IllegalArgumentException("缺少 tabId")
         requireExistingTab(resolvedTabId)
+        pendingPermissionPrompt
+            ?.takeIf { it.tabId != resolvedTabId }
+            ?.let(::completePermissionDeny)
         activeTabId = resolvedTabId
         reattachActiveTabIfNeeded()
         publishSnapshotUpdate()
@@ -1069,6 +1082,7 @@ class BrowserUseEngine(
         val resolvedTabId = tabId ?: activeTabId ?: throw IllegalArgumentException("当前没有活动标签页")
         val tab = requireExistingTab(resolvedTabId)
         withContext(Dispatchers.Main.immediate) {
+            cancelPendingPermissionPromptForTab(tab.tabId)
             tabs.remove(tab.tabId)
             if (activeTabId == tab.tabId) {
                 activeTabId = tabs.keys.lastOrNull()
@@ -1307,6 +1321,7 @@ class BrowserUseEngine(
     }
 
     private fun destroyOnMain() {
+        pendingPermissionPrompt?.let(::completePermissionDeny)
         tabs.values.forEach { tab ->
             runCatching {
                 (tab.webView.parent as? ViewGroup)?.removeView(tab.webView)
@@ -1348,6 +1363,7 @@ class BrowserUseEngine(
     private suspend fun executeCloseTab(request: BrowserUseRequest): BrowserUseOutcome {
         val tab = requireTabForMutation(request)
         withContext(Dispatchers.Main.immediate) {
+            cancelPendingPermissionPromptForTab(tab.tabId)
             tabs.remove(tab.tabId)
             if (activeTabId == tab.tabId) {
                 activeTabId = tabs.keys.lastOrNull()
@@ -2255,6 +2271,7 @@ class BrowserUseEngine(
     ): BrowserTab {
         require(Looper.myLooper() == Looper.getMainLooper()) { "createTabOnMain must run on main thread" }
         require(tabs.size < MAX_BROWSER_TABS) { "浏览器标签页上限为 $MAX_BROWSER_TABS" }
+        pendingPermissionPrompt?.let(::completePermissionDeny)
         val tabId = ++nextTabId
         val contextWrapper = MutableContextWrapper(appContext)
         val webView = WebView(contextWrapper).apply {
@@ -2269,13 +2286,15 @@ class BrowserUseEngine(
             settings.displayZoomControls = false
             settings.setSupportMultipleWindows(true)
             settings.javaScriptCanOpenWindowsAutomatically = true
-            settings.allowContentAccess = true
-            settings.allowFileAccess = true
-            settings.allowFileAccessFromFileURLs = true
+            settings.setGeolocationEnabled(true)
+            settings.allowContentAccess = false
+            settings.allowFileAccess = false
+            settings.allowFileAccessFromFileURLs = false
+            settings.allowUniversalAccessFromFileURLs = false
             settings.mediaPlaybackRequiresUserGesture = false
             settings.userAgentString = profile.userAgentString
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
+                settings.mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 settings.safeBrowsingEnabled = true
@@ -3059,11 +3078,13 @@ class BrowserUseEngine(
         if (!(currentUrl.startsWith("http://") || currentUrl.startsWith("https://"))) {
             withContext(Dispatchers.Main.immediate) {
                 tab.pageMenuCommands.clear()
+                synchronized(tab.activeUserscriptIds) { tab.activeUserscriptIds.clear() }
             }
             return
         }
         withContext(Dispatchers.Main.immediate) {
             tab.pageMenuCommands.clear()
+            synchronized(tab.activeUserscriptIds) { tab.activeUserscriptIds.clear() }
         }
         val matchedScripts = hostStore.listUserscripts().filter { script ->
             script.enabled &&
@@ -3071,9 +3092,15 @@ class BrowserUseEngine(
                 BrowserUserscriptSupport.isSupportedRunAt(script.runAt) &&
                 BrowserUserscriptSupport.matchesUrl(script, currentUrl)
         }
+        synchronized(tab.activeUserscriptIds) {
+            tab.activeUserscriptIds.addAll(matchedScripts.map { it.id })
+        }
         matchedScripts.forEach { script ->
             runCatching {
-                evaluateJavascriptRaw(tab, BrowserUserscriptSupport.buildWrapperScript(script))
+                evaluateJavascriptRaw(
+                    tab,
+                    BrowserUserscriptSupport.buildWrapperScript(script, tab.bridgeToken),
+                )
             }
         }
         publishSnapshotUpdate()
@@ -3083,6 +3110,7 @@ class BrowserUseEngine(
         if (tab.downloadHelperInjected) {
             return
         }
+        val bridgeTokenLiteral = JSONObject.quote(tab.bridgeToken)
         evaluateJavascriptRaw(
             tab,
             """
@@ -3092,6 +3120,7 @@ class BrowserUseEngine(
                     }
                     window.__omniDownloadBridgeInstalled = true;
                     const bridge = window.OmniBrowserDownloadBridge;
+                    const bridgeToken = $bridgeTokenLiteral;
                     if (!bridge) {
                         return 'missing_bridge';
                     }
@@ -3102,6 +3131,7 @@ class BrowserUseEngine(
                             const reader = new FileReader();
                             reader.onloadend = function() {
                                 bridge.saveDataUrl(
+                                    bridgeToken,
                                     String(fileName || 'download'),
                                     String(mimeType || blob.type || ''),
                                     String(reader.result || ''),
@@ -3110,7 +3140,7 @@ class BrowserUseEngine(
                             };
                             reader.readAsDataURL(blob);
                         } catch (error) {
-                            bridge.log(String(error && error.message ? error.message : error));
+                            bridge.log(bridgeToken, String(error && error.message ? error.message : error));
                         }
                     }
                     window.__omniSaveDownloadFromUrl = saveUrl;
@@ -3122,7 +3152,7 @@ class BrowserUseEngine(
                         event.preventDefault();
                         const fileName = anchor.getAttribute('download') || document.title || 'download';
                         if (href.startsWith('data:')) {
-                            bridge.saveDataUrl(String(fileName), '', href, String(location.href));
+                            bridge.saveDataUrl(bridgeToken, String(fileName), '', href, String(location.href));
                             return;
                         }
                         saveUrl(href, fileName, '');
@@ -3337,33 +3367,39 @@ class BrowserUseEngine(
 
     private fun grantPendingPermission(requestId: String?) {
         val prompt = pendingPermissionPrompt ?: return
-        if (!requestId.isNullOrBlank() && prompt.requestId != requestId) {
-            return
-        }
-        if (prompt.resources.any { it == WebPermissionRequest.RESOURCE_AUDIO_CAPTURE }) {
-            completePermissionDeny(prompt)
-            return
-        }
-        val permissions = runtimePermissionsForPrompt(prompt)
-        if (permissions.isEmpty()) {
-            completePermissionGrant(prompt)
-            return
-        }
-        RuntimePermissionRequest.requestPermissions(appContext, permissions) { resultMap ->
-            val granted = resultMap.values.all { it }
-            if (granted) {
-                completePermissionGrant(prompt)
-            } else {
+        if (!isPermissionPromptCurrent(prompt, requestId)) return
+        mainScope.launch(Dispatchers.Main.immediate) {
+            if (!isPermissionPromptCurrent(prompt, requestId)) return@launch
+            val permissions = runtimePermissionsForPrompt(prompt)
+            if (permissions.isEmpty()) {
                 completePermissionDeny(prompt)
+                return@launch
+            }
+            RuntimePermissionRequest.requestPermissions(appContext, permissions) { resultMap ->
+                mainScope.launch(Dispatchers.Main.immediate) {
+                    if (!isPermissionPromptCurrent(prompt, requestId)) {
+                        denyPermissionPromptCallback(prompt)
+                        return@launch
+                    }
+                    val granted = if (prompt.kind == "geolocation") {
+                        resultMap[Manifest.permission.ACCESS_COARSE_LOCATION] == true ||
+                            resultMap[Manifest.permission.ACCESS_FINE_LOCATION] == true
+                    } else {
+                        permissions.all { permission -> resultMap[permission] == true }
+                    }
+                    if (granted) {
+                        completePermissionGrant(prompt)
+                    } else {
+                        completePermissionDeny(prompt)
+                    }
+                }
             }
         }
     }
 
     private fun denyPendingPermission(requestId: String?) {
         val prompt = pendingPermissionPrompt ?: return
-        if (!requestId.isNullOrBlank() && prompt.requestId != requestId) {
-            return
-        }
+        if (!isPermissionPromptCurrent(prompt, requestId)) return
         completePermissionDeny(prompt)
     }
 
@@ -3374,27 +3410,81 @@ class BrowserUseEngine(
                 Manifest.permission.ACCESS_FINE_LOCATION
             )
         }
-        val mapped = prompt.resources.mapNotNull { resource ->
-            when (resource) {
-                WebPermissionRequest.RESOURCE_VIDEO_CAPTURE -> Manifest.permission.CAMERA
+        if (prompt.kind != "web" || prompt.capabilities.isEmpty()) return emptyArray()
+        val mapped = prompt.capabilities.mapNotNull { capability ->
+            when (capability) {
+                BrowserWebPermissionPolicy.CAPABILITY_CAMERA -> Manifest.permission.CAMERA
+                BrowserWebPermissionPolicy.CAPABILITY_MICROPHONE -> Manifest.permission.RECORD_AUDIO
                 else -> null
             }
         }.distinct()
+        if (mapped.size != prompt.capabilities.distinct().size) return emptyArray()
         return mapped.toTypedArray()
     }
 
     private fun completePermissionGrant(prompt: PendingPermissionPrompt) {
+        if (!isPermissionPromptCurrent(prompt, prompt.requestId)) {
+            denyPermissionPromptCallback(prompt)
+            return
+        }
+        if (prompt.kind == "web" && prompt.webResources.isEmpty()) {
+            completePermissionDeny(prompt)
+            return
+        }
         pendingPermissionPrompt = null
-        prompt.webPermissionRequest?.grant(prompt.resources.toTypedArray())
-        prompt.geolocationCallback?.invoke(prompt.origin, true, false)
+        prompt.webPermissionRequest?.grant(prompt.webResources.toTypedArray())
+        prompt.geolocationCallback?.invoke(
+            prompt.geolocationCallbackOrigin ?: prompt.origin,
+            true,
+            false,
+        )
         publishSnapshotUpdate()
     }
 
     private fun completePermissionDeny(prompt: PendingPermissionPrompt) {
-        pendingPermissionPrompt = null
-        prompt.webPermissionRequest?.deny()
-        prompt.geolocationCallback?.invoke(prompt.origin, false, false)
+        if (pendingPermissionPrompt === prompt) {
+            pendingPermissionPrompt = null
+        }
+        denyPermissionPromptCallback(prompt)
         publishSnapshotUpdate()
+    }
+
+    private fun denyPermissionPromptCallback(prompt: PendingPermissionPrompt) {
+        runCatching { prompt.webPermissionRequest?.deny() }
+        runCatching {
+            prompt.geolocationCallback?.invoke(
+                prompt.geolocationCallbackOrigin ?: prompt.origin,
+                false,
+                false,
+            )
+        }
+    }
+
+    private fun replacePendingPermissionPrompt(prompt: PendingPermissionPrompt) {
+        pendingPermissionPrompt?.let(::completePermissionDeny)
+        pendingPermissionPrompt = prompt
+    }
+
+    private fun cancelPendingPermissionPromptForTab(tabId: Int) {
+        pendingPermissionPrompt
+            ?.takeIf { it.tabId == tabId }
+            ?.let(::completePermissionDeny)
+    }
+
+    private fun isPermissionPromptCurrent(
+        prompt: PendingPermissionPrompt,
+        responseRequestId: String?,
+    ): Boolean {
+        val tab = tabs[prompt.tabId]
+        return pendingPermissionPrompt === prompt &&
+            BrowserWebPermissionPolicy.approvalMatchesCurrentRequest(
+                expectedRequestId = prompt.requestId,
+                responseRequestId = responseRequestId,
+                expectedTabId = prompt.tabId,
+                currentTabId = activeTabId?.takeIf { it == tab?.tabId },
+                expectedNavigationGeneration = prompt.navigationGeneration,
+                currentNavigationGeneration = tab?.navigationGeneration,
+            )
     }
 
     private inner class BrowserTabClient(
@@ -3415,7 +3505,6 @@ class BrowserUseEngine(
             return if (
                 lower.startsWith("http://") ||
                 lower.startsWith("https://") ||
-                lower.startsWith("file://") ||
                 lower.startsWith("about:") ||
                 lower.startsWith("data:") ||
                 lower.startsWith("blob:")
@@ -3433,12 +3522,16 @@ class BrowserUseEngine(
         }
 
         override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+            cancelPendingPermissionPromptForTab(tab.tabId)
+            tab.navigationGeneration += 1L
             tab.isLoading = true
             tab.currentUrl = url
             tab.title = view?.title ?: tab.title
             tab.lastError = null
             tab.helpersInjected = false
             tab.downloadHelperInjected = false
+            tab.bridgeToken = UUID.randomUUID().toString()
+            synchronized(tab.activeUserscriptIds) { tab.activeUserscriptIds.clear() }
             tab.hasSslError = false
             clearRiskChallengeState(tab)
             tab.pageMenuCommands.clear()
@@ -3619,19 +3712,35 @@ class BrowserUseEngine(
             if (request == null) {
                 return
             }
-            pendingPermissionPrompt?.webPermissionRequest?.deny()
-            pendingPermissionPrompt = PendingPermissionPrompt(
+            if (activeTabId != tab.tabId) {
+                request.deny()
+                return
+            }
+            pendingPermissionPrompt?.let(::completePermissionDeny)
+            val decision = BrowserWebPermissionPolicy.evaluateWebPermission(
+                rawOrigin = request.origin?.toString(),
+                requestedResources = request.resources,
+            )
+            if (decision == null) {
+                request.deny()
+                return
+            }
+            replacePendingPermissionPrompt(PendingPermissionPrompt(
                 requestId = UUID.randomUUID().toString(),
                 kind = "web",
-                origin = request.origin?.toString().orEmpty(),
-                resources = request.resources?.toList().orEmpty(),
-                webPermissionRequest = request
-            )
+                origin = decision.origin.normalizedOrigin,
+                displayHost = decision.origin.displayHost,
+                capabilities = decision.capabilities,
+                webResources = decision.resources,
+                tabId = tab.tabId,
+                navigationGeneration = tab.navigationGeneration,
+                webPermissionRequest = request,
+            ))
             publishSnapshotUpdate()
         }
 
         override fun onPermissionRequestCanceled(request: WebPermissionRequest?) {
-            if (pendingPermissionPrompt?.webPermissionRequest == request) {
+            if (pendingPermissionPrompt?.webPermissionRequest === request) {
                 pendingPermissionPrompt = null
                 publishSnapshotUpdate()
             }
@@ -3641,29 +3750,35 @@ class BrowserUseEngine(
             origin: String?,
             callback: GeolocationPermissions.Callback?
         ) {
-            pendingPermissionPrompt?.geolocationCallback?.invoke(
-                pendingPermissionPrompt?.origin.orEmpty(),
-                false,
-                false
-            )
-            pendingPermissionPrompt = PendingPermissionPrompt(
+            if (callback == null) return
+            if (activeTabId != tab.tabId) {
+                callback.invoke(origin.orEmpty(), false, false)
+                return
+            }
+            pendingPermissionPrompt?.let(::completePermissionDeny)
+            val approvedOrigin = BrowserWebPermissionPolicy.evaluateGeolocation(origin)
+            if (approvedOrigin == null) {
+                callback.invoke(origin.orEmpty(), false, false)
+                return
+            }
+            replacePendingPermissionPrompt(PendingPermissionPrompt(
                 requestId = UUID.randomUUID().toString(),
                 kind = "geolocation",
-                origin = origin.orEmpty(),
-                resources = listOf(
-                    Manifest.permission.ACCESS_COARSE_LOCATION,
-                    Manifest.permission.ACCESS_FINE_LOCATION
-                ),
-                geolocationCallback = callback
-            )
+                origin = approvedOrigin.normalizedOrigin,
+                displayHost = approvedOrigin.displayHost,
+                capabilities = listOf(BrowserWebPermissionPolicy.CAPABILITY_LOCATION),
+                tabId = tab.tabId,
+                navigationGeneration = tab.navigationGeneration,
+                geolocationCallback = callback,
+                geolocationCallbackOrigin = origin,
+            ))
             publishSnapshotUpdate()
         }
 
         override fun onGeolocationPermissionsHidePrompt() {
-            if (pendingPermissionPrompt?.kind == "geolocation") {
-                pendingPermissionPrompt = null
-                publishSnapshotUpdate()
-            }
+            pendingPermissionPrompt
+                ?.takeIf { it.kind == "geolocation" && it.tabId == tab.tabId }
+                ?.let(::completePermissionDeny)
         }
 
         override fun onShowFileChooser(
@@ -3709,6 +3824,7 @@ class BrowserUseEngine(
 
         override fun onCloseWindow(window: WebView?) {
             val closeTab = tabs.values.firstOrNull { it.webView == window } ?: return
+            cancelPendingPermissionPromptForTab(closeTab.tabId)
             tabs.remove(closeTab.tabId)
             if (activeTabId == closeTab.tabId) {
                 activeTabId = tabs.keys.lastOrNull()
@@ -3730,35 +3846,46 @@ class BrowserUseEngine(
     ) {
         @JavascriptInterface
         fun getValue(
+            bridgeToken: String,
             scriptId: String,
             key: String
         ): String? {
             val resolvedScriptId = scriptId.toLongOrNull() ?: return null
+            if (!isUserscriptBridgeAuthorized(tab, bridgeToken, resolvedScriptId)) return null
+            if (key.length > BrowserBridgeSecurity.MAX_USERSCRIPT_KEY_CHARS) return null
             return hostStore.getUserscriptValueMap(resolvedScriptId)[key]
         }
 
         @JavascriptInterface
         fun setValue(
+            bridgeToken: String,
             scriptId: String,
             key: String,
             value: String?
         ) {
             val resolvedScriptId = scriptId.toLongOrNull() ?: return
+            if (!isUserscriptBridgeAuthorized(tab, bridgeToken, resolvedScriptId)) return
+            if (key.length > BrowserBridgeSecurity.MAX_USERSCRIPT_KEY_CHARS) return
+            if ((value?.length ?: 0) > BrowserBridgeSecurity.MAX_USERSCRIPT_VALUE_CHARS) return
             hostStore.putUserscriptValue(resolvedScriptId, key, value)
         }
 
         @JavascriptInterface
         fun deleteValue(
+            bridgeToken: String,
             scriptId: String,
             key: String
         ) {
             val resolvedScriptId = scriptId.toLongOrNull() ?: return
+            if (!isUserscriptBridgeAuthorized(tab, bridgeToken, resolvedScriptId)) return
+            if (key.length > BrowserBridgeSecurity.MAX_USERSCRIPT_KEY_CHARS) return
             hostStore.putUserscriptValue(resolvedScriptId, key, null)
         }
 
         @JavascriptInterface
-        fun listValues(scriptId: String): String {
+        fun listValues(bridgeToken: String, scriptId: String): String {
             val resolvedScriptId = scriptId.toLongOrNull() ?: return "[]"
+            if (!isUserscriptBridgeAuthorized(tab, bridgeToken, resolvedScriptId)) return "[]"
             return org.json.JSONArray(
                 hostStore.getUserscriptValueMap(resolvedScriptId).keys.toList()
             ).toString()
@@ -3766,16 +3893,18 @@ class BrowserUseEngine(
 
         @JavascriptInterface
         fun registerMenuCommand(
+            bridgeToken: String,
             scriptId: String,
             title: String
         ): String {
             val resolvedScriptId = scriptId.toLongOrNull() ?: return ""
+            if (!isUserscriptBridgeAuthorized(tab, bridgeToken, resolvedScriptId)) return ""
             val commandId = UUID.randomUUID().toString()
             synchronized(tab.pageMenuCommands) {
                 tab.pageMenuCommands[commandId] = BrowserUserscriptMenuCommand(
                     commandId = commandId,
                     scriptId = resolvedScriptId,
-                    title = title.ifBlank { "Menu" }
+                    title = title.ifBlank { "Menu" }.take(120)
                 )
             }
             return commandId
@@ -3783,9 +3912,12 @@ class BrowserUseEngine(
 
         @JavascriptInterface
         fun log(
+            bridgeToken: String,
             scriptId: String,
             message: String
         ) {
+            val resolvedScriptId = scriptId.toLongOrNull() ?: return
+            if (!isUserscriptBridgeAuthorized(tab, bridgeToken, resolvedScriptId)) return
             scriptId.length
             message.length
         }
@@ -3796,15 +3928,15 @@ class BrowserUseEngine(
     ) {
         @JavascriptInterface
         fun saveDataUrl(
+            bridgeToken: String,
             fileName: String?,
             mimeType: String?,
             dataUrl: String?,
             sourceUrl: String?
         ) {
+            if (!BrowserBridgeSecurity.tokenMatches(tab.bridgeToken, bridgeToken)) return
+            if (!BrowserBridgeSecurity.acceptsInlineDataUrl(dataUrl)) return
             val payload = dataUrl?.trim().orEmpty()
-            if (!payload.startsWith("data:")) {
-                return
-            }
             val commaIndex = payload.indexOf(',')
             if (commaIndex <= 0) {
                 return
@@ -3813,13 +3945,16 @@ class BrowserUseEngine(
             val encodedBody = payload.substring(commaIndex + 1)
             val resolvedMimeType = mimeType?.takeIf { it.isNotBlank() }
                 ?: metadata.substringBefore(';').takeIf { it.isNotBlank() }
-            val bytes = if (metadata.contains(";base64")) {
-                android.util.Base64.decode(encodedBody, android.util.Base64.DEFAULT)
-            } else {
-                URLDecoder.decode(encodedBody, "UTF-8").toByteArray()
-            }
+            val bytes = runCatching {
+                if (metadata.contains(";base64")) {
+                    android.util.Base64.decode(encodedBody, android.util.Base64.DEFAULT)
+                } else {
+                    URLDecoder.decode(encodedBody, "UTF-8").toByteArray()
+                }
+            }.getOrNull() ?: return
+            if (bytes.size > BrowserBridgeSecurity.MAX_INLINE_DOWNLOAD_BYTES) return
             downloadManager.saveInlineDownload(
-                sourceUrl = sourceUrl?.takeIf { it.isNotBlank() } ?: tab.currentUrl.orEmpty(),
+                sourceUrl = tab.currentUrl.orEmpty(),
                 fileName = sanitizeFileName(fileName ?: "download"),
                 mimeType = resolvedMimeType,
                 bytes = bytes
@@ -3828,8 +3963,20 @@ class BrowserUseEngine(
         }
 
         @JavascriptInterface
-        fun log(message: String) {
+        fun log(bridgeToken: String, message: String) {
+            if (!BrowserBridgeSecurity.tokenMatches(tab.bridgeToken, bridgeToken)) return
             message.length
+        }
+    }
+
+    private fun isUserscriptBridgeAuthorized(
+        tab: BrowserTab,
+        bridgeToken: String,
+        scriptId: Long,
+    ): Boolean {
+        if (!BrowserBridgeSecurity.tokenMatches(tab.bridgeToken, bridgeToken)) return false
+        return synchronized(tab.activeUserscriptIds) {
+            scriptId in tab.activeUserscriptIds
         }
     }
 }

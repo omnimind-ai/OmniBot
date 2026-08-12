@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import cn.com.omnimind.baselib.util.OmniLog
+import cn.com.omnimind.bot.update.PrivacyConsentStore
 
 class WorkspaceScheduleBootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
@@ -17,9 +18,13 @@ class WorkspaceScheduleBootReceiver : BroadcastReceiver() {
             return
         }
         runCatching {
-            WorkspaceMemoryRollupScheduler(context).ensureScheduledIfEnabled()
-            WorkspaceScheduledTaskScheduler(context).rescheduleAllEnabled()
-            AgentAlarmToolService(context).reschedulePersistedExactRemindersIfPermitted()
+            if (WorkspaceScheduleConsentPolicy.allowsAutomaticRun(
+                    PrivacyConsentStore.getDecision(context)
+                )) {
+                WorkspaceMemoryRollupScheduler(context).ensureScheduledIfEnabled()
+                WorkspaceScheduledTaskScheduler(context).rescheduleAllEnabled()
+                AgentAlarmToolService(context).reschedulePersistedExactRemindersIfPermitted()
+            }
         }.onFailure {
             OmniLog.e("WorkspaceScheduleBootReceiver", "reschedule failed: ${it.message}")
         }

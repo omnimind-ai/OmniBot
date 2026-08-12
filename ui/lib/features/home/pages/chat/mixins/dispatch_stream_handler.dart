@@ -191,7 +191,6 @@ mixin DispatchStreamHandler<T extends StatefulWidget> on State<T> {
 
   /// 处理验证错误
   void handleValidationError(String taskID, String debugMessage) {
-    debugPrint(debugMessage);
     isDeepThinking = false;
     currentThinkingStage = 4;
     updateThinkingCard(taskID);

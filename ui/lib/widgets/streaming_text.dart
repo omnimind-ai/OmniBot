@@ -457,7 +457,6 @@ class _StreamingTextState extends State<StreamingText> {
         );
       }
     } catch (error) {
-      debugPrint('share selected text failed: $error');
       showToast(
         LegacyTextLocalizer.isEnglish ? 'Share failed' : '发送失败',
         type: ToastType.error,

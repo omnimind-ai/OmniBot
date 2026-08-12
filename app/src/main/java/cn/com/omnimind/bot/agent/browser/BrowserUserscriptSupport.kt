@@ -112,14 +112,17 @@ object BrowserUserscriptSupport {
     }
 
     fun buildWrapperScript(
-        script: BrowserUserscriptRecord
+        script: BrowserUserscriptRecord,
+        bridgeToken: String,
     ): String {
         val scriptIdLiteral = script.id.toString()
         val sourceLiteral = script.source
+        val bridgeTokenLiteral = JSONObject.quote(bridgeToken)
         return """
             (function() {
                 const source = ${JSONObject.quote(sourceLiteral)};
                 const scriptId = $scriptIdLiteral;
+                const bridgeToken = $bridgeTokenLiteral;
                 if (!window.__omniUserscriptRuntime) {
                     window.__omniUserscriptRuntime = {
                         menus: {},
@@ -144,7 +147,7 @@ object BrowserUserscriptSupport {
                     return style;
                 };
                 const GM_getValue = function(key, defaultValue) {
-                    const raw = bridge ? bridge.getValue(String(scriptId), String(key || '')) : null;
+                    const raw = bridge ? bridge.getValue(bridgeToken, String(scriptId), String(key || '')) : null;
                     if (raw === null || raw === undefined || raw === '') {
                         return defaultValue;
                     }
@@ -156,15 +159,15 @@ object BrowserUserscriptSupport {
                 };
                 const GM_setValue = function(key, value) {
                     if (!bridge) return;
-                    bridge.setValue(String(scriptId), String(key || ''), JSON.stringify(value));
+                    bridge.setValue(bridgeToken, String(scriptId), String(key || ''), JSON.stringify(value));
                 };
                 const GM_deleteValue = function(key) {
                     if (!bridge) return;
-                    bridge.deleteValue(String(scriptId), String(key || ''));
+                    bridge.deleteValue(bridgeToken, String(scriptId), String(key || ''));
                 };
                 const GM_listValues = function() {
                     if (!bridge) return [];
-                    const raw = bridge.listValues(String(scriptId));
+                    const raw = bridge.listValues(bridgeToken, String(scriptId));
                     try {
                         return JSON.parse(String(raw || '[]'));
                     } catch (_) {
@@ -173,7 +176,7 @@ object BrowserUserscriptSupport {
                 };
                 const GM_registerMenuCommand = function(title, callback) {
                     if (!bridge) return '';
-                    const commandId = String(bridge.registerMenuCommand(String(scriptId), String(title || 'Menu')));
+                    const commandId = String(bridge.registerMenuCommand(bridgeToken, String(scriptId), String(title || 'Menu')));
                     window.__omniUserscriptRuntime.menus[commandId] = {
                         title: String(title || 'Menu'),
                         callback: callback
@@ -200,7 +203,7 @@ object BrowserUserscriptSupport {
                     );
                 } catch (error) {
                     if (bridge) {
-                        bridge.log(String(scriptId), String(error && error.message ? error.message : error));
+                        bridge.log(bridgeToken, String(scriptId), String(error && error.message ? error.message : error));
                     }
                 }
             })();

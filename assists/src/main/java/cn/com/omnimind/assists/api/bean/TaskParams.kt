@@ -5,9 +5,10 @@ import cn.com.omnimind.assists.api.interfaces.OnMessagePushListener
 sealed class TaskParams {
     data class OpenClawConfig(
         val baseUrl: String,
-        val token: String? = null,
         val userId: String? = null,
-        val sessionKey: String? = null
+        val sessionKey: String? = null,
+        val generation: Long = -1L,
+        val canonicalOrigin: String = "",
     )
     data class ChatModelOverride(
         val providerProfileId: String,

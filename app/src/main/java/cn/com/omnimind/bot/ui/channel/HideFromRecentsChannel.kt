@@ -29,8 +29,12 @@ class HideFromRecentsChannel {
                         setExcludeFromRecents(exclude)
                         result.success(true)
                     } catch (e: Exception) {
-                        OmniLog.e(TAG, "Failed to set exclude from recents", e)
-                        result.error("ERROR", "Failed to set exclude from recents: ${e.message}", null)
+                        NativeChannelErrorPrivacy.deliver(
+                            result,
+                            TAG,
+                            "HIDE_FROM_RECENTS_FAILED",
+                            e,
+                        )
                     }
                 }
                 else -> {
@@ -63,7 +67,6 @@ class HideFromRecentsChannel {
                 OmniLog.e(TAG, "无法获取ActivityManager")
             }
         } catch (e: Exception) {
-            OmniLog.e(TAG, "设置excludeFromRecents失败", e)
             throw e
         }
     }

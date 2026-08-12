@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -42,12 +43,20 @@ void main() {
   late String soulContent;
   late String chatContent;
   late String memoryContent;
+  late bool embeddingEnabled;
+  late bool rollupEnabled;
+  late Completer<Map<String, Object?>>? embeddingSaveCompleter;
+  late Completer<Map<String, Object?>>? rollupSaveCompleter;
   late List<MethodCall> recordedCalls;
 
   setUp(() {
     soulContent = '# SOUL\ninitial soul\n';
     chatContent = '# CHAT\ninitial chat prompt\n';
     memoryContent = '# MEMORY\ninitial memory\n';
+    embeddingEnabled = true;
+    rollupEnabled = true;
+    embeddingSaveCompleter = null;
+    rollupSaveCompleter = null;
     recordedCalls = <MethodCall>[];
 
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -71,7 +80,23 @@ void main() {
               return <String, Object?>{'content': memoryContent};
             case 'getWorkspaceMemoryEmbeddingConfig':
               return <String, Object?>{
-                'enabled': true,
+                'enabled': embeddingEnabled,
+                'configured': true,
+                'sceneId': 'scene.memory.embedding',
+                'providerProfileId': 'provider-1',
+                'providerProfileName': 'Provider One',
+                'modelId': 'embedding-1',
+                'apiBase': 'https://example.com/v1',
+                'hasApiKey': true,
+              };
+            case 'saveWorkspaceMemoryEmbeddingConfig':
+              final pending = embeddingSaveCompleter;
+              if (pending != null) {
+                return pending.future;
+              }
+              embeddingEnabled = (call.arguments as Map)['enabled'] == true;
+              return <String, Object?>{
+                'enabled': embeddingEnabled,
                 'configured': true,
                 'sceneId': 'scene.memory.embedding',
                 'providerProfileId': 'provider-1',
@@ -82,7 +107,19 @@ void main() {
               };
             case 'getWorkspaceMemoryRollupStatus':
               return <String, Object?>{
-                'enabled': true,
+                'enabled': rollupEnabled,
+                'lastRunAtMillis': 1712800000000,
+                'nextRunAtMillis': 1712886400000,
+                'lastRunSummary': 'ok',
+              };
+            case 'saveWorkspaceMemoryRollupEnabled':
+              final pending = rollupSaveCompleter;
+              if (pending != null) {
+                return pending.future;
+              }
+              rollupEnabled = (call.arguments as Map)['enabled'] == true;
+              return <String, Object?>{
+                'enabled': rollupEnabled,
                 'lastRunAtMillis': 1712800000000,
                 'nextRunAtMillis': 1712886400000,
                 'lastRunSummary': 'ok',
@@ -141,4 +178,76 @@ void main() {
       hasLength(1),
     );
   });
+
+  testWidgets(
+    'serializes each memory toggle independently and trusts server results',
+    (tester) async {
+      embeddingSaveCompleter = Completer<Map<String, Object?>>();
+      rollupSaveCompleter = Completer<Map<String, Object?>>();
+
+      await tester.pumpWidget(buildTestApp(const WorkspaceMemorySettingPage()));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      Finder embeddingSwitchFinder() => find.byType(Switch).at(0);
+      Finder rollupSwitchFinder() => find.byType(Switch).at(1);
+      Switch embeddingSwitch() => tester.widget(embeddingSwitchFinder());
+      Switch rollupSwitch() => tester.widget(rollupSwitchFinder());
+      int saveCallCount(String method) =>
+          recordedCalls.where((call) => call.method == method).length;
+
+      embeddingSwitch().onChanged!(false);
+      await tester.pump();
+
+      expect(embeddingSwitch().value, isFalse);
+      expect(embeddingSwitch().onChanged, isNull);
+      expect(rollupSwitch().onChanged, isNotNull);
+      expect(saveCallCount('saveWorkspaceMemoryEmbeddingConfig'), 1);
+
+      await tester.tap(embeddingSwitchFinder());
+      await tester.pump();
+      expect(saveCallCount('saveWorkspaceMemoryEmbeddingConfig'), 1);
+
+      rollupSwitch().onChanged!(false);
+      await tester.pump();
+
+      expect(embeddingSwitch().onChanged, isNull);
+      expect(rollupSwitch().value, isFalse);
+      expect(rollupSwitch().onChanged, isNull);
+      expect(saveCallCount('saveWorkspaceMemoryRollupEnabled'), 1);
+
+      await tester.tap(rollupSwitchFinder());
+      await tester.pump();
+      expect(saveCallCount('saveWorkspaceMemoryRollupEnabled'), 1);
+
+      embeddingSaveCompleter!.complete(<String, Object?>{
+        'enabled': true,
+        'configured': true,
+        'sceneId': 'scene.memory.embedding',
+        'providerProfileId': 'provider-1',
+        'providerProfileName': 'Provider One',
+        'modelId': 'embedding-1',
+        'apiBase': 'https://example.com/v1',
+        'hasApiKey': true,
+      });
+      await tester.pump();
+
+      expect(embeddingSwitch().value, isTrue);
+      expect(embeddingSwitch().onChanged, isNotNull);
+      expect(rollupSwitch().onChanged, isNull);
+
+      rollupSaveCompleter!.complete(<String, Object?>{
+        'enabled': true,
+        'lastRunAtMillis': 1712800000000,
+        'nextRunAtMillis': 1712886400000,
+        'lastRunSummary': 'server kept rollup enabled',
+      });
+      await tester.pump();
+
+      expect(rollupSwitch().value, isTrue);
+      expect(rollupSwitch().onChanged, isNotNull);
+      expect(saveCallCount('saveWorkspaceMemoryEmbeddingConfig'), 1);
+      expect(saveCallCount('saveWorkspaceMemoryRollupEnabled'), 1);
+    },
+  );
 }

@@ -8,7 +8,7 @@ plugins {
 
 android {
     namespace = "cn.com.omnimind.assists"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         minSdk = 29
@@ -43,4 +43,5 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.androidx.core.ktx)
     implementation(libs.bouncycastle)
+    testImplementation(libs.junit)
 }

@@ -32,15 +32,14 @@ class PermissionRequest : Activity() {
          */
         private val PERMISSION_PURPOSES: Map<String, String> = mapOf(
             android.Manifest.permission.POST_NOTIFICATIONS to "为及时向您推送消息通知",
-            android.Manifest.permission.BLUETOOTH_CONNECT to "为连接蓝牙设备以提供相关服务",
-            android.Manifest.permission.BLUETOOTH_SCAN to "为扫描并发现蓝牙设备",
-            android.Manifest.permission.READ_MEDIA_IMAGES to "为读取图片以实现图片识别、截屏检测等功能",
-            android.Manifest.permission.READ_EXTERNAL_STORAGE to "为读取存储内容以下载文件、读取图片等",
-            android.Manifest.permission.WRITE_EXTERNAL_STORAGE to "为保存文件、下载安装包等",
-            android.Manifest.permission.WRITE_SETTINGS to "用于问题排查与系统设置相关功能",
+            android.Manifest.permission.READ_MEDIA_AUDIO to "用于读取您主动选择的本地 MP3，作为提醒闹钟铃声",
+            android.Manifest.permission.READ_EXTERNAL_STORAGE to "用于在 Android 12 及以下读取您主动选择的本地 MP3",
             android.Manifest.permission.ACCESS_COARSE_LOCATION to "为获取大致位置信息以提供位置相关服务",
             android.Manifest.permission.ACCESS_FINE_LOCATION to "为获取精确位置信息以提供位置相关服务",
             android.Manifest.permission.CAMERA to "为实现扫码、图片转文字等功能",
+            android.Manifest.permission.RECORD_AUDIO to "用于录制您主动发起的语音输入并转写为文字",
+            android.Manifest.permission.READ_CALENDAR to "用于在您主动调用日历功能时读取日历和日程",
+            android.Manifest.permission.WRITE_CALENDAR to "用于在您主动调用日历功能时创建或修改日程",
         )
 
         /**
@@ -135,15 +134,14 @@ class PermissionRequest : Activity() {
     private fun getPermissionLabelShort(permission: String): String {
         return when (permission) {
             android.Manifest.permission.POST_NOTIFICATIONS -> "通知权限使用说明："
-            android.Manifest.permission.BLUETOOTH_CONNECT -> "蓝牙连接权限使用说明："
-            android.Manifest.permission.BLUETOOTH_SCAN -> "蓝牙扫描权限使用说明："
-            android.Manifest.permission.READ_MEDIA_IMAGES -> "读取图片权限使用说明："
+            android.Manifest.permission.READ_MEDIA_AUDIO -> "音频权限使用说明："
             android.Manifest.permission.READ_EXTERNAL_STORAGE -> "读取存储权限使用说明："
-            android.Manifest.permission.WRITE_EXTERNAL_STORAGE -> "写入存储权限使用说明："
-            android.Manifest.permission.WRITE_SETTINGS -> "写设置权限使用说明："
             android.Manifest.permission.ACCESS_COARSE_LOCATION -> "大致位置权限使用说明："
             android.Manifest.permission.ACCESS_FINE_LOCATION -> "精确位置权限使用说明："
             android.Manifest.permission.CAMERA -> "相机权限使用说明："
+            android.Manifest.permission.RECORD_AUDIO -> "麦克风权限使用说明："
+            android.Manifest.permission.READ_CALENDAR -> "日历读取权限使用说明："
+            android.Manifest.permission.WRITE_CALENDAR -> "日历写入权限使用说明："
             else -> "权限使用说明："
         }
     }

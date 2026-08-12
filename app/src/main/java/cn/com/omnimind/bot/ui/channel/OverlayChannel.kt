@@ -46,8 +46,7 @@ class OverlayChannel {
                     // 尝试显示消息，如果控件未初始化，则等待并重试
                     showMessageWithRetry(message, result, maxRetries = 5, retryDelayMs = 100L)
                 } catch (e: Exception) {
-                    OmniLog.e(TAG, "showMessage failed: ${e.message}", e)
-                    result.error("SHOW_MESSAGE_FAILED", e.message, null)
+                    NativeChannelErrorPrivacy.deliver(result, TAG, "SHOW_MESSAGE_FAILED", e)
                 }
             }
             "setPetOverlayImagePath" -> {
@@ -57,8 +56,7 @@ class OverlayChannel {
                     setPetOverlayImagePath(path, selectedId)
                     result.success(true)
                 } catch (e: Exception) {
-                    OmniLog.e(TAG, "setPetOverlayImagePath failed: ${e.message}", e)
-                    result.error("SET_PET_IMAGE_FAILED", e.message, null)
+                    NativeChannelErrorPrivacy.deliver(result, TAG, "SET_PET_IMAGE_FAILED", e)
                 }
             }
             "playPetAction" -> {
@@ -110,8 +108,7 @@ class OverlayChannel {
                     ?.apply()
                 result.success(shown)
             } catch (e: Exception) {
-                OmniLog.e(TAG, "showPetOverlay failed: ${e.message}", e)
-                result.error("SHOW_PET_FAILED", e.message, null)
+                NativeChannelErrorPrivacy.deliver(result, TAG, "SHOW_PET_FAILED", e)
             }
         }
     }
@@ -127,8 +124,7 @@ class OverlayChannel {
                     ?.apply()
                 result.success(true)
             } catch (e: Exception) {
-                OmniLog.e(TAG, "hidePetOverlay failed: ${e.message}", e)
-                result.error("HIDE_PET_FAILED", e.message, null)
+                NativeChannelErrorPrivacy.deliver(result, TAG, "HIDE_PET_FAILED", e)
             }
         }
     }
@@ -171,7 +167,7 @@ class OverlayChannel {
                 }, retryDelayMs)
             } else {
                 //这里设置了1秒钟的重试，若1秒钟控件未初始化则记录。并抛出异常。
-                OmniLog.e(TAG, "DraggableBallInstance is null after $maxRetries retries, overlay may not be initialized")
+                OmniLog.e(TAG, "channel_failure code=OVERLAY_NOT_INITIALIZED retryCount=$maxRetries")
                 result.error("OVERLAY_NOT_INITIALIZED", "Overlay is not initialized after retries", null)
             }
             return
@@ -184,8 +180,7 @@ class OverlayChannel {
                 DraggableBallInstance.message(message)
                 result.success(true)
             } catch (e: Exception) {
-                OmniLog.e(TAG, "Failed to show message: ${e.message}", e)
-                result.error("SHOW_MESSAGE_FAILED", e.message, null)
+                NativeChannelErrorPrivacy.deliver(result, TAG, "SHOW_MESSAGE_FAILED", e)
             }
         }
     }

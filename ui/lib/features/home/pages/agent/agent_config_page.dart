@@ -2,8 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:ui/services/agent_runtime_service.dart';
+import 'package:ui/theme/app_colors.dart';
 import 'package:ui/theme/theme_context.dart';
 import 'package:ui/utils/ui.dart';
 import 'package:ui/widgets/common_app_bar.dart';
@@ -29,11 +29,15 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
 
   AcpAgentProfile? _agent;
   String _kind = '';
+  String _configFormat = '';
   String _configPath = '';
   String _authPath = '';
   bool _loading = true;
   bool _saving = false;
   bool _obscureApiKey = true;
+  bool _hasStoredApiKey = false;
+  bool _hasConfig = false;
+  int _configByteCount = 0;
   bool _enabled = true;
   bool _changed = false;
   String? _error;
@@ -81,12 +85,19 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
       if (agent == null) {
         throw StateError('Unknown ACP Agent: ${widget.agentId}');
       }
+      if (!mounted) return;
+      _syncAgent(agent);
+      setState(() {
+        _agent = agent;
+        _kind = agent.builtIn
+            ? _fallbackBuiltInConfigKind(agent.id)
+            : 'profile';
+      });
       Map<String, dynamic> payload = const {};
       if (agent.builtIn) {
         payload = await AgentRuntimeService.readAgentConfig(agent.id);
       }
       if (!mounted) return;
-      _syncAgent(agent);
       _syncPayload(payload);
       setState(() {
         _agent = agent;
@@ -115,13 +126,33 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
     _enabled = agent.enabled;
   }
 
+  String _fallbackBuiltInConfigKind(String agentId) {
+    return switch (agentId) {
+      'codex-acp' => 'codex',
+      'claude-code-acp' || 'opencode-acp' => 'replace-only',
+      _ => '',
+    };
+  }
+
   void _syncPayload(Map<String, dynamic> payload) {
     _setText(_baseUrlController, payload['baseUrl']?.toString() ?? '');
     _setText(_modelController, payload['model']?.toString() ?? '');
-    _setText(_apiKeyController, payload['apiKey']?.toString() ?? '');
-    _setText(_contentController, payload['content']?.toString() ?? '');
+    // All built-in Agent secrets/config files are replace-only. Even if a
+    // future native regression adds a value, this page never restores it.
+    _setText(_apiKeyController, '');
+    _setText(_contentController, '');
+    _hasStoredApiKey = payload['hasApiKey'] == true;
+    _hasConfig = payload['hasConfig'] == true;
+    _configByteCount = switch (payload['byteCount']) {
+      final int value when value >= 0 => value,
+      final num value when value >= 0 => value.toInt(),
+      _ => 0,
+    };
+    _configFormat = payload['format']?.toString() ?? '';
     _configPath =
-        payload['configPath']?.toString() ?? payload['path']?.toString() ?? '';
+        payload['configPath']?.toString() ??
+        payload['displayPath']?.toString() ??
+        '';
     _authPath = payload['authPath']?.toString() ?? '';
   }
 
@@ -144,7 +175,9 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
           final baseUrl = _baseUrlController.text.trim();
           final model = _modelController.text.trim();
           final apiKey = _apiKeyController.text.trim();
-          if (baseUrl.isEmpty || model.isEmpty || apiKey.isEmpty) {
+          if (baseUrl.isEmpty ||
+              model.isEmpty ||
+              (apiKey.isEmpty && !_hasStoredApiKey)) {
             throw ArgumentError(
               _text(
                 'Base URL、模型 ID 和 API Key 均不能为空。',
@@ -156,30 +189,32 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
             _agent!.id,
             baseUrl: baseUrl,
             model: model,
-            apiKey: apiKey,
+            apiKey: apiKey.isEmpty ? null : apiKey,
           );
           if (!mounted) return;
           _syncPayload(payload);
           break;
-        case 'json':
+        case 'replace-only':
           final content = _contentController.text;
-          final decoded = jsonDecode(content);
-          if (decoded is! Map) {
-            throw const FormatException(
-              'settings.json must contain a JSON object.',
+          if (content.trim().isEmpty) {
+            throw ArgumentError(
+              _text(
+                '替换内容不能为空；未写入任何文件。',
+                'Replacement content cannot be empty; no file was changed.',
+              ),
             );
+          }
+          if (_configFormat == 'json') {
+            final decoded = jsonDecode(content);
+            if (decoded is! Map) {
+              throw const FormatException(
+                'settings.json must contain a JSON object.',
+              );
+            }
           }
           final payload = await AgentRuntimeService.writeAgentConfig(
             _agent!.id,
             content: content,
-          );
-          if (!mounted) return;
-          _syncPayload(payload);
-          break;
-        case 'jsonc':
-          final payload = await AgentRuntimeService.writeAgentConfig(
-            _agent!.id,
-            content: _contentController.text,
           );
           if (!mounted) return;
           _syncPayload(payload);
@@ -225,6 +260,87 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
       setState(() => _changed = true);
       showToast(
         _text('配置已保存。', 'Configuration saved.'),
+        type: ToastType.success,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _error = error.toString());
+      showToast(error.toString(), type: ToastType.error);
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _clearBuiltInConfig() async {
+    final agent = _agent;
+    if (agent == null || !agent.builtIn || _saving) return;
+    final continued = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(
+          _text('清除本机 Agent 配置？', 'Clear local Agent configuration?'),
+        ),
+        content: Text(
+          _text(
+            '这会删除 ${agent.name} 的本机配置，并退出当前本地 Agent 会话。服务端账号和云端数据不会受影响。',
+            'This deletes the local ${agent.name} configuration and exits the current local Agent session. Your server account and cloud data are not affected.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(_text('取消', 'Cancel')),
+          ),
+          FilledButton(
+            key: const Key('agent-config-clear-continue'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(_text('继续', 'Continue')),
+          ),
+        ],
+      ),
+    );
+    if (continued != true || !mounted) return;
+    final clearTarget = _configPath.isEmpty
+        ? _text('该 Agent 的固定本机配置文件', 'this Agent’s fixed local files')
+        : '$_configPath${_authPath.isEmpty ? '' : _text(' 和 $_authPath', ' and $_authPath')}';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(_text('最后确认', 'Final confirmation')),
+        content: Text(
+          _text(
+            '确认永久清除 $clearTarget。已有秘密不会显示，清除后需要重新配置才能启动此本地 Agent。',
+            'Permanently clear $clearTarget. Existing secrets are never shown. You must configure this local Agent again before it can start.',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(_text('返回', 'Back')),
+          ),
+          FilledButton(
+            key: const Key('agent-config-clear-confirm'),
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.error,
+            ),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(_text('确认清除', 'Clear now')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() {
+      _saving = true;
+      _error = null;
+    });
+    try {
+      final payload = await AgentRuntimeService.clearAgentConfig(agent.id);
+      if (!mounted) return;
+      _syncPayload(payload);
+      setState(() => _changed = true);
+      showToast(
+        _text('本机 Agent 配置已清除。', 'Local Agent configuration cleared.'),
         type: ToastType.success,
       );
     } catch (error) {
@@ -284,6 +400,9 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
   @override
   Widget build(BuildContext context) {
     final palette = context.omniPalette;
+    final background = context.isDarkTheme
+        ? palette.pageBackground
+        : AppColors.background;
     final card = context.isDarkTheme ? palette.surfacePrimary : Colors.white;
     return PopScope(
       canPop: false,
@@ -291,7 +410,7 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
         if (!didPop) _close();
       },
       child: Scaffold(
-        backgroundColor: palette.pageBackground,
+        backgroundColor: background,
         appBar: CommonAppBar(
           title: _agent?.name ?? _text('Agent 配置', 'Agent configuration'),
           primary: true,
@@ -301,7 +420,7 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
               IconButton(
                 tooltip: _text('删除 Agent', 'Delete Agent'),
                 onPressed: _saving ? null : _deleteCustomAgent,
-                icon: const Icon(LucideIcons.trash2),
+                icon: const Icon(Icons.delete_outline_rounded),
               ),
           ],
         ),
@@ -354,9 +473,21 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
                                   strokeWidth: 2,
                                 ),
                               )
-                            : const Icon(LucideIcons.save),
-                        label: Text(_text('保存配置', 'Save configuration')),
+                            : const Icon(Icons.save_outlined),
+                        label: Text(_saveButtonLabel),
                       ),
+                      if (_agent?.builtIn == true &&
+                          (_kind == 'codex' || _kind == 'replace-only')) ...[
+                        const SizedBox(height: 10),
+                        OutlinedButton.icon(
+                          key: const Key('agent-config-clear'),
+                          onPressed: _saving ? null : _clearBuiltInConfig,
+                          icon: const Icon(Icons.delete_outline_rounded),
+                          label: Text(
+                            _text('清除本机配置', 'Clear local configuration'),
+                          ),
+                        ),
+                      ],
                     ],
                   ],
                 ),
@@ -368,26 +499,31 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
   String get _pageTitle {
     return switch (_kind) {
       'codex' => _text('Codex API 配置', 'Codex API configuration'),
-      'json' => _text('Claude Code 配置', 'Claude Code configuration'),
-      'jsonc' => _text('OpenCode 配置', 'OpenCode configuration'),
+      'replace-only' => _text(
+        '${_agent?.name ?? 'Agent'} 本机配置',
+        '${_agent?.name ?? 'Agent'} local configuration',
+      ),
       'profile' => _text('ACP 启动配置', 'ACP launch configuration'),
       _ => _text('Agent 配置', 'Agent configuration'),
+    };
+  }
+
+  String get _saveButtonLabel {
+    return switch (_kind) {
+      'replace-only' => _text('替换整份配置', 'Replace entire configuration'),
+      _ => _text('保存配置', 'Save configuration'),
     };
   }
 
   String get _pageSubtitle {
     return switch (_kind) {
       'codex' => _text(
-        '保存后会写入 $_configPath 和 $_authPath；下一次启动 Codex ACP 时生效。',
-        'Saving writes $_configPath and $_authPath. Changes apply the next time Codex ACP starts.',
+        'API Key 保存在本机 Agent 运行环境的权限受限文件中，可能是明文；这里只显示密钥是否存在，已有 API Key 永不显示。留空会保留，输入新值才替换。保存或清除会退出当前本地 Agent 会话。',
+        'The API Key is stored in a permission-restricted local Agent runtime file and may be plaintext. Only its presence is shown; the existing value is never displayed. Blank keeps it and a new value replaces it. Saving or clearing exits the current local Agent session.',
       ),
-      'json' => _text(
-        '直接编辑 $_configPath。这里显示的就是配置文件当前内容。',
-        'Edit $_configPath directly. This is the current file content.',
-      ),
-      'jsonc' => _text(
-        '直接编辑 $_configPath；OpenCode 支持 JSON 和 JSONC。',
-        'Edit $_configPath directly. OpenCode supports JSON and JSONC.',
+      'replace-only' => _text(
+        '$_configPath 是本机 Agent 运行环境文件，其中秘密可能是明文。现有配置和秘密不会显示；下方输入始终为空，提交会替换整份文件，空输入不会覆盖。替换或清除会退出当前本地 Agent 会话，服务端和云端不受影响。',
+        '$_configPath is a local Agent runtime file whose secrets may be plaintext. Existing configuration and secrets are never shown; the field below always starts empty, submitting replaces the entire file, and empty input never overwrites it. Replacing or clearing exits the current local Agent session; server and cloud data are unaffected.',
       ),
       'profile' => _text(
         'API 和模型由该 Agent 自身配置；这里仅管理 ACP 启动命令、参数与环境。',
@@ -400,7 +536,7 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
   Widget _buildEditor() {
     return switch (_kind) {
       'codex' => _buildCodexEditor(),
-      'json' || 'jsonc' => _buildRawFileEditor(),
+      'replace-only' => _buildReplaceOnlyFileEditor(),
       'profile' => _buildProfileEditor(),
       _ => Text(_text('没有可编辑的配置。', 'No editable configuration.')),
     };
@@ -436,12 +572,22 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
           autocorrect: false,
           decoration: InputDecoration(
             labelText: 'API Key',
+            hintText: _hasStoredApiKey
+                ? _text(
+                    '已存在；留空表示保留，输入新值表示替换',
+                    'Already configured; blank keeps it, a new value replaces it',
+                  )
+                : null,
             suffixIcon: IconButton(
               tooltip: _obscureApiKey
                   ? _text('显示 API Key', 'Show API Key')
                   : _text('隐藏 API Key', 'Hide API Key'),
               onPressed: () => setState(() => _obscureApiKey = !_obscureApiKey),
-              icon: Icon(_obscureApiKey ? LucideIcons.eye : LucideIcons.eyeOff),
+              icon: Icon(
+                _obscureApiKey
+                    ? Icons.visibility_outlined
+                    : Icons.visibility_off_outlined,
+              ),
             ),
           ),
         ),
@@ -449,19 +595,56 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
     );
   }
 
-  Widget _buildRawFileEditor() {
-    return TextField(
-      key: const Key('agent-raw-config-content'),
-      controller: _contentController,
-      minLines: 16,
-      maxLines: 28,
-      keyboardType: TextInputType.multiline,
-      style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-      decoration: InputDecoration(
-        labelText: _configPath,
-        alignLabelWithHint: true,
-        hintText: '{\n}\n',
-      ),
+  Widget _buildReplaceOnlyFileEditor() {
+    final status = _hasConfig
+        ? _text(
+            '已配置 · $_configByteCount 字节',
+            'Configured · $_configByteCount bytes',
+          )
+        : _text('尚未配置', 'Not configured');
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          status,
+          key: const Key('agent-config-status'),
+          style: Theme.of(context).textTheme.titleSmall,
+        ),
+        const SizedBox(height: 4),
+        SelectableText(
+          _configPath,
+          key: const Key('agent-config-display-path'),
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+        const SizedBox(height: 12),
+        Text(
+          _text(
+            '本机文件可能含明文秘密。替换整份文件；现有内容和秘密不会显示。',
+            'The local file may contain plaintext secrets. Replace the entire file; existing content and secrets are never shown.',
+          ),
+          key: const Key('agent-config-replace-warning'),
+          style: TextStyle(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+            fontSize: 12,
+          ),
+        ),
+        const SizedBox(height: 10),
+        TextField(
+          key: const Key('agent-raw-config-content'),
+          controller: _contentController,
+          minLines: 16,
+          maxLines: 28,
+          keyboardType: TextInputType.multiline,
+          style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+          decoration: InputDecoration(
+            labelText: _text('新的完整配置', 'New complete configuration'),
+            alignLabelWithHint: true,
+            hintText: _configFormat == 'jsonc'
+                ? _text('// OpenCode 支持 JSONC', '// OpenCode supports JSONC')
+                : '{\n}\n',
+          ),
+        ),
+      ],
     );
   }
 

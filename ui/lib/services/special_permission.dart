@@ -13,6 +13,79 @@ const _specialPermissionEvents = EventChannel(
   'cn.com.omnimind.bot/SpecialPermissionEvents',
 );
 
+class AppEditionCapabilitySnapshot {
+  const AppEditionCapabilitySnapshot({
+    required this.edition,
+    required this.installedAppsQuery,
+    required this.publicStorageAccess,
+  });
+
+  final String edition;
+  final bool installedAppsQuery;
+  final bool publicStorageAccess;
+
+  static const unavailable = AppEditionCapabilitySnapshot(
+    edition: 'unknown',
+    installedAppsQuery: false,
+    publicStorageAccess: false,
+  );
+
+  factory AppEditionCapabilitySnapshot.fromMap(Map<dynamic, dynamic> raw) {
+    final schemaVersion = raw['schemaVersion'];
+    final edition = raw['edition'];
+    final installedAppsQuery = raw['installedAppsQuery'];
+    final publicStorageAccess = raw['publicStorageAccess'];
+    if (schemaVersion != 1 ||
+        edition is! String ||
+        installedAppsQuery is! bool ||
+        publicStorageAccess is! bool) {
+      throw const FormatException('Invalid app edition capability snapshot');
+    }
+    final normalizedEdition = edition.trim().toLowerCase();
+    final isReviewedStandardEdition = normalizedEdition == 'standard';
+    return AppEditionCapabilitySnapshot(
+      edition: normalizedEdition.isEmpty ? 'unknown' : normalizedEdition,
+      installedAppsQuery: isReviewedStandardEdition && installedAppsQuery,
+      publicStorageAccess: isReviewedStandardEdition && publicStorageAccess,
+    );
+  }
+}
+
+AppEditionCapabilitySnapshot _currentAppEditionCapabilities =
+    AppEditionCapabilitySnapshot.unavailable;
+
+AppEditionCapabilitySnapshot get currentAppEditionCapabilitySnapshot =>
+    _currentAppEditionCapabilities;
+
+Future<AppEditionCapabilitySnapshot>
+refreshAppEditionCapabilitySnapshot() async {
+  try {
+    final raw = await spePermission.invokeMethod<Map<dynamic, dynamic>>(
+      'getAppEditionCapabilitySnapshot',
+    );
+    if (raw == null) {
+      _currentAppEditionCapabilities = AppEditionCapabilitySnapshot.unavailable;
+    } else {
+      _currentAppEditionCapabilities = AppEditionCapabilitySnapshot.fromMap(
+        raw,
+      );
+    }
+  } catch (_) {
+    _currentAppEditionCapabilities = AppEditionCapabilitySnapshot.unavailable;
+  }
+  return _currentAppEditionCapabilities;
+}
+
+void debugSetAppEditionCapabilitySnapshot(
+  AppEditionCapabilitySnapshot snapshot,
+) {
+  _currentAppEditionCapabilities = snapshot;
+}
+
+void debugResetAppEditionCapabilitySnapshot() {
+  _currentAppEditionCapabilities = AppEditionCapabilitySnapshot.unavailable;
+}
+
 enum EmbeddedTerminalDistribution {
   alpine('alpine'),
   ubuntu('ubuntu');
@@ -679,7 +752,6 @@ Future<bool> isShizukuInstalled() async {
     return await spePermission.invokeMethod<bool>('isShizukuInstalled') ??
         false;
   } catch (e) {
-    debugPrint('检查 Shizuku 安装状态失败: $e');
     return false;
   }
 }
@@ -688,7 +760,6 @@ Future<bool> isShizukuRunning() async {
   try {
     return await spePermission.invokeMethod<bool>('isShizukuRunning') ?? false;
   } catch (e) {
-    debugPrint('检查 Shizuku 运行状态失败: $e');
     return false;
   }
 }
@@ -704,7 +775,6 @@ Future<ShizukuStatusSnapshot> getShizukuStatus() async {
     );
     return ShizukuStatusSnapshot.fromMap(result);
   } catch (e) {
-    debugPrint('读取 Shizuku 状态失败: $e');
     return ShizukuStatusSnapshot.fallback();
   }
 }
@@ -716,7 +786,6 @@ Future<bool> requestShizukuPermission() async {
     );
     return ShizukuStatusSnapshot.fromMap(result).isGranted;
   } catch (e) {
-    debugPrint('请求 Shizuku 权限失败: $e');
     return false;
   }
 }
@@ -728,7 +797,6 @@ Future<ShizukuHealthCheckSnapshot> runShizukuHealthCheck() async {
     );
     return ShizukuHealthCheckSnapshot.fromMap(result);
   } catch (e) {
-    debugPrint('执行 Shizuku 健康检查失败: $e');
     return ShizukuHealthCheckSnapshot(
       status: ShizukuStatusSnapshot.fallback(),
       probeSuccess: false,
@@ -776,7 +844,6 @@ Future<bool> requestPermission(List<String> permissions) async {
     );
     return hasPermission == "Success";
   } catch (e) {
-    debugPrint('请求权限失败: $e');
     return false;
   }
 }
@@ -785,7 +852,6 @@ Future<bool> isTermuxInstalled() async {
   try {
     return await spePermission.invokeMethod<bool>('isTermuxInstalled') ?? false;
   } catch (e) {
-    debugPrint('检查 Termux 安装状态失败: $e');
     return false;
   }
 }
@@ -794,7 +860,6 @@ Future<bool> openTermuxApp() async {
   try {
     return await spePermission.invokeMethod<bool>('openTermuxApp') ?? false;
   } catch (e) {
-    debugPrint('打开 Termux 失败: $e');
     return false;
   }
 }
@@ -806,7 +871,6 @@ Future<bool> isTermuxRunCommandPermissionGranted() async {
         ) ??
         false;
   } catch (e) {
-    debugPrint('检查 Termux RUN_COMMAND 权限失败: $e');
     return false;
   }
 }
@@ -818,29 +882,40 @@ Future<bool> requestTermuxRunCommandPermission() async {
         ) ??
         false;
   } catch (e) {
-    debugPrint('请求 Termux RUN_COMMAND 权限失败: $e');
     return false;
   }
 }
 
 Future<bool> ensureInstalledAppsPermission() async {
   try {
-    final hasPermission =
-        await spePermission.invokeMethod<bool>(
-          'isInstalledAppsPermissionGranted',
-        ) ??
-        false;
+    final hasPermission = await isInstalledAppsPermissionGranted();
     if (hasPermission) {
       return true;
     }
+    if (!currentAppEditionCapabilitySnapshot.installedAppsQuery) return false;
     await openInstalledAppsSettings();
-  } catch (e) {
-    debugPrint('检查应用列表读取权限失败: $e');
+  } catch (_) {
+    // Fail closed when the native capability or settings channel is unavailable.
   }
   return false;
 }
 
+Future<bool> isInstalledAppsPermissionGranted() async {
+  try {
+    final capabilities = await refreshAppEditionCapabilitySnapshot();
+    if (!capabilities.installedAppsQuery) return false;
+    return await spePermission.invokeMethod<bool>(
+          'isInstalledAppsPermissionGranted',
+        ) ??
+        false;
+  } catch (_) {
+    return false;
+  }
+}
+
 Future<void> openInstalledAppsSettings() async {
+  final capabilities = await refreshAppEditionCapabilitySnapshot();
+  if (!capabilities.installedAppsQuery) return;
   await spePermission.invokeMethod('openInstalledAppsSettings');
 }
 
@@ -855,7 +930,6 @@ Future<bool> isNotificationPermissionGranted() async {
         ) ??
         false;
   } catch (e) {
-    debugPrint('检查通知权限失败: $e');
     return false;
   }
 }
@@ -867,7 +941,6 @@ Future<bool> requestNotificationPermission() async {
         ) ??
         false;
   } catch (e) {
-    debugPrint('请求通知权限失败: $e');
     return false;
   }
 }
@@ -886,7 +959,6 @@ Future<bool> isWorkspaceStorageAccessGranted() async {
         ) ??
         false;
   } catch (e) {
-    debugPrint('检查内置 workspace 状态失败: $e');
     return false;
   }
 }
@@ -897,17 +969,20 @@ Future<void> openWorkspaceStorageSettings() async {
 
 Future<bool> isPublicStorageAccessGranted() async {
   try {
+    final capabilities = await refreshAppEditionCapabilitySnapshot();
+    if (!capabilities.publicStorageAccess) return false;
     return await spePermission.invokeMethod<bool>(
           'isPublicStorageAccessGranted',
         ) ??
         false;
   } catch (e) {
-    debugPrint('检查公共文件访问权限失败: $e');
     return false;
   }
 }
 
 Future<void> openPublicStorageSettings() async {
+  final capabilities = await refreshAppEditionCapabilitySnapshot();
+  if (!capabilities.publicStorageAccess) return;
   await spePermission.invokeMethod('openPublicStorageSettings');
 }
 
@@ -928,7 +1003,6 @@ Future<bool> isUnknownAppInstallAllowed() async {
         ) ??
         false;
   } catch (e) {
-    debugPrint('检查未知应用安装权限失败: $e');
     return false;
   }
 }
@@ -952,7 +1026,6 @@ Future<bool> isBackgroundRunAllowed() async {
     return await spePermission.invokeMethod<bool>('isBackgroundRunAllowed') ??
         false;
   } catch (e) {
-    debugPrint('检查后台运行权限失败: $e');
     return false;
   }
 }

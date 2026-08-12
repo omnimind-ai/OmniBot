@@ -89,7 +89,6 @@ class CacheService {
       }
       return defaultValue;
     } catch (e) {
-      print('CacheService: getStringList 解析JSON失败 - $e');
       return defaultValue;
     }
   }
@@ -111,7 +110,6 @@ class CacheService {
       }
       await setString(key, jsonString);
     } catch (e) {
-      print('CacheService: setJson 失败 - $e');
     }
   }
 
@@ -148,7 +146,6 @@ class CacheService {
 
       return decoded as T?;
     } catch (e) {
-      print('CacheService: getJson 失败 - $e');
       return null;
     }
   }

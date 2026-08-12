@@ -13,6 +13,7 @@ import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.BuildConfig
 import cn.com.omnimind.bot.manager.ExternalApkInstallResult
 import cn.com.omnimind.bot.manager.ExternalApkInstaller
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -38,7 +39,8 @@ data class AppUpdateState(
     val releaseUrl: String,
     val releaseNotes: String,
     val apkName: String,
-    val apkDownloadUrl: String
+    val apkDownloadUrl: String,
+    val apkSha256: String = ""
 ) {
     fun toMap(): Map<String, Any> = mapOf(
         "currentVersion" to currentVersion,
@@ -49,14 +51,16 @@ data class AppUpdateState(
         "releaseUrl" to releaseUrl,
         "releaseNotes" to releaseNotes,
         "apkName" to apkName,
-        "apkDownloadUrl" to apkDownloadUrl
+        "apkDownloadUrl" to apkDownloadUrl,
+        "apkSha256" to apkSha256
     )
 }
 
 @VisibleForTesting
 internal data class ReleaseAsset(
     val name: String,
-    val downloadUrl: String
+    val downloadUrl: String,
+    val sha256: String = ""
 )
 
 @VisibleForTesting
@@ -91,6 +95,67 @@ internal data class ReleaseCandidate(
     val assets: List<ReleaseAsset>
 )
 
+@VisibleForTesting
+internal class AppUpdateCheckCoordinator {
+    internal data class Lease(
+        val generation: Long,
+        val force: Boolean,
+        val isLeader: Boolean,
+        internal val completion: CompletableDeferred<Result<AppUpdateState>>
+    )
+
+    private val lock = Any()
+    private var generation = 0L
+    private var active: Lease? = null
+
+    fun acquire(force: Boolean): Lease = synchronized(lock) {
+        val current = active
+        if (current != null && current.generation == generation) {
+            if (current.force || !force) {
+                return@synchronized current.copy(isLeader = false)
+            }
+            // A user-requested forced check supersedes a passive cache check.
+            // The passive result is now stale and must not be persisted.
+            generation += 1L
+            active = null
+        }
+
+        Lease(
+            generation = generation,
+            force = force,
+            isLeader = true,
+            completion = CompletableDeferred()
+        ).also { active = it }
+    }
+
+    fun invalidate(block: () -> Unit = {}) = synchronized(lock) {
+        generation += 1L
+        active = null
+        block()
+    }
+
+    fun applyIfCurrent(lease: Lease, block: () -> Unit): Boolean = synchronized(lock) {
+        if (lease.generation != generation) {
+            return@synchronized false
+        }
+        block()
+        true
+    }
+
+    suspend fun await(lease: Lease): AppUpdateState {
+        return lease.completion.await().getOrThrow()
+    }
+
+    fun complete(lease: Lease, result: Result<AppUpdateState>) {
+        lease.completion.complete(result)
+        synchronized(lock) {
+            if (active?.completion === lease.completion) {
+                active = null
+            }
+        }
+    }
+}
+
 object AppUpdateManager {
     private const val TAG = "AppUpdateManager"
     private const val PREFS_NAME = "app_update_state"
@@ -103,6 +168,7 @@ object AppUpdateManager {
     private const val KEY_RELEASE_NOTES = "release_notes"
     private const val KEY_APK_NAME = "apk_name"
     private const val KEY_APK_DOWNLOAD_URL = "apk_download_url"
+    private const val KEY_APK_SHA256 = "apk_sha256"
     private const val KEY_APK_DOWNLOAD_SOURCE = "apk_download_source"
     private const val KEY_INSTALL_ID = "install_id"
 
@@ -125,8 +191,41 @@ object AppUpdateManager {
             .writeTimeout(20, TimeUnit.SECONDS)
             .build()
     }
+    private val checkCoordinator = AppUpdateCheckCoordinator()
+
+    fun isSelfUpdateAvailable(): Boolean {
+        return isSelfUpdateEnabledForDistribution(
+            edition = BuildConfig.APP_EDITION,
+            enabled = BuildConfig.APP_SELF_UPDATE_ENABLED
+        )
+    }
+
+    @VisibleForTesting
+    internal fun isSelfUpdateEnabledForDistribution(
+        edition: String?,
+        enabled: Boolean
+    ): Boolean {
+        return enabled && edition?.trim()?.equals(EDITION_STANDARD, ignoreCase = true) == true
+    }
+
+    /**
+     * Cancels work left by a direct-install build when the same app is upgraded
+     * to a distribution (for example Google Play) that forbids APK self-update.
+     */
+    fun enforceDistributionPolicy(context: Context) {
+        if (isSelfUpdateAvailable()) return
+        runCatching {
+            WorkManager.getInstance(context.applicationContext).cancelUniqueWork(WORK_NAME)
+        }.onFailure {
+            OmniLog.w(TAG, "Unable to cancel disabled app update work: ${it.message}")
+        }
+    }
 
     fun schedulePeriodicChecks(context: Context) {
+        if (!isSelfUpdateAvailable()) {
+            enforceDistributionPolicy(context)
+            return
+        }
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)
             .build()
@@ -147,10 +246,14 @@ object AppUpdateManager {
     }
 
     fun requestSilentCheckIfDue(context: Context) {
+        if (!isSelfUpdateAvailable()) {
+            enforceDistributionPolicy(context)
+            return
+        }
         schedulePeriodicChecks(context)
         CoroutineScope(Dispatchers.IO).launch {
             runCatching {
-                checkNow(context.applicationContext, force = true)
+                checkNow(context.applicationContext, force = false)
             }.onFailure {
                 OmniLog.w(TAG, "Silent app update check failed: ${it.message}")
             }
@@ -159,6 +262,9 @@ object AppUpdateManager {
 
     fun getCachedStatus(context: Context): AppUpdateState {
         val appContext = context.applicationContext
+        if (!isSelfUpdateAvailable()) {
+            return emptyState(currentVersion(appContext))
+        }
         return readState(
             context = appContext,
             currentVersion = currentVersion(appContext),
@@ -182,47 +288,85 @@ object AppUpdateManager {
     fun setBetaOptIn(context: Context, enabled: Boolean): Boolean {
         val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val changed = prefs.getBoolean(KEY_BETA_OPT_IN, false) != enabled
-        prefs.edit().apply {
-            putBoolean(KEY_BETA_OPT_IN, enabled)
-            if (changed) {
-                putLong(KEY_CHECKED_AT, 0L)
-            }
-        }.apply()
+        val persist = {
+            prefs.edit().apply {
+                putBoolean(KEY_BETA_OPT_IN, enabled)
+                if (changed) {
+                    putLong(KEY_CHECKED_AT, 0L)
+                }
+            }.apply()
+        }
+        if (changed) {
+            checkCoordinator.invalidate(persist)
+        } else {
+            persist()
+        }
         return enabled
     }
 
     internal fun setApkDownloadSource(context: Context, rawValue: String?): ApkDownloadSource {
         val source = ApkDownloadSource.fromValue(rawValue)
-        context.applicationContext
+        val prefs = context.applicationContext
             .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .edit()
-            .putString(KEY_APK_DOWNLOAD_SOURCE, source.value)
-            .apply()
+        val persist = {
+            prefs.edit()
+                .putString(KEY_APK_DOWNLOAD_SOURCE, source.value)
+                .apply()
+        }
+        if (ApkDownloadSource.fromValue(prefs.getString(KEY_APK_DOWNLOAD_SOURCE, null)) != source) {
+            checkCoordinator.invalidate(persist)
+        } else {
+            persist()
+        }
         return source
     }
 
     suspend fun checkNow(context: Context, force: Boolean): AppUpdateState {
         val appContext = context.applicationContext
-        val now = System.currentTimeMillis()
-        val currentVersion = currentVersion(appContext)
-        val includeBeta = isBetaOptIn(appContext)
-        val downloadSource = getApkDownloadSource(appContext)
-        val cached = readState(appContext, currentVersion, includeBeta)
-        if (!force && now - cached.checkedAt < SILENT_CHECK_INTERVAL_MS) {
-            return cached
+        if (!isSelfUpdateAvailable()) {
+            return emptyState(currentVersion(appContext))
+        }
+        val lease = checkCoordinator.acquire(force)
+        if (!lease.isLeader) {
+            return checkCoordinator.await(lease)
         }
 
-        val fetched = fetchLatestReleaseState(
-            currentVersion = currentVersion,
-            includeBeta = includeBeta,
-            downloadSource = downloadSource,
-            deviceStatsParams = buildDeviceStatsParams(appContext)
-        ).copy(checkedAt = now)
-        saveState(appContext, fetched)
-        return fetched
+        return try {
+            val now = System.currentTimeMillis()
+            val currentVersion = currentVersion(appContext)
+            val includeBeta = isBetaOptIn(appContext)
+            val downloadSource = getApkDownloadSource(appContext)
+            val cached = readState(appContext, currentVersion, includeBeta)
+            val resolved = if (!force && now - cached.checkedAt < SILENT_CHECK_INTERVAL_MS) {
+                cached
+            } else {
+                val fetched = fetchLatestReleaseState(
+                    currentVersion = currentVersion,
+                    includeBeta = includeBeta,
+                    downloadSource = downloadSource,
+                    deviceStatsParams = buildDeviceStatsParams(appContext)
+                ).copy(checkedAt = now)
+                val saved = checkCoordinator.applyIfCurrent(lease) {
+                    saveState(appContext, fetched)
+                }
+                if (saved) fetched else getCachedStatus(appContext)
+            }
+            checkCoordinator.complete(lease, Result.success(resolved))
+            resolved
+        } catch (failure: Throwable) {
+            checkCoordinator.complete(lease, Result.failure(failure))
+            throw failure
+        }
     }
 
     suspend fun installLatestApk(context: Context): ExternalApkInstallResult {
+        if (!isSelfUpdateAvailable()) {
+            return ExternalApkInstallResult(
+                success = false,
+                status = ExternalApkInstaller.STATUS_INSTALL_FAILED,
+                message = "APK self-update is unavailable in this distribution."
+            )
+        }
         val installState = resolveInstallState(context)
         if (!installState.hasUpdate || installState.apkDownloadUrl.isBlank()) {
             return ExternalApkInstallResult(
@@ -239,7 +383,9 @@ object AppUpdateManager {
             context = context,
             downloadUrl = installState.apkDownloadUrl,
             apkFileName = safeFileName,
-            displayName = "OpenOmniBot"
+            displayName = "OpenOmniBot",
+            expectedSha256 = installState.apkSha256,
+            expectedPackageName = context.applicationContext.packageName
         )
     }
 
@@ -370,7 +516,8 @@ object AppUpdateManager {
             releaseUrl = prefs.getString(KEY_RELEASE_URL, "").orEmpty(),
             releaseNotes = prefs.getString(KEY_RELEASE_NOTES, "").orEmpty(),
             apkName = prefs.getString(KEY_APK_NAME, "").orEmpty(),
-            apkDownloadUrl = prefs.getString(KEY_APK_DOWNLOAD_URL, "").orEmpty()
+            apkDownloadUrl = prefs.getString(KEY_APK_DOWNLOAD_URL, "").orEmpty(),
+            apkSha256 = normalizeSha256(prefs.getString(KEY_APK_SHA256, ""))
         )
         val stateWithPreferredSource = applyPreferredDownloadSource(
             storedState,
@@ -381,7 +528,9 @@ object AppUpdateManager {
         }
         return stateWithPreferredSource.copy(
             hasUpdate = stateWithPreferredSource.hasUpdate &&
-                compareVersions(stateWithPreferredSource.latestVersion, currentVersion) > 0
+                compareVersions(stateWithPreferredSource.latestVersion, currentVersion) > 0 &&
+                isSecureDownloadUrl(stateWithPreferredSource.apkDownloadUrl) &&
+                stateWithPreferredSource.apkSha256.isNotBlank()
         )
     }
 
@@ -396,6 +545,7 @@ object AppUpdateManager {
             .putString(KEY_RELEASE_NOTES, state.releaseNotes)
             .putString(KEY_APK_NAME, state.apkName)
             .putString(KEY_APK_DOWNLOAD_URL, state.apkDownloadUrl)
+            .putString(KEY_APK_SHA256, normalizeSha256(state.apkSha256))
             .apply()
     }
 
@@ -471,35 +621,40 @@ object AppUpdateManager {
         } else {
             "$normalizedBase/$WORKER_UPDATES_PATH"
         }
-        val builder = updatesUrl.toHttpUrlOrNull()
-            ?.newBuilder()
-            ?.addQueryParameter("currentVersion", normalizeVersion(currentVersion))
-            ?.addQueryParameter("includeBeta", includeBeta.toString())
-            ?.addQueryParameter("edition", normalizeEdition(edition))
-            ?.addQueryParameter("source", downloadSource.value)
+        val parsedUpdatesUrl = updatesUrl.toHttpUrlOrNull()
+            ?.takeIf { it.scheme == "https" }
             ?: return null
-        deviceStatsParams.forEach { (key, value) ->
-            if (key.isNotBlank() && value.isNotBlank()) {
-                builder.addQueryParameter(key, value)
-            }
-        }
+        val builder = parsedUpdatesUrl
+            .newBuilder()
+            .addQueryParameter("currentVersion", normalizeVersion(currentVersion))
+            .addQueryParameter("includeBeta", includeBeta.toString())
+            .addQueryParameter("edition", normalizeEdition(edition))
+            .addQueryParameter("source", downloadSource.value)
+        deviceStatsParams["installId"]
+            ?.takeIf { it.isNotBlank() }
+            ?.let { builder.addQueryParameter("installId", it) }
         return builder.build()
     }
 
     /**
-     * Anonymous, per-install statistics sent to the update worker so the admin
-     * console can chart device models, OS versions and daily active checks via
-     * Cloudflare Analytics Engine. Contains no account or hardware identifiers;
-     * the install id is a random UUID generated on first use.
+     * Optional update statistics are intentionally limited to a random,
+     * per-install identifier. The app version is already a required update-check
+     * parameter. No identifier is generated or sent before explicit consent.
      */
     private fun buildDeviceStatsParams(context: Context): Map<String, String> {
-        return mapOf(
-            "deviceBrand" to (android.os.Build.BRAND ?: ""),
-            "deviceModel" to (android.os.Build.MODEL ?: ""),
-            "osVersion" to (android.os.Build.VERSION.RELEASE ?: ""),
-            "sdkInt" to android.os.Build.VERSION.SDK_INT.toString(),
-            "installId" to installId(context)
+        return buildDeviceStatsParams(
+            hasOptionalTelemetryConsent = PrivacyConsentStore.hasOptionalTelemetryConsent(context),
+            installIdProvider = { installId(context) }
         )
+    }
+
+    @VisibleForTesting
+    internal fun buildDeviceStatsParams(
+        hasOptionalTelemetryConsent: Boolean,
+        installIdProvider: () -> String
+    ): Map<String, String> {
+        if (!hasOptionalTelemetryConsent) return emptyMap()
+        return mapOf("installId" to installIdProvider())
     }
 
     private fun installId(context: Context): String {
@@ -520,6 +675,15 @@ object AppUpdateManager {
         checkedAt: Long = System.currentTimeMillis()
     ): AppUpdateState {
         val release = payload.optJSONObject("release") ?: payload
+        val expectedEdition = normalizeEdition(edition)
+        val responseEditions = listOf(
+            firstString(payload, "edition", "appEdition", "app_edition"),
+            firstString(release, "edition", "appEdition", "app_edition")
+        ).map { it.trim().lowercase(Locale.ROOT) }
+            .filter { it.isNotBlank() }
+        if (responseEditions.any { it != expectedEdition }) {
+            return emptyState(currentVersion, checkedAt = checkedAt)
+        }
         val version = normalizeVersion(
             firstString(release, "latestVersion", "version", "tag", "tagName", "tag_name")
         )
@@ -530,14 +694,23 @@ object AppUpdateManager {
 
         val assets = parseWorkerAssets(release.optJSONArray("assets"), downloadSource)
         val payloadAsset = releaseAssetFromPayload(release, downloadSource)
-        val preferredAsset = selectPreferredApkAsset(assets, edition) ?: payloadAsset
-        val hasInstallableUpdate = preferredAsset != null &&
-            compareVersions(version, currentVersion) > 0
+        val candidateAssets = buildList {
+            addAll(assets)
+            payloadAsset?.let(::add)
+        }
+        val preferredAsset = selectPreferredApkAsset(candidateAssets, expectedEdition)
         val downloadUrl = preferredAsset?.let { asset ->
             asset.downloadUrl.ifBlank {
                 resolveApkDownloadUrl(downloadSource, version, asset)
             }
         }.orEmpty()
+        val apkSha256 = normalizeSha256(preferredAsset?.sha256)
+        val hasInstallableUpdate = isInstallableUpdate(
+            version = version,
+            currentVersion = currentVersion,
+            asset = preferredAsset,
+            downloadUrl = downloadUrl
+        )
 
         return AppUpdateState(
             currentVersion = currentVersion,
@@ -550,7 +723,8 @@ object AppUpdateManager {
             releaseUrl = firstString(release, "releaseUrl", "htmlUrl", "html_url", "url"),
             releaseNotes = firstString(release, "releaseNotes", "notes", "body"),
             apkName = preferredAsset?.name.orEmpty(),
-            apkDownloadUrl = downloadUrl
+            apkDownloadUrl = downloadUrl,
+            apkSha256 = apkSha256
         )
     }
 
@@ -600,7 +774,11 @@ object AppUpdateManager {
                     "cnb_download_url"
                 )
             }
-            assets += ReleaseAsset(name = name, downloadUrl = downloadUrl)
+            assets += ReleaseAsset(
+                name = name,
+                downloadUrl = downloadUrl,
+                sha256 = normalizeSha256(firstString(raw, "sha256", "sha256sum", "checksum"))
+            )
         }
         return assets
     }
@@ -635,7 +813,13 @@ object AppUpdateManager {
                 "cnb_download_url"
             )
         }
-        return ReleaseAsset(name = name, downloadUrl = downloadUrl)
+        return ReleaseAsset(
+            name = name,
+            downloadUrl = downloadUrl,
+            sha256 = normalizeSha256(
+                firstString(payload, "apkSha256", "apk_sha256", "sha256", "sha256sum", "checksum")
+            )
+        )
     }
 
     private fun applyPreferredDownloadSource(
@@ -651,7 +835,8 @@ object AppUpdateManager {
                 version = state.latestVersion,
                 asset = ReleaseAsset(
                     name = state.apkName,
-                    downloadUrl = state.apkDownloadUrl
+                    downloadUrl = state.apkDownloadUrl,
+                    sha256 = state.apkSha256
                 )
             )
         )
@@ -690,7 +875,33 @@ object AppUpdateManager {
         if (normalizedBase.endsWith("/admin/releases", ignoreCase = true)) {
             normalizedBase = normalizedBase.dropLast("/admin/releases".length)
         }
-        return normalizedBase.ifBlank { null }
+        return normalizedBase
+            .ifBlank { null }
+            ?.takeIf { it.toHttpUrlOrNull()?.scheme == "https" }
+    }
+
+    @VisibleForTesting
+    internal fun normalizeSha256(raw: String?): String {
+        val normalized = raw?.trim()?.lowercase(Locale.ROOT).orEmpty()
+        return normalized.takeIf { SHA256_PATTERN.matches(it) }.orEmpty()
+    }
+
+    @VisibleForTesting
+    internal fun isSecureDownloadUrl(raw: String?): Boolean {
+        return raw?.trim()?.toHttpUrlOrNull()?.scheme == "https"
+    }
+
+    @VisibleForTesting
+    internal fun isInstallableUpdate(
+        version: String,
+        currentVersion: String,
+        asset: ReleaseAsset?,
+        downloadUrl: String
+    ): Boolean {
+        return asset != null &&
+            compareVersions(version, currentVersion) > 0 &&
+            isSecureDownloadUrl(downloadUrl) &&
+            normalizeSha256(asset.sha256).isNotBlank()
     }
 
     private fun firstString(raw: JSONObject, vararg keys: String): String {
@@ -732,7 +943,11 @@ object AppUpdateManager {
     }
 
     private fun normalizeEdition(raw: String?): String {
-        return EDITION_STANDARD
+        val normalized = raw?.trim()?.lowercase(Locale.ROOT).orEmpty()
+        return when (normalized) {
+            "", "legacy" -> EDITION_STANDARD
+            else -> normalized
+        }
     }
 
     private fun isEditionApkAsset(name: String, edition: String): Boolean {
@@ -778,6 +993,8 @@ object AppUpdateManager {
             ReleaseTrack.UNSUPPORTED -> false
         }
     }
+
+    private val SHA256_PATTERN = Regex("^[0-9a-f]{64}$")
 }
 
 class AppUpdateWorker(
@@ -785,8 +1002,12 @@ class AppUpdateWorker(
     workerParams: androidx.work.WorkerParameters
 ) : CoroutineWorker(appContext, workerParams) {
     override suspend fun doWork(): androidx.work.ListenableWorker.Result {
+        if (!AppUpdateManager.isSelfUpdateAvailable()) {
+            AppUpdateManager.enforceDistributionPolicy(applicationContext)
+            return androidx.work.ListenableWorker.Result.success()
+        }
         return runCatching {
-            AppUpdateManager.checkNow(applicationContext, force = true)
+            AppUpdateManager.checkNow(applicationContext, force = false)
             androidx.work.ListenableWorker.Result.success()
         }.getOrElse {
             OmniLog.w("AppUpdateWorker", "Periodic app update check failed: ${it.message}")

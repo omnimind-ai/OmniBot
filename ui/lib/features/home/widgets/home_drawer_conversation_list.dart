@@ -572,7 +572,6 @@ extension _HomeDrawerConversationList on HomeDrawerState {
           if (entry.value is bool) entry.key.toString(): entry.value as bool,
       };
     } catch (error) {
-      debugPrint('[HomeDrawer] Failed to load expanded sections: $error');
       return <String, bool>{};
     }
   }

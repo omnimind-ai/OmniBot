@@ -829,6 +829,7 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
                                   const SizedBox(height: 6),
                                   TextField(
                                     controller: _openClawTokenController,
+                                    obscureText: true,
                                     decoration: InputDecoration(
                                       labelText: LegacyTextLocalizer.isEnglish
                                           ? 'Token (optional)'
@@ -847,6 +848,25 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
                                           ? 'User ID (optional)'
                                           : 'User ID（可选）',
                                       isDense: true,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 10),
+                                  Align(
+                                    alignment: Alignment.centerRight,
+                                    child: OutlinedButton.icon(
+                                      key: const Key(
+                                        'openclaw-reset-device-identity-button',
+                                      ),
+                                      onPressed: _resetOpenClawDeviceIdentity,
+                                      icon: const Icon(
+                                        Icons.phonelink_erase_outlined,
+                                        size: 17,
+                                      ),
+                                      label: Text(
+                                        LegacyTextLocalizer.isEnglish
+                                            ? 'Reset device identity'
+                                            : '重置设备身份',
+                                      ),
                                     ),
                                   ),
                                 ],

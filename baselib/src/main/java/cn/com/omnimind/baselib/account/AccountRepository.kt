@@ -8,6 +8,7 @@ class AccountRepository(
     private val remote: AccountRemoteDataSource,
     private val tokenStore: AccountTokenStore,
     private val aiAccessModeStore: AiAccessModeStore = VolatileAiAccessModeStore(),
+    private val platformModels: PlatformModelRemoteDataSource? = null,
 ) {
     private val refreshMutex = Mutex()
 
@@ -15,6 +16,9 @@ class AccountRepository(
 
     suspend fun requestRegistrationCode(email: String): RegistrationCodeRequest =
         remote.requestRegistrationCode(email)
+
+    suspend fun requestPasswordResetCode(email: String): RegistrationCodeRequest =
+        remote.requestPasswordResetCode(email)
 
     suspend fun register(
         email: String,
@@ -30,7 +34,10 @@ class AccountRepository(
 
     suspend fun login(email: String, password: String): AccountSession {
         val session = remote.login(email, password)
-        tokenStore.write(session.tokens)
+        if (!tokenStore.write(session.tokens)) {
+            tokenStore.clear()
+            throw AccountCredentialStorageException()
+        }
         aiAccessModeStore.clear()
         try {
             getAiSettings()
@@ -53,6 +60,47 @@ class AccountRepository(
         authorized { accessToken -> remote.updateAiSettings(accessToken, mode) }.also {
             aiAccessModeStore.write(it.effectiveMode)
         }
+
+    suspend fun resetPassword(
+        email: String,
+        newPassword: String,
+        verificationRequestId: String,
+        verificationCode: String,
+    ) = remote.resetPassword(email, newPassword, verificationRequestId, verificationCode)
+
+    suspend fun changePassword(currentPassword: String, newPassword: String) =
+        authorized { accessToken ->
+            remote.changePassword(accessToken, currentPassword, newPassword)
+        }
+
+    suspend fun listSessions(): List<AccountDeviceSession> =
+        authorized(remote::listSessions)
+
+    suspend fun revokeSession(sessionId: String) =
+        authorized { accessToken -> remote.revokeSession(accessToken, sessionId) }
+
+    suspend fun revokeOtherSessions(): Int = authorized(remote::revokeOtherSessions)
+
+    suspend fun listPlatformUsage(limit: Int = 20): List<PlatformUsageEntry> {
+        require(limit in 1..100) { "limit must be between 1 and 100" }
+        return authorized { accessToken -> remote.listPlatformUsage(accessToken, limit) }
+    }
+
+    suspend fun deleteAccount(currentPassword: String) {
+        // Keep local credentials on ordinary failures so the user can correct the
+        // password and retry. Clear them only after the server confirms deletion.
+        authorized { accessToken -> remote.deleteAccount(accessToken, currentPassword) }
+        clearLocalSession()
+    }
+
+    suspend fun getPlatformModels(): List<PlatformModel> {
+        return getPlatformModelCatalog().models
+    }
+
+    suspend fun getPlatformModelCatalog(): PlatformModelCatalog {
+        val source = platformModels ?: throw PlatformGatewayNotConfiguredException()
+        return authorized(source::getCatalog)
+    }
 
     fun accessTokenForPlatformGateway(): String =
         tokenStore.read()?.accessToken ?: throw AccountNotAuthenticatedException()
@@ -80,8 +128,7 @@ class AccountRepository(
                 remote.logout(tokens.refreshToken)
             }
         } finally {
-            tokenStore.clear()
-            aiAccessModeStore.clear()
+            clearLocalSession()
         }
     }
 
@@ -92,7 +139,27 @@ class AccountRepository(
         } catch (error: AccountApiException) {
             if (error.statusCode != 401) throw error
             val refreshed = refreshAfterUnauthorized(initial)
-            operation(refreshed.accessToken)
+            try {
+                operation(refreshed.accessToken)
+            } catch (retryError: AccountApiException) {
+                if (retryError.statusCode == 401) {
+                    clearRejectedSession(refreshed.accessToken)
+                }
+                throw retryError
+            }
+        }
+    }
+
+    /**
+     * A newly refreshed access token being rejected means this local session is
+     * no longer usable. Clear it only if no concurrent request has already
+     * installed a newer token.
+     */
+    private suspend fun clearRejectedSession(rejectedAccessToken: String) {
+        refreshMutex.withLock {
+            if (tokenStore.read()?.accessToken == rejectedAccessToken) {
+                clearLocalSession()
+            }
         }
     }
 
@@ -107,13 +174,28 @@ class AccountRepository(
 
     private suspend fun refreshAndStore(current: AccountTokens): AccountSession {
         return try {
-            remote.refresh(current.refreshToken).also { tokenStore.write(it.tokens) }
+            remote.refresh(current.refreshToken).also { refreshed ->
+                if (!tokenStore.write(refreshed.tokens)) {
+                    tokenStore.clear()
+                    throw AccountCredentialStorageException()
+                }
+            }
         } catch (error: AccountApiException) {
             if (error.statusCode == 401) {
-                tokenStore.clear()
-                aiAccessModeStore.clear()
+                clearLocalSession()
             }
             throw error
+        }
+    }
+
+    private fun clearLocalSession() {
+        val tokensCleared = try {
+            tokenStore.clear()
+        } finally {
+            aiAccessModeStore.clear()
+        }
+        if (!tokensCleared) {
+            throw AccountCredentialStorageException()
         }
     }
 }

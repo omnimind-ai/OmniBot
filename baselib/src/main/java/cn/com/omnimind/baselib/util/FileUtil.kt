@@ -1,6 +1,5 @@
 package cn.com.omnimind.baselib.util
 
-import android.util.Log
 import java.io.File
 
 object FileUtil {
@@ -41,13 +40,13 @@ object FileUtil {
             } else {
                 val isCreated = dir.mkdirs()
                 if (isCreated) {
-                    Log.i(TAG, "目录不存在，已创建：$dirPath")
+                    OmniLog.i(TAG, "Directory created")
                 } else {
                     throw RuntimeException("创建目录失败：$dirPath")
                 }
             }
         } catch (e: Exception) {
-            e.printStackTrace()
+            OmniLog.e(TAG, "Directory operation failed type=${e.javaClass.simpleName}")
             throw RuntimeException("处理目录失败：${e.message}", e)
         }
     }
@@ -72,7 +71,7 @@ object FileUtil {
                 }
             }
         }
-        Log.i(TAG, "目录已清空：${dir.absolutePath}")
+        OmniLog.i(TAG, "Directory cleared")
     }
 
     fun deleteFile(file: File) {

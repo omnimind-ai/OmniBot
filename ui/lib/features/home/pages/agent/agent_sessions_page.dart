@@ -187,7 +187,6 @@ class _AgentSessionsPageState extends State<AgentSessionsPage> {
     try {
       return await AgentRuntimeService.listLoadedThreads();
     } catch (error) {
-      debugPrint('Codex loaded thread list unavailable: $error');
       return null;
     }
   }

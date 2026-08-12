@@ -33,7 +33,7 @@
     {
       "id": "install-codex-pet",
       "name": "install-codex-pet",
-      "description": "Install shared Codex pet packages into Omnibot with the official codex-pets npm CLI. Use when the user asks to add, install, download, import, or sync a pet by slug or collection, especially commands such as \"npx codex-pets add\".",
+      "description": "Handle shared Codex pet requests while the unaudited network installer is fail-closed pending a complete dependency lock and integrity manifest.",
       "assetPath": "builtin_skills/install-codex-pet",
       "hasScripts": true,
       "hasReferences": false,

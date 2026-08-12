@@ -221,7 +221,6 @@ extension _HomeDrawerSearch on HomeDrawerState {
 
   Future<void> _loadConversations() async {
     final generation = ++_conversationLoadGeneration;
-    debugPrint('[HomeDrawer] Loading conversations...');
     setState(() {
       isLoadingConversations =
           _allConversations.isEmpty &&
@@ -234,9 +233,6 @@ extension _HomeDrawerSearch on HomeDrawerState {
       );
       final loadedScheduledTasks =
           await ScheduledTaskStorageService.loadScheduledTasks();
-      debugPrint(
-        '[HomeDrawer] Loaded ${loadedConversations.length} conversations',
-      );
       if (!mounted || generation != _conversationLoadGeneration) return;
       final visibleThreadKeys = loadedConversations
           .map((conversation) => conversation.threadKey)
@@ -263,7 +259,6 @@ extension _HomeDrawerSearch on HomeDrawerState {
         _scheduleConversationSearch(immediate: true);
       }
     } catch (e) {
-      debugPrint('[HomeDrawer] Failed to load conversations: $e');
       if (!mounted || generation != _conversationLoadGeneration) return;
       setState(() {
         isLoadingConversations = false;

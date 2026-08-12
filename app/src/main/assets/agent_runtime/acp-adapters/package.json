@@ -1,0 +1,10 @@
+{
+  "name": "@omnimind/managed-acp-adapters",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Audited runtime dependency root for OmniBot managed ACP adapters.",
+  "dependencies": {
+    "@agentclientprotocol/claude-agent-acp": "0.61.0",
+    "@agentclientprotocol/codex-acp": "1.1.7"
+  }
+}

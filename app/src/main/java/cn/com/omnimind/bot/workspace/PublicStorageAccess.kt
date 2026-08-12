@@ -5,6 +5,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.provider.Settings
+import cn.com.omnimind.bot.distribution.AppEditionCapabilities
 
 object PublicStorageAccess {
     const val REQUIRED_PERMISSION_NAME = "公共文件访问"
@@ -12,7 +13,10 @@ object PublicStorageAccess {
     private const val SDCARD_ROOT_PATH = "/sdcard"
     private const val PUBLIC_URI_PREFIX = "omnibot://public"
 
+    fun isSupported(): Boolean = AppEditionCapabilities.canManagePublicStorage
+
     fun isGranted(): Boolean {
+        if (!isSupported()) return false
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             Environment.isExternalStorageManager()
         } else {
@@ -23,6 +27,7 @@ object PublicStorageAccess {
     fun requiredPermissionNames(): List<String> = listOf(REQUIRED_PERMISSION_NAME)
 
     fun buildSettingsIntent(packageName: String): Intent {
+        check(isSupported()) { "Public storage access is unavailable in this app edition." }
         return buildSettingsIntentForPackage(
             packageName = packageName,
             useAppSpecificAction = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
@@ -30,6 +35,7 @@ object PublicStorageAccess {
     }
 
     fun buildFallbackSettingsIntent(): Intent {
+        check(isSupported()) { "Public storage access is unavailable in this app edition." }
         return buildFallbackSettingsIntent(
             useManageAllFilesAction = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
         )

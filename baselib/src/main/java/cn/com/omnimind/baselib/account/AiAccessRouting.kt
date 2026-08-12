@@ -84,6 +84,7 @@ object AiRequestAccessResolver {
         cachedMode: AiAccessMode?,
         platformGatewayUrl: String?,
         accessToken: String?,
+        allowInsecureLoopback: Boolean = false,
     ): AiRequestAccess {
         if (!accountConfigured || !signedIn) {
             return AiRequestAccess(mode = AiAccessMode.BYOK)
@@ -103,6 +104,12 @@ object AiRequestAccessResolver {
             return AiRequestAccess(
                 mode = AiAccessMode.PLATFORM,
                 unavailableReason = "平台 AI 网关尚未配置",
+            )
+        }
+        if (!OfficialEndpointSecurity.isAllowed(gateway, allowInsecureLoopback)) {
+            return AiRequestAccess(
+                mode = AiAccessMode.PLATFORM,
+                unavailableReason = "Platform AI gateway must use HTTPS",
             )
         }
         val token = accessToken?.trim().orEmpty()

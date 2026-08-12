@@ -12,6 +12,7 @@ import cn.com.omnimind.baselib.permission.PermissionRequest
 import cn.com.omnimind.baselib.shizuku.ShizukuCapabilityManager
 import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.agent.AgentWorkspaceManager
+import cn.com.omnimind.bot.distribution.AppEditionCapabilities
 import cn.com.omnimind.bot.terminal.EmbeddedTerminalAutoStartManager
 import cn.com.omnimind.bot.terminal.EmbeddedTerminalInitCoordinator
 import cn.com.omnimind.bot.terminal.EmbeddedTerminalLaunchHelper
@@ -35,6 +36,7 @@ class SpecialPermissionManager(private val context: Context) {
 
     companion object {
         private const val TAG = "[PlatformManager]"
+        private const val CAPABILITY_UNAVAILABLE = "CAPABILITY_UNAVAILABLE"
     }
     private val embeddedTerminalSetupManager = EmbeddedTerminalSetupManager(context)
     private val embeddedTerminalAutoStartManager = EmbeddedTerminalAutoStartManager(context)
@@ -104,32 +106,44 @@ class SpecialPermissionManager(private val context: Context) {
     }
 
     fun isInstalledAppsPermissionGranted(result: MethodChannel.Result) {
+        if (!AppEditionCapabilities.canQueryInstalledApps) {
+            result.success(false)
+            return
+        }
         try {
             val value = AssistsUtil.Setting.isInstalledAppsPermissionGranted(context)
             result.success(value)
-        } catch (e: Exception) {
-            OmniLog.e(TAG, "Error checking installed apps permission", e)
-            result.error("CHECK_FAILED", "Failed to check installed apps permission.", e.message)
+        } catch (_: Exception) {
+            OmniLog.e(TAG, "Installed apps permission check failed")
+            result.error("CHECK_FAILED", "Failed to check installed apps permission.", null)
         }
     }
 
     fun openInstalledAppsSettings(result: MethodChannel.Result) {
+        if (!AppEditionCapabilities.canQueryInstalledApps) {
+            result.error(
+                CAPABILITY_UNAVAILABLE,
+                "Installed apps access is unavailable in this app edition.",
+                null,
+            )
+            return
+        }
         try {
             AssistsUtil.Setting.openInstalledAppsSettings(context)
             result.success(null)
             OmniLog.v(TAG, "Opening installed apps settings.")
-        } catch (e: Exception) {
-            OmniLog.e(
-                TAG,
-                "请求打开已安装应用列表权限设置时发生异常，可能没有 Activity 能处理此 Intent。",
-                e
-            )
+        } catch (_: Exception) {
+            OmniLog.e(TAG, "Opening installed apps settings failed")
             result.error(
                 "INTENT_FAILED",
-                "无法打开已安装应用列表权限设置页面，可能没有 Activity 能处理此 Intent。",
-                e.message
+                "Unable to open installed apps settings.",
+                null,
             )
         }
+    }
+
+    fun getAppEditionCapabilitySnapshot(result: MethodChannel.Result) {
+        result.success(AppEditionCapabilities.snapshot.toChannelMap())
     }
 
     fun openAutoStartSettings(result: MethodChannel.Result) {
@@ -350,14 +364,18 @@ class SpecialPermissionManager(private val context: Context) {
     }
 
     fun isPublicStorageAccessGranted(result: MethodChannel.Result) {
+        if (!AppEditionCapabilities.canManagePublicStorage) {
+            result.success(false)
+            return
+        }
         try {
             result.success(PublicStorageAccess.isGranted())
-        } catch (e: Exception) {
-            OmniLog.e(TAG, "Error checking public storage access", e)
+        } catch (_: Exception) {
+            OmniLog.e(TAG, "Public storage access check failed")
             result.error(
                 "CHECK_FAILED",
                 "Failed to check public storage access.",
-                e.message
+                null,
             )
         }
     }
@@ -382,20 +400,28 @@ class SpecialPermissionManager(private val context: Context) {
     }
 
     fun openPublicStorageSettings(result: MethodChannel.Result) {
+        if (!AppEditionCapabilities.canManagePublicStorage) {
+            result.error(
+                CAPABILITY_UNAVAILABLE,
+                "Public storage access is unavailable in this app edition.",
+                null,
+            )
+            return
+        }
         try {
             val primaryIntent = PublicStorageAccess.buildSettingsIntent(context.packageName)
-            runCatching {
+            try {
                 context.startActivity(primaryIntent)
-            }.recoverCatching {
+            } catch (_: Exception) {
                 context.startActivity(PublicStorageAccess.buildFallbackSettingsIntent())
-            }.getOrThrow()
+            }
             result.success(true)
-        } catch (e: Exception) {
-            OmniLog.e(TAG, "请求打开公共文件访问设置页时发生异常。", e)
+        } catch (_: Exception) {
+            OmniLog.e(TAG, "Opening public storage settings failed")
             result.error(
                 "INTENT_FAILED",
-                "无法打开公共文件访问设置页，可能没有 Activity 能处理此 Intent。",
-                e.message
+                "Unable to open public storage settings.",
+                null,
             )
         }
     }

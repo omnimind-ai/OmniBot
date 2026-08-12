@@ -1,12 +1,12 @@
 package cn.com.omnimind.bot.ui.channel
 
 import android.content.Context
-import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.update.AppUpdateManager
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -28,6 +28,19 @@ class AppUpdateChannel {
     }
 
     private fun handleMethodCall(call: MethodCall, result: MethodChannel.Result) {
+        if (call.method == "isSelfUpdateAvailable") {
+            result.success(AppUpdateManager.isSelfUpdateAvailable())
+            return
+        }
+        if (!AppUpdateManager.isSelfUpdateAvailable()) {
+            result.error(
+                "SELF_UPDATE_UNAVAILABLE",
+                "APK self-update is unavailable in this distribution.",
+                null
+            )
+            return
+        }
+
         val safeContext = context
         if (safeContext == null) {
             result.error("CONTEXT_ERROR", "Context not initialized", null)
@@ -60,16 +73,21 @@ class AppUpdateChannel {
             "checkNow" -> {
                 val force = call.argument<Boolean>("force") == true
                 CoroutineScope(Dispatchers.IO).launch {
-                    runCatching {
-                        AppUpdateManager.checkNow(safeContext, force = force).toMap()
-                    }.onSuccess { payload ->
+                    try {
+                        val payload = AppUpdateManager.checkNow(safeContext, force = force).toMap()
                         withContext(Dispatchers.Main) {
                             result.success(payload)
                         }
-                    }.onFailure {
-                        OmniLog.e("AppUpdateChannel", "App update check failed", it)
+                    } catch (cancellation: CancellationException) {
+                        throw cancellation
+                    } catch (error: Exception) {
                         withContext(Dispatchers.Main) {
-                            result.error("CHECK_FAILED", it.message ?: "Failed to check updates", null)
+                            NativeChannelErrorPrivacy.deliver(
+                                result,
+                                "AppUpdateChannel",
+                                "CHECK_FAILED",
+                                error,
+                            )
                         }
                     }
                 }
@@ -77,9 +95,8 @@ class AppUpdateChannel {
 
             "installLatestApk" -> {
                 CoroutineScope(Dispatchers.IO).launch {
-                    runCatching {
-                        AppUpdateManager.installLatestApk(safeContext)
-                    }.onSuccess { installResult ->
+                    try {
+                        val installResult = AppUpdateManager.installLatestApk(safeContext)
                         withContext(Dispatchers.Main) {
                             result.success(
                                 mapOf(
@@ -90,13 +107,15 @@ class AppUpdateChannel {
                                 )
                             )
                         }
-                    }.onFailure {
-                        OmniLog.e("AppUpdateChannel", "Install latest apk failed", it)
+                    } catch (cancellation: CancellationException) {
+                        throw cancellation
+                    } catch (error: Exception) {
                         withContext(Dispatchers.Main) {
-                            result.error(
+                            NativeChannelErrorPrivacy.deliver(
+                                result,
+                                "AppUpdateChannel",
                                 "INSTALL_FAILED",
-                                it.message ?: "Failed to install latest apk",
-                                null
+                                error,
                             )
                         }
                     }

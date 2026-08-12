@@ -11,7 +11,6 @@ class TermsPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const primaryBlack = Color(0xFF333333);
     const darkGrey = Color(0xFF666666);
 
     return Scaffold(

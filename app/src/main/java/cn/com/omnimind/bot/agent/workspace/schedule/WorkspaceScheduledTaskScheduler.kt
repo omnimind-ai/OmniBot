@@ -67,7 +67,10 @@ class WorkspaceScheduledTaskScheduler(
         }
 
         override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) {
-            OmniLog.e(TAG, "$action error taskId=$taskId code=$errorCode message=$errorMessage")
+            OmniLog.e(
+                TAG,
+                "$action error taskId=$taskId code=$errorCode hasMessage=${!errorMessage.isNullOrBlank()}",
+            )
         }
 
         override fun notImplemented() {

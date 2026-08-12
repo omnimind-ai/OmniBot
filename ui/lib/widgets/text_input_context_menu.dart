@@ -51,7 +51,6 @@ class TextInputContextMenu extends StatelessWidget {
                 );
                 editableTextState.hideToolbar();
               } catch (e) {
-                debugPrint('assistCore cut failed: $e');
               }
             },
           ),
@@ -65,7 +64,6 @@ class TextInputContextMenu extends StatelessWidget {
                 AssistsMessageService.copyToClipboard(selectedText);
                 editableTextState.hideToolbar();
               } catch (e) {
-                debugPrint('assistCore copy failed: $e');
               }
             },
           ),
@@ -82,7 +80,6 @@ class TextInputContextMenu extends StatelessWidget {
             try {
               pasteText = await AssistsMessageService.getClipboardText();
             } catch (e) {
-              debugPrint('assistCore paste failed: $e');
             }
 
             if (pasteText != null && pasteText.isNotEmpty) {
@@ -95,7 +92,6 @@ class TextInputContextMenu extends StatelessWidget {
                 SelectionChangedCause.toolbar,
               );
             } else {
-              debugPrint('assistCore paste empty');
             }
 
             editableTextState.hideToolbar();

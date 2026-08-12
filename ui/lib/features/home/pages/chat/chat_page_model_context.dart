@@ -30,9 +30,7 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
       });
       await _syncInvalidNormalConversationOverrideIfNeeded();
       await _syncActiveNormalConversationPromptTokenThreshold();
-    } catch (e) {
-      debugPrint('加载聊天模型上下文失败: $e');
-    }
+    } catch (e) {}
   }
 
   @override
@@ -578,6 +576,7 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
     );
   }
 
+  @override
   _ChatModelOverrideSelection? _effectiveNormalModelSelection(
     _ChatModelOverrideSelection? explicitSelection,
   ) {
@@ -607,6 +606,7 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
     return null;
   }
 
+  @override
   ModelProviderProfileSummary? _findProviderProfile(String profileId) {
     for (final profile in _modelProviderProfiles) {
       if (profile.id == profileId) {

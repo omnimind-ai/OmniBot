@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:ui/features/home/pages/authorize/authorize_page_args.dart';
 import 'package:ui/features/home/pages/authorize/widgets/permission_section.dart';
 import 'package:ui/services/permission_service.dart';
+import 'package:ui/services/special_permission.dart';
 import 'package:ui/theme/theme_context.dart';
 
 class PermissionSectionCard extends StatefulWidget {
@@ -19,36 +22,52 @@ class PermissionSectionCard extends StatefulWidget {
 }
 
 class _PermissionSectionCardState extends State<PermissionSectionCard> {
-  late final List<PermissionData> _backgroundPermissions;
+  List<PermissionData> _backgroundPermissions = const <PermissionData>[];
+  List<String> _availablePermissionIds = const <String>[];
+  bool _isLoadingCapabilities = true;
 
   @override
   void initState() {
     super.initState();
+    unawaited(_loadPermissions());
+  }
+
+  Future<void> _loadPermissions() async {
+    await refreshAppEditionCapabilitySnapshot();
+    final availableIds = _resolveAvailablePermissionIds();
+    final permissions = PermissionService.buildDisplayPermissionsForIds(
+      availableIds,
+    );
+    if (!mounted) return;
+    setState(() {
+      _availablePermissionIds = availableIds;
+      _backgroundPermissions = permissions;
+      _isLoadingCapabilities = false;
+    });
+  }
+
+  List<String> _resolveAvailablePermissionIds() {
     final requiredPermissionIds = normalizeRequiredPermissionIds(
       widget.cardData['requiredPermissionIds'] as List?,
     );
-    _backgroundPermissions = [
-      ...PermissionService.buildDisplayPermissionsForIds(
-        requiredPermissionIds.isEmpty
-            ? kTaskExecutionRequiredPermissionIds
-            : requiredPermissionIds,
-      ),
-    ];
+    final requestedIds = requiredPermissionIds.isEmpty
+        ? kTaskExecutionRequiredPermissionIds
+        : requiredPermissionIds;
+    return requestedIds
+        .where(PermissionService.isPermissionAvailable)
+        .toList(growable: false);
   }
 
   void _goAuthorizePage() {
-    final requiredPermissionIds = normalizeRequiredPermissionIds(
-      widget.cardData['requiredPermissionIds'] as List?,
-    );
-    widget.onRequestAuthorize?.call(
-      requiredPermissionIds.isEmpty
-          ? kTaskExecutionRequiredPermissionIds
-          : requiredPermissionIds,
-    );
+    if (_availablePermissionIds.isEmpty) return;
+    widget.onRequestAuthorize?.call(_availablePermissionIds);
   }
 
   @override
   Widget build(BuildContext context) {
+    if (_isLoadingCapabilities || _backgroundPermissions.isEmpty) {
+      return const SizedBox.shrink();
+    }
     final palette = context.omniPalette;
     final isDark = context.isDarkTheme;
 

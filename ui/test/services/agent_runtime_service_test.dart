@@ -244,31 +244,79 @@ void main() {
   });
 
   test(
-    'reads and writes Agent-owned configuration without trimming content',
+    'Agent config responses are status-only while explicit writes stay exact',
     () async {
       final calls = <MethodCall>[];
+      const leakedSecret = 'SECRET_FROM_OLD_CONFIG_MUST_NOT_REACH_FLUTTER';
       messenger.setMockMethodCallHandler(channel, (call) async {
         calls.add(call);
-        return <String, dynamic>{'ok': true};
+        return <String, dynamic>{
+          'agentId': 'claude-code-acp',
+          'kind': 'replace-only',
+          'format': 'json',
+          'displayPath': '~/.claude/settings.json',
+          'hasConfig': true,
+          'byteCount': 47,
+          'content': '{"token":"$leakedSecret"}',
+          'token': leakedSecret,
+          'diagnostics': <String, dynamic>{'raw': leakedSecret},
+        };
       });
 
-      await AgentRuntimeService.readAgentConfig('claude-code-acp');
-      await AgentRuntimeService.writeAgentConfig(
+      final read = await AgentRuntimeService.readAgentConfig('claude-code-acp');
+      final written = await AgentRuntimeService.writeAgentConfig(
         'claude-code-acp',
         content: ' {\n  "env": {}\n}\n ',
+      );
+      final cleared = await AgentRuntimeService.clearAgentConfig(
+        'claude-code-acp',
       );
 
       expect(calls.map((call) => call.method), [
         'agent/config/read',
         'agent/config/write',
+        'agent/config/clear',
       ]);
       expect(calls.first.arguments, {'agentId': 'claude-code-acp'});
-      expect(calls.last.arguments, {
+      expect(calls[1].arguments, {
         'agentId': 'claude-code-acp',
         'content': ' {\n  "env": {}\n}\n ',
       });
+      expect(calls.last.arguments, {'agentId': 'claude-code-acp'});
+      for (final payload in <Map<String, dynamic>>[read, written, cleared]) {
+        expect(payload['kind'], 'replace-only');
+        expect(payload['hasConfig'], isTrue);
+        expect(payload.containsKey('content'), isFalse);
+        expect(payload.containsKey('token'), isFalse);
+        expect(payload.containsKey('diagnostics'), isFalse);
+        expect(payload.toString(), isNot(contains(leakedSecret)));
+      }
     },
   );
+
+  test('Codex config status always blanks native credential fields', () async {
+    const leakedSecret = 'SECRET_CODEX_KEY_FROM_NATIVE';
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      return <String, dynamic>{
+        'agentId': 'codex-acp',
+        'kind': 'codex',
+        'configPath': '~/.codex/config.toml',
+        'authPath': '~/.codex/auth.json',
+        'baseUrl': 'https://api.example/v1',
+        'model': 'model-1',
+        'hasApiKey': true,
+        'apiKey': leakedSecret,
+        'authJson': '{"OPENAI_API_KEY":"$leakedSecret"}',
+      };
+    });
+
+    final payload = await AgentRuntimeService.readAgentConfig('codex-acp');
+
+    expect(payload['hasApiKey'], isTrue);
+    expect(payload['apiKey'], isEmpty);
+    expect(payload.containsKey('authJson'), isFalse);
+    expect(payload.toString(), isNot(contains(leakedSecret)));
+  });
 
   test('ignoreUserInput responds with empty answers payload', () async {
     MethodCall? capturedCall;
@@ -302,40 +350,47 @@ void main() {
     });
   });
 
-  test('reads and writes only remote bridge config', () async {
-    final calls = <MethodCall>[];
-    messenger.setMockMethodCallHandler(channel, (call) async {
-      calls.add(call);
-      return <String, dynamic>{
+  test(
+    'remote bridge config exposes status and sends replacements only',
+    () async {
+      final calls = <MethodCall>[];
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        calls.add(call);
+        return <String, dynamic>{
+          'remoteEnabled': true,
+          'remoteBridgeUrl': 'ws://192.168.1.2:17321/codex',
+          'hasRemoteBridgeToken': true,
+          'remoteCwd': '/Users/name/code/project',
+        };
+      });
+
+      final read = await AgentRuntimeService.readRemoteBridgeConfig();
+      final written = await AgentRuntimeService.writeRemoteBridgeConfig(
+        remoteEnabled: true,
+        remoteBridgeUrl: ' ws://192.168.1.2:17321/codex ',
+        remoteBridgeToken: ' token ',
+        remoteCwd: ' /Users/name/code/project ',
+      );
+
+      expect(read.remoteEnabled, isTrue);
+      expect(read.remoteBridgeUrl, 'ws://192.168.1.2:17321/codex');
+      expect(read.remoteBridgeToken, isEmpty);
+      expect(read.hasRemoteBridgeToken, isTrue);
+      expect(written.remoteCwd, '/Users/name/code/project');
+      expect(written.remoteBridgeToken, isEmpty);
+      expect(written.hasRemoteBridgeToken, isTrue);
+      expect(calls.map((call) => call.method), [
+        'config/remote/read',
+        'config/remote/write',
+      ]);
+      expect(calls.last.arguments, <String, dynamic>{
         'remoteEnabled': true,
         'remoteBridgeUrl': 'ws://192.168.1.2:17321/codex',
         'remoteBridgeToken': 'token',
         'remoteCwd': '/Users/name/code/project',
-      };
-    });
-
-    final read = await AgentRuntimeService.readRemoteBridgeConfig();
-    final written = await AgentRuntimeService.writeRemoteBridgeConfig(
-      remoteEnabled: true,
-      remoteBridgeUrl: ' ws://192.168.1.2:17321/codex ',
-      remoteBridgeToken: ' token ',
-      remoteCwd: ' /Users/name/code/project ',
-    );
-
-    expect(read.remoteEnabled, isTrue);
-    expect(read.remoteBridgeUrl, 'ws://192.168.1.2:17321/codex');
-    expect(written.remoteCwd, '/Users/name/code/project');
-    expect(calls.map((call) => call.method), [
-      'config/remote/read',
-      'config/remote/write',
-    ]);
-    expect(calls.last.arguments, <String, dynamic>{
-      'remoteEnabled': true,
-      'remoteBridgeUrl': 'ws://192.168.1.2:17321/codex',
-      'remoteBridgeToken': 'token',
-      'remoteCwd': '/Users/name/code/project',
-    });
-  });
+      });
+    },
+  );
 
   test('forwards ChatGPT device-code login lifecycle', () async {
     final calls = <MethodCall>[];

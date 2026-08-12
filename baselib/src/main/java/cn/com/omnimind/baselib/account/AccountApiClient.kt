@@ -13,23 +13,43 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 
+private fun secureOfficialHttpClient(): OkHttpClient {
+    return OkHttpClient.Builder()
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .build()
+}
+
 class AccountApiClient(
     baseUrl: String,
-    private val callFactory: Call.Factory = OkHttpClient(),
+    private val callFactory: Call.Factory = secureOfficialHttpClient(),
     private val gson: Gson = Gson(),
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    allowInsecureLoopback: Boolean = false,
 ) : AccountRemoteDataSource {
-    private val normalizedBaseUrl = baseUrl.trim().trimEnd('/').also { value ->
-        require(value.isNotEmpty()) { "baseUrl is empty" }
-        require(value.toHttpUrlOrNull() != null) { "baseUrl is not a valid HTTP URL" }
-    }
+    private val normalizedBaseUrl = OfficialEndpointSecurity.normalizeBaseUrl(
+        raw = baseUrl,
+        label = "baseUrl",
+        allowInsecureLoopback = allowInsecureLoopback,
+    )
 
     override suspend fun requestRegistrationCode(email: String): RegistrationCodeRequest {
+        return requestEmailCode(email, "register")
+    }
+
+    override suspend fun requestPasswordResetCode(email: String): RegistrationCodeRequest {
+        return requestEmailCode(email, "reset_password")
+    }
+
+    private suspend fun requestEmailCode(
+        email: String,
+        purpose: String,
+    ): RegistrationCodeRequest {
         val response = executeJson(
             request = jsonRequest(
                 path = "/v1/auth/email-codes",
                 method = "POST",
-                body = EmailCodeRequest(email = email.trim(), purpose = "register"),
+                body = EmailCodeRequest(email = email.trim(), purpose = purpose),
             ),
             responseClass = EmailCodeResponse::class.java,
         )
@@ -110,6 +130,114 @@ class AccountApiClient(
         responseClass = AiSettingsResponse::class.java,
     ).toDomain()
 
+    override suspend fun resetPassword(
+        email: String,
+        newPassword: String,
+        verificationRequestId: String,
+        verificationCode: String,
+    ) {
+        executeWithoutBody(
+            jsonRequest(
+                path = "/v1/auth/password-reset",
+                method = "POST",
+                body = PasswordResetRequest(
+                    email = email.trim(),
+                    newPassword = newPassword,
+                    verificationRequestId = verificationRequestId.trim(),
+                    verificationCode = verificationCode.trim(),
+                ),
+            )
+        )
+    }
+
+    override suspend fun changePassword(
+        accessToken: String,
+        currentPassword: String,
+        newPassword: String,
+    ) {
+        executeWithoutBody(
+            jsonRequest(
+                path = "/v1/me/password",
+                method = "PUT",
+                body = ChangePasswordRequest(currentPassword, newPassword),
+                accessToken = accessToken,
+            )
+        )
+    }
+
+    override suspend fun listSessions(accessToken: String): List<AccountDeviceSession> {
+        val response = executeJson(
+            request = authenticatedRequest("/v1/me/sessions", "GET", accessToken),
+            responseClass = SessionsResponse::class.java,
+        )
+        val items = response.items
+            ?: throw AccountProtocolException("Account response is missing sessions.items")
+        return items.map { it.toDomain() }
+    }
+
+    override suspend fun revokeSession(accessToken: String, sessionId: String) {
+        val normalizedSessionId = sessionId.trim().also {
+            require(it.isNotEmpty()) { "sessionId is empty" }
+            require(it.length <= 200) { "sessionId is too long" }
+        }
+        val url = endpoint("/v1/me/sessions").toHttpUrlOrNull()
+            ?.newBuilder()
+            ?.addPathSegment(normalizedSessionId)
+            ?.build()
+            ?: throw AccountProtocolException("Account session URL is invalid")
+        executeWithoutBody(
+            Request.Builder()
+                .url(url)
+                .header("Authorization", "Bearer $accessToken")
+                .header("Accept", "application/json")
+                .delete()
+                .build()
+        )
+    }
+
+    override suspend fun revokeOtherSessions(accessToken: String): Int {
+        val response = executeJson(
+            request = authenticatedRequest("/v1/me/sessions", "DELETE", accessToken),
+            responseClass = RevokeSessionsResponse::class.java,
+        )
+        return response.revoked.requiredNonNegative("revoked")
+    }
+
+    override suspend fun listPlatformUsage(
+        accessToken: String,
+        limit: Int,
+    ): List<PlatformUsageEntry> {
+        require(limit in 1..100) { "limit must be between 1 and 100" }
+        val url = endpoint("/v1/me/platform-usage").toHttpUrlOrNull()
+            ?.newBuilder()
+            ?.addQueryParameter("limit", limit.toString())
+            ?.build()
+            ?: throw AccountProtocolException("Account usage URL is invalid")
+        val response = executeJson(
+            request = Request.Builder()
+                .url(url)
+                .header("Authorization", "Bearer $accessToken")
+                .header("Accept", "application/json")
+                .get()
+                .build(),
+            responseClass = PlatformUsageResponse::class.java,
+        )
+        val items = response.items
+            ?: throw AccountProtocolException("Account response is missing usage.items")
+        return items.map { it.toDomain() }
+    }
+
+    override suspend fun deleteAccount(accessToken: String, currentPassword: String) {
+        executeWithoutBody(
+            jsonRequest(
+                path = "/v1/me",
+                method = "DELETE",
+                body = DeleteAccountRequest(currentPassword),
+                accessToken = accessToken,
+            )
+        )
+    }
+
     private fun authenticatedRequest(path: String, method: String, accessToken: String): Request =
         Request.Builder()
             .url(endpoint(path))
@@ -155,7 +283,16 @@ class AccountApiClient(
 
     private suspend fun execute(request: Request): String = withContext(ioDispatcher) {
         callFactory.newCall(request).execute().use { response ->
-            val body = response.body?.string().orEmpty()
+            val responseBody = response.body
+            if (responseBody != null && responseBody.contentLength() > MAX_RESPONSE_BODY_BYTES) {
+                throw AccountProtocolException("Account server response is too large")
+            }
+            val body = responseBody?.source()?.let { source ->
+                if (source.request(MAX_RESPONSE_BODY_BYTES + 1L)) {
+                    throw AccountProtocolException("Account server response is too large")
+                }
+                source.readUtf8()
+            }.orEmpty()
             if (!response.isSuccessful) {
                 val envelope = runCatching {
                     gson.fromJson(body, ErrorEnvelope::class.java)
@@ -174,6 +311,21 @@ class AccountApiClient(
     private fun String?.required(fieldName: String): String =
         this?.takeIf { it.isNotBlank() }
             ?: throw AccountProtocolException("Account response is missing $fieldName")
+
+    private fun Boolean?.required(fieldName: String): Boolean =
+        this ?: throw AccountProtocolException("Account response is missing $fieldName")
+
+    private fun Long?.requiredNonNegative(fieldName: String): Long =
+        this?.takeIf { it >= 0 }
+            ?: throw AccountProtocolException(
+                "Account response has a missing or invalid $fieldName"
+            )
+
+    private fun Int?.requiredNonNegative(fieldName: String): Int =
+        this?.takeIf { it >= 0 }
+            ?: throw AccountProtocolException(
+                "Account response has a missing or invalid $fieldName"
+            )
 
     private fun UserResponse.toDomain(): AccountUser = AccountUser(
         id = id.required("user.id"),
@@ -202,12 +354,32 @@ class AccountApiClient(
             PlatformQuota(
                 enabled = it.platformEnabled,
                 balance = it.balanceQuota,
+                weeklyLimit = it.weeklyLimitQuota,
+                weeklyUsed = it.weeklyUsedQuota,
+                weeklyPeriodStart = it.weeklyPeriodStart,
                 unit = it.unit.required("platform.unit"),
             )
         } ?: throw AccountProtocolException("Account response is missing platform quota"),
         platformAvailable = platformAvailable,
         platformUnavailableReason = platformUnavailableReason?.trim()?.ifEmpty { null },
         updatedAt = updatedAt.required("updatedAt"),
+    )
+
+    private fun SessionResponse.toDomain(): AccountDeviceSession = AccountDeviceSession(
+        id = id.required("session.id"),
+        expiresAt = expiresAt.required("session.expiresAt"),
+        createdAt = createdAt.required("session.createdAt"),
+        lastUsedAt = lastUsedAt.required("session.lastUsedAt"),
+        current = current.required("session.current"),
+    )
+
+    private fun PlatformUsageItemResponse.toDomain(): PlatformUsageEntry = PlatformUsageEntry(
+        model = model.required("usage.model"),
+        promptTokens = promptTokens.requiredNonNegative("usage.promptTokens"),
+        completionTokens = completionTokens.requiredNonNegative("usage.completionTokens"),
+        totalTokens = totalTokens.requiredNonNegative("usage.totalTokens"),
+        quotaUsed = quotaUsed.requiredNonNegative("usage.quotaUsed"),
+        createdAt = createdAt.required("usage.createdAt"),
     )
 
     private data class EmailCodeRequest(
@@ -234,6 +406,22 @@ class AccountApiClient(
 
     private data class RefreshTokenRequest(
         @SerializedName("refreshToken") val refreshToken: String,
+    )
+
+    private data class PasswordResetRequest(
+        @SerializedName("email") val email: String,
+        @SerializedName("newPassword") val newPassword: String,
+        @SerializedName("verificationRequestId") val verificationRequestId: String,
+        @SerializedName("verificationCode") val verificationCode: String,
+    )
+
+    private data class ChangePasswordRequest(
+        @SerializedName("currentPassword") val currentPassword: String,
+        @SerializedName("newPassword") val newPassword: String,
+    )
+
+    private data class DeleteAccountRequest(
+        @SerializedName("currentPassword") val currentPassword: String,
     )
 
     private data class UpdateAiSettingsRequest(
@@ -269,7 +457,39 @@ class AccountApiClient(
     private data class PlatformQuotaResponse(
         @SerializedName("platformEnabled") val platformEnabled: Boolean = false,
         @SerializedName("balanceQuota") val balanceQuota: Long = 0,
+        @SerializedName("weeklyLimitQuota") val weeklyLimitQuota: Long = 0,
+        @SerializedName("weeklyUsedQuota") val weeklyUsedQuota: Long = 0,
+        @SerializedName("weeklyPeriodStart") val weeklyPeriodStart: String? = null,
         @SerializedName("unit") val unit: String? = null,
+    )
+
+    private data class SessionsResponse(
+        @SerializedName("items") val items: List<SessionResponse>? = null,
+    )
+
+    private data class SessionResponse(
+        @SerializedName("id") val id: String? = null,
+        @SerializedName("expiresAt") val expiresAt: String? = null,
+        @SerializedName("createdAt") val createdAt: String? = null,
+        @SerializedName("lastUsedAt") val lastUsedAt: String? = null,
+        @SerializedName("current") val current: Boolean? = null,
+    )
+
+    private data class RevokeSessionsResponse(
+        @SerializedName("revoked") val revoked: Int? = null,
+    )
+
+    private data class PlatformUsageResponse(
+        @SerializedName("items") val items: List<PlatformUsageItemResponse>? = null,
+    )
+
+    private data class PlatformUsageItemResponse(
+        @SerializedName("model") val model: String? = null,
+        @SerializedName("promptTokens") val promptTokens: Long? = null,
+        @SerializedName("completionTokens") val completionTokens: Long? = null,
+        @SerializedName("totalTokens") val totalTokens: Long? = null,
+        @SerializedName("quotaUsed") val quotaUsed: Long? = null,
+        @SerializedName("createdAt") val createdAt: String? = null,
     )
 
     private data class ErrorEnvelope(
@@ -282,6 +502,7 @@ class AccountApiClient(
     )
 
     companion object {
+        internal const val MAX_RESPONSE_BODY_BYTES = 1L shl 20
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }
 }

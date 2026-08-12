@@ -1,11 +1,11 @@
 package cn.com.omnimind.bot.ui.channel
 
 import android.content.Context
-import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.mcp.McpServerManager
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -46,10 +46,16 @@ class McpServerChannel {
                         }
                         else -> withContext(Dispatchers.Main) { result.notImplemented() }
                     }
-                } catch (t: Throwable) {
-                    OmniLog.e("[McpServerChannel]", "channel error: ${t.message}")
+                } catch (cancellation: CancellationException) {
+                    throw cancellation
+                } catch (error: Exception) {
                     withContext(Dispatchers.Main) {
-                        result.error("MCP_ERROR", t.message ?: t.javaClass.simpleName, null)
+                        NativeChannelErrorPrivacy.deliver(
+                            result,
+                            "[McpServerChannel]",
+                            "MCP_ERROR",
+                            error,
+                        )
                     }
                 }
             }

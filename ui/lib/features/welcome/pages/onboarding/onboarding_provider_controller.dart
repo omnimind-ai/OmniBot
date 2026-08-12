@@ -1,4 +1,5 @@
 import 'package:flutter/widgets.dart';
+import 'package:ui/services/data_destination_confirmation.dart';
 import 'package:ui/services/model_provider_config_service.dart';
 import 'package:ui/services/scene_model_config_service.dart';
 
@@ -175,7 +176,10 @@ class OnboardingProviderController extends ChangeNotifier {
 
   /// Validates and saves the connection, then fetches available models.
   /// Returns true when the flow may advance to the model inventory page.
-  Future<bool> configure({required OnboardingTranslator t}) async {
+  Future<bool> configure({
+    required BuildContext context,
+    required OnboardingTranslator t,
+  }) async {
     if (_busy) return false;
     final option = selectedProvider;
     final name = nameController.text.trim();
@@ -193,6 +197,33 @@ class OnboardingProviderController extends ChangeNotifier {
     }
     if (option.id != 'custom' && apiKey.isEmpty) {
       _error = t('此提供商需要 API Key。', 'This provider requires an API key.');
+      _emit();
+      return false;
+    }
+
+    try {
+      final confirmation = await confirmDataDestinationAndRun<bool>(
+        context: context,
+        rawEndpoint: baseUrl,
+        capability: 'BYOK model provider',
+        operation: t('保存连接并获取模型', 'Save connection and fetch models'),
+        dataTypes: <String>[
+          t('提供商名称和接收地址', 'Provider name and receiver address'),
+          if (apiKey.isNotEmpty) t('API Key（仅写入）', 'API key (write-only)'),
+          t('模型列表请求与响应', 'Model catalog request and response'),
+          t(
+            '之后使用时发送的提示词、对话历史和附件',
+            'Future prompts, conversation history, and attachments when used',
+          ),
+        ],
+        action: () async => true,
+      );
+      if (!confirmation.confirmed) return false;
+    } catch (_) {
+      _error = t(
+        '接收地址不安全或格式无效，未发送任何数据。',
+        'The destination is unsafe or invalid. No data was sent.',
+      );
       _emit();
       return false;
     }
@@ -219,6 +250,13 @@ class OnboardingProviderController extends ChangeNotifier {
         sourceType: option.sourceType,
         protocolType: option.protocolType,
         wireApi: 'chat_completions',
+        destinationConfirmed: true,
+      );
+      DataDestinationSessionApprovals.remember(
+        subject: saved.id,
+        rawEndpoint: baseUrl,
+        capability: 'BYOK model provider',
+        operation: 'send chat content',
       );
       List<ProviderModelOption> models = const [];
       String? fetchError;
@@ -228,6 +266,7 @@ class OnboardingProviderController extends ChangeNotifier {
           apiKey: apiKey,
           profileId: saved.id,
           providerName: saved.name,
+          destinationConfirmed: true,
         );
         if (models.isEmpty) {
           fetchError = t(
@@ -255,7 +294,10 @@ class OnboardingProviderController extends ChangeNotifier {
       return true;
     } catch (error) {
       if (_disposed) return false;
-      _error = t('无法保存模型提供商：$error', 'Could not save the model provider: $error');
+      _error = t(
+        '无法保存模型提供商：$error',
+        'Could not save the model provider: $error',
+      );
       _emit();
       return false;
     } finally {
@@ -311,7 +353,10 @@ class OnboardingProviderController extends ChangeNotifier {
     final modelId = manualModelController.text.trim();
     if (profile == null || modelId.isEmpty) return;
     if (!ModelProviderConfigService.isValidModelName(modelId)) {
-      _error = t('模型 ID 格式无效，请检查空格或特殊字符。', 'The model ID is invalid. Check spaces and special characters.');
+      _error = t(
+        '模型 ID 格式无效，请检查空格或特殊字符。',
+        'The model ID is invalid. Check spaces and special characters.',
+      );
       _emit();
       return;
     }
@@ -331,7 +376,11 @@ class OnboardingProviderController extends ChangeNotifier {
       if (_disposed) return;
       _modelOptions = <ProviderModelOption>[
         ..._modelOptions,
-        ProviderModelOption(id: modelId, displayName: modelId, ownedBy: 'manual'),
+        ProviderModelOption(
+          id: modelId,
+          displayName: modelId,
+          ownedBy: 'manual',
+        ),
       ];
       manualModelController.clear();
       _error = null;

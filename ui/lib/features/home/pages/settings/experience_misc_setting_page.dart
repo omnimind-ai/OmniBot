@@ -69,7 +69,6 @@ class _ExperienceMiscSettingPageState
         _hideFromRecentsEnabled = enabled;
       });
     } catch (e) {
-      debugPrint('Error loading hide from recents state: $e');
     }
   }
 
@@ -84,7 +83,6 @@ class _ExperienceMiscSettingPageState
         _vibrationEnabled = enabled;
       });
     } catch (e) {
-      debugPrint('Error loading vibration state: $e');
     }
   }
 
@@ -106,7 +104,6 @@ class _ExperienceMiscSettingPageState
         notification,
       );
     } catch (e) {
-      debugPrint('Error loading runtime task settings: $e');
     }
   }
 

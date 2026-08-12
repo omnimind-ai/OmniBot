@@ -1,6 +1,9 @@
 package cn.com.omnimind.bot.mcp
 
+import androidx.annotation.VisibleForTesting
+import cn.com.omnimind.baselib.util.ContentEndpointSecurity
 import cn.com.omnimind.baselib.util.OmniLog
+import cn.com.omnimind.baselib.util.CredentialEndpointSecurity
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.Dispatchers
@@ -29,6 +32,10 @@ object RemoteMcpClient {
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(40, TimeUnit.SECONDS)
         .writeTimeout(40, TimeUnit.SECONDS)
+        // An automatic 307/308 redirect could replay a JSON-RPC body to another origin.
+        // Require users to configure the final endpoint instead.
+        .followRedirects(false)
+        .followSslRedirects(false)
         .build()
     private val jsonMediaType = "application/json; charset=utf-8".toMediaType()
     private data class HttpJsonResponse(
@@ -112,13 +119,35 @@ object RemoteMcpClient {
                 params = mapOf("name" to toolName, "arguments" to arguments)
             )
         }
-        val rawJson = gson.toJson(result)
+        return buildModelSafeCallResult(result)
+    }
+
+    @VisibleForTesting
+    internal fun buildModelSafeCallResult(result: Any?): RemoteMcpCallResult {
+        // MCP `_meta` is reserved for the client transport. It can contain short-lived
+        // download headers or other credentials and must never enter the model-visible
+        // tool result, UI previews, logs, or persisted conversation history.
+        val modelSafeResult = stripTransportMetadata(result)
         return RemoteMcpCallResult(
-            summaryText = buildSummaryText(result),
-            previewJson = buildPreviewJson(result),
-            rawResultJson = rawJson,
-            success = !(deepStringMap(result)?.get("isError") == true)
+            summaryText = buildSummaryText(modelSafeResult),
+            previewJson = buildPreviewJson(modelSafeResult),
+            rawResultJson = gson.toJson(modelSafeResult),
+            success = !(deepStringMap(modelSafeResult)?.get("isError") == true)
         )
+    }
+
+    @VisibleForTesting
+    internal fun stripTransportMetadata(value: Any?): Any? {
+        return when (value) {
+            is Map<*, *> -> value.entries
+                .filterNot { (key, _) -> key?.toString() == "_meta" }
+                .associate { (key, nested) ->
+                    key.toString() to stripTransportMetadata(nested)
+                }
+            is List<*> -> value.map(::stripTransportMetadata)
+            is Array<*> -> value.map(::stripTransportMetadata)
+            else -> value
+        }
     }
 
     fun invalidateSession(serverId: String? = null) {
@@ -199,8 +228,10 @@ object RemoteMcpClient {
         url: String,
         payload: String,
     ): HttpJsonResponse = withContext(Dispatchers.IO) {
+        val configuredEndpoint = validateEndpointSecurity(config.endpointUrl, config.bearerToken)
+        val sameOriginUrl = resolveAgainstBase(configuredEndpoint, url)
         val requestBuilder = Request.Builder()
-            .url(url)
+            .url(sameOriginUrl)
             .post(payload.toRequestBody(jsonMediaType))
             .header("Content-Type", "application/json")
             .header("Accept", "application/json, text/event-stream")
@@ -238,8 +269,10 @@ object RemoteMcpClient {
         requestId: String,
         expectResponse: Boolean,
     ): String = withContext(Dispatchers.IO) {
+        val configuredEndpoint = validateEndpointSecurity(config.endpointUrl, config.bearerToken)
+        val sameOriginUrl = resolveAgainstBase(configuredEndpoint, url)
         val requestBuilder = Request.Builder()
-            .url(url)
+            .url(sameOriginUrl)
             .post(payload.toRequestBody(jsonMediaType))
             .header("Content-Type", "application/json")
             .header("Accept", "application/json, text/event-stream")
@@ -287,8 +320,9 @@ object RemoteMcpClient {
         requestId: String,
         expectResponse: Boolean,
     ): String = withContext(Dispatchers.IO) {
+        val configuredEndpoint = validateEndpointSecurity(config.endpointUrl, config.bearerToken)
         val sseRequestBuilder = Request.Builder()
-            .url(config.endpointUrl)
+            .url(configuredEndpoint)
             .get()
             .header("Accept", "text/event-stream")
             .header("Cache-Control", "no-cache")
@@ -307,7 +341,7 @@ object RemoteMcpClient {
             val reader = sseResponse.body?.charStream()?.buffered()
                 ?: throw IllegalStateException("SSE response body is empty")
             val endpointData = readEndpointEvent(reader)
-            val messageUrl = resolveAgainstBase(config.endpointUrl, endpointData)
+            val messageUrl = resolveAgainstBase(configuredEndpoint, endpointData)
 
             val postResponse = executeHttpJson(config, messageUrl, payload)
             if (!expectResponse) {
@@ -327,8 +361,9 @@ object RemoteMcpClient {
         method: String,
         params: Map<String, Any?>,
     ): Any? = withContext(Dispatchers.IO) {
+        val configuredEndpoint = validateEndpointSecurity(config.endpointUrl, config.bearerToken)
         val sseRequestBuilder = Request.Builder()
-            .url(config.endpointUrl)
+            .url(configuredEndpoint)
             .get()
             .header("Accept", "text/event-stream")
             .header("Cache-Control", "no-cache")
@@ -347,7 +382,7 @@ object RemoteMcpClient {
             val reader = sseResponse.body?.charStream()?.buffered()
                 ?: throw IllegalStateException("SSE response body is empty")
             val endpointData = readEndpointEvent(reader)
-            val messageUrl = resolveAgainstBase(config.endpointUrl, endpointData)
+            val messageUrl = resolveAgainstBase(configuredEndpoint, endpointData)
 
             val initId = UUID.randomUUID().toString()
             val initPayload = gson.toJson(
@@ -545,12 +580,38 @@ object RemoteMcpClient {
         }
     }
 
-    private fun resolveAgainstBase(baseUrl: String, value: String): String {
-        value.toHttpUrlOrNull()?.let { return it.toString() }
+    @VisibleForTesting
+    internal fun resolveAgainstBase(baseUrl: String, value: String): String {
         val base = baseUrl.toHttpUrlOrNull()
-            ?: throw IllegalStateException("Invalid base endpoint: $baseUrl")
-        return base.resolve(value)?.toString()
-            ?: throw IllegalStateException("Unable to resolve endpoint '$value' from '$baseUrl'")
+            ?: throw IllegalStateException("Invalid configured MCP endpoint")
+        val resolved = value.toHttpUrlOrNull() ?: base.resolve(value)
+            ?: throw IllegalStateException("Unable to resolve MCP endpoint")
+        if (
+            resolved.scheme != base.scheme ||
+            resolved.host != base.host ||
+            resolved.port != base.port
+        ) {
+            throw SecurityException("MCP server returned a cross-origin endpoint")
+        }
+        if (resolved.username.isNotEmpty() || resolved.password.isNotEmpty()) {
+            throw SecurityException("MCP endpoint must not contain URL credentials")
+        }
+        return runCatching {
+            ContentEndpointSecurity.requireSafe(
+                rawUrl = resolved.toString(),
+                allowInsecureLoopback = CredentialEndpointSecurity.isDebugLoopbackAllowed(),
+            )
+        }.getOrElse { throw SecurityException("MCP endpoint URL is unsafe") }
+    }
+
+    @VisibleForTesting
+    internal fun validateEndpointSecurity(endpointUrl: String, bearerToken: String): String {
+        return runCatching {
+            ContentEndpointSecurity.requireSafe(
+                rawUrl = endpointUrl,
+                allowInsecureLoopback = CredentialEndpointSecurity.isDebugLoopbackAllowed(),
+            )
+        }.getOrElse { throw SecurityException("MCP endpoint URL is unsafe") }
     }
 
     private fun looksLikeSseEndpoint(url: String): Boolean {

@@ -616,8 +616,8 @@ object AgentToolDefinitions {
                 put(
                     "description",
                     text(
-                        "通过 Shizuku 执行安卓高权限动作。这条能力链路独立于 `terminal_execute`：既保留受控 typed action，也支持 `action=shell.exec` 的一次性任意 shell。若确实需要保留 cwd、环境变量或 shell 状态，请改用 `android_privileged_session_*`。当前后端：$backendLabel。当前可见 action：$actionList。`shell.exec` 与高风险动作都必须在 `arguments.confirmed` 中显式确认。",
-                        "Run Android privileged actions through Shizuku. This path stays separate from `terminal_execute`: it keeps the typed allowlisted actions and also supports one-shot arbitrary shell via `action=shell.exec`. When you truly need persistent cwd, environment, or shell state, switch to `android_privileged_session_*`. Current backend: $backendLabel. Currently visible actions: $actionList. `shell.exec` and high-risk actions both require explicit confirmation in `arguments.confirmed`."
+                        "通过 Shizuku 执行安卓高权限动作。当前后端：$backendLabel。当前可见 action：$actionList。任意 shell 与高风险动作在可验证的一次性本地确认桥接完成前保持禁用；模型参数不能授权。",
+                        "Run Android privileged actions through Shizuku. Current backend: $backendLabel. Currently visible actions: $actionList. Arbitrary shell and high-risk actions remain disabled until a verifiable one-time local approval bridge exists; model arguments cannot authorize them."
                     )
                 )
                 put(
@@ -648,8 +648,8 @@ object AgentToolDefinitions {
                             put(
                                 "description",
                                 text(
-                                    "动作参数对象。typed action 只传该 action 需要的字段；当 `action=shell.exec` 时，在这里传入 `command`、可选 `timeoutSeconds`、`workingDirectory`、`environment`，以及已获得用户明确同意后才传 `confirmed=true`。",
-                                    "Arguments object for the selected action. For typed actions, only include the fields that action needs. When `action=shell.exec`, provide `command`, optional `timeoutSeconds`, `workingDirectory`, `environment`, and only pass `confirmed=true` after explicit user consent."
+                                    "动作参数对象。只传该 action 需要的字段；不要传 confirmed 或任何确认令牌。",
+                                    "Arguments for the selected action. Include only fields required by that action; never send confirmed or a confirmation token."
                                 )
                             )
                         }
@@ -684,8 +684,8 @@ object AgentToolDefinitions {
                 put(
                     "description",
                     text(
-                        "启动一个可复用的 Shizuku 高权限 shell 会话，仅用于确实需要跨多轮保留 cwd、环境变量或 shell 状态的任务。当前后端：$backendLabel。此操作需要用户明确确认。",
-                        "Start a reusable Shizuku privileged shell session. Use it only when a task truly needs persistent cwd, environment variables, or shell state across turns. Current backend: $backendLabel. This operation requires explicit user confirmation."
+                        "启动一个可复用的 Shizuku 高权限 shell 会话。当前后端：$backendLabel。在可验证的一次性本地确认桥接完成前，此操作保持禁用。",
+                        "Start a reusable Shizuku privileged shell session. Current backend: $backendLabel. This operation remains disabled until a verifiable one-time local approval bridge exists."
                     )
                 )
                 put(
@@ -712,10 +712,6 @@ object AgentToolDefinitions {
                             putJsonObject("additionalProperties") {
                                 put("type", "string")
                             }
-                        }
-                        putJsonObject("confirmed") {
-                            put("type", "boolean")
-                            put("description", text("只有在用户已明确同意时才传 true。", "Set to true only after the user has explicitly confirmed."))
                         }
                     }
                 }
@@ -744,8 +740,8 @@ object AgentToolDefinitions {
                 put(
                     "description",
                     text(
-                        "向已有的 Shizuku 高权限 shell 会话发送一条命令，并等待该命令完成。当前后端：$backendLabel。每次执行都需要用户明确确认。",
-                        "Send a command to an existing Shizuku privileged shell session and wait for that command to finish. Current backend: $backendLabel. Every execution requires explicit user confirmation."
+                        "向已有的 Shizuku 高权限 shell 会话发送命令。当前后端：$backendLabel。在可验证的一次性本地确认桥接完成前，此操作保持禁用。",
+                        "Send a command to an existing Shizuku privileged shell session. Current backend: $backendLabel. This operation remains disabled until a verifiable one-time local approval bridge exists."
                     )
                 )
                 put(
@@ -769,10 +765,6 @@ object AgentToolDefinitions {
                         putJsonObject("timeoutSeconds") {
                             put("type", "integer")
                             put("description", text("等待该命令完成的超时时间，默认 120 秒，范围 5-600。", "Timeout in seconds while waiting for the command to finish. Default 120, range 5-600."))
-                        }
-                        putJsonObject("confirmed") {
-                            put("type", "boolean")
-                            put("description", text("只有在用户已明确同意时才传 true。", "Set to true only after the user has explicitly confirmed."))
                         }
                     }
                     putJsonArray("required") {
@@ -1210,7 +1202,7 @@ object AgentToolDefinitions {
             put("toolType", "workspace")
             put(
                 "description",
-                "Generate one image with the configured OpenAI-compatible image provider and save it as a workspace file. Prefer this over file_write for AI-created raster artwork."
+                "Generate one image and save it as a workspace file. Platform mode automatically uses the official image model; BYOK mode uses the configured OpenAI-compatible provider. Prefer this over file_write for AI-created raster artwork."
             )
             put("postToolRule", "Wait for the generated file result before reading, editing, or packaging it.")
             putJsonObject("parameters") {
@@ -1226,7 +1218,7 @@ object AgentToolDefinitions {
                     }
                     putJsonObject("model") {
                         put("type", "string")
-                        put("description", "Image model id. Defaults to gpt-image-2.")
+                        put("description", "Optional BYOK image model id. Platform mode ignores this and uses the official catalog; BYOK defaults to gpt-image-2.")
                     }
                     putJsonObject("size") {
                         put("type", "string")
@@ -1268,7 +1260,7 @@ object AgentToolDefinitions {
                     }
                     putJsonObject("providerProfileId") {
                         put("type", "string")
-                        put("description", "Optional provider profile id. Defaults to the currently selected model provider profile.")
+                        put("description", "Optional BYOK provider profile id. Platform mode ignores this; BYOK defaults to the currently selected provider profile.")
                     }
                 }
                 putJsonArray("required") {

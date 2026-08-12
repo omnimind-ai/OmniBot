@@ -237,7 +237,6 @@ class HomeGreetingSettingsService {
         );
       }
     } catch (error) {
-      debugPrint('Load home greeting settings failed: $error');
       notifier.value = HomeGreetingSettings.defaults;
     }
   }

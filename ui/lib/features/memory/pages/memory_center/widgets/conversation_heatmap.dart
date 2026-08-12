@@ -98,7 +98,6 @@ class _ConversationHeatmapState extends State<ConversationHeatmap>
         _fadeController.forward();
       }
     } catch (e) {
-      debugPrint('[ConversationHeatmap] Failed to load data: $e');
       if (mounted) {
         setState(() => _isLoading = false);
         _fadeController.forward();

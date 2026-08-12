@@ -1,6 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <!-- 允许本地/局域网明文通信（OpenClaw 媒体与网关多为 HTTP） -->
+    <!--
+      Cleartext remains enabled globally only because the user-facing browser may open HTTP pages.
+      This flag is not authorization for AI or other sensitive-content traffic. Every prompt, model
+      response, attachment, workspace-memory, remote bridge, MCP, voice, and image request is gated
+      in code immediately before network dispatch: production requires HTTPS/WSS, while debug may
+      use plaintext only for a literal 127/8 or ::1 loopback address. Sensitive clients also reject
+      HTTP redirects so a confirmed destination cannot forward content or credentials elsewhere.
+    -->
     <base-config cleartextTrafficPermitted="true">
         <trust-anchors>
             <certificates src="system" />

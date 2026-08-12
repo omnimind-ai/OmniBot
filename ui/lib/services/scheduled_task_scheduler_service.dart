@@ -43,19 +43,12 @@ class ScheduledTaskSchedulerService {
         await AssistsMessageService.syncWorkspaceScheduledTasks(
           tasks.map((task) => task.toJson()).toList(),
         );
-        print(
-          'ScheduledTaskSchedulerService: Native scheduler synced ${tasks.length} tasks',
-        );
         return;
       }
       for (final task in tasks) {
         scheduleTask(task);
       }
-      print(
-        'ScheduledTaskSchedulerService: Initialized with ${tasks.length} tasks',
-      );
     } catch (e) {
-      print('ScheduledTaskSchedulerService: Initialize error - $e');
     }
   }
 
@@ -63,17 +56,11 @@ class ScheduledTaskSchedulerService {
   static void _setupNativeCallbacks() {
     // 用户取消定时任务
     AssistsMessageService.setOnScheduledTaskCancelledCallBack((taskId) {
-      print(
-        'ScheduledTaskSchedulerService: Task cancelled from native - $taskId',
-      );
       _handleNativeCancel(taskId);
     });
 
     // 用户选择立即执行
     AssistsMessageService.setOnScheduledTaskExecuteNowCallBack((taskId) {
-      print(
-        'ScheduledTaskSchedulerService: Task execute now from native - $taskId',
-      );
       _handleNativeExecuteNow(taskId);
     });
   }
@@ -173,9 +160,6 @@ class ScheduledTaskSchedulerService {
       () => _executeScheduledTask(task),
     );
 
-    print(
-      'ScheduledTaskSchedulerService: Scheduled task "${task.title}" for ${DateTime.fromMillisecondsSinceEpoch(nextExecutionTime)}',
-    );
   }
 
   /// 显示倒计时提醒
@@ -195,7 +179,6 @@ class ScheduledTaskSchedulerService {
 
   /// 执行定时任务
   static Future<void> _executeScheduledTask(ScheduledTask task) async {
-    print('ScheduledTaskSchedulerService: Executing task "${task.title}"');
 
     _isShowingReminder = false;
     _currentCountdownTask = null;
@@ -252,7 +235,6 @@ class ScheduledTaskSchedulerService {
         await ScheduledTaskStorageService.deleteScheduledTask(task.id);
       }
     } catch (e) {
-      print('ScheduledTaskSchedulerService: Execute task error - $e');
     }
   }
 
@@ -267,7 +249,6 @@ class ScheduledTaskSchedulerService {
     _reminderTimers[taskId]?.cancel();
     _reminderTimers.remove(taskId);
 
-    print('ScheduledTaskSchedulerService: Cancelled task $taskId');
   }
 
   /// 取消所有定时任务

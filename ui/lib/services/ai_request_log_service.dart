@@ -74,4 +74,14 @@ class AiRequestLogService {
         .map((item) => AiRequestLogEntry.fromMap(item))
         .toList();
   }
+
+  static Future<void> clear() async {
+    final cleared = await _assistCore.invokeMethod<bool>('clearAiRequestLogs');
+    if (cleared != true) {
+      throw PlatformException(
+        code: 'CLEAR_AI_REQUEST_LOGS_ERROR',
+        message: 'Unable to clear AI request logs.',
+      );
+    }
+  }
 }

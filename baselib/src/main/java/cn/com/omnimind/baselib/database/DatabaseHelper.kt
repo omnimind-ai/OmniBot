@@ -354,6 +354,11 @@ object DatabaseHelper {
         return database ?: throw IllegalStateException("Database not initialized")
     }
 
+    /** Clears every Room-managed local table in one transaction. */
+    fun clearAllLocalTables() {
+        getDatabase().clearAllTables()
+    }
+
     // AppIcons相关方法
     suspend fun getAppIconByPackageName(packageName: String): AppIcons? {
         return getDatabase().appIconsDao().getByPackageName(packageName)

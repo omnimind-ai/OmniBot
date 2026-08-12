@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -29,6 +31,13 @@ class _WorkspaceBreadcrumbSegment {
 
 enum _WorkspaceEntryAction { edit, rename, delete, unmount }
 
+String _fileSystemEntityName(FileSystemEntity entry) {
+  final segments = entry.uri.pathSegments
+      .where((segment) => segment.isNotEmpty)
+      .toList(growable: false);
+  return segments.isEmpty ? entry.path : segments.last;
+}
+
 class _WorkspaceDragPayload {
   const _WorkspaceDragPayload({
     required this.sourcePath,
@@ -37,6 +46,36 @@ class _WorkspaceDragPayload {
 
   final String sourcePath;
   final bool isDirectory;
+}
+
+typedef WorkspaceTextFileReader = FutureOr<String> Function(String path);
+typedef _WorkspacePathResolver =
+    String? Function(String path, {bool? requireDirectory});
+
+@visibleForTesting
+bool isWorkspaceCanonicalPathWithinBoundary({
+  required String resolvedPath,
+  required String resolvedBoundaryPath,
+  bool caseInsensitive = false,
+}) {
+  String comparable(String value) {
+    var normalized = value.replaceAll('\\', '/');
+    final isDriveRoot = RegExp(r'^[A-Za-z]:/$').hasMatch(normalized);
+    if (normalized.length > 1 &&
+        normalized.endsWith('/') &&
+        !isDriveRoot) {
+      normalized = normalized.substring(0, normalized.length - 1);
+    }
+    return caseInsensitive ? normalized.toLowerCase() : normalized;
+  }
+
+  final path = comparable(resolvedPath);
+  final boundary = comparable(resolvedBoundaryPath);
+  return path == boundary || path.startsWith('$boundary/');
+}
+
+class _WorkspaceTextFileTooLarge implements Exception {
+  const _WorkspaceTextFileTooLarge();
 }
 
 class OmnibotWorkspaceBrowser extends StatefulWidget {
@@ -49,6 +88,7 @@ class OmnibotWorkspaceBrowser extends StatefulWidget {
   final bool showHeaderTitle;
   final bool enableInlineDirectoryExpansion;
   final bool inlineFilePreview;
+  final WorkspaceTextFileReader? textFileReader;
 
   const OmnibotWorkspaceBrowser({
     super.key,
@@ -61,6 +101,7 @@ class OmnibotWorkspaceBrowser extends StatefulWidget {
     this.showHeaderTitle = true,
     this.enableInlineDirectoryExpansion = true,
     this.inlineFilePreview = false,
+    this.textFileReader,
   });
 
   @override
@@ -229,15 +270,28 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
   bool get canGoUp =>
       _isPreviewingFile ||
       _isBulkSelectionMode ||
-      _directory.path != _rootDirectory.path;
+      _normalizePath(_directory.path) != _normalizePath(_rootDirectory.path);
 
   void openParentDirectory() {
     unawaited(_handleOpenParentDirectory());
   }
 
+  @visibleForTesting
+  void debugOpenInlineFileForTesting(String path) {
+    _openInlineFilePreview(
+      File(path),
+      currentShellPath: _currentShellPath(),
+    );
+  }
+
   void _openDirectory(Directory directory) {
+    final resolvedPath = _resolveExistingWorkspacePath(
+      directory.path,
+      requireDirectory: true,
+    );
+    if (resolvedPath == null) return;
     setState(() {
-      _directory = directory;
+      _directory = Directory(_normalizePath(directory.path));
       _expandedDirectoryPaths.clear();
       _directoryChildrenCache.clear();
       _selectedEntryPaths.clear();
@@ -250,9 +304,15 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
   }
 
   void _openDirectoryPath(String path) {
+    final resolvedPath = _resolveExistingWorkspacePath(
+      path,
+      requireDirectory: true,
+    );
+    if (resolvedPath == null) return;
     final normalized = _normalizePath(path);
-    if (!_isInsideWorkspace(normalized)) return;
-    if (_directory.path == normalized && !_isPreviewingFile) return;
+    if (_normalizePath(_directory.path) == normalized && !_isPreviewingFile) {
+      return;
+    }
     _openDirectory(Directory(normalized));
   }
 
@@ -260,6 +320,11 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
     FileSystemEntity entry, {
     String? currentShellPath,
   }) {
+    final resolvedPath = _resolveExistingWorkspacePath(
+      entry.path,
+      requireDirectory: false,
+    );
+    if (resolvedPath == null) return;
     final name = _entryNameFromPath(entry.path);
     final shellPath =
         OmnibotResourceService.shellPathForAndroidPath(entry.path) ??
@@ -268,7 +333,7 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
       _selectedEntryPaths.clear();
       _excludedEntryPaths.clear();
       _selectedFileMetadata = OmnibotResourceService.describePath(
-        entry.path,
+        _normalizePath(entry.path),
         title: name,
         shellPath: shellPath,
       );
@@ -734,11 +799,39 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
     return _WorkspaceInlineFilePreview(
       key: _inlinePreviewKey,
       metadata: metadata,
+      resolveSafePath: _resolveExistingWorkspacePath,
+      textFileReader: widget.textFileReader,
     );
   }
 
   List<FileSystemEntity> _sortedEntriesFor(Directory directory) {
-    return directory.listSync(followLinks: false).toList()..sort((a, b) {
+    final resolvedPath = _resolveExistingWorkspacePath(
+      directory.path,
+      requireDirectory: true,
+    );
+    if (resolvedPath == null) return const <FileSystemEntity>[];
+    List<FileSystemEntity> entries;
+    try {
+      final logicalDirectoryPath = _normalizePath(directory.path);
+      entries = Directory(resolvedPath)
+          .listSync(followLinks: false)
+          .map((entry) {
+            final logicalPath =
+                '$logicalDirectoryPath/${_fileSystemEntityName(entry)}';
+            return switch (
+              FileSystemEntity.typeSync(logicalPath, followLinks: false)
+            ) {
+              FileSystemEntityType.directory => Directory(logicalPath),
+              FileSystemEntityType.file => File(logicalPath),
+              FileSystemEntityType.link => Link(logicalPath),
+              _ => entry,
+            };
+          })
+          .toList();
+    } on FileSystemException {
+      return const <FileSystemEntity>[];
+    }
+    return entries..sort((a, b) {
       final aIsDirectoryLike = _isDirectoryLikeEntry(a);
       final bIsDirectoryLike = _isDirectoryLikeEntry(b);
       if (aIsDirectoryLike && !bIsDirectoryLike) return -1;
@@ -759,23 +852,25 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
   }
 
   WorkspaceMountEntry? _workspaceMountEntryFor(FileSystemEntity entry) {
+    return _workspaceMountEntryForPath(entry.path);
+  }
+
+  WorkspaceMountEntry? _workspaceMountEntryForPath(String path) {
     return WorkspaceMountService.describeMountEntrySync(
-      entry.path,
-      rootPath: _rootDirectory.path,
+      _platformFileSystemPath(path),
+      rootPath: _platformFileSystemPath(_rootDirectory.path),
     );
   }
 
   bool _isWorkspaceMountRootPath(String path) {
-    return WorkspaceMountService.describeMountEntrySync(
-          path,
-          rootPath: _rootDirectory.path,
-        ) !=
-        null;
+    return _workspaceMountEntryForPath(path) != null;
   }
 
   bool _isDescendantOfCurrentDirectory(String path) {
-    if (path == _directory.path) return true;
-    return path.startsWith('${_directory.path}/');
+    final normalizedPath = _normalizePath(path);
+    final normalizedDirectory = _normalizePath(_directory.path);
+    return normalizedPath == normalizedDirectory ||
+        normalizedPath.startsWith('$normalizedDirectory/');
   }
 
   void _collapseDirectory(String directoryPath) {
@@ -791,11 +886,16 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
   }
 
   void _toggleDirectoryExpansion(Directory directory, {required int depth}) {
+    final resolvedPath = _resolveExistingWorkspacePath(
+      directory.path,
+      requireDirectory: true,
+    );
+    if (resolvedPath == null) return;
     if (depth >= _maxInlineExpansionDepth) {
       _openDirectory(directory);
       return;
     }
-    final path = directory.path;
+    final path = _normalizePath(directory.path);
     if (_expandedDirectoryPaths.contains(path)) {
       _collapseDirectory(path);
       return;
@@ -811,7 +911,8 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
   Widget build(BuildContext context) {
     final exists = _directory.existsSync();
     final currentShellPath = _currentShellPath();
-    final canGoUpDirectory = _directory.path != _rootDirectory.path;
+    final canGoUpDirectory =
+        _normalizePath(_directory.path) != _normalizePath(_rootDirectory.path);
     final showParentEntry = canGoUpDirectory && !widget.showBreadcrumbHeader;
     final itemCount = _entries.length + (showParentEntry ? 1 : 0);
 
@@ -913,7 +1014,7 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
     bool roundTop = true,
     bool roundBottom = true,
   }) {
-    final name = entry.path.split('/').last;
+    final name = _fileSystemEntityName(entry);
     final mountEntry = _workspaceMountEntryFor(entry);
     final isWorkspaceMountEntry = mountEntry != null;
     final isDirectory = _isDirectoryLikeEntry(entry);
@@ -1234,6 +1335,10 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
     final palette = context.omniPalette;
     final name = _entryNameFromPath(entry.path);
     final mountEntry = _workspaceMountEntryFor(entry);
+    if (mountEntry == null &&
+        _resolveExistingWorkspacePath(entry.path) == null) {
+      return;
+    }
     final editable = _canEditEntry(entry);
     final action = await showModalBottomSheet<_WorkspaceEntryAction>(
       context: context,
@@ -1404,7 +1509,12 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
     if (entry is! File) {
       return false;
     }
-    final metadata = OmnibotResourceService.describePath(entry.path);
+    final resolvedPath = _resolveExistingWorkspacePath(
+      entry.path,
+      requireDirectory: false,
+    );
+    if (resolvedPath == null) return false;
+    final metadata = OmnibotResourceService.describePath(resolvedPath);
     return metadata.previewKind == 'text' || metadata.previewKind == 'code';
   }
 
@@ -1413,12 +1523,17 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
     String? currentShellPath,
     bool startInEditMode = false,
   }) {
+    final resolvedPath = _resolveExistingWorkspacePath(
+      entry.path,
+      requireDirectory: false,
+    );
+    if (resolvedPath == null) return;
     final name = _entryNameFromPath(entry.path);
     final shellPath =
         OmnibotResourceService.shellPathForAndroidPath(entry.path) ??
         (currentShellPath == null ? null : '$currentShellPath/$name');
     OmnibotResourceService.openFilePath(
-      entry.path,
+      resolvedPath,
       title: name,
       shellPath: shellPath,
       startInEditMode: startInEditMode,
@@ -1647,10 +1762,7 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
       _excludedEntryPaths,
       normalizedPath,
     );
-    final mountEntry = WorkspaceMountService.describeMountEntrySync(
-      normalizedPath,
-      rootPath: _rootDirectory.path,
-    );
+    final mountEntry = _workspaceMountEntryForPath(normalizedPath);
 
     if (sourceType != FileSystemEntityType.directory) {
       if (isSelected) {
@@ -1700,17 +1812,119 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
   }
 
   String _normalizePath(String path) {
-    if (path.length > 1 && path.endsWith('/')) {
-      return path.substring(0, path.length - 1);
+    var normalized = path.replaceAll('\\', '/');
+    final isWindowsDriveRoot = RegExp(r'^[A-Za-z]:/$').hasMatch(normalized);
+    if (normalized.length > 1 &&
+        normalized.endsWith('/') &&
+        !isWindowsDriveRoot) {
+      normalized = normalized.substring(0, normalized.length - 1);
     }
-    return path;
+    return normalized;
+  }
+
+  String _platformFileSystemPath(String path) {
+    return Platform.isWindows ? path.replaceAll('/', '\\') : path;
+  }
+
+  String _pathForContainmentComparison(String path) {
+    final normalized = _normalizePath(path);
+    return Platform.isWindows ? normalized.toLowerCase() : normalized;
+  }
+
+  bool _resolvedPathIsInsideWorkspace(String path, String resolvedRootPath) {
+    return isWorkspaceCanonicalPathWithinBoundary(
+      resolvedPath: path,
+      resolvedBoundaryPath: resolvedRootPath,
+      caseInsensitive: Platform.isWindows,
+    );
+  }
+
+  WorkspaceMountEntry? _authorizedMountForPath(String path) {
+    final normalizedPath = _normalizePath(path);
+    final normalizedRoot = _normalizePath(_rootDirectory.path);
+    final comparablePath = _pathForContainmentComparison(normalizedPath);
+    final comparableRoot = _pathForContainmentComparison(normalizedRoot);
+    if (comparablePath == comparableRoot ||
+        !comparablePath.startsWith('$comparableRoot/')) {
+      return null;
+    }
+    final relativePath = normalizedPath.substring(normalizedRoot.length + 1);
+    final firstSeparator = relativePath.indexOf('/');
+    final mountAlias = firstSeparator < 0
+        ? relativePath
+        : relativePath.substring(0, firstSeparator);
+    if (mountAlias.isEmpty) return null;
+    return _workspaceMountEntryForPath('$normalizedRoot/$mountAlias');
+  }
+
+  String? _resolveWorkspaceRootPath() {
+    try {
+      return _normalizePath(_rootDirectory.resolveSymbolicLinksSync());
+    } on FileSystemException {
+      return null;
+    }
+  }
+
+  String? _resolveExistingWorkspacePath(
+    String path, {
+    bool? requireDirectory,
+  }) {
+    try {
+      final sourceType = FileSystemEntity.typeSync(path);
+      if (sourceType == FileSystemEntityType.notFound ||
+          sourceType == FileSystemEntityType.link) {
+        return null;
+      }
+      final isDirectory = sourceType == FileSystemEntityType.directory;
+      if (requireDirectory != null && requireDirectory != isDirectory) {
+        return null;
+      }
+      final resolvedRootPath = _resolveWorkspaceRootPath();
+      if (resolvedRootPath == null) return null;
+      final resolvedPath = _normalizePath(
+        isDirectory
+            ? Directory(path).resolveSymbolicLinksSync()
+            : File(path).resolveSymbolicLinksSync(),
+      );
+      if (_resolvedPathIsInsideWorkspace(resolvedPath, resolvedRootPath)) {
+        return resolvedPath;
+      }
+      final mountEntry = _authorizedMountForPath(path);
+      if (mountEntry == null) return null;
+      final resolvedMountSource = _normalizePath(
+        Directory(
+          _platformFileSystemPath(mountEntry.linkPath),
+        ).resolveSymbolicLinksSync(),
+      );
+      return _resolvedPathIsInsideWorkspace(
+            resolvedPath,
+            resolvedMountSource,
+          )
+          ? resolvedPath
+          : null;
+    } on FileSystemException {
+      return null;
+    }
   }
 
   bool _isInsideWorkspace(String path) {
-    final normalizedPath = _normalizePath(path);
-    final normalizedRoot = _normalizePath(_rootDirectory.path);
-    return normalizedPath == normalizedRoot ||
-        normalizedPath.startsWith('$normalizedRoot/');
+    if (_resolveExistingWorkspacePath(path) != null) {
+      return true;
+    }
+    try {
+      if (FileSystemEntity.typeSync(path, followLinks: false) !=
+          FileSystemEntityType.notFound) {
+        return false;
+      }
+    } on FileSystemException {
+      return false;
+    }
+    final parentPath = File(path).parent.path;
+    return _resolveExistingWorkspacePath(
+          parentPath,
+          requireDirectory: true,
+        ) !=
+        null;
   }
 
   String _entryNameFromPath(String path) {
@@ -1830,7 +2044,10 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
             height: _itemHeight,
             child: Padding(
               // 背景整宽拉通,层级只靠内容左缩进体现,展开父子间不再出现背景缺口。
-              padding: EdgeInsets.only(left: 12 + depth * _indentStep, right: 12),
+              padding: EdgeInsets.only(
+                left: 12 + depth * _indentStep,
+                right: 12,
+              ),
               child: Row(
                 children: [
                   leading,
@@ -1862,7 +2079,7 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
     if (_isDirectoryLikeEntry(entry)) {
       return isExpanded ? _folderOpenIconAsset : _folderIconAsset;
     }
-    final fileName = entry.path.split('/').last.toLowerCase();
+    final fileName = _fileSystemEntityName(entry).toLowerCase();
     final dotIndex = fileName.lastIndexOf('.');
     final extension = dotIndex >= 0 ? fileName.substring(dotIndex) : '';
     if (_audioExtensions.contains(extension)) {
@@ -1875,12 +2092,13 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
   }
 
   String? _currentShellPath() {
-    final baseAndroid = widget.workspacePath;
+    final baseAndroid = _normalizePath(widget.workspacePath);
+    final currentAndroid = _normalizePath(_directory.path);
     final baseShell = widget.workspaceShellPath;
     if (baseShell == null || baseShell.isEmpty) return null;
-    if (_directory.path == baseAndroid) return baseShell;
-    if (_directory.path.startsWith('$baseAndroid/')) {
-      final suffix = _directory.path.substring(baseAndroid.length + 1);
+    if (currentAndroid == baseAndroid) return baseShell;
+    if (currentAndroid.startsWith('$baseAndroid/')) {
+      final suffix = currentAndroid.substring(baseAndroid.length + 1);
       return '$baseShell/$suffix';
     }
     return OmnibotResourceService.shellPathForAndroidPath(_directory.path) ??
@@ -1889,9 +2107,16 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
 }
 
 class _WorkspaceInlineFilePreview extends StatefulWidget {
-  const _WorkspaceInlineFilePreview({super.key, required this.metadata});
+  const _WorkspaceInlineFilePreview({
+    super.key,
+    required this.metadata,
+    required this.resolveSafePath,
+    this.textFileReader,
+  });
 
   final OmnibotResourceMetadata metadata;
+  final _WorkspacePathResolver resolveSafePath;
+  final WorkspaceTextFileReader? textFileReader;
 
   @override
   State<_WorkspaceInlineFilePreview> createState() =>
@@ -1900,10 +2125,15 @@ class _WorkspaceInlineFilePreview extends StatefulWidget {
 
 class _WorkspaceInlineFilePreviewState
     extends State<_WorkspaceInlineFilePreview> {
+  static const int _maxTextFileBytes = 5 * 1024 * 1024;
+
   final TextEditingController _editorController = TextEditingController();
   String? _textContent;
   String? _error;
+  String? _editingPath;
+  int _loadGeneration = 0;
   bool _loadingText = false;
+  bool _textReadyForEditing = false;
   bool _isEditing = false;
   bool _isSaving = false;
   bool _isDirty = false;
@@ -1912,7 +2142,8 @@ class _WorkspaceInlineFilePreviewState
       widget.metadata.previewKind == 'text' ||
       widget.metadata.previewKind == 'code';
 
-  bool get _canEdit => widget.metadata.exists && _isTextLike;
+  bool get _canEdit =>
+      widget.metadata.exists && _isTextLike && _textReadyForEditing;
 
   bool get _preferMonospace =>
       widget.metadata.previewKind == 'code' ||
@@ -1932,8 +2163,12 @@ class _WorkspaceInlineFilePreviewState
     super.didUpdateWidget(oldWidget);
     if (oldWidget.metadata.path != widget.metadata.path ||
         oldWidget.metadata.previewKind != widget.metadata.previewKind) {
+      _loadGeneration += 1;
       _textContent = null;
       _error = null;
+      _editingPath = null;
+      _loadingText = false;
+      _textReadyForEditing = false;
       _isEditing = false;
       _isSaving = false;
       _isDirty = false;
@@ -1944,6 +2179,7 @@ class _WorkspaceInlineFilePreviewState
 
   @override
   void dispose() {
+    _loadGeneration += 1;
     _editorController
       ..removeListener(_handleEditorChanged)
       ..dispose();
@@ -1961,18 +2197,29 @@ class _WorkspaceInlineFilePreviewState
 
   Future<void> _loadIfNeeded() async {
     if (!_isTextLike || !widget.metadata.exists) return;
+    final requestedPath = widget.metadata.path;
+    final generation = ++_loadGeneration;
     if (mounted) {
       setState(() {
         _loadingText = true;
+        _textReadyForEditing = false;
       });
     }
     try {
-      final text = await File(widget.metadata.path).readAsString();
-      if (!mounted) return;
+      final safePath = widget.resolveSafePath(
+        requestedPath,
+        requireDirectory: false,
+      );
+      if (safePath == null) {
+        throw const FileSystemException('Workspace boundary rejected');
+      }
+      final text = await _readTextWithLimit(safePath);
+      if (!_isCurrentLoad(generation, requestedPath)) return;
       setState(() {
         _textContent = text;
         _error = null;
         _loadingText = false;
+        _textReadyForEditing = true;
         if (_isEditing && !_isDirty) {
           _editorController.value = TextEditingValue(
             text: text,
@@ -1981,12 +2228,65 @@ class _WorkspaceInlineFilePreviewState
         }
       });
     } catch (error) {
-      if (!mounted) return;
+      if (!_isCurrentLoad(generation, requestedPath)) return;
       setState(() {
-        _error = '读取失败：$error';
+        _error = error is _WorkspaceTextFileTooLarge
+            ? '文件过大，无法安全预览或编辑'
+            : '无法安全读取此文件';
         _loadingText = false;
+        _textReadyForEditing = false;
       });
     }
+  }
+
+  bool _isCurrentLoad(int generation, String requestedPath) {
+    return mounted &&
+        generation == _loadGeneration &&
+        widget.metadata.path == requestedPath;
+  }
+
+  Future<String> _readTextWithLimit(String safePath) async {
+    final file = File(safePath);
+    final stat = await file.stat();
+    if (stat.type != FileSystemEntityType.file ||
+        stat.size > _maxTextFileBytes) {
+      throw const _WorkspaceTextFileTooLarge();
+    }
+
+    final injectedReader = widget.textFileReader;
+    if (injectedReader != null) {
+      final text = await injectedReader(safePath);
+      if (_utf8LengthExceedsLimit(text, _maxTextFileBytes)) {
+        throw const _WorkspaceTextFileTooLarge();
+      }
+      return text;
+    }
+
+    final bytes = BytesBuilder(copy: false);
+    var byteCount = 0;
+    await for (final chunk in file.openRead()) {
+      byteCount += chunk.length;
+      if (byteCount > _maxTextFileBytes) {
+        throw const _WorkspaceTextFileTooLarge();
+      }
+      bytes.add(chunk);
+    }
+    return utf8.decode(bytes.takeBytes());
+  }
+
+  bool _utf8LengthExceedsLimit(String value, int limit) {
+    var byteCount = 0;
+    for (final rune in value.runes) {
+      byteCount += rune <= 0x7f
+          ? 1
+          : rune <= 0x7ff
+          ? 2
+          : rune <= 0xffff
+          ? 3
+          : 4;
+      if (byteCount > limit) return true;
+    }
+    return false;
   }
 
   Future<bool> confirmDiscardIfNeeded() async {
@@ -2005,7 +2305,9 @@ class _WorkspaceInlineFilePreviewState
 
   Future<void> _handleEditPressed() async {
     if (!_canEdit) return;
+    final editingPath = widget.metadata.path;
     setState(() {
+      _editingPath = editingPath;
       _isEditing = true;
       _isDirty = false;
       _editorController.value = TextEditingValue(
@@ -2022,6 +2324,7 @@ class _WorkspaceInlineFilePreviewState
     final confirmed = await confirmDiscardIfNeeded();
     if (!confirmed || !mounted) return;
     setState(() {
+      _editingPath = null;
       _isEditing = false;
       _isDirty = false;
       _editorController.value = TextEditingValue(
@@ -2033,25 +2336,44 @@ class _WorkspaceInlineFilePreviewState
 
   Future<void> _handleSaveText() async {
     if (!_canEdit || _isSaving) return;
+    final requestedPath = widget.metadata.path;
+    if (_editingPath != requestedPath) return;
+    final safePath = widget.resolveSafePath(
+      requestedPath,
+      requireDirectory: false,
+    );
+    if (safePath == null) {
+      showToast('文件已离开安全的 workspace 范围', type: ToastType.error);
+      return;
+    }
+    final savedText = _editorController.text;
+    if (_utf8LengthExceedsLimit(savedText, _maxTextFileBytes)) {
+      showToast('内容过大，无法安全保存', type: ToastType.error);
+      return;
+    }
     setState(() {
       _isSaving = true;
     });
     try {
-      final savedText = _editorController.text;
-      File(widget.metadata.path).writeAsStringSync(savedText);
-      if (!mounted) return;
+      await File(safePath).writeAsString(savedText);
+      if (!mounted ||
+          widget.metadata.path != requestedPath ||
+          _editingPath != requestedPath) {
+        return;
+      }
       setState(() {
         _textContent = savedText;
+        _editingPath = null;
         _isDirty = false;
         _error = null;
         _isEditing = false;
       });
       showToast('文件已保存', type: ToastType.success);
-    } catch (error) {
-      if (!mounted) return;
-      showToast('保存失败：$error', type: ToastType.error);
+    } on FileSystemException {
+      if (!mounted || widget.metadata.path != requestedPath) return;
+      showToast('文件保存失败', type: ToastType.error);
     } finally {
-      if (mounted) {
+      if (mounted && widget.metadata.path == requestedPath) {
         setState(() {
           _isSaving = false;
         });

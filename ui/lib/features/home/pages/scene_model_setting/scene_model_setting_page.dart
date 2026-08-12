@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_switch/flutter_switch.dart';
-import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:ui/services/data_destination_confirmation.dart';
 import 'package:ui/services/model_provider_config_service.dart';
 import 'package:ui/services/scene_model_config_service.dart';
 import 'package:ui/services/voice_playback_coordinator.dart';
@@ -42,7 +42,7 @@ class SceneModelSettingPage extends StatefulWidget {
 }
 
 class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
-  static const bool _showManualRefreshButton = false;
+  static const bool _showManualRefreshButton = true;
 
   static const List<String> _sceneOrder = [
     'scene.dispatch.model',
@@ -71,6 +71,7 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
   bool _isLoading = true;
   bool _isRefreshingModels = false;
   bool _isSavingVoiceConfig = false;
+  int _providerRefreshGeneration = 0;
 
   List<SceneCatalogItem> _catalog = const [];
   List<SceneModelBindingEntry> _bindings = const [];
@@ -84,6 +85,8 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
   late final TextEditingController _voiceCurlController;
   Timer? _voiceConfigSaveDebounce;
   SceneVoiceConfig? _pendingVoiceConfig;
+  bool _voiceCurlDirty = false;
+  bool _clearStoredVoiceCurl = false;
   static const List<String> _voiceStylePresets = <String>[
     '默认',
     '自然对话',
@@ -105,6 +108,7 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
 
   @override
   void dispose() {
+    _providerRefreshGeneration += 1;
     _voiceConfigSaveDebounce?.cancel();
     _voiceIdController.dispose();
     _voiceCustomStyleController.dispose();
@@ -134,7 +138,8 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
   }
 
   bool get _isDarkTheme => context.isDarkTheme;
-  Color get _pageBackground => context.omniPalette.pageBackground;
+  Color get _pageBackground =>
+      _isDarkTheme ? context.omniPalette.pageBackground : AppColors.background;
   Color get _cardColor =>
       _isDarkTheme ? context.omniPalette.surfacePrimary : Colors.white;
   Color get _primaryTextColor =>
@@ -191,12 +196,10 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
         selection: TextSelection.collapsed(offset: config.customStyle.length),
       );
     }
-    if (_voiceCurlController.text != config.customCurlCommand) {
+    if (!_voiceCurlDirty && _voiceCurlController.text.isNotEmpty) {
       _voiceCurlController.value = TextEditingValue(
-        text: config.customCurlCommand,
-        selection: TextSelection.collapsed(
-          offset: config.customCurlCommand.length,
-        ),
+        text: '',
+        selection: const TextSelection.collapsed(offset: 0),
       );
     }
   }
@@ -219,10 +222,7 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
     });
   }
 
-  Future<void> _loadData({
-    bool showLoading = true,
-    bool refreshProviderModels = true,
-  }) async {
+  Future<void> _loadData({bool showLoading = true}) async {
     if (showLoading && mounted) {
       setState(() => _isLoading = true);
     }
@@ -260,16 +260,14 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
         _profiles = profilesPayload.profiles;
         _providerModelsByProfileId = enriched;
         _voiceConfig = voiceConfig;
+        _voiceCurlDirty = false;
+        _clearStoredVoiceCurl = false;
       });
       _syncVoiceControllers(voiceConfig);
       _scheduleMetadataRefresh(
         profiles: profilesPayload.profiles,
         providerModelsByProfileId: enriched,
       );
-      if (refreshProviderModels &&
-          _profiles.any((profile) => profile.configured)) {
-        unawaited(_refreshProviderModels());
-      }
     } catch (_) {
       if (!mounted) return;
       showToast(context.l10n.sceneModelLoadFailed, type: ToastType.error);
@@ -360,58 +358,108 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
 
   Future<void> _refreshProviderModels() async {
     if (_isRefreshingModels) return;
+    final refreshGeneration = ++_providerRefreshGeneration;
     setState(() => _isRefreshingModels = true);
     try {
-      final nextModels = <String, List<ProviderModelOption>>{};
+      final snapshots = List<ModelProviderProfileSummary>.from(_profiles);
+      final nextModels = <String, List<ProviderModelOption>>{
+        for (final entry in _providerModelsByProfileId.entries)
+          entry.key: List<ProviderModelOption>.from(entry.value),
+      };
+      final refreshedSnapshots = <String, ModelProviderProfileSummary>{};
       var refreshedCount = 0;
-      final failedProfiles = <String>[];
-      for (final profile in _profiles) {
+      var failedCount = 0;
+      var rejectedCount = 0;
+      var staleCount = 0;
+      for (final profile in snapshots) {
+        if (!_isProviderRefreshActive(refreshGeneration)) return;
         if (!profile.configured) {
-          nextModels[profile.id] =
-              await ModelProviderConfigService.getStoredModelOptionsForProfile(
-                profile.id,
-              );
           continue;
         }
         try {
-          final remoteModels = await ModelProviderConfigService.fetchModels(
-            apiBase: profile.baseUrl,
-            apiKey: profile.apiKey,
-            profileId: profile.id,
-          );
-          final manualModelIds =
-              await ModelProviderConfigService.getManualModelIds(
-                profileId: profile.id,
-              );
-          nextModels[profile.id] = ModelProviderConfigService.mergeModelOptions(
-            remoteModels: remoteModels,
-            manualModelIds: manualModelIds,
-          );
-          refreshedCount += remoteModels.length;
-        } catch (e) {
-          //允许部分成功，不让一个 Provider 的失败拖垮整次刷新。
-          nextModels[profile.id] =
-              await ModelProviderConfigService.getStoredModelOptionsForProfile(
-                profile.id,
-              );
-          failedProfiles.add(profile.name);
+          final List<ProviderModelOption>? refreshed;
+          if (_isPlatformOfficialProfile(profile)) {
+            refreshed = await _fetchModelsForConfirmedSnapshot(
+              profile,
+              refreshGeneration: refreshGeneration,
+              destinationConfirmed: false,
+            );
+          } else {
+            final outcome =
+                await confirmDataDestinationAndRun<List<ProviderModelOption>?>(
+                  context: context,
+                  rawEndpoint: profile.baseUrl,
+                  capability: 'BYOK model provider',
+                  operation: context.trLegacy('刷新场景模型列表'),
+                  dataTypes: [
+                    context.trLegacy('模型列表请求和提供商配置'),
+                    if (profile.hasApiKey || profile.hasCustomHeaders)
+                      context.trLegacy('已安全保存的提供商凭据'),
+                  ],
+                  action: () => _fetchModelsForConfirmedSnapshot(
+                    profile,
+                    refreshGeneration: refreshGeneration,
+                    destinationConfirmed: true,
+                  ),
+                );
+            if (!_isProviderRefreshActive(refreshGeneration)) return;
+            if (!outcome.confirmed) {
+              rejectedCount += 1;
+              continue;
+            }
+            refreshed = outcome.value;
+          }
+          if (!_isProviderRefreshActive(refreshGeneration)) return;
+          if (refreshed == null) {
+            staleCount += 1;
+            continue;
+          }
+          nextModels[profile.id] = refreshed;
+          refreshedSnapshots[profile.id] = profile;
+          refreshedCount += refreshed.length;
+        } catch (_) {
+          // Keep the last cached list. Error text must not echo an endpoint,
+          // credential, or provider exception into the UI.
+          failedCount += 1;
         }
       }
 
-      if (!mounted) return;
-      // 一次性更新页面模型数据
+      if (!_isProviderRefreshActive(refreshGeneration)) return;
+      if (refreshedSnapshots.isNotEmpty) {
+        final latestPayload = await ModelProviderConfigService.listProfiles();
+        if (!_isProviderRefreshActive(refreshGeneration)) return;
+        for (final entry in refreshedSnapshots.entries) {
+          final latest = _findProfile(latestPayload.profiles, entry.key);
+          final local = _findProfile(_profiles, entry.key);
+          if (latest == null ||
+              local == null ||
+              !_sameProviderSnapshot(entry.value, latest) ||
+              !_sameProviderSnapshot(entry.value, local)) {
+            nextModels[entry.key] = List<ProviderModelOption>.from(
+              _providerModelsByProfileId[entry.key] ?? const [],
+            );
+            staleCount += 1;
+          }
+        }
+      }
+      if (!_isProviderRefreshActive(refreshGeneration)) return;
       setState(() {
         _providerModelsByProfileId = _mergeBindingModels(
           providerModelsByProfileId: nextModels,
           bindings: _bindings,
         );
       });
-      if (failedProfiles.isNotEmpty) {
-        final preview = failedProfiles.take(2).join(', ');
-        final extraCount = failedProfiles.length - 2;
-        final suffix = extraCount > 0 ? ' (+$extraCount)' : '';
+      if (!mounted) return;
+      if (failedCount > 0 || staleCount > 0) {
         showToast(
-          context.l10n.sceneModelPartialUpdateFailed('$preview$suffix'),
+          context.trLegacy('部分模型列表未刷新，请检查 Provider 配置后重试。'),
+          type: ToastType.warning,
+        );
+        return;
+      }
+      if (rejectedCount > 0 && refreshedSnapshots.isEmpty) {
+        showToast(
+          context.trLegacy('未刷新：你没有确认本次数据接收方。'),
           type: ToastType.warning,
         );
         return;
@@ -422,17 +470,94 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
             : context.l10n.sceneModelUpdatedModels(refreshedCount),
         type: refreshedCount == 0 ? ToastType.warning : ToastType.success,
       );
-    } catch (e) {
+    } catch (_) {
       if (!mounted) return;
       showToast(
-        context.l10n.sceneModelRefreshFailed(e.toString()),
+        context.trLegacy('模型列表刷新失败，请检查 Provider 配置后重试。'),
         type: ToastType.error,
       );
     } finally {
-      if (mounted) {
+      if (mounted && refreshGeneration == _providerRefreshGeneration) {
         setState(() => _isRefreshingModels = false);
       }
     }
+  }
+
+  Future<List<ProviderModelOption>?> _fetchModelsForConfirmedSnapshot(
+    ModelProviderProfileSummary snapshot, {
+    required int refreshGeneration,
+    required bool destinationConfirmed,
+  }) async {
+    if (!_isProviderRefreshActive(refreshGeneration)) return null;
+    final beforePayload = await ModelProviderConfigService.listProfiles();
+    if (!_isProviderRefreshActive(refreshGeneration)) return null;
+    final before = _findProfile(beforePayload.profiles, snapshot.id);
+    final localBefore = _findProfile(_profiles, snapshot.id);
+    if (before == null ||
+        localBefore == null ||
+        !_sameProviderSnapshot(snapshot, before) ||
+        !_sameProviderSnapshot(snapshot, localBefore)) {
+      return null;
+    }
+
+    final remoteModels = await ModelProviderConfigService.fetchModels(
+      apiBase: snapshot.baseUrl,
+      profileId: snapshot.id,
+      providerName: snapshot.name,
+      destinationConfirmed: destinationConfirmed,
+    );
+    if (!_isProviderRefreshActive(refreshGeneration)) return null;
+    final manualModelIds = await ModelProviderConfigService.getManualModelIds(
+      profileId: snapshot.id,
+    );
+    if (!_isProviderRefreshActive(refreshGeneration)) return null;
+    final afterPayload = await ModelProviderConfigService.listProfiles();
+    if (!_isProviderRefreshActive(refreshGeneration)) return null;
+    final after = _findProfile(afterPayload.profiles, snapshot.id);
+    final localAfter = _findProfile(_profiles, snapshot.id);
+    if (after == null ||
+        localAfter == null ||
+        !_sameProviderSnapshot(snapshot, after) ||
+        !_sameProviderSnapshot(snapshot, localAfter)) {
+      return null;
+    }
+    return ModelProviderConfigService.mergeModelOptions(
+      remoteModels: remoteModels,
+      manualModelIds: manualModelIds,
+    );
+  }
+
+  bool _isProviderRefreshActive(int refreshGeneration) {
+    return mounted &&
+        _isRefreshingModels &&
+        refreshGeneration == _providerRefreshGeneration;
+  }
+
+  bool _isPlatformOfficialProfile(ModelProviderProfileSummary profile) {
+    return profile.sourceType == 'omnibot_official';
+  }
+
+  ModelProviderProfileSummary? _findProfile(
+    List<ModelProviderProfileSummary> profiles,
+    String profileId,
+  ) {
+    for (final profile in profiles) {
+      if (profile.id == profileId) return profile;
+    }
+    return null;
+  }
+
+  bool _sameProviderSnapshot(
+    ModelProviderProfileSummary left,
+    ModelProviderProfileSummary right,
+  ) {
+    return left.id == right.id &&
+        left.baseUrl.trim() == right.baseUrl.trim() &&
+        left.revision == right.revision &&
+        left.sourceType == right.sourceType &&
+        left.readOnly == right.readOnly &&
+        left.ready == right.ready &&
+        left.configured == right.configured;
   }
 
   Future<void> _saveSceneBinding({
@@ -554,15 +679,27 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
       return;
     }
     setState(() => _isSavingVoiceConfig = true);
+    final replacementCommand = _voiceCurlDirty && !_clearStoredVoiceCurl
+        ? nextConfig.customCurlCommand
+        : null;
+    final clearStoredCommand = _clearStoredVoiceCurl;
     try {
       final saved = await SceneModelConfigService.saveSceneVoiceConfig(
         nextConfig,
+        replacementCustomCurlCommand: replacementCommand,
+        clearCustomCurlCommand: clearStoredCommand,
       );
       unawaited(VoicePlaybackCoordinator.instance.refreshConfiguration());
       if (!mounted) return;
       if (_voiceConfig == nextConfig || _voiceConfig == saved) {
         setState(() {
           _voiceConfig = saved;
+          if (clearStoredCommand ||
+              replacementCommand == _voiceCurlController.text) {
+            _voiceCurlDirty = false;
+            _clearStoredVoiceCurl = false;
+            _voiceCurlController.clear();
+          }
         });
         _syncVoiceControllers(saved);
       }
@@ -698,7 +835,7 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
             const AgentAvatarButton(size: 30, showEditBadge: true),
             const SizedBox(width: 6),
           ],
-          Icon(LucideIcons.info, size: 15, color: _tertiaryTextColor),
+          Icon(Icons.info_outline, size: 15, color: _tertiaryTextColor),
         ],
       ),
     );
@@ -711,6 +848,7 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
     return Builder(
       builder: (fieldContext) {
         return InkWell(
+          key: Key('scene-model-selector-${scene.sceneId}'),
           onTap: isSaving
               ? null
               : () => _openSceneSelector(scene, fieldContext),
@@ -737,7 +875,7 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
                 ),
                 const SizedBox(width: 8),
                 Icon(
-                  LucideIcons.chevronDown,
+                  Icons.keyboard_arrow_down_rounded,
                   size: 18,
                   color: _tertiaryTextColor,
                 ),
@@ -986,10 +1124,45 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
                 : null,
           ),
           onChanged: (value) {
+            _voiceCurlDirty = true;
+            _clearStoredVoiceCurl = false;
             final next = _voiceConfig.copyWith(customCurlCommand: value);
             _updateVoiceConfig(next);
           },
         ),
+        if (_voiceConfig.hasCustomCurlCommand || _voiceCurlDirty) ...[
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _voiceCurlDirty
+                      ? 'The new command will replace the securely stored command.'
+                      : 'A command is stored securely. Enter a new value only to replace it.',
+                  style: TextStyle(color: _secondaryTextColor, fontSize: 11.5),
+                ),
+              ),
+              if (_voiceConfig.hasCustomCurlCommand)
+                TextButton(
+                  key: const Key('voice-scene-clear-stored-curl'),
+                  onPressed: _isSavingVoiceConfig
+                      ? null
+                      : () {
+                          _voiceConfigSaveDebounce?.cancel();
+                          _voiceCurlController.clear();
+                          _voiceCurlDirty = false;
+                          _clearStoredVoiceCurl = true;
+                          final next = _voiceConfig.copyWith(
+                            customCurlCommand: '',
+                            hasCustomCurlCommand: false,
+                          );
+                          _updateVoiceConfig(next, saveImmediately: true);
+                        },
+                  child: const Text('Clear stored command'),
+                ),
+            ],
+          ),
+        ],
       ],
     );
   }
@@ -1136,7 +1309,9 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
         child: Row(
           children: [
             Icon(
-              selected ? LucideIcons.circleCheck : LucideIcons.circle,
+              selected
+                  ? Icons.radio_button_checked_rounded
+                  : Icons.radio_button_off_rounded,
               size: 18,
               color: selected
                   ? Theme.of(context).colorScheme.primary
@@ -1217,8 +1392,8 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
                       onPressed: () => _toggleSceneExpanded(scene.sceneId),
                       icon: Icon(
                         isExpanded
-                            ? LucideIcons.chevronUp
-                            : LucideIcons.slidersHorizontal,
+                            ? Icons.expand_less_rounded
+                            : Icons.tune_rounded,
                         size: 18,
                         color: _tertiaryTextColor,
                       ),
@@ -1371,18 +1546,24 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
                           Align(
                             alignment: Alignment.centerLeft,
                             child: OutlinedButton.icon(
+                              key: const Key(
+                                'scene-model-refresh-provider-models-button',
+                              ),
                               onPressed: _isRefreshingModels
                                   ? null
                                   : _refreshProviderModels,
                               icon: _isRefreshingModels
                                   ? const SizedBox(
+                                      key: Key(
+                                        'scene-model-refresh-provider-models-progress',
+                                      ),
                                       width: 14,
                                       height: 14,
                                       child: CircularProgressIndicator(
                                         strokeWidth: 2,
                                       ),
                                     )
-                                  : const Icon(LucideIcons.refreshCw, size: 16),
+                                  : const Icon(Icons.refresh, size: 16),
                               label: Text(context.l10n.sceneModelRefreshList),
                             ),
                           ),
@@ -1552,7 +1733,7 @@ class _SceneSelectionPopupEntryState extends State<_SceneSelectionPopupEntry> {
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
       child: Row(
         children: [
-          Icon(LucideIcons.search, size: 18, color: _tertiaryTextColor),
+          Icon(Icons.search, size: 18, color: _tertiaryTextColor),
           const SizedBox(width: 8),
           Expanded(
             child: TextField(
@@ -1623,7 +1804,7 @@ class _SceneSelectionPopupEntryState extends State<_SceneSelectionPopupEntry> {
               ),
               if (selected)
                 Icon(
-                  LucideIcons.check,
+                  Icons.check_rounded,
                   size: 15,
                   color: _isDarkTheme
                       ? context.omniPalette.accentPrimary
@@ -1690,7 +1871,7 @@ class _SceneSelectionPopupEntryState extends State<_SceneSelectionPopupEntry> {
               if (isCurrent) ...[
                 const SizedBox(width: 6),
                 Icon(
-                  LucideIcons.circleCheck,
+                  Icons.check_circle_rounded,
                   size: 13,
                   color: _isDarkTheme
                       ? context.omniPalette.accentPrimary
@@ -1700,10 +1881,10 @@ class _SceneSelectionPopupEntryState extends State<_SceneSelectionPopupEntry> {
               const SizedBox(width: 6),
               Icon(
                 _hasSearchQuery
-                    ? LucideIcons.chevronsUpDown
+                    ? Icons.unfold_more_rounded
                     : expanded
-                    ? LucideIcons.chevronUp
-                    : LucideIcons.chevronDown,
+                    ? Icons.expand_less_rounded
+                    : Icons.expand_more_rounded,
                 size: 16,
                 color: _tertiaryTextColor,
               ),
@@ -1758,7 +1939,7 @@ class _SceneSelectionPopupEntryState extends State<_SceneSelectionPopupEntry> {
                 ),
                 if (selected)
                   Icon(
-                    LucideIcons.check,
+                    Icons.check_rounded,
                     size: 15,
                     color: _isDarkTheme
                         ? context.omniPalette.accentPrimary

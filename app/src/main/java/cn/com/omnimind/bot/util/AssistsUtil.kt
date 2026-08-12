@@ -7,12 +7,16 @@ import android.content.Intent
 import android.os.PowerManager
 import android.os.Process
 import android.provider.Settings
-import android.util.Log
 import androidx.core.net.toUri
 import cn.com.omnimind.assists.AssistsCore
+import cn.com.omnimind.assists.openclaw.OpenClawIdentityResetResult
+import cn.com.omnimind.assists.openclaw.OpenClawConfigurationMutationResult
+import cn.com.omnimind.assists.openclaw.OpenClawCredentialMutation
 import cn.com.omnimind.assists.api.bean.TaskParams
 import cn.com.omnimind.assists.api.interfaces.OnMessagePushListener
 import cn.com.omnimind.baselib.util.MobileManufacturerUtil
+import cn.com.omnimind.baselib.util.OmniLog
+import cn.com.omnimind.bot.distribution.AppEditionCapabilities
 import cn.com.omnimind.uikit.UIKit
 
 class AssistsUtil {
@@ -26,6 +30,32 @@ class AssistsUtil {
         fun cancelChatTask(taskId: String? = null) {
             AssistsCore.cancelChatTask(taskId)
         }
+
+        fun resetOpenClawDeviceIdentity(): OpenClawIdentityResetResult =
+            AssistsCore.resetOpenClawDeviceIdentity()
+
+        fun disableOpenClaw(): OpenClawConfigurationMutationResult =
+            AssistsCore.disableOpenClaw()
+
+        fun saveOpenClawConfiguration(
+            requestId: String,
+            expectedGeneration: Long,
+            confirmedOrigin: String,
+            rawBaseUrl: String,
+            userId: String,
+            credentialMutation: OpenClawCredentialMutation,
+            replacementToken: String?,
+            enable: Boolean,
+        ): OpenClawConfigurationMutationResult = AssistsCore.saveOpenClawConfiguration(
+            requestId,
+            expectedGeneration,
+            confirmedOrigin,
+            rawBaseUrl,
+            userId,
+            credentialMutation,
+            replacementToken,
+            enable,
+        )
 
         fun createChatTask(
             taskId: String,
@@ -112,7 +142,7 @@ class AssistsUtil {
             return runCatching {
                 appOpsManager.unsafeCheckOpNoThrow(operation, uid, packageName)
             }.getOrElse {
-                Log.d(TAG, "readAppOpMode failed for $operation: ${it.message}")
+                OmniLog.d(TAG, "readAppOpMode failed type=${it.javaClass.simpleName}")
                 null
             }
         }
@@ -139,6 +169,7 @@ class AssistsUtil {
         }
 
         fun isInstalledAppsPermissionGranted(context: Context): Boolean {
+            if (!AppEditionCapabilities.canQueryInstalledApps) return false
             return try {
                 context.packageManager.getInstalledApplications(0).size > 1
             } catch (_: Exception) {
@@ -147,6 +178,9 @@ class AssistsUtil {
         }
 
         fun openInstalledAppsSettings(context: Context) {
+            check(AppEditionCapabilities.canQueryInstalledApps) {
+                "Installed apps access is unavailable in this app edition."
+            }
             context.startActivity(
                 Intent(
                     Settings.ACTION_APPLICATION_DETAILS_SETTINGS,

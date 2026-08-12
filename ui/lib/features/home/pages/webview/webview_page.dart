@@ -91,22 +91,17 @@ class _WebViewPageState extends State<WebViewPage> {
             });
           },
           onPageStarted: (String url) {
-            debugPrint('WebView onPageStarted: $url');
             setState(() {
               _isLoading = true;
               _errorMessage = null;
             });
           },
           onPageFinished: (String url) {
-            debugPrint('WebView onPageFinished: $url');
             setState(() {
               _isLoading = false;
             });
           },
           onWebResourceError: (WebResourceError error) {
-            debugPrint(
-              'WebView onWebResourceError: ${error.description} (${error.url})',
-            );
             if (error.isForMainFrame == false) {
               return;
             }
@@ -133,7 +128,6 @@ class _WebViewPageState extends State<WebViewPage> {
     _loadInitialSource();
 
     // 打印加载的 URL
-    debugPrint('WebViewPage 加载 URL: ${widget.url}');
   }
 
   Future<void> _loadInitialSource() async {
@@ -213,12 +207,6 @@ class _WebViewPageState extends State<WebViewPage> {
       await dio.download(
         url,
         savePath,
-        onReceiveProgress: (received, total) {
-          if (total != -1) {
-            final progress = (received / total * 100).toStringAsFixed(0);
-            debugPrint('下载进度: $progress%');
-          }
-        },
       );
 
       // 如果是图片，保存到相册
@@ -236,8 +224,7 @@ class _WebViewPageState extends State<WebViewPage> {
           showToast('文件已下载: $fileName', type: ToastType.success);
         }
       }
-    } catch (e) {
-      debugPrint('下载失败: $e');
+    } catch (_) {
       showToast('下载失败', type: ToastType.error);
     } finally {
       setState(() {

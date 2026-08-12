@@ -23,6 +23,8 @@ import 'package:ui/features/home/pages/chat/utils/keyboard_inset_motion_tracker.
 import 'package:ui/features/home/pages/chat/widgets/agent_run_group_message.dart';
 import 'package:ui/features/home/pages/chat/widgets/chat_empty_greeting.dart';
 import 'package:ui/services/storage_service.dart';
+import 'package:ui/services/openclaw_credential_service.dart';
+import 'package:ui/services/data_destination_confirmation.dart';
 import 'package:ui/services/voice_playback_coordinator.dart';
 import 'package:ui/services/screen_dialog_service.dart';
 import 'package:ui/services/conversation_service.dart';
@@ -30,10 +32,10 @@ import 'package:ui/services/conversation_history_service.dart';
 import 'package:ui/services/home_greeting_settings_service.dart';
 import 'package:ui/services/link_preview_service.dart';
 import 'package:ui/widgets/ai_generated_badge.dart';
-import 'package:ui/constants/openclaw/openclaw_keys.dart';
 import 'package:ui/utils/ui.dart';
 import 'package:ui/features/home/pages/chat/mixins/agent_stream_handler.dart';
 import 'package:ui/theme/theme_context.dart';
+import 'package:ui/widgets/openclaw_identity_reset_dialog.dart';
 
 /// 聊天上下文存储的key
 const String kChatContextStorageKey = 'chat_context_for_summary';
@@ -109,6 +111,7 @@ class _ChatBotSheetState extends State<ChatBotSheet>
   String _openClawBaseUrl = '';
   String _openClawToken = '';
   String _openClawUserId = '';
+  OpenClawConfigurationSnapshot? _openClawConfiguration;
   bool _showSlashCommandPanel = false;
   bool _openClawPanelExpanded = false;
   final TextEditingController _openClawBaseUrlController =
@@ -348,44 +351,22 @@ class _ChatBotSheetState extends State<ChatBotSheet>
 
   Future<void> _loadOpenClawConfig() async {
     try {
-      final enabled =
-          widget.openClawEnabled ??
-          (StorageService.getBool(kOpenClawEnabledKey, defaultValue: false) ??
-              false);
-      final baseUrl =
-          StorageService.getString(kOpenClawBaseUrlKey, defaultValue: '') ?? '';
-      final token =
-          StorageService.getString(kOpenClawTokenKey, defaultValue: '') ?? '';
-      final userId =
-          StorageService.getString(kOpenClawUserIdKey, defaultValue: '') ?? '';
-      final effectiveEnabled = enabled && baseUrl.trim().isNotEmpty;
-      if (enabled && !effectiveEnabled) {
-        await StorageService.setBool(kOpenClawEnabledKey, false);
-      }
+      final configuration = await OpenClawCredentialService.initializeAndLoad();
       if (!mounted) return;
       setState(() {
-        _openClawEnabled = effectiveEnabled;
-        _openClawBaseUrl = baseUrl;
-        _openClawToken = token;
-        _openClawUserId = userId;
+        _openClawConfiguration = configuration;
+        _openClawEnabled = configuration.enabled;
+        _openClawBaseUrl = configuration.baseUrl;
+        _openClawToken = '';
+        _openClawUserId = configuration.userId;
       });
       await _ensureOpenClawUserId();
-    } catch (e) {
-      debugPrint('加载OpenClaw配置失败: $e');
-    }
+    } catch (e) {}
   }
 
   Future<void> _ensureOpenClawUserId() async {
     if (_openClawUserId.isNotEmpty) return;
-    final existing =
-        StorageService.getString(kOpenClawUserIdKey, defaultValue: '') ?? '';
-    if (existing.isNotEmpty) {
-      if (!mounted) return;
-      setState(() => _openClawUserId = existing);
-      return;
-    }
     final generated = DateTime.now().microsecondsSinceEpoch.toString();
-    await StorageService.setString(kOpenClawUserIdKey, generated);
     if (!mounted) return;
     setState(() => _openClawUserId = generated);
   }
@@ -400,9 +381,44 @@ class _ChatBotSheetState extends State<ChatBotSheet>
       _showOpenClawCommandPanel(expand: true);
       return;
     }
+    if (!enabled) {
+      if (!mounted) return;
+      final disabled = await OpenClawCredentialService.disable();
+      if (!disabled.success || !mounted) return;
+      setState(() {
+        _openClawConfiguration = disabled.configuration;
+        _openClawEnabled = false;
+      });
+      return;
+    }
+    final plan = await OpenClawCredentialService.prepareDestination(
+      _openClawBaseUrl,
+    );
     if (!mounted) return;
-    setState(() => _openClawEnabled = enabled);
-    await StorageService.setBool(kOpenClawEnabledKey, enabled);
+    final outcome =
+        await confirmDataDestinationAndRun<OpenClawConfigurationMutationResult>(
+          context: context,
+          rawEndpoint: plan.baseUrl,
+          capability: 'OpenClaw Gateway',
+          operation: LegacyTextLocalizer.isEnglish ? 'Enable' : '启用',
+          dataTypes: [
+            LegacyTextLocalizer.isEnglish
+                ? 'Future prompts, conversation history, attachments, and device pairing metadata'
+                : '启用后发送的提示词、对话历史、附件和设备配对元数据',
+          ],
+          action: () => OpenClawCredentialService.saveConfirmed(
+            plan: plan,
+            baseUrl: plan.baseUrl,
+            userId: _openClawUserId,
+            enable: true,
+          ),
+        );
+    if (!outcome.confirmed || outcome.value?.success != true || !mounted)
+      return;
+    setState(() {
+      _openClawConfiguration = outcome.value!.configuration;
+      _openClawEnabled = outcome.value!.configuration?.enabled == true;
+    });
   }
 
   void _showSnackBar(String message) {
@@ -480,28 +496,57 @@ class _ChatBotSheetState extends State<ChatBotSheet>
     _hideSlashCommandPanel();
   }
 
-  Future<void> _applyOpenClawConfig({
+  Future<bool> _applyOpenClawConfig({
     required String baseUrl,
     required String token,
     String? userId,
     bool enable = true,
   }) async {
-    await StorageService.setString(kOpenClawBaseUrlKey, baseUrl);
-    await StorageService.setString(kOpenClawTokenKey, token);
-    if (userId != null && userId.isNotEmpty) {
-      await StorageService.setString(kOpenClawUserIdKey, userId);
-    }
-    if (!mounted) return;
+    final plan = await OpenClawCredentialService.prepareDestination(baseUrl);
+    if (!mounted) return false;
+    final effectiveUserId = userId?.trim().isNotEmpty == true
+        ? userId!.trim()
+        : _openClawUserId.trim();
+    final outcome =
+        await confirmDataDestinationAndRun<OpenClawConfigurationMutationResult>(
+          context: context,
+          rawEndpoint: plan.baseUrl,
+          capability: 'OpenClaw Gateway',
+          operation: LegacyTextLocalizer.isEnglish
+              ? 'Save or enable configuration'
+              : '保存或启用配置',
+          dataTypes: [
+            LegacyTextLocalizer.isEnglish
+                ? 'Gateway credential, when configured'
+                : 'Gateway 凭据（如已配置）',
+            LegacyTextLocalizer.isEnglish
+                ? 'Future prompts, conversation history, attachments, and device pairing metadata'
+                : '启用后发送的提示词、对话历史、附件和设备配对元数据',
+          ],
+          action: () async {
+            return OpenClawCredentialService.saveConfirmed(
+              plan: plan,
+              baseUrl: plan.baseUrl,
+              userId: effectiveUserId,
+              enable: enable,
+              replacementToken: token,
+            );
+          },
+        );
+    final mutation = outcome.value;
+    if (!outcome.confirmed || mutation?.success != true || !mounted)
+      return false;
+    final configuration = mutation!.configuration;
+    if (configuration == null) return false;
     setState(() {
-      _openClawBaseUrl = baseUrl;
-      _openClawToken = token;
-      if (userId != null && userId.isNotEmpty) {
-        _openClawUserId = userId;
-      }
-      _openClawEnabled = enable && baseUrl.trim().isNotEmpty;
+      _openClawConfiguration = configuration;
+      _openClawBaseUrl = configuration.baseUrl;
+      _openClawToken = '';
+      _openClawTokenController.clear();
+      _openClawUserId = configuration.userId;
+      _openClawEnabled = configuration.enabled;
     });
-    await StorageService.setBool(kOpenClawEnabledKey, _openClawEnabled);
-    await _ensureOpenClawUserId();
+    return true;
   }
 
   Future<bool> _tryHandleSlashCommand(String messageText) async {
@@ -558,12 +603,20 @@ class _ChatBotSheetState extends State<ChatBotSheet>
       return true;
     }
 
-    await _applyOpenClawConfig(
+    final saved = await _applyOpenClawConfig(
       baseUrl: baseUrl.trim(),
       token: token.trim(),
       userId: userId?.trim(),
       enable: true,
     );
+    if (!saved) {
+      _showSnackBar(
+        LegacyTextLocalizer.isEnglish
+            ? 'Destination not confirmed; OpenClaw was not enabled'
+            : '未确认接收方，OpenClaw 未启用',
+      );
+      return true;
+    }
     _messageController.clear();
     _inputFocusNode.unfocus();
     _hideSlashCommandPanel();
@@ -575,6 +628,25 @@ class _ChatBotSheetState extends State<ChatBotSheet>
     return true;
   }
 
+  Future<void> _resetOpenClawDeviceIdentity() async {
+    final result = await showOpenClawIdentityResetFlow(
+      context: context,
+      onLocalDisabled: () {
+        if (mounted) setState(() => _openClawEnabled = false);
+      },
+    );
+    if (!mounted || result == null) return;
+    _showSnackBar(
+      result.success
+          ? (LegacyTextLocalizer.isEnglish
+                ? 'Device identity reset. Restart or reconnect OpenClaw.'
+                : '设备身份已重置，请重启或重新连接 OpenClaw。')
+          : (LegacyTextLocalizer.isEnglish
+                ? 'Reset was not verified; OpenClaw remains disabled.'
+                : '无法验证重置结果；OpenClaw 保持停用。'),
+    );
+  }
+
   /// 保存当前聊天上下文到本地存储
   Future<void> _saveChatContext() async {
     try {
@@ -583,9 +655,7 @@ class _ChatBotSheetState extends State<ChatBotSheet>
           .map((msg) => msg.toJson())
           .toList();
       await StorageService.setJson(kChatContextStorageKey, contextList);
-    } catch (e) {
-      debugPrint('保存聊天上下文失败: $e');
-    }
+    } catch (e) {}
   }
 
   Future<void> _handleBeforeTaskExecute() async {
@@ -641,7 +711,6 @@ class _ChatBotSheetState extends State<ChatBotSheet>
 
       String? summary;
       if (generateSummary) {
-        debugPrint("chat bot sheet 生成对话摘要...");
         final conversationHistory = _buildConversationHistoryText();
         summary = conversationHistory.isEmpty
             ? null
@@ -670,7 +739,6 @@ class _ChatBotSheetState extends State<ChatBotSheet>
           // 同步对话ID到Kotlin层，用于任务完成后导航
           await ConversationService.setCurrentConversationId(newId);
           await ConversationHistoryService.saveCurrentConversationId(newId);
-          debugPrint('[ChatBotSheet] 创建对话成功，ID: $newId');
         }
       }
 
@@ -728,9 +796,7 @@ class _ChatBotSheetState extends State<ChatBotSheet>
           );
         }
       }
-    } catch (e) {
-      debugPrint('[ChatBotSheet] 保存对话到数据库失败: $e');
-    }
+    } catch (e) {}
   }
 
   /// 加载保存的聊天上下文并通知原生层
@@ -749,18 +815,14 @@ class _ChatBotSheetState extends State<ChatBotSheet>
 
       // 添加loading消息
       _addLoadingMessage();
-    } catch (e) {
-      debugPrint('加载聊天上下文失败: $e');
-    }
+    } catch (e) {}
   }
 
   /// 清空保存的聊天上下文
   Future<void> _clearSavedContext() async {
     try {
       await StorageService.remove(kChatContextStorageKey);
-    } catch (e) {
-      debugPrint('清空聊天上下文失败: $e');
-    }
+    } catch (e) {}
   }
 
   Future<void> _loadResumeDataAndResend() async {
@@ -799,7 +861,6 @@ class _ChatBotSheetState extends State<ChatBotSheet>
         await _sendMessage(text: prompt, appendUserBubble: false);
       }
     } catch (e) {
-      debugPrint('加载授权恢复数据失败: $e');
     } finally {
       await StorageService.remove(kChatResumeAfterAuthKey);
     }
@@ -1627,7 +1688,7 @@ class _ChatBotSheetState extends State<ChatBotSheet>
     }
 
     if (_openClawEnabled) {
-      _sendChatMessage(messageIds.aiMessageId);
+      await _sendChatMessage(messageIds.aiMessageId);
       return;
     }
 
@@ -1707,21 +1768,8 @@ class _ChatBotSheetState extends State<ChatBotSheet>
 
       return success;
     } catch (e) {
-      debugPrint('Agent flow error: $e');
       return false;
     }
-  }
-
-  List<Map<String, dynamic>> _historyBeforeLatestUser(
-    List<Map<String, dynamic>> history,
-  ) {
-    if (history.isEmpty) return history;
-    final normalized = List<Map<String, dynamic>>.from(history);
-    final last = normalized.last;
-    if ((last['role'] as String?) == 'user') {
-      normalized.removeLast();
-    }
-    return normalized;
   }
 
   String _latestUserUtterance() {
@@ -1975,7 +2023,7 @@ class _ChatBotSheetState extends State<ChatBotSheet>
     });
   }
 
-  void _sendChatMessage(String aiMessageId) {
+  Future<void> _sendChatMessage(String aiMessageId) async {
     if (!_openClawEnabled) {
       handleAgentError(
         LegacyTextLocalizer.isEnglish
@@ -1984,14 +2032,23 @@ class _ChatBotSheetState extends State<ChatBotSheet>
       );
       return;
     }
+    final configuration = _openClawConfiguration;
+    if (configuration == null ||
+        !await OpenClawCredentialService.isAuthorized(configuration)) {
+      if (mounted) setState(() => _openClawEnabled = false);
+      handleAgentError(
+        LegacyTextLocalizer.isEnglish
+            ? 'OpenClaw configuration is disabled or stale. Confirm the destination again.'
+            : 'OpenClaw 配置已停用或过期，请重新确认接收方。',
+      );
+      return;
+    }
     final history = _buildOpenClawHistory();
-    final openClawConfig = {
-      'baseUrl': _openClawBaseUrl,
-      if (_openClawToken.isNotEmpty) 'token': _openClawToken,
-      if (_openClawUserId.isNotEmpty) 'userId': _openClawUserId,
-      if (_openClawUserId.isNotEmpty)
-        'sessionKey': 'openclaw:${_openClawUserId.trim()}',
-    };
+    final openClawConfig = configuration.taskPayload(
+      sessionKey: configuration.userId.isNotEmpty
+          ? 'openclaw:${configuration.userId.trim()}'
+          : 'main',
+    );
     final Future<bool> sendFuture = _aiService.sendMessageWithProvider(
       aiMessageId,
       history,
@@ -2055,11 +2112,7 @@ class _ChatBotSheetState extends State<ChatBotSheet>
         // 移除 loading 消息
         _messages.removeWhere((msg) => msg.isLoading);
       });
-
-      debugPrint('Task cancelled, all states reset');
-    } catch (e) {
-      debugPrint('onCancelTask error: $e');
-    }
+    } catch (e) {}
   }
 
   void _onCancelTaskFromCard(String taskId) {
@@ -2076,9 +2129,7 @@ class _ChatBotSheetState extends State<ChatBotSheet>
         _isInputAreaVisible = true;
         _messages.removeWhere((msg) => msg.isLoading);
       });
-    } catch (e) {
-      debugPrint('onCancelTaskFromCard error: $e');
-    }
+    } catch (e) {}
   }
 
   void _updateThinkingCardToCancelled(String taskID) {
@@ -2490,6 +2541,7 @@ class _ChatBotSheetState extends State<ChatBotSheet>
                         const SizedBox(height: 6),
                         TextField(
                           controller: _openClawTokenController,
+                          obscureText: true,
                           decoration: InputDecoration(
                             labelText: LegacyTextLocalizer.isEnglish
                                 ? 'Token (optional)'
@@ -2506,6 +2558,25 @@ class _ChatBotSheetState extends State<ChatBotSheet>
                           decoration: const InputDecoration(
                             labelText: 'User ID（可选）',
                             isDense: true,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: OutlinedButton.icon(
+                            key: const Key(
+                              'sheet-openclaw-reset-device-identity-button',
+                            ),
+                            onPressed: _resetOpenClawDeviceIdentity,
+                            icon: const Icon(
+                              Icons.phonelink_erase_outlined,
+                              size: 17,
+                            ),
+                            label: Text(
+                              LegacyTextLocalizer.isEnglish
+                                  ? 'Reset device identity'
+                                  : '重置设备身份',
+                            ),
                           ),
                         ),
                       ],

@@ -152,7 +152,7 @@ class CacheChannel {
                                 )
                             })
                         } catch (e: Exception) {
-                            result.error("GET_APP_ICON_ERROR", e.message, null)
+                            NativeChannelErrorPrivacy.deliver(result, TAG, "GET_APP_ICON_ERROR", e)
                         }
                     }
                 }
@@ -176,7 +176,7 @@ class CacheChannel {
                                 )
                             })
                         } catch (e: Exception) {
-                            result.error("GET_APP_ICONS_ERROR", e.message, null)
+                            NativeChannelErrorPrivacy.deliver(result, TAG, "GET_APP_ICONS_ERROR", e)
                         }
                     }
                 }
@@ -194,7 +194,7 @@ class CacheChannel {
                             }
                             result.success(success)
                         } catch (e: Exception) {
-                            result.error("INSERT_APP_ICON_ERROR", e.message, null)
+                            NativeChannelErrorPrivacy.deliver(result, TAG, "INSERT_APP_ICON_ERROR", e)
                         }
                     }
                 }
@@ -223,7 +223,7 @@ class CacheChannel {
                             }
                             result.success(id)
                         } catch (e: Exception) {
-                            result.error("INSERT_MESSAGE_ERROR", e.message, null)
+                            NativeChannelErrorPrivacy.deliver(result, TAG, "INSERT_MESSAGE_ERROR", e)
                         }
                     }
                 }
@@ -256,7 +256,7 @@ class CacheChannel {
                             }
                             result.success(true)
                         } catch (e: Exception) {
-                            result.error("UPDATE_MESSAGE_ERROR", e.message, null)
+                            NativeChannelErrorPrivacy.deliver(result, TAG, "UPDATE_MESSAGE_ERROR", e)
                         }
                     }
                 }
@@ -287,7 +287,7 @@ class CacheChannel {
                                 result.success(null)
                             }
                         } catch (e: Exception) {
-                            result.error("GET_MESSAGE_BY_ID_ERROR", e.message, null)
+                            NativeChannelErrorPrivacy.deliver(result, TAG, "GET_MESSAGE_BY_ID_ERROR", e)
                         }
                     }
                 }
@@ -318,7 +318,7 @@ class CacheChannel {
                                 )
                             )
                         } catch (e: Exception) {
-                            result.error("GET_MESSAGES_BY_PAGE_ERROR", e.message, null)
+                            NativeChannelErrorPrivacy.deliver(result, TAG, "GET_MESSAGES_BY_PAGE_ERROR", e)
                         }
                     }
                 }
@@ -335,7 +335,7 @@ class CacheChannel {
                             }
                             result.success(true)
                         } catch (e: Exception) {
-                            result.error("DELETE_MESSAGE_BY_ID_ERROR", e.message, null)
+                            NativeChannelErrorPrivacy.deliver(result, TAG, "DELETE_MESSAGE_BY_ID_ERROR", e)
                         }
                     }
                 }
@@ -348,7 +348,7 @@ class CacheChannel {
                             }
                             result.success(true)
                         } catch (e: Exception) {
-                            result.error("DELETE_ALL_MESSAGES_ERROR", e.message, null)
+                            NativeChannelErrorPrivacy.deliver(result, TAG, "DELETE_ALL_MESSAGES_ERROR", e)
                         }
                     }
                 }

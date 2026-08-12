@@ -13,9 +13,10 @@ data class ModelProviderConfig(
     val readOnly: Boolean = false,
     val ready: Boolean = true,
     val statusText: String? = null,
-    val wireApi: String = OpenAiWireApi.CHAT_COMPLETIONS
+    val wireApi: String = OpenAiWireApi.CHAT_COMPLETIONS,
+    val destinationConsentValid: Boolean = false,
 ) {
-    fun isConfigured(): Boolean = baseUrl.isNotBlank()
+    fun isConfigured(): Boolean = baseUrl.isNotBlank() && (readOnly || destinationConsentValid)
 }
 
 data class ModelProviderProfile(
@@ -29,9 +30,14 @@ data class ModelProviderProfile(
     val ready: Boolean = true,
     val statusText: String? = null,
     val protocolType: String = "openai_compatible",
-    val wireApi: String = OpenAiWireApi.CHAT_COMPLETIONS
+    val wireApi: String = OpenAiWireApi.CHAT_COMPLETIONS,
+    val revision: Long = 0L,
+    val consentVersion: Int = 0,
+    val consentOrigin: String = "",
+    val consentRevision: Long = 0L,
+    val destinationConsentValid: Boolean = false,
 ) {
-    fun isConfigured(): Boolean = baseUrl.isNotBlank()
+    fun isConfigured(): Boolean = baseUrl.isNotBlank() && (readOnly || destinationConsentValid)
 }
 
 data class ProviderModelOption(

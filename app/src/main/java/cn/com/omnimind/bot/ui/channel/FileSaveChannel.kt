@@ -13,7 +13,6 @@ import android.provider.MediaStore
 import android.webkit.MimeTypeMap
 import androidx.core.content.FileProvider
 import cn.com.omnimind.baselib.i18n.AppLocaleManager
-import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.util.AssistsUtil
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
@@ -69,18 +68,17 @@ class FileSaveChannel {
             try {
                 val source = File(sourcePath)
                 if (!source.exists()) {
-                    result.error("SAVE_FAILED", "Source file missing", sourcePath)
+                    result.error("SAVE_FAILED", "Source file missing", null)
                     return true
                 }
                 if (source.length() <= 0L) {
-                    result.error("SAVE_FAILED", "Source file is empty", sourcePath)
+                    result.error("SAVE_FAILED", "Source file is empty", null)
                     return true
                 }
                 copyFileToUri(activity, source, targetUri)
                 result.success(targetUri.toString())
             } catch (e: Exception) {
-                OmniLog.e(TAG, "Failed to save file", e)
-                result.error("SAVE_FAILED", e.message, e.toString())
+                NativeChannelErrorPrivacy.deliver(result, TAG, "SAVE_FAILED", e)
             }
 
             return true
@@ -141,7 +139,7 @@ class FileSaveChannel {
         try {
             val sourceFile = File(sourcePath)
             if (!sourceFile.exists()) {
-                result.error("INVALID_ARGS", "sourcePath does not exist", sourcePath)
+                result.error("INVALID_ARGS", "sourcePath does not exist", null)
                 return
             }
             val contentUri = buildShareableContentUri(activity, sourceFile)
@@ -152,7 +150,7 @@ class FileSaveChannel {
                 intent = buildViewIntent(activity, contentUri, safeMimeType, sourceFile.name)
             }
             if (!hasIntentHandler(activity, intent)) {
-                result.error("OPEN_FAILED", "No application can open this file", safeMimeType)
+                result.error("OPEN_FAILED", "No application can open this file", null)
                 return
             }
             grantUriPermissionToResolvers(activity, intent, contentUri)
@@ -162,8 +160,7 @@ class FileSaveChannel {
             })
             result.success(true)
         } catch (e: Exception) {
-            OmniLog.e(TAG, "Failed to open file", e)
-            result.error("OPEN_FAILED", e.message, e.toString())
+            NativeChannelErrorPrivacy.deliver(result, TAG, "OPEN_FAILED", e)
         }
     }
 
@@ -185,10 +182,18 @@ class FileSaveChannel {
         try {
             val sourceFile = File(sourcePath)
             if (!sourceFile.exists()) {
-                result.error("INVALID_ARGS", "sourcePath does not exist", sourcePath)
+                result.error("INVALID_ARGS", "sourcePath does not exist", null)
                 return
             }
-            val contentUri = buildShareableContentUri(activity, sourceFile)
+            // Always stage a private export for sharing. The chooser returns
+            // before the target app opens the URI, so pointing at the caller's
+            // temporary preview file would allow it to be deleted too early.
+            val stagedFile = stageFileInCache(activity, sourceFile, fileName)
+            val contentUri = FileProvider.getUriForFile(
+                activity,
+                fileProviderAuthority(activity),
+                stagedFile
+            )
             var safeMimeType = resolveMimeType(sourceFile, mimeType)
             var intent = buildShareIntent(
                 activity = activity,
@@ -206,7 +211,7 @@ class FileSaveChannel {
                 )
             }
             if (!hasIntentHandler(activity, intent)) {
-                result.error("SHARE_FAILED", "No application can share this file", safeMimeType)
+                result.error("SHARE_FAILED", "No application can share this file", null)
                 return
             }
             grantUriPermissionToResolvers(activity, intent, contentUri)
@@ -216,8 +221,7 @@ class FileSaveChannel {
             })
             result.success(true)
         } catch (e: Exception) {
-            OmniLog.e(TAG, "Failed to share file", e)
-            result.error("SHARE_FAILED", e.message, e.toString())
+            NativeChannelErrorPrivacy.deliver(result, TAG, "SHARE_FAILED", e)
         }
     }
 
@@ -252,8 +256,7 @@ class FileSaveChannel {
             )
             result.success(true)
         } catch (e: Exception) {
-            OmniLog.e(TAG, "Failed to share text", e)
-            result.error("SHARE_FAILED", e.message, e.toString())
+            NativeChannelErrorPrivacy.deliver(result, TAG, "SHARE_FAILED", e)
         }
     }
 
@@ -280,7 +283,7 @@ class FileSaveChannel {
 
         val sourceFile = File(sourcePath)
         if (!sourceFile.exists()) {
-            result.error("INVALID_ARGS", "sourcePath does not exist", sourcePath)
+            result.error("INVALID_ARGS", "sourcePath does not exist", null)
             return
         }
 
@@ -294,7 +297,7 @@ class FileSaveChannel {
                     return
                 }
             } catch (e: Exception) {
-                OmniLog.e(TAG, "Direct save failed, fallback to system dialog", e)
+                NativeChannelErrorPrivacy.record(TAG, "SAVE_DIRECT_FAILED", e)
             }
         }
 
@@ -311,7 +314,7 @@ class FileSaveChannel {
         } catch (e: Exception) {
             pendingResult = null
             pendingSourcePath = null
-            result.error("INIT_FAILED", e.message, e.toString())
+            NativeChannelErrorPrivacy.deliver(result, TAG, "INIT_FAILED", e)
         }
     }
 
@@ -387,19 +390,23 @@ class FileSaveChannel {
         return try {
             FileProvider.getUriForFile(context, fileProviderAuthority(context), sourceFile)
         } catch (_: IllegalArgumentException) {
-            val stagedFile = stageFileInCache(context, sourceFile)
+            val stagedFile = stageFileInCache(context, sourceFile, null)
             FileProvider.getUriForFile(context, fileProviderAuthority(context), stagedFile)
         }
     }
 
-    private fun stageFileInCache(context: Context, sourceFile: File): File {
+    private fun stageFileInCache(
+        context: Context,
+        sourceFile: File,
+        preferredName: String?
+    ): File {
         val exportDir = File(context.cacheDir, SHARED_EXPORT_DIR)
         if (!exportDir.exists()) {
             exportDir.mkdirs()
         }
         cleanupSharedExports(exportDir)
 
-        val safeName = sourceFile.name.ifBlank { "shared_file" }
+        val safeName = sanitizeSharedExportName(preferredName ?: sourceFile.name)
         val prefix = System.currentTimeMillis().toString()
         val stagedFile = File(exportDir, "${prefix}_$safeName")
         sourceFile.inputStream().use { input ->
@@ -410,13 +417,26 @@ class FileSaveChannel {
         return stagedFile
     }
 
+    private fun sanitizeSharedExportName(value: String): String {
+        val sanitized = value
+            .trim()
+            .replace(Regex("[\\u0000-\\u001F\\u007F<>:\"/\\\\|?*]"), "_")
+            .take(180)
+        return sanitized.takeUnless { it.isBlank() || it == "." || it == ".." }
+            ?: "shared_file"
+    }
+
     private fun cleanupSharedExports(directory: File) {
         val files = directory.listFiles().orEmpty().sortedByDescending { it.lastModified() }
         val now = System.currentTimeMillis()
         files.forEachIndexed { index, file ->
             val expired = now - file.lastModified() > SHARED_EXPORT_RETENTION_MS
             if (expired || index >= MAX_SHARED_EXPORT_FILES) {
-                runCatching { file.delete() }
+                try {
+                    file.delete()
+                } catch (_: Exception) {
+                    // Best-effort cache maintenance; never expose the private path.
+                }
             }
         }
     }

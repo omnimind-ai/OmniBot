@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 class McpServerInfo {
@@ -37,8 +36,7 @@ class McpServerService {
     try {
       final raw = await _channel.invokeMethod<Map<dynamic, dynamic>>('state');
       return McpServerInfo.fromMap(raw);
-    } on PlatformException catch (e) {
-      debugPrint('getState failed: ${e.message}');
+    } on PlatformException catch (_) {
       return null;
     }
   }
@@ -53,8 +51,7 @@ class McpServerService {
         },
       );
       return McpServerInfo.fromMap(raw);
-    } on PlatformException catch (e) {
-      debugPrint('setEnabled failed: ${e.message}');
+    } on PlatformException catch (_) {
       rethrow;
     }
   }
@@ -63,8 +60,7 @@ class McpServerService {
     try {
       final raw = await _channel.invokeMethod<Map<dynamic, dynamic>>('refreshToken');
       return McpServerInfo.fromMap(raw);
-    } on PlatformException catch (e) {
-      debugPrint('refreshToken failed: ${e.message}');
+    } on PlatformException catch (_) {
       rethrow;
     }
   }

@@ -21,7 +21,7 @@ object OmniLog {
      * log params
      */
     private var globalTag = "[Omni]"
-    private var minLevel = Level.VERBOSE
+    private var minLevel = Level.INFO
 
     /**
      * Optional extra reporter to mirror logs elsewhere (e.g. testbot -> scheduler).
@@ -66,11 +66,14 @@ object OmniLog {
         if (!runtimeLogEnabled) return
         if (tag == "RuntimeLogStore") return
         if (tag == "[AssistsCoreChannel]") return
-        val stack = throwable?.let { buildStackTraceString(it) }
+        val safeMessage = SensitiveDataSanitizer.sanitize(message)
+        val stack = throwable?.let {
+            SensitiveDataSanitizer.sanitize(buildStackTraceString(it), MAX_STACK_TRACE_CHARS)
+        }
         val entry = RuntimeLogEntry(
             level = level,
             tag = tag,
-            message = message,
+            message = safeMessage,
             stackTrace = stack,
             isCrash = false,
         )
@@ -90,8 +93,11 @@ object OmniLog {
                 RuntimeLogEntry(
                     level = "ERROR",
                     tag = tag,
-                    message = message,
-                    stackTrace = buildStackTraceString(throwable),
+                    message = SensitiveDataSanitizer.sanitize(message),
+                    stackTrace = SensitiveDataSanitizer.sanitize(
+                        buildStackTraceString(throwable),
+                        MAX_STACK_TRACE_CHARS,
+                    ),
                     isCrash = true,
                 )
             )
@@ -113,6 +119,14 @@ object OmniLog {
         }
     }
 
+    private fun safeLogMessage(message: String, throwable: Throwable?): String {
+        val safeMessage = SensitiveDataSanitizer.sanitize(message)
+        val safeStack = throwable?.let {
+            SensitiveDataSanitizer.sanitize(buildStackTraceString(it), MAX_STACK_TRACE_CHARS)
+        }.orEmpty()
+        return if (safeStack.isBlank()) safeMessage else "$safeMessage\n$safeStack"
+    }
+
     /**
      * log verbose
      * Place at the beginning of each function call to monitor function invocation
@@ -125,8 +139,9 @@ object OmniLog {
     ) {
         if (minLevel.ordinal > Level.VERBOSE.ordinal) return
         val actualTag = globalTag + tag
-        Log.v(actualTag, message, throwable)
-        notifyReporter(tag, message, "VERBOSE")
+        val safeMessage = safeLogMessage(message, throwable)
+        Log.v(actualTag, safeMessage)
+        notifyReporter(tag, safeMessage, "VERBOSE")
     }
 
     /**
@@ -141,8 +156,9 @@ object OmniLog {
     ) {
         if (minLevel.ordinal > Level.DEBUG.ordinal) return
         val actualTag = globalTag + tag
-        Log.v(actualTag, message, throwable)
-        notifyReporter(tag, message, "DEBUG")
+        val safeMessage = safeLogMessage(message, throwable)
+        Log.d(actualTag, safeMessage)
+        notifyReporter(tag, safeMessage, "DEBUG")
     }
 
     /**
@@ -157,8 +173,9 @@ object OmniLog {
     ) {
         if (minLevel.ordinal > Level.INFO.ordinal) return
         val actualTag = globalTag + tag
-        Log.i(actualTag, message, throwable)
-        notifyReporter(tag, message, "INFO")
+        val safeMessage = safeLogMessage(message, throwable)
+        Log.i(actualTag, safeMessage)
+        notifyReporter(tag, safeMessage, "INFO")
     }
 
     /**
@@ -173,8 +190,9 @@ object OmniLog {
     ) {
         if (minLevel.ordinal > Level.WARN.ordinal) return
         val actualTag = globalTag + tag
-        Log.w(actualTag, message, throwable)
-        notifyReporter(tag, message, "WARN")
+        val safeMessage = safeLogMessage(message, throwable)
+        Log.w(actualTag, safeMessage)
+        notifyReporter(tag, safeMessage, "WARN")
     }
 
     /**
@@ -189,8 +207,9 @@ object OmniLog {
     ) {
         if (minLevel.ordinal > Level.ERROR.ordinal) return
         val actualTag = globalTag + tag
-        Log.e(actualTag, message, throwable)
-        notifyReporter(tag, message, "ERROR")
+        val safeMessage = safeLogMessage(message, throwable)
+        Log.e(actualTag, safeMessage)
+        notifyReporter(tag, safeMessage, "ERROR")
         storeRuntimeLog("ERROR", tag, message, throwable)
     }
 
@@ -206,8 +225,11 @@ object OmniLog {
     ) {
         if (minLevel.ordinal > Level.ASSERT.ordinal) return
         val actualTag = globalTag + tag
-        Log.wtf(actualTag, message, throwable)
-        notifyReporter(tag, message, "ASSERT")
+        val safeMessage = safeLogMessage(message, throwable)
+        Log.wtf(actualTag, safeMessage)
+        notifyReporter(tag, safeMessage, "ASSERT")
         storeRuntimeLog("ASSERT", tag, message, throwable)
     }
+
+    private const val MAX_STACK_TRACE_CHARS = 24_000
 }

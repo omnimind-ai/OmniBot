@@ -213,8 +213,7 @@ class VoicePlaybackCoordinator extends ChangeNotifier {
     );
     // 自定义 curl 模式无需绑定 Provider：只要命令非空即视为可用。
     final customCurlReady =
-        voiceConfig.isCustomCurl &&
-        voiceConfig.customCurlCommand.trim().isNotEmpty;
+        voiceConfig.isCustomCurl && voiceConfig.hasCustomCurlCommand;
     final nextAvailable = nextBound || customCurlReady;
     var shouldNotify = false;
     if (_isVoiceSceneBound != nextAvailable) {

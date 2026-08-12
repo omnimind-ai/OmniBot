@@ -60,7 +60,6 @@ mixin TaskExecutionHandler<T extends StatefulWidget> on State<T> {
           .toList();
       await StorageService.setJson(kChatContextStorageKey, contextList);
     } catch (e) {
-      debugPrint('保存聊天上下文失败: $e');
     }
   }
 

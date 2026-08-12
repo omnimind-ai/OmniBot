@@ -31,7 +31,5 @@ final eventListenerProvider = Provider<void>((ref) {
   final eventBus = ref.read(eventBusProvider);
   eventBus.events.listen((event) {
     // OSS 版本暂不处理扩展事件，保留占位监听避免未消费广播。
-    // ignore: avoid_print
-    print("eventBus listen: $event");
   });
 });

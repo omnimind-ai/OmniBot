@@ -693,7 +693,6 @@ mixin AgentStreamHandler<T extends StatefulWidget> on State<T> {
     final taskId = currentDispatchTaskId ?? _lastAgentTaskId;
     if (taskId == null) return;
 
-    debugPrint('Agent error: $error');
 
     currentThinkingStage = ThinkingStage.complete.value;
     isDeepThinking = false;
@@ -926,7 +925,6 @@ mixin AgentStreamHandler<T extends StatefulWidget> on State<T> {
       try {
         await persistAgentConversation();
       } catch (e) {
-        debugPrint('persistAgentConversation failed: $e');
       }
     });
   }

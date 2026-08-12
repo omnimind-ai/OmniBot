@@ -1,112 +1,45 @@
-import 'dart:async';
-import 'dart:convert';
-import 'dart:io' as io;
-
+import 'package:flutter/material.dart';
+import 'package:ui/services/openclaw_credential_service.dart';
 import 'package:ui/utils/ui.dart';
 
+/// Performs a secret-free native authorization check.
+///
+/// The former Dart WebSocket probe could race a native reset and was not registered with the
+/// native session coordinator. The real connection test is now the normal native-gated send path,
+/// which is cancelled by reset/disable and revalidates immediately before each frame is sent.
 class OpenClawConnectionChecker {
   const OpenClawConnectionChecker._();
 
-  /// 检查 OpenClaw Gateway 连接与协议兼容性，并通过全局 Toast 给出结果
-  static Future<void> checkAndToast(String baseUrl) async {
-    final normalizedBaseUrl = baseUrl.trim();
-    if (normalizedBaseUrl.isEmpty) {
-      AppToast.warning('OpenClaw Base URL 为空，请先配置');
-      return;
-    }
-
+  static Future<void> checkAndToast(
+    BuildContext context,
+    String baseUrl,
+  ) async {
     try {
-      final wsUrl = buildWsUrl(normalizedBaseUrl);
-      final ws = await io.WebSocket.connect(
-        wsUrl,
-      ).timeout(const Duration(seconds: 8));
-      final challengeReceived = await _waitForConnectChallenge(ws);
-      await ws.close(io.WebSocketStatus.normalClosure, 'config check');
-      if (challengeReceived) {
-        AppToast.success('OpenClaw 连接成功，Gateway 协议正常');
+      final configuration =
+          await OpenClawCredentialService.loadConfiguration();
+      final authorized = configuration.enabled &&
+          configuration.baseUrl == baseUrl.trim() &&
+          await OpenClawCredentialService.isAuthorized(configuration);
+      if (!context.mounted) return;
+      if (authorized) {
+        AppToast.success(
+          Localizations.localeOf(context).languageCode == 'en'
+              ? 'OpenClaw is authorized. Send a message to test the Gateway connection.'
+              : 'OpenClaw 已获本机授权，请发送一条消息测试 Gateway 连接。',
+        );
       } else {
-        AppToast.warning('OpenClaw 已连接但未收到 challenge，请检查 Gateway 版本');
+        AppToast.warning(
+          Localizations.localeOf(context).languageCode == 'en'
+              ? 'OpenClaw is disabled or stale. Confirm the destination again.'
+              : 'OpenClaw 已停用或配置过期，请重新确认接收方。',
+        );
       }
-    } on TimeoutException {
+    } catch (_) {
       AppToast.error(
-        'OpenClaw 连接超时，请检查服务地址和网络',
-        duration: const Duration(seconds: 3),
+        Localizations.localeOf(context).languageCode == 'en'
+            ? 'OpenClaw authorization could not be verified.'
+            : '无法验证 OpenClaw 本机授权状态。',
       );
-    } catch (e) {
-      String errMsg = e.toString();
-      if (errMsg.length > 100) errMsg = '${errMsg.substring(0, 100)}...';
-      AppToast.error(
-        'OpenClaw 连接失败: $errMsg',
-        duration: const Duration(seconds: 3),
-      );
-    }
-  }
-
-  /// 将 baseUrl 转换为 WebSocket URL（与 Kotlin 端保持一致）
-  static String buildWsUrl(String baseUrl) {
-    var url = baseUrl.trim();
-    if (url.endsWith('/v1/chat/completions')) {
-      url = url.substring(0, url.length - '/v1/chat/completions'.length);
-    }
-    if (url.endsWith('/v1')) {
-      url = url.substring(0, url.length - '/v1'.length);
-    }
-    url = url.replaceAll(RegExp(r'/+$'), '');
-    if (url.startsWith('ws://') || url.startsWith('wss://')) return url;
-    if (url.startsWith('https://')) {
-      return 'wss://${url.substring('https://'.length)}'.replaceAll(
-        RegExp(r'/+$'),
-        '',
-      );
-    }
-    if (url.startsWith('http://')) {
-      return 'ws://${url.substring('http://'.length)}'.replaceAll(
-        RegExp(r'/+$'),
-        '',
-      );
-    }
-    return 'ws://$url'.replaceAll(RegExp(r'/+$'), '');
-  }
-
-  static Future<bool> _waitForConnectChallenge(io.WebSocket ws) async {
-    final completer = Completer<bool>();
-    late final StreamSubscription<dynamic> subscription;
-
-    subscription = ws.listen(
-      (data) {
-        try {
-          if (data is! String) return;
-          final frame = jsonDecode(data);
-          if (frame is Map &&
-              frame['type'] == 'event' &&
-              frame['event'] == 'connect.challenge' &&
-              !completer.isCompleted) {
-            completer.complete(true);
-          }
-        } catch (_) {
-          // ignore decode errors, only challenge event matters here
-        }
-      },
-      onError: (_) {
-        if (!completer.isCompleted) {
-          completer.complete(false);
-        }
-      },
-      onDone: () {
-        if (!completer.isCompleted) {
-          completer.complete(false);
-        }
-      },
-      cancelOnError: false,
-    );
-
-    try {
-      return await completer.future.timeout(
-        const Duration(seconds: 5),
-        onTimeout: () => false,
-      );
-    } finally {
-      await subscription.cancel();
     }
   }
 }

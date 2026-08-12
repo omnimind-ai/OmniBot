@@ -19,23 +19,34 @@ data class RemoteMcpServerConfig(
     val name: String,
     val endpointUrl: String,
     val bearerToken: String = "",
+    val clearBearerToken: Boolean = false,
     val enabled: Boolean = true,
     val lastHealth: RemoteMcpHealth = RemoteMcpHealth.UNKNOWN,
     val lastError: String? = null,
     val toolCount: Int = 0,
-    val lastSyncedAt: Long? = null
+    val lastSyncedAt: Long? = null,
+    val generation: Long = 0L,
+    val consentVersion: Int = 0,
+    val consentOrigin: String = "",
+    val consentRevision: Long = 0L,
 ) {
     fun toMap(): Map<String, Any?> {
         return mapOf(
             "id" to id,
             "name" to name,
             "endpointUrl" to endpointUrl,
-            "bearerToken" to bearerToken,
+            // Credentials are write-only from Flutter. Native runtime code
+            // hydrates the encrypted value only while performing a request.
+            "bearerToken" to "",
+            "hasBearerToken" to bearerToken.isNotBlank(),
             "enabled" to enabled,
             "lastHealth" to lastHealth.value,
             "lastError" to lastError,
             "toolCount" to toolCount,
-            "lastSyncedAt" to lastSyncedAt
+            "lastSyncedAt" to lastSyncedAt,
+            "generation" to generation,
+            "consentVersion" to consentVersion,
+            "consentRevision" to consentRevision,
         )
     }
 
@@ -51,16 +62,36 @@ data class RemoteMcpServerConfig(
                 is String -> value.toLongOrNull()
                 else -> null
             }
+            val generation = when (val value = raw["generation"]) {
+                is Number -> value.toLong()
+                is String -> value.toLongOrNull() ?: 0L
+                else -> 0L
+            }
+            val consentVersion = when (val value = raw["consentVersion"]) {
+                is Number -> value.toInt()
+                is String -> value.toIntOrNull() ?: 0
+                else -> 0
+            }
+            val consentRevision = when (val value = raw["consentRevision"]) {
+                is Number -> value.toLong()
+                is String -> value.toLongOrNull() ?: 0L
+                else -> 0L
+            }
             return RemoteMcpServerConfig(
                 id = raw["id"]?.toString()?.takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString(),
                 name = raw["name"]?.toString()?.trim().orEmpty(),
                 endpointUrl = raw["endpointUrl"]?.toString()?.trim().orEmpty(),
                 bearerToken = raw["bearerToken"]?.toString() ?: "",
+                clearBearerToken = raw["clearBearerToken"] == true,
                 enabled = raw["enabled"] != false,
                 lastHealth = RemoteMcpHealth.fromValue(raw["lastHealth"]?.toString()),
                 lastError = raw["lastError"]?.toString()?.takeIf { it.isNotBlank() },
                 toolCount = toolCount,
-                lastSyncedAt = lastSyncedAt
+                lastSyncedAt = lastSyncedAt,
+                generation = generation.coerceAtLeast(0L),
+                consentVersion = consentVersion.coerceAtLeast(0),
+                consentOrigin = raw["consentOrigin"]?.toString().orEmpty(),
+                consentRevision = consentRevision.coerceAtLeast(0L),
             )
         }
     }

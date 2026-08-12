@@ -1,6 +1,7 @@
 package cn.com.omnimind.bot.terminal
 
 import cn.com.omnimind.bot.agent.AgentWorkspaceManager
+import com.rk.terminal.ui.screens.settings.WorkingMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -8,6 +9,50 @@ import org.junit.Test
 import java.io.File
 
 class EmbeddedTerminalRuntimeTest {
+    @Test
+    fun basePackageBootstrapNeverRunsFloatingLanguagePackageInstallers() {
+        val commands = listOf(
+            EmbeddedTerminalRuntime.buildBasePackageBootstrapCommand(
+                workingMode = WorkingMode.ALPINE,
+                repositorySetupCommand = "true"
+            ),
+            EmbeddedTerminalRuntime.buildBasePackageBootstrapCommand(
+                workingMode = WorkingMode.UBUNTU,
+                repositorySetupCommand = "true",
+                nodeRepositorySetupCommand = "true"
+            )
+        )
+
+        commands.forEach { command ->
+            assertFalse(command.contains("pip install"))
+            assertFalse(command.contains("npm install"))
+            assertFalse(command.contains("--upgrade"))
+            assertFalse(command.contains("|| true"))
+            assertFalse(command.contains("@latest"))
+        }
+    }
+
+    @Test
+    fun basePackageProbeDoesNotTriggerPackageManagerDownloads() {
+        val command = EmbeddedTerminalRuntime.buildBasePackageProbeCommand()
+
+        val executableLines = command.lineSequence()
+            .map(String::trim)
+            .filterNot { it.startsWith("#") }
+            .joinToString("\n")
+        assertFalse(executableLines.contains("corepack ", ignoreCase = true))
+        assertFalse(command.contains("pnpm -v"))
+        assertTrue(command.contains("__OMNIBOT_PNPM_VERSION__ missing"))
+    }
+
+    @Test
+    fun basePackageBootstrapFailureDoesNotExposeInstallerOutput() {
+        assertEquals(
+            "AGENT_RUNTIME_BASE_PACKAGE_INSTALL_FAILED",
+            EmbeddedTerminalRuntime.buildInstallFailureMessage()
+        )
+    }
+
     @Test
     fun ubuntuStartupSuppressesSudoGroupProbeWithoutRemovingAndroidGroups() {
         val initScript = File("../ReTerminal/core/main/src/main/assets/init.sh").readText()

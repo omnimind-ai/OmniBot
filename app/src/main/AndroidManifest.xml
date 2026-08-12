@@ -9,22 +9,16 @@
         android:required="false" />
 
     <uses-permission android:name="android.permission.CAMERA" />
-    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30"/>
-    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30"/>
-    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
-    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
-        android:usesPermissionFlags="neverForLocation"/>
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 
     <!--允许访问网络，必选权限-->
 
-    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
 
     <!--允许写设备缓存，用于问题排查-->
-    <uses-permission android:name="android.permission.WRITE_SETTINGS" />
     <uses-permission android:name="android.permission.INTERNET" /> <!-- 网络访问 -->
-    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" /> <!-- 检查wifi网络状态 -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" /> <!-- 检查网络状态 -->
-    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" /> <!-- 允许修改网络状态 -->
 
     <!-- 添加通知权限，Android 13+ (API 33+) 需要 -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -38,21 +32,15 @@
     <!-- 悬浮窗权限 -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <!-- Android 10及以上后台启动权限 -->
-    <uses-permission android:name="android.permission.BACKGROUND_ACTIVITY_STARTS" />
 
     <!-- 读取外部存储权限，用于检测截屏 -->
-    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
     <!-- 基本震动权限 -->
     <uses-permission android:name="android.permission.VIBRATE" />
 
     <!-- Android 12+ 触觉反馈权限（如果需要） -->
-    <uses-permission android:name="android.permission.VIBRATE_ALWAYS" />
 
     <!-- 下载APK所需权限 -->
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
-        tools:replace="android:maxSdkVersion"
-        android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
     <uses-permission
@@ -60,7 +48,6 @@
         tools:ignore="ScopedStorage" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
-    <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.READ_CALENDAR" />
     <uses-permission android:name="android.permission.WRITE_CALENDAR" />
@@ -80,7 +67,7 @@
 
     <application
         android:name=".App"
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:enableOnBackInvokedCallback="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
@@ -90,6 +77,9 @@
         android:label="@string/omni_app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.OmnibotApp">
+        <meta-data
+            android:name="${omnibotEditionMarker}"
+            android:value="true" />
         <!-- 启动页 Activity -->
         <activity
             android:name=".activity.LauncherActivity"
@@ -105,7 +95,7 @@
 
         <activity
             android:name=".activity.MainActivity"
-            android:exported="true"
+            android:exported="false"
             android:label="@string/omni_app_name"
             android:launchMode="singleTask"
             android:screenOrientation="portrait"
@@ -115,20 +105,20 @@
 
         <activity
             android:name=".activity.QuickLogEntryActivity"
-            android:exported="true"
+            android:exported="false"
             android:excludeFromRecents="true"
             android:taskAffinity=""
             android:theme="@style/Theme.OmnibotApp.BottomSheet"
             android:windowSoftInputMode="adjustResize" />
         <activity
             android:name=".activity.QuickLogWidgetSettingsActivity"
-            android:exported="true"
+            android:exported="false"
             android:excludeFromRecents="true"
             android:taskAffinity=""
             android:theme="@style/Theme.OmnibotApp.BottomSheet" />
         <activity
             android:name=".activity.QuickLogWidgetBridgeActivity"
-            android:exported="true"
+            android:exported="false"
             android:theme="@style/Theme.OmnibotApp.Transparent"
             android:excludeFromRecents="true"
             android:noHistory="true"
@@ -230,7 +220,6 @@
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:scheme="content" android:mimeType="*/*" />
-                <data android:scheme="file" android:mimeType="*/*" />
             </intent-filter>
         </activity>
 

@@ -9,6 +9,7 @@ Future<void> showAppUpdateDialog(
   BuildContext context,
   AppUpdateStatus status,
 ) async {
+  if (!AppUpdateService.isSelfUpdateAvailable) return;
   final hasDirectInstall = status.canInstall;
   final isEnglish = Localizations.localeOf(context).languageCode == 'en';
   final palette = context.omniPalette;

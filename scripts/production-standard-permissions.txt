@@ -1,0 +1,27 @@
+# Exact tag|name|maxSdkVersion|usesPermissionFlags baseline.
+uses-permission|android.permission.ACCESS_COARSE_LOCATION||
+uses-permission|android.permission.ACCESS_FINE_LOCATION||
+uses-permission|android.permission.ACCESS_NETWORK_STATE||
+uses-permission|android.permission.CAMERA||
+uses-permission|android.permission.FOREGROUND_SERVICE||
+uses-permission|android.permission.FOREGROUND_SERVICE_DATA_SYNC||
+uses-permission|android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK||
+uses-permission|android.permission.FOREGROUND_SERVICE_SPECIAL_USE||
+uses-permission|android.permission.INTERNET||
+uses-permission|android.permission.MANAGE_EXTERNAL_STORAGE||
+uses-permission|android.permission.POST_NOTIFICATIONS||
+uses-permission|android.permission.QUERY_ALL_PACKAGES||
+uses-permission|android.permission.READ_CALENDAR||
+uses-permission|android.permission.READ_EXTERNAL_STORAGE|32|
+uses-permission|android.permission.READ_MEDIA_AUDIO||
+uses-permission|android.permission.RECEIVE_BOOT_COMPLETED||
+uses-permission|android.permission.RECORD_AUDIO||
+uses-permission|android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS||
+uses-permission|android.permission.REQUEST_INSTALL_PACKAGES||
+uses-permission|android.permission.SCHEDULE_EXACT_ALARM||
+uses-permission|android.permission.SYSTEM_ALERT_WINDOW||
+uses-permission|android.permission.VIBRATE||
+uses-permission|android.permission.WAKE_LOCK||
+uses-permission|android.permission.WRITE_CALENDAR||
+uses-permission|cn.com.omnimind.bot.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION||
+uses-permission|moe.shizuku.manager.permission.API_V23||

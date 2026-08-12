@@ -5,19 +5,31 @@ import cn.com.omnimind.baselib.account.OmniAccount
 import cn.com.omnimind.baselib.database.DatabaseHelper
 import cn.com.omnimind.baselib.i18n.AppLocaleManager
 import cn.com.omnimind.baselib.llm.ModelProviderConfigStore
+import cn.com.omnimind.baselib.llm.AiRequestLogStore
+import cn.com.omnimind.baselib.llm.PlatformAiProvisioner
 import cn.com.omnimind.baselib.util.OmniLog
+import cn.com.omnimind.baselib.util.AppSecretStore
+import cn.com.omnimind.baselib.util.CredentialEndpointSecurity
 import cn.com.omnimind.bot.agent.AgentPromptSettingsStore
 import cn.com.omnimind.bot.agent.AgentWorkspaceManager
 import cn.com.omnimind.bot.agent.SkillIndexService
 import cn.com.omnimind.bot.agent.WorkspaceMemoryRollupScheduler
 import cn.com.omnimind.bot.agent.WorkspaceScheduledTaskScheduler
+import cn.com.omnimind.bot.agent.tool.handlers.LocalUserConfirmationStore
 import cn.com.omnimind.bot.activity.StartupThemeResolver
 import cn.com.omnimind.bot.cleanup.LegacyLocalModelDataCleanup
+import cn.com.omnimind.bot.mcp.McpFileInbox
 import cn.com.omnimind.bot.mcp.McpServerManager
+import cn.com.omnimind.bot.mcp.RemoteMcpConfigStore
 import cn.com.omnimind.bot.quicklog.QuickLogWidgetUpdater
 import cn.com.omnimind.bot.terminal.EmbeddedTerminalRuntime
 import cn.com.omnimind.bot.update.AppUpdateManager
+import cn.com.omnimind.bot.update.PrivacyConsentPolicy
+import cn.com.omnimind.bot.update.PrivacyConsentStore
 import cn.com.omnimind.bot.util.NestedBackgroundStateUtil
+import cn.com.omnimind.assists.openclaw.OpenClawDeviceIdentity
+import cn.com.omnimind.assists.openclaw.OpenClawTokenStore
+import cn.com.omnimind.assists.openclaw.OpenClawConfigurationStore
 import cn.com.omnimind.baselib.shizuku.ShizukuCapabilityManager
 import com.rk.resources.Res
 import com.tencent.mmkv.MMKV
@@ -70,23 +82,35 @@ class App : BaseApplication() {
             "App super.onCreate cost: ${System.currentTimeMillis() - appStartTime}ms"
         )
         instance = this
+        // This is local-only policy enforcement. A Play build cancels any
+        // self-update work that may remain after upgrading from a direct build.
+        AppUpdateManager.enforceDistributionPolicy(this)
         StartupThemeResolver.applyStoredApplicationNightMode(this)
         AppLocaleManager.applyAppLocale(this)
         com.rk.libcommons.application = this
         Res.application = this
 
         MMKV.initialize(this)
+        if (!AiRequestLogStore.initializeAndScrubLegacyContent()) {
+            OmniLog.w("AppStartup", "Stored AI request log cleanup could not be verified; content capture remains disabled")
+        }
+        LocalUserConfirmationStore.initialize(this)
+        CredentialEndpointSecurity.configureDebugLoopback(BuildConfig.DEBUG)
+        AppSecretStore.initialize(this)
+        if (!OpenClawConfigurationStore.initialize(this)) {
+            OmniLog.w("AppStartup", "OpenClaw deny gate storage is unavailable; OpenClaw remains disabled")
+        }
+        OpenClawTokenStore.initialize()
+        OpenClawDeviceIdentity.migrateLegacyIfPresent()
+        RemoteMcpConfigStore.initialize(this)
+        McpFileInbox.initialize(this)
         ModelProviderConfigStore.initialize(this)
         OmniAccount.initialize(
             context = this,
             baseUrl = BuildConfig.BASE_URL,
             platformGatewayUrl = BuildConfig.AI_GATEWAY_URL,
+            allowInsecureLoopback = BuildConfig.DEBUG,
         )
-        if (OmniAccount.isConfigured() && OmniAccount.repository().isSignedIn()) {
-            CoroutineScope(Dispatchers.IO).launch {
-                runCatching { OmniAccount.repository().getAiSettings() }
-            }
-        }
         AgentPromptSettingsStore.initializeAndCleanupLegacyFiles(this)
         LegacyLocalModelDataCleanup.start(this)
         setupUncaughtExceptionHandler()
@@ -112,20 +136,18 @@ class App : BaseApplication() {
             SkillIndexService(this, workspaceManager).seedBuiltinSkillsIfNeeded()
         }
         runCatching {
-            WorkspaceMemoryRollupScheduler(this).ensureScheduledIfEnabled()
-        }
-        runCatching {
-            WorkspaceScheduledTaskScheduler(this).rescheduleAllEnabled()
-        }
-        runCatching {
             QuickLogWidgetUpdater.updateAll(this)
         }
         runCatching {
             ShizukuCapabilityManager.get(this)
         }
 
-        initSDKsAfterPrivacyConsent()
-        McpServerManager.restoreIfEnabled(this)
+        if (PrivacyConsentPolicy.allowsAutomaticExternalActivity(
+                PrivacyConsentStore.getDecision(this)
+            )
+        ) {
+            initSDKsAfterPrivacyConsent()
+        }
         CoroutineScope(Dispatchers.IO).launch {
             runCatching {
                 EmbeddedTerminalRuntime.warmup(this@App)
@@ -160,8 +182,28 @@ class App : BaseApplication() {
     }
 
     fun initSDKsAfterPrivacyConsent() {
+        val decision = PrivacyConsentStore.getDecision(this)
+        if (!PrivacyConsentPolicy.allowsAutomaticExternalActivity(decision)) {
+            OmniLog.d("AppStartup", "Automatic external startup work is disabled by privacy policy")
+            return
+        }
         OmniLog.d("AppStartup", "initSDKsAfterPrivacyConsent start")
         AppUpdateManager.requestSilentCheckIfDue(this)
+        if (OmniAccount.isConfigured() && OmniAccount.repository().isSignedIn()) {
+            CoroutineScope(Dispatchers.IO).launch {
+                runCatching {
+                    val settings = OmniAccount.repository().getAiSettings()
+                    PlatformAiProvisioner.synchronize(settings)
+                }
+            }
+        }
+        runCatching {
+            WorkspaceMemoryRollupScheduler(this).ensureScheduledIfEnabled()
+        }
+        runCatching {
+            WorkspaceScheduledTaskScheduler(this).rescheduleAllEnabled()
+        }
+        McpServerManager.restoreIfEnabled(this)
         OmniLog.d("AppStartup", "initSDKsAfterPrivacyConsent completed")
     }
 }

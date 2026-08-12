@@ -11,12 +11,15 @@ class ModelProviderConfig {
   final String baseUrl;
   final String apiKey;
   final Map<String, String> customHeaders;
+  final bool hasApiKey;
+  final bool hasCustomHeaders;
   final String source;
   final String providerType;
   final bool readOnly;
   final bool ready;
   final String statusText;
   final bool configured;
+  final bool destinationConsentValid;
   final String wireApi;
 
   const ModelProviderConfig({
@@ -25,12 +28,15 @@ class ModelProviderConfig {
     required this.baseUrl,
     required this.apiKey,
     required this.customHeaders,
+    this.hasApiKey = false,
+    this.hasCustomHeaders = false,
     required this.source,
     required this.providerType,
     required this.readOnly,
     required this.ready,
     required this.statusText,
     required this.configured,
+    this.destinationConsentValid = false,
     required this.wireApi,
   });
 
@@ -41,12 +47,15 @@ class ModelProviderConfig {
       baseUrl: '',
       apiKey: '',
       customHeaders: <String, String>{},
+      hasApiKey: false,
+      hasCustomHeaders: false,
       source: 'none',
       providerType: 'custom',
       readOnly: false,
       ready: false,
       statusText: '',
       configured: false,
+      destinationConsentValid: false,
       wireApi: 'chat_completions',
     );
   }
@@ -59,16 +68,18 @@ class ModelProviderConfig {
       id: (map['id'] ?? '').toString(),
       name: (map['name'] ?? '').toString(),
       baseUrl: (map['baseUrl'] ?? '').toString(),
-      apiKey: (map['apiKey'] ?? '').toString(),
-      customHeaders: ModelProviderConfigService.normalizeCustomHeaders(
-        ModelProviderConfigService._readStringMap(map['customHeaders']),
-      ),
+      // BYOK secrets are write-only. Ignore legacy/native payload values.
+      apiKey: '',
+      customHeaders: const <String, String>{},
+      hasApiKey: map['hasApiKey'] == true,
+      hasCustomHeaders: map['hasCustomHeaders'] == true,
       source: (map['source'] ?? 'none').toString(),
       providerType: (map['providerType'] ?? 'custom').toString(),
       readOnly: map['readOnly'] == true,
       ready: map['ready'] == true,
       statusText: (map['statusText'] ?? '').toString(),
       configured: map['configured'] == true,
+      destinationConsentValid: map['destinationConsentValid'] == true,
       wireApi: (map['wireApi'] ?? 'chat_completions').toString(),
     );
   }
@@ -80,11 +91,15 @@ class ModelProviderProfileSummary {
   final String baseUrl;
   final String apiKey;
   final Map<String, String> customHeaders;
+  final bool hasApiKey;
+  final bool hasCustomHeaders;
   final String sourceType;
   final bool readOnly;
   final bool ready;
   final String statusText;
   final bool configured;
+  final int revision;
+  final bool destinationConsentValid;
   final String protocolType;
   final String wireApi;
 
@@ -94,11 +109,15 @@ class ModelProviderProfileSummary {
     required this.baseUrl,
     required this.apiKey,
     required this.customHeaders,
+    this.hasApiKey = false,
+    this.hasCustomHeaders = false,
     required this.sourceType,
     required this.readOnly,
     required this.ready,
     required this.statusText,
     required this.configured,
+    this.revision = 0,
+    this.destinationConsentValid = false,
     this.protocolType = 'openai_compatible',
     this.wireApi = 'chat_completions',
   });
@@ -108,15 +127,17 @@ class ModelProviderProfileSummary {
       id: (map?['id'] ?? '').toString(),
       name: (map?['name'] ?? '').toString(),
       baseUrl: (map?['baseUrl'] ?? '').toString(),
-      apiKey: (map?['apiKey'] ?? '').toString(),
-      customHeaders: ModelProviderConfigService.normalizeCustomHeaders(
-        ModelProviderConfigService._readStringMap(map?['customHeaders']),
-      ),
+      apiKey: '',
+      customHeaders: const <String, String>{},
+      hasApiKey: map?['hasApiKey'] == true,
+      hasCustomHeaders: map?['hasCustomHeaders'] == true,
       sourceType: (map?['sourceType'] ?? 'custom').toString(),
       readOnly: map?['readOnly'] == true,
       ready: map?['ready'] == true,
       statusText: (map?['statusText'] ?? '').toString(),
       configured: map?['configured'] == true,
+      revision: (map?['revision'] as num?)?.toInt() ?? 0,
+      destinationConsentValid: map?['destinationConsentValid'] == true,
       protocolType: (map?['protocolType'] ?? 'openai_compatible').toString(),
       wireApi: (map?['wireApi'] ?? 'chat_completions').toString(),
     );
@@ -129,12 +150,15 @@ class ModelProviderProfileSummary {
       baseUrl: baseUrl,
       apiKey: apiKey,
       customHeaders: customHeaders,
+      hasApiKey: hasApiKey,
+      hasCustomHeaders: hasCustomHeaders,
       source: source,
       providerType: sourceType,
       readOnly: readOnly,
       ready: ready,
       statusText: statusText,
       configured: configured,
+      destinationConsentValid: destinationConsentValid,
       wireApi: wireApi,
     );
   }
@@ -368,7 +392,6 @@ class ModelProviderConfigService {
     '/v1',
     '/compatible-mode/v1',
   ];
-
   static String _canonicalProfileId(String profileId) {
     return profileId.trim();
   }
@@ -414,8 +437,11 @@ class ModelProviderConfigService {
     String? id,
     required String name,
     required String baseUrl,
-    required String apiKey,
-    Map<String, String> customHeaders = const <String, String>{},
+    String? apiKey,
+    Map<String, String>? customHeaders,
+    bool clearApiKey = false,
+    bool clearCustomHeaders = false,
+    bool destinationConfirmed = false,
     String sourceType = 'custom',
     String protocolType = 'openai_compatible',
     String? wireApi,
@@ -425,14 +451,22 @@ class ModelProviderConfigService {
       explicitWireApi: wireApi,
       protocolType: protocolType,
     );
-    final normalizedCustomHeaders = normalizeCustomHeaders(customHeaders);
+    final normalizedCustomHeaders = customHeaders == null
+        ? null
+        : normalizeCustomHeaders(customHeaders);
     final result = await AssistsMessageService.assistCore
         .invokeMethod<Map<dynamic, dynamic>>('saveModelProviderProfile', {
           if (id != null && id.trim().isNotEmpty) 'id': id.trim(),
           'name': name,
           'baseUrl': baseUrl,
-          'apiKey': apiKey,
-          'customHeaders': normalizedCustomHeaders,
+          if (apiKey != null) 'apiKey': apiKey,
+          if (apiKey != null) 'replaceApiKey': true,
+          if (clearApiKey) 'clearApiKey': true,
+          if (normalizedCustomHeaders != null)
+            'customHeaders': normalizedCustomHeaders,
+          if (normalizedCustomHeaders != null) 'replaceCustomHeaders': true,
+          if (clearCustomHeaders) 'clearCustomHeaders': true,
+          if (destinationConfirmed) 'destinationConfirmed': true,
           'sourceType': sourceType,
           'protocolType': protocolType,
           'wireApi': resolvedWireApi,
@@ -464,12 +498,16 @@ class ModelProviderConfigService {
     required String baseUrl,
     required String apiKey,
     Map<String, String> customHeaders = const <String, String>{},
+    bool destinationConfirmed = false,
   }) async {
     final result = await AssistsMessageService.assistCore
         .invokeMethod<Map<dynamic, dynamic>>('saveModelProviderConfig', {
           'baseUrl': baseUrl,
           'apiKey': apiKey,
+          'replaceApiKey': true,
           'customHeaders': normalizeCustomHeaders(customHeaders),
+          'replaceCustomHeaders': true,
+          if (destinationConfirmed) 'destinationConfirmed': true,
         });
     return ModelProviderConfig.fromMap(result);
   }
@@ -582,34 +620,51 @@ class ModelProviderConfigService {
 
   static Future<List<ProviderModelOption>> fetchModels({
     String apiBase = '',
-    String apiKey = '',
-    Map<String, String> customHeaders = const <String, String>{},
+    String? apiKey,
+    Map<String, String>? customHeaders,
     String? profileId,
     String providerName = '',
+    bool destinationConfirmed = false,
   }) async {
+    // Capture the persisted profile before starting the network request. A
+    // response obtained for an older profile revision must never replace the
+    // cache belonging to a newer endpoint or credential set.
+    final targetProfileId = await _resolveProfileId(profileId);
+    final profileSnapshot = targetProfileId == null
+        ? null
+        : await _findProfileById(targetProfileId);
     final result = await AssistsMessageService.assistCore
         .invokeMethod<List<dynamic>>('fetchProviderModels', {
           'apiBase': apiBase,
-          'apiKey': apiKey,
-          'customHeaders': normalizeCustomHeaders(customHeaders),
+          if (apiKey != null) 'apiKey': apiKey,
+          if (apiKey != null) 'useProvidedApiKey': true,
+          if (customHeaders != null)
+            'customHeaders': normalizeCustomHeaders(customHeaders),
+          if (customHeaders != null) 'useProvidedCustomHeaders': true,
           if (profileId != null && profileId.trim().isNotEmpty)
             'profileId': profileId.trim(),
+          if (profileSnapshot != null)
+            'expectedProfileRevision': profileSnapshot.revision,
+          if (profileSnapshot != null)
+            'expectedProfileBaseUrl': profileSnapshot.baseUrl,
+          if (destinationConfirmed) 'destinationConfirmed': true,
         });
     final models = (result ?? const [])
         .map((item) => ProviderModelOption.fromMap(item as Map?))
         .where((item) => item.id.isNotEmpty)
         .toList();
 
-    final targetProfileId = await _resolveProfileId(profileId);
     var cacheBase = normalizeApiBase(apiBase) ?? '';
+    if (cacheBase.isEmpty && profileSnapshot != null) {
+      cacheBase = normalizeApiBase(profileSnapshot.baseUrl) ?? '';
+    }
     if (cacheBase.isEmpty) {
       final config = await getConfig();
-      cacheBase = config.baseUrl;
+      cacheBase = normalizeApiBase(config.baseUrl) ?? '';
     }
     var resolvedProviderName = providerName.trim();
-    if (resolvedProviderName.isEmpty && targetProfileId != null) {
-      final profile = await _findProfileById(targetProfileId);
-      resolvedProviderName = profile?.name ?? '';
+    if (resolvedProviderName.isEmpty && profileSnapshot != null) {
+      resolvedProviderName = profileSnapshot.name;
     }
     final enrichedModels = await enrichModelsForProfile(
       profileId: targetProfileId ?? '',
@@ -617,13 +672,24 @@ class ModelProviderConfigService {
       apiBase: cacheBase,
       models: models,
     );
-    if (targetProfileId != null) {
+    if (targetProfileId != null && profileSnapshot != null) {
       try {
-        await _saveCachedFetchedModels(
-          profileId: targetProfileId,
-          apiBase: cacheBase,
-          models: enrichedModels,
-        );
+        final latestProfile = await _findProfileById(targetProfileId);
+        final requestedBase = normalizeApiBase(apiBase) ?? '';
+        final snapshotBase = normalizeApiBase(profileSnapshot.baseUrl) ?? '';
+        final requestMatchesSnapshot =
+            requestedBase.isEmpty ||
+            (snapshotBase.isNotEmpty && requestedBase == snapshotBase);
+        if (latestProfile != null &&
+            requestMatchesSnapshot &&
+            _sameProfileCacheIdentity(profileSnapshot, latestProfile)) {
+          await _saveCachedFetchedModels(
+            profileId: targetProfileId,
+            apiBase: cacheBase,
+            models: enrichedModels,
+            profileRevision: profileSnapshot.revision,
+          );
+        }
       } catch (_) {
         // ignore cache write failures
       }
@@ -635,6 +701,7 @@ class ModelProviderConfigService {
   static Future<List<ProviderModelOption>> getCachedFetchedModels({
     required String profileId,
     String apiBase = '',
+    int? profileRevision,
   }) async {
     final normalizedProfileId = _canonicalProfileId(profileId);
     await _migrateLegacyStorageIfNeeded(normalizedProfileId);
@@ -660,6 +727,17 @@ class ModelProviderConfigService {
       if (requestedBase.isNotEmpty && cacheBase != requestedBase) {
         return const [];
       }
+      final cachedRevision = _readCacheRevision(bucket['profileRevision']);
+      if (profileRevision != null) {
+        if (profileRevision > 0 && cachedRevision != profileRevision) {
+          return const [];
+        }
+        if (profileRevision == 0 &&
+            cachedRevision != null &&
+            cachedRevision != 0) {
+          return const [];
+        }
+      }
       final modelsRaw = bucket['models'];
       if (modelsRaw is! List) {
         return const [];
@@ -677,11 +755,13 @@ class ModelProviderConfigService {
     required String profileId,
     required String apiBase,
     required List<ProviderModelOption> models,
+    int? profileRevision,
   }) async {
     await _saveCachedFetchedModels(
       profileId: profileId,
       apiBase: apiBase,
       models: models,
+      profileRevision: profileRevision,
     );
   }
 
@@ -689,19 +769,36 @@ class ModelProviderConfigService {
     required String profileId,
     required String apiBase,
     required List<ProviderModelOption> models,
+    int? profileRevision,
   }) async {
     final normalizedProfileId = _canonicalProfileId(profileId);
     await _migrateLegacyStorageIfNeeded(normalizedProfileId);
     final current = _readJsonMap(_kCachedFetchedModelsKey);
+    final existing = current[normalizedProfileId];
+    final existingRevision = existing is Map
+        ? _readCacheRevision(existing['profileRevision'])
+        : null;
+    // The synchronous read/compare/set invocation runs on one Dart isolate,
+    // and SharedPreferences updates its local cache as setString is invoked.
+    // Thus a late old response observes (and cannot replace) a newer revision
+    // without retaining a Future mutex across unrelated Flutter test zones.
+    if (existingRevision != null &&
+        (profileRevision == null || existingRevision > profileRevision)) {
+      return;
+    }
     final normalizedBase = normalizeApiBase(apiBase) ?? '';
     current[normalizedProfileId] = {
       'apiBase': normalizedBase,
+      if (profileRevision != null) 'profileRevision': profileRevision,
       'models': models.map((item) => item.toMap()).toList(),
     };
-    await StorageService.setString(
+    final persisted = await StorageService.setString(
       _kCachedFetchedModelsKey,
       jsonEncode(current),
     );
+    if (!persisted) {
+      throw StateError('provider model cache persistence failed');
+    }
   }
 
   static Future<List<String>> getManualModelIds({
@@ -759,12 +856,32 @@ class ModelProviderConfigService {
     bool enrichMetadata = true,
   }) async {
     final normalizedProfileId = _canonicalProfileId(profileId);
-    final manualModelIds = await getManualModelIds(
-      profileId: normalizedProfileId,
-    );
-    final remoteModels = await getCachedFetchedModels(
-      profileId: normalizedProfileId,
-    );
+    final resolvedProfile = profile ?? await _findProfileById(profileId);
+    final isOfficial = resolvedProfile?.sourceType == 'omnibot_official';
+    final manualModelIds = isOfficial
+        ? const <String>[]
+        : await getManualModelIds(profileId: normalizedProfileId);
+    List<ProviderModelOption> remoteModels;
+    if (isOfficial && resolvedProfile?.ready == true) {
+      try {
+        remoteModels = await fetchModels(
+          profileId: normalizedProfileId,
+          providerName: resolvedProfile?.name ?? '',
+        );
+      } catch (_) {
+        remoteModels = await getCachedFetchedModels(
+          profileId: normalizedProfileId,
+          apiBase: resolvedProfile?.baseUrl ?? '',
+          profileRevision: resolvedProfile?.revision,
+        );
+      }
+    } else {
+      remoteModels = await getCachedFetchedModels(
+        profileId: normalizedProfileId,
+        apiBase: resolvedProfile?.baseUrl ?? '',
+        profileRevision: resolvedProfile?.revision,
+      );
+    }
     final merged = mergeModelOptions(
       remoteModels: remoteModels,
       manualModelIds: manualModelIds,
@@ -772,7 +889,6 @@ class ModelProviderConfigService {
     if (!enrichMetadata || merged.isEmpty) {
       return merged;
     }
-    final resolvedProfile = profile ?? await _findProfileById(profileId);
     return enrichModelsForProfile(
       profileId: normalizedProfileId,
       providerName: resolvedProfile?.name ?? '',
@@ -789,6 +905,9 @@ class ModelProviderConfigService {
       profileId,
       profile: profile,
     );
+    if (profile?.sourceType == 'omnibot_official') {
+      return storedModels;
+    }
     final hiddenModelIds = await getHiddenChatModelIds(profileId: profileId);
     return filterChatModelOptions(
       models: storedModels,
@@ -899,6 +1018,23 @@ class ModelProviderConfigService {
       // Ignore lookup failures; metadata enrichment can still use base URL.
     }
     return null;
+  }
+
+  static bool _sameProfileCacheIdentity(
+    ModelProviderProfileSummary left,
+    ModelProviderProfileSummary right,
+  ) {
+    return left.id == right.id &&
+        left.revision == right.revision &&
+        normalizeApiBase(left.baseUrl) == normalizeApiBase(right.baseUrl) &&
+        left.sourceType == right.sourceType &&
+        left.configured == right.configured;
+  }
+
+  static int? _readCacheRevision(Object? value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '');
   }
 
   static Map<String, dynamic> _readJsonMap(String key) {
@@ -1156,19 +1292,5 @@ class ModelProviderConfigService {
         return acc;
       }),
     );
-  }
-
-  static Map<String, String> _readStringMap(Object? value) {
-    if (value is Map) {
-      final result = <String, String>{};
-      value.forEach((key, item) {
-        if (key == null) {
-          return;
-        }
-        result[key.toString()] = item?.toString() ?? '';
-      });
-      return result;
-    }
-    return const <String, String>{};
   }
 }

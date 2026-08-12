@@ -18,7 +18,7 @@ class RemoteMcpConfigService {
   static Future<RemoteMcpServer?> upsertServer(RemoteMcpServer server) async {
     final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
       'upsertServer',
-      server.toMap(),
+      {...server.toMap(), 'destinationConfirmed': true},
     );
     if (result == null) return null;
     return RemoteMcpServer.fromMap(result);
@@ -29,21 +29,34 @@ class RemoteMcpConfigService {
   }
 
   static Future<RemoteMcpServer?> setServerEnabled(
-    String id,
+    RemoteMcpServer server,
     bool enabled,
   ) async {
     final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
       'setServerEnabled',
-      {'id': id, 'enabled': enabled},
+      {
+        'id': server.id,
+        'enabled': enabled,
+        'expectedEndpointUrl': server.endpointUrl,
+        'expectedGeneration': server.generation,
+        'destinationConfirmed': enabled,
+      },
     );
     if (result == null) return null;
     return RemoteMcpServer.fromMap(result);
   }
 
-  static Future<RemoteMcpServer?> refreshServerTools(String id) async {
+  static Future<RemoteMcpServer?> refreshServerTools(
+    RemoteMcpServer server,
+  ) async {
     final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
       'refreshServerTools',
-      {'id': id},
+      {
+        'id': server.id,
+        'expectedEndpointUrl': server.endpointUrl,
+        'expectedGeneration': server.generation,
+        'destinationConfirmed': true,
+      },
     );
     final serverMap = result?['server'] as Map<dynamic, dynamic>?;
     if (serverMap == null) return null;

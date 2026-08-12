@@ -9,11 +9,9 @@ class DeviceService {
     try {
       final String? androidId = await _methodChannel.invokeMethod('getAndroidId');
       return androidId;
-    } on PlatformException catch (e) {
-      print('获取Android ID失败: ${e.message}');
+    } on PlatformException catch (_) {
       return null;
-    } catch (e) {
-      print('获取Android ID时发生未知错误: $e');
+    } catch (_) {
       return null;
     }
   }
@@ -23,11 +21,9 @@ class DeviceService {
     try {
       final result = await _methodChannel.invokeMethod('getDeviceInfo');
       return _mapFromResult(result);
-    } on PlatformException catch (e) {
-      print('获取设备信息失败: ${e.message}');
+    } on PlatformException catch (_) {
       return null;
-    } catch (e) {
-      print('获取设备信息时发生未知错误: $e');
+    } catch (_) {
       return null;
     }
   }
@@ -37,11 +33,9 @@ class DeviceService {
     try {
       final String? ipAddress = await _methodChannel.invokeMethod('getIpAddress');
       return ipAddress;
-    } on PlatformException catch (e) {
-      print('获取IP地址失败: ${e.message}');
+    } on PlatformException catch (_) {
       return null;
-    } catch (e) {
-      print('获取IP地址时发生未知错误: $e');
+    } catch (_) {
       return null;
     }
   }
@@ -54,11 +48,9 @@ class DeviceService {
         return null;
       }
       return Map<String, dynamic>.from(result);
-    } on PlatformException catch (e) {
-      print('获取应用版本失败: ${e.message}');
+    } on PlatformException catch (_) {
       return null;
-    } catch (e) {
-      print('获取应用版本时发生未知错误: $e');
+    } catch (_) {
       return null;
     }
   }
@@ -69,8 +61,7 @@ class DeviceService {
     if (result is Map) {
       try {
         return result.map((key, value) => MapEntry(key?.toString() ?? '', value));
-      } catch (e) {
-        print('无法将结果转换为 Map<String, dynamic>: $e');
+      } catch (_) {
         return null;
       }
     }

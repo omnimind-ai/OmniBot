@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_switch/flutter_switch.dart';
-import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:ui/l10n/l10n.dart';
 import 'package:ui/services/special_permission.dart';
 import 'package:ui/theme/theme_context.dart';
@@ -26,6 +25,8 @@ class _AuthorizeSettingPageState extends State<AuthorizeSettingPage>
   bool _overlayPermission = false;
   bool _installedAppsPermission = false;
   bool _publicStoragePermission = false;
+  AppEditionCapabilitySnapshot _capabilities =
+      AppEditionCapabilitySnapshot.unavailable;
   ShizukuStatusSnapshot _shizukuStatus = ShizukuStatusSnapshot.fallback();
 
   Color get _pageBackground => context.omniPalette.pageBackground;
@@ -34,11 +35,13 @@ class _AuthorizeSettingPageState extends State<AuthorizeSettingPage>
   Color get _tertiaryTextColor => context.omniPalette.textTertiary;
   Color get _accentColor => context.omniPalette.accentPrimary;
   Color get _switchInactiveColor => context.omniPalette.borderStrong;
-  int get _corePermissionCount => 3;
+  bool get _installedAppsAvailable => _capabilities.installedAppsQuery;
+  bool get _publicStorageAvailable => _capabilities.publicStorageAccess;
+  int get _corePermissionCount => _installedAppsAvailable ? 3 : 2;
   int get _readyCorePermissionCount => <bool>[
     _backgroundRunning,
     _overlayPermission,
-    _installedAppsPermission,
+    if (_installedAppsAvailable) _installedAppsPermission,
   ].where((value) => value).length;
   bool get _allCorePermissionsEnabled =>
       _readyCorePermissionCount == _corePermissionCount;
@@ -74,8 +77,8 @@ class _AuthorizeSettingPageState extends State<AuthorizeSettingPage>
       setState(() {
         notificationEnabled = notification;
       });
-    } catch (e) {
-      debugPrint('Error loading settings: $e');
+    } catch (_) {
+      // Keep the safe default when the preference store is unavailable.
     }
   }
 
@@ -102,7 +105,7 @@ class _AuthorizeSettingPageState extends State<AuthorizeSettingPage>
         ),
         items: [
           _AuthorizeSettingItem(
-            icon: LucideIcons.bell,
+            icon: Icons.notifications_none_rounded,
             title: context.l10n.authorizeReceiveNotifications,
             subtitle: context.l10n.authorizeNotificationsDesc,
             trailing: _buildSwitchTrailing(
@@ -118,12 +121,16 @@ class _AuthorizeSettingPageState extends State<AuthorizeSettingPage>
       _AuthorizeSettingSection(
         label: _localeText(zh: '核心权限', en: 'Core Permissions'),
         subtitle: _localeText(
-          zh: '这些授权用于悬浮显示、后台运行和识别已安装应用。',
-          en: 'These permissions support overlays, background operation, and installed-app discovery.',
+          zh: _installedAppsAvailable
+              ? '这些授权用于悬浮显示、后台运行和识别已安装应用。'
+              : '这些授权用于悬浮显示和后台运行。',
+          en: _installedAppsAvailable
+              ? 'These permissions support overlays, background operation, and installed-app discovery.'
+              : 'These permissions support overlays and background operation.',
         ),
         items: [
           _AuthorizeSettingItem(
-            icon: LucideIcons.batteryCharging,
+            icon: Icons.battery_saver_outlined,
             title: context.trLegacy('后台运行权限'),
             subtitle: _localeText(
               zh: '减少系统回收，让消息、定时任务和本机服务在后台稳定继续。',
@@ -138,7 +145,7 @@ class _AuthorizeSettingPageState extends State<AuthorizeSettingPage>
             },
           ),
           _AuthorizeSettingItem(
-            icon: LucideIcons.pictureInPicture2,
+            icon: Icons.picture_in_picture_alt_outlined,
             title: context.trLegacy('悬浮窗权限'),
             subtitle: _localeText(
               zh: '允许小万在其他应用上方显示宠物、半屏聊天和任务提醒。',
@@ -152,23 +159,26 @@ class _AuthorizeSettingPageState extends State<AuthorizeSettingPage>
               spePermission.invokeMethod('openOverlaySettings');
             },
           ),
-          _AuthorizeSettingItem(
-            icon: LucideIcons.layoutGrid,
-            title: context.trLegacy('应用列表读取'),
-            subtitle: _localeText(
-              zh: '用于识别设备已安装应用，并提供应用上下文。',
-              en: 'Used to identify installed apps and provide app context.',
+          if (_installedAppsAvailable)
+            _AuthorizeSettingItem(
+              icon: Icons.apps_outlined,
+              title: context.trLegacy('应用列表读取'),
+              subtitle: _localeText(
+                zh: '用于识别设备已安装应用，并提供应用上下文。',
+                en: 'Used to identify installed apps and provide app context.',
+              ),
+              trailing: _buildPermissionTrailing(
+                label: context.trLegacy(
+                  _installedAppsPermission ? '已开启' : '去开启',
+                ),
+                color: _installedAppsPermission
+                    ? _tertiaryTextColor
+                    : _accentColor,
+              ),
+              onTap: () {
+                openInstalledAppsSettings();
+              },
             ),
-            trailing: _buildPermissionTrailing(
-              label: context.trLegacy(_installedAppsPermission ? '已开启' : '去开启'),
-              color: _installedAppsPermission
-                  ? _tertiaryTextColor
-                  : _accentColor,
-            ),
-            onTap: () {
-              spePermission.invokeMethod('openInstalledAppsSettings');
-            },
-          ),
         ],
       ),
       _AuthorizeSettingSection(
@@ -178,25 +188,26 @@ class _AuthorizeSettingPageState extends State<AuthorizeSettingPage>
           en: 'Enable when needed for broader system-level capabilities and compatibility.',
         ),
         items: [
-          _AuthorizeSettingItem(
-            icon: LucideIcons.folderOpen,
-            title: _localeText(zh: '所有文件访问权限', en: 'All files access'),
-            subtitle: _localeText(
-              zh: '允许小万访问设备公共存储中的文件与文件夹，用于文件读取、整理和下载等操作。',
-              en: 'Allow Omnibot to read and manage files in shared device storage for file tasks and downloads.',
+          if (_publicStorageAvailable)
+            _AuthorizeSettingItem(
+              icon: Icons.folder_open_rounded,
+              title: _localeText(zh: '所有文件访问权限', en: 'All files access'),
+              subtitle: _localeText(
+                zh: '允许小万访问设备公共存储中的文件与文件夹，用于文件读取、整理和下载等操作。',
+                en: 'Allow Omnibot to read and manage files in shared device storage for file tasks and downloads.',
+              ),
+              trailing: _buildPermissionTrailing(
+                label: context.trLegacy(
+                  _publicStoragePermission ? '已开启' : '去开启',
+                ),
+                color: _publicStoragePermission
+                    ? _tertiaryTextColor
+                    : _accentColor,
+              ),
+              onTap: openPublicStorageSettings,
             ),
-            trailing: _buildPermissionTrailing(
-              label: context.trLegacy(_publicStoragePermission ? '已开启' : '去开启'),
-              color: _publicStoragePermission
-                  ? _tertiaryTextColor
-                  : _accentColor,
-            ),
-            onTap: () {
-              openPublicStorageSettings();
-            },
-          ),
           _AuthorizeSettingItem(
-            icon: LucideIcons.usb,
+            icon: Icons.adb_rounded,
             title: context.trLegacy('Shizuku 权限'),
             subtitle: _shizukuStatus.localizedGuide,
             trailing: _buildPermissionTrailing(
@@ -219,19 +230,24 @@ class _AuthorizeSettingPageState extends State<AuthorizeSettingPage>
 
   Future<void> _checkPermissions() async {
     try {
+      final capabilities = await refreshAppEditionCapabilitySnapshot();
       final backgroundRunning = await isBackgroundRunAllowed();
       final overlayPermission =
           await spePermission.invokeMethod('isOverlayPermission') ?? false;
-      final installedAppsPermission =
-          await spePermission.invokeMethod(
-            'isInstalledAppsPermissionGranted',
-          ) ??
-          false;
-      final publicStoragePermission = await isPublicStorageAccessGranted();
+      final installedAppsPermission = capabilities.installedAppsQuery
+          ? await spePermission.invokeMethod(
+                  'isInstalledAppsPermissionGranted',
+                ) ??
+                false
+          : false;
+      final publicStoragePermission = capabilities.publicStorageAccess
+          ? await isPublicStorageAccessGranted()
+          : false;
       final shizukuStatus = await getShizukuStatus();
 
       if (mounted) {
         setState(() {
+          _capabilities = capabilities;
           _backgroundRunning = backgroundRunning;
           _overlayPermission = overlayPermission;
           _installedAppsPermission = installedAppsPermission;
@@ -239,8 +255,8 @@ class _AuthorizeSettingPageState extends State<AuthorizeSettingPage>
           _shizukuStatus = shizukuStatus;
         });
       }
-    } catch (e) {
-      debugPrint('Error checking permissions: $e');
+    } catch (_) {
+      // Permission probes fail closed and retain the last visible state.
     }
   }
 
@@ -451,7 +467,7 @@ class _AuthorizeSettingPageState extends State<AuthorizeSettingPage>
                 Padding(
                   padding: const EdgeInsets.only(left: 12),
                   child: Icon(
-                    LucideIcons.chevronRight,
+                    Icons.chevron_right_rounded,
                     size: 18,
                     color: _tertiaryTextColor,
                   ),
@@ -490,7 +506,11 @@ class _AuthorizeSettingPageState extends State<AuthorizeSettingPage>
             ),
           ),
           const SizedBox(width: 4),
-          Icon(LucideIcons.chevronRight, size: 18, color: _tertiaryTextColor),
+          Icon(
+            Icons.chevron_right_rounded,
+            size: 18,
+            color: _tertiaryTextColor,
+          ),
         ],
       ),
     );

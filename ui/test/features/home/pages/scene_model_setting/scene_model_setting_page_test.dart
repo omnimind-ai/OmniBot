@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_switch/flutter_switch.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:ui/core/router/go_router_manager.dart';
 import 'package:ui/features/home/pages/agent/remote_codex_setting_page.dart';
 import 'package:ui/features/home/pages/scene_model_setting/scene_model_setting_page.dart';
 import 'package:ui/l10n/generated/app_localizations.dart';
@@ -59,6 +60,7 @@ void main() {
 
   Widget buildTestApp(Widget child, {Locale locale = const Locale('zh')}) {
     return MaterialApp(
+      navigatorKey: GoRouterManager.rootNavigatorKey,
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
@@ -68,23 +70,78 @@ void main() {
     );
   }
 
+  Future<void> confirmDestination(WidgetTester tester) async {
+    expect(
+      find.byKey(const Key('data-destination-confirmation-dialog')),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const Key('data-destination-acknowledgement')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('data-destination-confirm')));
+    await tester.pumpAndSettle();
+  }
+
+  Future<void> confirmDestinationWithoutSettling(WidgetTester tester) async {
+    expect(
+      find.byKey(const Key('data-destination-confirmation-dialog')),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const Key('data-destination-acknowledgement')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('data-destination-confirm')));
+    await tester.pump();
+  }
+
+  Future<void> pumpSceneSettings(WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1080, 2200);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(buildTestApp(const SceneModelSettingPage()));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+  }
+
   late Map<String, dynamic> savedVoiceConfig;
   late Map<String, dynamic> codexReadConfig;
   late Map<String, dynamic>? savedCodexConfig;
   late int codexWriteCount;
   late bool providerConfigured;
+  late String providerBaseUrl;
+  late int providerRevision;
+  late String providerSourceType;
+  late bool providerReadOnly;
+  late bool providerReady;
+  late int providerFetchCount;
+  late List<Map<String, dynamic>> providerFetchResponse;
+  late Completer<List<Map<String, dynamic>>>? providerFetchCompleter;
+  late Object? providerFetchError;
+  late Map<dynamic, dynamic>? lastProviderFetchArguments;
 
   setUp(() async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     await StorageService.init();
     await VoicePlaybackCoordinator.instance.debugResetForTest();
+    ModelsDevCatalogService.setCatalogForTesting(
+      ModelsDevCatalogService.parseCatalog(_modelsDevCatalogJson),
+    );
     codexWriteCount = 0;
     providerConfigured = true;
+    providerBaseUrl = 'https://example.com/v1';
+    providerRevision = 1;
+    providerSourceType = 'custom';
+    providerReadOnly = false;
+    providerReady = true;
+    providerFetchCount = 0;
+    providerFetchResponse = <Map<String, dynamic>>[];
+    providerFetchCompleter = null;
+    providerFetchError = null;
+    lastProviderFetchArguments = null;
     savedCodexConfig = null;
     codexReadConfig = <String, dynamic>{
       'remoteEnabled': true,
       'remoteBridgeUrl': 'ws://192.168.1.2:17321/codex',
-      'remoteBridgeToken': 'test-token',
+      'hasRemoteBridgeToken': true,
       'remoteCwd': '/Users/name/code/project',
     };
     savedVoiceConfig = <String, dynamic>{
@@ -142,16 +199,33 @@ void main() {
                   <String, dynamic>{
                     'id': 'provider-1',
                     'name': 'Provider One',
-                    'baseUrl': 'https://example.com/v1',
+                    'baseUrl': providerBaseUrl,
                     'apiKey': 'secret',
+                    'hasApiKey': true,
                     'configured': providerConfigured,
+                    'destinationConsentValid': providerConfigured,
+                    'sourceType': providerSourceType,
+                    'readOnly': providerReadOnly,
+                    'ready': providerReady,
+                    'revision': providerRevision,
                     'protocolType': 'openai_compatible',
                   },
                 ],
                 'editingProfileId': 'provider-1',
               };
             case 'fetchProviderModels':
-              return <Map<String, dynamic>>[];
+              providerFetchCount += 1;
+              lastProviderFetchArguments = call.arguments as Map?;
+              final error = providerFetchError;
+              if (error != null) {
+                throw PlatformException(
+                  code: 'FETCH_FAILED',
+                  message: error.toString(),
+                );
+              }
+              final pending = providerFetchCompleter;
+              if (pending != null) return pending.future;
+              return providerFetchResponse;
             case 'getSceneVoiceConfig':
               return savedVoiceConfig;
             case 'saveSceneVoiceConfig':
@@ -173,7 +247,15 @@ void main() {
                 (call.arguments as Map).cast<String, dynamic>(),
               );
               codexWriteCount += 1;
-              return <String, dynamic>{...savedCodexConfig!};
+              return <String, dynamic>{
+                'remoteEnabled': savedCodexConfig!['remoteEnabled'],
+                'remoteBridgeUrl': savedCodexConfig!['remoteBridgeUrl'],
+                'hasRemoteBridgeToken':
+                    (savedCodexConfig!['remoteBridgeToken'] as String)
+                        .isNotEmpty ||
+                    codexReadConfig['hasRemoteBridgeToken'] == true,
+                'remoteCwd': savedCodexConfig!['remoteCwd'],
+              };
             default:
               return null;
           }
@@ -181,6 +263,10 @@ void main() {
   });
 
   tearDown(() async {
+    final pending = providerFetchCompleter;
+    if (pending != null && !pending.isCompleted) {
+      pending.complete(<Map<String, dynamic>>[]);
+    }
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, null);
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -199,6 +285,7 @@ void main() {
     await ModelProviderConfigService.saveCachedFetchedModels(
       profileId: 'provider-1',
       apiBase: 'https://example.com/v1',
+      profileRevision: providerRevision,
       models: const [
         ProviderModelOption(id: 'scene-model', displayName: 'scene-model'),
       ],
@@ -232,6 +319,239 @@ void main() {
       await tester.pump(const Duration(milliseconds: 1));
     }
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('scene entry shows BYOK cache without fetching provider models', (
+    tester,
+  ) async {
+    await ModelProviderConfigService.saveCachedFetchedModels(
+      profileId: 'provider-1',
+      apiBase: providerBaseUrl,
+      profileRevision: providerRevision,
+      models: const <ProviderModelOption>[
+        ProviderModelOption(id: 'cached-model', displayName: 'Cached model'),
+      ],
+    );
+
+    await pumpSceneSettings(tester);
+
+    expect(providerFetchCount, 0);
+    expect(
+      find.byKey(const Key('scene-model-refresh-provider-models-button')),
+      findsOneWidget,
+    );
+    await tester.tap(
+      find.byKey(
+        const Key('scene-model-selector-scene.compactor.context.chat'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('cached-model'), findsOneWidget);
+  });
+
+  testWidgets('manual BYOK refresh confirms once before fetch', (tester) async {
+    providerFetchResponse = <Map<String, dynamic>>[
+      <String, dynamic>{'id': 'fresh-model', 'displayName': 'Fresh model'},
+    ];
+    await pumpSceneSettings(tester);
+
+    await tester.tap(
+      find.byKey(const Key('scene-model-refresh-provider-models-button')),
+    );
+    await tester.pump();
+
+    expect(providerFetchCount, 0);
+    expect(
+      find.byKey(const Key('data-destination-confirmation-dialog')),
+      findsOneWidget,
+    );
+    expect(find.text('https://example.com:443'), findsOneWidget);
+    expect(find.textContaining('/v1'), findsNothing);
+
+    await confirmDestination(tester);
+
+    expect(providerFetchCount, 1);
+    expect(lastProviderFetchArguments?['apiBase'], providerBaseUrl);
+    expect(lastProviderFetchArguments?['profileId'], 'provider-1');
+    expect(lastProviderFetchArguments?['destinationConfirmed'], isTrue);
+    expect(
+      find.byKey(const Key('data-destination-confirmation-dialog')),
+      findsNothing,
+    );
+    expect(
+      tester
+          .widget<OutlinedButton>(
+            find.byKey(const Key('scene-model-refresh-provider-models-button')),
+          )
+          .onPressed,
+      isNotNull,
+    );
+    await tester.pump(const Duration(seconds: 3));
+  });
+
+  testWidgets('rejecting BYOK refresh performs zero fetch', (tester) async {
+    await pumpSceneSettings(tester);
+
+    await tester.tap(
+      find.byKey(const Key('scene-model-refresh-provider-models-button')),
+    );
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('data-destination-cancel')));
+    await tester.pumpAndSettle();
+
+    expect(providerFetchCount, 0);
+    expect(
+      find.byKey(const Key('scene-model-refresh-provider-models-progress')),
+      findsNothing,
+    );
+    expect(
+      tester
+          .widget<OutlinedButton>(
+            find.byKey(const Key('scene-model-refresh-provider-models-button')),
+          )
+          .onPressed,
+      isNotNull,
+    );
+    await tester.pump(const Duration(seconds: 3));
+  });
+
+  testWidgets('changed provider revision cannot apply an old fetch result', (
+    tester,
+  ) async {
+    final pending = Completer<List<Map<String, dynamic>>>();
+    providerFetchCompleter = pending;
+    await pumpSceneSettings(tester);
+
+    await tester.tap(
+      find.byKey(const Key('scene-model-refresh-provider-models-button')),
+    );
+    await tester.pump();
+    await confirmDestinationWithoutSettling(tester);
+    for (var attempt = 0; attempt < 4 && providerFetchCount == 0; attempt++) {
+      await tester.pump();
+    }
+    expect(providerFetchCount, 1);
+
+    providerBaseUrl = 'https://replacement.example.com/v1';
+    providerRevision = 2;
+    pending.complete(<Map<String, dynamic>>[
+      <String, dynamic>{'id': 'stale-model', 'displayName': 'Stale model'},
+    ]);
+    for (var attempt = 0; attempt < 10; attempt++) {
+      await tester.pump();
+      final button = tester.widget<OutlinedButton>(
+        find.byKey(const Key('scene-model-refresh-provider-models-button')),
+      );
+      if (button.onPressed != null) break;
+    }
+    expect(find.textContaining('部分模型列表未刷新'), findsOneWidget);
+
+    await tester.tap(
+      find.byKey(
+        const Key('scene-model-selector-scene.compactor.context.chat'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('stale-model'), findsNothing);
+    await tester.pump(const Duration(seconds: 3));
+  });
+
+  testWidgets(
+    'manual refresh is single flight and disposal ignores completion',
+    (tester) async {
+      final pending = Completer<List<Map<String, dynamic>>>();
+      providerFetchCompleter = pending;
+      await pumpSceneSettings(tester);
+      final refreshButton = tester.widget<OutlinedButton>(
+        find.byKey(const Key('scene-model-refresh-provider-models-button')),
+      );
+
+      refreshButton.onPressed!();
+      await tester.pump();
+      await confirmDestinationWithoutSettling(tester);
+      for (var attempt = 0; attempt < 4 && providerFetchCount == 0; attempt++) {
+        await tester.pump();
+      }
+      expect(providerFetchCount, 1);
+      refreshButton.onPressed!();
+      await tester.pump();
+      expect(providerFetchCount, 1);
+      expect(
+        find.byKey(const Key('data-destination-confirmation-dialog')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const Key('scene-model-refresh-provider-models-progress')),
+        findsOneWidget,
+      );
+
+      await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+      pending.complete(<Map<String, dynamic>>[
+        <String, dynamic>{'id': 'late-model', 'displayName': 'Late model'},
+      ]);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 20));
+      expect(providerFetchCount, 1);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('official platform catalog is not blocked by BYOK confirmation', (
+    tester,
+  ) async {
+    providerBaseUrl = '';
+    providerSourceType = 'omnibot_official';
+    providerReadOnly = true;
+    providerFetchResponse = <Map<String, dynamic>>[
+      <String, dynamic>{'id': 'official-model'},
+    ];
+
+    await pumpSceneSettings(tester);
+    expect(providerFetchCount, 1);
+    expect(
+      find.byKey(const Key('data-destination-confirmation-dialog')),
+      findsNothing,
+    );
+    await tester.pump(const Duration(seconds: 3));
+
+    await tester.tap(
+      find.byKey(const Key('scene-model-refresh-provider-models-button')),
+    );
+    await tester.pumpAndSettle();
+    expect(providerFetchCount, 2);
+    expect(lastProviderFetchArguments?['destinationConfirmed'], isNot(true));
+    expect(
+      find.byKey(const Key('data-destination-confirmation-dialog')),
+      findsNothing,
+    );
+    await tester.pump(const Duration(seconds: 3));
+  });
+
+  testWidgets('refresh errors never display endpoint token or exception text', (
+    tester,
+  ) async {
+    providerFetchError =
+        'socket failed at https://user:token@example.com/private?key=secret';
+    await pumpSceneSettings(tester);
+
+    await tester.tap(
+      find.byKey(const Key('scene-model-refresh-provider-models-button')),
+    );
+    await tester.pump();
+    await confirmDestinationWithoutSettling(tester);
+    for (var attempt = 0; attempt < 10; attempt++) {
+      await tester.pump();
+      final button = tester.widget<OutlinedButton>(
+        find.byKey(const Key('scene-model-refresh-provider-models-button')),
+      );
+      if (button.onPressed != null) break;
+    }
+
+    expect(find.textContaining('user:token'), findsNothing);
+    expect(find.textContaining('/private'), findsNothing);
+    expect(find.textContaining('key=secret'), findsNothing);
+    expect(find.textContaining('部分模型列表未刷新'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 3));
   });
 
   testWidgets('voice scene expands and saves voice settings', (tester) async {
@@ -287,7 +607,7 @@ void main() {
     expect(codexWriteCount, 0);
   });
 
-  testWidgets('remote bridge setting autosaves only bridge fields', (
+  testWidgets('remote bridge save confirms destination before native write', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(1080, 2200);
@@ -311,20 +631,41 @@ void main() {
       const Key('codex-config-remote-bridge-url-field'),
     );
     final cwdField = find.byKey(const Key('codex-config-remote-cwd-field'));
-    await tester.enterText(urlField, 'ws://10.0.0.2:17321/codex');
+    await tester.enterText(urlField, 'wss://bridge.example.com/codex');
     await tester.enterText(cwdField, '/Users/new/project');
 
     expect(codexWriteCount, 0);
-    await tester.pump(const Duration(milliseconds: 750));
+    await tester.tap(find.byKey(const Key('codex-config-save-button')));
     await tester.pump();
-
+    expect(codexWriteCount, 0);
+    await confirmDestination(tester);
     expect(codexWriteCount, 1);
     expect(savedCodexConfig, <String, dynamic>{
       'remoteEnabled': true,
-      'remoteBridgeUrl': 'ws://10.0.0.2:17321/codex',
-      'remoteBridgeToken': 'test-token',
+      'remoteBridgeUrl': 'wss://bridge.example.com/codex',
+      'remoteBridgeToken': '',
       'remoteCwd': '/Users/new/project',
     });
-    expect(find.text('已自动保存。'), findsOneWidget);
+    expect(find.text('已保存。'), findsOneWidget);
+
+    final tokenField = find.byKey(const Key('codex-config-remote-token-field'));
+    await tester.enterText(tokenField, 'replacement-token');
+    await tester.pump();
+    final saveButton = tester.widget<FilledButton>(
+      find.byKey(const Key('codex-config-save-button')),
+    );
+    expect(saveButton.onPressed, isNotNull);
+    saveButton.onPressed!();
+    await tester.pump();
+    expect(codexWriteCount, 1);
+    await confirmDestination(tester);
+    expect(codexWriteCount, 2);
+    expect(savedCodexConfig?['remoteBridgeToken'], 'replacement-token');
+    expect(
+      tester.widget<TextField>(tokenField).controller?.text,
+      isEmpty,
+      reason:
+          'Native must return only credential status, never the token value.',
+    );
   });
 }

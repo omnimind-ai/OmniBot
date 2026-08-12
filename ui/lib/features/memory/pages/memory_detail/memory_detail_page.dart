@@ -105,10 +105,13 @@ class MemoryDetailPage extends StatelessWidget {
       deleteIconAsset: 'assets/memory/memory_delete.svg',
       showEdit: false,
     );
+    if (!context.mounted) return;
     switch (action) {
       case RecordMenuAction.delete:
         final res = await onDelete(vm.id);
-        if (res) {
+        if (res &&
+            context.mounted &&
+            ModalRoute.of(context)?.isCurrent == true) {
           Navigator.pop(context); // 返回记忆中心
         }
         break;
@@ -206,7 +209,7 @@ class MemoryDetailPage extends StatelessWidget {
                   children: [
                     DetailContent(
                       title: memory.title,
-                      timestamp: memory.updatedAt ?? 0,
+                      timestamp: memory.updatedAt,
                       content: memory.description ?? '暂无详细内容',
                       appName: memory.appName,
                       appIconProvider: memory.appIcon,
@@ -250,6 +253,10 @@ class MemoryDetailPage extends StatelessWidget {
     }
 
     final granted = await _ensureSavePermission();
+    if (!dialogContext.mounted ||
+        ModalRoute.of(dialogContext)?.isCurrent != true) {
+      return;
+    }
     if (!granted) {
       showToast('请先授予存储权限', type: ToastType.warning);
       return;
@@ -271,11 +278,21 @@ class MemoryDetailPage extends StatelessWidget {
         await Gal.putImageBytes(bytes.buffer.asUint8List(), album: _albumName);
       }
 
+      if (!dialogContext.mounted ||
+          ModalRoute.of(dialogContext)?.isCurrent != true) {
+        return;
+      }
       showToast('保存成功', type: ToastType.success);
     } catch (e) {
+      if (!dialogContext.mounted ||
+          ModalRoute.of(dialogContext)?.isCurrent != true) {
+        return;
+      }
       showToast('保存失败：$e', type: ToastType.error);
     } finally {
-      if (Navigator.of(dialogContext).canPop()) {
+      if (dialogContext.mounted &&
+          ModalRoute.of(dialogContext)?.isCurrent == true &&
+          Navigator.of(dialogContext).canPop()) {
         Navigator.of(dialogContext).pop();
       }
     }

@@ -244,7 +244,6 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
         return;
       }
     } catch (e) {
-      debugPrint('恢复最近对话失败: $e');
     }
 
     if (!_isConversationOperationCurrent(token)) {
@@ -379,7 +378,6 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
         List<ChatMessageModel>.from(messages),
       );
     } catch (e) {
-      debugPrint('加载对话失败: $e');
     }
   }
 
@@ -419,7 +417,6 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
         });
       }
     } catch (e) {
-      debugPrint('加载更多消息失败: $e');
       if (_isConversationOperationCurrent(token)) {
         setState(() {
           isLoadingMore = false;
@@ -462,7 +459,6 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
           return;
         }
         if (restored) {
-          debugPrint('当前对话不在列表中，已从消息记录恢复: $currentConversationId');
           return;
         }
         invalidateConversationLifecycle();
@@ -496,7 +492,6 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
             fallbackTarget,
             mode: fallbackConversation.mode,
           );
-          debugPrint('当前对话已失效，已切换到最近对话: ${fallbackConversation.id}');
           return;
         }
 
@@ -525,10 +520,8 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
           blankTarget,
           mode: operationMode,
         );
-        debugPrint('当前对话已被删除，已切换到新对话');
       }
     } catch (e) {
-      debugPrint('检查对话存在性失败: $e');
     }
   }
 
@@ -614,7 +607,6 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
       }
       return true;
     } catch (e) {
-      debugPrint('从消息记录恢复对话失败: $e');
       return false;
     }
   }
@@ -683,9 +675,6 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
     }
 
     try {
-      debugPrint(
-        "[conversation manager] 对话持久化 generateSummary: $generateSummary markComplete: $markComplete",
-      );
       final now = DateTime.now().millisecondsSinceEpoch;
       final lastMessage = snapshotMessages.isNotEmpty
           ? (snapshotMessages[0].text ?? '')
@@ -830,7 +819,6 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
         }
       }
     } catch (e) {
-      debugPrint('保存对话失败: $e');
     }
   }
 

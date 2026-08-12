@@ -1,15 +1,19 @@
 package cn.com.omnimind.baselib.llm
 
 import android.content.Context
+import cn.com.omnimind.baselib.util.ContentEndpointSecurity
 import cn.com.omnimind.baselib.util.OmniLog
+import cn.com.omnimind.baselib.util.CredentialEndpointSecurity
 import cn.com.omnimind.baselib.util.OssIdentity
 import com.google.gson.Gson
 import com.google.gson.JsonParser
 import com.google.gson.annotations.SerializedName
 import com.google.gson.reflect.TypeToken
 import com.tencent.mmkv.MMKV
+import java.net.URI
 
 object ModelProviderConfigStore {
+    private const val CURRENT_DESTINATION_CONSENT_VERSION = 1
     private const val TAG = "ModelProviderConfigStore"
     private const val DIRECT_REQUEST_URL_MARKER = "#"
 
@@ -58,9 +62,38 @@ object ModelProviderConfigStore {
         if (secretStore != null) {
             return
         }
-        secretStore = EncryptedModelProviderSecretStore(context)
-        ModelProviderMigration.ensureMigrated()
-        migratePlaintextSecrets(MMKV.defaultMMKV())
+        val encryptedStore = try {
+            EncryptedModelProviderSecretStore(context)
+        } catch (_: Exception) {
+            null
+        }
+        secretStore = FailClosedModelProviderSecretStore(encryptedStore)
+        try {
+            ModelProviderMigration.ensureMigrated()
+        } catch (_: Exception) {
+            // Credential migration below still performs conservative plaintext cleanup.
+        }
+        val mmkv = try {
+            MMKV.defaultMMKV()
+        } catch (_: Exception) {
+            null
+        } ?: return
+        try {
+            migratePlaintextSecrets(mmkv)
+        } catch (_: Exception) {
+            try {
+                scrubPlaintextSecretsFailClosed(mmkv)
+            } catch (_: Exception) {
+                // Secure storage remains fail-closed; never swallow VM-fatal Errors.
+            }
+        }
+        if (secretStore?.isAvailable() != true) {
+            try {
+                scrubPlaintextSecretsFailClosed(mmkv)
+            } catch (_: Exception) {
+                // Secure storage remains fail-closed; never swallow VM-fatal Errors.
+            }
+        }
     }
 
     private data class StoredModelProviderProfile(
@@ -85,7 +118,15 @@ object ModelProviderConfigStore {
         @field:SerializedName(value = "protocolType", alternate = ["i"])
         val protocolType: String? = null,
         @field:SerializedName(value = "wireApi", alternate = ["j"])
-        val wireApi: String? = null
+        val wireApi: String? = null,
+        @field:SerializedName("revision")
+        val revision: Long? = null,
+        @field:SerializedName("consentVersion")
+        val consentVersion: Int? = null,
+        @field:SerializedName("consentOrigin")
+        val consentOrigin: String? = null,
+        @field:SerializedName("consentRevision")
+        val consentRevision: Long? = null,
     )
 
     fun listProfiles(): List<ModelProviderProfile> {
@@ -106,12 +147,12 @@ object ModelProviderConfigStore {
         )
         if (current.isNotEmpty()) {
             ensureEditingProfile(mmkv, current)
-            return current
+            return appendOfficialPlatformProfile(current)
         }
         val created = defaultProfiles(deletedOfficialProfileIds)
-        writeProfiles(mmkv, created)
+        persistProfilesFromReadPath(mmkv, created)
         mmkv.encode(KEY_EDITING_PROFILE_ID, created.first().id)
-        return created
+        return appendOfficialPlatformProfile(created)
     }
 
     fun getEditingProfileId(): String {
@@ -153,6 +194,7 @@ object ModelProviderConfigStore {
 
         val sanitized = buildList<ModelProviderProfile> {
             profiles
+                .filterNot { OmniOfficialProvider.isOfficialProfile(it.id) }
                 .filterNot { isDeletedOfficialProfile(it.id, deletedOfficialProfileIds) }
                 .forEach { profile ->
                     val existing = toList()
@@ -207,9 +249,13 @@ object ModelProviderConfigStore {
         customHeaders: Map<String, String> = emptyMap(),
         sourceType: String? = null,
         protocolType: String = "openai_compatible",
-        wireApi: String = OpenAiWireApi.CHAT_COMPLETIONS
+        wireApi: String = OpenAiWireApi.CHAT_COMPLETIONS,
+        destinationConfirmed: Boolean = false,
     ): ModelProviderProfile {
         ModelProviderMigration.ensureMigrated()
+        require(!OmniOfficialProvider.isOfficialProfile(id)) {
+            "official platform provider is read only"
+        }
         val normalizedProtocolType = normalizeProtocolType(protocolType)
         val normalizedWireApi = resolveWireApiForSave(
             baseUrl = baseUrl,
@@ -217,6 +263,15 @@ object ModelProviderConfigStore {
             wireApi = wireApi
         )
         val normalizedCustomHeaders = ProviderCustomHeaderUtils.sanitizeCustomHeaders(customHeaders)
+        val normalizedBaseUrl = normalizeBaseUrl(baseUrl).orEmpty()
+        if (normalizedBaseUrl.isNotEmpty()) {
+            ContentEndpointSecurity.requireSafe(
+                rawUrl = stripDirectRequestUrlMarker(normalizedBaseUrl),
+                allowInsecureLoopback = CredentialEndpointSecurity.isDebugLoopbackAllowed(),
+            )
+        } else {
+            require(!destinationConfirmed) { "cannot confirm an empty provider destination" }
+        }
         val mmkv = MMKV.defaultMMKV()
 
         val deletedOfficialProfileIds = readDeletedOfficialProfileIds(mmkv)
@@ -234,10 +289,27 @@ object ModelProviderConfigStore {
             profiles = current,
             existingId = if (currentIndex >= 0) normalizedId else null
         )
+        val existingProfile = current.getOrNull(currentIndex)
+        val nextRevision = (existingProfile?.revision ?: 0L) + 1L
+        val canRetainConsent = existingProfile?.destinationConsentValid == true && try {
+            canonicalEndpoint(existingProfile.baseUrl) == canonicalEndpoint(normalizedBaseUrl)
+        } catch (_: Exception) {
+            false
+        }
+        val consentVersion = if (destinationConfirmed || canRetainConsent) {
+            CURRENT_DESTINATION_CONSENT_VERSION
+        } else {
+            0
+        }
+        val consentOrigin = if (consentVersion == CURRENT_DESTINATION_CONSENT_VERSION) {
+            canonicalOrigin(normalizedBaseUrl)
+        } else {
+            ""
+        }
         val nextProfile = ModelProviderProfile(
             id = normalizedId,
             name = sanitizedName,
-            baseUrl = normalizeBaseUrl(baseUrl).orEmpty(),
+            baseUrl = normalizedBaseUrl,
             apiKey = apiKey.trim(),
             customHeaders = normalizedCustomHeaders,
             sourceType = resolveSourceTypeForSave(
@@ -247,7 +319,12 @@ object ModelProviderConfigStore {
                 existingSourceType = current.getOrNull(currentIndex)?.sourceType
             ),
             protocolType = normalizedProtocolType,
-            wireApi = normalizedWireApi
+            wireApi = normalizedWireApi,
+            revision = nextRevision,
+            consentVersion = consentVersion,
+            consentOrigin = consentOrigin,
+            consentRevision = if (consentVersion == CURRENT_DESTINATION_CONSENT_VERSION) nextRevision else 0L,
+            destinationConsentValid = consentVersion == CURRENT_DESTINATION_CONSENT_VERSION,
         )
 
         if (currentIndex >= 0) {
@@ -267,6 +344,9 @@ object ModelProviderConfigStore {
         ModelProviderMigration.ensureMigrated()
         val mmkv = MMKV.defaultMMKV()
         val normalizedId = profileId.trim()
+        require(!OmniOfficialProvider.isOfficialProfile(normalizedId)) {
+            "official platform provider cannot be deleted"
+        }
         val deletedOfficialProfileIds = readDeletedOfficialProfileIds(mmkv)
         val current = readActiveProfiles(
             mmkv = mmkv,
@@ -302,14 +382,16 @@ object ModelProviderConfigStore {
             readOnly = profile.readOnly,
             ready = profile.ready,
             statusText = profile.statusText,
-            wireApi = profile.wireApi
+            wireApi = profile.wireApi,
+            destinationConsentValid = profile.destinationConsentValid,
         )
     }
 
     fun saveConfig(
         baseUrl: String,
         apiKey: String,
-        customHeaders: Map<String, String> = emptyMap()
+        customHeaders: Map<String, String> = emptyMap(),
+        destinationConfirmed: Boolean = false,
     ) {
         val current = getEditingProfile()
         require(!current.readOnly) { "builtin provider is read only" }
@@ -321,8 +403,31 @@ object ModelProviderConfigStore {
             customHeaders = customHeaders,
             sourceType = current.sourceType,
             protocolType = current.protocolType,
-            wireApi = current.wireApi
+            wireApi = current.wireApi,
+            destinationConfirmed = destinationConfirmed,
         )
+    }
+
+    fun hasCurrentDestinationConsent(
+        profile: ModelProviderProfile,
+        rawUrl: String = profile.baseUrl,
+    ): Boolean {
+        if (profile.readOnly) return true
+        if (!profile.destinationConsentValid) return false
+        return try {
+            canonicalEndpoint(profile.baseUrl) == canonicalEndpoint(rawUrl)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /** Compare provider destinations without exposing their values to callers. */
+    fun sameCanonicalEndpoint(left: String, right: String): Boolean {
+        return try {
+            canonicalEndpoint(left) == canonicalEndpoint(right)
+        } catch (_: Exception) {
+            false
+        }
     }
 
     fun clearConfig() {
@@ -373,7 +478,11 @@ object ModelProviderConfigStore {
         if (candidate.isEmpty()) {
             return null
         }
-        val uri = runCatching { java.net.URI(candidate) }.getOrNull() ?: return null
+        val uri = try {
+            java.net.URI(candidate)
+        } catch (_: Exception) {
+            return null
+        }
         if (uri.scheme !in setOf("http", "https") || uri.host.isNullOrBlank()) {
             return null
         }
@@ -496,6 +605,43 @@ object ModelProviderConfigStore {
         }
     }
 
+    internal fun canonicalOrigin(rawUrl: String): String {
+        val uri = URI(canonicalEndpoint(rawUrl))
+        val scheme = uri.scheme.lowercase()
+        val host = uri.host.lowercase()
+        val port = if (uri.port >= 0) uri.port else if (scheme == "https" || scheme == "wss") 443 else 80
+        return buildString {
+            append(scheme).append("://")
+            if (host.contains(':')) append('[').append(host).append(']') else append(host)
+            append(':').append(port)
+        }
+    }
+
+    private fun canonicalEndpoint(rawUrl: String): String {
+        val safe = ContentEndpointSecurity.requireSafe(
+            rawUrl = stripDirectRequestUrlMarker(rawUrl),
+            allowInsecureLoopback = CredentialEndpointSecurity.isDebugLoopbackAllowed(),
+        )
+        val uri = URI(safe).normalize()
+        val scheme = uri.scheme.lowercase()
+        val host = uri.host.lowercase()
+        val port = if (uri.port >= 0) uri.port else if (scheme == "https" || scheme == "wss") 443 else 80
+        val path = uri.rawPath?.takeIf(String::isNotEmpty) ?: "/"
+        return buildString {
+            append(scheme).append("://")
+            if (host.contains(':')) append('[').append(host).append(']') else append(host)
+            append(':').append(port).append(path)
+            uri.rawQuery?.let { append('?').append(it) }
+        }
+    }
+
+    private fun appendOfficialPlatformProfile(
+        profiles: List<ModelProviderProfile>
+    ): List<ModelProviderProfile> {
+        val official = PlatformAiProvisioner.officialProfileOrNull() ?: return profiles
+        return profiles.filterNot { it.id == official.id } + official
+    }
+
     private fun normalizeSourceType(
         sourceType: String?,
         profileId: String?,
@@ -585,7 +731,7 @@ object ModelProviderConfigStore {
             profiles.forEach(::add)
             missingProfiles.forEach(::add)
         }
-        writeProfiles(mmkv, next)
+        persistProfilesFromReadPath(mmkv, next)
         mmkv.encode(KEY_BUILTIN_OFFICIAL_PROFILES_SEEDED, true)
         return next
     }
@@ -628,20 +774,41 @@ object ModelProviderConfigStore {
             ?.takeIf { it.isNotEmpty() }
             ?: return emptyList()
         return try {
-            val type = object : TypeToken<List<StoredModelProviderProfile>>() {}.type
-            val parsed: List<StoredModelProviderProfile> = gson.fromJson(normalizedRaw, type)
-                ?: emptyList()
-            val seen = LinkedHashSet<String>()
-            parsed.mapNotNull { profile ->
+            decodeProfilesJsonStrict(normalizedRaw)
+        } catch (e: Exception) {
+            OmniLog.w(TAG, "read provider profiles failed type=${e.javaClass.simpleName}")
+            emptyList()
+        }
+    }
+
+    private fun decodeProfilesJsonStrict(normalizedRaw: String): List<ModelProviderProfile> {
+        val root = JsonParser.parseString(normalizedRaw)
+        require(root.isJsonArray) { "provider profiles must be a JSON array" }
+        val type = object : TypeToken<List<StoredModelProviderProfile>>() {}.type
+        val parsed: List<StoredModelProviderProfile> = gson.fromJson(root, type) ?: emptyList()
+        val seen = LinkedHashSet<String>()
+        return parsed.mapNotNull { profile ->
                 val normalizedId = profile.id?.trim()?.takeIf { it.isNotEmpty() }
                     ?: return@mapNotNull null
                 if (!seen.add(normalizedId)) {
                     return@mapNotNull null
                 }
+                val normalizedBaseUrl = normalizeBaseUrl(profile.baseUrl.orEmpty()).orEmpty()
+                val revision = profile.revision?.coerceAtLeast(0L) ?: 0L
+                val consentVersion = profile.consentVersion?.coerceAtLeast(0) ?: 0
+                val consentOrigin = profile.consentOrigin?.trim().orEmpty()
+                val consentRevision = profile.consentRevision?.coerceAtLeast(0L) ?: 0L
+                val consentValid = try {
+                    consentVersion == CURRENT_DESTINATION_CONSENT_VERSION &&
+                        consentRevision == revision &&
+                        consentOrigin == canonicalOrigin(normalizedBaseUrl)
+                } catch (_: Exception) {
+                    false
+                }
                 ModelProviderProfile(
                     id = normalizedId,
                     name = profile.name?.trim().orEmpty().ifEmpty { DEFAULT_PROFILE_NAME },
-                    baseUrl = normalizeBaseUrl(profile.baseUrl.orEmpty()).orEmpty(),
+                    baseUrl = normalizedBaseUrl,
                     apiKey = profile.apiKey?.trim().orEmpty(),
                     customHeaders = ProviderCustomHeaderUtils.sanitizeCustomHeaders(
                         profile.customHeaders
@@ -655,13 +822,14 @@ object ModelProviderConfigStore {
                     ready = profile.ready ?: true,
                     statusText = profile.statusText,
                     protocolType = normalizeProtocolType(profile.protocolType),
-                    wireApi = normalizeWireApi(profile.wireApi)
+                    wireApi = normalizeWireApi(profile.wireApi),
+                    revision = revision,
+                    consentVersion = consentVersion,
+                    consentOrigin = consentOrigin,
+                    consentRevision = consentRevision,
+                    destinationConsentValid = consentValid,
                 )
             }
-        } catch (t: Throwable) {
-            OmniLog.w(TAG, "read provider profiles failed: ${t.message}")
-            emptyList()
-        }
     }
 
     internal fun encodeProfilesJson(profiles: List<ModelProviderProfile>): String {
@@ -685,7 +853,11 @@ object ModelProviderConfigStore {
                 ready = profile.ready,
                 statusText = profile.statusText,
                 protocolType = normalizeProtocolType(profile.protocolType),
-                wireApi = normalizeWireApi(profile.wireApi)
+                wireApi = normalizeWireApi(profile.wireApi),
+                revision = profile.revision,
+                consentVersion = profile.consentVersion,
+                consentOrigin = profile.consentOrigin,
+                consentRevision = profile.consentRevision,
             )
         }
         return gson.toJson(normalized)
@@ -705,14 +877,15 @@ object ModelProviderConfigStore {
         secrets: ModelProviderSecrets?
     ): ModelProviderProfile {
         if (secrets == null) {
-            return profile
+            return enforceCredentialTransport(profile)
         }
-        return profile.copy(
+        val hydrated = profile.copy(
             apiKey = secrets.apiKey,
             customHeaders = ProviderCustomHeaderUtils.sanitizeCustomHeaders(
                 secrets.customHeaders
             )
         )
+        return enforceCredentialTransport(hydrated)
     }
 
     private fun hydrateProfileSecrets(
@@ -733,8 +906,12 @@ object ModelProviderConfigStore {
     private fun migratePlaintextSecrets(mmkv: MMKV) {
         val store = requireSecretStore()
         val rawProfiles = mmkv.decodeString(KEY_PROVIDER_PROFILES)
-        val decodedProfiles = decodeProfilesJson(rawProfiles)
-        decodedProfiles.forEach { profile ->
+        val decodedProfiles = rawProfiles
+            ?.trim()
+            ?.takeIf(String::isNotEmpty)
+            ?.let(::decodeProfilesJsonStrict)
+            ?: emptyList()
+        val safeProfiles = decodedProfiles.map { profile ->
             val legacySecrets = ModelProviderSecrets(
                 apiKey = profile.apiKey,
                 customHeaders = profile.customHeaders
@@ -748,10 +925,23 @@ object ModelProviderConfigStore {
                     ?.takeIf { it.isNotEmpty() }
                     ?: legacySecrets.customHeaders
             )
-            store.writeProfile(profile.id, mergedSecrets)
+            val safeProfile = enforceCredentialTransport(
+                profile.copy(
+                    apiKey = mergedSecrets.apiKey,
+                    customHeaders = mergedSecrets.customHeaders,
+                )
+            )
+            store.writeProfile(
+                safeProfile.id,
+                ModelProviderSecrets(
+                    apiKey = safeProfile.apiKey,
+                    customHeaders = safeProfile.customHeaders,
+                ),
+            )
+            safeProfile
         }
-        if (rawProfilesHasSecretFields(rawProfiles)) {
-            check(mmkv.encode(KEY_PROVIDER_PROFILES, encodeProfilesMetadataJson(decodedProfiles))) {
+        if (rawProfilesHasSecretFields(rawProfiles) || safeProfiles != decodedProfiles) {
+            check(mmkv.encode(KEY_PROVIDER_PROFILES, encodeProfilesMetadataJson(safeProfiles))) {
                 "failed to remove plaintext model-provider credentials"
             }
         }
@@ -773,16 +963,50 @@ object ModelProviderConfigStore {
         }
     }
 
+    /** Erases only known plaintext provider credential fields after secure storage fails. */
+    private fun scrubPlaintextSecretsFailClosed(mmkv: MMKV) {
+        val rawProfiles = try {
+            mmkv.decodeString(KEY_PROVIDER_PROFILES)
+        } catch (_: Exception) {
+            mmkv.removeValueForKey(KEY_PROVIDER_PROFILES)
+            null
+        }
+        if (!rawProfiles.isNullOrBlank()) {
+            val metadataOnly = sanitizeProfilesMetadataJson(rawProfiles)
+            if (metadataOnly == null || !mmkv.encode(KEY_PROVIDER_PROFILES, metadataOnly)) {
+                mmkv.removeValueForKey(KEY_PROVIDER_PROFILES)
+            }
+        }
+        mmkv.allKeys()
+            ?.filter { key ->
+                key == KEY_PROVIDER_API_KEY || key.endsWith("_$KEY_PROVIDER_API_KEY")
+            }
+            .orEmpty()
+            .forEach(mmkv::removeValueForKey)
+    }
+
+    /** Invalid or uncertain input is never safe to retain in plaintext MMKV. */
+    internal fun sanitizeProfilesMetadataJson(raw: String?): String? {
+        val normalized = raw?.trim()?.takeIf(String::isNotEmpty) ?: return null
+        return try {
+            encodeProfilesMetadataJson(decodeProfilesJsonStrict(normalized))
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     private fun rawProfilesHasSecretFields(raw: String?): Boolean {
         val normalized = raw?.trim()?.takeIf { it.isNotEmpty() } ?: return false
-        return runCatching {
+        return try {
             val root = JsonParser.parseString(normalized)
             root.isJsonArray && root.asJsonArray.any { element ->
                 element.isJsonObject && listOf("apiKey", "d", "customHeaders", "e").any {
                     fieldName -> element.asJsonObject.has(fieldName)
                 }
             }
-        }.getOrDefault(false)
+        } catch (_: Exception) {
+            false
+        }
     }
 
     private fun readProfilesForUpdate(mmkv: MMKV): List<ModelProviderProfile> {
@@ -798,26 +1022,95 @@ object ModelProviderConfigStore {
     ): List<ModelProviderProfile> {
         val activeProfiles = filterDeletedOfficialProfiles(profiles, deletedOfficialProfileIds)
         if (activeProfiles.size != profiles.size) {
-            writeProfiles(mmkv, activeProfiles)
+            persistProfilesFromReadPath(mmkv, activeProfiles)
         }
         return activeProfiles
     }
 
     private fun writeProfiles(mmkv: MMKV, profiles: List<ModelProviderProfile>) {
         val store = requireSecretStore()
-        profiles.forEach { profile ->
-            store.writeProfile(
-                profile.id,
-                ModelProviderSecrets(
-                    apiKey = profile.apiKey,
-                    customHeaders = profile.customHeaders
+        check(store.isAvailable()) {
+            "Secure model-provider credential storage is unavailable"
+        }
+        val safeProfiles = profiles.map(::enforceCredentialTransport)
+        val previousMetadata = mmkv.decodeString(KEY_PROVIDER_PROFILES)
+        val previousIds = decodeProfilesJson(previousMetadata).mapTo(LinkedHashSet()) { it.id }
+        val touchedIds = previousIds + safeProfiles.map { it.id }
+        val previousSecrets = touchedIds.associateWith(store::readProfile)
+        try {
+            safeProfiles.forEach { safeProfile ->
+                store.writeProfile(
+                    safeProfile.id,
+                    ModelProviderSecrets(
+                        apiKey = safeProfile.apiKey,
+                        customHeaders = safeProfile.customHeaders
+                    )
                 )
-            )
+            }
+            val nextMetadata = encodeProfilesMetadataJson(safeProfiles)
+            check(mmkv.encode(KEY_PROVIDER_PROFILES, nextMetadata) &&
+                mmkv.decodeString(KEY_PROVIDER_PROFILES) == nextMetadata) {
+                "failed to store model-provider metadata"
+            }
+            store.deleteProfilesExcept(safeProfiles.mapTo(HashSet()) { it.id })
+        } catch (failure: Exception) {
+            val rolledBack = try {
+                touchedIds.forEach { id ->
+                    val previous = previousSecrets[id]
+                    if (previous == null) {
+                        store.deleteProfile(id)
+                    } else {
+                        store.writeProfile(id, previous)
+                    }
+                }
+                touchedIds.all { id -> store.readProfile(id) == previousSecrets[id] }
+            } catch (_: Exception) {
+                false
+            }
+            if (rolledBack && previousMetadata != null) {
+                if (!mmkv.encode(KEY_PROVIDER_PROFILES, previousMetadata) ||
+                    mmkv.decodeString(KEY_PROVIDER_PROFILES) != previousMetadata
+                ) {
+                    mmkv.removeValueForKey(KEY_PROVIDER_PROFILES)
+                }
+            } else {
+                // Removing metadata is safer than binding new credentials to
+                // an old provider endpoint after a partial commit.
+                mmkv.removeValueForKey(KEY_PROVIDER_PROFILES)
+            }
+            throw failure
+        }
+    }
+
+    /** Read-time seeding may persist non-secret metadata even when BYOK secrets are unavailable. */
+    private fun persistProfilesFromReadPath(
+        mmkv: MMKV,
+        profiles: List<ModelProviderProfile>,
+    ) {
+        if (requireSecretStore().isAvailable()) {
+            writeProfiles(mmkv, profiles)
+            return
         }
         check(mmkv.encode(KEY_PROVIDER_PROFILES, encodeProfilesMetadataJson(profiles))) {
             "failed to store model-provider metadata"
         }
-        store.deleteProfilesExcept(profiles.mapTo(HashSet()) { it.id })
+    }
+
+    private fun enforceCredentialTransport(profile: ModelProviderProfile): ModelProviderProfile {
+        val endpoint = stripDirectRequestUrlMarker(profile.baseUrl)
+        val safeMetadata = try {
+            ContentEndpointSecurity.requireSafe(
+                rawUrl = endpoint,
+                allowInsecureLoopback = CredentialEndpointSecurity.isDebugLoopbackAllowed(),
+            )
+            true
+        } catch (_: Exception) {
+            false
+        }
+        if (!safeMetadata) {
+            return profile.copy(baseUrl = "", apiKey = "", customHeaders = emptyMap())
+        }
+        return profile
     }
 
     internal fun decodeDeletedOfficialProfileIds(raw: String?): Set<String> {
@@ -833,7 +1126,7 @@ object ModelProviderConfigStore {
                     id.isNotEmpty() && OfficialProviderRegistry.findByProfileId(id) != null
                 }
             }
-        } catch (_: Throwable) {
+        } catch (_: Exception) {
             emptySet()
         }
     }
@@ -852,7 +1145,11 @@ object ModelProviderConfigStore {
     }
 
     private fun writeDeletedOfficialProfileIds(mmkv: MMKV, ids: Set<String>) {
-        mmkv.encode(KEY_DELETED_OFFICIAL_PROFILE_IDS, encodeDeletedOfficialProfileIds(ids))
+        val encoded = encodeDeletedOfficialProfileIds(ids)
+        check(
+            mmkv.encode(KEY_DELETED_OFFICIAL_PROFILE_IDS, encoded) &&
+                mmkv.decodeString(KEY_DELETED_OFFICIAL_PROFILE_IDS) == encoded
+        ) { "failed to store deleted official provider ids" }
     }
 
     private fun markDeletedOfficialProfileIfNeeded(mmkv: MMKV, profileId: String) {
@@ -874,14 +1171,15 @@ object ModelProviderConfigStore {
     }
 
     private fun syncLegacyFlatConfig(mmkv: MMKV, profile: ModelProviderProfile) {
-        mmkv.encode(KEY_PROVIDER_BASE_URL, profile.baseUrl)
-        requireSecretStore().writeProfile(
-            profile.id,
-            ModelProviderSecrets(
-                apiKey = profile.apiKey,
-                customHeaders = profile.customHeaders
-            )
-        )
+        val safeProfile = enforceCredentialTransport(profile)
+        val mirrored = mmkv.encode(KEY_PROVIDER_BASE_URL, safeProfile.baseUrl) &&
+            mmkv.decodeString(KEY_PROVIDER_BASE_URL) == safeProfile.baseUrl
+        if (!mirrored) {
+            mmkv.removeValueForKey(KEY_PROVIDER_BASE_URL)
+        }
+        // The legacy flat keys are migration inputs only. Runtime provider reads use
+        // KEY_PROVIDER_PROFILES plus the profile-scoped encrypted secret store, so do
+        // not perform a second secret write from this compatibility mirror.
         mmkv.removeValueForKey(KEY_PROVIDER_API_KEY)
     }
 
@@ -949,8 +1247,8 @@ object ModelProviderConfigStore {
                 if (mergedOverrides.isNotEmpty()) {
                     SceneModelOverrideStore.writeOverrideMap(mmkv, mergedOverrides)
                 }
-            } catch (t: Throwable) {
-                OmniLog.w(TAG, "migrate legacy provider config failed: ${t.message}")
+            } catch (e: Exception) {
+                OmniLog.w(TAG, "migrate legacy provider config failed type=${e.javaClass.simpleName}")
             } finally {
                 mmkv.encode(MIGRATION_DONE_KEY, true)
             }

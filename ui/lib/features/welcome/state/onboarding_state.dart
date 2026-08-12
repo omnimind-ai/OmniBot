@@ -33,7 +33,6 @@ class OnboardingState extends ChangeNotifier {
         _configuredProfileId = profiles.editingProfileId;
       }
     } catch (e) {
-      debugPrint('OnboardingState.checkExistingState error: $e');
     }
     _initialized = true;
     notifyListeners();

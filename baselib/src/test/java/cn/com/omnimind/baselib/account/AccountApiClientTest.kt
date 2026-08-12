@@ -9,8 +9,10 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.Response
+import okhttp3.ResponseBody
 import okhttp3.ResponseBody.Companion.toResponseBody
 import okio.Buffer
+import okio.BufferedSource
 import okio.Timeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -19,6 +21,173 @@ import org.junit.Test
 import java.util.ArrayDeque
 
 class AccountApiClientTest {
+    @Test
+    fun platformModelCatalogUsesJwtAndReturnsOnlySafeMetadata() = runBlocking {
+        val calls = RecordingCallFactory(
+            StubResponse(
+                200,
+                """
+                {
+                  "success":true,
+                  "data":[{
+                    "id":"Qwen3.5-Plus",
+                    "owned_by":"custom",
+                    "supported_endpoint_types":["openai"],
+                    "base_url":"https://internal.invalid",
+                    "key":"must-not-be-mapped"
+                  },{
+                    "id":"image-model",
+                    "supported_endpoint_types":["image-generation"]
+                  },{
+                    "id":"voice-model"
+                  }],
+                  "official_catalog":{
+                    "version":"2",
+                    "defaults":{
+                      "text":"Qwen3.5-Plus",
+                      "image":"image-model",
+                      "vision":"Qwen3.5-Plus",
+                      "tts":"voice-model",
+                      "stt":"voice-model",
+                      "tts_voice":"default_zh"
+                    },
+                    "capabilities":{
+                      "text":["Qwen3.5-Plus"],
+                      "image":["image-model"],
+                      "vision":["Qwen3.5-Plus"],
+                      "tts":["voice-model"],
+                      "stt":["voice-model"],
+                      "tts_voices":["default_zh","default_en"]
+                    }
+                  }
+                }
+                """.trimIndent(),
+            )
+        )
+        val client = PlatformModelApiClient(
+            gatewayBaseUrl = "https://model.example.com/",
+            callFactory = calls,
+            ioDispatcher = Dispatchers.Unconfined,
+        )
+
+        val catalog = client.getCatalog("account-jwt")
+        val models = catalog.models
+
+        assertEquals(
+            listOf("Qwen3.5-Plus", "image-model", "voice-model"),
+            models.map(PlatformModel::id),
+        )
+        assertEquals(listOf("openai"), models.first().supportedEndpointTypes)
+        assertTrue(catalog.hasOfficialCatalog)
+        assertEquals("2", catalog.version)
+        assertEquals("image-model", catalog.defaults.image)
+        assertEquals("voice-model", catalog.defaults.tts)
+        assertEquals("default_zh", catalog.defaults.ttsVoice)
+        assertEquals(listOf("Qwen3.5-Plus"), catalog.capabilities.vision)
+        assertEquals(listOf("voice-model"), catalog.capabilities.stt)
+        assertEquals(listOf("default_zh", "default_en"), catalog.capabilities.ttsVoices)
+        val request = calls.requests.single()
+        assertEquals("https://model.example.com/v1/models", request.url.toString())
+        assertEquals("Bearer account-jwt", request.header("Authorization"))
+    }
+
+    @Test
+    fun platformModelCatalogMapsLegacyVoiceToTtsButNotStt() = runBlocking {
+        val client = PlatformModelApiClient(
+            gatewayBaseUrl = "https://model.example.com",
+            callFactory = RecordingCallFactory(
+                StubResponse(
+                    200,
+                    """
+                    {
+                      "success":true,
+                      "data":[{"id":"legacy-voice"}],
+                      "official_catalog":{
+                        "version":"1",
+                        "defaults":{"voice":"legacy-voice"},
+                        "capabilities":{"voice":["legacy-voice"]}
+                      }
+                    }
+                    """.trimIndent(),
+                )
+            ),
+            ioDispatcher = Dispatchers.Unconfined,
+        )
+
+        val catalog = client.getCatalog("account-jwt")
+
+        assertEquals("legacy-voice", catalog.defaults.tts)
+        assertEquals(null, catalog.defaults.stt)
+        assertEquals(listOf("legacy-voice"), catalog.capabilities.tts)
+        assertTrue(catalog.capabilities.stt.isEmpty())
+    }
+
+    @Test
+    fun platformModelCatalogDoesNotReviveLegacyVoiceWhenNewCapabilitiesAreExplicitlyEmpty() =
+        runBlocking {
+            val client = PlatformModelApiClient(
+                gatewayBaseUrl = "https://model.example.com",
+                callFactory = RecordingCallFactory(
+                    StubResponse(
+                        200,
+                        """
+                        {
+                          "success":true,
+                          "data":[{"id":"legacy-voice"}],
+                          "official_catalog":{
+                            "defaults":{"voice":"legacy-voice"},
+                            "capabilities":{
+                              "tts":[],
+                              "stt":[],
+                              "voice":["legacy-voice"]
+                            }
+                          }
+                        }
+                        """.trimIndent(),
+                    )
+                ),
+                ioDispatcher = Dispatchers.Unconfined,
+            )
+
+            val catalog = client.getCatalog("account-jwt")
+
+            assertTrue(catalog.capabilities.tts.isEmpty())
+            assertTrue(catalog.capabilities.stt.isEmpty())
+        }
+
+    @Test
+    fun platformModelCatalogReportsUnauthorizedForRepositoryRefresh() = runBlocking {
+        val client = PlatformModelApiClient(
+            gatewayBaseUrl = "https://model.example.com",
+            callFactory = RecordingCallFactory(StubResponse(401, "{}")),
+            ioDispatcher = Dispatchers.Unconfined,
+        )
+
+        val error = runCatching { client.listModels("expired") }.exceptionOrNull()
+
+        assertTrue(error is AccountApiException)
+        error as AccountApiException
+        assertEquals(401, error.statusCode)
+        assertEquals("invalid_access_token", error.errorCode)
+    }
+
+    @Test
+    fun platformModelCatalogRejectsOversizedResponse() = runBlocking {
+        val oversized = "x".repeat(
+            PlatformModelApiClient.MAX_CATALOG_BODY_BYTES.toInt() + 1
+        )
+        val client = PlatformModelApiClient(
+            gatewayBaseUrl = "https://model.example.com",
+            callFactory = RecordingCallFactory(StubResponse(200, oversized)),
+            ioDispatcher = Dispatchers.Unconfined,
+        )
+
+        val error = runCatching { client.getCatalog("account-jwt") }.exceptionOrNull()
+
+        assertTrue(error is AccountProtocolException)
+        assertTrue(error?.message.orEmpty().contains("too large"))
+    }
+
     @Test
     fun loginSendsCredentialsAndReadsTokenPair() = runBlocking {
         val calls = RecordingCallFactory(
@@ -90,6 +259,170 @@ class AccountApiClientTest {
         assertEquals("请重新登录", error.message)
     }
 
+    @Test
+    fun oversizedAccountResponseIsRejectedBeforeParsing() = runBlocking {
+        val client = AccountApiClient(
+            baseUrl = "https://account.example.com",
+            callFactory = RecordingCallFactory(
+                StubResponse(
+                    200,
+                    "x".repeat(AccountApiClient.MAX_RESPONSE_BODY_BYTES.toInt() + 1),
+                    unknownLength = true,
+                )
+            ),
+            ioDispatcher = Dispatchers.Unconfined,
+        )
+
+        val error = runCatching { client.getCurrentUser("access-token") }.exceptionOrNull()
+
+        assertTrue(error is AccountProtocolException)
+        assertTrue(error?.message.orEmpty().contains("too large"))
+    }
+
+    @Test
+    fun passwordResetUsesDedicatedCodePurposeAndExactContract() = runBlocking {
+        val calls = RecordingCallFactory(
+            StubResponse(200, """{"requestId":"reset-1","expiresInSeconds":600}"""),
+            StubResponse(204, ""),
+        )
+        val client = AccountApiClient(
+            baseUrl = "https://account.example.com",
+            callFactory = calls,
+            ioDispatcher = Dispatchers.Unconfined,
+        )
+
+        val code = client.requestPasswordResetCode(" learner@example.com ")
+        client.resetPassword(
+            email = " learner@example.com ",
+            newPassword = "a new password with enough length",
+            verificationRequestId = code.requestId,
+            verificationCode = "123456",
+        )
+
+        val codeBody = JsonParser.parseString(calls.requests[0].bodyUtf8()).asJsonObject
+        assertEquals("reset_password", codeBody["purpose"].asString)
+        val reset = calls.requests[1]
+        assertEquals("https://account.example.com/v1/auth/password-reset", reset.url.toString())
+        val resetBody = JsonParser.parseString(reset.bodyUtf8()).asJsonObject
+        assertEquals(
+            setOf("email", "newPassword", "verificationRequestId", "verificationCode"),
+            resetBody.keySet(),
+        )
+        assertEquals("learner@example.com", resetBody["email"].asString)
+    }
+
+    @Test
+    fun lifecycleAndUsageRequestsUseBearerAndParseSafeFields() = runBlocking {
+        val calls = RecordingCallFactory(
+            StubResponse(
+                200,
+                """{"items":[{"id":"session/other","expiresAt":"2026-09-01T00:00:00Z","createdAt":"2026-08-01T00:00:00Z","lastUsedAt":"2026-08-12T00:00:00Z","current":false}]}""",
+            ),
+            StubResponse(204, ""),
+            StubResponse(
+                200,
+                """{"items":[{"model":"official-text","promptTokens":8,"completionTokens":3,"totalTokens":11,"quotaUsed":22,"createdAt":"2026-08-12T00:00:00Z"}]}""",
+            ),
+        )
+        val client = AccountApiClient(
+            baseUrl = "https://account.example.com",
+            callFactory = calls,
+            ioDispatcher = Dispatchers.Unconfined,
+        )
+
+        val sessions = client.listSessions("access-token")
+        client.revokeSession("access-token", sessions.single().id)
+        val usage = client.listPlatformUsage("access-token", 20)
+
+        assertEquals("session/other", sessions.single().id)
+        assertEquals(22L, usage.single().quotaUsed)
+        calls.requests.forEach {
+            assertEquals("Bearer access-token", it.header("Authorization"))
+        }
+        assertEquals("/v1/me/sessions/session%2Fother", calls.requests[1].url.encodedPath)
+        assertEquals("20", calls.requests[2].url.queryParameter("limit"))
+    }
+
+    @Test
+    fun lifecycleMutationRequestsMatchServerContractExactly() = runBlocking {
+        val calls = RecordingCallFactory(
+            StubResponse(204, ""),
+            StubResponse(200, """{"revoked":2}"""),
+            StubResponse(204, ""),
+        )
+        val client = AccountApiClient(
+            baseUrl = "https://account.example.com",
+            callFactory = calls,
+            ioDispatcher = Dispatchers.Unconfined,
+        )
+
+        client.changePassword(
+            accessToken = "access-token",
+            currentPassword = "current password value",
+            newPassword = "new secure password value",
+        )
+        val revoked = client.revokeOtherSessions("access-token")
+        client.deleteAccount("access-token", "current password value")
+
+        assertEquals(2, revoked)
+        assertEquals(
+            listOf("PUT", "DELETE", "DELETE"),
+            calls.requests.map { it.method },
+        )
+        assertEquals(
+            listOf("/v1/me/password", "/v1/me/sessions", "/v1/me"),
+            calls.requests.map { it.url.encodedPath },
+        )
+        calls.requests.forEach {
+            assertEquals("Bearer access-token", it.header("Authorization"))
+        }
+        val changeBody = JsonParser.parseString(calls.requests[0].bodyUtf8()).asJsonObject
+        assertEquals(setOf("currentPassword", "newPassword"), changeBody.keySet())
+        assertEquals("current password value", changeBody["currentPassword"].asString)
+        assertEquals("new secure password value", changeBody["newPassword"].asString)
+        val deleteBody = JsonParser.parseString(calls.requests[2].bodyUtf8()).asJsonObject
+        assertEquals(setOf("currentPassword"), deleteBody.keySet())
+        assertEquals("current password value", deleteBody["currentPassword"].asString)
+    }
+
+    @Test
+    fun malformedLifecycleCollectionsAndCountsAreRejected() = runBlocking {
+        val missingSessionsClient = AccountApiClient(
+            baseUrl = "https://account.example.com",
+            callFactory = RecordingCallFactory(StubResponse(200, "{}")),
+            ioDispatcher = Dispatchers.Unconfined,
+        )
+        val negativeCountClient = AccountApiClient(
+            baseUrl = "https://account.example.com",
+            callFactory = RecordingCallFactory(StubResponse(200, """{"revoked":-1}""")),
+            ioDispatcher = Dispatchers.Unconfined,
+        )
+        val missingUsageFieldClient = AccountApiClient(
+            baseUrl = "https://account.example.com",
+            callFactory = RecordingCallFactory(
+                StubResponse(
+                    200,
+                    """{"items":[{"model":"official-text","createdAt":"2026-08-12T00:00:00Z"}]}""",
+                )
+            ),
+            ioDispatcher = Dispatchers.Unconfined,
+        )
+
+        val sessionsError = runCatching {
+            missingSessionsClient.listSessions("access-token")
+        }.exceptionOrNull()
+        val countError = runCatching {
+            negativeCountClient.revokeOtherSessions("access-token")
+        }.exceptionOrNull()
+        val usageError = runCatching {
+            missingUsageFieldClient.listPlatformUsage("access-token", 20)
+        }.exceptionOrNull()
+
+        assertTrue(sessionsError is AccountProtocolException)
+        assertTrue(countError is AccountProtocolException)
+        assertTrue(usageError is AccountProtocolException)
+    }
+
     private fun Request.bodyUtf8(): String {
         val buffer = Buffer()
         requireNotNull(body).writeTo(buffer)
@@ -127,7 +460,11 @@ class AccountApiClientTest {
         """.trimIndent()
 }
 
-private data class StubResponse(val code: Int, val body: String)
+private data class StubResponse(
+    val code: Int,
+    val body: String,
+    val unknownLength: Boolean = false,
+)
 
 private class RecordingCallFactory(vararg responses: StubResponse) : Call.Factory {
     private val queuedResponses = ArrayDeque(responses.toList())
@@ -178,6 +515,20 @@ private class StubCall(
         .protocol(Protocol.HTTP_1_1)
         .code(stub.code)
         .message(if (stub.code in 200..299) "OK" else "Error")
-        .body(stub.body.toResponseBody("application/json".toMediaType()))
+        .body(
+            if (stub.unknownLength) {
+                object : ResponseBody() {
+                    private val buffer = Buffer().writeUtf8(stub.body)
+
+                    override fun contentType() = "application/json".toMediaType()
+
+                    override fun contentLength(): Long = -1
+
+                    override fun source(): BufferedSource = buffer
+                }
+            } else {
+                stub.body.toResponseBody("application/json".toMediaType())
+            }
+        )
         .build()
 }

@@ -175,4 +175,52 @@ void main() {
     );
     expect(AppBackgroundService.current.chatTextHexColor, '#1D3E7B');
   });
+
+  testWidgets('rapid appearance edits persist the final snapshot', (
+    tester,
+  ) async {
+    AppBackgroundService.notifier.value = const AppBackgroundConfig(
+      enabled: true,
+      sourceType: AppBackgroundSourceType.remote,
+      localImagePath: '',
+      remoteImageUrl: 'https://example.com/existing-background.png',
+      blurSigma: 10,
+      frostOpacity: 0.2,
+      brightness: 1,
+      focalX: 0.1,
+      focalY: -0.1,
+    );
+
+    await tester.pumpWidget(buildTestApp(const BackgroundSettingPage()));
+
+    final colorField = find.byKey(
+      const ValueKey('appearance-text-color-field'),
+    );
+    await tester.enterText(colorField, '#111111');
+    await tester.pump(const Duration(milliseconds: 30));
+    await tester.enterText(colorField, '#225588');
+    await tester.pump(const Duration(milliseconds: 30));
+    await tester.enterText(colorField, '#3A6FC4');
+    await tester.pump(const Duration(milliseconds: 260));
+    await tester.pumpAndSettle();
+
+    expect(
+      AppBackgroundService.current.chatTextColorMode,
+      AppBackgroundTextColorMode.custom,
+    );
+    expect(AppBackgroundService.current.chatTextHexColor, '#3A6FC4');
+
+    AppBackgroundService.notifier.value = AppBackgroundConfig.defaults;
+    await AppBackgroundService.load();
+
+    expect(
+      AppBackgroundService.current.chatTextColorMode,
+      AppBackgroundTextColorMode.custom,
+    );
+    expect(AppBackgroundService.current.chatTextHexColor, '#3A6FC4');
+    expect(
+      AppBackgroundService.current.remoteImageUrl,
+      'https://example.com/existing-background.png',
+    );
+  });
 }

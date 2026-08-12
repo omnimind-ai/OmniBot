@@ -98,6 +98,19 @@ object EnvironmentSetupLogic {
         if (requested.isEmpty()) {
             return emptyList()
         }
+        if (requested.any { it in NPM_AGENT_PACKAGE_IDS }) {
+            // Do not partially mutate the environment before reporting that the
+            // standalone CLI dependency graph is not yet audited.
+            return listOf(
+                "printf '%s\\n' 'AGENT_RUNTIME_MANAGED_CLI_LOCK_REQUIRED' >&2; exit 73"
+            )
+        }
+        if ("uv" in requested) {
+            // The automatic base runtime no longer downloads uv. User-selected
+            // installation remains closed until both supported Linux wheel
+            // hashes are shipped in a reviewed manifest.
+            return listOf("printf '%s\\n' 'AGENT_RUNTIME_UV_LOCK_REQUIRED' >&2; exit 74")
+        }
         val repoSetup = repositorySetupCommand.trim()
         val installPackageMap = if (workingMode == WorkingMode.UBUNTU) {
             ubuntuInstallPackageMap
@@ -131,30 +144,6 @@ object EnvironmentSetupLogic {
         }
         if ("pip" in requested || "uv" in requested) {
             commands += "ln -sf /usr/bin/pip3 /usr/local/bin/pip || true"
-        }
-        if ("uv" in requested) {
-            commands += if (workingMode == WorkingMode.UBUNTU) {
-                "python3 -m pip install --break-system-packages --upgrade uv"
-            } else {
-                "if ! apk add --no-cache uv; then python3 -m pip install --break-system-packages --upgrade uv; fi"
-            }
-        }
-        if (requested.any { it in NPM_AGENT_PACKAGE_IDS }) {
-            commands += "mkdir -p /root/.npm-global/bin"
-            commands += "npm config set prefix /root/.npm-global"
-            commands += "export PATH=\"/root/.npm-global/bin:${'$'}PATH\""
-        }
-        if ("codex" in requested) {
-            commands += "npm install -g --no-audit --no-fund @openai/codex@latest"
-            commands += "ln -sf /root/.npm-global/bin/codex /usr/local/bin/codex || true"
-        }
-        if ("claude_code" in requested) {
-            commands += "npm install -g --no-audit --no-fund @anthropic-ai/claude-code@latest"
-            commands += "ln -sf /root/.npm-global/bin/claude /usr/local/bin/claude || true"
-        }
-        if ("opencode" in requested) {
-            commands += "npm install -g --no-audit --no-fund opencode-ai@latest"
-            commands += "ln -sf /root/.npm-global/bin/opencode /usr/local/bin/opencode || true"
         }
         if ("openssh_server" in requested) {
             commands += "mkdir -p /var/run/sshd /etc/ssh"

@@ -58,6 +58,16 @@ class _OverlayPetOption {
   });
 }
 
+class _PendingBackgroundSave {
+  final AppBackgroundConfig snapshot;
+  final String? importedPath;
+
+  const _PendingBackgroundSave({
+    required this.snapshot,
+    required this.importedPath,
+  });
+}
+
 const List<_AppearanceTextColorPreset> _kAppearanceTextColorPresets =
     <_AppearanceTextColorPreset>[
       _AppearanceTextColorPreset(
@@ -114,7 +124,9 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
   Timer? _autoSaveDebounceTimer;
   Timer? _petRefreshTimer;
   int _previewProfileToken = 0;
-  int _autoSaveRequestId = 0;
+  _PendingBackgroundSave? _pendingAutoSave;
+  bool _autoSaveWriterRunning = false;
+  bool _isDisposing = false;
   bool _petExpanded = false;
   bool _petBusy = false;
   String _petsDirectoryPath = '';
@@ -202,14 +214,17 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
   @override
   void dispose() {
     final pendingSnapshot = _normalizedDraft();
+    _isDisposing = true;
     final shouldFlushPendingDraft =
+        _autoSaveWriterRunning ||
+        _pendingAutoSave != null ||
         !_sameConfig(_savedConfig, pendingSnapshot) ||
         _hasUnsavedImportedLocalImage(pendingSnapshot);
     _previewProfileDebounceTimer?.cancel();
     _autoSaveDebounceTimer?.cancel();
     _petRefreshTimer?.cancel();
     if (shouldFlushPendingDraft) {
-      unawaited(_flushPendingDraftOnDispose(pendingSnapshot));
+      _enqueueAutoSave(pendingSnapshot);
     }
     _remoteUrlController
       ..removeListener(_handleRemoteUrlChanged)
@@ -341,129 +356,124 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
     );
   }
 
-  Future<String?> _validateConfig(AppBackgroundConfig config) async {
+  Future<bool> _isConfigValid(AppBackgroundConfig config) async {
     if (config.sourceType == AppBackgroundSourceType.local &&
         config.localImagePath.trim().isEmpty) {
-      return context.l10n.appearancePickLocalImageFirst;
+      return false;
     }
     if (config.sourceType == AppBackgroundSourceType.local &&
         config.localImagePath.trim().isNotEmpty &&
         !await File(config.localImagePath).exists()) {
-      return context.l10n.appearanceLocalImageMissing;
+      return false;
     }
     if (config.sourceType == AppBackgroundSourceType.remote) {
       final uri = Uri.tryParse(config.remoteImageUrl.trim());
       if (uri == null ||
           !(uri.scheme == 'http' || uri.scheme == 'https') ||
           (uri.host.isEmpty)) {
-        return context.l10n.appearanceInvalidHttpUrl;
+        return false;
       }
     }
-    return null;
+    return true;
   }
 
   void _scheduleAutoSave() {
     _autoSaveDebounceTimer?.cancel();
     final snapshot = _normalizedDraft();
-    final requestId = ++_autoSaveRequestId;
     _autoSaveDebounceTimer = Timer(const Duration(milliseconds: 220), () {
-      unawaited(_persistAutoSave(requestId, snapshot));
+      _enqueueAutoSave(snapshot);
     });
   }
 
-  Future<void> _persistAutoSave(
-    int requestId,
-    AppBackgroundConfig snapshot,
-  ) async {
-    final importedPath = _sessionImportedLocalPath;
-    final validationError = await _validateConfig(snapshot);
-    if (validationError != null || _sameConfig(_savedConfig, snapshot)) {
-      if (validationError == null) {
+  void _enqueueAutoSave(AppBackgroundConfig snapshot) {
+    _pendingAutoSave = _PendingBackgroundSave(
+      snapshot: snapshot,
+      importedPath: _sessionImportedLocalPath,
+    );
+    if (_autoSaveWriterRunning) {
+      return;
+    }
+    _autoSaveWriterRunning = true;
+    unawaited(_drainAutoSaveQueue());
+  }
+
+  Future<void> _drainAutoSaveQueue() async {
+    if (mounted && !_isDisposing) {
+      setState(() => _saving = true);
+    } else {
+      _saving = true;
+    }
+
+    try {
+      while (true) {
+        final pending = _pendingAutoSave;
+        if (pending == null) {
+          break;
+        }
+        _pendingAutoSave = null;
+        await _persistAutoSave(pending);
+      }
+    } finally {
+      _autoSaveWriterRunning = false;
+      if (mounted && !_isDisposing) {
+        setState(() => _saving = false);
+      } else {
+        _saving = false;
+      }
+
+      // A snapshot may be queued just as the loop finishes. Restart the
+      // single writer so that the latest selection is never dropped.
+      if (_pendingAutoSave != null && !_autoSaveWriterRunning) {
+        _autoSaveWriterRunning = true;
+        unawaited(_drainAutoSaveQueue());
+      }
+    }
+  }
+
+  Future<void> _persistAutoSave(_PendingBackgroundSave pending) async {
+    final snapshot = pending.snapshot;
+    final importedPath = pending.importedPath;
+    final isValid = await _isConfigValid(snapshot);
+    if (!isValid || _sameConfig(_savedConfig, snapshot)) {
+      if (isValid) {
         await _cleanupUnsavedImportedImageIfNeeded(
           importedPath: importedPath,
           snapshot: snapshot,
         );
       }
-      if (requestId == _autoSaveRequestId) {
-        if (mounted) {
-          setState(() => _saving = false);
-        } else {
-          _saving = false;
+      return;
+    }
+
+    final previousSaved = _savedConfig;
+    try {
+      await AppBackgroundService.save(snapshot);
+      await _cleanupObsoleteLocalImages(
+        previousSaved: previousSaved,
+        snapshot: snapshot,
+        importedPath: importedPath,
+      );
+
+      final snapshotIsStillLatest =
+          _pendingAutoSave == null && _sameConfig(_draftConfig, snapshot);
+      if (mounted && !_isDisposing && snapshotIsStillLatest) {
+        setState(() {
+          _savedConfig = snapshot;
+          _draftConfig = snapshot;
+          if (_sessionImportedLocalPath == importedPath) {
+            _sessionImportedLocalPath = null;
+          }
+        });
+      } else {
+        _savedConfig = snapshot;
+        if (snapshotIsStillLatest &&
+            _sessionImportedLocalPath == importedPath) {
+          _sessionImportedLocalPath = null;
         }
       }
-      return;
-    }
-
-    if (mounted && requestId == _autoSaveRequestId) {
-      setState(() => _saving = true);
-    } else if (!mounted) {
-      _saving = true;
-    }
-
-    final previousSaved = _savedConfig;
-    try {
-      await AppBackgroundService.save(snapshot);
-      if (requestId != _autoSaveRequestId) {
-        return;
-      }
-
-      await _cleanupObsoleteLocalImages(
-        previousSaved: previousSaved,
-        snapshot: snapshot,
-        importedPath: importedPath,
-      );
-
-      if (!mounted) {
-        _savedConfig = snapshot;
-        _draftConfig = snapshot;
-        _sessionImportedLocalPath = null;
-        return;
-      }
-      setState(() {
-        _savedConfig = snapshot;
-        _draftConfig = snapshot;
-        _sessionImportedLocalPath = null;
-      });
     } catch (error) {
-      if (mounted && requestId == _autoSaveRequestId) {
+      if (mounted && !_isDisposing && _pendingAutoSave == null) {
         showToast('自动保存失败：$error', type: ToastType.error);
       }
-    } finally {
-      if (mounted && requestId == _autoSaveRequestId) {
-        setState(() => _saving = false);
-      } else if (!mounted) {
-        _saving = false;
-      }
-    }
-  }
-
-  Future<void> _flushPendingDraftOnDispose(AppBackgroundConfig snapshot) async {
-    final importedPath = _sessionImportedLocalPath;
-    final validationError = await _validateConfig(snapshot);
-    if (validationError != null) {
-      return;
-    }
-    if (_sameConfig(_savedConfig, snapshot)) {
-      await _cleanupUnsavedImportedImageIfNeeded(
-        importedPath: importedPath,
-        snapshot: snapshot,
-      );
-      return;
-    }
-
-    final previousSaved = _savedConfig;
-    try {
-      await AppBackgroundService.save(snapshot);
-      await _cleanupObsoleteLocalImages(
-        previousSaved: previousSaved,
-        snapshot: snapshot,
-        importedPath: importedPath,
-      );
-      _savedConfig = snapshot;
-      _draftConfig = snapshot;
-      _sessionImportedLocalPath = null;
-    } catch (_) {
-      // Silently skip persistence failures while the page is disposing.
     }
   }
 
@@ -472,9 +482,15 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
     required AppBackgroundConfig snapshot,
     required String? importedPath,
   }) async {
+    final latestPath = _pendingAutoSave?.snapshot.localImagePath;
+    final draftPath = _draftConfig.sourceType == AppBackgroundSourceType.local
+        ? _draftConfig.localImagePath
+        : null;
     if (previousSaved.sourceType == AppBackgroundSourceType.local &&
         previousSaved.localImagePath.isNotEmpty &&
-        previousSaved.localImagePath != snapshot.localImagePath) {
+        previousSaved.localImagePath != snapshot.localImagePath &&
+        previousSaved.localImagePath != latestPath &&
+        previousSaved.localImagePath != draftPath) {
       await AppBackgroundService.deleteManagedLocalImage(
         previousSaved.localImagePath,
       );
@@ -483,18 +499,26 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
       importedPath: importedPath,
       snapshot: snapshot,
     );
-    _sessionImportedLocalPath = null;
   }
 
   Future<void> _cleanupUnsavedImportedImageIfNeeded({
     required String? importedPath,
     required AppBackgroundConfig snapshot,
   }) async {
-    if (importedPath == null || importedPath == snapshot.localImagePath) {
+    final latestPath = _pendingAutoSave?.snapshot.localImagePath;
+    final draftPath = _draftConfig.sourceType == AppBackgroundSourceType.local
+        ? _draftConfig.localImagePath
+        : null;
+    if (importedPath == null ||
+        importedPath == snapshot.localImagePath ||
+        importedPath == latestPath ||
+        importedPath == draftPath) {
       return;
     }
     await AppBackgroundService.deleteManagedLocalImage(importedPath);
-    _sessionImportedLocalPath = null;
+    if (_sessionImportedLocalPath == importedPath) {
+      _sessionImportedLocalPath = null;
+    }
   }
 
   @override

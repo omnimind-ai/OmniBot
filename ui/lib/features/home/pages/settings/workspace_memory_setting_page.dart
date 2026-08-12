@@ -27,6 +27,8 @@ class _WorkspaceMemorySettingPageState
   bool _savingSoul = false;
   bool _savingChat = false;
   bool _savingMemory = false;
+  bool _savingEmbedding = false;
+  bool _savingRollup = false;
   bool _embeddingEnabled = true;
   bool _rollupEnabled = true;
   WorkspaceMemoryEmbeddingConfig? _embeddingConfig;
@@ -72,6 +74,7 @@ class _WorkspaceMemorySettingPageState
         _rollupEnabled = rollup.enabled;
       });
     } catch (e) {
+      if (!mounted) return;
       showToast(context.l10n.workspaceMemoryLoadFailed, type: ToastType.error);
     } finally {
       if (mounted) {
@@ -90,6 +93,7 @@ class _WorkspaceMemorySettingPageState
       _soulController.text = saved;
       showToast(context.l10n.agentSoulSaved, type: ToastType.success);
     } catch (e) {
+      if (!mounted) return;
       showToast(context.l10n.agentSoulSaveFailed, type: ToastType.error);
     } finally {
       if (mounted) {
@@ -108,6 +112,7 @@ class _WorkspaceMemorySettingPageState
       _chatController.text = saved;
       showToast(context.l10n.chatPromptSaved, type: ToastType.success);
     } catch (e) {
+      if (!mounted) return;
       showToast(context.l10n.chatPromptSaveFailed, type: ToastType.error);
     } finally {
       if (mounted) {
@@ -126,6 +131,7 @@ class _WorkspaceMemorySettingPageState
       _memoryController.text = saved;
       showToast(context.l10n.workspaceMemorySaved, type: ToastType.success);
     } catch (e) {
+      if (!mounted) return;
       showToast(context.l10n.workspaceMemorySaveFailed, type: ToastType.error);
     } finally {
       if (mounted) {
@@ -135,36 +141,60 @@ class _WorkspaceMemorySettingPageState
   }
 
   Future<void> _toggleEmbedding(bool enabled) async {
-    setState(() => _embeddingEnabled = enabled);
+    if (_savingEmbedding) return;
+    final previousEnabled = _embeddingEnabled;
+    setState(() {
+      _savingEmbedding = true;
+      _embeddingEnabled = enabled;
+    });
     try {
       final config = await WorkspaceMemoryService.saveEmbeddingConfig(
         enabled: enabled,
       );
       if (!mounted) return;
-      setState(() => _embeddingConfig = config);
+      setState(() {
+        _embeddingConfig = config;
+        _embeddingEnabled = config.enabled;
+      });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _embeddingEnabled = !enabled);
+      setState(() => _embeddingEnabled = previousEnabled);
       showToast(
         context.l10n.workspaceEmbeddingToggleFailed,
         type: ToastType.error,
       );
+    } finally {
+      if (mounted) {
+        setState(() => _savingEmbedding = false);
+      }
     }
   }
 
   Future<void> _toggleRollup(bool enabled) async {
-    setState(() => _rollupEnabled = enabled);
+    if (_savingRollup) return;
+    final previousEnabled = _rollupEnabled;
+    setState(() {
+      _savingRollup = true;
+      _rollupEnabled = enabled;
+    });
     try {
       final status = await WorkspaceMemoryService.saveRollupEnabled(enabled);
       if (!mounted) return;
-      setState(() => _rollupStatus = status);
+      setState(() {
+        _rollupStatus = status;
+        _rollupEnabled = status.enabled;
+      });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _rollupEnabled = !enabled);
+      setState(() => _rollupEnabled = previousEnabled);
       showToast(
         context.l10n.workspaceRollupToggleFailed,
         type: ToastType.error,
       );
+    } finally {
+      if (mounted) {
+        setState(() => _savingRollup = false);
+      }
     }
   }
 
@@ -177,12 +207,14 @@ class _WorkspaceMemorySettingPageState
       );
       await _loadAll();
     } on PlatformException catch (e) {
+      if (!mounted) return;
       final message = e.message?.trim();
       final errorText = (message == null || message.isEmpty)
           ? context.l10n.workspaceRollupFailed
           : '${context.l10n.workspaceRollupFailed}：$message';
       showToast(errorText, type: ToastType.error);
     } catch (e) {
+      if (!mounted) return;
       showToast(
         '${context.l10n.workspaceRollupFailed}：$e',
         type: ToastType.error,
@@ -223,6 +255,7 @@ class _WorkspaceMemorySettingPageState
                       ? context.l10n.workspaceEmbeddingReady
                       : context.l10n.workspaceEmbeddingNotReady,
                   value: _embeddingEnabled,
+                  busy: _savingEmbedding,
                   onChanged: _toggleEmbedding,
                   footer: TextButton(
                     onPressed: () {
@@ -237,6 +270,7 @@ class _WorkspaceMemorySettingPageState
                   subtitle:
                       '${context.l10n.workspaceLastRun(_formatTime(_rollupStatus?.lastRunAtMillis))}\n${context.l10n.workspaceNextRun(_formatTime(_rollupStatus?.nextRunAtMillis))}',
                   value: _rollupEnabled,
+                  busy: _savingRollup,
                   onChanged: _toggleRollup,
                   footer: Align(
                     alignment: Alignment.centerLeft,
@@ -279,6 +313,7 @@ class _WorkspaceMemorySettingPageState
     required String title,
     required String subtitle,
     required bool value,
+    required bool busy,
     required ValueChanged<bool> onChanged,
     Widget? footer,
   }) {
@@ -302,7 +337,7 @@ class _WorkspaceMemorySettingPageState
                   ),
                 ),
               ),
-              Switch(value: value, onChanged: onChanged),
+              Switch(value: value, onChanged: busy ? null : onChanged),
             ],
           ),
           const SizedBox(height: 4),

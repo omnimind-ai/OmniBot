@@ -1252,6 +1252,27 @@ class AppLocalizationsEn extends AppLocalizations {
   String get aboutPreferencesSectionTitle => 'Update & Testing';
 
   @override
+  String get aboutPrivacyConsentTitle =>
+      'Automatic network and background services';
+
+  @override
+  String get aboutPrivacyConsentDescription =>
+      'Only after you allow this may the app automatically sync platform models and check for updates at startup, start the LAN MCP listener, and restore background AI and legacy scheduled tasks. If you decline, local features and account or AI requests you start yourself remain available; background and LAN services will not be restored automatically. The random installation identifier is used only for update statistics.';
+
+  @override
+  String get aboutPrivacyConsentPending => 'Choose';
+
+  @override
+  String get aboutPrivacyConsentGranted => 'Allowed';
+
+  @override
+  String get aboutPrivacyConsentDeclined => 'Declined';
+
+  @override
+  String get aboutPrivacyConsentUpdateFailed =>
+      'Failed to save the privacy choice. Please try again.';
+
+  @override
   String get aboutApkSourceTitle => 'APK Download Source';
 
   @override
@@ -1260,7 +1281,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get aboutApkSourceDisclaimer =>
-      'By using this app, you agree to our Privacy Policy and consent to the collection of anonymous usage information through the open-source update Worker to help improve the software. You are solely responsible for any loss or consequence arising from your use of the app.';
+      'Update checks use the open-source Worker. After you allow automatic network and background services, automatic update checks may include a random installation identifier used only for update statistics.';
 
   @override
   String get aboutApkSourceOptionCnb => 'Cloudflare R2';

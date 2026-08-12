@@ -119,7 +119,6 @@ class MemoryCenterPageState extends State<MemoryCenterPage>
   Set<int> _selectedCardIds = {};
 
   // LLM 生成的记忆建议
-  String? _memorySuggestion;
   bool _isSuggestionLoading = false;
   late AnimationController _shimmerController;
   // 用于跟踪上次生成建议时的前三条记录ID
@@ -127,6 +126,9 @@ class MemoryCenterPageState extends State<MemoryCenterPage>
   Mem0MemorySnapshot _mem0Snapshot = Mem0MemorySnapshot.unconfigured();
   bool _isMem0Loading = false;
   bool _isMem0Mutating = false;
+  // Memory suggestions are disabled until the product has an explicit privacy
+  // disclosure and opt-in. Keep the old cache scrub while disabled.
+  bool get _memorySuggestionsEnabled => false;
   static const int _localMemoryTab = 0;
   static const int _cloudMemoryTab = 1;
   int _currentMemoryTab = _localMemoryTab;
@@ -180,13 +182,11 @@ class MemoryCenterPageState extends State<MemoryCenterPage>
   void onPageResumed() {
     if (_hasLoadedOnce) {
       // 应用从后台返回前台，静默刷新
-      print('MemoryCenterPage resumed - reloading data silently');
       _loadData(silent: true);
     }
   }
 
   Future<void> refreshData() async {
-    print('Refreshing memory center data...');
     await _loadData(forceMem0Refresh: true);
   }
 
@@ -196,8 +196,6 @@ class MemoryCenterPageState extends State<MemoryCenterPage>
     bool silent = false,
     bool forceMem0Refresh = false,
   }) async {
-    print('MemoryCenterPage loading data... (silent: $silent)');
-
     if (!silent) {
       _safeSetState(() {
         _isLoading = true;
@@ -218,8 +216,7 @@ class MemoryCenterPageState extends State<MemoryCenterPage>
             : {};
       });
       _hasLoadedOnce = true;
-    } catch (e) {
-      print('Error loading data: $e');
+    } catch (_) {
       if (!silent) {
         _safeSetState(() {
           _isLoading = false;
@@ -262,23 +259,16 @@ class MemoryCenterPageState extends State<MemoryCenterPage>
   }
 
   Future<void> _loadMemorySuggestion() async {
-    await StorageService.remove(kMemorySuggestionKey);
-    await StorageService.remove(kMemorySuggestionTopThreeIdsKey);
-    _safeSetState(() {
-      _memorySuggestion = null;
-      _isSuggestionLoading = false;
-      _lastTopThreeIds = <String>[];
-    });
-    return;
-    // 先加载持久化的建议
-    String? savedSuggestion;
-    try {
-      savedSuggestion = StorageService.getString(kMemorySuggestionKey);
-      print('加载持久化的记忆建议: $savedSuggestion');
-    } catch (e) {
-      print('加载记忆建议失败: $e');
+    if (!_memorySuggestionsEnabled) {
+      await StorageService.remove(kMemorySuggestionKey);
+      await StorageService.remove(kMemorySuggestionTopThreeIdsKey);
+      _safeSetState(() {
+        _isSuggestionLoading = false;
+        _lastTopThreeIds = <String>[];
+      });
+      return;
     }
-
+    // 先加载持久化的建议
     // 检查本地+云端的前三条是否变化，只在变化时生成建议
     final suggestionContext = _buildMemorySuggestionContext();
     final currentTopThreeIds = suggestionContext.ids;
@@ -295,7 +285,6 @@ class MemoryCenterPageState extends State<MemoryCenterPage>
       if (suggestionContext.records.isEmpty) {
         await StorageService.remove(kMemorySuggestionKey);
         _safeSetState(() {
-          _memorySuggestion = null;
           _isSuggestionLoading = false;
         });
         return;
@@ -304,9 +293,7 @@ class MemoryCenterPageState extends State<MemoryCenterPage>
       unawaited(_generateMemorySuggestion(suggestionContext.records));
     } else {
       _safeSetState(() {
-        _memorySuggestion = _sanitizeMemorySuggestion(savedSuggestion);
         _isSuggestionLoading = false;
-        print('记忆建议未变化，使用持久化数据: $_memorySuggestion');
       });
     }
   }
@@ -464,12 +451,6 @@ class MemoryCenterPageState extends State<MemoryCenterPage>
 
   */
 
-  String _trimDanglingSuggestionSuffix(String text) =>
-      _trimDanglingSuggestionSuffixAscii(text);
-
-  bool _looksBrokenMemorySuggestion(String text) =>
-      _looksBrokenMemorySuggestionAscii(text);
-
   String _clipSuggestionText(String text, {int maxLength = 24}) {
     if (text.length <= maxLength) {
       return text;
@@ -488,21 +469,15 @@ class MemoryCenterPageState extends State<MemoryCenterPage>
             .map((id) => id.toString().trim())
             .where((id) => id.isNotEmpty)
             .toList();
-        print('加载持久化的前三条ID: $_lastTopThreeIds');
       }
-    } catch (e) {
-      print('加载前三条记录ID失败: $e');
-    }
+    } catch (_) {}
   }
 
   /// 保存前三条记录ID到持久化存储
   Future<void> _saveLastTopThreeIds(List<String> ids) async {
     try {
       await StorageService.setJson(kMemorySuggestionTopThreeIdsKey, ids);
-      print('保存前三条ID到持久化存储: $ids');
-    } catch (e) {
-      print('保存前三条记录ID失败: $e');
-    }
+    } catch (_) {}
   }
 
   /// 检查前三条记录是否变化
@@ -551,7 +526,6 @@ class MemoryCenterPageState extends State<MemoryCenterPage>
       if (response != null && response.isNotEmpty && mounted) {
         final sanitized = _sanitizeMemorySuggestion(response);
         _safeSetState(() {
-          _memorySuggestion = sanitized;
           if (sanitized != null) {
             StorageService.setString(kMemorySuggestionKey, sanitized);
           } else {
@@ -564,8 +538,7 @@ class MemoryCenterPageState extends State<MemoryCenterPage>
           _isSuggestionLoading = false;
         });
       }
-    } catch (e) {
-      print('生成记忆建议失败: $e');
+    } catch (_) {
       _safeSetState(() {
         _isSuggestionLoading = false;
       });
@@ -576,6 +549,7 @@ class MemoryCenterPageState extends State<MemoryCenterPage>
     try {
       final items = await workspace_memory
           .WorkspaceMemoryService.getShortMemories(days: 14, limit: 300);
+      if (!mounted) return;
       final cards = items.map((item) {
         final text = _normalizeShortMemoryText(item.content);
         final isTruncated = text.length > 26;
@@ -609,9 +583,7 @@ class MemoryCenterPageState extends State<MemoryCenterPage>
         ];
         selectedTagIds = {'all'};
       });
-    } catch (e) {
-      print('Error loading short memories: $e');
-    }
+    } catch (_) {}
   }
 
   String _normalizeShortMemoryText(String raw) {
@@ -1389,6 +1361,7 @@ class MemoryCenterPageState extends State<MemoryCenterPage>
                                     await Future<void>.delayed(
                                       const Duration(milliseconds: 120),
                                     );
+                                    if (!mounted) return;
                                     await _editMem0Memory(item);
                                   },
                             style: OutlinedButton.styleFrom(
@@ -1413,6 +1386,7 @@ class MemoryCenterPageState extends State<MemoryCenterPage>
                                     await Future<void>.delayed(
                                       const Duration(milliseconds: 120),
                                     );
+                                    if (!mounted) return;
                                     await _deleteMem0Memory(item);
                                   },
                             style: TextButton.styleFrom(
@@ -1529,7 +1503,7 @@ class MemoryCenterPageState extends State<MemoryCenterPage>
       return;
     }
     final result = await _showMem0MemoryEditor();
-    if (result == null) {
+    if (!mounted || result == null) {
       return;
     }
     await _runMem0Mutation(
@@ -1548,7 +1522,7 @@ class MemoryCenterPageState extends State<MemoryCenterPage>
       return;
     }
     final result = await _showMem0MemoryEditor(initialItem: item);
-    if (result == null) {
+    if (!mounted || result == null) {
       return;
     }
     await _runMem0Mutation(
@@ -1575,7 +1549,7 @@ class MemoryCenterPageState extends State<MemoryCenterPage>
       confirmText: context.trLegacy('删除'),
       confirmButtonColor: AppColors.alertRed,
     );
-    if (confirmed != true) {
+    if (!mounted || confirmed != true) {
       return;
     }
     await _runMem0Mutation(
@@ -1596,8 +1570,10 @@ class MemoryCenterPageState extends State<MemoryCenterPage>
     try {
       await action();
       await _loadMem0Memories(forceRefresh: true);
+      if (!mounted) return;
       showToast(successMessage, type: ToastType.success);
     } catch (e) {
+      if (!mounted) return;
       showToast(
         context.l10n.memoryLongTermFailed(
           e.toString().replaceFirst('Exception: ', ''),

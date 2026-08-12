@@ -24,7 +24,6 @@ import '../common/openclaw_connection_checker.dart';
 import '../omnibot_workspace/widgets/omnibot_workspace_browser.dart';
 import 'services/chat_conversation_lifecycle_guard.dart';
 import 'services/chat_conversation_runtime_coordinator.dart';
-import 'package:ui/constants/openclaw/openclaw_keys.dart';
 import 'package:ui/core/router/go_router_manager.dart';
 import 'package:ui/services/app_state_service.dart';
 import 'package:ui/services/account_service.dart';
@@ -51,6 +50,8 @@ import 'package:ui/services/shared_open_draft_service.dart';
 import 'package:ui/theme/theme_context.dart';
 import 'package:ui/services/special_permission.dart';
 import 'package:ui/services/storage_service.dart';
+import 'package:ui/services/openclaw_credential_service.dart';
+import 'package:ui/services/data_destination_confirmation.dart';
 import 'package:ui/utils/ui.dart';
 import 'package:ui/l10n/legacy_text_localizer.dart';
 import 'package:ui/models/chat_startup_behavior.dart';
@@ -86,6 +87,7 @@ import 'package:ui/widgets/app_update_dialog.dart';
 import 'package:ui/widgets/app_background_widgets.dart';
 import 'package:ui/widgets/conversation_model_selector.dart';
 import 'package:ui/widgets/glass_popup.dart';
+import 'package:ui/widgets/openclaw_identity_reset_dialog.dart';
 import 'package:ui/widgets/omni_glass.dart';
 
 part 'chat_page_browser.dart';
@@ -122,6 +124,12 @@ abstract class _ChatPageStateBase extends State<ChatPage>
         TaskExecutionHandler,
         ConversationManager
     implements RouteAware {
+  _ChatModelOverrideSelection? _effectiveNormalModelSelection(
+    _ChatModelOverrideSelection? explicitSelection,
+  );
+
+  ModelProviderProfileSummary? _findProviderProfile(String profileId);
+
   // ===================== Controllers =====================
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _normalMessageScrollController = ScrollController();
@@ -174,10 +182,10 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   int _conversationTargetRequestId = 0;
 
   // OpenClaw 配置与开关
-  bool _openClawEnabled = false;
   String _openClawBaseUrl = '';
   String _openClawToken = '';
   String _openClawUserId = '';
+  OpenClawConfigurationSnapshot? _openClawConfiguration;
   ChatSurfaceMode _activeSurfaceMode = ChatSurfaceMode.normal;
   ChatPageMode _activeConversationMode = ChatPageMode.normal;
   bool _showSlashCommandPanel = false;
@@ -1985,7 +1993,7 @@ abstract class _ChatPageStateBase extends State<ChatPage>
 
   Future<void> _handleOutsideTap(Offset position);
 
-  Future<void> _applyOpenClawConfig({
+  Future<bool> _applyOpenClawConfig({
     required String baseUrl,
     required String token,
     String? userId,
@@ -2000,6 +2008,8 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   Future<void> _executeManualContextCompactionCommand();
 
   Future<void> _checkOpenClawConnection();
+
+  Future<void> _resetOpenClawDeviceIdentity();
 
   void _syncRuntimeSnapshotForMode(
     ChatPageMode mode, {

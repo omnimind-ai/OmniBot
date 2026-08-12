@@ -1,13 +1,19 @@
 package cn.com.omnimind.bot.ui.channel
 
+import android.app.ActivityManager
 import android.app.usage.StorageStatsManager
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.os.Process
 import android.os.storage.StorageManager
+import cn.com.omnimind.baselib.database.DatabaseHelper
 import cn.com.omnimind.baselib.i18n.AppLocaleManager
 import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.agent.AgentWorkspaceManager
+import cn.com.omnimind.bot.agent.runtime.AcpAgentProfileStore
+import cn.com.omnimind.bot.manager.AssistsCoreManager
+import cn.com.omnimind.bot.mcp.McpServerManager
+import com.ai.assistance.operit.terminal.TerminalManager
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -124,12 +130,73 @@ class StorageUsageChannel {
                 }
             }
 
+            "deleteAllLocalData" -> {
+                scope.launch {
+                    val confirmation = call.argument<String>("confirmation").orEmpty()
+                    if (!LocalDataDeletionPolicy.isConfirmed(confirmation)) {
+                        result.error(
+                            "LOCAL_DATA_CONFIRMATION_REQUIRED",
+                            "The local data deletion confirmation is invalid.",
+                            null,
+                        )
+                        return@launch
+                    }
+
+                    val context = requireContext()
+                    result.success(requestSystemLocalDataDeletion(context))
+                }
+            }
+
             else -> result.notImplemented()
         }
     }
 
     private fun requireContext(): Context {
         return appContext ?: error("StorageUsageChannel is not initialized")
+    }
+
+    /**
+     * Uses Android's own app-data reset instead of walking paths inside the process. This keeps
+     * public shared files and all cloud-side data out of scope, while Android atomically stops the
+     * package and removes its private databases, preferences, credentials, workspaces and caches.
+     */
+    private fun requestSystemLocalDataDeletion(context: Context): Map<String, Any> {
+        val assistsCoreManager = AssistsCoreManager.sharedInstanceOrCreate(context)
+        if (!assistsCoreManager.beginConversationHistoryMaintenance()) {
+            return mapOf(
+                "status" to "ABORTED",
+                "reason" to "ACTIVE_TASKS",
+                "requiresRestart" to false,
+            )
+        }
+
+        return try {
+            McpServerManager.stopServer()
+            TerminalManager.getInstance(context).closeAllSessions()
+            val activityManager = context.getSystemService(ActivityManager::class.java)
+            val accepted = activityManager?.clearApplicationUserData() == true
+            if (accepted) {
+                mapOf(
+                    "status" to "STARTED",
+                    "reason" to "",
+                    "requiresRestart" to true,
+                )
+            } else {
+                assistsCoreManager.endConversationHistoryMaintenance()
+                mapOf(
+                    "status" to "ABORTED",
+                    "reason" to "SYSTEM_REJECTED",
+                    "requiresRestart" to false,
+                )
+            }
+        } catch (_: Exception) {
+            assistsCoreManager.endConversationHistoryMaintenance()
+            mapOf(
+                "status" to "ABORTED",
+                "reason" to "SYSTEM_UNAVAILABLE",
+                "requiresRestart" to false,
+            )
+        }
     }
 
     private data class AnalysisPayload(
@@ -774,33 +841,31 @@ class StorageUsageChannel {
     private fun clearConversationHistory(): CleanupOutcome {
         val context = appContext ?: return CleanupOutcome(success = false, failedPaths = listOf("context_unavailable"))
         val dbFile = resolvePrimaryDatabaseFile(context)
-        if (!dbFile.exists()) {
-            return CleanupOutcome(success = true)
+        val assistsCoreManager = AssistsCoreManager.sharedInstanceOrCreate(context)
+        if (!assistsCoreManager.beginConversationHistoryMaintenance()) {
+            return CleanupOutcome(success = false, failedPaths = listOf("active_conversation_tasks"))
         }
 
-        return runCatching {
-            SQLiteDatabase.openDatabase(
-                dbFile.absolutePath,
-                null,
-                SQLiteDatabase.OPEN_READWRITE,
-            ).use { sqliteDb ->
-                sqliteDb.beginTransaction()
-                try {
-                    safeExecSql(sqliteDb, "DELETE FROM agent_conversation_entries")
-                    safeExecSql(sqliteDb, "DELETE FROM conversations")
-                    safeExecSql(sqliteDb, "DELETE FROM messages")
-                    sqliteDb.setTransactionSuccessful()
-                } finally {
-                    sqliteDb.endTransaction()
+        return try {
+            runCatching {
+                if (!AcpAgentProfileStore(context).clearConversationBindings()) {
+                    error("conversation binding cleanup failed")
                 }
-                safeExecSql(sqliteDb, "PRAGMA wal_checkpoint(TRUNCATE)")
-                safeExecSql(sqliteDb, "VACUUM")
+                if (!dbFile.exists()) {
+                    return@runCatching CleanupOutcome(success = true)
+                }
+
+                // Opening through Room first guarantees that every registered migration has
+                // completed before newer tables are included in the all-or-nothing deletion.
+                DatabaseHelper.clearAllLocalTables()
+                CleanupOutcome(success = true)
+            }.onFailure {
+                OmniLog.e(TAG, "Clear conversation history failed", it)
+            }.getOrElse {
+                CleanupOutcome(success = false, failedPaths = listOf("conversation_history_database"))
             }
-            CleanupOutcome(success = true)
-        }.onFailure {
-            OmniLog.e(TAG, "Clear conversation history failed", it)
-        }.getOrElse {
-            CleanupOutcome(success = false, failedPaths = listOf(dbFile.absolutePath))
+        } finally {
+            assistsCoreManager.endConversationHistoryMaintenance()
         }
     }
 

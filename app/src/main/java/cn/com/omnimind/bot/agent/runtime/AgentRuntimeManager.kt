@@ -3,9 +3,9 @@ package cn.com.omnimind.bot.agent.runtime
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
-import android.util.Log
 import com.ai.assistance.operit.terminal.TerminalManager
 import cn.com.omnimind.baselib.database.DatabaseHelper
+import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.BuildConfig
 import cn.com.omnimind.bot.agent.AgentAttachmentPromptSupport
 import cn.com.omnimind.bot.agent.AgentImageAttachmentSupport
@@ -16,6 +16,7 @@ import com.rk.terminal.runtime.TerminalDistribution
 import com.google.gson.GsonBuilder
 import com.google.gson.JsonParser
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.sync.Mutex
@@ -30,6 +31,7 @@ class AgentRuntimeManager private constructor(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val sessionMutex = Mutex()
     private val threadStartMutex = Mutex()
+    private val managedAcpInstallMutex = Mutex()
     private val mainHandler = Handler(Looper.getMainLooper())
     private val bindingRepository = AgentSessionBindingRepository(appContext)
     private val remoteConfigStore = CodexRemoteBridgeConfigStore(appContext)
@@ -193,6 +195,9 @@ class AgentRuntimeManager private constructor(
         }
         if (method == "agent/config/write") {
             return writeAgentConfig(args)
+        }
+        if (method == "agent/config/clear") {
+            return clearAgentConfig(args)
         }
         if (method.startsWith("agent/")) {
             return localAcpRuntime.handleMethod(method, args)
@@ -387,7 +392,7 @@ class AgentRuntimeManager private constructor(
             if (!shouldRecoverMissingThread(error)) {
                 throw error
             }
-            Log.w(
+            OmniLog.w(
                 "AgentRuntimeManager",
                 "Agent turn/start hit a missing thread; creating a fresh thread binding."
             )
@@ -425,7 +430,7 @@ class AgentRuntimeManager private constructor(
             if (!shouldRecoverMissingThread(error)) {
                 throw error
             }
-            Log.w(
+            OmniLog.w(
                 "AgentRuntimeManager",
                 "Agent review/start hit a missing thread; creating a fresh thread binding."
             )
@@ -516,41 +521,20 @@ class AgentRuntimeManager private constructor(
     }
 
     private suspend fun readAgentConfig(args: Map<String, Any?>): Map<String, Any?> {
+        rejectAgentConfigPathOverride(args)
         val agentId = args.stringValue("agentId")
-            ?: throw IllegalArgumentException("agentId is required.")
+            ?: throw IllegalArgumentException(AGENT_CONFIG_AGENT_ID_REQUIRED)
         val profile = acpAgentProfileStore.list().firstOrNull { it.id == agentId }
-            ?: throw IllegalArgumentException("Unknown ACP agent: $agentId")
+            ?: throw IllegalArgumentException(AGENT_CONFIG_UNKNOWN_AGENT)
         return when (profile.id) {
-            AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID -> {
-                val configToml = readTerminalTextFile(
-                    path = CODEX_CONFIG_TOML_PATH,
-                    executorKey = "codex-agent-config-read"
-                )
-                val authJson = readTerminalTextFile(
-                    path = CODEX_AUTH_JSON_PATH,
-                    executorKey = "codex-agent-auth-read"
-                )
-                linkedMapOf(
-                    "agentId" to profile.id,
-                    "kind" to "codex",
-                    "configPath" to CODEX_CONFIG_TOML_DISPLAY_PATH,
-                    "authPath" to CODEX_AUTH_JSON_DISPLAY_PATH,
-                    "baseUrl" to extractTomlString(configToml, "base_url").orEmpty(),
-                    "model" to extractTomlString(configToml, "model").orEmpty(),
-                    "apiKey" to extractOpenAiApiKey(authJson).orEmpty()
-                )
-            }
-            CLAUDE_CODE_AGENT_ID -> readRawAgentConfig(
+            AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID -> readCodexAgentConfigStatus(profile)
+            CLAUDE_CODE_AGENT_ID -> readReplaceOnlyAgentConfigStatus(
                 profile = profile,
-                kind = "json",
-                path = CLAUDE_SETTINGS_JSON_PATH,
-                displayPath = CLAUDE_SETTINGS_JSON_DISPLAY_PATH
+                target = requireNotNull(agentConfigFileTargetFor(profile.id))
             )
-            OPENCODE_AGENT_ID -> readRawAgentConfig(
+            OPENCODE_AGENT_ID -> readReplaceOnlyAgentConfigStatus(
                 profile = profile,
-                kind = "jsonc",
-                path = OPENCODE_CONFIG_JSON_PATH,
-                displayPath = OPENCODE_CONFIG_JSON_DISPLAY_PATH
+                target = requireNotNull(agentConfigFileTargetFor(profile.id))
             )
             else -> linkedMapOf(
                 "agentId" to profile.id,
@@ -559,155 +543,225 @@ class AgentRuntimeManager private constructor(
         }
     }
 
-    private suspend fun readRawAgentConfig(
-        profile: AcpAgentProfile,
-        kind: String,
-        path: String,
-        displayPath: String
+    private suspend fun readCodexAgentConfigStatus(
+        profile: AcpAgentProfile
     ): Map<String, Any?> {
-        val stored = readTerminalTextFile(
-            path = path,
-            executorKey = "agent-config-read-${profile.id}"
+        val output = executeAgentConfigCommand(
+            command = buildCodexAgentConfigStatusCommand(),
+            executorKey = "codex-agent-config-status"
         )
+        val status = parseCodexAgentConfigStatus(output)
         return linkedMapOf(
             "agentId" to profile.id,
-            "kind" to kind,
-            "path" to displayPath,
-            "content" to stored.ifBlank { DEFAULT_EMPTY_JSON_FILE }
+            "kind" to "codex",
+            "configPath" to CODEX_CONFIG_TOML_DISPLAY_PATH,
+            "authPath" to CODEX_AUTH_JSON_DISPLAY_PATH,
+            "baseUrl" to status.baseUrl,
+            "model" to status.model,
+            "hasApiKey" to status.hasApiKey,
+            // Keep this compatibility field deliberately empty. Credentials are
+            // replace-only and never cross the native-to-Flutter boundary.
+            "apiKey" to ""
+        )
+    }
+
+    private suspend fun readReplaceOnlyAgentConfigStatus(
+        profile: AcpAgentProfile,
+        target: AgentConfigFileTarget
+    ): Map<String, Any?> {
+        val output = executeAgentConfigCommand(
+            command = buildAgentConfigFileStatusCommand(target),
+            executorKey = "agent-config-status-${profile.id}"
+        )
+        val fileStatus = parseAgentConfigFileStatus(output)
+        return buildReplaceOnlyAgentConfigPayload(
+            agentId = profile.id,
+            format = target.format,
+            displayPath = target.displayPath,
+            hasConfig = fileStatus.hasConfig,
+            byteCount = fileStatus.byteCount
         )
     }
 
     private suspend fun writeAgentConfig(args: Map<String, Any?>): Map<String, Any?> {
+        rejectAgentConfigPathOverride(args)
         val agentId = args.stringValue("agentId")
-            ?: throw IllegalArgumentException("agentId is required.")
+            ?: throw IllegalArgumentException(AGENT_CONFIG_AGENT_ID_REQUIRED)
         val profile = acpAgentProfileStore.list().firstOrNull { it.id == agentId }
-            ?: throw IllegalArgumentException("Unknown ACP agent: $agentId")
+            ?: throw IllegalArgumentException(AGENT_CONFIG_UNKNOWN_AGENT)
         when (profile.id) {
             AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID -> {
                 val baseUrl = args.stringValue("baseUrl")
-                    ?: throw IllegalArgumentException("Base URL is required.")
+                    ?: throw IllegalArgumentException(AGENT_CONFIG_BASE_URL_REQUIRED)
                 val model = args.stringValue("model")
-                    ?: throw IllegalArgumentException("Model ID is required.")
+                    ?: throw IllegalArgumentException(AGENT_CONFIG_MODEL_REQUIRED)
                 val apiKey = args.stringValue("apiKey")
-                    ?: throw IllegalArgumentException("API Key is required.")
-                writeCodexConfigFiles(
-                    configToml = buildCodexConfigToml(
-                        baseUrl = baseUrl,
-                        model = model
-                    ),
-                    authJson = buildCodexAuthJson(apiKey)
-                )
+                requireAgentConfigSize(baseUrl)
+                requireAgentConfigSize(model)
+                if (apiKey != null) {
+                    requireAgentConfigSize(apiKey)
+                }
+                if (apiKey == null && !readCodexAgentConfigStatus(profile).booleanValue("hasApiKey")) {
+                    throw IllegalArgumentException(AGENT_CONFIG_API_KEY_REQUIRED)
+                }
+                val configToml = buildCodexConfigToml(baseUrl = baseUrl, model = model)
+                requireAgentConfigSize(configToml)
+                val authJson = apiKey?.let(::buildCodexAuthJson)
+                if (authJson != null) requireAgentConfigSize(authJson)
+                try {
+                    writeCodexAgentConfigFiles(
+                        configToml = configToml,
+                        authJson = authJson
+                    )
+                } catch (error: Exception) {
+                    disconnectLocalRuntimeAfterAgentConfigMutation()
+                    throw error
+                }
             }
             CLAUDE_CODE_AGENT_ID -> {
-                val content = args.stringValuePreservingWhitespace("content")
-                    ?.ifBlank { DEFAULT_EMPTY_JSON_FILE }
-                    ?: throw IllegalArgumentException("settings.json content is required.")
-                requireAgentConfigSize(content)
+                val content = validateAgentConfigReplacement(
+                    args.stringValuePreservingWhitespace("content")
+                )
                 runCatching {
                     require(JsonParser.parseString(content).isJsonObject)
                 }.getOrElse {
-                    throw IllegalArgumentException(
-                        "Claude Code settings.json must contain a valid JSON object.",
-                        it
-                    )
+                    throw IllegalArgumentException(AGENT_CONFIG_INVALID_JSON_OBJECT)
                 }
-                writeTerminalTextFile(
-                    path = CLAUDE_SETTINGS_JSON_PATH,
+                writeFixedAgentConfigFile(
+                    target = requireNotNull(agentConfigFileTargetFor(profile.id)),
                     content = content,
-                    executorKey = "agent-config-write-${profile.id}"
+                    executorKey = "agent-config-replace-${profile.id}"
                 )
             }
             OPENCODE_AGENT_ID -> {
-                val content = args.stringValuePreservingWhitespace("content")
-                    ?.ifBlank { DEFAULT_EMPTY_JSON_FILE }
-                    ?: throw IllegalArgumentException("opencode.json content is required.")
-                requireAgentConfigSize(content)
-                writeTerminalTextFile(
-                    path = OPENCODE_CONFIG_JSON_PATH,
+                val content = validateAgentConfigReplacement(
+                    args.stringValuePreservingWhitespace("content")
+                )
+                writeFixedAgentConfigFile(
+                    target = requireNotNull(agentConfigFileTargetFor(profile.id)),
                     content = content,
-                    executorKey = "agent-config-write-${profile.id}"
+                    executorKey = "agent-config-replace-${profile.id}"
                 )
             }
-            else -> throw UnsupportedOperationException(
-                "Custom ACP Agent settings are stored in its launch profile."
-            )
+            else -> throw UnsupportedOperationException(AGENT_CONFIG_UNSUPPORTED)
         }
-        localAcpRuntime.disconnect()
-        activeTurnsByThreadId.clear()
+        disconnectLocalRuntimeAfterAgentConfigMutation()
         return readAgentConfig(mapOf("agentId" to profile.id))
     }
 
-    private suspend fun writeCodexConfigFiles(
-        configToml: String,
-        authJson: String
-    ) {
-        val command = """
-            set -eu
-            mkdir -p ${shellQuote(AgentRuntimeDefaults.CODEX_HOME)}
-            umask 077
-            printf %s ${shellQuote(configToml)} > ${shellQuote(CODEX_CONFIG_TOML_PATH)}
-            printf %s ${shellQuote(authJson)} > ${shellQuote(CODEX_AUTH_JSON_PATH)}
-            chmod 600 ${shellQuote(CODEX_CONFIG_TOML_PATH)} ${shellQuote(CODEX_AUTH_JSON_PATH)}
-        """.trimIndent()
-        executeAgentConfigCommand(command, "codex-agent-config-write")
-    }
-
-    private suspend fun readTerminalTextFile(
-        path: String,
-        executorKey: String
-    ): String {
-        val command = """
-            set -eu
-            printf '${AGENT_CONFIG_START_MARKER}\n'
-            if [ -f ${shellQuote(path)} ]; then
-              cat ${shellQuote(path)}
-            fi
-            printf '\n${AGENT_CONFIG_END_MARKER}\n'
-        """.trimIndent()
-        val output = executeAgentConfigCommand(command, executorKey)
-        return extractMarkedBlock(
-            output,
-            AGENT_CONFIG_START_MARKER,
-            AGENT_CONFIG_END_MARKER
-        )
-    }
-
-    private suspend fun writeTerminalTextFile(
-        path: String,
+    private suspend fun writeFixedAgentConfigFile(
+        target: AgentConfigFileTarget,
         content: String,
         executorKey: String
     ) {
-        val parent = File(path).parent
-            ?: throw IllegalArgumentException("Invalid Agent config path.")
-        val command = """
-            set -eu
-            mkdir -p ${shellQuote(parent)}
-            umask 077
-            printf %s ${shellQuote(content)} > ${shellQuote(path)}
-            chmod 600 ${shellQuote(path)}
-        """.trimIndent()
-        executeAgentConfigCommand(command, executorKey)
+        require(target in ALL_AGENT_CONFIG_FILE_TARGETS) {
+            AGENT_CONFIG_UNSAFE_PATH
+        }
+        val payload = content.toByteArray(Charsets.UTF_8)
+        requireAgentConfigSize(payload)
+        val output = executeAgentConfigCommand(
+            command = buildAgentConfigAtomicReplaceCommand(target),
+            executorKey = executorKey,
+            stdin = payload
+        )
+        requireAgentConfigSuccessMarker(output, AGENT_CONFIG_WRITE_OK_MARKER)
+    }
+
+    private suspend fun writeCodexAgentConfigFiles(
+        configToml: String,
+        authJson: String?
+    ) {
+        val payload = GsonBuilder().create().toJson(
+            buildMap<String, String> {
+                put("config", configToml)
+                if (authJson != null) put("auth", authJson)
+            }
+        ).toByteArray(Charsets.UTF_8)
+        requireAgentConfigSize(payload)
+        val output = executeAgentConfigCommand(
+            command = buildCodexAgentConfigTransactionCommand(authJson != null),
+            executorKey = "codex-agent-config-transaction",
+            stdin = payload
+        )
+        requireAgentConfigSuccessMarker(output, AGENT_CONFIG_WRITE_OK_MARKER)
+    }
+
+    private suspend fun clearAgentConfig(args: Map<String, Any?>): Map<String, Any?> {
+        rejectAgentConfigPathOverride(args)
+        val agentId = args.stringValue("agentId")
+            ?: throw IllegalArgumentException(AGENT_CONFIG_AGENT_ID_REQUIRED)
+        val profile = acpAgentProfileStore.list().firstOrNull { it.id == agentId }
+            ?: throw IllegalArgumentException(AGENT_CONFIG_UNKNOWN_AGENT)
+        val targets = agentConfigClearTargetsFor(profile.id)
+        if (targets.isEmpty()) {
+            throw UnsupportedOperationException(AGENT_CONFIG_UNSUPPORTED)
+        }
+        val output = executeAgentConfigCommand(
+            command = buildAgentConfigClearCommand(targets),
+            executorKey = "agent-config-clear-${profile.id}"
+        )
+        requireAgentConfigSuccessMarker(output, AGENT_CONFIG_CLEAR_OK_MARKER)
+        disconnectLocalRuntimeAfterAgentConfigMutation()
+        return readAgentConfig(mapOf("agentId" to profile.id))
+    }
+
+    private suspend fun disconnectLocalRuntimeAfterAgentConfigMutation() {
+        sessionMutex.withLock {
+            localAcpRuntime.disconnect()
+            if (activeRuntime == AgentRuntimeKind.LOCAL) {
+                activeRuntime = null
+                activeLocalDistributionId = null
+            }
+            activeTurnsByThreadId.clear()
+            pendingThreadStartConversationId = null
+        }
     }
 
     private suspend fun executeAgentConfigCommand(
         command: String,
-        executorKey: String
+        executorKey: String,
+        stdin: ByteArray? = null
     ): String {
-        val result = TerminalManager.getInstance(appContext).executeHiddenCommand(
-            command = command,
-            executorKey = executorKey,
-            timeoutMs = 30_000L
-        )
-        if (!result.isOk || result.exitCode != 0) {
-            throw IllegalStateException(
-                result.error.ifBlank {
-                    result.rawOutputPreview.ifBlank {
-                        "Failed to access the Agent configuration."
+        val stdinFailed = java.util.concurrent.atomic.AtomicBoolean(false)
+        val result = try {
+            TerminalManager.getInstance(appContext).executeHiddenCommand(
+                command = command,
+                executorKey = executorKey,
+                timeoutMs = 30_000L,
+                onProcessStarted = { process ->
+                    try {
+                        process.outputStream.use { stream ->
+                            if (stdin != null) {
+                                stream.write(stdin)
+                                stream.flush()
+                            }
+                        }
+                    } catch (_: Exception) {
+                        stdinFailed.set(true)
                     }
                 }
             )
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            throw IllegalStateException(AGENT_CONFIG_IO_FAILED)
+        }
+        if (stdinFailed.get()) {
+            throw IllegalStateException(AGENT_CONFIG_IO_FAILED)
+        }
+        if (!result.isOk || result.exitCode != 0) {
+            throw IllegalStateException(agentConfigErrorForExitCode(result.exitCode))
+        }
+        if (result.output.toByteArray(Charsets.UTF_8).size > MAX_AGENT_CONFIG_STATUS_BYTES) {
+            throw IllegalStateException(AGENT_CONFIG_INVALID_STATUS)
         }
         return result.output
+    }
+
+    private fun requireAgentConfigSuccessMarker(output: String, marker: String) {
+        if (output.trim() != marker) {
+            throw IllegalStateException(AGENT_CONFIG_INVALID_STATUS)
+        }
     }
 
     private suspend fun writeRemoteBridgeConfig(args: Map<String, Any?>): Map<String, Any?> {
@@ -737,10 +791,13 @@ class AgentRuntimeManager private constructor(
     }
 
     private suspend fun testRemoteConfig(args: Map<String, Any?>): Map<String, Any?> {
+        val storedConfig = remoteConfigStore.read()
         val remoteConfig = CodexRemoteBridgeConfig(
             enabled = true,
             bridgeUrl = args.stringValue("remoteBridgeUrl").orEmpty(),
-            authToken = args.stringValue("remoteBridgeToken").orEmpty(),
+            authToken = args.stringValue("remoteBridgeToken")
+                ?.takeIf(String::isNotBlank)
+                ?: storedConfig.authToken,
             cwd = args.stringValue("remoteCwd").orEmpty()
         )
         if (!remoteConfig.isConfigured) {
@@ -916,59 +973,93 @@ class AgentRuntimeManager private constructor(
 
     private suspend fun ensureManagedAcpAdapter(profile: AcpAgentProfile) {
         val runtime = AcpAgentProfileStore.officialRuntime(profile) ?: return
-        val packageName = runtime.managedAdapterPackage ?: return
-        if (isTerminalCommandAvailable(profile.command)) {
+        val packageSpec = runtime.managedAdapterPackage ?: return
+        if (!managedAcpCommandMatchesPackage(packageSpec, profile.command)) {
+            throw ManagedAcpInstallException(AGENT_RUNTIME_ADAPTER_LOCK_INVALID)
+        }
+        val payload = loadManagedAcpInstallPayload(appContext)
+        if (isManagedAcpAdapterReady(payload, packageSpec, profile.command)) {
             return
         }
-        if (!isTerminalCommandAvailable(runtime.discoveryCommand)) {
-            throw IllegalStateException(
-                "${profile.name} CLI was not found: ${runtime.discoveryCommand}. " +
-                    "Install it in Terminal Environment first."
-            )
+        if (!isSystemManagedAcpToolchainAvailable()) {
+            throw ManagedAcpInstallException(AGENT_RUNTIME_ADAPTER_NPM_MISSING)
         }
-        if (!isTerminalCommandAvailable("npm")) {
-            throw IllegalStateException(
-                "npm is required to prepare the ${profile.name} ACP adapter."
-            )
-        }
-        val command = """
-            set -eu
-            mkdir -p /root/.npm-global/bin
-            export PATH="/root/.npm-global/bin:${'$'}PATH"
-            npm install -g --prefix /root/.npm-global --no-audit --no-fund \
-                ${shellQuote(packageName)}
-            command -v ${shellQuote(profile.command)} >/dev/null 2>&1
-        """.trimIndent()
-        val result = TerminalManager.getInstance(appContext).executeHiddenCommand(
-            command = command,
-            executorKey = "acp-adapter-install-${profile.id}",
-            timeoutMs = MANAGED_ACP_INSTALL_TIMEOUT_MS
-        )
-        if (!result.isOk || result.exitCode != 0) {
-            val details = result.output.trim()
-                .ifBlank { result.rawOutputPreview.trim() }
-                .ifBlank { result.error.trim() }
-                .takeLast(2_000)
-            throw IllegalStateException(
-                buildString {
-                    append("Failed to prepare the ${profile.name} ACP adapter")
-                    if (details.isNotBlank()) {
-                        append(": ")
-                        append(details)
+        managedAcpInstallMutex.withLock {
+            if (isManagedAcpAdapterReady(payload, packageSpec, profile.command)) {
+                return
+            }
+            val installInput = buildManagedAcpInstallInput(payload)
+            val stdinFailed = java.util.concurrent.atomic.AtomicBoolean(false)
+            val result = try {
+                TerminalManager.getInstance(appContext).executeHiddenCommand(
+                    command = buildManagedAcpInstallCommand(
+                        payload = payload,
+                        packageSpec = packageSpec,
+                        command = profile.command
+                    ),
+                    executorKey = "acp-adapter-install-${profile.id}",
+                    timeoutMs = MANAGED_ACP_INSTALL_TIMEOUT_MS,
+                    onProcessStarted = { process ->
+                        try {
+                            process.outputStream.use { stream ->
+                                stream.write(installInput)
+                                stream.flush()
+                            }
+                        } catch (_: Exception) {
+                            stdinFailed.set(true)
+                            runCatching { process.destroy() }
+                        }
                     }
-                }
-            )
+                )
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                throw ManagedAcpInstallException(AGENT_RUNTIME_ADAPTER_INSTALL_FAILED)
+            }
+            if (stdinFailed.get() || !result.isOk || result.exitCode != 0) {
+                throw ManagedAcpInstallException(AGENT_RUNTIME_ADAPTER_INSTALL_FAILED)
+            }
+            if (!isManagedAcpAdapterReady(payload, packageSpec, profile.command)) {
+                throw ManagedAcpInstallException(AGENT_RUNTIME_ADAPTER_INSTALL_FAILED)
+            }
         }
     }
 
-    private suspend fun isTerminalCommandAvailable(command: String): Boolean {
-        val result = TerminalManager.getInstance(appContext).executeHiddenCommand(
-            command = "$MANAGED_NPM_PATH_PREFIX " +
-                "command -v ${shellQuote(command)} >/dev/null 2>&1",
-            executorKey = "acp-command-probe-${command.hashCode()}",
-            timeoutMs = 20_000L
-        )
-        return result.isOk && result.exitCode == 0
+    private suspend fun isManagedAcpAdapterReady(
+        payload: ManagedAcpInstallPayload,
+        packageSpec: String,
+        command: String
+    ): Boolean {
+        return try {
+            val result = TerminalManager.getInstance(appContext).executeHiddenCommand(
+                command = buildManagedAcpReadyProbeCommand(payload, packageSpec, command),
+                executorKey = "acp-managed-adapter-probe-${command.hashCode()}",
+                timeoutMs = 20_000L
+            )
+            result.isOk && result.exitCode == 0
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private suspend fun isSystemManagedAcpToolchainAvailable(): Boolean {
+        return try {
+            val result = TerminalManager.getInstance(appContext).executeHiddenCommand(
+                command = "PATH='/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'; " +
+                    "export PATH; command -v node >/dev/null 2>&1; " +
+                    "command -v npm >/dev/null 2>&1; " +
+                    "test \"\$(node -p 'Number(process.versions.node.split(`.`)[0]) >= 22 ? `yes` : `no`' 2>/dev/null)\" = yes",
+                executorKey = "acp-system-npm-probe",
+                timeoutMs = 20_000L
+            )
+            result.isOk && result.exitCode == 0
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            false
+        }
     }
 
     private suspend fun ensureLocalAcpConnected(args: Map<String, Any?>) {
@@ -1074,9 +1165,10 @@ class AgentRuntimeManager private constructor(
             ?.get("item")?.let { it as? Map<*, *> }
             ?.get("type")?.toString()
             ?: (params["item"] as? Map<*, *>)?.get("type")?.toString()
-        Log.d(
+        OmniLog.d(
             "AgentRuntimeManager",
-            "<- method=$method itemType=$diagItemType threadId=$threadId turnId=$turnId"
+            "server event method=$method itemType=$diagItemType " +
+                "hasThread=${!threadId.isNullOrBlank()} hasTurn=${!turnId.isNullOrBlank()}"
         )
         val protocolEventType = if (method == "codex/event") {
             remoteCodexProtocolEventType(params)
@@ -1135,7 +1227,10 @@ class AgentRuntimeManager private constructor(
         val localConversationId = runCatching {
             syncMessage(method, message, params, threadId)
         }.onFailure { error ->
-            Log.w("AgentRuntimeManager", "syncMessage failed for $method: ${error.message}")
+            OmniLog.w(
+                "AgentRuntimeManager",
+                "syncMessage failed method=$method type=${error.javaClass.simpleName}",
+            )
         }.getOrNull()
 
         // Deliver to Flutter FIRST. The completion side effects below only run
@@ -1170,9 +1265,9 @@ class AgentRuntimeManager private constructor(
                     conversationMode = "codex"
                 )
             }.onFailure { error ->
-                Log.w(
+                OmniLog.w(
                     "AgentRuntimeManager",
-                    "task completion notification failed: ${error.message}"
+                    "task completion notification failed type=${error.javaClass.simpleName}"
                 )
             }
         }
@@ -1260,15 +1355,18 @@ class AgentRuntimeManager private constructor(
             runCatching {
                 listener?.invoke(event)
             }.onFailure { error ->
-                Log.w("AgentRuntimeManager", "primary event listener failed: ${error.message}")
+                OmniLog.w(
+                    "AgentRuntimeManager",
+                    "primary event listener failed type=${error.javaClass.simpleName}",
+                )
             }
             supplementalListeners.forEach { supplemental ->
                 runCatching {
                     supplemental(event)
                 }.onFailure { error ->
-                    Log.w(
+                    OmniLog.w(
                         "AgentRuntimeManager",
-                        "supplemental event listener failed: ${error.message}"
+                        "supplemental event listener failed type=${error.javaClass.simpleName}"
                     )
                 }
             }
@@ -1285,12 +1383,23 @@ class AgentRuntimeManager private constructor(
             )
         }
         return runCatching {
+            val managedPackage = AcpAgentProfileStore.officialRuntime(profile)
+                ?.managedAdapterPackage
             val environmentPrefix = profile.environment.entries.joinToString(" ") {
                 "${it.key}=${shellQuote(it.value)}"
             }.let { if (it.isBlank()) "" else "export $it; " }
+            val probeCommand = if (managedPackage != null) {
+                buildManagedAcpReadyProbeCommand(
+                    payload = loadManagedAcpInstallPayload(appContext),
+                    packageSpec = managedPackage,
+                    command = profile.command
+                )
+            } else {
+                "$MANAGED_ACP_PATH_PREFIX $environmentPrefix" +
+                    "command -v ${shellQuote(profile.command)}"
+            }
             val result = TerminalManager.getInstance(appContext).executeHiddenCommand(
-                command = "$MANAGED_NPM_PATH_PREFIX $environmentPrefix" +
-                    "command -v ${shellQuote(profile.command)}",
+                command = probeCommand,
                 executorKey = "acp-agent-probe-${profile.id}",
                 timeoutMs = 15_000L
             )
@@ -1299,6 +1408,8 @@ class AgentRuntimeManager private constructor(
                 version = null,
                 error = if (result.isOk && result.exitCode == 0) {
                     null
+                } else if (managedPackage != null) {
+                    AGENT_RUNTIME_ADAPTER_INSTALL_FAILED
                 } else {
                     result.error.ifBlank {
                         "ACP agent command not found: ${profile.command}"
@@ -1500,8 +1611,6 @@ private enum class AgentRuntimeKind(val payloadValue: String) {
 }
 
 private const val MANAGED_ACP_INSTALL_TIMEOUT_MS = 10 * 60 * 1_000L
-private const val MANAGED_NPM_PATH_PREFIX =
-    "PATH=\"/root/.npm-global/bin:\$PATH\"; export PATH;"
 
 private val LOCAL_ACP_METHODS = setOf(
     "thread/start",
@@ -1759,7 +1868,7 @@ private fun buildRemoteBridgeConfigPayload(
         "agentHome" to AgentRuntimeDefaults.CODEX_HOME,
         "remoteEnabled" to remoteConfig.enabled,
         "remoteBridgeUrl" to remoteConfig.bridgeUrl,
-        "remoteBridgeToken" to remoteConfig.authToken,
+        "hasRemoteBridgeToken" to remoteConfig.authToken.isNotBlank(),
         "remoteCwd" to remoteConfig.cwd,
         "remoteConfigured" to remoteConfig.isConfigured,
         "runtime" to runtime
@@ -1790,6 +1899,484 @@ internal fun buildCodexAuthJson(apiKey: String): String {
         .setPrettyPrinting()
         .create()
         .toJson(mapOf("OPENAI_API_KEY" to apiKey.trim())) + "\n"
+}
+
+internal data class AgentConfigFileTarget(
+    val agentId: String,
+    val role: String,
+    val path: String,
+    val displayPath: String,
+    val format: String,
+    val parentDirectories: List<String>
+)
+
+private data class AgentConfigFileStatus(
+    val hasConfig: Boolean,
+    val byteCount: Long
+)
+
+private data class CodexAgentConfigStatus(
+    val baseUrl: String,
+    val model: String,
+    val hasApiKey: Boolean
+)
+
+internal fun agentConfigFileTargetFor(agentId: String): AgentConfigFileTarget? {
+    return when (agentId) {
+        AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID -> CODEX_CONFIG_FILE_TARGET
+        CLAUDE_CODE_AGENT_ID -> CLAUDE_CONFIG_FILE_TARGET
+        OPENCODE_AGENT_ID -> OPENCODE_CONFIG_FILE_TARGET
+        else -> null
+    }
+}
+
+internal fun agentConfigClearTargetsFor(agentId: String): List<AgentConfigFileTarget> {
+    return when (agentId) {
+        AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID -> listOf(
+            CODEX_CONFIG_FILE_TARGET,
+            CODEX_AUTH_FILE_TARGET
+        )
+        CLAUDE_CODE_AGENT_ID -> listOf(CLAUDE_CONFIG_FILE_TARGET)
+        OPENCODE_AGENT_ID -> listOf(OPENCODE_CONFIG_FILE_TARGET)
+        else -> emptyList()
+    }
+}
+
+internal fun buildReplaceOnlyAgentConfigPayload(
+    agentId: String,
+    format: String,
+    displayPath: String,
+    hasConfig: Boolean,
+    byteCount: Long
+): Map<String, Any?> {
+    require(byteCount in 0..MAX_AGENT_CONFIG_FILE_BYTES) {
+        AGENT_CONFIG_FILE_TOO_LARGE
+    }
+    return linkedMapOf(
+        "agentId" to agentId,
+        "kind" to "replace-only",
+        "format" to format,
+        "displayPath" to displayPath,
+        "hasConfig" to hasConfig,
+        "byteCount" to byteCount
+    )
+}
+
+internal fun validateAgentConfigReplacement(content: String?): String {
+    val replacement = content?.takeUnless(String::isBlank)
+        ?: throw IllegalArgumentException(AGENT_CONFIG_EMPTY_REPLACEMENT)
+    requireAgentConfigSize(replacement)
+    return replacement
+}
+
+internal fun buildAgentConfigFileStatusCommand(target: AgentConfigFileTarget): String {
+    require(target in ALL_AGENT_CONFIG_FILE_TARGETS) { AGENT_CONFIG_UNSAFE_PATH }
+    val directoryGuard = buildAgentConfigDirectoryGuard(target.parentDirectories, create = false)
+    val parent = target.parentDirectories.last()
+    val fileName = target.path.substringAfterLast('/')
+    val statusReader = """
+        import os, stat, sys
+        try:
+            fd = os.open(sys.argv[1], os.O_RDONLY | os.O_NOFOLLOW)
+        except FileNotFoundError:
+            print('$AGENT_CONFIG_START_MARKER')
+            print('HAS_CONFIG=0')
+            print('BYTE_COUNT=0')
+            print('$AGENT_CONFIG_END_MARKER')
+            raise SystemExit(0)
+        except OSError:
+            raise SystemExit($AGENT_CONFIG_EXIT_UNSAFE_PATH)
+        try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise SystemExit($AGENT_CONFIG_EXIT_UNSAFE_PATH)
+            if info.st_size > $MAX_AGENT_CONFIG_FILE_BYTES:
+                raise SystemExit($AGENT_CONFIG_EXIT_TOO_LARGE)
+            print('$AGENT_CONFIG_START_MARKER')
+            print('HAS_CONFIG=1')
+            print('BYTE_COUNT=' + str(info.st_size))
+            print('$AGENT_CONFIG_END_MARKER')
+        finally:
+            os.close(fd)
+    """.trimIndent()
+    return """
+        set -eu
+        $directoryGuard
+        expected_parent=${shellQuote(parent)}
+        if [ -d "${'$'}expected_parent" ]; then
+          cd -P "${'$'}expected_parent"
+          if [ "${'$'}(pwd -P)" != "${'$'}expected_parent" ]; then exit $AGENT_CONFIG_EXIT_UNSAFE_PATH; fi
+          target=${shellQuote(fileName)}
+          exec python3 -c ${shellQuote(statusReader)} "${'$'}target"
+        fi
+        printf '%s\n' '$AGENT_CONFIG_START_MARKER'
+        printf 'HAS_CONFIG=0\n'
+        printf 'BYTE_COUNT=0\n'
+        printf '%s\n' '$AGENT_CONFIG_END_MARKER'
+    """.trimIndent()
+}
+
+internal fun buildAgentConfigAtomicReplaceCommand(target: AgentConfigFileTarget): String {
+    require(target in ALL_AGENT_CONFIG_FILE_TARGETS) { AGENT_CONFIG_UNSAFE_PATH }
+    val directoryGuard = buildAgentConfigDirectoryGuard(target.parentDirectories, create = true)
+    val parent = target.parentDirectories.last()
+    val fileName = target.path.substringAfterLast('/')
+    return """
+        set -eu
+        umask 077
+        $directoryGuard
+        expected_parent=${shellQuote(parent)}
+        cd -P "${'$'}expected_parent"
+        if [ "${'$'}(pwd -P)" != "${'$'}expected_parent" ]; then exit $AGENT_CONFIG_EXIT_UNSAFE_PATH; fi
+        target=${shellQuote(fileName)}
+        if [ -L "${'$'}target" ]; then exit $AGENT_CONFIG_EXIT_UNSAFE_PATH; fi
+        if [ -e "${'$'}target" ] && [ ! -f "${'$'}target" ]; then exit $AGENT_CONFIG_EXIT_UNSAFE_PATH; fi
+        if [ -f "${'$'}target" ]; then
+          link_count=${'$'}(stat -c '%h' "${'$'}target" 2>/dev/null || exit $AGENT_CONFIG_EXIT_INVALID_STATUS)
+          case "${'$'}link_count" in ''|*[!0-9]*) exit $AGENT_CONFIG_EXIT_INVALID_STATUS ;; esac
+          if [ "${'$'}link_count" -ne 1 ]; then exit $AGENT_CONFIG_EXIT_UNSAFE_PATH; fi
+        fi
+        temp=${'$'}(mktemp ".${'$'}target.omnibot-replace.XXXXXX")
+        trap 'rm -f "${'$'}temp"' EXIT HUP INT TERM
+        chmod 600 "${'$'}temp"
+        cat > "${'$'}temp"
+        byte_count=${'$'}(stat -c '%s' "${'$'}temp" 2>/dev/null || exit $AGENT_CONFIG_EXIT_INVALID_STATUS)
+        case "${'$'}byte_count" in ''|*[!0-9]*) exit $AGENT_CONFIG_EXIT_INVALID_STATUS ;; esac
+        if [ "${'$'}byte_count" -gt $MAX_AGENT_CONFIG_FILE_BYTES ]; then exit $AGENT_CONFIG_EXIT_TOO_LARGE; fi
+        mv -f "${'$'}temp" "${'$'}target"
+        trap - EXIT HUP INT TERM
+        printf '%s\n' '$AGENT_CONFIG_WRITE_OK_MARKER'
+    """.trimIndent()
+}
+
+internal fun buildCodexAgentConfigTransactionCommand(includeAuth: Boolean): String {
+    val directoryGuard = buildAgentConfigDirectoryGuard(
+        CODEX_CONFIG_FILE_TARGET.parentDirectories,
+        create = true
+    )
+    val transaction = """
+        import json, os, stat, sys, tempfile
+        MAX_BYTES = $MAX_AGENT_CONFIG_FILE_BYTES
+        UNSAFE = $AGENT_CONFIG_EXIT_UNSAFE_PATH
+        TOO_LARGE = $AGENT_CONFIG_EXIT_TOO_LARGE
+        INVALID = $AGENT_CONFIG_EXIT_INVALID_STATUS
+        IO_FAILED = 43
+        include_auth = ${if (includeAuth) "True" else "False"}
+        expected = {'config', 'auth'} if include_auth else {'config'}
+
+        raw = sys.stdin.buffer.read(MAX_BYTES + 1)
+        if len(raw) > MAX_BYTES:
+            raise SystemExit(TOO_LARGE)
+        try:
+            payload = json.loads(raw.decode('utf-8'))
+        except (UnicodeDecodeError, ValueError):
+            raise SystemExit(INVALID)
+        if not isinstance(payload, dict) or set(payload) != expected:
+            raise SystemExit(INVALID)
+        targets = [('config.toml', payload.get('config'))]
+        if include_auth:
+            targets.append(('auth.json', payload.get('auth')))
+        for _, content in targets:
+            if not isinstance(content, str) or not content or len(content.encode('utf-8')) > MAX_BYTES:
+                raise SystemExit(INVALID)
+
+        def validate_existing(name):
+            try:
+                info = os.lstat(name)
+            except FileNotFoundError:
+                return False
+            except OSError:
+                raise SystemExit(UNSAFE)
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise SystemExit(UNSAFE)
+            return True
+
+        existed = {name: validate_existing(name) for name, _ in targets}
+        temps = {}
+        backups = {}
+        installed = []
+        try:
+            for name, content in targets:
+                fd, temp_name = tempfile.mkstemp(prefix='.' + name + '.omnibot-new.', dir='.')
+                temps[name] = temp_name
+                try:
+                    os.fchmod(fd, 0o600)
+                    data = content.encode('utf-8')
+                    view = memoryview(data)
+                    while view:
+                        written = os.write(fd, view)
+                        if written <= 0:
+                            raise OSError('short write')
+                        view = view[written:]
+                    os.fsync(fd)
+                finally:
+                    os.close(fd)
+            for name, _ in targets:
+                if existed[name]:
+                    fd, backup = tempfile.mkstemp(prefix='.' + name + '.omnibot-old.', dir='.')
+                    os.close(fd)
+                    os.unlink(backup)
+                    os.replace(name, backup)
+                    backups[name] = backup
+            for name, _ in targets:
+                os.replace(temps.pop(name), name)
+                installed.append(name)
+            directory_fd = os.open('.', os.O_RDONLY | os.O_DIRECTORY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except BaseException:
+            for name in reversed(installed):
+                try:
+                    os.unlink(name)
+                except FileNotFoundError:
+                    pass
+            for name, _ in reversed(targets):
+                backup = backups.get(name)
+                if backup is not None:
+                    try:
+                        os.replace(backup, name)
+                    except OSError:
+                        pass
+            raise SystemExit(IO_FAILED)
+        finally:
+            for temp_name in temps.values():
+                try:
+                    os.unlink(temp_name)
+                except FileNotFoundError:
+                    pass
+        for backup in backups.values():
+            try:
+                os.unlink(backup)
+            except OSError:
+                raise SystemExit(IO_FAILED)
+        print('$AGENT_CONFIG_WRITE_OK_MARKER')
+    """.trimIndent()
+    return """
+        set -eu
+        umask 077
+        $directoryGuard
+        expected_parent=${shellQuote(CODEX_CONFIG_FILE_TARGET.parentDirectories.last())}
+        cd -P "${'$'}expected_parent"
+        if [ "${'$'}(pwd -P)" != "${'$'}expected_parent" ]; then exit $AGENT_CONFIG_EXIT_UNSAFE_PATH; fi
+        exec python3 -c ${shellQuote(transaction)}
+    """.trimIndent()
+}
+
+internal fun buildAgentConfigClearCommand(targets: List<AgentConfigFileTarget>): String {
+    require(targets.isNotEmpty() && targets.all { it in ALL_AGENT_CONFIG_FILE_TARGETS }) {
+        AGENT_CONFIG_UNSAFE_PATH
+    }
+    val directories = targets.flatMap { it.parentDirectories }.distinct()
+    val directoryGuard = buildAgentConfigDirectoryGuard(directories, create = false)
+    val deleteCommands = targets.joinToString(separator = "\n") { target ->
+        val parent = shellQuote(target.parentDirectories.last())
+        val fileName = shellQuote(target.path.substringAfterLast('/'))
+        "if [ -d $parent ]; then\n" +
+            "  (cd -P $parent\n" +
+            "   if [ \"${'$'}(pwd -P)\" != $parent ]; then exit $AGENT_CONFIG_EXIT_UNSAFE_PATH; fi\n" +
+            "   target=$fileName\n" +
+            "   if [ -e \"${'$'}target\" ] && [ ! -f \"${'$'}target\" ] && [ ! -L \"${'$'}target\" ]; then exit $AGENT_CONFIG_EXIT_UNSAFE_PATH; fi\n" +
+            "   rm -f \"${'$'}target\")\n" +
+            "fi"
+    }
+    return """
+        set -eu
+        $directoryGuard
+        $deleteCommands
+        printf '%s\n' '$AGENT_CONFIG_CLEAR_OK_MARKER'
+    """.trimIndent()
+}
+
+internal fun buildCodexAgentConfigStatusCommand(): String {
+    val targets = listOf(CODEX_CONFIG_FILE_TARGET, CODEX_AUTH_FILE_TARGET)
+    val directoryGuard = buildAgentConfigDirectoryGuard(
+        targets.flatMap { it.parentDirectories }.distinct(),
+        create = false
+    )
+    val statusReader = """
+        import json, os, re, stat, sys
+        MAX_BYTES = $MAX_AGENT_CONFIG_FILE_BYTES
+        UNSAFE = $AGENT_CONFIG_EXIT_UNSAFE_PATH
+        TOO_LARGE = $AGENT_CONFIG_EXIT_TOO_LARGE
+        INVALID = $AGENT_CONFIG_EXIT_INVALID_STATUS
+
+        def read_regular(name):
+            try:
+                fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW)
+            except FileNotFoundError:
+                return None
+            except OSError:
+                raise SystemExit(UNSAFE)
+            try:
+                info = os.fstat(fd)
+                if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                    raise SystemExit(UNSAFE)
+                if info.st_size > MAX_BYTES:
+                    raise SystemExit(TOO_LARGE)
+                data = bytearray()
+                while True:
+                    chunk = os.read(fd, min(65536, MAX_BYTES + 1 - len(data)))
+                    if not chunk:
+                        break
+                    data.extend(chunk)
+                    if len(data) > MAX_BYTES:
+                        raise SystemExit(TOO_LARGE)
+                return bytes(data)
+            finally:
+                os.close(fd)
+
+        def decode(value):
+            try:
+                return value.decode('utf-8')
+            except UnicodeDecodeError:
+                raise SystemExit(INVALID)
+
+        model = ''
+        base_url = ''
+        config = read_regular(sys.argv[1])
+        if config is not None:
+            for line in decode(config).splitlines():
+                match = re.fullmatch(r'\s*(model|base_url)\s*=\s*"([^"\\]*)"\s*(?:#.*)?', line)
+                if match and match.group(1) == 'model' and not model:
+                    model = match.group(2)
+                elif match and match.group(1) == 'base_url' and not base_url:
+                    base_url = match.group(2)
+        has_key = 0
+        auth = read_regular(sys.argv[2])
+        if auth is not None:
+            try:
+                parsed = json.loads(decode(auth))
+            except (ValueError, TypeError):
+                raise SystemExit(INVALID)
+            if isinstance(parsed, dict) and isinstance(parsed.get('OPENAI_API_KEY'), str) and parsed['OPENAI_API_KEY']:
+                has_key = 1
+        print('$AGENT_CONFIG_START_MARKER')
+        print('MODEL=' + model)
+        print('BASE_URL=' + base_url)
+        print('HAS_API_KEY=' + str(has_key))
+        print('$AGENT_CONFIG_END_MARKER')
+    """.trimIndent()
+    return """
+        set -eu
+        $directoryGuard
+        expected_parent=${shellQuote(CODEX_CONFIG_FILE_TARGET.parentDirectories.last())}
+        if [ -d "${'$'}expected_parent" ]; then
+          cd -P "${'$'}expected_parent"
+          if [ "${'$'}(pwd -P)" != "${'$'}expected_parent" ]; then exit $AGENT_CONFIG_EXIT_UNSAFE_PATH; fi
+          config_path=${shellQuote(CODEX_CONFIG_TOML_PATH.substringAfterLast('/'))}
+          auth_path=${shellQuote(CODEX_AUTH_JSON_PATH.substringAfterLast('/'))}
+          exec python3 -c ${shellQuote(statusReader)} "${'$'}config_path" "${'$'}auth_path"
+        fi
+        printf '%s\n' '$AGENT_CONFIG_START_MARKER'
+        printf 'MODEL=\n'
+        printf 'BASE_URL=\n'
+        printf 'HAS_API_KEY=0\n'
+        printf '%s\n' '$AGENT_CONFIG_END_MARKER'
+    """.trimIndent()
+}
+
+private fun buildAgentConfigDirectoryGuard(
+    directories: List<String>,
+    create: Boolean
+): String {
+    require(directories.isNotEmpty()) { AGENT_CONFIG_UNSAFE_PATH }
+    return directories.joinToString(separator = "\n") { directory ->
+        require(directory in ALL_AGENT_CONFIG_PARENT_DIRECTORIES) {
+            AGENT_CONFIG_UNSAFE_PATH
+        }
+        val quoted = shellQuote(directory)
+        buildString {
+            append("if [ -L $quoted ]; then exit $AGENT_CONFIG_EXIT_UNSAFE_PATH; fi\n")
+            append("if [ -e $quoted ] && [ ! -d $quoted ]; then exit $AGENT_CONFIG_EXIT_UNSAFE_PATH; fi\n")
+            if (create) {
+                append("mkdir -p $quoted\n")
+            }
+            append("if [ -d $quoted ]; then\n")
+            append("  resolved_directory=\$(cd -P $quoted 2>/dev/null && pwd -P) || exit $AGENT_CONFIG_EXIT_UNSAFE_PATH\n")
+            append("  if [ \"\$resolved_directory\" != $quoted ]; then exit $AGENT_CONFIG_EXIT_UNSAFE_PATH; fi\n")
+            if (create) {
+                append("  chmod 700 $quoted\n")
+            }
+            append("fi")
+        }
+    }
+}
+
+private fun parseAgentConfigFileStatus(output: String): AgentConfigFileStatus {
+    val fields = parseAgentConfigStatusFields(
+        output = output,
+        expectedKeys = listOf("HAS_CONFIG", "BYTE_COUNT")
+    )
+    val hasConfig = when (fields.getValue("HAS_CONFIG")) {
+        "1" -> true
+        "0" -> false
+        else -> throw IllegalStateException(AGENT_CONFIG_INVALID_STATUS)
+    }
+    val byteCount = fields.getValue("BYTE_COUNT").toLongOrNull()
+        ?.takeIf { it in 0..MAX_AGENT_CONFIG_FILE_BYTES }
+        ?: throw IllegalStateException(AGENT_CONFIG_INVALID_STATUS)
+    if (!hasConfig && byteCount != 0L) {
+        throw IllegalStateException(AGENT_CONFIG_INVALID_STATUS)
+    }
+    return AgentConfigFileStatus(hasConfig = hasConfig, byteCount = byteCount)
+}
+
+private fun parseCodexAgentConfigStatus(output: String): CodexAgentConfigStatus {
+    val fields = parseAgentConfigStatusFields(
+        output = output,
+        expectedKeys = listOf("MODEL", "BASE_URL", "HAS_API_KEY")
+    )
+    val hasApiKey = when (fields.getValue("HAS_API_KEY")) {
+        "1" -> true
+        "0" -> false
+        else -> throw IllegalStateException(AGENT_CONFIG_INVALID_STATUS)
+    }
+    return CodexAgentConfigStatus(
+        baseUrl = fields.getValue("BASE_URL"),
+        model = fields.getValue("MODEL"),
+        hasApiKey = hasApiKey
+    )
+}
+
+private fun parseAgentConfigStatusFields(
+    output: String,
+    expectedKeys: List<String>
+): Map<String, String> {
+    val lines = output.lineSequence()
+        .map { it.removeSuffix("\r") }
+        .toList()
+    val start = lines.indexOf(AGENT_CONFIG_START_MARKER)
+    val end = lines.indexOf(AGENT_CONFIG_END_MARKER)
+    if (start < 0 || end <= start || end - start - 1 != expectedKeys.size) {
+        throw IllegalStateException(AGENT_CONFIG_INVALID_STATUS)
+    }
+    val fields = linkedMapOf<String, String>()
+    lines.subList(start + 1, end).forEachIndexed { index, line ->
+        val key = expectedKeys[index]
+        val prefix = "$key="
+        if (!line.startsWith(prefix)) {
+            throw IllegalStateException(AGENT_CONFIG_INVALID_STATUS)
+        }
+        fields[key] = line.removePrefix(prefix)
+    }
+    return fields
+}
+
+internal fun agentConfigErrorForExitCode(exitCode: Int): String {
+    return when (exitCode) {
+        AGENT_CONFIG_EXIT_UNSAFE_PATH -> AGENT_CONFIG_UNSAFE_PATH
+        AGENT_CONFIG_EXIT_TOO_LARGE -> AGENT_CONFIG_FILE_TOO_LARGE
+        AGENT_CONFIG_EXIT_INVALID_STATUS -> AGENT_CONFIG_INVALID_STATUS
+        else -> AGENT_CONFIG_IO_FAILED
+    }
+}
+
+private fun rejectAgentConfigPathOverride(args: Map<String, Any?>) {
+    if (args.keys.any { it.lowercase() in AGENT_CONFIG_PATH_OVERRIDE_KEYS }) {
+        throw IllegalArgumentException(AGENT_CONFIG_UNSAFE_PATH)
+    }
 }
 
 private fun shellQuote(value: String): String {
@@ -1889,8 +2476,16 @@ private fun extractOpenAiApiKey(source: String): String? {
 }
 
 private fun requireAgentConfigSize(content: String) {
-    require(content.length <= MAX_AGENT_CONFIG_FILE_CHARS) {
-        "Agent configuration is too large."
+    requireAgentConfigSize(content.toByteArray(Charsets.UTF_8))
+}
+
+private fun requireAgentConfigSize(content: ByteArray) {
+    require(content.size in 1..MAX_AGENT_CONFIG_FILE_BYTES.toInt()) {
+        if (content.isEmpty()) {
+            AGENT_CONFIG_EMPTY_REPLACEMENT
+        } else {
+            AGENT_CONFIG_FILE_TOO_LARGE
+        }
     }
 }
 
@@ -1900,6 +2495,15 @@ private fun Map<String, Any?>.stringValue(key: String): String? {
 
 private fun Map<String, Any?>.stringValuePreservingWhitespace(key: String): String? {
     return this[key]?.toString()
+}
+
+private fun Map<String, Any?>.booleanValue(key: String): Boolean {
+    return when (val raw = this[key]) {
+        is Boolean -> raw
+        is Number -> raw.toInt() != 0
+        is String -> raw.equals("true", ignoreCase = true) || raw == "1"
+        else -> false
+    }
 }
 
 private fun Map<String, Any?>.longValue(key: String): Long? {
@@ -1923,8 +2527,80 @@ private const val CLAUDE_SETTINGS_JSON_DISPLAY_PATH = "~/.claude/settings.json"
 private const val OPENCODE_CONFIG_JSON_DISPLAY_PATH = "~/.config/opencode/opencode.json"
 private const val AGENT_CONFIG_START_MARKER = "__OMNI_AGENT_CONFIG_START__"
 private const val AGENT_CONFIG_END_MARKER = "__OMNI_AGENT_CONFIG_END__"
-private const val MAX_AGENT_CONFIG_FILE_CHARS = 1_048_576
-private const val DEFAULT_EMPTY_JSON_FILE = "{\n}\n"
+private const val AGENT_CONFIG_WRITE_OK_MARKER = "__OMNI_AGENT_CONFIG_WRITE_OK__"
+private const val AGENT_CONFIG_CLEAR_OK_MARKER = "__OMNI_AGENT_CONFIG_CLEAR_OK__"
+private const val MAX_AGENT_CONFIG_FILE_BYTES = 1_048_576L
+private const val MAX_AGENT_CONFIG_STATUS_BYTES = 8_192
+private const val AGENT_CONFIG_EXIT_UNSAFE_PATH = 40
+private const val AGENT_CONFIG_EXIT_TOO_LARGE = 41
+private const val AGENT_CONFIG_EXIT_INVALID_STATUS = 42
+internal const val AGENT_CONFIG_AGENT_ID_REQUIRED = "AGENT_CONFIG_AGENT_ID_REQUIRED"
+internal const val AGENT_CONFIG_UNKNOWN_AGENT = "AGENT_CONFIG_UNKNOWN_AGENT"
+internal const val AGENT_CONFIG_UNSUPPORTED = "AGENT_CONFIG_UNSUPPORTED"
+internal const val AGENT_CONFIG_UNSAFE_PATH = "AGENT_CONFIG_UNSAFE_PATH"
+internal const val AGENT_CONFIG_BASE_URL_REQUIRED = "AGENT_CONFIG_BASE_URL_REQUIRED"
+internal const val AGENT_CONFIG_MODEL_REQUIRED = "AGENT_CONFIG_MODEL_REQUIRED"
+internal const val AGENT_CONFIG_API_KEY_REQUIRED = "AGENT_CONFIG_API_KEY_REQUIRED"
+internal const val AGENT_CONFIG_EMPTY_REPLACEMENT = "AGENT_CONFIG_EMPTY_REPLACEMENT"
+internal const val AGENT_CONFIG_INVALID_JSON_OBJECT = "AGENT_CONFIG_INVALID_JSON_OBJECT"
+internal const val AGENT_CONFIG_FILE_TOO_LARGE = "AGENT_CONFIG_FILE_TOO_LARGE"
+internal const val AGENT_CONFIG_INVALID_STATUS = "AGENT_CONFIG_INVALID_STATUS"
+internal const val AGENT_CONFIG_IO_FAILED = "AGENT_CONFIG_IO_FAILED"
+
+private val CODEX_CONFIG_FILE_TARGET = AgentConfigFileTarget(
+    agentId = AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID,
+    role = "config",
+    path = CODEX_CONFIG_TOML_PATH,
+    displayPath = CODEX_CONFIG_TOML_DISPLAY_PATH,
+    format = "toml",
+    parentDirectories = listOf("/root/.codex")
+)
+
+private val CODEX_AUTH_FILE_TARGET = AgentConfigFileTarget(
+    agentId = AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID,
+    role = "auth",
+    path = CODEX_AUTH_JSON_PATH,
+    displayPath = CODEX_AUTH_JSON_DISPLAY_PATH,
+    format = "json",
+    parentDirectories = listOf("/root/.codex")
+)
+
+private val CLAUDE_CONFIG_FILE_TARGET = AgentConfigFileTarget(
+    agentId = CLAUDE_CODE_AGENT_ID,
+    role = "config",
+    path = CLAUDE_SETTINGS_JSON_PATH,
+    displayPath = CLAUDE_SETTINGS_JSON_DISPLAY_PATH,
+    format = "json",
+    parentDirectories = listOf("/root/.claude")
+)
+
+private val OPENCODE_CONFIG_FILE_TARGET = AgentConfigFileTarget(
+    agentId = OPENCODE_AGENT_ID,
+    role = "config",
+    path = OPENCODE_CONFIG_JSON_PATH,
+    displayPath = OPENCODE_CONFIG_JSON_DISPLAY_PATH,
+    format = "jsonc",
+    parentDirectories = listOf("/root/.config", "/root/.config/opencode")
+)
+
+private val ALL_AGENT_CONFIG_FILE_TARGETS = setOf(
+    CODEX_CONFIG_FILE_TARGET,
+    CODEX_AUTH_FILE_TARGET,
+    CLAUDE_CONFIG_FILE_TARGET,
+    OPENCODE_CONFIG_FILE_TARGET
+)
+
+private val ALL_AGENT_CONFIG_PARENT_DIRECTORIES = ALL_AGENT_CONFIG_FILE_TARGETS
+    .flatMap { it.parentDirectories }
+    .toSet()
+
+private val AGENT_CONFIG_PATH_OVERRIDE_KEYS = setOf(
+    "path",
+    "configpath",
+    "authpath",
+    "displaypath",
+    "target"
+)
 
 private fun Map<String, Any?>.mapValue(key: String): Map<String, Any?> {
     val raw = this[key] as? Map<*, *> ?: return emptyMap()

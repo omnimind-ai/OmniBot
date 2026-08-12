@@ -1,7 +1,10 @@
 package cn.com.omnimind.bot.agent.runtime
 
 import android.util.Base64
-import android.util.Log
+import cn.com.omnimind.baselib.http.OkHttpManager
+import cn.com.omnimind.baselib.util.ContentEndpointSecurity
+import cn.com.omnimind.baselib.util.OmniLog
+import cn.com.omnimind.bot.BuildConfig
 import com.google.gson.Gson
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
@@ -47,6 +50,7 @@ internal class RemoteCodexBridgeConnection(
         onExit: suspend (Int?) -> Unit
     ) {
         check(config.isConfigured) { "Remote Codex bridge URL and cwd are required." }
+        requireSecureBridgeCredentialTransport(config)
         val request = Request.Builder()
             .url(normalizeCodexBridgeWebSocketUrl(config.bridgeUrl))
             .applyBridgeAuth(config.authToken)
@@ -79,10 +83,14 @@ internal class RemoteCodexBridgeConnection(
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 closed.set(true)
                 if (!started.isCompleted) {
-                    started.completeExceptionally(t)
+                    started.completeExceptionally(
+                        IllegalStateException(
+                            "Remote Codex bridge transport failed (${t.javaClass.simpleName})."
+                        )
+                    )
                 }
                 scope.launch {
-                    onStderrLine(t.message ?: t.javaClass.simpleName)
+                    onStderrLine("Remote Codex bridge transport failed.")
                     onExit(null)
                 }
             }
@@ -98,7 +106,12 @@ internal class RemoteCodexBridgeConnection(
                 }
             }
         }
-        client.newWebSocket(request, listener)
+        OkHttpManager.sensitiveContentWebSocket(
+            client = client,
+            request = request,
+            listener = listener,
+            allowInsecureLoopback = BuildConfig.DEBUG,
+        )
         withTimeout(START_TIMEOUT_MS) {
             started.await()
         }
@@ -148,7 +161,7 @@ internal class RemoteCodexBridgeConnection(
                 scope.launch { onExit(exitCode) }
             }
             "error" -> {
-                val message = obj.stringValue("message") ?: "Codex bridge error."
+                val message = "Codex bridge returned an error."
                 if (!started.isCompleted) {
                     started.completeExceptionally(IllegalStateException(message))
                 }
@@ -169,7 +182,7 @@ internal class RemoteCodexBridgeConnection(
             }
             return
         }
-        val message = obj.stringValue("message") ?: "Codex bridge rejected the connection."
+        val message = "Codex bridge rejected the connection."
         if (!started.isCompleted) {
             started.completeExceptionally(IllegalStateException(message))
         }
@@ -208,6 +221,7 @@ internal suspend fun listCodexRemoteBridgeDirectory(
             "path" to path.orEmpty()
         )
     }
+    requireSecureBridgeCredentialTransport(config)
     return withContext(Dispatchers.IO) {
         runCatching {
             val urlBuilder = normalizeCodexBridgeFsListUrl(config.bridgeUrl)
@@ -222,7 +236,18 @@ internal suspend fun listCodexRemoteBridgeDirectory(
                 .url(urlBuilder.build())
                 .applyBridgeAuth(config.authToken)
                 .build()
-            client.newCall(request).execute().use { response ->
+            OkHttpManager.sensitiveContentCall(
+                client = client,
+                request = request,
+                allowInsecureLoopback = BuildConfig.DEBUG,
+            ).execute().use { response ->
+                if (!response.isSuccessful) {
+                    return@use linkedMapOf<String, Any?>(
+                        "ok" to false,
+                        "error" to "Bridge directory list failed: HTTP ${response.code}",
+                        "path" to path.orEmpty(),
+                    )
+                }
                 val body = response.body?.string().orEmpty()
                 val json = runCatching { JsonParser.parseString(body) }.getOrNull()
                 val parsed = json?.toKotlinValue() as? Map<*, *>
@@ -231,20 +256,24 @@ internal suspend fun listCodexRemoteBridgeDirectory(
                     ?.associate { (key, value) -> key.toString() to value }
                     ?.toMutableMap()
                     ?: linkedMapOf<String, Any?>()
-                if (!response.isSuccessful) {
-                    payload["ok"] = false
-                    payload.putIfAbsent(
-                        "error",
-                        "Bridge directory list failed: HTTP ${response.code}"
+                if (payload["ok"] == false) {
+                    linkedMapOf(
+                        "ok" to false,
+                        "error" to "Bridge directory list failed.",
+                        "path" to path.orEmpty(),
                     )
+                } else {
+                    payload
                 }
-                payload
             }
         }.getOrElse { error ->
-            Log.w(REMOTE_BRIDGE_TAG, "Bridge directory list failed: ${error.message}")
+            OmniLog.w(
+                REMOTE_BRIDGE_TAG,
+                "Bridge directory list failed type=${error.javaClass.simpleName}",
+            )
             linkedMapOf(
                 "ok" to false,
-                "error" to (error.message ?: error.javaClass.simpleName),
+                "error" to "Bridge directory list failed (${error.javaClass.simpleName}).",
                 "path" to path.orEmpty()
             )
         }
@@ -325,7 +354,7 @@ internal suspend fun uploadCodexRemoteBridgeAttachment(
     if (!source.exists() || !source.isFile) {
         return linkedMapOf(
             "ok" to false,
-            "error" to "Attachment file is not readable: ${source.absolutePath}"
+            "error" to "Attachment file is not readable."
         )
     }
     val dataBase64 = withContext(Dispatchers.IO) {
@@ -422,6 +451,7 @@ private suspend fun requestRemoteBridgeJson(
     body: String?,
     fallbackErrorPrefix: String
 ): Map<String, Any?> {
+    requireSecureBridgeCredentialTransport(config)
     return withContext(Dispatchers.IO) {
         runCatching {
             val builder = Request.Builder()
@@ -433,7 +463,17 @@ private suspend fun requestRemoteBridgeJson(
                 )
             }
             val request = builder.build()
-            client.newCall(request).execute().use { response ->
+            OkHttpManager.sensitiveContentCall(
+                client = client,
+                request = request,
+                allowInsecureLoopback = BuildConfig.DEBUG,
+            ).execute().use { response ->
+                if (!response.isSuccessful) {
+                    return@use linkedMapOf<String, Any?>(
+                        "ok" to false,
+                        "error" to "$fallbackErrorPrefix: HTTP ${response.code}",
+                    )
+                }
                 val responseBody = response.body?.string().orEmpty()
                 val json = runCatching { JsonParser.parseString(responseBody) }.getOrNull()
                 val parsed = json?.toKotlinValue() as? Map<*, *>
@@ -442,17 +482,23 @@ private suspend fun requestRemoteBridgeJson(
                     ?.associate { (key, value) -> key.toString() to value }
                     ?.toMutableMap()
                     ?: linkedMapOf<String, Any?>()
-                if (!response.isSuccessful) {
-                    payload["ok"] = false
-                    payload.putIfAbsent("error", "$fallbackErrorPrefix: HTTP ${response.code}")
+                if (payload["ok"] == false) {
+                    linkedMapOf(
+                        "ok" to false,
+                        "error" to "$fallbackErrorPrefix.",
+                    )
+                } else {
+                    payload
                 }
-                payload
             }
         }.getOrElse { error ->
-            Log.w(REMOTE_BRIDGE_TAG, "$fallbackErrorPrefix: ${error.message}")
+            OmniLog.w(
+                REMOTE_BRIDGE_TAG,
+                "$fallbackErrorPrefix type=${error.javaClass.simpleName}",
+            )
             linkedMapOf(
                 "ok" to false,
-                "error" to (error.message ?: error.javaClass.simpleName)
+                "error" to "$fallbackErrorPrefix (${error.javaClass.simpleName})."
             )
         }
     }
@@ -473,39 +519,55 @@ internal suspend fun probeCodexRemoteBridge(
             cwd = config.cwd.trim().ifBlank { null }
         )
     }
+    requireSecureBridgeCredentialTransport(config)
     return withContext(Dispatchers.IO) {
         runCatching {
             val request = Request.Builder()
                 .url(normalizeCodexBridgeHealthUrl(config.bridgeUrl))
                 .applyBridgeAuth(config.authToken)
                 .build()
-            client.newCall(request).execute().use { response ->
-                val body = response.body?.string().orEmpty()
-                val json = runCatching { JsonParser.parseString(body).asJsonObject }.getOrNull()
+            OkHttpManager.sensitiveContentCall(
+                client = client,
+                request = request,
+                allowInsecureLoopback = BuildConfig.DEBUG,
+            ).execute().use { response ->
                 if (!response.isSuccessful) {
                     return@withContext CodexRemoteBridgeProbe(
                         ready = false,
                         version = null,
-                        error = json?.stringValue("error")
-                            ?: "Bridge health check failed: HTTP ${response.code}",
+                        error = "Bridge health check failed: HTTP ${response.code}",
+                        cwd = null,
+                    )
+                }
+                val body = response.body?.string().orEmpty()
+                val json = runCatching { JsonParser.parseString(body).asJsonObject }.getOrNull()
+                val ready = json?.get("ok")?.asBooleanOrNull() ?: true
+                if (!ready) {
+                    CodexRemoteBridgeProbe(
+                        ready = false,
+                        version = null,
+                        error = "Bridge health check reported not ready.",
+                        cwd = null,
+                    )
+                } else {
+                    CodexRemoteBridgeProbe(
+                        ready = true,
+                        version = json?.stringValue("codexVersion") ?: json?.stringValue("version"),
+                        error = null,
                         cwd = json?.stringValue("cwd"),
                         details = json?.toKotlinMap().orEmpty()
                     )
                 }
-                CodexRemoteBridgeProbe(
-                    ready = json?.get("ok")?.asBooleanOrNull() ?: true,
-                    version = json?.stringValue("codexVersion") ?: json?.stringValue("version"),
-                    error = json?.stringValue("error"),
-                    cwd = json?.stringValue("cwd"),
-                    details = json?.toKotlinMap().orEmpty()
-                )
             }
         }.getOrElse { error ->
-            Log.w(REMOTE_BRIDGE_TAG, "Bridge health check failed: ${error.message}")
+            OmniLog.w(
+                REMOTE_BRIDGE_TAG,
+                "Bridge health check failed type=${error.javaClass.simpleName}",
+            )
             CodexRemoteBridgeProbe(
                 ready = false,
                 version = null,
-                error = error.message ?: error.javaClass.simpleName,
+                error = "Bridge health check failed (${error.javaClass.simpleName}).",
                 cwd = null
             )
         }
@@ -526,6 +588,13 @@ private fun Request.Builder.applyBridgeAuth(token: String): Request.Builder {
         header("X-Omnibot-Bridge-Token", normalized)
     }
     return this
+}
+
+private fun requireSecureBridgeCredentialTransport(config: CodexRemoteBridgeConfig) {
+    ContentEndpointSecurity.requireSafe(
+        rawUrl = config.bridgeUrl,
+        allowInsecureLoopback = BuildConfig.DEBUG,
+    )
 }
 
 private fun JsonObject.stringValue(key: String): String? {

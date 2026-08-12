@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:ui/theme/app_colors.dart';
 // 分组容器
 class SettingSection extends StatelessWidget {
   final List<Widget> children;

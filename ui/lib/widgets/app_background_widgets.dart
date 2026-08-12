@@ -341,6 +341,7 @@ class _ChatPreviewChrome extends StatelessWidget {
             ),
             child: Text(
               '${context.l10n.appearancePreviewChat} · ${visualProfile.previewToneLabel}',
+              key: const ValueKey('app-background-preview-chat-tone'),
               style: TextStyle(
                 color: visualProfile.secondaryTextColor,
                 fontSize: 11 * textScale,
@@ -512,6 +513,9 @@ class _PreviewMessageCard extends StatelessWidget {
             children: [
               Text(
                 title,
+                key: ValueKey(
+                  'app-background-preview-message-title-${userStyle ? 'user' : 'assistant'}',
+                ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
@@ -523,6 +527,9 @@ class _PreviewMessageCard extends StatelessWidget {
               const SizedBox(height: 6),
               Text(
                 subtitle,
+                key: ValueKey(
+                  'app-background-preview-message-subtitle-${userStyle ? 'user' : 'assistant'}',
+                ),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(

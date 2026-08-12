@@ -10,6 +10,7 @@ import 'package:ui/features/home/pages/chat/chat_page.dart';
 import 'package:ui/features/home/pages/chat/widgets/chat_spotlight_tour.dart';
 import 'package:ui/features/welcome/pages/onboarding/onboarding_choice_page.dart';
 import 'package:ui/l10n/generated/app_localizations.dart';
+import 'package:ui/services/special_permission.dart';
 import 'package:ui/services/storage_service.dart';
 import 'package:ui/theme/app_theme.dart';
 import 'package:ui/widgets/provider_vendor_icon.dart';
@@ -24,6 +25,7 @@ void main() {
   late String savedDistribution;
   late List<String> requestedPackageIds;
   late Map<String, dynamic> terminalSnapshot;
+  late Map<String, dynamic> editionCapabilitySnapshot;
   Completer<void>? prepareGate;
 
   Map<String, dynamic> profilePayload({
@@ -73,6 +75,17 @@ void main() {
     }
   }
 
+  Future<void> confirmDestination(WidgetTester tester) async {
+    expect(
+      find.byKey(const Key('data-destination-confirmation-dialog')),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const Key('data-destination-acknowledgement')));
+    await tester.pump();
+    await tester.tap(find.byKey(const Key('data-destination-confirm')));
+    await tester.pumpAndSettle();
+  }
+
   Future<void> openToolsPage(WidgetTester tester) async {
     await tester.tap(find.byKey(const ValueKey('tutorial-system-next')));
     await tester.pumpAndSettle();
@@ -117,11 +130,20 @@ void main() {
       'stage': '',
       'logLines': <String>[],
     };
+    editionCapabilitySnapshot = <String, dynamic>{
+      'schemaVersion': 1,
+      'edition': 'standard',
+      'installedAppsQuery': true,
+      'publicStorageAccess': true,
+    };
+    debugResetAppEditionCapabilitySnapshot();
     prepareGate = null;
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(terminalChannel, (call) async {
       switch (call.method) {
+        case 'getAppEditionCapabilitySnapshot':
+          return editionCapabilitySnapshot;
         case 'getEmbeddedTerminalDistribution':
           return 'alpine';
         case 'getEmbeddedTerminalInitSnapshot':
@@ -191,6 +213,7 @@ void main() {
   });
 
   tearDown(() {
+    debugResetAppEditionCapabilitySnapshot();
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(terminalChannel, null);
@@ -612,6 +635,44 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('Play permissions page omits unavailable restricted actions', (
+    tester,
+  ) async {
+    editionCapabilitySnapshot = <String, dynamic>{
+      'schemaVersion': 1,
+      'edition': 'play',
+      'installedAppsQuery': false,
+      'publicStorageAccess': false,
+    };
+    tester.view.physicalSize = const Size(430, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(buildTestApp());
+    await tester.pump(const Duration(milliseconds: 50));
+    await openPermissionsPage(tester);
+
+    expect(find.text('0 / 2 项核心授权已就绪'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('tutorial-permission-apps')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('tutorial-permission-storage')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('tutorial-permission-battery')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('tutorial-permission-overlay')),
+      findsOneWidget,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('provider models can be assigned before opening the chat guide', (
     tester,
   ) async {
@@ -638,6 +699,7 @@ void main() {
     await showFinder(tester, connect);
     await tester.tap(connect);
     await tester.pumpAndSettle();
+    await confirmDestination(tester);
 
     expect(find.text('已准备 2 个模型'), findsOneWidget);
     expect(find.text('确认可用模型'), findsOneWidget);

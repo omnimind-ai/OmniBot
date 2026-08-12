@@ -274,10 +274,15 @@ class _OpenClawAttachmentCardState extends State<OpenClawAttachmentCard> {
       });
     } finally {
       if (tempPath != null) {
-        File(tempPath).delete().catchError((_) {});
+        try {
+          await File(tempPath).delete();
+        } on FileSystemException {
+          // The temporary file may already have been removed by the host picker.
+        }
       }
-      if (!mounted) return;
-      setState(() => _downloading = false);
+      if (mounted) {
+        setState(() => _downloading = false);
+      }
     }
   }
 
@@ -313,15 +318,4 @@ class _OpenClawAttachmentCardState extends State<OpenClawAttachmentCard> {
     return 'http://$trimmed';
   }
 
-  void _showSnackBar(BuildContext context, String message) {
-    final messenger = ScaffoldMessenger.maybeOf(context);
-    messenger?.hideCurrentSnackBar();
-    messenger?.showSnackBar(
-      SnackBar(
-        content: Text(message),
-        duration: const Duration(milliseconds: 1400),
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
-  }
 }

@@ -231,7 +231,7 @@ class _OnboardingChoicePageState extends State<OnboardingChoicePage> {
   }
 
   Future<void> _configureProvider() async {
-    final success = await _provider.configure(t: _t);
+    final success = await _provider.configure(context: context, t: _t);
     if (success && mounted) {
       _goToPage(TutorialPage.modelInventory);
     }

@@ -1,6 +1,7 @@
 package cn.com.omnimind.bot.agent
 
 import cn.com.omnimind.assists.controller.http.HttpController
+import cn.com.omnimind.baselib.util.CredentialEndpointSecurity
 import java.io.BufferedReader
 import java.io.BufferedWriter
 import java.io.InputStreamReader
@@ -13,9 +14,20 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.After
+import org.junit.Before
 import org.junit.Test
 
 class HttpControllerCustomHeadersTest {
+    @Before
+    fun enableDebugLiteralLoopback() {
+        CredentialEndpointSecurity.configureDebugLoopback(true)
+    }
+
+    @After
+    fun resetDebugLiteralLoopback() {
+        CredentialEndpointSecurity.configureDebugLoopback(false)
+    }
 
     @Test
     fun `fetchProviderModels applies custom headers to openai compatible requests`() = runBlocking {

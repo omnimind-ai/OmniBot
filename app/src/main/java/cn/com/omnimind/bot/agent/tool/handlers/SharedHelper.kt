@@ -61,6 +61,10 @@ class SharedHelper(
         "正在查询已安装应用" to "Querying installed apps",
         "未找到匹配的已安装应用。" to "No matching installed apps found.",
         "查询已安装应用失败" to "Failed to query installed apps",
+        "当前应用版本不提供已安装应用查询。" to
+            "Installed-app queries are unavailable in this app edition.",
+        "当前应用版本不提供公共文件访问。" to
+            "Public storage access is unavailable in this app edition.",
         "浏览器操作失败" to "Browser action failed",
         "请提供继续执行所需的信息。" to "Please provide the information required to continue.",
         "任务已取消" to "Task cancelled",
@@ -536,11 +540,18 @@ class SharedHelper(
     suspend fun requirePublicStorageAccessIfNeeded(
         callback: AgentCallback,
         vararg inputPaths: String?
-    ): ToolExecutionResult.PermissionRequired? {
+    ): ToolExecutionResult? {
         val needsPublicStorage = inputPaths.any { PublicStorageAccess.isPublicStorageInput(it) }
-        if (!needsPublicStorage || PublicStorageAccess.isGranted()) {
+        if (!needsPublicStorage) {
             return null
         }
+        if (!PublicStorageAccess.isSupported()) {
+            return ToolExecutionResult.Error(
+                "public_storage",
+                localized("当前应用版本不提供公共文件访问。")
+            )
+        }
+        if (PublicStorageAccess.isGranted()) return null
         val missing = PublicStorageAccess.requiredPermissionNames()
         return permissionRequiredResult(callback, missing)
     }

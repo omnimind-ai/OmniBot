@@ -173,6 +173,10 @@ class _PureChatToggleHarnessState extends State<_PureChatToggleHarness> {
                     _agentTapCount += 1;
                   });
                 },
+                acpAgentModes: const <ChatAcpAgentModeOption>[
+                  ChatAcpAgentModeOption(id: 'codex-acp', name: 'Codex'),
+                ],
+                activeAcpAgentId: 'codex-acp',
                 activeMode: ChatSurfaceMode.normal,
                 onModeChanged: (_) {},
                 displayLayer: ChatIslandDisplayLayer.mode,
@@ -445,17 +449,14 @@ void main() {
 
     final petButton = find.byKey(const ValueKey('chat-app-bar-pet-button'));
     final appBarContext = tester.element(find.byType(ChatAppBar));
-    SvgPicture petIcon() => tester.widget<SvgPicture>(
-      find.descendant(of: petButton, matching: find.byType(SvgPicture)),
+    Icon petIcon() => tester.widget<Icon>(
+      find.descendant(of: petButton, matching: find.byType(Icon)),
     );
 
     expect(find.text('petShowing:true'), findsOneWidget);
     expect(
-      petIcon().colorFilter,
-      ColorFilter.mode(
-        appBarContext.omniPalette.accentPrimary,
-        BlendMode.srcIn,
-      ),
+      petIcon().color,
+      appBarContext.omniPalette.accentPrimary,
     );
 
     await tester.tap(petButton);
@@ -464,8 +465,8 @@ void main() {
     expect(find.text('petTaps:1'), findsOneWidget);
     expect(find.text('petShowing:false'), findsOneWidget);
     expect(
-      petIcon().colorFilter,
-      ColorFilter.mode(Colors.grey[800]!, BlendMode.srcIn),
+      petIcon().color,
+      Colors.grey[800]!,
     );
   });
 
@@ -1110,6 +1111,9 @@ void main() {
               onAgentTap: () {
                 agentTapCount += 1;
               },
+              acpAgentModes: const <ChatAcpAgentModeOption>[
+                ChatAcpAgentModeOption(id: 'codex-acp', name: 'Codex'),
+              ],
               onAppUpdateTap: () {
                 tapCount += 1;
               },
@@ -1197,6 +1201,7 @@ void main() {
               isAgentReady: true,
               isAgentConnected: true,
               isAgentSelected: true,
+              activeAcpAgentId: 'codex-acp',
               showPureChatToggle: true,
             ),
           ),
@@ -1205,16 +1210,15 @@ void main() {
     );
 
     final agent = find.byKey(const ValueKey('chat-app-bar-pure-chat-button'));
-    final agentIcon = tester.widget<SvgPicture>(
-      find.descendant(of: agent, matching: find.byType(SvgPicture)),
+    final agentIcon = tester.widget<AgentBrandIcon>(
+      find.descendant(of: agent, matching: find.byType(AgentBrandIcon)),
     );
 
     expect(
-      agentIcon.colorFilter,
-      const ColorFilter.mode(Color(0xFF2C7FEB), BlendMode.srcIn),
+      agentIcon.tint,
+      const Color(0xFF2C7FEB),
     );
-    expect(agentIcon.width, 22);
-    expect(agentIcon.height, 22);
+    expect(agentIcon.size, 22);
   });
 
   testWidgets('uses current chat mode icon in surface slider', (tester) async {
@@ -1262,7 +1266,7 @@ void main() {
     expect(primaryIconIdentity(), contains('assets/home/avatar.svg'));
 
     await pumpAppBar(isAgentSelected: true);
-    expect(primaryIconIdentity(), 'agent:codex-acp');
+    expect(primaryIconIdentity(), 'agent:generic-agent');
 
     await pumpAppBar(isPureChatSelected: true);
     expect(primaryIconIdentity(), contains('assets/home/chat/pure_chat.svg'));

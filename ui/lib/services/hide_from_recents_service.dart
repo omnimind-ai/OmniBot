@@ -21,7 +21,6 @@ class HideFromRecentsService {
 
       return result ?? false;
     } catch (e) {
-      print('设置后台隐藏失败: $e');
       return false;
     }
   }

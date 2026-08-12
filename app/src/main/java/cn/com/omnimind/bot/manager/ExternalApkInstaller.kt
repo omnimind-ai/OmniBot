@@ -6,7 +6,9 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
+import android.content.pm.SigningInfo
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
@@ -14,19 +16,28 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.annotation.VisibleForTesting
 import cn.com.omnimind.baselib.http.OkHttpManager
 import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.R
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.io.File
 import java.io.FileOutputStream
+import java.security.MessageDigest
+import java.util.Locale
 
 data class ExternalApkInstallResult(
     val success: Boolean,
     val status: String,
     val message: String,
     val filePath: String? = null
+)
+
+private data class ApkVerificationResult(
+    val valid: Boolean,
+    val message: String,
 )
 
 object ExternalApkInstaller {
@@ -36,10 +47,13 @@ object ExternalApkInstaller {
     private const val DOWNLOAD_NOTIFICATION_CHANNEL_ID = "app_update_download"
     private const val DOWNLOAD_NOTIFICATION_CHANNEL_NAME = "应用更新下载"
     private const val DOWNLOAD_NOTIFICATION_ID = 1102
+    private const val MAX_APK_BYTES = 500L * 1024L * 1024L
 
     const val STATUS_INSTALLER_LAUNCHED = "installer_launched"
     const val STATUS_INSTALL_PERMISSION_REQUIRED = "install_permission_required"
     const val STATUS_DOWNLOAD_FAILED = "download_failed"
+    const val STATUS_VERIFICATION_FAILED = "verification_failed"
+    const val STATUS_INSECURE_DOWNLOAD_URL = "insecure_download_url"
     const val STATUS_INSTALL_FAILED = "install_failed"
 
     private fun fileProviderAuthority(context: Context): String {
@@ -74,10 +88,27 @@ object ExternalApkInstaller {
         context: Context,
         downloadUrl: String,
         apkFileName: String,
-        displayName: String
+        displayName: String,
+        expectedSha256: String,
+        expectedPackageName: String,
     ): ExternalApkInstallResult {
         val appContext = context.applicationContext
         val notifier = UpdateDownloadNotifier(appContext, displayName)
+        if (!isSecureDownloadUrl(downloadUrl)) {
+            return ExternalApkInstallResult(
+                success = false,
+                status = STATUS_INSECURE_DOWNLOAD_URL,
+                message = "更新地址不安全，已取消安装。"
+            )
+        }
+        val normalizedSha256 = normalizeSha256(expectedSha256)
+        if (normalizedSha256.isBlank()) {
+            return ExternalApkInstallResult(
+                success = false,
+                status = STATUS_VERIFICATION_FAILED,
+                message = "更新包缺少完整性信息，已取消安装。"
+            )
+        }
         if (!canInstallPackages(appContext)) {
             withContext(Dispatchers.Main) {
                 openInstallPermissionSettings(context)
@@ -90,11 +121,24 @@ object ExternalApkInstaller {
         }
 
         notifier.showStarting()
-        val existingApk = existingDownloadedApk(appContext, apkFileName)
+        val safeApkFileName = sanitizeApkFileName(apkFileName)
+        val existingApk = existingDownloadedApk(appContext, safeApkFileName)
+            ?.takeIf { cachedFile ->
+                verifyApk(
+                    context = appContext,
+                    apkFile = cachedFile,
+                    expectedSha256 = normalizedSha256,
+                    expectedPackageName = expectedPackageName,
+                ).valid.also { valid ->
+                    if (!valid) {
+                        runCatching { cachedFile.delete() }
+                    }
+                }
+            }
         val apkFile = existingApk ?: downloadApk(
             context = appContext,
             downloadUrl = downloadUrl,
-            apkFileName = apkFileName,
+            apkFileName = safeApkFileName,
             notifier = notifier
         ) ?: run {
             notifier.showFailed("$displayName 安装包下载失败，请稍后重试。")
@@ -102,6 +146,22 @@ object ExternalApkInstaller {
                 success = false,
                 status = STATUS_DOWNLOAD_FAILED,
                 message = "$displayName 安装包下载失败，请稍后重试。"
+            )
+        }
+
+        val verification = verifyApk(
+            context = appContext,
+            apkFile = apkFile,
+            expectedSha256 = normalizedSha256,
+            expectedPackageName = expectedPackageName,
+        )
+        if (!verification.valid) {
+            runCatching { apkFile.delete() }
+            notifier.showFailed(verification.message)
+            return ExternalApkInstallResult(
+                success = false,
+                status = STATUS_VERIFICATION_FAILED,
+                message = verification.message,
             )
         }
 
@@ -169,9 +229,17 @@ object ExternalApkInstaller {
                     OmniLog.e(TAG, "Download apk failed with code: ${response.code}")
                     return@use null
                 }
+                if (response.request.url.scheme != "https") {
+                    OmniLog.e(TAG, "Update download redirected to a non-HTTPS URL")
+                    return@use null
+                }
 
                 val body = response.body ?: return@use null
                 val totalBytes = body.contentLength()
+                if (totalBytes > MAX_APK_BYTES) {
+                    OmniLog.e(TAG, "Update package exceeds the maximum allowed size")
+                    return@use null
+                }
                 var downloadedBytes = 0L
                 tempFile.outputStream().use { output ->
                     body.byteStream().use { input ->
@@ -179,6 +247,9 @@ object ExternalApkInstaller {
                         while (true) {
                             val read = input.read(buffer)
                             if (read == -1) break
+                            if (downloadedBytes + read > MAX_APK_BYTES) {
+                                throw IllegalStateException("Update package exceeds the maximum allowed size")
+                            }
                             output.write(buffer, 0, read)
                             downloadedBytes += read
                             notifier.updateProgress(
@@ -202,17 +273,156 @@ object ExternalApkInstaller {
                     }
                     tempFile.delete()
                 }
-                notifier.showCompleted(apkFile)
                 apkFile
             }
         } catch (e: Exception) {
-            OmniLog.e(TAG, "Download external apk failed", e)
+            OmniLog.e(TAG, "Download external apk failed: ${e.javaClass.simpleName}")
             null
         } finally {
-            if (tempFile.exists() && tempFile.length() == 0L) {
-                tempFile.delete()
+            if (tempFile.exists()) tempFile.delete()
+        }
+    }
+
+    private fun verifyApk(
+        context: Context,
+        apkFile: File,
+        expectedSha256: String,
+        expectedPackageName: String,
+    ): ApkVerificationResult {
+        val actualSha256 = runCatching { sha256Hex(apkFile) }.getOrNull()
+        if (actualSha256 == null || !constantTimeHexEquals(actualSha256, expectedSha256)) {
+            return ApkVerificationResult(false, "更新包完整性校验失败，文件已删除。")
+        }
+
+        val packageManager = context.packageManager
+        val candidate = archivePackageInfo(packageManager, apkFile)
+            ?: return ApkVerificationResult(false, "无法识别更新包，文件已删除。")
+        if (candidate.packageName != expectedPackageName || candidate.packageName != context.packageName) {
+            return ApkVerificationResult(false, "更新包应用标识不匹配，文件已删除。")
+        }
+
+        val installed = installedPackageInfo(packageManager, context.packageName)
+            ?: return ApkVerificationResult(false, "无法验证当前应用身份，已取消安装。")
+        if (candidate.longVersionCode <= installed.longVersionCode) {
+            return ApkVerificationResult(false, "更新包版本未高于当前版本，已取消安装。")
+        }
+
+        if (!signingIdentityMatches(installed.signingInfo, candidate.signingInfo)) {
+            return ApkVerificationResult(false, "更新包签名与当前应用不一致，文件已删除。")
+        }
+        return ApkVerificationResult(true, "更新包校验通过。")
+    }
+
+    @Suppress("DEPRECATION")
+    private fun archivePackageInfo(packageManager: PackageManager, apkFile: File): PackageInfo? {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            packageManager.getPackageArchiveInfo(
+                apkFile.absolutePath,
+                PackageManager.PackageInfoFlags.of(PackageManager.GET_SIGNING_CERTIFICATES.toLong()),
+            )
+        } else {
+            packageManager.getPackageArchiveInfo(apkFile.absolutePath, PackageManager.GET_SIGNING_CERTIFICATES)
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun installedPackageInfo(packageManager: PackageManager, packageName: String): PackageInfo? {
+        return runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                packageManager.getPackageInfo(
+                    packageName,
+                    PackageManager.PackageInfoFlags.of(PackageManager.GET_SIGNING_CERTIFICATES.toLong()),
+                )
+            } else {
+                packageManager.getPackageInfo(packageName, PackageManager.GET_SIGNING_CERTIFICATES)
+            }
+        }.getOrNull()
+    }
+
+    private fun signingIdentityMatches(current: SigningInfo?, candidate: SigningInfo?): Boolean {
+        if (current == null || candidate == null) return false
+        val currentSigners = signatureDigests(current.apkContentsSigners)
+        val candidateSigners = signatureDigests(candidate.apkContentsSigners)
+        val candidateHistory = signatureDigests(candidate.signingCertificateHistory) + candidateSigners
+        return signerTransitionIsAllowed(
+            currentSigners = currentSigners,
+            candidateSigners = candidateSigners,
+            candidateHistory = candidateHistory,
+            hasMultipleSigners = current.hasMultipleSigners() || candidate.hasMultipleSigners(),
+        )
+    }
+
+    @VisibleForTesting
+    internal fun signerTransitionIsAllowed(
+        currentSigners: Set<String>,
+        candidateSigners: Set<String>,
+        candidateHistory: Set<String>,
+        hasMultipleSigners: Boolean,
+    ): Boolean {
+        if (currentSigners.isEmpty() || candidateSigners.isEmpty()) return false
+        if (hasMultipleSigners) return currentSigners == candidateSigners
+        // A forward key rotation proves that the new APK's verified lineage contains the
+        // currently installed signer. The inverse check would also accept an old signing key.
+        return currentSigners.any(candidateHistory::contains)
+    }
+
+    private fun signatureDigests(signatures: Array<android.content.pm.Signature>?): Set<String> {
+        return signatures.orEmpty().mapTo(linkedSetOf()) { signature ->
+            sha256Hex(signature.toByteArray())
+        }
+    }
+
+    private fun sha256Hex(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().buffered().use { input ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                digest.update(buffer, 0, read)
             }
         }
+        return digest.digest().toHex()
+    }
+
+    private fun sha256Hex(bytes: ByteArray): String {
+        return MessageDigest.getInstance("SHA-256").digest(bytes).toHex()
+    }
+
+    private fun ByteArray.toHex(): String = joinToString(separator = "") { byte ->
+        "%02x".format(byte.toInt() and 0xff)
+    }
+
+    @VisibleForTesting
+    internal fun normalizeSha256(raw: String?): String {
+        val normalized = raw?.trim()?.lowercase(Locale.ROOT).orEmpty()
+        return normalized.takeIf { it.matches(Regex("^[0-9a-f]{64}$")) }.orEmpty()
+    }
+
+    @VisibleForTesting
+    internal fun constantTimeHexEquals(left: String, right: String): Boolean {
+        val normalizedLeft = normalizeSha256(left)
+        val normalizedRight = normalizeSha256(right)
+        if (normalizedLeft.isBlank() || normalizedRight.isBlank()) return false
+        return MessageDigest.isEqual(
+            normalizedLeft.toByteArray(Charsets.US_ASCII),
+            normalizedRight.toByteArray(Charsets.US_ASCII),
+        )
+    }
+
+    @VisibleForTesting
+    internal fun sanitizeApkFileName(raw: String): String {
+        val leaf = File(raw.trim()).name
+        val sanitized = leaf.replace(Regex("[^A-Za-z0-9._-]"), "_").take(180)
+        return sanitized.takeIf { it.endsWith(".apk", ignoreCase = true) && it.length > 4 }
+            ?: "OpenOmniBot-update.apk"
+    }
+
+    @VisibleForTesting
+    internal fun isSecureDownloadUrl(raw: String?): Boolean {
+        val value = raw?.trim().orEmpty()
+        return runCatching { value.toHttpUrlOrNull()?.scheme == "https" }
+            .getOrDefault(false)
     }
 
     private fun installApk(context: Context, apkFile: File): Boolean {

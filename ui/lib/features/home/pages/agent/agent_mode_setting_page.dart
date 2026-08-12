@@ -81,7 +81,6 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
         enabled,
       );
     } catch (error) {
-      debugPrint('Load remote bridge failed: $error');
     }
   }
 

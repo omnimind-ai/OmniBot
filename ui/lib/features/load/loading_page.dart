@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/svg.dart';
 import 'package:simple_gradient_text/simple_gradient_text.dart';
 import 'package:flutter/services.dart';
 
@@ -129,7 +128,6 @@ class _LoadingPageState extends State<LoadingPage>
         _checkAndComplete();
       }
     } catch (e) {
-      print('Initialization error: $e');
       // 即使出错也要完成加载，避免卡死
       if (mounted) {
         setState(() {

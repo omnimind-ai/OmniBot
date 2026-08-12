@@ -16,6 +16,7 @@ import java.io.File
 class PdfPreviewChannel {
     companion object {
         private const val CHANNEL = "cn.com.omnimind.bot/pdf_preview"
+        private const val TAG = "PdfPreviewChannel"
         private const val DEFAULT_RENDER_WIDTH_PX = 1080
         private const val MAX_RENDER_WIDTH_PX = 1800
     }
@@ -53,8 +54,8 @@ class PdfPreviewChannel {
             return
         }
 
-        runCatching {
-            openRenderer(ctx, source).use { holder ->
+        try {
+            val payload = openRenderer(ctx, source).use { holder ->
                 val pages = ArrayList<Map<String, Int>>(holder.renderer.pageCount)
                 for (index in 0 until holder.renderer.pageCount) {
                     holder.renderer.openPage(index).use { page ->
@@ -69,10 +70,15 @@ class PdfPreviewChannel {
                     "pages" to pages
                 )
             }
-        }.onSuccess(result::success)
-            .onFailure { error ->
-                result.error("PDF_INFO_FAILED", error.message, null)
-            }
+            result.success(payload)
+        } catch (error: Exception) {
+            NativeChannelErrorPrivacy.deliver(
+                result,
+                TAG,
+                "PDF_INFO_FAILED",
+                error,
+            )
+        }
     }
 
     private fun renderPdfPage(
@@ -95,8 +101,8 @@ class PdfPreviewChannel {
             return
         }
 
-        runCatching {
-            openRenderer(ctx, source).use { holder ->
+        try {
+            val payload = openRenderer(ctx, source).use { holder ->
                 require(pageIndex in 0 until holder.renderer.pageCount) {
                     "pageIndex out of range"
                 }
@@ -129,10 +135,15 @@ class PdfPreviewChannel {
                     }
                 }
             }
-        }.onSuccess(result::success)
-            .onFailure { error ->
-                result.error("PDF_RENDER_FAILED", error.message, null)
-            }
+            result.success(payload)
+        } catch (error: Exception) {
+            NativeChannelErrorPrivacy.deliver(
+                result,
+                TAG,
+                "PDF_RENDER_FAILED",
+                error,
+            )
+        }
     }
 
     fun clear() {
@@ -150,8 +161,12 @@ class PdfPreviewChannel {
                 descriptor = descriptor,
                 renderer = PdfRenderer(descriptor)
             )
-        } catch (error: Throwable) {
-            runCatching { descriptor.close() }
+        } catch (error: Exception) {
+            try {
+                descriptor.close()
+            } catch (_: Exception) {
+                // Closing is best effort; do not replace the original failure.
+            }
             throw error
         }
     }
@@ -185,8 +200,16 @@ class PdfPreviewChannel {
         val renderer: PdfRenderer
     ) : AutoCloseable {
         override fun close() {
-            runCatching { renderer.close() }
-            runCatching { descriptor.close() }
+            try {
+                renderer.close()
+            } catch (_: Exception) {
+                // Best-effort cleanup.
+            }
+            try {
+                descriptor.close()
+            } catch (_: Exception) {
+                // Best-effort cleanup.
+            }
         }
     }
 }

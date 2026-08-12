@@ -123,7 +123,7 @@ object EmbeddedTerminalRuntime {
 
     private const val PREFS_NAME = "embedded_terminal_runtime"
     private const val KEY_BASE_PACKAGE_VERSION = "base_package_version"
-    private const val BASE_PACKAGE_VERSION = 3
+    private const val BASE_PACKAGE_VERSION = 4
     private const val SESSION_DONE_PREFIX = "__OMNIBOT_SESSION_DONE__"
     private const val DEFAULT_CURRENT_DIRECTORY = AgentWorkspaceManager.SHELL_ROOT_PATH
     private const val BASE_PACKAGE_READY_MARKER = "__OMNIBOT_BASE_PACKAGES_READY__"
@@ -149,7 +149,6 @@ object EmbeddedTerminalRuntime {
         "pip3",
         "rg",
         "tmux",
-        "uv",
         "xz"
     )
 
@@ -160,11 +159,31 @@ object EmbeddedTerminalRuntime {
     )
     private val shellPromptRegex = Regex("""^[^\r\n]*[#$] ?$""")
 
-    private fun buildBasePackageBootstrapCommand(): String {
-        val packageBootstrap = if (TerminalDistribution.selected().workingMode == WorkingMode.UBUNTU) {
+    internal fun buildBasePackageBootstrapCommand(): String {
+        val workingMode = TerminalDistribution.selected().workingMode
+        return if (workingMode == WorkingMode.UBUNTU) {
+            buildBasePackageBootstrapCommand(
+                workingMode = workingMode,
+                repositorySetupCommand = UbuntuRepositoryManager.buildSelectedRepositorySetupCommand(),
+                nodeRepositorySetupCommand = UbuntuRepositoryManager.buildNodeRepositorySetupCommand()
+            )
+        } else {
+            buildBasePackageBootstrapCommand(
+                workingMode = workingMode,
+                repositorySetupCommand = AlpineRepositoryManager.buildSelectedRepositorySetupCommand()
+            )
+        }
+    }
+
+    internal fun buildBasePackageBootstrapCommand(
+        workingMode: Int,
+        repositorySetupCommand: String,
+        nodeRepositorySetupCommand: String = ""
+    ): String {
+        val packageBootstrap = if (workingMode == WorkingMode.UBUNTU) {
             """
-                ${UbuntuRepositoryManager.buildSelectedRepositorySetupCommand()}
-                ${UbuntuRepositoryManager.buildNodeRepositorySetupCommand()}
+                $repositorySetupCommand
+                $nodeRepositorySetupCommand
                 apt-get update &&
                 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
                   bash \
@@ -183,7 +202,7 @@ object EmbeddedTerminalRuntime {
             """.trimIndent()
         } else {
             """
-                ${AlpineRepositoryManager.buildSelectedRepositorySetupCommand()}
+                $repositorySetupCommand
                 apk update &&
                 apk add --no-cache \
                   bash \
@@ -208,12 +227,7 @@ object EmbeddedTerminalRuntime {
             set -e
             export PATH="${'$'}HOME/.local/bin:${'$'}PATH"
             $packageBootstrap
-            ln -sf /usr/bin/python3 /usr/local/bin/python || true
-            python3 -m pip install --break-system-packages --upgrade pip >/dev/null 2>&1 || true
-            python3 -m pip install --break-system-packages --upgrade uv >/dev/null 2>&1 || true
-            npm install -g pnpm --no-audit --no-fund >/dev/null 2>&1 || true
-            if [ -x "${'$'}HOME/.local/bin/uv" ]; then ln -sf "${'$'}HOME/.local/bin/uv" /usr/local/bin/uv; fi
-            if [ -x "${'$'}HOME/.local/bin/uvx" ]; then ln -sf "${'$'}HOME/.local/bin/uvx" /usr/local/bin/uvx; fi
+            ln -sf /usr/bin/python3 /usr/local/bin/python
         """.trimIndent()
     }
 
@@ -518,7 +532,7 @@ object EmbeddedTerminalRuntime {
                     message = failureMessage
                 )
             } else {
-                val failureMessage = buildInstallFailureMessage(installResult)
+                val failureMessage = buildInstallFailureMessage()
                 emitEnvironmentProgress(
                     onProgress,
                     EnvironmentProgress(
@@ -1589,7 +1603,7 @@ object EmbeddedTerminalRuntime {
         )
     }
 
-    private fun buildBasePackageProbeCommand(): String {
+    internal fun buildBasePackageProbeCommand(): String {
         val commands = requiredCliCommands.joinToString(" ")
         return """
             export PATH="${'$'}HOME/.local/bin:${'$'}PATH"
@@ -1613,30 +1627,15 @@ object EmbeddedTerminalRuntime {
             fi
             echo "$BASE_PACKAGE_NODE_VERSION_MARKER ${'$'}node_version"
 
-            pnpm_version=""
-            if command -v pnpm >/dev/null 2>&1; then
-              pnpm_version=$(pnpm -v 2>/dev/null | head -n 1 | tr -d '\r')
-            fi
-            if [ -z "${'$'}pnpm_version" ] && command -v corepack >/dev/null 2>&1; then
-              pnpm_version=$(corepack pnpm -v 2>/dev/null | head -n 1 | tr -d '\r')
-            fi
-            if [ -z "${'$'}pnpm_version" ]; then
-              pnpm_version="missing"
-            fi
-            echo "$BASE_PACKAGE_PNPM_VERSION_MARKER ${'$'}pnpm_version"
+            # Do not invoke pnpm/Corepack during a readiness probe: a Corepack
+            # shim may download an unpinned package manager merely to print its
+            # version. PNPM remains unavailable until a reviewed lock is shipped.
+            echo "$BASE_PACKAGE_PNPM_VERSION_MARKER missing"
         """.trimIndent()
     }
 
-    private fun buildInstallFailureMessage(result: HiddenExecResult): String {
-        val output = sanitizeTerminalNoise(result.output).takeLast(1200).trim()
-        val details = when {
-            output.isNotBlank() -> output
-            result.rawOutputPreview.isNotBlank() -> result.rawOutputPreview.takeLast(1200)
-            result.error.isNotBlank() -> result.error
-            else -> "未知错误"
-        }
-        return "内嵌终端环境已初始化，但基础 Agent CLI 包安装失败：$details"
-    }
+    internal fun buildInstallFailureMessage(): String =
+        "AGENT_RUNTIME_BASE_PACKAGE_INSTALL_FAILED"
 
     private fun buildMissingBasePackageFailureMessage(missingCommands: List<String>): String {
         if (missingCommands.isEmpty()) {

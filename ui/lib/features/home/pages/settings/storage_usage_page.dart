@@ -22,6 +22,7 @@ class _StorageUsagePageState extends State<StorageUsagePage> {
   String? _error;
   String? _clearingCategoryId;
   String? _applyingStrategyId;
+  bool _deletingAllLocalData = false;
   StorageUsageSummary? _summary;
 
   static const List<Color> _segmentPaletteLight = [
@@ -330,6 +331,125 @@ class _StorageUsagePageState extends State<StorageUsagePage> {
     }
   }
 
+  Future<void> _deleteAllLocalData() async {
+    final reviewed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        final palette = dialogContext.omniPalette;
+        return AlertDialog(
+          backgroundColor: palette.surfacePrimary,
+          title: Text(_t(dialogContext, '删除全部本机数据', 'Delete all local data')),
+          content: Text(
+            _t(
+              dialogContext,
+              '这会永久删除本机聊天、工作区、账号登录状态、AI Provider、凭据、配置、日志和缓存，并关闭正在运行的本机服务。云端账号、平台额度、服务端记录和公共存储中的原文件不会被删除。App 随后会关闭，需要重新打开。',
+              'This permanently deletes local chats, workspaces, account sign-in, AI providers, credentials, settings, logs, and caches, and stops local services. Your cloud account, platform quota, server records, and original files in shared storage are kept. The app will close and must be opened again.',
+            ),
+            style: TextStyle(color: palette.textSecondary),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: Text(_t(dialogContext, '取消', 'Cancel')),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: Text(_t(dialogContext, '我已了解', 'I understand')),
+            ),
+          ],
+        );
+      },
+    );
+    if (!mounted || reviewed != true) return;
+
+    final controller = TextEditingController();
+    final phrase = _t(context, '删除本机数据', 'DELETE LOCAL DATA');
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        final palette = dialogContext.omniPalette;
+        return StatefulBuilder(
+          builder: (dialogContext, setDialogState) => AlertDialog(
+            backgroundColor: palette.surfacePrimary,
+            title: Text(_t(dialogContext, '最终确认', 'Final confirmation')),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _t(
+                    dialogContext,
+                    '请输入“$phrase”继续。此操作无法撤销。',
+                    'Type “$phrase” to continue. This cannot be undone.',
+                  ),
+                  style: TextStyle(color: palette.textSecondary),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: controller,
+                  autofocus: true,
+                  onChanged: (_) => setDialogState(() {}),
+                  decoration: InputDecoration(hintText: phrase),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: Text(_t(dialogContext, '取消', 'Cancel')),
+              ),
+              FilledButton(
+                onPressed: controller.text == phrase
+                    ? () => Navigator.of(dialogContext).pop(true)
+                    : null,
+                child: Text(_t(dialogContext, '永久删除', 'Delete permanently')),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    // Let the dialog route finish its exit animation before releasing the controller.
+    await Future<void>.delayed(kThemeAnimationDuration);
+    controller.dispose();
+    if (!mounted || confirmed != true) return;
+
+    setState(() => _deletingAllLocalData = true);
+    try {
+      final result = await StorageUsageService.deleteAllLocalData(phrase);
+      if (!mounted) return;
+      if (!result.started) {
+        final activeTasks = result.reason == 'ACTIVE_TASKS';
+        showToast(
+          activeTasks
+              ? _t(
+                  context,
+                  '仍有 AI 任务正在运行，已安全中止删除。请先停止任务后重试。',
+                  'Deletion was safely aborted because AI tasks are still running. Stop them and try again.',
+                )
+              : _t(
+                  context,
+                  '系统未开始清除，本机数据保持不变。',
+                  'The system did not start clearing; local data is unchanged.',
+                ),
+          type: ToastType.error,
+        );
+      }
+    } catch (_) {
+      if (!mounted) return;
+      showToast(
+        _t(
+          context,
+          '系统未开始清除，本机数据保持不变。',
+          'The system did not start clearing; local data is unchanged.',
+        ),
+        type: ToastType.error,
+      );
+    } finally {
+      if (mounted) setState(() => _deletingAllLocalData = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final summary = _summary;
@@ -390,6 +510,44 @@ class _StorageUsagePageState extends State<StorageUsagePage> {
                     ),
                   ),
                   _buildCategorySection(summary),
+                  const SizedBox(height: 24),
+                  SettingsSectionTitle(
+                    label: _t(context, '本机数据重置', 'Local data reset'),
+                    subtitle: _t(
+                      context,
+                      '仅清除这台设备上的 OmniBot 私有数据，不删除云端账号或公共文件',
+                      'Clear only OmniBot private data on this device; cloud accounts and shared files are kept',
+                    ),
+                  ),
+                  Card(
+                    color: palette.surfacePrimary,
+                    child: ListTile(
+                      leading: Icon(
+                        Icons.delete_forever_outlined,
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                      title: Text(
+                        _t(context, '删除全部本机数据', 'Delete all local data'),
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
+                      subtitle: Text(
+                        _t(
+                          context,
+                          '永久删除本机聊天、工作区、凭据、配置和缓存',
+                          'Permanently delete local chats, workspaces, credentials, settings, and caches',
+                        ),
+                      ),
+                      trailing: _deletingAllLocalData
+                          ? const SizedBox.square(
+                              dimension: 20,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.chevron_right_rounded),
+                      onTap: _deletingAllLocalData ? null : _deleteAllLocalData,
+                    ),
+                  ),
                 ],
               ),
             ),

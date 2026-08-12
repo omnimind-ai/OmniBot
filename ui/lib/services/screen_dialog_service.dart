@@ -22,20 +22,16 @@ class ScreenDialogService {
       switch (call.method) {
         case 'onTitle':
           final String title = call.arguments ?? '';
-          print(title);
           _onTitleCallback?.call(title);
           break;
         case 'onContent':
           final String content = call.arguments ?? '';
-          print(content);
           _onContentCallback?.call(content);
           break;
         default:
-          print('Unhandled method: ${call.method}');
+          break;
       }
-    } catch (e) {
-      print('Failed to handle method call: $e');
-    }
+    } catch (_) {}
   }
 
   static void setOnTitleCallback(TitleCallback callback) {
@@ -53,7 +49,6 @@ class ScreenDialogService {
   }
 
   static void clearCallbacks() {
-    print('ScreenDialogService.clearCallbacks()');
     _onTitleCallback = null;
     _onContentCallback = null;
     _onBeforeCloseChatBotDialog = null;
@@ -64,8 +59,7 @@ class ScreenDialogService {
       _channel.setMethodCallHandler(null);
       var result = await _channel.invokeMethod('closeDialog');
       return result == "Success";
-    } on PlatformException catch (e) {
-      print('Failed to close dialog: ${e.message}');
+    } on PlatformException {
       return false;
     }
   }
@@ -78,8 +72,7 @@ class ScreenDialogService {
       _channel.setMethodCallHandler(null);
       var result = await _channel.invokeMethod('closeChatBotDialog');
       return result == "Success";
-    } on PlatformException catch (e) {
-      print('Failed to close chat bot dialog: ${e.message}');
+    } on PlatformException {
       return false;
     }
   }
@@ -88,8 +81,7 @@ class ScreenDialogService {
     try {
       final result = await _channel.invokeMethod('hideForExternalActivity');
       return result == true;
-    } on PlatformException catch (e) {
-      print('Failed to hide dialog for external activity: ${e.message}');
+    } on PlatformException {
       return false;
     }
   }
@@ -100,8 +92,7 @@ class ScreenDialogService {
         'restoreAfterExternalActivity',
       );
       return result == true;
-    } on PlatformException catch (e) {
-      print('Failed to restore dialog after external activity: ${e.message}');
+    } on PlatformException {
       return false;
     }
   }

@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:ui/theme/app_colors.dart';
 import 'package:ui/widgets/bottom_sheet_bg.dart';
-import 'package:ui/widgets/gradient_button.dart';
 
 /// 目标应用配置
 class TargetApp {

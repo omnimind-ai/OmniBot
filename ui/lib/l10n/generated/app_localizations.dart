@@ -2252,6 +2252,42 @@ abstract class AppLocalizations {
   /// **'更新与测试'**
   String get aboutPreferencesSectionTitle;
 
+  /// No description provided for @aboutPrivacyConsentTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'自动联网与后台服务'**
+  String get aboutPrivacyConsentTitle;
+
+  /// No description provided for @aboutPrivacyConsentDescription.
+  ///
+  /// In zh, this message translates to:
+  /// **'同意后，应用才会在启动时自动同步平台模型、检查更新、开启局域网 MCP 监听，并恢复后台 AI 与旧定时任务。拒绝后仍可使用本地功能，也可手动发起账号或 AI 请求；应用不会自动恢复后台或局域网服务。随机安装标识仅用于更新统计。'**
+  String get aboutPrivacyConsentDescription;
+
+  /// No description provided for @aboutPrivacyConsentPending.
+  ///
+  /// In zh, this message translates to:
+  /// **'请选择'**
+  String get aboutPrivacyConsentPending;
+
+  /// No description provided for @aboutPrivacyConsentGranted.
+  ///
+  /// In zh, this message translates to:
+  /// **'已同意'**
+  String get aboutPrivacyConsentGranted;
+
+  /// No description provided for @aboutPrivacyConsentDeclined.
+  ///
+  /// In zh, this message translates to:
+  /// **'已拒绝'**
+  String get aboutPrivacyConsentDeclined;
+
+  /// No description provided for @aboutPrivacyConsentUpdateFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'隐私选择保存失败，请重试'**
+  String get aboutPrivacyConsentUpdateFailed;
+
   /// No description provided for @aboutApkSourceTitle.
   ///
   /// In zh, this message translates to:
@@ -2267,7 +2303,7 @@ abstract class AppLocalizations {
   /// No description provided for @aboutApkSourceDisclaimer.
   ///
   /// In zh, this message translates to:
-  /// **'使用本软件即表示您同意我们的隐私政策，并同意我们通过开源的更新 Worker 收集匿名使用信息，以持续改进软件。因使用本软件产生的任何损失或后果由您自行承担。'**
+  /// **'更新检查会通过开源 Worker 完成；同意自动联网与后台服务后，自动更新检查可附带随机安装标识，该标识仅用于更新统计。'**
   String get aboutApkSourceDisclaimer;
 
   /// No description provided for @aboutApkSourceOptionCnb.

@@ -24,7 +24,6 @@ Future<void> bootstrapMain(List<String> args) async {
   // 可以在这里处理从原生传递过来的参数
   if (args.isNotEmpty) {
     // 处理参数的逻辑
-    debugPrint('Received args from native: $args');
 
     // 检查是否有路由参数
     for (var arg in args) {
@@ -32,8 +31,6 @@ Future<void> bootstrapMain(List<String> args) async {
         initialRoute = arg.substring(8); // 提取路由路径
       }
     }
-  } else {
-    debugPrint('No args received from native');
   }
 
   // 设置初始路由
@@ -88,33 +85,18 @@ class _MyAppState extends ConsumerState<MyApp> {
   void initState() {
     super.initState();
 
-    final initStart = DateTime.now();
-    debugPrint('🎨 [FlutterStartup] MyApp initState start');
     _router = GoRouterManager.createRouter(ref);
     _initializeApp();
-    debugPrint(
-      "⏱️  [FlutterStartup] MyApp initState cost: ${DateTime.now().difference(initStart).inMilliseconds}ms",
-    );
   }
 
   Future<void> _initializeApp() async {
-    final appInitStart = DateTime.now();
     try {
       ref.read(eventListenerProvider);
-      debugPrint(
-        "⏱️  [FlutterStartup] eventListenerProvider init cost: ${DateTime.now().difference(appInitStart).inMilliseconds}ms",
-      );
-    } catch (e) {
-      debugPrint('⚠️  [FlutterStartup] initializeApp error: $e');
-    }
+    } catch (_) {}
   }
 
   @override
   Widget build(BuildContext context) {
-    final buildStart = DateTime.now();
-    debugPrint('🎨 [FlutterStartup] MyApp build start');
-
-    final widgetBuildStart = DateTime.now();
     final themeMode = ref.watch(appThemeModeProvider).materialThemeMode;
     final resolvedLocale = ref.watch(appResolvedLocaleProvider);
     final predictiveBackEnabled = ref.watch(predictiveBackEnabledProvider);
@@ -172,13 +154,6 @@ class _MyAppState extends ConsumerState<MyApp> {
       },
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
-    );
-
-    debugPrint(
-      "⏱️  [FlutterStartup] Widget tree build cost: ${DateTime.now().difference(widgetBuildStart).inMilliseconds}ms",
-    );
-    debugPrint(
-      "✅ [FlutterStartup] MyApp build total cost: ${DateTime.now().difference(buildStart).inMilliseconds}ms",
     );
 
     return widget;

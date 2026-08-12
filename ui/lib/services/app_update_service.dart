@@ -96,6 +96,18 @@ class AppUpdateInstallResult {
   }
 }
 
+class _InFlightUpdateCheck {
+  const _InFlightUpdateCheck({
+    required this.configurationGeneration,
+    required this.force,
+    required this.future,
+  });
+
+  final int configurationGeneration;
+  final bool force;
+  final Future<AppUpdateStatus?> future;
+}
+
 class AppUpdateService {
   static const MethodChannel _channel = MethodChannel(
     'cn.com.omnimind.bot/app_update',
@@ -103,6 +115,9 @@ class AppUpdateService {
   static const String _dismissedBannerVersionKey =
       'dismissed_app_update_banner_version';
 
+  static final ValueNotifier<bool> availabilityNotifier = ValueNotifier<bool>(
+    false,
+  );
   static final ValueNotifier<bool> betaOptInNotifier = ValueNotifier<bool>(
     false,
   );
@@ -110,10 +125,18 @@ class AppUpdateService {
       ValueNotifier<AppUpdateDownloadSource>(AppUpdateDownloadSource.worker);
   static final ValueNotifier<AppUpdateStatus?> statusNotifier =
       ValueNotifier<AppUpdateStatus?>(null);
+  static int _configurationGeneration = 0;
+  static int _statusRequestGeneration = 0;
+  static _InFlightUpdateCheck? _inFlightUpdateCheck;
 
   static Future<void> initialize() => _initialize();
 
   static Future<void> _initialize() async {
+    final available = await refreshAvailability();
+    if (!available) {
+      _clearUnavailableState();
+      return;
+    }
     await Future.wait<void>([
       refreshBetaOptIn(),
       refreshCachedStatus(),
@@ -122,38 +145,70 @@ class AppUpdateService {
     unawaited(_safeRefreshIfNeeded());
   }
 
+  static bool get isSelfUpdateAvailable => availabilityNotifier.value;
+
+  static Future<bool> refreshAvailability() async {
+    try {
+      final available =
+          await _channel.invokeMethod<bool>('isSelfUpdateAvailable') ?? false;
+      availabilityNotifier.value = available;
+      if (!available) {
+        _clearUnavailableState();
+      }
+      return available;
+    } catch (_) {
+      availabilityNotifier.value = false;
+      _clearUnavailableState();
+      return false;
+    }
+  }
+
   static Future<bool> refreshBetaOptIn() async {
+    if (!await _ensureAvailable()) return false;
+    final configurationGeneration = _configurationGeneration;
     try {
       final enabled =
           await _channel.invokeMethod<bool>('getBetaOptIn') ?? false;
-      betaOptInNotifier.value = enabled;
-      return enabled;
+      if (configurationGeneration == _configurationGeneration) {
+        betaOptInNotifier.value = enabled;
+      }
+      return betaOptInNotifier.value;
     } catch (_) {
       return betaOptInNotifier.value;
     }
   }
 
   static Future<AppUpdateStatus?> refreshCachedStatus() async {
+    if (!await _ensureAvailable()) return null;
+    final requestGeneration = ++_statusRequestGeneration;
     try {
       final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
         'getCachedStatus',
       );
       final status = result == null ? null : AppUpdateStatus.fromMap(result);
-      statusNotifier.value = status;
-      return status;
+      if (requestGeneration == _statusRequestGeneration) {
+        statusNotifier.value = status;
+      }
+      return requestGeneration == _statusRequestGeneration
+          ? status
+          : statusNotifier.value;
     } catch (_) {
       return statusNotifier.value;
     }
   }
 
   static Future<AppUpdateDownloadSource> refreshDownloadSource() async {
+    if (!await _ensureAvailable()) return AppUpdateDownloadSource.worker;
+    final configurationGeneration = _configurationGeneration;
     try {
       final rawSource = await _channel.invokeMethod<String>(
         'getApkDownloadSource',
       );
       final source = AppUpdateDownloadSource.fromRaw(rawSource);
-      downloadSourceNotifier.value = source;
-      return source;
+      if (configurationGeneration == _configurationGeneration) {
+        downloadSourceNotifier.value = source;
+      }
+      return downloadSourceNotifier.value;
     } catch (_) {
       return downloadSourceNotifier.value;
     }
@@ -168,6 +223,8 @@ class AppUpdateService {
   }
 
   static Future<bool> setBetaOptIn(bool enabled) async {
+    await _requireAvailable();
+    _invalidateUpdateConfiguration();
     final updated =
         await _channel.invokeMethod<bool>('setBetaOptIn', {
           'enabled': enabled,
@@ -185,6 +242,8 @@ class AppUpdateService {
   static Future<AppUpdateDownloadSource> setDownloadSource(
     AppUpdateDownloadSource source,
   ) async {
+    await _requireAvailable();
+    _invalidateUpdateConfiguration();
     final rawSource = await _channel.invokeMethod<String>(
       'setApkDownloadSource',
       {'source': source.value},
@@ -196,6 +255,7 @@ class AppUpdateService {
   }
 
   static Future<AppUpdateInstallResult> installLatestApk() async {
+    await _requireAvailable();
     final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
       'installLatestApk',
     );
@@ -203,7 +263,7 @@ class AppUpdateService {
   }
 
   static bool shouldShowBanner(AppUpdateStatus? status) {
-    if (status == null || !status.hasUpdate) {
+    if (!isSelfUpdateAvailable || status == null || !status.hasUpdate) {
       return false;
     }
     final dismissedVersion = StorageService.getString(
@@ -214,7 +274,7 @@ class AppUpdateService {
   }
 
   static Future<void> dismissBanner(AppUpdateStatus status) async {
-    if (status.latestVersion.isEmpty) {
+    if (!isSelfUpdateAvailable || status.latestVersion.isEmpty) {
       return;
     }
     await StorageService.setString(
@@ -223,14 +283,53 @@ class AppUpdateService {
     );
   }
 
-  static Future<AppUpdateStatus?> _check({required bool force}) async {
+  static Future<AppUpdateStatus?> _check({required bool force}) {
+    final configurationGeneration = _configurationGeneration;
+    final active = _inFlightUpdateCheck;
+    if (active != null &&
+        active.configurationGeneration == configurationGeneration &&
+        (active.force || !force)) {
+      return active.future;
+    }
+
+    final requestGeneration = ++_statusRequestGeneration;
+    late final Future<AppUpdateStatus?> future;
+    future = _performCheck(
+      force: force,
+      configurationGeneration: configurationGeneration,
+      requestGeneration: requestGeneration,
+    ).whenComplete(() {
+      if (identical(_inFlightUpdateCheck?.future, future)) {
+        _inFlightUpdateCheck = null;
+      }
+    });
+    _inFlightUpdateCheck = _InFlightUpdateCheck(
+      configurationGeneration: configurationGeneration,
+      force: force,
+      future: future,
+    );
+    return future;
+  }
+
+  static Future<AppUpdateStatus?> _performCheck({
+    required bool force,
+    required int configurationGeneration,
+    required int requestGeneration,
+  }) async {
+    if (!await _ensureAvailable()) return null;
     final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
       'checkNow',
       {'force': force},
     );
     final status = result == null ? null : AppUpdateStatus.fromMap(result);
-    statusNotifier.value = status;
-    return status;
+    final isCurrent =
+        configurationGeneration == _configurationGeneration &&
+        requestGeneration == _statusRequestGeneration;
+    if (isCurrent) {
+      statusNotifier.value = status;
+      return status;
+    }
+    return statusNotifier.value;
   }
 
   static Future<AppUpdateStatus?> _safeRefreshIfNeeded() async {
@@ -239,5 +338,30 @@ class AppUpdateService {
     } catch (_) {
       return statusNotifier.value;
     }
+  }
+
+  static Future<bool> _ensureAvailable() async {
+    if (isSelfUpdateAvailable) return true;
+    return refreshAvailability();
+  }
+
+  static Future<void> _requireAvailable() async {
+    if (await _ensureAvailable()) return;
+    throw UnsupportedError(
+      'APK self-update is unavailable in this distribution.',
+    );
+  }
+
+  static void _clearUnavailableState() {
+    _invalidateUpdateConfiguration();
+    betaOptInNotifier.value = false;
+    downloadSourceNotifier.value = AppUpdateDownloadSource.worker;
+    statusNotifier.value = null;
+  }
+
+  static void _invalidateUpdateConfiguration() {
+    _configurationGeneration += 1;
+    _statusRequestGeneration += 1;
+    _inFlightUpdateCheck = null;
   }
 }

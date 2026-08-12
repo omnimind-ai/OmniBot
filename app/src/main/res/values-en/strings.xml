@@ -36,4 +36,8 @@
     <string name="quick_log_delete_success">Memory deleted</string>
     <string name="quick_log_delete_failed">Delete failed. Please try again.</string>
     <string name="quick_log_not_found">This memory no longer exists.</string>
+    <string name="privacy_consent_title">Privacy and automatic services</string>
+    <string name="privacy_consent_message">Only after you explicitly allow this will the app automatically sync the platform model catalog, check for updates, restore the LAN MCP listener, and restore background AI or older scheduled tasks. Declining does not block local features or account and AI requests you start yourself, but the app will not automatically restore background tasks or LAN services. Update statistics send only a random installation identifier and app version. You can change this later on the About page.</string>
+    <string name="privacy_consent_allow">Allow</string>
+    <string name="privacy_consent_decline">Decline</string>
 </resources>

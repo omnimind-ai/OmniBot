@@ -7,6 +7,7 @@ import cn.com.omnimind.bot.mcp.RemoteMcpServerConfig
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -29,7 +30,10 @@ class RemoteMcpConfigChannel {
                         }
                         "upsertServer" -> {
                             val raw = call.arguments<Map<String, Any?>>() ?: emptyMap()
-                            val saved = RemoteMcpConfigStore.upsertServer(RemoteMcpServerConfig.fromMap(raw))
+                            val saved = RemoteMcpConfigStore.upsertServer(
+                                RemoteMcpServerConfig.fromMap(raw),
+                                destinationConfirmed = raw["destinationConfirmed"] == true,
+                            )
                             RemoteMcpDiscoveryRegistry.invalidate(saved.id)
                             respondSuccess(result, saved.toMap())
                         }
@@ -42,7 +46,15 @@ class RemoteMcpConfigChannel {
                         "setServerEnabled" -> {
                             val serverId = call.argument<String>("id").orEmpty()
                             val enabled = call.argument<Boolean>("enabled") == true
-                            val updated = RemoteMcpConfigStore.setServerEnabled(serverId, enabled)
+                            val expectedEndpointUrl = call.argument<String>("expectedEndpointUrl").orEmpty()
+                            val expectedGeneration = call.argument<Number>("expectedGeneration")?.toLong() ?: -1L
+                            val updated = RemoteMcpConfigStore.setServerEnabled(
+                                serverId,
+                                enabled,
+                                expectedEndpointUrl,
+                                expectedGeneration,
+                                destinationConfirmed = enabled && call.argument<Boolean>("destinationConfirmed") == true,
+                            )
                             if (!enabled) {
                                 RemoteMcpDiscoveryRegistry.invalidate(serverId)
                             }
@@ -50,8 +62,16 @@ class RemoteMcpConfigChannel {
                         }
                         "refreshServerTools" -> {
                             val serverId = call.argument<String>("id").orEmpty()
-                            val config = RemoteMcpConfigStore.getServer(serverId)
-                                ?: throw IllegalArgumentException("Server not found")
+                            val expectedEndpointUrl = call.argument<String>("expectedEndpointUrl").orEmpty()
+                            val expectedGeneration = call.argument<Number>("expectedGeneration")?.toLong() ?: -1L
+                            check(call.argument<Boolean>("destinationConfirmed") == true) {
+                                "Remote MCP destination confirmation is required"
+                            }
+                            val config = RemoteMcpConfigStore.confirmServerDestination(
+                                serverId,
+                                expectedEndpointUrl,
+                                expectedGeneration,
+                            )
                             val discovered = RemoteMcpDiscoveryRegistry.discoverServer(config, forceRefresh = true)
                             respondSuccess(
                                 result,
@@ -63,10 +83,18 @@ class RemoteMcpConfigChannel {
                         }
                         else -> withContext(Dispatchers.Main) { result.notImplemented() }
                     }
-                } catch (t: Throwable) {
-                    OmniLog.e("[RemoteMcpConfigChannel]", "channel error: ${t.message}")
+                } catch (failure: Exception) {
+                    if (failure is CancellationException) throw failure
+                    OmniLog.e(
+                        "[RemoteMcpConfigChannel]",
+                        "Remote MCP configuration operation failed type=${failure.javaClass.simpleName}",
+                    )
                     withContext(Dispatchers.Main) {
-                        result.error("REMOTE_MCP_ERROR", t.message, null)
+                        result.error(
+                            "REMOTE_MCP_ERROR",
+                            "Remote MCP configuration is unavailable. Please try again.",
+                            null,
+                        )
                     }
                 }
             }

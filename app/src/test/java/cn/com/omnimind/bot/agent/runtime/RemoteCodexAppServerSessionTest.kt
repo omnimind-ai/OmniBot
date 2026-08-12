@@ -18,11 +18,20 @@ import java.io.OutputStreamWriter
 import java.nio.file.Files
 import java.nio.charset.StandardCharsets
 import java.util.Collections
+import org.junit.Assume.assumeFalse
 
 class RemoteCodexAppServerSessionTest {
 
+    private fun requirePosixShell() {
+        assumeFalse(
+            "POSIX shell integration runs in Linux CI",
+            System.getProperty("os.name").orEmpty().startsWith("Windows")
+        )
+    }
+
     @Test
     fun startSendsInitializeAndInitializedThenEmitsConnected() = runBlocking {
+        requirePosixShell()
         val harness = RemoteCodexSessionHarness(
             """
             read first
@@ -50,6 +59,7 @@ class RemoteCodexAppServerSessionTest {
 
     @Test
     fun sendRequestCorrelatesResponseAndRoutesNotifications() = runBlocking {
+        requirePosixShell()
         val harness = RemoteCodexSessionHarness(
             """
             read init
@@ -78,6 +88,7 @@ class RemoteCodexAppServerSessionTest {
 
     @Test
     fun configReadRequestSendsObjectParams() = runBlocking {
+        requirePosixShell()
         val harness = RemoteCodexSessionHarness(
             """
             read init
@@ -107,6 +118,7 @@ class RemoteCodexAppServerSessionTest {
 
     @Test
     fun stdoutParseErrorIsForwardedAsEvent() = runBlocking {
+        requirePosixShell()
         val harness = RemoteCodexSessionHarness(
             """
             read init
@@ -131,6 +143,7 @@ class RemoteCodexAppServerSessionTest {
 
     @Test
     fun processExitCompletesPendingStateAndBlocksFutureRequests() = runBlocking {
+        requirePosixShell()
         val harness = RemoteCodexSessionHarness(
             """
             read init

@@ -25,44 +25,22 @@ mixin _ChatPageOpenClawMixin on _ChatPageStateBase {
   @override
   Future<void> _loadOpenClawConfig() async {
     try {
-      final enabled =
-          StorageService.getBool(kOpenClawEnabledKey, defaultValue: false) ??
-          false;
-      final baseUrl =
-          StorageService.getString(kOpenClawBaseUrlKey, defaultValue: '') ?? '';
-      final token =
-          StorageService.getString(kOpenClawTokenKey, defaultValue: '') ?? '';
-      final userId =
-          StorageService.getString(kOpenClawUserIdKey, defaultValue: '') ?? '';
-      final effectiveEnabled = enabled && baseUrl.trim().isNotEmpty;
-      if (enabled && !effectiveEnabled) {
-        await StorageService.setBool(kOpenClawEnabledKey, false);
-      }
+      final configuration = await OpenClawCredentialService.initializeAndLoad();
       if (!mounted) return;
       setState(() {
-        _openClawEnabled = effectiveEnabled;
-        _openClawBaseUrl = baseUrl;
-        _openClawToken = token;
-        _openClawUserId = userId;
+        _openClawConfiguration = configuration;
+        _openClawBaseUrl = configuration.baseUrl;
+        _openClawToken = '';
+        _openClawUserId = configuration.userId;
       });
       await _ensureOpenClawUserId();
-    } catch (e) {
-      debugPrint('加载OpenClaw配置失败: $e');
-    }
+    } catch (e) {}
   }
 
   @override
   Future<void> _ensureOpenClawUserId() async {
     if (_openClawUserId.isNotEmpty) return;
-    final existing =
-        StorageService.getString(kOpenClawUserIdKey, defaultValue: '') ?? '';
-    if (existing.isNotEmpty) {
-      if (!mounted) return;
-      setState(() => _openClawUserId = existing);
-      return;
-    }
     final generated = DateTime.now().microsecondsSinceEpoch.toString();
-    await StorageService.setString(kOpenClawUserIdKey, generated);
     if (!mounted) return;
     setState(() => _openClawUserId = generated);
   }
@@ -211,41 +189,68 @@ mixin _ChatPageOpenClawMixin on _ChatPageStateBase {
       return;
     }
     if (_openClawPanelExpanded) {
-      await _applyOpenClawConfig(
+      final saved = await _applyOpenClawConfig(
         baseUrl: _openClawBaseUrlController.text.trim(),
         token: _openClawTokenController.text.trim(),
         userId: _openClawUserIdController.text.trim(),
         enable: _isOpenClawSurface,
       );
-      _checkOpenClawConnection();
+      if (saved) _checkOpenClawConnection();
     }
     _hideSlashCommandPanel();
   }
 
   @override
-  Future<void> _applyOpenClawConfig({
+  Future<bool> _applyOpenClawConfig({
     required String baseUrl,
     required String token,
     String? userId,
     bool enable = true,
   }) async {
-    await StorageService.setString(kOpenClawBaseUrlKey, baseUrl);
-    await StorageService.setString(kOpenClawTokenKey, token);
-    if (userId != null && userId.isNotEmpty) {
-      await StorageService.setString(kOpenClawUserIdKey, userId);
-    }
-    if (!mounted) return;
+    final plan = await OpenClawCredentialService.prepareDestination(baseUrl);
+    if (!mounted) return false;
+    final effectiveUserId = userId?.trim().isNotEmpty == true
+        ? userId!.trim()
+        : _openClawUserId.trim();
+    final outcome =
+        await confirmDataDestinationAndRun<OpenClawConfigurationMutationResult>(
+          context: context,
+          rawEndpoint: plan.baseUrl,
+          capability: 'OpenClaw Gateway',
+          operation: LegacyTextLocalizer.isEnglish
+              ? 'Save or enable configuration'
+              : '保存或启用配置',
+          dataTypes: [
+            LegacyTextLocalizer.isEnglish
+                ? 'Gateway credential, when configured'
+                : 'Gateway 凭据（如已配置）',
+            LegacyTextLocalizer.isEnglish
+                ? 'Future prompts, conversation history, attachments, and device pairing metadata'
+                : '启用后发送的提示词、对话历史、附件和设备配对元数据',
+          ],
+          action: () async {
+            return OpenClawCredentialService.saveConfirmed(
+              plan: plan,
+              baseUrl: plan.baseUrl,
+              userId: effectiveUserId,
+              enable: _isOpenClawSurface && enable,
+              replacementToken: token,
+            );
+          },
+        );
+    final mutation = outcome.value;
+    if (!outcome.confirmed || mutation?.success != true) return false;
+    final configuration = mutation!.configuration;
+    if (configuration == null) return false;
+    if (!mounted) return false;
     setState(() {
-      _openClawBaseUrl = baseUrl;
-      _openClawToken = token;
-      if (userId != null && userId.isNotEmpty) {
-        _openClawUserId = userId;
-      }
-      _openClawEnabled =
-          _isOpenClawSurface && enable && baseUrl.trim().isNotEmpty;
+      _openClawConfiguration = configuration;
+      _openClawBaseUrl = configuration.baseUrl;
+      _openClawToken = '';
+      _openClawTokenController.clear();
+      _openClawUserId = configuration.userId;
     });
-    await StorageService.setBool(kOpenClawEnabledKey, _openClawEnabled);
-    await _ensureOpenClawUserId();
+    return true;
   }
 
   @override
@@ -326,12 +331,16 @@ mixin _ChatPageOpenClawMixin on _ChatPageStateBase {
       return true;
     }
 
-    await _applyOpenClawConfig(
+    final saved = await _applyOpenClawConfig(
       baseUrl: baseUrl.trim(),
       token: token.trim(),
       userId: userId?.trim(),
       enable: true,
     );
+    if (!saved) {
+      _showSnackBar('未确认接收方，OpenClaw 未启用');
+      return true;
+    }
     _messageController.clear();
     _inputFocusNode.unfocus();
     _hideSlashCommandPanel();
@@ -453,6 +462,27 @@ mixin _ChatPageOpenClawMixin on _ChatPageStateBase {
 
   @override
   Future<void> _checkOpenClawConnection() async {
-    await OpenClawConnectionChecker.checkAndToast(_openClawBaseUrl);
+    await OpenClawConnectionChecker.checkAndToast(context, _openClawBaseUrl);
+  }
+
+  @override
+  Future<void> _resetOpenClawDeviceIdentity() async {
+    final result = await showOpenClawIdentityResetFlow(
+      context: context,
+      onLocalDisabled: () {
+        // Native state is authoritative; the next snapshot refresh reflects
+        // the disabled state without maintaining a duplicate local flag.
+      },
+    );
+    if (!mounted || result == null) return;
+    _showSnackBar(
+      result.success
+          ? (LegacyTextLocalizer.isEnglish
+                ? 'Device identity reset. Restart or reconnect OpenClaw.'
+                : '设备身份已重置，请重启或重新连接 OpenClaw。')
+          : (LegacyTextLocalizer.isEnglish
+                ? 'Reset was not verified (${result.status}); OpenClaw remains disabled.'
+                : '无法验证重置结果（${result.status}）；OpenClaw 保持停用。'),
+    );
   }
 }

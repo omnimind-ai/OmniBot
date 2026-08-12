@@ -85,21 +85,89 @@ class RegistrationCodeRequest {
   }
 }
 
+class AccountDeviceSession {
+  const AccountDeviceSession({
+    required this.id,
+    required this.expiresAt,
+    required this.createdAt,
+    required this.lastUsedAt,
+    required this.current,
+  });
+
+  final String id;
+  final DateTime? expiresAt;
+  final DateTime? createdAt;
+  final DateTime? lastUsedAt;
+  final bool current;
+
+  factory AccountDeviceSession.fromMap(Map<dynamic, dynamic> map) {
+    DateTime? parse(String key) =>
+        DateTime.tryParse((map[key] ?? '').toString());
+    return AccountDeviceSession(
+      id: (map['id'] ?? '').toString(),
+      expiresAt: parse('expiresAt'),
+      createdAt: parse('createdAt'),
+      lastUsedAt: parse('lastUsedAt'),
+      current: map['current'] == true,
+    );
+  }
+}
+
+class PlatformUsageEntry {
+  const PlatformUsageEntry({
+    required this.model,
+    required this.promptTokens,
+    required this.completionTokens,
+    required this.totalTokens,
+    required this.quotaUsed,
+    required this.createdAt,
+  });
+
+  final String model;
+  final int promptTokens;
+  final int completionTokens;
+  final int totalTokens;
+  final int quotaUsed;
+  final DateTime? createdAt;
+
+  factory PlatformUsageEntry.fromMap(Map<dynamic, dynamic> map) {
+    return PlatformUsageEntry(
+      model: (map['model'] ?? '').toString(),
+      promptTokens: (map['promptTokens'] as num?)?.toInt() ?? 0,
+      completionTokens: (map['completionTokens'] as num?)?.toInt() ?? 0,
+      totalTokens: (map['totalTokens'] as num?)?.toInt() ?? 0,
+      quotaUsed: (map['quotaUsed'] as num?)?.toInt() ?? 0,
+      createdAt: DateTime.tryParse((map['createdAt'] ?? '').toString()),
+    );
+  }
+}
+
 class PlatformQuota {
   const PlatformQuota({
     required this.enabled,
     required this.balance,
+    required this.weeklyLimit,
+    required this.weeklyUsed,
+    this.weeklyPeriodStart,
     required this.unit,
   });
 
   final bool enabled;
   final int balance;
+  final int weeklyLimit;
+  final int weeklyUsed;
+  final DateTime? weeklyPeriodStart;
   final String unit;
 
   factory PlatformQuota.fromMap(Map<dynamic, dynamic> map) {
     return PlatformQuota(
       enabled: map['platformEnabled'] == true,
       balance: (map['balanceQuota'] as num?)?.toInt() ?? 0,
+      weeklyLimit: (map['weeklyLimitQuota'] as num?)?.toInt() ?? 0,
+      weeklyUsed: (map['weeklyUsedQuota'] as num?)?.toInt() ?? 0,
+      weeklyPeriodStart: DateTime.tryParse(
+        (map['weeklyPeriodStart'] ?? '').toString(),
+      ),
       unit: (map['unit'] ?? '').toString(),
     );
   }
@@ -112,6 +180,8 @@ class AiSettings {
     required this.platform,
     required this.platformAvailable,
     this.platformUnavailableReason,
+    required this.officialProviderReady,
+    this.officialProviderStatus,
   });
 
   final AiAccessMode mode;
@@ -119,12 +189,18 @@ class AiSettings {
   final PlatformQuota platform;
   final bool platformAvailable;
   final String? platformUnavailableReason;
+  final bool officialProviderReady;
+  final String? officialProviderStatus;
 
   factory AiSettings.fromMap(Map<dynamic, dynamic> map) {
     final platform = map['platform'];
     final platformAvailable = map['platformAvailable'] == true;
-    final unavailableReason =
-        map['platformUnavailableReason']?.toString().trim();
+    final unavailableReason = map['platformUnavailableReason']
+        ?.toString()
+        .trim();
+    final officialProviderStatus = map['officialProviderStatus']
+        ?.toString()
+        .trim();
     return AiSettings(
       mode: platformAvailable && (map['mode'] ?? '').toString() == 'platform'
           ? AiAccessMode.platform
@@ -134,9 +210,15 @@ class AiSettings {
         platform is Map ? Map<dynamic, dynamic>.from(platform) : const {},
       ),
       platformAvailable: platformAvailable,
-      platformUnavailableReason: unavailableReason == null || unavailableReason.isEmpty
+      platformUnavailableReason:
+          unavailableReason == null || unavailableReason.isEmpty
           ? null
           : unavailableReason,
+      officialProviderReady: map['officialProviderReady'] == true,
+      officialProviderStatus:
+          officialProviderStatus == null || officialProviderStatus.isEmpty
+          ? null
+          : officialProviderStatus,
     );
   }
 }
@@ -185,6 +267,28 @@ class AccountService {
     return RegistrationCodeRequest.fromMap(result);
   }
 
+  static Future<RegistrationCodeRequest> requestPasswordResetCode(
+    String email,
+  ) async {
+    final result = await _requiredMap(
+      'requestPasswordResetCode',
+      <String, Object?>{'email': email},
+    );
+    return RegistrationCodeRequest.fromMap(result);
+  }
+
+  static Future<void> resetPassword({
+    required String email,
+    required String newPassword,
+    required String verificationRequestId,
+    required String verificationCode,
+  }) => _channel.invokeMethod<void>('resetPassword', <String, Object?>{
+    'email': email,
+    'newPassword': newPassword,
+    'verificationRequestId': verificationRequestId,
+    'verificationCode': verificationCode,
+  });
+
   static Future<AccountUser> register({
     required String email,
     required String password,
@@ -225,17 +329,85 @@ class AccountService {
     return AiSettings.fromMap(result);
   }
 
+  static Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) => _channel.invokeMethod<void>('changePassword', <String, Object?>{
+    'currentPassword': currentPassword,
+    'newPassword': newPassword,
+  });
+
+  static Future<List<AccountDeviceSession>> listSessions() async {
+    final result = await _requiredList('listSessions');
+    return result
+        .map((item) {
+          if (item is! Map) {
+            throw _invalidAccountResult();
+          }
+          return AccountDeviceSession.fromMap(Map<dynamic, dynamic>.from(item));
+        })
+        .toList(growable: false);
+  }
+
+  static Future<void> revokeSession(String sessionId) =>
+      _channel.invokeMethod<void>('revokeSession', <String, Object?>{
+        'sessionId': sessionId,
+      });
+
+  static Future<int> revokeOtherSessions() async {
+    final result = await _requiredMap('revokeOtherSessions');
+    final revoked = result['revoked'];
+    if (revoked is! num || revoked.toInt() < 0) {
+      throw _invalidAccountResult();
+    }
+    return revoked.toInt();
+  }
+
+  static Future<List<PlatformUsageEntry>> listPlatformUsage({
+    int limit = 20,
+  }) async {
+    final result = await _requiredList('listPlatformUsage', <String, Object?>{
+      'limit': limit,
+    });
+    return result
+        .map((item) {
+          if (item is! Map) {
+            throw _invalidAccountResult();
+          }
+          return PlatformUsageEntry.fromMap(Map<dynamic, dynamic>.from(item));
+        })
+        .toList(growable: false);
+  }
+
+  static Future<void> deleteAccount(String currentPassword) =>
+      _channel.invokeMethod<void>('deleteAccount', <String, Object?>{
+        'currentPassword': currentPassword,
+      });
+
   static Future<Map<dynamic, dynamic>> _requiredMap(
     String method, [
     Map<String, Object?>? arguments,
   ]) async {
     final result = await _channel.invokeMethod<dynamic>(method, arguments);
     if (result is! Map) {
-      throw PlatformException(
-        code: 'INVALID_ACCOUNT_RESULT',
-        message: 'Account result is invalid',
-      );
+      throw _invalidAccountResult();
     }
     return Map<dynamic, dynamic>.from(result);
   }
+
+  static Future<List<dynamic>> _requiredList(
+    String method, [
+    Map<String, Object?>? arguments,
+  ]) async {
+    final result = await _channel.invokeMethod<dynamic>(method, arguments);
+    if (result is! List) {
+      throw _invalidAccountResult();
+    }
+    return List<dynamic>.from(result);
+  }
+
+  static PlatformException _invalidAccountResult() => PlatformException(
+    code: 'INVALID_ACCOUNT_RESULT',
+    message: 'Account result is invalid',
+  );
 }

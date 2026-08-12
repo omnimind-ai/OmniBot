@@ -4,6 +4,7 @@ import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ActivityInfo
+import android.content.res.Configuration
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
@@ -19,6 +20,8 @@ import cn.com.omnimind.bot.ui.channel.FileSaveChannel
 import cn.com.omnimind.bot.ui.platformview.AgentBrowserPlatformViewFactory
 import cn.com.omnimind.bot.ui.platformview.EmbeddedTerminalPlatformViewFactory
 import cn.com.omnimind.bot.update.AppUpdateManager
+import cn.com.omnimind.bot.update.PrivacyConsentPolicy
+import cn.com.omnimind.bot.update.PrivacyConsentStore
 import cn.com.omnimind.bot.util.AssistsUtil
 import cn.com.omnimind.bot.util.SchemeUtil
 import cn.com.omnimind.bot.util.TaskRuntimeSettings
@@ -104,12 +107,17 @@ class MainActivity : FlutterActivity() {
         return false
     }
 
-    private fun applyResponsiveOrientation() {
-        val isTablet = resources.configuration.smallestScreenWidthDp >= 600
-        requestedOrientation = if (isTablet) {
-            ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-        } else {
-            ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        applyResponsiveOrientation(newConfig)
+    }
+
+    private fun applyResponsiveOrientation(configuration: Configuration = resources.configuration) {
+        val targetOrientation = MainActivityOrientationPolicy.requestedOrientation(
+            configuration.smallestScreenWidthDp,
+        )
+        if (requestedOrientation != targetOrientation) {
+            requestedOrientation = targetOrientation
         }
     }
 
@@ -151,7 +159,12 @@ class MainActivity : FlutterActivity() {
         super.onResume()
         TaskRuntimeSettings.attachActivity(this)
         TaskRuntimeSettings.onActivityResumed(this)
-        AppUpdateManager.requestSilentCheckIfDue(this)
+        if (PrivacyConsentPolicy.allowsAutomaticExternalActivity(
+                PrivacyConsentStore.getDecision(this)
+            )
+        ) {
+            AppUpdateManager.requestSilentCheckIfDue(this)
+        }
 
         if (!AssistsUtil.Core.isInitialized()) {
             AssistsUtil.Core.initCore(App.instance)
@@ -198,4 +211,16 @@ class MainActivity : FlutterActivity() {
         }
     }
 
+}
+
+internal object MainActivityOrientationPolicy {
+    private const val LARGE_SCREEN_MIN_WIDTH_DP = 600
+
+    fun requestedOrientation(smallestScreenWidthDp: Int): Int {
+        return if (smallestScreenWidthDp >= LARGE_SCREEN_MIN_WIDTH_DP) {
+            ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+        } else {
+            ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+        }
+    }
 }

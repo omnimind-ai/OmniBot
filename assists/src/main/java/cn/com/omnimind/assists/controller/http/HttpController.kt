@@ -15,14 +15,20 @@ import cn.com.omnimind.baselib.llm.ChatCompletionStreamOptions
 import cn.com.omnimind.baselib.llm.DeepSeekProvider
 import cn.com.omnimind.baselib.database.DatabaseHelper
 import cn.com.omnimind.baselib.database.TokenUsageRecord
+import cn.com.omnimind.baselib.http.OkHttpManager
 import cn.com.omnimind.baselib.llm.ModelProviderConfig
 import cn.com.omnimind.baselib.llm.ModelProviderConfigStore
 import cn.com.omnimind.baselib.util.OmniLog
+import cn.com.omnimind.baselib.util.ContentEndpointSecurity
+import cn.com.omnimind.baselib.util.CredentialEndpointSecurity
+import cn.com.omnimind.assists.openclaw.OpenClawTokenStore
+import cn.com.omnimind.assists.openclaw.OpenClawConfigurationStore
 import cn.com.omnimind.baselib.llm.ModelSceneRegistry
 import cn.com.omnimind.baselib.llm.OpenAiWireApi
 import cn.com.omnimind.baselib.llm.OpenAIResponsesRequest
 import cn.com.omnimind.baselib.llm.ProviderModelOption
 import cn.com.omnimind.baselib.llm.ProviderCustomHeaderUtils
+import cn.com.omnimind.baselib.llm.PlatformAiProvisioner
 import cn.com.omnimind.baselib.llm.SceneModelBindingStore
 import cn.com.omnimind.baselib.llm.contentText
 import kotlinx.serialization.encodeToString
@@ -48,7 +54,6 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.sse.EventSource
 import okhttp3.sse.EventSourceListener
-import okhttp3.sse.EventSources
 import org.json.JSONObject
 import org.json.JSONArray
 
@@ -57,11 +62,9 @@ import org.json.JSONArray
  */
 object HttpController {
     private const val TAG = "HttpController"
-    private const val RESPONSE_LOG_CHUNK_SIZE = 3500
     private const val ROUTE_CUSTOM_OPENAI_COMPAT = "custom_openai_compat"
     private const val ANTHROPIC_EPHEMERAL_CACHE_TYPE = "ephemeral"
     private const val ANTHROPIC_MAX_CACHE_BREAKPOINTS = 4
-
     data class ChatCompletionRouteInfo(
         val requestedModel: String,
         val resolvedModel: String,
@@ -109,72 +112,6 @@ object HttpController {
         val requestJson: String
     )
 
-    /**
-     * Anthropic reports uncached input, cache writes, and cache reads as separate
-     * counters. Keep the latest value of every counter because streaming
-     * message_delta events commonly contain only the cumulative output count.
-     */
-    private class AnthropicUsageAccumulator {
-        private var sawUsage = false
-        private var inputTokens = 0
-        private var cacheCreationInputTokens = 0
-        private var cacheReadInputTokens = 0
-        private var outputTokens = 0
-
-        fun merge(usage: KxJsonObject?) {
-            if (usage == null) return
-            updateIfPresent(usage, "input_tokens") { inputTokens = it }
-            updateIfPresent(usage, "cache_creation_input_tokens") {
-                cacheCreationInputTokens = it
-            }
-            updateIfPresent(usage, "cache_read_input_tokens") {
-                cacheReadInputTokens = it
-            }
-            updateIfPresent(usage, "output_tokens") { outputTokens = it }
-        }
-
-        fun toOpenAIUsage(): KxJsonObject? {
-            if (!sawUsage) return null
-
-            // Internally prompt_tokens means tokens processed without a cache
-            // read. Cache writes still require processing, while cache reads are
-            // exposed separately as cached_tokens.
-            val promptTokens = safeTokenSum(inputTokens, cacheCreationInputTokens)
-            val totalTokens = safeTokenSum(promptTokens, cacheReadInputTokens, outputTokens)
-            return buildJsonObject {
-                put("prompt_tokens", JsonPrimitive(promptTokens))
-                put("completion_tokens", JsonPrimitive(outputTokens))
-                put("total_tokens", JsonPrimitive(totalTokens))
-                put(
-                    "prompt_tokens_details",
-                    buildJsonObject {
-                        put("cached_tokens", JsonPrimitive(cacheReadInputTokens))
-                        put("cache_creation_tokens", JsonPrimitive(cacheCreationInputTokens))
-                    }
-                )
-            }
-        }
-
-        private fun updateIfPresent(
-            usage: KxJsonObject,
-            key: String,
-            update: (Int) -> Unit
-        ) {
-            val value = (usage[key] as? JsonPrimitive)
-                ?.contentOrNull
-                ?.toIntOrNull()
-                ?: return
-            update(value.coerceAtLeast(0))
-            sawUsage = true
-        }
-
-        private fun safeTokenSum(vararg values: Int): Int {
-            return values.fold(0L) { total, value -> total + value }
-                .coerceAtMost(Int.MAX_VALUE.toLong())
-                .toInt()
-        }
-    }
-
             private data class ResponseToolCallState(
                 var index: Int = -1,
                 var id: String = "",
@@ -210,8 +147,20 @@ object HttpController {
 
     private val openClawStreamClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
+            .followRedirects(false)
+            .followSslRedirects(false)
             .connectTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
             .readTimeout(0, java.util.concurrent.TimeUnit.SECONDS)
+            .writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+    }
+
+    private val nonStreamingContentClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .followRedirects(false)
+            .followSslRedirects(false)
+            .connectTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
             .writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
             .build()
     }
@@ -252,7 +201,7 @@ object HttpController {
                 }.onFailure {
                     OmniLog.w(
                         TAG,
-                        "ignore stream log chunk for $label: ${it.message}"
+                        "ignore stream log chunk for $label type=${it.javaClass.simpleName}"
                     )
                 }
             }
@@ -274,7 +223,7 @@ object HttpController {
                 }.onFailure {
                     OmniLog.w(
                         TAG,
-                        "ignore stream close logging for $label: ${it.message}"
+                        "ignore stream close logging for $label type=${it.javaClass.simpleName}"
                     )
                 }
             }
@@ -299,13 +248,13 @@ object HttpController {
                             statusCode = response?.code ?: responseCode,
                             responseJson = AiRequestLogStore.buildStreamResponseJson(rawEvents)
                                 .ifBlank { AiRequestLogStore.prettyJsonOrRaw(fallbackBody) },
-                            errorMessage = t?.message
+                            errorMessage = t?.javaClass?.simpleName
                         )
                     }
                 }.onFailure {
                     OmniLog.w(
                         TAG,
-                        "ignore stream failure logging for $label: ${it.message}"
+                        "ignore stream failure logging for $label type=${it.javaClass.simpleName}"
                     )
                 }
             }
@@ -378,14 +327,10 @@ object HttpController {
 
     private fun logResponseBody(label: String, body: String?) {
         runCatching {
-            val normalized = body?.trim()?.takeIf { it.isNotEmpty() } ?: "<empty>"
-            val chunks = normalized.chunked(RESPONSE_LOG_CHUNK_SIZE)
-            chunks.forEachIndexed { index, chunk ->
-                val suffix = if (chunks.size == 1) "" else " (${index + 1}/${chunks.size})"
-                OmniLog.i(TAG, "$label Response Body$suffix: $chunk")
-            }
+            val bodyBytes = body?.toByteArray(Charsets.UTF_8)?.size ?: 0
+            OmniLog.i(TAG, "$label responseBodyBytes=$bodyBytes")
         }.onFailure {
-            OmniLog.w(TAG, "ignore response body log failure: ${it.message}")
+            OmniLog.w(TAG, "ignore response metadata log failure: ${it.javaClass.simpleName}")
         }
     }
 
@@ -415,14 +360,17 @@ object HttpController {
         }.onFailure {
             OmniLog.w(
                 TAG,
-                "ignore AI request log persistence failure for ${seed.label}: ${it.message}"
+                "ignore AI request log persistence failure for ${seed.label} type=${it.javaClass.simpleName}"
             )
         }
         // Record token usage from every successful LLM response
         if (success && responseJson.isNotEmpty()) {
             runCatching { recordTokenUsageFromResponse(seed, responseJson) }
                 .onFailure {
-                    OmniLog.w(TAG, "ignore token usage recording failure: ${it.message}")
+                    OmniLog.w(
+                        TAG,
+                        "ignore token usage recording failure type=${it.javaClass.simpleName}",
+                    )
                 }
         }
     }
@@ -437,19 +385,15 @@ object HttpController {
         OmniLog.d(TAG, "[TokenUsage] parsing response for model=${seed.model}, stream=${seed.stream}, responseLen=${normalized.length}")
 
         // Find the usage object — streaming responses are a JSONArray, non-streaming is a JSONObject
-        val usageObj: JSONObject? = if (seed.protocolType.equals("anthropic", ignoreCase = true)) {
-            extractAnthropicUsageObject(normalized)
-        } else {
-            null
-        } ?: when {
+        val usageObj: JSONObject? = when {
             normalized.startsWith("[") -> {
                 // Streaming: scan chunks from end to find the one with usage
                 val arr = JSONArray(normalized)
                 var found: JSONObject? = null
                 for (i in arr.length() - 1 downTo 0) {
                     val chunk = arr.optJSONObject(i) ?: continue
-                    val u = extractUsageObject(chunk)
-                    if (u != null && (readUsageInt(u, "completion_tokens", "output_tokens") >= 0
+                    val u = chunk.optJSONObject("usage")
+                    if (u != null && (u.optInt("completion_tokens", -1) >= 0
                                 || u.optInt("total_tokens", -1) >= 0)) {
                         found = u
                         break
@@ -458,7 +402,7 @@ object HttpController {
                 found
             }
             normalized.startsWith("{") -> {
-                extractUsageObject(JSONObject(normalized))
+                JSONObject(normalized).optJSONObject("usage")
             }
             else -> null
         }
@@ -468,17 +412,10 @@ object HttpController {
             return
         }
 
-        val promptTokens = readUsageInt(usageObj, "prompt_tokens", "input_tokens").coerceAtLeast(0)
-        val completionTokens = readUsageInt(usageObj, "completion_tokens", "output_tokens").coerceAtLeast(0)
-        val promptDetails = usageObj.optJSONObject("prompt_tokens_details")
-            ?: usageObj.optJSONObject("input_tokens_details")
-        val cachedTokens = promptDetails?.optInt("cached_tokens", 0) ?: 0
-        val cacheCreationTokens = promptDetails?.optInt("cache_creation_tokens", 0) ?: 0
-        if (promptTokens == 0 && completionTokens == 0 && cachedTokens == 0) {
-            OmniLog.d(
-                TAG,
-                "[TokenUsage] usage is empty (prompt=0, completion=0, cached=0) for model=${seed.model}"
-            )
+        val promptTokens = usageObj.optInt("prompt_tokens", 0)
+        val completionTokens = usageObj.optInt("completion_tokens", 0)
+        if (promptTokens == 0 && completionTokens == 0) {
+            OmniLog.d(TAG, "[TokenUsage] usage is empty (prompt=0, completion=0) for model=${seed.model}")
             return
         }
 
@@ -487,13 +424,15 @@ object HttpController {
         val reasoningTokens = details?.optInt("reasoning_tokens", 0) ?: 0
         val textTokens = details?.optInt("text_tokens", 0) ?: 0
 
+        val promptDetails = usageObj.optJSONObject("prompt_tokens_details")
+        val cachedTokens = promptDetails?.optInt("cached_tokens", 0) ?: 0
+
         OmniLog.i(
             TAG,
             "[TokenUsage] recording: model=${seed.model}, " +
                 "prompt=$promptTokens, completion=$completionTokens, " +
                 "reasoning=$reasoningTokens, text=$textTokens, cached=$cachedTokens, " +
-                "cacheCreation=$cacheCreationTokens, " +
-                "stream=${seed.stream}, url=${seed.url}"
+                "stream=${seed.stream}"
         )
 
         CoroutineScope(Dispatchers.IO).launch {
@@ -511,52 +450,11 @@ object HttpController {
                     )
                 )
             }.onFailure {
-                OmniLog.w(TAG, "Failed to insert token usage record: ${it.message}")
+                OmniLog.w(
+                    TAG,
+                    "Failed to insert token usage record type=${it.javaClass.simpleName}",
+                )
             }
-        }
-    }
-
-    private fun extractUsageObject(payload: JSONObject): JSONObject? {
-        return payload.optJSONObject("usage")
-            ?: payload.optJSONObject("response")?.optJSONObject("usage")
-    }
-
-    private fun extractAnthropicUsageObject(responseJson: String): JSONObject? {
-        return normalizeAnthropicUsageResponse(responseJson)?.let(::JSONObject)
-    }
-
-    private fun normalizeAnthropicUsageResponse(responseJson: String): String? {
-        val accumulator = AnthropicUsageAccumulator()
-
-        fun mergePayload(payload: KxJsonObject) {
-            accumulator.merge(payload["usage"] as? KxJsonObject)
-            accumulator.merge(
-                (payload["message"] as? KxJsonObject)?.get("usage") as? KxJsonObject
-            )
-            accumulator.merge(
-                (payload["response"] as? KxJsonObject)?.get("usage") as? KxJsonObject
-            )
-        }
-
-        when (val payload = runCatching {
-            completionJson.parseToJsonElement(responseJson)
-        }.getOrNull()) {
-            is KxJsonArray -> {
-                payload.forEach { event ->
-                    (event as? KxJsonObject)?.let(::mergePayload)
-                }
-            }
-            is KxJsonObject -> mergePayload(payload)
-            else -> Unit
-        }
-        return accumulator.toOpenAIUsage()?.toString()
-    }
-
-    private fun readUsageInt(usage: JSONObject, primaryKey: String, fallbackKey: String): Int {
-        return when {
-            usage.has(primaryKey) -> usage.optInt(primaryKey, -1)
-            usage.has(fallbackKey) -> usage.optInt(fallbackKey, -1)
-            else -> -1
         }
     }
 
@@ -883,6 +781,11 @@ object HttpController {
 
         val aiAccess = OmniAccount.currentAiRequestAccess()
         aiAccess.unavailableReason?.let { throw IllegalStateException(it) }
+        if (aiAccess.usesPlatform) {
+            PlatformAiProvisioner.routingUnavailableReason()?.let {
+                throw IllegalStateException(it)
+            }
+        }
         val transportRoute = AiRequestTransportPolicy.apply(
             access = aiAccess,
             byokRoute = AiTransportRoute(
@@ -1006,6 +909,10 @@ object HttpController {
         headers: Map<String, String>,
         requestBody: okhttp3.RequestBody? = null
     ): Request.Builder {
+        ContentEndpointSecurity.requireSafe(
+            rawUrl = url,
+            allowInsecureLoopback = CredentialEndpointSecurity.isDebugLoopbackAllowed(),
+        )
         val builder = Request.Builder()
             .url(url)
         headers.forEach { (key, value) ->
@@ -1407,8 +1314,7 @@ object HttpController {
             OmniLog.i(
                 TAG,
                 "[non-stream anthropic parse] content_len=${contentText.length}, " +
-                    "tool_calls=${toolCalls.size}, stop_reason=$stopReason, " +
-                    "content_preview=${contentText.take(200)}"
+                    "tool_calls=${toolCalls.size}, stop_reason=$stopReason"
             )
 
             SceneChatCompletionResponse(
@@ -1425,7 +1331,7 @@ object HttpController {
         } catch (e: Exception) {
             buildFailureSceneResponse(
                 code = "500",
-                message = "Anthropic parse error: ${e.message}",
+                message = "Anthropic response parse failed",
                 parser = parser,
                 routeTag = routeTag,
                 rawResponseBody = body
@@ -1568,13 +1474,13 @@ object HttpController {
                     }
                     "response.completed" -> {
                         val responseObj = json.obj("response") ?: json
-                        val usage = responseObj.obj("usage")?.let(::normalizeResponsesUsage)
+                        val usage = responseObj.obj("usage")
                         outer.onEvent(
                             eventSource,
                             id,
                             type,
                             buildOpenAIChunk(
-                                deltaJson = "{}",
+                            deltaJson = "{}",
                                 finishReason = if (sawToolCall) "tool_calls" else "stop",
                                 usage = usage
                             )
@@ -1654,15 +1560,6 @@ object HttpController {
 
             private fun KxJsonObject.array(name: String): KxJsonArray? {
                 return this[name] as? KxJsonArray
-            }
-
-            private fun normalizeResponsesUsage(usage: KxJsonObject): KxJsonObject {
-                val normalized = usage.toMutableMap()
-                usage["input_tokens"]?.let { normalized["prompt_tokens"] = it }
-                usage["output_tokens"]?.let { normalized["completion_tokens"] = it }
-                usage["input_tokens_details"]?.let { normalized["prompt_tokens_details"] = it }
-                usage["output_tokens_details"]?.let { normalized["completion_tokens_details"] = it }
-                return KxJsonObject(normalized)
             }
 
             private fun buildOpenAIToolCallChunk(
@@ -1784,9 +1681,8 @@ object HttpController {
     fun wrapAnthropicListener(outer: EventSourceListener): EventSourceListener {
         return object : EventSourceListener() {
             // per-stream state
-            private val toolUseBlocks = mutableMapOf<Int, KxJsonObject>() // index → {id, name}
+            private val toolUseBlocks = mutableMapOf<Int, JSONObject>() // index → {id, name}
             private val toolArgBuffers = mutableMapOf<Int, StringBuilder>() // index → partial json
-            private val usage = AnthropicUsageAccumulator()
 
             override fun onOpen(eventSource: EventSource, response: okhttp3.Response) {
                 outer.onOpen(eventSource, response)
@@ -1802,28 +1698,24 @@ object HttpController {
                     outer.onEvent(eventSource, id, type, "[DONE]")
                     return
                 }
-                val json = runCatching {
-                    completionJson.parseToJsonElement(data) as? KxJsonObject
-                }.getOrNull() ?: return
+                val json = runCatching { JSONObject(data) }.getOrNull() ?: return
                 val eventType = type?.trim()?.takeIf { it.isNotEmpty() }
-                    ?: stringField(json, "type").takeIf { it.isNotEmpty() }
+                    ?: json.optString("type").trim().takeIf { it.isNotEmpty() }
                 if (eventType == null) {
                     when {
-                        json.containsKey("choices") -> {
+                        json.has("choices") -> {
                             // Some providers may return OpenAI-style chunks on Anthropic-compatible route.
                             outer.onEvent(eventSource, id, type, data)
                         }
-                        json.containsKey("text") -> {
-                            val text = stringField(json, "text")
+                        json.has("text") -> {
+                            val text = json.optString("text", "")
                             if (text.isNotEmpty()) {
                                 outer.onEvent(
                                     eventSource,
                                     id,
                                     type,
                                     buildOpenAIChunk(
-                                        deltaJson = buildJsonObject {
-                                            put("content", JsonPrimitive(text))
-                                        },
+                                        deltaJson = JSONObject().put("content", text),
                                         finishReason = null
                                     )
                                 )
@@ -1833,69 +1725,36 @@ object HttpController {
                     return
                 }
                 when (eventType) {
-                    "message_start" -> {
-                        usage.merge(
-                            objectField(json, "message")?.let { objectField(it, "usage") }
-                        )
-                        usage.toOpenAIUsage()?.let { normalizedUsage ->
-                            outer.onEvent(
-                                eventSource,
-                                id,
-                                type,
-                                buildOpenAIChunk(
-                                    deltaJson = KxJsonObject(emptyMap()),
-                                    finishReason = null,
-                                    usageJson = normalizedUsage
-                                )
-                            )
-                        }
-                    }
                     "content_block_start" -> {
-                        val index = intField(json, "index") ?: 0
-                        val block = objectField(json, "content_block") ?: return
-                        when (stringField(block, "type")) {
+                        val index = json.optInt("index", 0)
+                        val block = json.optJSONObject("content_block") ?: return
+                        when (block.optString("type")) {
                             "tool_use" -> {
-                                val toolId = stringField(block, "id").ifEmpty { "tool_$index" }
-                                val toolName = stringField(block, "name")
-                                toolUseBlocks[index] = buildJsonObject {
-                                    put("id", JsonPrimitive(toolId))
-                                    put("name", JsonPrimitive(toolName))
-                                }
+                                toolUseBlocks[index] = JSONObject()
+                                    .put("id", block.optString("id", "tool_$index"))
+                                    .put("name", block.optString("name", ""))
                                 toolArgBuffers[index] = StringBuilder()
                                 // emit tool_call header chunk
                                 val chunk = buildOpenAIChunk(
-                                    deltaJson = buildJsonObject {
-                                        put(
-                                            "tool_calls",
-                                            buildJsonArray {
-                                                add(
-                                                    buildJsonObject {
-                                                        put("index", JsonPrimitive(index))
-                                                        put("id", JsonPrimitive(toolId))
-                                                        put("type", JsonPrimitive("function"))
-                                                        put(
-                                                            "function",
-                                                            buildJsonObject {
-                                                                put("name", JsonPrimitive(toolName))
-                                                                put("arguments", JsonPrimitive(""))
-                                                            }
-                                                        )
-                                                    }
-                                                )
-                                            }
-                                        )
-                                    },
+                                    deltaJson = JSONObject()
+                                        .put("tool_calls", JSONArray().put(
+                                            JSONObject()
+                                                .put("index", index)
+                                                .put("id", block.optString("id", "tool_$index"))
+                                                .put("type", "function")
+                                                .put("function", JSONObject()
+                                                    .put("name", block.optString("name", ""))
+                                                    .put("arguments", ""))
+                                        )),
                                     finishReason = null
                                 )
                                 outer.onEvent(eventSource, id, type, chunk)
                             }
                             "text" -> {
-                                val text = stringField(block, "text")
+                                val text = block.optString("text", "")
                                 if (text.isNotEmpty()) {
                                     val chunk = buildOpenAIChunk(
-                                        deltaJson = buildJsonObject {
-                                            put("content", JsonPrimitive(text))
-                                        },
+                                        deltaJson = JSONObject().put("content", text),
                                         finishReason = null
                                     )
                                     outer.onEvent(eventSource, id, type, chunk)
@@ -1904,52 +1763,36 @@ object HttpController {
                         }
                     }
                     "content_block_delta" -> {
-                        val index = intField(json, "index") ?: 0
-                        val delta = objectField(json, "delta") ?: return
-                        when (stringField(delta, "type")) {
+                        val index = json.optInt("index", 0)
+                        val delta = json.optJSONObject("delta") ?: return
+                        when (delta.optString("type")) {
                             "text_delta" -> {
-                                val text = stringField(delta, "text")
+                                val text = delta.optString("text", "")
                                 val chunk = buildOpenAIChunk(
-                                    deltaJson = buildJsonObject {
-                                        put("content", JsonPrimitive(text))
-                                    },
+                                    deltaJson = JSONObject().put("content", text),
                                     finishReason = null
                                 )
                                 outer.onEvent(eventSource, id, type, chunk)
                             }
                             "input_json_delta" -> {
-                                val partialJson = stringField(delta, "partial_json")
+                                val partialJson = delta.optString("partial_json", "")
                                 toolArgBuffers[index]?.append(partialJson)
                                 val chunk = buildOpenAIChunk(
-                                    deltaJson = buildJsonObject {
-                                        put(
-                                            "tool_calls",
-                                            buildJsonArray {
-                                                add(
-                                                    buildJsonObject {
-                                                        put("index", JsonPrimitive(index))
-                                                        put(
-                                                            "function",
-                                                            buildJsonObject {
-                                                                put("arguments", JsonPrimitive(partialJson))
-                                                            }
-                                                        )
-                                                    }
-                                                )
-                                            }
-                                        )
-                                    },
+                                    deltaJson = JSONObject()
+                                        .put("tool_calls", JSONArray().put(
+                                            JSONObject()
+                                                .put("index", index)
+                                                .put("function", JSONObject().put("arguments", partialJson))
+                                        )),
                                     finishReason = null
                                 )
                                 outer.onEvent(eventSource, id, type, chunk)
                             }
                             "thinking_delta" -> {
-                                val thinking = stringField(delta, "thinking")
+                                val thinking = delta.optString("thinking", "")
                                 if (thinking.isNotEmpty()) {
                                     val chunk = buildOpenAIChunk(
-                                        deltaJson = buildJsonObject {
-                                            put("reasoning_content", JsonPrimitive(thinking))
-                                        },
+                                        deltaJson = JSONObject().put("reasoning_content", thinking),
                                         finishReason = null
                                     )
                                     outer.onEvent(eventSource, id, type, chunk)
@@ -1958,17 +1801,13 @@ object HttpController {
                         }
                     }
                     "message_delta" -> {
-                        usage.merge(objectField(json, "usage"))
-                        val delta = objectField(json, "delta")
-                        val stopReason = delta?.let { stringField(it, "stop_reason") }
-                            ?.takeIf { it.isNotEmpty() }
-                        val normalizedUsage = usage.toOpenAIUsage()
-                        if (stopReason != null || normalizedUsage != null) {
+                        val delta = json.optJSONObject("delta") ?: return
+                        val stopReason = delta.optString("stop_reason", "").takeIf { it.isNotEmpty() }
+                        if (stopReason != null) {
                             val finishReason = if (stopReason == "tool_use") "tool_calls" else stopReason
                             val chunk = buildOpenAIChunk(
-                                deltaJson = KxJsonObject(emptyMap()),
-                                finishReason = finishReason,
-                                usageJson = normalizedUsage
+                                deltaJson = JSONObject(),
+                                finishReason = finishReason
                             )
                             outer.onEvent(eventSource, id, type, chunk)
                         }
@@ -1977,19 +1816,14 @@ object HttpController {
                         outer.onEvent(eventSource, id, type, "[DONE]")
                     }
                     "error" -> {
-                        val errMsg = objectField(json, "error")
-                            ?.let { stringField(it, "message") }
-                            ?.takeIf { it.isNotEmpty() }
-                            ?: "stream error"
+                        val errMsg = json.optJSONObject("error")?.optString("message", "stream error") ?: "stream error"
                         outer.onFailure(eventSource, RuntimeException("Anthropic stream error: $errMsg"), null)
                     }
                     "completion" -> {
-                        val completion = stringField(json, "completion")
+                        val completion = json.optString("completion", "")
                         if (completion.isNotEmpty()) {
                             val chunk = buildOpenAIChunk(
-                                deltaJson = buildJsonObject {
-                                    put("content", JsonPrimitive(completion))
-                                },
+                                deltaJson = JSONObject().put("content", completion),
                                 finishReason = null
                             )
                             outer.onEvent(eventSource, id, type, chunk)
@@ -2010,41 +1844,14 @@ object HttpController {
                 outer.onFailure(eventSource, t, response)
             }
 
-            private fun buildOpenAIChunk(
-                deltaJson: KxJsonObject,
-                finishReason: String?,
-                usageJson: KxJsonObject? = null
-            ): String {
-                return buildJsonObject {
-                    put(
-                        "choices",
-                        buildJsonArray {
-                            add(
-                                buildJsonObject {
-                                    put("delta", deltaJson)
-                                    finishReason?.let {
-                                        put("finish_reason", JsonPrimitive(it))
-                                    }
-                                }
-                            )
-                        }
-                    )
-                    usageJson?.let { put("usage", it) }
-                }.toString()
-            }
-
-            private fun objectField(source: KxJsonObject, name: String): KxJsonObject? {
-                return source[name] as? KxJsonObject
-            }
-
-            private fun stringField(source: KxJsonObject, name: String): String {
-                return (source[name] as? JsonPrimitive)?.contentOrNull.orEmpty()
-            }
-
-            private fun intField(source: KxJsonObject, name: String): Int? {
-                return (source[name] as? JsonPrimitive)
-                    ?.contentOrNull
-                    ?.toIntOrNull()
+            private fun buildOpenAIChunk(deltaJson: JSONObject, finishReason: String?): String {
+                return JSONObject()
+                    .put("choices", JSONArray().put(
+                        JSONObject()
+                            .put("delta", deltaJson)
+                            .put("finish_reason", finishReason)
+                    ))
+                    .toString()
             }
         }
     }
@@ -2071,9 +1878,10 @@ object HttpController {
         logRequestHeaders("[anthropic stream model=${resolved.resolvedModel}]", request.headers.toMultimap().mapValues {
             it.value.joinToString(",")
         })
-        EventSources.createFactory(openAIStreamClient(forceHttp1)).newEventSource(
-            request,
-            createLoggingEventListener(
+        OkHttpManager.sensitiveContentEventSource(
+            client = openAIStreamClient(forceHttp1),
+            request = request,
+            listener = createLoggingEventListener(
                 "[anthropic stream model=${resolved.resolvedModel}]",
                 wrapAnthropicListener(event),
                 requestLogSeed = AiRequestLogSeed(
@@ -2084,7 +1892,8 @@ object HttpController {
                     stream = true,
                     requestJson = requestJson
                 )
-            )
+            ),
+            allowInsecureLoopback = CredentialEndpointSecurity.isDebugLoopbackAllowed(),
         )
     }
 
@@ -2092,6 +1901,8 @@ object HttpController {
 
     private fun openAIStreamClient(forceHttp1: Boolean = false): OkHttpClient {
         return OkHttpClient.Builder()
+            .followRedirects(false)
+            .followSslRedirects(false)
             .apply {
                 if (forceHttp1) protocols(listOf(Protocol.HTTP_1_1))
             }
@@ -2124,8 +1935,7 @@ object HttpController {
         resolved: ResolvedSceneRequest,
         messages: List<Map<String, Any>>,
         enableThinking: Boolean? = null,
-        reasoningEffort: String? = null,
-        promptCacheKey: String? = null
+        reasoningEffort: String? = null
     ): ChatCompletionRequest {
         val disableThinking = reasoningEffort == "no"
         val chatMessages = messages.map { message ->
@@ -2145,7 +1955,6 @@ object HttpController {
             messages = chatMessages,
             enableThinking = if (disableThinking) false else enableThinking,
             reasoningEffort = if (disableThinking) null else reasoningEffort,
-            promptCacheKey = promptCacheKey?.trim()?.takeIf { it.isNotEmpty() },
             streamOptions = ChatCompletionStreamOptions(includeUsage = true),
         )
     }
@@ -2426,8 +2235,7 @@ object HttpController {
             stream = parsedRequest.stream,
             tools = buildResponsesTools(parsedRequest),
             toolChoice = buildResponsesToolChoice(parsedRequest.toolChoice),
-            reasoning = buildResponsesReasoning(parsedRequest),
-            promptCacheKey = parsedRequest.promptCacheKey
+            reasoning = buildResponsesReasoning(parsedRequest)
         )
         return stripAnthropicOnlyFieldsForOpenAiCompatible(
             completionJson.encodeToString(payload)
@@ -2590,9 +2398,6 @@ object HttpController {
         } else {
             updated.remove("reasoning_effort")
         }
-        // prompt_cache_key is an OpenAI extension and DeepSeek's official API
-        // rejects unsupported top-level request fields.
-        updated.remove("prompt_cache_key")
         return KxJsonObject(updated).toString()
     }
 
@@ -2683,9 +2488,10 @@ object HttpController {
         } else {
             event
         }
-        EventSources.createFactory(openAIStreamClient()).newEventSource(
-            request,
-            createLoggingEventListener(
+        OkHttpManager.sensitiveContentEventSource(
+            client = openAIStreamClient(),
+            request = request,
+            listener = createLoggingEventListener(
                 "[openai_compatible stream model=${chatRequest.model} route=${routeTag.orEmpty()}]",
                 delegate,
                 requestLogSeed = AiRequestLogSeed(
@@ -2700,7 +2506,8 @@ object HttpController {
                     stream = true,
                     requestJson = requestJson
                 )
-            )
+            ),
+            allowInsecureLoopback = CredentialEndpointSecurity.isDebugLoopbackAllowed(),
         )
     }
 
@@ -2757,9 +2564,10 @@ object HttpController {
         } else {
             event
         }
-        EventSources.createFactory(openAIStreamClient(forceHttp1)).newEventSource(
-            request,
-            createLoggingEventListener(
+        OkHttpManager.sensitiveContentEventSource(
+            client = openAIStreamClient(forceHttp1),
+            request = request,
+            listener = createLoggingEventListener(
                 "[openai_compatible chat-completions model=${resolved.resolvedModel}]",
                 delegate,
                 requestLogSeed = AiRequestLogSeed(
@@ -2774,7 +2582,8 @@ object HttpController {
                     stream = true,
                     requestJson = preparedRequestJson
                 )
-            )
+            ),
+            allowInsecureLoopback = CredentialEndpointSecurity.isDebugLoopbackAllowed(),
         )
     }
 
@@ -2787,25 +2596,10 @@ object HttpController {
         return dummySource
     }
 
-    private fun sanitizeShortMessage(raw: String?, maxLen: Int = 200): String {
-        val normalized = raw?.replace(Regex("\\s+"), " ")?.trim().orEmpty()
-        if (normalized.isEmpty()) {
-            return "请求失败"
-        }
-        return if (normalized.length <= maxLen) normalized else "${normalized.take(maxLen)}..."
-    }
-
     private fun extractAvailabilityMessage(responseBody: String?): String {
-        if (responseBody.isNullOrBlank()) return "请求失败"
-        return try {
-            val json = JSONObject(responseBody)
-            val errorObj = json.optJSONObject("error")
-            val errorMsg = errorObj?.optString("message", "")?.takeIf { it.isNotBlank() }
-            val topMsg = json.optString("message", "").takeIf { it.isNotBlank() }
-            sanitizeShortMessage(errorMsg ?: topMsg ?: responseBody)
-        } catch (_: Exception) {
-            sanitizeShortMessage(responseBody)
-        }
+        // Provider bodies can echo prompts, paths, endpoints, or credentials. They remain available
+        // to the local opt-in request log, but must never be promoted into a user-facing error.
+        return if (responseBody.isNullOrEmpty()) "请求失败" else "请求失败，请检查服务配置"
     }
 
 
@@ -2858,8 +2652,7 @@ object HttpController {
         explicitModel: String? = null,
         explicitProtocolType: String? = null,
         explicitWireApi: String? = null,
-        reasoningEffort: String? = null,
-        promptCacheKey: String? = null
+        reasoningEffort: String? = null
     ): EventSource {
         val resolved = resolveSceneRequest(
             modelOrScene = model,
@@ -2876,8 +2669,7 @@ object HttpController {
                 resolved = resolved,
                 messages = messages,
                 enableThinking = enableThinking,
-                reasoningEffort = reasoningEffort,
-                promptCacheKey = promptCacheKey
+                reasoningEffort = reasoningEffort
             ),
             apiBase = resolved.apiBase,
             apiKey = resolved.apiKey,
@@ -2938,13 +2730,21 @@ object HttpController {
         messages: List<Map<String, Any>>,
         event: EventSourceListener
     ): EventSource {
+        check(OpenClawConfigurationStore.isAuthorized(openClawConfig)) {
+            "OPENCLAW_AUTHORIZATION_REQUIRED"
+        }
         val baseUrl = openClawConfig.baseUrl.trim().trimEnd('/')
         val url = "$baseUrl/v1/chat/completions"
-        val authToken = openClawConfig.token?.trim()
+        val authToken = OpenClawTokenStore.getGatewayToken()
+            .takeIf(String::isNotBlank)
+        ContentEndpointSecurity.requireSafe(
+            rawUrl = url,
+            allowInsecureLoopback = CredentialEndpointSecurity.isDebugLoopbackAllowed(),
+        )
 
         OmniLog.i(
             "HttpController",
-            "OpenClaw stream url=$url messages=${messages.size} user=${openClawConfig.userId?.trim()} auth=${!authToken.isNullOrBlank()} sessionKey=${!openClawConfig.sessionKey.isNullOrBlank()}"
+            "OpenClaw stream messages=${messages.size} hasUser=${!openClawConfig.userId.isNullOrBlank()} auth=${!authToken.isNullOrBlank()} sessionKey=${!openClawConfig.sessionKey.isNullOrBlank()}"
         )
 
         val jsonObject = JSONObject()
@@ -2985,10 +2785,11 @@ object HttpController {
             "OpenClaw request ready bodyBytes=${jsonObject.toString().length}"
         )
 
-        return EventSources.createFactory(openClawStreamClient)
-            .newEventSource(
-                request,
-                createLoggingEventListener(
+        return OpenClawConfigurationStore.withAuthorization(openClawConfig) {
+            OkHttpManager.sensitiveContentEventSource(
+                client = openClawStreamClient,
+                request = request,
+                listener = createLoggingEventListener(
                     "[openclaw/v1/chat/completions]",
                     event,
                     requestLogSeed = AiRequestLogSeed(
@@ -2999,8 +2800,10 @@ object HttpController {
                         stream = true,
                         requestJson = jsonObject.toString()
                     )
-                )
+                ),
+                allowInsecureLoopback = CredentialEndpointSecurity.isDebugLoopbackAllowed(),
             )
+        } ?: throw IllegalStateException("OPENCLAW_AUTHORIZATION_REQUIRED")
     }
 
 
@@ -3102,9 +2905,8 @@ object HttpController {
             )
             val anthropicUrl = buildAnthropicMessagesUrl(base)
             OmniLog.d(TAG, "=== Anthropic Request Debug ===")
-            OmniLog.d(TAG, "URL: $anthropicUrl")
             OmniLog.d(TAG, "Model: ${resolved.resolvedModel}, hasApiKey=${!resolved.apiKey.isNullOrBlank()}")
-            OmniLog.d(TAG, "Request Body: ${anthropicJson.take(2000)}")
+            OmniLog.d(TAG, "Request body bytes: ${anthropicJson.toByteArray(Charsets.UTF_8).size}")
             OmniLog.d(TAG, "==============================")
             val requestBody = anthropicJson.toRequestBody("application/json".toMediaType())
             val requestCall = buildAnthropicRequestBuilder(
@@ -3117,7 +2919,11 @@ object HttpController {
             logRequestHeaders("[anthropic model=${resolved.resolvedModel}]", requestCall.headers.toMultimap().mapValues {
                 it.value.joinToString(",")
             })
-            val response = OkHttpClient().newCall(requestCall).execute()
+            val response = OkHttpManager.sensitiveContentCall(
+                client = nonStreamingContentClient,
+                request = requestCall,
+                allowInsecureLoopback = CredentialEndpointSecurity.isDebugLoopbackAllowed(),
+            ).execute()
             val responseBody = response.body?.string()
             OmniLog.d(TAG, "Anthropic Response Status: ${response.code}")
             logResponseBody("[anthropic model=${resolved.resolvedModel}]", responseBody)
@@ -3183,9 +2989,8 @@ object HttpController {
                 )
             }
             OmniLog.d(TAG, "=== OpenAI Request Debug ===")
-            OmniLog.d(TAG, "URL: $url")
             OmniLog.d(TAG, "Model: ${variant.request.model}, hasApiKey=${!resolved.apiKey.isNullOrBlank()}, variant=${variant.name}")
-            OmniLog.d(TAG, "Request Body: ${requestJson.take(2000)}")
+            OmniLog.d(TAG, "Request body bytes: ${requestJson.toByteArray(Charsets.UTF_8).size}")
             OmniLog.d(TAG, "============================")
 
             val requestBody = requestJson.toRequestBody("application/json".toMediaType())
@@ -3199,7 +3004,11 @@ object HttpController {
                 it.value.joinToString(",")
             })
 
-            val response = OkHttpClient().newCall(requestCall).execute()
+            val response = OkHttpManager.sensitiveContentCall(
+                client = nonStreamingContentClient,
+                request = requestCall,
+                allowInsecureLoopback = CredentialEndpointSecurity.isDebugLoopbackAllowed(),
+            ).execute()
             val responseBody = response.body?.string()
             OmniLog.d(TAG, "Response Status: ${response.code}")
             logResponseBody("[openai_compatible model=${variant.request.model}]", responseBody)
@@ -3232,7 +3041,7 @@ object HttpController {
                 )
                 lastFailure = failure
                 if (retryOnBadRequest && response.code == 400 && index < variants.lastIndex) {
-                    OmniLog.w(TAG, "scene completion 400 on variant=${variant.name}: ${failure.message}")
+                    OmniLog.w(TAG, "scene completion rejected variant=${variant.name} code=400")
                     continue
                 }
                 return@withContext failure
@@ -3329,7 +3138,11 @@ object HttpController {
                 "[provider availability openai model=$normalizedModel]",
                 request.headers.toMultimap().mapValues { it.value.joinToString(",") }
             )
-            val response = OkHttpClient().newCall(request).execute()
+            val response = OkHttpManager.sensitiveContentCall(
+                client = nonStreamingContentClient,
+                request = request,
+                allowInsecureLoopback = CredentialEndpointSecurity.isDebugLoopbackAllowed(),
+            ).execute()
             val responseBody = response.body?.string()
             if (!response.isSuccessful) {
                 return@withContext ModelAvailabilityCheckResult(
@@ -3372,7 +3185,7 @@ object HttpController {
             ModelAvailabilityCheckResult(
                 available = false,
                 code = null,
-                message = sanitizeShortMessage(e.message ?: "请求异常")
+                message = "请求异常（${e.javaClass.simpleName}）"
             )
         }
     }
@@ -3429,7 +3242,11 @@ object HttpController {
             "[provider models protocol=$protocolType]",
             request.headers.toMultimap().mapValues { it.value.joinToString(",") }
         )
-        val response = OkHttpClient().newCall(request).execute()
+        val response = OkHttpManager.sensitiveContentCall(
+            client = nonStreamingContentClient,
+            request = request,
+            allowInsecureLoopback = CredentialEndpointSecurity.isDebugLoopbackAllowed(),
+        ).execute()
         val responseBody = response.body?.string()
         if (!response.isSuccessful) {
             throw IllegalStateException(
@@ -3487,7 +3304,11 @@ object HttpController {
         )
 
         return@withContext try {
-            val response = OkHttpClient().newCall(request).execute()
+            val response = OkHttpManager.sensitiveContentCall(
+                client = nonStreamingContentClient,
+                request = request,
+                allowInsecureLoopback = CredentialEndpointSecurity.isDebugLoopbackAllowed(),
+            ).execute()
             val responseBody = response.body?.string()
             if (!response.isSuccessful) {
                 return@withContext ModelAvailabilityCheckResult(
@@ -3514,7 +3335,7 @@ object HttpController {
             ModelAvailabilityCheckResult(
                 available = false,
                 code = null,
-                message = sanitizeShortMessage(e.message ?: "璇锋眰寮傚父")
+                message = "请求异常（${e.javaClass.simpleName}）"
             )
         }
     }
@@ -3635,7 +3456,7 @@ object HttpController {
                 TAG,
                 "[non-stream openai parse] content_len=${content.length}, " +
                     "reasoning_len=${reasoning.length}, tool_calls=${toolCalls.size}, " +
-                    "finish=$finishReason, content_preview=${content.take(200)}"
+                    "finish=$finishReason"
             )
 
             SceneChatCompletionResponse(
@@ -3651,10 +3472,10 @@ object HttpController {
                 rawResponseBody = response
             )
         } catch (e: Exception) {
-            safeLogError("Failed to parse structured OpenAI response: ${e.message}")
+            safeLogError("Failed to parse structured OpenAI response type=${e.javaClass.simpleName}")
             buildFailureSceneResponse(
                 code = "500",
-                message = "Parse error: ${e.message}",
+                message = "Response parse failed",
                 parser = parser,
                 routeTag = routeTag,
                 rawResponseBody = response
@@ -3695,10 +3516,10 @@ object HttpController {
                 rawResponseBody = response
             )
         } catch (e: Exception) {
-            safeLogError("Failed to parse responses output: ${e.message}")
+            safeLogError("Failed to parse responses output type=${e.javaClass.simpleName}")
             buildFailureSceneResponse(
                 code = "500",
-                message = "Responses parse error: ${e.message}",
+                message = "Responses output parse failed",
                 parser = parser,
                 routeTag = routeTag,
                 rawResponseBody = response

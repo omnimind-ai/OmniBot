@@ -1,6 +1,7 @@
 package cn.com.omnimind.bot.agent.runtime
 
 import android.content.Context
+import cn.com.omnimind.baselib.util.AppSecretStore
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import java.util.UUID
@@ -26,7 +27,8 @@ internal data class AcpAgentProfile(
             "description" to description,
             "command" to command,
             "arguments" to arguments,
-            "environment" to environment,
+            "environment" to environment.keys.associateWith { "" },
+            "environmentSecretKeys" to environment.keys.sorted(),
             "enabled" to enabled,
             "builtIn" to builtIn,
             "source" to if (builtIn) "official" else "custom",
@@ -76,6 +78,11 @@ internal class AcpAgentProfileStore(context: Context) {
     )
     private val gson = Gson()
 
+    init {
+        migrateLegacyEnvironmentValues()
+        migrateOfficialCommandOverrides()
+    }
+
     @Synchronized
     fun list(): List<AcpAgentProfile> {
         val stored = readStoredProfiles()
@@ -85,8 +92,6 @@ internal class AcpAgentProfileStore(context: Context) {
         val official = OFFICIAL_AGENTS.map { definition ->
             val override = storedById[definition.id] ?: return@map definition
             definition.copy(
-                command = override.command,
-                arguments = override.arguments,
                 environment = override.environment,
                 enabled = override.enabled
             )
@@ -150,6 +155,11 @@ internal class AcpAgentProfileStore(context: Context) {
     }
 
     @Synchronized
+    fun clearConversationBindings(): Boolean {
+        return preferences.edit().remove(KEY_CONVERSATION_BINDINGS).commit()
+    }
+
+    @Synchronized
     fun select(id: String): AcpAgentProfile {
         val selected = list().firstOrNull { it.id == id.trim() }
             ?: throw IllegalArgumentException("Unknown ACP agent: $id")
@@ -169,13 +179,21 @@ internal class AcpAgentProfileStore(context: Context) {
         val officialDefinition = OFFICIAL_AGENTS.firstOrNull { it.id == targetId }
         val candidate = if (officialDefinition != null) {
             officialDefinition.copy(
-                command = raw.command,
-                arguments = raw.arguments,
-                environment = raw.environment,
+                environment = mergeEnvironmentForReplace(
+                    raw.environment,
+                    current.firstOrNull { it.id == targetId }?.environment.orEmpty(),
+                ),
                 enabled = raw.enabled
             )
         } else {
-            raw.copy(id = targetId, builtIn = false)
+            raw.copy(
+                id = targetId,
+                builtIn = false,
+                environment = mergeEnvironmentForReplace(
+                    raw.environment,
+                    current.firstOrNull { it.id == targetId }?.environment.orEmpty(),
+                ),
+            )
         }
         val profile = normalize(candidate)
             ?: throw IllegalArgumentException("Agent name and command are required.")
@@ -236,7 +254,15 @@ internal class AcpAgentProfileStore(context: Context) {
         }
     }
 
-    private fun readStoredProfiles(): List<AcpAgentProfile> = runCatching {
+    private fun readStoredProfiles(): List<AcpAgentProfile> = readStoredProfilesRaw().map { profile ->
+        profile.copy(
+            environment = profile.environment.keys.associateWith { key ->
+                AppSecretStore.read(environmentSecretKey(profile.id, key)).orEmpty()
+            },
+        )
+    }
+
+    private fun readStoredProfilesRaw(): List<AcpAgentProfile> = runCatching {
         val json = preferences.getString(KEY_PROFILES, null)
             ?: return@runCatching emptyList()
         gson.fromJson<List<AcpAgentProfile>>(
@@ -247,8 +273,134 @@ internal class AcpAgentProfileStore(context: Context) {
 
     private fun writeProfiles(profiles: List<AcpAgentProfile>) {
         val persistable = profiles.filter { !it.builtIn || hasOfficialOverride(it) }
-        preferences.edit().putString(KEY_PROFILES, gson.toJson(persistable)).apply()
+        val oldRawProfiles = readStoredProfilesRaw()
+        val oldMetadataJson = preferences.getString(KEY_PROFILES, null)
+        val desiredKeyNames = persistable.flatMap { profile ->
+            profile.environment.keys.map { key -> environmentSecretKey(profile.id, key) }
+        }.toSet()
+        val oldKeyNames = oldRawProfiles.flatMap { profile ->
+            profile.environment.keys.map { key -> environmentSecretKey(profile.id, key) }
+        }.toSet()
+        val snapshots = (desiredKeyNames + oldKeyNames).associateWith { key ->
+            AppSecretStore.readWithStatus(key).also { result ->
+                if (!result.succeeded) throw IllegalStateException(ACP_AGENT_PROFILE_PERSIST_FAILED)
+            }.value
+        }
+        val desiredSecrets = linkedMapOf<String, String>()
+        val safeProfiles = persistable.map { profile ->
+            val safeEnvironment = linkedMapOf<String, String>()
+            profile.environment.forEach { (key, value) ->
+                val secretKey = environmentSecretKey(profile.id, key)
+                val desiredValue = value.takeIf(String::isNotEmpty)
+                    ?: snapshots[secretKey]
+                    ?: throw IllegalStateException(ACP_AGENT_PROFILE_PERSIST_FAILED)
+                desiredSecrets[secretKey] = desiredValue
+                safeEnvironment[key] = ""
+            }
+            profile.copy(environment = safeEnvironment)
+        }
+        val desiredMetadataJson = gson.toJson(safeProfiles)
+        try {
+            desiredSecrets.forEach { (key, value) ->
+                if (!AppSecretStore.write(key, value) || AppSecretStore.read(key) != value) {
+                    throw IllegalStateException(ACP_AGENT_PROFILE_PERSIST_FAILED)
+                }
+            }
+            val committed = preferences.edit()
+                .putString(KEY_PROFILES, desiredMetadataJson)
+                .commit()
+            if (!committed || preferences.getString(KEY_PROFILES, null) != desiredMetadataJson) {
+                throw IllegalStateException(ACP_AGENT_PROFILE_PERSIST_FAILED)
+            }
+            (oldKeyNames - desiredSecrets.keys).forEach { key ->
+                if (!AppSecretStore.delete(key)) {
+                    throw IllegalStateException(ACP_AGENT_PROFILE_PERSIST_FAILED)
+                }
+            }
+        } catch (error: Exception) {
+            var secretsRestored = true
+            snapshots.forEach { (key, value) ->
+                val restored = if (value == null) {
+                    AppSecretStore.delete(key)
+                } else {
+                    AppSecretStore.write(key, value)
+                }
+                secretsRestored = restored && secretsRestored
+            }
+            val metadataRestored = if (oldMetadataJson == null) {
+                preferences.edit().remove(KEY_PROFILES).commit() &&
+                    preferences.getString(KEY_PROFILES, null) == null
+            } else {
+                preferences.edit().putString(KEY_PROFILES, oldMetadataJson).commit() &&
+                    preferences.getString(KEY_PROFILES, null) == oldMetadataJson
+            }
+            if (!secretsRestored || !metadataRestored) {
+                throw IllegalStateException(ACP_AGENT_PROFILE_PERSIST_FAILED)
+            }
+            throw IllegalStateException(ACP_AGENT_PROFILE_PERSIST_FAILED)
+        }
     }
+
+    private fun migrateLegacyEnvironmentValues() {
+        val rawProfiles = readStoredProfilesRaw()
+        if (rawProfiles.none { profile -> profile.environment.values.any(String::isNotEmpty) }) return
+        val safeProfiles = rawProfiles.map { profile ->
+            val safeEnvironment = linkedMapOf<String, String>()
+            profile.environment.forEach { (key, legacyValue) ->
+                if (legacyValue.isEmpty()) {
+                    safeEnvironment[key] = ""
+                } else {
+                    val secretKey = environmentSecretKey(profile.id, key)
+                    val migrated = AppSecretStore.write(secretKey, legacyValue) &&
+                        AppSecretStore.read(secretKey) == legacyValue
+                    if (migrated) safeEnvironment[key] = "" else AppSecretStore.delete(secretKey)
+                }
+            }
+            profile.copy(environment = safeEnvironment)
+        }
+        val scrubbed = preferences.edit()
+            .putString(KEY_PROFILES, gson.toJson(safeProfiles))
+            .commit()
+        if (!scrubbed) {
+            // Removing the complete legacy record is safer than retaining credentials.
+            preferences.edit().remove(KEY_PROFILES).commit()
+            rawProfiles.forEach { AppSecretStore.deletePrefix(environmentSecretPrefix(it.id)) }
+        }
+    }
+
+    private fun migrateOfficialCommandOverrides() {
+        val stored = readStoredProfiles()
+        if (stored.none { profile ->
+                val definition = OFFICIAL_AGENTS.firstOrNull { it.id == profile.id }
+                definition != null &&
+                    (profile.command != definition.command || profile.arguments != definition.arguments)
+            }
+        ) {
+            return
+        }
+        writeProfiles(
+            stored.map { profile ->
+                val definition = OFFICIAL_AGENTS.firstOrNull { it.id == profile.id }
+                    ?: return@map profile
+                definition.copy(
+                    environment = profile.environment,
+                    enabled = profile.enabled
+                )
+            }
+        )
+    }
+
+    private fun mergeEnvironmentForReplace(
+        requested: Map<String, String>,
+        current: Map<String, String>,
+    ): Map<String, String> = requested.mapValues { (key, value) ->
+        if (value.isEmpty() && current.containsKey(key)) current.getValue(key) else value
+    }
+
+    private fun environmentSecretPrefix(profileId: String): String = "acp.env.$profileId."
+
+    private fun environmentSecretKey(profileId: String, name: String): String =
+        environmentSecretPrefix(profileId) + name
 
     private fun hasOfficialOverride(profile: AcpAgentProfile): Boolean {
         val definition = OFFICIAL_AGENTS.firstOrNull { it.id == profile.id } ?: return true
@@ -342,24 +494,16 @@ internal class AcpAgentProfileStore(context: Context) {
         private val OFFICIAL_RUNTIMES = mapOf(
             DEFAULT_CODEX_AGENT_ID to AcpOfficialRuntime(
                 discoveryCommand = "codex",
-                managedAdapterPackage = "@agentclientprotocol/codex-acp@1.1.7"
+                managedAdapterPackage = MANAGED_CODEX_ACP_PACKAGE_SPEC
             ),
             "claude-code-acp" to AcpOfficialRuntime(
                 discoveryCommand = "claude",
-                managedAdapterPackage = "@agentclientprotocol/claude-agent-acp@0.61.0"
+                managedAdapterPackage = MANAGED_CLAUDE_ACP_PACKAGE_SPEC
             ),
             "opencode-acp" to AcpOfficialRuntime(discoveryCommand = "opencode")
         )
 
         fun officialRuntime(profile: AcpAgentProfile): AcpOfficialRuntime? {
-            val definition = OFFICIAL_AGENTS.firstOrNull { it.id == profile.id }
-                ?: return null
-            if (
-                profile.command != definition.command ||
-                profile.arguments != definition.arguments
-            ) {
-                return null
-            }
             return OFFICIAL_RUNTIMES[profile.id]
         }
 
@@ -369,6 +513,8 @@ internal class AcpAgentProfileStore(context: Context) {
         private const val KEY_SESSION_BINDINGS = "session_bindings"
         private const val KEY_CONVERSATION_BINDINGS = "conversation_bindings"
         private const val KEY_HEALTH = "health"
+        internal const val ACP_AGENT_PROFILE_PERSIST_FAILED =
+            "ACP_AGENT_PROFILE_PERSIST_FAILED"
         private val ENVIRONMENT_NAME = Regex("[A-Za-z_][A-Za-z0-9_]*")
     }
 }

@@ -17,6 +17,8 @@ class OnboardingPermissionController extends ChangeNotifier
   bool _overlay = false;
   bool _installedApps = false;
   bool _publicStorage = false;
+  AppEditionCapabilitySnapshot _capabilities =
+      AppEditionCapabilitySnapshot.unavailable;
   ShizukuStatusSnapshot _shizukuStatus = ShizukuStatusSnapshot.fallback();
   bool _notificationEnabled = true;
 
@@ -24,17 +26,19 @@ class OnboardingPermissionController extends ChangeNotifier
   bool get overlay => _overlay;
   bool get installedApps => _installedApps;
   bool get publicStorage => _publicStorage;
+  bool get installedAppsAvailable => _capabilities.installedAppsQuery;
+  bool get publicStorageAvailable => _capabilities.publicStorageAccess;
   ShizukuStatusSnapshot get shizukuStatus => _shizukuStatus;
   bool get notificationEnabled => _notificationEnabled;
 
-  /// Battery, overlay, and installed-apps are the core three, matching the
-  /// settings page overview.
-  static const int coreTotal = 3;
+  /// Play omits installed-app discovery, so it is not counted as a missing
+  /// permission that a user could grant later.
+  int get coreTotal => installedAppsAvailable ? 3 : 2;
 
   int get coreReadyCount => <bool>[
     _backgroundRunning,
     _overlay,
-    _installedApps,
+    if (installedAppsAvailable) _installedApps,
   ].where((value) => value).length;
 
   bool get allCoreReady => coreReadyCount == coreTotal;
@@ -73,7 +77,10 @@ class OnboardingPermissionController extends ChangeNotifier
     _checking = true;
     try {
       var changed = false;
-      Future<void> probe(Future<bool> Function() read, void Function(bool) apply) async {
+      Future<void> probe(
+        Future<bool> Function() read,
+        void Function(bool) apply,
+      ) async {
         try {
           final value = await read();
           apply(value);
@@ -83,21 +90,37 @@ class OnboardingPermissionController extends ChangeNotifier
         }
       }
 
-      await probe(isBackgroundRunAllowed, (value) => _backgroundRunning = value);
+      _capabilities = await refreshAppEditionCapabilitySnapshot();
+      changed = true;
+      await probe(
+        isBackgroundRunAllowed,
+        (value) => _backgroundRunning = value,
+      );
       await probe(
         () async =>
             await spePermission.invokeMethod('isOverlayPermission') == true,
         (value) => _overlay = value,
       );
-      await probe(
-        () async =>
-            await spePermission.invokeMethod(
-                  'isInstalledAppsPermissionGranted',
-                ) ==
-                true,
-        (value) => _installedApps = value,
-      );
-      await probe(isPublicStorageAccessGranted, (value) => _publicStorage = value);
+      if (installedAppsAvailable) {
+        await probe(
+          () async =>
+              await spePermission.invokeMethod(
+                'isInstalledAppsPermissionGranted',
+              ) ==
+              true,
+          (value) => _installedApps = value,
+        );
+      } else {
+        _installedApps = false;
+      }
+      if (publicStorageAvailable) {
+        await probe(
+          isPublicStorageAccessGranted,
+          (value) => _publicStorage = value,
+        );
+      } else {
+        _publicStorage = false;
+      }
       try {
         _shizukuStatus = await getShizukuStatus();
         changed = true;
@@ -137,10 +160,12 @@ class OnboardingPermissionController extends ChangeNotifier
   }
 
   void openInstalledAppsSettings() {
+    if (!installedAppsAvailable) return;
     unawaited(spePermission.invokeMethod('openInstalledAppsSettings'));
   }
 
   void openStorageSettings() {
+    if (!publicStorageAvailable) return;
     unawaited(openPublicStorageSettings());
   }
 }

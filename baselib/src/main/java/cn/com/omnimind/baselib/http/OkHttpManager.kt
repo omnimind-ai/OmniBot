@@ -2,10 +2,12 @@ package cn.com.omnimind.baselib.http
 
 import android.annotation.SuppressLint
 import android.util.Log
+import androidx.annotation.VisibleForTesting
 import cn.com.omnimind.baselib.http.interceptor.CommonParamsInterceptor
 import cn.com.omnimind.baselib.http.interceptor.HeaderInterceptor
 import cn.com.omnimind.baselib.service.DeviceInfoService
 import cn.com.omnimind.baselib.util.APPPackageUtil
+import cn.com.omnimind.baselib.util.ContentEndpointSecurity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -20,6 +22,8 @@ import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
 import okhttp3.sse.EventSource
 import okhttp3.sse.EventSourceListener
 import okhttp3.sse.EventSources
@@ -67,17 +71,22 @@ object OkHttpManager {
 
     fun getAppVersionHeaders(): Map<String, String> {
         val appVersionInfo = DeviceInfoService.getAppVersion(BaseApplication.instance)
+        return buildAppVersionHeaders(
+            appVersionInfo = appVersionInfo,
+            isDebug = APPPackageUtil.isAppDebug()
+        )
+    }
+
+    @VisibleForTesting
+    internal fun buildAppVersionHeaders(
+        appVersionInfo: Map<String, Any>,
+        isDebug: Boolean
+    ): Map<String, String> {
         return mapOf(
             "App-Version-Name" to (appVersionInfo["versionName"]?.toString() ?: "1.0"),
             "App-Version-Code" to (appVersionInfo["versionCode"]?.toString() ?: "1"),
             "App-Platform" to (appVersionInfo["platform"]?.toString() ?: "android"),
-            "App-IsDebug" to APPPackageUtil.isAppDebug().toString(),
-            "App-Device-Manufacturer" to (appVersionInfo["manufacturer"]?.toString() ?: "Unknown"),
-            "App-Device-Brand" to (appVersionInfo["brand"]?.toString() ?: "Unknown"),
-            "App-Device-Product" to (appVersionInfo["product"]?.toString() ?: "Unknown"),
-            "App-Device-Device" to (appVersionInfo["device"]?.toString() ?: "Unknown"),
-            "App-Device-Model" to (appVersionInfo["model"]?.toString() ?: "Unknown"),
-            "APP-Other-Info" to (DeviceInfoService.getOtherInfo())
+            "App-IsDebug" to isDebug.toString()
         )
     }
 
@@ -97,6 +106,74 @@ object OkHttpManager {
 //            .addInterceptor(LogInterceptor())
 
         return builder.build()
+    }
+
+    /**
+     * Creates a client for requests that carry prompts, files, workspace data, or model output.
+     * Redirects are deliberately disabled: a destination approved by the user must not be able to
+     * move sensitive content or authorization headers to a different endpoint.
+     */
+    fun sensitiveContentClient(
+        client: OkHttpClient,
+        allowInsecureLoopback: Boolean = false,
+    ): OkHttpClient = client.newBuilder()
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .addNetworkInterceptor { chain ->
+            try {
+                ContentEndpointSecurity.requireSafe(
+                    rawUrl = chain.request().url.toString(),
+                    allowInsecureLoopback = allowInsecureLoopback,
+                )
+            } catch (_: IllegalArgumentException) {
+                throw IOException("Sensitive content endpoint was rejected.")
+            }
+            chain.proceed(chain.request())
+        }
+        .build()
+
+    /** Revalidates the final immutable request immediately before a network call is created. */
+    fun sensitiveContentCall(
+        client: OkHttpClient,
+        request: Request,
+        allowInsecureLoopback: Boolean = false,
+    ): Call {
+        ContentEndpointSecurity.requireSafe(
+            rawUrl = request.url.toString(),
+            allowInsecureLoopback = allowInsecureLoopback,
+        )
+        return sensitiveContentClient(client, allowInsecureLoopback).newCall(request)
+    }
+
+    /** Applies the same final-request gate to SSE, whose factory otherwise owns call creation. */
+    fun sensitiveContentEventSource(
+        client: OkHttpClient,
+        request: Request,
+        listener: EventSourceListener,
+        allowInsecureLoopback: Boolean = false,
+    ): EventSource {
+        ContentEndpointSecurity.requireSafe(
+            rawUrl = request.url.toString(),
+            allowInsecureLoopback = allowInsecureLoopback,
+        )
+        return EventSources.createFactory(
+            sensitiveContentClient(client, allowInsecureLoopback)
+        ).newEventSource(request, listener)
+    }
+
+    /** Applies the same final-request gate to a WebSocket handshake. */
+    fun sensitiveContentWebSocket(
+        client: OkHttpClient,
+        request: Request,
+        listener: WebSocketListener,
+        allowInsecureLoopback: Boolean = false,
+    ): WebSocket {
+        ContentEndpointSecurity.requireSafe(
+            rawUrl = request.url.toString(),
+            allowInsecureLoopback = allowInsecureLoopback,
+        )
+        return sensitiveContentClient(client, allowInsecureLoopback)
+            .newWebSocket(request, listener)
     }
 
     // 执行请求

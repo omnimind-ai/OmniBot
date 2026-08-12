@@ -22,10 +22,12 @@ void main() {
         .setMockMethodCallHandler(agentRuntimeChannel, null);
   });
 
-  testWidgets('Codex config page reads and writes auth/config fields', (
+  testWidgets('Codex only shows key status and blank keeps the old key', (
     tester,
   ) async {
-    Map<String, dynamic>? saved;
+    const oldSecret = 'SECRET_OLD_CODEX_KEY_MUST_NOT_RENDER';
+    const replacementSecret = 'EXPLICIT_NEW_CODEX_KEY';
+    final saves = <Map<String, dynamic>>[];
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(agentRuntimeChannel, (call) async {
           if (call.method == 'agent/list') {
@@ -39,19 +41,22 @@ void main() {
               'authPath': '~/.codex/auth.json',
               'baseUrl': 'https://old.example/v1',
               'model': 'old-model',
-              'apiKey': 'sk-old',
+              'hasApiKey': true,
+              'apiKey': oldSecret,
             };
           }
           if (call.method == 'agent/config/write') {
-            saved = Map<String, dynamic>.from(call.arguments as Map);
+            final saved = Map<String, dynamic>.from(call.arguments as Map);
+            saves.add(saved);
             return <String, dynamic>{
               'agentId': 'codex-acp',
               'kind': 'codex',
               'configPath': '~/.codex/config.toml',
               'authPath': '~/.codex/auth.json',
-              'baseUrl': saved!['baseUrl'],
-              'model': saved!['model'],
-              'apiKey': saved!['apiKey'],
+              'baseUrl': saved['baseUrl'],
+              'model': saved['model'],
+              'hasApiKey': true,
+              'apiKey': oldSecret,
             };
           }
           return null;
@@ -59,8 +64,13 @@ void main() {
 
     await _pumpPage(tester, 'codex-acp');
 
-    expect(find.textContaining('~/.codex/config.toml'), findsOneWidget);
-    expect(find.textContaining('~/.codex/auth.json'), findsOneWidget);
+    final apiKeyField = tester.widget<TextField>(
+      find.byKey(const Key('codex-agent-api-key')),
+    );
+    expect(apiKeyField.controller?.text, isEmpty);
+    expect(find.textContaining(oldSecret), findsNothing);
+    expect(find.textContaining('已有 API Key 永不显示'), findsOneWidget);
+
     await tester.enterText(
       find.byKey(const Key('codex-agent-base-url')),
       'https://api.example/v1',
@@ -69,64 +79,157 @@ void main() {
       find.byKey(const Key('codex-agent-model')),
       'deepseek-chat',
     );
+    await tester.tap(find.byKey(const Key('agent-config-save')));
+    await tester.pumpAndSettle();
+
+    expect(saves.single['agentId'], 'codex-acp');
+    expect(saves.single['baseUrl'], 'https://api.example/v1');
+    expect(saves.single['model'], 'deepseek-chat');
+    expect(saves.single.containsKey('apiKey'), isFalse);
+    expect(find.textContaining(oldSecret), findsNothing);
+
     await tester.enterText(
       find.byKey(const Key('codex-agent-api-key')),
-      'sk-new',
+      replacementSecret,
     );
     await tester.tap(find.byKey(const Key('agent-config-save')));
     await tester.pumpAndSettle();
 
-    expect(saved?['agentId'], 'codex-acp');
-    expect(saved?['baseUrl'], 'https://api.example/v1');
-    expect(saved?['model'], 'deepseek-chat');
-    expect(saved?['apiKey'], 'sk-new');
+    expect(saves, hasLength(2));
+    expect(saves.last['apiKey'], replacementSecret);
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('codex-agent-api-key')))
+          .controller
+          ?.text,
+      isEmpty,
+    );
+    expect(find.textContaining(replacementSecret), findsNothing);
   });
 
-  testWidgets('Claude config page edits the complete settings.json content', (
+  testWidgets(
+    'Claude status never fills old content and empty cannot overwrite',
+    (tester) async {
+      const oldSecret = 'SECRET_ANTHROPIC_TOKEN_MUST_NOT_RENDER';
+      const replacement = '{\n  "env": {"ANTHROPIC_MODEL": "claude-opus"}\n}\n';
+      Map<String, dynamic>? saved;
+      var writeCalls = 0;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(agentRuntimeChannel, (call) async {
+            if (call.method == 'agent/list') {
+              return _catalog(_agent('claude-code-acp', 'Claude Code'));
+            }
+            if (call.method == 'agent/config/read') {
+              return <String, dynamic>{
+                'agentId': 'claude-code-acp',
+                'kind': 'replace-only',
+                'format': 'json',
+                'displayPath': '~/.claude/settings.json',
+                'hasConfig': true,
+                'byteCount': 123,
+                'content': '{"token":"$oldSecret"}',
+              };
+            }
+            if (call.method == 'agent/config/write') {
+              writeCalls += 1;
+              saved = Map<String, dynamic>.from(call.arguments as Map);
+              return <String, dynamic>{
+                'agentId': 'claude-code-acp',
+                'kind': 'replace-only',
+                'format': 'json',
+                'displayPath': '~/.claude/settings.json',
+                'hasConfig': true,
+                'byteCount': replacement.length,
+                'content': oldSecret,
+              };
+            }
+            return null;
+          });
+
+      await _pumpPage(tester, 'claude-code-acp');
+
+      final contentField = tester.widget<TextField>(
+        find.byKey(const Key('agent-raw-config-content')),
+      );
+      expect(contentField.controller?.text, isEmpty);
+      expect(find.textContaining(oldSecret), findsNothing);
+      expect(find.textContaining('现有内容和秘密不会显示'), findsOneWidget);
+      expect(find.textContaining('已配置 · 123 字节'), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('agent-config-save')));
+      await tester.pumpAndSettle();
+      expect(writeCalls, 0);
+
+      await tester.enterText(
+        find.byKey(const Key('agent-raw-config-content')),
+        replacement,
+      );
+      await tester.tap(find.byKey(const Key('agent-config-save')));
+      await tester.pumpAndSettle();
+
+      expect(writeCalls, 1);
+      expect(saved?['agentId'], 'claude-code-acp');
+      expect(saved?['content'], replacement);
+      expect(
+        tester
+            .widget<TextField>(
+              find.byKey(const Key('agent-raw-config-content')),
+            )
+            .controller
+            ?.text,
+        isEmpty,
+      );
+      expect(find.textContaining(oldSecret), findsNothing);
+    },
+  );
+
+  testWidgets('built-in clear requires two confirmations and explains scope', (
     tester,
   ) async {
-    Map<String, dynamic>? saved;
-    const initial = '{\n  "env": {"ANTHROPIC_MODEL": "claude-sonnet"}\n}\n';
-    const updated = '{\n  "env": {"ANTHROPIC_MODEL": "claude-opus"}\n}\n';
+    var clearCalls = 0;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(agentRuntimeChannel, (call) async {
           if (call.method == 'agent/list') {
-            return _catalog(_agent('claude-code-acp', 'Claude Code'));
+            return _catalog(_agent('opencode-acp', 'OpenCode'));
           }
           if (call.method == 'agent/config/read') {
-            return <String, dynamic>{
-              'agentId': 'claude-code-acp',
-              'kind': 'json',
-              'path': '~/.claude/settings.json',
-              'content': initial,
-            };
+            return _replaceOnlyStatus(
+              agentId: 'opencode-acp',
+              format: 'jsonc',
+              path: '~/.config/opencode/opencode.json',
+              hasConfig: true,
+              byteCount: 88,
+            );
           }
-          if (call.method == 'agent/config/write') {
-            saved = Map<String, dynamic>.from(call.arguments as Map);
-            return <String, dynamic>{
-              'agentId': 'claude-code-acp',
-              'kind': 'json',
-              'path': '~/.claude/settings.json',
-              'content': saved!['content'],
-            };
+          if (call.method == 'agent/config/clear') {
+            clearCalls += 1;
+            return _replaceOnlyStatus(
+              agentId: 'opencode-acp',
+              format: 'jsonc',
+              path: '~/.config/opencode/opencode.json',
+              hasConfig: false,
+              byteCount: 0,
+            );
           }
           return null;
         });
 
-    await _pumpPage(tester, 'claude-code-acp');
+    await _pumpPage(tester, 'opencode-acp');
 
-    expect(find.textContaining('~/.claude/settings.json'), findsWidgets);
-    expect(find.textContaining('claude-sonnet'), findsOneWidget);
-    await tester.enterText(
-      find.byKey(const Key('agent-raw-config-content')),
-      updated,
-    );
-    await tester.tap(find.byKey(const Key('agent-config-save')));
+    await tester.tap(find.byKey(const Key('agent-config-clear')));
     await tester.pumpAndSettle();
+    expect(clearCalls, 0);
+    expect(find.textContaining('服务端账号和云端数据不会受影响'), findsOneWidget);
 
-    expect(saved?['agentId'], 'claude-code-acp');
-    expect(saved?['content'], updated);
-    expect(find.textContaining('claude-opus'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('agent-config-clear-continue')));
+    await tester.pumpAndSettle();
+    expect(clearCalls, 0);
+    expect(find.text('最后确认'), findsOneWidget);
+
+    await tester.tap(find.byKey(const Key('agent-config-clear-confirm')));
+    await tester.pumpAndSettle();
+    expect(clearCalls, 1);
+    expect(find.text('尚未配置'), findsOneWidget);
   });
 }
 
@@ -165,5 +268,22 @@ Map<String, dynamic> _agent(String id, String name) {
     'builtIn': true,
     'source': 'official',
     'status': 'online',
+  };
+}
+
+Map<String, dynamic> _replaceOnlyStatus({
+  required String agentId,
+  required String format,
+  required String path,
+  required bool hasConfig,
+  required int byteCount,
+}) {
+  return <String, dynamic>{
+    'agentId': agentId,
+    'kind': 'replace-only',
+    'format': format,
+    'displayPath': path,
+    'hasConfig': hasConfig,
+    'byteCount': byteCount,
   };
 }

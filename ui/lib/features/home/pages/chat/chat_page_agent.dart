@@ -358,7 +358,6 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       }
       _applyRefreshedAgentRuntimeStatus(status);
     } catch (error) {
-      debugPrint('Prepare Agent model options failed: $error');
       return;
     }
     if (!mounted || !status.connected) {
@@ -398,7 +397,6 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         _agentCatalog = catalog;
       });
     } catch (error) {
-      debugPrint('Load ACP agent catalog failed: $error');
     } finally {
       if (mounted) {
         setState(() {
@@ -434,11 +432,6 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         statusForRequest,
       );
       final models = extractAcpModelIds(response);
-      if (models.isEmpty) {
-        debugPrint(
-          '[Agent] model catalog returned no parseable models: ${jsonEncode(response)}',
-        );
-      }
       final reportedPreferredModel =
           configSettings.modelId ??
           _extractAgentPreferredOptionId(response) ??
@@ -541,7 +534,6 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         reasoningEffort: _extractAgentConfigReasoningEffort(response),
       );
     } catch (error) {
-      debugPrint('Read Agent config run settings failed: $error');
       return const _AgentRunSettingsSnapshot();
     }
   }
@@ -1055,7 +1047,6 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       final normalizedGlobal = global?.trim() ?? '';
       return normalizedGlobal.isEmpty ? null : normalizedGlobal;
     } catch (error) {
-      debugPrint('Read Agent command preference failed: $error');
       return null;
     }
   }
@@ -1138,19 +1129,8 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     //   [Agent/E] item/completed:commandExecution
     // do not show up while pwd/ls/cat run, the events are being dropped
     // upstream (codex app-server -> codex-bridge -> Kotlin -> EventChannel).
-    debugPrint('[Agent/E] $diagnosticMethod');
     if (diagnosticMethod == 'acp/configOptions/updated') {
       unawaited(_loadAgentModelOptions(force: true));
-    }
-    final totalEvents = _agentEventDiagnosticCounter.values.fold<int>(
-      0,
-      (sum, count) => sum + count,
-    );
-    if (totalEvents % 32 == 0 || diagnosticMethod == 'turn/completed') {
-      debugPrint(
-        '[Agent/E] === counters @$totalEvents === '
-        '${_agentEventDiagnosticCounter.entries.map((e) => '${e.key}:${e.value}').join(', ')}',
-      );
     }
     final remoteCodex = _isRemoteCodexConfigured();
     final eventThreadId = _remoteCodexEventThreadId(event);
@@ -1172,10 +1152,6 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
             : mappedRemoteConversationId) ??
         _currentConversationIdByMode[ChatPageMode.agent];
     if (conversationId == null) {
-      debugPrint(
-        '[Agent] dropping $diagnosticMethod — no conversationId '
-        '(remoteCodex=$remoteCodex, eventThreadId=$eventThreadId)',
-      );
       return;
     }
     if (remoteCodex && eventThreadId != null && !shouldPromoteRemoteEvent) {
@@ -1221,11 +1197,6 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
           _activeAgentTurnId = null;
         }
       }
-    }
-    if (!result.handled &&
-        result.method != 'codex/stderr' &&
-        result.method != 'codex/parseError') {
-      debugPrint('[Agent] unhandled app-server event: ${jsonEncode(event)}');
     }
     if (_activeMode == ChatPageMode.agent && mounted && isVisibleConversation) {
       setState(() {});
@@ -1349,11 +1320,6 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
               mode: ConversationMode.agent,
             ),
           );
-        } else {
-          debugPrint(
-            '[Agent] keeping active conversation ${_currentConversationIdByMode[ChatPageMode.agent]} '
-            'instead of mismatched native conversation $localConversationId',
-          );
         }
       }
       if (!remoteCodex) {
@@ -1379,7 +1345,6 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         turnId: _activeAgentTurnId,
       );
     } catch (error) {
-      debugPrint('Agent interrupt failed: $error');
     }
   }
 
@@ -1524,7 +1489,6 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         fromPoll: true,
       );
     } catch (error) {
-      debugPrint('Remote Agent session sync failed: $error');
     } finally {
       if (_remoteCodexSessionSyncThreadId == threadId) {
         _remoteCodexSessionSyncInFlight = false;
@@ -1538,7 +1502,6 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     try {
       return await AgentRuntimeService.readThread(threadId: threadId);
     } catch (error) {
-      debugPrint('Agent thread/read failed, falling back to resume: $error');
       return AgentRuntimeService.resumeThread(threadId: threadId);
     }
   }
@@ -1940,7 +1903,6 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         ),
       );
     } catch (error) {
-      debugPrint('Read Agent account failed: $error');
     }
   }
 
@@ -1951,7 +1913,6 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       if (authUrl == null) return;
       await launchUrlString(authUrl, mode: LaunchMode.externalApplication);
     } catch (error) {
-      debugPrint('Start remote Agent login failed: $error');
     }
   }
 

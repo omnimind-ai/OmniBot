@@ -5,9 +5,9 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Build
 import android.provider.Settings
-import android.util.Log
 import androidx.core.content.pm.PackageInfoCompat
 import cn.com.omnimind.baselib.util.APPPackageUtil
+import cn.com.omnimind.baselib.util.OmniLog
 import java.net.NetworkInterface
 import java.util.Collections
 
@@ -35,10 +35,9 @@ object DeviceInfoService {
                 context.contentResolver,
                 Settings.Secure.ANDROID_ID
             )
-            Log.d(TAG, "Android ID: $androidId")
             androidId
         } catch (e: Exception) {
-            Log.e(TAG, "Error getting Android ID", e)
+            OmniLog.e(TAG, "Unable to read Android ID (${e.javaClass.simpleName})")
             null
         }
     }
@@ -58,10 +57,9 @@ object DeviceInfoService {
                 "version" to android.os.Build.VERSION.RELEASE,
                 "sdkVersion" to android.os.Build.VERSION.SDK_INT
             )
-            Log.d(TAG, "Device Info: $deviceInfo")
             deviceInfo
         } catch (e: Exception) {
-            Log.e(TAG, "Error getting device info", e)
+            OmniLog.e(TAG, "Unable to read device metadata (${e.javaClass.simpleName})")
             emptyMap()
         }
     }
@@ -78,7 +76,6 @@ object DeviceInfoService {
                     if (!address.isLoopbackAddress && address is java.net.Inet4Address) {
                         val hostAddress = address.hostAddress
                         if (hostAddress != null && !hostAddress.startsWith("127.")) {
-                            Log.d(TAG, "Device IP Address: $hostAddress")
                             return hostAddress
                         }
                     }
@@ -86,7 +83,7 @@ object DeviceInfoService {
             }
             null
         } catch (e: Exception) {
-            Log.e(TAG, "Error getting device IP address", e)
+            OmniLog.e(TAG, "Unable to read device network address (${e.javaClass.simpleName})")
             null
         }
     }
@@ -106,46 +103,17 @@ object DeviceInfoService {
             val versionInfo = mapOf(
                 "versionName" to versionName,
                 "versionCode" to versionCode,
-                "platform" to platform,
-                "manufacturer" to (android.os.Build.MANUFACTURER ?: "Unknown"),
-                "brand" to (android.os.Build.BRAND ?: "Unknown"),
-                "product" to (android.os.Build.PRODUCT ?: "Unknown"),
-                "device" to (android.os.Build.DEVICE ?: "Unknown"),
-                "model" to (android.os.Build.MODEL ?: "Unknown"),
-
-                )
-            Log.d(TAG, "App Version: $versionInfo")
+                "platform" to platform
+            )
             versionInfo
         } catch (e: Exception) {
-            Log.e(TAG, "Error getting app version", e)
+            OmniLog.e(TAG, "Unable to read app version metadata (${e.javaClass.simpleName})")
             mapOf(
                 "versionName" to "1.0",
                 "versionCode" to 1L,
-                "platform" to "android",
-                "manufacturer" to (android.os.Build.MANUFACTURER ?: "Unknown"),
-                "brand" to (android.os.Build.BRAND ?: "Unknown"),
-                "product" to (android.os.Build.PRODUCT ?: "Unknown"),
-                "device" to (android.os.Build.DEVICE ?: "Unknown"),
-                "model" to (android.os.Build.MODEL ?: "Unknown")
+                "platform" to "android"
             )
         }
-    }
-
-    fun getOtherInfo(): String {
-        val deviceInfo = mapOf(
-            "hardware" to (android.os.Build.HARDWARE ?: "Unknown"),
-            "board" to (android.os.Build.BOARD ?: "Unknown"),
-            "display" to (android.os.Build.DISPLAY ?: "Unknown"),
-            "fingerprint" to (android.os.Build.FINGERPRINT ?: "Unknown"),
-            "host" to (android.os.Build.HOST ?: "Unknown"),
-            "id" to (android.os.Build.ID ?: "Unknown"),
-            "tags" to (android.os.Build.TAGS ?: "Unknown"),
-            "type" to (android.os.Build.TYPE ?: "Unknown"),
-            "user" to (android.os.Build.USER ?: "Unknown"),
-            "codename" to (android.os.Build.VERSION.CODENAME ?: "Unknown"),
-            "incremental" to (android.os.Build.VERSION.INCREMENTAL ?: "Unknown")
-        )
-        return deviceInfo.toString()
     }
 
     /**
@@ -180,7 +148,7 @@ object DeviceInfoService {
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to get network type: ${e.message}", e)
+            OmniLog.e(TAG, "Unable to read network type (${e.javaClass.simpleName})")
             "unknown"
         }
     }

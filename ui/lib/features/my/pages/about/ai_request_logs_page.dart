@@ -70,6 +70,58 @@ class _AiRequestLogsPageState extends State<AiRequestLogsPage> {
     );
   }
 
+  Future<void> _clearLogs() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(LegacyTextLocalizer.localize('确定删除吗？')),
+        content: Text(
+          LegacyTextLocalizer.localize('这会删除本机保存的 AI 请求诊断记录，删除后不可找回。'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(LegacyTextLocalizer.localize('取消')),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(LegacyTextLocalizer.localize('删除')),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    setState(() {
+      _isLoading = true;
+      _errorMessage = '';
+    });
+    try {
+      await AiRequestLogService.clear();
+      if (!mounted) return;
+      setState(() {
+        _logs = const [];
+        _expandedLogKeys.clear();
+      });
+      showToast(
+        LegacyTextLocalizer.localize('AI 请求日志已清除'),
+        type: ToastType.success,
+      );
+    } catch (_) {
+      if (!mounted) return;
+      showToast(
+        LegacyTextLocalizer.localize('清除失败，请重试'),
+        type: ToastType.error,
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+
   String _formatDateTime(DateTime value) {
     String pad(int number) => number.toString().padLeft(2, '0');
     return '${value.year}-${pad(value.month)}-${pad(value.day)} '
@@ -638,6 +690,11 @@ class _AiRequestLogsPageState extends State<AiRequestLogsPage> {
         title: LegacyTextLocalizer.localize('请求日志'),
         primary: true,
         actions: [
+          IconButton(
+            onPressed: _isLoading || _logs.isEmpty ? null : _clearLogs,
+            icon: const Icon(Icons.delete_outline),
+            tooltip: LegacyTextLocalizer.localize('清除日志'),
+          ),
           IconButton(
             onPressed: _loadLogs,
             icon: const Icon(LucideIcons.refreshCw),

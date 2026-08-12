@@ -7,6 +7,9 @@ import cn.com.omnimind.baselib.i18n.PromptLocale
 import cn.com.omnimind.baselib.llm.ModelProviderConfigStore
 import cn.com.omnimind.baselib.llm.ModelSceneRegistry
 import cn.com.omnimind.baselib.llm.ProviderCustomHeaderUtils
+import cn.com.omnimind.baselib.http.OkHttpManager
+import cn.com.omnimind.baselib.util.ContentEndpointSecurity
+import cn.com.omnimind.baselib.util.CredentialEndpointSecurity
 import cn.com.omnimind.baselib.llm.SceneModelBindingStore
 import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.agent.workspace.memory.LongTermMemoryIndex
@@ -416,7 +419,7 @@ class WorkspaceMemoryService(
         val queryEmbedding = if (embeddingConfig.configured) {
             runCatching { requestEmbedding(embeddingConfig, normalizedQuery) }
                 .onFailure {
-                    OmniLog.w(TAG, "embedding query failed: ${it.message}")
+                    OmniLog.w(TAG, "embedding query failed type=${it.javaClass.simpleName}")
                 }
                 .getOrNull()
         } else {
@@ -686,7 +689,7 @@ class WorkspaceMemoryService(
                 HttpController.postSceneChatCompletion(request)
             }
         }.onFailure {
-            OmniLog.w(TAG, "rollup tool-call request failed: ${it.message}")
+            OmniLog.w(TAG, "rollup tool-call request failed type=${it.javaClass.simpleName}")
         }.getOrNull()
 
         if (toolResponse != null && toolResponse.success) {
@@ -713,7 +716,7 @@ class WorkspaceMemoryService(
                 HttpController.postLLMRequest(SCENE_MEMORY_ROLLUP, prompt).message
             }
         }.onFailure {
-            OmniLog.w(TAG, "rollup legacy llm request failed: ${it.message}")
+            OmniLog.w(TAG, "rollup legacy llm request failed type=${it.javaClass.simpleName}")
         }.getOrNull()?.trim().orEmpty()
         if (responseText.isEmpty()) {
             return null
@@ -952,7 +955,9 @@ class WorkspaceMemoryService(
         }
         val jsonText = extractFirstJsonObject(rawArguments) ?: rawArguments
         val payload = runCatching { JSONObject(jsonText) }
-            .onFailure { OmniLog.w(TAG, "rollup tool args parse failed: ${it.message}") }
+            .onFailure {
+                OmniLog.w(TAG, "rollup tool args parse failed type=${it.javaClass.simpleName}")
+            }
             .getOrNull() ?: return null
         val summary = firstNonBlank(payload, listOf("dailySummary", "summary", "todaySummary"))
         val candidates = extractLongTermCandidates(payload)
@@ -968,7 +973,9 @@ class WorkspaceMemoryService(
     private fun parseRollupInference(raw: String): RollupInference? {
         val jsonText = extractFirstJsonObject(raw) ?: return null
         val payload = runCatching { JSONObject(jsonText) }
-            .onFailure { OmniLog.w(TAG, "rollup parse json failed: ${it.message}") }
+            .onFailure {
+                OmniLog.w(TAG, "rollup parse json failed type=${it.javaClass.simpleName}")
+            }
             .getOrNull() ?: return null
         val summary = firstNonBlank(payload, listOf("dailySummary", "summary", "todaySummary"))
         val candidates = extractLongTermCandidates(payload)
@@ -1212,7 +1219,9 @@ class WorkspaceMemoryService(
             }
             val embedding = if (config.configured) {
                 runCatching { requestEmbedding(config, chunk.text) }
-                    .onFailure { OmniLog.w(TAG, "embedding chunk failed: ${it.message}") }
+                    .onFailure {
+                        OmniLog.w(TAG, "embedding chunk failed type=${it.javaClass.simpleName}")
+                    }
                     .getOrElse { emptyList() }
             } else {
                 emptyList()
@@ -1237,7 +1246,7 @@ class WorkspaceMemoryService(
             val type = object : TypeToken<List<MemoryIndexEntry>>() {}.type
             gson.fromJson<List<MemoryIndexEntry>>(raw, type) ?: emptyList()
         }.getOrElse {
-            OmniLog.w(TAG, "parse index failed: ${it.message}")
+            OmniLog.w(TAG, "parse index failed type=${it.javaClass.simpleName}")
             emptyList()
         }
     }
@@ -1262,6 +1271,10 @@ class WorkspaceMemoryService(
         } else {
             "$apiBase/v1/embeddings"
         }
+        val safeUrl = ContentEndpointSecurity.requireSafe(
+            rawUrl = url,
+            allowInsecureLoopback = CredentialEndpointSecurity.isDebugLoopbackAllowed(),
+        )
         val requestJson = JSONObject().apply {
             put("model", modelId)
             put("input", JSONArray().put(text.take(8_000)))
@@ -1274,7 +1287,7 @@ class WorkspaceMemoryService(
             custom = profile.customHeaders
         )
         val request = Request.Builder()
-            .url(url)
+            .url(safeUrl)
             .apply {
                 mergedHeaders.forEach { (key, value) ->
                     header(key, value)
@@ -1282,12 +1295,14 @@ class WorkspaceMemoryService(
             }
             .post(requestJson.toString().toRequestBody("application/json".toMediaType()))
             .build()
-        httpClient.newCall(request).execute().use { response ->
+        OkHttpManager.sensitiveContentCall(
+            client = httpClient,
+            request = request,
+            allowInsecureLoopback = CredentialEndpointSecurity.isDebugLoopbackAllowed(),
+        ).execute().use { response ->
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) {
-                throw IllegalStateException(
-                    "embedding request failed(${response.code}): ${body.take(320)}"
-                )
+                throw IllegalStateException("embedding request failed (${response.code})")
             }
             val payload = JSONObject(body)
             val data = payload.optJSONArray("data") ?: JSONArray()

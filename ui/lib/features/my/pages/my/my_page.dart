@@ -52,9 +52,7 @@ class MyPageState extends State<MyPage> {
         vibrationEnabled = enabled;
       });
 
-      print('Vibration state loaded: $vibrationEnabled');
     } catch (e) {
-      print('Error loading vibration state: $e');
     }
   }
 
@@ -68,7 +66,6 @@ class MyPageState extends State<MyPage> {
         nickname = savedNickname;
       });
     } catch (e) {
-      print('Error loading user data: $e');
     }
   }
 

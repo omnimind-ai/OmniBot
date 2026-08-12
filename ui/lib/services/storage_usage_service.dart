@@ -333,6 +333,40 @@ class StorageUsageStrategyResult {
   }
 }
 
+class LocalDataDeletionResult {
+  const LocalDataDeletionResult({
+    required this.status,
+    required this.reason,
+    required this.requiresRestart,
+  });
+
+  final String status;
+  final String reason;
+  final bool requiresRestart;
+
+  bool get started => status == 'STARTED';
+
+  factory LocalDataDeletionResult.fromMap(Map<dynamic, dynamic> map) {
+    const statuses = {'STARTED', 'ABORTED'};
+    const reasons = {
+      '',
+      'ACTIVE_TASKS',
+      'SYSTEM_REJECTED',
+      'SYSTEM_UNAVAILABLE',
+    };
+    final status = map['status']?.toString() ?? '';
+    final reason = map['reason']?.toString() ?? '';
+    if (!statuses.contains(status) || !reasons.contains(reason)) {
+      throw const FormatException('Invalid local data deletion result');
+    }
+    return LocalDataDeletionResult(
+      status: status,
+      reason: reason,
+      requiresRestart: map['requiresRestart'] == true,
+    );
+  }
+}
+
 class StorageUsageService {
   static const MethodChannel _channel = MethodChannel(
     'cn.com.omnimind.bot/StorageUsage',
@@ -394,5 +428,20 @@ class StorageUsageService {
     return StorageUsageStrategyResult.fromMap(
       Map<dynamic, dynamic>.from(result),
     );
+  }
+
+  static Future<LocalDataDeletionResult> deleteAllLocalData(
+    String confirmation,
+  ) async {
+    final result = await _channel.invokeMethod<dynamic>('deleteAllLocalData', {
+      'confirmation': confirmation,
+    });
+    if (result is! Map) {
+      throw PlatformException(
+        code: 'INVALID_LOCAL_DATA_DELETION_RESULT',
+        message: 'Local data deletion result is invalid',
+      );
+    }
+    return LocalDataDeletionResult.fromMap(Map<dynamic, dynamic>.from(result));
   }
 }

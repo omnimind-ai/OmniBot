@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ui/services/model_provider_config_service.dart';
 import 'package:ui/services/models_dev_catalog_service.dart';
@@ -30,7 +31,140 @@ const _modelsDevCatalogJson = '''
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  const assistCoreChannel = MethodChannel(
+    'cn.com.omnimind.bot/AssistCoreEvent',
+  );
+
   tearDown(ModelsDevCatalogService.resetForTesting);
+
+  test('provider payload treats native credentials as write-only', () {
+    final profile = ModelProviderProfileSummary.fromMap({
+      'id': 'provider-1',
+      'name': 'Provider',
+      'baseUrl': 'https://provider.example/v1',
+      'apiKey': 'must-not-enter-dart',
+      'customHeaders': {'Authorization': 'must-not-enter-dart'},
+      'hasApiKey': true,
+      'hasCustomHeaders': true,
+      'revision': 7,
+      'destinationConsentValid': true,
+    });
+
+    expect(profile.apiKey, isEmpty);
+    expect(profile.customHeaders, isEmpty);
+    expect(profile.hasApiKey, isTrue);
+    expect(profile.hasCustomHeaders, isTrue);
+    expect(profile.revision, 7);
+    expect(profile.destinationConsentValid, isTrue);
+  });
+
+  test(
+    'save sends replace intent only for explicitly entered secrets',
+    () async {
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      final calls = <MethodCall>[];
+      messenger.setMockMethodCallHandler(assistCoreChannel, (call) async {
+        calls.add(call);
+        return <String, dynamic>{
+          'id': 'provider-1',
+          'name': 'Provider',
+          'baseUrl': 'https://provider.example/v1',
+          'hasApiKey': true,
+          'hasCustomHeaders': true,
+          'configured': true,
+        };
+      });
+      addTearDown(
+        () => messenger.setMockMethodCallHandler(assistCoreChannel, null),
+      );
+
+      await ModelProviderConfigService.saveProfile(
+        id: 'provider-1',
+        name: 'Provider',
+        baseUrl: 'https://provider.example/v1',
+        destinationConfirmed: true,
+      );
+      final preserved = Map<dynamic, dynamic>.from(
+        calls.single.arguments as Map,
+      );
+      expect(preserved.containsKey('apiKey'), isFalse);
+      expect(preserved.containsKey('customHeaders'), isFalse);
+      expect(preserved['replaceApiKey'], isNull);
+      expect(preserved['replaceCustomHeaders'], isNull);
+      expect(preserved['destinationConfirmed'], isTrue);
+
+      calls.clear();
+      await ModelProviderConfigService.saveProfile(
+        id: 'provider-1',
+        name: 'Provider',
+        baseUrl: 'https://provider.example/v1',
+        apiKey: 'replacement',
+        customHeaders: const {'X-Provider-Token': 'replacement-header'},
+        destinationConfirmed: true,
+      );
+      final replaced = Map<dynamic, dynamic>.from(
+        calls.single.arguments as Map,
+      );
+      expect(replaced['replaceApiKey'], isTrue);
+      expect(replaced['replaceCustomHeaders'], isTrue);
+    },
+  );
+
+  test(
+    'fetch binds native credential lookup to one profile revision',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      await StorageService.init();
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      final fetchCalls = <MethodCall>[];
+      messenger.setMockMethodCallHandler(assistCoreChannel, (call) async {
+        switch (call.method) {
+          case 'listModelProviderProfiles':
+            return <String, dynamic>{
+              'profiles': <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'id': 'provider-1',
+                  'name': 'Provider',
+                  'baseUrl': 'https://provider.example/v1',
+                  'hasApiKey': true,
+                  'configured': true,
+                  'revision': 9,
+                },
+              ],
+              'editingProfileId': 'provider-1',
+            };
+          case 'fetchProviderModels':
+            fetchCalls.add(call);
+            return <Map<String, dynamic>>[
+              <String, dynamic>{'id': 'model-1', 'displayName': 'Model 1'},
+            ];
+          default:
+            throw PlatformException(code: 'unexpected_method');
+        }
+      });
+      addTearDown(
+        () => messenger.setMockMethodCallHandler(assistCoreChannel, null),
+      );
+
+      final models = await ModelProviderConfigService.fetchModels(
+        apiBase: 'https://provider.example/v1',
+        profileId: 'provider-1',
+        destinationConfirmed: true,
+      );
+
+      expect(models.single.id, 'model-1');
+      final arguments = Map<dynamic, dynamic>.from(
+        fetchCalls.single.arguments as Map,
+      );
+      expect(arguments['expectedProfileRevision'], 9);
+      expect(
+        arguments['expectedProfileBaseUrl'],
+        'https://provider.example/v1',
+      );
+    },
+  );
 
   test('builds request urls from root base url', () {
     expect(
@@ -300,5 +434,63 @@ void main() {
       ).map((item) => item.id),
       ['gpt-4o'],
     );
+  });
+
+  test('provider model cache is bound to the profile revision', () async {
+    SharedPreferences.setMockInitialValues({});
+    await StorageService.init();
+
+    await ModelProviderConfigService.saveCachedFetchedModels(
+      profileId: 'provider-1',
+      apiBase: 'https://provider.example/v1',
+      profileRevision: 7,
+      models: const [
+        ProviderModelOption(id: 'revision-7', displayName: 'revision-7'),
+      ],
+    );
+
+    expect(
+      await ModelProviderConfigService.getCachedFetchedModels(
+        profileId: 'provider-1',
+        apiBase: 'https://provider.example/v1',
+        profileRevision: 8,
+      ),
+      isEmpty,
+    );
+    expect(
+      (await ModelProviderConfigService.getCachedFetchedModels(
+        profileId: 'provider-1',
+        apiBase: 'https://provider.example/v1',
+        profileRevision: 7,
+      )).single.id,
+      'revision-7',
+    );
+  });
+
+  test('late older cache write cannot replace a newer revision', () async {
+    SharedPreferences.setMockInitialValues({});
+    await StorageService.init();
+
+    await ModelProviderConfigService.saveCachedFetchedModels(
+      profileId: 'provider-1',
+      apiBase: 'https://provider.example/v1',
+      profileRevision: 8,
+      models: const [
+        ProviderModelOption(id: 'revision-8', displayName: 'revision-8'),
+      ],
+    );
+    await ModelProviderConfigService.saveCachedFetchedModels(
+      profileId: 'provider-1',
+      apiBase: 'https://provider.example/v1',
+      profileRevision: 7,
+      models: const [ProviderModelOption(id: 'stale', displayName: 'stale')],
+    );
+
+    final cached = await ModelProviderConfigService.getCachedFetchedModels(
+      profileId: 'provider-1',
+      apiBase: 'https://provider.example/v1',
+      profileRevision: 8,
+    );
+    expect(cached.single.id, 'revision-8');
   });
 }

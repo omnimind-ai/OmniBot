@@ -41,7 +41,7 @@ String formatErrorMessageForUser(
 
   final prefixParts = <String>[];
   if (statusCode != null && statusCode > 0) prefixParts.add('HTTP $statusCode');
-  if (code != null && code!.trim().isNotEmpty) prefixParts.add(code!.trim());
+  if (code != null && code.trim().isNotEmpty) prefixParts.add(code.trim());
 
   final prefix = prefixParts.isEmpty ? '' : '${prefixParts.join(' / ')}：';
 

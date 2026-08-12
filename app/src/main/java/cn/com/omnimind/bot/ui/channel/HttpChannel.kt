@@ -1,7 +1,6 @@
 package cn.com.omnimind.bot.ui.channel
 
 import cn.com.omnimind.baselib.http.OkHttpManager
-import cn.com.omnimind.baselib.util.OmniLog
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -89,15 +88,13 @@ class HttpChannel {
                         result.success(responseMap)
                     }
                 } catch (e: Exception) {
-                    OmniLog.e(TAG, "Network request failed", e)
                     withContext(Dispatchers.Main) {
-                        result.error("NETWORK_ERROR", e.message, e.toString())
+                        NativeChannelErrorPrivacy.deliver(result, TAG, "NETWORK_ERROR", e)
                     }
                 }
             }
         } catch (e: Exception) {
-            OmniLog.e(TAG, "Failed to parse request parameters", e)
-            result.error("INVALID_PARAMETERS", e.message, e.toString())
+            NativeChannelErrorPrivacy.deliver(result, TAG, "INVALID_PARAMETERS", e)
         }
     }
 

@@ -105,6 +105,7 @@ class SceneVoiceConfig {
   final String customStyle;
   final String ttsMode;
   final String customCurlCommand;
+  final bool hasCustomCurlCommand;
 
   const SceneVoiceConfig({
     this.autoPlay = false,
@@ -113,6 +114,7 @@ class SceneVoiceConfig {
     this.customStyle = '',
     this.ttsMode = ttsModeBuiltin,
     this.customCurlCommand = '',
+    this.hasCustomCurlCommand = false,
   });
 
   bool get isCustomCurl => ttsMode == ttsModeCustomCurl;
@@ -124,7 +126,10 @@ class SceneVoiceConfig {
       stylePreset: (map?['stylePreset'] ?? '默认').toString(),
       customStyle: (map?['customStyle'] ?? '').toString(),
       ttsMode: (map?['ttsMode'] ?? ttsModeBuiltin).toString(),
-      customCurlCommand: (map?['customCurlCommand'] ?? '').toString(),
+      // Native credentials are write-only. Discard any legacy value even if an
+      // older native build accidentally includes it in the payload.
+      customCurlCommand: '',
+      hasCustomCurlCommand: map?['hasCustomCurlCommand'] == true,
     );
   }
 
@@ -135,6 +140,7 @@ class SceneVoiceConfig {
     String? customStyle,
     String? ttsMode,
     String? customCurlCommand,
+    bool? hasCustomCurlCommand,
   }) {
     return SceneVoiceConfig(
       autoPlay: autoPlay ?? this.autoPlay,
@@ -143,6 +149,7 @@ class SceneVoiceConfig {
       customStyle: customStyle ?? this.customStyle,
       ttsMode: ttsMode ?? this.ttsMode,
       customCurlCommand: customCurlCommand ?? this.customCurlCommand,
+      hasCustomCurlCommand: hasCustomCurlCommand ?? this.hasCustomCurlCommand,
     );
   }
 
@@ -154,7 +161,8 @@ class SceneVoiceConfig {
         other.stylePreset == stylePreset &&
         other.customStyle == customStyle &&
         other.ttsMode == ttsMode &&
-        other.customCurlCommand == customCurlCommand;
+        other.customCurlCommand == customCurlCommand &&
+        other.hasCustomCurlCommand == hasCustomCurlCommand;
   }
 
   @override
@@ -165,6 +173,7 @@ class SceneVoiceConfig {
     customStyle,
     ttsMode,
     customCurlCommand,
+    hasCustomCurlCommand,
   );
 }
 
@@ -292,8 +301,10 @@ class SceneModelConfigService {
   }
 
   static Future<SceneVoiceConfig> saveSceneVoiceConfig(
-    SceneVoiceConfig config,
-  ) async {
+    SceneVoiceConfig config, {
+    String? replacementCustomCurlCommand,
+    bool clearCustomCurlCommand = false,
+  }) async {
     final result = await AssistsMessageService.assistCore
         .invokeMethod<Map<dynamic, dynamic>>('saveSceneVoiceConfig', {
           'autoPlay': config.autoPlay,
@@ -301,7 +312,11 @@ class SceneModelConfigService {
           'stylePreset': config.stylePreset,
           'customStyle': config.customStyle,
           'ttsMode': config.ttsMode,
-          'customCurlCommand': config.customCurlCommand,
+          if (replacementCustomCurlCommand != null)
+            'customCurlCommand': replacementCustomCurlCommand,
+          if (replacementCustomCurlCommand != null)
+            'replaceCustomCurlCommand': true,
+          if (clearCustomCurlCommand) 'clearCustomCurlCommand': true,
         });
     return SceneVoiceConfig.fromMap(result);
   }

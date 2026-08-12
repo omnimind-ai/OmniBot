@@ -6,6 +6,7 @@ import 'package:ui/widgets/common_app_bar.dart';
 
 import '../../../../services/device_service.dart';
 import '../../../../services/permission_service.dart';
+import '../../../../services/special_permission.dart';
 import 'authorize_page_args.dart';
 
 class AuthorizePage extends StatefulWidget {
@@ -55,6 +56,7 @@ class _AuthorizePageState extends State<AuthorizePage>
         _isLoading = true;
       });
 
+      await refreshAppEditionCapabilitySnapshot();
       final deviceInfo = await DeviceService.getDeviceInfo();
       final brand = (deviceInfo?['brand'] as String?)?.toLowerCase() ?? 'other';
       if (!mounted) return;
@@ -79,7 +81,9 @@ class _AuthorizePageState extends State<AuthorizePage>
         _isLoading = false;
       });
     } catch (e) {
-      debugPrint('获取设备品牌失败: $e');
+      if (!mounted) return;
+
+      await refreshAppEditionCapabilitySnapshot();
       if (!mounted) return;
 
       final specs = PermissionService.loadSpecs(

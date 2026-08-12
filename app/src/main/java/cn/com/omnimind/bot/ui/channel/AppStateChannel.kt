@@ -109,15 +109,15 @@ class AppStateChannel {
                     return
                 }
                 AppLocaleManager.applyAppLocale(appContext)
-                runCatching {
+                try {
                     AgentWorkspaceManager(appContext).ensureRuntimeDirectories()
-                }.onFailure {
-                    OmniLog.w(TAG, "Failed to refresh workspace defaults after language change: ${it.message}")
+                } catch (error: Exception) {
+                    NativeChannelErrorPrivacy.record(TAG, "WORKSPACE_DEFAULT_REFRESH_FAILED", error)
                 }
-                runCatching {
+                try {
                     QuickLogWidgetUpdater.updateAll(appContext)
-                }.onFailure {
-                    OmniLog.w(TAG, "Failed to refresh quick log widget language: ${it.message}")
+                } catch (error: Exception) {
+                    NativeChannelErrorPrivacy.record(TAG, "QUICK_LOG_WIDGET_REFRESH_FAILED", error)
                 }
                 result.success(true)
             }

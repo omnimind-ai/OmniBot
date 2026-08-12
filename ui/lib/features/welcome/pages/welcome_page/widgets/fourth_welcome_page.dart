@@ -54,8 +54,8 @@ class _FourthWelcomePageState extends State<FourthWelcomePage>
   /// 加载设备品牌并初始化权限列表
   Future<void> _loadDeviceBrandAndPermissions() async {
     try {
+      await refreshAppEditionCapabilitySnapshot();
       final deviceInfo = await DeviceService.getDeviceInfo();
-      debugPrint('Device Info: $deviceInfo');
       final brand = (deviceInfo?['brand'] as String?)?.toLowerCase() ?? 'other';
 
       if (mounted) {
@@ -79,8 +79,9 @@ class _FourthWelcomePageState extends State<FourthWelcomePage>
         });
       }
     } catch (e) {
-      debugPrint('获取设备品牌失败: $e');
       if (mounted) {
+        await refreshAppEditionCapabilitySnapshot();
+        if (!mounted) return;
         // 失败时使用默认配置
         final specs = PermissionService.loadSpecs(brand: 'other');
         final fallbackPermissions = PermissionService.specsToPermissionData(
@@ -181,7 +182,6 @@ class _FourthWelcomePageState extends State<FourthWelcomePage>
           await spePermission.invokeMethod<bool>('isTermuxInstalled') ?? false;
       return installed;
     } catch (e) {
-      debugPrint('检查 Termux 安装状态失败: $e');
       return false;
     }
   }
@@ -190,7 +190,6 @@ class _FourthWelcomePageState extends State<FourthWelcomePage>
     try {
       return await spePermission.invokeMethod<bool>('openTermuxApp') ?? false;
     } catch (e) {
-      debugPrint('打开 Termux 失败: $e');
       return false;
     }
   }

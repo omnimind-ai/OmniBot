@@ -25,14 +25,9 @@ class AiChatService {
   }
 
   void _handleChatMessageCallback(String taskId, String content, String? type) {
-    print(
-      '_handleChatMessageCallback called: taskId=$taskId, content=$content, type=$type',
-    );
     try {
       _onMessageCallback?.call(taskId, content, type);
-    } catch (e) {
-      print('解析聊天消息失败: $e');
-    }
+    } catch (_) {}
   }
 
   void _handleChatMessageEndCallback(String taskId, {Map<String, dynamic>? turnUsage}) {

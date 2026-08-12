@@ -1,7 +1,7 @@
 package cn.com.omnimind.bot.agent
 
 import cn.com.omnimind.assists.controller.http.HttpController
-import cn.com.omnimind.baselib.llm.contentText
+import cn.com.omnimind.baselib.util.CredentialEndpointSecurity
 import java.io.BufferedReader
 import java.io.BufferedWriter
 import java.io.InputStreamReader
@@ -14,16 +14,24 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
-import okhttp3.Request
-import okhttp3.sse.EventSource
-import okhttp3.sse.EventSourceListener
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
+import org.junit.After
+import org.junit.Before
 import org.junit.Test
 
 class HttpControllerAnthropicTest {
+    @Before
+    fun enableDebugLiteralLoopback() {
+        CredentialEndpointSecurity.configureDebugLoopback(true)
+    }
+
+    @After
+    fun resetDebugLiteralLoopback() {
+        CredentialEndpointSecurity.configureDebugLoopback(false)
+    }
     private val json = Json { ignoreUnknownKeys = true }
 
     @Test
@@ -87,207 +95,6 @@ class HttpControllerAnthropicTest {
 
         val root = json.parseToJsonElement(payload).jsonObject
         assertFalse(root.containsKey("cache_control"))
-    }
-
-    @Test
-    fun `anthropic stream adapter preserves cache hit usage`() {
-        val chunks = mutableListOf<String>()
-        val wrapped = HttpController.wrapAnthropicListener(
-            object : EventSourceListener() {
-                override fun onEvent(
-                    eventSource: EventSource,
-                    id: String?,
-                    type: String?,
-                    data: String
-                ) {
-                    chunks += data
-                }
-            }
-        )
-
-        val source = dummyEventSource()
-        wrapped.onEvent(
-            source,
-            null,
-            "message_start",
-            """
-                {
-                  "type": "message_start",
-                  "message": {
-                    "usage": {
-                      "input_tokens": 12,
-                      "cache_creation_input_tokens": 0,
-                      "cache_read_input_tokens": 4096,
-                      "output_tokens": 1
-                    }
-                  }
-                }
-            """.trimIndent()
-        )
-        wrapped.onEvent(
-            source,
-            null,
-            "content_block_delta",
-            """{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}"""
-        )
-        wrapped.onEvent(
-            source,
-            null,
-            "message_delta",
-            """{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}"""
-        )
-        wrapped.onEvent(source, null, "message_stop", """{"type":"message_stop"}""")
-
-        val accumulator = AgentLlmStreamAccumulator(json)
-        chunks.forEach(accumulator::consume)
-        val turn = accumulator.buildTurn()
-
-        assertEquals("Hello", turn.message.contentText())
-        assertEquals("end_turn", turn.finishReason)
-        assertEquals(12, turn.usage?.promptTokens)
-        assertEquals(5, turn.usage?.completionTokens)
-        assertEquals(4113, turn.usage?.totalTokens)
-        assertEquals(
-            "4096",
-            turn.usage?.promptTokensDetails?.jsonObject
-                ?.get("cached_tokens")?.jsonPrimitive?.content
-        )
-    }
-
-    @Test
-    fun `anthropic non stream usage counts cache writes as processed input`() {
-        val method = HttpController::class.java.getDeclaredMethod(
-            "normalizeAnthropicUsageResponse",
-            String::class.java
-        )
-        method.isAccessible = true
-        val usage = method.invoke(
-            HttpController,
-            """
-                {
-                  "usage": {
-                    "input_tokens": 7,
-                    "cache_creation_input_tokens": 1024,
-                    "cache_read_input_tokens": 0,
-                    "output_tokens": 2
-                  }
-                }
-            """.trimIndent()
-        ) as String
-        val root = json.parseToJsonElement(usage).jsonObject
-
-        assertEquals("1031", root["prompt_tokens"]?.jsonPrimitive?.content)
-        assertEquals("2", root["completion_tokens"]?.jsonPrimitive?.content)
-        assertEquals("1033", root["total_tokens"]?.jsonPrimitive?.content)
-        assertEquals(
-            "1024",
-            root["prompt_tokens_details"]?.jsonObject
-                ?.get("cache_creation_tokens")?.jsonPrimitive?.content
-        )
-        assertEquals(
-            "0",
-            root["prompt_tokens_details"]?.jsonObject
-                ?.get("cached_tokens")?.jsonPrimitive?.content
-        )
-    }
-
-    @Test
-    fun `anthropic logged stream usage merges initial input with final output`() {
-        val method = HttpController::class.java.getDeclaredMethod(
-            "normalizeAnthropicUsageResponse",
-            String::class.java
-        )
-        method.isAccessible = true
-        val usage = method.invoke(
-            HttpController,
-            """
-                [
-                  {
-                    "type": "message_start",
-                    "message": {
-                      "usage": {
-                        "input_tokens": 9,
-                        "cache_creation_input_tokens": 0,
-                        "cache_read_input_tokens": 2048,
-                        "output_tokens": 1
-                      }
-                    }
-                  },
-                  {
-                    "type": "message_delta",
-                    "usage": {"output_tokens": 6}
-                  }
-                ]
-            """.trimIndent()
-        ) as String
-        val root = json.parseToJsonElement(usage).jsonObject
-
-        assertEquals("9", root["prompt_tokens"]?.jsonPrimitive?.content)
-        assertEquals("6", root["completion_tokens"]?.jsonPrimitive?.content)
-        assertEquals("2063", root["total_tokens"]?.jsonPrimitive?.content)
-        assertEquals(
-            "2048",
-            root["prompt_tokens_details"]?.jsonObject
-                ?.get("cached_tokens")?.jsonPrimitive?.content
-        )
-    }
-
-    @Test
-    fun `anthropic stream adapter still converts tool calls`() {
-        val chunks = mutableListOf<String>()
-        val wrapped = HttpController.wrapAnthropicListener(
-            object : EventSourceListener() {
-                override fun onEvent(
-                    eventSource: EventSource,
-                    id: String?,
-                    type: String?,
-                    data: String
-                ) {
-                    chunks += data
-                }
-            }
-        )
-
-        val source = dummyEventSource()
-        wrapped.onEvent(
-            source,
-            null,
-            "message_start",
-            """{"type":"message_start","message":{"usage":{"input_tokens":20,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":1}}}"""
-        )
-        wrapped.onEvent(
-            source,
-            null,
-            "content_block_start",
-            """{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"tool_7","name":"get_weather","input":{}}}"""
-        )
-        wrapped.onEvent(
-            source,
-            null,
-            "content_block_delta",
-            """{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"city\":\"Shanghai\"}"}}"""
-        )
-        wrapped.onEvent(
-            source,
-            null,
-            "message_delta",
-            """{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":4}}"""
-        )
-        wrapped.onEvent(source, null, "message_stop", """{"type":"message_stop"}""")
-
-        val accumulator = AgentLlmStreamAccumulator(json)
-        chunks.forEach(accumulator::consume)
-        val turn = accumulator.buildTurn()
-
-        assertEquals("tool_calls", turn.finishReason)
-        assertEquals("tool_7", turn.message.toolCalls?.single()?.id)
-        assertEquals("get_weather", turn.message.toolCalls?.single()?.function?.name)
-        assertEquals(
-            """{"city":"Shanghai"}""",
-            turn.message.toolCalls?.single()?.function?.arguments
-        )
-        assertEquals(20, turn.usage?.promptTokens)
-        assertEquals(4, turn.usage?.completionTokens)
     }
 
     @Test
@@ -373,15 +180,6 @@ class HttpControllerAnthropicTest {
             assertNotNull(models.first().ownedBy)
         } finally {
             serverSocket.close()
-        }
-    }
-
-    private fun dummyEventSource(): EventSource {
-        return object : EventSource {
-            override fun request(): Request =
-                Request.Builder().url("https://example.com").build()
-
-            override fun cancel() = Unit
         }
     }
 

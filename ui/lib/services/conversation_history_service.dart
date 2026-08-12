@@ -1,6 +1,5 @@
 import 'dart:convert';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ui/models/chat_message_model.dart';
@@ -76,8 +75,8 @@ class ConversationHistoryService {
           fromNativeRoute: false,
           clearRequestKey: true,
         );
-      } catch (e) {
-        debugPrint('解析当前线程目标失败: $e');
+      } catch (_) {
+        // Invalid legacy targets fall back to the stored conversation id.
       }
     }
     final conversationId = await getCurrentConversationId(mode: mode);
@@ -144,8 +143,7 @@ class ConversationHistoryService {
     }
     try {
       return ConversationThreadTarget.fromEncodedJson(raw);
-    } catch (e) {
-      debugPrint('解析上次可见线程失败: $e');
+    } catch (_) {
       return null;
     }
   }
@@ -177,8 +175,8 @@ class ConversationHistoryService {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.reload();
-    } catch (e) {
-      debugPrint('刷新本地缓存失败: $e');
+    } catch (_) {
+      // Local cache reload is best effort.
     }
   }
 
@@ -272,11 +270,9 @@ class ConversationHistoryService {
         'messages': jsonList,
       });
       return true;
-    } on PlatformException catch (e) {
-      debugPrint('保存对话历史失败: ${e.message}');
+    } on PlatformException catch (_) {
       return false;
-    } catch (e) {
-      debugPrint('保存对话历史异常: $e');
+    } catch (_) {
       return false;
     }
   }
@@ -299,10 +295,10 @@ class ConversationHistoryService {
         nativeMessages: nativeMessages,
         expectedMessageCount: expectedMessageCount,
       );
-    } on PlatformException catch (e) {
-      debugPrint('获取对话历史失败: ${e.message}');
-    } catch (e) {
-      debugPrint('解析对话历史失败: $e');
+    } on PlatformException catch (_) {
+      // Fall through to legacy storage.
+    } catch (_) {
+      // Fall through to legacy storage.
     }
 
     return _restoreLegacyConversationMessages(
@@ -355,10 +351,10 @@ class ConversationHistoryService {
         );
       }
       return (messages: messages, hasMore: hasMore);
-    } on PlatformException catch (e) {
-      debugPrint('分页获取对话历史失败: ${e.message}');
-    } catch (e) {
-      debugPrint('分页解析对话历史失败: $e');
+    } on PlatformException catch (_) {
+      // Fall through to legacy storage.
+    } catch (_) {
+      // Fall through to legacy storage.
     }
 
     return _legacyPagedConversationMessages(
@@ -545,8 +541,8 @@ class ConversationHistoryService {
         if (messages.isNotEmpty) {
           return messages;
         }
-      } catch (e) {
-        debugPrint('解析旧版对话历史失败 key=$key: $e');
+      } catch (_) {
+        // Skip malformed legacy entries.
       }
     }
     return <ChatMessageModel>[];
@@ -590,8 +586,7 @@ class ConversationHistoryService {
       return await SharedPreferences.getInstance();
     } on MissingPluginException {
       return null;
-    } catch (e) {
-      debugPrint('$operation 跳过：$e');
+    } catch (_) {
       return null;
     }
   }
@@ -628,10 +623,10 @@ class ConversationHistoryService {
         'cardData': cardData,
         'createdAt': createdAtMillis,
       });
-    } on PlatformException catch (e) {
-      debugPrint('保存 UI 卡片失败: ${e.message}');
-    } catch (e) {
-      debugPrint('保存 UI 卡片异常: $e');
+    } on PlatformException catch (_) {
+      // UI card persistence is best effort.
+    } catch (_) {
+      // UI card persistence is best effort.
     }
   }
 
@@ -645,10 +640,10 @@ class ConversationHistoryService {
         'conversationId': conversationId,
         'mode': mode.storageValue,
       });
-    } on PlatformException catch (e) {
-      debugPrint('清理对话历史失败: ${e.message}');
-    } catch (e) {
-      debugPrint('清理对话历史异常: $e');
+    } on PlatformException catch (_) {
+      // Native cleanup is best effort; legacy cleanup still runs.
+    } catch (_) {
+      // Native cleanup is best effort; legacy cleanup still runs.
     }
     await _clearLegacyConversationMessages(conversationId, mode: mode);
   }

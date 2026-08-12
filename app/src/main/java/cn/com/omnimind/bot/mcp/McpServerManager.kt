@@ -3,6 +3,10 @@ package cn.com.omnimind.bot.mcp
 import android.content.Context
 import android.content.pm.PackageManager
 import android.util.Base64
+import cn.com.omnimind.baselib.util.AppSecretStoreBackend
+import cn.com.omnimind.baselib.util.FailClosedSecretRepository
+import cn.com.omnimind.baselib.util.LegacySecretSnapshot
+import cn.com.omnimind.baselib.util.LegacySecretStore
 import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.webchat.AgentRunService
 import cn.com.omnimind.bot.webchat.BrowserMirrorService
@@ -59,7 +63,9 @@ object McpServerManager {
     private const val TAG = "[McpServerManager]"
     private const val PREF_ENABLE = "mcp_server_enabled"
     private const val PREF_HOST = "mcp_server_host"
-    private const val PREF_TOKEN_VAULT = "mcp_server_token_v2" // 加密后的 token
+    private const val PREF_TOKEN_VAULT = "mcp_server_token_v2"
+    private const val PREF_TOKEN_PLAINTEXT = "mcp_server_token"
+    private const val SECRET_TOKEN = "mcp.local_server.token.v1"
     private const val PREF_PORT = "mcp_server_port"
     private const val DEFAULT_PORT = 8899
     private const val WEBCHAT_SESSION_COOKIE = "omnibot_webchat_session"
@@ -86,10 +92,42 @@ object McpServerManager {
     @Volatile
     private var cachedToken: String? = null
 
+    private val tokenRepository by lazy {
+        FailClosedSecretRepository(
+            key = SECRET_TOKEN,
+            secureStore = AppSecretStoreBackend,
+            legacyStore = object : LegacySecretStore {
+                override fun snapshot(): LegacySecretSnapshot {
+                    return buildLegacyMcpTokenSnapshot(
+                        weakVaultValue = mmkv.decodeString(PREF_TOKEN_VAULT),
+                        plaintextValue = mmkv.decodeString(PREF_TOKEN_PLAINTEXT),
+                        decryptWeakVault = { LegacyTokenVault.decrypt(it) },
+                    )
+                }
+
+                override fun erase() {
+                    mmkv.remove(PREF_TOKEN_VAULT)
+                    mmkv.remove(PREF_TOKEN_PLAINTEXT)
+                }
+            },
+            isValid = ::isValidMcpToken,
+        )
+    }
+
     // ==================== 公共 API ====================
 
     fun restoreIfEnabled(context: Context) {
+        val hasLegacyToken = mmkv.containsKey(PREF_TOKEN_VAULT) ||
+            mmkv.containsKey(PREF_TOKEN_PLAINTEXT)
+        if (hasLegacyToken && tokenRepository.loadExisting() == null) {
+            failClosedCredentialStorage()
+            return
+        }
         if (!mmkv.decodeBool(PREF_ENABLE, false)) return
+        if (runCatching { ensureToken() }.isFailure) {
+            failClosedCredentialStorage()
+            return
+        }
         val port = mmkv.decodeInt(PREF_PORT, DEFAULT_PORT).takeIf { it > 0 } ?: DEFAULT_PORT
         serverScope.launch {
             runCatching { startServer(context, port) }
@@ -110,7 +148,10 @@ object McpServerManager {
 
     fun refreshToken(context: Context): McpServerState {
         val newToken = generateToken()
-        TokenVault.encryptAndStore(mmkv, PREF_TOKEN_VAULT, newToken)
+        if (!tokenRepository.replace(newToken)) {
+            failClosedCredentialStorage()
+            throw IllegalStateException("MCP credential storage unavailable")
+        }
         cachedToken = newToken
         if (isRunning || mmkv.decodeBool(PREF_ENABLE, false)) {
             return restart(context)
@@ -119,13 +160,17 @@ object McpServerManager {
     }
 
     fun currentState(): McpServerState {
+        val token = runCatching { ensureToken() }.getOrElse {
+            failClosedCredentialStorage()
+            ""
+        }
         val resolvedHost = resolveAdvertisedHost()
         return McpServerState(
-            enabled = mmkv.decodeBool(PREF_ENABLE, false) && isRunning,
+            enabled = token.isNotEmpty() && mmkv.decodeBool(PREF_ENABLE, false) && isRunning,
             running = isRunning,
             host = resolvedHost,
             port = mmkv.decodeInt(PREF_PORT, DEFAULT_PORT).takeIf { it > 0 } ?: DEFAULT_PORT,
-            token = ensureToken(),
+            token = token,
         )
     }
 
@@ -206,9 +251,7 @@ object McpServerManager {
         )
     }
 
-    /**
-     * 文件下载端点处理（支持文件 token 和 Bearer token）。
-     */
+    /** 文件下载端点处理（支持专用文件 token Header 和服务器 Bearer token）。 */
     suspend fun handleFileDownload(call: io.ktor.server.application.ApplicationCall) {
         val fileId = call.parameters["fileId"]
         if (fileId.isNullOrBlank()) {
@@ -222,7 +265,7 @@ object McpServerManager {
             return
         }
 
-        val token = call.request.queryParameters["token"]
+        val token = call.request.headers[McpFileDownloadContract.TOKEN_HEADER]
         val authHeader = call.request.headers["Authorization"]
         val bearerToken = authHeader?.removePrefix("Bearer ")?.trim()
         val bearerOk = !bearerToken.isNullOrBlank() && timingSafeEquals(bearerToken, ensureToken())
@@ -281,7 +324,7 @@ object McpServerManager {
                 mmkv.encode(PREF_ENABLE, true)
                 mmkv.encode(PREF_PORT, port)
                 mmkv.encode(PREF_HOST, lanIp)
-                OmniLog.i(TAG, "MCP server started at http://$lanIp:$port")
+                OmniLog.i(TAG, "MCP server started port=$port")
                 return currentState()
             } catch (t: Throwable) {
                 server = null
@@ -408,31 +451,16 @@ object McpServerManager {
     // ==================== Token 管理 ====================
 
     /**
-     * 确保存在有效 token，优先从内存缓存取，否则从加密存储解密。
-     * 首次运行时自动生成并通过 [TokenVault] 加密存储到 MMKV。
+     * Ensures a token exists in Keystore-backed storage. Legacy MMKV values are used only
+     * for one migration attempt and are erased whether that attempt succeeds or fails.
      */
+    @Synchronized
     private fun ensureToken(): String {
         cachedToken?.let { return it }
-        // 尝试从加密存储解密
-        val decrypted = TokenVault.decryptFrom(mmkv, PREF_TOKEN_VAULT)
-        if (decrypted != null) {
-            cachedToken = decrypted
-            return decrypted
-        }
-        // 兼容旧版：尝试读取明文 token 并迁移到加密存储
-        val legacyPlain = mmkv.decodeString("mcp_server_token")
-        if (!legacyPlain.isNullOrBlank()) {
-            TokenVault.encryptAndStore(mmkv, PREF_TOKEN_VAULT, legacyPlain)
-            mmkv.remove("mcp_server_token")
-            cachedToken = legacyPlain
-            OmniLog.i(TAG, "Migrated legacy plain token to encrypted vault")
-            return legacyPlain
-        }
-        // 全新生成
-        val newToken = generateToken()
-        TokenVault.encryptAndStore(mmkv, PREF_TOKEN_VAULT, newToken)
-        cachedToken = newToken
-        return newToken
+        val token = tokenRepository.loadOrCreate(::generateToken)
+            ?: throw IllegalStateException("MCP credential storage unavailable")
+        cachedToken = token
+        return token
     }
 
     private fun generateToken(): String {
@@ -440,6 +468,14 @@ object McpServerManager {
         val buffer = ByteArray(32)
         random.nextBytes(buffer)
         return Base64.encodeToString(buffer, Base64.NO_WRAP or Base64.URL_SAFE)
+    }
+
+    private fun failClosedCredentialStorage() {
+        cachedToken = null
+        mmkv.encode(PREF_ENABLE, false)
+        synchronized(serverLock) {
+            stopServerLocked()
+        }
     }
 
     // ==================== 安全工具方法 ====================
@@ -458,12 +494,8 @@ object McpServerManager {
     }
 }
 
-/**
- * Token 加密保险箱 — AES-256-GCM 加解密，密钥由应用签名派生。
- *
- * 存储格式：Base64(IV[12] + ciphertext + GCM tag[16])
- */
-private object TokenVault {
+/** Read-only decoder for the removed APK-signature-derived token vault. */
+private object LegacyTokenVault {
     private const val AES_KEY_SIZE = 32
     private const val GCM_IV_SIZE = 12
     private const val TRANSFORMATION = "AES/GCM/NoPadding"
@@ -492,51 +524,41 @@ private object TokenVault {
         return key
     }
 
-    /**
-     * 加密明文 token 并 Base64 编码后存入 MMKV。
-     */
-    fun encryptAndStore(mmkv: com.tencent.mmkv.MMKV, key: String, plainText: String) {
-        try {
-            val context = cn.com.omnimind.bot.App.instance
-            val secretKey = deriveKey(context)
-            val iv = ByteArray(GCM_IV_SIZE).also { SecureRandom().nextBytes(it) }
-            val cipher = Cipher.getInstance(TRANSFORMATION)
-            cipher.init(Cipher.ENCRYPT_MODE, secretKey, GCMParameterSpec(128, iv))
-            val encrypted = cipher.doFinal(plainText.toByteArray(Charsets.UTF_8))
-            // IV + ciphertext 拼接
-            val combined = iv + encrypted
-            val encoded = Base64.encodeToString(combined, Base64.NO_WRAP or Base64.URL_SAFE)
-            mmkv.encode(key, encoded)
-        } catch (e: Exception) {
-            OmniLog.e("TokenVault", "encryptAndStore failed: ${e.message}")
-            // 降级：加密失败时仍存储明文（保底可用）
-            mmkv.encode(key, plainText)
-        }
-    }
-
-    /**
-     * 从 MMKV 读取并解密 token。返回 null 表示不存在或解密失败。
-     */
-    fun decryptFrom(mmkv: com.tencent.mmkv.MMKV, key: String): String? {
-        val stored = mmkv.decodeString(key) ?: return null
-        try {
+    fun decrypt(stored: String): String? {
+        return runCatching {
             val context = cn.com.omnimind.bot.App.instance
             val secretKey = deriveKey(context)
             val combined = Base64.decode(stored, Base64.NO_WRAP or Base64.URL_SAFE)
-            if (combined.size < GCM_IV_SIZE + 16) return null // 数据太短，不合法
+            if (combined.size < GCM_IV_SIZE + 16) return@runCatching null
             val iv = combined.copyOfRange(0, GCM_IV_SIZE)
             val encrypted = combined.copyOfRange(GCM_IV_SIZE, combined.size)
             val cipher = Cipher.getInstance(TRANSFORMATION)
             cipher.init(Cipher.DECRYPT_MODE, secretKey, GCMParameterSpec(128, iv))
             val decrypted = cipher.doFinal(encrypted)
-            return String(decrypted, Charsets.UTF_8)
-        } catch (e: Exception) {
-            OmniLog.e("TokenVault", "decryptFrom failed: ${e.message}")
-            // 降级：如果存储的就是明文（首次加密失败的场景），直接返回
-            if (stored.length in 32..128 && stored.all { it.isLetterOrDigit() || it in "_-=" }) {
-                return stored
-            }
-            return null
-        }
+            String(decrypted, Charsets.UTF_8)
+        }.getOrNull()
     }
 }
+
+internal fun buildLegacyMcpTokenSnapshot(
+    weakVaultValue: String?,
+    plaintextValue: String?,
+    decryptWeakVault: (String) -> String?,
+): LegacySecretSnapshot {
+    val existed = weakVaultValue != null || plaintextValue != null
+    val candidates = buildList {
+        if (weakVaultValue != null) {
+            runCatching { decryptWeakVault(weakVaultValue) }
+                .getOrNull()
+                ?.let(::add)
+            // Ciphertext and the removed plaintext fallback are indistinguishable in this slot.
+            // If authenticated decryption fails, reject the value instead of treating it as a token.
+        }
+        if (plaintextValue != null) add(plaintextValue)
+    }.distinct()
+    return LegacySecretSnapshot(existed = existed, candidates = candidates)
+}
+
+internal fun isValidMcpToken(value: String): Boolean =
+    value.length in 32..128 &&
+        value.all { it.isLetterOrDigit() || it == '_' || it == '-' || it == '=' }

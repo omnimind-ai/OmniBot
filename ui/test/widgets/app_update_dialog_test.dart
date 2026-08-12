@@ -6,6 +6,14 @@ import 'package:ui/theme/omni_theme_palette.dart';
 import 'package:ui/widgets/app_update_dialog.dart';
 
 void main() {
+  setUp(() {
+    AppUpdateService.availabilityNotifier.value = true;
+  });
+
+  tearDown(() {
+    AppUpdateService.availabilityNotifier.value = false;
+  });
+
   const status = AppUpdateStatus(
     currentVersion: '1.0.0',
     latestVersion: '1.0.1',
@@ -66,6 +74,17 @@ void main() {
       _textColor(tester, 'Published at'),
       OmniThemePalette.dark.textTertiary,
     );
+  });
+
+  testWidgets('does not open when APK self-update is unavailable', (
+    tester,
+  ) async {
+    AppUpdateService.availabilityNotifier.value = false;
+
+    await pumpDialog(tester, themeMode: ThemeMode.light);
+
+    expect(find.text('New version available'), findsNothing);
+    expect(find.text('Current version'), findsNothing);
   });
 }
 

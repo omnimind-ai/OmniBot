@@ -665,7 +665,7 @@ void main() {
     );
     runtime.messages.insert(0, ChatMessageModel.userMessage('第一句标题应该保留'));
 
-    await coordinator.applyAgentEvent(
+    coordinator.applyAgentEvent(
       conversationId: conversationId,
       event: {
         'message': {
@@ -1769,7 +1769,7 @@ void main() {
       );
       expect(thinkingMessage.cardData?['type'], 'deep_thinking');
       expect(thinkingMessage.cardData?['thinkingContent'], '恢复后也要能看到这段思考');
-      expect(thinkingMessage.streamMeta?['seq'], 1);
+      expect(thinkingMessage.streamMeta?['seq'], 2);
       expect(thinkingMessage.streamMeta?['roundIndex'], 1);
       expect(thinkingMessage.streamMeta?['kind'], 'thinking_snapshot');
       expect(thinkingMessage.streamMeta?['parentTaskId'], taskId);

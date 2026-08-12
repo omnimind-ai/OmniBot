@@ -67,17 +67,17 @@ class AgentRuntimeChannel {
             .orEmpty()
 
         scope.launch {
-            runCatching {
-                AgentRuntimeManager
+            try {
+                val payload = AgentRuntimeManager
                     .getInstance(safeContext)
                     .handleMethod(call.method, arguments)
-            }.onSuccess { payload ->
                 result.success(payload)
-            }.onFailure { error ->
-                result.error(
+            } catch (error: Exception) {
+                NativeChannelErrorPrivacy.deliver(
+                    result,
+                    "AgentRuntimeChannel",
                     "AGENT_RUNTIME_CALL_FAILED",
-                    error.message ?: error.javaClass.simpleName,
-                    null
+                    error,
                 )
             }
         }

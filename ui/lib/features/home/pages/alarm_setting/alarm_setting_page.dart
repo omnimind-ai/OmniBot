@@ -65,6 +65,7 @@ class _AlarmSettingPageState extends State<AlarmSettingPage> {
 
   Future<void> _pickLocalMp3() async {
     final granted = await _ensureAudioReadPermission();
+    if (!mounted) return;
     if (!granted) {
       showToast(
         context.l10n.alarmAudioPermissionDenied,
@@ -78,6 +79,7 @@ class _AlarmSettingPageState extends State<AlarmSettingPage> {
       allowedExtensions: const ['mp3'],
       allowMultiple: false,
     );
+    if (!mounted) return;
 
     if (result == null || result.files.isEmpty) {
       return;
@@ -88,7 +90,6 @@ class _AlarmSettingPageState extends State<AlarmSettingPage> {
       return;
     }
 
-    if (!mounted) return;
     setState(() {
       _localPath = path;
       _source = _sourceLocalMp3;

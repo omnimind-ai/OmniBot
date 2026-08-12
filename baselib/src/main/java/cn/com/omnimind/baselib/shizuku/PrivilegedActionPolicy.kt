@@ -154,18 +154,13 @@ object PrivilegedActionPolicy {
     }
 
     fun requiresConfirmation(action: String): Boolean {
-        return when (normalizeAction(action)) {
-            ACTION_PACKAGE_FORCE_STOP,
-            ACTION_PACKAGE_GRANT_PERMISSION,
-            ACTION_PACKAGE_REVOKE_PERMISSION,
-            ACTION_PACKAGE_SET_APPOPS,
-            ACTION_SETTINGS_PUT,
-            ACTION_DEVICE_SET_MOBILE_DATA_ENABLED,
-            ACTION_SHELL_EXEC,
-            ACTION_SESSION_START,
-            ACTION_SESSION_EXEC -> true
-            else -> false
-        }
+        val normalizedAction = normalizeAction(action)
+        // The privileged service cannot currently verify an app-issued, one-time local approval.
+        // Keep every Shizuku action fail-closed, including diagnostic reads: settings, logcat,
+        // dumpsys, properties and installed-package data can all expose sensitive information.
+        // Unknown actions are also confirmation-requiring so a newly added action cannot become
+        // model-executable merely because this policy was not updated at the same time.
+        return normalizedAction.isNotEmpty()
     }
 
     fun requiresRoot(

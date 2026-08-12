@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:ui/theme/app_theme_mode.dart';
 
@@ -12,7 +11,7 @@ class AppStateService {
     try {
       final result = await _channel.invokeMethod('exitApp');
       return result == true;
-    } catch (e) {
+    } catch (_) {
       return false;
     }
   }
@@ -22,8 +21,7 @@ class AppStateService {
       return await _channel.invokeMethod<Map<dynamic, dynamic>>(
         'getPendingShareDraft',
       );
-    } catch (e) {
-      debugPrint('⚠️ Failed to consume pending share draft: $e');
+    } catch (_) {
       return null;
     }
   }
@@ -34,8 +32,7 @@ class AppStateService {
         'clearPendingShareDraft',
       );
       return result == true;
-    } catch (e) {
-      debugPrint('⚠️ Failed to clear pending share draft: $e');
+    } catch (_) {
       return false;
     }
   }
@@ -44,8 +41,7 @@ class AppStateService {
     try {
       final result = await _channel.invokeMethod<String>('getSharedOpenMode');
       return _normalizeSharedOpenMode(result);
-    } catch (e) {
-      debugPrint('⚠️ Failed to get shared open mode: $e');
+    } catch (_) {
       return 'default';
     }
   }
@@ -59,8 +55,7 @@ class AppStateService {
         'imageMode': _normalizeSharedOpenMode(result?['imageMode']?.toString()),
         'fileMode': _normalizeSharedOpenMode(result?['fileMode']?.toString()),
       };
-    } catch (e) {
-      debugPrint('⚠️ Failed to get shared open modes: $e');
+    } catch (_) {
       return const {'imageMode': 'default', 'fileMode': 'default'};
     }
   }
@@ -72,8 +67,7 @@ class AppStateService {
         if (target != null) 'target': target,
       });
       return _normalizeSharedOpenMode(result);
-    } catch (e) {
-      debugPrint('⚠️ Failed to set shared open mode: $e');
+    } catch (_) {
       return _normalizeSharedOpenMode(mode);
     }
   }
@@ -91,8 +85,7 @@ class AppStateService {
         'applyLanguagePreference',
       );
       return result == true;
-    } catch (e) {
-      debugPrint('⚠️ Failed to apply language preference on native side: $e');
+    } catch (_) {
       return false;
     }
   }
@@ -103,8 +96,7 @@ class AppStateService {
         'mode': mode.storageValue,
       });
       return result == true;
-    } catch (e) {
-      debugPrint('⚠️ Failed to apply theme mode on native side: $e');
+    } catch (_) {
       return false;
     }
   }

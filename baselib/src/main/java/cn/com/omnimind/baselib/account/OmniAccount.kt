@@ -12,12 +12,33 @@ object OmniAccount {
     @Volatile
     private var configuredPlatformGatewayUrl: String = ""
 
-    fun initialize(context: Context, baseUrl: String, platformGatewayUrl: String = "") {
-        val normalized = baseUrl.trim().trimEnd('/')
-        val normalizedGateway = platformGatewayUrl.trim().trimEnd('/')
+    @Volatile
+    private var configuredAllowInsecureLoopback: Boolean = false
+
+    fun initialize(
+        context: Context,
+        baseUrl: String,
+        platformGatewayUrl: String = "",
+        allowInsecureLoopback: Boolean = false,
+    ) {
+        val normalized = baseUrl.trim().takeIf(String::isNotEmpty)?.let {
+            OfficialEndpointSecurity.normalizeBaseUrl(
+                raw = it,
+                label = "account base URL",
+                allowInsecureLoopback = allowInsecureLoopback,
+            )
+        }.orEmpty()
+        val normalizedGateway = platformGatewayUrl.trim().takeIf(String::isNotEmpty)?.let {
+            OfficialEndpointSecurity.normalizeBaseUrl(
+                raw = it,
+                label = "platform gateway URL",
+                allowInsecureLoopback = allowInsecureLoopback,
+            )
+        }.orEmpty()
         if (normalized.isEmpty()) {
             configuredBaseUrl = ""
             configuredPlatformGatewayUrl = ""
+            configuredAllowInsecureLoopback = false
             configuredRepository = null
             return
         }
@@ -33,12 +54,24 @@ object OmniAccount {
                 configuredPlatformGatewayUrl == normalizedGateway
             ) return
             configuredRepository = AccountRepository(
-                remote = AccountApiClient(normalized),
+                remote = AccountApiClient(
+                    baseUrl = normalized,
+                    allowInsecureLoopback = allowInsecureLoopback,
+                ),
                 tokenStore = EncryptedAccountTokenStore(context),
                 aiAccessModeStore = SharedPreferencesAiAccessModeStore(context),
+                platformModels = normalizedGateway
+                    .takeIf { it.isNotEmpty() }
+                    ?.let {
+                        PlatformModelApiClient(
+                            gatewayBaseUrl = it,
+                            allowInsecureLoopback = allowInsecureLoopback,
+                        )
+                    },
             )
             configuredBaseUrl = normalized
             configuredPlatformGatewayUrl = normalizedGateway
+            configuredAllowInsecureLoopback = allowInsecureLoopback
         }
     }
 
@@ -55,6 +88,7 @@ object OmniAccount {
             cachedMode = repository?.cachedAiAccessMode(),
             platformGatewayUrl = configuredPlatformGatewayUrl,
             accessToken = runCatching { repository?.accessTokenForPlatformGateway() }.getOrNull(),
+            allowInsecureLoopback = configuredAllowInsecureLoopback,
         )
     }
 }

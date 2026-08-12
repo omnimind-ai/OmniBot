@@ -21,6 +21,8 @@ import kotlinx.coroutines.withContext
 class McpFileReceiverActivity : ComponentActivity() {
     companion object {
         private const val TAG = "McpFileReceiver"
+        private const val MAX_SHARED_URIS = 10
+        private const val MAX_SHARED_TEXT_CHARS = 100_000
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -36,13 +38,30 @@ class McpFileReceiverActivity : ComponentActivity() {
     }
 
     private fun handleIntent(intent: Intent?) {
-        if (intent == null) {
-            finish()
-            return
+        val accepted = McpFileReceiverIntentPolicy.runIfSupported(intent?.action) {
+            handleSupportedIntent(checkNotNull(intent))
         }
+        if (!accepted) {
+            OmniLog.w(TAG, "Rejected unsupported share action: ${intent?.action}")
+            finish()
+        }
+    }
 
-        val sharedText = extractSharedText(intent)
-        val uris = extractUris(intent)
+    private fun handleSupportedIntent(intent: Intent) {
+        val sharedText = runCatching { extractSharedText(intent) }
+            .onFailure { OmniLog.w(TAG, "Unable to read shared text type=${it.javaClass.simpleName}") }
+            .getOrNull()
+        val rawUris = runCatching { extractUris(intent) }
+            .onFailure { OmniLog.w(TAG, "Unable to read shared files type=${it.javaClass.simpleName}") }
+            .getOrDefault(emptyList())
+        val uris = rawUris.asSequence()
+            .filter { uri -> uri.scheme == "content" }
+            .distinct()
+            .take(MAX_SHARED_URIS)
+            .toList()
+        if (rawUris.size != uris.size) {
+            OmniLog.w(TAG, "Ignored unsupported or excess shared files")
+        }
         val mimeTypeHint = intent.type
         if (uris.isEmpty() && sharedText.isNullOrBlank()) {
             OmniLog.w(TAG, "No share content found in intent: ${intent.action}")
@@ -104,12 +123,16 @@ class McpFileReceiverActivity : ComponentActivity() {
         mimeTypeHint: String?,
     ) {
         lifecycleScope.launch(Dispatchers.IO) {
-            val draft = SharedOpenDraftStore.store(
-                context = this@McpFileReceiverActivity,
-                text = sharedText,
-                imageUris = imageUris,
-                mimeTypeHint = mimeTypeHint,
-            )
+            val draft = runCatching {
+                SharedOpenDraftStore.store(
+                    context = this@McpFileReceiverActivity,
+                    text = sharedText,
+                    imageUris = imageUris,
+                    mimeTypeHint = mimeTypeHint,
+                )
+            }.onFailure {
+                OmniLog.w(TAG, "Unable to create shared draft type=${it.javaClass.simpleName}")
+            }.getOrNull()
             withContext(Dispatchers.Main) {
                 if (draft != null) {
                     val route =
@@ -142,12 +165,16 @@ class McpFileReceiverActivity : ComponentActivity() {
         mimeTypeHint: String?,
     ) {
         lifecycleScope.launch(Dispatchers.IO) {
-            val draft = SharedOpenDraftStore.storeWorkspaceDraft(
-                context = this@McpFileReceiverActivity,
-                text = sharedText,
-                uris = uris,
-                mimeTypeHint = mimeTypeHint,
-            )
+            val draft = runCatching {
+                SharedOpenDraftStore.storeWorkspaceDraft(
+                    context = this@McpFileReceiverActivity,
+                    text = sharedText,
+                    uris = uris,
+                    mimeTypeHint = mimeTypeHint,
+                )
+            }.onFailure {
+                OmniLog.w(TAG, "Unable to create workspace draft type=${it.javaClass.simpleName}")
+            }.getOrNull()
             withContext(Dispatchers.Main) {
                 if (draft != null) {
                     val route =
@@ -183,13 +210,17 @@ class McpFileReceiverActivity : ComponentActivity() {
     ) {
         lifecycleScope.launch(Dispatchers.IO) {
             val receivedFileCount = storeFileTransfers(fileTransferUris, mimeTypeHint)
-            val draft = SharedOpenDraftStore.storeMixedDraft(
-                context = this@McpFileReceiverActivity,
-                text = sharedText,
-                imageUris = imageUris,
-                workspaceUris = workspaceUris,
-                mimeTypeHint = mimeTypeHint,
-            )
+            val draft = runCatching {
+                SharedOpenDraftStore.storeMixedDraft(
+                    context = this@McpFileReceiverActivity,
+                    text = sharedText,
+                    imageUris = imageUris,
+                    workspaceUris = workspaceUris,
+                    mimeTypeHint = mimeTypeHint,
+                )
+            }.onFailure {
+                OmniLog.w(TAG, "Unable to create mixed draft type=${it.javaClass.simpleName}")
+            }.getOrNull()
             withContext(Dispatchers.Main) {
                 if (draft != null) {
                     val route =
@@ -251,11 +282,13 @@ class McpFileReceiverActivity : ComponentActivity() {
     private fun storeFileTransfers(uris: List<Uri>, mimeTypeHint: String?): Int {
         if (uris.isEmpty()) return 0
         val records = uris.mapNotNull { uri ->
-            McpFileInbox.storeFromUri(this@McpFileReceiverActivity, uri, mimeTypeHint)
+            runCatching {
+                McpFileInbox.storeFromUri(this@McpFileReceiverActivity, uri, mimeTypeHint)
+            }.onFailure {
+                OmniLog.w(TAG, "Unable to import shared file type=${it.javaClass.simpleName}")
+            }.getOrNull()
         }
         if (records.isEmpty()) return 0
-        val fileNames = records.map { it.fileName }.distinct()
-
         return records.size
     }
 
@@ -299,11 +332,12 @@ class McpFileReceiverActivity : ComponentActivity() {
         return intent.getCharSequenceExtra(Intent.EXTRA_TEXT)
             ?.toString()
             ?.trim()
+            ?.take(MAX_SHARED_TEXT_CHARS)
             ?.ifEmpty { null }
     }
 
     private fun isImageUri(uri: Uri, mimeTypeHint: String?): Boolean {
-        val resolvedMimeType = contentResolver.getType(uri)
+        val resolvedMimeType = runCatching { contentResolver.getType(uri) }.getOrNull()
             ?: mimeTypeHint?.takeIf { !it.equals("*/*", ignoreCase = true) }
             ?: guessMimeTypeFromUri(uri)
         return resolvedMimeType?.startsWith("image/", ignoreCase = true) == true
@@ -316,5 +350,19 @@ class McpFileReceiverActivity : ComponentActivity() {
             ?.ifEmpty { null }
             ?: return null
         return MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension)
+    }
+}
+
+internal object McpFileReceiverIntentPolicy {
+    private val supportedActions = setOf(
+        Intent.ACTION_SEND,
+        Intent.ACTION_SEND_MULTIPLE,
+        Intent.ACTION_VIEW,
+    )
+
+    fun runIfSupported(action: String?, block: () -> Unit): Boolean {
+        if (action !in supportedActions) return false
+        block()
+        return true
     }
 }

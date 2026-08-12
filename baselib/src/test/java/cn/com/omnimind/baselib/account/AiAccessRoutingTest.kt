@@ -84,4 +84,41 @@ class AiAccessRoutingTest {
 
         assertEquals(byok, route)
     }
+
+    @Test
+    fun platformModeRejectsCleartextGatewayBeforeAttachingAccountToken() {
+        val access = AiRequestAccessResolver.resolve(
+            accountConfigured = true,
+            signedIn = true,
+            cachedMode = AiAccessMode.PLATFORM,
+            platformGatewayUrl = "http://gateway.example.com",
+            accessToken = "account-jwt",
+        )
+
+        assertTrue(!access.usesPlatform)
+        assertNull(access.bearerToken)
+        assertTrue(!access.unavailableReason.isNullOrBlank())
+    }
+
+    @Test
+    fun loopbackHttpIsAvailableOnlyWhenExplicitlyEnabledForDebug() {
+        val production = AiRequestAccessResolver.resolve(
+            accountConfigured = true,
+            signedIn = true,
+            cachedMode = AiAccessMode.PLATFORM,
+            platformGatewayUrl = "http://127.0.0.1:8080",
+            accessToken = "account-jwt",
+        )
+        val debug = AiRequestAccessResolver.resolve(
+            accountConfigured = true,
+            signedIn = true,
+            cachedMode = AiAccessMode.PLATFORM,
+            platformGatewayUrl = "http://127.0.0.1:8080",
+            accessToken = "account-jwt",
+            allowInsecureLoopback = true,
+        )
+
+        assertTrue(!production.usesPlatform)
+        assertTrue(debug.usesPlatform)
+    }
 }

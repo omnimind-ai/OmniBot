@@ -535,7 +535,7 @@ String _stripUtf8Bom(String s) {
 bool _looksLikeJson(String s) {
   // 典型 JSON 五种类型的起始：{ [ " 数字/负号 t/f/null
   final ch = s.codeUnitAt(0);
-  const lcT = 116, lcF = 102, lcN = 110, dash = 45;
+  const dash = 45;
   final isDigit = ch >= 48 && ch <= 57; // 0-9
   return ch == 123 /*{*/ ||
       ch == 91 /*[*/ ||

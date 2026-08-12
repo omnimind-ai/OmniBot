@@ -72,6 +72,9 @@ class AssistsCoreChannel {
                 "listRecentAiRequestLogs" -> {
                     assistsCoreManager!!.listRecentAiRequestLogs(call, result)
                 }
+                "clearAiRequestLogs" -> {
+                    assistsCoreManager!!.clearAiRequestLogs(call, result)
+                }
                 "listRuntimeLogs" -> {
                     assistsCoreManager!!.listRuntimeLogs(call, result)
                 }

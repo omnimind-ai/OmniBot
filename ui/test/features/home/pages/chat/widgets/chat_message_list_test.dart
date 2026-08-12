@@ -27,12 +27,12 @@ void main() {
 
     await tester.pump();
 
-    final animatedPadding = tester.widget<AnimatedPadding>(
-      find.byType(AnimatedPadding),
+    final emptyPadding = tester.widget<Padding>(
+      find.byKey(const ValueKey('chat-empty-bottom-overlay-padding')),
     );
 
-    expect(animatedPadding.padding, const EdgeInsets.only(bottom: 128));
-    expect(find.text('有什么可以帮助你的？'), findsOneWidget);
+    expect(emptyPadding.padding, const EdgeInsets.only(bottom: 128));
+    expect(find.text('你好👋，我是小万'), findsOneWidget);
   });
 
   testWidgets(

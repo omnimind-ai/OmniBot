@@ -11,7 +11,18 @@ import 'package:ui/services/special_permission.dart';
 class PermissionService {
   PermissionService._();
 
+  static bool isPermissionAvailable(String id) {
+    return switch (id) {
+      kInstalledAppsPermissionId =>
+        currentAppEditionCapabilitySnapshot.installedAppsQuery,
+      kPublicStoragePermissionId =>
+        currentAppEditionCapabilitySnapshot.publicStorageAccess,
+      _ => true,
+    };
+  }
+
   static _PermissionDisplaySpec? _specialDisplaySpec(String id) {
+    if (!isPermissionAvailable(id)) return null;
     return switch (id) {
       kWorkspaceStoragePermissionId => _PermissionDisplaySpec(
         id: kWorkspaceStoragePermissionId,
@@ -103,7 +114,6 @@ class PermissionService {
             final result = await spePermission.invokeMethod(spec.checkMethod);
             return result ?? false;
           } catch (e) {
-            print('检查权限 ${spec.id} 失败: $e');
             return false;
           }
         },
@@ -127,7 +137,6 @@ class PermissionService {
         // 优先使用自定义检查方法
         if (spec.customCheckMethod != null) {
           final granted = await spec.customCheckMethod!();
-          print('权限 ${spec.id} 授权状态(自定义检查): $granted');
           if (!granted) {
             missing.add(spec);
           }
@@ -135,12 +144,10 @@ class PermissionService {
         }
 
         final granted = await spePermission.invokeMethod(spec.checkMethod);
-        print('权限 ${spec.id} 授权状态: $granted');
         if (granted != true) {
           missing.add(spec);
         }
       } catch (e) {
-        print('检查权限 ${spec.id} 失败: $e');
         missing.add(spec);
       }
     }
@@ -269,6 +276,7 @@ class PermissionService {
     Iterable<String> ids,
   ) {
     return ids
+        .where(isPermissionAvailable)
         .map((id) {
           final special = _specialDisplaySpec(id);
           if (special != null) {
@@ -369,6 +377,7 @@ class _PermissionDisplaySpec {
 /// [brand] 设备品牌，如 'huawei', 'xiaomi', 'oppo', 'vivo' 等
 /// 如果 brand 为 null 或空字符串，则自动检测设备品牌
 Future<int> checkMissingPermissions(String? brand) async {
+  await refreshAppEditionCapabilitySnapshot();
   if (brand == null || brand.isEmpty) {
     final deviceInfo = await DeviceService.getDeviceInfo();
     brand = (deviceInfo?['brand'] as String?)?.toLowerCase() ?? 'other';

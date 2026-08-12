@@ -187,7 +187,9 @@ void main() {
       },
     );
 
-    expect(find.text('ctx:20k  in:10k  out:87  cache:10k'), findsOneWidget);
+    expect(find.text('ctx:20k'), findsOneWidget);
+    expect(find.text('10k'), findsNWidgets(2));
+    expect(find.text('87'), findsOneWidget);
     expect(find.byType(FilledButton), findsOneWidget);
 
     await tester.tap(find.byType(FilledButton));

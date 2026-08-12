@@ -6,32 +6,24 @@ import com.rk.terminal.ui.screens.settings.WorkingMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.Assume.assumeFalse
 import java.io.File
 import java.nio.file.Files
 
 class EnvironmentSetupLogicTest {
 
     @Test
-    fun buildInstallCommands_usesAlpinePackagesAndUvBootstrap() {
+    fun buildInstallCommands_uvFailsClosedWithoutAuditedWheelManifest() {
         val commands = EnvironmentSetupLogic.buildInstallCommands(
             selectedPackageIds = listOf("python", "pip", "uv", "nodejs", "ssh_client"),
             repositorySetupCommand = ""
         )
 
-        val apkAdd = commands.first { it.startsWith("apk add ") }
-        assertTrue(apkAdd.contains("python3"))
-        assertTrue(apkAdd.contains("py3-pip"))
-        assertTrue(apkAdd.contains("nodejs"))
-        assertTrue(apkAdd.contains("npm"))
-        assertTrue(apkAdd.contains("openssh-client-default"))
-
-        assertTrue(commands.contains("ln -sf /usr/bin/python3 /usr/local/bin/python || true"))
-        assertTrue(commands.contains("ln -sf /usr/bin/pip3 /usr/local/bin/pip || true"))
-        assertTrue(
-            commands.contains(
-                "if ! apk add --no-cache uv; then python3 -m pip install --break-system-packages --upgrade uv; fi"
-            )
+        assertEquals(
+            listOf("printf '%s\\n' 'AGENT_RUNTIME_UV_LOCK_REQUIRED' >&2; exit 74"),
+            commands
         )
+        assertTrue(commands.none { it.contains("pip install") })
     }
 
     @Test
@@ -46,7 +38,7 @@ class EnvironmentSetupLogicTest {
     }
 
     @Test
-    fun buildInstallCommands_usesUbuntuPackagesAndApt() {
+    fun buildInstallCommands_uvFailsClosedBeforeUbuntuMutation() {
         val commands = EnvironmentSetupLogic.buildInstallCommands(
             selectedPackageIds = listOf("python", "pip", "uv", "nodejs", "ssh_client", "xz"),
             repositorySetupCommand = UbuntuRepositoryManager.buildRepositorySetupCommand(
@@ -55,47 +47,25 @@ class EnvironmentSetupLogicTest {
             workingMode = WorkingMode.UBUNTU
         )
 
-        val ubuntuRepositorySetup = commands.first()
-        assertTrue(ubuntuRepositorySetup.contains("mirrors.tuna.tsinghua.edu.cn/ubuntu-ports"))
-        assertTrue(ubuntuRepositorySetup.contains("ports.ubuntu.com/ubuntu-ports"))
-        assertTrue(ubuntuRepositorySetup.contains("ubuntu.sources"))
-
-        val nodeRepositorySetup = commands.first { it.contains("deb.nodesource.com/node_22.x") }
-        assertTrue(nodeRepositorySetup.contains("nodesource-repo.gpg.key"))
-        assertTrue(nodeRepositorySetup.contains("Architectures: %s"))
-
-        val aptInstall = commands.last { it.startsWith("apt-get update") }
-        assertTrue(aptInstall.contains("python3"))
-        assertTrue(aptInstall.contains("python3-pip"))
-        assertTrue(aptInstall.contains("nodejs"))
-        assertTrue(!aptInstall.split(Regex("\\s+")).contains("npm"))
-        assertTrue(aptInstall.contains("openssh-client"))
-        assertTrue(aptInstall.contains("xz-utils"))
-        assertTrue(commands.contains("python3 -m pip install --break-system-packages --upgrade uv"))
+        assertEquals(
+            listOf("printf '%s\\n' 'AGENT_RUNTIME_UV_LOCK_REQUIRED' >&2; exit 74"),
+            commands
+        )
+        assertTrue(commands.none { it.contains("pip install") })
     }
 
     @Test
-    fun buildInstallCommands_codexInstallsOfficialCliAndRuntimeDependencies() {
+    fun buildInstallCommands_codexFailsClosedWithoutAuditedStandaloneCliLock() {
         val commands = EnvironmentSetupLogic.buildInstallCommands(
             selectedPackageIds = listOf("codex"),
             repositorySetupCommand = ""
         )
 
-        val apkAdd = commands.first { it.startsWith("apk add ") }
-        assertTrue(apkAdd.contains("nodejs"))
-        assertTrue(apkAdd.contains("npm"))
-        assertTrue(apkAdd.contains("git"))
-        assertTrue(commands.contains("npm config set prefix /root/.npm-global"))
-        assertTrue(
-            commands.contains(
-                "npm install -g --no-audit --no-fund @openai/codex@latest"
-            )
+        assertEquals(
+            listOf("printf '%s\\n' 'AGENT_RUNTIME_MANAGED_CLI_LOCK_REQUIRED' >&2; exit 73"),
+            commands
         )
-        assertTrue(
-            commands.contains(
-                "ln -sf /root/.npm-global/bin/codex /usr/local/bin/codex || true"
-            )
-        )
+        assertTrue(commands.none { it.contains("npm install") || it.contains("@latest") })
     }
 
     @Test
@@ -108,36 +78,17 @@ class EnvironmentSetupLogicTest {
     }
 
     @Test
-    fun buildInstallCommands_installsClaudeCodeAndOpenCodeInManagedNpmPath() {
+    fun buildInstallCommands_claudeAndOpenCodeFailClosedWithoutAuditedLock() {
         val commands = EnvironmentSetupLogic.buildInstallCommands(
             selectedPackageIds = listOf("claude_code", "opencode"),
             repositorySetupCommand = ""
         )
 
-        val apkAdd = commands.first { it.startsWith("apk add ") }
-        assertTrue(apkAdd.contains("nodejs"))
-        assertTrue(apkAdd.contains("npm"))
-        assertTrue(commands.count { it == "npm config set prefix /root/.npm-global" } == 1)
-        assertTrue(
-            commands.contains(
-                "npm install -g --no-audit --no-fund @anthropic-ai/claude-code@latest"
-            )
+        assertEquals(
+            listOf("printf '%s\\n' 'AGENT_RUNTIME_MANAGED_CLI_LOCK_REQUIRED' >&2; exit 73"),
+            commands
         )
-        assertTrue(
-            commands.contains(
-                "ln -sf /root/.npm-global/bin/claude /usr/local/bin/claude || true"
-            )
-        )
-        assertTrue(
-            commands.contains(
-                "npm install -g --no-audit --no-fund opencode-ai@latest"
-            )
-        )
-        assertTrue(
-            commands.contains(
-                "ln -sf /root/.npm-global/bin/opencode /usr/local/bin/opencode || true"
-            )
-        )
+        assertTrue(commands.none { it.contains("npm install") || it.contains("@latest") })
     }
 
     @Test
@@ -193,6 +144,10 @@ class EnvironmentSetupLogicTest {
 
     @Test
     fun buildSetupScript_isShellSafeForEveryPackageCombination() {
+        assumeFalse(
+            "POSIX shell syntax validation runs in Linux CI",
+            System.getProperty("os.name").orEmpty().startsWith("Windows")
+        )
         val packageIds = EnvironmentSetupLogic.packageDefinitions.map { it.id }
         val tempDir = Files.createTempDirectory("omni-setup-script-test").toFile()
 

@@ -71,7 +71,6 @@ class StorageService {
           : jsonEncode(value.toJson());
       return await setString(key, jsonString);
     } catch (e) {
-      print('StorageService: setJson 失败 - $e');
       return false;
     }
   }
@@ -92,7 +91,6 @@ class StorageService {
       }
       return decoded as T?;
     } catch (e) {
-      print('StorageService: getJson 失败 - $e');
       return null;
     }
   }

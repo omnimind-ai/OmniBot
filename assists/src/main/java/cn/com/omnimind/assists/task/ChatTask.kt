@@ -9,8 +9,12 @@ import cn.com.omnimind.assists.api.interfaces.TaskChangeListener
 import cn.com.omnimind.assists.controller.http.HttpController
 import cn.com.omnimind.assists.openclaw.OpenClawDeviceIdentity
 import cn.com.omnimind.assists.openclaw.OpenClawTokenStore
+import cn.com.omnimind.assists.openclaw.OpenClawConfigurationStore
 import cn.com.omnimind.baselib.http.Http429Exception
+import cn.com.omnimind.baselib.http.OkHttpManager
 import cn.com.omnimind.baselib.util.OmniLog
+import cn.com.omnimind.baselib.util.ContentEndpointSecurity
+import cn.com.omnimind.baselib.util.CredentialEndpointSecurity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -40,7 +44,6 @@ class ChatTask(override val taskChangeListener: TaskChangeListener,
                taskManager: TaskManager
 ) : Task(taskChangeListener, taskManager),
     FlowCollector<String> {
-    private val responseLogChunkSize = 3500
     // 仅使用单线程调度器并不足以保证顺序：
     // 每个 chunk 的处理过程会 suspend（例如切到 Main 派发给 Flutter），
     // 后续 chunk 可能在前一个恢复前继续执行，导致 UI 看到乱序文本。
@@ -54,13 +57,19 @@ class ChatTask(override val taskChangeListener: TaskChangeListener,
     private lateinit var taskID: String
     private lateinit var eventSource: EventSource
     private var isManualCancel = false // 标记是否为主动取消
+    @Volatile
     private var provider: String? = null
     private var openClawConfig: TaskParams.OpenClawConfig? = null
     private var modelOverride: TaskParams.ChatModelOverride? = null
     private var reasoningEffort: String? = null
+    @Volatile
     private var openClawFinished = false
     private var openClawLoggedFirstEvent = false
+    @Volatile
     private var openClawWebSocket: WebSocket? = null
+    @Volatile
+    private var identityResetStopRequested = false
+    private val openClawLifecycleLock = Any()
     private val openClawBuffers = mutableMapOf<String, String>()
     private val openClawAttachmentSent = mutableSetOf<String>()
     private var openClawHeartbeatJob: Job? = null
@@ -89,34 +98,67 @@ class ChatTask(override val taskChangeListener: TaskChangeListener,
         reasoningEffort: String? = null,
         promptCacheKey: String? = null
     ) {
-        super.start{
+        synchronized(openClawLifecycleLock) {
+            this.content = content
+            this.taskID = taskID
+            this.onMessagePushListener = onMessagePushListener
+            this.provider = provider?.trim()?.lowercase()
+            this.openClawConfig = openClawConfig
+            this.modelOverride = modelOverride
+            this.reasoningEffort = reasoningEffort?.trim()?.lowercase()
+            this.identityResetStopRequested = false
+        }
+        super.start taskBlock@{
             try {
-                this@ChatTask.content = content
-                this@ChatTask.taskID = taskID
-                this@ChatTask.onMessagePushListener = onMessagePushListener
-                this@ChatTask.provider = provider?.trim()?.lowercase()
-                this@ChatTask.openClawConfig = openClawConfig
-                this@ChatTask.modelOverride = modelOverride
-                this@ChatTask.reasoningEffort = reasoningEffort?.trim()?.lowercase()
-                this@ChatTask.openClawFinished = false
-                this@ChatTask.openClawLoggedFirstEvent = false
-                this@ChatTask.openClawWebSocket = null
-                this@ChatTask.openClawBuffers.clear()
-                this@ChatTask.openClawAttachmentSent.clear()
-                this@ChatTask.openClawHeartbeatJob?.cancel()
-                this@ChatTask.openClawHeartbeatJob = null
+                val mayStart = synchronized(openClawLifecycleLock) {
+                    if (identityResetStopRequested) {
+                        false
+                    } else {
+                        this@ChatTask.openClawFinished = false
+                        this@ChatTask.openClawLoggedFirstEvent = false
+                        this@ChatTask.openClawWebSocket = null
+                        this@ChatTask.openClawBuffers.clear()
+                        this@ChatTask.openClawAttachmentSent.clear()
+                        this@ChatTask.openClawHeartbeatJob?.cancel()
+                        this@ChatTask.openClawHeartbeatJob = null
+                        true
+                    }
+                }
+                if (!mayStart) {
+                    onTaskDestroy()
+                    return@taskBlock
+                }
                 OmniLog.i(tag, "start chat task=$taskID provider=${this@ChatTask.provider} messages=${content.size}")
                 if (this@ChatTask.provider == "openclaw" && openClawConfig != null) {
+                    if (!OpenClawConfigurationStore.isAuthorized(openClawConfig)) {
+                        onMessagePushListener.onChatMessage(
+                            taskID,
+                            "OpenClaw authorization required",
+                            "error",
+                        )
+                        onMessagePushListener.onChatMessageEnd(taskID)
+                        onTaskStop(TaskFinishType.ERROR, "OpenClaw authorization required")
+                        onTaskDestroy()
+                        taskManager.unregisterChatTask(taskID)
+                        return@taskBlock
+                    }
                     OmniLog.i(
                         tag,
-                        "openclaw enabled baseUrl=${openClawConfig.baseUrl.trim()} token=${!openClawConfig.token.isNullOrBlank()} sessionKey=${!openClawConfig.sessionKey.isNullOrBlank()} userId=${openClawConfig.userId?.trim()}"
+                        "openclaw enabled hasBaseUrl=${openClawConfig.baseUrl.isNotBlank()} token=${OpenClawTokenStore.hasAnyAuthToken()} sessionKey=${!openClawConfig.sessionKey.isNullOrBlank()} hasUser=${!openClawConfig.userId.isNullOrBlank()}"
                     )
-                    openClawWebSocket = startOpenClawGatewayChat(
+                    val createdWebSocket = startOpenClawGatewayChat(
                         taskID = taskID,
                         content = content,
                         openClawConfig = openClawConfig,
                         onMessagePushListener = onMessagePushListener
                     )
+                    synchronized(openClawLifecycleLock) {
+                        if (identityResetStopRequested) {
+                            createdWebSocket?.cancel()
+                        } else {
+                            openClawWebSocket = createdWebSocket
+                        }
+                    }
                 } else {
                     eventSource = HttpController.postLLMStreamRequestWithContextAsFlow(
                         model = "scene.dispatch.model",
@@ -162,7 +204,7 @@ class ChatTask(override val taskChangeListener: TaskChangeListener,
                                             errorType
                                         )
                                         onMessagePushListener.onChatMessageEnd(taskID)
-                                        onTaskStop(TaskFinishType.ERROR, t?.message ?: "Unknown error")
+                                        onTaskStop(TaskFinishType.ERROR, "AI transport request failed")
                                     }
                                     onTaskDestroy()
                                     taskManager.unregisterChatTask(taskID)
@@ -181,28 +223,31 @@ class ChatTask(override val taskChangeListener: TaskChangeListener,
                 }
             } catch (e: Http429Exception){
                 launchOrderedStreamDispatch {
-                    OmniLog.e(tag, "openclaw rate limited task=$taskID msg=${e.message}")
+                    OmniLog.e(tag, "openclaw rate limited task=$taskID type=${e.javaClass.simpleName}")
                     val errorType = "rate_limited"
                     onMessagePushListener.onChatMessage(
                         taskID,
-                        org.json.JSONObject().put("message", e.message ?: "Rate limited").put("statusCode", 429).toString(),
+                        org.json.JSONObject().put("message", "Rate limited").put("statusCode", 429).toString(),
                         errorType
                     )
                     onMessagePushListener.onChatMessageEnd(taskID)
-                    onTaskStop(TaskFinishType.ERROR, e.message ?: "Unknown error")
+                    onTaskStop(TaskFinishType.ERROR, "Rate limited")
                     onTaskDestroy()
                     taskManager.unregisterChatTask(taskID)
                 }
             } catch (e: Exception) {
                 launchOrderedStreamDispatch {
-                    OmniLog.e(tag, "openclaw exception task=$taskID msg=${e.message}")
+                    OmniLog.e(tag, "openclaw exception task=$taskID type=${e.javaClass.simpleName}")
                     onMessagePushListener.onChatMessage(
                         taskID,
-                        org.json.JSONObject().put("message", e.message ?: "Unknown error").put("exception", e.javaClass.simpleName).toString(),
+                        org.json.JSONObject()
+                            .put("message", "AI request failed")
+                            .put("exception", e.javaClass.simpleName)
+                            .toString(),
                         "error"
                     )
                     onMessagePushListener.onChatMessageEnd(taskID)
-                    onTaskStop(TaskFinishType.ERROR, e.message ?: "Unknown error")
+                    onTaskStop(TaskFinishType.ERROR, "AI request failed")
                     onTaskDestroy()
                     taskManager.unregisterChatTask(taskID)
                 }
@@ -235,7 +280,7 @@ class ChatTask(override val taskChangeListener: TaskChangeListener,
                 onMessagePushListener.onChatMessage(taskID, payload, null)
             }
         } catch (e: Exception) {
-            OmniLog.e(tag, "openclaw parse error task=$taskID msg=${e.message}")
+            OmniLog.e(tag, "openclaw parse error task=$taskID type=${e.javaClass.simpleName}")
             return
         }
     }
@@ -245,9 +290,11 @@ class ChatTask(override val taskChangeListener: TaskChangeListener,
         response: okhttp3.Response?
     ): String {
         return try {
-            val message = t?.message
-                ?: response?.message
-                ?: "Unknown error"
+            val message = if (response?.code == 429) {
+                "Request rate limited"
+            } else {
+                "AI transport request failed"
+            }
             val exception = t?.javaClass?.simpleName
             val code = response?.code
 
@@ -257,7 +304,7 @@ class ChatTask(override val taskChangeListener: TaskChangeListener,
                 if (code != null) put("statusCode", code)
             }.toString()
         } catch (e: Exception) {
-            t?.message ?: response?.message ?: "Unknown error"
+            "AI transport request failed"
         }
     }
 
@@ -280,6 +327,44 @@ class ChatTask(override val taskChangeListener: TaskChangeListener,
         taskScope.cancel()
     }
 
+    fun isOpenClawTask(): Boolean = provider == "openclaw"
+
+    /**
+     * Immediately severs an OpenClaw socket before device identity material can be replaced.
+     * The reset coordinator removes this task only when this method can verify the local handle is
+     * canceled and no later-created socket can be installed.
+     */
+    fun stopOpenClawSessionForIdentityReset(): Boolean {
+        if (!isOpenClawTask()) return true
+        val socket = synchronized(openClawLifecycleLock) {
+            identityResetStopRequested = true
+            isManualCancel = true
+            openClawFinished = true
+            openClawHeartbeatJob?.cancel()
+            openClawHeartbeatJob = null
+            openClawWebSocket.also { openClawWebSocket = null }
+        }
+        val socketCanceled = try {
+            socket?.cancel()
+            true
+        } catch (_: Exception) {
+            false
+        }
+        taskScope.cancel()
+        controllerScope.cancel()
+        isRunning = false
+        cancelScope.launch {
+            try {
+                onMessagePushListener?.onChatMessageEnd(taskID)
+            } catch (_: Exception) {
+                // The native authorization state remains disabled even if UI notification fails.
+            }
+        }
+        return socketCanceled && synchronized(openClawLifecycleLock) {
+            identityResetStopRequested && openClawWebSocket == null && openClawFinished
+        }
+    }
+
     /**
      * 启动 OpenClaw Gateway WebSocket 聊天连接
      *
@@ -298,12 +383,30 @@ class ChatTask(override val taskChangeListener: TaskChangeListener,
         openClawConfig: TaskParams.OpenClawConfig,
         onMessagePushListener: OnMessagePushListener,
     ): WebSocket? {
+        if (!OpenClawConfigurationStore.isAuthorized(openClawConfig)) {
+            rejectStaleOpenClawTask(taskID, onMessagePushListener)
+            return null
+        }
         val wsUrl = buildOpenClawGatewayWsUrl(openClawConfig.baseUrl)
         if (wsUrl.isBlank()) {
             launchOrderedStreamDispatch {
                 onMessagePushListener.onChatMessage(taskID, "", "error")
                 onMessagePushListener.onChatMessageEnd(taskID)
                 onTaskStop(TaskFinishType.ERROR, "OpenClaw ws url invalid")
+                onTaskDestroy()
+            }
+            return null
+        }
+        try {
+            ContentEndpointSecurity.requireSafe(
+                rawUrl = wsUrl,
+                allowInsecureLoopback = CredentialEndpointSecurity.isDebugLoopbackAllowed(),
+            )
+        } catch (_: Exception) {
+            launchOrderedStreamDispatch {
+                onMessagePushListener.onChatMessage(taskID, "", "error")
+                onMessagePushListener.onChatMessageEnd(taskID)
+                onTaskStop(TaskFinishType.ERROR, "OpenClaw requires secure transport")
                 onTaskDestroy()
             }
             return null
@@ -326,18 +429,29 @@ class ChatTask(override val taskChangeListener: TaskChangeListener,
         val sessionKey = openClawConfig.sessionKey?.trim().takeIf { !it.isNullOrEmpty() } ?: "main"
 
         val client = OkHttpClient.Builder()
+            .followRedirects(false)
+            .followSslRedirects(false)
             .pingInterval(20, TimeUnit.SECONDS)
             .build()
         val request = Request.Builder().url(wsUrl).build()
-        OmniLog.i(tag, "openclaw ws connect url=$wsUrl sessionKey=$sessionKey")
+        OmniLog.i(tag, "openclaw ws connect requested hasUrl=${wsUrl.isNotBlank()} hasSession=${sessionKey.isNotBlank()}")
 
-        return client.newWebSocket(request, object : WebSocketListener() {
+        return OpenClawConfigurationStore.withAuthorization(openClawConfig) {
+            OkHttpManager.sensitiveContentWebSocket(
+                client = client,
+                request = request,
+                listener = object : WebSocketListener() {
             private var challengeReceived = false
             private var connectRequested = false
             private var handshakeTimeoutJob: Job? = null
 
             // 不在 onOpen 中直接发送 connect，必须等待 challenge
             override fun onOpen(webSocket: WebSocket, response: Response) {
+                if (!OpenClawConfigurationStore.isAuthorized(openClawConfig)) {
+                    webSocket.cancel()
+                    rejectStaleOpenClawTask(taskID, onMessagePushListener)
+                    return
+                }
                 OmniLog.i(tag, "openclaw ws opened, waiting for connect.challenge...")
                 handshakeTimeoutJob = controllerScope.launch {
                     delay(openClawHandshakeTimeoutMs)
@@ -370,6 +484,11 @@ class ChatTask(override val taskChangeListener: TaskChangeListener,
                                 val event = frame.optString("event")
                                 when (event) {
                                     "connect.challenge" -> {
+                                        if (!OpenClawConfigurationStore.isAuthorized(openClawConfig)) {
+                                            webSocket.cancel()
+                                            rejectStaleOpenClawTask(taskID, onMessagePushListener)
+                                            return@dispatch
+                                        }
                                         challengeReceived = true
                                         handshakeTimeoutJob?.cancel()
                                         if (connectRequested) {
@@ -378,7 +497,8 @@ class ChatTask(override val taskChangeListener: TaskChangeListener,
                                         }
                                         connectRequested = true
                                         handleConnectChallenge(
-                                            webSocket, frame, connectId, openClawConfig
+                                            webSocket, frame, connectId, openClawConfig,
+                                            onMessagePushListener,
                                         )
                                     }
                                     "chat" -> handleChatEvent(
@@ -394,16 +514,14 @@ class ChatTask(override val taskChangeListener: TaskChangeListener,
                                 if (id == connectId) {
                                         handleConnectResponse(
                                             webSocket, frame, ok, taskID, sendId,
-                                            sessionKey, userMessage, userAttachments, onMessagePushListener
+                                            sessionKey, userMessage, userAttachments,
+                                            openClawConfig, onMessagePushListener
                                         )
                                     } else if (id == sendId && !ok) {
                                     openClawHeartbeatJob?.cancel()
                                     webSocket.close(1000, "send failed")
                                     OmniLog.e(tag, "openclaw ws send failed task=$taskID")
-                                    val errText = extractOpenClawErrorText(
-                                        frame,
-                                        fallback = "OpenClaw send failed",
-                                    )
+                                    val errText = "OpenClaw send failed"
                                     onMessagePushListener.onChatMessage(taskID, errText, "error")
                                     onMessagePushListener.onChatMessageEnd(taskID)
                                     onTaskStop(TaskFinishType.ERROR, "OpenClaw send failed")
@@ -412,7 +530,7 @@ class ChatTask(override val taskChangeListener: TaskChangeListener,
                             }
                         }
                     } catch (e: Exception) {
-                        OmniLog.e(tag, "openclaw ws parse error task=$taskID msg=${e.message}")
+                        OmniLog.e(tag, "openclaw ws parse error task=$taskID type=${e.javaClass.simpleName}")
                     }
                 }
             }
@@ -424,15 +542,14 @@ class ChatTask(override val taskChangeListener: TaskChangeListener,
                     openClawHeartbeatJob?.cancel()
                     if (openClawFinished) return@dispatch
                     logOpenClawBuffers("openclaw task=$taskID (partial)")
-                    OmniLog.e(tag, "openclaw ws failure task=$taskID msg=${t.message}")
+                    OmniLog.e(tag, "openclaw ws failure task=$taskID type=${t.javaClass.simpleName}")
                     if (isManualCancel) {
                         onMessagePushListener.onChatMessageEnd(taskID)
                         onTaskStop(TaskFinishType.FINISH, "")
                     } else {
-                        val errText = t.message?.trim().orEmpty().ifBlank { "OpenClaw failure" }
-                        onMessagePushListener.onChatMessage(taskID, errText, "error")
+                        onMessagePushListener.onChatMessage(taskID, "OpenClaw transport failed", "error")
                         onMessagePushListener.onChatMessageEnd(taskID)
-                        onTaskStop(TaskFinishType.ERROR, t.message ?: "Unknown error")
+                        onTaskStop(TaskFinishType.ERROR, "OpenClaw transport failed")
                     }
                     onTaskDestroy()
                 }
@@ -443,7 +560,7 @@ class ChatTask(override val taskChangeListener: TaskChangeListener,
                     handshakeTimeoutJob?.cancel()
                     openClawHeartbeatJob?.cancel()
                     logOpenClawBuffers("openclaw task=$taskID (closed)")
-                    OmniLog.i(tag, "openclaw ws closed task=$taskID code=$code reason=$reason")
+                    OmniLog.i(tag, "openclaw ws closed task=$taskID code=$code hasReason=${reason.isNotBlank()}")
                     openClawBuffers.remove(taskID)
                     if (!openClawFinished) {
                         openClawFinished = true
@@ -451,7 +568,7 @@ class ChatTask(override val taskChangeListener: TaskChangeListener,
                             onMessagePushListener.onChatMessageEnd(taskID)
                             onTaskStop(TaskFinishType.FINISH, "")
                         } else {
-                            val errText = "OpenClaw closed (code=$code, reason=$reason)"
+                            val errText = "OpenClaw closed (code=$code)"
                             onMessagePushListener.onChatMessage(taskID, errText, "error")
                             onMessagePushListener.onChatMessageEnd(taskID)
                             onTaskStop(TaskFinishType.ERROR, "OpenClaw closed")
@@ -462,7 +579,10 @@ class ChatTask(override val taskChangeListener: TaskChangeListener,
                     return@dispatch
                 }
             }
-        })
+                },
+                allowInsecureLoopback = CredentialEndpointSecurity.isDebugLoopbackAllowed(),
+            )
+        }
     }
 
     /**
@@ -473,7 +593,12 @@ class ChatTask(override val taskChangeListener: TaskChangeListener,
         frame: org.json.JSONObject,
         connectId: String,
         openClawConfig: TaskParams.OpenClawConfig,
+        onMessagePushListener: OnMessagePushListener,
     ) {
+        if (!OpenClawConfigurationStore.isAuthorized(openClawConfig)) {
+            webSocket.cancel()
+            return
+        }
         val payload = frame.optJSONObject("payload")
         val nonce = payload?.optString("nonce").orEmpty()
         if (nonce.isBlank()) {
@@ -495,32 +620,40 @@ class ChatTask(override val taskChangeListener: TaskChangeListener,
             .distinct()
             .sorted()
 
-        // 设备身份信息（Ed25519 密钥对持久化，同一安装内稳定复用）
-        val deviceId = OpenClawDeviceIdentity.getFingerprint()
-        val publicKey = OpenClawDeviceIdentity.getPublicKeyBase64Url()
-
-        // 认证 token（优先 deviceToken，若不存在则使用 gateway token）
-        val authToken = OpenClawTokenStore.getAuthToken(openClawConfig.token)
-
         OmniLog.d(tag, "openclaw signedAt=$signedAt (${signedAt.toString().length} digits)")
         OmniLog.d(tag, "openclaw scopesNorm=${scopesNorm.joinToString(",")}")
+        val identity = OpenClawConfigurationStore.withAuthorization(openClawConfig) {
+            val deviceId = OpenClawDeviceIdentity.getFingerprint()
+            val publicKey = OpenClawDeviceIdentity.getPublicKeyBase64Url()
+            val authToken = OpenClawTokenStore.getAuthToken()
+            val signature = if (nonce.isNotBlank()) {
+                OpenClawDeviceIdentity.signChallenge(
+                    nonce = nonce,
+                    signedAt = signedAt,
+                    deviceId = deviceId,
+                    clientId = clientId,
+                    clientMode = clientMode,
+                    role = role,
+                    scopes = scopesNorm,
+                    token = authToken,
+                    platform = clientPlatform,
+                    deviceFamily = "mobile",
+                )
+            } else ""
+            OpenClawHandshakeIdentity(deviceId, publicKey, authToken, signature)
+        } ?: run {
+            webSocket.cancel()
+            return
+        }
+        val deviceId = identity.deviceId
+        val publicKey = identity.publicKey
+        val authToken = identity.authToken
+        val signature = identity.signature
 
-        val signature = if (nonce.isNotBlank()) {
-            OpenClawDeviceIdentity.signChallenge(
-                nonce = nonce,
-                signedAt = signedAt,
-                deviceId = deviceId,
-                clientId = clientId,
-                clientMode = clientMode,
-                role = role,
-                scopes = scopesNorm,
-                token = authToken,
-                platform = clientPlatform,
-                deviceFamily = "mobile",
-            )
-        } else ""
-
-        OmniLog.i(tag, "openclaw challenge received nonce=${nonce.take(16)}... deviceId=${deviceId.take(16)}...")
+        OmniLog.i(
+            tag,
+            "openclaw challenge received hasNonce=${nonce.isNotBlank()} hasDeviceId=${deviceId.isNotBlank()}",
+        )
 
         // 构建 connect 请求参数
         val connectParams = org.json.JSONObject()
@@ -573,8 +706,15 @@ class ChatTask(override val taskChangeListener: TaskChangeListener,
         connectFrame.put("method", "connect")
         connectFrame.put("params", connectParams)
 
-        val sent = webSocket.send(connectFrame.toString())
-        OmniLog.i(tag, "openclaw connect request sent=$sent deviceId=${deviceId.take(16)}... hasToken=${authToken.isNotEmpty()}")
+        val sent = OpenClawConfigurationStore.withAuthorization(openClawConfig) {
+            webSocket.send(connectFrame.toString())
+        } ?: false
+        if (!sent) {
+            webSocket.cancel()
+            rejectStaleOpenClawTask(taskID, onMessagePushListener)
+            return
+        }
+        OmniLog.i(tag, "openclaw connect request sent=$sent hasDeviceId=${deviceId.isNotBlank()} hasToken=${authToken.isNotEmpty()}")
     }
 
     /**
@@ -589,13 +729,19 @@ class ChatTask(override val taskChangeListener: TaskChangeListener,
         sessionKey: String,
         userMessage: String,
         userAttachments: org.json.JSONArray,
+        openClawConfig: TaskParams.OpenClawConfig,
         onMessagePushListener: OnMessagePushListener,
     ) {
+        if (!OpenClawConfigurationStore.isAuthorized(openClawConfig)) {
+            webSocket.cancel()
+            rejectStaleOpenClawTask(taskID, onMessagePushListener)
+            return
+        }
         if (!ok) {
             openClawHeartbeatJob?.cancel()
             webSocket.close(1000, "connect failed")
             OmniLog.e(tag, "openclaw ws connect failed task=$taskID")
-            val errText = extractOpenClawErrorText(frame, fallback = "OpenClaw connect failed")
+            val errText = "OpenClaw connect failed"
             onMessagePushListener.onChatMessage(taskID, errText, "error")
             onMessagePushListener.onChatMessageEnd(taskID)
             onTaskStop(TaskFinishType.ERROR, "OpenClaw connect failed")
@@ -611,22 +757,30 @@ class ChatTask(override val taskChangeListener: TaskChangeListener,
         // 持久化 deviceToken（如果 Gateway 颁发了）
         val auth = payload?.optJSONObject("auth")
         val deviceToken = auth?.optString("deviceToken").orEmpty()
-        if (deviceToken.isNotBlank()) {
-            OpenClawTokenStore.saveDeviceToken(deviceToken)
-            OmniLog.i(tag, "openclaw saved new deviceToken")
-        }
         val role = auth?.optString("role")
         val scopesArray = auth?.optJSONArray("scopes")
         val scopesList = if (scopesArray != null) {
             (0 until scopesArray.length()).map { scopesArray.optString(it) }
         } else emptyList()
-        OpenClawTokenStore.saveAuthInfo(role, scopesList)
+        val pairingSaved = OpenClawConfigurationStore.withAuthorization(openClawConfig) {
+            if (deviceToken.isNotBlank()) {
+                OpenClawTokenStore.saveDeviceToken(deviceToken)
+                OmniLog.i(tag, "openclaw saved new deviceToken")
+            }
+            OpenClawTokenStore.saveAuthInfo(role, scopesList)
+            true
+        } ?: false
+        if (!pairingSaved) {
+            webSocket.cancel()
+            rejectStaleOpenClawTask(taskID, onMessagePushListener)
+            return
+        }
 
         // 启动心跳（基于 Gateway 返回的 tickIntervalMs）
         val policy = payload?.optJSONObject("policy")
         val tickIntervalMs = policy?.optLong("tickIntervalMs", 15000L) ?: 15000L
         val safeIntervalMs = tickIntervalMs.coerceAtLeast(openClawMinHeartbeatIntervalMs)
-        startHeartbeat(webSocket, safeIntervalMs)
+        startHeartbeat(webSocket, safeIntervalMs, openClawConfig)
 
         // 握手完成，现在发送 chat.send 请求
         val sendParams = org.json.JSONObject()
@@ -644,8 +798,20 @@ class ChatTask(override val taskChangeListener: TaskChangeListener,
         sendFrame.put("method", "chat.send")
         sendFrame.put("params", sendParams)
 
-        val sent = webSocket.send(sendFrame.toString())
-        OmniLog.i(tag, "openclaw chat.send request sent=$sent task=$taskID sessionKey=$sessionKey")
+        if (!OpenClawConfigurationStore.isAuthorized(openClawConfig)) {
+            webSocket.cancel()
+            rejectStaleOpenClawTask(taskID, onMessagePushListener)
+            return
+        }
+        val sent = OpenClawConfigurationStore.withAuthorization(openClawConfig) {
+            webSocket.send(sendFrame.toString())
+        } ?: false
+        if (!sent) {
+            webSocket.cancel()
+            rejectStaleOpenClawTask(taskID, onMessagePushListener)
+            return
+        }
+        OmniLog.i(tag, "openclaw chat.send request sent=$sent task=$taskID hasSession=${sessionKey.isNotBlank()}")
     }
 
     /**
@@ -733,7 +899,7 @@ class ChatTask(override val taskChangeListener: TaskChangeListener,
             onTaskStop(TaskFinishType.FINISH, "")
             onTaskDestroy()
         } else if (state == "error" || state == "aborted") {
-            val errText = extractOpenClawErrorText(payload, fallback = "OpenClaw error")
+            val errText = "OpenClaw request failed"
             logResponseBody(
                 "openclaw task=$taskID run=$runId (partial)",
                 openClawBuffers[runId].orEmpty().ifBlank { nextText }
@@ -754,21 +920,35 @@ class ChatTask(override val taskChangeListener: TaskChangeListener,
     /**
      * 启动应用层心跳，按照 Gateway 返回的 tickIntervalMs 发送 tick
      */
-    private fun startHeartbeat(webSocket: WebSocket, intervalMs: Long) {
+    private fun startHeartbeat(
+        webSocket: WebSocket,
+        intervalMs: Long,
+        openClawConfig: TaskParams.OpenClawConfig,
+    ) {
         openClawHeartbeatJob?.cancel()
         val effectiveIntervalMs = intervalMs.coerceAtLeast(openClawMinHeartbeatIntervalMs)
         openClawHeartbeatJob = controllerScope.launch {
             while (isActive) {
                 delay(effectiveIntervalMs)
                 try {
+                    if (!OpenClawConfigurationStore.isAuthorized(openClawConfig)) {
+                        webSocket.cancel()
+                        break
+                    }
                     val tickFrame = org.json.JSONObject()
                     tickFrame.put("type", "req")
                     tickFrame.put("id", "tick-${System.currentTimeMillis()}")
                     tickFrame.put("method", "tick")
                     tickFrame.put("params", org.json.JSONObject())
-                    webSocket.send(tickFrame.toString())
+                    val sent = OpenClawConfigurationStore.withAuthorization(openClawConfig) {
+                        webSocket.send(tickFrame.toString())
+                    } ?: false
+                    if (!sent) break
                 } catch (e: Exception) {
-                    OmniLog.e(tag, "openclaw heartbeat send failed: ${e.message}")
+                    OmniLog.e(
+                        tag,
+                        "openclaw heartbeat send failed type=${e.javaClass.simpleName}",
+                    )
                     break
                 }
             }
@@ -1098,22 +1278,6 @@ class ChatTask(override val taskChangeListener: TaskChangeListener,
         }
     }
 
-    private fun extractOpenClawErrorText(
-        source: org.json.JSONObject,
-        fallback: String,
-    ): String {
-        val obj = source.optJSONObject("error")
-        val objText = obj?.toString()?.trim().orEmpty()
-        if (objText.isNotBlank()) return objText
-        val message = source.optString("errorMessage").trim()
-        if (message.isNotBlank()) return message
-        val error = source.optString("error").trim()
-        if (error.isNotBlank()) return error
-        val msg = source.optString("message").trim()
-        if (msg.isNotBlank()) return msg
-        return fallback
-    }
-
     private fun appendOpenClawDelta(runId: String, delta: String) {
         if (delta.isBlank()) return
         val previous = openClawBuffers[runId].orEmpty()
@@ -1141,13 +1305,31 @@ class ChatTask(override val taskChangeListener: TaskChangeListener,
     }
 
     private fun logResponseBody(label: String, body: String?) {
-        val normalized = body?.trim()?.takeIf { it.isNotEmpty() } ?: return
-        val chunks = normalized.chunked(responseLogChunkSize)
-        chunks.forEachIndexed { index, chunk ->
-            val suffix = if (chunks.size == 1) "" else " (${index + 1}/${chunks.size})"
-            OmniLog.i(tag, "$label Response Body$suffix: $chunk")
+        val bodyBytes = body?.toByteArray(Charsets.UTF_8)?.size ?: 0
+        OmniLog.i(tag, "$label responseBodyBytes=$bodyBytes")
+    }
+
+    private fun rejectStaleOpenClawTask(
+        taskID: String,
+        listener: OnMessagePushListener,
+    ) {
+        if (openClawFinished) return
+        openClawFinished = true
+        launchOrderedStreamDispatch {
+            listener.onChatMessage(taskID, "OpenClaw authorization required", "error")
+            listener.onChatMessageEnd(taskID)
+            onTaskStop(TaskFinishType.ERROR, "OpenClaw authorization required")
+            onTaskDestroy()
+            taskManager.unregisterChatTask(taskID)
         }
     }
+
+    private data class OpenClawHandshakeIdentity(
+        val deviceId: String,
+        val publicKey: String,
+        val authToken: String,
+        val signature: String,
+    )
 
 
     override suspend fun emit(value: String) {

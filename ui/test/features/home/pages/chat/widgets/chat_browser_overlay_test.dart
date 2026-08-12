@@ -52,7 +52,8 @@ void main() {
                 requestId: 'permission-1',
                 kind: 'geolocation',
                 origin: 'https://example.com',
-                resources: <String>['android.permission.ACCESS_FINE_LOCATION'],
+                recipient: 'example.com',
+                capabilities: <String>['location'],
               ),
               userscriptSummary: BrowserUserscriptSummary(
                 pendingInstall: BrowserUserscriptInstallPreview(
@@ -79,10 +80,75 @@ void main() {
     expect(find.text('example.com'), findsOneWidget);
     expect(find.text('检测到验证码或风控验证，已暂停自动操作，请手动处理后继续'), findsOneWidget);
     expect(find.text('是否打开外部链接？'), findsOneWidget);
-    expect(find.text('页面请求权限'), findsOneWidget);
     expect(find.text('页面输入'), findsOneWidget);
     expect(find.text('当前平台暂不支持浏览器工具视图'), findsOneWidget);
+    expect(find.text('网站请求敏感权限'), findsOneWidget);
+    expect(find.text('接收方：example.com'), findsOneWidget);
+    expect(find.text('用途：允许该网站使用位置。'), findsOneWidget);
+    expect(
+      find.text(
+        '数据由该网站处理，不是 OmniBot AI。授权仅对本次请求有效，不会保存为“始终允许”。',
+      ),
+      findsOneWidget,
+    );
+    expect(find.textContaining('android.permission'), findsNothing);
+    expect(find.text('仅此次允许'), findsOneWidget);
     expect(find.byIcon(Icons.star_rounded), findsOneWidget);
     expect(find.byIcon(Icons.arrow_back_ios_new_rounded), findsOneWidget);
   });
+
+  testWidgets(
+    'renders an English per-request website disclosure without raw permissions',
+    (tester) async {
+      LegacyTextLocalizer.setResolvedLocale(const Locale('en'));
+
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: const Locale('en'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: ChatBrowserOverlay(
+              snapshot: const ChatBrowserSessionSnapshot(
+                available: true,
+                workspaceId: 'conversation_2',
+                activeTabId: 4,
+                currentUrl: 'https://media.example',
+                title: 'Media example',
+                permissionPrompt: BrowserPermissionPrompt(
+                  requestId: 'permission-2',
+                  kind: 'web',
+                  origin: 'https://media.example',
+                  recipient: 'media.example',
+                  capabilities: <String>['camera', 'microphone'],
+                ),
+              ),
+              onSnapshotChanged: (_) {},
+              onClose: () {},
+              onDragDelta: (_) {},
+              onResizeLeftDelta: (_) {},
+              onResizeRightDelta: (_) {},
+            ),
+          ),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      expect(find.text('Website requests sensitive access'), findsOneWidget);
+      expect(find.text('Recipient: media.example'), findsOneWidget);
+      expect(
+        find.text('Purpose: let this website use camera, microphone.'),
+        findsOneWidget,
+      );
+      expect(
+        find.text(
+          'The website processes this data, not OmniBot AI. Access applies only to this request and is never saved as “always allow”.',
+        ),
+        findsOneWidget,
+      );
+      expect(find.textContaining('android.webkit.resource'), findsNothing);
+      expect(find.text('Allow once'), findsOneWidget);
+    },
+  );
 }

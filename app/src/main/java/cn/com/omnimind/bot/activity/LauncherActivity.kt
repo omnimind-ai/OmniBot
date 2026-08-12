@@ -5,7 +5,12 @@ import android.content.pm.ActivityInfo
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import cn.com.omnimind.baselib.util.OmniLog
+import cn.com.omnimind.bot.App
+import cn.com.omnimind.bot.R
 import cn.com.omnimind.bot.quicklog.QuickLogWidgetActionRouter
+import cn.com.omnimind.bot.update.PrivacyConsentDecision
+import cn.com.omnimind.bot.update.PrivacyConsentPolicy
+import cn.com.omnimind.bot.update.PrivacyConsentStore
 import cn.com.omnimind.bot.util.PredictiveBackGate
 
 /**
@@ -25,11 +30,39 @@ class LauncherActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         PredictiveBackGate.install(this)
         OmniLog.d(TAG, "LauncherActivity onCreate")
+        if (PrivacyConsentPolicy.shouldPrompt(PrivacyConsentStore.getDecision(this))) {
+            showPrivacyConsentDialog()
+            return
+        }
+        continueLaunch()
+    }
+
+    private fun continueLaunch() {
         if (QuickLogWidgetActionRouter.consumeInto(this, intent)) {
             finish()
             return
         }
         showLoadingAndStartMain()
+    }
+
+    private fun showPrivacyConsentDialog() {
+        android.app.AlertDialog.Builder(this)
+            .setTitle(R.string.privacy_consent_title)
+            .setMessage(R.string.privacy_consent_message)
+            .setPositiveButton(R.string.privacy_consent_allow) { _, _ ->
+                recordPrivacyDecisionAndContinue(PrivacyConsentDecision.GRANTED)
+            }
+            .setNegativeButton(R.string.privacy_consent_decline) { _, _ ->
+                recordPrivacyDecisionAndContinue(PrivacyConsentDecision.DECLINED)
+            }
+            .setCancelable(false)
+            .show()
+    }
+
+    private fun recordPrivacyDecisionAndContinue(decision: PrivacyConsentDecision) {
+        PrivacyConsentStore.recordDecision(this, decision)
+        (application as? App)?.initSDKsAfterPrivacyConsent()
+        continueLaunch()
     }
 
     private fun applyResponsiveOrientation() {

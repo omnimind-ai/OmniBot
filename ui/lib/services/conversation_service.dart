@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ui/models/conversation_model.dart';
@@ -55,11 +54,9 @@ class ConversationService {
         return conversations;
       }
       return conversations.where((item) => !item.isArchived).toList();
-    } on PlatformException catch (e) {
-      debugPrint('[ConversationService] 获取对话列表失败: ${e.message}');
+    } on PlatformException catch (_) {
       return [];
-    } catch (e) {
-      debugPrint('[ConversationService] 获取对话列表异常: $e');
+    } catch (_) {
       return [];
     }
   }
@@ -105,11 +102,9 @@ class ConversationService {
       if (result is int) return result;
       if (result is String) return int.tryParse(result);
       return null;
-    } on PlatformException catch (e) {
-      debugPrint('创建对话失败: ${e.message}');
+    } on PlatformException catch (_) {
       return null;
-    } catch (e) {
-      debugPrint('创建对话失败: $e');
+    } catch (_) {
       return null;
     }
   }
@@ -127,11 +122,9 @@ class ConversationService {
         {'conversation': payload.toJson()},
       );
       return result == 'SUCCESS';
-    } on PlatformException catch (e) {
-      debugPrint('更新对话失败: ${e.message}');
+    } on PlatformException catch (_) {
       return false;
-    } catch (e) {
-      debugPrint('更新对话失败: $e');
+    } catch (_) {
       return false;
     }
   }
@@ -183,11 +176,9 @@ class ConversationService {
             'promptTokenThreshold': promptTokenThreshold,
           });
       return result == 'SUCCESS';
-    } on PlatformException catch (e) {
-      debugPrint('更新对话压缩阈值失败: ${e.message}');
+    } on PlatformException catch (_) {
       return false;
-    } catch (e) {
-      debugPrint('更新对话压缩阈值失败: $e');
+    } catch (_) {
       return false;
     }
   }
@@ -248,11 +239,9 @@ class ConversationService {
         await ConversationHistoryService.getLastVisibleThreadTarget(),
       );
       return true;
-    } on PlatformException catch (e) {
-      debugPrint('删除对话失败: ${e.message}');
+    } on PlatformException catch (_) {
       return false;
-    } catch (e) {
-      debugPrint('删除对话失败: $e');
+    } catch (_) {
       return false;
     }
   }
@@ -314,9 +303,7 @@ class ConversationService {
         );
       }
       return true;
-    } catch (e) {
-      final action = archived ? '归档' : '恢复';
-      debugPrint('Agent session $action 同步失败，继续使用本地历史状态: $e');
+    } catch (_) {
       return false;
     }
   }
@@ -362,8 +349,7 @@ class ConversationService {
         ...?prefs.getStringList(_hiddenAgentConversationIdsKey),
         ...?prefs.getStringList(_legacyHiddenAgentConversationIdsKey),
       }.map(int.tryParse).whereType<int>().toSet();
-    } catch (e) {
-      debugPrint('[ConversationService] 读取 Agent 隐藏会话失败: $e');
+    } catch (_) {
       return const <int>{};
     }
   }
@@ -377,8 +363,8 @@ class ConversationService {
       }
       final encoded = hiddenIds.map((id) => id.toString()).toList()..sort();
       await prefs.setStringList(_hiddenAgentConversationIdsKey, encoded);
-    } catch (e) {
-      debugPrint('[ConversationService] 保存 Agent 隐藏会话失败: $e');
+    } catch (_) {
+      // Hidden-conversation persistence is best effort.
     }
   }
 
@@ -394,8 +380,7 @@ class ConversationService {
           name: newTitle,
         );
         return true;
-      } catch (e) {
-        debugPrint('更新 Agent 对话标题失败: $e');
+      } catch (_) {
         return false;
       }
     }
@@ -407,11 +392,9 @@ class ConversationService {
             'mode': mode.storageValue,
           });
       return result == 'SUCCESS';
-    } on PlatformException catch (e) {
-      debugPrint('更新对话标题失败: ${e.message}');
+    } on PlatformException catch (_) {
       return false;
-    } catch (e) {
-      debugPrint('更新对话标题失败: $e');
+    } catch (_) {
       return false;
     }
   }
@@ -425,11 +408,9 @@ class ConversationService {
         {'conversationHistory': conversationHistory},
       );
       return result as String?;
-    } on PlatformException catch (e) {
-      debugPrint('生成对话摘要失败: ${e.message}');
+    } on PlatformException catch (_) {
       return null;
-    } catch (e) {
-      debugPrint('生成对话摘要失败: $e');
+    } catch (_) {
       return null;
     }
   }
@@ -447,11 +428,9 @@ class ConversationService {
         },
       );
       return result == 'SUCCESS';
-    } on PlatformException catch (e) {
-      debugPrint('完成对话失败: ${e.message}');
+    } on PlatformException catch (_) {
       return false;
-    } catch (e) {
-      debugPrint('完成对话失败: $e');
+    } catch (_) {
       return false;
     }
   }
@@ -466,11 +445,9 @@ class ConversationService {
         {'conversationId': conversationId ?? 0, 'mode': mode.storageValue},
       );
       return result == 'SUCCESS';
-    } on PlatformException catch (e) {
-      debugPrint('设置当前对话ID失败: ${e.message}');
+    } on PlatformException catch (_) {
       return false;
-    } catch (e) {
-      debugPrint('设置当前对话ID失败: $e');
+    } catch (_) {
       return false;
     }
   }

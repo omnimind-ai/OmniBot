@@ -3,11 +3,15 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui';
-import 'package:flutter_svg/flutter_svg.dart';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:ui/services/model_vendor_catalog.dart';
 import 'package:ui/services/special_permission.dart';
+import 'package:ui/services/speech_transcription_service.dart';
 import 'package:ui/services/storage_service.dart';
 import 'package:ui/theme/theme_context.dart';
 import 'package:ui/widgets/provider_vendor_icon.dart';
@@ -426,6 +430,8 @@ class ChatInputAreaState extends _ChatInputAreaStateBase
 
 enum _ComposerKeyboardPhase { hidden, opening, visible, closing }
 
+enum _SpeechInputPhase { idle, starting, recording, transcribing }
+
 extension on _ComposerKeyboardPhase {
   bool get expandsEmptyTextField {
     return switch (this) {
@@ -488,6 +494,10 @@ abstract class _ChatInputAreaStateBase extends State<ChatInputArea>
   double _lastReportedInputHeight = 44;
   bool _inputHeightReportScheduled = false;
   bool _isComposerHovered = false;
+  _SpeechInputPhase _speechInputPhase = _SpeechInputPhase.idle;
+  int _speechRecordingSeconds = 0;
+  Timer? _speechRecordingTimer;
+  StreamSubscription<SpeechTranscriptionEvent>? _speechEventSubscription;
   late AnimationController _composerFlowController;
   late AnimationController _modelPickerSpinController;
 
@@ -514,6 +524,9 @@ abstract class _ChatInputAreaStateBase extends State<ChatInputArea>
     widget.controller.addListener(_onTextChanged);
     widget.focusNode.addListener(_onFocusChanged);
     WidgetsBinding.instance.addObserver(this);
+    _speechEventSubscription = SpeechTranscriptionService.events.listen(
+      _handleSpeechTranscriptionEvent,
+    );
 
     _terminalSvg = const SizedBox.shrink();
     _sendSvg = const SizedBox.shrink();
@@ -747,6 +760,11 @@ abstract class _ChatInputAreaStateBase extends State<ChatInputArea>
 
   @override
   void dispose() {
+    _speechRecordingTimer?.cancel();
+    _speechEventSubscription?.cancel();
+    if (_speechInputPhase != _SpeechInputPhase.idle) {
+      unawaited(SpeechTranscriptionService.cancel());
+    }
     WidgetsBinding.instance.removeObserver(this);
     _textFieldScrollController.dispose();
     _composerStateNotifier.dispose();
@@ -755,6 +773,213 @@ abstract class _ChatInputAreaStateBase extends State<ChatInputArea>
     widget.controller.removeListener(_onTextChanged);
     widget.focusNode.removeListener(_onFocusChanged);
     super.dispose();
+  }
+
+  Future<void> toggleSpeechInput() async {
+    switch (_speechInputPhase) {
+      case _SpeechInputPhase.idle:
+        await _startSpeechRecording();
+        return;
+      case _SpeechInputPhase.starting:
+        return;
+      case _SpeechInputPhase.recording:
+        await _stopAndTranscribeSpeech();
+        return;
+      case _SpeechInputPhase.transcribing:
+        await _cancelSpeechInput();
+        return;
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused &&
+        _speechInputPhase == _SpeechInputPhase.recording) {
+      unawaited(_cancelSpeechInput());
+    }
+  }
+
+  Future<void> transcribeAudioFile() async {
+    if (_speechInputPhase != _SpeechInputPhase.idle) return;
+    final selection = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowMultiple: false,
+      allowedExtensions: const <String>[
+        'wav',
+        'mp3',
+        'm4a',
+        'aac',
+        'flac',
+        'ogg',
+        'webm',
+        'mp4',
+      ],
+    );
+    final file = selection == null || selection.files.isEmpty
+        ? null
+        : selection.files.first;
+    final path = file?.path?.trim() ?? '';
+    if (path.isEmpty || !mounted) return;
+    setState(() => _speechInputPhase = _SpeechInputPhase.transcribing);
+    try {
+      final result = await SpeechTranscriptionService.transcribeFile(
+        path: path,
+        language: Localizations.localeOf(context).languageCode,
+      );
+      if (!mounted) return;
+      _insertSpeechTranscript(result.text);
+    } on PlatformException catch (error) {
+      if (mounted && error.code != 'STT_CANCELLED') _showSpeechError(error);
+    } catch (_) {
+      if (mounted) _showSpeechFallbackError();
+    } finally {
+      if (mounted) {
+        setState(() => _speechInputPhase = _SpeechInputPhase.idle);
+      }
+    }
+  }
+
+  Future<void> _startSpeechRecording() async {
+    setState(() {
+      _speechInputPhase = _SpeechInputPhase.starting;
+      _speechRecordingSeconds = 0;
+    });
+    try {
+      await SpeechTranscriptionService.startRecording(
+        language: Localizations.localeOf(context).languageCode,
+      );
+      if (!mounted) return;
+      setState(() => _speechInputPhase = _SpeechInputPhase.recording);
+      _speechRecordingTimer?.cancel();
+      _speechRecordingTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+        if (!mounted || _speechInputPhase != _SpeechInputPhase.recording) {
+          return;
+        }
+        setState(() {
+          _speechRecordingSeconds = (_speechRecordingSeconds + 1)
+              .clamp(0, 60)
+              .toInt();
+        });
+      });
+    } on PlatformException catch (error) {
+      if (mounted) _showSpeechError(error);
+      if (mounted) setState(() => _speechInputPhase = _SpeechInputPhase.idle);
+    } catch (_) {
+      if (mounted) _showSpeechFallbackError();
+      if (mounted) setState(() => _speechInputPhase = _SpeechInputPhase.idle);
+    }
+  }
+
+  Future<void> _stopAndTranscribeSpeech() async {
+    _speechRecordingTimer?.cancel();
+    setState(() => _speechInputPhase = _SpeechInputPhase.transcribing);
+    try {
+      final result = await SpeechTranscriptionService.stopAndTranscribe(
+        language: Localizations.localeOf(context).languageCode,
+      );
+      if (!mounted) return;
+      _insertSpeechTranscript(result.text);
+    } on PlatformException catch (error) {
+      if (mounted && error.code != 'STT_CANCELLED') _showSpeechError(error);
+    } catch (_) {
+      if (mounted) _showSpeechFallbackError();
+    } finally {
+      if (mounted) {
+        setState(() => _speechInputPhase = _SpeechInputPhase.idle);
+      }
+    }
+  }
+
+  Future<void> _cancelSpeechInput() async {
+    _speechRecordingTimer?.cancel();
+    try {
+      await SpeechTranscriptionService.cancel();
+    } finally {
+      if (mounted) {
+        setState(() {
+          _speechInputPhase = _SpeechInputPhase.idle;
+          _speechRecordingSeconds = 0;
+        });
+      }
+    }
+  }
+
+  void _handleSpeechTranscriptionEvent(SpeechTranscriptionEvent event) {
+    if (!mounted) return;
+    switch (event.state) {
+      case 'transcribing':
+        _speechRecordingTimer?.cancel();
+        setState(() => _speechInputPhase = _SpeechInputPhase.transcribing);
+        return;
+      case 'completed':
+        _speechRecordingTimer?.cancel();
+        final text = event.result?.text.trim() ?? '';
+        if (text.isNotEmpty) _insertSpeechTranscript(text);
+        setState(() => _speechInputPhase = _SpeechInputPhase.idle);
+        return;
+      case 'error':
+        _speechRecordingTimer?.cancel();
+        _showSpeechErrorMessage(event.message);
+        setState(() => _speechInputPhase = _SpeechInputPhase.idle);
+        return;
+      case 'cancelled':
+        _speechRecordingTimer?.cancel();
+        setState(() => _speechInputPhase = _SpeechInputPhase.idle);
+        return;
+      default:
+        return;
+    }
+  }
+
+  void _insertSpeechTranscript(String rawText) {
+    final transcript = rawText.trim();
+    if (transcript.isEmpty) return;
+    final value = widget.controller.value;
+    final selection = value.selection;
+    final start = selection.isValid
+        ? selection.start.clamp(0, value.text.length)
+        : value.text.length;
+    final end = selection.isValid
+        ? selection.end.clamp(start, value.text.length)
+        : start;
+    final before = value.text.substring(0, start);
+    final after = value.text.substring(end);
+    final prefix = before.isNotEmpty && !RegExp(r'\s$').hasMatch(before)
+        ? ' '
+        : '';
+    final suffix = after.isNotEmpty && !RegExp(r'^\s').hasMatch(after)
+        ? ' '
+        : '';
+    final inserted = '$prefix$transcript$suffix';
+    final nextText = before + inserted + after;
+    widget.controller.value = TextEditingValue(
+      text: nextText,
+      selection: TextSelection.collapsed(
+        offset: before.length + inserted.length,
+      ),
+    );
+    widget.onRequestFocus?.call();
+    widget.focusNode.requestFocus();
+  }
+
+  void _showSpeechError(PlatformException error) {
+    _showSpeechErrorMessage(error.message);
+  }
+
+  void _showSpeechFallbackError() {
+    _showSpeechErrorMessage(null);
+  }
+
+  void _showSpeechErrorMessage(String? rawMessage) {
+    final english = Localizations.localeOf(context).languageCode == 'en';
+    final message = rawMessage?.trim().isNotEmpty == true
+        ? rawMessage!.trim()
+        : english
+        ? 'Speech transcription failed. Please try again.'
+        : '语音转写失败，请重试';
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
+    );
   }
 
   void _reportInputHeightAfterBuild() {

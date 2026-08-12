@@ -6,6 +6,8 @@ import android.provider.OpenableColumns
 import android.webkit.MimeTypeMap
 import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.agent.AgentWorkspaceManager
+import cn.com.omnimind.bot.util.BoundedStreamCopy
+import cn.com.omnimind.bot.util.ContentSizeLimitExceededException
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -80,6 +82,9 @@ object SharedOpenDraftStore {
     private const val DIR_NAME = "shared_open_drafts"
     private const val WORKSPACE_DIR_NAME = "shared-open"
     private const val FILE_RETENTION_MS = 3L * 24L * 60L * 60L * 1000L
+    private const val MAX_ATTACHMENTS = 10
+    private const val MAX_ATTACHMENT_BYTES = 25L * 1024L * 1024L
+    private const val MAX_SHARED_TEXT_CHARS = 100_000
 
     fun store(
         context: Context,
@@ -89,9 +94,11 @@ object SharedOpenDraftStore {
     ): SharedOpenDraft? {
         cleanupStaleFiles(context)
         val now = System.currentTimeMillis()
-        val normalizedText = text?.trim()?.ifEmpty { null }
-        val attachments = imageUris.mapNotNull { uri ->
-            copyImageToLocalDraft(context, uri, mimeTypeHint)
+        val normalizedText = text?.trim()?.take(MAX_SHARED_TEXT_CHARS)?.ifEmpty { null }
+        val attachments = imageUris.take(MAX_ATTACHMENTS).mapNotNull { uri ->
+            copyAttachmentSafely("shared image") {
+                copyImageToLocalDraft(context, uri, mimeTypeHint)
+            }
         }
         if (normalizedText == null && attachments.isEmpty()) {
             return null
@@ -119,9 +126,11 @@ object SharedOpenDraftStore {
     ): SharedOpenDraft? {
         cleanupStaleFiles(context)
         val now = System.currentTimeMillis()
-        val normalizedText = text?.trim()?.ifEmpty { null }
-        val attachments = uris.mapNotNull { uri ->
-            copyUriToWorkspace(context, uri, mimeTypeHint, now)
+        val normalizedText = text?.trim()?.take(MAX_SHARED_TEXT_CHARS)?.ifEmpty { null }
+        val attachments = uris.take(MAX_ATTACHMENTS).mapNotNull { uri ->
+            copyAttachmentSafely("workspace file") {
+                copyUriToWorkspace(context, uri, mimeTypeHint, now)
+            }
         }
         if (normalizedText == null && attachments.isEmpty()) {
             return null
@@ -150,13 +159,17 @@ object SharedOpenDraftStore {
     ): SharedOpenDraft? {
         cleanupStaleFiles(context)
         val now = System.currentTimeMillis()
-        val normalizedText = text?.trim()?.ifEmpty { null }
+        val normalizedText = text?.trim()?.take(MAX_SHARED_TEXT_CHARS)?.ifEmpty { null }
         val attachments = buildList {
-            imageUris.mapNotNullTo(this) { uri ->
-                copyImageToLocalDraft(context, uri, mimeTypeHint)
+            imageUris.take(MAX_ATTACHMENTS).mapNotNullTo(this) { uri ->
+                copyAttachmentSafely("shared image") {
+                    copyImageToLocalDraft(context, uri, mimeTypeHint)
+                }
             }
-            workspaceUris.mapNotNullTo(this) { uri ->
-                copyUriToWorkspace(context, uri, mimeTypeHint, now)
+            workspaceUris.take((MAX_ATTACHMENTS - size).coerceAtLeast(0)).mapNotNullTo(this) { uri ->
+                copyAttachmentSafely("workspace file") {
+                    copyUriToWorkspace(context, uri, mimeTypeHint, now)
+                }
             }
         }
         if (normalizedText == null && attachments.isEmpty()) {
@@ -193,13 +206,27 @@ object SharedOpenDraftStore {
     private fun prefs(context: Context) =
         context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
+    private inline fun copyAttachmentSafely(
+        label: String,
+        block: () -> SharedOpenDraftAttachment?,
+    ): SharedOpenDraftAttachment? {
+        return runCatching(block)
+            .onFailure { OmniLog.w(TAG, "Unable to import $label type=${it.javaClass.simpleName}") }
+            .getOrNull()
+    }
+
     private fun copyImageToLocalDraft(
         context: Context,
         uri: Uri,
         mimeTypeHint: String?,
     ): SharedOpenDraftAttachment? {
+        if (uri.scheme != "content") return null
         val resolver = context.contentResolver
         val meta = queryMeta(context, uri)
+        if ((meta.size ?: 0L) > MAX_ATTACHMENT_BYTES) {
+            OmniLog.w(TAG, "Rejected shared image because it exceeds the size limit")
+            return null
+        }
         val mimeType = resolveMimeType(context, uri, mimeTypeHint)
         val baseName = meta.displayName ?: "shared_image_${System.currentTimeMillis()}"
         val fileName = ensureExtension(sanitizeFileName(baseName), mimeType)
@@ -215,12 +242,15 @@ object SharedOpenDraftStore {
             val input = resolver.openInputStream(uri) ?: return null
             input.use { source ->
                 target.outputStream().use { sink ->
-                    source.copyTo(sink)
+                    BoundedStreamCopy.copy(source, sink, MAX_ATTACHMENT_BYTES)
                 }
             }
-            target.length()
+        } catch (error: ContentSizeLimitExceededException) {
+            OmniLog.w(TAG, "Rejected shared image because it exceeds the size limit")
+            runCatching { target.delete() }
+            return null
         } catch (error: Exception) {
-            OmniLog.e(TAG, "Failed to copy shared image uri=$uri", error)
+            OmniLog.e(TAG, "Failed to copy shared image: ${error.javaClass.simpleName}")
             runCatching { target.delete() }
             return null
         }
@@ -241,8 +271,13 @@ object SharedOpenDraftStore {
         mimeTypeHint: String?,
         now: Long,
     ): SharedOpenDraftAttachment? {
+        if (uri.scheme != "content") return null
         val resolver = context.contentResolver
         val meta = queryMeta(context, uri)
+        if ((meta.size ?: 0L) > MAX_ATTACHMENT_BYTES) {
+            OmniLog.w(TAG, "Rejected workspace file because it exceeds the size limit")
+            return null
+        }
         val mimeType = resolveMimeType(context, uri, mimeTypeHint)
         val baseName = meta.displayName ?: "shared_file_$now"
         val fileName = ensureExtension(sanitizeFileName(baseName), mimeType)
@@ -261,12 +296,15 @@ object SharedOpenDraftStore {
             val input = resolver.openInputStream(uri) ?: return null
             input.use { source ->
                 target.outputStream().use { sink ->
-                    source.copyTo(sink)
+                    BoundedStreamCopy.copy(source, sink, MAX_ATTACHMENT_BYTES)
                 }
             }
-            target.length()
+        } catch (error: ContentSizeLimitExceededException) {
+            OmniLog.w(TAG, "Rejected workspace file because it exceeds the size limit")
+            runCatching { target.delete() }
+            return null
         } catch (error: Exception) {
-            OmniLog.e(TAG, "Failed to copy shared uri to workspace uri=$uri", error)
+            OmniLog.e(TAG, "Failed to copy shared workspace file: ${error.javaClass.simpleName}")
             runCatching { target.delete() }
             return null
         }
@@ -312,7 +350,7 @@ object SharedOpenDraftStore {
                 if (nameIndex >= 0) {
                     displayName = it.getString(nameIndex)
                 }
-                if (sizeIndex >= 0) {
+                if (sizeIndex >= 0 && !it.isNull(sizeIndex)) {
                     size = it.getLong(sizeIndex)
                 }
             }
@@ -322,7 +360,7 @@ object SharedOpenDraftStore {
 
     private fun sanitizeFileName(name: String): String {
         val trimmed = name.trim().ifEmpty { "shared_image" }
-        return trimmed.replace(Regex("[\\\\/:*?\"<>|]"), "_")
+        return trimmed.replace(Regex("[\\\\/:*?\"<>|]"), "_").take(160)
     }
 
     private fun ensureExtension(name: String, mimeType: String?): String {

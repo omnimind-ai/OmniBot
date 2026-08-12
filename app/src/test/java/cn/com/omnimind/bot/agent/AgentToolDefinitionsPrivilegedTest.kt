@@ -6,14 +6,14 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
-import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AgentToolDefinitionsPrivilegedTest {
 
     @Test
-    fun `android privileged action exposes shell exec`() {
+    fun `android privileged action documents that shell remains locally gated`() {
         val tool = AgentToolDefinitions.androidPrivilegedActionTool(
             visibleActions = listOf("diagnostics.getprop", "shell.exec"),
             backend = ShizukuBackend.ADB,
@@ -27,9 +27,10 @@ class AgentToolDefinitionsPrivilegedTest {
 
         assertTrue(enumValues.any { it.jsonPrimitive.contentOrNull == "shell.exec" })
         assertTrue(
-            function["description"]?.jsonPrimitive?.contentOrNull?.contains("one-shot arbitrary shell") ==
+            function["description"]?.jsonPrimitive?.contentOrNull?.contains("remain disabled") ==
                 true
         )
+        assertFalse(properties.containsKey("confirmed"))
     }
 
     @Test
@@ -47,7 +48,7 @@ class AgentToolDefinitionsPrivilegedTest {
     }
 
     @Test
-    fun `privileged session start exposes confirmed flag`() {
+    fun `privileged session start does not expose model-controlled confirmation`() {
         val tool = AgentToolDefinitions.androidPrivilegedSessionStartTool(
             backend = ShizukuBackend.ADB,
             locale = PromptLocale.EN_US
@@ -55,8 +56,8 @@ class AgentToolDefinitionsPrivilegedTest {
         val function = tool["function"] as JsonObject
         val parameters = function["parameters"] as JsonObject
         val properties = parameters["properties"] as JsonObject
-        val confirmed = properties["confirmed"] as JsonObject
-
-        assertEquals("boolean", confirmed["type"]?.jsonPrimitive?.contentOrNull)
+        assertFalse(properties.containsKey("confirmed"))
+        assertFalse(properties.containsKey("confirmationToken"))
+        assertFalse(properties.containsKey("locallyApproved"))
     }
 }

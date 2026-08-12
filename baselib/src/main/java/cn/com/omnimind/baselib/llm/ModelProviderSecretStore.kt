@@ -14,6 +14,8 @@ internal data class ModelProviderSecrets(
 )
 
 internal interface ModelProviderSecretStore {
+    fun isAvailable(): Boolean
+
     fun readProfile(profileId: String): ModelProviderSecrets?
 
     fun writeProfile(profileId: String, secrets: ModelProviderSecrets)
@@ -54,6 +56,13 @@ internal class EncryptedModelProviderSecretStore(context: Context) : ModelProvid
         )
     }
 
+    override fun isAvailable(): Boolean = try {
+        preferences.all
+        true
+    } catch (_: Exception) {
+        false
+    }
+
     @Synchronized
     override fun readProfile(profileId: String): ModelProviderSecrets? {
         val encodedId = encodeKeyPart(profileId)
@@ -86,6 +95,11 @@ internal class EncryptedModelProviderSecretStore(context: Context) : ModelProvid
             editor.putString(headersStorageKey, gson.toJson(headers))
         }
         check(editor.commit()) { "failed to store encrypted model-provider credentials" }
+        val expected = ModelProviderSecrets(apiKey, headers)
+            .takeUnless { it.apiKey.isEmpty() && it.customHeaders.isEmpty() }
+        check(readProfile(profileId) == expected) {
+            "failed to verify encrypted model-provider credentials"
+        }
     }
 
     @Synchronized
@@ -97,6 +111,9 @@ internal class EncryptedModelProviderSecretStore(context: Context) : ModelProvid
                 .remove("$PROFILE_HEADERS_PREFIX$encodedId")
                 .commit()
         ) { "failed to delete encrypted model-provider credentials" }
+        check(readProfile(profileId) == null) {
+            "failed to verify encrypted model-provider credential deletion"
+        }
     }
 
     @Synchronized
@@ -117,6 +134,9 @@ internal class EncryptedModelProviderSecretStore(context: Context) : ModelProvid
         val editor = preferences.edit()
         keysToDelete.forEach(editor::remove)
         check(editor.commit()) { "failed to prune encrypted model-provider credentials" }
+        check(keysToDelete.none(preferences::contains)) {
+            "failed to verify encrypted model-provider credential pruning"
+        }
     }
 
     @Synchronized
@@ -137,24 +157,33 @@ internal class EncryptedModelProviderSecretStore(context: Context) : ModelProvid
             editor.putString(key, normalized)
         }
         check(editor.commit()) { "failed to store encrypted legacy model-provider credential" }
+        check(readLegacy(storageKey) == normalized.takeIf(String::isNotEmpty)) {
+            "failed to verify encrypted legacy model-provider credential"
+        }
     }
 
     @Synchronized
     override fun deleteLegacy(storageKey: String) {
+        val key = "$LEGACY_API_KEY_PREFIX${encodeKeyPart(storageKey)}"
         check(
             preferences.edit()
-                .remove("$LEGACY_API_KEY_PREFIX${encodeKeyPart(storageKey)}")
+                .remove(key)
                 .commit()
         ) { "failed to delete encrypted legacy model-provider credential" }
+        check(!preferences.contains(key)) {
+            "failed to verify encrypted legacy model-provider credential deletion"
+        }
     }
 
     private fun decodeHeaders(raw: String?): Map<String, String> {
         val normalized = raw?.trim()?.takeIf { it.isNotEmpty() } ?: return emptyMap()
-        return runCatching {
+        return try {
             val type = object : TypeToken<Map<String, String>>() {}.type
             val decoded: Map<String, String> = gson.fromJson(normalized, type) ?: emptyMap()
             ProviderCustomHeaderUtils.sanitizeCustomHeaders(decoded)
-        }.getOrDefault(emptyMap())
+        } catch (_: Exception) {
+            emptyMap()
+        }
     }
 
     private fun encodeKeyPart(value: String): String {
@@ -170,5 +199,90 @@ internal class EncryptedModelProviderSecretStore(context: Context) : ModelProvid
         private const val PROFILE_API_KEY_PREFIX = "profile_api_key_"
         private const val PROFILE_HEADERS_PREFIX = "profile_headers_"
         private const val LEGACY_API_KEY_PREFIX = "legacy_api_key_"
+    }
+}
+
+/**
+ * Converts any Keystore/encrypted-preferences exception into a process-local
+ * unavailable state. Reads then return no credentials, while writes/deletes
+ * fail explicitly so callers cannot report a successful BYOK mutation.
+ */
+internal class FailClosedModelProviderSecretStore(
+    private val delegate: ModelProviderSecretStore?,
+) : ModelProviderSecretStore {
+    @Volatile
+    private var unavailable: Boolean = delegate?.let { store ->
+        try {
+            !store.isAvailable()
+        } catch (_: Exception) {
+            true
+        }
+    } ?: true
+
+    override fun isAvailable(): Boolean = !unavailable
+
+    @Synchronized
+    override fun readProfile(profileId: String): ModelProviderSecrets? = readSafely {
+        it.readProfile(profileId)
+    }
+
+    @Synchronized
+    override fun writeProfile(profileId: String, secrets: ModelProviderSecrets) {
+        writeSafely { it.writeProfile(profileId, secrets) }
+    }
+
+    @Synchronized
+    override fun deleteProfile(profileId: String) {
+        writeSafely { it.deleteProfile(profileId) }
+    }
+
+    @Synchronized
+    override fun deleteProfilesExcept(profileIds: Set<String>) {
+        writeSafely { it.deleteProfilesExcept(profileIds) }
+    }
+
+    @Synchronized
+    override fun readLegacy(storageKey: String): String? = readSafely {
+        it.readLegacy(storageKey)
+    }
+
+    @Synchronized
+    override fun writeLegacy(storageKey: String, apiKey: String) {
+        writeSafely { it.writeLegacy(storageKey, apiKey) }
+    }
+
+    @Synchronized
+    override fun deleteLegacy(storageKey: String) {
+        writeSafely { it.deleteLegacy(storageKey) }
+    }
+
+    private fun <T> readSafely(block: (ModelProviderSecretStore) -> T): T? {
+        if (unavailable) return null
+        val current = delegate ?: return failClosedRead()
+        return try {
+            block(current)
+        } catch (_: Exception) {
+            failClosedRead()
+        }
+    }
+
+    private fun writeSafely(block: (ModelProviderSecretStore) -> Unit) {
+        check(!unavailable) { UNAVAILABLE_MESSAGE }
+        val current = delegate ?: error(UNAVAILABLE_MESSAGE)
+        try {
+            block(current)
+        } catch (_: Exception) {
+            unavailable = true
+            throw IllegalStateException(UNAVAILABLE_MESSAGE)
+        }
+    }
+
+    private fun <T> failClosedRead(): T? {
+        unavailable = true
+        return null
+    }
+
+    private companion object {
+        const val UNAVAILABLE_MESSAGE = "Secure model-provider credential storage is unavailable"
     }
 }

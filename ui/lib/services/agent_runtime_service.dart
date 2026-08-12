@@ -448,6 +448,7 @@ class CodexRemoteBridgeConfig {
     this.remoteEnabled = false,
     this.remoteBridgeUrl = '',
     this.remoteBridgeToken = '',
+    this.hasRemoteBridgeToken = false,
     this.remoteCwd = '',
     this.remoteConfigured = false,
     this.runtime,
@@ -456,6 +457,7 @@ class CodexRemoteBridgeConfig {
   final bool remoteEnabled;
   final String remoteBridgeUrl;
   final String remoteBridgeToken;
+  final bool hasRemoteBridgeToken;
   final String remoteCwd;
   final bool remoteConfigured;
   final String? runtime;
@@ -465,7 +467,9 @@ class CodexRemoteBridgeConfig {
     return CodexRemoteBridgeConfig(
       remoteEnabled: source['remoteEnabled'] == true,
       remoteBridgeUrl: _stringOrNull(source['remoteBridgeUrl']) ?? '',
-      remoteBridgeToken: _stringOrNull(source['remoteBridgeToken']) ?? '',
+      // Native deliberately never returns the credential to Flutter.
+      remoteBridgeToken: '',
+      hasRemoteBridgeToken: source['hasRemoteBridgeToken'] == true,
       remoteCwd: _stringOrNull(source['remoteCwd']) ?? '',
       remoteConfigured: source['remoteConfigured'] == true,
       runtime: _stringOrNull(source['runtime']),
@@ -670,8 +674,10 @@ class AgentRuntimeService {
     return _invokeMap('agent/test', {'agentId': agentId.trim()});
   }
 
-  static Future<Map<String, dynamic>> readAgentConfig(String agentId) {
-    return _invokeMap('agent/config/read', {'agentId': agentId.trim()});
+  static Future<Map<String, dynamic>> readAgentConfig(String agentId) async {
+    return sanitizeAgentConfigStatusPayload(
+      await _invokeMap('agent/config/read', {'agentId': agentId.trim()}),
+    );
   }
 
   static Future<Map<String, dynamic>> writeAgentConfig(
@@ -680,14 +686,22 @@ class AgentRuntimeService {
     String? model,
     String? apiKey,
     String? content,
-  }) {
-    return _invokeMap('agent/config/write', {
-      'agentId': agentId.trim(),
-      if (baseUrl != null) 'baseUrl': baseUrl,
-      if (model != null) 'model': model,
-      if (apiKey != null) 'apiKey': apiKey,
-      if (content != null) 'content': content,
-    });
+  }) async {
+    return sanitizeAgentConfigStatusPayload(
+      await _invokeMap('agent/config/write', {
+        'agentId': agentId.trim(),
+        if (baseUrl != null) 'baseUrl': baseUrl,
+        if (model != null) 'model': model,
+        if (apiKey != null) 'apiKey': apiKey,
+        if (content != null) 'content': content,
+      }),
+    );
+  }
+
+  static Future<Map<String, dynamic>> clearAgentConfig(String agentId) async {
+    return sanitizeAgentConfigStatusPayload(
+      await _invokeMap('agent/config/clear', {'agentId': agentId.trim()}),
+    );
   }
 
   static Future<Map<String, dynamic>> startThread({
@@ -1076,6 +1090,50 @@ class AgentRuntimeService {
     final result = await _methodChannel.invokeMethod<dynamic>(method, args);
     return _normalizeMap(result) ?? <String, dynamic>{};
   }
+}
+
+/// Keeps the native Agent configuration boundary status-only.
+///
+/// This deliberately rebuilds a small allowlisted map instead of removing a
+/// few known secret keys. A future native field therefore cannot accidentally
+/// expose a complete config file, token, or nested diagnostic payload to UI.
+Map<String, dynamic> sanitizeAgentConfigStatusPayload(
+  Map<String, dynamic> source,
+) {
+  final agentId = _stringOrNull(source['agentId']) ?? '';
+  final nativeKind = _stringOrNull(source['kind']) ?? '';
+  if (nativeKind == 'codex') {
+    return <String, dynamic>{
+      'agentId': agentId,
+      'kind': 'codex',
+      'configPath': _stringOrNull(source['configPath']) ?? '',
+      'authPath': _stringOrNull(source['authPath']) ?? '',
+      'baseUrl': _stringOrNull(source['baseUrl']) ?? '',
+      'model': _stringOrNull(source['model']) ?? '',
+      'hasApiKey': source['hasApiKey'] == true,
+      'apiKey': '',
+    };
+  }
+  if (nativeKind == 'replace-only' ||
+      nativeKind == 'json' ||
+      nativeKind == 'jsonc') {
+    final byteCount = _intOrNull(source['byteCount']) ?? 0;
+    if (byteCount < 0 || byteCount > 1048576) {
+      throw const FormatException('AGENT_CONFIG_INVALID_STATUS');
+    }
+    return <String, dynamic>{
+      'agentId': agentId,
+      'kind': 'replace-only',
+      'format':
+          _stringOrNull(source['format']) ??
+          (nativeKind == 'jsonc' ? 'jsonc' : 'json'),
+      'displayPath':
+          _stringOrNull(source['displayPath'] ?? source['path']) ?? '',
+      'hasConfig': source['hasConfig'] == true,
+      'byteCount': byteCount,
+    };
+  }
+  return <String, dynamic>{'agentId': agentId, 'kind': nativeKind};
 }
 
 Map<String, dynamic>? _normalizeMap(dynamic value) {

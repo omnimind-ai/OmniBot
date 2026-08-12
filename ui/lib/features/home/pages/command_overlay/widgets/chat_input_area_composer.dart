@@ -226,6 +226,12 @@ mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
       SizedBox(
         width: 28,
         height: 28,
+        child: _buildSpeechInputButton(compact: false),
+      ),
+      const SizedBox(width: 4),
+      SizedBox(
+        width: 28,
+        height: 28,
         child: _buildTerminalButton(iconSize: 22),
       ),
       const SizedBox(width: 6),
@@ -746,6 +752,12 @@ mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
         SizedBox(
           width: 24,
           height: 24,
+          child: _buildSpeechInputButton(compact: true),
+        ),
+        const SizedBox(width: 2),
+        SizedBox(
+          width: 24,
+          height: 24,
           child: _buildTerminalButton(iconSize: 20),
         ),
         const SizedBox(width: 2),
@@ -856,7 +868,6 @@ mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
             Object error,
             StackTrace stackTrace,
           ) {
-            debugPrint('Refresh Agent run settings failed: $error');
           }),
         );
       }
@@ -1202,6 +1213,65 @@ mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
       onPressed: () {
         unawaited(openTerminalFromInput());
       },
+    );
+  }
+
+  Widget _buildSpeechInputButton({required bool compact}) {
+    final english = Localizations.localeOf(context).languageCode == 'en';
+    final recording = _speechInputPhase == _SpeechInputPhase.recording;
+    final waiting =
+        _speechInputPhase == _SpeechInputPhase.starting ||
+        _speechInputPhase == _SpeechInputPhase.transcribing;
+    final tooltip = switch (_speechInputPhase) {
+      _SpeechInputPhase.idle =>
+        english
+            ? 'Voice input (long-press to transcribe a file)'
+            : '语音输入（长按转写音频文件）',
+      _SpeechInputPhase.starting =>
+        english ? 'Starting microphone…' : '正在启动麦克风…',
+      _SpeechInputPhase.recording =>
+        english
+            ? 'Stop and transcribe (${_speechRecordingSeconds}s)'
+            : '停止并转写（$_speechRecordingSeconds 秒）',
+      _SpeechInputPhase.transcribing =>
+        english ? 'Transcribing… Tap to cancel' : '正在转写…点击取消',
+    };
+    final iconSize = compact ? 18.0 : 20.0;
+    final color = recording
+        ? const Color(0xFFE64646)
+        : context.omniPalette.textSecondary;
+
+    return Semantics(
+      button: true,
+      label: tooltip,
+      child: Tooltip(
+        message: tooltip,
+        waitDuration: const Duration(milliseconds: 400),
+        child: InkWell(
+          key: const ValueKey('chat-input-speech-button'),
+          borderRadius: BorderRadius.circular(8),
+          onTap: () => unawaited(toggleSpeechInput()),
+          onLongPress: _speechInputPhase == _SpeechInputPhase.idle
+              ? () => unawaited(transcribeAudioFile())
+              : null,
+          child: Center(
+            child: waiting
+                ? SizedBox(
+                    width: iconSize - 3,
+                    height: iconSize - 3,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 1.8,
+                      color: color,
+                    ),
+                  )
+                : Icon(
+                    recording ? Icons.stop_rounded : LucideIcons.mic2,
+                    size: iconSize,
+                    color: color,
+                  ),
+          ),
+        ),
+      ),
     );
   }
 

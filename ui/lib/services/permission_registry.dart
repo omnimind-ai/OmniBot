@@ -119,20 +119,21 @@ class PermissionRegistry {
         openMethod: 'openBatteryOptimizationSettings',
         checkMethod: 'isBackgroundRunAllowed',
       ),
-      PermissionSpec(
-        id: 'installed_apps',
-        iconPath: 'assets/welcome/permission_installed_apps.svg',
-        iconWidth: 32.0,
-        iconHeight: 32.0,
-        name: LegacyTextLocalizer.isEnglish
-            ? 'Installed Apps Access'
-            : '应用列表读取',
-        description: LegacyTextLocalizer.isEnglish
-            ? 'Identify installed apps for app context'
-            : '识别已安装应用并提供应用上下文',
-        openMethod: 'openInstalledAppsSettings',
-        checkMethod: 'isInstalledAppsPermissionGranted',
-      ),
+      if (currentAppEditionCapabilitySnapshot.installedAppsQuery)
+        PermissionSpec(
+          id: 'installed_apps',
+          iconPath: 'assets/welcome/permission_installed_apps.svg',
+          iconWidth: 32.0,
+          iconHeight: 32.0,
+          name: LegacyTextLocalizer.isEnglish
+              ? 'Installed Apps Access'
+              : '应用列表读取',
+          description: LegacyTextLocalizer.isEnglish
+              ? 'Identify installed apps for app context'
+              : '识别已安装应用并提供应用上下文',
+          openMethod: 'openInstalledAppsSettings',
+          checkMethod: 'isInstalledAppsPermissionGranted',
+        ),
     ];
     final optionalPermissions = <PermissionSpec>[
       PermissionSpec(

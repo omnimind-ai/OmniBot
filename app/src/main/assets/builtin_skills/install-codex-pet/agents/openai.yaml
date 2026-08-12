@@ -1,4 +1,4 @@
 interface:
   display_name: "Install Codex Pet"
   short_description: "Install shared Codex pets into Omnibot"
-  default_prompt: "Use $install-codex-pet to add a shared pet with npx codex-pets."
+  default_prompt: "Use $install-codex-pet to handle a shared pet request without running an unaudited network installer."

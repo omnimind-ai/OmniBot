@@ -70,7 +70,6 @@ extension _HomeDrawerActions on HomeDrawerState {
       }
       await HapticFeedback.mediumImpact();
     } catch (error) {
-      debugPrint('[HomeDrawer] failed to trigger delete haptic: $error');
     }
   }
 

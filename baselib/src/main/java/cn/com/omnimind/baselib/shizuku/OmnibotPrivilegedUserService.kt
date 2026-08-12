@@ -16,7 +16,7 @@ class OmnibotPrivilegedUserService() : IOmnibotPrivilegedUserService.Stub() {
     @Suppress("unused")
     @Keep
     constructor(context: Context) : this() {
-        Log.d(TAG, "Privileged user service created with context: $context")
+        Log.d(TAG, "Privileged user service created")
     }
 
     override fun execute(requestJson: String?): String {

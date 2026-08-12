@@ -40,7 +40,11 @@ internal object PrivilegedCommandExecutor {
     fun execute(request: PrivilegedRequest): PrivilegedResult {
         val backend = currentBackend()
         val action = PrivilegedActionPolicy.normalizeAction(request.action)
-        val arguments = request.arguments
+        val arguments = request.arguments - setOf(
+            "confirmed",
+            "confirmationToken",
+            "locallyApproved",
+        )
 
         if (!PrivilegedActionPolicy.isSupported(action, backend, includeInternal = true, arguments = arguments)) {
             return failure(
@@ -65,15 +69,19 @@ internal object PrivilegedCommandExecutor {
             }
         }
 
-        if ((request.requiresConfirmation || PrivilegedActionPolicy.requiresConfirmation(action)) &&
-            !isExplicitlyConfirmed(arguments)
-        ) {
+        if (!passesTrustedConfirmationGate(request)) {
             return failure(
                 request = request,
                 backend = backend,
                 code = "confirmation_required",
                 message = "This privileged action requires explicit confirmation.",
-                requiresConfirmation = true
+                requiresConfirmation = true,
+                command = null,
+                timeoutSeconds = null,
+            ).copy(
+                workingDirectory = null,
+                environment = emptyMap(),
+                sessionId = null,
             ).also { audit(request, it) }
         }
 
@@ -486,11 +494,8 @@ internal object PrivilegedCommandExecutor {
     private fun audit(request: PrivilegedRequest, result: PrivilegedResult) {
         val summary = buildString {
             append("action=${request.action}")
-            request.sessionId?.takeIf { it.isNotBlank() }?.let { append(", sessionId=$it") }
-            request.command?.takeIf { it.isNotBlank() }?.let {
-                append(", command=")
-                append(it.take(200))
-            }
+            append(", hasSession=${!request.sessionId.isNullOrBlank()}")
+            append(", hasCommand=${!request.command.isNullOrBlank()}")
             append(", success=${result.success}")
             append(", code=${result.code}")
             result.exitCode?.let { append(", exit=$it") }
@@ -545,8 +550,14 @@ internal object PrivilegedCommandExecutor {
         return arguments["enabled"]?.trim()?.lowercase() in setOf("1", "true", "yes", "on", "enable", "enabled")
     }
 
-    private fun isExplicitlyConfirmed(arguments: Map<String, String>): Boolean {
-        return arguments["confirmed"]?.trim()?.lowercase() in setOf("1", "true", "yes", "confirm", "confirmed")
+    /**
+     * The Shizuku service runs across a shell/root IPC boundary and currently has no verifier for
+     * app-issued one-time UI grants. Confirmation-shaped request arguments are model-controlled,
+     * so every confirmation-requiring request must remain disabled until a verifiable bridge exists.
+     */
+    internal fun passesTrustedConfirmationGate(request: PrivilegedRequest): Boolean {
+        val action = PrivilegedActionPolicy.normalizeAction(request.action)
+        return !request.requiresConfirmation && !PrivilegedActionPolicy.requiresConfirmation(action)
     }
 
     private fun encodeInputText(text: String): String {

@@ -6,7 +6,9 @@ import android.provider.OpenableColumns
 import android.util.Base64
 import android.webkit.MimeTypeMap
 import cn.com.omnimind.baselib.util.OmniLog
+import cn.com.omnimind.bot.util.BoundedStreamCopy
 import java.io.File
+import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -28,17 +30,34 @@ data class McpFileRecord(
 object McpFileInbox {
     private const val TAG = "[McpFileInbox]"
     private const val MAX_FILES = 20
+    private const val MAX_FILE_BYTES = 25L * 1024L * 1024L
+    private const val MAX_TOTAL_BYTES = 100L * 1024L * 1024L
     private const val FILE_TTL_MS = 2 * 60 * 60 * 1000L
     private const val TOKEN_TTL_MS = 15 * 60 * 1000L
 
     private val lock = Any()
     private val records = ConcurrentHashMap<String, McpFileRecord>()
+    private var inboxInitialized = false
+
+    /**
+     * Removes files left by a previous process before the inbox can be served.
+     * Records are intentionally memory-only, so a process restart invalidates every old file.
+     */
+    fun initialize(context: Context): Boolean = synchronized(lock) {
+        initializeInboxLocked(File(context.applicationContext.filesDir, "mcp_inbox"))
+    }
 
     fun storeFromUri(context: Context, uri: Uri, mimeTypeHint: String? = null): McpFileRecord? {
+        if (uri.scheme != "content") {
+            OmniLog.w(TAG, "Rejected non-content file share")
+            return null
+        }
         val resolver = context.contentResolver
         val now = System.currentTimeMillis()
-        val meta = queryMeta(resolver = resolver, uri = uri)
-        val mimeType = resolver.getType(uri) ?: mimeTypeHint
+        val meta = runCatching { queryMeta(resolver = resolver, uri = uri) }
+            .onFailure { OmniLog.w(TAG, "Unable to read shared file metadata type=${it.javaClass.simpleName}") }
+            .getOrElse { return null }
+        val mimeType = runCatching { resolver.getType(uri) }.getOrNull() ?: mimeTypeHint
         var fileName = sanitizeFileName(meta.displayName ?: "shared_$now")
         fileName = ensureExtension(fileName, mimeType)
 
@@ -48,32 +67,43 @@ object McpFileInbox {
             return null
         }
 
-        val fileId = UUID.randomUUID().toString()
-        val targetFile = File(dir, "${fileId}_$fileName")
-        val sizeBytes = copyUriToFile(context, uri, targetFile)
-            ?: run {
-                if (targetFile.exists()) targetFile.delete()
-                return null
+        return synchronized(lock) {
+            if (!initializeInboxLocked(dir)) {
+                OmniLog.e(TAG, "Inbox initialization failed closed")
+                return@synchronized null
+            }
+            cleanupLocked()
+            val currentBytes = records.values.sumOf { it.sizeBytes.coerceAtLeast(0L) }
+            val remainingBytes = (MAX_TOTAL_BYTES - currentBytes).coerceAtLeast(0L)
+            val allowedBytes = minOf(MAX_FILE_BYTES, remainingBytes)
+            if (allowedBytes <= 0L || (meta.sizeBytes ?: 0L) > allowedBytes) {
+                OmniLog.w(TAG, "Rejected shared file because the inbox size limit was reached")
+                return@synchronized null
             }
 
-        val record = McpFileRecord(
-            id = fileId,
-            fileName = fileName,
-            mimeType = mimeType,
-            sizeBytes = if (sizeBytes > 0) sizeBytes else meta.sizeBytes ?: 0L,
-            path = targetFile.absolutePath,
-            createdAt = now,
-            downloadToken = "",
-            tokenExpiresAt = 0L,
-        )
+            val fileId = UUID.randomUUID().toString()
+            val targetFile = File(dir, "${fileId}_$fileName")
+            val sizeBytes = copyUriToFile(context, uri, targetFile, allowedBytes)
+                ?: run {
+                    if (targetFile.exists()) targetFile.delete()
+                    return@synchronized null
+                }
 
-        synchronized(lock) {
+            val record = McpFileRecord(
+                id = fileId,
+                fileName = fileName,
+                mimeType = mimeType,
+                sizeBytes = sizeBytes,
+                path = targetFile.absolutePath,
+                createdAt = now,
+                downloadToken = "",
+                tokenExpiresAt = 0L,
+            )
             records[record.id] = record
             cleanupLocked()
+            OmniLog.i(TAG, "Stored shared file (${record.sizeBytes} bytes)")
+            record
         }
-
-        OmniLog.i(TAG, "Stored file ${record.fileName} (${record.sizeBytes} bytes) as ${record.id}")
-        return record
     }
 
     fun latest(): McpFileRecord? = synchronized(lock) {
@@ -98,21 +128,28 @@ object McpFileInbox {
 
     fun clearAll(): Int = synchronized(lock) {
         val ids = records.keys.toList()
-        ids.forEach { removeLocked(it) }
-        ids.size
+        ids.count { removeLocked(it) }
     }
 
-    fun issueDownloadToken(record: McpFileRecord): McpFileRecord {
+    fun issueDownloadToken(record: McpFileRecord): McpFileRecord? = synchronized(lock) {
+        val current = records[record.id] ?: return@synchronized null
         val now = System.currentTimeMillis()
-        record.downloadToken = generateToken()
-        record.tokenExpiresAt = now + TOKEN_TTL_MS
-        return record
+        if (current.downloadToken.isBlank() || now > current.tokenExpiresAt) {
+            current.downloadToken = generateToken()
+            current.tokenExpiresAt = now + TOKEN_TTL_MS
+        }
+        // Return an immutable snapshot so another request cannot mutate credentials
+        // while this response is being serialized.
+        current.copy()
     }
 
-    fun isTokenValid(record: McpFileRecord, token: String?): Boolean {
+    fun isTokenValid(record: McpFileRecord, token: String?): Boolean = synchronized(lock) {
         if (token.isNullOrBlank()) return false
-        if (token != record.downloadToken) return false
-        return System.currentTimeMillis() <= record.tokenExpiresAt
+        if (token.length > 512 || System.currentTimeMillis() > record.tokenExpiresAt) return false
+        MessageDigest.isEqual(
+            record.downloadToken.toByteArray(Charsets.UTF_8),
+            token.toByteArray(Charsets.UTF_8),
+        )
     }
 
     private fun cleanupLocked() {
@@ -132,31 +169,61 @@ object McpFileInbox {
         }
     }
 
-    private fun removeLocked(fileId: String): Boolean {
-        val record = records.remove(fileId) ?: return false
-        runCatching { File(record.path).delete() }
-        OmniLog.i(TAG, "Removed file ${record.fileName} (${record.id})")
+    private fun initializeInboxLocked(dir: File): Boolean {
+        if (inboxInitialized) return true
+        if (!dir.exists()) {
+            inboxInitialized = true
+            return true
+        }
+        val orphans = dir.listFiles()
+        if (orphans == null) {
+            OmniLog.e(TAG, "Unable to enumerate stale inbox files")
+            return false
+        }
+        val failedCount = orphans.count { orphan ->
+            !runCatching { orphan.delete() }.getOrDefault(false)
+        }
+        if (failedCount > 0) {
+            OmniLog.e(TAG, "Unable to remove $failedCount stale inbox file(s)")
+            return false
+        }
+        inboxInitialized = true
         return true
     }
 
-    private fun copyUriToFile(context: Context, uri: Uri, target: File): Long? {
+    private fun removeLocked(fileId: String): Boolean {
+        val record = records[fileId] ?: return false
+        val file = File(record.path)
+        val deleted = !file.exists() || runCatching { file.delete() }.getOrDefault(false)
+        if (!deleted) {
+            OmniLog.e(TAG, "Unable to remove shared file")
+            return false
+        }
+        records.remove(fileId, record)
+        OmniLog.i(TAG, "Removed shared file")
+        return true
+    }
+
+    private fun copyUriToFile(context: Context, uri: Uri, target: File, maxBytes: Long): Long? {
         return try {
             val input = context.contentResolver.openInputStream(uri) ?: return null
             input.use { source ->
                 target.outputStream().use { output ->
-                    source.copyTo(output)
+                    BoundedStreamCopy.copy(source, output, maxBytes)
                 }
             }
-            target.length()
+        } catch (e: cn.com.omnimind.bot.util.ContentSizeLimitExceededException) {
+            OmniLog.w(TAG, "Rejected shared file because it exceeds the size limit")
+            null
         } catch (e: Exception) {
-            OmniLog.e(TAG, "Failed to copy uri to file: ${e.message}")
+            OmniLog.e(TAG, "Failed to copy shared file: ${e.javaClass.simpleName}")
             null
         }
     }
 
     private fun sanitizeFileName(name: String): String {
         val trimmed = name.trim().ifBlank { "shared_file" }
-        return trimmed.replace(Regex("[\\\\/:*?\"<>|]"), "_")
+        return trimmed.replace(Regex("[\\\\/:*?\"<>|]"), "_").take(160)
     }
 
     private fun ensureExtension(name: String, mimeType: String?): String {
@@ -177,7 +244,7 @@ object McpFileInbox {
                 if (nameIndex >= 0) {
                     displayName = it.getString(nameIndex)
                 }
-                if (sizeIndex >= 0) {
+                if (sizeIndex >= 0 && !it.isNull(sizeIndex)) {
                     sizeBytes = it.getLong(sizeIndex)
                 }
             }

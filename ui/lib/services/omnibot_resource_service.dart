@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 import 'package:ui/core/router/go_router_manager.dart';
@@ -114,7 +115,7 @@ class OmnibotResourceService {
 
   static void debugSetWorkspacePaths(OmnibotWorkspacePaths paths) {
     _workspacePaths = paths;
-    _workspacePathsFuture = Future<OmnibotWorkspacePaths>.value(paths);
+    _workspacePathsFuture = SynchronousFuture<OmnibotWorkspacePaths>(paths);
   }
 
   static void debugResetWorkspacePaths() {
@@ -295,6 +296,11 @@ class OmnibotResourceService {
       return true;
     }
 
+    if (requiredPermissionId == kPublicStoragePermissionId) {
+      final capabilities = await refreshAppEditionCapabilitySnapshot();
+      if (!capabilities.publicStorageAccess) return false;
+    }
+
     final granted = switch (requiredPermissionId) {
       kPublicStoragePermissionId => await isPublicStorageAccessGranted(),
       _ => await isWorkspaceStorageAccessGranted(),
@@ -356,7 +362,7 @@ class OmnibotResourceService {
     final resolvedMimeType = isDirectory
         ? 'inode/directory'
         : (mimeType ?? _guessMimeType(path));
-    final derivedTitle = path.split(Platform.pathSeparator).last;
+    final derivedTitle = path.replaceAll('\\', '/').split('/').last;
     final resolvedTitle =
         title ?? (derivedTitle.isEmpty ? 'workspace' : derivedTitle);
     final resolvedEmbedKind = switch (resolvedPreviewKind) {

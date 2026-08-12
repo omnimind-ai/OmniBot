@@ -1,7 +1,6 @@
 package cn.com.omnimind.bot.ui.channel
 
 import android.content.Context
-import android.util.Log
 import cn.com.omnimind.baselib.service.DeviceInfoService
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
@@ -63,8 +62,7 @@ class DeviceInfoChannel {
             val androidId = DeviceInfoService.getAndroidId(ctx)
             result.success(androidId)
         } catch (e: Exception) {
-            Log.e(TAG, "Error getting Android ID", e)
-            result.error("ANDROID_ID_ERROR", "Failed to get Android ID", e.message)
+            NativeChannelErrorPrivacy.deliver(result, TAG, "ANDROID_ID_ERROR", e)
         }
     }
 
@@ -78,8 +76,7 @@ class DeviceInfoChannel {
             val deviceInfo = DeviceInfoService.getDeviceInfo(ctx)
             result.success(deviceInfo)
         } catch (e: Exception) {
-            Log.e(TAG, "Error getting device info", e)
-            result.error("DEVICE_INFO_ERROR", "Failed to get device info", e.message)
+            NativeChannelErrorPrivacy.deliver(result, TAG, "DEVICE_INFO_ERROR", e)
         }
     }
 
@@ -88,8 +85,7 @@ class DeviceInfoChannel {
             val ipAddress = DeviceInfoService.getIpAddress()
             result.success(ipAddress)
         } catch (e: Exception) {
-            Log.e(TAG, "Error getting IP address", e)
-            result.error("IP_ADDRESS_ERROR", "Failed to get IP address", e.message)
+            NativeChannelErrorPrivacy.deliver(result, TAG, "IP_ADDRESS_ERROR", e)
         }
     }
 
@@ -103,8 +99,7 @@ class DeviceInfoChannel {
             val versionInfo = DeviceInfoService.getAppVersion(ctx)
             result.success(versionInfo)
         } catch (e: Exception) {
-            Log.e(TAG, "Error getting app version", e)
-            result.error("VERSION_ERROR", "Failed to get app version", e.message)
+            NativeChannelErrorPrivacy.deliver(result, TAG, "VERSION_ERROR", e)
         }
     }
 

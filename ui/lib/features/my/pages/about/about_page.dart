@@ -5,6 +5,7 @@ import 'package:ui/core/router/go_router_manager.dart';
 import 'package:ui/l10n/l10n.dart';
 import 'package:ui/services/app_update_service.dart';
 import 'package:ui/services/device_service.dart';
+import 'package:ui/services/privacy_consent_service.dart';
 import 'package:ui/theme/app_colors.dart';
 import 'package:ui/theme/app_text_styles.dart';
 import 'package:ui/theme/theme_context.dart';
@@ -28,6 +29,7 @@ class _AboutPageState extends State<AboutPage> {
       'https://omnimind-ai.github.io/OmniBot-Docs/en/';
 
   String _version = '';
+  bool _selfUpdateAvailable = AppUpdateService.isSelfUpdateAvailable;
   AppUpdateStatus? _updateStatus = AppUpdateService.statusNotifier.value;
   bool _betaOptIn = AppUpdateService.betaOptInNotifier.value;
   AppUpdateDownloadSource _downloadSource =
@@ -35,26 +37,42 @@ class _AboutPageState extends State<AboutPage> {
   bool _isCheckingUpdate = false;
   bool _isUpdatingBetaOptIn = false;
   bool _isUpdatingDownloadSource = false;
+  PrivacyConsentDecision _privacyDecision =
+      PrivacyConsentService.decisionNotifier.value;
+  bool _isUpdatingPrivacyDecision = false;
   bool _hasSyncedUpdatePreferences = false;
 
   @override
   void initState() {
     super.initState();
+    AppUpdateService.availabilityNotifier.addListener(
+      _handleUpdateAvailabilityChanged,
+    );
     AppUpdateService.statusNotifier.addListener(_handleUpdateStatusChanged);
     AppUpdateService.betaOptInNotifier.addListener(_handleBetaOptInChanged);
     AppUpdateService.downloadSourceNotifier.addListener(
       _handleDownloadSourceChanged,
     );
+    PrivacyConsentService.decisionNotifier.addListener(
+      _handlePrivacyDecisionChanged,
+    );
     _loadVersion();
     _loadUpdateStatus();
+    _loadPrivacyDecision();
   }
 
   @override
   void dispose() {
+    AppUpdateService.availabilityNotifier.removeListener(
+      _handleUpdateAvailabilityChanged,
+    );
     AppUpdateService.statusNotifier.removeListener(_handleUpdateStatusChanged);
     AppUpdateService.betaOptInNotifier.removeListener(_handleBetaOptInChanged);
     AppUpdateService.downloadSourceNotifier.removeListener(
       _handleDownloadSourceChanged,
+    );
+    PrivacyConsentService.decisionNotifier.removeListener(
+      _handlePrivacyDecisionChanged,
     );
     super.dispose();
   }
@@ -74,7 +92,6 @@ class _AboutPageState extends State<AboutPage> {
         _version = 'Version -';
       });
     } catch (e) {
-      debugPrint('加载版本号失败: $e');
       if (!mounted) return;
       setState(() {
         _version = 'Version -';
@@ -86,6 +103,7 @@ class _AboutPageState extends State<AboutPage> {
     await AppUpdateService.initialize();
     if (!mounted) return;
     setState(() {
+      _selfUpdateAvailable = AppUpdateService.isSelfUpdateAvailable;
       _betaOptIn = AppUpdateService.betaOptInNotifier.value;
       _updateStatus = AppUpdateService.statusNotifier.value;
       _downloadSource = AppUpdateService.downloadSourceNotifier.value;
@@ -121,8 +139,63 @@ class _AboutPageState extends State<AboutPage> {
     });
   }
 
+  Future<void> _loadPrivacyDecision() async {
+    final decision = await PrivacyConsentService.refresh();
+    if (!mounted) return;
+    setState(() {
+      _privacyDecision = decision;
+    });
+  }
+
+  void _handleUpdateAvailabilityChanged() {
+    if (!mounted) return;
+    setState(() {
+      _selfUpdateAvailable = AppUpdateService.isSelfUpdateAvailable;
+    });
+  }
+
+  void _handlePrivacyDecisionChanged() {
+    if (!mounted) return;
+    setState(() {
+      _privacyDecision = PrivacyConsentService.decisionNotifier.value;
+    });
+  }
+
+  Future<void> _handleSelectPrivacyDecision(
+    PrivacyConsentDecision? decision,
+  ) async {
+    if (decision == null ||
+        decision == PrivacyConsentDecision.pending ||
+        decision == _privacyDecision ||
+        _isUpdatingPrivacyDecision) {
+      return;
+    }
+    setState(() {
+      _isUpdatingPrivacyDecision = true;
+    });
+    try {
+      final persisted = await PrivacyConsentService.setDecision(decision);
+      if (!mounted) return;
+      setState(() {
+        _privacyDecision = persisted;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      showToast(
+        context.l10n.aboutPrivacyConsentUpdateFailed,
+        type: ToastType.error,
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isUpdatingPrivacyDecision = false;
+        });
+      }
+    }
+  }
+
   Future<void> _handleToggleBetaOptIn(bool enabled) async {
-    if (_isUpdatingBetaOptIn) return;
+    if (!_selfUpdateAvailable || _isUpdatingBetaOptIn) return;
     setState(() {
       _isUpdatingBetaOptIn = true;
     });
@@ -150,7 +223,7 @@ class _AboutPageState extends State<AboutPage> {
   }
 
   Future<void> _handleCheckUpdate() async {
-    if (_isCheckingUpdate) return;
+    if (!_selfUpdateAvailable || _isCheckingUpdate) return;
     setState(() {
       _isCheckingUpdate = true;
     });
@@ -180,6 +253,7 @@ class _AboutPageState extends State<AboutPage> {
   }
 
   Future<void> _handlePrimaryAction() async {
+    if (!_selfUpdateAvailable) return;
     final status = _updateStatus;
     if (status != null && status.hasUpdate) {
       await showAppUpdateDialog(context, status);
@@ -192,6 +266,7 @@ class _AboutPageState extends State<AboutPage> {
     AppUpdateDownloadSource? source,
   ) async {
     if (source == null ||
+        !_selfUpdateAvailable ||
         _isUpdatingDownloadSource ||
         source == _downloadSource) {
       return;
@@ -220,6 +295,7 @@ class _AboutPageState extends State<AboutPage> {
   }
 
   String? _buildUpdateHint() {
+    if (!_selfUpdateAvailable) return null;
     final status = _updateStatus;
     if (status?.hasUpdate != true) return null;
     return '${context.trLegacy('发现新版本')} ${status!.latestVersionLabel}';
@@ -332,45 +408,48 @@ class _AboutPageState extends State<AboutPage> {
                 : AppColors.text70,
           ),
         ),
-        SizedBox(height: updateHint == null ? 12 : 10),
-        if (updateHint != null) ...[
-          Text(
-            updateHint,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              fontFamily: AppTextStyles.fontFamily,
-              fontSize: compact ? 10.5 : 11,
-              fontWeight: FontWeight.w500,
-              letterSpacing: 0.3,
-              height: 1.5,
-              color: context.isDarkTheme
-                  ? palette.textTertiary
-                  : AppColors.text50,
+        if (_selfUpdateAvailable) ...[
+          SizedBox(height: updateHint == null ? 12 : 10),
+          if (updateHint != null) ...[
+            Text(
+              updateHint,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontFamily: AppTextStyles.fontFamily,
+                fontSize: compact ? 10.5 : 11,
+                fontWeight: FontWeight.w500,
+                letterSpacing: 0.3,
+                height: 1.5,
+                color: context.isDarkTheme
+                    ? palette.textTertiary
+                    : AppColors.text50,
+              ),
             ),
+            const SizedBox(height: 12),
+          ],
+          GradientButton(
+            text: _isCheckingUpdate
+                ? context.trLegacy('检查中...')
+                : (_updateStatus?.hasUpdate == true
+                      ? context.trLegacy('查看新版本')
+                      : context.trLegacy('检查更新')),
+            width: 180,
+            height: compact ? 40 : 44,
+            gradientColors: updateButtonGradient,
+            textStyle: TextStyle(
+              color: updateButtonTextColor,
+              fontSize: compact ? 15 : 16,
+              fontFamily: AppTextStyles.fontFamily,
+              fontWeight: FontWeight.w500,
+              height: 1.5,
+              letterSpacing: 0.5,
+            ),
+            enabled: !_isCheckingUpdate,
+            onTap: _handlePrimaryAction,
           ),
           const SizedBox(height: 12),
-        ],
-        GradientButton(
-          text: _isCheckingUpdate
-              ? context.trLegacy('检查中...')
-              : (_updateStatus?.hasUpdate == true
-                    ? context.trLegacy('查看新版本')
-                    : context.trLegacy('检查更新')),
-          width: 180,
-          height: compact ? 40 : 44,
-          gradientColors: updateButtonGradient,
-          textStyle: TextStyle(
-            color: updateButtonTextColor,
-            fontSize: compact ? 15 : 16,
-            fontFamily: AppTextStyles.fontFamily,
-            fontWeight: FontWeight.w500,
-            height: 1.5,
-            letterSpacing: 0.5,
-          ),
-          enabled: !_isCheckingUpdate,
-          onTap: _handlePrimaryAction,
-        ),
-        const SizedBox(height: 12),
+        ] else
+          const SizedBox(height: 12),
         _buildAboutActionButton(
           icon: LucideIcons.receiptText,
           label: context.trLegacy('请求日志'),
@@ -620,6 +699,46 @@ class _AboutPageState extends State<AboutPage> {
     );
   }
 
+  String _privacyDecisionLabel(PrivacyConsentDecision decision) {
+    return switch (decision) {
+      PrivacyConsentDecision.pending => context.l10n.aboutPrivacyConsentPending,
+      PrivacyConsentDecision.granted => context.l10n.aboutPrivacyConsentGranted,
+      PrivacyConsentDecision.declined =>
+        context.l10n.aboutPrivacyConsentDeclined,
+    };
+  }
+
+  Widget _buildPrivacyConsentTrailing() {
+    final palette = context.omniPalette;
+    return DropdownButtonHideUnderline(
+      child: DropdownButton<PrivacyConsentDecision>(
+        key: const ValueKey('about-privacy-consent-dropdown'),
+        value: _privacyDecision,
+        isDense: true,
+        dropdownColor: context.isDarkTheme
+            ? palette.surfacePrimary
+            : Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        style: TextStyle(
+          color: context.isDarkTheme ? palette.textPrimary : AppColors.text,
+          fontWeight: FontWeight.w600,
+          fontSize: 13,
+          fontFamily: AppTextStyles.fontFamily,
+        ),
+        items: PrivacyConsentDecision.values.map((decision) {
+          return DropdownMenuItem<PrivacyConsentDecision>(
+            value: decision,
+            enabled: decision != PrivacyConsentDecision.pending,
+            child: Text(_privacyDecisionLabel(decision)),
+          );
+        }).toList(),
+        onChanged: _isUpdatingPrivacyDecision
+            ? null
+            : _handleSelectPrivacyDecision,
+      ),
+    );
+  }
+
   Widget _buildPreferenceSection(bool compact) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -630,45 +749,59 @@ class _AboutPageState extends State<AboutPage> {
         ),
         AnimatedOpacity(
           duration: const Duration(milliseconds: 180),
-          opacity: _isUpdatingBetaOptIn ? 0.72 : 1,
+          opacity: _isUpdatingPrivacyDecision ? 0.72 : 1,
           child: _buildFlatSettingRow(
-            title: context.l10n.aboutBetaProgramTitle,
-            subtitle: context.l10n.aboutBetaProgramDescription,
+            title: context.l10n.aboutPrivacyConsentTitle,
+            subtitle: context.l10n.aboutPrivacyConsentDescription,
             compact: compact,
-            onTap: _isUpdatingBetaOptIn
-                ? null
-                : () => _handleToggleBetaOptIn(!_betaOptIn),
-            trailing: IgnorePointer(
-              child: FlutterSwitch(
-                width: 44.8,
-                height: 25.0,
-                toggleSize: 15.3,
-                padding: 4.8,
-                activeColor: context.omniPalette.accentPrimary,
-                inactiveColor: context.omniPalette.borderStrong,
-                value: _betaOptIn,
-                borderRadius: 28.75,
-                duration: _hasSyncedUpdatePreferences
-                    ? const Duration(milliseconds: 200)
-                    : Duration.zero,
-                onToggle: (_) {},
+            trailing: _buildPrivacyConsentTrailing(),
+            isLast: !_selfUpdateAvailable,
+          ),
+        ),
+        if (_selfUpdateAvailable) ...[
+          _buildFlatSectionDivider(),
+          AnimatedOpacity(
+            duration: const Duration(milliseconds: 180),
+            opacity: _isUpdatingBetaOptIn ? 0.72 : 1,
+            child: _buildFlatSettingRow(
+              title: context.l10n.aboutBetaProgramTitle,
+              subtitle: context.l10n.aboutBetaProgramDescription,
+              compact: compact,
+              onTap: _isUpdatingBetaOptIn
+                  ? null
+                  : () => _handleToggleBetaOptIn(!_betaOptIn),
+              trailing: IgnorePointer(
+                child: FlutterSwitch(
+                  width: 44.8,
+                  height: 25.0,
+                  toggleSize: 15.3,
+                  padding: 4.8,
+                  activeColor: context.omniPalette.accentPrimary,
+                  inactiveColor: context.omniPalette.borderStrong,
+                  value: _betaOptIn,
+                  borderRadius: 28.75,
+                  duration: _hasSyncedUpdatePreferences
+                      ? const Duration(milliseconds: 200)
+                      : Duration.zero,
+                  onToggle: (_) {},
+                ),
               ),
             ),
           ),
-        ),
-        _buildFlatSectionDivider(),
-        AnimatedOpacity(
-          duration: const Duration(milliseconds: 180),
-          opacity: _isUpdatingDownloadSource ? 0.72 : 1,
-          child: _buildFlatSettingRow(
-            title: context.l10n.aboutApkSourceTitle,
-            subtitle: context.l10n.aboutApkSourceDescription,
-            bottomNote: context.l10n.aboutApkSourceDisclaimer,
-            compact: compact,
-            trailing: _buildDownloadSourceTrailing(),
-            isLast: true,
+          _buildFlatSectionDivider(),
+          AnimatedOpacity(
+            duration: const Duration(milliseconds: 180),
+            opacity: _isUpdatingDownloadSource ? 0.72 : 1,
+            child: _buildFlatSettingRow(
+              title: context.l10n.aboutApkSourceTitle,
+              subtitle: context.l10n.aboutApkSourceDescription,
+              bottomNote: context.l10n.aboutApkSourceDisclaimer,
+              compact: compact,
+              trailing: _buildDownloadSourceTrailing(),
+              isLast: true,
+            ),
           ),
-        ),
+        ],
       ],
     );
   }
