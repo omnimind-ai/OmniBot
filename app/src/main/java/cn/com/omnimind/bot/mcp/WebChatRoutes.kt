@@ -9,12 +9,14 @@ import cn.com.omnimind.bot.webchat.WorkspaceFileService
 import com.google.gson.Gson
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
+import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.call
 import io.ktor.server.request.receive
 import io.ktor.server.response.header
-import io.ktor.server.response.respond
 import io.ktor.server.response.respondBytes
 import io.ktor.server.response.respondFile
+import io.ktor.server.response.respondText
 import io.ktor.server.response.respondTextWriter
 import io.ktor.server.routing.*
 import kotlinx.coroutines.flow.collect
@@ -28,6 +30,14 @@ object WebChatRoutes {
 
     private val gson by lazy { Gson() }
 
+    /** Serialize heterogeneous WebChat payloads explicitly instead of relying on Ktor's map serializer. */
+    private suspend fun ApplicationCall.respondJson(
+        payload: Any?,
+        status: HttpStatusCode = HttpStatusCode.OK
+    ) {
+        respondText(gson.toJson(payload), ContentType.Application.Json, status)
+    }
+
     fun Route.registerWebChatRoutes(
         conversationService: ConversationDomainService,
         workspaceFileService: WorkspaceFileService,
@@ -38,7 +48,7 @@ object WebChatRoutes {
         route("/webchat/api") {
             get("/bootstrap") {
                 if (!McpServerManager.requireWebChatAuth(call)) return@get
-                call.respond(
+                call.respondJson(
                     mapOf(
                         "server" to McpServerManager.currentState().toMap(),
                         "capabilities" to mapOf(
@@ -70,7 +80,7 @@ object WebChatRoutes {
                 if (!McpServerManager.requireWebChatAuth(call)) return@get
                 val includeArchived = call.request.queryParameters.boolean("includeArchived", true)
                 val archivedOnly = call.request.queryParameters.boolean("archivedOnly", false)
-                call.respond(
+                call.respondJson(
                     conversationService.listConversationPayloads(
                         includeArchived = includeArchived,
                         archivedOnly = archivedOnly
@@ -81,8 +91,7 @@ object WebChatRoutes {
             post("/conversations") {
                 if (!McpServerManager.requireWebChatAuth(call)) return@post
                 val body = call.receive<Map<String, Any?>>()
-                call.respond(
-                    io.ktor.http.HttpStatusCode.Created,
+                call.respondJson(
                     conversationService.createConversation(
                         title = body["title"]?.toString() ?: "新对话",
                         mode = body["mode"]?.toString() ?: "normal",
@@ -92,7 +101,8 @@ object WebChatRoutes {
                         parentConversationMode = body["parentConversationMode"]?.toString(),
                         scheduledTaskId = body["scheduledTaskId"]?.toString(),
                         agentId = body["agentId"]?.toString()
-                    )
+                    ),
+                    HttpStatusCode.Created
                 )
             }
 
@@ -100,12 +110,12 @@ object WebChatRoutes {
                 if (!McpServerManager.requireWebChatAuth(call)) return@patch
                 val conversationId = call.parameters["conversationId"]?.toLongOrNull()
                 if (conversationId == null || conversationId <= 0L) {
-                    call.respond(io.ktor.http.HttpStatusCode.BadRequest, mapOf("error" to "INVALID_CONVERSATION_ID"))
+                    call.respondJson(mapOf("error" to "INVALID_CONVERSATION_ID"), HttpStatusCode.BadRequest)
                     return@patch
                 }
                 val body = call.receive<Map<String, Any?>>().toMutableMap()
                 body["id"] = conversationId
-                call.respond(
+                call.respondJson(
                     conversationService.updateConversationFromPayload(body)
                 )
             }
@@ -114,18 +124,18 @@ object WebChatRoutes {
                 if (!McpServerManager.requireWebChatAuth(call)) return@delete
                 val conversationId = call.parameters["conversationId"]?.toLongOrNull()
                 if (conversationId == null || conversationId <= 0L) {
-                    call.respond(io.ktor.http.HttpStatusCode.BadRequest, mapOf("error" to "INVALID_CONVERSATION_ID"))
+                    call.respondJson(mapOf("error" to "INVALID_CONVERSATION_ID"), HttpStatusCode.BadRequest)
                     return@delete
                 }
                 conversationService.deleteConversation(conversationId)
-                call.respond(mapOf("success" to true))
+                call.respondJson(mapOf("success" to true))
             }
 
             get("/conversations/{conversationId}/messages") {
                 if (!McpServerManager.requireWebChatAuth(call)) return@get
                 val conversationId = call.parameters["conversationId"]?.toLongOrNull()
                 if (conversationId == null || conversationId <= 0L) {
-                    call.respond(io.ktor.http.HttpStatusCode.BadRequest, mapOf("error" to "INVALID_CONVERSATION_ID"))
+                    call.respondJson(mapOf("error" to "INVALID_CONVERSATION_ID"), HttpStatusCode.BadRequest)
                     return@get
                 }
                 val mode = call.request.queryParameters["mode"] ?: "normal"
@@ -133,7 +143,7 @@ object WebChatRoutes {
                     conversationId = conversationId,
                     conversationMode = mode
                 )
-                call.respond(
+                call.respondJson(
                     conversationService.listConversationMessages(
                         conversationId = conversationId,
                         conversationMode = mode,
@@ -146,23 +156,23 @@ object WebChatRoutes {
                 if (!McpServerManager.requireWebChatAuth(call)) return@post
                 val conversationId = call.parameters["conversationId"]?.toLongOrNull()
                 if (conversationId == null || conversationId <= 0L) {
-                    call.respond(io.ktor.http.HttpStatusCode.BadRequest, mapOf("error" to "INVALID_CONVERSATION_ID"))
+                    call.respondJson(mapOf("error" to "INVALID_CONVERSATION_ID"), HttpStatusCode.BadRequest)
                     return@post
                 }
                 val body = call.receive<Map<String, Any?>>()
                 val accepted = runCatching {
                     agentRunService.startConversationRun(conversationId, body)
                 }.getOrElse { error ->
-                    call.respond(io.ktor.http.HttpStatusCode.Conflict, mapOf("error" to (error.message ?: "RUN_START_FAILED")))
+                    call.respondJson(mapOf("error" to (error.message ?: "RUN_START_FAILED")), HttpStatusCode.Conflict)
                     return@post
                 }
-                call.respond(io.ktor.http.HttpStatusCode.Accepted, accepted)
+                call.respondJson(accepted, HttpStatusCode.Accepted)
             }
 
             post("/tasks/{taskId}/cancel") {
                 if (!McpServerManager.requireWebChatAuth(call)) return@post
                 val taskId = call.parameters["taskId"]?.trim().takeUnless { it.isNullOrEmpty() }
-                call.respond(agentRunService.cancelTask(taskId))
+                call.respondJson(agentRunService.cancelTask(taskId))
             }
 
             post("/tasks/{taskId}/clarify") {
@@ -171,10 +181,10 @@ object WebChatRoutes {
                 val body = call.receive<Map<String, Any?>>()
                 val reply = body["reply"]?.toString() ?: body["userInput"]?.toString().orEmpty()
                 if (reply.isBlank()) {
-                    call.respond(io.ktor.http.HttpStatusCode.BadRequest, mapOf("error" to "EMPTY_REPLY"))
+                    call.respondJson(mapOf("error" to "EMPTY_REPLY"), HttpStatusCode.BadRequest)
                     return@post
                 }
-                call.respond(agentRunService.clarifyTask(taskId, reply))
+                call.respondJson(agentRunService.clarifyTask(taskId, reply))
             }
 
             get("/events") {
@@ -208,7 +218,7 @@ object WebChatRoutes {
                 val recursive = call.request.queryParameters.boolean("recursive", false)
                 val maxDepth = call.request.queryParameters["maxDepth"]?.toIntOrNull() ?: 2
                 val limit = call.request.queryParameters["limit"]?.toIntOrNull() ?: 200
-                call.respond(
+                call.respondJson(
                     if (path.isNullOrBlank()) {
                         workspaceFileService.bootstrapPayload()
                     } else {
@@ -226,14 +236,14 @@ object WebChatRoutes {
                 if (!McpServerManager.requireWebChatAuth(call)) return@get
                 val path = call.request.queryParameters["path"]
                 if (path.isNullOrBlank()) {
-                    call.respond(io.ktor.http.HttpStatusCode.BadRequest, mapOf("error" to "MISSING_PATH"))
+                    call.respondJson(mapOf("error" to "MISSING_PATH"), HttpStatusCode.BadRequest)
                     return@get
                 }
                 val maxChars = call.request.queryParameters["maxChars"]?.toIntOrNull() ?: 64_000
                 val offset = call.request.queryParameters["offset"]?.toIntOrNull() ?: 0
                 val lineStart = call.request.queryParameters["lineStart"]?.toIntOrNull()
                 val lineCount = call.request.queryParameters["lineCount"]?.toIntOrNull()
-                call.respond(
+                call.respondJson(
                     workspaceFileService.readFile(
                         path = path,
                         maxChars = maxChars,
@@ -249,10 +259,10 @@ object WebChatRoutes {
                 val body = call.receive<Map<String, Any?>>()
                 val path = body["path"]?.toString().orEmpty()
                 if (path.isBlank()) {
-                    call.respond(io.ktor.http.HttpStatusCode.BadRequest, mapOf("error" to "MISSING_PATH"))
+                    call.respondJson(mapOf("error" to "MISSING_PATH"), HttpStatusCode.BadRequest)
                     return@put
                 }
-                call.respond(
+                call.respondJson(
                     workspaceFileService.writeFile(
                         path = path,
                         content = body["content"]?.toString() ?: "",
@@ -267,10 +277,10 @@ object WebChatRoutes {
                 val sourcePath = body["sourcePath"]?.toString().orEmpty()
                 val targetPath = body["targetPath"]?.toString().orEmpty()
                 if (sourcePath.isBlank() || targetPath.isBlank()) {
-                    call.respond(io.ktor.http.HttpStatusCode.BadRequest, mapOf("error" to "MISSING_PATH"))
+                    call.respondJson(mapOf("error" to "MISSING_PATH"), HttpStatusCode.BadRequest)
                     return@post
                 }
-                call.respond(
+                call.respondJson(
                     workspaceFileService.move(
                         sourcePath = sourcePath,
                         targetPath = targetPath,
@@ -283,21 +293,21 @@ object WebChatRoutes {
                 if (!McpServerManager.requireWebChatAuth(call)) return@delete
                 val path = call.request.queryParameters["path"]
                 if (path.isNullOrBlank()) {
-                    call.respond(io.ktor.http.HttpStatusCode.BadRequest, mapOf("error" to "MISSING_PATH"))
+                    call.respondJson(mapOf("error" to "MISSING_PATH"), HttpStatusCode.BadRequest)
                     return@delete
                 }
                 workspaceFileService.delete(
                     path = path,
                     recursive = call.request.queryParameters.boolean("recursive", false)
                 )
-                call.respond(mapOf("success" to true))
+                call.respondJson(mapOf("success" to true))
             }
 
             get("/download") {
                 if (!McpServerManager.requireWebChatAuth(call)) return@get
                 val path = call.request.queryParameters["path"]
                 if (path.isNullOrBlank()) {
-                    call.respond(io.ktor.http.HttpStatusCode.BadRequest, mapOf("error" to "MISSING_PATH"))
+                    call.respondJson(mapOf("error" to "MISSING_PATH"), HttpStatusCode.BadRequest)
                     return@get
                 }
                 val (file, _) = workspaceFileService.resolveDownloadFile(path)
@@ -319,14 +329,14 @@ object WebChatRoutes {
         route("/browser") {
             get("/snapshot") {
                 if (!McpServerManager.requireWebChatAuth(call)) return@get
-                call.respond(browserMirrorService.snapshot())
+                call.respondJson(browserMirrorService.snapshot())
             }
 
             get("/frame") {
                 if (!McpServerManager.requireWebChatAuth(call)) return@get
                 val frame = browserMirrorService.frameBytes()
                 if (frame == null) {
-                    call.respond(io.ktor.http.HttpStatusCode.NotFound, mapOf("error" to "BROWSER_FRAME_UNAVAILABLE"))
+                    call.respondJson(mapOf("error" to "BROWSER_FRAME_UNAVAILABLE"), HttpStatusCode.NotFound)
                 } else {
                     call.respondBytes(frame, ContentType.Image.PNG)
                 }
@@ -335,7 +345,7 @@ object WebChatRoutes {
             post("/action") {
                 if (!McpServerManager.requireWebChatAuth(call)) return@post
                 val body = call.receive<Map<String, Any?>>()
-                call.respond(browserMirrorService.executeAction(body))
+                call.respondJson(browserMirrorService.executeAction(body))
             }
         }
     }
