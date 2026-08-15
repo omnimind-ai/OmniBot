@@ -9,7 +9,6 @@ import cn.com.omnimind.bot.terminal.EmbeddedTerminalRuntime
 import cn.com.omnimind.bot.plugin.runtime.RuntimeSkillBundleManager
 import com.ai.assistance.operit.terminal.TerminalManager
 import com.rk.terminal.runtime.TerminalDistribution
-import com.rk.terminal.runtime.UbuntuRepositoryManager
 import java.util.UUID
 
 internal class OmniFlowAppPlatform(
@@ -56,7 +55,6 @@ internal class OmniFlowAppPlatform(
         val command = buildOmniFlowPythonPrepareCommand(
             expectedVersion = expectedVersion,
             distributionId = distribution.id,
-            ubuntuRepositorySetup = UbuntuRepositoryManager.buildSelectedRepositorySetupCommand(),
         )
         val result = TerminalManager.getInstance(appContext).executeHiddenCommand(
             command = command,
@@ -142,7 +140,6 @@ internal class OmniFlowAppPlatform(
 internal fun buildOmniFlowPythonPrepareCommand(
     expectedVersion: String,
     distributionId: String = "alpine",
-    ubuntuRepositorySetup: String = ":",
 ): String {
     require(Regex("""\d+\.\d+""").matches(expectedVersion)) {
         "invalid_python_version"
@@ -151,24 +148,23 @@ internal fun buildOmniFlowPythonPrepareCommand(
         "unsupported_terminal_distribution"
     }
     val repairCommand = if (distributionId == "ubuntu") {
-        """
-            $ubuntuRepositorySetup
-            apt-get update
-            DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3 python3-pip python3-numpy
-        """.trimIndent()
+        "DEBIAN_FRONTEND=noninteractive apt-get install -y --reinstall --no-install-recommends python3-numpy"
     } else {
-        "apk --wait 300 add --no-cache python3 py3-pip py3-numpy"
+        "apk --wait 300 fix --no-cache py3-numpy"
     }
     return """
         set -e
         expected='$expectedVersion'
         echo 'OMNIFLOW_PYTHON_STAGE=probe_start'
-        base_packages_ready() {
-          command -v python3 >/dev/null 2>&1 &&
-          python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])' | grep -qx "${'$'}expected" &&
-          python3 -c 'import numpy' >/dev/null 2>&1
+        command -v python3 >/dev/null 2>&1 || {
+          echo 'OMNIFLOW_PYTHON_STAGE=error reason=python_missing' >&2
+          exit 12
         }
-        if ! base_packages_ready; then
+        python3 -c 'import sys; print("%d.%d" % sys.version_info[:2])' | grep -qx "${'$'}expected" || {
+          echo 'OMNIFLOW_PYTHON_STAGE=error reason=python_version_mismatch' >&2
+          exit 13
+        }
+        if ! python3 -c 'import numpy' >/dev/null 2>&1; then
           echo 'OMNIFLOW_PYTHON_STAGE=repair_start package=python-numpy'
           $repairCommand
           printf '%s\n' '$distributionId-python$expectedVersion-numpy-v1' > /etc/omnibot-python-environment
@@ -176,7 +172,7 @@ internal fun buildOmniFlowPythonPrepareCommand(
         else
           echo 'OMNIFLOW_PYTHON_STAGE=probe_ready source=environment'
         fi
-        base_packages_ready
+        python3 -c 'import numpy' >/dev/null 2>&1
         echo 'OMNIFLOW_PYTHON_STAGE=ready'
     """.trimIndent()
 }

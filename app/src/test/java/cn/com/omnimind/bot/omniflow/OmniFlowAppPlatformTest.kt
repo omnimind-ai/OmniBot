@@ -11,17 +11,22 @@ import org.junit.Test
 
 class OmniFlowAppPlatformTest {
     @Test
-    fun `python preparation only requires system numpy`() {
+    fun `alpine python preparation reinstalls only numpy when missing`() {
         val command = buildOmniFlowPythonPrepareCommand("3.12")
 
-        assertTrue(command.contains("if ! base_packages_ready; then"))
-        assertTrue(command.contains("apk --wait 300 add --no-cache python3 py3-pip py3-numpy"))
+        assertTrue(command.contains("command -v python3"))
+        assertTrue(command.contains("reason=python_missing"))
+        assertTrue(command.contains("reason=python_version_mismatch"))
+        assertTrue(command.contains("if ! python3 -c 'import numpy'"))
+        assertTrue(command.contains("apk --wait 300 fix --no-cache py3-numpy"))
         assertTrue(command.contains("python3 -c 'import numpy'"))
         assertTrue(command.contains("OMNIFLOW_PYTHON_STAGE=repair_start package=python-numpy"))
         assertTrue(command.contains("OMNIFLOW_PYTHON_STAGE=probe_ready source=environment"))
         assertTrue(command.contains("/etc/omnibot-python-environment"))
         assertTrue(command.contains("alpine-python3.12-numpy-v1"))
         assertFalse(command.contains("apt-get"))
+        assertFalse(command.contains("apk update"))
+        assertFalse(command.contains("py3-pip"))
         assertFalse(command.contains("printf '%s\\\\n'"))
         assertFalse(command.contains("command -v uv"))
         assertFalse(command.contains("uv sync"))
@@ -30,17 +35,18 @@ class OmniFlowAppPlatformTest {
     }
 
     @Test
-    fun `ubuntu python preparation repairs system numpy with apt`() {
+    fun `ubuntu python preparation reinstalls only numpy without apt update`() {
         val command = buildOmniFlowPythonPrepareCommand(
             expectedVersion = "3.12",
             distributionId = "ubuntu",
-            ubuntuRepositorySetup = "setup-ubuntu-repository",
         )
 
-        assertTrue(command.contains("setup-ubuntu-repository"))
-        assertTrue(command.contains("apt-get update"))
-        assertTrue(command.contains("python3 python3-pip python3-numpy"))
+        assertTrue(command.contains("apt-get install -y --reinstall"))
+        assertTrue(command.contains("python3-numpy"))
         assertTrue(command.contains("ubuntu-python3.12-numpy-v1"))
+        assertFalse(command.contains("apt-get update"))
+        assertFalse(command.contains("python3-pip"))
+        assertFalse(command.contains("setup-ubuntu-repository"))
         assertFalse(command.contains("apk --wait"))
     }
 
