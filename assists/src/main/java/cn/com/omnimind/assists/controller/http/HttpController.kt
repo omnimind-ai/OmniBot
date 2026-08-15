@@ -2577,6 +2577,7 @@ object HttpController {
     }
 
     private fun buildResponsesMessageItem(role: String, text: String): JsonElement {
+        val contentType = if (role == "assistant") "output_text" else "input_text"
         return buildJsonObject {
             put("role", role)
             put(
@@ -2584,7 +2585,7 @@ object HttpController {
                 buildJsonArray {
                     add(
                         buildJsonObject {
-                            put("type", "input_text")
+                            put("type", contentType)
                             put("text", text)
                         }
                     )
