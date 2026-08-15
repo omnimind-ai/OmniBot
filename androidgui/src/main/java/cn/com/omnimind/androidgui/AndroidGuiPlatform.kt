@@ -143,7 +143,14 @@ internal class AccessibilityAndroidGuiPlatform(
     }
 
     override suspend fun inputTarget(x: Float?, y: Float?): AndroidGuiInputTarget? =
-        withNodes { nodes -> selectInputNode(nodes, x, y)?.toInputTarget() }
+        withNodes { nodes ->
+            selectInputNode(
+                nodes = nodes,
+                x = x,
+                y = y,
+                lookup = InputNodeLookup.CLICK_TARGET,
+            )?.toInputTarget()
+        }
 
     override suspend fun installedApplications(): Map<String, String> = withContext(Dispatchers.IO) {
         val manager = context.packageManager
@@ -196,6 +203,7 @@ internal class AccessibilityAndroidGuiPlatform(
                     y = optionalNumber(action, OobActionSchema.ARG_Y),
                     resourceId = action.args[OobActionSchema.ARG_NODE_RESOURCE_ID]
                         ?.toString().orEmpty(),
+                    lookup = InputNodeLookup.INPUT_ACTION,
                 ) ?: return@withNodes AndroidGuiActionResult(false, "input_target_not_found")
                 if (node.isPassword) {
                     return@withNodes AndroidGuiActionResult(
@@ -244,7 +252,13 @@ internal class AccessibilityAndroidGuiPlatform(
         var success = false
         repeat(PRESS_KEY_ATTEMPTS) { attempt ->
             success = withNodes { nodes ->
-                val node = selectInputNode(nodes, x, y, resourceId) ?: return@withNodes false
+                val node = selectInputNode(
+                    nodes = nodes,
+                    x = x,
+                    y = y,
+                    resourceId = resourceId,
+                    lookup = InputNodeLookup.INPUT_ACTION,
+                ) ?: return@withNodes false
                 if (!node.isFocused) {
                     node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
                 }
@@ -402,6 +416,7 @@ internal class AccessibilityAndroidGuiPlatform(
         x: Float?,
         y: Float?,
         resourceId: String = "",
+        lookup: InputNodeLookup,
     ): AccessibilityNodeInfo? {
         val editable = nodes.filter { it.isEditable && it.isEnabled && it.isVisibleToUser }
         if (resourceId.isNotBlank()) {
@@ -414,6 +429,7 @@ internal class AccessibilityAndroidGuiPlatform(
             editable.firstOrNull { node ->
                 Rect().also(node::getBoundsInScreen).contains(x.toInt(), y.toInt())
             }?.let { return it }
+            if (!lookup.allowFallbackAfterCoordinateMiss) return null
         }
         if (resourceId.isNotBlank()) {
             editable.firstOrNull { it.viewIdResourceName == resourceId && it.isFocused }
@@ -474,6 +490,13 @@ internal class AccessibilityAndroidGuiPlatform(
         const val PRESS_KEY_RETRY_DELAY_MS = 120L
         val PACKAGE = Regex("package=\\\"([^\\\"]+)\\\"")
     }
+}
+
+internal enum class InputNodeLookup(
+    val allowFallbackAfterCoordinateMiss: Boolean,
+) {
+    CLICK_TARGET(false),
+    INPUT_ACTION(true),
 }
 
 internal val OPEN_APP_INTENT_FLAGS: Int =

@@ -37,7 +37,7 @@ void main() {
     () async {
       await OmniFlowToolClient.listFunctions();
       await OmniFlowToolClient.listRunLogs();
-      await OmniFlowToolClient.convertRunLog('run-1');
+      await OmniFlowToolClient.saveFunctionFromRunLog('run-1');
       await OmniFlowToolClient.replayFunction(
         'function.demo',
         <String, dynamic>{'query': 'ice'},
@@ -48,7 +48,7 @@ void main() {
       expect(calls.map((call) => (call.arguments as Map)['name']), <String>[
         'list_functions',
         'list_run_logs',
-        'convert_run_log',
+        'save_function',
         'function.demo',
       ]);
       expect(
@@ -61,4 +61,39 @@ void main() {
       );
     },
   );
+
+  test('parses the saved Function without a second backend read', () async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          calls.add(call);
+          return <String, Object?>{
+            'success': true,
+            'function_id': 'function.saved',
+            'function': <String, Object?>{
+              'function_id': 'function.saved',
+              'name': '已保存指令',
+              'steps': <Object?>[],
+            },
+          };
+        });
+
+    final result = await OmniFlowToolClient.registerFunctionFromRunLog('run-1');
+
+    expect(result.success, isTrue);
+    expect(result.functionId, 'function.saved');
+    expect(result.function?['source_run_id'], 'run-1');
+    expect(calls.map((call) => (call.arguments as Map)['name']), <String>[
+      'save_function',
+    ]);
+  });
+
+  test('rejects a successful registration response without function id', () {
+    final result = OmniFlowFunctionRegistrationResult.fromPayload(
+      <String, dynamic>{'success': true},
+      runId: 'run-1',
+    );
+
+    expect(result.success, isFalse);
+    expect(result.errorMessage, contains('function_id'));
+  });
 }

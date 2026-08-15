@@ -4,7 +4,6 @@ import cn.com.omnimind.androidgui.AndroidGuiActionResult
 import cn.com.omnimind.baselib.runlog.Action
 import cn.com.omnimind.baselib.runlog.State
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -79,16 +78,9 @@ internal class ManualRecordingEngine(
                 onDispatched(operationResult)
             } catch (error: CancellationException) {
                 throw error
-            } catch (_: Exception) {
-                Unit
-            }
+            } catch (_: Exception) {}
             executed = operationResult.success
-            val after = safeObserve(
-                stage = "${sequence}_after",
-                command = command,
-                staleXml = before.state?.xml,
-                retryUnchanged = operationResult.success && command.action.tool in STATE_CHANGING_TOOLS,
-            )
+            val after = safeObserve(stage = "${sequence}_after", command = command)
             if (operationResult.success || command.persistOnFailure) {
                 val sourceStateRequired = command.action.tool in SOURCE_STATE_REQUIRED_TOOLS
                 val evidenceComplete = !sourceStateRequired || !before.state?.xml.isNullOrBlank()
@@ -155,49 +147,29 @@ internal class ManualRecordingEngine(
     private suspend fun safeObserve(
         stage: String,
         command: ManualRecordingCommand,
-        staleXml: String? = null,
-        retryUnchanged: Boolean = false,
     ): ManualRecordingObservation {
-        var latest = ManualRecordingObservation(captureError = "xml_unavailable")
-        var latestWithXml: ManualRecordingObservation? = null
-        repeat(OBSERVATION_ATTEMPTS) { attempt ->
-            latest = try {
-                observe(stage, command).let { observation ->
-                    if (!observation.state?.xml.isNullOrBlank()) observation
-                    else observation.copy(captureError = observation.captureError ?: "xml_unavailable")
-                }
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: Exception) {
-                ManualRecordingObservation(
-                    captureError = error.message.orEmpty().ifBlank {
-                        "${error.javaClass.simpleName}:xml_capture_failed"
-                    },
-                )
+        return try {
+            observe(stage, command).let { observation ->
+                if (!observation.state?.xml.isNullOrBlank()) observation
+                else observation.copy(captureError = observation.captureError ?: "xml_unavailable")
             }
-            val xml = latest.state?.xml
-            if (!xml.isNullOrBlank()) {
-                latestWithXml = latest
-                val unchanged = retryUnchanged && !staleXml.isNullOrBlank() && xml == staleXml
-                if (!unchanged) return latest
-            }
-            if (attempt == OBSERVATION_ATTEMPTS - 1) {
-                return latestWithXml ?: latest
-            }
-            delay(OBSERVATION_RETRY_DELAY_MS)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            ManualRecordingObservation(
+                captureError = error.message.orEmpty().ifBlank {
+                    "${error.javaClass.simpleName}:xml_capture_failed"
+                },
+            )
         }
-        return latestWithXml ?: latest
     }
 
     private companion object {
-        private const val OBSERVATION_ATTEMPTS = 5
-        private const val OBSERVATION_RETRY_DELAY_MS = 100L
         private val SOURCE_STATE_REQUIRED_TOOLS = setOf(
             "click",
             "long_press",
             "input_text",
             "swipe",
         )
-        private val STATE_CHANGING_TOOLS = SOURCE_STATE_REQUIRED_TOOLS + "press_key"
     }
 }

@@ -376,6 +376,10 @@ class _VlmTaskResultCard extends StatelessWidget {
         .toString()
         .trim();
     final autoRegistered = payload['auto_registered'] == true;
+    final registeredFunctionId = _firstNonEmptyVlmValue([
+      payload['registered_function_id'],
+      payload['function_id'],
+    ]);
     final registrationHint = (payload['registration_hint'] ?? '')
         .toString()
         .trim();
@@ -469,7 +473,12 @@ class _VlmTaskResultCard extends StatelessWidget {
                       key: const ValueKey('vlm-task-open-functions'),
                       onPressed: () => context.push(
                         autoRegistered || runId.isEmpty
-                            ? '/task/omniflow'
+                            ? Uri(
+                                path: '/task/omniflow',
+                                queryParameters: registeredFunctionId.isEmpty
+                                    ? null
+                                    : {'functionId': registeredFunctionId},
+                              ).toString()
                             : '/task/run_log/$runId',
                       ),
                       icon: const Icon(LucideIcons.workflow, size: 15),

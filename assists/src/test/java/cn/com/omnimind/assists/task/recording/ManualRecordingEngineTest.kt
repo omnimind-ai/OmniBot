@@ -15,6 +15,14 @@ import org.junit.Test
 
 class ManualRecordingEngineTest {
     @Test
+    fun `manual back is a target independent canonical key`() {
+        assertEquals(
+            mapOf("key" to "back"),
+            manualPressKeyActionArgs("back", null),
+        )
+    }
+
+    @Test
     fun `manual enter keeps the selected input target`() {
         val target = ManualInputTarget(
             description = "搜索框",
@@ -126,7 +134,7 @@ class ManualRecordingEngineTest {
     }
 
     @Test
-    fun retriesUnchangedAfterStateUntilFreshXmlArrives() = runBlocking {
+    fun capturesAfterStateOnceWithoutBlockingForPageChanges() = runBlocking {
         val journal = ManualRecordingJournal()
         var afterAttempts = 0
         val engine = ManualRecordingEngine(
@@ -136,13 +144,7 @@ class ManualRecordingEngineTest {
                     observation("<page name=\"before\"/>")
                 } else {
                     afterAttempts += 1
-                    observation(
-                        if (afterAttempts < 3) {
-                            "<page name=\"before\"/>"
-                        } else {
-                            "<page name=\"after\"/>"
-                        },
-                    )
+                    observation("<page name=\"before\"/>")
                 }
             },
             execute = { AndroidGuiActionResult(true, "ok") },
@@ -151,8 +153,8 @@ class ManualRecordingEngineTest {
         val outcome = engine.perform(action("click", 100L))
 
         assertTrue(outcome.recorded)
-        assertEquals(3, afterAttempts)
-        assertEquals("<page name=\"after\"/>", journal.lastOrNull()?.afterXml)
+        assertEquals(1, afterAttempts)
+        assertEquals("<page name=\"before\"/>", journal.lastOrNull()?.afterXml)
     }
 
     @Test
@@ -176,7 +178,7 @@ class ManualRecordingEngineTest {
     }
 
     @Test
-    fun unchangedClickStateIsStillRecordedAfterRetries() = runBlocking {
+    fun unchangedClickStateIsRecordedWithoutRetries() = runBlocking {
         val journal = ManualRecordingJournal()
         var observationCount = 0
         val engine = ManualRecordingEngine(
@@ -191,7 +193,7 @@ class ManualRecordingEngineTest {
         val outcome = engine.perform(action("click", 100L))
 
         assertTrue(outcome.recorded)
-        assertEquals(6, observationCount)
+        assertEquals(2, observationCount)
         assertEquals("<page/>", journal.lastOrNull()?.afterXml)
     }
 

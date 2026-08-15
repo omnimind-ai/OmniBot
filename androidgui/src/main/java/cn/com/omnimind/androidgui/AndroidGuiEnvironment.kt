@@ -115,7 +115,10 @@ class AndroidGuiEnvironment internal constructor(
         )
     }
 
-    suspend fun act(action: Action): AndroidGuiActionResult {
+    suspend fun act(
+        action: Action,
+        awaitStabilization: Boolean = true,
+    ): AndroidGuiActionResult {
         if (!awaitReady()) {
             return AndroidGuiActionResult(
                 success = false,
@@ -125,6 +128,9 @@ class AndroidGuiEnvironment internal constructor(
         return try {
             val result = platform.dispatch(canonicalForDisplay(action))
             if (!result.success) return result
+            if (!awaitStabilization) {
+                return result.withStabilization("runtime_delegated")
+            }
             if (action.tool == OobActionSchema.TOOL_WAIT) {
                 return result.withStabilization("completed_by_action")
             }

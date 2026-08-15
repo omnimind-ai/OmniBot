@@ -24,6 +24,7 @@ List<GoRoute> taskRoutes = [
     name: 'task/omniflow',
     builder: (context, state) => OmniFlowExecutionCenterPage(
       initialTab: state.uri.queryParameters['tab'],
+      initialFunctionId: state.uri.queryParameters['functionId'],
     ),
   ),
   GoRoute(

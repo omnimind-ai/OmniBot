@@ -47,14 +47,8 @@ data class ManualRecordedAction(
 }
 
 internal fun selectManualInputTargetAfterClick(
-    before: ManualInputTarget?,
-    after: ManualInputTarget?,
-    clickedFocusedTarget: ManualInputTarget?,
-): ManualInputTarget? = when {
-    clickedFocusedTarget != null -> clickedFocusedTarget
-    after != null && after != before -> after
-    else -> null
-}
+    clickedTarget: ManualInputTarget?,
+): ManualInputTarget? = clickedTarget
 
 internal fun manualInputTextActionArgs(
     text: String,
@@ -93,6 +87,16 @@ internal fun canonicalManualScreenAction(
         ),
     )
     return actionOf(tool, canonicalArgs)
+}
+
+internal fun isManualSystemBackGesture(gesture: ManualOverlayTouchGesture): Boolean {
+    if (gesture.actionName != OobActionSchema.TOOL_SWIPE || gesture.displayWidth <= 0) return false
+    val edgeWidth = gesture.displayWidth * 0.05f
+    return when (gesture.direction) {
+        "right" -> gesture.startX <= edgeWidth
+        "left" -> gesture.startX >= gesture.displayWidth - edgeWidth
+        else -> false
+    }
 }
 
 internal data class ManualTraceSnapshot(
@@ -179,7 +183,7 @@ class ManualTraceRecorder(
     private val engine = ManualRecordingEngine(
         journal = journal,
         observe = { stage, command -> captureObservation(stage, command) },
-        execute = { command -> environment.act(command.action) },
+        execute = { command -> environment.act(command.action, awaitStabilization = false) },
         onActionRecorded = { index, action -> onActionRecorded?.invoke(index, action) },
     )
 
@@ -313,32 +317,32 @@ class ManualTraceRecorder(
         if (!isRecording() || gesture.actionName !in SUPPORTED_GESTURES) {
             return ManualOverlayGestureReplayResult(executed = false, recorded = false)
         }
-        val inputTargetBefore = if (gesture.actionName == OobActionSchema.TOOL_CLICK) {
-            environment.inputTarget()?.toManualInputTarget()
-        } else {
-            null
-        }
         val command = gesture.toRecordingCommand()
         val outcome = engine.perform(command) { dispatchResult ->
             onGestureDispatched(
                 dispatchResult.success && gesture.actionName == OobActionSchema.TOOL_CLICK,
             )
         }
-        val inputTarget = if (outcome.recorded && gesture.actionName == OobActionSchema.TOOL_CLICK) {
-            awaitInputTargetAfterClick(
-                before = inputTargetBefore,
-                x = gesture.startX,
-                y = gesture.startY,
-            )
-        } else {
-            null
-        }
         return ManualOverlayGestureReplayResult(
             executed = outcome.executed,
             recorded = outcome.recorded,
             mayOpenIme = outcome.executed && gesture.actionName == OobActionSchema.TOOL_CLICK,
-            inputTarget = inputTarget,
+            inputTarget = null,
         )
+    }
+
+    suspend fun detectInputTargetAfterClick(
+        x: Float,
+        y: Float,
+    ): ManualInputTarget? = withTimeoutOrNull(INPUT_TARGET_TIMEOUT_MS) {
+        var target: ManualInputTarget? = null
+        while (target == null && isRecording()) {
+            target = selectManualInputTargetAfterClick(
+                environment.inputTarget(x, y)?.toManualInputTarget(),
+            )
+            if (target == null) delay(INPUT_TARGET_POLL_MS)
+        }
+        target
     }
 
     private suspend fun awaitInputTarget(): ManualInputTarget? = withTimeoutOrNull(INPUT_TARGET_TIMEOUT_MS) {
@@ -352,24 +356,19 @@ class ManualTraceRecorder(
         target
     }
 
-    private suspend fun awaitInputTargetAfterClick(
-        before: ManualInputTarget?,
-        x: Float,
-        y: Float,
-    ): ManualInputTarget? = withTimeoutOrNull(INPUT_TARGET_TIMEOUT_MS) {
-        var target: ManualInputTarget? = null
-        while (target == null) {
-            val after = environment.inputTarget()?.toManualInputTarget()
-            val clicked = environment.inputTarget(x, y)?.toManualInputTarget()
-            target = selectManualInputTargetAfterClick(before, after, clicked)
-            if (target == null) {
-                delay(INPUT_TARGET_POLL_MS)
-            }
-        }
-        target
-    }
-
     private fun ManualOverlayTouchGesture.toRecordingCommand(): ManualRecordingCommand {
+        if (isManualSystemBackGesture(this)) {
+            return command(
+                tool = OobActionSchema.TOOL_PRESS_KEY,
+                args = manualPressKeyActionArgs("back"),
+                title = "返回",
+                summary = "侧滑返回",
+                source = OVERLAY_TOUCH_SOURCE,
+                startedAtMs = startedAtMs,
+                displayWidth = displayWidth,
+                displayHeight = displayHeight,
+            )
+        }
         return when (actionName) {
             OobActionSchema.TOOL_CLICK -> command(
                 tool = actionName,

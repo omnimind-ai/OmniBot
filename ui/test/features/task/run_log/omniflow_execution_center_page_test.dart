@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:ui/features/task/pages/execution_history/omniflow_execution_center_page.dart';
 import 'package:ui/l10n/generated/app_localizations.dart';
+import 'package:ui/models/conversation_model.dart';
+import 'package:ui/models/conversation_thread_target.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -142,7 +145,7 @@ void main() {
               },
             },
             'function.demo' => <String, Object?>{'success': true},
-            'convert_run_log' => <String, Object?>{
+            'save_function' => <String, Object?>{
               'success': true,
               'function_id': 'function.demo',
             },
@@ -303,12 +306,30 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
+    ConversationThreadTarget? openedTarget;
+    final router = GoRouter(
+      routes: [
+        GoRoute(
+          path: '/',
+          builder: (_, __) => const OmniFlowExecutionCenterPage(),
+        ),
+        GoRoute(
+          path: '/home/chat',
+          builder: (_, state) {
+            final target = state.extra! as ConversationThreadTarget;
+            openedTarget = target;
+            return const Scaffold(body: Text('agent conversation'));
+          },
+        ),
+      ],
+    );
+    addTearDown(router.dispose);
     await tester.pumpWidget(
-      const MaterialApp(
+      MaterialApp.router(
         locale: Locale('zh'),
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
-        home: OmniFlowExecutionCenterPage(),
+        routerConfig: router,
       ),
     );
     await tester.pumpAndSettle();
@@ -328,70 +349,41 @@ void main() {
     );
     await tester.tap(find.byKey(const ValueKey('function-detail-enhance')));
     await tester.pumpAndSettle();
-    expect(find.text('增强复用指令'), findsOneWidget);
+    expect(find.text('agent conversation'), findsOneWidget);
+    expect(openedTarget?.mode, ConversationMode.agent);
     expect(
-      find.byKey(const ValueKey('function-enhancement-instruction')),
-      findsOneWidget,
+      openedTarget?.initialMessage,
+      contains('function_id: function.demo'),
     );
-    await tester.tap(
-      find.byKey(const ValueKey('function-enhancement-default')),
-    );
-    await tester.pumpAndSettle();
-    expect(
-      toolCalls.any(
-        (call) =>
-            call['name'] == 'update_function' &&
-            (call['arguments'] as Map?)?['function_id'] == 'function.demo' &&
-            (call['arguments'] as Map?)?['mode'] == 'enhance' &&
-            !(call['arguments'] as Map).containsKey('instruction'),
-      ),
-      isTrue,
-    );
-
-    await tester.tap(find.text('演示指令'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('function-detail-run')));
-    await tester.pumpAndSettle();
-    expect(find.text('填写执行参数'), findsOneWidget);
+    expect(toolCalls.any((call) => call['name'] == 'update_function'), isFalse);
   });
 
-  testWidgets('passes optional Function enhancement instruction', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(360, 800);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
+  test('builds a complete Function enhancement Agent request', () {
+    final prompt = buildFunctionEnhancementPrompt({
+      'function_id': 'function.demo',
+      'name': '演示指令',
+      'steps': <Object?>[],
+    });
 
+    expect(prompt, contains('get_function'));
+    expect(prompt, contains('function_id: function.demo'));
+    expect(prompt, contains('不要执行该指令'));
+  });
+
+  testWidgets('opens the requested Function directly', (tester) async {
     await tester.pumpWidget(
       const MaterialApp(
         locale: Locale('zh'),
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
-        home: OmniFlowExecutionCenterPage(),
+        home: OmniFlowExecutionCenterPage(initialFunctionId: 'function.demo'),
       ),
     );
     await tester.pumpAndSettle();
 
-    await tester.tap(find.text('演示指令'));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('function-detail-enhance')));
-    await tester.pumpAndSettle();
-    await tester.enterText(
-      find.byKey(const ValueKey('function-enhancement-instruction')),
-      '优先使用搜索框，不要依赖菜单位置',
-    );
-    await tester.tap(find.byKey(const ValueKey('function-enhancement-submit')));
-    await tester.pumpAndSettle();
-
-    expect(
-      toolCalls.any(
-        (call) =>
-            call['name'] == 'update_function' &&
-            (call['arguments'] as Map?)?['instruction'] == '优先使用搜索框，不要依赖菜单位置',
-      ),
-      isTrue,
-    );
+    expect(find.byKey(const ValueKey('function-detail-sheet')), findsOneWidget);
+    expect(find.text('演示指令'), findsWidgets);
+    expect(toolCalls.any((call) => call['name'] == 'get_function'), isTrue);
   });
 
   testWidgets('uses consistent Chinese labels across the execution center', (
@@ -451,7 +443,134 @@ void main() {
     expect(find.byKey(const ValueKey('run-log-open-run-1')), findsOneWidget);
     await tester.tap(find.text('注册为复用指令'));
     await tester.pumpAndSettle();
-    expect(toolCalls.any((call) => call['name'] == 'convert_run_log'), isTrue);
+    expect(toolCalls.any((call) => call['name'] == 'save_function'), isTrue);
+    expect(find.byKey(const ValueKey('function-detail-sheet')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('function-detail-enhance')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('shows the Function linked to a RunLog and opens it', (
+    tester,
+  ) async {
+    toolResponseOverride = (name, call) {
+      if (name != 'list_functions') return null;
+      return <String, Object?>{
+        'success': true,
+        'functions': <Object?>[
+          <String, Object?>{
+            'function_id': 'function.demo',
+            'source_run_id': 'run-1',
+            'name': '演示指令',
+            'description': '复用已成功执行的轨迹',
+            'input_schema': <String, Object?>{
+              'type': 'object',
+              'properties': <String, Object?>{},
+            },
+            'steps': <Object?>[],
+          },
+        ],
+      };
+    };
+    await tester.pumpWidget(
+      const MaterialApp(
+        locale: Locale('zh'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: OmniFlowExecutionCenterPage(initialTab: 'run_logs'),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('查看复用指令'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('run-log-function-run-1')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('function-detail-sheet')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('function-detail-enhance')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
+    'registration uses the saved Function immediately when detail reload fails',
+    (tester) async {
+      toolResponseOverride = (name, call) {
+        if (name == 'save_function') {
+          return <String, Object?>{
+            'success': true,
+            'function_id': 'function.registered',
+            'function': <String, Object?>{
+              'function_id': 'function.registered',
+              'source_run_id': 'run-1',
+              'name': '刚注册的指令',
+              'description': '注册响应已经包含完整 Function',
+              'agent_visible': true,
+              'input_schema': <String, Object?>{
+                'type': 'object',
+                'properties': <String, Object?>{},
+              },
+              'steps': <Object?>[],
+            },
+          };
+        }
+        if (name == 'get_function') {
+          throw PlatformException(code: 'FUNCTION_NOT_READY');
+        }
+        return null;
+      };
+
+      await tester.pumpWidget(
+        const MaterialApp(
+          locale: Locale('zh'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: OmniFlowExecutionCenterPage(initialTab: 'run_logs'),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('注册为复用指令'));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('function-detail-sheet')),
+        findsOneWidget,
+      );
+      expect(find.text('刚注册的指令'), findsWidgets);
+      expect(find.text('复用指令'), findsWidgets);
+      expect(toolCalls.where((call) => call['name'] == 'get_function'), isEmpty);
+      expect(find.textContaining('StateError: 注册失败'), findsNothing);
+    },
+  );
+
+  testWidgets('keeps Enhance visible on a narrow phone', (tester) async {
+    tester.view.physicalSize = const Size(280, 640);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        locale: Locale('zh'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: OmniFlowExecutionCenterPage(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('演示指令'));
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('function-detail-enhance')),
+      findsOneWidget,
+    );
+    expect(find.text('增强'), findsOneWidget);
+    expect(find.byKey(const ValueKey('function-detail-run')), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('opens directly on the Run Logs tab', (tester) async {
@@ -500,5 +619,4 @@ void main() {
     expect(find.text('2 VLM calls'), findsOneWidget);
     expect(find.byKey(const ValueKey('run-log-open-run-1')), findsOneWidget);
   });
-
 }

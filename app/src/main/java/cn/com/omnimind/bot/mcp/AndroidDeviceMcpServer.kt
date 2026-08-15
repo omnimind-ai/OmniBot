@@ -3,6 +3,7 @@ package cn.com.omnimind.bot.mcp
 import android.content.Context
 import cn.com.omnimind.bot.agent.HttpAgentLlmClient
 import cn.com.omnimind.bot.omniflow.OmniFlow
+import cn.com.omnimind.bot.omniflow.OmniFlowFunctionRegistration
 import cn.com.omnimind.bot.omniflow.OmniFlowPluginRuntime
 import cn.com.omnimind.bot.omniflow.OmniVlmPlugin
 import cn.com.omnimind.bot.omniflow.asOmniFlowModelClient
@@ -203,18 +204,13 @@ internal object AndroidDeviceMcpServer {
         "save_function" -> {
             val runId = arguments["run_id"]?.toString().orEmpty().trim()
             require(runId.isNotEmpty()) { "omniflow_run_id_required" }
-            OmniFlow.callTool(
+            OmniFlowFunctionRegistration.saveRunLog(
                 context = context,
-                toolCall = OmniFlow.ToolCall(
-                    "save_function",
-                    mapOf(
-                        "run_id" to runId,
-                        "agent_visible" to true,
-                    ),
-                ),
+                runId = runId,
+                agentVisible = true,
                 source = "mcp",
                 modelClient = modelClient,
-            ).payload
+            )
         }
         else -> OmniFlow.callTool(
             context = context,

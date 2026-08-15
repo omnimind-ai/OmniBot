@@ -55,6 +55,12 @@ data class ManualRecognizedGesture(
 )
 
 object ManualGestureRecognizer {
+    fun recognizeCancelledSwipe(
+        trace: ManualPointerTrace,
+        thresholds: ManualGestureThresholds,
+    ): ManualRecognizedGesture? = recognize(trace, thresholds)
+        ?.takeIf { it.actionName == OobActionSchema.TOOL_SWIPE }
+
     fun recognize(
         trace: ManualPointerTrace,
         thresholds: ManualGestureThresholds,

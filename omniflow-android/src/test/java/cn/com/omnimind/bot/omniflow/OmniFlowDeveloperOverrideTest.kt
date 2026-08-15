@@ -32,12 +32,21 @@ class OmniFlowDeveloperOverrideTest {
             parentFile.mkdirs()
             writeText("ENGINE = 'stable'\n")
         }
+        base.resolve("schemas/oob/oob_canonical_actions.v1.json").apply {
+            parentFile.mkdirs()
+            writeText("{\"tools\":[]}")
+        }
         val store = OmniFlowDeveloperOverrideStore(temporary.resolve("override"))
 
         store.apply(base, "runtime-v1", "vlm/planner.py", "VALUE = 'edited'\n")
 
         assertEquals("VALUE = 'edited'\n", store.read("vlm/planner.py"))
         assertEquals("ENGINE = 'stable'\n", store.read("runtime/engine.py"))
+        assertEquals(
+            "{\"tools\":[]}",
+            temporary.resolve("override/python/schemas/oob/oob_canonical_actions.v1.json")
+                .readText(),
+        )
         assertEquals(listOf("omniflow/vlm/planner.py"), store.status("runtime-v1").modifiedFiles)
         assertTrue(store.clear())
         assertFalse(store.status("runtime-v1").enabled)

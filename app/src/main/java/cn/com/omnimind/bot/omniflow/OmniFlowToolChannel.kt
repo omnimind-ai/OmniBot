@@ -42,17 +42,27 @@ class OmniFlowToolChannel(context: Context) {
         val goal = payload?.get("goal")?.toString()?.trim().orEmpty()
         scope.launch {
             runCatching {
-                OmniFlow.callTool(
-                    context = appContext,
-                    toolCall = OmniFlow.ToolCall(name, arguments),
-                    goal = goal.ifBlank { name },
-                    modelClient = if (OmniFlowPluginRuntime.isEnabled()) {
+                val modelClient = if (OmniFlowPluginRuntime.isEnabled()) {
                         HttpAgentLlmClient(CoroutineScope(currentCoroutineContext()))
                             .asOmniFlowModelClient()
                     } else {
                         null
-                    },
-                ).payload
+                    }
+                if (name == TOOL_SAVE_FUNCTION && arguments["function"] == null) {
+                    OmniFlowFunctionRegistration.saveRunLog(
+                        context = appContext,
+                        runId = arguments["run_id"]?.toString().orEmpty(),
+                        agentVisible = arguments["agent_visible"] != false,
+                        modelClient = modelClient,
+                    )
+                } else {
+                    OmniFlow.callTool(
+                        context = appContext,
+                        toolCall = OmniFlow.ToolCall(name, arguments),
+                        goal = goal.ifBlank { name },
+                        modelClient = modelClient,
+                    ).payload
+                }
             }.onSuccess { response ->
                 withContext(Dispatchers.Main.immediate) { result.success(response) }
             }.onFailure { error ->
@@ -166,26 +176,17 @@ class OmniFlowToolChannel(context: Context) {
         val runLog = InternalRunLogStore.timelinePayload(appContext, result.runId)
         val conversion = if (result.success && result.actionCount > 0) {
             runCatching {
-                OmniFlow.callTool(
+                OmniFlowFunctionRegistration.saveRunLog(
                     context = appContext,
-                    toolCall = OmniFlow.ToolCall(
-                        name = TOOL_CONVERT_RUN_LOG,
-                        arguments = mapOf(
-                            "run_id" to result.runId,
-                            "register" to true,
-                            "agent_visible" to true,
-                            "enhance" to true,
-                            "name" to result.name,
-                            "description" to result.description,
-                        ),
-                    ),
+                    runId = result.runId,
+                    agentVisible = true,
                     modelClient = if (OmniFlowPluginRuntime.isEnabled()) {
                         HttpAgentLlmClient(CoroutineScope(currentCoroutineContext()))
                             .asOmniFlowModelClient()
                     } else {
                         null
                     },
-                ).payload
+                )
             }.getOrElse { error ->
                 OmniLog.e(TAG, "manual recording conversion failed: ${error.message}", error)
                 mapOf(
@@ -231,6 +232,6 @@ class OmniFlowToolChannel(context: Context) {
         const val TAG = "OmniFlowToolChannel"
         const val METHOD_CALL_TOOL = "tools/call"
         const val METHOD_START_HUMAN_TRAJECTORY_LEARNING = "startHumanTrajectoryLearning"
-        const val TOOL_CONVERT_RUN_LOG = "convert_run_log"
+        const val TOOL_SAVE_FUNCTION = "save_function"
     }
 }

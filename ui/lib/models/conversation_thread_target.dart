@@ -13,6 +13,7 @@ class ConversationThreadTarget {
     this.isNewConversation = false,
     this.fromNativeRoute = false,
     this.requestKey,
+    this.initialMessage,
   });
 
   final int? conversationId;
@@ -24,6 +25,7 @@ class ConversationThreadTarget {
   final bool isNewConversation;
   final bool fromNativeRoute;
   final String? requestKey;
+  final String? initialMessage;
 
   const ConversationThreadTarget.newConversation({
     this.mode = ConversationMode.normal,
@@ -31,6 +33,7 @@ class ConversationThreadTarget {
     this.requestKey,
     this.agentRuntime,
     this.agentId,
+    this.initialMessage,
   }) : conversationId = null,
        agentSessionId = null,
        agentSessionActive = null,
@@ -45,7 +48,8 @@ class ConversationThreadTarget {
     this.agentSessionId,
     this.agentRuntime,
     this.agentSessionActive,
-  }) : isNewConversation = false;
+  }) : initialMessage = null,
+       isNewConversation = false;
 
   const ConversationThreadTarget.agentSession({
     required String sessionId,
@@ -58,6 +62,7 @@ class ConversationThreadTarget {
        agentSessionId = sessionId,
        agentRuntime = runtime,
        mode = ConversationMode.agent,
+       initialMessage = null,
        isNewConversation = false;
 
   bool get hasConversationId => conversationId != null;
@@ -86,6 +91,7 @@ class ConversationThreadTarget {
     bool? isNewConversation,
     bool? fromNativeRoute,
     String? requestKey,
+    String? initialMessage,
     bool clearRequestKey = false,
   }) {
     return ConversationThreadTarget(
@@ -98,6 +104,7 @@ class ConversationThreadTarget {
       isNewConversation: isNewConversation ?? this.isNewConversation,
       fromNativeRoute: fromNativeRoute ?? this.fromNativeRoute,
       requestKey: clearRequestKey ? null : (requestKey ?? this.requestKey),
+      initialMessage: initialMessage ?? this.initialMessage,
     );
   }
 
@@ -164,7 +171,8 @@ class ConversationThreadTarget {
         other.mode == mode &&
         other.isNewConversation == isNewConversation &&
         other.fromNativeRoute == fromNativeRoute &&
-        other.requestKey == requestKey;
+        other.requestKey == requestKey &&
+        other.initialMessage == initialMessage;
   }
 
   @override
@@ -178,6 +186,7 @@ class ConversationThreadTarget {
     isNewConversation,
     fromNativeRoute,
     requestKey,
+    initialMessage,
   );
 
   @override

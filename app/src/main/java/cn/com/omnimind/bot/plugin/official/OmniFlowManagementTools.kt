@@ -16,7 +16,7 @@ object OmniFlowManagementTools {
     const val LIST_RUN_LOGS = "list_run_logs"
     const val GET_RUN_LOG = "get_run_log"
     const val GET_RUN_LOG_STATE = "get_run_log_state"
-    const val CONVERT_RUN_LOG = "convert_run_log"
+    const val SAVE_FUNCTION = "save_function"
     const val GET_PYTHON_OVERRIDE = "get_omniflow_python_override"
     const val APPLY_PYTHON_OVERRIDE = "apply_omniflow_python_override"
     const val CLEAR_PYTHON_OVERRIDE = "clear_omniflow_python_override"
@@ -32,7 +32,7 @@ object OmniFlowManagementTools {
         LIST_RUN_LOGS,
         GET_RUN_LOG,
         GET_RUN_LOG_STATE,
-        CONVERT_RUN_LOG,
+        SAVE_FUNCTION,
         GET_PYTHON_OVERRIDE,
         APPLY_PYTHON_OVERRIDE,
         CLEAR_PYTHON_OVERRIDE,
@@ -65,7 +65,7 @@ object OmniFlowManagementTools {
             "Create Function",
             "Register a complete canonical Function artifact. This is a low-level operation; " +
                 "to register a completed VLM RunLog as a reusable instruction, use " +
-                "convert_run_log instead.",
+                "save_function instead.",
             required = listOf("function"),
             properties = mapOf(
                 "function" to objectProperty("Canonical OmniFlow Function artifact."),
@@ -137,22 +137,15 @@ object OmniFlowManagementTools {
             ),
         ),
         definition(
-            CONVERT_RUN_LOG,
-            "Convert RunLog",
-            "Register a successful VLM RunLog as a replayable Function. Workflow: use the " +
-                "run_id from the preceding VLM result (or list_run_logs/get_run_log), then " +
-                "call this tool with register=true and agent_visible=true. Set enhance=true " +
-                "only when semantic enhancement is requested. The returned function_id is " +
-                "the internal id used for later recall; do not invent one.",
+            SAVE_FUNCTION,
+            "Save Function",
+            "Register a successful RunLog as a replayable Function. Pass the run_id returned " +
+                "by the completed GUI task. The returned function_id is the internal id used " +
+                "for later recall; do not invent one.",
             required = listOf("run_id"),
             properties = mapOf(
                 "run_id" to stringProperty("Source RunLog id."),
-                "register" to booleanProperty("Register the converted Function."),
                 "agent_visible" to booleanProperty("Expose the Function to the Agent."),
-                "enhance" to booleanProperty("Run offline semantic enhancement."),
-                "function_id" to stringProperty("Optional Function id override."),
-                "name" to stringProperty("Optional Function name override."),
-                "description" to stringProperty("Optional Function description override."),
             ),
         ),
         definition(

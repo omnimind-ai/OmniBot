@@ -488,7 +488,21 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
             : ((result['error_message'] ?? '').toString().trim().isEmpty
                   ? '手动录制失败'
                   : '手动录制失败：${result['error_message']}');
-        updateOrAddAiMessage(messageId, text, !succeeded);
+        final card = buildManualRecordingResultCard(
+          messageId: messageId,
+          result: result,
+          summary: text,
+        );
+        final index = _messages.indexWhere(
+          (message) => message.id == messageId,
+        );
+        setState(() {
+          if (index == -1) {
+            _messages.insert(0, card);
+          } else {
+            _messages[index] = card;
+          }
+        });
         unawaited(saveConversation());
       },
       onFinally: () async {

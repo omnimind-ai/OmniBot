@@ -521,12 +521,14 @@ object InternalRunLogStore {
         val beforeState = statePayload(context, beforeStateId)
         val payload = linkedMapOf<String, Any?>(
             "step_index" to (numberToLong(step["step_index"]) ?: 0L).toInt(),
+            "before_state_id" to beforeStateId,
             "observation" to externalStatePayload(context, beforeStateId),
             "action" to externalActionPayload(
                 action = stringMap(step["action"]),
                 display = stringMap(beforeState["display"]),
             ),
             "result" to externalResultPayload(stringMap(step["result"])),
+            "after_state_id" to afterStateId,
             "next_observation" to externalStatePayload(context, afterStateId),
         )
         stringMap(step["metadata"]).takeIf { it.isNotEmpty() }?.let {

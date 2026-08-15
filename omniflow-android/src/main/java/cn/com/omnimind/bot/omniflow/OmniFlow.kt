@@ -287,7 +287,6 @@ object OmniFlow {
         "list_run_logs",
         "get_run_log",
         "get_run_log_state",
-        "convert_run_log",
         "save_function",
     )
 }
@@ -651,7 +650,7 @@ class OmniFlowDeviceDispatcher internal constructor(
         actions.forEach { rawAction ->
             val action = rawAction.entries.associate { (key, value) -> key.toString() to value }
             val name = firstText(action["name"])
-            if (name != "convert_run_log") return@forEach
+            if (name != "save_function") return@forEach
             val arguments = mapValue(action["arguments"])
             val registration = runCatching {
                 call(

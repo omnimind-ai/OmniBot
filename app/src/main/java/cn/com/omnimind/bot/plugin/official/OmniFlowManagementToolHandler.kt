@@ -15,6 +15,7 @@ import cn.com.omnimind.baselib.runlog.InternalRunLogStore
 import cn.com.omnimind.bot.omniflow.OmniFlow
 import cn.com.omnimind.bot.omniflow.OmniFlowPluginRuntime
 import cn.com.omnimind.bot.omniflow.OmniFlowPythonRuntime
+import cn.com.omnimind.bot.omniflow.OmniFlowFunctionRegistration
 import cn.com.omnimind.bot.omniflow.asOmniFlowModelClient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -61,8 +62,8 @@ class OmniFlowManagementToolHandler(context: Context) : ToolHandler {
                 return developerOverrideResult(toolName, normalizedArguments)
             }
             if (
-                toolName == OmniFlowManagementTools.CONVERT_RUN_LOG &&
-                normalizedArguments["register"] == true
+                toolName == OmniFlowManagementTools.SAVE_FUNCTION &&
+                normalizedArguments["run_id"]?.toString()?.isNotBlank() == true
             ) {
                 val runId = normalizedArguments["run_id"]?.toString().orEmpty().trim()
                 val record = InternalRunLogStore.getRun(helper.context, runId)
@@ -73,19 +74,27 @@ class OmniFlowManagementToolHandler(context: Context) : ToolHandler {
                     )
                 }
             }
-            val payload = OmniFlow.callTool(
-                context = helper.context,
-                toolCall = OmniFlow.ToolCall(
-                    name = toolName,
-                    arguments = normalizedArguments,
-                ),
-                modelClient = if (OmniFlowPluginRuntime.isEnabled()) {
+            val modelClient = if (OmniFlowPluginRuntime.isEnabled()) {
                     HttpAgentLlmClient(CoroutineScope(currentCoroutineContext()))
                         .asOmniFlowModelClient()
                 } else {
                     null
-                },
-            ).payload
+                }
+            val payload = if (toolName == OmniFlowManagementTools.SAVE_FUNCTION) {
+                OmniFlowFunctionRegistration.saveRunLog(
+                    context = helper.context,
+                    runId = normalizedArguments["run_id"]?.toString().orEmpty(),
+                    agentVisible = normalizedArguments["agent_visible"] != false,
+                    modelClient = modelClient,
+                    source = "agent_function_registration",
+                )
+            } else {
+                OmniFlow.callTool(
+                    context = helper.context,
+                    toolCall = OmniFlow.ToolCall(toolName, normalizedArguments),
+                    modelClient = modelClient,
+                ).payload
+            }
             val encoded = helper.mapToJsonElement(payload).toString()
             if (payload["success"] == false) {
                 ToolExecutionResult.Error(
@@ -118,7 +127,7 @@ class OmniFlowManagementToolHandler(context: Context) : ToolHandler {
             "已读取 ${payload["count"] ?: 0} 个复用指令"
         OmniFlowManagementTools.LIST_RUN_LOGS ->
             "已读取 ${payload["count"] ?: (payload["runs"] as? List<*>)?.size ?: 0} 个 RunLog"
-        OmniFlowManagementTools.CONVERT_RUN_LOG -> "RunLog 已转换为复用指令"
+        OmniFlowManagementTools.SAVE_FUNCTION -> "RunLog 已注册为复用指令"
         else -> "OmniFlow 操作已完成"
     }
 
@@ -189,8 +198,7 @@ internal fun isRegisterableRunLog(record: CanonicalRunLogRecord?): Boolean =
 
 /**
  * A registered RunLog Function must be visible to the recall router unless the caller
- * explicitly asks for a hidden artifact. Older Agent turns commonly supplied only
- * `register=true`, which produced a successful but unusable hidden Function.
+ * explicitly asks for a hidden artifact.
  */
 internal fun normalizeOmniFlowManagementArguments(
     toolName: String,
@@ -203,8 +211,7 @@ internal fun normalizeOmniFlowManagementArguments(
         put(key, jsonElementToManagementValue(value))
     }
     if (
-        toolName == OmniFlowManagementTools.CONVERT_RUN_LOG &&
-        args["register"]?.jsonPrimitive?.booleanOrNull == true &&
+        toolName == OmniFlowManagementTools.SAVE_FUNCTION &&
         !args.containsKey("agent_visible")
     ) {
         put("agent_visible", true)

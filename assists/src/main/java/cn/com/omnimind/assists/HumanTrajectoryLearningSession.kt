@@ -3,6 +3,7 @@ package cn.com.omnimind.assists
 import android.content.Context
 import cn.com.omnimind.baselib.runlog.InternalRunLogStore
 import cn.com.omnimind.baselib.runlog.RunLogWriter
+import cn.com.omnimind.baselib.runlog.State
 import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.assists.task.recording.ManualRecordedAction
 import cn.com.omnimind.assists.task.recording.ManualTraceRecorder
@@ -284,6 +285,19 @@ object HumanTrajectoryLearningSession {
             }
     }
 
+    suspend fun detectManualInputTargetAfterClick(
+        x: Float,
+        y: Float,
+    ): ManualInputTarget? {
+        val session = synchronized(lock) { activeSession } ?: return null
+        if (synchronized(lock) { activePaused }) return null
+        return runCatching { session.recorder.detectInputTargetAfterClick(x, y) }
+            .getOrElse { error ->
+                OmniLog.w(TAG, "manual input target detection failed: ${error.message}")
+                null
+            }
+    }
+
     suspend fun recordManualInputText(
         text: String,
         inputTarget: ManualInputTarget? = null,
@@ -389,19 +403,16 @@ object HumanTrajectoryLearningSession {
             persistedCount
         }
         val hasActions = trace.actions.isNotEmpty()
-        val evidenceComplete = trace.actions.all(ManualRecordedAction::evidenceComplete)
         val actionsExecuted = manualOperationFailuresResolved(trace.actions)
-        val success = hasActions && evidenceComplete && actionsExecuted && persisted.isSuccess
+        val success = hasActions && actionsExecuted && persisted.isSuccess
         val doneReason = when {
             persisted.isFailure -> "runlog_persist_failed"
-            !evidenceComplete -> "state_capture_incomplete"
             !actionsExecuted -> "action_execution_failed"
             success -> "user_completed"
             else -> "empty_recording"
         }
         val errorMessage = when {
             persisted.isFailure -> "RunLog 保存失败：${persisted.exceptionOrNull()?.message.orEmpty()}"
-            !evidenceComplete -> "页面状态采集失败，本次轨迹已保存但不能安全重放"
             !actionsExecuted -> "部分手动操作执行失败，RunLog 已保留失败动作和原因"
             !hasActions -> "未记录到可复用的人类操作"
             else -> null
@@ -588,8 +599,8 @@ private fun manualRunLogFact(
     action: ManualRecordedAction,
     source: String,
 ): Map<String, Any?> {
-    val beforeState = requireNotNull(action.beforeState) { "manual_before_state_required" }
-    val afterState = requireNotNull(action.afterState) { "manual_after_state_required" }
+    val beforeState = action.beforeState ?: manualPlaceholderState(action, "before")
+    val afterState = action.afterState ?: manualPlaceholderState(action, "after")
     return linkedMapOf(
         "before_state_id" to beforeState.stateId,
         "action" to action.action.asMap(),
@@ -614,7 +625,16 @@ private fun manualRunLogFact(
     )
 }
 
-internal fun manualRunLogStates(action: ManualRecordedAction): List<Map<String, Any?>> = listOf(
-    requireNotNull(action.beforeState) { "manual_before_state_required" }.asMap(),
-    requireNotNull(action.afterState) { "manual_after_state_required" }.asMap(),
+internal fun manualRunLogStates(action: ManualRecordedAction): List<Map<String, Any?>> =
+    listOf(
+        (action.beforeState ?: manualPlaceholderState(action, "before")).asMap(),
+        (action.afterState ?: manualPlaceholderState(action, "after")).asMap(),
+    )
+
+private fun manualPlaceholderState(action: ManualRecordedAction, stage: String): State = State.create(
+    packageName = action.beforePackageName ?: action.afterPackageName.orEmpty(),
+    activityName = "manual_recording_$stage",
+    displayWidth = action.displayWidth.coerceAtLeast(1),
+    displayHeight = action.displayHeight.coerceAtLeast(1),
+    xml = "<hierarchy capture=\"unavailable\" stage=\"$stage\" />",
 )

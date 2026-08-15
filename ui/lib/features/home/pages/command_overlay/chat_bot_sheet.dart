@@ -15,6 +15,7 @@ import 'package:ui/services/agent_stream_meta.dart';
 import 'package:ui/features/home/pages/command_overlay/services/chat_service.dart';
 import 'package:ui/features/home/pages/command_overlay/constants/messages.dart';
 import 'package:ui/features/home/pages/command_overlay/services/manual_recording_flow_controller.dart';
+import 'package:ui/features/home/pages/command_overlay/services/manual_recording_result_card.dart';
 import 'package:ui/features/home/pages/command_overlay/utils/deep_thinking_parser.dart';
 import 'package:ui/features/home/pages/chat/utils/agent_run_timeline.dart';
 import 'package:ui/features/home/pages/chat/utils/stream_text_merge.dart';
@@ -1684,25 +1685,16 @@ class _ChatBotSheetState extends State<ChatBotSheet>
           (message) => message.id == messageId,
         );
         final text = _manualRecordingResultText(result);
+        final card = buildManualRecordingResultCard(
+          messageId: messageId,
+          result: result,
+          summary: text,
+        );
         setState(() {
-          final content = <String, dynamic>{'text': text, 'id': messageId};
           if (index == -1) {
-            _messages.insert(
-              0,
-              ChatMessageModel(
-                id: messageId,
-                type: 1,
-                user: 2,
-                content: content,
-                isError: result['success'] != true,
-              ),
-            );
+            _messages.insert(0, card);
           } else {
-            _messages[index] = _messages[index].copyWith(
-              content: content,
-              isLoading: false,
-              isError: result['success'] != true,
-            );
+            _messages[index] = card;
           }
         });
         unawaited(_saveConversationToDb(markComplete: true));

@@ -11,6 +11,12 @@ import org.junit.Test
 
 class AndroidGuiEnvironmentTest {
     @Test
+    fun `input popup movement keeps click detection strict and input execution recoverable`() {
+        assertEquals(false, InputNodeLookup.CLICK_TARGET.allowFallbackAfterCoordinateMiss)
+        assertEquals(true, InputNodeLookup.INPUT_ACTION.allowFallbackAfterCoordinateMiss)
+    }
+
+    @Test
     fun `accessibility reconnect window tolerates slow OEM rebinding`() {
         assertEquals(15_000L, ACCESSIBILITY_READY_TIMEOUT_MS)
     }
@@ -75,6 +81,22 @@ class AndroidGuiEnvironmentTest {
         assertEquals(3, platform.observeCalls)
         assertEquals("host_completed", result.diagnostics["state_stabilization"])
         assertEquals("stable", result.diagnostics["state_stabilization_result"])
+    }
+
+    @Test
+    fun `manual action can dispatch without waiting for page stabilization`() = runBlocking {
+        val platform = ReconnectingPlatform().apply { ready = true }
+        val environment = AndroidGuiEnvironment(appContext = null, platform = platform)
+
+        val result = environment.act(
+            Action(tool = "click", args = mapOf("x" to 10, "y" to 20)),
+            awaitStabilization = false,
+        )
+
+        assertTrue(result.success)
+        assertEquals(1, platform.dispatchCalls)
+        assertEquals(0, platform.observeCalls)
+        assertEquals("runtime_delegated", result.diagnostics["state_stabilization_result"])
     }
 
     private class ReconnectingPlatform : AndroidGuiPlatform {

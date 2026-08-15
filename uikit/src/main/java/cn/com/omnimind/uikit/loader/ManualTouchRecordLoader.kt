@@ -15,7 +15,6 @@ import android.view.WindowManager
 import cn.com.omnimind.androidgui.AndroidGuiEnvironment
 import cn.com.omnimind.androidgui.AndroidGuiOverlayHost
 import cn.com.omnimind.assists.HumanTrajectoryLearningSession
-import cn.com.omnimind.assists.ManualInputTarget
 import cn.com.omnimind.assists.ManualOverlayTouchGesture
 import cn.com.omnimind.assists.recording.ManualGestureRecognizer
 import cn.com.omnimind.assists.recording.ManualGestureThresholds
@@ -323,7 +322,39 @@ object ManualTouchRecordLoader {
                 enqueueGesture(gesture)
             }
             MotionEvent.ACTION_CANCEL -> {
+                if (!isTracking) return
+                val finishedAtMs = System.currentTimeMillis()
                 isTracking = false
+                val recognized = ManualGestureRecognizer.recognizeCancelledSwipe(
+                    trace = ManualPointerTrace(
+                        startX = startX,
+                        startY = startY,
+                        endX = endX,
+                        endY = endY,
+                        startedAtMs = downAtMs,
+                        finishedAtMs = finishedAtMs,
+                    ),
+                    thresholds = ManualGestureThresholds.overlay(
+                        touchSlopPx = touchSlop,
+                        longPressTimeoutMs = longPressTimeout,
+                    ),
+                ) ?: return
+                enqueueGesture(
+                    ManualOverlayTouchGesture(
+                        actionName = recognized.actionName,
+                        startX = recognized.startX,
+                        startY = recognized.startY,
+                        endX = recognized.endX,
+                        endY = recognized.endY,
+                        durationMs = recognized.durationMs,
+                        distancePx = recognized.distancePx,
+                        direction = recognized.direction,
+                        startedAtMs = recognized.startedAtMs,
+                        finishedAtMs = recognized.finishedAtMs,
+                        displayWidth = currentDisplaySize().x,
+                        displayHeight = currentDisplaySize().y,
+                    ),
+                )
             }
         }
     }
@@ -457,7 +488,6 @@ object ManualTouchRecordLoader {
 
         var executed = false
         var recorded = false
-        var inputTarget: ManualInputTarget? = null
         runCatching {
             withContext(Dispatchers.Main) {
                 synchronized(this@ManualTouchRecordLoader) {
@@ -474,6 +504,7 @@ object ManualTouchRecordLoader {
                 val replayResult = HumanTrajectoryLearningSession.recordOverlayGesture(gesture) {
                     withContext(Dispatchers.Main) {
                         synchronized(this@ManualTouchRecordLoader) {
+                            endSyntheticReplaySuppressionLocked()
                             if (overlayView?.isAttachedToWindow == true &&
                                 HumanTrajectoryLearningSession.isActive() &&
                                 !HumanTrajectoryLearningSession.isPaused()) {
@@ -484,7 +515,6 @@ object ManualTouchRecordLoader {
                 }
                 executed = replayResult.executed
                 recorded = replayResult.recorded
-                inputTarget = replayResult.inputTarget
             } finally {
                 withContext(Dispatchers.Main) {
                     synchronized(this@ManualTouchRecordLoader) {
@@ -500,7 +530,9 @@ object ManualTouchRecordLoader {
         if (executed && recorded) {
             // Keep recording UI static. Per-gesture indicators/status updates add
             // extra overlay input work and can make the control window ANR.
-            inputTarget?.let(ManualRecordingControlOverlay::offerInput)
+            if (gesture.actionName == OobActionSchema.TOOL_CLICK) {
+                detectAndOfferInput(gesture)
+            }
         } else if (executed && !recorded) {
             OmniLog.w(TAG, "manual gesture executed but was not recorded action=${gesture.actionName}")
         }
@@ -517,6 +549,15 @@ object ManualTouchRecordLoader {
         }
         if (!sessionStillActive) return false
         return true
+    }
+
+    private fun detectAndOfferInput(gesture: ManualOverlayTouchGesture) {
+        recordScope.launch {
+            HumanTrajectoryLearningSession.detectManualInputTargetAfterClick(
+                x = gesture.startX,
+                y = gesture.startY,
+            )?.let(ManualRecordingControlOverlay::offerInput)
+        }
     }
 
     private fun beginSyntheticReplaySuppressionLocked() {

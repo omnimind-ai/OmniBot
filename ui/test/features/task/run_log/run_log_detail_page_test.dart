@@ -12,6 +12,18 @@ void main() {
         .setMockMethodCallHandler(assistChannel, (call) async {
           if (call.method != 'tools/call') return null;
           final arguments = Map<Object?, Object?>.from(call.arguments as Map);
+          if (arguments['name'] == 'list_functions') {
+            return <String, Object?>{
+              'success': true,
+              'functions': <Object?>[
+                <String, Object?>{
+                  'function_id': 'function.settings',
+                  'source_run_id': 'run-1',
+                  'name': '打开设置',
+                },
+              ],
+            };
+          }
           if (arguments['name'] != 'get_run_log') {
             return <String, Object?>{'success': true};
           }
@@ -118,10 +130,20 @@ void main() {
       expect(find.text('Tap · 100, 200'), findsOneWidget);
       expect(find.text('1.23k tokens'), findsOneWidget);
       expect(find.textContaining('"tool": "click"'), findsNothing);
+      expect(find.text('Linked Function'), findsOneWidget);
+      expect(find.text('打开设置'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('run-log-view-function')),
+        findsOneWidget,
+      );
 
       await tester.tap(find.text('Tap · 100, 200'));
       await tester.pumpAndSettle();
 
+      expect(find.text('Action evidence'), findsOneWidget);
+      expect(find.text('Action screenshot'), findsOneWidget);
+      expect(find.text('Before action'), findsNothing);
+      expect(find.text('After action'), findsNothing);
       expect(find.text('Decision'), findsOneWidget);
       expect(find.text('Tap the visible Settings result'), findsNWidgets(2));
       expect(find.text('Raw reasoning (optional)'), findsOneWidget);
@@ -139,10 +161,6 @@ void main() {
         find.text('The Settings result is visible and enabled.'),
         findsOneWidget,
       );
-      await tester.drag(find.byType(ListView).last, const Offset(0, -500));
-      await tester.pumpAndSettle();
-      expect(find.text('Before state'), findsOneWidget);
-      expect(find.text('After state'), findsOneWidget);
     },
   );
 }

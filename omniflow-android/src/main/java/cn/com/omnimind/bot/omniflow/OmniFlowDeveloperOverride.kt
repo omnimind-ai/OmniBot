@@ -80,10 +80,12 @@ internal class OmniFlowDeveloperOverrideStore(
 
     private fun ensureBase(basePythonRoot: File, runtimeVersion: String) {
         val sourcePackage = File(basePythonRoot, "omniflow")
+        val sourceSchemas = File(basePythonRoot, "schemas")
         require(sourcePackage.isDirectory) { "omniflow_override_base_missing" }
         if (
             packageRoot.isDirectory &&
-            versionFile.takeIf(File::isFile)?.readText()?.trim() == runtimeVersion
+            versionFile.takeIf(File::isFile)?.readText()?.trim() == runtimeVersion &&
+            (!sourceSchemas.isDirectory || File(pythonRoot, "schemas").isDirectory)
         ) {
             return
         }
@@ -95,6 +97,14 @@ internal class OmniFlowDeveloperOverrideStore(
         val temporaryPackage = File(temporary, "python/omniflow")
         require(sourcePackage.copyRecursively(temporaryPackage, overwrite = true)) {
             "omniflow_override_base_copy_failed"
+        }
+        if (sourceSchemas.isDirectory) {
+            require(
+                sourceSchemas.copyRecursively(
+                    File(temporary, "python/schemas"),
+                    overwrite = true,
+                ),
+            ) { "omniflow_override_schema_copy_failed" }
         }
         preserved.forEach { (path, bytes) ->
             bytes ?: return@forEach

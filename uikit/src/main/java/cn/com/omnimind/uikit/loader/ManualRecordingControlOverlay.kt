@@ -12,6 +12,7 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.provider.Settings
 import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -81,12 +82,25 @@ object ManualRecordingControlOverlay {
             dismissLocked()
             sessionRunId = runId
             captureStateCallback = onCaptureState
-            val shown = tryShow(
+            var shown = tryShow(
                 context = overlayHandle.context,
                 windowType = overlayHandle.windowType,
                 trusted = overlayHandle.trusted,
                 state = state,
             )
+            if (!shown && overlayHandle.trusted && Settings.canDrawOverlays(fallbackContext)) {
+                shown = tryShow(
+                    context = fallbackContext.applicationContext ?: fallbackContext,
+                    windowType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                    } else {
+                        @Suppress("DEPRECATION")
+                        WindowManager.LayoutParams.TYPE_PHONE
+                    },
+                    trusted = false,
+                    state = state,
+                )
+            }
             if (!shown) {
                 sessionRunId = null
                 captureStateCallback = null
@@ -653,14 +667,7 @@ object ManualRecordingControlOverlay {
                     .setItems(labels) { _, which ->
                         when (which) {
                             0 -> when {
-                                inputTarget == null -> finishManualActionDialog(
-                                    localizedText(
-                                        context,
-                                        "请先点击输入框",
-                                        "Tap an input field first",
-                                    ),
-                                )
-                                inputTarget.password -> finishManualActionDialog(
+                                inputTarget?.password == true -> finishManualActionDialog(
                                     localizedText(
                                         context,
                                         "密码输入不录制",

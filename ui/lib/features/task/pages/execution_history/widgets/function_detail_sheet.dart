@@ -12,6 +12,7 @@ class FunctionDetailSheet extends StatefulWidget {
     required this.onReplay,
     required this.onEnhance,
     required this.onDelete,
+    this.refreshOnOpen = true,
   });
 
   final Map<String, dynamic> initialFunction;
@@ -19,6 +20,7 @@ class FunctionDetailSheet extends StatefulWidget {
   final ValueChanged<Map<String, dynamic>> onReplay;
   final ValueChanged<Map<String, dynamic>> onEnhance;
   final ValueChanged<Map<String, dynamic>> onDelete;
+  final bool refreshOnOpen;
 
   @override
   State<FunctionDetailSheet> createState() => _FunctionDetailSheetState();
@@ -33,7 +35,11 @@ class _FunctionDetailSheetState extends State<FunctionDetailSheet> {
   void initState() {
     super.initState();
     _function = Map<String, dynamic>.from(widget.initialFunction);
-    unawaited(_load());
+    if (widget.refreshOnOpen) {
+      unawaited(_load());
+    } else {
+      _loading = false;
+    }
   }
 
   Future<void> _load() async {
@@ -250,30 +256,35 @@ class _FunctionDetailSheetState extends State<FunctionDetailSheet> {
                 padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
                 child: Row(
                   children: [
-                    OutlinedButton.icon(
+                    IconButton.outlined(
+                      key: const ValueKey('function-detail-delete'),
                       onPressed: functionId.isEmpty
                           ? null
                           : () => _closeAndRun(widget.onDelete),
+                      tooltip: _text(context, '删除', 'Delete'),
                       icon: const Icon(Icons.delete_outline_rounded, size: 18),
-                      label: Text(_text(context, '删除', 'Delete')),
                     ),
                     const SizedBox(width: 8),
-                    OutlinedButton.icon(
-                      key: const ValueKey('function-detail-enhance'),
-                      onPressed: functionId.isEmpty
-                          ? null
-                          : () => _closeAndRun(widget.onEnhance),
-                      icon: const Icon(Icons.auto_fix_high_rounded, size: 18),
-                      label: Text(_text(context, '增强', 'Enhance')),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        key: const ValueKey('function-detail-enhance'),
+                        onPressed: functionId.isEmpty
+                            ? null
+                            : () => _closeAndRun(widget.onEnhance),
+                        icon: const Icon(Icons.auto_fix_high_rounded, size: 18),
+                        label: Text(_text(context, '增强', 'Enhance')),
+                      ),
                     ),
-                    const Spacer(),
-                    FilledButton.icon(
-                      key: const ValueKey('function-detail-run'),
-                      onPressed: functionId.isEmpty
-                          ? null
-                          : () => _closeAndRun(widget.onReplay),
-                      icon: const Icon(Icons.play_arrow_rounded, size: 19),
-                      label: Text(_text(context, '执行', 'Run')),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: FilledButton.icon(
+                        key: const ValueKey('function-detail-run'),
+                        onPressed: functionId.isEmpty
+                            ? null
+                            : () => _closeAndRun(widget.onReplay),
+                        icon: const Icon(Icons.play_arrow_rounded, size: 19),
+                        label: Text(_text(context, '执行', 'Run')),
+                      ),
                     ),
                   ],
                 ),

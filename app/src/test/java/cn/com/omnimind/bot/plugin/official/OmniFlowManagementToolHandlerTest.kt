@@ -12,29 +12,28 @@ class OmniFlowManagementToolHandlerTest {
     private val json = Json { explicitNulls = false }
 
     @Test
-    fun `registering a converted runlog defaults to agent visible`() {
+    fun `saving a runlog defaults to agent visible`() {
         val args = json.parseToJsonElement(
-            """{"run_id":"gui-123","register":true,"enhance":true}""",
+            """{"run_id":"gui-123"}""",
         ).jsonObject
 
         val normalized = normalizeOmniFlowManagementArguments(
-            OmniFlowManagementTools.CONVERT_RUN_LOG,
+            OmniFlowManagementTools.SAVE_FUNCTION,
             args,
         )
 
         assertEquals("gui-123", normalized["run_id"])
-        assertEquals(true, normalized["register"])
         assertEquals(true, normalized["agent_visible"])
     }
 
     @Test
     fun `explicitly hidden converted runlog remains hidden`() {
         val args = json.parseToJsonElement(
-            """{"run_id":"gui-123","register":true,"agent_visible":false}""",
+            """{"run_id":"gui-123","agent_visible":false}""",
         ).jsonObject
 
         val normalized = normalizeOmniFlowManagementArguments(
-            OmniFlowManagementTools.CONVERT_RUN_LOG,
+            OmniFlowManagementTools.SAVE_FUNCTION,
             args,
         )
 

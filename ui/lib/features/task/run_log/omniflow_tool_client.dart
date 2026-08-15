@@ -1,5 +1,58 @@
 import 'package:ui/services/assists_core_service.dart';
 
+class OmniFlowFunctionRegistrationResult {
+  const OmniFlowFunctionRegistrationResult({
+    required this.function,
+    this.errorMessage,
+  });
+
+  final Map<String, dynamic>? function;
+  final String? errorMessage;
+
+  bool get success => function != null;
+  String get functionId => function?['function_id']?.toString().trim() ?? '';
+
+  factory OmniFlowFunctionRegistrationResult.fromPayload(
+    Map<String, dynamic> payload, {
+    required String runId,
+  }) {
+    if (payload['success'] == false) {
+      return OmniFlowFunctionRegistrationResult(
+        function: null,
+        errorMessage:
+            payload['error_message']?.toString().trim().nullIfEmpty ??
+            payload['error_code']?.toString().trim().nullIfEmpty ??
+            '注册失败',
+      );
+    }
+    final nested = payload['function'];
+    final function = nested is Map
+        ? nested.map((key, value) => MapEntry(key.toString(), value))
+        : <String, dynamic>{};
+    final functionId =
+        (function['function_id'] ??
+                payload['function_id'] ??
+                payload['registered_function_id'])
+            ?.toString()
+            .trim() ??
+        '';
+    if (functionId.isEmpty) {
+      return const OmniFlowFunctionRegistrationResult(
+        function: null,
+        errorMessage: '注册响应缺少 function_id',
+      );
+    }
+    return OmniFlowFunctionRegistrationResult(
+      function: <String, dynamic>{
+        ...function,
+        'function_id': functionId,
+        if ((function['source_run_id']?.toString().trim() ?? '').isEmpty)
+          'source_run_id': runId,
+      },
+    );
+  }
+}
+
 class OmniFlowToolClient {
   const OmniFlowToolClient._();
 
@@ -29,13 +82,18 @@ class OmniFlowToolClient {
     return _call('get_run_log_state', {'state_id': stateId});
   }
 
-  static Future<Map<String, dynamic>> convertRunLog(String runId) {
-    return _call('convert_run_log', {
-      'run_id': runId,
-      'register': true,
-      'agent_visible': true,
-      'enhance': true,
-    });
+  static Future<Map<String, dynamic>> saveFunctionFromRunLog(String runId) {
+    return _call('save_function', {'run_id': runId, 'agent_visible': true});
+  }
+
+  static Future<OmniFlowFunctionRegistrationResult> registerFunctionFromRunLog(
+    String runId,
+  ) async {
+    final payload = await saveFunctionFromRunLog(runId);
+    return OmniFlowFunctionRegistrationResult.fromPayload(
+      payload,
+      runId: runId,
+    );
   }
 
   static Future<Map<String, dynamic>> startHumanTrajectoryLearning({
@@ -117,4 +175,8 @@ class OmniFlowToolClient {
     }
     return value;
   }
+}
+
+extension on String {
+  String? get nullIfEmpty => isEmpty ? null : this;
 }

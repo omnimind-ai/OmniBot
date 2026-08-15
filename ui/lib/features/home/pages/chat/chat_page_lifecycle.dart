@@ -272,12 +272,28 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     }
     await _applyStagedSharedDraftIfNeeded(effectiveTarget);
     if (isStaleRequest()) return;
+    await _sendInitialMessageIfNeeded(effectiveTarget);
+    if (isStaleRequest()) return;
     await _persistVisibleThreadTargetIfNeeded();
     unawaited(_syncVisibleChatConversation());
     if (isStaleRequest()) return;
     if (syncPage) {
       _jumpToCurrentModePage(animate: false);
     }
+  }
+
+  Future<void> _sendInitialMessageIfNeeded(
+    ConversationThreadTarget target,
+  ) async {
+    final message = target.initialMessage?.trim() ?? '';
+    if (!target.isNewConversation ||
+        target.mode != ConversationMode.agent ||
+        message.isEmpty) {
+      return;
+    }
+    final requestKey = target.requestKey ?? message;
+    if (!_consumedInitialMessageRequests.add(requestKey)) return;
+    await _sendMessage(text: message);
   }
 
   void _restoreLocalAgentThreadIdFromTarget(ConversationThreadTarget target) {

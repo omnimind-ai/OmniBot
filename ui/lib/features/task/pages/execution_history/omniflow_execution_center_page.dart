@@ -7,17 +7,32 @@ import 'package:go_router/go_router.dart';
 import 'package:ui/features/task/pages/execution_history/widgets/function_detail_sheet.dart';
 import 'package:ui/features/task/run_log/run_log_metrics.dart';
 import 'package:ui/features/task/run_log/omniflow_tool_client.dart';
+import 'package:ui/models/conversation_model.dart';
+import 'package:ui/models/conversation_thread_target.dart';
 import 'package:ui/models/omni_plugin_item.dart';
 import 'package:ui/services/omni_plugin_service.dart';
 
 class OmniFlowExecutionCenterPage extends StatefulWidget {
-  const OmniFlowExecutionCenterPage({super.key, this.initialTab});
+  const OmniFlowExecutionCenterPage({
+    super.key,
+    this.initialTab,
+    this.initialFunctionId,
+  });
 
   final String? initialTab;
+  final String? initialFunctionId;
 
   @override
   State<OmniFlowExecutionCenterPage> createState() =>
       _OmniFlowExecutionCenterPageState();
+}
+
+@visibleForTesting
+String buildFunctionEnhancementPrompt(Map<String, dynamic> function) {
+  final functionId = _string(function['function_id']);
+  return '请增强下面的 OmniFlow 复用指令。先用 get_function 读取完整内容，分析参数化、稳定性和可复用性，再通过 OmniFlow 工具保存更新；不要执行该指令。\n\n'
+      'function_id: $functionId\n'
+      '当前信息：${jsonEncode(function)}';
 }
 
 class _OmniFlowExecutionCenterPageState
@@ -42,6 +57,8 @@ class _OmniFlowExecutionCenterPageState
   bool _runLogsHasMore = false;
   int _runLogsNextOffset = 0;
   String? _runLogsError;
+  bool _initialFunctionOpened = false;
+  final Set<String> _registeringRunIds = <String>{};
 
   bool get _ready => _plugin?.installed == true && _plugin?.enabled == true;
 
@@ -109,15 +126,20 @@ class _OmniFlowExecutionCenterPageState
     if (!_ready) return;
     if (_tabController.index == 0) {
       if (!_functionsLoaded) await _loadFunctions(reset: true);
-    } else if (!_runLogsLoaded) {
-      await _loadRunLogs(reset: true);
+    } else {
+      await Future.wait([
+        if (!_runLogsLoaded) _loadRunLogs(reset: true),
+        if (!_functionsLoaded) _loadFunctions(reset: true),
+      ]);
     }
   }
 
   Future<void> _loadActive({required bool reset}) {
-    return _tabController.index == 0
-        ? _loadFunctions(reset: reset)
-        : _loadRunLogs(reset: reset);
+    if (_tabController.index == 0) return _loadFunctions(reset: reset);
+    return Future.wait([
+      _loadRunLogs(reset: reset),
+      _loadFunctions(reset: reset),
+    ]).then((_) {});
   }
 
   Future<void> _loadFunctions({required bool reset}) async {
@@ -147,6 +169,7 @@ class _OmniFlowExecutionCenterPageState
           fallback: offset + items.length,
         );
       });
+      _openInitialFunctionIfAvailable();
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -155,6 +178,21 @@ class _OmniFlowExecutionCenterPageState
         _functionsError = error.toString();
       });
     }
+  }
+
+  void _openInitialFunctionIfAvailable() {
+    if (_initialFunctionOpened || !mounted) return;
+    final functionId = widget.initialFunctionId?.trim() ?? '';
+    if (functionId.isEmpty) return;
+    final function = _functions.cast<Map<String, dynamic>?>().firstWhere(
+      (item) => _string(item?['function_id']) == functionId,
+      orElse: () => null,
+    );
+    if (function == null) return;
+    _initialFunctionOpened = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_showFunctionDetails(function));
+    });
   }
 
   Future<void> _loadRunLogs({required bool reset}) async {
@@ -210,7 +248,10 @@ class _OmniFlowExecutionCenterPageState
     }
   }
 
-  Future<void> _showFunctionDetails(Map<String, dynamic> function) {
+  Future<void> _showFunctionDetails(
+    Map<String, dynamic> function, {
+    bool refreshOnOpen = true,
+  }) {
     return showModalBottomSheet<void>(
       context: context,
       useRootNavigator: true,
@@ -223,6 +264,7 @@ class _OmniFlowExecutionCenterPageState
         onReplay: _replay,
         onEnhance: _enhanceFunction,
         onDelete: _deleteFunction,
+        refreshOnOpen: refreshOnOpen,
       ),
     );
   }
@@ -230,59 +272,15 @@ class _OmniFlowExecutionCenterPageState
   Future<void> _enhanceFunction(Map<String, dynamic> function) async {
     final functionId = _string(function['function_id']);
     if (functionId.isEmpty) return;
-    final instruction = await _collectEnhancementInstruction();
-    if (instruction == null || !mounted) return;
-    final sourceRunId = _string(
-      function['source_run_id'] ?? function['run_id'],
-    ).nullIfEmpty;
-    await _runAction(
-      () => OmniFlowToolClient.enhanceFunction(
-        functionId,
-        runId: sourceRunId,
-        instruction: instruction,
-      ),
-      success: _text(context, '复用指令已增强', 'Function enhanced'),
-      reload: true,
-    );
-  }
-
-  Future<String?> _collectEnhancementInstruction() {
-    var instruction = '';
-    return showDialog<String>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(_text(context, '增强复用指令', 'Enhance Function')),
-        content: TextField(
-          key: const ValueKey('function-enhancement-instruction'),
-          autofocus: true,
-          minLines: 2,
-          maxLines: 5,
-          maxLength: 2000,
-          onChanged: (value) => instruction = value,
-          decoration: InputDecoration(
-            hintText: _text(
-              context,
-              '可选：例如“把搜索内容设为参数”或“优先使用搜索框”',
-              'Optional: for example, “make the search text a parameter”',
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: Text(_text(context, '取消', 'Cancel')),
-          ),
-          TextButton(
-            key: const ValueKey('function-enhancement-default'),
-            onPressed: () => Navigator.pop(dialogContext, ''),
-            child: Text(_text(context, '默认增强', 'Default')),
-          ),
-          FilledButton(
-            key: const ValueKey('function-enhancement-submit'),
-            onPressed: () => Navigator.pop(dialogContext, instruction.trim()),
-            child: Text(_text(context, '增强', 'Enhance')),
-          ),
-        ],
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted) return;
+    final requestKey = DateTime.now().microsecondsSinceEpoch.toString();
+    context.push(
+      '/home/chat',
+      extra: ConversationThreadTarget.newConversation(
+        mode: ConversationMode.agent,
+        requestKey: requestKey,
+        initialMessage: buildFunctionEnhancementPrompt(function),
       ),
     );
   }
@@ -417,15 +415,53 @@ class _OmniFlowExecutionCenterPageState
     );
   }
 
-  Future<void> _convertRunLog(Map<String, dynamic> runLog) async {
+  Future<void> _saveFunctionFromRunLog(Map<String, dynamic> runLog) async {
     final runId = _string(runLog['run_id']);
-    if (runId.isEmpty) return;
-    _functionsLoaded = false;
-    await _runAction(
-      () => OmniFlowToolClient.convertRunLog(runId),
-      success: _text(context, '已注册为复用指令', 'Function registered'),
-      reload: true,
-    );
+    if (runId.isEmpty || _registeringRunIds.contains(runId)) return;
+    setState(() => _registeringRunIds.add(runId));
+    try {
+      final registration = await OmniFlowToolClient.registerFunctionFromRunLog(
+        runId,
+      );
+      if (!mounted) return;
+      if (!registration.success) {
+        throw StateError(
+          registration.errorMessage ??
+              _text(context, '注册失败', 'Registration failed'),
+        );
+      }
+      final function = <String, dynamic>{
+        'name':
+            _string(runLog['goal']).nullIfEmpty ??
+            _text(context, '未命名复用指令', 'Unnamed Function'),
+        'description': _string(runLog['goal']),
+        ...registration.function!,
+      };
+      setState(() {
+        _functions = _mergeById(
+          <Map<String, dynamic>>[function],
+          _functions,
+          idKey: 'function_id',
+        );
+        _functionsLoaded = true;
+      });
+      _tabController.animateTo(0);
+      await WidgetsBinding.instance.endOfFrame;
+      if (!mounted) return;
+      await _showFunctionDetails(function, refreshOnOpen: false);
+      if (mounted) unawaited(_loadFunctions(reset: true));
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            error is StateError ? error.message.toString() : error.toString(),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _registeringRunIds.remove(runId));
+    }
   }
 
   Future<void> _runAction(
@@ -542,12 +578,15 @@ class _OmniFlowExecutionCenterPageState
         ),
         _RunLogsTab(
           runLogs: _runLogs,
+          functions: _functions,
           loading: _runLogsLoading,
           error: _runLogsError,
           hasMore: _runLogsHasMore,
           onRefresh: () => _loadRunLogs(reset: true),
           onLoadMore: () => _loadRunLogs(reset: false),
-          onConvert: _convertRunLog,
+          onConvert: _saveFunctionFromRunLog,
+          onOpenFunction: _showFunctionDetails,
+          registeringRunIds: _registeringRunIds,
         ),
       ],
     );
@@ -712,21 +751,27 @@ class _FunctionListItem extends StatelessWidget {
 class _RunLogsTab extends StatelessWidget {
   const _RunLogsTab({
     required this.runLogs,
+    required this.functions,
     required this.loading,
     required this.error,
     required this.hasMore,
     required this.onRefresh,
     required this.onLoadMore,
     required this.onConvert,
+    required this.onOpenFunction,
+    required this.registeringRunIds,
   });
 
   final List<Map<String, dynamic>> runLogs;
+  final List<Map<String, dynamic>> functions;
   final bool loading;
   final String? error;
   final bool hasMore;
   final AsyncCallback onRefresh;
   final AsyncCallback onLoadMore;
   final ValueChanged<Map<String, dynamic>> onConvert;
+  final ValueChanged<Map<String, dynamic>> onOpenFunction;
+  final Set<String> registeringRunIds;
 
   @override
   Widget build(BuildContext context) {
@@ -769,11 +814,17 @@ class _RunLogsTab extends StatelessWidget {
             );
           }
           final runLog = runLogs[index];
+          final linkedFunction = _linkedFunction(runLog, functions);
           return _RunLogListItem(
             runLog: runLog,
             onOpen: () =>
                 context.push('/task/run_log/${_string(runLog['run_id'])}'),
             onConvert: () => onConvert(runLog),
+            linkedFunction: linkedFunction,
+            registering: registeringRunIds.contains(_string(runLog['run_id'])),
+            onOpenFunction: linkedFunction == null
+                ? null
+                : () => onOpenFunction(linkedFunction),
           );
         },
       ),
@@ -786,11 +837,17 @@ class _RunLogListItem extends StatelessWidget {
     required this.runLog,
     required this.onOpen,
     required this.onConvert,
+    required this.linkedFunction,
+    required this.onOpenFunction,
+    required this.registering,
   });
 
   final Map<String, dynamic> runLog;
   final VoidCallback onOpen;
   final VoidCallback onConvert;
+  final Map<String, dynamic>? linkedFunction;
+  final VoidCallback? onOpenFunction;
+  final bool registering;
 
   @override
   Widget build(BuildContext context) {
@@ -878,8 +935,33 @@ class _RunLogListItem extends StatelessWidget {
                     ),
                   ),
                   TextButton(
-                    onPressed: onConvert,
-                    child: Text(_text(context, '注册为复用指令', 'Register Function')),
+                    key: ValueKey(
+                      linkedFunction == null
+                          ? 'run-log-register-$runId'
+                          : 'run-log-function-$runId',
+                    ),
+                    onPressed: registering
+                        ? null
+                        : (onOpenFunction ?? onConvert),
+                    child: registering
+                        ? Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              const SizedBox.square(
+                                dimension: 14,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              ),
+                              const SizedBox(width: 7),
+                              Text(_text(context, '注册中', 'Registering')),
+                            ],
+                          )
+                        : Text(
+                            linkedFunction == null
+                                ? _text(context, '注册为复用指令', 'Register Function')
+                                : _text(context, '查看复用指令', 'View Function'),
+                          ),
                   ),
                   Icon(
                     Icons.chevron_right_rounded,
@@ -894,6 +976,22 @@ class _RunLogListItem extends StatelessWidget {
       ),
     );
   }
+}
+
+Map<String, dynamic>? _linkedFunction(
+  Map<String, dynamic> runLog,
+  List<Map<String, dynamic>> functions,
+) {
+  final runId = _string(runLog['run_id']);
+  final executedFunctionId = _string(runLog['function_id']);
+  for (final function in functions) {
+    final functionId = _string(function['function_id']);
+    if ((executedFunctionId.isNotEmpty && functionId == executedFunctionId) ||
+        (runId.isNotEmpty && _string(function['source_run_id']) == runId)) {
+      return function;
+    }
+  }
+  return null;
 }
 
 class _LoadMoreRow extends StatelessWidget {

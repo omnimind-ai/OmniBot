@@ -92,9 +92,7 @@ void main() {
     expect(icon.size, 18);
   });
 
-  testWidgets('completed VLM tool renders inline result actions', (
-    tester,
-  ) async {
+  testWidgets('completed VLM tool renders GUI completion card', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
@@ -125,6 +123,48 @@ void main() {
     expect(find.text('查看 RunLog'), findsOneWidget);
     expect(find.text('注册为复用指令'), findsOneWidget);
     expect(find.byKey(kAgentToolDetailSheetKey), findsNothing);
+  });
+
+  testWidgets('registered GUI result opens its matching Function details', (
+    tester,
+  ) async {
+    final router = GoRouter(
+      initialLocation: '/',
+      routes: [
+        GoRoute(
+          path: '/',
+          builder: (context, state) => Scaffold(
+            body: AgentToolSummaryCard(
+              cardData: {
+                'status': 'success',
+                'toolName': 'vlm_task',
+                'toolType': 'builtin',
+                'resultPreviewJson': jsonEncode({
+                  'run_id': 'gui-run-1',
+                  'success': true,
+                  'content': '已完成',
+                  'auto_registered': true,
+                  'registered_function_id': 'recorded_demo',
+                }),
+              },
+            ),
+          ),
+        ),
+        GoRoute(
+          path: '/task/omniflow',
+          builder: (context, state) => Scaffold(
+            body: Text('function:${state.uri.queryParameters['functionId']}'),
+          ),
+        ),
+      ],
+    );
+    addTearDown(router.dispose);
+
+    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+    await tester.tap(find.byKey(const ValueKey('vlm-task-open-functions')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('function:recorded_demo'), findsOneWidget);
   });
 
   testWidgets('unfinished VLM tool still exposes its RunLog', (tester) async {

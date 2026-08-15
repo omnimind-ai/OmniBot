@@ -45,6 +45,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import java.io.File
+import java.net.InetSocketAddress
+import java.net.ServerSocket
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.UUID
@@ -67,6 +69,7 @@ object McpServerManager {
     private const val PREF_TOKEN_VAULT = "mcp_server_token_v2" // 加密后的 token
     private const val PREF_PORT = "mcp_server_port"
     private const val DEFAULT_PORT = 8899
+    private const val PORT_SEARCH_ATTEMPTS = 100
     private const val WEBCHAT_SESSION_COOKIE = "omnibot_webchat_session"
     private const val WEBCHAT_SESSION_TTL_MS = 7L * 24L * 60L * 60L * 1000L
 
@@ -277,16 +280,20 @@ object McpServerManager {
                     }
                     stopServerLocked()
                 }
-                val engine = buildServer(context, port)
+                val resolvedPort = resolveAvailablePort(port)
+                val engine = buildServer(context, resolvedPort)
                 engine.start(wait = false)
 
                 server = engine
                 isRunning = true
                 activeHost = lanIp
                 mmkv.encode(PREF_ENABLE, true)
-                mmkv.encode(PREF_PORT, port)
+                mmkv.encode(PREF_PORT, resolvedPort)
                 mmkv.encode(PREF_HOST, lanIp)
-                OmniLog.i(TAG, "MCP server started at http://$lanIp:$port")
+                if (resolvedPort != port) {
+                    OmniLog.w(TAG, "MCP port $port occupied; switched to $resolvedPort")
+                }
+                OmniLog.i(TAG, "MCP server started at http://$lanIp:$resolvedPort")
                 return currentState()
             } catch (t: Throwable) {
                 server = null
@@ -296,6 +303,28 @@ object McpServerManager {
                 throw t
             }
         }
+    }
+
+    internal fun isTcpPortAvailable(port: Int): Boolean {
+        if (port !in 1..65535) return false
+        return runCatching {
+            ServerSocket().use { socket ->
+                socket.reuseAddress = false
+                socket.bind(InetSocketAddress("0.0.0.0", port))
+            }
+        }.isSuccess
+    }
+
+    internal fun resolveAvailablePort(
+        preferredPort: Int,
+        maxAttempts: Int = PORT_SEARCH_ATTEMPTS,
+        isAvailable: (Int) -> Boolean = ::isTcpPortAvailable,
+    ): Int {
+        require(preferredPort in 1..65535) { "无效的 MCP 端口: $preferredPort" }
+        require(maxAttempts > 0) { "MCP 端口搜索次数必须大于 0" }
+        val lastPort = (preferredPort.toLong() + maxAttempts - 1L).coerceAtMost(65535L).toInt()
+        return (preferredPort..lastPort).firstOrNull(isAvailable)
+            ?: error("MCP 端口 $preferredPort..$lastPort 均被占用")
     }
 
     private fun buildServer(

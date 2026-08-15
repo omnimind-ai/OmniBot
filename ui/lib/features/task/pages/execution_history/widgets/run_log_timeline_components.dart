@@ -342,7 +342,8 @@ class RunLogStepDetailSheet extends StatelessWidget {
   final Map<String, dynamic> step;
   final int fallbackIndex;
   final RunLogTokenUsage? tokenUsage;
-  final Future<void> Function(String stateId) onShowState;
+  final Future<void> Function(String stateId, Map<String, dynamic> action)
+  onShowState;
 
   @override
   Widget build(BuildContext context) {
@@ -430,6 +431,37 @@ class RunLogStepDetailSheet extends StatelessWidget {
                   controller: controller,
                   padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
                   children: [
+                    if (beforeStateId.isNotEmpty ||
+                        afterStateId.isNotEmpty) ...[
+                      Text(
+                        _text(context, '动作证据', 'Action evidence'),
+                        style: TextStyle(
+                          color: palette.textSecondary,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: [
+                          OutlinedButton.icon(
+                            onPressed: () => onShowState(
+                              beforeStateId.isNotEmpty
+                                  ? beforeStateId
+                                  : afterStateId,
+                              action,
+                            ),
+                            icon: const Icon(Icons.image_outlined, size: 17),
+                            label: Text(
+                              _text(context, '动作截图', 'Action screenshot'),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                    ],
                     if (summary.isNotEmpty) ...[
                       Text(
                         _text(context, '决策', 'Decision'),
@@ -570,32 +602,6 @@ class RunLogStepDetailSheet extends StatelessWidget {
                         ),
                       ),
                     ),
-                    if (beforeStateId.isNotEmpty ||
-                        afterStateId.isNotEmpty) ...[
-                      const SizedBox(height: 14),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          if (beforeStateId.isNotEmpty)
-                            OutlinedButton.icon(
-                              onPressed: () => onShowState(beforeStateId),
-                              icon: const Icon(Icons.image_outlined, size: 17),
-                              label: Text(
-                                _text(context, '前置状态', 'Before state'),
-                              ),
-                            ),
-                          if (afterStateId.isNotEmpty)
-                            OutlinedButton.icon(
-                              onPressed: () => onShowState(afterStateId),
-                              icon: const Icon(Icons.image_outlined, size: 17),
-                              label: Text(
-                                _text(context, '后置状态', 'After state'),
-                              ),
-                            ),
-                        ],
-                      ),
-                    ],
                   ],
                 ),
               ),

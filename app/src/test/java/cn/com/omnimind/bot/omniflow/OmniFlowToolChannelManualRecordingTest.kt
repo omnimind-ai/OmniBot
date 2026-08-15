@@ -22,7 +22,7 @@ class OmniFlowToolChannelManualRecordingTest {
     }
 
     @Test
-    fun manualRecordingRegistersBeforeOfflineEnhancement() {
+    fun manualRecordingUsesTheCanonicalFunctionRegistrationPath() {
         val source = projectSource(
             "app/src/main/java/cn/com/omnimind/bot/omniflow/OmniFlowToolChannel.kt",
         )
@@ -30,9 +30,24 @@ class OmniFlowToolChannelManualRecordingTest {
             .substringAfter("private suspend fun finalizedPayload(")
             .substringBefore("fun clear()")
 
-        assertTrue(method.contains("\"register\" to true"))
-        assertTrue(method.contains("\"enhance\" to true"))
+        assertTrue(method.contains("OmniFlowFunctionRegistration.saveRunLog("))
+        assertTrue(method.contains("runId = result.runId"))
+        assertTrue(method.contains("agentVisible = true"))
         assertTrue(method.contains("modelClient = if (OmniFlowPluginRuntime.isEnabled())"))
+    }
+
+    @Test
+    fun manualTextInputDoesNotRequireAPreviouslyFocusedField() {
+        val source = projectSource(
+            "uikit/src/main/java/cn/com/omnimind/uikit/loader/ManualRecordingControlOverlay.kt",
+        )
+        val actionDialog = source
+            .substringAfter("private fun showManualActionDialog(")
+            .substringBefore("private fun showManualInputTextDialog(")
+
+        assertTrue(actionDialog.contains("showManualInputTextDialog(context, inputTarget)"))
+        assertTrue(!actionDialog.contains("Tap an input field first"))
+        assertTrue(!actionDialog.contains("请先点击输入框"))
     }
 
     @Test
