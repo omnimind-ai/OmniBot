@@ -4,6 +4,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.PowerManager
 import android.provider.Settings
 import cn.com.omnimind.accessibility.service.AssistsService
 import cn.com.omnimind.baselib.runlog.Action
@@ -28,6 +29,9 @@ data class AndroidGuiScreenSnapshot(
     val displayHeight: Int,
     val screenshotJpeg: ByteArray?,
 )
+
+/** Raised when a physical-display GUI task can no longer safely continue. */
+class AndroidGuiDisplayOffException : IllegalStateException("android_gui_display_off")
 
 enum class AndroidGuiAccessibilityStatus {
     DISABLED,
@@ -56,6 +60,7 @@ class AndroidGuiEnvironment internal constructor(
     fun isReady(): Boolean = accessibilityStatus() == AndroidGuiAccessibilityStatus.READY
 
     suspend fun awaitReady(timeoutMs: Long = ACCESSIBILITY_READY_TIMEOUT_MS): Boolean {
+        ensureDisplayInteractive()
         if (!isAccessibilityEnabled()) return false
         return withTimeoutOrNull(timeoutMs) {
             while (!platform.isReady()) delay(50L)
@@ -197,6 +202,14 @@ class AndroidGuiEnvironment internal constructor(
             ),
         )
         return action.copy(args = args)
+    }
+
+    private fun ensureDisplayInteractive() {
+        val context = appContext ?: return
+        val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+        if (powerManager != null && !powerManager.isInteractive) {
+            throw AndroidGuiDisplayOffException()
+        }
     }
 }
 

@@ -44,6 +44,8 @@ typedef AgentContextCompactionStateCallback =
       int? promptTokenThreshold,
     );
 typedef AgentStreamEventCallback = void Function(AgentStreamEvent event);
+typedef AgentRuntimeRecoveryCallback =
+    void Function(Map<String, dynamic> payload);
 typedef ScheduledTaskCancelledCallBack = void Function(String taskId);
 typedef ScheduledTaskExecuteNowCallBack = void Function(String taskId);
 
@@ -274,6 +276,8 @@ class AssistsMessageService {
   static final List<ChatTaskMessageEndCallBack> _onChatTaskMessageEndCallBacks =
       [];
   static final List<AgentStreamEventCallback> _onAgentStreamEventCallbacks = [];
+  static final List<AgentRuntimeRecoveryCallback>
+  _onAgentRuntimeRecoveryCallbacks = [];
 
   static Stream<Map<String, dynamic>> get conversationListChangedStream =>
       _conversationListChangedController.stream;
@@ -421,6 +425,14 @@ class AssistsMessageService {
             callback(event);
           }
           break;
+        case 'onAgentRuntimeRecovery':
+          final payload = Map<String, dynamic>.from(
+            (call.arguments as Map?) ?? const <String, dynamic>{},
+          );
+          for (final callback in _onAgentRuntimeRecoveryCallbacks) {
+            callback(payload);
+          }
+          break;
         case 'onScheduledTaskCancelled':
           final Map<String, dynamic> data = Map<String, dynamic>.from(
             call.arguments,
@@ -560,6 +572,42 @@ class AssistsMessageService {
     AgentStreamEventCallback? callback,
   ) {
     _onAgentStreamEventCallbacks.remove(callback);
+  }
+
+  static void addOnAgentRuntimeRecoveryCallback(
+    AgentRuntimeRecoveryCallback callback,
+  ) {
+    if (!_onAgentRuntimeRecoveryCallbacks.contains(callback)) {
+      _onAgentRuntimeRecoveryCallbacks.add(callback);
+    }
+  }
+
+  static void removeOnAgentRuntimeRecoveryCallback(
+    AgentRuntimeRecoveryCallback callback,
+  ) {
+    _onAgentRuntimeRecoveryCallbacks.remove(callback);
+  }
+
+  /// Replays durable task envelopes after a Flutter engine/channel reconnect.
+  static Future<Map<String, dynamic>> recoverAgentRuntime() async {
+    try {
+      final result = await assistCore.invokeMethod<Map<dynamic, dynamic>>(
+        'recoverAgentRuntime',
+      );
+      final payload = Map<String, dynamic>.from(
+        (result ?? const <dynamic, dynamic>{}).map(
+          (key, value) => MapEntry(key.toString(), value),
+        ),
+      );
+      for (final callback in List<AgentRuntimeRecoveryCallback>.from(
+        _onAgentRuntimeRecoveryCallbacks,
+      )) {
+        callback(payload);
+      }
+      return payload;
+    } catch (_) {
+      return const <String, dynamic>{};
+    }
   }
 
   static void addOnExternalUserMessageAppendedCallback(

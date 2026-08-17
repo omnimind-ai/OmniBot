@@ -53,6 +53,7 @@ import cn.com.omnimind.assists.controller.http.HttpController
 import cn.com.omnimind.baselib.util.SchemeUtil
 import cn.com.omnimind.bot.util.TaskRuntimeSettings
 import cn.com.omnimind.bot.task.runtime.TaskRuntime
+import cn.com.omnimind.bot.task.runtime.TaskRuntimeStore
 import cn.com.omnimind.bot.agent.AgentCallback
 import cn.com.omnimind.bot.agent.AgentAlarmToolService
 import cn.com.omnimind.bot.agent.AgentConversationContextCompactor
@@ -1124,6 +1125,46 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
         OmniLog.d(TAG, "setChannel")
         this.channel = _channel
         FlutterChatSyncBridge.bindCurrentChannel(_channel)
+    }
+
+    /**
+     * Returns the durable Agent envelopes and conversation identifiers.
+     * Flutter calls this after every engine/channel reconnect and loads the
+     * persisted snapshot through the normal history API;
+     * RealtimeHub is intentionally not used as a replay buffer.
+     */
+    fun recoverAgentRuntime(result: MethodChannel.Result) {
+        mainJob.launch {
+            val activeIds = activeAgentTaskIds().toSet()
+            val recovered = withContext(Dispatchers.IO) {
+                TaskRuntimeStore.listPending(context).map { record ->
+                    val conversationId = (record.payload["conversationId"] as? Number)?.toLong()
+                        ?.takeIf { it > 0L }
+                    val mode = normalizeConversationMode(
+                        record.payload["conversationMode"]?.toString().orEmpty(),
+                    )
+                    mapOf<String, Any?>(
+                        "taskId" to record.taskId,
+                        "kind" to record.kind,
+                        "status" to if (record.taskId in activeIds) "running" else record.status.name.lowercase(),
+                        "recoveryState" to if (record.taskId in activeIds) "running" else "queued",
+                        "statusText" to "后台恢复中",
+                        "backgroundRecovered" to true,
+                        "updatedAt" to record.updatedAt,
+                        "conversationId" to conversationId,
+                        "conversationMode" to mode,
+                    ).filterValues { it != null }
+                }
+            }
+            result.success(
+                sanitizeInteropMap(
+                    mapOf(
+                        "tasks" to recovered,
+                        "generatedAt" to System.currentTimeMillis(),
+                    ),
+                ),
+            )
+        }
     }
 
     private fun currentChannelOrNull(): MethodChannel? {
@@ -4094,10 +4135,24 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
         handleCreateOrContinueAgentTask(call, result, isContinue = false)
     }
 
+    internal fun startAgentTaskFromRuntime(
+        call: MethodCall,
+        parentScope: CoroutineScope,
+        result: MethodChannel.Result,
+    ) {
+        handleCreateOrContinueAgentTask(
+            call = call,
+            result = result,
+            isContinue = false,
+            parentScope = parentScope,
+        )
+    }
+
     private fun handleCreateOrContinueAgentTask(
         call: MethodCall,
         result: MethodChannel.Result,
-        isContinue: Boolean
+        isContinue: Boolean,
+        parentScope: CoroutineScope? = null,
     ) {
         val rawCallArguments = (call.arguments as? Map<*, *>)
             ?.entries
@@ -4228,7 +4283,7 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 "continueGeneration" to continueGeneration
             )
         )
-        val agentRunJob = SupervisorJob()
+        val agentRunJob = SupervisorJob(parentScope?.coroutineContext?.get(Job))
         val agentRunScope = CoroutineScope(agentRunJob + Dispatchers.Default)
         val agentRunContext = ActiveAgentRunContext(
             taskId = taskId,

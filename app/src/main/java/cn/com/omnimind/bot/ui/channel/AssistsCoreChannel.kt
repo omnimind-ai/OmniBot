@@ -26,7 +26,6 @@ class AssistsCoreChannel {
     fun onCreate(context: Context) {
         assistsCoreManager = AssistsCoreManager.sharedInstanceOrCreate(context)
         omniFlowToolChannel = OmniFlowToolChannel(context)
-        assistsCoreManager?.setChannel(channel!!);
 
     }
 
@@ -50,6 +49,9 @@ class AssistsCoreChannel {
 
                 "createAgentTask" -> {
                     assistsCoreManager!!.createAgentTask( call, result)
+                }
+                "recoverAgentRuntime" -> {
+                    assistsCoreManager!!.recoverAgentRuntime(result)
                 }
                 "agentSkillList" -> {
                     assistsCoreManager!!.agentSkillList(call, result)

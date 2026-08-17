@@ -269,6 +269,9 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     AssistsMessageService.setOnAgentStreamEventCallback(
       _handleAgentStreamEvent,
     );
+    AssistsMessageService.addOnAgentRuntimeRecoveryCallback(
+      _handleAgentRuntimeRecovery,
+    );
     AssistsMessageService.addOnExternalUserMessageAppendedCallback(
       _handleExternalUserMessageAppended,
     );
@@ -278,6 +281,7 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     AssistsMessageService.setOnAgentContextCompactionStateCallback(
       _handleAgentContextCompactionStateChanged,
     );
+    unawaited(AssistsMessageService.recoverAgentRuntime());
   }
 
   ChatConversationRuntimeState? runtimeFor({

@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.SystemClock
+import cn.com.omnimind.androidgui.AndroidGuiDisplayOffException
 import cn.com.omnimind.androidgui.AndroidGuiEnvironment
 import cn.com.omnimind.baselib.runlog.Action
 import cn.com.omnimind.baselib.runlog.InternalRunLogStore
@@ -291,6 +292,10 @@ object OmniFlow {
     )
 }
 
+internal class GuiDisplayOffCancellationException : CancellationException(
+    "android_gui_display_off",
+)
+
 class OmniFlowDeviceDispatcher internal constructor(
     context: Context,
     private val request: ExecutionRequest? = null,
@@ -372,6 +377,9 @@ class OmniFlowDeviceDispatcher internal constructor(
             applyPostRunActions(result)
         } catch (error: ManualCompletionRequested) {
             throw error
+        } catch (error: AndroidGuiDisplayOffException) {
+            finishRun(cancelledFailure(activeRun.cancelledDoneReason, error))
+            throw GuiDisplayOffCancellationException()
         } catch (error: CancellationException) {
             finishRun(cancelledFailure(activeRun.cancelledDoneReason, error))
             throw error

@@ -14,16 +14,18 @@ import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.manager.AssistsCoreManager
 import cn.com.omnimind.bot.R
 import cn.com.omnimind.bot.activity.MainActivity
-import io.flutter.plugin.common.MethodCall
-import io.flutter.plugin.common.MethodChannel
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Foreground host for user-visible long-running tasks.
  *
- * The service owns the durable launch envelope and re-attaches it to the
- * existing Agent runner. The runner itself stays in AssistsCoreManager so this
- * migration does not duplicate the business loop.
+ * The service owns the durable launch envelope and dispatches it through a
+ * TaskRunner. The runner still delegates to the existing Agent loop so this
+ * boundary does not duplicate or destabilize loop semantics.
  */
 class TaskRuntimeService : Service() {
     companion object {
@@ -39,9 +41,14 @@ class TaskRuntimeService : Service() {
         getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
     }
     private val dispatchedTaskIds = ConcurrentHashMap.newKeySet<String>()
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private lateinit var manager: AssistsCoreManager
+    private lateinit var agentTaskRunner: AgentTaskRunner
 
     override fun onCreate() {
         super.onCreate()
+        manager = AssistsCoreManager.sharedInstanceOrCreate(applicationContext)
+        agentTaskRunner = AgentTaskRunner(manager)
         ensureNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
         OmniLog.d(TAG, "Task runtime foreground service created")
@@ -65,31 +72,33 @@ class TaskRuntimeService : Service() {
 
     override fun onDestroy() {
         OmniLog.d(TAG, "Task runtime foreground service destroyed")
+        serviceScope.cancel()
         super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     private fun dispatchPendingTasks() {
-        val manager = AssistsCoreManager.sharedInstanceOrCreate(applicationContext)
         TaskRuntimeStore.listPending(applicationContext).forEach { record ->
             if (!dispatchedTaskIds.add(record.taskId)) return@forEach
+            if (record.kind != agentTaskRunner.kind) return@forEach
             if (manager.activeAgentTaskIds().contains(record.taskId)) return@forEach
             TaskRuntimeStore.markRunning(applicationContext, record.taskId)
-            val arguments = record.payload.toMutableMap().apply {
-                put("__taskRuntimeOwned", true)
+            val started = runCatching {
+                agentTaskRunner.start(record, serviceScope)
+            }.getOrElse { error ->
+                OmniLog.e(
+                    TAG,
+                    "Unable to start task runner taskId=${record.taskId}: ${error.message}",
+                    error,
+                )
+                false
             }
-            manager.createAgentTask(
-                MethodCall("createAgentTask", arguments),
-                NoOpResult,
-            )
+            if (!started) {
+                dispatchedTaskIds.remove(record.taskId)
+                TaskRuntime.finish(applicationContext, record.taskId)
+            }
         }
-    }
-
-    private object NoOpResult : MethodChannel.Result {
-        override fun success(result: Any?) = Unit
-        override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) = Unit
-        override fun notImplemented() = Unit
     }
 
     private fun updateNotification() {

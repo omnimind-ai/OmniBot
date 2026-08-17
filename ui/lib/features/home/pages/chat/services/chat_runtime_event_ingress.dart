@@ -1,6 +1,87 @@
 part of 'chat_conversation_runtime_coordinator.dart';
 
 extension _ChatRuntimeEventIngress on ChatConversationRuntimeCoordinator {
+  void _handleAgentRuntimeRecovery(Map<String, dynamic> payload) {
+    final rawTasks = payload['tasks'];
+    if (rawTasks is! List) return;
+    for (final rawTask in rawTasks.whereType<Map>()) {
+      final task = Map<String, dynamic>.from(
+        rawTask.map((key, value) => MapEntry(key.toString(), value)),
+      );
+      unawaited(_restoreAgentRuntimeTask(task));
+    }
+  }
+
+  Future<void> _restoreAgentRuntimeTask(Map<String, dynamic> task) async {
+    final taskId = (task['taskId'] ?? '').toString().trim();
+    final conversationId = _asPositiveInt(task['conversationId']);
+    if (taskId.isEmpty || conversationId == null) return;
+    final rawMode = (task['conversationMode'] ?? '').toString().trim();
+    final mode = rawMode == 'agent'
+        ? kChatRuntimeModeAgent
+        : _runtimeModeFromConversationMode(rawMode);
+    final runtime = ensureRuntime(
+      conversationId: conversationId,
+      mode: mode,
+      initialChatIslandDisplayLayer: ChatIslandDisplayLayer.mode,
+    );
+    _taskBindings[taskId] = _TaskBinding(
+      conversationId: conversationId,
+      mode: mode,
+    );
+    final historyMode = mode == kChatRuntimeModeAgent
+        ? ConversationMode.agent
+        : mode == kChatRuntimeModeOpenClaw
+        ? ConversationMode.openclaw
+        : ConversationMode.normal;
+    try {
+      final messages = await ConversationHistoryService.getConversationMessages(
+        conversationId,
+        mode: historyMode,
+      );
+      final current = _runtimeForTask(taskId) ?? runtime;
+      _replaceRuntimeMessagesIfChanged(current, messages);
+    } catch (_) {
+      // The native payload remains useful even when legacy migration is busy.
+    }
+    final recoveryCardId = '$taskId-background-recovery';
+    runtime.isAiResponding = true;
+    runtime.isExecutingTask = true;
+    runtime.isDeepThinking = true;
+    runtime.currentThinkingStage = ThinkingStage.thinking.value;
+    runtime.lastAgentTaskId = taskId;
+    runtime.activeThinkingCardId = recoveryCardId;
+    final existingIndex = runtime.messages.indexWhere(
+      (message) => message.id == recoveryCardId,
+    );
+    final card = ChatMessageModel(
+      id: recoveryCardId,
+      type: 2,
+      user: 3,
+      content: <String, dynamic>{
+        'cardData': <String, dynamic>{
+          'type': 'deep_thinking',
+          'isLoading': true,
+          'thinkingContent': LegacyTextLocalizer.isEnglish
+              ? 'Recovering in background…'
+              : '后台恢复中',
+          'stage': ThinkingStage.thinking.value,
+          'taskID': taskId,
+          'cardId': recoveryCardId,
+          'startTime': DateTime.now().millisecondsSinceEpoch,
+        },
+        'id': recoveryCardId,
+      },
+      createAt: DateTime.now(),
+    );
+    if (existingIndex == -1) {
+      runtime.messages.insert(0, card);
+    } else {
+      runtime.messages[existingIndex] = card;
+    }
+    _notifyRuntimeListeners();
+  }
+
   void _handleChatTaskMessage(String taskId, String content, String? type) {
     final binding = _taskBindings[taskId];
     final runtime = _runtimeForTask(taskId);
