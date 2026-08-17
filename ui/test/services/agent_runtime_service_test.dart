@@ -462,6 +462,36 @@ void main() {
     expect(agent.managedAdapter, isTrue);
   });
 
+  test('deduplicates legacy Xiaowan Bot entries in the ACP catalog', () {
+    final catalog = AcpAgentCatalog.fromMap(<String, dynamic>{
+      'selectedAgentId': 'xiaowan-acp',
+      'agents': <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 'xiaowan-acp',
+          'name': '小万',
+          'command': 'omnibot-xiaowan-acp',
+          'builtIn': true,
+        },
+        <String, dynamic>{
+          'id': 'legacy-xiaowan-bot',
+          'name': '小万 Bot',
+          'command': 'legacy-xiaowan',
+        },
+        <String, dynamic>{
+          'id': 'codex-acp',
+          'name': 'Codex',
+          'command': 'codex-acp',
+        },
+      ],
+    });
+
+    expect(catalog.agents.map((agent) => agent.id), [
+      'xiaowan-acp',
+      'codex-acp',
+    ]);
+    expect(catalog.selectedAgent?.name, '小万');
+  });
+
   test('local Agent requests use the selected ACP model', () {
     final model = selectAgentRequestModel(
       status: const AgentRuntimeStatus(

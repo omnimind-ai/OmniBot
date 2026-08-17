@@ -12,6 +12,7 @@ import cn.com.omnimind.bot.agent.AgentRuntimeContextRepository
 import cn.com.omnimind.bot.agent.AgentScheduleToolBridge
 import cn.com.omnimind.bot.agent.NoOpAgentRunControl
 import cn.com.omnimind.bot.agent.OmniAgentExecutor
+import cn.com.omnimind.bot.agent.ToolExecutionResult
 import com.agentclientprotocol.agent.Agent
 import com.agentclientprotocol.agent.AgentInfo
 import com.agentclientprotocol.agent.AgentSession
@@ -27,6 +28,10 @@ import com.agentclientprotocol.model.PromptResponse
 import com.agentclientprotocol.model.SessionId
 import com.agentclientprotocol.model.SessionUpdate
 import com.agentclientprotocol.model.StopReason
+import com.agentclientprotocol.model.ToolCallContent
+import com.agentclientprotocol.model.ToolCallId
+import com.agentclientprotocol.model.ToolCallStatus
+import com.agentclientprotocol.model.ToolKind
 import com.agentclientprotocol.protocol.Protocol
 import com.agentclientprotocol.rpc.JsonRpcMessage
 import com.agentclientprotocol.transport.BaseTransport
@@ -132,6 +137,9 @@ private class XiaowanAgentSession(
             }
         }.trim()
         require(text.isNotEmpty()) { "Xiaowan ACP prompt is empty" }
+        val streamBridge = XiaowanAcpEventBridge { update ->
+            emit(Event.SessionUpdateEvent(update))
+        }
         val result = executor.processUserMessage(
             userMessage = text,
             conversationHistory = emptyList(),
@@ -142,7 +150,7 @@ private class XiaowanAgentSession(
             modelOverride = null,
             reasoningEffort = null,
             terminalEnvironment = emptyMap(),
-            callback = NoOpAgentCallback,
+            callback = streamBridge,
             runControl = NoOpAgentRunControl,
             historyMessagesOverride = messages.toList(),
         )
@@ -159,17 +167,11 @@ private class XiaowanAgentSession(
             role = "assistant",
             content = JsonPrimitive(answer),
         )
-        if (answer.isNotEmpty()) {
-            emit(
-                Event.SessionUpdateEvent(
-                    SessionUpdate.AgentMessageChunk(
-                        content = ContentBlock.Text(answer),
-                        messageId = MessageId(UUID.randomUUID().toString()),
-                        _meta = JsonNull,
-                    )
-                )
-            )
-        }
+        // The executor reports cumulative snapshots through AgentCallback. The
+        // bridge already converted those snapshots to ACP chunks; this final
+        // call only fills a gap when a provider returned content without any
+        // callback update, and is de-duplicated by the same bridge.
+        streamBridge.emitAssistantSnapshot(answer)
         emit(
             Event.PromptResponseEvent(
                 PromptResponse(
@@ -179,6 +181,244 @@ private class XiaowanAgentSession(
             )
         )
     }
+}
+
+/** Convert the executor's cumulative snapshots into append-only ACP chunks. */
+internal fun acpSnapshotDelta(previous: String, next: String): String? {
+    if (next.isEmpty() || next == previous) return null
+    if (previous.isEmpty()) return next
+    if (next.startsWith(previous)) return next.removePrefix(previous).ifEmpty { null }
+    // A provider retry can reset the snapshot. Emit the new snapshot as a new
+    // chunk rather than concatenating unrelated generations.
+    if (previous.startsWith(next)) return null
+    return next
+}
+
+private class XiaowanAcpEventBridge(
+    private val emitUpdate: suspend (SessionUpdate) -> Unit,
+) : AgentCallback {
+    private var assistantSnapshot = ""
+    private var thoughtSnapshot = ""
+    private var assistantMessageId = MessageId(UUID.randomUUID().toString())
+    private var thoughtMessageId = MessageId(UUID.randomUUID().toString())
+    private val toolIdsByName = mutableMapOf<String, String>()
+
+    suspend fun emitAssistantSnapshot(snapshot: String) {
+        emitTextSnapshot(
+            snapshot = snapshot,
+            previous = assistantSnapshot,
+            messageId = assistantMessageId,
+            emit = { delta, id ->
+                assistantSnapshot = snapshot
+                assistantMessageId = id
+                emitUpdate(
+                    SessionUpdate.AgentMessageChunk(
+                        content = ContentBlock.Text(delta),
+                        messageId = id,
+                        _meta = JsonNull,
+                    )
+                )
+            }
+        )
+    }
+
+    override suspend fun onThinkingStart() {
+        thoughtSnapshot = ""
+        thoughtMessageId = MessageId(UUID.randomUUID().toString())
+    }
+
+    override suspend fun onThinkingUpdate(thinking: String) {
+        emitTextSnapshot(
+            snapshot = thinking,
+            previous = thoughtSnapshot,
+            messageId = thoughtMessageId,
+            emit = { delta, id ->
+                thoughtSnapshot = thinking
+                thoughtMessageId = id
+                emitUpdate(
+                    SessionUpdate.AgentThoughtChunk(
+                        content = ContentBlock.Text(delta),
+                        messageId = id,
+                        _meta = JsonNull,
+                    )
+                )
+            }
+        )
+    }
+
+    override suspend fun onToolCallStart(
+        toolName: String,
+        arguments: kotlinx.serialization.json.JsonObject,
+    ) {
+        emitToolStart(UUID.randomUUID().toString(), toolName, arguments)
+    }
+
+    override suspend fun onToolCallStart(
+        toolCallId: String,
+        toolName: String,
+        arguments: kotlinx.serialization.json.JsonObject,
+    ) {
+        emitToolStart(toolCallId.ifBlank { UUID.randomUUID().toString() }, toolName, arguments)
+    }
+
+    private suspend fun emitToolStart(
+        toolCallId: String,
+        toolName: String,
+        arguments: kotlinx.serialization.json.JsonObject,
+    ) {
+        toolIdsByName[toolName] = toolCallId
+        emitUpdate(
+            SessionUpdate.ToolCall(
+                toolCallId = ToolCallId(toolCallId),
+                title = toolName,
+                kind = ToolKind.OTHER,
+                status = ToolCallStatus.IN_PROGRESS,
+                content = listOf(
+                    ToolCallContent.Content(ContentBlock.Text(arguments.toString()))
+                ),
+                locations = emptyList(),
+                rawInput = arguments,
+                rawOutput = JsonNull,
+                _meta = JsonNull,
+            )
+        )
+    }
+
+    override suspend fun onToolCallProgress(
+        toolName: String,
+        progress: String,
+        extras: Map<String, Any?>,
+    ) {
+        val toolCallId = toolIdsByName[toolName] ?: UUID.randomUUID().toString().also {
+            toolIdsByName[toolName] = it
+        }
+        emitUpdate(
+            SessionUpdate.ToolCallUpdate(
+                toolCallId = ToolCallId(toolCallId),
+                title = toolName,
+                kind = ToolKind.OTHER,
+                status = ToolCallStatus.IN_PROGRESS,
+                content = listOf(
+                    ToolCallContent.Content(ContentBlock.Text(progress))
+                ),
+                locations = emptyList(),
+                rawInput = JsonNull,
+                rawOutput = JsonNull,
+                _meta = JsonNull,
+            )
+        )
+    }
+
+    override suspend fun onToolCallComplete(
+        toolName: String,
+        result: ToolExecutionResult,
+    ) {
+        emitToolComplete(toolIdsByName[toolName], toolName, result)
+    }
+
+    override suspend fun onToolCallComplete(
+        toolCallId: String,
+        toolName: String,
+        result: ToolExecutionResult,
+    ) {
+        emitToolComplete(
+            toolCallId.ifBlank { toolIdsByName[toolName] },
+            toolName,
+            result,
+        )
+    }
+
+    private suspend fun emitToolComplete(
+        toolCallId: String?,
+        toolName: String,
+        result: ToolExecutionResult,
+    ) {
+        val resolvedToolCallId = toolCallId ?: UUID.randomUUID().toString()
+        toolIdsByName[toolName] = resolvedToolCallId
+        val text = toolResultText(result)
+        emitUpdate(
+            SessionUpdate.ToolCallUpdate(
+                toolCallId = ToolCallId(resolvedToolCallId),
+                title = toolName,
+                kind = ToolKind.OTHER,
+                status = if (toolResultSucceeded(result)) {
+                    ToolCallStatus.COMPLETED
+                } else {
+                    ToolCallStatus.FAILED
+                },
+                content = text.takeIf(String::isNotEmpty)?.let {
+                    listOf(ToolCallContent.Content(ContentBlock.Text(it)))
+                }.orEmpty(),
+                locations = emptyList(),
+                rawInput = JsonNull,
+                rawOutput = JsonPrimitive(text),
+                _meta = JsonNull,
+            )
+        )
+    }
+
+    override suspend fun onChatMessage(message: String) {
+        emitAssistantSnapshot(message)
+    }
+
+    override suspend fun onChatMessage(message: String, isFinal: Boolean) {
+        emitAssistantSnapshot(message)
+    }
+
+    override suspend fun onChatMessage(
+        message: String,
+        isFinal: Boolean,
+        prefillTokensPerSecond: Double?,
+        decodeTokensPerSecond: Double?,
+    ) {
+        emitAssistantSnapshot(message)
+    }
+
+    override suspend fun onClarifyRequired(question: String, missingFields: List<String>?) = Unit
+    override suspend fun onComplete(result: AgentResult) = Unit
+    override suspend fun onError(error: String) = Unit
+    override suspend fun onPermissionRequired(missing: List<String>) = Unit
+
+    private suspend fun emitTextSnapshot(
+        snapshot: String,
+        previous: String,
+        messageId: MessageId,
+        emit: suspend (String, MessageId) -> Unit,
+    ) {
+        val delta = acpSnapshotDelta(previous, snapshot) ?: return
+        val id = if (previous.isNotEmpty() && !snapshot.startsWith(previous)) {
+            MessageId(UUID.randomUUID().toString())
+        } else {
+            messageId
+        }
+        emit(delta, id)
+    }
+}
+
+private fun toolResultSucceeded(result: ToolExecutionResult): Boolean = when (result) {
+    is ToolExecutionResult.Error,
+    is ToolExecutionResult.Interrupted,
+    is ToolExecutionResult.PermissionRequired -> false
+    is ToolExecutionResult.TerminalResult -> result.success
+    is ToolExecutionResult.ScheduleResult -> result.success
+    is ToolExecutionResult.McpResult -> result.success
+    is ToolExecutionResult.MemoryResult -> result.success
+    is ToolExecutionResult.ContextResult -> result.success
+    is ToolExecutionResult.ChatMessage,
+    is ToolExecutionResult.Clarify -> true
+}
+
+private fun toolResultText(result: ToolExecutionResult): String = when (result) {
+    is ToolExecutionResult.ChatMessage -> result.message
+    is ToolExecutionResult.Clarify -> result.question
+    is ToolExecutionResult.Error -> result.message
+    is ToolExecutionResult.PermissionRequired -> result.missing.joinToString(", ")
+    is ToolExecutionResult.ScheduleResult -> result.summaryText
+    is ToolExecutionResult.McpResult -> result.summaryText.ifBlank { result.rawResultJson }
+    is ToolExecutionResult.MemoryResult -> result.summaryText.ifBlank { result.rawResultJson }
+    is ToolExecutionResult.TerminalResult -> result.summaryText.ifBlank { result.terminalOutput }
+    is ToolExecutionResult.Interrupted -> result.summaryText
+    is ToolExecutionResult.ContextResult -> result.summaryText.ifBlank { result.rawResultJson }
 }
 
 private object NoOpScheduleToolBridge : AgentScheduleToolBridge {
@@ -192,26 +432,6 @@ private object NoOpScheduleToolBridge : AgentScheduleToolBridge {
 
     override suspend fun deleteTask(arguments: Map<String, Any?>): Map<String, Any?> =
         mapOf("success" to false, "error" to "Scheduling is not available through ACP session metadata.")
-}
-
-private object NoOpAgentCallback : AgentCallback {
-    override suspend fun onThinkingStart() = Unit
-    override suspend fun onThinkingUpdate(thinking: String) = Unit
-    override suspend fun onToolCallStart(toolName: String, arguments: kotlinx.serialization.json.JsonObject) = Unit
-    override suspend fun onToolCallProgress(
-        toolName: String,
-        progress: String,
-        extras: Map<String, Any?>,
-    ) = Unit
-    override suspend fun onToolCallComplete(
-        toolName: String,
-        result: cn.com.omnimind.bot.agent.ToolExecutionResult,
-    ) = Unit
-    override suspend fun onChatMessage(message: String) = Unit
-    override suspend fun onClarifyRequired(question: String, missingFields: List<String>?) = Unit
-    override suspend fun onComplete(result: AgentResult) = Unit
-    override suspend fun onError(error: String) = Unit
-    override suspend fun onPermissionRequired(missing: List<String>) = Unit
 }
 
 private class LoopbackTransport : BaseTransport() {

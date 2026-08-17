@@ -159,6 +159,7 @@ internal class AcpAgentProfileStore(context: Context) {
 
     @Synchronized
     fun list(): List<AcpAgentProfile> {
+        migrateLegacyXiaowanAliases()
         val stored = readStoredProfiles()
             .mapNotNull(::normalize)
             .filterNot { it.id in RETIRED_AGENT_IDS }
@@ -197,6 +198,7 @@ internal class AcpAgentProfileStore(context: Context) {
     }
 
     fun agentIdForSession(sessionId: String): String? {
+        migrateLegacyXiaowanAliases()
         return sessionBindings()[sessionId.trim()]
             ?.takeIf(String::isNotBlank)
             ?.takeUnless { it in RETIRED_AGENT_IDS }
@@ -214,6 +216,7 @@ internal class AcpAgentProfileStore(context: Context) {
 
     fun agentIdForConversation(conversationId: Long): String? {
         if (conversationId <= 0L) return null
+        migrateLegacyXiaowanAliases()
         return conversationBindings()[conversationId.toString()]
             ?.takeIf(String::isNotBlank)
             ?.takeUnless { it in RETIRED_AGENT_IDS }
@@ -325,6 +328,38 @@ internal class AcpAgentProfileStore(context: Context) {
             object : TypeToken<List<AcpAgentProfile>>() {}.type
         )
     }.getOrNull().orEmpty()
+
+    /**
+     * Older builds could persist the built-in Xiaowan command as a custom
+     * profile named "小万 Bot". Keep the official id as the only identity and
+     * migrate all persisted references to it during the first catalog read.
+     */
+    @Synchronized
+    private fun migrateLegacyXiaowanAliases() {
+        val stored = readStoredProfiles()
+        val aliases = stored.filter(::isLegacyXiaowanAlias)
+        if (aliases.isEmpty()) return
+        val aliasIds = aliases.mapTo(linkedSetOf()) { it.id }
+        writeProfiles(stored.filterNot { it.id in aliasIds })
+
+        val selectedId = preferences.getString(KEY_SELECTED_PROFILE_ID, null)
+        val sessionBindings = sessionBindings().mapValues { (_, agentId) ->
+            if (agentId in aliasIds) XIAOWAN_AGENT_ID else agentId
+        }
+        val conversationBindings = conversationBindings().mapValues { (_, agentId) ->
+            if (agentId in aliasIds) XIAOWAN_AGENT_ID else agentId
+        }
+        val health = readHealth().filterKeys { it !in aliasIds }
+        preferences.edit().apply {
+            if (selectedId in aliasIds) {
+                putString(KEY_SELECTED_PROFILE_ID, XIAOWAN_AGENT_ID)
+            }
+            putString(KEY_SESSION_BINDINGS, gson.toJson(sessionBindings))
+            putString(KEY_CONVERSATION_BINDINGS, gson.toJson(conversationBindings))
+            putString(KEY_HEALTH, gson.toJson(health))
+            apply()
+        }
+    }
 
     private fun writeProfiles(profiles: List<AcpAgentProfile>) {
         val persistable = profiles.filter { !it.builtIn || hasOfficialOverride(it) }
@@ -467,6 +502,17 @@ internal class AcpAgentProfileStore(context: Context) {
                 return null
             }
             return OFFICIAL_RUNTIMES[profile.id]
+        }
+
+        internal fun isLegacyXiaowanAlias(profile: AcpAgentProfile): Boolean {
+            if (profile.id == XIAOWAN_AGENT_ID) return false
+            val normalizedName = profile.name
+                .trim()
+                .lowercase()
+                .replace(Regex("[\\s_-]+"), "")
+            return profile.command.equals("omnibot-xiaowan-acp", ignoreCase = true) ||
+                normalizedName == "小万bot" ||
+                normalizedName == "xiaowanbot"
         }
 
         private const val PREFERENCES_NAME = "acp_agent_profiles"

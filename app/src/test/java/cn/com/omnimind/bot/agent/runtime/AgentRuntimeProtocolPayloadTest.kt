@@ -52,6 +52,10 @@ class AgentRuntimeProtocolPayloadTest {
             AcpAgentProfileStore.OFFICIAL_AGENTS.map { it.name }
         )
         assertTrue(AcpAgentProfileStore.OFFICIAL_AGENTS.all { it.builtIn })
+        assertEquals(
+            AcpAgentProfileStore.OFFICIAL_AGENTS.size,
+            AcpAgentProfileStore.OFFICIAL_AGENTS.map { it.id }.toSet().size
+        )
         val codex = AcpAgentProfileStore.OFFICIAL_AGENTS.first {
             it.id == AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID
         }
@@ -129,6 +133,47 @@ class AgentRuntimeProtocolPayloadTest {
         assertTrue(DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("cmd_copy = rm -rf"))
         assertTrue(DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("omnibot-node-gyp-copy"))
         assertTrue(DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("exec /bin/ln"))
+    }
+
+    @Test
+    fun legacyXiaowanBotProfileIsRecognizedAsAnAlias() {
+        assertTrue(
+            AcpAgentProfileStore.isLegacyXiaowanAlias(
+                AcpAgentProfile(
+                    id = "legacy-xiaowan-bot",
+                    name = "小万 Bot",
+                    command = "legacy-xiaowan"
+                )
+            )
+        )
+        assertTrue(
+            AcpAgentProfileStore.isLegacyXiaowanAlias(
+                AcpAgentProfile(
+                    id = "legacy-xiaowan-command",
+                    name = "旧入口",
+                    command = "omnibot-xiaowan-acp"
+                )
+            )
+        )
+        assertFalse(
+            AcpAgentProfileStore.isLegacyXiaowanAlias(
+                AcpAgentProfile(
+                    id = AcpAgentProfileStore.XIAOWAN_AGENT_ID,
+                    name = "小万",
+                    command = "omnibot-xiaowan-acp",
+                    builtIn = true
+                )
+            )
+        )
+    }
+
+    @Test
+    fun cumulativeAgentSnapshotsBecomeSingleAppendOnlyAcpChunks() {
+        assertEquals("你", acpSnapshotDelta("", "你"))
+        assertEquals("好", acpSnapshotDelta("你", "你好"))
+        assertEquals("吗", acpSnapshotDelta("你好", "你好吗"))
+        assertNull(acpSnapshotDelta("你好吗", "你好吗"))
+        assertEquals("重新开始", acpSnapshotDelta("旧内容", "重新开始"))
     }
 
     @Test

@@ -406,13 +406,17 @@ class AcpAgentCatalog {
   factory AcpAgentCatalog.fromMap(Map<dynamic, dynamic>? map) {
     final source = map ?? const <dynamic, dynamic>{};
     final rawAgents = source['agents'];
-    final agents = rawAgents is List
-        ? rawAgents
-              .whereType<Map>()
-              .map(AcpAgentProfile.fromMap)
-              .where((agent) => agent.id.isNotEmpty)
-              .toList(growable: false)
-        : const <AcpAgentProfile>[];
+    final agents = <AcpAgentProfile>[];
+    final seenIdentities = <String>{};
+    if (rawAgents is List) {
+      for (final rawAgent in rawAgents.whereType<Map>()) {
+        final agent = AcpAgentProfile.fromMap(rawAgent);
+        if (agent.id.isEmpty) continue;
+        if (seenIdentities.add(_agentCatalogIdentity(agent))) {
+          agents.add(agent);
+        }
+      }
+    }
     return AcpAgentCatalog(
       selectedAgentId:
           _stringOrNull(source['selectedAgentId']) ??
@@ -420,6 +424,20 @@ class AcpAgentCatalog {
       agents: agents,
     );
   }
+}
+
+String _agentCatalogIdentity(AcpAgentProfile agent) {
+  final normalizedName = agent.name
+      .trim()
+      .toLowerCase()
+      .replaceAll(RegExp(r'[\s_-]+'), '');
+  if (agent.id == 'xiaowan-acp' ||
+      agent.command.toLowerCase() == 'omnibot-xiaowan-acp' ||
+      normalizedName == '小万bot' ||
+      normalizedName == 'xiaowanbot') {
+    return 'xiaowan-acp';
+  }
+  return 'id:${agent.id}';
 }
 
 String? selectAgentRequestModel({
