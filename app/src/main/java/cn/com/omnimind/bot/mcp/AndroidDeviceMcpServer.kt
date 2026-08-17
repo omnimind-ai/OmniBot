@@ -37,6 +37,8 @@ internal object AndroidDeviceMcpServer {
         val description: String,
         val properties: Map<String, JsonObject> = emptyMap(),
         val required: List<String> = emptyList(),
+        /** Restore the optional OmniFlow provider only for explicit OmniFlow calls. */
+        val requiresOmniFlowPlugin: Boolean = false,
     )
 
     // Keep the ACP-facing MCP surface limited to official device capabilities.
@@ -54,6 +56,7 @@ internal object AndroidDeviceMcpServer {
                 "step_skill_guidance" to schema("string", "Optional step guidance."),
             ),
             required = listOf("goal"),
+            requiresOmniFlowPlugin = true,
         ),
         DeviceTool(
             name = "run_function",
@@ -65,6 +68,7 @@ internal object AndroidDeviceMcpServer {
                 "goal" to schema("string", "Optional display goal."),
             ),
             required = listOf("function_id"),
+            requiresOmniFlowPlugin = true,
         ),
         DeviceTool(
             name = "list_functions",
@@ -75,6 +79,7 @@ internal object AndroidDeviceMcpServer {
                 "offset" to schema("integer", "Pagination offset."),
                 "include_hidden" to schema("boolean", "Include hidden Functions."),
             ),
+            requiresOmniFlowPlugin = true,
         ),
         DeviceTool(
             name = "register_function",
@@ -84,6 +89,7 @@ internal object AndroidDeviceMcpServer {
                 "run_id" to schema("string", "Successful RunLog id returned by run_gui."),
             ),
             required = listOf("run_id"),
+            requiresOmniFlowPlugin = true,
         ),
         DeviceTool(
             name = "context_apps_query",
@@ -140,7 +146,9 @@ internal object AndroidDeviceMcpServer {
                     ),
                 ) { request ->
                     runCatching {
-                        ensureOmniFlowReady(context)
+                        if (tool.requiresOmniFlowPlugin) {
+                            ensureOmniFlowReady(context)
+                        }
                         callOmniFlowTool(
                             context = context,
                             tool = tool,

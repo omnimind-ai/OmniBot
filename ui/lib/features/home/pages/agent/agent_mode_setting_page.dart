@@ -75,9 +75,10 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
       final model = agentScene.effectiveModel.trim();
       if (!mounted) return;
       setState(() {
-        _sharedModelLabel = [provider, model]
-            .where((value) => value.isNotEmpty)
-            .join(' / ');
+        _sharedModelLabel = [
+          provider,
+          model,
+        ].where((value) => value.isNotEmpty).join(' / ');
       });
     } catch (_) {
       // The Agent catalog remains usable when scene binding is unavailable.
@@ -104,9 +105,71 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
       setState(() {
         _loading = false;
         _refreshing = false;
+        // Keep the built-in catalog visible when the native health probe is
+        // temporarily unavailable.  A probe error must not turn the whole
+        // Agent page into a blank/error-only screen.
+        _catalog = _catalog ?? _fallbackCatalog();
         _error = error.toString();
       });
     }
+  }
+
+  AcpAgentCatalog _fallbackCatalog() {
+    const agents = <AcpAgentProfile>[
+      AcpAgentProfile(
+        id: 'xiaowan-acp',
+        name: '小万',
+        command: 'omnibot-xiaowan-acp',
+        description: '小万内置能力通过官方 ACP Agent 接口提供',
+        builtIn: true,
+        source: 'official',
+        status: 'unchecked',
+      ),
+      AcpAgentProfile(
+        id: 'codex-acp',
+        name: 'Codex',
+        command: 'codex-acp',
+        description: 'OpenAI Codex through its managed ACP adapter',
+        builtIn: true,
+        source: 'official',
+        status: 'unchecked',
+        managedAdapter: true,
+      ),
+      AcpAgentProfile(
+        id: 'claude-code-acp',
+        name: 'Claude Code',
+        command: 'claude-agent-acp',
+        description: 'Claude Code through the ACP adapter',
+        builtIn: true,
+        source: 'official',
+        status: 'unchecked',
+        managedAdapter: true,
+      ),
+      AcpAgentProfile(
+        id: 'opencode-acp',
+        name: 'OpenCode',
+        command: 'opencode',
+        description: 'OpenCode ACP server',
+        arguments: <String>['acp'],
+        builtIn: true,
+        source: 'official',
+        status: 'unchecked',
+        managedAdapter: true,
+      ),
+      AcpAgentProfile(
+        id: 'deepseek-harness-acp',
+        name: 'DeepSeek Harness',
+        command: 'dsh-acp-demo',
+        description:
+            'DeepSeek Harness coding agent through its official ACP server',
+        arguments: <String>['--config', '/root/.dsh/omnibot-acp/cordis.yml'],
+        builtIn: true,
+        source: 'official',
+        status: 'unchecked',
+        managedAdapter: true,
+      ),
+    ];
+    return AcpAgentCatalog(selectedAgentId: 'xiaowan-acp', agents: agents);
   }
 
   Future<void> _loadRemoteBridge() async {
@@ -451,11 +514,7 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
       ),
       child: Row(
         children: [
-          Icon(
-            LucideIcons.bot,
-            size: 18,
-            color: palette.accentPrimary,
-          ),
+          Icon(LucideIcons.bot, size: 18, color: palette.accentPrimary),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
@@ -484,7 +543,11 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
         hintStyle: TextStyle(color: palette.textTertiary, fontSize: 13.5),
         prefixIcon: Padding(
           padding: const EdgeInsets.only(left: 14, right: 8),
-          child: Icon(LucideIcons.search, size: 18, color: palette.textTertiary),
+          child: Icon(
+            LucideIcons.search,
+            size: 18,
+            color: palette.textTertiary,
+          ),
         ),
         prefixIconConstraints: const BoxConstraints(),
         filled: true,
@@ -541,9 +604,7 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
   Widget _buildAgentTile(AcpAgentProfile agent) {
     final palette = context.omniPalette;
     final status = _statusPresentation(agent.status, _english);
-    final statusColor = agent.enabled
-        ? status.color
-        : const Color(0xFF98A2B3);
+    final statusColor = agent.enabled ? status.color : const Color(0xFF98A2B3);
     final hasError =
         (agent.lastCheckError ?? '').isNotEmpty && agent.status != 'online';
     final canTest =
@@ -569,9 +630,7 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
       ),
       title: agent.name,
       statusColor: statusColor,
-      statusLabel: !agent.enabled
-          ? _text('已停用', 'Disabled')
-          : status.label,
+      statusLabel: !agent.enabled ? _text('已停用', 'Disabled') : status.label,
       subtitle: agent.description.isNotEmpty
           ? agent.description
           : ([agent.command, ...agent.arguments]).join(' '),
@@ -760,11 +819,7 @@ class _FlatTile extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(4, 13, 2, 13),
           child: Row(
             children: [
-              SizedBox(
-                width: 18,
-                height: 18,
-                child: Center(child: leading),
-              ),
+              SizedBox(width: 18, height: 18, child: Center(child: leading)),
               const SizedBox(width: 10),
               Expanded(
                 child: Column(

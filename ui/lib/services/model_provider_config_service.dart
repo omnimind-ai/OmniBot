@@ -403,27 +403,35 @@ class ModelProviderConfigService {
     try {
       final result = await AssistsMessageService.assistCore
           .invokeMethod<Map<dynamic, dynamic>>('listModelProviderProfiles');
-      return ModelProviderProfilesPayload.fromMap(result);
+      final payload = ModelProviderProfilesPayload.fromMap(result);
+      // A clean install can legitimately have no editable profile yet.  Keep
+      // the configuration page usable so the user can register the first
+      // Provider instead of rendering an empty page and losing the save path.
+      if (payload.profiles.isNotEmpty) return payload;
+      return _emptyEditableProfilePayload();
     } on PlatformException {
-      final fallback = await getConfig();
-      final profile = ModelProviderProfileSummary(
-        id: fallback.id.isNotEmpty ? fallback.id : 'profile-1',
-        name: fallback.name.isNotEmpty ? fallback.name : 'Provider 1',
-        baseUrl: fallback.baseUrl,
-        apiKey: fallback.apiKey,
-        customHeaders: fallback.customHeaders,
-        sourceType: fallback.providerType,
-        readOnly: fallback.readOnly,
-        ready: fallback.ready,
-        statusText: fallback.statusText,
-        configured: fallback.configured,
-        wireApi: fallback.wireApi,
-      );
-      return ModelProviderProfilesPayload(
-        profiles: [profile],
-        editingProfileId: profile.id,
-      );
+      return _emptyEditableProfilePayload();
     }
+  }
+
+  static ModelProviderProfilesPayload _emptyEditableProfilePayload() {
+    const profile = ModelProviderProfileSummary(
+      id: 'profile-1',
+      name: 'Provider 1',
+      baseUrl: '',
+      apiKey: '',
+      customHeaders: <String, String>{},
+      sourceType: 'custom',
+      readOnly: false,
+      ready: false,
+      statusText: '',
+      configured: false,
+      wireApi: 'chat_completions',
+    );
+    return const ModelProviderProfilesPayload(
+      profiles: <ModelProviderProfileSummary>[profile],
+      editingProfileId: 'profile-1',
+    );
   }
 
   static Future<ModelProviderProfileSummary> saveProfile({
