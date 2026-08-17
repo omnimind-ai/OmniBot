@@ -119,7 +119,8 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
 
   Future<void> _test(AcpAgentProfile agent) async {
     if (_busyAgentId != null || !agent.enabled) return;
-    if (agent.managedAdapter && agent.status == 'unchecked') {
+    if (agent.managedAdapter &&
+        (agent.status == 'unchecked' || agent.status == 'missing')) {
       showToast(
         _text(
           '首次检测会自动准备 ACP 适配器；也可在终端环境页统一安装，下载可能需要一些时间。',
@@ -468,17 +469,20 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
         : const Color(0xFF98A2B3);
     final hasError =
         (agent.lastCheckError ?? '').isNotEmpty && agent.status != 'online';
-    final canTest = agent.enabled && agent.status != 'missing';
+    final canTest =
+        agent.enabled && (agent.status != 'missing' || agent.managedAdapter);
     final busy = agent.id == _busyAgentId;
     final needsManagedPreparation =
         agent.managedAdapter &&
-        agent.status == 'unchecked' &&
-        agent.lastCheckError?.contains('will be prepared') == true;
+        (agent.status == 'unchecked' || agent.status == 'missing') &&
+        (agent.lastCheckError?.contains('will be prepared') == true ||
+            agent.status == 'missing');
     final testLabel = needsManagedPreparation
         ? _text('准备并初始化', 'Prepare & initialize')
         : agent.status == 'unchecked'
         ? _text('检测', 'Check')
         : _text('重新检测', 'Check again');
+    final installEntry = agent.managedAdapter && agent.status != 'online';
     return _FlatTile(
       tileKey: Key('agent-config-${agent.id}'),
       leading: AgentBrandIcon(
@@ -499,10 +503,12 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
       actionLabel: canTest ? testLabel : null,
       actionKey: Key('agent-check-${agent.id}'),
       onAction: canTest ? () => _test(agent) : null,
-      navigationLabel: _text('配置', 'Configure'),
+      navigationLabel: installEntry
+          ? _text('安装', 'Install')
+          : _text('配置', 'Configure'),
       navigationKey: Key('agent-navigation-${agent.id}'),
       busy: busy,
-      onTap: () => _openAgentConfig(agent),
+      onTap: installEntry ? () => _test(agent) : () => _openAgentConfig(agent),
     );
   }
 }

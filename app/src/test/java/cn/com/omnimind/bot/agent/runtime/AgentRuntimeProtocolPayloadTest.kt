@@ -1,6 +1,7 @@
 package cn.com.omnimind.bot.agent.runtime
 
 import cn.com.omnimind.bot.mcp.McpServerState
+import cn.com.omnimind.baselib.llm.ModelProviderProfile
 import com.agentclientprotocol.model.McpServer
 import java.io.File
 import org.junit.Assert.assertEquals
@@ -64,8 +65,15 @@ class AgentRuntimeProtocolPayloadTest {
             AcpAgentProfileStore.officialRuntime(codex)?.discoveryCommand
         )
         assertEquals(
-            "@agentclientprotocol/codex-acp@1.1.7",
+            "@openai/codex@latest",
             AcpAgentProfileStore.officialRuntime(codex)?.managedAdapterPackage
+        )
+        assertEquals(
+            listOf(
+                "@openai/codex@latest",
+                "@agentclientprotocol/codex-acp@1.1.7"
+            ),
+            AcpAgentProfileStore.officialRuntime(codex)?.managedAdapterPackages
         )
         val xiaowan = AcpAgentProfileStore.OFFICIAL_AGENTS.first {
             it.id == AcpAgentProfileStore.XIAOWAN_AGENT_ID
@@ -194,7 +202,12 @@ class AgentRuntimeProtocolPayloadTest {
         assertEquals("https://gateway.example/v1", restored.toEnvironment()["DEEPSEEK_BASE_URL"])
         assertEquals("deepseek-custom", restored.toEnvironment()["DSH_MODEL"])
         assertEquals("high", restored.toEnvironment()["DSH_REASONING_EFFORT"])
+        assertEquals(
+            "xhigh",
+            DeepSeekHarnessConfig(reasoningEffort = "max").toEnvironment()["DSH_REASONING_EFFORT"]
+        )
         assertEquals("read-only", restored.toEnvironment()["DSH_PERMISSION_MODE"])
+        assertEquals("/root/.dsh/omnibot-acp-clean", restored.toEnvironment()["DSH_ACP_HOME"])
         assertEquals("1", restored.toEnvironment()["NODE_NO_WARNINGS"])
     }
 
@@ -214,6 +227,73 @@ class AgentRuntimeProtocolPayloadTest {
     }
 
     @Test
+    fun sharedAgentProviderIsTheDefaultCredentialSourceForAllAcpModes() {
+        val provider = ModelProviderProfile(
+            id = "deepseek-provider",
+            name = "DeepSeek",
+            baseUrl = "https://api.deepseek.com",
+            apiKey = "sk-shared"
+        )
+        val credentials = AgentProviderCredentials(provider.baseUrl, provider.apiKey)
+        val dsh = syncAgentProviderCredentials(
+            DeepSeekHarnessConfig(
+                baseUrl = "https://old.example",
+                apiKey = "sk-old"
+            ),
+            credentials,
+            sharedModel = "glm-5.1"
+        )
+
+        assertEquals(provider.baseUrl, dsh.baseUrl)
+        assertEquals(provider.apiKey, dsh.apiKey)
+        assertEquals("glm-5.1", dsh.model)
+        assertEquals(
+            provider.apiKey,
+            buildSharedAgentProviderEnvironment("claude-code-acp", credentials)["ANTHROPIC_AUTH_TOKEN"]
+        )
+        assertEquals(
+            provider.baseUrl,
+            buildSharedAgentProviderEnvironment("opencode-acp", credentials)["OPENAI_BASE_URL"]
+        )
+        assertEquals(
+            provider.apiKey,
+            buildSharedAgentProviderEnvironment("codex-acp", credentials)["OPENAI_API_KEY"]
+        )
+    }
+
+    @Test
+    fun officialAgentConfigAdaptersRemapOneProviderWithoutPrivateProtocolFields() {
+        val credentials = AgentProviderCredentials(
+            baseUrl = "https://gateway.example/v1",
+            apiKey = "sk-shared"
+        )
+
+        val dsh = AgentConfigAdapterRegistry.map(
+            AgentProviderMappingInput(
+                agentId = AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID,
+                provider = credentials,
+                model = "glm-5.1",
+                deepSeekConfig = DeepSeekHarnessConfig(reasoningEffort = "max")
+            )
+        )
+        assertEquals("glm-5.1", dsh.deepSeekConfig?.model)
+        assertEquals("xhigh", dsh.environment["DSH_REASONING_EFFORT"])
+
+        val codex = AgentConfigAdapterRegistry.map(
+            AgentProviderMappingInput(
+                agentId = AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID,
+                provider = credentials,
+                model = "glm-5.1"
+            )
+        )
+        assertEquals("glm-5.1", codex.codexModel)
+        assertEquals(
+            "https://gateway.example/v1",
+            codex.environment["OPENAI_BASE_URL"]
+        )
+    }
+
+    @Test
     fun deepSeekHarnessCordisCompositionUsesTheOfficialAcpPlugin() {
         val config = buildDeepSeekHarnessCordisConfig()
 
@@ -225,10 +305,17 @@ class AgentRuntimeProtocolPayloadTest {
         assertTrue(config.contains("name: '@deepseek-ai/dsh-tool-subagent'"))
         assertTrue(config.contains("name: '@deepseek-ai/dsh-tool-workflow'"))
         assertTrue(config.contains("serverName: omnibot"))
+        assertTrue(config.contains("provider: deepseek-official"))
+        assertTrue(config.contains("process.env.DSH_MODEL ?? 'deepseek-v4-pro'"))
         assertTrue(config.contains("process.env.OMNIBOT_MCP_URL"))
         assertTrue(config.contains("process.env.OMNIBOT_MCP_TOKEN"))
         assertTrue(config.contains("workspaceRoot: !!js process.cwd()"))
         assertTrue(config.contains("persistenceCompression: !!js"))
+        assertTrue(
+            config.contains(
+                "persistenceRoot: !!js \"(process.env.DSH_ACP_HOME ?? '/root/.dsh/omnibot-acp-clean') + '/sessions'\""
+            )
+        )
         assertTrue(config.contains("maxBytes: 65536"))
         assertTrue(config.contains("process.env.DSH_MODEL"))
         assertTrue(config.contains("process.env.DSH_REASONING_EFFORT"))

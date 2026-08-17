@@ -7,6 +7,8 @@ import android.util.Log
 import com.ai.assistance.operit.terminal.TerminalManager
 import com.ai.assistance.operit.terminal.setup.buildAlpinePackageInstallCommand
 import cn.com.omnimind.baselib.database.DatabaseHelper
+import cn.com.omnimind.baselib.llm.ModelProviderConfigStore
+import cn.com.omnimind.baselib.llm.SceneModelBindingStore
 import cn.com.omnimind.bot.BuildConfig
 import cn.com.omnimind.bot.agent.AgentAttachmentPromptSupport
 import cn.com.omnimind.bot.agent.AgentImageAttachmentSupport
@@ -999,30 +1001,74 @@ class AgentRuntimeManager private constructor(
     private suspend fun prepareLocalAcpLaunch(
         profile: AcpAgentProfile
     ): Map<String, String> {
-        val deepSeekEnvironment = if (
+        val sharedProvider = currentAgentProviderCredentials()
+        val sharedModel = currentAgentModel()
+        val officialDeepSeek =
             profile.id == AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID &&
             AcpAgentProfileStore.officialRuntime(profile) != null
-        ) {
-            val mcpState = McpServerManager.ensureRunning(appContext)
-            val config = parseDeepSeekHarnessConfig(
-                readTerminalTextFile(
-                    path = DEEPSEEK_HARNESS_CONFIG_PATH,
-                    executorKey = "deepseek-harness-launch-config-read"
-                )
+        val deepSeekConfig = if (officialDeepSeek) {
+            syncAgentProviderCredentials(
+                config = parseDeepSeekHarnessConfig(
+                    readTerminalTextFile(
+                        path = DEEPSEEK_HARNESS_CONFIG_PATH,
+                        executorKey = "deepseek-harness-launch-config-read"
+                    )
+                ),
+                sharedProvider = sharedProvider,
+                sharedModel = sharedModel
             )
+        } else {
+            DeepSeekHarnessConfig()
+        }
+        val existingCodexModel = if (
+            profile.id == AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID &&
+            sharedProvider != null
+        ) {
+            extractTomlString(
+                readTerminalTextFile(
+                    path = CODEX_CONFIG_TOML_PATH,
+                    executorKey = "codex-agent-provider-sync-read"
+                ),
+                "model"
+            )
+        } else {
+            null
+        }
+        val mapping = AgentConfigAdapterRegistry.map(
+            AgentProviderMappingInput(
+                agentId = profile.id,
+                provider = sharedProvider,
+                model = sharedModel,
+                deepSeekConfig = deepSeekConfig,
+                existingCodexModel = existingCodexModel
+            )
+        )
+        val deepSeekEnvironment = if (officialDeepSeek) {
+            val mcpState = McpServerManager.ensureRunning(appContext)
+            val config = mapping.deepSeekConfig ?: deepSeekConfig
             require(config.apiKey.isNotBlank()) {
-                "Configure the DeepSeek API key in Agent mode settings before starting DeepSeek Harness."
+                "Configure an API key in Model Provider settings before starting an ACP Agent."
             }
-            config.toEnvironment() + buildDeepSeekHarnessMcpEnvironment(mcpState)
+            mapping.environment + buildDeepSeekHarnessMcpEnvironment(mcpState)
         } else {
             emptyMap()
         }
         ensureManagedAcpAdapter(profile)
         return when (profile.id) {
-            AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID ->
-                mapOf("CODEX_HOME" to AgentRuntimeDefaults.CODEX_HOME)
+            AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID -> {
+                if (sharedProvider != null) {
+                    writeCodexConfigFiles(
+                        configToml = buildCodexConfigToml(
+                            baseUrl = sharedProvider.baseUrl,
+                            model = mapping.codexModel ?: "gpt-5-codex"
+                        ),
+                        authJson = buildCodexAuthJson(sharedProvider.apiKey)
+                    )
+                }
+                mapping.environment
+            }
             AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID -> {
-                if (AcpAgentProfileStore.officialRuntime(profile) != null) {
+                if (officialDeepSeek) {
                     writeTerminalTextFile(
                         path = DEEPSEEK_HARNESS_CORDIS_PATH,
                         content = buildDeepSeekHarnessCordisConfig(),
@@ -1031,9 +1077,22 @@ class AgentRuntimeManager private constructor(
                 }
                 deepSeekEnvironment
             }
-            else -> emptyMap()
+            else -> mapping.environment
         }
     }
+
+    private fun currentAgentProviderCredentials(): AgentProviderCredentials? = runCatching {
+        ModelProviderConfigStore.getEditingProfile()
+            .takeIf { it.baseUrl.isNotBlank() && it.apiKey.isNotBlank() }
+            ?.let { AgentProviderCredentials(it.baseUrl, it.apiKey) }
+    }.getOrNull()
+
+    private fun currentAgentModel(): String? = runCatching {
+        SceneModelBindingStore.getBinding("scene.dispatch.model")
+            ?.modelId
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+    }.getOrNull()
 
     private suspend fun ensureManagedAcpAdapter(profile: AcpAgentProfile) {
         val runtime = AcpAgentProfileStore.officialRuntime(profile) ?: return
@@ -1048,12 +1107,6 @@ class AgentRuntimeManager private constructor(
             ?: true
         if (commandAvailable && allPackagesReady && adapterHealthy) {
             return
-        }
-        if (!isTerminalCommandAvailable(runtime.discoveryCommand)) {
-            throw IllegalStateException(
-                "${profile.name} CLI was not found: ${runtime.discoveryCommand}. " +
-                    "Install it in Terminal Environment first."
-            )
         }
         if (!isTerminalCommandAvailable("npm")) {
             throw IllegalStateException(
@@ -1747,13 +1800,16 @@ internal val MANAGED_NATIVE_BUILD_PREREQUISITES_COMMAND = """
     }
     ensure_native_build_tools
 """.trimIndent()
-private const val DEEPSEEK_HARNESS_HOME = "/root/.dsh/omnibot-acp"
+private const val DEEPSEEK_HARNESS_CONFIG_HOME = "/root/.dsh/omnibot-acp"
+// Keep configuration and credentials, but start DSH with a clean persistence
+// root so incompatible legacy session artifacts cannot be loaded.
+private const val DEEPSEEK_HARNESS_PERSISTENCE_HOME = "/root/.dsh/omnibot-acp-clean"
 private const val DEEPSEEK_HARNESS_CONFIG_PATH =
-    "$DEEPSEEK_HARNESS_HOME/config.json"
+    "$DEEPSEEK_HARNESS_CONFIG_HOME/config.json"
 private const val DEEPSEEK_HARNESS_CONFIG_DISPLAY_PATH =
     "~/.dsh/omnibot-acp/config.json"
 private const val DEEPSEEK_HARNESS_CORDIS_PATH =
-    "$DEEPSEEK_HARNESS_HOME/cordis.yml"
+    "$DEEPSEEK_HARNESS_CONFIG_HOME/cordis.yml"
 private const val DEEPSEEK_PUBLIC_BASE_URL = "https://api.deepseek.com"
 private const val DEEPSEEK_HARNESS_DEFAULT_MODEL = "deepseek-v4-pro"
 private const val DEEPSEEK_HARNESS_DEFAULT_REASONING_EFFORT = "max"
@@ -2072,9 +2128,15 @@ internal data class DeepSeekHarnessConfig(
         "DEEPSEEK_BASE_URL" to baseUrl,
         "DEEPSEEK_API_KEY" to apiKey,
         "DSH_MODEL" to model,
-        "DSH_REASONING_EFFORT" to reasoningEffort,
+        // DSH keeps its official UI vocabulary (off/high/max), while the
+        // shared OpenAI-compatible Provider accepts the standard effort set.
+        "DSH_REASONING_EFFORT" to when (reasoningEffort) {
+            "off" -> "none"
+            "max" -> "xhigh"
+            else -> reasoningEffort
+        },
         "DSH_PERMISSION_MODE" to permissionMode,
-        "DSH_ACP_HOME" to DEEPSEEK_HARNESS_HOME,
+        "DSH_ACP_HOME" to DEEPSEEK_HARNESS_PERSISTENCE_HOME,
         "NODE_NO_WARNINGS" to "1"
     )
 }
@@ -2168,6 +2230,9 @@ internal fun buildDeepSeekHarnessCordisConfig(): String = """
         models:
           - id: deepseek-v4-flash
           - id: deepseek-v4-pro
+          # Keep the shared Provider model visible to the official Harness
+          # model registry as well as the ACP launch environment.
+          - id: !!js "process.env.DSH_MODEL ?? 'deepseek-v4-pro'"
 
     - id: sandbox
       name: '@deepseek-ai/dsh-sandbox-local'
@@ -2196,7 +2261,7 @@ internal fun buildDeepSeekHarnessCordisConfig(): String = """
       config:
         provider: deepseek-official
         model: !!js "process.env.DSH_MODEL ?? 'deepseek-v4-pro'"
-        persistenceRoot: !!js "(process.env.DSH_ACP_HOME ?? '/root/.dsh/omnibot-acp') + '/sessions'"
+        persistenceRoot: !!js "(process.env.DSH_ACP_HOME ?? '/root/.dsh/omnibot-acp-clean') + '/sessions'"
         persistenceCompression: !!js "process.env.DSH_PERSISTENCE_COMPRESSION ?? 'zstd'"
         # Keep the official Harness defaults for workspace context, skills,
         # jobs, goals, and tool transport. The host does not disable them.
@@ -2468,8 +2533,8 @@ private fun Map<String, Any?>.longValue(key: String): Long? {
     }
 }
 
-private const val CLAUDE_CODE_AGENT_ID = "claude-code-acp"
-private const val OPENCODE_AGENT_ID = "opencode-acp"
+internal const val CLAUDE_CODE_AGENT_ID = "claude-code-acp"
+internal const val OPENCODE_AGENT_ID = "opencode-acp"
 private const val CODEX_CONFIG_TOML_PATH = "/root/.codex/config.toml"
 private const val CODEX_AUTH_JSON_PATH = "/root/.codex/auth.json"
 private const val CLAUDE_SETTINGS_JSON_PATH = "/root/.claude/settings.json"

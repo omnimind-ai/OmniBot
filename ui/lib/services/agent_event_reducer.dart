@@ -157,10 +157,21 @@ class AgentEventReducer {
             runtime.currentDispatchTaskId ??
             runtime.lastAgentTaskId ??
             parentTaskId;
+        final statusDetail = _turnFailureDetail(params);
+        final statusIsFailure =
+            status == 'failed' || status == 'systemerror' || status == 'error';
+        if (statusIsFailure && statusDetail != null) {
+          _recordTurnFailure(
+            runtime,
+            taskId: taskId,
+            detail: statusDetail,
+            params: params,
+          );
+        }
         _completeTurn(
           runtime,
           taskId,
-          appendCancelIfEmpty: _statusIsCancelled(status),
+          appendCancelIfEmpty: !statusIsFailure && _statusIsCancelled(status),
         );
       }
       return AgentReduceResult(
@@ -660,30 +671,11 @@ class AgentEventReducer {
     }
 
     if (method == 'turn/failed') {
-      final detail =
-          _extractText(_asStringMap(params['error'])?['message']) ??
-          _extractText(params['message']) ??
-          _extractText(params['error']) ??
-          _safeJson(params);
-      final cardId = '$parentTaskId-agent-status';
-      _upsertToolCard(
+      _recordTurnFailure(
         runtime,
-        cardId: cardId,
         taskId: parentTaskId,
-        toolType: 'status',
-        title: method,
-        status: 'error',
-        summary: detail,
-        progress: detail,
-        raw: params,
-        streamMeta: _streamMeta(
-          runtime,
-          parentTaskId: parentTaskId,
-          entryId: cardId,
-          kind: 'error',
-          isFinal: true,
-        ),
-        touchTurn: false,
+        detail: _turnFailureDetail(params, fallbackToPayload: true)!,
+        params: params,
       );
       final completionTaskId =
           turnId ??
@@ -1702,6 +1694,49 @@ class AgentEventReducer {
       _finalizeThinkingCardsForTask(runtime, taskId);
     }
     _markToolCardsCompleteForTask(runtime, taskId);
+  }
+
+  void _recordTurnFailure(
+    ChatConversationRuntimeState runtime, {
+    required String taskId,
+    required String detail,
+    required Map<String, dynamic> params,
+  }) {
+    final cardId = '$taskId-agent-status';
+    _upsertToolCard(
+      runtime,
+      cardId: cardId,
+      taskId: taskId,
+      toolType: 'status',
+      title: 'turn/failed',
+      status: 'error',
+      summary: detail,
+      progress: detail,
+      raw: params,
+      streamMeta: _streamMeta(
+        runtime,
+        parentTaskId: taskId,
+        entryId: cardId,
+        kind: 'error',
+        isFinal: true,
+      ),
+      touchTurn: false,
+    );
+  }
+
+  String? _turnFailureDetail(
+    Map<String, dynamic> params, {
+    bool fallbackToPayload = false,
+  }) {
+    final detail =
+        _extractText(_asStringMap(params['error'])?['message']) ??
+        _extractText(params['message']) ??
+        _extractText(params['reason']) ??
+        _extractText(params['error']);
+    if (detail != null && detail.trim().isNotEmpty) {
+      return detail.trim();
+    }
+    return fallbackToPayload ? _safeJson(params) : null;
   }
 
   bool _hasVisibleAssistantTextForTask(

@@ -742,9 +742,28 @@ internal class LocalAcpRuntime(
                         replayingThreads.remove(threadId)
                     }
                 }
-                else -> throw UnsupportedOperationException(
-                    "The selected ACP agent did not advertise session resume or loadSession."
-                )
+                else -> {
+                    // ACP agents are allowed to expose prompt/new-session only.
+                    // When restore is not advertised, continue the app
+                    // conversation on a fresh official ACP session instead of
+                    // inventing a private resume protocol.
+                    val fresh = requireClient().newSession(
+                        parameters,
+                        operationsFactory()
+                    )
+                    registerSession(fresh, cwd)
+                    profileStore.bindSession(fresh.sessionId.value, activeAgentId())
+                    val conversationId = bindingRepository.ensureBinding(
+                        threadId = fresh.sessionId.value,
+                        conversationId = args.longValue("conversationId")
+                            ?: bindingRepository.getBindingByThreadId(threadId)?.conversationId,
+                        cwd = cwd
+                    )
+                    profileStore.bindConversation(conversationId, activeAgentId())
+                    return@withLock sessionPayload(fresh, conversationId).plus(
+                        "sessionRestored" to false
+                    )
+                }
             }
             registerSession(restored, cwd)
             profileStore.bindSession(restored.sessionId.value, activeAgentId())
@@ -1242,8 +1261,11 @@ internal class LocalAcpRuntime(
         val explicitThreadId = args.stringValue("threadId")
         if (!explicitThreadId.isNullOrBlank()) {
             return sessions[explicitThreadId] ?: run {
-                resumeThread(args)
-                sessions[explicitThreadId]
+                val response = resumeThread(args)
+                val resolvedThreadId = response.stringValue("threadId")
+                    ?: response.stringValue("sessionId")
+                    ?: explicitThreadId
+                sessions[resolvedThreadId]
                     ?: throw IllegalStateException("Failed to restore ACP session.")
             }
         }
@@ -1258,8 +1280,11 @@ internal class LocalAcpRuntime(
                 ?: AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID
             if (bindingAgentId == activeAgentId()) {
                 return sessions[binding.threadId] ?: run {
-                    resumeThread(args + mapOf("threadId" to binding.threadId))
-                    sessions[binding.threadId]
+                    val response = resumeThread(args + mapOf("threadId" to binding.threadId))
+                    val resolvedThreadId = response.stringValue("threadId")
+                        ?: response.stringValue("sessionId")
+                        ?: binding.threadId
+                    sessions[resolvedThreadId]
                         ?: throw IllegalStateException("Failed to restore ACP session.")
                 }
             }

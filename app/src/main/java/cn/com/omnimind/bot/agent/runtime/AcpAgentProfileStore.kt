@@ -475,13 +475,24 @@ internal class AcpAgentProfileStore(context: Context) {
         private val OFFICIAL_RUNTIMES = mapOf(
             DEFAULT_CODEX_AGENT_ID to AcpOfficialRuntime(
                 discoveryCommand = "codex",
-                managedAdapterPackage = "@agentclientprotocol/codex-acp@1.1.7"
+                managedAdapterPackage = "@openai/codex@latest",
+                managedAdapterPackages = listOf(
+                    "@openai/codex@latest",
+                    "@agentclientprotocol/codex-acp@1.1.7"
+                )
             ),
             "claude-code-acp" to AcpOfficialRuntime(
                 discoveryCommand = "claude",
-                managedAdapterPackage = "@agentclientprotocol/claude-agent-acp@0.61.0"
+                managedAdapterPackage = "@anthropic-ai/claude-code@latest",
+                managedAdapterPackages = listOf(
+                    "@anthropic-ai/claude-code@latest",
+                    "@agentclientprotocol/claude-agent-acp@0.61.0"
+                )
             ),
-            "opencode-acp" to AcpOfficialRuntime(discoveryCommand = "opencode"),
+            "opencode-acp" to AcpOfficialRuntime(
+                discoveryCommand = "opencode",
+                managedAdapterPackage = "opencode-ai@latest"
+            ),
             DEEPSEEK_HARNESS_AGENT_ID to AcpOfficialRuntime(
                 discoveryCommand = "node",
                 managedAdapterPackage = DEEPSEEK_HARNESS_NPM_PACKAGE_SPECS.first(),
