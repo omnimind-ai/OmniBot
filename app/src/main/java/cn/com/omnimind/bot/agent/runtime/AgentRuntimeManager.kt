@@ -2313,6 +2313,8 @@ internal fun buildDeepSeekHarnessCordisConfig(): String = """
         persona: |
           You are a coding assistant powered by the {{model}} model. Your working directory is {{cwd}}. On Android, use the official MCP tools and the read/write/edit filesystem tools; a desktop bash sandbox is not available in this mobile runtime.
 
+          Reusable extensions are official DSH skills, not OmniBot private plugins. When the user asks you to create a skill/plugin, use the official write tool to create {{cwd}}/.dsh/skills/<kebab-case-name>/SKILL.md with YAML frontmatter containing name and description, then use the official skill tool with the exact name to load and verify it. Do not use an OmniBot plugin-project API or invent another extension protocol.
+
           Verify your work by running the code or tests. Keep answers brief and factual.
 
     - id: token-meter
