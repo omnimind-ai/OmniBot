@@ -7,12 +7,16 @@ import cn.com.omnimind.bot.webchat.RealtimeHub
 import cn.com.omnimind.bot.webchat.WebChatAvatarService
 import cn.com.omnimind.bot.webchat.WorkspaceFileService
 import com.google.gson.Gson
+import com.google.gson.JsonParseException
+import com.google.gson.JsonSyntaxException
+import com.google.gson.reflect.TypeToken
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.call
-import io.ktor.server.request.receive
+import io.ktor.server.plugins.BadRequestException
+import io.ktor.server.request.receiveText
 import io.ktor.server.response.header
 import io.ktor.server.response.respondBytes
 import io.ktor.server.response.respondFile
@@ -21,21 +25,36 @@ import io.ktor.server.response.respondTextWriter
 import io.ktor.server.routing.*
 import kotlinx.coroutines.flow.collect
 
+private val webChatGson by lazy { Gson() }
+private val webChatJsonObjectType = object : TypeToken<Map<String, Any?>>() {}.type
+
+internal fun parseWebChatJsonObject(payload: String): Map<String, Any?> {
+    if (payload.isBlank()) throw JsonSyntaxException("Expected a JSON object")
+    return webChatGson.fromJson<Map<String, Any?>>(payload, webChatJsonObjectType)
+        ?: throw JsonSyntaxException("Expected a JSON object")
+}
+
+internal suspend fun ApplicationCall.receiveWebChatJsonObject(): Map<String, Any?> {
+    val payload = receiveText()
+    return try {
+        parseWebChatJsonObject(payload)
+    } catch (error: JsonParseException) {
+        throw BadRequestException("Invalid JSON request body", error)
+    }
+}
+
 /**
  * WebChat API 路由注册。
  *
  * 从 McpServerManager 拆分而来，包含对话管理、事件流、工作区文件、浏览器镜像等路由。
  */
 object WebChatRoutes {
-
-    private val gson by lazy { Gson() }
-
     /** Serialize heterogeneous WebChat payloads explicitly instead of relying on Ktor's map serializer. */
     private suspend fun ApplicationCall.respondJson(
         payload: Any?,
         status: HttpStatusCode = HttpStatusCode.OK
     ) {
-        respondText(gson.toJson(payload), ContentType.Application.Json, status)
+        respondText(webChatGson.toJson(payload), ContentType.Application.Json, status)
     }
 
     fun Route.registerWebChatRoutes(
@@ -90,7 +109,7 @@ object WebChatRoutes {
 
             post("/conversations") {
                 if (!McpServerManager.requireWebChatAuth(call)) return@post
-                val body = call.receive<Map<String, Any?>>()
+                val body = call.receiveWebChatJsonObject()
                 call.respondJson(
                     conversationService.createConversation(
                         title = body["title"]?.toString() ?: "新对话",
@@ -113,7 +132,7 @@ object WebChatRoutes {
                     call.respondJson(mapOf("error" to "INVALID_CONVERSATION_ID"), HttpStatusCode.BadRequest)
                     return@patch
                 }
-                val body = call.receive<Map<String, Any?>>().toMutableMap()
+                val body = call.receiveWebChatJsonObject().toMutableMap()
                 body["id"] = conversationId
                 call.respondJson(
                     conversationService.updateConversationFromPayload(body)
@@ -159,7 +178,7 @@ object WebChatRoutes {
                     call.respondJson(mapOf("error" to "INVALID_CONVERSATION_ID"), HttpStatusCode.BadRequest)
                     return@post
                 }
-                val body = call.receive<Map<String, Any?>>()
+                val body = call.receiveWebChatJsonObject()
                 val accepted = runCatching {
                     agentRunService.startConversationRun(conversationId, body)
                 }.getOrElse { error ->
@@ -178,7 +197,7 @@ object WebChatRoutes {
             post("/tasks/{taskId}/clarify") {
                 if (!McpServerManager.requireWebChatAuth(call)) return@post
                 val taskId = call.parameters["taskId"]?.trim().takeUnless { it.isNullOrEmpty() }
-                val body = call.receive<Map<String, Any?>>()
+                val body = call.receiveWebChatJsonObject()
                 val reply = body["reply"]?.toString() ?: body["userInput"]?.toString().orEmpty()
                 if (reply.isBlank()) {
                     call.respondJson(mapOf("error" to "EMPTY_REPLY"), HttpStatusCode.BadRequest)
@@ -197,7 +216,7 @@ object WebChatRoutes {
                     RealtimeHub.stream().collect { event ->
                         write("id: ${event.id}\n")
                         write("event: ${event.event}\n")
-                        write("data: ${gson.toJson(event.data)}\n\n")
+                        write("data: ${webChatGson.toJson(event.data)}\n\n")
                         flush()
                     }
                 }
@@ -256,7 +275,7 @@ object WebChatRoutes {
 
             put("/file") {
                 if (!McpServerManager.requireWebChatAuth(call)) return@put
-                val body = call.receive<Map<String, Any?>>()
+                val body = call.receiveWebChatJsonObject()
                 val path = body["path"]?.toString().orEmpty()
                 if (path.isBlank()) {
                     call.respondJson(mapOf("error" to "MISSING_PATH"), HttpStatusCode.BadRequest)
@@ -273,7 +292,7 @@ object WebChatRoutes {
 
             post("/move") {
                 if (!McpServerManager.requireWebChatAuth(call)) return@post
-                val body = call.receive<Map<String, Any?>>()
+                val body = call.receiveWebChatJsonObject()
                 val sourcePath = body["sourcePath"]?.toString().orEmpty()
                 val targetPath = body["targetPath"]?.toString().orEmpty()
                 if (sourcePath.isBlank() || targetPath.isBlank()) {
@@ -344,7 +363,7 @@ object WebChatRoutes {
 
             post("/action") {
                 if (!McpServerManager.requireWebChatAuth(call)) return@post
-                val body = call.receive<Map<String, Any?>>()
+                val body = call.receiveWebChatJsonObject()
                 call.respondJson(browserMirrorService.executeAction(body))
             }
         }

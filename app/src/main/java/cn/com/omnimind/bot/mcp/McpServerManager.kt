@@ -30,7 +30,6 @@ import io.ktor.server.plugins.calllogging.CallLogging
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.request.host
 import io.ktor.server.request.path
-import io.ktor.server.request.receive
 import io.ktor.server.response.header
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondFile
@@ -185,7 +184,7 @@ object McpServerManager {
             call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Access denied"))
             return
         }
-        val body = runCatching { call.receive<Map<String, Any?>>() }.getOrDefault(emptyMap())
+        val body = runCatching { call.receiveWebChatJsonObject() }.getOrDefault(emptyMap())
         val token = body["token"]?.toString()
             ?: call.request.headers["Authorization"]?.removePrefix("Bearer ")?.trim()
         if (token.isNullOrBlank() || !timingSafeEquals(token, ensureToken())) {
