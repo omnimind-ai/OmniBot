@@ -24,7 +24,10 @@ internal data class AgentProviderMapping(
     val environment: Map<String, String> = emptyMap(),
     val deepSeekConfig: DeepSeekHarnessConfig? = null,
     val codexModel: String? = null,
-    val codexBaseUrl: String? = null
+    val codexBaseUrl: String? = null,
+    /** Official OpenCode model reference (provider/model), written to opencode.json. */
+    val openCodeModel: String? = null,
+    val openCodeBaseUrl: String? = null
 )
 
 internal interface AgentConfigAdapter {
@@ -99,12 +102,20 @@ private object CodexConfigAdapter : AgentConfigAdapter {
 private object ClaudeCodeConfigAdapter : AgentConfigAdapter {
     override fun map(input: AgentProviderMappingInput): AgentProviderMapping {
         val provider = input.provider ?: return AgentProviderMapping()
+        val model = input.model?.trim()?.takeIf { it.isNotEmpty() }
         return AgentProviderMapping(
-            environment = mapOf(
-                "ANTHROPIC_BASE_URL" to provider.baseUrl,
-                "ANTHROPIC_API_KEY" to provider.apiKey,
-                "ANTHROPIC_AUTH_TOKEN" to provider.apiKey
-            )
+            environment = buildMap {
+                put("ANTHROPIC_BASE_URL", provider.baseUrl)
+                put("ANTHROPIC_API_KEY", provider.apiKey)
+                put("ANTHROPIC_AUTH_TOKEN", provider.apiKey)
+                if (model != null) {
+                    // Official Claude Code model override. Without this the
+                    // CLI falls back to claude-opus and a shared gateway can
+                    // reject the request before it reaches the model.
+                    put("ANTHROPIC_MODEL", model)
+                    put("ANTHROPIC_SMALL_FAST_MODEL", model)
+                }
+            }
         )
     }
 }
@@ -112,11 +123,14 @@ private object ClaudeCodeConfigAdapter : AgentConfigAdapter {
 private object OpenCodeConfigAdapter : AgentConfigAdapter {
     override fun map(input: AgentProviderMappingInput): AgentProviderMapping {
         val provider = input.provider ?: return AgentProviderMapping()
+        val model = input.model?.trim()?.takeIf { it.isNotEmpty() }
         return AgentProviderMapping(
             environment = mapOf(
                 "OPENAI_BASE_URL" to provider.baseUrl,
                 "OPENAI_API_KEY" to provider.apiKey
-            )
+            ),
+            openCodeModel = model?.let { "$OPEN_CODE_PROVIDER_ID/$it" },
+            openCodeBaseUrl = normalizeOpenCodeBaseUrl(provider.baseUrl)
         )
     }
 }
@@ -155,6 +169,28 @@ internal fun normalizeCodexBaseUrl(baseUrl: String): String {
         normalized.endsWith("/responses") ||
         normalized.endsWith("/v1/responses")
     ) {
+        return normalized
+    }
+    return "$normalized/v1"
+}
+
+internal const val OPEN_CODE_PROVIDER_ID = "omnibot"
+
+/** OpenCode's official OpenAI-compatible provider expects the API root, not a
+ * chat-completions endpoint. The shared store normally already holds the root,
+ * but accepting legacy endpoint values keeps old profiles usable. */
+internal fun normalizeOpenCodeBaseUrl(baseUrl: String): String {
+    var normalized = baseUrl.trim().trimEnd('/')
+    listOf(
+        "/v1/chat/completions",
+        "/chat/completions",
+        "/v1/responses",
+        "/responses"
+    ).firstOrNull { normalized.endsWith(it, ignoreCase = true) }?.let {
+        normalized = normalized.dropLast(it.length).trimEnd('/')
+    }
+    if (normalized.isEmpty() || normalized.endsWith("#")) return normalized
+    if (normalized.endsWith("/v1") || normalized.endsWith("/compatible-mode/v1")) {
         return normalized
     }
     return "$normalized/v1"

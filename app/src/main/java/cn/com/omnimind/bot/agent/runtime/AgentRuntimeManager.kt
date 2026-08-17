@@ -1108,6 +1108,19 @@ class AgentRuntimeManager private constructor(
                 }
                 deepSeekEnvironment
             }
+            OPENCODE_AGENT_ID -> {
+                if (sharedProvider != null && mapping.openCodeModel != null) {
+                    writeTerminalTextFile(
+                        path = OPENCODE_CONFIG_PATH,
+                        content = buildOpenCodeConfigJson(
+                            model = mapping.openCodeModel,
+                            baseUrl = mapping.openCodeBaseUrl ?: sharedProvider.baseUrl
+                        ),
+                        executorKey = "opencode-agent-config-write"
+                    )
+                }
+                mapping.environment
+            }
             else -> mapping.environment
         }
     }
@@ -1922,6 +1935,7 @@ private const val DEEPSEEK_HARNESS_CONFIG_DISPLAY_PATH =
     "~/.dsh/omnibot-acp/config.json"
 private const val DEEPSEEK_HARNESS_CORDIS_PATH =
     "$DEEPSEEK_HARNESS_CONFIG_HOME/cordis.yml"
+private const val OPENCODE_CONFIG_PATH = "/root/.config/opencode/opencode.json"
 internal const val ACP_FILESYSTEM_COMPAT_PATH =
     "$DEEPSEEK_HARNESS_CONFIG_HOME/acp-fs-compat.cjs"
 internal val ACP_FILESYSTEM_COMPAT_SCRIPT = """
@@ -2348,6 +2362,46 @@ internal fun buildDeepSeekHarnessConfigJson(
                 "apiKey" to config.apiKey,
                 "reasoningEffort" to config.reasoningEffort,
                 "permissionMode" to config.permissionMode
+            )
+        ) + "\n"
+}
+
+/**
+ * Official OpenCode v1 configuration for a custom OpenAI-compatible provider.
+ * The API key remains an environment substitution; the host only publishes
+ * the shared provider/model mapping into OpenCode's own config surface.
+ */
+internal fun buildOpenCodeConfigJson(
+    model: String,
+    baseUrl: String
+): String {
+    val providerModel = model.substringAfter("/", model)
+    return GsonBuilder()
+        .setPrettyPrinting()
+        .create()
+        .toJson(
+            linkedMapOf(
+                "\$schema" to "https://opencode.ai/config.json",
+                "model" to model,
+                "provider" to linkedMapOf(
+                    OPEN_CODE_PROVIDER_ID to linkedMapOf(
+                        "npm" to "@ai-sdk/openai-compatible",
+                        "name" to "OmniBot Provider",
+                        "options" to linkedMapOf(
+                            "baseURL" to baseUrl,
+                            "apiKey" to "{env:OPENAI_API_KEY}"
+                        ),
+                        "models" to linkedMapOf(
+                            providerModel to linkedMapOf(
+                                "name" to providerModel,
+                                "limit" to linkedMapOf(
+                                    "context" to 128000,
+                                    "output" to 8192
+                                )
+                            )
+                        )
+                    )
+                )
             )
         ) + "\n"
 }

@@ -134,7 +134,7 @@ internal object AndroidDeviceMcpServer {
                     tools = ServerCapabilities.Tools(listChanged = false),
                 ),
             ),
-            instructions = "Use the official OmniBot MCP server to access Android GUI, Functions, files, app context, and plugin capabilities.",
+            instructions = "Use the official OmniBot MCP server to access Android GUI, Functions, files, and app context.",
         ).apply {
             omniFlowTools.forEach { tool ->
                 addTool(

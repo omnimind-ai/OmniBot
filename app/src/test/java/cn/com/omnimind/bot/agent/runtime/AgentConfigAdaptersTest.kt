@@ -46,6 +46,8 @@ class AgentConfigAdaptersTest {
         )
         assertEquals(provider.apiKey, claude.environment["ANTHROPIC_API_KEY"])
         assertEquals(provider.apiKey, claude.environment["ANTHROPIC_AUTH_TOKEN"])
+        assertEquals(model, claude.environment["ANTHROPIC_MODEL"])
+        assertEquals(model, claude.environment["ANTHROPIC_SMALL_FAST_MODEL"])
 
         val openCode = AgentConfigAdapterRegistry.map(
             AgentProviderMappingInput(
@@ -56,6 +58,8 @@ class AgentConfigAdaptersTest {
         )
         assertEquals(provider.apiKey, openCode.environment["OPENAI_API_KEY"])
         assertEquals(provider.baseUrl, openCode.environment["OPENAI_BASE_URL"])
+        assertEquals("omnibot/GLM-5.1", openCode.openCodeModel)
+        assertEquals("https://llmapi.paratera.com/v1", openCode.openCodeBaseUrl)
     }
 
     @Test
@@ -80,6 +84,30 @@ class AgentConfigAdaptersTest {
         assertEquals(
             "https://example.com/compatible-mode/v1",
             normalizeCodexBaseUrl("https://example.com/compatible-mode/v1"),
+        )
+    }
+
+    @Test
+    fun openCodeConfigUsesOfficialCustomProviderShape() {
+        val config = buildOpenCodeConfigJson(
+            model = "omnibot/GLM-5.1",
+            baseUrl = "https://llmapi.paratera.com/v1"
+        )
+        assertTrue(config.contains("https://opencode.ai/config.json"))
+        assertTrue(config.contains("@ai-sdk/openai-compatible"))
+        assertTrue(config.contains("omnibot/GLM-5.1"))
+        assertTrue(config.contains("{env:OPENAI_API_KEY}"))
+    }
+
+    @Test
+    fun openCodeBaseUrlAcceptsLegacyChatEndpoint() {
+        assertEquals(
+            "https://example.com/v1",
+            normalizeOpenCodeBaseUrl("https://example.com/v1/chat/completions")
+        )
+        assertEquals(
+            "https://example.com/compatible-mode/v1",
+            normalizeOpenCodeBaseUrl("https://example.com/compatible-mode/v1")
         )
     }
 }
