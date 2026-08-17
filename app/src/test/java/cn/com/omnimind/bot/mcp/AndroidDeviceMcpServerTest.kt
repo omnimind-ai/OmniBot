@@ -8,7 +8,7 @@ import kotlinx.coroutines.runBlocking
 
 class AndroidDeviceMcpServerTest {
     @Test
-    fun `public MCP surface exposes user-level device and plugin tools`() {
+    fun `public MCP surface exposes official user-level device tools`() {
         assertEquals(
             linkedSetOf(
                 "run_gui",
@@ -17,10 +17,6 @@ class AndroidDeviceMcpServerTest {
                 "register_function",
                 "context_apps_query",
                 "file_transfer",
-                "plugin_list",
-                "plugin_project_contract",
-                "plugin_project_check",
-                "plugin_project_publish",
             ),
             AndroidDeviceMcpServer.publicToolNames,
         )
