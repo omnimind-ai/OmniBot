@@ -30,6 +30,8 @@ class AgentConversationHistoryRepository(
         const val ENTRY_TYPE_ASSISTANT_MESSAGE = "assistant_message"
         const val ENTRY_TYPE_TOOL_EVENT = "tool_event"
         const val ENTRY_TYPE_UI_CARD = "ui_card"
+        /** Raw ACP notifications retained outside the user-facing projection. */
+        const val ENTRY_TYPE_STREAM_EVENT = "stream_event"
 
         const val STATUS_RUNNING = "running"
         const val STATUS_SUCCESS = "success"
@@ -186,6 +188,28 @@ class AgentConversationHistoryRepository(
         refreshConversationMetadata(conversationId)
     }
 
+    suspend fun persistHiddenStreamEvent(
+        conversationId: Long,
+        conversationMode: String,
+        entryId: String,
+        payload: Map<String, Any?>,
+        createdAt: Long = System.currentTimeMillis()
+    ) = withContext(Dispatchers.IO) {
+        upsertEntry(
+            AgentConversationEntry(
+                conversationId = conversationId,
+                conversationMode = conversationMode,
+                entryId = entryId,
+                entryType = ENTRY_TYPE_STREAM_EVENT,
+                status = STATUS_SUCCESS,
+                summary = "ACP stream event",
+                payloadJson = gson.toJson(payload),
+                createdAt = createdAt,
+                updatedAt = System.currentTimeMillis()
+            )
+        )
+    }
+
     suspend fun replaceThreadMessagesFromUiSnapshot(
         conversationId: Long,
         conversationMode: String,
@@ -193,6 +217,9 @@ class AgentConversationHistoryRepository(
     ) = withContext(Dispatchers.IO) {
         val existingConversation = DatabaseHelper.getConversationById(conversationId)
         val existingEntries = loadThreadEntriesAscSafe(conversationId, conversationMode)
+        val existingStreamEvents = existingEntries.filter {
+            it.entryType == ENTRY_TYPE_STREAM_EVENT
+        }
         val existingToolPayloads = existingEntries
             .filter { it.entryType == ENTRY_TYPE_TOOL_EVENT }
             .associate { entry ->
@@ -210,6 +237,14 @@ class AgentConversationHistoryRepository(
         )
         var remappedCutoffEntryDbId: Long? = null
         DatabaseHelper.deleteAgentConversationThread(conversationId, conversationMode)
+        existingStreamEvents.forEach { streamEvent ->
+            upsertEntry(
+                streamEvent.copy(
+                    id = 0,
+                    updatedAt = System.currentTimeMillis()
+                )
+            )
+        }
         ConversationSnapshotOrdering.prepareForStorage(mergedMessages).forEach { prepared ->
             val message = prepared.payload
             val restoredToolPayload =

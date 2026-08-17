@@ -12,6 +12,22 @@ import org.junit.Test
 
 class AgentRuntimeProtocolPayloadTest {
     @Test
+    fun officialAcpSessionUpdateUsesCanonicalSessionIdForLocalBinding() {
+        val notification = mapOf(
+            "method" to "session/update",
+            "params" to mapOf(
+                "sessionId" to "acp-session-1",
+                "update" to mapOf(
+                    "sessionUpdate" to "agent_message_chunk",
+                    "content" to mapOf("type" to "text", "text" to "ok"),
+                ),
+            ),
+        )
+
+        assertEquals("acp-session-1", extractThreadId(notification))
+    }
+
+    @Test
     fun acpSessionCompatibilityCanonicalizesOldIdsOnlyAtTheBoundary() {
         val canonical = AcpSessionCompatibility.canonicalize(
             "session/prompt",

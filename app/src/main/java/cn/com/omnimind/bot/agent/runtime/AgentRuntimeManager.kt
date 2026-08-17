@@ -10,6 +10,7 @@ import cn.com.omnimind.baselib.database.DatabaseHelper
 import cn.com.omnimind.baselib.llm.ModelProviderConfigStore
 import cn.com.omnimind.baselib.llm.SceneModelBindingStore
 import cn.com.omnimind.bot.BuildConfig
+import cn.com.omnimind.bot.agent.AgentConversationHistoryRepository
 import cn.com.omnimind.bot.agent.AgentAttachmentPromptSupport
 import cn.com.omnimind.bot.agent.AgentImageAttachmentSupport
 import cn.com.omnimind.bot.agent.AgentWorkspaceAttachmentSupport
@@ -26,6 +27,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.io.File
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
 class AgentRuntimeManager private constructor(
@@ -37,6 +39,7 @@ class AgentRuntimeManager private constructor(
     private val threadStartMutex = Mutex()
     private val mainHandler = Handler(Looper.getMainLooper())
     private val bindingRepository = AgentSessionBindingRepository(appContext)
+    private val historyRepository = AgentConversationHistoryRepository(appContext)
     private val remoteConfigStore = CodexRemoteBridgeConfigStore(appContext)
     private val acpAgentProfileStore = AcpAgentProfileStore(appContext)
     private val localAcpRuntime = LocalAcpRuntime(
@@ -1390,6 +1393,26 @@ class AgentRuntimeManager private constructor(
             Log.w("AgentRuntimeManager", "syncMessage failed for $method: ${error.message}")
         }.getOrNull()
 
+        persistRawProtocolEvent(
+            conversationId = localConversationId,
+            method = method,
+            threadId = threadId,
+            turnId = turnId,
+            agentId = eventAgentId,
+            agentName = eventAgentName,
+            event = linkedMapOf(
+                "method" to method,
+                "workspaceId" to RemoteCodexAppServerSession.DEFAULT_WORKSPACE_ID,
+                "threadId" to threadId,
+                "turnId" to turnId,
+                "conversationId" to localConversationId,
+                "agentId" to eventAgentId,
+                "agentName" to eventAgentName,
+                "params" to params,
+                "message" to message
+            )
+        )
+
         // Deliver to Flutter FIRST. The completion side effects below only run
         // for the terminal event, so anything that throws in them used to drop
         // exactly that one event while every other event sailed through —
@@ -1448,6 +1471,23 @@ class AgentRuntimeManager private constructor(
             .firstOrNull { it.id == agentId }
             ?.name
             ?: localAcpRuntime.activeAgentName()
+        persistRawProtocolEvent(
+            conversationId = conversationId,
+            method = "acp/presentation",
+            threadId = threadId,
+            turnId = turnId,
+            agentId = agentId,
+            agentName = agentName,
+            event = linkedMapOf(
+                "method" to "acp/presentation",
+                "presentation" to presentation,
+                "threadId" to threadId,
+                "turnId" to turnId,
+                "conversationId" to conversationId,
+                "agentId" to agentId,
+                "agentName" to agentName
+            )
+        )
         emitEvent(
             linkedMapOf(
                 "presentation" to presentation,
@@ -1473,6 +1513,50 @@ class AgentRuntimeManager private constructor(
                     "task completion notification failed: ${error.message}"
                 )
             }
+        }
+    }
+
+    /**
+     * Persist the complete official protocol envelope once, before it is
+     * projected to Flutter or WebChat. Unknown notification methods remain
+     * available for diagnostics, while the history projection ignores this
+     * hidden entry type when building prompts and visible messages.
+     */
+    private suspend fun persistRawProtocolEvent(
+        conversationId: Long?,
+        method: String,
+        threadId: String?,
+        turnId: String?,
+        agentId: String?,
+        agentName: String?,
+        event: Map<String, Any?>
+    ) {
+        val normalizedConversationId = conversationId ?: return
+        val createdAt = System.currentTimeMillis()
+        runCatching {
+            historyRepository.persistHiddenStreamEvent(
+                conversationId = normalizedConversationId,
+                conversationMode = "codex",
+                entryId = "acp-stream-event-${UUID.randomUUID()}",
+                payload = linkedMapOf<String, Any?>(
+                    "type" to AgentConversationHistoryRepository.ENTRY_TYPE_STREAM_EVENT,
+                    "method" to method,
+                    "conversationId" to normalizedConversationId,
+                    "threadId" to threadId,
+                    "turnId" to turnId,
+                    "agentId" to agentId,
+                    "agentName" to agentName,
+                    "createdAt" to createdAt,
+                    "event" to event
+                ).filterValues { it != null },
+                createdAt = createdAt
+            )
+        }.onFailure { error ->
+            Log.w(
+                "AgentRuntimeManager",
+                "Persisting raw ACP event failed for method=$method: ${error.message}",
+                error
+            )
         }
     }
 
@@ -2763,10 +2847,14 @@ private fun remoteCodexProtocolMsg(value: Any?, depth: Int = 0): Map<*, *>? {
     return null
 }
 
-private fun extractThreadId(value: Any?): String? {
+internal fun extractThreadId(value: Any?): String? {
     return extractStringRecursive(
         value = value,
-        keys = setOf("threadId", "thread_id"),
+        // Official ACP notifications use `sessionId`; `threadId` remains a
+        // compatibility alias for the app-server boundary. Reading the
+        // canonical field here keeps session/update events attached to the
+        // local conversation instead of dropping them before persistence.
+        keys = setOf("sessionId", "threadId", "thread_id"),
         nestedObjectKeys = setOf(
             "thread",
             "message",

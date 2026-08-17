@@ -5008,6 +5008,25 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                             )
                         } ?: basePayload
                     )
+                    conversationId?.let { normalizedConversationId ->
+                        val streamEventEntryId = "$taskId-stream-event-$eventSeq"
+                        persistConversationMutation(
+                            description = "persist agent stream event",
+                            publish = false
+                        ) {
+                            repository.persistHiddenStreamEvent(
+                                conversationId = normalizedConversationId,
+                                conversationMode = resolvedConversationMode,
+                                entryId = streamEventEntryId,
+                                payload = payload + mapOf(
+                                    "streamEventEntryId" to streamEventEntryId
+                                ),
+                                createdAt = payload["createdAt"]?.let { value ->
+                                    (value as? Number)?.toLong()
+                                } ?: System.currentTimeMillis()
+                            )
+                        }
+                    }
                     RealtimeHub.publish("agent_stream_event", payload)
                     withContext(Dispatchers.Main) {
                         invokeFlutterEventSafely("onAgentStreamEvent", payload)

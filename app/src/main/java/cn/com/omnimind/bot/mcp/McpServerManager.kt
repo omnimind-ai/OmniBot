@@ -297,8 +297,22 @@ object McpServerManager {
 
             var preferredPort = port
             repeat(PORT_SEARCH_ATTEMPTS) {
+                // Some Android builds report every fixed-port probe as
+                // unavailable even though an ephemeral loopback port can be
+                // bound. Keep the preferred-port scan, but never make ACP
+                // unusable just because that probe is overly conservative.
                 val resolvedPort = runCatching { resolveAvailablePort(preferredPort, 1) }
-                    .getOrNull()
+                    .getOrElse {
+                        runCatching { reserveEphemeralPort() }
+                            .onFailure { error ->
+                                OmniLog.w(
+                                    TAG,
+                                    "MCP fixed-port probe failed and ephemeral fallback failed: " +
+                                        (error.message ?: error.javaClass.simpleName),
+                                )
+                            }
+                            .getOrNull()
+                    }
                     ?: return@repeat
                 val engine = buildServer(context, resolvedPort)
                 try {
@@ -356,6 +370,10 @@ object McpServerManager {
                 socket.bind(InetSocketAddress("0.0.0.0", port))
             }
         }.isSuccess
+    }
+
+    internal fun reserveEphemeralPort(): Int = ServerSocket(0).use { socket ->
+        socket.localPort
     }
 
     internal fun resolveAvailablePort(
