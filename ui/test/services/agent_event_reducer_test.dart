@@ -151,10 +151,7 @@ void main() {
             'update': {
               'sessionUpdate': 'agent_message_chunk',
               'messageId': 'message-1',
-              'content': {
-                'type': 'text',
-                'text': '来自标准 ACP',
-              },
+              'content': {'type': 'text', 'text': '来自标准 ACP'},
             },
           },
         },
@@ -164,6 +161,34 @@ void main() {
     expect(result.handled, isTrue);
     expect(runtime.messages.single.text, '来自标准 ACP');
     expect(runtime.messages.single.user, 2);
+  });
+
+  test('isolates ACP chunks without messageId by host turn', () {
+    for (final turn in <String>['turn-1', 'turn-2']) {
+      final result = reducer.reduce(
+        runtime: runtime,
+        event: {
+          'turnId': turn,
+          'message': {
+            'method': 'session/update',
+            'params': {
+              'sessionId': 'session-1',
+              'update': {
+                'sessionUpdate': 'agent_message_chunk',
+                'content': {'type': 'text', 'text': turn},
+              },
+            },
+          },
+        },
+      );
+      expect(result.handled, isTrue);
+    }
+
+    expect(runtime.messages, hasLength(2));
+    expect(runtime.messages.map((message) => message.text).toSet(), {
+      'turn-1',
+      'turn-2',
+    });
   });
 
   test('does not turn ACP config updates into a private event', () {
@@ -187,34 +212,37 @@ void main() {
     expect(runtime.messages, isEmpty);
   });
 
-  test('projects local lifecycle state without accepting a fake protocol event', () {
-    final started = reducer.reduce(
-      runtime: runtime,
-      event: {
-        'presentation': {
-          'kind': 'turn_started',
-          'threadId': 'session-1',
-          'turnId': 'turn-1',
+  test(
+    'projects local lifecycle state without accepting a fake protocol event',
+    () {
+      final started = reducer.reduce(
+        runtime: runtime,
+        event: {
+          'presentation': {
+            'kind': 'turn_started',
+            'threadId': 'session-1',
+            'turnId': 'turn-1',
+          },
         },
-      },
-    );
-    expect(started.handled, isTrue);
-    expect(runtime.activeAgentTaskIds, <String>{'turn-1'});
+      );
+      expect(started.handled, isTrue);
+      expect(runtime.activeAgentTaskIds, <String>{'turn-1'});
 
-    final completed = reducer.reduce(
-      runtime: runtime,
-      event: {
-        'presentation': {
-          'kind': 'turn_completed',
-          'threadId': 'session-1',
-          'turnId': 'turn-1',
-          'turn': {'id': 'turn-1', 'status': 'end_turn'},
+      final completed = reducer.reduce(
+        runtime: runtime,
+        event: {
+          'presentation': {
+            'kind': 'turn_completed',
+            'threadId': 'session-1',
+            'turnId': 'turn-1',
+            'turn': {'id': 'turn-1', 'status': 'end_turn'},
+          },
         },
-      },
-    );
-    expect(completed.handled, isTrue);
-    expect(runtime.activeAgentTaskIds, isEmpty);
-  });
+      );
+      expect(completed.handled, isTrue);
+      expect(runtime.activeAgentTaskIds, isEmpty);
+    },
+  );
 
   test('maps command output deltas into terminal tool card', () {
     reducer.reduce(

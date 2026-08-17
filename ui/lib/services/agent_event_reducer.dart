@@ -58,10 +58,7 @@ class AgentEventReducer {
     // projects that protocol object into the existing presentation reducer so
     // the UI remains a renderer rather than becoming another ACP dialect.
     if (method == 'session/update') {
-      final projected = _projectAcpSessionUpdate(
-        event: event,
-        params: params,
-      );
+      final projected = _projectAcpSessionUpdate(event: event, params: params);
       if (projected == null) {
         return AgentReduceResult(handled: true, method: method);
       }
@@ -2637,6 +2634,12 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
     params['session_id'],
     event['threadId'],
   ]);
+  final turnId = _firstString([
+    event['turnId'],
+    event['turn_id'],
+    params['turnId'],
+    params['turn_id'],
+  ]);
   final sessionUpdate = _string(update['sessionUpdate']);
   if (sessionUpdate == null || sessionUpdate.isEmpty) return null;
 
@@ -2644,6 +2647,7 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
     return <String, dynamic>{
       ...values,
       if (sessionId != null) 'threadId': sessionId,
+      if (turnId != null) 'turnId': turnId,
     };
   }
 
@@ -2652,7 +2656,9 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
       return <String, dynamic>{
         'method': 'item/agentMessage/delta',
         'params': projectedParams(<String, dynamic>{
-          'itemId': update['messageId'],
+          // DSH's official update may omit messageId. A turn-scoped fallback
+          // prevents the next turn from appending to the previous message.
+          'itemId': update['messageId'] ?? turnId,
           'delta': _extractText(update['content']) ?? '',
         }),
       };
@@ -2660,7 +2666,7 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
       return <String, dynamic>{
         'method': 'item/reasoning/delta',
         'params': projectedParams(<String, dynamic>{
-          'itemId': update['messageId'],
+          'itemId': update['messageId'] ?? turnId,
           'delta': _extractText(update['content']) ?? '',
         }),
       };
@@ -2675,9 +2681,8 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
       final item = _projectAcpToolCall(update);
       final status = _string(item['status'])?.toLowerCase();
       return <String, dynamic>{
-        'method': status == 'completed' ||
-                status == 'failed' ||
-                status == 'cancelled'
+        'method':
+            status == 'completed' || status == 'failed' || status == 'cancelled'
             ? 'item/completed'
             : 'item/updated',
         'params': projectedParams(<String, dynamic>{'item': item}),
@@ -2691,9 +2696,12 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
         'method': 'turn/plan/updated',
         'params': projectedParams(<String, dynamic>{
           'entries': entries ?? const <Map<String, dynamic>>[],
-          'plan': entries
-                  ?.map((entry) =>
-                      '- [${entry['status'] ?? 'pending'}] ${entry['content'] ?? ''}')
+          'plan':
+              entries
+                  ?.map(
+                    (entry) =>
+                        '- [${entry['status'] ?? 'pending'}] ${entry['content'] ?? ''}',
+                  )
                   .join('\n') ??
               '',
         }),
@@ -2712,9 +2720,7 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
     case 'session_info_update':
       return <String, dynamic>{
         'method': 'thread/name/updated',
-        'params': projectedParams(<String, dynamic>{
-          'name': update['title'],
-        }),
+        'params': projectedParams(<String, dynamic>{'name': update['title']}),
       };
     default:
       // Usage, commands, and future ACP update kinds do not affect the chat
@@ -2733,16 +2739,9 @@ Map<String, dynamic>? _projectPresentationEvent({
 }) {
   final kind = _string(presentation['kind']);
   if (kind == null || kind.isEmpty) return null;
-  final params = Map<String, dynamic>.from(presentation)
-    ..remove('kind');
-  final threadId = _firstString([
-    presentation['threadId'],
-    event['threadId'],
-  ]);
-  final turnId = _firstString([
-    presentation['turnId'],
-    event['turnId'],
-  ]);
+  final params = Map<String, dynamic>.from(presentation)..remove('kind');
+  final threadId = _firstString([presentation['threadId'], event['threadId']]);
+  final turnId = _firstString([presentation['turnId'], event['turnId']]);
   if (threadId != null) params['threadId'] = threadId;
   if (turnId != null) params['turnId'] = turnId;
 
@@ -2752,10 +2751,7 @@ Map<String, dynamic>? _projectPresentationEvent({
     case 'thread_archived':
       return <String, dynamic>{'method': 'thread/archived', 'params': params};
     case 'thread_unarchived':
-      return <String, dynamic>{
-        'method': 'thread/unarchived',
-        'params': params,
-      };
+      return <String, dynamic>{'method': 'thread/unarchived', 'params': params};
     case 'turn_started':
       return <String, dynamic>{'method': 'turn/started', 'params': params};
     case 'turn_completed':
@@ -2765,10 +2761,7 @@ Map<String, dynamic>? _projectPresentationEvent({
     case 'approval_requested':
       return <String, dynamic>{
         'method': 'item/started',
-        'params': <String, dynamic>{
-          ...params,
-          'item': params['item'],
-        },
+        'params': <String, dynamic>{...params, 'item': params['item']},
       };
     default:
       return null;

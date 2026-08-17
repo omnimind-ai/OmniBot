@@ -1720,7 +1720,11 @@ internal class LocalAcpRuntime(
         val notification = update.toAcpSessionNotification(threadId) ?: return
         emitAcpNotification(
             sessionId = notification.sessionId,
-            update = notification.update
+            update = notification.update,
+            // Keep the official ACP notification untouched inside params.
+            // This host-only envelope field lets the renderer isolate a
+            // message when an agent (DSH in particular) omits messageId.
+            turnId = resolvedTurnId
         )
     }
 
@@ -1731,17 +1735,20 @@ internal class LocalAcpRuntime(
      */
     private suspend fun emitAcpNotification(
         sessionId: String,
-        update: Map<String, Any?>
+        update: Map<String, Any?>,
+        turnId: String? = null
     ) {
-        onMessage(
-            linkedMapOf(
+        onMessage(linkedMapOf<String, Any?>(
                 "method" to "session/update",
                 "params" to linkedMapOf(
                     "sessionId" to sessionId,
                     "update" to update
                 )
-            )
-        )
+            ).apply {
+                // This is outside the official ACP params object and is only
+                // consumed by the host presentation bridge.
+                turnId?.takeIf { it.isNotBlank() }?.let { put("turnId", it) }
+            })
     }
 
     private suspend fun emitPresentation(
