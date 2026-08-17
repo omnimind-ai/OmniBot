@@ -61,6 +61,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.flow.takeWhile
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
@@ -68,6 +69,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -80,6 +82,7 @@ import java.io.OutputStreamWriter
 import java.nio.charset.StandardCharsets
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 
 internal class LocalAcpRuntime(
     context: Context,
@@ -87,6 +90,7 @@ internal class LocalAcpRuntime(
     private val bindingRepository: AgentSessionBindingRepository,
     private val profileStore: AcpAgentProfileStore,
     private val prepareLaunchEnvironment: suspend (AcpAgentProfile) -> Map<String, String>,
+    private val sharedModelProvider: () -> String?,
     private val onMessage: suspend (Map<String, Any?>) -> Unit
 ) {
     private val appContext = context.applicationContext
@@ -178,6 +182,7 @@ internal class LocalAcpRuntime(
     suspend fun connect(
         profile: AcpAgentProfile = profileStore.selected()
     ) = connectMutex.withLock {
+        Log.i(TAG, "Connecting ACP agent id=${profile.id} command=${profile.command}")
         require(profile.enabled) { "ACP agent ${profile.name} is disabled." }
         if (isConnected && activeProfile?.id == profile.id) {
             return@withLock
@@ -193,6 +198,7 @@ internal class LocalAcpRuntime(
                 }
             }
         } catch (error: Throwable) {
+            Log.e(TAG, "ACP launch preparation failed for ${profile.id}: ${error.message}", error)
             val wrapped = wrapInitializationError(profile, error)
             profileStore.saveHealth(profile.id, failedAgentHealth(wrapped))
             throw wrapped
@@ -213,8 +219,11 @@ internal class LocalAcpRuntime(
         val nextProtocol = Protocol(scope, transport)
         val nextClient = Client(nextProtocol)
         try {
+            Log.i(TAG, "Starting ACP process for ${profile.id}")
             nextConnection.start()
+            Log.i(TAG, "ACP process started for ${profile.id}")
             nextProtocol.start()
+            Log.i(TAG, "ACP protocol started for ${profile.id}; initializing")
             val initialized = initializeAgent(
                 client = nextClient,
                 connection = nextConnection,
@@ -234,6 +243,12 @@ internal class LocalAcpRuntime(
                     )
                 )
             )
+            Log.i(
+                TAG,
+                "ACP initialized for ${profile.id}: " +
+                    "implementation=${initialized.implementation?.name} " +
+                    "version=${initialized.implementation?.version}"
+            )
             connection = nextConnection
             protocol = nextProtocol
             client = nextClient
@@ -252,6 +267,13 @@ internal class LocalAcpRuntime(
         } catch (error: Throwable) {
             nextProtocol.close()
             val diagnostics = nextConnection.diagnosticSummary()
+            Log.e(
+                TAG,
+                "ACP initialize failed for ${profile.id}: " +
+                    "${error.message ?: error.javaClass.simpleName}" +
+                    if (diagnostics.isBlank()) "" else "; $diagnostics",
+                error
+            )
             nextConnection.close()
             val failure = if (
                 error is TimeoutCancellationException &&
@@ -333,6 +355,7 @@ internal class LocalAcpRuntime(
     }
 
     private suspend fun disconnectLocked() {
+        Log.i(TAG, "Disconnecting ACP runtime profile=${activeProfile?.id ?: "none"}")
         // Close every in-flight turn before tearing the transport down.
         // Cancelling the prompt jobs first would leave their finally blocks
         // racing a dead connection, and the UI would keep showing those turns
@@ -355,8 +378,14 @@ internal class LocalAcpRuntime(
         client = null
         agentInfo = null
         activeProfile = null
-        connection?.close()
+        val oldConnection = connection
         connection = null
+        if (oldConnection != null) {
+            withTimeoutOrNull(PROCESS_CLOSE_TIMEOUT_MS) {
+                oldConnection.close()
+            } ?: Log.w(TAG, "Timed out closing ACP process")
+        }
+        Log.i(TAG, "Disconnected ACP runtime")
     }
 
     fun statusPayload(): Map<String, Any?> {
@@ -498,7 +527,13 @@ internal class LocalAcpRuntime(
 
     private suspend fun selectAgent(id: String): Map<String, Any?> {
         val selected = profileStore.select(id)
-        if (isConnected && activeProfile?.id != selected.id) {
+        // A provider switch is a process boundary.  Do not rely on the
+        // in-memory `isConnected` flag here: after an app restart or a
+        // partially failed handshake the old ACP process may still be alive
+        // even though the client state is incomplete.  Closing unconditionally
+        // prevents the next prompt from being sent to the previous agent.
+        if (activeProfile?.id != selected.id || connection != null) {
+            Log.i(TAG, "Switching ACP agent to ${selected.id}; closing previous process")
             disconnect()
         }
         return agentsPayload(refreshAvailability = false)
@@ -584,9 +619,15 @@ internal class LocalAcpRuntime(
             val runtime = AcpAgentProfileStore.officialRuntime(profile)
             buildList {
                 add("launch" to profile.command)
-                runtime?.discoveryCommand
-                    ?.takeIf { it != profile.command }
-                    ?.let { add("discovery" to it) }
+                // A managed adapter is the official ACP entry point.  Its
+                // vendor CLI (for example `codex`) is not required to be
+                // installed separately and must not make an ACP profile look
+                // missing after the adapter itself was installed.
+                if (runtime?.managedAdapterPackage == null) {
+                    runtime?.discoveryCommand
+                        ?.takeIf { it != profile.command }
+                        ?.let { add("discovery" to it) }
+                }
             }.map { (kind, rawCommand) ->
                 val executable = shellQuoteAcp(rawCommand)
                 "if command -v $executable >/dev/null 2>&1; then " +
@@ -620,7 +661,9 @@ internal class LocalAcpRuntime(
             val runtime = AcpAgentProfileStore.officialRuntime(profile)
             val launchInstalled = availability["launch"] == true
             val discoveryInstalled = availability["discovery"] == true
-            val installed = builtIn || launchInstalled || discoveryInstalled
+            val managedAdapter = runtime?.managedAdapterPackage != null
+            val installed = builtIn || launchInstalled ||
+                (!managedAdapter && discoveryInstalled)
             val previous = profileStore.health(profile.id)
             val next = when {
                 !profile.enabled -> previous.copy(
@@ -638,7 +681,7 @@ internal class LocalAcpRuntime(
                     status = AcpAgentHealth.STATUS_MISSING,
                     installed = false,
                     error = "Agent command not found: " +
-                        (runtime?.discoveryCommand ?: profile.command),
+                        profile.command,
                     checkedAt = checkedAt
                 )
                 !launchInstalled && runtime?.managedAdapterPackage != null ->
@@ -874,7 +917,7 @@ internal class LocalAcpRuntime(
             it.id.value == "model" || it.category == SessionConfigOptionCategory.MODEL
         } as? SessionConfigOption.Select
         val options = modelOption?.flatOptions().orEmpty()
-        val legacyModels = if (options.isEmpty() && session.modelsSupported) {
+        val acpModels = if (options.isEmpty() && session.modelsSupported) {
             session.availableModels.map {
                 linkedMapOf(
                     "id" to it.modelId.value,
@@ -893,6 +936,23 @@ internal class LocalAcpRuntime(
                 )
             }
         }
+        // Some official ACP adapters intentionally do not expose a model
+        // config option.  Agent mode still uses the app's shared Provider
+        // binding in that case, so keep the model selector useful and aligned
+        // with the same model used by the rest of the app.
+        val sharedModel = sharedModelProvider()
+        val legacyModels = if (acpModels.isEmpty() && !sharedModel.isNullOrBlank()) {
+            listOf(
+                linkedMapOf(
+                    "id" to sharedModel,
+                    "model" to sharedModel,
+                    "displayName" to sharedModel,
+                    "description" to "Shared Provider model"
+                )
+            )
+        } else {
+            acpModels
+        }
         val effortOption = sessionConfigOptions(session).firstOrNull {
             it.id.value == "reasoning_effort" ||
                 it.category == SessionConfigOptionCategory.THOUGHT_LEVEL
@@ -902,6 +962,7 @@ internal class LocalAcpRuntime(
             "currentModelId" to (
                 modelOption?.currentValue?.value
                     ?: if (session.modelsSupported) session.currentModel.value.value else null
+                    ?: sharedModel
                 ),
             "reasoningEfforts" to effortOption?.flatOptions()?.map { it.value.value }.orEmpty(),
             "currentReasoningEffort" to effortOption?.currentValue?.value,
@@ -1066,17 +1127,28 @@ internal class LocalAcpRuntime(
             var cancelled = false
             var failure: Throwable? = null
             try {
-                session.prompt(blocks).collect { event ->
+                // ACP's prompt response is the terminal signal for this
+                // request. Some adapters keep the underlying notification
+                // stream open for session-scoped updates after responding;
+                // collecting until that transport closes leaves the UI in
+                // "thinking" forever even though the turn already ended.
+                session.prompt(blocks).takeWhile { event ->
                     lastTurnActivityAt[threadId] = System.currentTimeMillis()
                     when (event) {
-                        is Event.SessionUpdateEvent ->
+                        is Event.SessionUpdateEvent -> {
                             handleSessionUpdate(threadId, turnId, event.update)
+                            true
+                        }
                         is Event.PromptResponseEvent -> {
                             stopReason = event.response.stopReason.name.lowercase()
-                            Log.i(TAG, "ACP prompt response for turn=$turnId stopReason=$stopReason")
+                            Log.i(
+                                TAG,
+                                "ACP prompt response for turn=$turnId stopReason=$stopReason"
+                            )
+                            false
                         }
                     }
-                }
+                }.collect()
             } catch (error: CancellationException) {
                 cancelled = true
             } catch (error: Throwable) {
@@ -1106,17 +1178,27 @@ internal class LocalAcpRuntime(
         // watchdog cancels itself as soon as the prompt job ends for any other
         // reason, so it only ever finalizes a genuinely stalled turn.
         val watchdog = scope.launch(start = CoroutineStart.LAZY) {
+            val startedAt = System.currentTimeMillis()
             while (true) {
                 delay(STALL_CHECK_INTERVAL_MS)
                 val last = lastTurnActivityAt[threadId] ?: return@launch
-                if (System.currentTimeMillis() - last >= STALL_DEADLINE_MS) {
+                val now = System.currentTimeMillis()
+                if (now - startedAt >= STALL_DEADLINE_MS ||
+                    now - last >= STALL_DEADLINE_MS
+                ) {
                     Log.w(
                         TAG,
                         "ACP turn=$turnId on session=$threadId produced no updates for " +
                             "$STALL_DEADLINE_MS ms; finalizing because the adapter did not " +
                             "send a session/prompt response."
                     )
-                    finishTurn(threadId = threadId, turnId = turnId, status = "end_turn")
+                    finishTurn(
+                        threadId = threadId,
+                        turnId = turnId,
+                        status = "timeout",
+                        error = "ACP agent did not finish this turn within " +
+                            "${STALL_DEADLINE_MS / 1000}s."
+                    )
                     runCatching { job.cancelAndJoin() }
                     return@launch
                 }
@@ -1749,6 +1831,7 @@ internal class LocalAcpRuntime(
     companion object {
         private const val TAG = "LocalAcpRuntime"
         private const val INITIALIZE_TIMEOUT_MS = 90_000L
+        private const val PROCESS_CLOSE_TIMEOUT_MS = 1_500L
         private const val COMMAND_PROBE_TIMEOUT_MS = 20_000L
         private const val MAX_FILE_LINES = 20_000
 
@@ -1844,6 +1927,7 @@ private class AcpProcessConnection(
                 append(shellQuoteAcp(it))
             }
         }
+        Log.i("LocalAcpRuntime", "Launching ACP process profile=${profile.id} command=$command")
         val started = TerminalManager.getInstance(context).startLongLivedAlpineProcess(
             command = command,
             executorKey = "acp-agent-${profile.id}",
@@ -1851,6 +1935,10 @@ private class AcpProcessConnection(
             extraEnvironment = environment
         )
         process = started
+        Log.i(
+            "LocalAcpRuntime",
+            "Launched ACP process profile=${profile.id} alive=${started.isAlive}"
+        )
         writer = OutputStreamWriter(started.outputStream, StandardCharsets.UTF_8)
         readerJob = scope.launch {
             try {
@@ -1975,18 +2063,52 @@ private class AcpProcessConnection(
     override suspend fun close() {
         closing = true
         val current = process
+        Log.i(
+            "LocalAcpRuntime",
+            "Closing ACP process profile=${profile.id} alive=${current?.isAlive == true}"
+        )
         process = null
         readerJob?.cancel()
         stderrJob?.cancel()
         waitJob?.cancel()
-        runCatching { writer?.close() }
-        writer = null
-        runCatching { current?.inputStream?.close() }
-        runCatching { current?.errorStream?.close() }
+        // Destroy the process before closing its pipes.  A proot-backed
+        // Process stream can block while its child is still alive; doing the
+        // pipe cleanup first used to hold the runtime mutex indefinitely and
+        // prevented every subsequent ACP agent from starting.
         runCatching { current?.destroy() }
-        readerJob?.cancelAndJoin()
-        stderrJob?.cancelAndJoin()
-        waitJob?.cancelAndJoin()
+        Log.i(
+            "LocalAcpRuntime",
+            "Requested ACP process shutdown profile=${profile.id}"
+        )
+        if (current != null) {
+            val exited = withContext(Dispatchers.IO) {
+                runCatching { current.waitFor(500, TimeUnit.MILLISECONDS) }
+                    .getOrDefault(false)
+            }
+            if (!exited) {
+                runCatching { current.destroyForcibly() }
+                withContext(Dispatchers.IO) {
+                    runCatching { current.waitFor(500, TimeUnit.MILLISECONDS) }
+                }
+            }
+        }
+        withTimeoutOrNull(250L) {
+            withContext(Dispatchers.IO) {
+                runCatching { writer?.close() }
+                runCatching { current?.inputStream?.close() }
+                runCatching { current?.errorStream?.close() }
+            }
+        }
+        writer = null
+        Log.i(
+            "LocalAcpRuntime",
+            "Closed ACP process profile=${profile.id} alive=${current?.isAlive == true}"
+        )
+        withTimeoutOrNull(500L) {
+            readerJob?.cancelAndJoin()
+            stderrJob?.cancelAndJoin()
+            waitJob?.cancelAndJoin()
+        }
         readerJob = null
         stderrJob = null
         waitJob = null

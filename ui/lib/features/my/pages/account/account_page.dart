@@ -866,6 +866,14 @@ class _AccountPageState extends State<AccountPage> {
         return _text('验证码无效或已经过期', 'The code is invalid or expired');
       case 'rate_limited':
         return _text('操作太频繁，请稍后再试', 'Too many attempts. Try again later.');
+      case 'too_many_requests':
+        return _text('操作太频繁，请稍后再试', 'Too many attempts. Try again later.');
+      case 'verification_unavailable':
+        return _text('验证码服务暂时不可用，请稍后重试', 'Verification service is temporarily unavailable.');
+      case 'account_service_unavailable':
+        return _text('账号服务暂时不可用，请稍后重试', 'Account service is temporarily unavailable.');
+      case 'ACCOUNT_FEATURE_UNAVAILABLE':
+        return _text('当前账号服务版本不支持注册，请稍后重试', 'This account service does not support registration yet.');
       case 'current_password_invalid':
         return _text('当前密码不正确', 'The current password is incorrect');
       case 'password_reuse':

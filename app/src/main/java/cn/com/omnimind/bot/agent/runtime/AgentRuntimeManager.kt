@@ -45,6 +45,7 @@ class AgentRuntimeManager private constructor(
         bindingRepository = bindingRepository,
         profileStore = acpAgentProfileStore,
         prepareLaunchEnvironment = ::prepareLocalAcpLaunch,
+        sharedModelProvider = ::currentAgentModel,
         onMessage = ::handleServerMessage
     )
     private val activeTurnsByThreadId = ConcurrentHashMap<String, String>()
@@ -185,7 +186,26 @@ class AgentRuntimeManager private constructor(
             activeLocalDistributionId = null
             clearActiveTurns()
             if (runtime.kind == AgentRuntimeKind.LOCAL) {
-                connectLocalAcp()
+                val profile = acpAgentProfileStore.selected()
+                Log.i(
+                    "AgentRuntimeManager",
+                    "Connecting selected local ACP agent id=${profile.id} command=${profile.command}"
+                )
+                try {
+                    connectLocalAcp()
+                    Log.i(
+                        "AgentRuntimeManager",
+                        "Connected selected local ACP agent id=${profile.id}"
+                    )
+                } catch (error: Throwable) {
+                    Log.e(
+                        "AgentRuntimeManager",
+                        "Failed to connect selected local ACP agent id=${profile.id}: " +
+                            (error.message ?: error.javaClass.simpleName),
+                        error
+                    )
+                    throw error
+                }
                 activeRuntime = AgentRuntimeKind.LOCAL
                 activeLocalDistributionId = localDistributionId
                 return status()
@@ -1059,7 +1079,7 @@ class AgentRuntimeManager private constructor(
                 if (sharedProvider != null) {
                     writeCodexConfigFiles(
                         configToml = buildCodexConfigToml(
-                            baseUrl = sharedProvider.baseUrl,
+                            baseUrl = mapping.codexBaseUrl ?: sharedProvider.baseUrl,
                             model = mapping.codexModel ?: "gpt-5-codex"
                         ),
                         authJson = buildCodexAuthJson(sharedProvider.apiKey)
@@ -1084,7 +1104,7 @@ class AgentRuntimeManager private constructor(
     private fun currentAgentProviderCredentials(): AgentProviderCredentials? = runCatching {
         ModelProviderConfigStore.getEditingProfile()
             .takeIf { it.baseUrl.isNotBlank() && it.apiKey.isNotBlank() }
-            ?.let { AgentProviderCredentials(it.baseUrl, it.apiKey) }
+            ?.let { AgentProviderCredentials(it.baseUrl, it.apiKey, it.wireApi) }
     }.getOrNull()
 
     private fun currentAgentModel(): String? = runCatching {
@@ -2416,7 +2436,6 @@ internal fun buildCodexConfigToml(
     val lines = mutableListOf(
         "model_provider = \"omnimind\"",
         "model = ${tomlString(model.trim())}",
-        "model_reasoning_effort = \"xhigh\"",
         "disable_response_storage = true",
         "",
         "[model_providers.omnimind]",

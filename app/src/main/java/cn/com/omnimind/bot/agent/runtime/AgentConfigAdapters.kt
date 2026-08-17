@@ -8,7 +8,8 @@ package cn.com.omnimind.bot.agent.runtime
  */
 internal data class AgentProviderCredentials(
     val baseUrl: String,
-    val apiKey: String
+    val apiKey: String,
+    val wireApi: String = "chat_completions"
 )
 
 internal data class AgentProviderMappingInput(
@@ -22,7 +23,8 @@ internal data class AgentProviderMappingInput(
 internal data class AgentProviderMapping(
     val environment: Map<String, String> = emptyMap(),
     val deepSeekConfig: DeepSeekHarnessConfig? = null,
-    val codexModel: String? = null
+    val codexModel: String? = null,
+    val codexBaseUrl: String? = null
 )
 
 internal interface AgentConfigAdapter {
@@ -88,7 +90,8 @@ private object CodexConfigAdapter : AgentConfigAdapter {
                 ?.takeIf { it.isNotBlank() }
                 ?: input.existingCodexModel
                     ?.takeIf { it.isNotBlank() }
-                ?: "gpt-5-codex"
+                ?: "gpt-5-codex",
+            codexBaseUrl = provider?.baseUrl?.let(::normalizeCodexBaseUrl)
         )
     }
 }
@@ -141,4 +144,18 @@ internal fun buildSharedAgentProviderEnvironment(
             model = null
         )
     ).environment
+}
+
+internal fun normalizeCodexBaseUrl(baseUrl: String): String {
+    val normalized = baseUrl.trim().trimEnd('/')
+    if (normalized.isEmpty()) return normalized
+    if (normalized.contains('#') ||
+        normalized.endsWith("/v1") ||
+        normalized.endsWith("/compatible-mode/v1") ||
+        normalized.endsWith("/responses") ||
+        normalized.endsWith("/v1/responses")
+    ) {
+        return normalized
+    }
+    return "$normalized/v1"
 }

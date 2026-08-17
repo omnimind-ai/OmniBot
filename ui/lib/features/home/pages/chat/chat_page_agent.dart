@@ -134,15 +134,17 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       _optimisticAcpAgentId = normalized;
       _isAcpAgentSwitching = true;
     });
-    // Enter the selected Agent's blank conversation immediately. Adapter
-    // installation, process launch, and connection continue in parallel.
-    final navigationFuture = _applyConversationThreadTarget(target);
     var selected = false;
     try {
       selected = selectsRemote
           ? await _selectRemoteCodexRuntime()
           : await _selectAgent(normalized);
-      await navigationFuture;
+      // Select/connect the adapter before creating the new conversation. This
+      // prevents the first prompt from being routed to the previous agent
+      // while the ACP process is still switching.
+      if (selected) {
+        await _applyConversationThreadTarget(target);
+      }
     } finally {
       if (mounted) {
         setState(() {
@@ -633,12 +635,6 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     final wasRemote =
         _agentRuntimeStatus.runtime == 'remote' ||
         _agentRuntimeStatus.remoteEnabled;
-    if (!wasRemote &&
-        normalized ==
-            (_agentRuntimeStatus.activeAgentId ??
-                _agentCatalog?.selectedAgentId)) {
-      return true;
-    }
     try {
       if (wasRemote) {
         final remote = await AgentRuntimeService.readRemoteBridgeConfig();
