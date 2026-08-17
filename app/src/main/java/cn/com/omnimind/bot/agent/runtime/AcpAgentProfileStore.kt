@@ -73,12 +73,11 @@ internal const val DEEPSEEK_HARNESS_NPM_CHANNEL = "next"
 internal val DEEPSEEK_HARNESS_NPM_PACKAGE_NAMES = listOf(
     "@deepseek-ai/dsh-acp-demo",
     "@deepseek-ai/dsh-llm-deepseek",
-    "@deepseek-ai/dsh-sandbox-local",
-    "@deepseek-ai/dsh-sandbox-policy",
     "@deepseek-ai/dsh-subprocess-local",
-    "@deepseek-ai/dsh-bash-sandbox",
     "@deepseek-ai/dsh-user-approval",
     "@deepseek-ai/dsh-mcp-client",
+    "@deepseek-ai/dsh-fs",
+    "@deepseek-ai/dsh-fs-local",
     // Official ACP example composition: preserve the Harness capability
     // surface instead of shipping a reduced host-owned tool loop.
     "@deepseek-ai/dsh-token-meter",
@@ -95,8 +94,6 @@ internal val DEEPSEEK_HARNESS_NPM_PACKAGE_NAMES = listOf(
     "@deepseek-ai/dsh-tool-ralph",
     "@deepseek-ai/dsh-tool-todo",
     "@deepseek-ai/dsh-repeat-tool-reminder",
-    "@deepseek-ai/dsh-fs-sandbox",
-    "@deepseek-ai/dsh-fs-observation-policy",
     "@deepseek-ai/dsh-tool-fs",
     // Official Harness skill registry and filesystem-backed skill provider.
     // These are DSH's native reusable-extension surface; they are not the
@@ -104,8 +101,6 @@ internal val DEEPSEEK_HARNESS_NPM_PACKAGE_NAMES = listOf(
     "@deepseek-ai/dsh-skill",
     "@deepseek-ai/dsh-skill-filesystem",
     "@deepseek-ai/dsh-tool-skill",
-    "@deepseek-ai/dsh-hooks-claude-code",
-    "@deepseek-ai/dsh-hooks-codex"
 )
 internal val DEEPSEEK_HARNESS_NPM_PACKAGE_SPECS =
     DEEPSEEK_HARNESS_NPM_PACKAGE_NAMES.map { packageName ->

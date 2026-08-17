@@ -208,11 +208,23 @@ internal class LocalAcpRuntime(
         ) {
             XiaowanAcpConnection(appContext, scope)
         } else {
+            val launchEnvironment = baseEnvironment + profile.environment
             AcpProcessConnection(
                 context = appContext,
                 scope = scope,
                 profile = profile,
-                environment = baseEnvironment + profile.environment
+                environment = launchEnvironment + mapOf(
+                    // Official ACP runtimes use atomic file writers for
+                    // sessions, skills and extensions.  The interactive
+                    // terminal's historical PRoot link emulation turns
+                    // those writes into dangling symlinks, so opt ACP out
+                    // without changing ordinary terminal behavior.
+                    "OMNIBOT_DISABLE_PROOT_LINK2SYMLINK" to "1",
+                    "NODE_OPTIONS" to appendNodeRequire(
+                        launchEnvironment["NODE_OPTIONS"],
+                        ACP_FILESYSTEM_COMPAT_PATH
+                    )
+                )
             )
         }
         val transport = nextConnection.createTransport(scope)
@@ -312,6 +324,12 @@ internal class LocalAcpRuntime(
                     "Open Agent mode settings to configure the command or install its adapter."
             )
         }
+    }
+
+    private fun appendNodeRequire(existing: String?, path: String): String {
+        val option = "--require $path"
+        return existing.orEmpty().trim()
+            .let { current -> if (current.contains(option)) current else "$current $option".trim() }
     }
 
     private suspend fun initializeAgent(

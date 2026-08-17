@@ -1074,6 +1074,14 @@ class AgentRuntimeManager private constructor(
             emptyMap()
         }
         ensureManagedAcpAdapter(profile)
+        // Official ACP persistence uses hard-link publication. Android's app
+        // sandbox rejects hard links, so install one narrow Node compatibility
+        // preload while keeping the upstream ACP/DSH packages untouched.
+        writeTerminalTextFile(
+            path = ACP_FILESYSTEM_COMPAT_PATH,
+            content = ACP_FILESYSTEM_COMPAT_SCRIPT,
+            executorKey = "acp-filesystem-compat-write"
+        )
         return when (profile.id) {
             AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID -> {
                 if (sharedProvider != null) {
@@ -1830,6 +1838,31 @@ private const val DEEPSEEK_HARNESS_CONFIG_DISPLAY_PATH =
     "~/.dsh/omnibot-acp/config.json"
 private const val DEEPSEEK_HARNESS_CORDIS_PATH =
     "$DEEPSEEK_HARNESS_CONFIG_HOME/cordis.yml"
+internal const val ACP_FILESYSTEM_COMPAT_PATH =
+    "$DEEPSEEK_HARNESS_CONFIG_HOME/acp-fs-compat.cjs"
+internal val ACP_FILESYSTEM_COMPAT_SCRIPT = """
+    // Android app sandboxes reject hard-link creation. Official ACP runtimes
+    // use fs.promises.link as an atomic publish primitive, so copy the fully
+    // written temporary file only for that specific denied operation.
+    const fs = require('node:fs');
+    const promises = fs.promises;
+    const originalLink = promises.link.bind(promises);
+    promises.link = async (existingPath, newPath, ...args) => {
+      try {
+        return await originalLink(existingPath, newPath, ...args);
+      } catch (error) {
+        if (error && (error.code === 'EACCES' || error.code === 'EPERM')) {
+          await promises.copyFile(
+            existingPath,
+            newPath,
+            fs.constants.COPYFILE_EXCL
+          );
+          return;
+        }
+        throw error;
+      }
+    };
+""".trimIndent() + "\n"
 private const val DEEPSEEK_PUBLIC_BASE_URL = "https://api.deepseek.com"
 private const val DEEPSEEK_HARNESS_DEFAULT_MODEL = "deepseek-v4-pro"
 private const val DEEPSEEK_HARNESS_DEFAULT_REASONING_EFFORT = "max"
@@ -2239,9 +2272,11 @@ internal fun buildDeepSeekHarnessConfigJson(
  * Phone-safe copy of DeepSeek Harness's official ACP example composition.
  *
  * The host owns only deployment values (model, permission, persistence, and
- * the MCP endpoint). The capability plugins and their defaults stay aligned
- * with the upstream composition, so the app does not accidentally turn DSH
- * into a smaller private agent implementation.
+ * the MCP endpoint). The mounted capability plugins stay official and keep
+ * the upstream names/defaults; desktop-only services that require bwrap,
+ * Landlock, or a shell host are intentionally not mounted on Android.
+ * This keeps DSH native while avoiding a private mobile protocol or a plugin
+ * tree that can never become ready on the phone.
  */
 internal fun buildDeepSeekHarnessCordisConfig(): String = """
     - id: llm-deepseek
@@ -2256,22 +2291,8 @@ internal fun buildDeepSeekHarnessCordisConfig(): String = """
           # model registry as well as the ACP launch environment.
           - id: !!js "process.env.DSH_MODEL ?? 'deepseek-v4-pro'"
 
-    - id: sandbox
-      name: '@deepseek-ai/dsh-sandbox-local'
-
-    - id: sandbox-policy
-      name: '@deepseek-ai/dsh-sandbox-policy'
-      config:
-        mode: !!js "process.env.DSH_PERMISSION_MODE ?? 'workspace-write'"
-        workspaceRoot: !!js process.cwd()
-
     - id: subprocess
       name: '@deepseek-ai/dsh-subprocess-local'
-
-    - id: bash
-      name: '@deepseek-ai/dsh-bash-sandbox'
-      config:
-        timeoutMs: 60000
 
     - id: approval
       name: '@deepseek-ai/dsh-user-approval'
@@ -2290,7 +2311,7 @@ internal fun buildDeepSeekHarnessCordisConfig(): String = """
         workspaceContext:
           maxBytes: 65536
         persona: |
-          You are a coding assistant powered by the {{model}} model. Your working directory is {{cwd}}. Your bash tool runs under a file sandbox — a `[sandbox: file access denied …]` result is policy, not a command bug.
+          You are a coding assistant powered by the {{model}} model. Your working directory is {{cwd}}. On Android, use the official MCP tools and the read/write/edit filesystem tools; a desktop bash sandbox is not available in this mobile runtime.
 
           Verify your work by running the code or tests. Keep answers brief and factual.
 
@@ -2366,13 +2387,13 @@ internal fun buildDeepSeekHarnessCordisConfig(): String = """
     - id: repeat-tool-reminder
       name: '@deepseek-ai/dsh-repeat-tool-reminder'
 
-    - id: fs-sandbox
-      name: '@deepseek-ai/dsh-fs-sandbox'
+    # Android has no desktop bwrap/Landlock backend. Mount DSH's official
+    # local filesystem seam directly so read/write/edit remain real DSH tools
+    # without advertising an approval flow that the phone cannot service.
+    - id: fs
+      name: '@deepseek-ai/dsh-fs-local'
       config:
         cwd: !!js process.cwd()
-
-    - id: fs-observation-policy
-      name: '@deepseek-ai/dsh-fs-observation-policy'
 
     - id: tool-fs
       name: '@deepseek-ai/dsh-tool-fs'
@@ -2395,16 +2416,6 @@ internal fun buildDeepSeekHarnessCordisConfig(): String = """
 
     - id: tool-skill
       name: '@deepseek-ai/dsh-tool-skill'
-
-    - id: hooks-claude-code
-      name: '@deepseek-ai/dsh-hooks-claude-code'
-      config:
-        configPath: ./hooks.json
-
-    - id: hooks-codex
-      name: '@deepseek-ai/dsh-hooks-codex'
-      config:
-        configPath: ./codex-hooks.json
 
     - id: mcp-omnibot
       name: '@deepseek-ai/dsh-mcp-client'

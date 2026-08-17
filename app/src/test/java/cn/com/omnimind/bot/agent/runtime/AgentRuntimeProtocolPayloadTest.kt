@@ -111,6 +111,11 @@ class AgentRuntimeProtocolPayloadTest {
         )
         assertTrue(
             deepSeekRuntime?.managedAdapterPackages.orEmpty().contains(
+                "@deepseek-ai/dsh-fs-local@next"
+            )
+        )
+        assertTrue(
+            deepSeekRuntime?.managedAdapterPackages.orEmpty().contains(
                 "@deepseek-ai/dsh-compaction-basic@next"
             )
         )
@@ -324,6 +329,7 @@ class AgentRuntimeProtocolPayloadTest {
         assertTrue(config.contains("name: '@deepseek-ai/dsh-llm-deepseek'"))
         assertTrue(config.contains("name: '@deepseek-ai/dsh-acp-demo'"))
         assertTrue(config.contains("name: '@deepseek-ai/dsh-mcp-client'"))
+        assertTrue(config.contains("name: '@deepseek-ai/dsh-fs-local'"))
         assertTrue(config.contains("name: '@deepseek-ai/dsh-compaction-basic'"))
         assertTrue(config.contains("name: '@deepseek-ai/dsh-tool-fs'"))
         assertTrue(config.contains("name: '@deepseek-ai/dsh-skill'"))
@@ -339,7 +345,7 @@ class AgentRuntimeProtocolPayloadTest {
         assertTrue(config.contains("process.env.DSH_MODEL ?? 'deepseek-v4-pro'"))
         assertTrue(config.contains("process.env.OMNIBOT_MCP_URL"))
         assertTrue(config.contains("process.env.OMNIBOT_MCP_TOKEN"))
-        assertTrue(config.contains("workspaceRoot: !!js process.cwd()"))
+        assertTrue(config.contains("cwd: !!js process.cwd()"))
         assertTrue(config.contains("persistenceCompression: !!js"))
         assertTrue(
             config.contains(
@@ -351,6 +357,11 @@ class AgentRuntimeProtocolPayloadTest {
         assertTrue(config.contains("process.env.DSH_REASONING_EFFORT"))
         assertTrue(config.contains("process.env.DSH_PERMISSION_MODE"))
         assertTrue(config.contains("policy: !!js"))
+        assertFalse(config.contains("name: '@deepseek-ai/dsh-bash-sandbox'"))
+        assertFalse(config.contains("name: '@deepseek-ai/dsh-fs-sandbox'"))
+        assertFalse(config.contains("name: '@deepseek-ai/dsh-fs-observation-policy'"))
+        assertFalse(config.contains("name: '@deepseek-ai/dsh-hooks-claude-code'"))
+        assertFalse(config.contains("name: '@deepseek-ai/dsh-hooks-codex'"))
         assertFalse(config.contains("omnibot-acp-demo.mjs"))
         assertFalse(config.contains("skills:\n          enabled: false"))
         assertFalse(config.contains("toolJobs: false"))
@@ -454,6 +465,29 @@ class AgentRuntimeProtocolPayloadTest {
                 processAlive = true
             )
         )
+    }
+
+    @Test
+    fun officialAcpLaunchDisablesOnlyTheProotLinkCompatibilityMode() {
+        val script = File(
+            "../ReTerminal/core/main/src/main/assets/init-host.sh"
+        ).takeIf { it.exists() } ?: File(
+            "ReTerminal/core/main/src/main/assets/init-host.sh"
+        )
+        val source = script.readText()
+
+        assertTrue(source.contains("OMNIBOT_DISABLE_PROOT_LINK2SYMLINK"))
+        assertTrue(source.contains("ARGS=\"\$ARGS --link2symlink\""))
+        assertTrue(source.contains("!= \"1\""))
+    }
+
+    @Test
+    fun officialAcpFilesystemCompatibilityUsesCopyOnlyForDeniedHardLinks() {
+        assertTrue(ACP_FILESYSTEM_COMPAT_SCRIPT.contains("promises.link"))
+        assertTrue(ACP_FILESYSTEM_COMPAT_SCRIPT.contains("COPYFILE_EXCL"))
+        assertTrue(ACP_FILESYSTEM_COMPAT_SCRIPT.contains("EACCES"))
+        assertTrue(ACP_FILESYSTEM_COMPAT_SCRIPT.contains("EPERM"))
+        assertFalse(ACP_FILESYSTEM_COMPAT_SCRIPT.contains("rename"))
     }
 
 
