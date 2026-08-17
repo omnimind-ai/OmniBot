@@ -52,6 +52,7 @@ import cn.com.omnimind.bot.util.AssistsUtil
 import cn.com.omnimind.assists.controller.http.HttpController
 import cn.com.omnimind.baselib.util.SchemeUtil
 import cn.com.omnimind.bot.util.TaskRuntimeSettings
+import cn.com.omnimind.bot.task.runtime.TaskRuntime
 import cn.com.omnimind.bot.agent.AgentCallback
 import cn.com.omnimind.bot.agent.AgentAlarmToolService
 import cn.com.omnimind.bot.agent.AgentConversationContextCompactor
@@ -1887,6 +1888,7 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
         mainJob.launch {
             try {
                 TaskRuntimeSettings.onTaskStarted(context)
+                TaskRuntime.start(context, taskID)
                 val workspaceMemoryService = WorkspaceMemoryService(context)
                 val preparedContent = prepareChatTaskContent(
                     content = content,
@@ -1962,12 +1964,14 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
             } catch (e: PermissionException) {
                 removeChatTaskPersistenceState(taskID)
                 TaskRuntimeSettings.onTaskFinished(context)
+                TaskRuntime.finish(context, taskID)
                 withContext(Dispatchers.Main) {
                     result.error("PERMISSION_ERROR", e.message, null)
                 }
             } catch (e: Exception) {
                 removeChatTaskPersistenceState(taskID)
                 TaskRuntimeSettings.onTaskFinished(context)
+                TaskRuntime.finish(context, taskID)
                 withContext(Dispatchers.Main) {
                     result.error("DO_TASK_ERROR", e.message, null)
                 }
@@ -2150,6 +2154,7 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
             )
         }
         TaskRuntimeSettings.onTaskFinished(context)
+        TaskRuntime.finish(context, taskID)
         if (persistenceState?.isError != true) {
             TaskRuntimeSettings.notifyTaskFinished(
                 context = context,
@@ -4211,6 +4216,7 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
         )
         registerActiveAgentRun(taskId, agentRunContext)
         TaskRuntimeSettings.onTaskStarted(context)
+        TaskRuntime.start(context, taskId)
 
         agentRunScope.launch {
             var historyRepository: AgentConversationHistoryRepository? = null
@@ -5927,6 +5933,7 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 }
             } finally {
                 TaskRuntimeSettings.onTaskFinished(context)
+                TaskRuntime.finish(context, taskId)
                 clearActiveAgentJob(taskId, agentRunJob)
             }
         }

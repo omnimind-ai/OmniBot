@@ -211,6 +211,11 @@
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
+        <service
+            android:name="cn.com.omnimind.bot.task.runtime.TaskRuntimeService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
         <activity
             android:name="cn.com.omnimind.bot.agent.BrowserFileChooserRequestActivity"
             android:exported="false"
