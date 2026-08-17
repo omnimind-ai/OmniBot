@@ -1,6 +1,7 @@
 package com.rk
 
 import android.content.ComponentName
+import android.app.Application
 import android.content.Context
 import android.content.pm.PackageManager
 import android.content.res.AssetFileDescriptor
@@ -14,6 +15,8 @@ import android.provider.DocumentsProvider
 import android.util.Log
 import android.webkit.MimeTypeMap
 import com.rk.libcommons.selectedTerminalHomeDir
+import com.rk.libcommons.application
+import com.rk.resources.Res
 import com.rk.resources.getString
 import com.rk.resources.strings
 import java.io.File
@@ -103,6 +106,19 @@ class AlpineDocumentProvider : DocumentsProvider() {
     }
 
     override fun onCreate(): Boolean {
+        // DocumentsUI may bind this provider before Application.onCreate() has
+        // finished.  The terminal settings singleton reads the shared
+        // application reference during class initialization, so seed the
+        // reference from the provider context before queryRoots() can touch it.
+        // The real Application.onCreate() will assign the same process-wide
+        // references again during normal startup.
+        val providerApplication = context?.applicationContext as? Application
+        if (application == null && providerApplication != null) {
+            application = providerApplication
+        }
+        if (Res.application == null && providerApplication != null) {
+            Res.application = providerApplication
+        }
         return true
     }
 

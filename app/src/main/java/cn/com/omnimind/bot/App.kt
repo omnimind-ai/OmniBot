@@ -85,7 +85,7 @@ class App : BaseApplication() {
         CredentialEndpointSecurity.configureDebugLoopback(BuildConfig.DEBUG)
         AppSecretStore.initialize(this)
         ModelProviderConfigStore.initialize(this)
-        DebugOmniMindProviderBootstrap.install()
+        DebugOmniMindProviderBootstrap.install(this)
         OfficialOmniPluginProviders.register()
         OmniAccount.initialize(
             context = this,
