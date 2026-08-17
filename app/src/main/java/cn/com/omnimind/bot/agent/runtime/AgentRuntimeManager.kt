@@ -12,6 +12,8 @@ import cn.com.omnimind.bot.agent.AgentAttachmentPromptSupport
 import cn.com.omnimind.bot.agent.AgentImageAttachmentSupport
 import cn.com.omnimind.bot.agent.AgentWorkspaceAttachmentSupport
 import cn.com.omnimind.bot.agent.AgentWorkspaceManager
+import cn.com.omnimind.bot.mcp.McpServerManager
+import cn.com.omnimind.bot.task.runtime.TaskRuntime
 import cn.com.omnimind.bot.util.TaskRuntimeSettings
 import com.rk.terminal.runtime.TerminalDistribution
 import com.google.gson.GsonBuilder
@@ -44,6 +46,45 @@ class AgentRuntimeManager private constructor(
         onMessage = ::handleServerMessage
     )
     private val activeTurnsByThreadId = ConcurrentHashMap<String, String>()
+
+    /**
+     * One lifecycle boundary for every Agent backend. ACP, a remote Codex
+     * bridge, and future Harness adapters all enter here once a turn id is
+     * known, so Android background survival is not coupled to any Agent loop.
+     */
+    private fun trackActiveTurn(threadId: String, turnId: String) {
+        val previousTurnId = activeTurnsByThreadId.put(threadId, turnId)
+        if (previousTurnId == turnId) return
+        previousTurnId?.let(::releaseTurnRuntime)
+        TaskRuntimeSettings.onTaskStarted(appContext)
+        if (!TaskRuntime.start(appContext, agentTurnRuntimeId(turnId))) {
+            Log.w("AgentRuntimeManager", "Unable to acquire foreground runtime for turn=$turnId")
+        }
+    }
+
+    private fun clearActiveTurn(threadId: String, expectedTurnId: String? = null) {
+        val removedTurnId = if (expectedTurnId == null) {
+            activeTurnsByThreadId.remove(threadId)
+        } else if (activeTurnsByThreadId.remove(threadId, expectedTurnId)) {
+            expectedTurnId
+        } else {
+            null
+        }
+        removedTurnId?.let(::releaseTurnRuntime)
+    }
+
+    private fun clearActiveTurns() {
+        activeTurnsByThreadId.entries.toList().forEach { (threadId, turnId) ->
+            if (activeTurnsByThreadId.remove(threadId, turnId)) {
+                releaseTurnRuntime(turnId)
+            }
+        }
+    }
+
+    private fun releaseTurnRuntime(turnId: String) {
+        TaskRuntime.finish(appContext, agentTurnRuntimeId(turnId))
+        TaskRuntimeSettings.onTaskFinished(appContext)
+    }
 
     @Volatile
     private var pendingThreadStartConversationId: Long? = null
@@ -140,7 +181,7 @@ class AgentRuntimeManager private constructor(
             session = null
             activeRuntime = null
             activeLocalDistributionId = null
-            activeTurnsByThreadId.clear()
+            clearActiveTurns()
             if (runtime.kind == AgentRuntimeKind.LOCAL) {
                 connectLocalAcp()
                 activeRuntime = AgentRuntimeKind.LOCAL
@@ -183,7 +224,7 @@ class AgentRuntimeManager private constructor(
             localAcpRuntime.disconnect()
             activeRuntime = null
             activeLocalDistributionId = null
-            activeTurnsByThreadId.clear()
+            clearActiveTurns()
         }
         return status()
     }
@@ -400,7 +441,7 @@ class AgentRuntimeManager private constructor(
         }
         val turnId = extractTurnId(response)
         if (!turnId.isNullOrBlank()) {
-            activeTurnsByThreadId[threadId] = turnId
+            trackActiveTurn(threadId, turnId)
         }
         return response.withLocalIds(
             threadId = threadId,
@@ -442,7 +483,7 @@ class AgentRuntimeManager private constructor(
         }
         val turnId = extractTurnId(response)
         if (!turnId.isNullOrBlank()) {
-            activeTurnsByThreadId[threadId] = turnId
+            trackActiveTurn(threadId, turnId)
         }
         return response.withLocalIds(
             threadId = threadId,
@@ -481,7 +522,7 @@ class AgentRuntimeManager private constructor(
             "turn/interrupt",
             mapOf("threadId" to threadId, "turnId" to turnId)
         ) as Map<String, Any?>
-        activeTurnsByThreadId.remove(threadId)
+        clearActiveTurn(threadId, turnId)
         return response.withLocalIds(
             threadId = threadId,
             conversationId = localConversationIdForThread(threadId),
@@ -666,7 +707,7 @@ class AgentRuntimeManager private constructor(
             )
         }
         localAcpRuntime.disconnect()
-        activeTurnsByThreadId.clear()
+        clearActiveTurns()
         return readAgentConfig(mapOf("agentId" to profile.id))
     }
 
@@ -761,7 +802,7 @@ class AgentRuntimeManager private constructor(
             localAcpRuntime.disconnect()
             activeRuntime = null
             activeLocalDistributionId = null
-            activeTurnsByThreadId.clear()
+            clearActiveTurns()
         }
         return buildRemoteBridgeConfigPayload(
             remoteConfig = savedRemoteConfig,
@@ -910,11 +951,11 @@ class AgentRuntimeManager private constructor(
         val active = remoteCodexThreadActivity(response)
         val activeTurnId = extractActiveTurnId(response)
         if (active == true && !activeTurnId.isNullOrBlank()) {
-            activeTurnsByThreadId[threadId] = activeTurnId
+            trackActiveTurn(threadId, activeTurnId)
             return
         }
         if (active == false) {
-            activeTurnsByThreadId.remove(threadId)
+            clearActiveTurn(threadId)
         }
     }
 
@@ -942,6 +983,7 @@ class AgentRuntimeManager private constructor(
             profile.id == AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID &&
             AcpAgentProfileStore.officialRuntime(profile) != null
         ) {
+            val mcpState = McpServerManager.ensureRunning(appContext)
             val config = parseDeepSeekHarnessConfig(
                 readTerminalTextFile(
                     path = DEEPSEEK_HARNESS_CONFIG_PATH,
@@ -951,7 +993,7 @@ class AgentRuntimeManager private constructor(
             require(config.apiKey.isNotBlank()) {
                 "Configure the DeepSeek API key in Agent mode settings before starting DeepSeek Harness."
             }
-            config.toEnvironment()
+            config.toEnvironment() + buildDeepSeekHarnessMcpEnvironment(mcpState)
         } else {
             emptyMap()
         }
@@ -1204,15 +1246,14 @@ class AgentRuntimeManager private constructor(
             (method == "turn/started" ||
                 protocolEventType == "task_started" ||
                 protocolEventType == "turn_started")) {
-            activeTurnsByThreadId[threadId] = turnId
-            TaskRuntimeSettings.onTaskStarted(appContext)
+            trackActiveTurn(threadId, turnId)
         }
         if (!threadId.isNullOrBlank() && method == "thread/status/changed") {
             val active = remoteCodexThreadActivity(message)
             if (active == true && !turnId.isNullOrBlank()) {
-                activeTurnsByThreadId[threadId] = turnId
+                trackActiveTurn(threadId, turnId)
             } else if (active == false) {
-                activeTurnsByThreadId.remove(threadId)
+                clearActiveTurn(threadId)
             }
         }
         if (!threadId.isNullOrBlank() &&
@@ -1220,7 +1261,7 @@ class AgentRuntimeManager private constructor(
                 protocolEventType == "task_complete" ||
                 protocolEventType == "turn_complete" ||
                 protocolEventType == "turn_aborted")) {
-            activeTurnsByThreadId.remove(threadId)
+            clearActiveTurn(threadId, turnId)
         }
         if (!threadId.isNullOrBlank() &&
             (method == "error" || method == "turn/failed") &&
@@ -1229,10 +1270,10 @@ class AgentRuntimeManager private constructor(
             // turn fails terminally (no follow-up turn/completed will come).
             // Clear the active turn so subsequent thread/read responses
             // surface active=false to the Flutter side.
-            activeTurnsByThreadId.remove(threadId)
+            clearActiveTurn(threadId, turnId)
         }
         if (!threadId.isNullOrBlank() && method == "thread/closed") {
-            activeTurnsByThreadId.remove(threadId)
+            clearActiveTurn(threadId)
         }
 
         val eventAgentId = if (activeRuntime == AgentRuntimeKind.REMOTE) {
@@ -1278,7 +1319,6 @@ class AgentRuntimeManager private constructor(
             protocolEventType == "task_complete" ||
             protocolEventType == "turn_complete") {
             runCatching {
-                TaskRuntimeSettings.onTaskFinished(appContext)
                 TaskRuntimeSettings.notifyTaskFinished(
                     context = appContext,
                     title = "$eventAgentName task completed",
@@ -2064,6 +2104,16 @@ internal fun buildDeepSeekHarnessCordisConfig(): String = """
           You are a coding assistant powered by {{model}} on DeepSeek Harness.
           Your working directory is {{cwd}}. Inspect files, make focused changes,
           and verify work with relevant tests before answering.
+
+    - id: mcp-omnibot
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: omnibot
+        transport: streamable-http
+        url: !!js process.env.OMNIBOT_MCP_URL
+        headers:
+          Authorization: !!js "'Bearer ' + process.env.OMNIBOT_MCP_TOKEN"
+        failOnStartupError: true
 """.trimIndent() + "\n"
 
 internal fun npmPackageName(spec: String): String {
@@ -2237,6 +2287,8 @@ private const val AGENT_CONFIG_START_MARKER = "__OMNI_AGENT_CONFIG_START__"
 private const val AGENT_CONFIG_END_MARKER = "__OMNI_AGENT_CONFIG_END__"
 private const val MAX_AGENT_CONFIG_FILE_CHARS = 1_048_576
 private const val DEFAULT_EMPTY_JSON_FILE = "{\n}\n"
+
+internal fun agentTurnRuntimeId(turnId: String): String = "agent-turn:${turnId.trim()}"
 
 private fun Map<String, Any?>.mapValue(key: String): Map<String, Any?> {
     val raw = this[key] as? Map<*, *> ?: return emptyMap()

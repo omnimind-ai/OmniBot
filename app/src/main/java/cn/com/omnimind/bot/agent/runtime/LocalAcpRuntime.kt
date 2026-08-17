@@ -8,6 +8,7 @@ import android.util.Log
 import cn.com.omnimind.bot.BuildConfig
 import cn.com.omnimind.bot.agent.AgentWorkspaceAttachmentSupport
 import cn.com.omnimind.bot.agent.AgentWorkspaceManager
+import cn.com.omnimind.bot.mcp.McpServerManager
 import com.ai.assistance.operit.terminal.TerminalManager
 import com.agentclientprotocol.agent.AgentInfo
 import com.agentclientprotocol.client.Client
@@ -592,7 +593,7 @@ internal class LocalAcpRuntime(
                 ?.let(sessions::get)
                 ?.takeIf { sessionCwds[it.sessionId.value] == cwd }
             val session = catalogSession ?: requireClient().newSession(
-                SessionCreationParameters(cwd, emptyList()),
+                sessionCreationParameters(cwd),
                 operationsFactory()
             ).also { registerSession(it, cwd) }
             if (catalogSession != null) {
@@ -634,7 +635,7 @@ internal class LocalAcpRuntime(
                 args.stringValue("cwd")
                     ?: bindingRepository.getBindingByThreadId(threadId)?.cwd
             )
-            val parameters = SessionCreationParameters(cwd, emptyList())
+            val parameters = sessionCreationParameters(cwd)
             val restored = when {
                 capabilities.sessionCapabilities.resume != null ->
                     requireClient().resumeSession(
@@ -1097,13 +1098,31 @@ internal class LocalAcpRuntime(
             }
             val cwd = normalizeCwd(args.stringValue("cwd"))
             requireClient().newSession(
-                SessionCreationParameters(cwd, emptyList()),
+                sessionCreationParameters(cwd),
                 operationsFactory()
             ).also { session ->
                 registerSession(session, cwd)
                 catalogSessionId = session.sessionId.value
             }
         }
+    }
+
+    private fun sessionCreationParameters(cwd: String): SessionCreationParameters {
+        val profile = activeProfile ?: profileStore.selected()
+        val supportsHttp = requireAgentInfo().capabilities.mcpCapabilities.http
+        val mcpState = if (supportsHttp) {
+            McpServerManager.ensureRunning(appContext)
+        } else {
+            McpServerManager.currentState()
+        }
+        return SessionCreationParameters(
+            cwd = cwd,
+            mcpServers = buildLocalAgentAcpMcpServers(
+                agentId = profile.id,
+                supportsHttp = supportsHttp,
+                state = mcpState
+            )
+        )
     }
 
     private suspend fun applyRunConfig(

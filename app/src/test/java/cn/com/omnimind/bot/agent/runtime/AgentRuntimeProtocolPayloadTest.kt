@@ -1,5 +1,7 @@
 package cn.com.omnimind.bot.agent.runtime
 
+import cn.com.omnimind.bot.mcp.McpServerState
+import com.agentclientprotocol.model.McpServer
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -42,6 +44,11 @@ class AgentRuntimeProtocolPayloadTest {
         assertTrue(
             deepSeekRuntime?.managedAdapterPackages.orEmpty().contains(
                 "@deepseek-ai/dsh-llm-deepseek@next"
+            )
+        )
+        assertTrue(
+            deepSeekRuntime?.managedAdapterPackages.orEmpty().contains(
+                "@deepseek-ai/dsh-mcp-client@next"
             )
         )
         assertTrue(
@@ -106,13 +113,70 @@ class AgentRuntimeProtocolPayloadTest {
 
         assertTrue(config.contains("name: '@deepseek-ai/dsh-llm-deepseek'"))
         assertTrue(config.contains("name: '$DEEPSEEK_HARNESS_OMNIBOT_ACP_PLUGIN_PATH'"))
+        assertTrue(config.contains("name: '@deepseek-ai/dsh-mcp-client'"))
         assertFalse(config.contains("name: '@deepseek-ai/dsh-acp-demo'"))
+        assertTrue(config.contains("serverName: omnibot"))
+        assertTrue(config.contains("process.env.OMNIBOT_MCP_URL"))
+        assertTrue(config.contains("process.env.OMNIBOT_MCP_TOKEN"))
         assertTrue(config.contains("workspaceRoot: /workspace"))
         assertTrue(config.contains("persistenceCompression: none"))
         assertTrue(config.contains("process.env.DSH_MODEL"))
         assertTrue(config.contains("process.env.DSH_REASONING_EFFORT"))
         assertTrue(config.contains("process.env.DSH_PERMISSION_MODE"))
         assertTrue(config.contains("policy: ask"))
+    }
+
+    @Test
+    fun localAgentMcpUsesAcpSessionInjectionExceptForDeepSeekHarness() {
+        val state = McpServerState(
+            enabled = true,
+            running = true,
+            host = "192.168.1.8",
+            port = 8899,
+            token = "secret-token"
+        )
+
+        val codexServers = buildLocalAgentAcpMcpServers(
+            agentId = AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID,
+            supportsHttp = true,
+            state = state
+        )
+        val server = codexServers.single() as McpServer.Http
+        assertEquals("omnibot", server.name)
+        assertEquals("http://127.0.0.1:8899/mcp", server.url)
+        assertEquals("Authorization", server.headers.single().name)
+        assertEquals("Bearer secret-token", server.headers.single().value)
+
+        assertTrue(
+            buildLocalAgentAcpMcpServers(
+                agentId = AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID,
+                supportsHttp = false,
+                state = state
+            ).isEmpty()
+        )
+        assertTrue(
+            buildLocalAgentAcpMcpServers(
+                agentId = "custom-acp-agent",
+                supportsHttp = false,
+                state = state
+            ).isEmpty()
+        )
+    }
+
+    @Test
+    fun deepSeekHarnessMcpConnectionIsSuppliedOnlyThroughLaunchEnvironment() {
+        val environment = buildDeepSeekHarnessMcpEnvironment(
+            McpServerState(
+                enabled = true,
+                running = true,
+                host = null,
+                port = 9001,
+                token = "local-secret"
+            )
+        )
+
+        assertEquals("http://127.0.0.1:9001/mcp", environment["OMNIBOT_MCP_URL"])
+        assertEquals("local-secret", environment["OMNIBOT_MCP_TOKEN"])
     }
 
     @Test

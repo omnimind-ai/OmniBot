@@ -77,7 +77,8 @@ internal val DEEPSEEK_HARNESS_NPM_PACKAGE_NAMES = listOf(
     "@deepseek-ai/dsh-sandbox-policy",
     "@deepseek-ai/dsh-subprocess-local",
     "@deepseek-ai/dsh-bash-sandbox",
-    "@deepseek-ai/dsh-user-approval"
+    "@deepseek-ai/dsh-user-approval",
+    "@deepseek-ai/dsh-mcp-client"
 )
 internal val DEEPSEEK_HARNESS_NPM_PACKAGE_SPECS =
     DEEPSEEK_HARNESS_NPM_PACKAGE_NAMES.map { packageName ->

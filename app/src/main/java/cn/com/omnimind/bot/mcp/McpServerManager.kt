@@ -69,6 +69,7 @@ object McpServerManager {
     private const val PREF_TOKEN_VAULT = "mcp_server_token_v2" // 加密后的 token
     private const val PREF_PORT = "mcp_server_port"
     private const val DEFAULT_PORT = 8899
+    private const val LOOPBACK_HOST = "127.0.0.1"
     private const val PORT_SEARCH_ATTEMPTS = 100
     private const val WEBCHAT_SESSION_COOKIE = "omnibot_webchat_session"
     private const val WEBCHAT_SESSION_TTL_MS = 7L * 24L * 60L * 60L * 1000L
@@ -114,6 +115,17 @@ object McpServerManager {
             mmkv.encode(PREF_ENABLE, false)
         }
         return currentState()
+    }
+
+    /**
+     * Makes the authenticated MCP endpoint available to an in-app Agent.
+     * Reuses the existing server and persisted port instead of creating a
+     * second private protocol or a second server lifecycle.
+     */
+    fun ensureRunning(context: Context): McpServerState {
+        currentState().takeIf { it.running }?.let { return it }
+        val port = mmkv.decodeInt(PREF_PORT, DEFAULT_PORT).takeIf { it > 0 } ?: DEFAULT_PORT
+        return startServer(context, port)
     }
 
     fun refreshToken(context: Context): McpServerState {
@@ -269,8 +281,10 @@ object McpServerManager {
     private fun startServer(context: Context, port: Int): McpServerState {
         synchronized(serverLock) {
             try {
-                val lanIp = resolveLanIp()
-                    ?: throw IllegalStateException("未检测到可用的局域网 IPv4 地址")
+                // Local ACP/DSH agents use loopback and must remain available
+                // even when Wi-Fi is absent. WebChat still advertises the LAN
+                // address whenever one exists.
+                val lanIp = resolveLanIp() ?: LOOPBACK_HOST
                 if (isRunning) {
                     val currentPort = mmkv.decodeInt(PREF_PORT, DEFAULT_PORT).takeIf { it > 0 } ?: DEFAULT_PORT
                     if (currentPort == port) {

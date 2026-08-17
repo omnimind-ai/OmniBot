@@ -55,6 +55,15 @@ class TaskRuntimeService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent == null && TaskRuntimeStore.listPending(applicationContext).isEmpty()) {
+            // A foreground lease for an external Harness is intentionally not
+            // a second persisted Agent state machine. If Android recreates the
+            // process after that Harness was lost, there is nothing safe for
+            // this service to resume, so do not leave a zombie notification.
+            OmniLog.i(TAG, "Stopping empty task runtime after process recreation")
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
         when (intent?.action) {
             ACTION_START -> {
                 updateNotification()
