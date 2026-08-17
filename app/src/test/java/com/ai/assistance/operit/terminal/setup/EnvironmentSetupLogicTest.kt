@@ -120,12 +120,12 @@ class EnvironmentSetupLogicTest {
         assertTrue(commands.count { it == "npm config set prefix /root/.npm-global" } == 1)
         assertTrue(
             commands.contains(
-                "npm install -g --no-audit --no-fund @anthropic-ai/claude-code@latest"
+                "npm install -g --no-audit --no-fund @agentclientprotocol/claude-agent-acp@latest"
             )
         )
         assertTrue(
             commands.contains(
-                "ln -sf /root/.npm-global/bin/claude /usr/local/bin/claude || true"
+                "ln -sf /root/.npm-global/bin/claude-agent-acp /usr/local/bin/claude-agent-acp || true"
             )
         )
         assertTrue(
@@ -147,8 +147,8 @@ class EnvironmentSetupLogicTest {
         )
 
         assertTrue(command.contains("/root/.npm-global/bin"))
-        assertTrue(command.contains("command -v claude"))
-        assertTrue(command.contains("claude --version"))
+        assertTrue(command.contains("command -v claude-agent-acp"))
+        assertTrue(command.contains("claude-agent-acp --version"))
         assertTrue(command.contains("command -v opencode"))
         assertTrue(command.contains("opencode --version"))
     }
