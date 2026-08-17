@@ -2,6 +2,7 @@ package cn.com.omnimind.bot.mcp
 
 import java.net.InetSocketAddress
 import java.net.ServerSocket
+import java.net.BindException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -41,5 +42,13 @@ class McpServerPortAvailabilityTest {
             maxAttempts = 2,
             isAvailable = { false },
         )
+    }
+
+    @Test
+    fun detectsWrappedAddressInUseWithoutEscalatingAnOptionalServerFailure() {
+        val error = IllegalStateException("server start failed", BindException("Address already in use"))
+
+        assertTrue(McpServerManager.hasAddressAlreadyInUse(error))
+        assertFalse(McpServerManager.hasAddressAlreadyInUse(IllegalStateException("network unavailable")))
     }
 }

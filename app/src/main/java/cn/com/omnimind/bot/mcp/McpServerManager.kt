@@ -45,6 +45,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import java.io.File
+import java.net.BindException
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.security.MessageDigest
@@ -280,43 +281,71 @@ object McpServerManager {
 
     private fun startServer(context: Context, port: Int): McpServerState {
         synchronized(serverLock) {
-            try {
-                // Local ACP/DSH agents use loopback and must remain available
-                // even when Wi-Fi is absent. WebChat still advertises the LAN
-                // address whenever one exists.
-                val lanIp = resolveLanIp() ?: LOOPBACK_HOST
-                if (isRunning) {
-                    val currentPort = mmkv.decodeInt(PREF_PORT, DEFAULT_PORT).takeIf { it > 0 } ?: DEFAULT_PORT
-                    if (currentPort == port) {
-                        activeHost = lanIp
-                        mmkv.encode(PREF_HOST, lanIp)
+            // Local ACP/DSH agents use loopback and must remain available even
+            // when Wi-Fi is absent. WebChat still advertises the LAN address
+            // whenever one exists.
+            val lanIp = resolveLanIp() ?: LOOPBACK_HOST
+            if (isRunning) {
+                val currentPort = mmkv.decodeInt(PREF_PORT, DEFAULT_PORT).takeIf { it > 0 } ?: DEFAULT_PORT
+                if (currentPort == port) {
+                    activeHost = lanIp
+                    mmkv.encode(PREF_HOST, lanIp)
+                    return currentState()
+                }
+                stopServerLocked()
+            }
+
+            var preferredPort = port
+            repeat(PORT_SEARCH_ATTEMPTS) {
+                val resolvedPort = runCatching { resolveAvailablePort(preferredPort, 1) }
+                    .getOrNull()
+                    ?: return@repeat
+                val engine = buildServer(context, resolvedPort)
+                try {
+                    engine.start(wait = false)
+                    server = engine
+                    isRunning = true
+                    activeHost = lanIp
+                    mmkv.encode(PREF_ENABLE, true)
+                    mmkv.encode(PREF_PORT, resolvedPort)
+                    mmkv.encode(PREF_HOST, lanIp)
+                    if (resolvedPort != port) {
+                        OmniLog.w(TAG, "MCP port $port occupied; switched to $resolvedPort")
+                    }
+                    OmniLog.i(TAG, "MCP server started at http://$lanIp:$resolvedPort")
+                    return currentState()
+                } catch (error: Exception) {
+                    runCatching { engine.stop(500, 1_500) }
+                    if (!hasAddressAlreadyInUse(error)) {
+                        OmniLog.e(TAG, "startServer failed: ${error.message}")
                         return currentState()
                     }
-                    stopServerLocked()
+                    OmniLog.w(TAG, "MCP port $resolvedPort became occupied; retrying")
+                    preferredPort = resolvedPort + 1
                 }
-                val resolvedPort = resolveAvailablePort(port)
-                val engine = buildServer(context, resolvedPort)
-                engine.start(wait = false)
-
-                server = engine
-                isRunning = true
-                activeHost = lanIp
-                mmkv.encode(PREF_ENABLE, true)
-                mmkv.encode(PREF_PORT, resolvedPort)
-                mmkv.encode(PREF_HOST, lanIp)
-                if (resolvedPort != port) {
-                    OmniLog.w(TAG, "MCP port $port occupied; switched to $resolvedPort")
-                }
-                OmniLog.i(TAG, "MCP server started at http://$lanIp:$resolvedPort")
-                return currentState()
-            } catch (t: Throwable) {
-                server = null
-                isRunning = false
-                activeHost = null
-                OmniLog.e(TAG, "startServer failed: ${t.message}")
-                throw t
             }
+
+            server = null
+            isRunning = false
+            activeHost = null
+            mmkv.encode(PREF_ENABLE, false)
+            OmniLog.e(TAG, "startServer failed: no available MCP port")
+            return currentState()
         }
+    }
+
+    internal fun hasAddressAlreadyInUse(error: Throwable): Boolean {
+        val seen = mutableSetOf<Throwable>()
+        var current: Throwable? = error
+        while (current != null && seen.add(current)) {
+            if (current is BindException ||
+                current.message?.contains("Address already in use", ignoreCase = true) == true
+            ) {
+                return true
+            }
+            current = current.cause
+        }
+        return false
     }
 
     internal fun isTcpPortAvailable(port: Int): Boolean {

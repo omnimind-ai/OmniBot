@@ -2,7 +2,6 @@ package cn.com.omnimind.bot.plugin.official
 
 import android.content.Context
 import cn.com.omnimind.bot.BuildConfig
-import cn.com.omnimind.bot.mcp.McpServerManager
 import cn.com.omnimind.bot.omniflow.OmniFlowAppPlatform
 import cn.com.omnimind.bot.omniflow.OmniFlowPluginRuntime
 import cn.com.omnimind.bot.omniflow.OmniFlowRuntimeProvider
@@ -57,7 +56,11 @@ class OmniVlmLiteProvider(
 
             override suspend fun onEnable() {
                 OmniFlowPluginRuntime.enable(appContext)
-                McpServerManager.setEnabled(appContext, true)
+                // MCP is started lazily by the official ACP adapter or by the
+                // local-service settings page.  Starting a Ktor socket while
+                // the application is restoring plugins can race a previous
+                // process and take down the whole Android process on bind
+                // failure.
             }
 
             override suspend fun onDisable() {
