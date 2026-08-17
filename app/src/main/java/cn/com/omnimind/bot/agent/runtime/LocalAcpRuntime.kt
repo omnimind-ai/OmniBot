@@ -576,7 +576,10 @@ internal class LocalAcpRuntime(
     private suspend fun refreshAgentAvailability() {
         val profiles = profileStore.list()
         if (profiles.isEmpty()) return
-        val command = MANAGED_NPM_PATH_PREFIX + "\n" + profiles.flatMap { profile ->
+        val externalProfiles = profiles.filterNot {
+            it.id == AcpAgentProfileStore.XIAOWAN_AGENT_ID
+        }
+        val command = MANAGED_NPM_PATH_PREFIX + "\n" + externalProfiles.flatMap { profile ->
             val id = shellQuoteAcp(profile.id)
             val runtime = AcpAgentProfileStore.officialRuntime(profile)
             buildList {
@@ -591,34 +594,45 @@ internal class LocalAcpRuntime(
                     "printf '__OMNI_ACP_AGENT__\\t%s\\t%s\\t0\\n' $id '$kind'; fi"
             }
         }.joinToString("\n")
-        val availabilityById = runCatching {
-            TerminalManager.getInstance(appContext).executeHiddenCommand(
-                command = command,
-                executorKey = "acp-agent-catalog-probe",
-                timeoutMs = 15_000L
-            ).output.lineSequence().mapNotNull { line ->
-                val parts = line.trim().split('\t')
-                if (parts.size == 4 && parts[0] == "__OMNI_ACP_AGENT__") {
-                    Triple(parts[1], parts[2], parts[3] == "1")
-                } else {
-                    null
-                }
-            }.groupBy { it.first }
-        }.getOrDefault(emptyMap())
+        val availabilityById = if (externalProfiles.isEmpty()) {
+            emptyMap()
+        } else {
+            runCatching {
+                TerminalManager.getInstance(appContext).executeHiddenCommand(
+                    command = command,
+                    executorKey = "acp-agent-catalog-probe",
+                    timeoutMs = 15_000L
+                ).output.lineSequence().mapNotNull { line ->
+                    val parts = line.trim().split('\t')
+                    if (parts.size == 4 && parts[0] == "__OMNI_ACP_AGENT__") {
+                        Triple(parts[1], parts[2], parts[3] == "1")
+                    } else {
+                        null
+                    }
+                }.groupBy { it.first }
+            }.getOrDefault(emptyMap())
+        }
         val checkedAt = System.currentTimeMillis()
         profiles.forEach { profile ->
+            val builtIn = profile.id == AcpAgentProfileStore.XIAOWAN_AGENT_ID
             val availability = availabilityById[profile.id].orEmpty()
                 .associate { it.second to it.third }
             val runtime = AcpAgentProfileStore.officialRuntime(profile)
             val launchInstalled = availability["launch"] == true
             val discoveryInstalled = availability["discovery"] == true
-            val installed = launchInstalled || discoveryInstalled
+            val installed = builtIn || launchInstalled || discoveryInstalled
             val previous = profileStore.health(profile.id)
             val next = when {
                 !profile.enabled -> previous.copy(
                     status = AcpAgentHealth.STATUS_OFFLINE,
                     installed = installed,
                     error = "Agent is disabled."
+                )
+                builtIn -> AcpAgentHealth(
+                    status = AcpAgentHealth.STATUS_ONLINE,
+                    installed = true,
+                    error = null,
+                    checkedAt = checkedAt
                 )
                 !installed -> AcpAgentHealth(
                     status = AcpAgentHealth.STATUS_MISSING,

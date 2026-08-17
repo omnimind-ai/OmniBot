@@ -48,11 +48,13 @@ class AgentRuntimeProtocolPayloadTest {
     @Test
     fun managedAcpCatalogIncludesSupportedAgentsWithoutGemini() {
         assertEquals(
-            listOf("Codex", "Claude Code", "OpenCode", "DeepSeek Harness", "小万"),
+            listOf("小万", "Codex", "Claude Code", "OpenCode", "DeepSeek Harness"),
             AcpAgentProfileStore.OFFICIAL_AGENTS.map { it.name }
         )
         assertTrue(AcpAgentProfileStore.OFFICIAL_AGENTS.all { it.builtIn })
-        val codex = AcpAgentProfileStore.OFFICIAL_AGENTS.first()
+        val codex = AcpAgentProfileStore.OFFICIAL_AGENTS.first {
+            it.id == AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID
+        }
         assertEquals(
             "codex",
             AcpAgentProfileStore.officialRuntime(codex)?.discoveryCommand
@@ -61,6 +63,15 @@ class AgentRuntimeProtocolPayloadTest {
             "@agentclientprotocol/codex-acp@1.1.7",
             AcpAgentProfileStore.officialRuntime(codex)?.managedAdapterPackage
         )
+        val xiaowan = AcpAgentProfileStore.OFFICIAL_AGENTS.first {
+            it.id == AcpAgentProfileStore.XIAOWAN_AGENT_ID
+        }
+        assertEquals("omnibot-xiaowan-acp", xiaowan.command)
+        assertEquals(
+            "omnibot-xiaowan-acp",
+            AcpAgentProfileStore.officialRuntime(xiaowan)?.discoveryCommand
+        )
+        assertNull(AcpAgentProfileStore.officialRuntime(xiaowan)?.managedAdapterPackage)
         val deepSeek = AcpAgentProfileStore.OFFICIAL_AGENTS.first {
             it.id == AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID
         }

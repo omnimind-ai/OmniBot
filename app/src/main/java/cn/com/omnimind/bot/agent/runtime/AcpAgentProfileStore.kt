@@ -397,6 +397,13 @@ internal class AcpAgentProfileStore(context: Context) {
 
         val OFFICIAL_AGENTS = listOf(
             AcpAgentProfile(
+                id = XIAOWAN_AGENT_ID,
+                name = "小万",
+                description = "Omnibot 内置能力通过官方 ACP Agent 接口提供",
+                command = "omnibot-xiaowan-acp",
+                builtIn = true
+            ),
+            AcpAgentProfile(
                 id = DEFAULT_CODEX_AGENT_ID,
                 name = "Codex",
                 description = "OpenAI Codex through its managed ACP adapter",
@@ -425,16 +432,9 @@ internal class AcpAgentProfileStore(context: Context) {
                 command = "dsh-acp-demo",
                 arguments = listOf("--config", DEEPSEEK_HARNESS_CORDIS_PATH),
                 builtIn = true
-            ),
-            AcpAgentProfile(
-                id = XIAOWAN_AGENT_ID,
-                name = "小万",
-                description = "Omnibot 内置能力通过官方 ACP Agent 接口提供",
-                command = "omnibot-xiaowan-acp",
-                builtIn = true
             )
         )
-        val DEFAULT_CODEX_AGENT = OFFICIAL_AGENTS.first()
+        val DEFAULT_CODEX_AGENT = OFFICIAL_AGENTS.first { it.id == DEFAULT_CODEX_AGENT_ID }
         private val OFFICIAL_AGENT_IDS = OFFICIAL_AGENTS.mapTo(linkedSetOf()) { it.id }
         private val RETIRED_AGENT_IDS = setOf("gemini-cli-acp")
         private val OFFICIAL_RUNTIMES = mapOf(

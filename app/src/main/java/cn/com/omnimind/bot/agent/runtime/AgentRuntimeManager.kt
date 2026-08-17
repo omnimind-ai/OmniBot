@@ -1501,6 +1501,13 @@ class AgentRuntimeManager private constructor(
                 error = "No enabled ACP Agent is selected."
             )
         }
+        if (profile.id == AcpAgentProfileStore.XIAOWAN_AGENT_ID) {
+            return AgentRuntimeProbe(
+                ready = true,
+                version = BuildConfig.VERSION_NAME,
+                error = null
+            )
+        }
         return runCatching {
             val environmentPrefix = profile.environment.entries.joinToString(" ") {
                 "${it.key}=${shellQuote(it.value)}"
