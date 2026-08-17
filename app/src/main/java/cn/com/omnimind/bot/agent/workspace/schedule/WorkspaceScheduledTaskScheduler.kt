@@ -240,7 +240,7 @@ class WorkspaceScheduledTaskScheduler(
             "scheduledTaskTitle" to task.title,
             "scheduleNotificationEnabled" to task.notificationEnabled
         )
-        AssistsCoreManager(appContext).createAgentTask(
+        AssistsCoreManager.sharedInstanceOrCreate(appContext).createAgentTask(
             MethodCall("createAgentTask", args),
             NoopResult(task.taskId, "createAgentTask")
         )

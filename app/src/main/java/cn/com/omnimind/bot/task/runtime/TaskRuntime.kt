@@ -18,18 +18,31 @@ object TaskRuntime {
     private const val TAG = "TaskRuntime"
     private val activeTaskIds = ConcurrentHashMap.newKeySet<String>()
 
+    fun enqueueAgent(
+        context: Context,
+        taskId: String,
+        payload: Map<String, Any?>,
+    ): Boolean {
+        val normalizedTaskId = taskId.trim()
+        if (normalizedTaskId.isEmpty()) return false
+        if (!TaskRuntimeStore.putAgent(context, normalizedTaskId, payload)) {
+            OmniLog.e(TAG, "Unable to persist agent task taskId=$normalizedTaskId")
+            return false
+        }
+        if (start(context, normalizedTaskId)) return true
+        TaskRuntimeStore.remove(context, normalizedTaskId)
+        return false
+    }
+
     fun start(context: Context, taskId: String): Boolean {
         val normalizedTaskId = taskId.trim()
         if (normalizedTaskId.isEmpty()) {
             OmniLog.w(TAG, "Ignoring task runtime start with empty task id")
             return false
         }
-        val wasEmpty = activeTaskIds.isEmpty()
-        activeTaskIds.add(normalizedTaskId)
-        if (!wasEmpty) return true
-
+        val newlyActive = activeTaskIds.add(normalizedTaskId)
         return sendStartCommand(context).also { started ->
-            if (!started) activeTaskIds.remove(normalizedTaskId)
+            if (!started && newlyActive) activeTaskIds.remove(normalizedTaskId)
         }
     }
 
@@ -40,7 +53,8 @@ object TaskRuntime {
             return false
         }
         activeTaskIds.remove(normalizedTaskId)
-        if (activeTaskIds.isNotEmpty()) return true
+        TaskRuntimeStore.remove(context, normalizedTaskId)
+        if (activeTaskIds.isNotEmpty() || TaskRuntimeStore.listPending(context).isNotEmpty()) return true
 
         return runCatching {
             context.applicationContext.stopService(

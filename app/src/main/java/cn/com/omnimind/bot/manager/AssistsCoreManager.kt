@@ -4104,6 +4104,7 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
             ?.filter { it.key != null }
             ?.associate { it.key.toString() to it.value }
             ?: emptyMap()
+        val runtimeOwned = call.argument<Boolean>("__taskRuntimeOwned") == true
         val taskId = (call.argument<String>("taskId") ?: "").trim()
         val userMessage = AgentTextSanitizer.sanitizeUtf16(
             (call.argument<String>("userMessage") ?: "").toString()
@@ -4178,6 +4179,27 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
         }
         if (taskId.isBlank()) {
             result.error("INVALID_ARGUMENTS", "taskId is empty", null)
+            return
+        }
+        if (!runtimeOwned) {
+            val persistedArguments = sanitizeInteropMap(
+                rawCallArguments + mapOf(
+                    "taskId" to taskId,
+                    "userMessage" to userMessage,
+                    "attachments" to rawAttachments,
+                    "userMessageCreatedAt" to userMessageCreatedAt,
+                    "conversationId" to conversationId,
+                    "conversationMode" to resolvedConversationMode,
+                    "reasoningEffort" to reasoningEffort,
+                    "terminalEnvironment" to terminalEnvironment,
+                    "continueMode" to (isContinue || call.argument<Boolean>("continueMode") == true),
+                )
+            )
+            if (!TaskRuntime.enqueueAgent(context, taskId, persistedArguments)) {
+                result.error("TASK_RUNTIME_START_FAILED", "Unable to start task runtime", null)
+                return
+            }
+            result.success("SUCCESS")
             return
         }
         removeFailedAgentRetryContext(taskId)

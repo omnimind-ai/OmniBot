@@ -11,16 +11,19 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import cn.com.omnimind.baselib.util.OmniLog
+import cn.com.omnimind.bot.manager.AssistsCoreManager
 import cn.com.omnimind.bot.R
 import cn.com.omnimind.bot.activity.MainActivity
+import io.flutter.plugin.common.MethodCall
+import io.flutter.plugin.common.MethodChannel
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Foreground host for user-visible long-running tasks.
  *
- * This service deliberately does not own Agent business logic yet. Keeping the
- * existing runner in place makes this first migration low risk: the service
- * supplies Android's foreground execution contract while later work can move
- * the runner behind TaskRuntime without changing callers.
+ * The service owns the durable launch envelope and re-attaches it to the
+ * existing Agent runner. The runner itself stays in AssistsCoreManager so this
+ * migration does not duplicate the business loop.
  */
 class TaskRuntimeService : Service() {
     companion object {
@@ -35,6 +38,7 @@ class TaskRuntimeService : Service() {
     private val notificationManager by lazy {
         getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
     }
+    private val dispatchedTaskIds = ConcurrentHashMap.newKeySet<String>()
 
     override fun onCreate() {
         super.onCreate()
@@ -47,16 +51,16 @@ class TaskRuntimeService : Service() {
         when (intent?.action) {
             ACTION_START -> {
                 updateNotification()
+                dispatchPendingTasks()
             }
 
             else -> {
                 OmniLog.w(TAG, "Ignoring unknown task runtime action=${intent?.action}")
+                dispatchPendingTasks()
             }
         }
 
-        // The first migration has no durable TaskStore yet. Do not recreate a
-        // stale notification without its task set after an unexpected kill.
-        return START_NOT_STICKY
+        return START_STICKY
     }
 
     override fun onDestroy() {
@@ -65,6 +69,28 @@ class TaskRuntimeService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    private fun dispatchPendingTasks() {
+        val manager = AssistsCoreManager.sharedInstanceOrCreate(applicationContext)
+        TaskRuntimeStore.listPending(applicationContext).forEach { record ->
+            if (!dispatchedTaskIds.add(record.taskId)) return@forEach
+            if (manager.activeAgentTaskIds().contains(record.taskId)) return@forEach
+            TaskRuntimeStore.markRunning(applicationContext, record.taskId)
+            val arguments = record.payload.toMutableMap().apply {
+                put("__taskRuntimeOwned", true)
+            }
+            manager.createAgentTask(
+                MethodCall("createAgentTask", arguments),
+                NoOpResult,
+            )
+        }
+    }
+
+    private object NoOpResult : MethodChannel.Result {
+        override fun success(result: Any?) = Unit
+        override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) = Unit
+        override fun notImplemented() = Unit
+    }
 
     private fun updateNotification() {
         notificationManager.notify(NOTIFICATION_ID, buildNotification())

@@ -24,7 +24,7 @@ class AssistsCoreChannel {
     private var assistsCoreManager: AssistsCoreManager? = null
     private var omniFlowToolChannel: OmniFlowToolChannel? = null
     fun onCreate(context: Context) {
-        assistsCoreManager = AssistsCoreManager(context)
+        assistsCoreManager = AssistsCoreManager.sharedInstanceOrCreate(context)
         omniFlowToolChannel = OmniFlowToolChannel(context)
         assistsCoreManager?.setChannel(channel!!);
 
