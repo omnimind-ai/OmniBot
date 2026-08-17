@@ -78,7 +78,28 @@ internal val DEEPSEEK_HARNESS_NPM_PACKAGE_NAMES = listOf(
     "@deepseek-ai/dsh-subprocess-local",
     "@deepseek-ai/dsh-bash-sandbox",
     "@deepseek-ai/dsh-user-approval",
-    "@deepseek-ai/dsh-mcp-client"
+    "@deepseek-ai/dsh-mcp-client",
+    // Official ACP example composition: preserve the Harness capability
+    // surface instead of shipping a reduced host-owned tool loop.
+    "@deepseek-ai/dsh-token-meter",
+    "@deepseek-ai/dsh-compaction-basic",
+    "@deepseek-ai/dsh-session-projection",
+    "@deepseek-ai/dsh-subagent",
+    "@deepseek-ai/dsh-subagent-spawn-in-process",
+    "@deepseek-ai/dsh-subagent-fork-in-process",
+    "@deepseek-ai/dsh-tool-subagent-control",
+    "@deepseek-ai/dsh-tool-subagent-report",
+    "@deepseek-ai/dsh-tool-subagent",
+    "@deepseek-ai/dsh-workflow-worker-thread",
+    "@deepseek-ai/dsh-tool-workflow",
+    "@deepseek-ai/dsh-tool-ralph",
+    "@deepseek-ai/dsh-tool-todo",
+    "@deepseek-ai/dsh-repeat-tool-reminder",
+    "@deepseek-ai/dsh-fs-sandbox",
+    "@deepseek-ai/dsh-fs-observation-policy",
+    "@deepseek-ai/dsh-tool-fs",
+    "@deepseek-ai/dsh-hooks-claude-code",
+    "@deepseek-ai/dsh-hooks-codex"
 )
 internal val DEEPSEEK_HARNESS_NPM_PACKAGE_SPECS =
     DEEPSEEK_HARNESS_NPM_PACKAGE_NAMES.map { packageName ->
@@ -372,6 +393,7 @@ internal class AcpAgentProfileStore(context: Context) {
     companion object {
         const val DEFAULT_CODEX_AGENT_ID = "codex-acp"
         const val DEEPSEEK_HARNESS_AGENT_ID = "deepseek-harness-acp"
+        const val XIAOWAN_AGENT_ID = "xiaowan-acp"
 
         val OFFICIAL_AGENTS = listOf(
             AcpAgentProfile(
@@ -403,6 +425,13 @@ internal class AcpAgentProfileStore(context: Context) {
                 command = "dsh-acp-demo",
                 arguments = listOf("--config", DEEPSEEK_HARNESS_CORDIS_PATH),
                 builtIn = true
+            ),
+            AcpAgentProfile(
+                id = XIAOWAN_AGENT_ID,
+                name = "小万",
+                description = "Omnibot 内置能力通过官方 ACP Agent 接口提供",
+                command = "omnibot-xiaowan-acp",
+                builtIn = true
             )
         )
         val DEFAULT_CODEX_AGENT = OFFICIAL_AGENTS.first()
@@ -424,7 +453,8 @@ internal class AcpAgentProfileStore(context: Context) {
                 managedAdapterPackages = DEEPSEEK_HARNESS_NPM_PACKAGE_SPECS,
                 requiresNativeBuildTools = true,
                 managedAdapterHealthCommand = DEEPSEEK_HARNESS_NATIVE_HEALTH_COMMAND
-            )
+            ),
+            XIAOWAN_AGENT_ID to AcpOfficialRuntime(discoveryCommand = "omnibot-xiaowan-acp")
         )
 
         fun officialRuntime(profile: AcpAgentProfile): AcpOfficialRuntime? {

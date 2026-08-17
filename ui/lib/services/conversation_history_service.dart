@@ -7,6 +7,7 @@ import 'package:ui/models/chat_message_model.dart';
 import 'package:ui/models/conversation_model.dart';
 import 'package:ui/models/conversation_thread_target.dart';
 import 'package:ui/services/agent_message_kinds.dart';
+import 'package:ui/services/omnibot_resource_service.dart';
 
 /// 对话历史持久化服务
 class ConversationHistoryService {
@@ -187,6 +188,22 @@ class ConversationHistoryService {
     ConversationMode mode = ConversationMode.normal,
   }) {
     return '$_conversationMessagesKey${mode.storageValue}_$conversationId';
+  }
+
+  /// Exports the durable conversation snapshot through the app's existing
+  /// share boundary. Native Room remains the source of truth; this is only a
+  /// user-visible copy and never becomes a second history protocol.
+  static Future<bool> exportConversation(
+    int conversationId, {
+    ConversationMode mode = ConversationMode.normal,
+  }) async {
+    final messages = await getConversationMessages(conversationId, mode: mode);
+    final payload = const JsonEncoder.withIndent('  ').convert({
+      'conversationId': conversationId,
+      'mode': mode.storageValue,
+      'messages': messages.map((message) => message.toJson()).toList(),
+    });
+    return OmnibotResourceService.shareText(payload);
   }
 
   static String _legacyConversationMessagesKey(int conversationId) {

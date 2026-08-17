@@ -70,7 +70,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       status = await AgentRuntimeService.status();
       if (status.ready && !status.connected) {
         status = await AgentRuntimeService.connect();
-        unawaited(AgentRuntimeService.listThreads());
+        unawaited(AgentRuntimeService.listSessions());
       }
     } catch (error) {
       status = AgentRuntimeStatus(
@@ -273,8 +273,8 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       if (!status.connected) {
         status = await AgentRuntimeService.connect();
       }
-      final response = await AgentRuntimeService.resumeThread(
-        threadId: threadId,
+      final response = await AgentRuntimeService.loadSession(
+        sessionId: threadId,
       );
       if (!mounted) return;
       final resolvedThreadId =
@@ -354,7 +354,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       }
       if (!status.connected) {
         status = await AgentRuntimeService.connect();
-        unawaited(AgentRuntimeService.listThreads());
+        unawaited(AgentRuntimeService.listSessions());
       }
       _applyRefreshedAgentRuntimeStatus(status);
     } catch (error) {
@@ -597,6 +597,19 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     if (normalized.isEmpty || normalized.startsWith('/')) {
       return;
     }
+    try {
+      await _setAgentConfigOption(configId: 'model', value: normalized);
+    } catch (error) {
+      if (mounted) {
+        showToast(
+          LegacyTextLocalizer.isEnglish
+              ? 'Failed to change Agent model: $error'
+              : '修改 Agent 模型失败：$error',
+          type: ToastType.error,
+        );
+      }
+      return;
+    }
     if (!mounted) return;
     setState(() {
       _activeAgentModelId = normalized;
@@ -736,6 +749,22 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         !_agentReasoningEffortOptions.contains(normalized)) {
       return;
     }
+    try {
+      await _setAgentConfigOption(
+        configId: 'reasoning_effort',
+        value: normalized,
+      );
+    } catch (error) {
+      if (mounted) {
+        showToast(
+          LegacyTextLocalizer.isEnglish
+              ? 'Failed to change reasoning effort: $error'
+              : '修改思考强度失败：$error',
+          type: ToastType.error,
+        );
+      }
+      return;
+    }
     if (!mounted) return;
     setState(() {
       _activeAgentReasoningEffort = normalized;
@@ -747,6 +776,59 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     await _writeAgentPreference(
       _kAgentReasoningEffortPreferenceKey,
       normalized,
+    );
+  }
+
+  @override
+  Future<void> _selectAgentPermissionMode(AgentPermissionMode mode) async {
+    final value = switch (mode) {
+      AgentPermissionMode.readOnly => 'read-only',
+      AgentPermissionMode.defaultMode ||
+      AgentPermissionMode.autoReview => 'agent',
+      AgentPermissionMode.fullAccess => 'agent-full-access',
+    };
+    try {
+      await _setAgentConfigOption(configId: 'mode', value: value);
+    } catch (error) {
+      if (mounted) {
+        showToast(
+          LegacyTextLocalizer.isEnglish
+              ? 'Failed to change Agent permissions: $error'
+              : '修改 Agent 权限模式失败：$error',
+          type: ToastType.error,
+        );
+      }
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _agentPermissionMode = mode;
+    });
+  }
+
+  Future<void> _setAgentConfigOption({
+    required String configId,
+    required dynamic value,
+  }) async {
+    // Remote Codex keeps its own app-server configuration path. Its turn
+    // request still carries the selected legacy fields, while config/set is
+    // reserved for local ACP sessions that expose ACP configOptions.
+    if (_agentRuntimeStatus.runtime == 'remote' ||
+        _agentRuntimeStatus.remoteEnabled) {
+      return;
+    }
+    final threadId = _activeAgentThreadId?.trim();
+    final conversationId = _modeState(ChatPageMode.agent).currentConversationId;
+    // Before the first turn there is no durable session to mutate. The local
+    // preference is applied once when startThread creates the ACP session.
+    if ((threadId == null || threadId.isEmpty) && conversationId == null) {
+      return;
+    }
+    await AgentRuntimeService.setSessionConfigOption(
+      sessionId: threadId,
+      conversationId: conversationId,
+      configId: configId,
+      value: value,
     );
   }
 
@@ -983,9 +1065,9 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
 
     try {
       final reviewModel = await _resolveAgentRequestModel(status);
-      final response = await AgentRuntimeService.startReview(
+      final response = await AgentRuntimeService.reviewSession(
         conversationId: remoteCodex ? null : resolvedConversationId,
-        threadId: _activeAgentThreadId,
+        sessionId: _activeAgentThreadId,
         approvalPolicy: _agentPermissionMode.approvalPolicy,
         approvalsReviewer: _agentPermissionMode.approvalsReviewer,
         sandboxPolicy: _agentPermissionMode.sandboxPolicy,
@@ -1145,7 +1227,10 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     // do not show up while pwd/ls/cat run, the events are being dropped
     // upstream (codex app-server -> codex-bridge -> Kotlin -> EventChannel).
     debugPrint('[Agent/E] $diagnosticMethod');
-    if (diagnosticMethod == 'acp/configOptions/updated') {
+    final acpUpdate = _asAgentMap(
+      (_asAgentMap(event['params']) ?? const <String, dynamic>{})['update'],
+    );
+    if (acpUpdate?['sessionUpdate'] == 'config_option_update') {
       unawaited(_loadAgentModelOptions(force: true));
     }
     final totalEvents = _agentEventDiagnosticCounter.values.fold<int>(
@@ -1317,9 +1402,9 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         status,
         overrideModel: modelOverride,
       );
-      final response = await AgentRuntimeService.startTurn(
+      final response = await AgentRuntimeService.promptSession(
         conversationId: remoteCodex ? null : resolvedConversationId,
-        threadId: _activeAgentThreadId,
+        sessionId: _activeAgentThreadId,
         text: messageText,
         attachments: attachments,
         approvalPolicy: _agentPermissionMode.approvalPolicy,
@@ -1379,10 +1464,10 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       return;
     }
     try {
-      await AgentRuntimeService.interruptTurn(
+      await AgentRuntimeService.cancelPrompt(
         conversationId: _isRemoteCodexConfigured() ? null : conversationId,
-        threadId: _activeAgentThreadId,
-        turnId: _activeAgentTurnId,
+        sessionId: _activeAgentThreadId,
+        promptId: _activeAgentTurnId,
       );
     } catch (error) {
       debugPrint('Agent interrupt failed: $error');
@@ -1542,10 +1627,10 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     String threadId,
   ) async {
     try {
-      return await AgentRuntimeService.readThread(threadId: threadId);
+      return await AgentRuntimeService.readSession(sessionId: threadId);
     } catch (error) {
       debugPrint('Agent thread/read failed, falling back to resume: $error');
-      return AgentRuntimeService.resumeThread(threadId: threadId);
+      return AgentRuntimeService.loadSession(sessionId: threadId);
     }
   }
 
@@ -1974,7 +2059,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     var status = await AgentRuntimeService.status();
     if (!status.connected) {
       status = await AgentRuntimeService.connect();
-      unawaited(AgentRuntimeService.listThreads());
+      unawaited(AgentRuntimeService.listSessions());
     }
     _applyRefreshedAgentRuntimeStatus(status);
     return status;

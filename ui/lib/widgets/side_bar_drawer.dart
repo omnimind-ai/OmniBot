@@ -10,6 +10,7 @@ import '../models/conversation_model.dart';
 import '../models/conversation_thread_target.dart';
 import '../services/assists_core_service.dart';
 import '../services/conversation_service.dart';
+import '../services/conversation_history_service.dart';
 import 'package:ui/core/router/go_router_manager.dart';
 import 'package:ui/l10n/legacy_text_localizer.dart';
 
@@ -340,6 +341,16 @@ class _SidebarDrawerState extends State<SidebarDrawer> {
               ),
             ),
             PopupMenuItem(
+              value: 'export',
+              child: Row(
+                children: [
+                  Icon(Icons.ios_share, size: 18, color: Colors.grey[600]),
+                  SizedBox(width: 8),
+                  Text(isEnglish ? 'Export' : '导出'),
+                ],
+              ),
+            ),
+            PopupMenuItem(
               value: 'delete',
               child: Row(
                 children: [
@@ -353,6 +364,8 @@ class _SidebarDrawerState extends State<SidebarDrawer> {
         ).then((value) {
           if (value == 'rename') {
             _renameConversation(conversation);
+          } else if (value == 'export') {
+            _exportConversation(conversation);
           } else if (value == 'delete') {
             _deleteConversation(conversation);
           }
@@ -421,6 +434,24 @@ class _SidebarDrawerState extends State<SidebarDrawer> {
         conversations[index] = conversation.copyWith(title: normalizedTitle);
       }
     });
+  }
+
+  Future<void> _exportConversation(ConversationModel conversation) async {
+    final exported = await ConversationHistoryService.exportConversation(
+      conversation.id,
+      mode: conversation.mode,
+    );
+    if (!mounted) return;
+    final isEnglish = Localizations.localeOf(context).languageCode == 'en';
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          exported
+              ? (isEnglish ? 'Conversation exported' : '对话已导出')
+              : (isEnglish ? 'Export failed' : '导出失败'),
+        ),
+      ),
+    );
   }
 
   void _deleteConversation(ConversationModel conversation) async {

@@ -230,23 +230,38 @@ class AgentRuntimeManager private constructor(
     }
 
     suspend fun handleMethod(method: String, args: Map<String, Any?>): Any? {
+        val canonicalArgs = AcpSessionCompatibility.canonicalize(method, args)
         if (method == "agent/config/read") {
-            return readAgentConfig(args)
+            return readAgentConfig(canonicalArgs)
         }
         if (method == "agent/config/write") {
-            return writeAgentConfig(args)
+            return writeAgentConfig(canonicalArgs)
         }
         if (method.startsWith("agent/")) {
-            return localAcpRuntime.handleMethod(method, args)
+            return localAcpRuntime.handleMethod(method, canonicalArgs)
         }
         if (resolveRuntime().kind == AgentRuntimeKind.LOCAL && method in LOCAL_ACP_METHODS) {
-            ensureLocalAcpConnected(args)
-            return localAcpRuntime.handleMethod(method, args)
+            ensureLocalAcpConnected(canonicalArgs)
+            return localAcpRuntime.handleMethod(method, canonicalArgs)
         }
         return when (method) {
             "status" -> status()
             "connect" -> connect()
             "disconnect" -> disconnect()
+            // The local runtime speaks ACP directly. The remote Codex
+            // runtime remains an official Codex app-server transport, so
+            // these ACP-shaped calls are translated only at that boundary.
+            "session/new" -> startThread(canonicalArgs).withAcpSessionId()
+            "session/load" -> requestWithResolvedThread("thread/resume", canonicalArgs)
+                .withAcpSessionId()
+            "session/list" -> listThreads(canonicalArgs).withAcpSessions()
+            "session/prompt" -> startTurn(canonicalArgs).withAcpSessionId()
+            "session/cancel" -> interruptTurn(canonicalArgs).withAcpSessionId()
+            "session/archive" -> archiveThread(canonicalArgs, archived = true)
+                .withAcpSessionId()
+            "session/unarchive" -> archiveThread(canonicalArgs, archived = false)
+                .withAcpSessionId()
+            "session/name/set" -> setThreadName(canonicalArgs).withAcpSessionId()
             "thread/start" -> startThread(args)
             "thread/resume" -> requestWithResolvedThread("thread/resume", args)
             "thread/read" -> requestWithResolvedThread("thread/read", args)
@@ -277,7 +292,7 @@ class AgentRuntimeManager private constructor(
             "turn/start" -> startTurn(args)
             "turn/steer" -> steerTurn(args)
             "turn/interrupt" -> interruptTurn(args)
-            "review/start" -> startReview(args)
+            "review/start" -> startReview(canonicalArgs)
             "account/read" -> requestAccountMethod("account/read", null)
             "account/login/start" -> requestAccountMethod(
                 "account/login/start",
@@ -348,7 +363,9 @@ class AgentRuntimeManager private constructor(
         val threadId = resolveThreadId(args)
         val params = linkedMapOf<String, Any?>("threadId" to threadId)
         if (method == "thread/read") {
-            args["includeTurns"]?.let { params["includeTurns"] = it }
+            (args["includeHistory"] ?: args["includeTurns"])?.let {
+                params["includeTurns"] = it
+            }
         }
         val response = request(method, params) as Map<String, Any?>
         if (shouldSyncLocalThreadBindings() && (method == "thread/read" || method == "thread/resume")) {
@@ -489,12 +506,13 @@ class AgentRuntimeManager private constructor(
             threadId = threadId,
             conversationId = localConversationIdForThread(threadId),
             turnId = turnId
-        )
+        ).withAcpSessionId()
     }
 
     private suspend fun steerTurn(args: Map<String, Any?>): Map<String, Any?> {
         val threadId = resolveThreadId(args)
-        val expectedTurnId = args.stringValue("expectedTurnId")
+        val expectedTurnId = args.stringValue("expectedPromptId")
+            ?: args.stringValue("expectedTurnId")
             ?: args.stringValue("turnId")
             ?: activeTurnsByThreadId[threadId]
             ?: throw IllegalArgumentException("missing active Agent turn id")
@@ -515,7 +533,8 @@ class AgentRuntimeManager private constructor(
 
     private suspend fun interruptTurn(args: Map<String, Any?>): Map<String, Any?> {
         val threadId = resolveThreadId(args)
-        val turnId = args.stringValue("turnId")
+        val turnId = args.stringValue("promptId")
+            ?: args.stringValue("turnId")
             ?: activeTurnsByThreadId[threadId]
             ?: throw IllegalArgumentException("missing active Agent turn id")
         val response = request(
@@ -918,6 +937,7 @@ class AgentRuntimeManager private constructor(
 
     private suspend fun ensureThreadForTurn(args: Map<String, Any?>, cwd: String): String {
         val explicitThreadId = args.stringValue("threadId")
+            ?: args.stringValue("sessionId")
         if (!explicitThreadId.isNullOrBlank()) {
             return explicitThreadId
         }
@@ -1004,11 +1024,6 @@ class AgentRuntimeManager private constructor(
             AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID -> {
                 if (AcpAgentProfileStore.officialRuntime(profile) != null) {
                     writeTerminalTextFile(
-                        path = DEEPSEEK_HARNESS_OMNIBOT_ACP_PLUGIN_PATH,
-                        content = readDeepSeekHarnessAcpPluginAsset(),
-                        executorKey = "deepseek-harness-acp-plugin-write"
-                    )
-                    writeTerminalTextFile(
                         path = DEEPSEEK_HARNESS_CORDIS_PATH,
                         content = buildDeepSeekHarnessCordisConfig(),
                         executorKey = "deepseek-harness-cordis-write"
@@ -1018,13 +1033,6 @@ class AgentRuntimeManager private constructor(
             }
             else -> emptyMap()
         }
-    }
-
-    private fun readDeepSeekHarnessAcpPluginAsset(): String {
-        return appContext.assets
-            .open(DEEPSEEK_HARNESS_OMNIBOT_ACP_PLUGIN_ASSET)
-            .bufferedReader()
-            .use { it.readText() }
     }
 
     private suspend fun ensureManagedAcpAdapter(profile: AcpAgentProfile) {
@@ -1213,6 +1221,11 @@ class AgentRuntimeManager private constructor(
     }
 
     private suspend fun handleServerMessage(message: Map<String, Any?>) {
+        val presentation = message.mapValue("presentation")
+        if (presentation.isNotEmpty()) {
+            handleLocalPresentationMessage(presentation)
+            return
+        }
         val method = extractRemoteCodexServerMethod(message)
         val explicitParams = extractRemoteCodexServerParams(message)
         val params = if (explicitParams.isNotEmpty()) {
@@ -1324,6 +1337,53 @@ class AgentRuntimeManager private constructor(
                     title = "$eventAgentName task completed",
                     message = "Tap to view the completed Agent turn.",
                     conversationId = localConversationId,
+                    conversationMode = "codex"
+                )
+            }.onFailure { error ->
+                Log.w(
+                    "AgentRuntimeManager",
+                    "task completion notification failed: ${error.message}"
+                )
+            }
+        }
+    }
+
+    /**
+     * Local ACP has no turn lifecycle notification: the lifecycle is the
+     * result of the `session/prompt` request itself. Keep that host concern
+     * separate from ACP by sending a presentation state, never a fabricated
+     * thread, turn, or item protocol notification.
+     */
+    private suspend fun handleLocalPresentationMessage(
+        presentation: Map<String, Any?>
+    ) {
+        val kind = presentation.stringValue("kind") ?: return
+        val threadId = presentation.stringValue("threadId")
+        val turnId = presentation.stringValue("turnId")
+        val conversationId = threadId?.let { localConversationIdForThread(it) }
+        val agentId = threadId?.let(acpAgentProfileStore::agentIdForSession)
+            ?: localAcpRuntime.activeAgentId()
+        val agentName = acpAgentProfileStore.list()
+            .firstOrNull { it.id == agentId }
+            ?.name
+            ?: localAcpRuntime.activeAgentName()
+        emitEvent(
+            linkedMapOf(
+                "presentation" to presentation,
+                "threadId" to threadId,
+                "turnId" to turnId,
+                "conversationId" to conversationId,
+                "agentId" to agentId,
+                "agentName" to agentName
+            )
+        )
+        if (kind == "turn_completed" || kind == "turn_failed") {
+            runCatching {
+                TaskRuntimeSettings.notifyTaskFinished(
+                    context = appContext,
+                    title = "$agentName task completed",
+                    message = "Tap to view the completed Agent turn.",
+                    conversationId = conversationId,
                     conversationMode = "codex"
                 )
             }.onFailure { error ->
@@ -1507,7 +1567,9 @@ class AgentRuntimeManager private constructor(
     }
 
     private suspend fun resolveThreadId(args: Map<String, Any?>): String {
-        val explicit = args.stringValue("threadId") ?: args.stringValue("thread_id")
+        val explicit = args.stringValue("threadId")
+            ?: args.stringValue("sessionId")
+            ?: args.stringValue("thread_id")
         if (!explicit.isNullOrBlank()) {
             return explicit
         }
@@ -1685,10 +1747,6 @@ private const val DEEPSEEK_HARNESS_CONFIG_DISPLAY_PATH =
     "~/.dsh/omnibot-acp/config.json"
 private const val DEEPSEEK_HARNESS_CORDIS_PATH =
     "$DEEPSEEK_HARNESS_HOME/cordis.yml"
-private const val DEEPSEEK_HARNESS_OMNIBOT_ACP_PLUGIN_ASSET =
-    "deepseek_harness/omnibot-acp-demo.mjs"
-internal const val DEEPSEEK_HARNESS_OMNIBOT_ACP_PLUGIN_PATH =
-    "/root/.npm-global/lib/node_modules/@deepseek-ai/dsh-acp-demo/lib/omnibot-acp-demo.mjs"
 private const val DEEPSEEK_PUBLIC_BASE_URL = "https://api.deepseek.com"
 private const val DEEPSEEK_HARNESS_DEFAULT_MODEL = "deepseek-v4-pro"
 private const val DEEPSEEK_HARNESS_DEFAULT_REASONING_EFFORT = "max"
@@ -1701,20 +1759,21 @@ private val DEEPSEEK_HARNESS_PERMISSION_MODES = setOf(
 )
 
 private val LOCAL_ACP_METHODS = setOf(
-    "thread/start",
-    "thread/resume",
-    "thread/read",
-    "thread/list",
-    "thread/loaded/list",
+    "session/new",
+    "session/load",
+    "session/list",
+    "session/prompt",
+    "session/cancel",
+    "session/archive",
+    "session/unarchive",
+    "session/name/set",
     "thread/archive",
     "thread/unarchive",
     "thread/name/set",
     "model/list",
     "config/read",
+    "config/set",
     "collaborationMode/list",
-    "turn/start",
-    "turn/steer",
-    "turn/interrupt",
     "review/start",
     "respondToServerRequest"
 )
@@ -1749,6 +1808,38 @@ internal fun Map<String, Any?>.withLocalIds(
         result["active"] = active
     }
     return result
+}
+
+internal fun Map<String, Any?>.withAcpSessionId(): Map<String, Any?> {
+    val sessionId = stringValue("sessionId") ?: stringValue("threadId")
+    val promptId = stringValue("promptId") ?: stringValue("turnId")
+    val result = LinkedHashMap(this).apply {
+        if (!sessionId.isNullOrBlank()) {
+            put("sessionId", sessionId)
+        }
+        if (!promptId.isNullOrBlank()) {
+            put("promptId", promptId)
+        }
+    }
+    return AcpSessionCompatibility.withLegacyIds(result)
+}
+
+internal fun Map<String, Any?>.withAcpSessions(): Map<String, Any?> {
+    val sessions = this["sessions"] ?: this["threads"]
+    val normalized = (sessions as? List<*>)?.map { entry ->
+        val map = (entry as? Map<*, *>)?.entries?.associate { (key, value) ->
+            key.toString() to value
+        } ?: return@map entry
+        AcpSessionCompatibility.withLegacyIds(
+            LinkedHashMap(map).apply {
+                val sessionId = stringValue("sessionId") ?: stringValue("threadId")
+                if (!sessionId.isNullOrBlank()) put("sessionId", sessionId)
+            }
+        )
+    }
+    return LinkedHashMap(this).apply {
+        if (normalized != null) put("sessions", normalized)
+    }
 }
 
 internal fun sanitizeAgentRuntimeAbsolutePath(raw: String?): String? {
@@ -2053,13 +2144,23 @@ internal fun buildDeepSeekHarnessConfigJson(
         ) + "\n"
 }
 
-/** Phone-safe DeepSeek Harness composition with Omnibot's interactive ACP bridge. */
+/**
+ * Phone-safe copy of DeepSeek Harness's official ACP example composition.
+ *
+ * The host owns only deployment values (model, permission, persistence, and
+ * the MCP endpoint). The capability plugins and their defaults stay aligned
+ * with the upstream composition, so the app does not accidentally turn DSH
+ * into a smaller private agent implementation.
+ */
 internal fun buildDeepSeekHarnessCordisConfig(): String = """
     - id: llm-deepseek
       name: '@deepseek-ai/dsh-llm-deepseek'
       config:
         thinking: enabled
         reasoningEffort: !!js "process.env.DSH_REASONING_EFFORT ?? 'max'"
+        models:
+          - id: deepseek-v4-flash
+          - id: deepseek-v4-pro
 
     - id: sandbox
       name: '@deepseek-ai/dsh-sandbox-local'
@@ -2068,7 +2169,7 @@ internal fun buildDeepSeekHarnessCordisConfig(): String = """
       name: '@deepseek-ai/dsh-sandbox-policy'
       config:
         mode: !!js "process.env.DSH_PERMISSION_MODE ?? 'workspace-write'"
-        workspaceRoot: /workspace
+        workspaceRoot: !!js process.cwd()
 
     - id: subprocess
       name: '@deepseek-ai/dsh-subprocess-local'
@@ -2081,29 +2182,116 @@ internal fun buildDeepSeekHarnessCordisConfig(): String = """
     - id: approval
       name: '@deepseek-ai/dsh-user-approval'
       config:
-        policy: ask
+        policy: !!js "(process.env.DSH_PERMISSION_MODE ?? 'workspace-write') === 'danger-full-access' ? 'never' : 'ask'"
 
     - id: acp-agent
-      name: '$DEEPSEEK_HARNESS_OMNIBOT_ACP_PLUGIN_PATH'
+      name: '@deepseek-ai/dsh-acp-demo'
       config:
         provider: deepseek-official
         model: !!js "process.env.DSH_MODEL ?? 'deepseek-v4-pro'"
-        reasoningEffort: !!js "process.env.DSH_REASONING_EFFORT ?? 'max'"
-        permissionMode: !!js "process.env.DSH_PERMISSION_MODE ?? 'workspace-write'"
         persistenceRoot: !!js "(process.env.DSH_ACP_HOME ?? '/root/.dsh/omnibot-acp') + '/sessions'"
-        persistenceCompression: none
+        persistenceCompression: !!js "process.env.DSH_PERSISTENCE_COMPRESSION ?? 'zstd'"
+        # Keep the official Harness defaults for workspace context, skills,
+        # jobs, goals, and tool transport. The host does not disable them.
         workspaceContext:
           maxBytes: 65536
-        skills:
-          enabled: false
-        toolBash:
-          enableRunInBackground: false
-        toolJobs: false
-        goals: false
         persona: |
-          You are a coding assistant powered by {{model}} on DeepSeek Harness.
-          Your working directory is {{cwd}}. Inspect files, make focused changes,
-          and verify work with relevant tests before answering.
+          You are a coding assistant powered by the {{model}} model. Your working directory is {{cwd}}. Your bash tool runs under a file sandbox — a `[sandbox: file access denied …]` result is policy, not a command bug.
+
+          Verify your work by running the code or tests. Keep answers brief and factual.
+
+    - id: token-meter
+      name: '@deepseek-ai/dsh-token-meter'
+
+    - id: compaction-basic
+      name: '@deepseek-ai/dsh-compaction-basic'
+      config:
+        thresholdRatio: 0.8
+        retainRatio: 0.08
+        maxTokens: 8192
+        compactionRetries: 1
+
+    - id: session-projection
+      name: '@deepseek-ai/dsh-session-projection'
+
+    - id: subagent
+      name: '@deepseek-ai/dsh-subagent'
+
+    - id: subagent-spawn-in-process
+      name: '@deepseek-ai/dsh-subagent-spawn-in-process'
+      config:
+        providerName: spawn
+
+    - id: subagent-fork-in-process
+      name: '@deepseek-ai/dsh-subagent-fork-in-process'
+      config:
+        providerName: fork
+
+    - id: tool-subagent-control
+      name: '@deepseek-ai/dsh-tool-subagent-control'
+
+    - id: tool-subagent-list-agents
+      name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
+
+    - id: tool-subagent-report
+      name: '@deepseek-ai/dsh-tool-subagent-report'
+
+    - id: tool-subagent
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: spawn
+        toolName: subagent
+        backgroundMode: continuable
+        maxDepth: 1
+
+    - id: tool-subagent-fork
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: fork
+        toolName: subagent_fork
+        backgroundMode: one-shot
+        enableRunInBackground: false
+        maxDepth: 1
+
+    - id: workflow-worker-thread
+      name: '@deepseek-ai/dsh-workflow-worker-thread'
+      config:
+        provider: spawn
+
+    - id: tool-workflow
+      name: '@deepseek-ai/dsh-tool-workflow'
+
+    - id: tool-ralph
+      name: '@deepseek-ai/dsh-tool-ralph'
+
+    - id: tool-todo
+      name: '@deepseek-ai/dsh-tool-todo'
+      config:
+        allowParallelInProgress: true
+
+    - id: repeat-tool-reminder
+      name: '@deepseek-ai/dsh-repeat-tool-reminder'
+
+    - id: fs-sandbox
+      name: '@deepseek-ai/dsh-fs-sandbox'
+      config:
+        cwd: !!js process.cwd()
+
+    - id: fs-observation-policy
+      name: '@deepseek-ai/dsh-fs-observation-policy'
+
+    - id: tool-fs
+      name: '@deepseek-ai/dsh-tool-fs'
+
+    - id: hooks-claude-code
+      name: '@deepseek-ai/dsh-hooks-claude-code'
+      config:
+        configPath: ./hooks.json
+
+    - id: hooks-codex
+      name: '@deepseek-ai/dsh-hooks-codex'
+      config:
+        configPath: ./codex-hooks.json
 
     - id: mcp-omnibot
       name: '@deepseek-ai/dsh-mcp-client'

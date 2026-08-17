@@ -1,13 +1,9 @@
 package cn.com.omnimind.bot.plugin.sandbox
 
 import cn.com.omnimind.baselib.llm.AssistantToolCall
-import cn.com.omnimind.baselib.llm.ChatCompletionMessage
 import cn.com.omnimind.baselib.llm.ChatCompletionRequest
-import cn.com.omnimind.baselib.llm.ChatCompletionStreamOptions
-import cn.com.omnimind.baselib.llm.ChatCompletionThinking
 import cn.com.omnimind.baselib.llm.contentText
 import cn.com.omnimind.bot.agent.AgentCallback
-import cn.com.omnimind.bot.agent.AgentConversationContextCompactor
 import cn.com.omnimind.bot.agent.AgentExecutionEnvironment
 import cn.com.omnimind.bot.agent.AgentToolExecutionHandle
 import cn.com.omnimind.bot.agent.AgentToolRegistry
@@ -67,9 +63,9 @@ internal object SandboxConnectorContract {
             )
         },
         "xiaowanDefaults" to mapOf(
-            "reasoning_effort" to "none",
-            "max_tokens" to 800,
-            "temperature" to 0.4,
+            "reasoning_effort" to XiaowanChatCompletionRequestFactory.DEFAULT_REASONING_EFFORT,
+            "max_tokens" to XiaowanChatCompletionRequestFactory.DEFAULT_MAX_TOKENS,
+            "temperature" to XiaowanChatCompletionRequestFactory.DEFAULT_TEMPERATURE,
         ),
         "dashboardBridge" to mapOf(
             "method" to "window.omni.tools.call",
@@ -712,31 +708,20 @@ internal object SandboxProjectConnectorRegistry {
                 append(args)
             }
         }
-        val messages = buildList {
-            if (system.isNotEmpty()) {
-                add(ChatCompletionMessage(role = "system", content = JsonPrimitive(system)))
-            }
-            add(ChatCompletionMessage(role = "user", content = JsonPrimitive(prompt)))
-        }
         val reasoningEffort = config["reasoning_effort"]
             ?.jsonPrimitive
             ?.contentOrNull
             ?.trim()
             ?.lowercase()
-            ?: "none"
-        val disableThinking = reasoningEffort == "none"
-        return ChatCompletionRequest(
-            messages = messages,
-            model = AgentConversationContextCompactor.DEFAULT_AGENT_MODEL_SCENE,
-            maxCompletionTokens = config["max_tokens"]?.jsonPrimitive?.intOrNull
-                ?.coerceIn(32, 4_096) ?: 800,
+            ?: XiaowanChatCompletionRequestFactory.DEFAULT_REASONING_EFFORT
+        return XiaowanChatCompletionRequestFactory.create(
+            prompt = prompt,
+            system = system,
+            maxTokens = config["max_tokens"]?.jsonPrimitive?.intOrNull
+                ?: XiaowanChatCompletionRequestFactory.DEFAULT_MAX_TOKENS,
             temperature = config["temperature"]?.jsonPrimitive?.doubleOrNull
-                ?.coerceIn(0.0, 2.0) ?: 0.4,
-            stream = true,
-            streamOptions = ChatCompletionStreamOptions(),
+                ?: XiaowanChatCompletionRequestFactory.DEFAULT_TEMPERATURE,
             reasoningEffort = reasoningEffort,
-            enableThinking = if (disableThinking) false else null,
-            thinking = if (disableThinking) ChatCompletionThinking(type = "disabled") else null,
         )
     }
 

@@ -694,14 +694,16 @@ class AgentRuntimeService {
     });
   }
 
-  static Future<Map<String, dynamic>> startThread({
+  // Canonical ACP application API. New code must use session/prompt names;
+  // the methods below keep the previous Dart surface working for old builds.
+  static Future<Map<String, dynamic>> newSession({
     int? conversationId,
     String? cwd,
     String? model,
     String? effort,
     String? collaborationMode,
   }) {
-    return _invokeMap('thread/start', {
+    return _invokeMap('session/new', {
       if (conversationId != null) 'conversationId': conversationId,
       if (cwd != null && cwd.trim().isNotEmpty) 'cwd': cwd.trim(),
       if (model != null && model.trim().isNotEmpty) 'model': model.trim(),
@@ -711,42 +713,172 @@ class AgentRuntimeService {
     });
   }
 
+  static Future<Map<String, dynamic>> loadSession({
+    String? sessionId,
+    int? conversationId,
+  }) {
+    return _invokeMap('session/load', {
+      if (sessionId != null) 'sessionId': sessionId,
+      if (conversationId != null) 'conversationId': conversationId,
+    });
+  }
+
+  static Future<Map<String, dynamic>> readSession({
+    String? sessionId,
+    int? conversationId,
+    bool includeHistory = true,
+  }) {
+    return _invokeMap('session/load', {
+      if (sessionId != null) 'sessionId': sessionId,
+      if (conversationId != null) 'conversationId': conversationId,
+      'includeHistory': includeHistory,
+    });
+  }
+
+  static Future<Map<String, dynamic>> listSessions({
+    int limit = 50,
+    String? cursor,
+  }) {
+    return _invokeMap('session/list', {
+      'limit': limit,
+      if (cursor != null && cursor.trim().isNotEmpty) 'cursor': cursor.trim(),
+    });
+  }
+
+  static Future<Map<String, dynamic>> listLoadedSessions() {
+    return _invokeMap('session/list');
+  }
+
+  static Future<Map<String, dynamic>> archiveSession({
+    String? sessionId,
+    int? conversationId,
+  }) {
+    return _invokeMap('session/archive', {
+      if (sessionId != null) 'sessionId': sessionId,
+      if (conversationId != null) 'conversationId': conversationId,
+    });
+  }
+
+  static Future<Map<String, dynamic>> unarchiveSession({
+    String? sessionId,
+    int? conversationId,
+  }) {
+    return _invokeMap('session/unarchive', {
+      if (sessionId != null) 'sessionId': sessionId,
+      if (conversationId != null) 'conversationId': conversationId,
+    });
+  }
+
+  static Future<Map<String, dynamic>> setSessionName({
+    String? sessionId,
+    int? conversationId,
+    required String name,
+  }) {
+    return _invokeMap('session/name/set', {
+      if (sessionId != null) 'sessionId': sessionId,
+      if (conversationId != null) 'conversationId': conversationId,
+      'name': name,
+    });
+  }
+
+  static Future<Map<String, dynamic>> promptSession({
+    String? sessionId,
+    int? conversationId,
+    required String text,
+    List<Map<String, dynamic>> attachments = const [],
+    String? cwd,
+    String? approvalPolicy,
+    String? approvalsReviewer,
+    Map<String, dynamic>? sandboxPolicy,
+    String? model,
+    String? effort,
+    String? collaborationMode,
+  }) {
+    return _invokeMap('session/prompt', {
+      if (sessionId != null) 'sessionId': sessionId,
+      if (conversationId != null) 'conversationId': conversationId,
+      if (cwd != null && cwd.trim().isNotEmpty) 'cwd': cwd.trim(),
+      if (approvalPolicy != null && approvalPolicy.trim().isNotEmpty)
+        'approvalPolicy': approvalPolicy.trim(),
+      if (approvalsReviewer != null && approvalsReviewer.trim().isNotEmpty)
+        'approvalsReviewer': approvalsReviewer.trim(),
+      if (sandboxPolicy != null) 'sandboxPolicy': sandboxPolicy,
+      if (model != null && model.trim().isNotEmpty) 'model': model.trim(),
+      if (effort != null && effort.trim().isNotEmpty) 'effort': effort.trim(),
+      if (collaborationMode != null && collaborationMode.trim().isNotEmpty)
+        'collaborationMode': collaborationMode.trim(),
+      'text': text,
+      if (attachments.isNotEmpty) 'attachments': attachments,
+    });
+  }
+
+  static Future<Map<String, dynamic>> cancelPrompt({
+    String? sessionId,
+    int? conversationId,
+    String? promptId,
+  }) {
+    return _invokeMap('session/cancel', {
+      if (sessionId != null) 'sessionId': sessionId,
+      if (conversationId != null) 'conversationId': conversationId,
+      if (promptId != null) 'promptId': promptId,
+    });
+  }
+
+  @Deprecated('Use newSession')
+  static Future<Map<String, dynamic>> startThread({
+    int? conversationId,
+    String? cwd,
+    String? model,
+    String? effort,
+    String? collaborationMode,
+  }) {
+    return newSession(
+      conversationId: conversationId,
+      cwd: cwd,
+      model: model,
+      effort: effort,
+      collaborationMode: collaborationMode,
+    );
+  }
+
+  @Deprecated('Use loadSession')
   static Future<Map<String, dynamic>> resumeThread({
     String? threadId,
     int? conversationId,
   }) {
-    return _invokeMap('thread/resume', {
+    return _invokeMap('session/load', {
       if (threadId != null) 'threadId': threadId,
       if (conversationId != null) 'conversationId': conversationId,
     });
   }
 
+  @Deprecated('Use readSession')
   static Future<Map<String, dynamic>> readThread({
     String? threadId,
     int? conversationId,
     bool includeTurns = true,
   }) {
-    return _invokeMap('thread/read', {
+    return _invokeMap('session/load', {
       if (threadId != null) 'threadId': threadId,
       if (conversationId != null) 'conversationId': conversationId,
       'includeTurns': includeTurns,
     });
   }
 
+  @Deprecated('Use listSessions')
   static Future<Map<String, dynamic>> listThreads({
     int limit = 50,
     String? cursor,
   }) {
-    return _invokeMap('thread/list', {
-      'limit': limit,
-      if (cursor != null && cursor.trim().isNotEmpty) 'cursor': cursor.trim(),
-    });
+    return listSessions(limit: limit, cursor: cursor);
   }
 
+  @Deprecated('Use listLoadedSessions')
   static Future<Map<String, dynamic>> listLoadedThreads() {
-    return _invokeMap('thread/loaded/list');
+    return listLoadedSessions();
   }
 
+  @Deprecated('Use archiveSession')
   static Future<Map<String, dynamic>> archiveThread({
     String? threadId,
     int? conversationId,
@@ -757,6 +889,7 @@ class AgentRuntimeService {
     });
   }
 
+  @Deprecated('Use unarchiveSession')
   static Future<Map<String, dynamic>> unarchiveThread({
     String? threadId,
     int? conversationId,
@@ -767,6 +900,7 @@ class AgentRuntimeService {
     });
   }
 
+  @Deprecated('Use setSessionName')
   static Future<Map<String, dynamic>> setThreadName({
     String? threadId,
     int? conversationId,
@@ -779,6 +913,7 @@ class AgentRuntimeService {
     });
   }
 
+  @Deprecated('Use promptSession')
   static Future<Map<String, dynamic>> startTurn({
     String? threadId,
     int? conversationId,
@@ -792,7 +927,7 @@ class AgentRuntimeService {
     String? effort,
     String? collaborationMode,
   }) {
-    return _invokeMap('turn/start', {
+    return _invokeMap('session/prompt', {
       if (threadId != null) 'threadId': threadId,
       if (conversationId != null) 'conversationId': conversationId,
       if (cwd != null && cwd.trim().isNotEmpty) 'cwd': cwd.trim(),
@@ -810,6 +945,36 @@ class AgentRuntimeService {
     });
   }
 
+  static Future<Map<String, dynamic>> reviewSession({
+    String? sessionId,
+    int? conversationId,
+    String? cwd,
+    Map<String, dynamic>? target,
+    String? approvalPolicy,
+    String? approvalsReviewer,
+    Map<String, dynamic>? sandboxPolicy,
+    String? model,
+    String? effort,
+    String? collaborationMode,
+  }) {
+    return _invokeMap('review/start', {
+      if (sessionId != null) 'sessionId': sessionId,
+      if (conversationId != null) 'conversationId': conversationId,
+      if (cwd != null && cwd.trim().isNotEmpty) 'cwd': cwd.trim(),
+      'target': target ?? <String, dynamic>{'type': 'uncommittedChanges'},
+      if (approvalPolicy != null && approvalPolicy.trim().isNotEmpty)
+        'approvalPolicy': approvalPolicy.trim(),
+      if (approvalsReviewer != null && approvalsReviewer.trim().isNotEmpty)
+        'approvalsReviewer': approvalsReviewer.trim(),
+      if (sandboxPolicy != null) 'sandboxPolicy': sandboxPolicy,
+      if (model != null && model.trim().isNotEmpty) 'model': model.trim(),
+      if (effort != null && effort.trim().isNotEmpty) 'effort': effort.trim(),
+      if (collaborationMode != null && collaborationMode.trim().isNotEmpty)
+        'collaborationMode': collaborationMode.trim(),
+    });
+  }
+
+  @Deprecated('Use reviewSession')
   static Future<Map<String, dynamic>> startReview({
     String? threadId,
     int? conversationId,
@@ -853,6 +1018,37 @@ class AgentRuntimeService {
 
   static Future<Map<String, dynamic>> readConfig() {
     return _invokeMap('config/read');
+  }
+
+  static Future<Map<String, dynamic>> setSessionConfigOption({
+    String? sessionId,
+    int? conversationId,
+    required String configId,
+    required dynamic value,
+  }) {
+    return _invokeMap('config/set', {
+      if (sessionId != null && sessionId.trim().isNotEmpty)
+        'sessionId': sessionId.trim(),
+      if (conversationId != null) 'conversationId': conversationId,
+      'configId': configId.trim(),
+      'value': value,
+    });
+  }
+
+  @Deprecated('Use setSessionConfigOption')
+  static Future<Map<String, dynamic>> setConfigOption({
+    String? threadId,
+    int? conversationId,
+    required String configId,
+    required dynamic value,
+  }) {
+    return _invokeMap('config/set', {
+      if (threadId != null && threadId.trim().isNotEmpty)
+        'threadId': threadId.trim(),
+      if (conversationId != null) 'conversationId': conversationId,
+      'configId': configId.trim(),
+      'value': value,
+    });
   }
 
   static Future<CodexRemoteBridgeConfig> readRemoteBridgeConfig() async {
@@ -994,7 +1190,7 @@ class AgentRuntimeService {
     int? conversationId,
     String? turnId,
   }) {
-    return _invokeMap('turn/interrupt', {
+    return _invokeMap('session/cancel', {
       if (threadId != null) 'threadId': threadId,
       if (conversationId != null) 'conversationId': conversationId,
       if (turnId != null) 'turnId': turnId,

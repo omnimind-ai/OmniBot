@@ -143,7 +143,7 @@ internal class WebAgentRunBridge(
                 agentId = agentId
             )
             val response = normalizeMap(
-                manager.handleMethod("turn/start", arguments)
+                manager.handleMethod("session/prompt", arguments)
             )
             bindServerIds(
                 state = state,
@@ -168,7 +168,7 @@ internal class WebAgentRunBridge(
         )
         state.threadId?.let { arguments["threadId"] = it }
         state.turnId?.let { arguments["turnId"] = it }
-        manager.handleMethod("turn/interrupt", arguments)
+        manager.handleMethod("session/cancel", arguments)
         return true
     }
 

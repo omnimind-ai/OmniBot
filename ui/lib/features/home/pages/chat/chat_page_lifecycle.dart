@@ -324,9 +324,9 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
       return;
     }
     try {
-      final response = await AgentRuntimeService.readThread(
+      final response = await AgentRuntimeService.readSession(
         conversationId: conversationId,
-        includeTurns: false,
+        includeHistory: false,
       );
       AgentRuntimeStatus? status;
       try {

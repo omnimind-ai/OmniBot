@@ -38,10 +38,35 @@ class AgentEventReducer {
     final message = _asStringMap(event['message']) ?? event;
     final method = _resolveAgentEventMethod(event: event, message: message);
     if (method.isEmpty) {
+      final presentation = _asStringMap(event['presentation']);
+      if (presentation != null) {
+        final projected = _projectPresentationEvent(
+          event: event,
+          presentation: presentation,
+        );
+        if (projected == null) {
+          return const AgentReduceResult(handled: false);
+        }
+        return reduce(runtime: runtime, event: projected);
+      }
       return const AgentReduceResult(handled: false);
     }
 
     final params = _eventParams(event: event, message: message, method: method);
+
+    // ACP agents speak the official session/update notification. The reducer
+    // projects that protocol object into the existing presentation reducer so
+    // the UI remains a renderer rather than becoming another ACP dialect.
+    if (method == 'session/update') {
+      final projected = _projectAcpSessionUpdate(
+        event: event,
+        params: params,
+      );
+      if (projected == null) {
+        return AgentReduceResult(handled: true, method: method);
+      }
+      return reduce(runtime: runtime, event: projected);
+    }
     final threadId = _firstString([
       event['threadId'],
       params['threadId'],
@@ -2564,6 +2589,186 @@ class _AgentQuestion {
   final String id;
   final String title;
   final String detail;
+}
+
+Map<String, dynamic>? _projectAcpSessionUpdate({
+  required Map<String, dynamic> event,
+  required Map<String, dynamic> params,
+}) {
+  final update = _asStringMap(params['update']);
+  if (update == null) return null;
+  final sessionId = _firstString([
+    params['sessionId'],
+    params['session_id'],
+    event['threadId'],
+  ]);
+  final sessionUpdate = _string(update['sessionUpdate']);
+  if (sessionUpdate == null || sessionUpdate.isEmpty) return null;
+
+  Map<String, dynamic> projectedParams(Map<String, dynamic> values) {
+    return <String, dynamic>{
+      ...values,
+      if (sessionId != null) 'threadId': sessionId,
+    };
+  }
+
+  switch (sessionUpdate) {
+    case 'agent_message_chunk':
+      return <String, dynamic>{
+        'method': 'item/agentMessage/delta',
+        'params': projectedParams(<String, dynamic>{
+          'itemId': update['messageId'],
+          'delta': _extractText(update['content']) ?? '',
+        }),
+      };
+    case 'agent_thought_chunk':
+      return <String, dynamic>{
+        'method': 'item/reasoning/delta',
+        'params': projectedParams(<String, dynamic>{
+          'itemId': update['messageId'],
+          'delta': _extractText(update['content']) ?? '',
+        }),
+      };
+    case 'tool_call':
+      return <String, dynamic>{
+        'method': 'item/started',
+        'params': projectedParams(<String, dynamic>{
+          'item': _projectAcpToolCall(update),
+        }),
+      };
+    case 'tool_call_update':
+      final item = _projectAcpToolCall(update);
+      final status = _string(item['status'])?.toLowerCase();
+      return <String, dynamic>{
+        'method': status == 'completed' ||
+                status == 'failed' ||
+                status == 'cancelled'
+            ? 'item/completed'
+            : 'item/updated',
+        'params': projectedParams(<String, dynamic>{'item': item}),
+      };
+    case 'plan':
+      final entries = (update['entries'] as List?)
+          ?.whereType<Map>()
+          .map((entry) => Map<String, dynamic>.from(entry))
+          .toList();
+      return <String, dynamic>{
+        'method': 'turn/plan/updated',
+        'params': projectedParams(<String, dynamic>{
+          'entries': entries ?? const <Map<String, dynamic>>[],
+          'plan': entries
+                  ?.map((entry) =>
+                      '- [${entry['status'] ?? 'pending'}] ${entry['content'] ?? ''}')
+                  .join('\n') ??
+              '',
+        }),
+      };
+    case 'current_mode_update':
+      return <String, dynamic>{
+        'method': 'thread/settings/updated',
+        'params': projectedParams(<String, dynamic>{
+          'collaborationMode': update['currentModeId'],
+        }),
+      };
+    case 'config_option_update':
+      // Configuration metadata is consumed directly by the ACP-facing
+      // settings UI. It is not converted into an app-owned event name.
+      return null;
+    case 'session_info_update':
+      return <String, dynamic>{
+        'method': 'thread/name/updated',
+        'params': projectedParams(<String, dynamic>{
+          'name': update['title'],
+        }),
+      };
+    default:
+      // Usage, commands, and future ACP update kinds do not affect the chat
+      // cards yet. They remain valid ACP notifications and are safely ignored
+      // by this presentation projection.
+      return null;
+  }
+}
+
+/// Local ACP prompt completion is a host lifecycle concern, not an ACP
+/// notification. It arrives as a presentation state and is projected into
+/// the existing card reducer without exposing a second agent protocol.
+Map<String, dynamic>? _projectPresentationEvent({
+  required Map<String, dynamic> event,
+  required Map<String, dynamic> presentation,
+}) {
+  final kind = _string(presentation['kind']);
+  if (kind == null || kind.isEmpty) return null;
+  final params = Map<String, dynamic>.from(presentation)
+    ..remove('kind');
+  final threadId = _firstString([
+    presentation['threadId'],
+    event['threadId'],
+  ]);
+  final turnId = _firstString([
+    presentation['turnId'],
+    event['turnId'],
+  ]);
+  if (threadId != null) params['threadId'] = threadId;
+  if (turnId != null) params['turnId'] = turnId;
+
+  switch (kind) {
+    case 'thread_started':
+      return <String, dynamic>{'method': 'thread/started', 'params': params};
+    case 'thread_archived':
+      return <String, dynamic>{'method': 'thread/archived', 'params': params};
+    case 'thread_unarchived':
+      return <String, dynamic>{
+        'method': 'thread/unarchived',
+        'params': params,
+      };
+    case 'turn_started':
+      return <String, dynamic>{'method': 'turn/started', 'params': params};
+    case 'turn_completed':
+      return <String, dynamic>{'method': 'turn/completed', 'params': params};
+    case 'turn_failed':
+      return <String, dynamic>{'method': 'turn/failed', 'params': params};
+    case 'approval_requested':
+      return <String, dynamic>{
+        'method': 'item/started',
+        'params': <String, dynamic>{
+          ...params,
+          'item': params['item'],
+        },
+      };
+    default:
+      return null;
+  }
+}
+
+Map<String, dynamic> _projectAcpToolCall(Map<String, dynamic> update) {
+  return <String, dynamic>{
+    'id': update['toolCallId'],
+    'type': _acpToolUiType(_string(update['kind'])),
+    'title': update['title'],
+    'status': update['status'],
+    'content': update['content'],
+    'locations': update['locations'],
+    'rawInput': update['rawInput'],
+    'rawOutput': update['rawOutput'],
+  };
+}
+
+String _acpToolUiType(String? kind) {
+  switch (kind?.toLowerCase()) {
+    case 'execute':
+      return 'commandExecution';
+    case 'edit':
+    case 'delete':
+    case 'move':
+      return 'fileChange';
+    case 'search':
+    case 'fetch':
+      return 'webSearch';
+    case 'think':
+      return 'plan';
+    default:
+      return 'tool';
+  }
 }
 
 bool _isReasoningMethod(String method) {

@@ -355,7 +355,7 @@ extension _ChatInputAgentControls on _ChatInputAreaStateBase {
       try {
         final mode = await handle.future;
         if (mode == null) return;
-        widget.onAgentPermissionModeChanged?.call(mode);
+        await widget.onAgentPermissionModeChanged?.call(mode);
       } finally {
         if (_agentPermissionMenuHandle == handle) {
           _agentPermissionMenuHandle = null;

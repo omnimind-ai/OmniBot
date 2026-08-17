@@ -160,7 +160,8 @@ class OmniAgentExecutor(
         terminalEnvironment: Map<String, String>,
         callback: AgentCallback,
         runControl: AgentRunControl = NoOpAgentRunControl,
-        continueMode: Boolean = false
+        continueMode: Boolean = false,
+        historyMessagesOverride: List<ChatCompletionMessage>? = null
     ): AgentResult {
         var toolRouter: AgentToolRouter? = null
         var pluginSession: OmniPluginSession? = null
@@ -239,7 +240,8 @@ class OmniAgentExecutor(
                 skillsRootAndroidPath = workspaceManager.skillsRoot().absolutePath,
                 resolvedSkills = resolvedSkills,
                 memoryContext = promptIdentityContext,
-                terminalDistribution = terminalDistribution
+                terminalDistribution = terminalDistribution,
+                historyMessagesOverride = historyMessagesOverride
             )
 
             val llmClient = HttpAgentLlmClient(
@@ -354,7 +356,8 @@ class OmniAgentExecutor(
         skillsRootAndroidPath: String,
         resolvedSkills: List<ResolvedSkillContext>,
         memoryContext: WorkspaceMemoryPromptContext?,
-        terminalDistribution: TerminalDistribution.Spec = TerminalDistribution.alpine
+        terminalDistribution: TerminalDistribution.Spec = TerminalDistribution.alpine,
+        historyMessagesOverride: List<ChatCompletionMessage>? = null
     ): List<ChatCompletionMessage> {
         val systemPrompt = AgentSystemPrompt.build(
             workspace = workspaceDescriptor,
@@ -375,7 +378,7 @@ class OmniAgentExecutor(
                 ))
                 add(buildCachedTimeContextMessage(locale))
             },
-            historyMessages = promptSeed.historyMessages,
+            historyMessages = historyMessagesOverride ?: promptSeed.historyMessages,
             currentUserMessage = buildCurrentUserMessage(userMessage, attachments),
             continueMode = continueMode
         )

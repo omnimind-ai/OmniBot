@@ -1,12 +1,7 @@
 package cn.com.omnimind.bot.plugin.sandbox
 
 import android.content.Context
-import cn.com.omnimind.baselib.llm.ChatCompletionMessage
-import cn.com.omnimind.baselib.llm.ChatCompletionRequest
-import cn.com.omnimind.baselib.llm.ChatCompletionStreamOptions
-import cn.com.omnimind.baselib.llm.ChatCompletionThinking
 import cn.com.omnimind.baselib.llm.contentText
-import cn.com.omnimind.bot.agent.AgentConversationContextCompactor
 import cn.com.omnimind.bot.agent.HttpAgentLlmClient
 import cn.com.omnimind.bot.plugin.OmniPluginHost
 import kotlinx.coroutines.CoroutineScope
@@ -92,22 +87,16 @@ class SandboxPluginBridgeRuntime private constructor(
 
     private suspend fun generateWithXiaowan(params: Map<*, *>): Map<String, Any?> {
         val prompt = params.requireString("prompt")
-        require(prompt.length <= MAX_AI_PROMPT_CHARS) {
-            "prompt exceeds the $MAX_AI_PROMPT_CHARS character limit"
-        }
         val system = params["system"]?.toString()?.trim().orEmpty()
-        require(system.length <= MAX_AI_SYSTEM_CHARS) {
-            "system exceeds the $MAX_AI_SYSTEM_CHARS character limit"
-        }
-        val maxTokens = ((params["maxTokens"] as? Number)?.toInt() ?: DEFAULT_AI_MAX_TOKENS)
-            .coerceIn(MIN_AI_MAX_TOKENS, MAX_AI_MAX_TOKENS)
-        val temperature = ((params["temperature"] as? Number)?.toDouble() ?: 0.4)
-            .coerceIn(0.0, 2.0)
-        val request = buildFastAiRequest(
+        val request = XiaowanChatCompletionRequestFactory.create(
             prompt = prompt,
             system = system,
-            maxTokens = maxTokens,
-            temperature = temperature,
+            maxTokens = (params["maxTokens"] as? Number)?.toInt()
+                ?: XiaowanChatCompletionRequestFactory.DEFAULT_MAX_TOKENS,
+            temperature = (params["temperature"] as? Number)?.toDouble()
+                ?: XiaowanChatCompletionRequestFactory.DEFAULT_TEMPERATURE,
+            reasoningEffort = params["reasoningEffort"]?.toString()
+                ?: XiaowanChatCompletionRequestFactory.DEFAULT_REASONING_EFFORT,
         )
         val turn = withContext(Dispatchers.IO) {
             HttpAgentLlmClient(CoroutineScope(currentCoroutineContext())).streamTurn(
@@ -170,36 +159,4 @@ class SandboxPluginBridgeRuntime private constructor(
         else -> JsonPrimitive(toString())
     }
 
-    private companion object {
-        const val MIN_AI_MAX_TOKENS = 32
-        const val DEFAULT_AI_MAX_TOKENS = 1_024
-        const val MAX_AI_MAX_TOKENS = 4_096
-        const val MAX_AI_PROMPT_CHARS = 32_000
-        const val MAX_AI_SYSTEM_CHARS = 8_000
-    }
-}
-
-internal fun buildFastAiRequest(
-    prompt: String,
-    system: String,
-    maxTokens: Int,
-    temperature: Double,
-): ChatCompletionRequest {
-    val messages = buildList {
-        if (system.isNotEmpty()) {
-            add(ChatCompletionMessage(role = "system", content = JsonPrimitive(system)))
-        }
-        add(ChatCompletionMessage(role = "user", content = JsonPrimitive(prompt)))
-    }
-    return ChatCompletionRequest(
-        messages = messages,
-        model = AgentConversationContextCompactor.DEFAULT_AGENT_MODEL_SCENE,
-        maxCompletionTokens = maxTokens,
-        temperature = temperature,
-        stream = true,
-        streamOptions = ChatCompletionStreamOptions(),
-        reasoningEffort = "none",
-        enableThinking = false,
-        thinking = ChatCompletionThinking(type = "disabled"),
-    )
 }

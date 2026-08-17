@@ -37,7 +37,8 @@ class ChatInputWrapper extends StatelessWidget {
   final FutureOr<void> Function()? onAgentRunSettingsOpened;
   final AgentPermissionMode? agentPermissionMode;
   final List<AgentPermissionMode> agentPermissionModes;
-  final ValueChanged<AgentPermissionMode>? onAgentPermissionModeChanged;
+  final FutureOr<void> Function(AgentPermissionMode)?
+  onAgentPermissionModeChanged;
   final bool useIndependentSendButton;
   final bool translucent;
 

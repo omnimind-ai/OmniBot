@@ -14,9 +14,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * The mapper is the single ACP -> UI translation shared by the local runtime and
- * (once it forwards ACP) the remote PC Bridge, so its output shape is a
- * contract worth pinning down.
+ * The mapper is the single ACP notification serializer shared by local ACP
+ * agents, so its official envelope is a contract worth pinning down.
  */
 class AcpSessionUpdateMapperTest {
 
@@ -25,30 +24,20 @@ class AcpSessionUpdateMapperTest {
         val event = SessionUpdate.AgentMessageChunk(
             content = ContentBlock.Text("hello"),
             messageId = MessageId("msg_a")
-        ).toAcpUiEvent("thread-1")
+        ).toAcpSessionNotification("thread-1")
 
-        assertEquals("item/agentMessage/delta", event?.method)
-        assertEquals("msg_a", event?.params?.get("itemId"))
-        assertEquals("hello", event?.params?.get("delta"))
+        assertEquals("thread-1", event?.sessionId)
+        assertEquals("agent_message_chunk", event?.update?.get("sessionUpdate"))
+        assertEquals("msg_a", event?.update?.get("messageId"))
+        assertEquals(mapOf("type" to "text", "text" to "hello"), event?.update?.get("content"))
     }
 
     @Test
-    fun agentMessageChunkWithoutMessageIdFallsBackToTheTurn() {
-        val event = SessionUpdate.AgentMessageChunk(
-            content = ContentBlock.Text("hello")
-        ).toAcpUiEvent("thread-1", "turn-1")
+    fun agentMessageChunkWithoutMessageIdKeepsTheOfficialOptionalFieldAbsent() {
+        val event = SessionUpdate.AgentMessageChunk(content = ContentBlock.Text("hello"))
+            .toAcpSessionNotification("thread-1")
 
-        assertEquals("turn-1-agent", event?.params?.get("itemId"))
-    }
-
-    @Test
-    fun agentMessageChunksWithoutIdsDoNotCollideAcrossTurns() {
-        fun itemId(turnId: String): Any? = SessionUpdate.AgentMessageChunk(
-            content = ContentBlock.Text("hello")
-        ).toAcpUiEvent("thread-1", turnId)?.params?.get("itemId")
-
-        assertEquals("turn-1-agent", itemId("turn-1"))
-        assertEquals("turn-2-agent", itemId("turn-2"))
+        assertFalse(event?.update?.containsKey("messageId") == true)
     }
 
     @Test
@@ -56,25 +45,28 @@ class AcpSessionUpdateMapperTest {
         val event = SessionUpdate.AgentThoughtChunk(
             content = ContentBlock.Text("先检查消息顺序"),
             messageId = MessageId("msg_thinking")
-        ).toAcpUiEvent("thread-1")
+        ).toAcpSessionNotification("thread-1")
 
-        assertEquals("item/reasoning/delta", event?.method)
-        assertEquals("msg_thinking", event?.params?.get("itemId"))
-        assertEquals("先检查消息顺序", event?.params?.get("delta"))
+        assertEquals("agent_thought_chunk", event?.update?.get("sessionUpdate"))
+        assertEquals("msg_thinking", event?.update?.get("messageId"))
+        assertEquals(
+            mapOf("type" to "text", "text" to "先检查消息顺序"),
+            event?.update?.get("content")
+        )
     }
 
     @Test
     fun toolCallUpdateOnlyCompletesOnATerminalStatus() {
-        fun methodFor(status: ToolCallStatus?): String? = SessionUpdate.ToolCallUpdate(
+        fun statusFor(status: ToolCallStatus?): String? = SessionUpdate.ToolCallUpdate(
             toolCallId = ToolCallId("call-1"),
             status = status
-        ).toAcpUiEvent("thread-1")?.method
+        ).toAcpSessionNotification("thread-1")?.update?.get("status") as String?
 
-        assertEquals("item/completed", methodFor(ToolCallStatus.COMPLETED))
-        assertEquals("item/completed", methodFor(ToolCallStatus.FAILED))
-        assertEquals("item/updated", methodFor(ToolCallStatus.IN_PROGRESS))
-        assertEquals("item/updated", methodFor(ToolCallStatus.PENDING))
-        assertEquals("item/updated", methodFor(null))
+        assertEquals("completed", statusFor(ToolCallStatus.COMPLETED))
+        assertEquals("failed", statusFor(ToolCallStatus.FAILED))
+        assertEquals("in_progress", statusFor(ToolCallStatus.IN_PROGRESS))
+        assertEquals("pending", statusFor(ToolCallStatus.PENDING))
+        assertNull(statusFor(null))
     }
 
     @Test
@@ -83,19 +75,19 @@ class AcpSessionUpdateMapperTest {
         // to the timeline.
         assertNull(
             SessionUpdate.UserMessageChunk(content = ContentBlock.Text("hi"))
-                .toAcpUiEvent("thread-1")
+                .toAcpSessionNotification("thread-1")
         )
     }
 
     @Test
     fun sessionInfoUpdateWithoutATitleProducesNothing() {
-        assertNull(SessionUpdate.SessionInfoUpdate(title = null).toAcpUiEvent("thread-1"))
-        assertNull(SessionUpdate.SessionInfoUpdate(title = "  ").toAcpUiEvent("thread-1"))
+        assertNull(SessionUpdate.SessionInfoUpdate(title = null).toAcpSessionNotification("thread-1"))
+        assertNull(SessionUpdate.SessionInfoUpdate(title = "  ").toAcpSessionNotification("thread-1"))
 
         val renamed = SessionUpdate.SessionInfoUpdate(title = "Renamed")
-            .toAcpUiEvent("thread-1")
-        assertEquals("thread/name/updated", renamed?.method)
-        assertEquals("Renamed", renamed?.params?.get("name"))
+            .toAcpSessionNotification("thread-1")
+        assertEquals("session_info_update", renamed?.update?.get("sessionUpdate"))
+        assertEquals("Renamed", renamed?.update?.get("title"))
     }
 
     @Test
@@ -122,18 +114,5 @@ class AcpSessionUpdateMapperTest {
             SessionUpdate.AvailableCommandsUpdate(availableCommands = emptyList())
                 .isTurnScoped()
         )
-    }
-
-    @Test
-    fun toolKindsMapOntoTheUiItemTypes() {
-        assertEquals("commandExecution", acpToolItemType("EXECUTE"))
-        assertEquals("fileChange", acpToolItemType("EDIT"))
-        assertEquals("fileChange", acpToolItemType("DELETE"))
-        assertEquals("fileChange", acpToolItemType("MOVE"))
-        assertEquals("webSearch", acpToolItemType("SEARCH"))
-        assertEquals("webSearch", acpToolItemType("FETCH"))
-        assertEquals("plan", acpToolItemType("THINK"))
-        assertEquals("tool", acpToolItemType("OTHER"))
-        assertEquals("tool", acpToolItemType(null))
     }
 }

@@ -11,9 +11,44 @@ import org.junit.Test
 
 class AgentRuntimeProtocolPayloadTest {
     @Test
+    fun acpSessionCompatibilityCanonicalizesOldIdsOnlyAtTheBoundary() {
+        val canonical = AcpSessionCompatibility.canonicalize(
+            "session/prompt",
+            mapOf("threadId" to "old-session", "turnId" to "old-prompt")
+        )
+
+        assertEquals("old-session", canonical["sessionId"])
+        assertEquals("old-prompt", canonical["promptId"])
+        assertEquals("old-session", canonical["threadId"])
+        assertEquals("old-prompt", canonical["turnId"])
+
+        val canonicalWins = AcpSessionCompatibility.canonicalize(
+            "session/cancel",
+            mapOf(
+                "sessionId" to "new-session",
+                "threadId" to "old-session",
+                "promptId" to "new-prompt",
+                "turnId" to "old-prompt"
+            )
+        )
+        assertEquals("new-session", canonicalWins["sessionId"])
+        assertEquals("new-prompt", canonicalWins["promptId"])
+    }
+
+    @Test
+    fun acpSessionCompatibilityAddsLegacyIdsOnlyToResponses() {
+        val response = AcpSessionCompatibility.withLegacyIds(
+            mapOf("sessionId" to "session-1", "promptId" to "prompt-1")
+        )
+
+        assertEquals("session-1", response["threadId"])
+        assertEquals("prompt-1", response["turnId"])
+    }
+
+    @Test
     fun managedAcpCatalogIncludesSupportedAgentsWithoutGemini() {
         assertEquals(
-            listOf("Codex", "Claude Code", "OpenCode", "DeepSeek Harness"),
+            listOf("Codex", "Claude Code", "OpenCode", "DeepSeek Harness", "小万"),
             AcpAgentProfileStore.OFFICIAL_AGENTS.map { it.name }
         )
         assertTrue(AcpAgentProfileStore.OFFICIAL_AGENTS.all { it.builtIn })
@@ -49,6 +84,21 @@ class AgentRuntimeProtocolPayloadTest {
         assertTrue(
             deepSeekRuntime?.managedAdapterPackages.orEmpty().contains(
                 "@deepseek-ai/dsh-mcp-client@next"
+            )
+        )
+        assertTrue(
+            deepSeekRuntime?.managedAdapterPackages.orEmpty().contains(
+                "@deepseek-ai/dsh-compaction-basic@next"
+            )
+        )
+        assertTrue(
+            deepSeekRuntime?.managedAdapterPackages.orEmpty().contains(
+                "@deepseek-ai/dsh-tool-fs@next"
+            )
+        )
+        assertTrue(
+            deepSeekRuntime?.managedAdapterPackages.orEmpty().contains(
+                "@deepseek-ai/dsh-tool-subagent@next"
             )
         )
         assertTrue(
@@ -108,22 +158,30 @@ class AgentRuntimeProtocolPayloadTest {
     }
 
     @Test
-    fun deepSeekHarnessCordisCompositionOwnsTheMissingAcpCapabilities() {
+    fun deepSeekHarnessCordisCompositionUsesTheOfficialAcpPlugin() {
         val config = buildDeepSeekHarnessCordisConfig()
 
         assertTrue(config.contains("name: '@deepseek-ai/dsh-llm-deepseek'"))
-        assertTrue(config.contains("name: '$DEEPSEEK_HARNESS_OMNIBOT_ACP_PLUGIN_PATH'"))
+        assertTrue(config.contains("name: '@deepseek-ai/dsh-acp-demo'"))
         assertTrue(config.contains("name: '@deepseek-ai/dsh-mcp-client'"))
-        assertFalse(config.contains("name: '@deepseek-ai/dsh-acp-demo'"))
+        assertTrue(config.contains("name: '@deepseek-ai/dsh-compaction-basic'"))
+        assertTrue(config.contains("name: '@deepseek-ai/dsh-tool-fs'"))
+        assertTrue(config.contains("name: '@deepseek-ai/dsh-tool-subagent'"))
+        assertTrue(config.contains("name: '@deepseek-ai/dsh-tool-workflow'"))
         assertTrue(config.contains("serverName: omnibot"))
         assertTrue(config.contains("process.env.OMNIBOT_MCP_URL"))
         assertTrue(config.contains("process.env.OMNIBOT_MCP_TOKEN"))
-        assertTrue(config.contains("workspaceRoot: /workspace"))
-        assertTrue(config.contains("persistenceCompression: none"))
+        assertTrue(config.contains("workspaceRoot: !!js process.cwd()"))
+        assertTrue(config.contains("persistenceCompression: !!js"))
+        assertTrue(config.contains("maxBytes: 65536"))
         assertTrue(config.contains("process.env.DSH_MODEL"))
         assertTrue(config.contains("process.env.DSH_REASONING_EFFORT"))
         assertTrue(config.contains("process.env.DSH_PERMISSION_MODE"))
-        assertTrue(config.contains("policy: ask"))
+        assertTrue(config.contains("policy: !!js"))
+        assertFalse(config.contains("omnibot-acp-demo.mjs"))
+        assertFalse(config.contains("skills:\n          enabled: false"))
+        assertFalse(config.contains("toolJobs: false"))
+        assertFalse(config.contains("goals: false"))
     }
 
     @Test
@@ -177,31 +235,6 @@ class AgentRuntimeProtocolPayloadTest {
 
         assertEquals("http://127.0.0.1:9001/mcp", environment["OMNIBOT_MCP_URL"])
         assertEquals("local-secret", environment["OMNIBOT_MCP_TOKEN"])
-    }
-
-    @Test
-    fun deepSeekHarnessInteractiveBridgePublishesUiAndConfigEvents() {
-        val workingDirectory = File(requireNotNull(System.getProperty("user.dir")))
-        val source = listOf(
-            workingDirectory.resolve(
-                "app/src/main/assets/deepseek_harness/omnibot-acp-demo.mjs"
-            ),
-            workingDirectory.resolve(
-                "src/main/assets/deepseek_harness/omnibot-acp-demo.mjs"
-            )
-        ).firstOrNull(File::isFile)?.readText()
-            ?: error("DeepSeek Harness interactive ACP asset is missing.")
-
-        assertTrue(source.contains("sessionUpdate: 'agent_thought_chunk'"))
-        assertTrue(source.contains("messageId: thoughtMessageId("))
-        assertTrue(source.contains("sessionUpdate: 'tool_call'"))
-        assertTrue(source.contains("sessionUpdate: 'tool_call_update'"))
-        assertTrue(source.contains("messageId: event.data.message.id"))
-        assertTrue(source.contains("category: 'model'"))
-        assertTrue(source.contains("category: 'thought_level'"))
-        assertTrue(source.contains("category: 'mode'"))
-        assertTrue(source.contains("installModelSelection(agentCtx, selection)"))
-        assertTrue(source.contains("setSandboxMode(record.agent.session, mode)"))
     }
 
     @Test

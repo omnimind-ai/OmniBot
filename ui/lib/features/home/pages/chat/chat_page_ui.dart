@@ -1421,11 +1421,7 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
                           : AgentPermissionMode.values,
                       onAgentPermissionModeChanged:
                           _activeMode == ChatPageMode.agent
-                          ? (mode) {
-                              setState(() {
-                                _agentPermissionMode = mode;
-                              });
-                            }
+                          ? _selectAgentPermissionMode
                           : null,
                       onInputHeightChanged: _handleInputAreaHeightChanged,
                       onClearSelectedModelOverride:

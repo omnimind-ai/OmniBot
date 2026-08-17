@@ -165,7 +165,8 @@ class ChatInputArea extends StatefulWidget {
   final FutureOr<void> Function()? onAgentRunSettingsOpened;
   final AgentPermissionMode? agentPermissionMode;
   final List<AgentPermissionMode> agentPermissionModes;
-  final ValueChanged<AgentPermissionMode>? onAgentPermissionModeChanged;
+  final FutureOr<void> Function(AgentPermissionMode)?
+  onAgentPermissionModeChanged;
   final bool useIndependentSendButton;
 
   const ChatInputArea({

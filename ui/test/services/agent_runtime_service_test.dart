@@ -41,7 +41,7 @@ void main() {
       collaborationMode: 'plan',
     );
 
-    expect(capturedCall?.method, 'turn/start');
+    expect(capturedCall?.method, 'session/prompt');
     final args = Map<String, dynamic>.from(
       (capturedCall?.arguments as Map).cast<String, dynamic>(),
     );
@@ -116,9 +116,30 @@ void main() {
       'model/list',
       'collaborationMode/list',
       'config/read',
-      'thread/loaded/list',
+      'session/list',
     ]);
     expect(calls.first.arguments, {'limit': 100});
+  });
+
+  test('sets a Harness-owned ACP config option', () async {
+    MethodCall? capturedCall;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      capturedCall = call;
+      return <String, dynamic>{'ok': true};
+    });
+
+    await AgentRuntimeService.setConfigOption(
+      threadId: 'thread-1',
+      configId: 'mode',
+      value: 'agent-full-access',
+    );
+
+    expect(capturedCall?.method, 'config/set');
+    expect(capturedCall?.arguments, {
+      'threadId': 'thread-1',
+      'configId': 'mode',
+      'value': 'agent-full-access',
+    });
   });
 
   test('ACP model extraction keeps config categories separate', () {
@@ -299,7 +320,7 @@ void main() {
 
     await AgentRuntimeService.readThread(threadId: 'thread-1');
 
-    expect(capturedCall?.method, 'thread/read');
+    expect(capturedCall?.method, 'session/load');
     expect(capturedCall?.arguments, {
       'threadId': 'thread-1',
       'includeTurns': true,

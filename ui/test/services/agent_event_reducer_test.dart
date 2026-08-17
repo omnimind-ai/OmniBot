@@ -140,6 +140,82 @@ void main() {
     expect(message.cardData?['thinkingContent'], '先确认用户消息与当前轮次');
   });
 
+  test('renders the official ACP session/update envelope', () {
+    final result = reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'method': 'session/update',
+          'params': {
+            'sessionId': 'session-1',
+            'update': {
+              'sessionUpdate': 'agent_message_chunk',
+              'messageId': 'message-1',
+              'content': {
+                'type': 'text',
+                'text': '来自标准 ACP',
+              },
+            },
+          },
+        },
+      },
+    );
+
+    expect(result.handled, isTrue);
+    expect(runtime.messages.single.text, '来自标准 ACP');
+    expect(runtime.messages.single.user, 2);
+  });
+
+  test('does not turn ACP config updates into a private event', () {
+    final result = reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'method': 'session/update',
+          'params': {
+            'sessionId': 'session-1',
+            'update': {
+              'sessionUpdate': 'config_option_update',
+              'configOptions': const <Map<String, dynamic>>[],
+            },
+          },
+        },
+      },
+    );
+
+    expect(result.handled, isTrue);
+    expect(runtime.messages, isEmpty);
+  });
+
+  test('projects local lifecycle state without accepting a fake protocol event', () {
+    final started = reducer.reduce(
+      runtime: runtime,
+      event: {
+        'presentation': {
+          'kind': 'turn_started',
+          'threadId': 'session-1',
+          'turnId': 'turn-1',
+        },
+      },
+    );
+    expect(started.handled, isTrue);
+    expect(runtime.activeAgentTaskIds, <String>{'turn-1'});
+
+    final completed = reducer.reduce(
+      runtime: runtime,
+      event: {
+        'presentation': {
+          'kind': 'turn_completed',
+          'threadId': 'session-1',
+          'turnId': 'turn-1',
+          'turn': {'id': 'turn-1', 'status': 'end_turn'},
+        },
+      },
+    );
+    expect(completed.handled, isTrue);
+    expect(runtime.activeAgentTaskIds, isEmpty);
+  });
+
   test('maps command output deltas into terminal tool card', () {
     reducer.reduce(
       runtime: runtime,

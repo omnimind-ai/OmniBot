@@ -11,74 +11,64 @@ import com.agentclientprotocol.model.ToolCallContent
 import com.agentclientprotocol.model.ToolCallStatus
 
 /**
- * The one translation from ACP session updates to the event vocabulary the
- * Flutter chat timeline consumes.
+ * The official ACP notification envelope forwarded to the host UI.
  *
- * This is deliberately a pure, side-effect-free mapping that owns no session or
- * process state, because it has two callers rather than one:
- *
- *  - [LocalAcpRuntime], which runs an ACP agent as a local child process, and
- *  - the remote PC Bridge, once it forwards ACP instead of the legacy
- *    `codex app-server` protocol.
- *
- * Keeping it here means the bridge migration reuses this mapping verbatim
- * instead of growing a second translator on the Dart side. The Dart reducer's
- * `codex/event` branch (~510 lines of legacy protocol handling) then becomes
- * unreachable and can be deleted outright rather than maintained in parallel.
+ * This type intentionally contains no app-specific method names. ACP session
+ * updates are carried by the standard `session/update` notification, and the
+ * Flutter side consumes the official `sessionUpdate` discriminator inside the
+ * update payload.
  */
-internal data class AcpUiEvent(
-    val method: String,
-    val params: Map<String, Any?>
+internal data class AcpSessionNotification(
+    val sessionId: String,
+    val update: Map<String, Any?>
 )
 
 /**
- * Maps one ACP session update to the UI event it produces, or `null` when the
- * update carries nothing the timeline renders.
+ * Maps one ACP session update to the official ACP `session/update` payload, or
+ * `null` when the update carries nothing the timeline renders.
  *
- * [threadId] scopes session-level updates. [turnId] supplies a local UI
- * identity for chunks whose optional ACP message id is absent, so separate
- * prompt turns can never overwrite one another.
+ * [threadId] scopes the notification to its ACP session. Optional ACP fields
+ * are preserved as optional; the presentation layer may create local fallback
+ * ids when it needs to render a card, but the protocol bridge does not invent
+ * them.
  */
-internal fun SessionUpdate.toAcpUiEvent(
-    threadId: String,
-    turnId: String? = null
-): AcpUiEvent? = when (this) {
-    is SessionUpdate.AgentMessageChunk -> AcpUiEvent(
-        method = "item/agentMessage/delta",
-        params = mapOf(
-            "itemId" to (messageId?.value ?: "${turnId ?: threadId}-agent"),
-            "delta" to content.textPayload()
-        )
+internal fun SessionUpdate.toAcpSessionNotification(
+    threadId: String
+): AcpSessionNotification? = when (this) {
+    is SessionUpdate.AgentMessageChunk -> AcpSessionNotification(
+        sessionId = threadId,
+        update = linkedMapOf<String, Any?>(
+            "sessionUpdate" to "agent_message_chunk",
+            "content" to content.acpPayload()
+        ).apply {
+            messageId?.value?.let { put("messageId", it) }
+        }
     )
 
-    is SessionUpdate.AgentThoughtChunk -> AcpUiEvent(
-        method = "item/reasoning/delta",
-        params = mapOf(
-            "itemId" to (messageId?.value ?: "${turnId ?: threadId}-reasoning"),
-            "delta" to content.textPayload()
-        )
+    is SessionUpdate.AgentThoughtChunk -> AcpSessionNotification(
+        sessionId = threadId,
+        update = linkedMapOf<String, Any?>(
+            "sessionUpdate" to "agent_thought_chunk",
+            "content" to content.acpPayload()
+        ).apply {
+            messageId?.value?.let { put("messageId", it) }
+        }
     )
 
-    is SessionUpdate.ToolCall -> AcpUiEvent(
-        method = "item/started",
-        params = mapOf("item" to toolPayload(this))
+    is SessionUpdate.ToolCall -> AcpSessionNotification(
+        sessionId = threadId,
+        update = toolPayload(this) + ("sessionUpdate" to "tool_call")
     )
 
-    is SessionUpdate.ToolCallUpdate -> AcpUiEvent(
-        method = if (status == ToolCallStatus.COMPLETED || status == ToolCallStatus.FAILED) {
-            "item/completed"
-        } else {
-            "item/updated"
-        },
-        params = mapOf("item" to toolPayload(this))
+    is SessionUpdate.ToolCallUpdate -> AcpSessionNotification(
+        sessionId = threadId,
+        update = toolPayload(this) + ("sessionUpdate" to "tool_call_update")
     )
 
-    is SessionUpdate.PlanUpdate -> AcpUiEvent(
-        method = "turn/plan/updated",
-        params = mapOf(
-            "plan" to entries.joinToString("\n") {
-                "- [${it.status.name.lowercase()}] ${it.content}"
-            },
+    is SessionUpdate.PlanUpdate -> AcpSessionNotification(
+        sessionId = threadId,
+        update = mapOf(
+            "sessionUpdate" to "plan",
             "entries" to entries.map {
                 mapOf(
                     "content" to it.content,
@@ -89,35 +79,56 @@ internal fun SessionUpdate.toAcpUiEvent(
         )
     )
 
-    is SessionUpdate.PlanUpdateV2 -> AcpUiEvent(
-        method = "turn/plan/updated",
-        params = when (val variant = plan) {
-            is PlanVariant.Items -> mapOf(
-                "id" to variant.id,
-                "plan" to variant.entries.joinToString("\n") { it.content }
-            )
-            is PlanVariant.Markdown -> mapOf("id" to variant.id, "plan" to variant.content)
-            is PlanVariant.File -> mapOf("id" to variant.id, "plan" to variant.uri)
-        }
-    )
-
-    is SessionUpdate.PlanRemoved -> AcpUiEvent(
-        method = "turn/plan/updated",
-        params = mapOf("id" to id, "plan" to "")
-    )
-
-    is SessionUpdate.CurrentModeUpdate -> AcpUiEvent(
-        method = "thread/settings/updated",
-        params = mapOf(
-            "threadId" to threadId,
-            "collaborationMode" to currentModeId.value
+    is SessionUpdate.PlanUpdateV2 -> AcpSessionNotification(
+        sessionId = threadId,
+        update = mapOf(
+            "sessionUpdate" to "plan",
+            "entries" to when (val variant = plan) {
+                is PlanVariant.Items -> variant.entries.map {
+                    mapOf(
+                        "content" to it.content,
+                        "priority" to it.priority.name.lowercase(),
+                        "status" to it.status.name.lowercase()
+                    )
+                }
+                is PlanVariant.Markdown -> listOf(
+                    mapOf(
+                        "content" to variant.content,
+                        "priority" to "medium",
+                        "status" to "in_progress"
+                    )
+                )
+                is PlanVariant.File -> listOf(
+                    mapOf(
+                        "content" to variant.uri,
+                        "priority" to "medium",
+                        "status" to "in_progress"
+                    )
+                )
+            }
         )
     )
 
-    is SessionUpdate.ConfigOptionUpdate -> AcpUiEvent(
-        method = "acp/configOptions/updated",
-        params = mapOf(
-            "threadId" to threadId,
+    is SessionUpdate.PlanRemoved -> AcpSessionNotification(
+        sessionId = threadId,
+        update = mapOf(
+            "sessionUpdate" to "plan",
+            "entries" to emptyList<Map<String, Any?>>()
+        )
+    )
+
+    is SessionUpdate.CurrentModeUpdate -> AcpSessionNotification(
+        sessionId = threadId,
+        update = mapOf(
+            "sessionUpdate" to "current_mode_update",
+            "currentModeId" to currentModeId.value
+        )
+    )
+
+    is SessionUpdate.ConfigOptionUpdate -> AcpSessionNotification(
+        sessionId = threadId,
+        update = mapOf(
+            "sessionUpdate" to "config_option_update",
             "configOptions" to configOptions.map(::acpConfigOptionPayload)
         )
     )
@@ -125,38 +136,39 @@ internal fun SessionUpdate.toAcpUiEvent(
     is SessionUpdate.SessionInfoUpdate -> title
         ?.takeIf { it.isNotBlank() }
         ?.let {
-            AcpUiEvent(
-                method = "thread/name/updated",
-                params = mapOf("threadId" to threadId, "name" to it)
+            AcpSessionNotification(
+                sessionId = threadId,
+                update = mapOf(
+                    "sessionUpdate" to "session_info_update",
+                    "title" to it
+                )
             )
         }
 
-    is SessionUpdate.UsageUpdate -> AcpUiEvent(
-        method = "acp/usage/updated",
-        params = mapOf(
+    is SessionUpdate.UsageUpdate -> AcpSessionNotification(
+        sessionId = threadId,
+        update = mapOf(
+            "sessionUpdate" to "usage_update",
             "used" to used,
             "size" to size,
-            "cost" to cost?.amount,
-            "currency" to cost?.currency
+            "cost" to cost?.let { mapOf("amount" to it.amount, "currency" to it.currency) }
         )
     )
 
-    is SessionUpdate.AvailableCommandsUpdate -> AcpUiEvent(
-        method = "acp/commands/updated",
-        params = mapOf(
-            "commands" to availableCommands.map {
+    is SessionUpdate.AvailableCommandsUpdate -> AcpSessionNotification(
+        sessionId = threadId,
+        update = mapOf(
+            "sessionUpdate" to "available_commands_update",
+            "availableCommands" to availableCommands.map {
                 mapOf("name" to it.name, "description" to it.description)
             }
         )
     )
 
-    is SessionUpdate.UnknownSessionUpdate -> AcpUiEvent(
-        method = "acp/sessionUpdate/unknown",
-        params = mapOf(
-            "sessionUpdate" to sessionUpdateType,
-            "raw" to rawJson.toString()
-        )
-    )
+    // ACP clients must not invent a second event type for unknown updates.
+    // The official SDK already preserves the raw update at the protocol seam;
+    // unsupported updates are intentionally ignored by this UI projection.
+    is SessionUpdate.UnknownSessionUpdate -> null
 
     // The client is the author of user messages, so a replayed echo of one adds
     // nothing to the timeline.
@@ -226,47 +238,44 @@ private fun ContentBlock.textPayload(): String = when (this) {
     is ContentBlock.Resource -> resource.toString()
 }
 
+private fun ContentBlock.acpPayload(): Map<String, Any?> = mapOf(
+    "type" to "text",
+    "text" to textPayload()
+)
+
 private fun toolPayload(update: SessionUpdate.ToolCall): Map<String, Any?> =
     linkedMapOf(
-        "id" to update.toolCallId.value,
-        "type" to acpToolItemType(update.kind?.name),
+        "toolCallId" to update.toolCallId.value,
+        "kind" to (update.kind?.name?.lowercase() ?: "other"),
         "title" to update.title,
         "status" to update.status?.name?.lowercase(),
         "content" to update.content.toolContentPayload(),
         "locations" to update.locations.map {
             mapOf("path" to it.path, "line" to it.line?.toLong())
         },
-        "rawInput" to update.rawInput?.toString(),
-        "rawOutput" to update.rawOutput?.toString()
+        "rawInput" to update.rawInput?.toAcpValue(),
+        "rawOutput" to update.rawOutput?.toAcpValue()
     )
 
 private fun toolPayload(update: SessionUpdate.ToolCallUpdate): Map<String, Any?> =
     linkedMapOf(
-        "id" to update.toolCallId.value,
-        "type" to acpToolItemType(update.kind?.name),
+        "toolCallId" to update.toolCallId.value,
+        "kind" to update.kind?.name?.lowercase(),
         "title" to update.title,
         "status" to update.status?.name?.lowercase(),
         "content" to update.content?.toolContentPayload(),
         "locations" to update.locations?.map {
             mapOf("path" to it.path, "line" to it.line?.toLong())
         },
-        "rawInput" to update.rawInput?.toString(),
-        "rawOutput" to update.rawOutput?.toString()
+        "rawInput" to update.rawInput?.toAcpValue(),
+        "rawOutput" to update.rawOutput?.toAcpValue()
     )
-
-internal fun acpToolItemType(kind: String?): String = when (kind) {
-    "EXECUTE" -> "commandExecution"
-    "EDIT", "DELETE", "MOVE" -> "fileChange"
-    "SEARCH", "FETCH" -> "webSearch"
-    "THINK" -> "plan"
-    else -> "tool"
-}
 
 private fun List<ToolCallContent>.toolContentPayload(): List<Map<String, Any?>> = map {
     when (it) {
         is ToolCallContent.Content -> mapOf(
             "type" to "content",
-            "text" to it.content.textPayload()
+            "content" to it.content.acpPayload()
         )
         is ToolCallContent.Diff -> mapOf(
             "type" to "diff",
@@ -278,5 +287,21 @@ private fun List<ToolCallContent>.toolContentPayload(): List<Map<String, Any?>> 
             "type" to "terminal",
             "terminalId" to it.terminalId
         )
+    }
+}
+
+private fun kotlinx.serialization.json.JsonElement.toAcpValue(): Any? = when (this) {
+    is kotlinx.serialization.json.JsonObject -> entries.associate { (key, value) ->
+        key to value.toAcpValue()
+    }
+    is kotlinx.serialization.json.JsonArray -> map { it.toAcpValue() }
+    is kotlinx.serialization.json.JsonPrimitive -> {
+        if (isString) content
+        else when (content) {
+            "true" -> true
+            "false" -> false
+            "null" -> null
+            else -> content.toLongOrNull() ?: content.toDoubleOrNull() ?: content
+        }
     }
 }

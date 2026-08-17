@@ -509,7 +509,7 @@
   "alpineCodex": "OpenAI Codex CLI for ACP Agents",
   "alpineClaudeCode": "Anthropic Claude Code CLI for ACP Agents",
   "alpineOpenCode": "OpenCode CLI with built-in ACP support",
-  "alpineDeepSeekHarness": "DeepSeek Harness (dsh) ACP runtime, installed from the latest npm next channel",
+  "alpineDeepSeekHarness": "DeepSeek Harness (dsh) official ACP runtime",
   "alpineSshClient": "SSH Client",
   "alpineSshpass": "SSH Password Helper",
   "alpineOpenSshServer": "OpenSSH Server",

@@ -366,9 +366,11 @@ class ConversationService {
   }) async {
     try {
       if (archived) {
-        await AgentRuntimeService.archiveThread(conversationId: conversationId);
+        await AgentRuntimeService.archiveSession(
+          conversationId: conversationId,
+        );
       } else {
-        await AgentRuntimeService.unarchiveThread(
+        await AgentRuntimeService.unarchiveSession(
           conversationId: conversationId,
         );
       }
@@ -448,7 +450,7 @@ class ConversationService {
   }) async {
     if (mode == ConversationMode.agent) {
       try {
-        await AgentRuntimeService.setThreadName(
+        await AgentRuntimeService.setSessionName(
           conversationId: conversationId,
           name: newTitle,
         );

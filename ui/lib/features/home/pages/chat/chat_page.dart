@@ -1655,6 +1655,8 @@ abstract class _ChatPageStateBase extends State<ChatPage>
 
   Future<void> _selectAgentReasoningEffort(String effort);
 
+  Future<void> _selectAgentPermissionMode(AgentPermissionMode mode);
+
   Future<void> _activateAgentPlanMode({
     bool persistOnly = false,
     bool dismissPanel = true,
