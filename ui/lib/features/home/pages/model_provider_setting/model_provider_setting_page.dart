@@ -750,7 +750,21 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
       }
     }
     if (!enrichMetadata) {
-      return cached;
+      if (cached.isNotEmpty) {
+        return cached;
+      }
+      // A newly created Provider has no cache yet. Populate it once while
+      // opening the page so the model section does not appear empty until
+      // the user discovers the manual refresh button.
+      try {
+        return await ModelProviderConfigService.fetchModels(
+          profileId: profile.id,
+          providerName: profile.name,
+          capability: 'text',
+        );
+      } catch (_) {
+        return cached;
+      }
     }
     return _enrichModelsForProfile(profile, cached);
   }

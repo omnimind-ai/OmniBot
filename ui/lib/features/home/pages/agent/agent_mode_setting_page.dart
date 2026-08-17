@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:ui/core/router/go_router_manager.dart';
 import 'package:ui/services/agent_runtime_service.dart';
+import 'package:ui/services/scene_model_config_service.dart';
 import 'package:ui/services/storage_service.dart';
 import 'package:ui/theme/theme_context.dart';
 import 'package:ui/utils/ui.dart';
@@ -29,6 +30,7 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
   bool _refreshing = false;
   String? _error;
   String? _busyAgentId;
+  String _sharedModelLabel = '';
   // 远程 PC Bridge 状态：先用缓存同步渲染，后台再刷新，避免一帧加载闪烁。
   bool _remoteBridgeEnabled =
       StorageService.getBool(StorageService.kRemoteBridgeEnabledKey) ?? false;
@@ -42,7 +44,44 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
   void initState() {
     super.initState();
     unawaited(_load());
+    unawaited(_loadSharedModel());
     unawaited(_loadRemoteBridge());
+  }
+
+  Future<void> _loadSharedModel() async {
+    try {
+      final catalog = await SceneModelConfigService.getSceneCatalog();
+      final agentScene = catalog.firstWhere(
+        (item) => item.sceneId == 'scene.dispatch.model',
+        orElse: () => const SceneCatalogItem(
+          sceneId: '',
+          description: '',
+          defaultModel: '',
+          effectiveModel: '',
+          effectiveProviderProfileId: '',
+          effectiveProviderProfileName: '',
+          boundProviderProfileId: '',
+          boundProviderProfileName: '',
+          transport: '',
+          configSource: '',
+          overrideApplied: false,
+          overrideModel: '',
+          providerConfigured: false,
+          bindingExists: false,
+          bindingProfileMissing: false,
+        ),
+      );
+      final provider = agentScene.effectiveProviderProfileName.trim();
+      final model = agentScene.effectiveModel.trim();
+      if (!mounted) return;
+      setState(() {
+        _sharedModelLabel = [provider, model]
+            .where((value) => value.isNotEmpty)
+            .join(' / ');
+      });
+    } catch (_) {
+      // The Agent catalog remains usable when scene binding is unavailable.
+    }
   }
 
   Future<void> _load({bool refresh = false}) async {
@@ -283,10 +322,12 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
                   SettingsSectionTitle(
                     label: _text('托管 Agent', 'Managed Agents'),
                     subtitle: _text(
-                      '预置 Agent 始终显示；状态来自命令检测与 ACP initialize。API、账号和默认模型由各 Agent 自身配置。',
-                      'Built-in Agents always remain visible. Status comes from command detection and ACP initialize. Each Agent owns its API, account, and default model configuration.',
+                      '预置 Agent 始终显示；状态来自命令检测与 ACP initialize。所有 Agent 默认复用这里的统一 Provider 和模型，适配器只负责映射到官方配置。',
+                      'Built-in Agents always remain visible. Status comes from command detection and ACP initialize. All Agents reuse the shared Provider and model by default; adapters only map them to each official configuration surface.',
                     ),
                   ),
+                  _buildSharedModelSummary(card),
+                  const SizedBox(height: 12),
                   _buildSearchField(card),
                   const SizedBox(height: 12),
                   OmniSegmentedSlider<_AgentFilter>(
@@ -393,6 +434,42 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
                   ),
                 ],
               ),
+      ),
+    );
+  }
+
+  Widget _buildSharedModelSummary(Color card) {
+    final palette = context.omniPalette;
+    final label = _sharedModelLabel.isEmpty
+        ? _text('尚未配置统一模型', 'No shared model configured')
+        : _sharedModelLabel;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      decoration: BoxDecoration(
+        color: card,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            LucideIcons.bot,
+            size: 18,
+            color: palette.accentPrimary,
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              '${_text('统一 Provider / 模型：', 'Shared Provider / model: ')}$label',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: palette.textSecondary,
+                fontSize: 13,
+                height: 1.4,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -534,7 +611,20 @@ class _AddCustomAgentDialogState extends State<_AddCustomAgentDialog> {
   void _save() {
     final name = _name.trim();
     final command = _command.trim();
-    if (name.isEmpty || command.isEmpty) return;
+    if (name.isEmpty) {
+      showToast(
+        _text('名称不能为空', 'Agent name is required'),
+        type: ToastType.warning,
+      );
+      return;
+    }
+    if (command.isEmpty) {
+      showToast(
+        _text('启动命令不能为空', 'Agent command is required'),
+        type: ToastType.warning,
+      );
+      return;
+    }
     Navigator.of(context).pop(
       AcpAgentProfile(
         id: '',

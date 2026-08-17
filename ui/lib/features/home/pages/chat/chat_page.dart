@@ -436,7 +436,9 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   List<ChatAcpAgentModeOption> get _chatAcpAgentModeOptions {
     final profiles = _agentCatalog?.agents ?? const <AcpAgentProfile>[];
     final options = <ChatAcpAgentModeOption>[
-      for (final profile in profiles)
+      for (final profile in profiles.where(
+        (profile) => profile.id != 'xiaowan-acp',
+      ))
         ChatAcpAgentModeOption(
           id: profile.id,
           name: profile.name,

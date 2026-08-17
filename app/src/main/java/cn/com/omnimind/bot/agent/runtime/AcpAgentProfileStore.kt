@@ -434,7 +434,7 @@ internal class AcpAgentProfileStore(context: Context) {
             AcpAgentProfile(
                 id = XIAOWAN_AGENT_ID,
                 name = "小万",
-                description = "Omnibot 内置能力通过官方 ACP Agent 接口提供",
+                description = "小万内置能力通过官方 ACP Agent 接口提供",
                 command = "omnibot-xiaowan-acp",
                 builtIn = true
             ),

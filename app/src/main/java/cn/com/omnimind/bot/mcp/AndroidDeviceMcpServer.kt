@@ -1,6 +1,8 @@
 package cn.com.omnimind.bot.mcp
 
 import android.content.Context
+import cn.com.omnimind.bot.agent.AgentRuntimeContextRepository
+import cn.com.omnimind.bot.agent.AgentWorkspaceManager
 import cn.com.omnimind.bot.agent.HttpAgentLlmClient
 import cn.com.omnimind.bot.omniflow.OmniFlow
 import cn.com.omnimind.bot.omniflow.OmniFlowFunctionRegistration
@@ -9,6 +11,11 @@ import cn.com.omnimind.bot.omniflow.OmniVlmPlugin
 import cn.com.omnimind.bot.omniflow.asOmniFlowModelClient
 import cn.com.omnimind.bot.plugin.OmniPluginHost
 import cn.com.omnimind.bot.plugin.official.OmniVlmLiteProvider
+import cn.com.omnimind.bot.plugin.sandbox.SandboxConnectorContract
+import cn.com.omnimind.bot.plugin.sandbox.SandboxPluginCommand
+import cn.com.omnimind.bot.plugin.sandbox.SandboxPluginPool
+import cn.com.omnimind.bot.plugin.sandbox.SandboxPluginShortcutManager
+import cn.com.omnimind.bot.plugin.sandbox.SandboxProjectManifest
 import io.modelcontextprotocol.kotlin.sdk.server.Server
 import io.modelcontextprotocol.kotlin.sdk.server.ServerOptions
 import io.modelcontextprotocol.kotlin.sdk.types.CallToolResult
@@ -19,6 +26,7 @@ import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import io.modelcontextprotocol.kotlin.sdk.types.ToolSchema
 import io.modelcontextprotocol.kotlin.sdk.types.toJson
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -26,6 +34,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.longOrNull
 
@@ -81,6 +90,51 @@ internal object AndroidDeviceMcpServer {
             ),
             required = listOf("run_id"),
         ),
+        DeviceTool(
+            name = "context_apps_query",
+            operation = "context_apps_query",
+            description = "Query launchable apps installed on the Android device.",
+            properties = mapOf(
+                "query" to schema("string", "App name or package substring."),
+                "limit" to schema("integer", "Maximum number of results."),
+            ),
+        ),
+        DeviceTool(
+            name = "file_transfer",
+            operation = "file_transfer",
+            description = "List or retrieve files shared to the OpenOmniBot device inbox.",
+            properties = mapOf(
+                "action" to schema("string", "latest | wait | list | get | clear."),
+                "fileId" to schema("string", "File id for get or clear."),
+                "afterFileId" to schema("string", "For wait, return a newer file."),
+                "timeoutMs" to schema("integer", "Wait timeout in milliseconds."),
+                "limit" to schema("integer", "Maximum number of files."),
+            ),
+        ),
+        DeviceTool(
+            name = "plugin_list",
+            operation = "plugin_list",
+            description = "List installed and enabled OpenOmniBot plugins.",
+        ),
+        DeviceTool(
+            name = "plugin_project_contract",
+            operation = "plugin_project_contract",
+            description = "Read the official connector contract for creating an OpenOmniBot plugin project.",
+        ),
+        DeviceTool(
+            name = "plugin_project_check",
+            operation = "plugin_project_check",
+            description = "Validate a plugin project in the shared workspace before publishing it.",
+            properties = pluginProjectProperties(),
+            required = listOf("path", "manifest"),
+        ),
+        DeviceTool(
+            name = "plugin_project_publish",
+            operation = "plugin_project_publish",
+            description = "Validate, publish, install, and enable a plugin project from the shared workspace.",
+            properties = pluginProjectProperties(),
+            required = listOf("path", "manifest"),
+        ),
     )
 
     internal val publicToolNames: Set<String> = omniFlowTools.mapTo(linkedSetOf()) { it.name }
@@ -92,16 +146,18 @@ internal object AndroidDeviceMcpServer {
         val modelClient = HttpAgentLlmClient(scope).asOmniFlowModelClient()
         return Server(
             serverInfo = Implementation(
-                name = "openomnibot-android-device",
+                // Keep the MCP server identity identical across ACP adapters,
+                // the phone endpoint, and the official DSH MCP client.
+                name = "omnibot",
                 version = "1.0.0",
-                title = "OpenOmniBot Android Device",
+                title = "OmniBot",
             ),
             options = ServerOptions(
                 capabilities = ServerCapabilities(
                     tools = ServerCapabilities.Tools(listChanged = false),
                 ),
             ),
-            instructions = "Run Android GUI tasks, replay registered Functions, or register a successful run.",
+            instructions = "Use the official OmniBot MCP server to access Android GUI, Functions, files, app context, and plugin capabilities.",
         ).apply {
             omniFlowTools.forEach { tool ->
                 addTool(
@@ -212,6 +268,67 @@ internal object AndroidDeviceMcpServer {
                 modelClient = modelClient,
             )
         }
+        "context_apps_query" -> {
+            val query = arguments["query"]?.toString()?.trim().orEmpty()
+            val limit = (arguments["limit"] as? Number)?.toInt()?.coerceIn(1, 100) ?: 20
+            val items = AgentRuntimeContextRepository(context).queryInstalledApps(
+                query = query.ifBlank { null },
+                limit = limit,
+            )
+            mapOf(
+                "query" to query,
+                "limit" to limit,
+                "count" to items.size,
+                "items" to items.map { item ->
+                    mapOf("appName" to item.appName, "packageName" to item.packageName)
+                },
+            )
+        }
+        "file_transfer" -> McpToolExecutors.executeFileTransfer(arguments)
+        "plugin_list" -> {
+            val states = OmniPluginHost.get(context).list()
+            mapOf(
+                "count" to states.size,
+                "plugins" to states.map { state ->
+                    mapOf(
+                        "id" to state.descriptor.id,
+                        "name" to state.descriptor.name,
+                        "installed" to state.installed,
+                        "enabled" to state.enabled,
+                        "version" to state.descriptor.version,
+                    )
+                },
+            )
+        }
+        "plugin_project_contract" -> SandboxConnectorContract.payload()
+        "plugin_project_check" -> {
+            val project = resolvePluginProject(context, arguments)
+            SandboxPluginPool(context).execute(
+                SandboxPluginCommand.CheckProject(project.directory, project.manifest),
+            ).requireSuccess().payload
+        }
+        "plugin_project_publish" -> {
+            val project = resolvePluginProject(context, arguments)
+            val published = SandboxPluginPool(context).execute(
+                SandboxPluginCommand.PublishProject(project.directory, project.manifest),
+            ).requireSuccess()
+            val pluginId = published.payload.getValue("pluginId") as String
+            val host = OmniPluginHost.get(context)
+            val current = host.list().firstOrNull { it.descriptor.id == pluginId }
+            val state = if (current?.installed == true) {
+                host.update(pluginId)
+            } else {
+                host.install(pluginId)
+            }
+            if (!state.enabled) host.setEnabled(pluginId, true)
+            val shortcut = SandboxPluginShortcutManager(context).pinOrUpdate(pluginId)
+            buildMap {
+                putAll(published.payload)
+                put("name", project.manifest.name)
+                put("dashboardRoute", "/home/plugin_dashboard?pluginId=$pluginId")
+                put("shortcut", shortcut.toMap())
+            }
+        }
         else -> OmniFlow.callTool(
             context = context,
             toolCall = OmniFlow.ToolCall(tool.operation, arguments),
@@ -245,8 +362,60 @@ internal object AndroidDeviceMcpServer {
         ),
     )
 
+    private fun pluginProjectProperties(): Map<String, JsonObject> = mapOf(
+        "path" to schema("string", "Project path under /workspace."),
+        "manifest" to JsonObject(
+            mapOf(
+                "type" to JsonPrimitive("object"),
+                "description" to JsonPrimitive(
+                    "Official SandboxProjectManifest JSON object."
+                ),
+            )
+        ),
+    )
+
+    private data class ResolvedPluginProject(
+        val directory: java.io.File,
+        val manifest: SandboxProjectManifest,
+    )
+
+    private fun resolvePluginProject(
+        context: Context,
+        arguments: Map<String, Any?>,
+    ): ResolvedPluginProject {
+        val path = arguments["path"]?.toString()?.trim().orEmpty()
+        require(path.isNotBlank()) { "plugin project path is required" }
+        val manifestValue = arguments["manifest"]
+            ?: throw IllegalArgumentException("plugin project manifest is required")
+        val manifestJson = manifestValue.toJsonElement()
+        val manifest = Json { ignoreUnknownKeys = true }
+            .decodeFromJsonElement<SandboxProjectManifest>(manifestJson)
+        val workspaceManager = AgentWorkspaceManager(context)
+        val workspace = workspaceManager.buildWorkspaceDescriptor(null, "mcp-plugin")
+        val directory = workspaceManager.resolvePath(path, workspace)
+        require(directory.isDirectory) { "plugin project directory does not exist: $path" }
+        return ResolvedPluginProject(directory, manifest)
+    }
+
     private fun Map<String, JsonElement>.toKotlinMap(): Map<String, Any?> = entries.associate { (key, value) ->
         key to value.toKotlinValue()
+    }
+
+    private fun Any?.toJsonElement(): JsonElement = when (this) {
+        null -> JsonNull
+        is JsonElement -> this
+        is Map<*, *> -> JsonObject(entries.associate { (key, value) ->
+            key.toString() to value.toJsonElement()
+        })
+        is List<*> -> JsonArray(map { it.toJsonElement() })
+        is Boolean -> JsonPrimitive(this)
+        is Byte -> JsonPrimitive(this)
+        is Short -> JsonPrimitive(this)
+        is Int -> JsonPrimitive(this)
+        is Long -> JsonPrimitive(this)
+        is Float -> JsonPrimitive(this)
+        is Double -> JsonPrimitive(this)
+        else -> JsonPrimitive(toString())
     }
 
     private fun JsonElement.toKotlinValue(): Any? = when (this) {

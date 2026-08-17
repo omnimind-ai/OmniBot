@@ -203,8 +203,16 @@ class AgentRuntimeProtocolPayloadTest {
         assertEquals("deepseek-custom", restored.toEnvironment()["DSH_MODEL"])
         assertEquals("high", restored.toEnvironment()["DSH_REASONING_EFFORT"])
         assertEquals(
-            "xhigh",
+            "high",
             DeepSeekHarnessConfig(reasoningEffort = "max").toEnvironment()["DSH_REASONING_EFFORT"]
+        )
+        assertEquals(
+            "enabled",
+            DeepSeekHarnessConfig(reasoningEffort = "max").toEnvironment()["DSH_THINKING"]
+        )
+        assertEquals(
+            "disabled",
+            DeepSeekHarnessConfig(reasoningEffort = "off").toEnvironment()["DSH_THINKING"]
         )
         assertEquals("read-only", restored.toEnvironment()["DSH_PERMISSION_MODE"])
         assertEquals("/root/.dsh/omnibot-acp-clean", restored.toEnvironment()["DSH_ACP_HOME"])
@@ -277,7 +285,7 @@ class AgentRuntimeProtocolPayloadTest {
             )
         )
         assertEquals("glm-5.1", dsh.deepSeekConfig?.model)
-        assertEquals("xhigh", dsh.environment["DSH_REASONING_EFFORT"])
+        assertEquals("high", dsh.environment["DSH_REASONING_EFFORT"])
 
         val codex = AgentConfigAdapterRegistry.map(
             AgentProviderMappingInput(

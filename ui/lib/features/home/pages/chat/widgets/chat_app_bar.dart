@@ -586,8 +586,11 @@ class _ChatAppBarModeShortcutButtonState
     final canSelectPureChat =
         widget.isAgentSelected ||
         (!widget.isPureChatToggleLocked && widget.onPureChatToggleTap != null);
+    // Keep every enabled managed Agent visible. Installation/configuration is
+    // part of selecting the Agent, so hiding missing or unchecked entries
+    // makes DSH impossible to start and gives the user no recovery action.
     final acpAgentModes = widget.acpAgentModes
-        .where((agent) => agent.isAvailable)
+        .where((agent) => agent.enabled)
         .toList(growable: false);
     final popupAnchor = Rect.fromLTWH(anchor.left, anchor.top, anchor.width, 0);
 

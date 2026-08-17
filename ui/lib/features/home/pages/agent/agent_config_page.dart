@@ -415,8 +415,8 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
   String get _pageSubtitle {
     return switch (_kind) {
       'codex' => _text(
-        '保存后会写入 $_configPath 和 $_authPath；下一次启动 Codex ACP 时生效。',
-        'Saving writes $_configPath and $_authPath. Changes apply the next time Codex ACP starts.',
+        '默认直接复用统一 Provider；这里仅查看或覆盖官方 Codex 文件，保存后下一次启动 ACP 时生效。',
+        'The shared Provider is used by default. This page only views or overrides the official Codex files; changes apply on the next ACP start.',
       ),
       'json' => _text(
         '直接编辑 $_configPath。这里显示的就是配置文件当前内容。',
@@ -427,12 +427,12 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
         'Edit $_configPath directly. OpenCode supports JSON and JSONC.',
       ),
       'deepseek-harness' => _text(
-        '配置保存到 $_configPath；首次检测会安装 npm next 通道的最新 dsh ACP 运行组件，也可在终端环境页统一安装。',
-        'Saved to $_configPath. The first check installs the latest dsh ACP runtime from npm next; it is also available in Terminal Environment.',
+        '默认直接复用统一 Provider 和模型；这里仅保留官方 DSH 配置入口。首次检测会准备官方 dsh ACP 运行组件。',
+        'The shared Provider and model are used by default. This page only keeps the official DSH configuration entry. The first check prepares the official dsh ACP runtime.',
       ),
       'profile' => _text(
-        'API 和模型由该 Agent 自身配置；这里仅管理 ACP 启动命令、参数与环境。',
-        'The Agent owns its API and model configuration. This page only manages ACP launch settings.',
+        '自定义 Agent 只管理 ACP 启动命令、参数与环境；Provider 和模型仍由统一 Agent 配置提供。',
+        'Custom Agents only manage the ACP launch command, arguments, and environment; the shared Agent Provider supplies credentials and model.',
       ),
       _ => '',
     };

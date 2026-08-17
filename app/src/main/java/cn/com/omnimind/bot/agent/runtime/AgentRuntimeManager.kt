@@ -2128,13 +2128,14 @@ internal data class DeepSeekHarnessConfig(
         "DEEPSEEK_BASE_URL" to baseUrl,
         "DEEPSEEK_API_KEY" to apiKey,
         "DSH_MODEL" to model,
-        // DSH keeps its official UI vocabulary (off/high/max), while the
-        // shared OpenAI-compatible Provider accepts the standard effort set.
+        // DSH keeps its official vocabulary. The shared OpenAI-compatible
+        // Provider used by the phone accepts the standard effort vocabulary;
+        // map only at this adapter boundary so DSH itself remains official.
         "DSH_REASONING_EFFORT" to when (reasoningEffort) {
-            "off" -> "none"
-            "max" -> "xhigh"
+            "max" -> "high"
             else -> reasoningEffort
         },
+        "DSH_THINKING" to if (reasoningEffort == "off") "disabled" else "enabled",
         "DSH_PERMISSION_MODE" to permissionMode,
         "DSH_ACP_HOME" to DEEPSEEK_HARNESS_PERSISTENCE_HOME,
         "NODE_NO_WARNINGS" to "1"
@@ -2225,7 +2226,7 @@ internal fun buildDeepSeekHarnessCordisConfig(): String = """
     - id: llm-deepseek
       name: '@deepseek-ai/dsh-llm-deepseek'
       config:
-        thinking: enabled
+        thinking: !!js "process.env.DSH_THINKING ?? 'enabled'"
         reasoningEffort: !!js "process.env.DSH_REASONING_EFFORT ?? 'max'"
         models:
           - id: deepseek-v4-flash

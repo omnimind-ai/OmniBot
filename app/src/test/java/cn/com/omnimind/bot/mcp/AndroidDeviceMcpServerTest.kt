@@ -8,13 +8,19 @@ import kotlinx.coroutines.runBlocking
 
 class AndroidDeviceMcpServerTest {
     @Test
-    fun `public MCP surface contains only user-level OmniFlow tools`() {
+    fun `public MCP surface exposes user-level device and plugin tools`() {
         assertEquals(
             linkedSetOf(
                 "run_gui",
                 "run_function",
                 "list_functions",
                 "register_function",
+                "context_apps_query",
+                "file_transfer",
+                "plugin_list",
+                "plugin_project_contract",
+                "plugin_project_check",
+                "plugin_project_publish",
             ),
             AndroidDeviceMcpServer.publicToolNames,
         )
