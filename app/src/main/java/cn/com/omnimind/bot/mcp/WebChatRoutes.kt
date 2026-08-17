@@ -8,6 +8,7 @@ import cn.com.omnimind.bot.webchat.WebChatAvatarService
 import cn.com.omnimind.bot.webchat.WorkspaceFileService
 import com.google.gson.Gson
 import com.google.gson.JsonParseException
+import com.google.gson.JsonParser
 import com.google.gson.JsonSyntaxException
 import com.google.gson.reflect.TypeToken
 import io.ktor.http.ContentType
@@ -30,8 +31,9 @@ private val webChatJsonObjectType = object : TypeToken<Map<String, Any?>>() {}.t
 
 internal fun parseWebChatJsonObject(payload: String): Map<String, Any?> {
     if (payload.isBlank()) throw JsonSyntaxException("Expected a JSON object")
-    return webChatGson.fromJson<Map<String, Any?>>(payload, webChatJsonObjectType)
-        ?: throw JsonSyntaxException("Expected a JSON object")
+    val element = JsonParser.parseString(payload)
+    if (!element.isJsonObject) throw JsonSyntaxException("Expected a JSON object")
+    return webChatGson.fromJson(element, webChatJsonObjectType)
 }
 
 internal suspend fun ApplicationCall.receiveWebChatJsonObject(): Map<String, Any?> {
