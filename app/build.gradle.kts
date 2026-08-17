@@ -287,6 +287,16 @@ android {
                 "proguard-rules.pro"
             )
         }
+        // Device validation needs to update the normal package installed on a
+        // phone. Keep the debug signing/configuration, but do not append
+        // .debug; otherwise adb installs a second app and the launcher keeps
+        // opening the stale production package.
+        create("deviceDebug") {
+            initWith(getByName("debug"))
+            signingConfig = signingConfigs.getByName("debug")
+            applicationIdSuffix = ""
+            matchingFallbacks += listOf("debug")
+        }
     }
 
     compileOptions {
