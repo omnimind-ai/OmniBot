@@ -2138,6 +2138,7 @@ internal data class DeepSeekHarnessConfig(
         "DSH_THINKING" to if (reasoningEffort == "off") "disabled" else "enabled",
         "DSH_PERMISSION_MODE" to permissionMode,
         "DSH_ACP_HOME" to DEEPSEEK_HARNESS_PERSISTENCE_HOME,
+        "DSH_HOME" to DEEPSEEK_HARNESS_CONFIG_HOME,
         "NODE_NO_WARNINGS" to "1"
     )
 }
@@ -2355,6 +2356,25 @@ internal fun buildDeepSeekHarnessCordisConfig(): String = """
 
     - id: tool-fs
       name: '@deepseek-ai/dsh-tool-fs'
+
+    # Official DSH reusable-extension surface. Skills are discovered from
+    # the DSH workspace and user roots, then exposed through the native
+    # `skill` tool; no OmniBot plugin-project schema is injected into DSH.
+    - id: skills
+      name: '@deepseek-ai/dsh-skill'
+
+    - id: skills-filesystem
+      name: '@deepseek-ai/dsh-skill-filesystem'
+      config:
+        dshHome: !!js process.env.DSH_HOME
+        # Android/proot filesystems do not reliably deliver native watcher events.
+        # Keep the official provider, but use its polling watcher so a newly
+        # written DSH skill is visible to the next ACP step.
+        watchUsePolling: true
+        watchPollIntervalMs: 250
+
+    - id: tool-skill
+      name: '@deepseek-ai/dsh-tool-skill'
 
     - id: hooks-claude-code
       name: '@deepseek-ai/dsh-hooks-claude-code'

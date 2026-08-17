@@ -121,6 +121,21 @@ class AgentRuntimeProtocolPayloadTest {
         )
         assertTrue(
             deepSeekRuntime?.managedAdapterPackages.orEmpty().contains(
+                "@deepseek-ai/dsh-skill@next"
+            )
+        )
+        assertTrue(
+            deepSeekRuntime?.managedAdapterPackages.orEmpty().contains(
+                "@deepseek-ai/dsh-skill-filesystem@next"
+            )
+        )
+        assertTrue(
+            deepSeekRuntime?.managedAdapterPackages.orEmpty().contains(
+                "@deepseek-ai/dsh-tool-skill@next"
+            )
+        )
+        assertTrue(
+            deepSeekRuntime?.managedAdapterPackages.orEmpty().contains(
                 "@deepseek-ai/dsh-tool-subagent@next"
             )
         )
@@ -216,6 +231,7 @@ class AgentRuntimeProtocolPayloadTest {
         )
         assertEquals("read-only", restored.toEnvironment()["DSH_PERMISSION_MODE"])
         assertEquals("/root/.dsh/omnibot-acp-clean", restored.toEnvironment()["DSH_ACP_HOME"])
+        assertEquals("/root/.dsh/omnibot-acp", restored.toEnvironment()["DSH_HOME"])
         assertEquals("1", restored.toEnvironment()["NODE_NO_WARNINGS"])
     }
 
@@ -310,6 +326,12 @@ class AgentRuntimeProtocolPayloadTest {
         assertTrue(config.contains("name: '@deepseek-ai/dsh-mcp-client'"))
         assertTrue(config.contains("name: '@deepseek-ai/dsh-compaction-basic'"))
         assertTrue(config.contains("name: '@deepseek-ai/dsh-tool-fs'"))
+        assertTrue(config.contains("name: '@deepseek-ai/dsh-skill'"))
+        assertTrue(config.contains("name: '@deepseek-ai/dsh-skill-filesystem'"))
+        assertTrue(config.contains("name: '@deepseek-ai/dsh-tool-skill'"))
+        assertTrue(config.contains("dshHome: !!js process.env.DSH_HOME"))
+        assertTrue(config.contains("watchUsePolling: true"))
+        assertTrue(config.contains("watchPollIntervalMs: 250"))
         assertTrue(config.contains("name: '@deepseek-ai/dsh-tool-subagent'"))
         assertTrue(config.contains("name: '@deepseek-ai/dsh-tool-workflow'"))
         assertTrue(config.contains("serverName: omnibot"))

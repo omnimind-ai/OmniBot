@@ -98,6 +98,12 @@ internal val DEEPSEEK_HARNESS_NPM_PACKAGE_NAMES = listOf(
     "@deepseek-ai/dsh-fs-sandbox",
     "@deepseek-ai/dsh-fs-observation-policy",
     "@deepseek-ai/dsh-tool-fs",
+    // Official Harness skill registry and filesystem-backed skill provider.
+    // These are DSH's native reusable-extension surface; they are not the
+    // app's private plugin-project protocol.
+    "@deepseek-ai/dsh-skill",
+    "@deepseek-ai/dsh-skill-filesystem",
+    "@deepseek-ai/dsh-tool-skill",
     "@deepseek-ai/dsh-hooks-claude-code",
     "@deepseek-ai/dsh-hooks-codex"
 )
