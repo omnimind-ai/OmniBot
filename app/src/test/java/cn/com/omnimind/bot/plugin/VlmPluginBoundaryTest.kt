@@ -7,7 +7,7 @@ import org.junit.Test
 
 class VlmPluginBoundaryTest {
     @Test
-    fun `build profiles keep required OmniFlow lifecycle in plugin host`() {
+    fun `build profiles keep opt in OmniFlow lifecycle in plugin host`() {
         val provider = projectSource(
             "app/src/main/java/cn/com/omnimind/bot/plugin/official/OmniVlmLiteProvider.kt",
         )
@@ -40,7 +40,7 @@ class VlmPluginBoundaryTest {
         assertFalse(catalog.contains("\"name\": \"Android GUI\""))
         assertFalse(host.contains("DEFAULT_INSTALL_GUI_PLUGIN"))
         assertFalse(host.contains("DEFAULT_INSTALL_ALL_PLUGINS"))
-        assertTrue(catalog.contains("\"required\": true"))
+        assertTrue(catalog.contains("\"required\": false"))
         assertTrue(appBuild.contains("prop(\"OMNIBOT_PROFILE\").ifBlank { \"main\" }"))
         assertTrue(appBuild.contains("omnibotProfile == \"investor\""))
         assertTrue(

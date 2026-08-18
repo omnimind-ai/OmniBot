@@ -149,8 +149,8 @@ void main() {
                 <String, dynamic>{
                   'sceneId': 'scene.vlm.operation.primary',
                   'description': '负责 Android GUI 观察与动作决策',
-                  'defaultModel': 'qwen3-vl-plus',
-                  'effectiveModel': 'qwen3-vl-plus',
+                  'defaultModel': 'qwen3.5-plus',
+                  'effectiveModel': 'qwen3.5-plus',
                   'effectiveProviderProfileId': '',
                   'effectiveProviderProfileName': '',
                   'boundProviderProfileId': '',

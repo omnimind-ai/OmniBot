@@ -166,15 +166,13 @@ internal object AndroidDeviceMcpServer {
 
     private suspend fun ensureOmniFlowReady(context: Context) {
         val host = OmniPluginHost.get(context)
-        ensureDefaultPluginEnabled(
+        requireDefaultPluginEnabled(
             isEnabled = OmniFlowPluginRuntime::isEnabled,
             inspect = {
                 host.list()
                     .firstOrNull { it.descriptor.id == OmniVlmLiteProvider.ID }
                     ?.let { DefaultPluginStatus(installed = it.installed, enabled = it.enabled) }
             },
-            install = { host.install(OmniVlmLiteProvider.ID) },
-            enable = { host.setEnabled(OmniVlmLiteProvider.ID, true) },
         )
     }
 
@@ -183,20 +181,18 @@ internal object AndroidDeviceMcpServer {
         val enabled: Boolean,
     )
 
-    internal suspend fun ensureDefaultPluginEnabled(
+    internal suspend fun requireDefaultPluginEnabled(
         isEnabled: () -> Boolean,
         inspect: suspend () -> DefaultPluginStatus?,
-        install: suspend () -> Unit,
-        enable: suspend () -> Unit,
     ) {
         if (isEnabled()) return
         val status = inspect()
-        when {
-            status?.enabled == true -> Unit
-            status?.installed == true -> enable()
-            else -> install()
+        val guidance = if (status?.installed == true) {
+            "手机操作未启用。请打开插件市场 → OmniFlow → 启用插件，确认无障碍服务已开启，并在模型场景中配置 Agent Provider/模型后重试。"
+        } else {
+            "手机操作未启用。请打开插件市场 → OmniFlow → 安装并启用插件，确认无障碍服务已开启，并在模型场景中配置 Agent Provider/模型后重试。"
         }
-        require(isEnabled()) { "omniflow_plugin_not_enabled" }
+        throw IllegalStateException(guidance)
     }
 
     private suspend fun callOmniFlowTool(

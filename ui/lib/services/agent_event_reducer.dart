@@ -1317,7 +1317,22 @@ class AgentEventReducer {
     required String delta,
     required bool hasLiveCache,
   }) {
-    if (delta.isEmpty || hasLiveCache || existingText.isEmpty) {
+    if (delta.isEmpty || existingText.isEmpty) {
+      runtime.agentReplayDeltaOffsets.remove(entryId);
+      return delta;
+    }
+    if (hasLiveCache) {
+      // Official DSH ACP emits committed assistant message blocks rather than
+      // token deltas. A reconnect/retry can deliver the same committed block
+      // again, or a provider can send a cumulative block for the same
+      // messageId. Keep the live stream idempotent without changing the ACP
+      // envelope or inventing a second event protocol.
+      if (delta == existingText) {
+        return null;
+      }
+      if (delta.startsWith(existingText)) {
+        return delta.substring(existingText.length);
+      }
       runtime.agentReplayDeltaOffsets.remove(entryId);
       return delta;
     }

@@ -10,7 +10,7 @@
       "publisher": "OmniMind",
       "kind": "runtime_bundle",
       "downloadSizeBytes": 941767,
-      "required": true,
+      "required": false,
       "capabilities": [
         "Manual recording",
         "Canonical RunLog",
@@ -31,8 +31,8 @@
       },
       "presentation": {
         "description": {
-          "zh": "OmniFlow 是随应用自动安装并启动的 GUI/VLM 系统组件；可录制流程并在相似任务中复用。",
-          "en": "OmniFlow is a GUI/VLM system component installed and started automatically with the app for recording and reusing similar flows."
+          "zh": "OmniFlow 是可选的 GUI/VLM 系统组件；需要操作手机时再安装并启用。",
+          "en": "OmniFlow is an optional GUI/VLM component; install and enable it only when you need phone automation."
         },
         "readiness": "vlm_provider",
         "usage": [
@@ -54,8 +54,8 @@
               "en": "Ready out of the box"
             },
             "description": {
-              "zh": "首次启动会自动安装并启用，后续启动自动恢复；用户无需在插件市场手动操作。",
-              "en": "It installs and enables itself on first launch and restores automatically later, with no manual marketplace setup."
+              "zh": "默认不安装、不启用；需要手机操作时，在插件市场手动安装并启用。",
+              "en": "It is not installed or enabled by default; install and enable it manually from Plugin Market when phone automation is needed."
             }
           },
           {

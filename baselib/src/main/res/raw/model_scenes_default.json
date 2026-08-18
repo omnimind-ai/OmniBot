@@ -9,7 +9,8 @@
     }
   },
   "scene.vlm.operation.primary": {
-    "model": "qwen3-vl-plus",
+    "model": "",
+    "inherits_model_from": "scene.dispatch.model",
     "transport": "openai_compatible",
     "response_parser": "text_content",
     "prompt": null,

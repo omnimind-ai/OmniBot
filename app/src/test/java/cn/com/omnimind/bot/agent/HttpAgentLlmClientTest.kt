@@ -667,7 +667,7 @@ class HttpAgentLlmClientTest {
                 resolveRouteInfoOp = { model, _, _, _, _, protocolType, _ ->
                     routeInfo(
                         requestedModel = model,
-                        resolvedModel = "qwen3-vl-plus",
+                        resolvedModel = "configured-vlm-model",
                         protocolType = protocolType ?: "openai_compatible",
                         requiresReasoningEcho = false,
                     )
@@ -692,7 +692,7 @@ class HttpAgentLlmClientTest {
                 request = simpleRequest().copy(model = "scene.vlm.operation.primary"),
             )
 
-            assertEquals("qwen3-vl-plus", turn.resolvedModel)
+            assertEquals("configured-vlm-model", turn.resolvedModel)
         } finally {
             scope.cancel()
         }

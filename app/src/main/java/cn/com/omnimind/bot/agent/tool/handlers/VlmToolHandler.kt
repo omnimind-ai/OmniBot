@@ -14,6 +14,7 @@ import cn.com.omnimind.bot.agent.AgentToolRegistry
 import cn.com.omnimind.bot.agent.HttpAgentLlmClient
 import cn.com.omnimind.bot.agent.ToolExecutionResult
 import cn.com.omnimind.bot.omniflow.OmniVlmPlugin
+import cn.com.omnimind.bot.omniflow.OmniFlowPluginRuntime
 import cn.com.omnimind.bot.omniflow.asOmniFlowModelClient
 import cn.com.omnimind.bot.runlog.firstNonBlank
 import cn.com.omnimind.bot.runlog.mapArg
@@ -58,7 +59,6 @@ class VlmToolHandler(context: Context) : ToolHandler {
         val runId = "gui-${UUID.randomUUID()}"
         toolHandle.bindStopAction {
             OmniVlmPlugin.stop(runId)
-            Unit
         }
         helper.reportToolProgress(
             callback = callback,
@@ -70,6 +70,16 @@ class VlmToolHandler(context: Context) : ToolHandler {
             ),
             toolHandle = toolHandle,
         )
+        if (!OmniFlowPluginRuntime.isEnabled()) {
+            val message = "手机操作未启用。请打开插件市场 → OmniFlow → 安装并启用插件，确认无障碍服务已开启，并在模型场景中配置 Agent Provider/模型后重试。"
+            persistFailure(runId, goal, "omniflow_disabled", message)
+            return failedRunResult(
+                runId = runId,
+                goal = goal,
+                doneReason = "omniflow_disabled",
+                message = message,
+            )
+        }
         val permission = AndroidAutomationPermissionGate.check(helper.context)
         if (!permission.granted) {
             persistFailure(runId, goal, "permission_required", "缺少无障碍权限")

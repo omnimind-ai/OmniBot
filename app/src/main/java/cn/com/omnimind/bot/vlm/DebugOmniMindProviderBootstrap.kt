@@ -7,7 +7,6 @@ import cn.com.omnimind.baselib.llm.ModelProviderConfigStore
 import cn.com.omnimind.baselib.llm.ModelProviderProfile
 import cn.com.omnimind.baselib.llm.OpenAiWireApi
 import cn.com.omnimind.baselib.llm.SceneModelBindingStore
-import cn.com.omnimind.baselib.llm.SceneOperationConfigStore
 import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.BuildConfig
 
@@ -21,7 +20,6 @@ object DebugOmniMindProviderBootstrap {
     private const val FLUTTER_MANUAL_MODEL_IDS_KEY = "flutter.manual_provider_model_ids_v2"
     private val DEFAULT_LLMTHU_SCENES = listOf(
         "scene.dispatch.model",
-        SceneOperationConfigStore.SCENE_ID,
         "scene.compactor.context.chat",
     )
 

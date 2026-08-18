@@ -24,64 +24,52 @@ class AndroidDeviceMcpServerTest {
     }
 
     @Test
-    fun `missing default plugin is installed before tool call`() = runBlocking {
-        var enabled = false
-        var installCount = 0
-        var enableCount = 0
+    fun `missing default plugin explains how to enable phone control`() = runBlocking {
+        var message = ""
+        try {
+            AndroidDeviceMcpServer.requireDefaultPluginEnabled(
+                isEnabled = { false },
+                inspect = { null },
+            )
+        } catch (error: IllegalStateException) {
+            message = error.message.orEmpty()
+        }
 
-        AndroidDeviceMcpServer.ensureDefaultPluginEnabled(
-            isEnabled = { enabled },
-            inspect = { null },
-            install = {
-                installCount += 1
-                enabled = true
-            },
-            enable = { enableCount += 1 },
-        )
-
-        assertTrue(enabled)
-        assertEquals(1, installCount)
-        assertEquals(0, enableCount)
+        assertTrue(message.contains("插件市场"))
+        assertTrue(message.contains("安装并启用"))
     }
 
     @Test
-    fun `disabled installed default plugin is formally enabled`() = runBlocking {
-        var enabled = false
-        var installCount = 0
-        var enableCount = 0
+    fun `disabled installed default plugin explains how to enable it`() = runBlocking {
+        var message = ""
+        try {
+            AndroidDeviceMcpServer.requireDefaultPluginEnabled(
+                isEnabled = { false },
+                inspect = {
+                    AndroidDeviceMcpServer.DefaultPluginStatus(
+                        installed = true,
+                        enabled = false,
+                    )
+                },
+            )
+        } catch (error: IllegalStateException) {
+            message = error.message.orEmpty()
+        }
 
-        AndroidDeviceMcpServer.ensureDefaultPluginEnabled(
-            isEnabled = { enabled },
-            inspect = {
-                AndroidDeviceMcpServer.DefaultPluginStatus(
-                    installed = true,
-                    enabled = false,
-                )
-            },
-            install = { installCount += 1 },
-            enable = {
-                enableCount += 1
-                enabled = true
-            },
-        )
-
-        assertTrue(enabled)
-        assertEquals(0, installCount)
-        assertEquals(1, enableCount)
+        assertTrue(message.contains("启用插件"))
+        assertTrue(message.contains("无障碍服务"))
     }
 
     @Test
-    fun `ready runtime skips plugin restoration`() = runBlocking {
+    fun `ready runtime skips plugin inspection`() = runBlocking {
         var inspectionCount = 0
 
-        AndroidDeviceMcpServer.ensureDefaultPluginEnabled(
+        AndroidDeviceMcpServer.requireDefaultPluginEnabled(
             isEnabled = { true },
             inspect = {
                 inspectionCount += 1
                 null
             },
-            install = { error("install must not run") },
-            enable = { error("enable must not run") },
         )
 
         assertEquals(0, inspectionCount)
