@@ -306,7 +306,9 @@ internal class AcpAgentProfileStore(context: Context) {
             .apply()
         clearHealth(normalizedId)
         if (preferences.getString(KEY_SELECTED_PROFILE_ID, null) == normalizedId) {
-            preferences.edit().putString(KEY_SELECTED_PROFILE_ID, DEFAULT_CODEX_AGENT_ID).apply()
+            // Xiaowan is the single built-in default entry.  Deleting a
+            // custom profile must not silently switch the user to Codex.
+            preferences.edit().putString(KEY_SELECTED_PROFILE_ID, XIAOWAN_AGENT_ID).apply()
         }
     }
 

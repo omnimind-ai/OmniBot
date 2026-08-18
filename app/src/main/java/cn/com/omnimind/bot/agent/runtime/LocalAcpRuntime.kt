@@ -1947,6 +1947,14 @@ private class AcpProcessConnection(
         if (isRunning) return
         closing = false
         val command = buildString {
+            // ACP session/new is created with /workspace as its cwd.  The
+            // embedded terminal otherwise starts long-lived processes in
+            // /root, which makes official filesystem/skill providers resolve
+            // a different process.cwd() than the ACP session.  Keep every
+            // managed ACP runtime on the same official workspace root.
+            append("cd ")
+            append(shellQuoteAcp(AgentWorkspaceManager.SHELL_ROOT_PATH))
+            append(" && ")
             append(MANAGED_NPM_PATH_PREFIX)
             append(' ')
             append("exec ")
