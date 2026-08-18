@@ -943,6 +943,22 @@ class ModelProviderConfigService {
           profile.id,
           profile: profile,
         );
+        if (profile.configured && models.isEmpty) {
+          // A newly saved BYOK Provider has no local cache until the first
+          // model discovery. The Provider settings page already performs this
+          // discovery, so the chat selector must do the same instead of
+          // presenting a false "no models" state on the first open.
+          try {
+            models = await fetchModels(
+              profileId: profile.id,
+              providerName: profile.name,
+              capability: 'text',
+            );
+          } catch (_) {
+            // Keep the empty result. The scene-bound model/manual entry can
+            // still be used as a fallback by the chat page.
+          }
+        }
       }
       groups.add(ProviderModelGroup(profile: profile, models: models));
     }

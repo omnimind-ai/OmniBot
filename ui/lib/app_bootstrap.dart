@@ -43,26 +43,70 @@ Future<void> bootstrapMain(List<String> args) async {
   }
   WidgetsFlutterBinding.ensureInitialized();
   WidgetsBinding.instance.deferFirstFrame();
-  SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  try {
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  } catch (error, stackTrace) {
+    debugPrint('[FlutterStartup] system UI mode setup failed: $error');
+    debugPrint('$stackTrace');
+  }
 
   final container = ProviderContainer();
-  await StorageService.init();
-  await AppBackgroundService.load();
-  await ScheduledTaskSchedulerService.initialize();
-  await OmnibotResourceService.ensureWorkspacePathsLoaded();
-  SystemChrome.setSystemUIOverlayStyle(
-    AppTheme.overlayStyleForBrightness(
-      _resolveStartupBrightness(StorageService.getThemeMode()),
-    ),
-  );
+  // Keep the first frame fail-open. A transient platform/plugin failure during
+  // startup must not leave the Flutter engine alive behind a permanently
+  // blank window. Services that depend on storage or a native channel can
+  // retry from their own pages after the shell is visible.
+  try {
+    await StorageService.init();
+  } catch (error, stackTrace) {
+    debugPrint('[FlutterStartup] StorageService.init failed: $error');
+    debugPrint('$stackTrace');
+  }
+  try {
+    await AppBackgroundService.load();
+  } catch (error, stackTrace) {
+    debugPrint('[FlutterStartup] AppBackgroundService.load failed: $error');
+    debugPrint('$stackTrace');
+  }
+  try {
+    await ScheduledTaskSchedulerService.initialize();
+  } catch (error, stackTrace) {
+    debugPrint(
+      '[FlutterStartup] ScheduledTaskSchedulerService.initialize failed: '
+      '$error',
+    );
+    debugPrint('$stackTrace');
+  }
+  try {
+    await OmnibotResourceService.ensureWorkspacePathsLoaded();
+  } catch (error, stackTrace) {
+    debugPrint(
+      '[FlutterStartup] OmnibotResourceService workspace load failed: $error',
+    );
+    debugPrint('$stackTrace');
+  }
+  try {
+    SystemChrome.setSystemUIOverlayStyle(
+      AppTheme.overlayStyleForBrightness(
+        _resolveStartupBrightness(StorageService.getThemeMode()),
+      ),
+    );
+  } catch (error, stackTrace) {
+    debugPrint('[FlutterStartup] system UI style setup failed: $error');
+    debugPrint('$stackTrace');
+  }
 
-  runApp(
-    UncontrolledProviderScope(
-      container: container,
-      child: MyApp(args: args),
-    ),
-  );
-  WidgetsBinding.instance.allowFirstFrame();
+  try {
+    runApp(
+      UncontrolledProviderScope(
+        container: container,
+        child: MyApp(args: args),
+      ),
+    );
+  } finally {
+    // Even if a widget/plugin throws while constructing the root tree, do not
+    // keep the native window permanently behind a deferred first frame.
+    WidgetsBinding.instance.allowFirstFrame();
+  }
 }
 
 Brightness _resolveStartupBrightness(AppThemeMode mode) {
