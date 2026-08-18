@@ -73,11 +73,17 @@ internal const val DEEPSEEK_HARNESS_NPM_CHANNEL = "next"
 internal val DEEPSEEK_HARNESS_NPM_PACKAGE_NAMES = listOf(
     "@deepseek-ai/dsh-acp-demo",
     "@deepseek-ai/dsh-llm-deepseek",
+    "@deepseek-ai/dsh-llm-pi-ai",
     "@deepseek-ai/dsh-subprocess-local",
     "@deepseek-ai/dsh-user-approval",
     "@deepseek-ai/dsh-mcp-client",
     "@deepseek-ai/dsh-fs",
-    "@deepseek-ai/dsh-fs-local",
+    // Official mobile-safe filesystem stack. dsh-fs-sandbox is the
+    // in-process workspace fence; dsh-sandbox-policy owns the shared policy
+    // vocabulary and dsh-fs-observation-policy owns read-before-write/edit.
+    "@deepseek-ai/dsh-sandbox-policy",
+    "@deepseek-ai/dsh-fs-sandbox",
+    "@deepseek-ai/dsh-fs-observation-policy",
     // Official ACP example composition: preserve the Harness capability
     // surface instead of shipping a reduced host-owned tool loop.
     "@deepseek-ai/dsh-token-meter",
@@ -141,8 +147,10 @@ internal val DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND = """
       rm -rf "${'$'}hardlink_helper"
       return "${'$'}install_status"
     }
-    repair_deepseek_harness_node_pty
     install_deepseek_harness_packages
+    # npm may replace node-pty during the install above, so the native repair
+    # must run after package publication as well as on later health checks.
+    repair_deepseek_harness_node_pty
     $DEEPSEEK_HARNESS_NATIVE_HEALTH_COMMAND
 """.trimIndent()
 

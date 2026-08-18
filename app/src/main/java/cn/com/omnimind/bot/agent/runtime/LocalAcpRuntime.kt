@@ -959,15 +959,19 @@ internal class LocalAcpRuntime(
         // binding in that case, so keep the model selector useful and aligned
         // with the same model used by the rest of the app.
         val sharedModel = sharedModelProvider()
-        val legacyModels = if (acpModels.isEmpty() && !sharedModel.isNullOrBlank()) {
-            listOf(
-                linkedMapOf(
-                    "id" to sharedModel,
-                    "model" to sharedModel,
-                    "displayName" to sharedModel,
-                    "description" to "Shared Provider model"
-                )
+        val sharedModelEntry = sharedModel?.takeIf { it.isNotBlank() }?.let {
+            linkedMapOf(
+                "id" to it,
+                "model" to it,
+                "displayName" to it,
+                "description" to "Shared Provider model"
             )
+        }
+        val legacyModels = if (
+            sharedModelEntry != null &&
+            acpModels.none { it["id"] == sharedModel }
+        ) {
+            acpModels + sharedModelEntry
         } else {
             acpModels
         }
@@ -978,9 +982,9 @@ internal class LocalAcpRuntime(
         return linkedMapOf(
             "models" to legacyModels,
             "currentModelId" to (
-                modelOption?.currentValue?.value
+                sharedModel
+                    ?: modelOption?.currentValue?.value
                     ?: if (session.modelsSupported) session.currentModel.value.value else null
-                    ?: sharedModel
                 ),
             "reasoningEfforts" to effortOption?.flatOptions()?.map { it.value.value }.orEmpty(),
             "currentReasoningEffort" to effortOption?.currentValue?.value,

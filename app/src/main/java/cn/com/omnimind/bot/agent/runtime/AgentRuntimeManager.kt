@@ -8,6 +8,7 @@ import com.ai.assistance.operit.terminal.TerminalManager
 import com.ai.assistance.operit.terminal.setup.buildAlpinePackageInstallCommand
 import cn.com.omnimind.baselib.database.DatabaseHelper
 import cn.com.omnimind.baselib.llm.ModelProviderConfigStore
+import cn.com.omnimind.baselib.llm.ModelSceneRegistry
 import cn.com.omnimind.baselib.llm.SceneModelBindingStore
 import cn.com.omnimind.bot.BuildConfig
 import cn.com.omnimind.bot.agent.AgentConversationHistoryRepository
@@ -16,6 +17,7 @@ import cn.com.omnimind.bot.agent.AgentImageAttachmentSupport
 import cn.com.omnimind.bot.agent.AgentWorkspaceAttachmentSupport
 import cn.com.omnimind.bot.agent.AgentWorkspaceManager
 import cn.com.omnimind.bot.mcp.McpServerManager
+import cn.com.omnimind.bot.terminal.EmbeddedTerminalSetupManager
 import cn.com.omnimind.bot.task.runtime.TaskRuntime
 import cn.com.omnimind.bot.util.TaskRuntimeSettings
 import com.rk.terminal.runtime.TerminalDistribution
@@ -29,6 +31,33 @@ import kotlinx.coroutines.sync.withLock
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+
+/**
+ * A scene binding is only valid for the Provider it names. Older builds could
+ * leave a debug model binding behind while the user had already switched the
+ * active Provider, which made every ACP adapter send the active Provider's
+ * credentials with a model from another Provider. Keep the shared Agent model
+ * coherent and fall back to the canonical scene default until the user picks
+ * a model for the active Provider.
+ */
+internal fun resolveSharedAgentModel(
+    editingProfileId: String,
+    boundProviderProfileId: String?,
+    boundModel: String?,
+    defaultModel: String?
+): String? {
+    val normalizedEditingProfileId = editingProfileId.trim()
+    val normalizedBoundModel = boundModel?.trim().orEmpty()
+    return if (
+        normalizedEditingProfileId.isNotEmpty() &&
+        boundProviderProfileId?.trim() == normalizedEditingProfileId &&
+        normalizedBoundModel.isNotEmpty()
+    ) {
+        normalizedBoundModel
+    } else {
+        defaultModel?.trim()?.takeIf { it.isNotEmpty() }
+    }
+}
 
 class AgentRuntimeManager private constructor(
     private val context: Context
@@ -1132,10 +1161,16 @@ class AgentRuntimeManager private constructor(
     }.getOrNull()
 
     private fun currentAgentModel(): String? = runCatching {
-        SceneModelBindingStore.getBinding("scene.dispatch.model")
-            ?.modelId
-            ?.trim()
-            ?.takeIf { it.isNotEmpty() }
+        val editingProfileId = ModelProviderConfigStore.getEditingProfileId()
+        val binding = SceneModelBindingStore.getBinding("scene.dispatch.model")
+        resolveSharedAgentModel(
+            editingProfileId = editingProfileId,
+            boundProviderProfileId = binding?.providerProfileId,
+            boundModel = binding?.modelId,
+            defaultModel = ModelSceneRegistry
+                .getRuntimeProfile("scene.dispatch.model")
+                ?.model
+        )
     }.getOrNull()
 
     private suspend fun ensureManagedAcpAdapter(profile: AcpAgentProfile) {
@@ -1151,6 +1186,25 @@ class AgentRuntimeManager private constructor(
             ?: true
         if (commandAvailable && allPackagesReady && adapterHealthy) {
             return
+        }
+        if (!isTerminalCommandAvailable("npm")) {
+            val terminalPackageId = managedAgentTerminalPackageId(profile.id)
+            if (terminalPackageId == null) {
+                throw IllegalStateException(
+                    "npm is required to prepare the ${profile.name} ACP adapter."
+                )
+            }
+            val bootstrap = EmbeddedTerminalSetupManager(appContext).installPackages(
+                selectedPackageIds = listOf(terminalPackageId)
+            )
+            if (!bootstrap.success) {
+                val details = bootstrap.message.ifBlank { bootstrap.output.trim() }
+                throw IllegalStateException(
+                    details.ifBlank {
+                        "Unable to install the ${profile.name} ACP adapter prerequisites."
+                    }
+                )
+            }
         }
         if (!isTerminalCommandAvailable("npm")) {
             throw IllegalStateException(
@@ -2411,8 +2465,9 @@ internal fun buildOpenCodeConfigJson(
  *
  * The host owns only deployment values (model, permission, persistence, and
  * the MCP endpoint). The mounted capability plugins stay official and keep
- * the upstream names/defaults; desktop-only services that require bwrap,
- * Landlock, or a shell host are intentionally not mounted on Android.
+ * the upstream names/defaults; the desktop-only runner that requires
+ * bwrap/Landlock is intentionally not mounted on Android, while the official
+ * in-process filesystem sandbox remains enabled.
  * This keeps DSH native while avoiding a private mobile protocol or a plugin
  * tree that can never become ready on the phone.
  */
@@ -2429,6 +2484,23 @@ internal fun buildDeepSeekHarnessCordisConfig(): String = """
           # model registry as well as the ACP launch environment.
           - id: !!js "process.env.DSH_MODEL ?? 'deepseek-v4-pro'"
 
+    # The shared Provider may be DeepSeek, GLM, or another OpenAI-compatible
+    # service. Use DSH's official generic pi-ai adapter for that route instead
+    # of forcing every model through the DeepSeek-only wire adapter.
+    - id: llm-shared-provider
+      name: '@deepseek-ai/dsh-llm-pi-ai'
+      config:
+        providers:
+          omnibot:
+            displayName: OmniBot shared Provider
+            apiKeyEnv: DEEPSEEK_API_KEY
+            api: openai-completions
+            baseURL: !!js process.env.DEEPSEEK_BASE_URL
+            models:
+              - id: !!js "process.env.DSH_MODEL ?? 'deepseek-v4-pro'"
+            defaultContextWindow: 128000
+            defaultMaxTokens: 8192
+
     - id: subprocess
       name: '@deepseek-ai/dsh-subprocess-local'
 
@@ -2440,7 +2512,7 @@ internal fun buildDeepSeekHarnessCordisConfig(): String = """
     - id: acp-agent
       name: '@deepseek-ai/dsh-acp-demo'
       config:
-        provider: deepseek-official
+        provider: omnibot
         model: !!js "process.env.DSH_MODEL ?? 'deepseek-v4-pro'"
         persistenceRoot: !!js "(process.env.DSH_ACP_HOME ?? '/root/.dsh/omnibot-acp-clean') + '/sessions'"
         persistenceCompression: !!js "process.env.DSH_PERSISTENCE_COMPRESSION ?? 'zstd'"
@@ -2527,13 +2599,22 @@ internal fun buildDeepSeekHarnessCordisConfig(): String = """
     - id: repeat-tool-reminder
       name: '@deepseek-ai/dsh-repeat-tool-reminder'
 
-    # Android has no desktop bwrap/Landlock backend. Mount DSH's official
-    # local filesystem seam directly so read/write/edit remain real DSH tools
-    # without advertising an approval flow that the phone cannot service.
+    # Android has no desktop bwrap/Landlock runner, but DSH's official
+    # in-process filesystem sandbox is portable and provides the same
+    # workspace-write/read-only vocabulary for read/write/edit.
+    - id: sandbox-policy
+      name: '@deepseek-ai/dsh-sandbox-policy'
+      config:
+        mode: !!js "process.env.DSH_PERMISSION_MODE ?? 'workspace-write'"
+        workspaceRoot: !!js process.cwd()
+
     - id: fs
-      name: '@deepseek-ai/dsh-fs-local'
+      name: '@deepseek-ai/dsh-fs-sandbox'
       config:
         cwd: !!js process.cwd()
+
+    - id: fs-observation-policy
+      name: '@deepseek-ai/dsh-fs-observation-policy'
 
     - id: tool-fs
       name: '@deepseek-ai/dsh-tool-fs'
@@ -2567,6 +2648,16 @@ internal fun buildDeepSeekHarnessCordisConfig(): String = """
           Authorization: !!js "'Bearer ' + process.env.OMNIBOT_MCP_TOKEN"
         failOnStartupError: true
 """.trimIndent() + "\n"
+
+internal fun managedAgentTerminalPackageId(agentId: String): String? {
+    return when (agentId) {
+        AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID -> "codex"
+        CLAUDE_CODE_AGENT_ID -> "claude_code"
+        OPENCODE_AGENT_ID -> "opencode"
+        AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID -> "deepseek_harness"
+        else -> null
+    }
+}
 
 internal fun npmPackageName(spec: String): String {
     val versionSeparator = spec.lastIndexOf('@')

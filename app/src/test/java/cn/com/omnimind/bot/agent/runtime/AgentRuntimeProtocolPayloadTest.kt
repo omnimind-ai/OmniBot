@@ -122,12 +122,27 @@ class AgentRuntimeProtocolPayloadTest {
         )
         assertTrue(
             deepSeekRuntime?.managedAdapterPackages.orEmpty().contains(
+                "@deepseek-ai/dsh-llm-pi-ai@next"
+            )
+        )
+        assertTrue(
+            deepSeekRuntime?.managedAdapterPackages.orEmpty().contains(
                 "@deepseek-ai/dsh-mcp-client@next"
             )
         )
         assertTrue(
             deepSeekRuntime?.managedAdapterPackages.orEmpty().contains(
-                "@deepseek-ai/dsh-fs-local@next"
+                "@deepseek-ai/dsh-sandbox-policy@next"
+            )
+        )
+        assertTrue(
+            deepSeekRuntime?.managedAdapterPackages.orEmpty().contains(
+                "@deepseek-ai/dsh-fs-sandbox@next"
+            )
+        )
+        assertTrue(
+            deepSeekRuntime?.managedAdapterPackages.orEmpty().contains(
+                "@deepseek-ai/dsh-fs-observation-policy@next"
             )
         )
         assertTrue(
@@ -177,6 +192,10 @@ class AgentRuntimeProtocolPayloadTest {
         assertTrue(DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("cmd_copy = rm -rf"))
         assertTrue(DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("omnibot-node-gyp-copy"))
         assertTrue(DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("exec /bin/ln"))
+        assertTrue(
+            DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.lastIndexOf("install_deepseek_harness_packages") <
+                DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.lastIndexOf("repair_deepseek_harness_node_pty")
+        )
     }
 
     @Test
@@ -339,13 +358,28 @@ class AgentRuntimeProtocolPayloadTest {
     }
 
     @Test
+    fun managedAgentInstallationUsesTheExistingOfficialTerminalSetupIds() {
+        assertEquals(
+            "deepseek_harness",
+            managedAgentTerminalPackageId(AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID)
+        )
+        assertEquals("codex", managedAgentTerminalPackageId("codex-acp"))
+        assertEquals("claude_code", managedAgentTerminalPackageId("claude-code-acp"))
+        assertEquals("opencode", managedAgentTerminalPackageId("opencode-acp"))
+        assertNull(managedAgentTerminalPackageId(AcpAgentProfileStore.XIAOWAN_AGENT_ID))
+    }
+
+    @Test
     fun deepSeekHarnessCordisCompositionUsesTheOfficialAcpPlugin() {
         val config = buildDeepSeekHarnessCordisConfig()
 
         assertTrue(config.contains("name: '@deepseek-ai/dsh-llm-deepseek'"))
+        assertTrue(config.contains("name: '@deepseek-ai/dsh-llm-pi-ai'"))
         assertTrue(config.contains("name: '@deepseek-ai/dsh-acp-demo'"))
         assertTrue(config.contains("name: '@deepseek-ai/dsh-mcp-client'"))
-        assertTrue(config.contains("name: '@deepseek-ai/dsh-fs-local'"))
+        assertTrue(config.contains("name: '@deepseek-ai/dsh-sandbox-policy'"))
+        assertTrue(config.contains("name: '@deepseek-ai/dsh-fs-sandbox'"))
+        assertTrue(config.contains("name: '@deepseek-ai/dsh-fs-observation-policy'"))
         assertTrue(config.contains("name: '@deepseek-ai/dsh-compaction-basic'"))
         assertTrue(config.contains("name: '@deepseek-ai/dsh-tool-fs'"))
         assertTrue(config.contains("name: '@deepseek-ai/dsh-skill'"))
@@ -357,7 +391,10 @@ class AgentRuntimeProtocolPayloadTest {
         assertTrue(config.contains("name: '@deepseek-ai/dsh-tool-subagent'"))
         assertTrue(config.contains("name: '@deepseek-ai/dsh-tool-workflow'"))
         assertTrue(config.contains("serverName: omnibot"))
-        assertTrue(config.contains("provider: deepseek-official"))
+        assertTrue(config.contains("provider: omnibot"))
+        assertTrue(config.contains("apiKeyEnv: DEEPSEEK_API_KEY"))
+        assertTrue(config.contains("api: openai-completions"))
+        assertTrue(config.contains("baseURL: !!js process.env.DEEPSEEK_BASE_URL"))
         assertTrue(config.contains("process.env.DSH_MODEL ?? 'deepseek-v4-pro'"))
         assertTrue(config.contains("process.env.OMNIBOT_MCP_URL"))
         assertTrue(config.contains("process.env.OMNIBOT_MCP_TOKEN"))
@@ -378,8 +415,7 @@ class AgentRuntimeProtocolPayloadTest {
         assertFalse(config.contains("pluginProjectSchema"))
         assertTrue(config.contains("policy: !!js"))
         assertFalse(config.contains("name: '@deepseek-ai/dsh-bash-sandbox'"))
-        assertFalse(config.contains("name: '@deepseek-ai/dsh-fs-sandbox'"))
-        assertFalse(config.contains("name: '@deepseek-ai/dsh-fs-observation-policy'"))
+        assertFalse(config.contains("name: '@deepseek-ai/dsh-fs-local'"))
         assertFalse(config.contains("name: '@deepseek-ai/dsh-hooks-claude-code'"))
         assertFalse(config.contains("name: '@deepseek-ai/dsh-hooks-codex'"))
         assertFalse(config.contains("omnibot-acp-demo.mjs"))
@@ -912,5 +948,35 @@ class AgentRuntimeProtocolPayloadTest {
         assertTrue(config.contains("requires_openai_auth = true"))
         assertFalse(config.contains("env_key"))
         assertTrue(auth.contains("\"OPENAI_API_KEY\": \"sk-test\""))
+    }
+
+    @Test
+    fun sharedAgentModelRejectsAStaleBindingFromAnotherProvider() {
+        assertEquals(
+            "qwen3.5-plus",
+            resolveSharedAgentModel(
+                editingProfileId = "bailian-official",
+                boundProviderProfileId = "debug-llmthu-glm",
+                boundModel = "GLM-5.1",
+                defaultModel = "qwen3.5-plus"
+            )
+        )
+        assertEquals(
+            "glm-5",
+            resolveSharedAgentModel(
+                editingProfileId = "debug-llmthu-glm",
+                boundProviderProfileId = "debug-llmthu-glm",
+                boundModel = "glm-5",
+                defaultModel = "qwen3.5-plus"
+            )
+        )
+        assertNull(
+            resolveSharedAgentModel(
+                editingProfileId = "",
+                boundProviderProfileId = "debug-llmthu-glm",
+                boundModel = "GLM-5.1",
+                defaultModel = ""
+            )
+        )
     }
 }
