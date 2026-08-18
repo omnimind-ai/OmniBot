@@ -435,10 +435,30 @@ abstract class _ChatPageStateBase extends State<ChatPage>
 
   List<ChatAcpAgentModeOption> get _chatAcpAgentModeOptions {
     final profiles = _agentCatalog?.agents ?? const <AcpAgentProfile>[];
+    final hasXiaowan = profiles.any((profile) => profile.id == 'xiaowan-acp');
+    final orderedProfiles = profiles.toList(growable: false)
+      ..sort((left, right) {
+        final leftIsXiaowan = left.id == 'xiaowan-acp';
+        final rightIsXiaowan = right.id == 'xiaowan-acp';
+        if (leftIsXiaowan == rightIsXiaowan) {
+          return 0;
+        }
+        return leftIsXiaowan ? -1 : 1;
+      });
     final options = <ChatAcpAgentModeOption>[
-      for (final profile in profiles.where(
-        (profile) => profile.id != 'xiaowan-acp',
-      ))
+      // Xiaowan is an in-process built-in ACP Agent. Keep its public entry
+      // available even while the asynchronous native catalog is refreshing;
+      // otherwise the UI falls back to the legacy OmniAi row and that row
+      // cannot carry the ACP profile action.
+      if (!hasXiaowan)
+        const ChatAcpAgentModeOption(
+          id: 'xiaowan-acp',
+          name: '小万',
+          enabled: true,
+          installed: true,
+          status: 'online',
+        ),
+      for (final profile in orderedProfiles)
         ChatAcpAgentModeOption(
           id: profile.id,
           name: profile.name,

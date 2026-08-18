@@ -32,6 +32,7 @@ double _chatAppBarModeMenuAgentIconSize(String agentId) {
   // Claude Code 横向较宽，OpenCode 则有较多留白。这里按轮廓做光学尺寸
   // 校正，让它们在 40px 菜单行内看起来接近同一大小。
   return switch (agentId.trim()) {
+    'xiaowan-acp' => 23,
     'codex-acp' || 'codex-remote' => 19,
     'claude-code-acp' => 21,
     'opencode-acp' => 22,
@@ -397,13 +398,16 @@ class ChatAppBar extends StatelessWidget {
   }
 }
 
-enum _ChatAppBarModeShortcutKind { omniAi, acpAgent, pureChat }
+enum _ChatAppBarModeShortcutKind { omniAi, xiaowanAcp, acpAgent, pureChat }
 
 class _ChatAppBarModeShortcutAction {
   const _ChatAppBarModeShortcutAction._(this.kind, [this.agentId]);
 
   static const omniAi = _ChatAppBarModeShortcutAction._(
     _ChatAppBarModeShortcutKind.omniAi,
+  );
+  static const xiaowanAcp = _ChatAppBarModeShortcutAction._(
+    _ChatAppBarModeShortcutKind.xiaowanAcp,
   );
   static const pureChat = _ChatAppBarModeShortcutAction._(
     _ChatAppBarModeShortcutKind.pureChat,
@@ -592,6 +596,16 @@ class _ChatAppBarModeShortcutButtonState
     final acpAgentModes = widget.acpAgentModes
         .where((agent) => agent.enabled)
         .toList(growable: false);
+    ChatAcpAgentModeOption? xiaowan;
+    for (final agent in acpAgentModes) {
+      if (agent.id == 'xiaowan-acp') {
+        xiaowan = agent;
+        break;
+      }
+    }
+    final otherAgents = acpAgentModes
+        .where((agent) => agent.id != 'xiaowan-acp')
+        .toList(growable: false);
     final popupAnchor = Rect.fromLTWH(anchor.left, anchor.top, anchor.width, 0);
 
     final action = await showGlassPopup<_ChatAppBarModeShortcutAction>(
@@ -605,50 +619,81 @@ class _ChatAppBarModeShortcutButtonState
       unfoldAlignment: Alignment.topCenter,
       child: ValueListenableBuilder<bool>(
         valueListenable: _isAgentLoadingNotifier,
-        builder: (context, isAgentLoading, _) =>
-            _ChatAppBarModeShortcutMenuContent(
-              width: _kChatAppBarAccessoryButtonSize,
-              closeTooltip: isEnglish ? 'Close mode menu' : '收起模式菜单',
-              headerIcon: _buildOpenIcon(selectedColor),
-              items: [
-                _ChatAppBarModeShortcutMenuItemData(
+        builder: (context, isAgentLoading, _) {
+          final xiaowanItem = xiaowan == null
+              ? _ChatAppBarModeShortcutMenuItemData(
                   action: _ChatAppBarModeShortcutAction.omniAi,
                   iconAsset: _kChatAppBarAgentIconAsset,
                   tooltip: isEnglish ? 'OmniAi' : '小万',
                   selected: widget.isOmniAiSelected,
-                  enabled: widget.onOmniAiTap != null,
+                  enabled:
+                      widget.onOmniAiTap != null ||
+                      widget.onAcpAgentTap != null,
                   iconSize: _kChatAppBarModeMenuOmniAiIconSize,
                   iconOffset: _kChatAppBarModeMenuOmniAiIconOffset,
-                ),
-                for (final agent in acpAgentModes)
-                  _ChatAppBarModeShortcutMenuItemData(
-                    action: _ChatAppBarModeShortcutAction.acpAgent(agent.id),
-                    agentId: agent.id,
-                    tooltip: agent.name,
-                    selected:
-                        widget.isAgentSelected &&
-                        agent.id == widget.activeAcpAgentId,
-                    enabled:
-                        !isAgentLoading &&
-                        (widget.onAcpAgentTap != null ||
-                            widget.onAgentTap != null),
-                    iconSize: _chatAppBarModeMenuAgentIconSize(agent.id),
-                  ),
+                  onTap: () {
+                    // Even during the asynchronous catalog refresh this is
+                    // the single visible Xiaowan entry. Route it directly to
+                    // the official ACP profile instead of waiting for the
+                    // legacy OmniAi action to round-trip through the popup.
+                    if (widget.onAcpAgentTap != null) {
+                      widget.onAcpAgentTap!('xiaowan-acp');
+                    } else {
+                      widget.onOmniAiTap?.call();
+                    }
+                    Navigator.of(context).pop();
+                  },
+                )
+              : _ChatAppBarModeShortcutMenuItemData(
+                  action: _ChatAppBarModeShortcutAction.xiaowanAcp,
+                  iconAsset: _kChatAppBarAgentIconAsset,
+                  tooltip: xiaowan.name,
+                  selected:
+                      widget.isOmniAiSelected ||
+                      (widget.isAgentSelected &&
+                          xiaowan.id == widget.activeAcpAgentId),
+                  enabled:
+                      !isAgentLoading &&
+                      (widget.onAcpAgentTap != null ||
+                          widget.onAgentTap != null),
+                  iconSize: _chatAppBarModeMenuAgentIconSize(xiaowan.id),
+                );
+          return _ChatAppBarModeShortcutMenuContent(
+            width: _kChatAppBarAccessoryButtonSize,
+            closeTooltip: isEnglish ? 'Close mode menu' : '收起模式菜单',
+            headerIcon: _buildOpenIcon(selectedColor),
+            items: [
+              xiaowanItem,
+              for (final agent in otherAgents)
                 _ChatAppBarModeShortcutMenuItemData(
-                  action: _ChatAppBarModeShortcutAction.pureChat,
-                  iconAsset: _kChatAppBarPureChatIconAsset,
-                  tooltip: isEnglish ? 'Pure chat' : '纯聊天模式',
-                  selected: widget.isPureChatSelected,
-                  enabled: canSelectPureChat,
-                  iconSize: _kChatAppBarModeMenuPureChatIconSize,
+                  action: _ChatAppBarModeShortcutAction.acpAgent(agent.id),
+                  agentId: agent.id,
+                  tooltip: agent.name,
+                  selected:
+                      widget.isAgentSelected &&
+                      agent.id == widget.activeAcpAgentId,
+                  enabled:
+                      !isAgentLoading &&
+                      (widget.onAcpAgentTap != null ||
+                          widget.onAgentTap != null),
+                  iconSize: _chatAppBarModeMenuAgentIconSize(agent.id),
                 ),
-              ],
-              selectedColor: selectedColor,
-              // popup 有自己的不透明 surface，不能复用为聊天壁纸适配的 AppBar
-              // iconTint；后者在浅色主题 + 深色壁纸时可能接近白色。
-              iconTint: palette.textSecondary,
-              disabledTint: palette.textTertiary,
-            ),
+              _ChatAppBarModeShortcutMenuItemData(
+                action: _ChatAppBarModeShortcutAction.pureChat,
+                iconAsset: _kChatAppBarPureChatIconAsset,
+                tooltip: isEnglish ? 'Pure chat' : '纯聊天模式',
+                selected: widget.isPureChatSelected,
+                enabled: canSelectPureChat,
+                iconSize: _kChatAppBarModeMenuPureChatIconSize,
+              ),
+            ],
+            selectedColor: selectedColor,
+            // popup 有自己的不透明 surface，不能复用为聊天壁纸适配的 AppBar
+            // iconTint；后者在浅色主题 + 深色壁纸时可能接近白色。
+            iconTint: palette.textSecondary,
+            disabledTint: palette.textTertiary,
+          );
+        },
       ),
     );
     if (mounted) {
@@ -656,7 +701,21 @@ class _ChatAppBarModeShortcutButtonState
     }
     switch (action?.kind) {
       case _ChatAppBarModeShortcutKind.omniAi:
-        widget.onOmniAiTap?.call();
+        // The single Xiaowan shortcut is backed by the official ACP profile
+        // whenever the ACP callback is available. Keep the old callback only
+        // for callers that do not provide the ACP surface yet.
+        if (widget.onAcpAgentTap != null) {
+          widget.onAcpAgentTap!('xiaowan-acp');
+        } else {
+          widget.onOmniAiTap?.call();
+        }
+        break;
+      case _ChatAppBarModeShortcutKind.xiaowanAcp:
+        if (widget.onAcpAgentTap != null) {
+          widget.onAcpAgentTap!('xiaowan-acp');
+        } else {
+          widget.onOmniAiTap?.call();
+        }
         break;
       case _ChatAppBarModeShortcutKind.acpAgent:
         final agentId = action?.agentId?.trim() ?? '';
@@ -769,6 +828,7 @@ class _ChatAppBarModeShortcutMenuItemData {
     required this.enabled,
     this.iconSize = 20,
     this.iconOffset = Offset.zero,
+    this.onTap,
   });
 
   final _ChatAppBarModeShortcutAction action;
@@ -779,6 +839,7 @@ class _ChatAppBarModeShortcutMenuItemData {
   final bool enabled;
   final double iconSize;
   final Offset iconOffset;
+  final VoidCallback? onTap;
 }
 
 class _ChatAppBarModeShortcutMenuContent extends StatelessWidget {
@@ -874,6 +935,7 @@ class _ChatAppBarModeShortcutMenuContent extends StatelessWidget {
 String _chatModeShortcutActionSlug(_ChatAppBarModeShortcutAction action) {
   return switch (action.kind) {
     _ChatAppBarModeShortcutKind.omniAi => 'omni-ai',
+    _ChatAppBarModeShortcutKind.xiaowanAcp => 'xiaowan-acp',
     _ChatAppBarModeShortcutKind.acpAgent => 'acp-${action.agentId ?? 'agent'}',
     _ChatAppBarModeShortcutKind.pureChat => 'pure-chat',
   };
@@ -902,7 +964,13 @@ class _ChatAppBarModeShortcutMenuRow extends StatelessWidget {
       message: item.tooltip,
       child: InkWell(
         onTap: item.enabled
-            ? () => Navigator.of(context).pop(item.action)
+            ? () {
+                if (item.onTap != null) {
+                  item.onTap!();
+                } else {
+                  Navigator.of(context).pop(item.action);
+                }
+              }
             : null,
         borderRadius: BorderRadius.circular(12),
         child: SizedBox(

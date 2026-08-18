@@ -1240,7 +1240,10 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
               isPetOpening: _isPetOverlayOpening,
               isPetShowing: _isPetOverlayShowing,
               onOmniAiTap: () {
-                unawaited(_handleAgentModeShortcutTap());
+                // Xiaowan and the built-in Xiaowan ACP profile are one
+                // visible Agent. Keep the old shortcut callback only as the
+                // UI compatibility boundary and route it through ACP.
+                unawaited(_handleAcpAgentModeShortcutTap('xiaowan-acp'));
               },
               onPureChatToggleTap: () {
                 unawaited(_handlePureChatModeShortcutTap());

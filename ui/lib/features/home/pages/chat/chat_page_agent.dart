@@ -122,7 +122,17 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       return;
     }
     final selectsRemote = normalized == _kRemoteCodexModeAgentId;
-    if (_activeMode == ChatPageMode.agent && normalized == _activeAcpAgentId) {
+    // A conversation binding describes which Agent owns the visible history;
+    // it is not proof that the native ACP runtime is currently selected. On
+    // restart the binding can still point at Xiaowan while the persisted ACP
+    // profile is Codex (or another Agent). Always reconcile that mismatch
+    // instead of treating the shortcut tap as a no-op.
+    final runtimeActiveAgentId = _agentRuntimeStatus.activeAgentId?.trim() ?? '';
+    final sameVisibleAgent =
+        _activeMode == ChatPageMode.agent && normalized == _activeAcpAgentId;
+    final sameRuntimeAgent =
+        runtimeActiveAgentId.isEmpty || runtimeActiveAgentId == normalized;
+    if (sameVisibleAgent && sameRuntimeAgent) {
       return;
     }
     final previousTarget = _threadTargetForMode;

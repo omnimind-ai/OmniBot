@@ -4,7 +4,7 @@ import 'package:ui/theme/theme_context.dart';
 
 /// ACP Agent 品牌图标。
 ///
-/// 已知的内置 Agent（Codex / Claude Code / OpenCode / DeepSeek Harness）渲染各自来自 Lobe Icons
+/// 已知的内置 Agent（小万 / Codex / Claude Code / OpenCode / DeepSeek Harness）渲染各自来自 Lobe Icons
 /// (https://icons.lobehub.com) 的原始品牌 SVG；未识别的自定义 Agent 回退到默认
 /// 机器人图标 [Icons.smart_toy_outlined]。
 class AgentBrandIcon extends StatelessWidget {
@@ -29,6 +29,7 @@ class AgentBrandIcon extends StatelessWidget {
   final Color? tint;
 
   static const Map<String, _AgentBrand> _brands = {
+    'xiaowan-acp': _AgentBrand('assets/home/avatar.svg'),
     'codex-acp': _AgentBrand('assets/agents/codex.svg'),
     'codex-remote': _AgentBrand('assets/agents/codex.svg'),
     'claude-code-acp': _AgentBrand(
