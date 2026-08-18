@@ -105,7 +105,7 @@ private object ClaudeCodeConfigAdapter : AgentConfigAdapter {
         val model = input.model?.trim()?.takeIf { it.isNotEmpty() }
         return AgentProviderMapping(
             environment = buildMap {
-                put("ANTHROPIC_BASE_URL", provider.baseUrl)
+                put("ANTHROPIC_BASE_URL", normalizeClaudeCodeBaseUrl(provider.baseUrl))
                 put("ANTHROPIC_API_KEY", provider.apiKey)
                 put("ANTHROPIC_AUTH_TOKEN", provider.apiKey)
                 if (model != null) {
@@ -194,4 +194,48 @@ internal fun normalizeOpenCodeBaseUrl(baseUrl: String): String {
         return normalized
     }
     return "$normalized/v1"
+}
+
+/**
+ * Claude Code speaks Anthropic Messages over ACP.  Alibaba Model Studio
+ * publishes a separate official Anthropic-compatible endpoint; its normal
+ * provider URL is the OpenAI-compatible endpoint used by Codex/OpenCode.
+ * Remap only the documented Alibaba endpoints here.  Other providers keep
+ * their configured URL untouched because the host cannot infer a compatible
+ * protocol from a generic URL.
+ */
+internal fun normalizeClaudeCodeBaseUrl(baseUrl: String): String {
+    var normalized = baseUrl.trim().trimEnd('/')
+    listOf(
+        "/chat/completions",
+        "/v1/chat/completions",
+        "/responses",
+        "/v1/responses",
+    ).firstOrNull { normalized.endsWith(it, ignoreCase = true) }?.let {
+        normalized = normalized.dropLast(it.length).trimEnd('/')
+    }
+    if (normalized.endsWith("/apps/anthropic", ignoreCase = true)) {
+        return normalized
+    }
+
+    val host = runCatching {
+        java.net.URI(normalized).host?.lowercase()
+    }.getOrNull().orEmpty()
+    val isAlibabaModelStudio = host == "dashscope.aliyuncs.com" ||
+        host == "dashscope-us.aliyuncs.com" ||
+        host.endsWith(".dashscope.aliyuncs.com") ||
+        host.endsWith(".maas.aliyuncs.com")
+    if (!isAlibabaModelStudio) return normalized
+
+    val openAiPath = when {
+        normalized.endsWith("/compatible-mode/v1", ignoreCase = true) ->
+            "/compatible-mode/v1"
+        normalized.endsWith("/v1", ignoreCase = true) -> "/v1"
+        else -> null
+    }
+    return if (openAiPath != null) {
+        normalized.dropLast(openAiPath.length).trimEnd('/') + "/apps/anthropic"
+    } else {
+        normalized
+    }
 }

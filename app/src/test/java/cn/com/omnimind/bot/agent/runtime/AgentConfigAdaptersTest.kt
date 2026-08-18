@@ -46,6 +46,7 @@ class AgentConfigAdaptersTest {
         )
         assertEquals(provider.apiKey, claude.environment["ANTHROPIC_API_KEY"])
         assertEquals(provider.apiKey, claude.environment["ANTHROPIC_AUTH_TOKEN"])
+        assertEquals(provider.baseUrl, claude.environment["ANTHROPIC_BASE_URL"])
         assertEquals(model, claude.environment["ANTHROPIC_MODEL"])
         assertEquals(model, claude.environment["ANTHROPIC_SMALL_FAST_MODEL"])
 
@@ -108,6 +109,28 @@ class AgentConfigAdaptersTest {
         assertEquals(
             "https://example.com/compatible-mode/v1",
             normalizeOpenCodeBaseUrl("https://example.com/compatible-mode/v1")
+        )
+    }
+
+    @Test
+    fun claudeCodeUsesAlibabaOfficialAnthropicEndpoint() {
+        assertEquals(
+            "https://dashscope.aliyuncs.com/apps/anthropic",
+            normalizeClaudeCodeBaseUrl(
+                "https://dashscope.aliyuncs.com/compatible-mode/v1"
+            )
+        )
+        assertEquals(
+            "https://coding.dashscope.aliyuncs.com/apps/anthropic",
+            normalizeClaudeCodeBaseUrl("https://coding.dashscope.aliyuncs.com/v1")
+        )
+    }
+
+    @Test
+    fun claudeCodeLeavesUnknownProviderEndpointUntouched() {
+        assertEquals(
+            "https://llmapi.paratera.com/v1",
+            normalizeClaudeCodeBaseUrl("https://llmapi.paratera.com/v1")
         )
     }
 }
