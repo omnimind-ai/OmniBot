@@ -15,7 +15,6 @@ object DebugOmniMindProviderBootstrap {
     internal const val LLMTHU_PROFILE_ID = "debug-llmthu-glm"
     internal const val LLMTHU_PROFILE_NAME = "LLMTHU GLM-5.1 (Debug)"
     private const val TAG = "DebugOmniMindProvider"
-    private const val DEVICE_DEBUG_BUILD_TYPE = "deviceDebug"
     private const val FLUTTER_PREFERENCES = "FlutterSharedPreferences"
     private const val FLUTTER_MANUAL_MODEL_IDS_KEY = "flutter.manual_provider_model_ids_v2"
     private val DEFAULT_LLMTHU_SCENES = listOf(
@@ -24,10 +23,7 @@ object DebugOmniMindProviderBootstrap {
     )
 
     fun install(context: Context) {
-        if (!shouldInstallDebugProvider(BuildConfig.BUILD_TYPE, BuildConfig.ENABLE_LLMTHU_BOOTSTRAP)) {
-            if (BuildConfig.BUILD_TYPE == DEVICE_DEBUG_BUILD_TYPE) {
-                removeDeviceDebugState(context)
-            }
+        if (!shouldInstallDebugProvider(BuildConfig.ENABLE_LLMTHU_BOOTSTRAP)) {
             return
         }
         val llmThuPlan = createLlmThuPlan(
@@ -92,135 +88,12 @@ object DebugOmniMindProviderBootstrap {
     }
 
     /**
-     * The normal device-validation APK is signed like debug so it can be
-     * installed quickly, but it must not inherit debug-only provider
-     * injection. Otherwise a stale bundled LLMTHU profile becomes the active
-     * model and hides the user's shared Provider configuration.
+     * The device-validation APK is allowed to use the same explicitly
+     * configured LLMTHU Provider as the debug APK. The Provider is only
+     * written when the build enables the bootstrap and supplies a credential;
+     * otherwise the user's existing Provider configuration is preserved.
      */
-    internal fun shouldInstallDebugProvider(
-        buildType: String,
-        enabled: Boolean,
-    ): Boolean = enabled && buildType != DEVICE_DEBUG_BUILD_TYPE
-
-    private fun removeDeviceDebugState(context: Context) {
-        val profiles = runCatching { ModelProviderConfigStore.listProfiles() }
-            .getOrElse { return }
-        val removedProfile = profiles.firstOrNull { it.id in DEBUG_MANAGED_PROFILE_IDS }
-        val remainingProfiles = profiles.filterNot { it.id in DEBUG_MANAGED_PROFILE_IDS }
-        val recoveredProfile = recoverSharedProvider(remainingProfiles, removedProfile)
-        val recoveredTargetId = remainingProfiles.firstOrNull { profile ->
-            profile.id == "profile-1" && !profile.isConfigured() && !profile.readOnly
-        }?.id
-        val recoveredProfileForStorage = recoveredProfile?.copy(
-            id = recoveredTargetId ?: "shared-agent-provider",
-        )
-        val profilesToKeep = if (recoveredProfileForStorage == null) {
-            remainingProfiles
-        } else {
-            val replaced = remainingProfiles.map { profile ->
-                if (profile.id == recoveredTargetId) recoveredProfileForStorage else profile
-            }
-            if (recoveredTargetId == null) replaced + recoveredProfileForStorage else replaced
-        }
-        val currentEditingProfileId = runCatching {
-            ModelProviderConfigStore.getEditingProfile().id
-        }.getOrNull()
-        val selectedProfileId = profilesToKeep.firstOrNull {
-            it.id == currentEditingProfileId && canStartAcpAgent(it)
-        }?.id ?: profilesToKeep.firstOrNull(::canStartAcpAgent)?.id
-            ?: recoveredProfileForStorage?.id
-            ?: profilesToKeep.firstOrNull {
-                it.id == currentEditingProfileId && it.isConfigured()
-            }?.id ?: profilesToKeep.firstOrNull(ModelProviderProfile::isConfigured)?.id
-            ?: profilesToKeep.firstOrNull()?.id
-        val shouldRewriteProfiles = remainingProfiles.size != profiles.size ||
-            recoveredProfileForStorage != null ||
-            selectedProfileId != currentEditingProfileId
-        if (shouldRewriteProfiles && selectedProfileId != null) {
-            runCatching {
-                // replaceProfiles also removes the corresponding encrypted
-                // secrets. If the debug profile was the only profile, the
-                // store creates its normal empty profile-1 fallback. When a
-                // debug profile was the only configured one, recover its
-                // credentials under the normal shared-provider identity.
-                ModelProviderConfigStore.replaceProfiles(
-                    profilesToKeep,
-                    editingProfileId = selectedProfileId,
-                )
-                if (recoveredProfileForStorage != null) {
-                    val sharedProfileId = ModelProviderConfigStore.getEditingProfile().id
-                    val recoveredModel = BuildConfig.DEBUG_LLMTHU_MODEL.trim()
-                    if (recoveredModel.isNotEmpty()) {
-                        DEFAULT_LLMTHU_SCENES.forEach { sceneId ->
-                            SceneModelBindingStore.saveBinding(
-                                sceneId = sceneId,
-                                providerProfileId = sharedProfileId,
-                                modelId = recoveredModel,
-                            )
-                        }
-                        seedFlutterManualModelId(
-                            context = context,
-                            profileId = sharedProfileId,
-                            modelId = recoveredModel,
-                        )
-                    }
-                }
-            }.onFailure {
-                OmniLog.w(TAG, "remove device debug provider failed: ${it.message}")
-            }
-        }
-        DEFAULT_LLMTHU_SCENES.forEach { sceneId ->
-            runCatching {
-                val binding = SceneModelBindingStore.getBinding(sceneId)
-                if (binding?.providerProfileId in DEBUG_MANAGED_PROFILE_IDS) {
-                    SceneModelBindingStore.clearBinding(sceneId)
-                }
-            }
-        }
-        removeFlutterDebugModelCache(context)
-    }
-
-    private fun recoverSharedProvider(
-        remainingProfiles: List<ModelProviderProfile>,
-        removedProfile: ModelProviderProfile?,
-    ): ModelProviderProfile? {
-        if (remainingProfiles.any(::canStartAcpAgent)) return null
-        val source = removedProfile?.takeIf(::canStartAcpAgent)
-            ?: createLlmThuPlan(
-                apiBase = BuildConfig.DEBUG_LLMTHU_API_BASE,
-                apiKey = BuildConfig.DEBUG_LLMTHU_API_KEY,
-                model = BuildConfig.DEBUG_LLMTHU_MODEL,
-            )?.profile
-            ?: return null
-        return source.copy(
-            id = "profile-1",
-            name = "共享 Agent Provider",
-            sourceType = "custom",
-            readOnly = false,
-            ready = false,
-            statusText = "",
-        )
-    }
-
-    private fun removeFlutterDebugModelCache(context: Context) {
-        val preferences = context.applicationContext.getSharedPreferences(
-            FLUTTER_PREFERENCES,
-            Context.MODE_PRIVATE,
-        )
-        val current = runCatching {
-            JSONObject(preferences.getString(FLUTTER_MANUAL_MODEL_IDS_KEY, null).orEmpty())
-        }.getOrElse { return }
-        var changed = false
-        DEBUG_MANAGED_PROFILE_IDS.forEach { profileId ->
-            if (current.has(profileId)) {
-                current.remove(profileId)
-                changed = true
-            }
-        }
-        if (changed) {
-            preferences.edit().putString(FLUTTER_MANUAL_MODEL_IDS_KEY, current.toString()).apply()
-        }
-    }
+    internal fun shouldInstallDebugProvider(enabled: Boolean): Boolean = enabled
 
     /**
      * Keep the configured default visible to Flutter before a remote
@@ -260,9 +133,6 @@ object DebugOmniMindProviderBootstrap {
     ): Boolean = existingProfileId == null ||
         !existingProfileConfigured ||
         existingProfileId in DEBUG_MANAGED_PROFILE_IDS
-
-    internal fun canStartAcpAgent(profile: ModelProviderProfile): Boolean =
-        profile.baseUrl.isNotBlank() && profile.apiKey.isNotBlank()
 
     internal fun createLlmThuPlan(
         apiBase: String,

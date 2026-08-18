@@ -36,40 +36,15 @@ class DebugOmniMindProviderBootstrapTest {
     }
 
     @Test
-    fun `device debug build never installs bundled debug provider`() {
-        assertFalse(
-            DebugOmniMindProviderBootstrap.shouldInstallDebugProvider(
-                buildType = "deviceDebug",
-                enabled = true,
-            )
+    fun `device debug build can install explicitly configured provider`() {
+        assertTrue(
+            DebugOmniMindProviderBootstrap.shouldInstallDebugProvider(enabled = true)
         )
         assertTrue(
-            DebugOmniMindProviderBootstrap.shouldInstallDebugProvider(
-                buildType = "debug",
-                enabled = true,
-            )
+            DebugOmniMindProviderBootstrap.shouldInstallDebugProvider(enabled = true)
         )
         assertFalse(
-            DebugOmniMindProviderBootstrap.shouldInstallDebugProvider(
-                buildType = "release",
-                enabled = false,
-            )
-        )
-    }
-
-    @Test
-    fun `agent readiness requires endpoint and credential`() {
-        val profile = DebugOmniMindProviderBootstrap.createLlmThuPlan(
-            apiBase = "https://llmapi.paratera.com",
-            apiKey = "llmthu-key",
-            model = "GLM-5.1",
-        )!!.profile
-
-        assertTrue(DebugOmniMindProviderBootstrap.canStartAcpAgent(profile))
-        assertFalse(
-            DebugOmniMindProviderBootstrap.canStartAcpAgent(
-                profile.copy(apiKey = ""),
-            ),
+            DebugOmniMindProviderBootstrap.shouldInstallDebugProvider(enabled = false)
         )
     }
 
