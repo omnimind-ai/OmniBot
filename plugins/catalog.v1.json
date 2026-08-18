@@ -11,6 +11,7 @@
       "kind": "runtime_bundle",
       "downloadSizeBytes": 941767,
       "required": false,
+      "installByDefault": true,
       "capabilities": [
         "Manual recording",
         "Canonical RunLog",
@@ -31,8 +32,8 @@
       },
       "presentation": {
         "description": {
-          "zh": "OmniFlow 是可选的 GUI/VLM 系统组件；需要操作手机时再安装并启用。",
-          "en": "OmniFlow is an optional GUI/VLM component; install and enable it only when you need phone automation."
+          "zh": "OmniFlow 运行时默认安装，但 GUI/VLM 操作模块默认关闭；需要操作手机时再启用。",
+          "en": "The OmniFlow runtime is installed by default, but its GUI/VLM operation module is disabled until you enable it."
         },
         "readiness": "vlm_provider",
         "usage": [
@@ -54,8 +55,8 @@
               "en": "Ready out of the box"
             },
             "description": {
-              "zh": "默认不安装、不启用；需要手机操作时，在插件市场手动安装并启用。",
-              "en": "It is not installed or enabled by default; install and enable it manually from Plugin Market when phone automation is needed."
+              "zh": "默认只安装运行时，不启用操作工具；需要手机操作时，在插件市场启用 OmniFlow。",
+              "en": "Only the runtime is installed by default; operation tools stay disabled until you enable OmniFlow from Plugin Market."
             }
           },
           {

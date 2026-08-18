@@ -259,6 +259,27 @@ class OmniPluginPlatformTest {
     }
 
     @Test
+    fun `install by default prepares runtime without loading operation tools`() = runBlocking {
+        val provider = RecordingProvider(
+            pluginId = "com.omnimind.install-default",
+            toolName = "install_default_action",
+            installByDefault = true,
+        )
+        val platform = platform(provider)
+
+        val state = platform.list().single()
+
+        assertTrue(state.installed)
+        assertFalse(state.enabled)
+        assertEquals(1, provider.installCount)
+        assertEquals(0, provider.enableCount)
+        platform.openSession().useSuspending { session ->
+            assertTrue(session.toolDefinitions.isEmpty())
+            assertTrue(session.toolHandlers.isEmpty())
+        }
+    }
+
+    @Test
     fun `required plugin repairs a persisted disabled state`() = runBlocking {
         val provider = RecordingProvider(
             pluginId = "com.omnimind.required-disabled",
@@ -400,6 +421,7 @@ class OmniPluginPlatformTest {
         private val toolName: String,
         interfaceVersion: Int = OmniPluginContract.CURRENT_INTERFACE_VERSION,
         required: Boolean = false,
+        installByDefault: Boolean = false,
         private var installFailure: Throwable? = null,
     ) : OmniPluginProvider {
         var installCount = 0
@@ -422,6 +444,7 @@ class OmniPluginPlatformTest {
             description = "test plugin",
             publisher = "OmniMind",
             required = required,
+            installByDefault = installByDefault,
         )
 
         override suspend fun install() {

@@ -16,6 +16,7 @@ import cn.com.omnimind.bot.agent.tool.handlers.SystemToolHandler
 import cn.com.omnimind.bot.agent.tool.handlers.TerminalToolHandler
 import cn.com.omnimind.bot.agent.tool.handlers.ToolHandler
 import cn.com.omnimind.bot.agent.tool.handlers.VlmToolHandler
+import cn.com.omnimind.bot.omniflow.OmniFlowPluginRuntime
 import com.rk.terminal.runtime.TerminalDistribution
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.serialization.json.Json
@@ -29,7 +30,8 @@ class AgentToolRouter(
     private val workspaceManager: AgentWorkspaceManager,
     private val subagentDispatcher: SubagentDispatcher,
     terminalDistribution: TerminalDistribution.Spec = TerminalDistribution.alpine,
-    pluginHandlers: List<ToolHandler> = emptyList()
+    pluginHandlers: List<ToolHandler> = emptyList(),
+    includeVlmTool: Boolean = OmniFlowPluginRuntime.isEnabled(),
 ) : AgentToolExecutor {
 
     private val json = Json {
@@ -44,9 +46,9 @@ class AgentToolRouter(
     private val terminalHandler = TerminalToolHandler(helper, workspaceManager, scope)
     private val privilegedHandler = PrivilegedToolHandler(helper, workspaceManager, terminalHandler)
 
-    private val orderedHandlers: List<ToolHandler> = listOf(
+    private val orderedHandlers: List<ToolHandler> = listOfNotNull(
         ContextToolHandler(helper),
-        VlmToolHandler(context),
+        VlmToolHandler(context).takeIf { includeVlmTool },
         privilegedHandler,
         terminalHandler,
         BrowserToolHandler(helper, workspaceManager),

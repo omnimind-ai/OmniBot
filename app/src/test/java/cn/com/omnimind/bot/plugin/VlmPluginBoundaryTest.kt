@@ -41,6 +41,7 @@ class VlmPluginBoundaryTest {
         assertFalse(host.contains("DEFAULT_INSTALL_GUI_PLUGIN"))
         assertFalse(host.contains("DEFAULT_INSTALL_ALL_PLUGINS"))
         assertTrue(catalog.contains("\"required\": false"))
+        assertTrue(catalog.contains("\"installByDefault\": true"))
         assertTrue(appBuild.contains("prop(\"OMNIBOT_PROFILE\").ifBlank { \"main\" }"))
         assertTrue(appBuild.contains("omnibotProfile == \"investor\""))
         assertTrue(

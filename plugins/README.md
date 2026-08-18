@@ -44,8 +44,8 @@ tests verify the release and MCP interface.
 ## OmniFlow automation bundle
 
 XiaoWan's native Android GUI runtime and Kotlin online `vlm_task` ship with the
-APK and do not require Python or plugin installation. The optional OmniFlow
-bundle adds manual recording, canonical RunLog-to-Function conversion,
+APK. The OmniFlow runtime bundle is installed as a disabled operation module;
+enabling it adds manual recording, canonical RunLog-to-Function conversion,
 Function recall and parameter binding, and OmniTransfer replay. Installing the
 bundle prepares and verifies its Skill backend, including Mobilerun, Python,
 NumPy, and the canonical OmniTransfer runtime. Model files remain provider-side
@@ -96,9 +96,9 @@ The repository maintains one host implementation and two packaging profiles:
 
 - `./gradlew assembleDevelopStandardDebug -POMNIBOT_PROFILE=main
   -Ptarget=lib/main_standard.dart` builds the normal `main` profile. It embeds
-  the verified OmniFlow baseline asset, but does not install or enable OmniFlow
-  by default; install and enable it from Plugin Market only when phone
-  automation is needed. Later plugin updates come from GitHub Releases.
+  the verified OmniFlow baseline asset and installs its runtime by default, but
+  does not enable the operation tools; enable OmniFlow from Plugin Market only
+  when phone automation is needed. Later plugin updates come from GitHub Releases.
 - `./gradlew assembleDevelopStandardDebug -POMNIBOT_PROFILE=investor
   -Ptarget=lib/main_standard.dart` builds the `investor` profile. It keeps
   the complete packaged plugin catalog; official plugins also remain opt-in

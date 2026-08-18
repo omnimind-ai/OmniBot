@@ -71,7 +71,7 @@ class VlmToolHandler(context: Context) : ToolHandler {
             toolHandle = toolHandle,
         )
         if (!OmniFlowPluginRuntime.isEnabled()) {
-            val message = "手机操作未启用。请打开插件市场 → OmniFlow → 安装并启用插件，确认无障碍服务已开启，并在模型场景中配置 Agent Provider/模型后重试。"
+            val message = "手机操作模块未启用。请打开插件市场 → OmniFlow → 启用插件（若尚未安装则先安装），确认无障碍服务已开启，并在模型场景中配置 Agent Provider/模型后重试。"
             persistFailure(runId, goal, "omniflow_disabled", message)
             return failedRunResult(
                 runId = runId,
