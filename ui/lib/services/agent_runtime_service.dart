@@ -427,10 +427,10 @@ class AcpAgentCatalog {
 }
 
 String _agentCatalogIdentity(AcpAgentProfile agent) {
-  final normalizedName = agent.name
-      .trim()
-      .toLowerCase()
-      .replaceAll(RegExp(r'[\s_-]+'), '');
+  final normalizedName = agent.name.trim().toLowerCase().replaceAll(
+    RegExp(r'[\s_-]+'),
+    '',
+  );
   if (agent.id == 'xiaowan-acp' ||
       agent.command.toLowerCase() == 'omnibot-xiaowan-acp' ||
       normalizedName == '小万bot' ||
@@ -444,11 +444,10 @@ String? selectAgentRequestModel({
   required AgentRuntimeStatus status,
   required String? overrideModel,
   required String? activeModel,
-  required String? scopedModel,
   required bool activeModelSourceMatches,
 }) {
   return _stringOrNull(
-    overrideModel ?? (activeModelSourceMatches ? activeModel : scopedModel),
+    overrideModel ?? (activeModelSourceMatches ? activeModel : null),
   );
 }
 
@@ -734,21 +733,27 @@ class AgentRuntimeService {
   static Future<Map<String, dynamic>> loadSession({
     String? sessionId,
     int? conversationId,
+    String? agentId,
   }) {
     return _invokeMap('session/load', {
       if (sessionId != null) 'sessionId': sessionId,
       if (conversationId != null) 'conversationId': conversationId,
+      if (agentId != null && agentId.trim().isNotEmpty)
+        'agentId': agentId.trim(),
     });
   }
 
   static Future<Map<String, dynamic>> readSession({
     String? sessionId,
     int? conversationId,
+    String? agentId,
     bool includeHistory = true,
   }) {
     return _invokeMap('session/load', {
       if (sessionId != null) 'sessionId': sessionId,
       if (conversationId != null) 'conversationId': conversationId,
+      if (agentId != null && agentId.trim().isNotEmpty)
+        'agentId': agentId.trim(),
       'includeHistory': includeHistory,
     });
   }
@@ -802,6 +807,7 @@ class AgentRuntimeService {
   static Future<Map<String, dynamic>> promptSession({
     String? sessionId,
     int? conversationId,
+    String? agentId,
     required String text,
     List<Map<String, dynamic>> attachments = const [],
     String? cwd,
@@ -815,6 +821,8 @@ class AgentRuntimeService {
     return _invokeMap('session/prompt', {
       if (sessionId != null) 'sessionId': sessionId,
       if (conversationId != null) 'conversationId': conversationId,
+      if (agentId != null && agentId.trim().isNotEmpty)
+        'agentId': agentId.trim(),
       if (cwd != null && cwd.trim().isNotEmpty) 'cwd': cwd.trim(),
       if (approvalPolicy != null && approvalPolicy.trim().isNotEmpty)
         'approvalPolicy': approvalPolicy.trim(),
@@ -1041,6 +1049,7 @@ class AgentRuntimeService {
   static Future<Map<String, dynamic>> setSessionConfigOption({
     String? sessionId,
     int? conversationId,
+    String? agentId,
     required String configId,
     required dynamic value,
   }) {
@@ -1048,6 +1057,8 @@ class AgentRuntimeService {
       if (sessionId != null && sessionId.trim().isNotEmpty)
         'sessionId': sessionId.trim(),
       if (conversationId != null) 'conversationId': conversationId,
+      if (agentId != null && agentId.trim().isNotEmpty)
+        'agentId': agentId.trim(),
       'configId': configId.trim(),
       'value': value,
     });

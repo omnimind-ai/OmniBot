@@ -74,10 +74,14 @@ class AgentRuntimeChannel {
             }.onSuccess { payload ->
                 result.success(payload)
             }.onFailure { error ->
+                val detail = generateSequence(error) { it.cause }
+                    .mapNotNull { it.message?.trim()?.takeIf(String::isNotEmpty) }
+                    .distinct()
+                    .joinToString("; ")
                 result.error(
                     "AGENT_RUNTIME_CALL_FAILED",
-                    error.message ?: error.javaClass.simpleName,
-                    null
+                    "${call.method}: ${detail.ifBlank { error.javaClass.simpleName }}",
+                    mapOf("method" to call.method)
                 )
             }
         }

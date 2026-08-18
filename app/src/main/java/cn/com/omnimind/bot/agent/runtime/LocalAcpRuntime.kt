@@ -90,7 +90,6 @@ internal class LocalAcpRuntime(
     private val bindingRepository: AgentSessionBindingRepository,
     private val profileStore: AcpAgentProfileStore,
     private val prepareLaunchEnvironment: suspend (AcpAgentProfile) -> Map<String, String>,
-    private val sharedModelProvider: () -> String?,
     private val onMessage: suspend (Map<String, Any?>) -> Unit
 ) {
     private val appContext = context.applicationContext
@@ -767,8 +766,30 @@ internal class LocalAcpRuntime(
         sessionMutex.withLock {
             val threadId = resolveThreadId(args)
             val expectedAgentId = profileStore.agentIdForSession(threadId)
-            require(expectedAgentId == null || expectedAgentId == activeAgentId()) {
-                "ACP session $threadId belongs to agent $expectedAgentId, not ${activeAgentId()}."
+            if (expectedAgentId != null && expectedAgentId != activeAgentId()) {
+                val cwd = normalizeCwd(
+                    args.stringValue("cwd")
+                        ?: bindingRepository.getBindingByThreadId(threadId)?.cwd
+                )
+                val fresh = requireClient().newSession(
+                    sessionCreationParameters(cwd),
+                    operationsFactory()
+                )
+                registerSession(fresh, cwd)
+                profileStore.bindSession(fresh.sessionId.value, activeAgentId())
+                val conversationId = bindingRepository.ensureBinding(
+                    threadId = fresh.sessionId.value,
+                    conversationId = args.longValue("conversationId")
+                        ?: bindingRepository.getBindingByThreadId(threadId)?.conversationId,
+                    cwd = cwd
+                )
+                profileStore.bindConversation(conversationId, activeAgentId())
+                return@withLock sessionPayload(fresh, conversationId).plus(
+                    mapOf(
+                        "sessionRestored" to false,
+                        "previousSessionId" to threadId
+                    )
+                )
             }
             sessions[threadId]?.let {
                 return@withLock sessionPayload(
@@ -954,36 +975,15 @@ internal class LocalAcpRuntime(
                 )
             }
         }
-        // Some official ACP adapters intentionally do not expose a model
-        // config option.  Agent mode still uses the app's shared Provider
-        // binding in that case, so keep the model selector useful and aligned
-        // with the same model used by the rest of the app.
-        val sharedModel = sharedModelProvider()
-        val sharedModelEntry = sharedModel?.takeIf { it.isNotBlank() }?.let {
-            linkedMapOf(
-                "id" to it,
-                "model" to it,
-                "displayName" to it,
-                "description" to "Shared Provider model"
-            )
-        }
-        val legacyModels = if (
-            sharedModelEntry != null &&
-            acpModels.none { it["id"] == sharedModel }
-        ) {
-            acpModels + sharedModelEntry
-        } else {
-            acpModels
-        }
         val effortOption = sessionConfigOptions(session).firstOrNull {
             it.id.value == "reasoning_effort" ||
                 it.category == SessionConfigOptionCategory.THOUGHT_LEVEL
         } as? SessionConfigOption.Select
         return linkedMapOf(
-            "models" to legacyModels,
+            "models" to acpModels,
+            "modelConfigSupported" to (modelOption != null || session.modelsSupported),
             "currentModelId" to (
-                sharedModel
-                    ?: modelOption?.currentValue?.value
+                modelOption?.currentValue?.value
                     ?: if (session.modelsSupported) session.currentModel.value.value else null
                 ),
             "reasoningEfforts" to effortOption?.flatOptions()?.map { it.value.value }.orEmpty(),
@@ -1036,7 +1036,45 @@ internal class LocalAcpRuntime(
         }
         val option = sessionConfigOptions(session).firstOrNull {
             it.id.value == configId
-        } ?: throw IllegalArgumentException(
+        } ?: when (configId) {
+            "model" -> sessionConfigOptions(session).firstOrNull {
+                it.category == SessionConfigOptionCategory.MODEL
+            }
+            "reasoning_effort" -> sessionConfigOptions(session).firstOrNull {
+                it.category == SessionConfigOptionCategory.THOUGHT_LEVEL
+            }
+            "mode" -> sessionConfigOptions(session).firstOrNull {
+                it.category == SessionConfigOptionCategory.MODE
+            }
+            else -> null
+        }
+        if (option == null && configId == "model" && session.modelsSupported) {
+            val value = rawValue.toString()
+            val model = session.availableModels.firstOrNull {
+                it.modelId.value == value
+            } ?: throw IllegalArgumentException(
+                "Invalid value '$value' for ACP model selection."
+            )
+            if (session.currentModel.value.value != value) {
+                session.setModel(model.modelId)
+            }
+            val options = sessionConfigOptions(session).map(::acpConfigOptionPayload)
+            emitAcpNotification(
+                sessionId = threadId,
+                update = mapOf(
+                    "sessionUpdate" to "config_option_update",
+                    "configOptions" to options
+                )
+            )
+            return linkedMapOf(
+                "ok" to true,
+                "threadId" to threadId,
+                "configId" to configId,
+                "value" to value,
+                "configOptions" to options
+            )
+        }
+        option ?: throw IllegalArgumentException(
             "ACP session does not expose config option '$configId'."
         )
 
@@ -1080,7 +1118,6 @@ internal class LocalAcpRuntime(
                 AcpPermissionBehavior.ASK_USER
             }
         }
-
         val options = sessionConfigOptions(session).map(::acpConfigOptionPayload)
         emitAcpNotification(
             sessionId = threadId,

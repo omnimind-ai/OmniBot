@@ -1330,9 +1330,8 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
                       onCancelTask: _onCancelTask,
                       onPopupVisibilityChanged: _onPopupVisibilityChanged,
                       onTerminalTap: _handleTerminalToolTap,
-                      onManualRecordingTap: _activeMode == ChatPageMode.normal
-                          ? () => _startManualRecordingCommand('手动录制')
-                          : null,
+                      onManualRecordingTap: () =>
+                          _startManualRecordingCommand('手动录制'),
                       useLargeComposerStyle: true,
                       useAttachmentPickerForPlus: true,
                       onPickAttachment: _pickAttachments,
@@ -1358,57 +1357,19 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
                           _activeMode == ChatPageMode.normal
                           ? _handleContextUsageRingLongPress
                           : null,
-                      modelPickerSettings: _activeMode == ChatPageMode.normal
-                          ? ChatModelPickerSettings(
-                              modelId: _activeNormalChatModelId ?? '',
-                              hasSelectableModels:
-                                  _hasSelectableNormalChatModels,
-                              anchorKey: _firstUseTourModelAnchorKey,
-                              onPointerDown: () {
-                                _suppressNextOutsideTapKeyboardHide = true;
-                              },
-                              onOpen: (anchorContext) =>
-                                  _openConversationModelSelector(anchorContext),
-                            )
-                          : null,
-                      agentRunSettings: _activeMode == ChatPageMode.agent
-                          ? AgentRunSettings(
-                              agentName:
-                                  _agentRuntimeStatus.activeAgentName ??
-                                  _agentCatalog?.selectedAgent?.name ??
-                                  '',
-                              modelId: _activeAgentModelId ?? '',
-                              reasoningEffort:
-                                  _activeAgentReasoningEffort ?? '',
-                              modelOptions: _agentModelOptions,
-                              reasoningEffortOptions:
-                                  _agentReasoningEffortOptions,
-                              isLoadingModels: _isAgentModelListLoading,
-                              modelListError: _agentModelListError,
-                            )
-                          : null,
-                      onAgentRunSettingsOpened:
-                          _activeMode == ChatPageMode.agent
-                          ? _loadAgentModelOptionsWhenReady
-                          : null,
-                      onAgentRunSettingsChanged:
-                          _activeMode == ChatPageMode.agent
-                          ? ({String? modelId, String? reasoningEffort}) {
-                              if (modelId != null) {
-                                unawaited(
-                                  _selectAgentModel(
-                                    modelId,
-                                    clearComposer: false,
-                                  ),
-                                );
-                              }
-                              if (reasoningEffort != null) {
-                                unawaited(
-                                  _selectAgentReasoningEffort(reasoningEffort),
-                                );
-                              }
-                            }
-                          : null,
+                      modelPickerSettings: ChatModelPickerSettings(
+                        modelId: _activeDispatchSceneSelection?.modelId ?? '',
+                        hasSelectableModels: _hasSelectableProviderModels,
+                        anchorKey: _firstUseTourModelAnchorKey,
+                        onPointerDown: () {
+                          _suppressNextOutsideTapKeyboardHide = true;
+                        },
+                        onOpen: (anchorContext) =>
+                            _openConversationModelSelector(anchorContext),
+                      ),
+                      agentRunSettings: null,
+                      onAgentRunSettingsOpened: null,
+                      onAgentRunSettingsChanged: null,
                       agentPermissionMode: _activeMode == ChatPageMode.agent
                           ? _agentPermissionMode
                           : null,

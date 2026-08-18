@@ -532,7 +532,10 @@ internal class AcpAgentProfileStore(context: Context) {
                 .trim()
                 .lowercase()
                 .replace(Regex("[\\s_-]+"), "")
-            return profile.command.equals("omnibot-xiaowan-acp", ignoreCase = true) ||
+            return profile.id.equals("legacy-xiaowan-bot", ignoreCase = true) ||
+                profile.command.equals("omnibot-xiaowan-acp", ignoreCase = true) ||
+                profile.command.contains("xiaowan", ignoreCase = true) ||
+                normalizedName == "小万" ||
                 normalizedName == "小万bot" ||
                 normalizedName == "xiaowanbot"
         }

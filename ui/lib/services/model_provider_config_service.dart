@@ -921,43 +921,24 @@ class ModelProviderConfigService {
     final payload = await listProfiles();
     final groups = <ProviderModelGroup>[];
     for (final profile in payload.profiles) {
-      List<ProviderModelOption> models;
-      // The official runtime catalog is capability-scoped and is not managed
-      // by the BYOK visibility list. Refresh its full text catalog here so the
-      // chat selector does not degrade to only the scene-bound fallback model.
-      if (profile.sourceType == 'omnibot_official' && profile.configured) {
+      var models = <ProviderModelOption>[];
+      if (profile.configured) {
         try {
-          models = await fetchModels(
+          final fetched = await fetchModels(
             profileId: profile.id,
             providerName: profile.name,
             capability: 'text',
           );
-        } catch (_) {
-          models = await getChatModelOptionsForProfile(
-            profile.id,
-            profile: profile,
+          final hiddenModelIds = await getHiddenChatModelIds(
+            profileId: profile.id,
           );
-        }
-      } else {
-        models = await getChatModelOptionsForProfile(
-          profile.id,
-          profile: profile,
-        );
-        if (profile.configured && models.isEmpty) {
-          // A newly saved BYOK Provider has no local cache until the first
-          // model discovery. The Provider settings page already performs this
-          // discovery, so the chat selector must do the same instead of
-          // presenting a false "no models" state on the first open.
-          try {
-            models = await fetchModels(
-              profileId: profile.id,
-              providerName: profile.name,
-              capability: 'text',
-            );
-          } catch (_) {
-            // Keep the empty result. The scene-bound model/manual entry can
-            // still be used as a fallback by the chat page.
-          }
+          models = filterChatModelOptions(
+            models: fetched,
+            hiddenModelIds: hiddenModelIds,
+          );
+        } catch (_) {
+          // A failed /models request must not resurrect cached, manual, or
+          // scene-bound model IDs.
         }
       }
       groups.add(ProviderModelGroup(profile: profile, models: models));

@@ -12,7 +12,16 @@ ConversationThreadTarget _newThreadTargetForConversationMode(
 ConversationThreadTarget _newAgentThreadTarget({
   String? agentId,
   String? agentRuntime,
+  int? conversationId,
 }) {
+  if (conversationId != null) {
+    return ConversationThreadTarget.existing(
+      conversationId: conversationId,
+      mode: ConversationMode.agent,
+      agentId: agentId,
+      agentRuntime: agentRuntime,
+    );
+  }
   return ConversationThreadTarget.newConversation(
     mode: ConversationMode.agent,
     requestKey: DateTime.now().microsecondsSinceEpoch.toString(),
@@ -324,15 +333,22 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
       return;
     }
     try {
-      final response = await AgentRuntimeService.readSession(
-        conversationId: conversationId,
-        includeHistory: false,
-      );
       AgentRuntimeStatus? status;
       try {
         status = await AgentRuntimeService.status();
       } catch (_) {
         status = null;
+      }
+      final requestedAgentId = target.agentId?.trim() ?? '';
+      final response = await AgentRuntimeService.readSession(
+        conversationId: conversationId,
+        agentId: requestedAgentId.isEmpty ? null : requestedAgentId,
+        includeHistory: false,
+      );
+      try {
+        status = await AgentRuntimeService.status();
+      } catch (_) {
+        // Keep the status snapshot from before session restoration.
       }
       if (!mounted || !_isConversationTargetRequestCurrent(requestId)) {
         return;

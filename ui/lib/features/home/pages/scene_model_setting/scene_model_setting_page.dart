@@ -44,6 +44,7 @@ class SceneModelSettingPage extends StatefulWidget {
 class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
   static const List<String> _sceneOrder = [
     'scene.dispatch.model',
+    'scene.vlm.operation.primary',
     'scene.voice',
     'scene.compactor.context.chat',
     'scene.memory.embedding',
@@ -821,6 +822,19 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
   String _selectionLabel(SceneCatalogItem scene) {
     final binding = _bindingMap[scene.sceneId];
     if (binding == null) {
+      if (scene.effectiveProviderProfileId.isNotEmpty &&
+          scene.effectiveModel.trim().isNotEmpty) {
+        final profile = _profiles.where(
+          (item) => item.id == scene.effectiveProviderProfileId,
+        );
+        final profileName = profile.isEmpty
+            ? 'Provider unavailable'
+            : profile.first.name;
+        final sourceLabel = scene.sceneId == 'scene.vlm.operation.primary'
+            ? context.trLegacy('Agent 原生')
+            : profileName;
+        return '$sourceLabel / ${scene.effectiveModel}';
+      }
       if (scene.defaultModel.trim().isEmpty) {
         return context.trLegacy('未绑定');
       }
@@ -1737,6 +1751,9 @@ class _SceneSelectionPopupEntryState extends State<_SceneSelectionPopupEntry> {
     final selected = widget.currentBinding == null;
     final label = widget.scene.sceneId == 'scene.voice'
         ? context.trLegacy('清除绑定')
+        : widget.scene.sceneId == 'scene.vlm.operation.primary' &&
+              widget.scene.defaultModel.trim().isEmpty
+        ? context.trLegacy('恢复默认（Agent 原生配置）')
         : context.trLegacy('恢复默认（${widget.scene.defaultModel}）');
     return Padding(
       padding: const EdgeInsets.fromLTRB(10, 2, 10, 4),
@@ -1917,6 +1934,77 @@ class _SceneSelectionPopupEntryState extends State<_SceneSelectionPopupEntry> {
     );
   }
 
+  Future<void> _enterManualModel(ModelProviderProfileSummary profile) async {
+    final controller = TextEditingController();
+    final modelId = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        String? errorText;
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: const Text('Enter model ID'),
+              content: TextField(
+                controller: controller,
+                autofocus: true,
+                decoration: InputDecoration(
+                  hintText: 'e.g. deepseek-chat',
+                  errorText: errorText,
+                ),
+                onSubmitted: (value) {
+                  final normalized = value.trim();
+                  if (!SceneModelConfigService.isValidModelName(normalized)) {
+                    setState(() => errorText = 'Invalid model ID');
+                    return;
+                  }
+                  Navigator.of(dialogContext).pop(normalized);
+                },
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    final normalized = controller.text.trim();
+                    if (!SceneModelConfigService.isValidModelName(normalized)) {
+                      setState(() => errorText = 'Invalid model ID');
+                      return;
+                    }
+                    Navigator.of(dialogContext).pop(normalized);
+                  },
+                  child: const Text('Use model'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    controller.dispose();
+    if (!mounted || modelId == null || modelId.trim().isEmpty) {
+      return;
+    }
+    Navigator.of(context).pop(
+      _SceneSelectionAction.select(
+        providerProfileId: profile.id,
+        modelId: modelId.trim(),
+      ),
+    );
+  }
+
+  Widget _buildManualModelTile(ModelProviderProfileSummary profile) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(10, 2, 10, 8),
+      child: TextButton.icon(
+        onPressed: () => _enterManualModel(profile),
+        icon: const Icon(LucideIcons.pencil, size: 15),
+        label: const Text('Enter model ID manually'),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final mediaQuery = MediaQuery.of(context);
@@ -1979,21 +2067,26 @@ class _SceneSelectionPopupEntryState extends State<_SceneSelectionPopupEntry> {
                           if (expanded)
                             profile.configured
                                 ? models.isEmpty
-                                      ? Padding(
-                                          padding: EdgeInsets.fromLTRB(
-                                            12,
-                                            4,
-                                            12,
-                                            8,
-                                          ),
-                                          child: Text(
-                                            'No selectable models for this Provider',
-                                            style: TextStyle(
-                                              fontSize: 12,
-                                              color: _tertiaryTextColor,
-                                              fontFamily: 'PingFang SC',
+                                      ? Column(
+                                          children: [
+                                            Padding(
+                                              padding: EdgeInsets.fromLTRB(
+                                                12,
+                                                4,
+                                                12,
+                                                2,
+                                              ),
+                                              child: Text(
+                                                'No selectable models for this Provider. You can enter a model ID manually.',
+                                                style: TextStyle(
+                                                  fontSize: 12,
+                                                  color: _tertiaryTextColor,
+                                                  fontFamily: 'PingFang SC',
+                                                ),
+                                              ),
                                             ),
-                                          ),
+                                            _buildManualModelTile(profile),
+                                          ],
                                         )
                                       : Column(
                                           children: models.map((item) {

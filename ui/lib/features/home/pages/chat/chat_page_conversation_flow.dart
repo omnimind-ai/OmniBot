@@ -348,28 +348,27 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       return false;
     }
 
-    for (final profileId in configuredProfileIds) {
-      final models = optionsSource[profileId] ?? const <ProviderModelOption>[];
-      if (models.any((model) => model.id.trim().isNotEmpty)) {
-        return true;
-      }
-    }
-
     for (final scene in catalogSource) {
       final providerProfileId = scene.effectiveProviderProfileId.trim();
       if (!scene.providerConfigured ||
           !configuredProfileIds.contains(providerProfileId)) {
         continue;
       }
-      if (scene.effectiveModel.trim().isNotEmpty) {
+      final models = optionsSource[providerProfileId] ??
+          const <ProviderModelOption>[];
+      if (models.any((model) => model.id == scene.effectiveModel)) {
         return true;
       }
     }
 
     final override = _activeConversationModelOverrideSelection;
-    return override != null &&
-        configuredProfileIds.contains(override.providerProfileId) &&
-        override.modelId.trim().isNotEmpty;
+    if (override == null ||
+        !configuredProfileIds.contains(override.providerProfileId)) {
+      return false;
+    }
+    return (optionsSource[override.providerProfileId] ??
+            const <ProviderModelOption>[])
+        .any((model) => model.id == override.modelId);
   }
 
   @override

@@ -149,8 +149,8 @@ void main() {
                 <String, dynamic>{
                   'sceneId': 'scene.vlm.operation.primary',
                   'description': '负责 Android GUI 观察与动作决策',
-                  'defaultModel': 'qwen3.5-plus',
-                  'effectiveModel': 'qwen3.5-plus',
+                  'defaultModel': '',
+                  'effectiveModel': '',
                   'effectiveProviderProfileId': '',
                   'effectiveProviderProfileName': '',
                   'boundProviderProfileId': '',
@@ -644,10 +644,9 @@ void main() {
     expect(find.text('Voice'), findsOneWidget);
     expect(find.text('GUI'), findsOneWidget);
     expect(find.text('VLM'), findsNothing);
-    expect(find.text('小万官方内置模型'), findsOneWidget);
     expect(find.text('Compactor'), findsNothing);
     expect(find.text('Chat Compactor'), findsOneWidget);
-    expect(find.text('未绑定'), findsOneWidget);
+    expect(find.text('未绑定'), findsNWidgets(2));
     expect(find.text('AI 响应完成后自动播放'), findsNothing);
     expect(find.byKey(const Key('voice-scene-expand-button')), findsOneWidget);
 
@@ -655,7 +654,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('AI 响应完成后自动播放'), findsOneWidget);
-    expect(find.byType(FlutterSwitch), findsNWidgets(2));
+    expect(find.byType(FlutterSwitch), findsOneWidget);
     expect(find.byType(Switch), findsNothing);
     expect(find.byKey(const Key('voice-scene-voice-id-field')), findsOneWidget);
     expect(
@@ -687,9 +686,9 @@ void main() {
     expect(codexWriteCount, 0);
   });
 
-  testWidgets(
-    'GUI can switch from explicit official model to custom provider',
-    (tester) async {
+  testWidgets('GUI uses Agent native defaults and remains adjustable', (
+    tester,
+  ) async {
       tester.view.physicalSize = const Size(1080, 2000);
       tester.view.devicePixelRatio = 1.0;
       addTearDown(tester.view.resetPhysicalSize);
@@ -698,14 +697,20 @@ void main() {
       await tester.pumpWidget(buildTestApp(const SceneModelSettingPage()));
       await tester.pumpAndSettle();
 
-      expect(find.text('小万官方内置模型'), findsOneWidget);
+      expect(
+        find.byKey(
+          const Key('scene-model-selector-scene.vlm.operation.primary'),
+        ),
+        findsOneWidget,
+      );
       await tester.tap(
-        find.byKey(const Key('operation-scene-official-toggle')),
+        find.byKey(
+          const Key('scene-model-selector-scene.vlm.operation.primary'),
+        ),
       );
       await tester.pumpAndSettle();
 
-      expect(savedOperationConfig['useOfficialService'], isFalse);
-      expect(find.text('小万官方内置模型'), findsNothing);
+      expect(find.text('Enter model ID manually'), findsOneWidget);
     },
   );
 

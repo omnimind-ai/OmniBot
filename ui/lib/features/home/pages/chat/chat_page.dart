@@ -275,6 +275,7 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   String? _loadedAgentModelSourceKey;
   String? _loadingAgentModelSourceKey;
   int _agentModelListRequestId = 0;
+  bool _agentModelConfigSupported = false;
   List<String> _agentModelOptions = const <String>[];
   List<String> _agentReasoningEffortOptions = const <String>[];
   List<String> _agentCollaborationModes = const <String>[];
@@ -394,6 +395,10 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     final optimisticAgentId = _optimisticAcpAgentId?.trim() ?? '';
     if (optimisticAgentId.isNotEmpty) {
       return optimisticAgentId;
+    }
+    final targetAgentId = _resolvedThreadTarget?.agentId?.trim() ?? '';
+    if (targetAgentId.isNotEmpty) {
+      return targetAgentId;
     }
     final boundAgentId = _conversationBoundAcpAgentId;
     if (boundAgentId != null) {
@@ -1134,17 +1139,18 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   String? get _activeNormalChatModelId {
     final dispatchScene = _dispatchSceneCatalogItem;
     final effectiveModel = dispatchScene?.effectiveModel.trim() ?? '';
-    if (effectiveModel.isNotEmpty) {
+    if (dispatchScene?.effectiveProviderProfileId.trim().isNotEmpty == true &&
+        effectiveModel.isNotEmpty) {
       return effectiveModel;
-    }
-    final defaultModel = dispatchScene?.defaultModel.trim() ?? '';
-    if (defaultModel.isNotEmpty) {
-      return defaultModel;
     }
     return null;
   }
 
   bool get _hasSelectableNormalChatModels {
+    return _hasSelectableProviderModels;
+  }
+
+  bool get _hasSelectableProviderModels {
     return _modelProviderProfiles.any((profile) {
       if (!profile.configured) {
         return false;
@@ -1554,55 +1560,6 @@ abstract class _ChatPageStateBase extends State<ChatPage>
       for (final entry in source.entries)
         entry.key: List<ProviderModelOption>.from(entry.value),
     };
-    final knownProfileIds = profiles.map((item) => item.id).toSet();
-
-    void ensureOption(String profileId, String modelId, String ownedBy) {
-      final normalizedProfileId = profileId.trim();
-      final normalizedModelId = modelId.trim();
-      if (normalizedProfileId.isEmpty || normalizedModelId.isEmpty) {
-        return;
-      }
-      if (!knownProfileIds.contains(normalizedProfileId)) {
-        return;
-      }
-      final bucket = result.putIfAbsent(
-        normalizedProfileId,
-        () => <ProviderModelOption>[],
-      );
-      final exists = bucket.any((item) => item.id == normalizedModelId);
-      if (!exists) {
-        bucket.insert(
-          0,
-          ProviderModelOption(
-            id: normalizedModelId,
-            displayName: normalizedModelId,
-            ownedBy: ownedBy,
-          ),
-        );
-      }
-    }
-
-    if (overrideSelection != null) {
-      ensureOption(
-        overrideSelection.providerProfileId,
-        overrideSelection.modelId,
-        'override',
-      );
-    }
-
-    final dispatchScene = sceneCatalog.where(
-      (item) => item.sceneId == 'scene.dispatch.model',
-    );
-    if (dispatchScene.isNotEmpty) {
-      final scene = dispatchScene.first;
-      ensureOption(
-        scene.effectiveProviderProfileId,
-        scene.effectiveModel,
-        'scene',
-      );
-      ensureOption(scene.boundProviderProfileId, scene.overrideModel, 'scene');
-    }
-
     return result;
   }
 

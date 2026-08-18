@@ -142,6 +142,30 @@ void main() {
     });
   });
 
+  test(
+    'sets an ACP config option for the active Agent without conversation binding',
+    () async {
+      MethodCall? capturedCall;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        capturedCall = call;
+        return <String, dynamic>{'ok': true};
+      });
+
+      await AgentRuntimeService.setSessionConfigOption(
+        agentId: 'custom-agent',
+        configId: 'model',
+        value: 'provider-model',
+      );
+
+      expect(capturedCall?.method, 'config/set');
+      expect(capturedCall?.arguments, {
+        'agentId': 'custom-agent',
+        'configId': 'model',
+        'value': 'provider-model',
+      });
+    },
+  );
+
   test('ACP model extraction keeps config categories separate', () {
     final response = <String, dynamic>{
       'models': <Map<String, dynamic>>[
@@ -501,11 +525,25 @@ void main() {
       ),
       overrideModel: null,
       activeModel: 'input-selected',
-      scopedModel: 'api-scoped',
       activeModelSourceMatches: true,
     );
 
     expect(model, 'input-selected');
+  });
+
+  test('shared Agent requests use the verified active Provider model', () {
+    final model = selectAgentRequestModel(
+      status: const AgentRuntimeStatus(
+        connected: true,
+        ready: true,
+        runtime: 'local',
+      ),
+      overrideModel: null,
+      activeModel: 'DeepSeek-V4-Pro',
+      activeModelSourceMatches: true,
+    );
+
+    expect(model, 'DeepSeek-V4-Pro');
   });
 
   test('local Agent requests do not read a separate Codex API model', () {
@@ -517,7 +555,6 @@ void main() {
       ),
       overrideModel: null,
       activeModel: null,
-      scopedModel: null,
       activeModelSourceMatches: true,
     );
 

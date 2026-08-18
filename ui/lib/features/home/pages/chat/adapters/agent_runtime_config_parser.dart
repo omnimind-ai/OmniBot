@@ -24,17 +24,31 @@ List<String> _mergeAgentOptionIds({
 }) {
   final seen = <String>{};
   final result = <String>[];
-  void add(String? value) {
+  final verifiedOptions = options
+      .map((option) => option.trim())
+      .where((option) => option.isNotEmpty)
+      .toList(growable: false);
+  String? verifiedMatch(String? value) {
     final text = value?.trim() ?? '';
-    if (text.isEmpty || !seen.add(text)) {
+    if (text.isEmpty) {
+      return null;
+    }
+    return verifiedOptions.firstWhere(
+      (option) => option == text || option.toLowerCase() == text.toLowerCase(),
+      orElse: () => '',
+    );
+  }
+  void add(String? value) {
+    final verified = verifiedMatch(value);
+    if (verified == null || verified.isEmpty || !seen.add(verified)) {
       return;
     }
-    result.add(text);
+    result.add(verified);
   }
 
   add(current);
   add(preferred);
-  for (final option in options) {
+  for (final option in verifiedOptions) {
     add(option);
   }
   return result;

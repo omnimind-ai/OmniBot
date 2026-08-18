@@ -64,7 +64,9 @@ object OmniFlow {
     )
 
     private val executionMutex = Mutex()
+    private val controlMutex = Mutex()
     private val executions = ExecutionRegistry()
+    private var controlDispatcher: OmniFlowDeviceDispatcher? = null
 
     fun configure(
         platform: OmniFlowPlatform,
@@ -82,7 +84,32 @@ object OmniFlow {
 
     suspend fun shutdown() {
         executions.stop()
+        controlMutex.withLock { controlDispatcher = null }
         OmniFlowPythonRuntime.shutdown()
+    }
+
+    suspend fun observe(
+        context: Context,
+        captureScreenshot: Boolean = false,
+    ): Map<String, Any?> = control(
+        context = context,
+        method = "observe",
+        payload = mapOf("screenshot" to captureScreenshot),
+    )
+
+    suspend fun control(
+        context: Context,
+        method: String,
+        payload: Map<String, Any?> = emptyMap(),
+    ): Map<String, Any?> = controlMutex.withLock {
+        if (method == "reset") {
+            controlDispatcher = null
+            return@withLock mapOf("reset" to true)
+        }
+        val dispatcher = controlDispatcher ?: OmniFlowDeviceDispatcher.create(context).also {
+            controlDispatcher = it
+        }
+        dispatcher.callDevice(method = method, payload = payload)
     }
 
     private suspend fun executeInteractiveTool(
@@ -339,6 +366,8 @@ class OmniFlowDeviceDispatcher internal constructor(
     var currentStateId: String? = null
         private set
 
+    private var currentState: State? = null
+
     private var previousActionTool: String? = null
 
     suspend fun call(
@@ -429,9 +458,10 @@ class OmniFlowDeviceDispatcher internal constructor(
         )
         if (suppressOverlay) beforeScreenshot()
         return try {
-            environment.observe(captureScreenshot = captureScreenshot)
-                .also { currentStateId = it.stateId }
-                .asHostMap(includeImage = captureScreenshot)
+            environment.observe(captureScreenshot = captureScreenshot).also {
+                currentStateId = it.stateId
+                currentState = it
+            }.asHostMap(includeImage = captureScreenshot)
         } finally {
             if (suppressOverlay) afterScreenshot()
         }
@@ -441,7 +471,12 @@ class OmniFlowDeviceDispatcher internal constructor(
         beforeOperation()
         onPhase(ExecutionPhase.AUTOMATIC)
         val action = Action.fromMap(mapValue(payload["action"]))
-        val sourceState = State.fromMap(mapValue(payload["state"]))
+        val suppliedState = mapValue(payload["state"])
+        val sourceState = if (suppliedState.isNotEmpty()) {
+            State.fromMap(suppliedState)
+        } else {
+            currentState ?: error("host_action_state_required")
+        }
         require(sourceState.stateId == currentStateId) { "host_action_state_stale" }
         if (blocksPaymentConfirmation(sourceState, action)) {
             return mapOf(
@@ -474,7 +509,10 @@ class OmniFlowDeviceDispatcher internal constructor(
                     ),
                 )
             }
-            val result = environment.act(action)
+            val result = environment.act(
+                action = action,
+                awaitStabilization = payload["await_stabilization"] != false,
+            )
             if (result.success) previousActionTool = action.tool
             linkedMapOf<String, Any?>(
                 "success" to result.success,

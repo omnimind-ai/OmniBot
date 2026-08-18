@@ -1,5 +1,12 @@
 package cn.com.omnimind.bot.agent.runtime
 
+import cn.com.omnimind.baselib.llm.ProviderModelOption
+import cn.com.omnimind.baselib.llm.OpenAiWireApi
+import com.google.gson.GsonBuilder
+import com.google.gson.JsonArray
+import com.google.gson.JsonNull
+import com.google.gson.JsonObject
+
 /**
  * The app has one provider configuration. Official ACP runtimes each expose
  * their own deployment configuration, so this layer only remaps the shared
@@ -9,7 +16,9 @@ package cn.com.omnimind.bot.agent.runtime
 internal data class AgentProviderCredentials(
     val baseUrl: String,
     val apiKey: String,
-    val wireApi: String = "chat_completions"
+    val wireApi: String = "chat_completions",
+    val customHeaders: Map<String, String> = emptyMap(),
+    val protocolType: String = "openai_compatible"
 )
 
 internal data class AgentProviderMappingInput(
@@ -17,13 +26,13 @@ internal data class AgentProviderMappingInput(
     val provider: AgentProviderCredentials?,
     val model: String?,
     val deepSeekConfig: DeepSeekHarnessConfig = DeepSeekHarnessConfig(),
-    val existingCodexModel: String? = null
 )
 
 internal data class AgentProviderMapping(
     val environment: Map<String, String> = emptyMap(),
     val deepSeekConfig: DeepSeekHarnessConfig? = null,
     val codexModel: String? = null,
+    val codexWireApi: String? = null,
     val codexBaseUrl: String? = null,
     /** Official OpenCode model reference (provider/model), written to opencode.json. */
     val openCodeModel: String? = null,
@@ -89,11 +98,8 @@ private object CodexConfigAdapter : AgentConfigAdapter {
         }
         return AgentProviderMapping(
             environment = environment,
-            codexModel = input.model
-                ?.takeIf { it.isNotBlank() }
-                ?: input.existingCodexModel
-                    ?.takeIf { it.isNotBlank() }
-                ?: "gpt-5-codex",
+            codexModel = input.model?.trim()?.takeIf { it.isNotEmpty() },
+            codexWireApi = provider?.wireApi?.let(OpenAiWireApi::normalize),
             codexBaseUrl = provider?.baseUrl?.let(::normalizeCodexBaseUrl)
         )
     }
@@ -143,8 +149,161 @@ internal fun syncAgentProviderCredentials(
     return config.copy(
         baseUrl = sharedProvider?.baseUrl ?: config.baseUrl,
         apiKey = sharedProvider?.apiKey ?: config.apiKey,
-        model = sharedModel?.takeIf { it.isNotBlank() } ?: config.model
+        model = when {
+            sharedModel != null -> sharedModel.trim()
+            sharedProvider != null -> ""
+            else -> config.model
+        }
     )
+}
+
+/**
+ * Selects a model without inventing a deployment-specific default.
+ *
+ * The Provider list is authoritative. A missing or empty list means the
+ * Provider could not verify a usable model, so an old adapter model must not
+ * be resurrected for an ACP launch.
+ */
+internal fun resolveAdapterModel(
+    providerModelIds: List<String>?,
+    boundModel: String?
+): String? {
+    val normalizedBoundModel = boundModel.normalizedModelId()
+    val normalizedProviderModels = providerModelIds
+        ?.mapNotNull { it.normalizedModelId() }
+        ?.distinctBy(String::lowercase)
+        .orEmpty()
+    if (normalizedProviderModels.isEmpty()) return null
+    return normalizedBoundModel.findMatchingModel(normalizedProviderModels)
+}
+
+internal fun resolveAcpLaunchModel(
+    providerModelIds: List<String>?,
+    boundModel: String?
+): String? {
+    return resolveAdapterModel(
+        providerModelIds = providerModelIds,
+        boundModel = boundModel
+    )
+}
+
+internal fun buildCodexModelCatalogJson(
+    providerModels: List<ProviderModelOption>
+): String {
+    val models = JsonArray()
+    providerModels
+        .asSequence()
+        .mapNotNull { providerModel ->
+            val modelId = providerModel.id.trim().takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+            modelId to providerModel
+        }
+        .distinctBy { it.first.lowercase() }
+        .forEach { (modelId, providerModel) ->
+            val contextWindow = providerModel.contextLimit
+                ?.takeIf { it > 0 }
+                ?: CODEX_DEFAULT_CONTEXT_WINDOW
+            val inputModalities = providerModel.inputModalities
+                .map { it.trim().lowercase() }
+                .filter { it in CODEX_SUPPORTED_INPUT_MODALITIES }
+                .distinct()
+                .toMutableList()
+            if ("text" !in inputModalities) inputModalities += "text"
+
+            val model = JsonObject().apply {
+                addProperty("slug", modelId)
+                addProperty("display_name", providerModel.displayName.trim().ifEmpty { modelId })
+                add("description", JsonNull.INSTANCE)
+                addProperty("base_instructions", CODEX_PROVIDER_BASE_INSTRUCTIONS)
+                add("default_reasoning_level", JsonNull.INSTANCE)
+                add("supported_reasoning_levels", JsonArray())
+                addProperty("shell_type", "default")
+                addProperty("visibility", "list")
+                addProperty("supported_in_api", true)
+                addProperty("priority", 99)
+                add("additional_speed_tiers", JsonArray())
+                add("service_tiers", JsonArray())
+                add("default_service_tier", JsonNull.INSTANCE)
+                add("availability_nux", JsonNull.INSTANCE)
+                add("upgrade", JsonNull.INSTANCE)
+                add("model_messages", JsonNull.INSTANCE)
+                addProperty("include_skills_usage_instructions", false)
+                addProperty("include_plugin_usage_instructions", false)
+                addProperty("include_apps_usage_instructions", false)
+                addProperty("supports_reasoning_summary_parameter", true)
+                addProperty("default_reasoning_summary", "auto")
+                addProperty("support_verbosity", false)
+                add("default_verbosity", JsonNull.INSTANCE)
+                add("apply_patch_tool_type", JsonNull.INSTANCE)
+                addProperty("web_search_tool_type", "text")
+                add("truncation_policy", JsonObject().apply {
+                    addProperty("mode", "bytes")
+                    addProperty("limit", 10000)
+                })
+                addProperty("supports_image_detail_original", false)
+                addProperty("context_window", contextWindow)
+                addProperty("max_context_window", contextWindow)
+                add("auto_compact_token_limit", JsonNull.INSTANCE)
+                add("comp_hash", JsonNull.INSTANCE)
+                addProperty("effective_context_window_percent", 95)
+                add("experimental_supported_tools", JsonArray())
+                add("input_modalities", GsonBuilder().create().toJsonTree(inputModalities))
+                addProperty("supports_search_tool", false)
+                addProperty("use_responses_lite", false)
+                addProperty("node_repl_auto_review_required", false)
+                addProperty("node_repl_disabled", false)
+                add("auto_review_model_override", JsonNull.INSTANCE)
+                add("model_specialty", JsonNull.INSTANCE)
+                add("tool_mode", JsonNull.INSTANCE)
+                add("multi_agent_version", JsonNull.INSTANCE)
+            }
+            models.add(model)
+        }
+
+    return GsonBuilder()
+        .setPrettyPrinting()
+        .create()
+        .toJson(JsonObject().apply { add("models", models) }) + "\n"
+}
+
+private const val CODEX_DEFAULT_CONTEXT_WINDOW = 272000
+private val CODEX_SUPPORTED_INPUT_MODALITIES = setOf("text", "image", "audio")
+private const val CODEX_PROVIDER_BASE_INSTRUCTIONS =
+    "You are a coding agent. Follow the user's instructions, inspect the workspace, and make safe, precise changes."
+
+internal fun buildAuthoritativeProviderModelPayload(
+    providerModelIds: List<String>?,
+    boundModel: String?
+): Map<String, Any?> {
+    val models = providerModelIds
+        .orEmpty()
+        .mapNotNull { it.normalizedModelId() }
+        .distinctBy(String::lowercase)
+        .map { modelId ->
+            linkedMapOf<String, Any?>(
+                "id" to modelId,
+                "model" to modelId,
+                "displayName" to modelId,
+            )
+        }
+    val modelIds = models.mapNotNull { it["id"] as? String }
+    return linkedMapOf(
+        "models" to models,
+        "modelConfigSupported" to modelIds.isNotEmpty(),
+        "currentModelId" to resolveAdapterModel(modelIds, boundModel),
+        "reasoningEfforts" to emptyList<String>(),
+        "currentReasoningEffort" to null,
+        "configOptions" to emptyList<Any?>(),
+        "source" to "provider",
+    )
+}
+
+private fun String?.normalizedModelId(): String? = this
+    ?.trim()
+    ?.takeIf { it.isNotEmpty() }
+
+private fun String?.findMatchingModel(candidates: List<String>): String? {
+    val value = this ?: return null
+    return candidates.firstOrNull { it == value || it.equals(value, ignoreCase = true) }
 }
 
 internal fun buildSharedAgentProviderEnvironment(

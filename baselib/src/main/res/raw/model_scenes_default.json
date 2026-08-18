@@ -1,6 +1,6 @@
 {
   "scene.dispatch.model": {
-    "model": "qwen3.5-plus",
+    "model": "",
     "prompt": null,
     "description": "可执行任务三段式分流（decision/app-scope/task-match）默认模型（Flutter 侧）",
     "description_i18n": {

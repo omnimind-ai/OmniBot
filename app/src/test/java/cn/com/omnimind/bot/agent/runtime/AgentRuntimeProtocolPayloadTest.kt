@@ -12,6 +12,54 @@ import org.junit.Test
 
 class AgentRuntimeProtocolPayloadTest {
     @Test
+    fun deepSeekHarnessConfigSupportsPartialPermissionUpdates() {
+        val current = DeepSeekHarnessConfig(
+            baseUrl = "https://provider.example/v1",
+            model = "provider-model",
+            apiKey = "secret",
+            reasoningEffort = "high",
+            permissionMode = "workspace-write"
+        )
+
+        val updated = deepSeekHarnessConfigFromArgs(
+            args = mapOf("permissionMode" to "read-only"),
+            current = current,
+            sharedProvider = AgentProviderCredentials(current.baseUrl, current.apiKey),
+            sharedModel = current.model
+        )
+
+        assertEquals(current.baseUrl, updated.baseUrl)
+        assertEquals(current.model, updated.model)
+        assertEquals(current.apiKey, updated.apiKey)
+        assertEquals(current.reasoningEffort, updated.reasoningEffort)
+        assertEquals("read-only", updated.permissionMode)
+    }
+
+    @Test
+    fun sharedAgentModelUsesTheProviderBoundToTheAgentScene() {
+        assertEquals(
+            "provider-model",
+            resolveSharedAgentModel(
+                boundProviderProfileId = "provider-1",
+                boundModel = " provider-model "
+            )
+        )
+        assertEquals(
+            "provider-model",
+            resolveSharedAgentModel(
+                boundProviderProfileId = "provider-1",
+                boundModel = "provider-model"
+            )
+        )
+        assertNull(
+            resolveSharedAgentModel(
+                boundProviderProfileId = null,
+                boundModel = null
+            )
+        )
+    }
+
+    @Test
     fun officialAcpSessionUpdateUsesCanonicalSessionIdForLocalBinding() {
         val notification = mapOf(
             "method" to "session/update",
@@ -279,12 +327,14 @@ class AgentRuntimeProtocolPayloadTest {
     fun deepSeekHarnessProviderConfigEditPreservesComposerPermissionDefault() {
         val restored = deepSeekHarnessConfigFromArgs(
             args = mapOf(
-                "baseUrl" to "https://gateway.example/v1",
-                "model" to "deepseek-custom",
-                "apiKey" to "sk-updated",
                 "reasoningEffort" to "high"
             ),
-            current = DeepSeekHarnessConfig(permissionMode = "read-only")
+            current = DeepSeekHarnessConfig(permissionMode = "read-only"),
+            sharedProvider = AgentProviderCredentials(
+                baseUrl = "https://gateway.example/v1",
+                apiKey = "sk-updated"
+            ),
+            sharedModel = "deepseek-custom"
         )
 
         assertEquals("read-only", restored.permissionMode)
@@ -395,7 +445,7 @@ class AgentRuntimeProtocolPayloadTest {
         assertTrue(config.contains("apiKeyEnv: DEEPSEEK_API_KEY"))
         assertTrue(config.contains("api: openai-completions"))
         assertTrue(config.contains("baseURL: !!js process.env.DEEPSEEK_BASE_URL"))
-        assertTrue(config.contains("process.env.DSH_MODEL ?? 'deepseek-v4-pro'"))
+        assertTrue(config.contains("id: !!js \"process.env.DSH_MODEL\""))
         assertTrue(config.contains("process.env.OMNIBOT_MCP_URL"))
         assertTrue(config.contains("process.env.OMNIBOT_MCP_TOKEN"))
         assertTrue(config.contains("cwd: !!js process.cwd()"))
@@ -951,31 +1001,26 @@ class AgentRuntimeProtocolPayloadTest {
     }
 
     @Test
-    fun sharedAgentModelRejectsAStaleBindingFromAnotherProvider() {
+    fun sharedAgentModelUsesTheBoundProviderRegardlessOfEditingProfile() {
         assertEquals(
-            "qwen3.5-plus",
+            "GLM-5.1",
             resolveSharedAgentModel(
-                editingProfileId = "bailian-official",
                 boundProviderProfileId = "debug-llmthu-glm",
-                boundModel = "GLM-5.1",
-                defaultModel = "qwen3.5-plus"
+                boundModel = "GLM-5.1"
             )
         )
         assertEquals(
             "glm-5",
             resolveSharedAgentModel(
-                editingProfileId = "debug-llmthu-glm",
                 boundProviderProfileId = "debug-llmthu-glm",
-                boundModel = "glm-5",
-                defaultModel = "qwen3.5-plus"
+                boundModel = "glm-5"
             )
         )
-        assertNull(
+        assertEquals(
+            "GLM-5.1",
             resolveSharedAgentModel(
-                editingProfileId = "",
                 boundProviderProfileId = "debug-llmthu-glm",
-                boundModel = "GLM-5.1",
-                defaultModel = ""
+                boundModel = "GLM-5.1"
             )
         )
     }

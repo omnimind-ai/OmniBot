@@ -7,9 +7,14 @@ import android.util.Log
 import com.ai.assistance.operit.terminal.TerminalManager
 import com.ai.assistance.operit.terminal.setup.buildAlpinePackageInstallCommand
 import cn.com.omnimind.baselib.database.DatabaseHelper
+import cn.com.omnimind.baselib.llm.ModelProviderProfile
 import cn.com.omnimind.baselib.llm.ModelProviderConfigStore
-import cn.com.omnimind.baselib.llm.ModelSceneRegistry
+import cn.com.omnimind.baselib.llm.OmniOfficialProvider
+import cn.com.omnimind.baselib.llm.OpenAiWireApi
+import cn.com.omnimind.baselib.llm.PlatformAiProvisioner
+import cn.com.omnimind.baselib.llm.ProviderModelOption
 import cn.com.omnimind.baselib.llm.SceneModelBindingStore
+import cn.com.omnimind.assists.controller.http.HttpController
 import cn.com.omnimind.bot.BuildConfig
 import cn.com.omnimind.bot.agent.AgentConversationHistoryRepository
 import cn.com.omnimind.bot.agent.AgentAttachmentPromptSupport
@@ -34,28 +39,25 @@ import java.util.concurrent.ConcurrentHashMap
 
 /**
  * A scene binding is only valid for the Provider it names. Older builds could
- * leave a debug model binding behind while the user had already switched the
- * active Provider, which made every ACP adapter send the active Provider's
- * credentials with a model from another Provider. Keep the shared Agent model
- * coherent and fall back to the canonical scene default until the user picks
- * a model for the active Provider.
+ * The Agent scene binding is the shared Provider/model source for every ACP
+ * adapter. The Provider settings page can have a different editing profile;
+ * that profile must not cause ACP to discard the model selected for Agent.
+ * Never borrow the scene's built-in default because it may not exist at the
+ * configured Provider.
  */
 internal fun resolveSharedAgentModel(
-    editingProfileId: String,
     boundProviderProfileId: String?,
-    boundModel: String?,
-    defaultModel: String?
+    boundModel: String?
 ): String? {
-    val normalizedEditingProfileId = editingProfileId.trim()
+    val normalizedBoundProviderProfileId = boundProviderProfileId?.trim().orEmpty()
     val normalizedBoundModel = boundModel?.trim().orEmpty()
     return if (
-        normalizedEditingProfileId.isNotEmpty() &&
-        boundProviderProfileId?.trim() == normalizedEditingProfileId &&
+        normalizedBoundProviderProfileId.isNotEmpty() &&
         normalizedBoundModel.isNotEmpty()
     ) {
         normalizedBoundModel
     } else {
-        defaultModel?.trim()?.takeIf { it.isNotEmpty() }
+        null
     }
 }
 
@@ -77,7 +79,6 @@ class AgentRuntimeManager private constructor(
         bindingRepository = bindingRepository,
         profileStore = acpAgentProfileStore,
         prepareLaunchEnvironment = ::prepareLocalAcpLaunch,
-        sharedModelProvider = ::currentAgentModel,
         onMessage = ::handleServerMessage
     )
     private val activeTurnsByThreadId = ConcurrentHashMap<String, String>()
@@ -294,9 +295,16 @@ class AgentRuntimeManager private constructor(
         if (method.startsWith("agent/")) {
             return localAcpRuntime.handleMethod(method, canonicalArgs)
         }
+        if (
+            method == "model/list" &&
+            resolveRuntime().kind == AgentRuntimeKind.LOCAL &&
+            acpAgentProfileStore.selected().id in SUPPORTED_SHARED_PROVIDER_AGENT_IDS
+        ) {
+            return listAuthoritativeProviderModels()
+        }
         if (resolveRuntime().kind == AgentRuntimeKind.LOCAL && method in LOCAL_ACP_METHODS) {
-            ensureLocalAcpConnected(canonicalArgs)
-            return localAcpRuntime.handleMethod(method, canonicalArgs)
+            val localArgs = ensureLocalAcpConnected(canonicalArgs)
+            return localAcpRuntime.handleMethod(method, localArgs)
         }
         return when (method) {
             "status" -> status()
@@ -645,13 +653,15 @@ class AgentRuntimeManager private constructor(
                     path = CODEX_AUTH_JSON_PATH,
                     executorKey = "codex-agent-auth-read"
                 )
+                val sharedProvider = currentAgentProviderProfile()
                 linkedMapOf(
                     "agentId" to profile.id,
                     "kind" to "codex",
                     "configPath" to CODEX_CONFIG_TOML_DISPLAY_PATH,
                     "authPath" to CODEX_AUTH_JSON_DISPLAY_PATH,
-                    "baseUrl" to extractTomlString(configToml, "base_url").orEmpty(),
-                    "model" to extractTomlString(configToml, "model").orEmpty(),
+                    "baseUrl" to (sharedProvider?.baseUrl
+                        ?: extractTomlString(configToml, "base_url").orEmpty()),
+                    "model" to currentAgentBoundModel().orEmpty(),
                     "apiKey" to extractOpenAiApiKey(authJson).orEmpty()
                 )
             }
@@ -674,12 +684,13 @@ class AgentRuntimeManager private constructor(
                         executorKey = "deepseek-harness-config-read"
                     )
                 )
+                val sharedProvider = currentAgentProviderProfile()
                 linkedMapOf(
                     "agentId" to profile.id,
                     "kind" to "deepseek-harness",
                     "configPath" to DEEPSEEK_HARNESS_CONFIG_DISPLAY_PATH,
-                    "baseUrl" to config.baseUrl,
-                    "model" to config.model,
+                    "baseUrl" to (sharedProvider?.baseUrl ?: config.baseUrl),
+                    "model" to currentAgentBoundModel().orEmpty(),
                     "apiKey" to config.apiKey,
                     "reasoningEffort" to config.reasoningEffort,
                     "permissionMode" to config.permissionMode
@@ -723,12 +734,28 @@ class AgentRuntimeManager private constructor(
                     ?: throw IllegalArgumentException("Model ID is required.")
                 val apiKey = args.stringValue("apiKey")
                     ?: throw IllegalArgumentException("API Key is required.")
+                val providerModelResolution = resolveCurrentProviderModelIds(
+                    currentAgentProviderProfile()
+                )
+                val providerModels = providerModelResolution
+                    ?.takeIf { it.authoritative }
+                    ?.models
+                    .orEmpty()
+                val resolvedModel = resolveAcpLaunchModel(
+                    providerModelIds = providerModels.map(ProviderModelOption::id),
+                    boundModel = model
+                ) ?: throw IllegalArgumentException(
+                    "Model must be selected from the current Provider /models response."
+                )
                 writeCodexConfigFiles(
                     configToml = buildCodexConfigToml(
                         baseUrl = baseUrl,
-                        model = model
+                        model = resolvedModel,
+                        wireApi = args.stringValue("wireApi") ?: OpenAiWireApi.RESPONSES,
+                        modelCatalogPath = CODEX_MODEL_CATALOG_JSON_PATH
                     ),
-                    authJson = buildCodexAuthJson(apiKey)
+                    authJson = buildCodexAuthJson(apiKey),
+                    modelCatalogJson = buildCodexModelCatalogJson(providerModels)
                 )
             }
             CLAUDE_CODE_AGENT_ID -> {
@@ -768,7 +795,12 @@ class AgentRuntimeManager private constructor(
                         executorKey = "deepseek-harness-config-before-write"
                     )
                 )
-                val config = deepSeekHarnessConfigFromArgs(args, current)
+                val config = deepSeekHarnessConfigFromArgs(
+                    args = args,
+                    current = current,
+                    sharedProvider = currentAgentProviderCredentials(),
+                    sharedModel = currentAgentBoundModel()
+                )
                 writeTerminalTextFile(
                     path = DEEPSEEK_HARNESS_CONFIG_PATH,
                     content = buildDeepSeekHarnessConfigJson(config),
@@ -786,7 +818,8 @@ class AgentRuntimeManager private constructor(
 
     private suspend fun writeCodexConfigFiles(
         configToml: String,
-        authJson: String
+        authJson: String,
+        modelCatalogJson: String
     ) {
         val command = """
             set -eu
@@ -794,7 +827,8 @@ class AgentRuntimeManager private constructor(
             umask 077
             printf %s ${shellQuote(configToml)} > ${shellQuote(CODEX_CONFIG_TOML_PATH)}
             printf %s ${shellQuote(authJson)} > ${shellQuote(CODEX_AUTH_JSON_PATH)}
-            chmod 600 ${shellQuote(CODEX_CONFIG_TOML_PATH)} ${shellQuote(CODEX_AUTH_JSON_PATH)}
+            printf %s ${shellQuote(modelCatalogJson)} > ${shellQuote(CODEX_MODEL_CATALOG_JSON_PATH)}
+            chmod 600 ${shellQuote(CODEX_CONFIG_TOML_PATH)} ${shellQuote(CODEX_AUTH_JSON_PATH)} ${shellQuote(CODEX_MODEL_CATALOG_JSON_PATH)}
         """.trimIndent()
         executeAgentConfigCommand(command, "codex-agent-config-write")
     }
@@ -1053,51 +1087,55 @@ class AgentRuntimeManager private constructor(
     private suspend fun prepareLocalAcpLaunch(
         profile: AcpAgentProfile
     ): Map<String, String> {
+        val sharedProviderProfile = currentAgentProviderProfile()
         val sharedProvider = currentAgentProviderCredentials()
-        val sharedModel = currentAgentModel()
+        val boundModel = currentAgentBoundModel()
+        val providerModelResolution = resolveCurrentProviderModelIds(sharedProviderProfile)
+        val providerModelIds = providerModelResolution
+            ?.takeIf { it.authoritative }
+            ?.modelIds
         val officialDeepSeek =
             profile.id == AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID &&
             AcpAgentProfileStore.officialRuntime(profile) != null
-        val deepSeekConfig = if (officialDeepSeek) {
-            syncAgentProviderCredentials(
-                config = parseDeepSeekHarnessConfig(
-                    readTerminalTextFile(
-                        path = DEEPSEEK_HARNESS_CONFIG_PATH,
-                        executorKey = "deepseek-harness-launch-config-read"
-                    )
-                ),
-                sharedProvider = sharedProvider,
-                sharedModel = sharedModel
+        val existingDeepSeekConfig = if (officialDeepSeek) {
+            readTerminalTextFile(
+                path = DEEPSEEK_HARNESS_CONFIG_PATH,
+                executorKey = "deepseek-harness-launch-config-read"
             )
         } else {
-            DeepSeekHarnessConfig()
+            ""
         }
-        val existingCodexModel = if (
-            profile.id == AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID &&
-            sharedProvider != null
+        val deepSeekConfig = parseDeepSeekHarnessConfig(existingDeepSeekConfig)
+        val resolvedModel = resolveAcpLaunchModel(
+            providerModelIds = providerModelIds,
+            boundModel = boundModel
+        )
+        if (profile.id in SUPPORTED_SHARED_PROVIDER_AGENT_IDS &&
+            resolvedModel == null
         ) {
-            extractTomlString(
-                readTerminalTextFile(
-                    path = CODEX_CONFIG_TOML_PATH,
-                    executorKey = "codex-agent-provider-sync-read"
-                ),
-                "model"
+            throw IllegalStateException(
+                "当前 Agent 没有已绑定且已验证的 Provider 模型。请先在 Agent 设置中选择可用模型。"
             )
-        } else {
-            null
         }
+        val syncedDeepSeekConfig = deepSeekConfig.copy(
+            baseUrl = sharedProvider?.baseUrl ?: deepSeekConfig.baseUrl,
+            apiKey = sharedProvider?.apiKey ?: deepSeekConfig.apiKey,
+            model = resolvedModel.orEmpty()
+        )
         val mapping = AgentConfigAdapterRegistry.map(
             AgentProviderMappingInput(
                 agentId = profile.id,
                 provider = sharedProvider,
-                model = sharedModel,
-                deepSeekConfig = deepSeekConfig,
-                existingCodexModel = existingCodexModel
+                model = resolvedModel,
+                deepSeekConfig = syncedDeepSeekConfig
             )
         )
         val deepSeekEnvironment = if (officialDeepSeek) {
             val mcpState = McpServerManager.ensureRunning(appContext)
             val config = mapping.deepSeekConfig ?: deepSeekConfig
+            require(config.model.isNotBlank()) {
+                "DeepSeek Harness 没有可用模型，拒绝使用默认模型启动。"
+            }
             require(config.apiKey.isNotBlank()) {
                 "Configure an API key in Model Provider settings before starting an ACP Agent."
             }
@@ -1120,9 +1158,18 @@ class AgentRuntimeManager private constructor(
                     writeCodexConfigFiles(
                         configToml = buildCodexConfigToml(
                             baseUrl = mapping.codexBaseUrl ?: sharedProvider.baseUrl,
-                            model = mapping.codexModel ?: "gpt-5-codex"
+                            model = mapping.codexModel
+                                ?: throw IllegalStateException(
+                                    "Codex 没有可用模型，拒绝写入无匹配配置。"
+                                ),
+                            wireApi = mapping.codexWireApi
+                                ?: OpenAiWireApi.normalize(sharedProvider.wireApi),
+                            modelCatalogPath = CODEX_MODEL_CATALOG_JSON_PATH
                         ),
-                        authJson = buildCodexAuthJson(sharedProvider.apiKey)
+                        authJson = buildCodexAuthJson(sharedProvider.apiKey),
+                        modelCatalogJson = buildCodexModelCatalogJson(
+                            providerModelResolution?.models.orEmpty()
+                        )
                     )
                 }
                 mapping.environment
@@ -1154,24 +1201,81 @@ class AgentRuntimeManager private constructor(
         }
     }
 
-    private fun currentAgentProviderCredentials(): AgentProviderCredentials? = runCatching {
-        ModelProviderConfigStore.getEditingProfile()
-            .takeIf { it.baseUrl.isNotBlank() && it.apiKey.isNotBlank() }
-            ?.let { AgentProviderCredentials(it.baseUrl, it.apiKey, it.wireApi) }
+    private fun currentAgentProviderProfile(): ModelProviderProfile? = runCatching {
+        val binding = SceneModelBindingStore.getBinding("scene.dispatch.model")
+            ?: return@runCatching null
+        ModelProviderConfigStore.getProfile(binding.providerProfileId)
+            ?.takeIf { it.baseUrl.isNotBlank() && it.apiKey.isNotBlank() }
     }.getOrNull()
 
-    private fun currentAgentModel(): String? = runCatching {
-        val editingProfileId = ModelProviderConfigStore.getEditingProfileId()
+    private fun currentAgentProviderCredentials(): AgentProviderCredentials? =
+        currentAgentProviderProfile()
+            ?.takeIf { it.apiKey.isNotBlank() }
+            ?.let {
+                AgentProviderCredentials(
+                    baseUrl = it.baseUrl,
+                    apiKey = it.apiKey,
+                    wireApi = it.wireApi,
+                    customHeaders = it.customHeaders,
+                    protocolType = it.protocolType
+                )
+            }
+
+    private fun currentAgentBoundModel(): String? = runCatching {
         val binding = SceneModelBindingStore.getBinding("scene.dispatch.model")
+        val boundProfile = binding?.providerProfileId
+            ?.let(ModelProviderConfigStore::getProfile)
+            ?.takeIf { it.baseUrl.isNotBlank() && it.apiKey.isNotBlank() }
+            ?: return@runCatching null
         resolveSharedAgentModel(
-            editingProfileId = editingProfileId,
             boundProviderProfileId = binding?.providerProfileId,
-            boundModel = binding?.modelId,
-            defaultModel = ModelSceneRegistry
-                .getRuntimeProfile("scene.dispatch.model")
-                ?.model
+            boundModel = binding?.modelId
         )
     }.getOrNull()
+
+    private data class ProviderModelResolution(
+        val models: List<ProviderModelOption>,
+        val authoritative: Boolean
+    ) {
+        val modelIds: List<String>
+            get() = models.map { it.id.trim() }.filter(String::isNotEmpty)
+    }
+
+    private suspend fun resolveCurrentProviderModelIds(
+        profile: ModelProviderProfile?
+    ): ProviderModelResolution? {
+        profile ?: return null
+        val fetched = runCatching {
+            if (OmniOfficialProvider.isOfficialProfile(profile.id)) {
+                PlatformAiProvisioner.ensureReadyAndGetModels()
+            } else {
+                HttpController.fetchProviderModels(
+                    apiBase = profile.baseUrl,
+                    apiKey = profile.apiKey,
+                    customHeaders = profile.customHeaders,
+                    protocolType = profile.protocolType,
+                    wireApi = profile.wireApi
+                )
+            }.filter { it.id.trim().isNotEmpty() }
+        }.getOrNull()
+        return fetched?.let { models ->
+            ProviderModelResolution(
+                models = models,
+                authoritative = true
+            )
+        }
+    }
+
+    private suspend fun listAuthoritativeProviderModels(): Map<String, Any?> {
+        val provider = currentAgentProviderProfile()
+        val modelResolution = resolveCurrentProviderModelIds(provider)
+        return buildAuthoritativeProviderModelPayload(
+            providerModelIds = modelResolution
+                ?.takeIf { it.authoritative }
+                ?.modelIds,
+            boundModel = currentAgentBoundModel(),
+        )
+    }
 
     private suspend fun ensureManagedAcpAdapter(profile: AcpAgentProfile) {
         val runtime = AcpAgentProfileStore.officialRuntime(profile) ?: return
@@ -1289,24 +1393,24 @@ class AgentRuntimeManager private constructor(
         return result.isOk && result.exitCode == 0
     }
 
-    private suspend fun ensureLocalAcpConnected(args: Map<String, Any?>) {
+    private suspend fun ensureLocalAcpConnected(args: Map<String, Any?>): Map<String, Any?> {
         val requestedAgentId = args.stringValue("agentId")
         val explicitThreadId = args.stringValue("threadId")
-        val requestedThreadId = explicitThreadId
-            ?: args.longValue("conversationId")
-                ?.let { bindingRepository.getBindingByConversationId(it)?.threadId }
+        val conversationId = args.longValue("conversationId")
+        val conversationBinding = conversationId
+            ?.let { bindingRepository.getBindingByConversationId(it) }
+        val requestedThreadId = explicitThreadId ?: conversationBinding?.threadId
         val boundAgentId = requestedThreadId?.let {
             acpAgentProfileStore.agentIdForSession(it)
-                ?: AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID
         }
-        require(
-            requestedAgentId == null ||
-                boundAgentId == null ||
-                requestedAgentId == boundAgentId
-        ) {
-            "ACP session $requestedThreadId belongs to agent $boundAgentId, not $requestedAgentId."
+        val conversationAgentId = conversationId?.let {
+            acpAgentProfileStore.agentIdForConversation(it)
         }
-        val targetAgentId = boundAgentId ?: requestedAgentId
+        val selectedAgentId = acpAgentProfileStore.selected().id
+        val targetAgentId = requestedAgentId
+            ?: boundAgentId
+            ?: conversationAgentId
+            ?: selectedAgentId
         val targetProfile = targetAgentId?.let { agentId ->
             acpAgentProfileStore.list().firstOrNull { it.id == agentId }
                 ?: throw IllegalArgumentException("Unknown ACP agent: $agentId")
@@ -1316,8 +1420,14 @@ class AgentRuntimeManager private constructor(
                 "ACP agent ${targetProfile.name} is disabled."
             }
         }
+        val threadBelongsToAnotherAgent = explicitThreadId != null &&
+            boundAgentId != null &&
+            targetProfile != null &&
+            boundAgentId != targetProfile.id
         if (targetProfile != null &&
-            targetProfile.id != acpAgentProfileStore.selected().id
+            (targetProfile.id != acpAgentProfileStore.selected().id ||
+                localAcpRuntime.isConnected &&
+                    localAcpRuntime.activeAgentId() != targetProfile.id)
         ) {
             check(!localAcpRuntime.hasActiveTurns()) {
                 "设备当前已有其他 ACP Agent 任务，暂时不能切换 Agent。"
@@ -1326,11 +1436,32 @@ class AgentRuntimeManager private constructor(
             acpAgentProfileStore.select(targetProfile.id)
         }
         if (localAcpRuntime.isConnected) {
-            return
+            return if (threadBelongsToAnotherAgent) {
+                LinkedHashMap(args).apply {
+                    remove("threadId")
+                    remove("sessionId")
+                }
+            } else {
+                args
+            }
         }
         connectLocalAcp()
         activeRuntime = AgentRuntimeKind.LOCAL
         activeLocalDistributionId = TerminalDistribution.selected().id
+        if (conversationId != null) {
+            acpAgentProfileStore.bindConversation(
+                conversationId,
+                targetProfile?.id ?: selectedAgentId
+            )
+        }
+        return if (threadBelongsToAnotherAgent) {
+            LinkedHashMap(args).apply {
+                remove("threadId")
+                remove("sessionId")
+            }
+        } else {
+            args
+        }
     }
 
     private suspend fun requestAccountMethod(method: String, params: Any?): Any {
@@ -1990,6 +2121,12 @@ private const val DEEPSEEK_HARNESS_CONFIG_DISPLAY_PATH =
 private const val DEEPSEEK_HARNESS_CORDIS_PATH =
     "$DEEPSEEK_HARNESS_CONFIG_HOME/cordis.yml"
 private const val OPENCODE_CONFIG_PATH = "/root/.config/opencode/opencode.json"
+private val SUPPORTED_SHARED_PROVIDER_AGENT_IDS = setOf(
+    AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID,
+    AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID,
+    CLAUDE_CODE_AGENT_ID,
+    OPENCODE_AGENT_ID
+)
 internal const val ACP_FILESYSTEM_COMPAT_PATH =
     "$DEEPSEEK_HARNESS_CONFIG_HOME/acp-fs-compat.cjs"
 internal val ACP_FILESYSTEM_COMPAT_SCRIPT = """
@@ -2016,7 +2153,7 @@ internal val ACP_FILESYSTEM_COMPAT_SCRIPT = """
     };
 """.trimIndent() + "\n"
 private const val DEEPSEEK_PUBLIC_BASE_URL = "https://api.deepseek.com"
-private const val DEEPSEEK_HARNESS_DEFAULT_MODEL = "deepseek-v4-pro"
+private const val DEEPSEEK_HARNESS_DEFAULT_MODEL = ""
 private const val DEEPSEEK_HARNESS_DEFAULT_REASONING_EFFORT = "max"
 private const val DEEPSEEK_HARNESS_DEFAULT_PERMISSION_MODE = "workspace-write"
 private val DEEPSEEK_HARNESS_REASONING_EFFORTS = setOf("off", "high", "max")
@@ -2376,16 +2513,24 @@ internal fun parseDeepSeekHarnessConfig(source: String): DeepSeekHarnessConfig {
 
 internal fun deepSeekHarnessConfigFromArgs(
     args: Map<String, Any?>,
-    current: DeepSeekHarnessConfig = DeepSeekHarnessConfig()
+    current: DeepSeekHarnessConfig = DeepSeekHarnessConfig(),
+    sharedProvider: AgentProviderCredentials? = null,
+    sharedModel: String? = null
 ): DeepSeekHarnessConfig {
-    val baseUrl = args.stringValue("baseUrl")
-        ?: throw IllegalArgumentException("DeepSeek Base URL is required.")
-    val model = args.stringValue("model")
-        ?: throw IllegalArgumentException("DeepSeek model ID is required.")
-    val apiKey = args.stringValue("apiKey")
-        ?: throw IllegalArgumentException("DeepSeek API key is required.")
+    val baseUrl = sharedProvider?.baseUrl.orEmpty()
+    val model = sharedModel.orEmpty()
+    val apiKey = sharedProvider?.apiKey.orEmpty()
     val reasoningEffort = args.stringValue("reasoningEffort")
-        ?: DEEPSEEK_HARNESS_DEFAULT_REASONING_EFFORT
+        ?: current.reasoningEffort
+    require(baseUrl.isNotBlank()) {
+        "DeepSeek Base URL is required."
+    }
+    require(model.isNotBlank()) {
+        "DeepSeek model ID is required. Select a model from the active Provider first."
+    }
+    require(apiKey.isNotBlank()) {
+        "DeepSeek API key is required."
+    }
     require(reasoningEffort in DEEPSEEK_HARNESS_REASONING_EFFORTS) {
         "DeepSeek Harness reasoning effort must be off, high, or max."
     }
@@ -2491,7 +2636,7 @@ internal fun buildDeepSeekHarnessCordisConfig(): String = """
             api: openai-completions
             baseURL: !!js process.env.DEEPSEEK_BASE_URL
             models:
-              - id: !!js "process.env.DSH_MODEL ?? 'deepseek-v4-pro'"
+              - id: !!js "process.env.DSH_MODEL"
             defaultContextWindow: 128000
             defaultMaxTokens: 8192
 
@@ -2507,7 +2652,7 @@ internal fun buildDeepSeekHarnessCordisConfig(): String = """
       name: '@deepseek-ai/dsh-acp-demo'
       config:
         provider: omnibot
-        model: !!js "process.env.DSH_MODEL ?? 'deepseek-v4-pro'"
+        model: !!js process.env.DSH_MODEL
         persistenceRoot: !!js "(process.env.DSH_ACP_HOME ?? '/root/.dsh/omnibot-acp-clean') + '/sessions'"
         persistenceCompression: !!js "process.env.DSH_PERSISTENCE_COMPRESSION ?? 'zstd'"
         # Keep the official Harness defaults for workspace context, skills,
@@ -2667,17 +2812,27 @@ internal fun isRecoverableAgentThreadError(message: String): Boolean {
 
 internal fun buildCodexConfigToml(
     baseUrl: String,
-    model: String
+    model: String,
+    wireApi: String = OpenAiWireApi.RESPONSES,
+    modelCatalogPath: String? = null
 ): String {
+    val codexWireApi = if (OpenAiWireApi.isResponses(wireApi)) {
+        OpenAiWireApi.RESPONSES
+    } else {
+        "chat"
+    }
     val lines = mutableListOf(
         "model_provider = \"omnimind\"",
         "model = ${tomlString(model.trim())}",
         "disable_response_storage = true",
+        modelCatalogPath?.trim()?.takeIf { it.isNotEmpty() }
+            ?.let { "model_catalog_json = ${tomlString(it)}" }
+            .orEmpty(),
         "",
         "[model_providers.omnimind]",
         "name = \"omnimind\"",
         "base_url = ${tomlString(baseUrl.trim())}",
-        "wire_api = \"responses\"",
+        "wire_api = \"$codexWireApi\"",
         "requires_openai_auth = true"
     )
     return lines.joinToString(separator = "\n", postfix = "\n")
@@ -2771,6 +2926,61 @@ private fun unescapeTomlBasicString(value: String): String {
     }
 }
 
+private fun extractJsonString(source: String, key: String): String? {
+    if (source.isBlank()) return null
+    val parsed = runCatching {
+        JsonParser.parseString(source)
+            .takeIf { it.isJsonObject }
+            ?.asJsonObject
+            ?.get(key)
+            ?.takeIf { it.isJsonPrimitive }
+            ?.asString
+    }.getOrNull()
+    if (!parsed.isNullOrBlank()) return parsed.trim()
+    return Regex(
+        pattern = """(?m)[\"']${Regex.escape(key)}[\"']\s*:\s*[\"']([^\"']+)[\"']"""
+    ).find(source)
+        ?.groupValues
+        ?.getOrNull(1)
+        ?.trim()
+        ?.takeIf(String::isNotEmpty)
+}
+
+private fun extractClaudeCodeModel(source: String): String? {
+    val parsed = runCatching {
+        JsonParser.parseString(source)
+            .takeIf { it.isJsonObject }
+            ?.asJsonObject
+    }.getOrNull()
+    val directModel = parsed?.get("model")
+        ?.takeIf { it.isJsonPrimitive }
+        ?.asString
+        ?.trim()
+        ?.takeIf(String::isNotEmpty)
+    if (directModel != null) return directModel
+    val environment = parsed?.getAsJsonObject("env")
+    val environmentModel = listOf("ANTHROPIC_MODEL", "ANTHROPIC_SMALL_FAST_MODEL")
+        .asSequence()
+        .mapNotNull { key ->
+            environment?.get(key)
+                ?.takeIf { it.isJsonPrimitive }
+                ?.asString
+                ?.trim()
+                ?.takeIf(String::isNotEmpty)
+        }
+        .firstOrNull()
+    return environmentModel
+        ?: extractJsonString(source, "ANTHROPIC_MODEL")
+        ?: extractJsonString(source, "ANTHROPIC_SMALL_FAST_MODEL")
+}
+
+private fun extractOpenCodeModel(source: String): String? {
+    return extractJsonString(source, "model")
+        ?.removePrefix("$OPEN_CODE_PROVIDER_ID/")
+        ?.trim()
+        ?.takeIf(String::isNotEmpty)
+}
+
 private fun extractOpenAiApiKey(source: String): String? {
     val trimmed = source.trim()
     if (trimmed.isEmpty()) return null
@@ -2813,6 +3023,7 @@ internal const val CLAUDE_CODE_AGENT_ID = "claude-code-acp"
 internal const val OPENCODE_AGENT_ID = "opencode-acp"
 private const val CODEX_CONFIG_TOML_PATH = "/root/.codex/config.toml"
 private const val CODEX_AUTH_JSON_PATH = "/root/.codex/auth.json"
+private const val CODEX_MODEL_CATALOG_JSON_PATH = "/root/.codex/provider-model-catalog.json"
 private const val CLAUDE_SETTINGS_JSON_PATH = "/root/.claude/settings.json"
 private const val OPENCODE_CONFIG_JSON_PATH = "/root/.config/opencode/opencode.json"
 private const val CODEX_CONFIG_TOML_DISPLAY_PATH = "~/.codex/config.toml"
