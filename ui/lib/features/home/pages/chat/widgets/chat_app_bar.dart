@@ -626,23 +626,12 @@ class _ChatAppBarModeShortcutButtonState
                   iconAsset: _kChatAppBarAgentIconAsset,
                   tooltip: isEnglish ? 'OmniAi' : '小万',
                   selected: widget.isOmniAiSelected,
-                  enabled:
-                      widget.onOmniAiTap != null ||
-                      widget.onAcpAgentTap != null,
+                  // Xiaowan is the built-in Agent and is always a valid
+                  // selection. The parent keeps the legacy callback as a
+                  // compatibility fallback when ACP is not supplied.
+                  enabled: true,
                   iconSize: _kChatAppBarModeMenuOmniAiIconSize,
                   iconOffset: _kChatAppBarModeMenuOmniAiIconOffset,
-                  onTap: () {
-                    // Even during the asynchronous catalog refresh this is
-                    // the single visible Xiaowan entry. Route it directly to
-                    // the official ACP profile instead of waiting for the
-                    // legacy OmniAi action to round-trip through the popup.
-                    if (widget.onAcpAgentTap != null) {
-                      widget.onAcpAgentTap!('xiaowan-acp');
-                    } else {
-                      widget.onOmniAiTap?.call();
-                    }
-                    Navigator.of(context).pop();
-                  },
                 )
               : _ChatAppBarModeShortcutMenuItemData(
                   action: _ChatAppBarModeShortcutAction.xiaowanAcp,
@@ -652,10 +641,10 @@ class _ChatAppBarModeShortcutButtonState
                       widget.isOmniAiSelected ||
                       (widget.isAgentSelected &&
                           xiaowan.id == widget.activeAcpAgentId),
-                  enabled:
-                      !isAgentLoading &&
-                      (widget.onAcpAgentTap != null ||
-                          widget.onAgentTap != null),
+                  // Do not make the built-in Agent depend on asynchronous
+                  // callback/catalog refresh state. Selection is handled by
+                  // the common action-return path below.
+                  enabled: true,
                   iconSize: _chatAppBarModeMenuAgentIconSize(xiaowan.id),
                 );
           return _ChatAppBarModeShortcutMenuContent(
@@ -673,7 +662,6 @@ class _ChatAppBarModeShortcutButtonState
                       widget.isAgentSelected &&
                       agent.id == widget.activeAcpAgentId,
                   enabled:
-                      !isAgentLoading &&
                       (widget.onAcpAgentTap != null ||
                           widget.onAgentTap != null),
                   iconSize: _chatAppBarModeMenuAgentIconSize(agent.id),
@@ -828,7 +816,6 @@ class _ChatAppBarModeShortcutMenuItemData {
     required this.enabled,
     this.iconSize = 20,
     this.iconOffset = Offset.zero,
-    this.onTap,
   });
 
   final _ChatAppBarModeShortcutAction action;
@@ -839,7 +826,6 @@ class _ChatAppBarModeShortcutMenuItemData {
   final bool enabled;
   final double iconSize;
   final Offset iconOffset;
-  final VoidCallback? onTap;
 }
 
 class _ChatAppBarModeShortcutMenuContent extends StatelessWidget {
@@ -870,62 +856,76 @@ class _ChatAppBarModeShortcutMenuContent extends StatelessWidget {
         mediaQuery.padding.vertical -
         mediaQuery.viewInsets.vertical -
         16;
+    final panel = OmniGlassPanel(
+      key: const ValueKey('chat-app-bar-mode-menu-capsule'),
+      borderRadius: BorderRadius.circular(width / 2),
+      // 40px 宽、20px 顶部圆角时，top: 0 的 1px 高光会被圆弧裁成
+      // 顶部中央的一颗亮点；此处关闭局部高光，保留完整边框与阴影。
+      showTopHighlight: false,
+      surfaceColor: palette.surfaceElevated,
+      child: Material(
+        color: Colors.transparent,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Tooltip(
+              message: closeTooltip,
+              child: InkWell(
+                key: const ValueKey('chat-app-bar-mode-menu-close'),
+                onTap: () => Navigator.of(context).pop(),
+                borderRadius: BorderRadius.vertical(
+                  top: Radius.circular(width / 2),
+                ),
+                child: SizedBox(
+                  height: _kChatAppBarAccessoryButtonSize,
+                  child: Center(child: headerIcon),
+                ),
+              ),
+            ),
+            const SizedBox(height: 6),
+            Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (final item in items)
+                  _ChatAppBarModeShortcutMenuRow(
+                    key: ValueKey(
+                      'chat-app-bar-mode-menu-${_chatModeShortcutActionSlug(item.action)}',
+                    ),
+                    item: item,
+                    selectedColor: selectedColor,
+                    iconTint: iconTint,
+                    disabledTint: disabledTint,
+                  ),
+              ],
+            ),
+            const SizedBox(height: 6),
+          ],
+        ),
+      ),
+    );
     return SizedBox(
       width: width,
       child: ConstrainedBox(
         constraints: BoxConstraints(
           maxHeight: maxHeight.clamp(120.0, 720.0).toDouble(),
         ),
-        child: OmniGlassPanel(
-          key: const ValueKey('chat-app-bar-mode-menu-capsule'),
-          borderRadius: BorderRadius.circular(width / 2),
-          // 40px 宽、20px 顶部圆角时，top: 0 的 1px 高光会被圆弧裁成
-          // 顶部中央的一颗亮点；此处关闭局部高光，保留完整边框与阴影。
-          showTopHighlight: false,
-          surfaceColor: palette.surfaceElevated,
-          child: Material(
-            color: Colors.transparent,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Tooltip(
-                  message: closeTooltip,
-                  child: InkWell(
-                    key: const ValueKey('chat-app-bar-mode-menu-close'),
-                    onTap: () => Navigator.of(context).pop(),
-                    borderRadius: BorderRadius.vertical(
-                      top: Radius.circular(width / 2),
-                    ),
-                    child: SizedBox(
-                      height: _kChatAppBarAccessoryButtonSize,
-                      child: Center(child: headerIcon),
-                    ),
-                  ),
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            panel,
+            if (items.isNotEmpty)
+              Positioned(
+                top: _kChatAppBarAccessoryButtonSize + 6,
+                left: 0,
+                right: 0,
+                height: _kChatAppBarAccessoryButtonSize,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onTap: () => Navigator.of(context).pop(items.first.action),
+                  child: const SizedBox.expand(),
                 ),
-                const SizedBox(height: 6),
-                Flexible(
-                  child: SingleChildScrollView(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        for (final item in items)
-                          _ChatAppBarModeShortcutMenuRow(
-                            key: ValueKey(
-                              'chat-app-bar-mode-menu-${_chatModeShortcutActionSlug(item.action)}',
-                            ),
-                            item: item,
-                            selectedColor: selectedColor,
-                            iconTint: iconTint,
-                            disabledTint: disabledTint,
-                          ),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 6),
-              ],
-            ),
-          ),
+              ),
+          ],
         ),
       ),
     );
@@ -962,17 +962,13 @@ class _ChatAppBarModeShortcutMenuRow extends StatelessWidget {
         : (item.selected ? selectedColor : iconTint);
     return Tooltip(
       message: item.tooltip,
-      child: InkWell(
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
         onTap: item.enabled
             ? () {
-                if (item.onTap != null) {
-                  item.onTap!();
-                } else {
-                  Navigator.of(context).pop(item.action);
-                }
+                Navigator.of(context).pop(item.action);
               }
             : null,
-        borderRadius: BorderRadius.circular(12),
         child: SizedBox(
           height: 40,
           child: Center(

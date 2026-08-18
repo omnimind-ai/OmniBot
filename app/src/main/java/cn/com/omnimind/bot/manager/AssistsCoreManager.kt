@@ -3183,7 +3183,15 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                OmniLog.e(TAG, "fetchProviderModels failed")
+                // Keep the user-facing error generic, but retain the actual
+                // status/transport reason in logcat so an empty model list is
+                // diagnosable on a real device without exposing credentials.
+                OmniLog.e(
+                    TAG,
+                    "fetchProviderModels failed: " +
+                        (e.message?.take(300) ?: e.javaClass.simpleName),
+                    e
+                )
                 withContext(Dispatchers.Main) {
                     result.error(
                         "FETCH_PROVIDER_MODELS_ERROR",

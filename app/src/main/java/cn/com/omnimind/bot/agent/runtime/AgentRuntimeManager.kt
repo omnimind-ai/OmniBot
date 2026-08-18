@@ -2477,12 +2477,6 @@ internal fun buildDeepSeekHarnessCordisConfig(): String = """
       config:
         thinking: !!js "process.env.DSH_THINKING ?? 'enabled'"
         reasoningEffort: !!js "process.env.DSH_REASONING_EFFORT ?? 'max'"
-        models:
-          - id: deepseek-v4-flash
-          - id: deepseek-v4-pro
-          # Keep the shared Provider model visible to the official Harness
-          # model registry as well as the ACP launch environment.
-          - id: !!js "process.env.DSH_MODEL ?? 'deepseek-v4-pro'"
 
     # The shared Provider may be DeepSeek, GLM, or another OpenAI-compatible
     # service. Use DSH's official generic pi-ai adapter for that route instead
