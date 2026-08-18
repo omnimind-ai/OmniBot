@@ -16,7 +16,6 @@ import cn.com.omnimind.bot.agent.tool.handlers.SystemToolHandler
 import cn.com.omnimind.bot.agent.tool.handlers.TerminalToolHandler
 import cn.com.omnimind.bot.agent.tool.handlers.ToolHandler
 import cn.com.omnimind.bot.agent.tool.handlers.VlmToolHandler
-import cn.com.omnimind.bot.omniflow.OmniFlowPluginRuntime
 import com.rk.terminal.runtime.TerminalDistribution
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.serialization.json.Json
@@ -31,7 +30,9 @@ class AgentToolRouter(
     private val subagentDispatcher: SubagentDispatcher,
     terminalDistribution: TerminalDistribution.Spec = TerminalDistribution.alpine,
     pluginHandlers: List<ToolHandler> = emptyList(),
-    includeVlmTool: Boolean = OmniFlowPluginRuntime.isEnabled(),
+    // The handler is a gated entry point: it returns manual-enable guidance
+    // while the operation module is disabled and executes only when enabled.
+    includeVlmTool: Boolean = true,
 ) : AgentToolExecutor {
 
     private val json = Json {

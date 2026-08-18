@@ -10,7 +10,6 @@ import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.mcp.RemoteMcpDiscoveredServer
 import cn.com.omnimind.bot.mcp.RemoteMcpToolDescriptor
 import cn.com.omnimind.bot.plugin.OmniPluginToolDefinition
-import cn.com.omnimind.bot.omniflow.OmniFlowPluginRuntime
 import com.rk.terminal.runtime.TerminalDistribution
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -32,7 +31,9 @@ class AgentToolRegistry(
     pluginToolDefinitions: List<OmniPluginToolDefinition> = emptyList(),
     userMessage: String? = null,
     toolRoutingMode: AgentToolRoutingMode = AgentToolRoutingMode.DEFAULT,
-    includeVlmTool: Boolean = OmniFlowPluginRuntime.isEnabled(),
+    // Keep the visual-operation entry visible so the Agent can explain how
+    // to enable it. VlmToolHandler gates execution until OmniFlow is enabled.
+    includeVlmTool: Boolean = true,
 ) : AgentToolCatalog {
     data class RuntimeToolDescriptor(
         val name: String,

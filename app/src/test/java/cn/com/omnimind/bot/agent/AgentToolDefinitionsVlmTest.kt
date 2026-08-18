@@ -24,14 +24,11 @@ class AgentToolDefinitionsVlmTest {
     }
 
     @Test
-    fun `disabled operation module does not load vlm task`() {
-        val definitions = AgentToolDefinitions.staticTools(
-            locale = PromptLocale.EN_US,
-            includeVlmTool = false,
-        )
+    fun `visual entry stays available for manual-enable guidance`() {
+        val definitions = AgentToolDefinitions.staticTools(PromptLocale.EN_US)
 
         assertTrue(
-            definitions.none {
+            definitions.any {
                 (it["function"] as? JsonObject)
                     ?.get("name")
                     ?.jsonPrimitive
