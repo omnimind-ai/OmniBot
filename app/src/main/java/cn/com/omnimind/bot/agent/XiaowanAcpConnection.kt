@@ -39,7 +39,7 @@ import com.agentclientprotocol.transport.Transport
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.channelFlow
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.JsonElement
@@ -128,7 +128,7 @@ private class XiaowanAgentSession(
     override suspend fun prompt(
         content: List<ContentBlock>,
         _meta: JsonElement?,
-    ): Flow<Event> = flow {
+    ): Flow<Event> = channelFlow {
         val text = content.joinToString("") { block ->
             when (block) {
                 is ContentBlock.Text -> block.text
@@ -138,7 +138,12 @@ private class XiaowanAgentSession(
         }.trim()
         require(text.isNotEmpty()) { "Xiaowan ACP prompt is empty" }
         val streamBridge = XiaowanAcpEventBridge { update ->
-            emit(Event.SessionUpdateEvent(update))
+            // AgentCallback can arrive from provider/tool worker coroutines.
+            // `flow { emit(...) }` is not thread-safe and drops the whole turn
+            // with Flow invariant violations when two stream callbacks race.
+            // channelFlow serializes the hand-off while preserving every ACP
+            // session/update event.
+            send(Event.SessionUpdateEvent(update))
         }
         val result = executor.processUserMessage(
             userMessage = text,
@@ -172,7 +177,7 @@ private class XiaowanAgentSession(
         // call only fills a gap when a provider returned content without any
         // callback update, and is de-duplicated by the same bridge.
         streamBridge.emitAssistantSnapshot(answer)
-        emit(
+        send(
             Event.PromptResponseEvent(
                 PromptResponse(
                     stopReason = StopReason.END_TURN,
