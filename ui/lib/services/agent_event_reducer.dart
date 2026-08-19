@@ -1741,7 +1741,10 @@ class AgentEventReducer {
   void _completeTurn(
     ChatConversationRuntimeState runtime,
     String taskId, {
-    bool appendCancelIfEmpty = true,
+    // A normal ACP turn/completed is successful even when the turn only
+    // produced reasoning or tool activity. Cancellation is represented by an
+    // explicit cancelled thread status, not by an empty assistant message.
+    bool appendCancelIfEmpty = false,
   }) {
     final wasActive = runtime.activeAgentTurnIds.contains(taskId);
     final isCurrentTurn =

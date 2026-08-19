@@ -1,6 +1,7 @@
 package cn.com.omnimind.bot.agent.runtime
 
 import cn.com.omnimind.baselib.llm.ProviderModelOption
+import cn.com.omnimind.baselib.llm.OpenAiWireApi
 import com.google.gson.JsonParser
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -85,7 +86,7 @@ class AgentConfigAdaptersTest {
         assertEquals(provider.baseUrl, codex.environment["OPENAI_BASE_URL"])
         assertEquals(model, codex.codexModel)
         assertEquals("https://llmapi.paratera.com/v1", codex.codexBaseUrl)
-        assertEquals("chat_completions", codex.codexWireApi)
+        assertEquals(OpenAiWireApi.RESPONSES, codex.codexWireApi)
 
         val claude = AgentConfigAdapterRegistry.map(
             AgentProviderMappingInput(
@@ -320,6 +321,36 @@ class AgentConfigAdaptersTest {
         assertEquals(128000, model["max_context_window"].asInt)
         assertTrue(model["base_instructions"].asString.isNotBlank())
         assertEquals("list", model["visibility"].asString)
+        assertEquals(false, model["supports_parallel_tool_calls"].asBoolean)
+        assertEquals("medium", model["default_reasoning_level"].asString)
+        assertEquals(
+            listOf("medium"),
+            model["supported_reasoning_levels"].asJsonArray.map {
+                it.asJsonObject["effort"].asString
+            },
+        )
+    }
+
+    @Test
+    fun codexCatalogUsesCodexDefaultEffortWhenProviderOmitsEffortList() {
+        val catalog = JsonParser.parseString(
+            buildCodexModelCatalogJson(
+                listOf(
+                    ProviderModelOption(
+                        id = "deepseek-v4-pro",
+                    ),
+                ),
+            ),
+        ).asJsonObject
+        val model = catalog.getAsJsonArray("models").single().asJsonObject
+
+        assertEquals("medium", model["default_reasoning_level"].asString)
+        assertEquals(
+            listOf("medium"),
+            model["supported_reasoning_levels"].asJsonArray.map {
+                it.asJsonObject["effort"].asString
+            },
+        )
     }
 
     @Test

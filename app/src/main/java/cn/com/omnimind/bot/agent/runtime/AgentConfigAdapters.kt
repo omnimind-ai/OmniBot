@@ -99,7 +99,12 @@ private object CodexConfigAdapter : AgentConfigAdapter {
         return AgentProviderMapping(
             environment = environment,
             codexModel = input.model?.trim()?.takeIf { it.isNotEmpty() },
-            codexWireApi = provider?.wireApi?.let(OpenAiWireApi::normalize),
+            // Current Codex ACP (1.1.x) removed the legacy Chat Completions
+            // wire and rejects `wire_api = "chat"` during every request.
+            // The shared Provider may still use Chat Completions for the app
+            // and DSH, but Codex must receive its own official Responses
+            // transport setting.
+            codexWireApi = provider?.let { OpenAiWireApi.RESPONSES },
             codexBaseUrl = provider?.baseUrl?.let(::normalizeCodexBaseUrl)
         )
     }
@@ -202,6 +207,11 @@ internal fun buildCodexModelCatalogJson(
             val contextWindow = providerModel.contextLimit
                 ?.takeIf { it > 0 }
                 ?: CODEX_DEFAULT_CONTEXT_WINDOW
+            // The Provider /models response does not expose Codex's concrete
+            // effort list. Codex 1.1.x otherwise falls back to `none`, which
+            // the shared gateway rejects. Keep the adapter's default explicit
+            // and conservative; it does not change the Provider model ID.
+            val reasoningLevels = listOf("medium")
             val inputModalities = providerModel.inputModalities
                 .map { it.trim().lowercase() }
                 .filter { it in CODEX_SUPPORTED_INPUT_MODALITIES }
@@ -214,8 +224,20 @@ internal fun buildCodexModelCatalogJson(
                 addProperty("display_name", providerModel.displayName.trim().ifEmpty { modelId })
                 add("description", JsonNull.INSTANCE)
                 addProperty("base_instructions", CODEX_PROVIDER_BASE_INSTRUCTIONS)
-                add("default_reasoning_level", JsonNull.INSTANCE)
-                add("supported_reasoning_levels", JsonArray())
+                if (reasoningLevels.isEmpty()) {
+                    add("default_reasoning_level", JsonNull.INSTANCE)
+                    add("supported_reasoning_levels", JsonArray())
+                } else {
+                    addProperty("default_reasoning_level", "medium")
+                    add("supported_reasoning_levels", JsonArray().apply {
+                        reasoningLevels.forEach { effort ->
+                            add(JsonObject().apply {
+                                addProperty("effort", effort)
+                                addProperty("description", effort)
+                            })
+                        }
+                    })
+                }
                 addProperty("shell_type", "default")
                 addProperty("visibility", "list")
                 addProperty("supported_in_api", true)
@@ -229,8 +251,8 @@ internal fun buildCodexModelCatalogJson(
                 addProperty("include_skills_usage_instructions", false)
                 addProperty("include_plugin_usage_instructions", false)
                 addProperty("include_apps_usage_instructions", false)
-                addProperty("supports_reasoning_summary_parameter", true)
-                addProperty("default_reasoning_summary", "auto")
+                addProperty("supports_reasoning_summary_parameter", false)
+                add("default_reasoning_summary", JsonNull.INSTANCE)
                 addProperty("support_verbosity", false)
                 add("default_verbosity", JsonNull.INSTANCE)
                 add("apply_patch_tool_type", JsonNull.INSTANCE)
@@ -248,6 +270,10 @@ internal fun buildCodexModelCatalogJson(
                 add("experimental_supported_tools", JsonArray())
                 add("input_modalities", GsonBuilder().create().toJsonTree(inputModalities))
                 addProperty("supports_search_tool", false)
+                // Codex 1.1.x requires this capability bit when loading the
+                // provider model catalog.  Only advertise parallel calls
+                // when the Provider's /models metadata explicitly says so.
+                addProperty("supports_parallel_tool_calls", providerModel.toolCall == true)
                 addProperty("use_responses_lite", false)
                 addProperty("node_repl_auto_review_required", false)
                 addProperty("node_repl_disabled", false)

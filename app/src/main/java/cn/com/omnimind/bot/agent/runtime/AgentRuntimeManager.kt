@@ -2949,7 +2949,38 @@ internal fun buildOpenCodeConfigJson(
  */
 internal fun buildDeepSeekHarnessCordisConfig(
     userPlugins: List<DshPluginRecord> = emptyList()
-): String = """
+): String {
+    val officialPackageNames = setOf(
+        "@deepseek-ai/dsh-llm-deepseek",
+        "@deepseek-ai/dsh-llm-pi-ai",
+        "@deepseek-ai/dsh-subprocess-local",
+        "@deepseek-ai/dsh-user-approval",
+        "@deepseek-ai/dsh-acp-demo",
+        "@deepseek-ai/dsh-token-meter",
+        "@deepseek-ai/dsh-compaction-basic",
+        "@deepseek-ai/dsh-session-projection",
+        "@deepseek-ai/dsh-subagent",
+        "@deepseek-ai/dsh-subagent-spawn-in-process",
+        "@deepseek-ai/dsh-subagent-fork-in-process",
+        "@deepseek-ai/dsh-tool-subagent-control",
+        "@deepseek-ai/dsh-tool-subagent-control/list-agents",
+        "@deepseek-ai/dsh-tool-subagent-report",
+        "@deepseek-ai/dsh-tool-subagent",
+        "@deepseek-ai/dsh-workflow-worker-thread",
+        "@deepseek-ai/dsh-tool-workflow",
+        "@deepseek-ai/dsh-tool-ralph",
+        "@deepseek-ai/dsh-tool-todo",
+        "@deepseek-ai/dsh-repeat-tool-reminder",
+        "@deepseek-ai/dsh-sandbox-policy",
+        "@deepseek-ai/dsh-fs-sandbox",
+        "@deepseek-ai/dsh-fs-observation-policy",
+        "@deepseek-ai/dsh-tool-fs",
+        "@deepseek-ai/dsh-skill",
+        "@deepseek-ai/dsh-skill-filesystem",
+        "@deepseek-ai/dsh-tool-skill",
+        "@deepseek-ai/dsh-mcp-client"
+    )
+    return """
     - id: llm-deepseek
       name: '@deepseek-ai/dsh-llm-deepseek'
       config:
@@ -3110,7 +3141,7 @@ internal fun buildDeepSeekHarnessCordisConfig(
     - id: tool-skill
       name: '@deepseek-ai/dsh-tool-skill'
 
-${DshPluginManager.cordisEntries(userPlugins)}
+${DshPluginManager.cordisEntries(userPlugins, officialPackageNames)}
 
     - id: mcp-omnibot
       name: '@deepseek-ai/dsh-mcp-client'
@@ -3122,6 +3153,7 @@ ${DshPluginManager.cordisEntries(userPlugins)}
           Authorization: !!js "'Bearer ' + process.env.OMNIBOT_MCP_TOKEN"
         failOnStartupError: true
 """.trimIndent() + "\n"
+}
 
 internal fun managedAgentTerminalPackageId(agentId: String): String? {
     return when (agentId) {

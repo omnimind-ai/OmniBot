@@ -1258,6 +1258,8 @@ internal class LocalAcpRuntime(
             throw error
         }
         val completion = CompletableDeferred<Map<String, Any?>>()
+        val activeConnection = connection
+            ?: throw IllegalStateException("ACP agent connection is not available.")
         val job = scope.launch(start = CoroutineStart.LAZY) {
             var stopReason: String? = null
             var cancelled = false
@@ -1311,12 +1313,58 @@ internal class LocalAcpRuntime(
         }
         promptJobs[threadId] = job
         lastTurnActivityAt[threadId] = System.currentTimeMillis()
-        job.start()
+        var watchdog: Job? = null
+        var exitWatcher: Job? = null
+
+        // A process exit is not guaranteed to close an in-flight ACP prompt
+        // flow.  StdioTransport may remain suspended on the input channel even
+        // after the child has gone away, so observing the connection only while
+        // initializing is insufficient.  Keep the process lifecycle and the
+        // host turn lifecycle joined for every prompt.
+        exitWatcher = scope.launch(start = CoroutineStart.LAZY) {
+            val exitCode = activeConnection.exitSignal.await()
+            if (
+                activeTurnIds[threadId] != turnId ||
+                finishedTurns.contains(turnId)
+            ) {
+                return@launch
+            }
+            val error = activeConnection.exitDescription(exitCode)
+            Log.e(
+                TAG,
+                "ACP process exited during turn=$turnId session=$threadId: $error"
+            )
+            finishTurn(
+                threadId = threadId,
+                turnId = turnId,
+                status = "error",
+                error = error
+            )
+            runCatching {
+                withTimeoutOrNull(CANCEL_JOIN_TIMEOUT_MS) {
+                    job.cancelAndJoin()
+                }
+            }
+            if (connection === activeConnection) {
+                runCatching { disconnect() }
+                    .onFailure { closeError ->
+                        Log.w(
+                            TAG,
+                            "Unable to reset ACP runtime after process exit: " +
+                                (closeError.message ?: closeError.javaClass.simpleName),
+                            closeError
+                        )
+                    }
+            }
+        }
+
         // Guards against an adapter that streams its answer and then never
         // sends the `session/prompt` response (see [lastTurnActivityAt]). The
         // watchdog cancels itself as soon as the prompt job ends for any other
-        // reason, so it only ever finalizes a genuinely stalled turn.
-        val watchdog = scope.launch(start = CoroutineStart.LAZY) {
+        // reason, so it only ever finalizes a genuinely stalled turn.  A
+        // timed-out process is also closed; otherwise the next prompt can be
+        // sent to the same broken ACP session and appear to require a new chat.
+        watchdog = scope.launch(start = CoroutineStart.LAZY) {
             val startedAt = System.currentTimeMillis()
             while (true) {
                 delay(STALL_CHECK_INTERVAL_MS)
@@ -1338,15 +1386,34 @@ internal class LocalAcpRuntime(
                         error = "ACP agent did not finish this turn within " +
                             "${STALL_DEADLINE_MS / 1000}s."
                     )
-                    runCatching { job.cancelAndJoin() }
+                    if (connection === activeConnection) {
+                        runCatching { disconnect() }
+                            .onFailure { closeError ->
+                                Log.w(
+                                    TAG,
+                                    "Unable to reset stalled ACP runtime: " +
+                                        (closeError.message ?: closeError.javaClass.simpleName),
+                                    closeError
+                                )
+                            }
+                    } else {
+                        runCatching { job.cancelAndJoin() }
+                    }
                     return@launch
                 }
             }
         }
-        job.invokeOnCompletion { watchdog.cancel() }
-        watchdog.start()
+
+        job.invokeOnCompletion {
+            watchdog?.cancel()
+            exitWatcher?.cancel()
+        }
+        watchdog?.start()
+        exitWatcher?.start()
+        job.start()
         job.join()
-        watchdog.cancelAndJoin()
+        watchdog?.cancelAndJoin()
+        exitWatcher?.cancelAndJoin()
         return linkedMapOf<String, Any?>(
             "threadId" to threadId,
             "turnId" to turnId,

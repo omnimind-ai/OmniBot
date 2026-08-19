@@ -2185,7 +2185,7 @@ diff --git a/lib/main.dart b/lib/main.dart
     expect(completedCard['endTime'], isNotNull);
   });
 
-  test('turn completion after manual interrupt leaves a cancellation body', () {
+  test('normal turn completion never creates a cancellation body', () {
     reducer.reduce(
       runtime: runtime,
       event: {
@@ -2219,18 +2219,16 @@ diff --git a/lib/main.dart b/lib/main.dart
       },
     );
 
-    final cancelMessage = runtime.messages.firstWhere(
-      (message) => message.id == 'turn-1-cancelled',
+    expect(
+      runtime.messages.any((message) => message.id == 'turn-1-cancelled'),
+      isFalse,
     );
-    expect(cancelMessage.text, '任务已取消');
-    expect(cancelMessage.streamMeta?['parentTaskId'], 'turn-1');
-    expect(cancelMessage.streamMeta?['isFinal'], isTrue);
 
     final thinkingCard = runtime.messages
         .firstWhere((message) => message.cardData?['type'] == 'deep_thinking')
         .cardData!;
     expect(thinkingCard['isLoading'], isFalse);
-    expect(thinkingCard['stage'], ThinkingStage.cancelled.value);
+    expect(thinkingCard['stage'], ThinkingStage.complete.value);
     expect(thinkingCard['endTime'], isNotNull);
   });
 
