@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.PowerManager
+import android.os.SystemClock
 import android.provider.Settings
 import cn.com.omnimind.accessibility.service.AssistsService
 import cn.com.omnimind.baselib.runlog.Action
@@ -15,6 +16,7 @@ import cn.com.omnimind.baselib.runlog.State
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.math.min
 
 data class AndroidGuiActionResult(
     val success: Boolean,
@@ -28,6 +30,11 @@ data class AndroidGuiScreenSnapshot(
     val displayWidth: Int,
     val displayHeight: Int,
     val screenshotJpeg: ByteArray?,
+)
+
+data class AndroidGuiObservation(
+    val state: State,
+    val stabilization: Map<String, Any?>,
 )
 
 /** Raised when a physical-display GUI task can no longer safely continue. */
@@ -93,10 +100,27 @@ class AndroidGuiEnvironment internal constructor(
 
     fun screenshotExcludesOverlays(): Boolean = platform.screenshotExcludesOverlays()
 
-    suspend fun observe(captureScreenshot: Boolean = true): State {
+    suspend fun observe(
+        captureScreenshot: Boolean = true,
+        waitToStabilize: Boolean = false,
+    ): State = observeWithDiagnostics(
+        captureScreenshot = captureScreenshot,
+        waitToStabilize = waitToStabilize,
+    ).state
+
+    suspend fun observeWithDiagnostics(
+        captureScreenshot: Boolean = true,
+        waitToStabilize: Boolean = false,
+    ): AndroidGuiObservation {
         check(awaitReady()) { "android_gui_accessibility_not_ready" }
         val context = checkNotNull(appContext) { "android_gui_context_required" }
-        val observed = platform.observe(captureScreenshot)
+        val observedAndStability = if (waitToStabilize) {
+            observeStable(captureScreenshot)
+        } else {
+            platform.observe(captureScreenshot) to false
+        }
+        val observed = observedAndStability.first
+        val stabilized = observedAndStability.second
         val state = State.create(
             packageName = observed.packageName,
             activityName = observed.activityName,
@@ -104,8 +128,52 @@ class AndroidGuiEnvironment internal constructor(
             displayHeight = observed.displayHeight,
             xml = observed.xml,
         )
-        return InternalRunLogStore.persistState(context, state, observed.screenshotJpeg)
+        val persisted = InternalRunLogStore.persistState(context, state, observed.screenshotJpeg)
+        return AndroidGuiObservation(
+            state = persisted,
+            stabilization = linkedMapOf<String, Any?>(
+                "wait_requested" to waitToStabilize,
+                "stabilized" to if (waitToStabilize) stabilized else null,
+                "result" to when {
+                    !waitToStabilize -> "not_requested"
+                    stabilized -> "stable"
+                    else -> "timeout"
+                },
+            ).filterValues { it != null },
+        )
     }
+
+    private suspend fun observeStable(
+        captureScreenshot: Boolean,
+    ): Pair<AndroidGuiPlatformState, Boolean> {
+        var previous = platform.observe(captureScreenshot)
+        var current = previous
+        var stableChecks = 1
+        val deadline = SystemClock.elapsedRealtime() + OBSERVE_STABILIZATION_TIMEOUT_MS
+        while (stableChecks < OBSERVE_STABILIZATION_THRESHOLD) {
+            val remaining = deadline - SystemClock.elapsedRealtime()
+            if (remaining <= 0L) break
+            delay(min(OBSERVE_STABILIZATION_POLL_MS, remaining))
+            if (SystemClock.elapsedRealtime() >= deadline) break
+            current = platform.observe(captureScreenshot)
+            stableChecks = if (sameUiState(previous, current)) {
+                stableChecks + 1
+            } else {
+                1
+            }
+            previous = current
+        }
+        return current to (stableChecks >= OBSERVE_STABILIZATION_THRESHOLD)
+    }
+
+    private fun sameUiState(
+        previous: AndroidGuiPlatformState,
+        current: AndroidGuiPlatformState,
+    ): Boolean = previous.packageName == current.packageName &&
+        previous.activityName == current.activityName &&
+        previous.displayWidth == current.displayWidth &&
+        previous.displayHeight == current.displayHeight &&
+        previous.xml == current.xml
 
     /** Capture a transient preview without writing a RunLog state or image to disk. */
     suspend fun captureScreenSnapshot(): AndroidGuiScreenSnapshot {
@@ -218,6 +286,9 @@ private const val ACTION_ACCESSIBILITY_DETAILS_SETTINGS =
 internal const val ACCESSIBILITY_READY_TIMEOUT_MS = 15_000L
 private const val STATE_STABILIZATION_POLL_MS = 100L
 private const val STATE_STABILIZATION_TIMEOUT_MS = 1_500L
+private const val OBSERVE_STABILIZATION_THRESHOLD = 3
+private const val OBSERVE_STABILIZATION_POLL_MS = 500L
+private const val OBSERVE_STABILIZATION_TIMEOUT_MS = 6_000L
 private const val OPEN_APP_STABILIZATION_TIMEOUT_MS = 5_000L
 
 internal fun stateStabilizationTimeoutMs(tool: String): Long =

@@ -19,9 +19,11 @@ class DebugOmniFlowObserveReceiver : BroadcastReceiver() {
         scope.launch {
             try {
                 val screenshot = intent?.getBooleanExtra("includeScreenshot", false) == true
+                val waitToStabilize = intent?.getBooleanExtra("waitToStabilize", false) == true
                 val state = OmniFlow.observe(
                     context = appContext,
                     captureScreenshot = screenshot,
+                    waitToStabilize = waitToStabilize,
                 )
                 val payload = linkedMapOf<String, Any?>(
                     "schema_version" to "oob.observe.v1",

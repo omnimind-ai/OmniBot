@@ -91,10 +91,14 @@ object OmniFlow {
     suspend fun observe(
         context: Context,
         captureScreenshot: Boolean = false,
+        waitToStabilize: Boolean = false,
     ): Map<String, Any?> = control(
         context = context,
         method = "observe",
-        payload = mapOf("screenshot" to captureScreenshot),
+        payload = mapOf(
+            "screenshot" to captureScreenshot,
+            "wait_to_stabilize" to waitToStabilize,
+        ),
     )
 
     suspend fun control(
@@ -452,16 +456,24 @@ class OmniFlowDeviceDispatcher internal constructor(
     private suspend fun observe(payload: Map<String, Any?>): Map<String, Any?> {
         beforeOperation()
         val captureScreenshot = payload["screenshot"] != false
+        val waitToStabilize = payload["wait_to_stabilize"] == true
         val suppressOverlay = shouldSuppressOverlayForScreenshot(
             captureScreenshot = captureScreenshot,
             screenshotExcludesOverlays = environment.screenshotExcludesOverlays(),
         )
         if (suppressOverlay) beforeScreenshot()
         return try {
-            environment.observe(captureScreenshot = captureScreenshot).also {
-                currentStateId = it.stateId
-                currentState = it
-            }.asHostMap(includeImage = captureScreenshot)
+            environment.observeWithDiagnostics(
+                captureScreenshot = captureScreenshot,
+                waitToStabilize = waitToStabilize,
+            ).also {
+                currentStateId = it.state.stateId
+                currentState = it.state
+            }.let {
+                it.state.asHostMap(includeImage = captureScreenshot) + mapOf(
+                    "stabilization" to it.stabilization,
+                )
+            }
         } finally {
             if (suppressOverlay) afterScreenshot()
         }
