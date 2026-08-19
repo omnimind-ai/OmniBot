@@ -32,7 +32,12 @@ class McpServerChannel {
                 try {
                     when (call.method) {
                         "state" -> {
-                            respondSuccess(result, McpServerManager.currentState().toMap())
+                            val state = if (McpServerManager.isPersistedEnabled()) {
+                                McpServerManager.ensureRunning(context)
+                            } else {
+                                McpServerManager.currentState()
+                            }
+                            respondSuccess(result, state.toMap())
                         }
                         "setEnabled" -> {
                             val enable = call.argument<Boolean>("enable") ?: false

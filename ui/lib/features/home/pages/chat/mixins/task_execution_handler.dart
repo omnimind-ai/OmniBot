@@ -47,6 +47,7 @@ mixin TaskExecutionHandler<T extends StatefulWidget> on State<T> {
   Future<void> persistConversationSnapshot({
     bool generateSummary,
     bool markComplete,
+    bool rethrowOnFailure = false,
   });
 
   // ===================== 上下文保存 =====================

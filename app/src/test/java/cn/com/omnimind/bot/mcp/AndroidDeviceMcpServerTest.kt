@@ -8,25 +8,51 @@ import kotlinx.coroutines.runBlocking
 
 class AndroidDeviceMcpServerTest {
     @Test
-    fun `public MCP surface exposes official user-level device tools`() {
-        assertEquals(
-            linkedSetOf(
-                "run_gui",
-                "run_function",
-                "list_functions",
-                "register_function",
-                "context_apps_query",
-                "file_transfer",
-                "schedule_task_create",
-                "schedule_task_list",
-                "schedule_task_update",
-                "schedule_task_delete",
-                "alarm_reminder_create",
-                "alarm_reminder_list",
-                "alarm_reminder_delete",
+    fun `public MCP surface exposes device and OmniBot native tools`() {
+        assertTrue(
+            AndroidDeviceMcpServer.publicToolNames.containsAll(
+                setOf(
+                    "run_gui",
+                    "run_function",
+                    "list_functions",
+                    "register_function",
+                    "context_apps_query",
+                    "file_transfer",
+                    "schedule_task_create",
+                    "schedule_task_list",
+                    "schedule_task_update",
+                    "schedule_task_delete",
+                    "alarm_reminder_create",
+                    "alarm_reminder_list",
+                    "alarm_reminder_delete",
+                ),
             ),
-            AndroidDeviceMcpServer.publicToolNames,
         )
+        assertTrue(AndroidDeviceMcpServer.publicToolNames.containsAll(setOf(
+            "context_time_now",
+            "browser_use",
+            "file_read",
+            "file_write",
+            "file_edit",
+            "file_list",
+            "file_search",
+            "file_stat",
+            "file_move",
+            "skills_list",
+            "skills_read",
+            "calendar_list",
+            "calendar_event_create",
+            "calendar_event_list",
+            "calendar_event_update",
+            "calendar_event_delete",
+            "music_playback_control",
+            "memory_search",
+            "memory_write_daily",
+            "memory_upsert_longterm",
+            "memory_rollup_day",
+            "memory_load",
+            "subagent_dispatch",
+        )))
         assertFalse(AndroidDeviceMcpServer.publicToolNames.any { it.startsWith("device_") })
     }
 

@@ -96,13 +96,13 @@ The repository maintains one host implementation and two packaging profiles:
 
 - `./gradlew assembleDevelopStandardDebug -POMNIBOT_PROFILE=main
   -Ptarget=lib/main_standard.dart` builds the normal `main` profile. It embeds
-  the verified OmniFlow baseline asset and installs its runtime by default, but
-  does not enable the operation tools; enable OmniFlow from Plugin Market only
-  when phone automation is needed. Later plugin updates come from GitHub Releases.
+  the verified OmniFlow baseline asset and enables its runtime and operation
+  tools by default. Disable OmniFlow from Plugin Market if phone automation is
+  not needed. Later plugin updates come from GitHub Releases.
 - `./gradlew assembleDevelopStandardDebug -POMNIBOT_PROFILE=investor
   -Ptarget=lib/main_standard.dart` builds the `investor` profile. It keeps
-  the complete packaged plugin catalog; official plugins also remain opt-in
-  unless explicitly enabled by the user.
+  the complete packaged plugin catalog; OmniFlow is enabled by default while
+  other official plugins remain opt-in unless explicitly enabled by the user.
 
 Both profiles use the same Kotlin, Flutter, plugin contracts, and catalog. The
 profile controls only packaged assets, catalog visibility, and first-launch

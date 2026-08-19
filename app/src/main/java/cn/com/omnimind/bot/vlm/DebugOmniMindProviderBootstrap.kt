@@ -96,7 +96,7 @@ object DebugOmniMindProviderBootstrap {
         existingProfileConfigured: Boolean,
     ): Boolean = existingProfileId == null ||
         !existingProfileConfigured ||
-        existingProfileId in DEBUG_MANAGED_PROFILE_IDS
+        existingProfileId == LEGACY_OMNIMIND_PROFILE_ID
 
     internal fun createLlmThuPlan(
         apiBase: String,

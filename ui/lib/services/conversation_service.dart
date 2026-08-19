@@ -147,6 +147,7 @@ class ConversationService {
     int? parentConversationId,
     ConversationMode? parentConversationMode,
     String? scheduledTaskId,
+    bool rethrowOnError = false,
   }) async {
     try {
       final result = await _assistCore
@@ -166,9 +167,11 @@ class ConversationService {
       return null;
     } on PlatformException catch (e) {
       debugPrint('创建对话失败: ${e.message}');
+      if (rethrowOnError) rethrow;
       return null;
     } catch (e) {
       debugPrint('创建对话失败: $e');
+      if (rethrowOnError) rethrow;
       return null;
     }
   }

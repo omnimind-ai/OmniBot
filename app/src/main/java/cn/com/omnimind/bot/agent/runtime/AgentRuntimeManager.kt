@@ -1145,6 +1145,14 @@ class AgentRuntimeManager private constructor(
         } else {
             ""
         }
+        val existingOpenCodeConfig = if (profile.id == OPENCODE_AGENT_ID) {
+            readTerminalTextFile(
+                path = OPENCODE_CONFIG_PATH,
+                executorKey = "opencode-agent-config-read"
+            )
+        } else {
+            ""
+        }
         val deepSeekConfig = parseDeepSeekHarnessConfig(existingDeepSeekConfig)
         val resolvedModel = resolveAcpLaunchModel(
             providerModelIds = providerModelIds,
@@ -1230,7 +1238,8 @@ class AgentRuntimeManager private constructor(
                         path = OPENCODE_CONFIG_PATH,
                         content = buildOpenCodeConfigJson(
                             model = mapping.openCodeModel,
-                            baseUrl = mapping.openCodeBaseUrl ?: sharedProvider.baseUrl
+                            baseUrl = mapping.openCodeBaseUrl ?: sharedProvider.baseUrl,
+                            existingConfigJson = existingOpenCodeConfig,
                         ),
                         executorKey = "opencode-agent-config-write"
                     )
@@ -2162,6 +2171,7 @@ private const val DEEPSEEK_HARNESS_CORDIS_PATH =
     "$DEEPSEEK_HARNESS_CONFIG_HOME/cordis.yml"
 private const val OPENCODE_CONFIG_PATH = "/root/.config/opencode/opencode.json"
 private val SUPPORTED_SHARED_PROVIDER_AGENT_IDS = setOf(
+    AcpAgentProfileStore.XIAOWAN_AGENT_ID,
     AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID,
     AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID,
     CLAUDE_CODE_AGENT_ID,
@@ -2612,37 +2622,45 @@ internal fun buildDeepSeekHarnessConfigJson(
  */
 internal fun buildOpenCodeConfigJson(
     model: String,
-    baseUrl: String
+    baseUrl: String,
+    existingConfigJson: String = "",
 ): String {
     val providerModel = model.substringAfter("/", model)
-    return GsonBuilder()
-        .setPrettyPrinting()
-        .create()
-        .toJson(
-            linkedMapOf(
-                "\$schema" to "https://opencode.ai/config.json",
-                "model" to model,
-                "provider" to linkedMapOf(
-                    OPEN_CODE_PROVIDER_ID to linkedMapOf(
-                        "npm" to "@ai-sdk/openai-compatible",
-                        "name" to "OmniBot Provider",
-                        "options" to linkedMapOf(
-                            "baseURL" to baseUrl,
-                            "apiKey" to "{env:OPENAI_API_KEY}"
-                        ),
-                        "models" to linkedMapOf(
-                            providerModel to linkedMapOf(
-                                "name" to providerModel,
-                                "limit" to linkedMapOf(
-                                    "context" to 128000,
-                                    "output" to 8192
-                                )
-                            )
-                        )
-                    )
-                )
-            )
-        ) + "\n"
+    val root = runCatching {
+        JsonParser.parseString(existingConfigJson).takeIf { it.isJsonObject }?.asJsonObject
+    }.getOrNull() ?: com.google.gson.JsonObject()
+    root.addProperty("\$schema", "https://opencode.ai/config.json")
+    root.addProperty("model", model)
+
+    val providers = root.getAsJsonObject("provider") ?: com.google.gson.JsonObject().also {
+        root.add("provider", it)
+    }
+    val provider = providers.getAsJsonObject(OPEN_CODE_PROVIDER_ID)
+        ?: com.google.gson.JsonObject().also {
+            providers.add(OPEN_CODE_PROVIDER_ID, it)
+        }
+    provider.addProperty("npm", "@ai-sdk/openai-compatible")
+    provider.addProperty("name", "OmniBot Provider")
+    val options = provider.getAsJsonObject("options") ?: com.google.gson.JsonObject().also {
+        provider.add("options", it)
+    }
+    options.addProperty("baseURL", baseUrl)
+    options.addProperty("apiKey", "{env:OPENAI_API_KEY}")
+    val models = provider.getAsJsonObject("models") ?: com.google.gson.JsonObject().also {
+        provider.add("models", it)
+    }
+    val modelConfig = models.getAsJsonObject(providerModel)
+        ?: com.google.gson.JsonObject().also {
+            models.add(providerModel, it)
+        }
+    modelConfig.addProperty("name", providerModel)
+    val limits = modelConfig.getAsJsonObject("limit") ?: com.google.gson.JsonObject().also {
+        modelConfig.add("limit", it)
+    }
+    limits.addProperty("context", 128000)
+    limits.addProperty("output", 8192)
+
+    return GsonBuilder().setPrettyPrinting().create().toJson(root) + "\n"
 }
 
 /**

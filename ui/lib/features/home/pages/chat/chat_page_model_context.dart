@@ -53,6 +53,7 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
               const <ProviderModelOption>[])
           .any((item) => item.id == selection.modelId);
     }
+
     final persisted = _conversationModelOverride;
     final pending = _pendingConversationModelOverride;
     final shouldClearPersisted =
@@ -63,9 +64,7 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
             modelId: persisted.modelId,
           ),
         );
-    final shouldClearPending =
-        pending != null &&
-        !hasVerifiedModel(pending);
+    final shouldClearPending = pending != null && !hasVerifiedModel(pending);
 
     if (!shouldClearPersisted && !shouldClearPending) {
       return;
@@ -468,7 +467,28 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
         _openClawPanelExpanded = false;
       });
     }
-    if (!_hasSelectableProviderModels) {
+    final activeSelection = _activeDispatchSceneSelection;
+    // Refresh the scene binding and Provider catalog at the point of use.
+    // ACP runtime startup can finish before the Flutter scene snapshot does;
+    // relying on the initial snapshot can therefore show the Provider's
+    // default model even after a different Provider model was selected.
+    await _loadNormalChatModelContext();
+    final refreshedSelection = _activeDispatchSceneSelection ?? activeSelection;
+    final refreshedProviderModels = refreshedSelection == null
+        ? const <ProviderModelOption>[]
+        : (_modelOptionsByProfileId[refreshedSelection.providerProfileId] ??
+              const <ProviderModelOption>[]);
+    if (refreshedSelection != null && refreshedProviderModels.length <= 1) {
+      await _loadCachedProviderModelsForChatSelector(refreshedSelection);
+    }
+    final selectorProfiles = _modelProviderProfiles;
+    final selectorOptions = _modelOptionsByProfileId;
+    final hasSelectorModels = selectorProfiles.any((profile) {
+      return profile.configured &&
+          (selectorOptions[profile.id] ?? const <ProviderModelOption>[])
+              .isNotEmpty;
+    });
+    if (!hasSelectorModels) {
       return;
     }
     // 关键：不能调 `_inputFocusNode.unfocus()`，也不能用 `showGlassPopup`
@@ -506,8 +526,8 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
       builder: (handle) => ConversationModelSelectorContent(
         width: popupWidth,
         maxHeight: popupMaxHeight,
-        profiles: _modelProviderProfiles,
-        providerModelsByProfileId: _modelOptionsByProfileId,
+        profiles: selectorProfiles,
+        providerModelsByProfileId: selectorOptions,
         currentSelection: currentSelection,
         // 软键盘"确定"提交搜索时:先打开 popup 的"一次性键盘隐藏豁免",再 unfocus
         // —— 这样 IME 塌陷不会被 DismissOverlayOnKeyboardHide 当作"用户想关 popup"
@@ -537,6 +557,44 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
         _conversationModelSelectorHandle = null;
       }
     }
+  }
+
+  Future<void> _loadCachedProviderModelsForChatSelector(
+    _ChatModelOverrideSelection selection,
+  ) async {
+    final profile = _modelProviderProfiles
+        .where((item) => item.id == selection.providerProfileId)
+        .firstOrNull;
+    if (profile == null) {
+      return;
+    }
+    final cached = await ModelProviderConfigService.getCachedFetchedModels(
+      profileId: profile.id,
+    );
+    if (cached.isEmpty) {
+      return;
+    }
+    final hidden = await ModelProviderConfigService.getHiddenChatModelIds(
+      profileId: profile.id,
+    );
+    final models = ModelProviderConfigService.filterChatModelOptions(
+      models: ModelProviderConfigService.mergeModelOptions(
+        remoteModels: cached,
+        manualModelIds: const <String>[],
+      ),
+      hiddenModelIds: hidden,
+    );
+    if (!mounted || models.isEmpty) {
+      return;
+    }
+    setState(() {
+      final next = <String, List<ProviderModelOption>>{
+        for (final entry in _modelOptionsByProfileId.entries)
+          entry.key: List<ProviderModelOption>.from(entry.value),
+      };
+      next[profile.id] = models;
+      _modelOptionsByProfileId = next;
+    });
   }
 
   @override

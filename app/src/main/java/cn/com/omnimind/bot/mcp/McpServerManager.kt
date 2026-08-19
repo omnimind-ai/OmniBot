@@ -150,6 +150,13 @@ object McpServerManager {
         )
     }
 
+    /**
+     * Returns whether the user has enabled the persisted local MCP service.
+     * This is deliberately separate from [McpServerState.running]: after a
+     * process restart the preference can be true before the socket is restored.
+     */
+    internal fun isPersistedEnabled(): Boolean = mmkv.decodeBool(PREF_ENABLE, false)
+
     fun stopServer() {
         synchronized(serverLock) {
             stopServerLocked()
@@ -422,6 +429,15 @@ object McpServerManager {
                         ?.trim()
                     if (bearerToken.isNullOrBlank() || !timingSafeEquals(bearerToken, token)) {
                         call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Authentication required"))
+                        finish()
+                        return@intercept
+                    }
+                    if (ModernMcpProtocol.isModernRequest(call)) {
+                        ModernMcpProtocol.handle(
+                            call = call,
+                            context = appContext,
+                            scope = serverScope,
+                        )
                         finish()
                     }
                 }

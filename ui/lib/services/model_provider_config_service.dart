@@ -929,16 +929,48 @@ class ModelProviderConfigService {
             providerName: profile.name,
             capability: 'text',
           );
+          final cached = await getCachedFetchedModels(
+            profileId: profile.id,
+            // This is the same Provider profile catalog. Keep it available
+            // for the picker when /models is temporarily unauthorized or
+            // returns only a partial list.
+          );
+          final manualIds = profile.sourceType == 'omnibot_official'
+              ? const <String>[]
+              : await getManualModelIds(profileId: profile.id);
           final hiddenModelIds = await getHiddenChatModelIds(
             profileId: profile.id,
           );
           models = filterChatModelOptions(
-            models: fetched,
+            models: mergeModelOptions(
+              remoteModels: <ProviderModelOption>[...fetched, ...cached],
+              manualModelIds: manualIds,
+            ),
             hiddenModelIds: hiddenModelIds,
           );
         } catch (_) {
-          // A failed /models request must not resurrect cached, manual, or
-          // scene-bound model IDs.
+          // Keep the Provider catalog available when a transient/auth failure
+          // prevents a fresh /models request. These cached models came from
+          // this same Provider profile and endpoint; never fall back to ACP
+          // harness declarations or scene-bound IDs here.
+          final cached = await getCachedFetchedModels(
+            profileId: profile.id,
+            // This is the same Provider profile catalog. Keep it available
+            // even when the current /models request cannot authenticate.
+          );
+          final manualIds = profile.sourceType == 'omnibot_official'
+              ? const <String>[]
+              : await getManualModelIds(profileId: profile.id);
+          final hiddenModelIds = await getHiddenChatModelIds(
+            profileId: profile.id,
+          );
+          models = filterChatModelOptions(
+            models: mergeModelOptions(
+              remoteModels: cached,
+              manualModelIds: manualIds,
+            ),
+            hiddenModelIds: hiddenModelIds,
+          );
         }
       }
       groups.add(ProviderModelGroup(profile: profile, models: models));

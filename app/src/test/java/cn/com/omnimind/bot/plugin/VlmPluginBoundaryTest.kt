@@ -40,6 +40,7 @@ class VlmPluginBoundaryTest {
         assertFalse(catalog.contains("\"name\": \"Android GUI\""))
         assertFalse(host.contains("DEFAULT_INSTALL_GUI_PLUGIN"))
         assertFalse(host.contains("DEFAULT_INSTALL_ALL_PLUGINS"))
+        assertTrue(host.contains("defaultEnabledPluginIds = setOf(OmniVlmLiteProvider.ID)"))
         assertTrue(catalog.contains("\"required\": false"))
         assertTrue(catalog.contains("\"installByDefault\": true"))
         assertTrue(appBuild.contains("prop(\"OMNIBOT_PROFILE\").ifBlank { \"main\" }"))

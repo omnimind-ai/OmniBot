@@ -94,4 +94,14 @@ class DebugOmniMindProviderBootstrapTest {
         )
     }
 
+    @Test
+    fun `current debug provider binding remains user selected`() {
+        assertFalse(
+            DebugOmniMindProviderBootstrap.shouldReplaceDefaultBinding(
+                existingProfileId = DebugOmniMindProviderBootstrap.LLMTHU_PROFILE_ID,
+                existingProfileConfigured = true,
+            )
+        )
+    }
+
 }

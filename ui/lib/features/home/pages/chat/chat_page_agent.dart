@@ -6,6 +6,7 @@ const String _kAgentCollaborationModePreferenceKey = 'collaboration_mode';
 const String _kAgentPreferenceStoragePrefix = 'chat_agent_command_preference';
 const String _kLegacyAgentPreferenceStoragePrefix =
     'chat_codex_command_preference';
+const String _kXiaowanAcpAgentId = 'xiaowan-acp';
 const String _kDeepSeekHarnessAgentId = 'deepseek-harness-acp';
 const Duration _remoteCodexExternalActiveGrace = Duration(seconds: 6);
 const List<String> _kAgentModelListResponseKeys = <String>[
@@ -31,7 +32,12 @@ Keep the file practical and avoid generic advice. If AGENTS.md already exists, p
 
 mixin _ChatPageAgentMixin on _ChatPageStateBase {
   bool _usesSharedProviderModel(String? agentId) {
-    return switch (agentId?.trim()) {
+    final normalizedAgentId = agentId?.trim() ?? '';
+    final agentKey = normalizedAgentId.startsWith('local-')
+        ? normalizedAgentId.substring('local-'.length)
+        : normalizedAgentId;
+    return switch (agentKey) {
+      _kXiaowanAcpAgentId ||
       'codex-acp' ||
       'claude-code-acp' ||
       'opencode-acp' ||
@@ -73,17 +79,37 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       return const <String>[];
     }
 
-    var options = <ProviderModelOption>[];
+    // The normal chat model context already owns the complete Provider
+    // catalog. Keep it as the baseline and merge a fresh /models response on
+    // top so a partial/transient response cannot reduce the Agent picker to
+    // only the currently bound model.
+    final providerOptions = <ProviderModelOption>[
+      ...?_modelOptionsByProfileId[profile.id],
+    ];
+    var freshOptions = const <ProviderModelOption>[];
     try {
-      options = await ModelProviderConfigService.fetchModels(
+      freshOptions = await ModelProviderConfigService.fetchModels(
         profileId: profile.id,
         providerName: profile.name,
         capability: 'text',
       );
+      providerOptions.addAll(freshOptions);
     } catch (_) {
       // Agent selection only accepts models verified by this Provider.
     }
-    return options
+    final cachedOptions =
+        await ModelProviderConfigService.getCachedFetchedModels(
+          profileId: profile.id,
+        );
+    providerOptions.addAll(cachedOptions);
+    final storedOptions =
+        await ModelProviderConfigService.getStoredModelOptionsForProfile(
+          profile.id,
+          profile: profile,
+          enrichMetadata: false,
+        );
+    providerOptions.addAll(storedOptions);
+    return providerOptions
         .map((item) => item.id.trim())
         .where((item) => item.isNotEmpty)
         .toSet()
@@ -407,15 +433,26 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
   @override
   Future<void> _loadAgentModelOptionsWhenReady({bool force = false}) async {
     final currentSourceKey = agentModelSourceKey(_agentRuntimeStatus);
+    final sharedProviderAgent =
+        _usesSharedProviderModel(_activeAcpAgentId) ||
+        _usesSharedProviderModel(_agentRuntimeStatus.activeAgentId);
     final hasResolvedEffort =
         _agentReasoningEffortOptions.isEmpty ||
         (_activeAgentReasoningEffort ?? '').trim().isNotEmpty;
     if (!force &&
-        _agentRuntimeStatus.connected &&
+        (sharedProviderAgent || _agentRuntimeStatus.connected) &&
         _loadedAgentModelSourceKey == currentSourceKey &&
         _agentModelOptions.isNotEmpty &&
+        (!sharedProviderAgent || _agentModelOptions.length > 1) &&
         (_activeAgentModelId ?? '').trim().isNotEmpty &&
         hasResolvedEffort) {
+      return;
+    }
+    if (sharedProviderAgent && !force && _agentModelOptions.length > 1) {
+      return;
+    }
+    if (sharedProviderAgent && !force) {
+      await _loadAgentModelOptions(force: true);
       return;
     }
     late AgentRuntimeStatus status;
@@ -1199,10 +1236,10 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     } else {
       try {
         await _ensureActiveConversationReadyForStreaming();
-      } catch (_) {
+      } catch (error) {
         if (mounted) {
           _currentDispatchTaskId = messageIds.aiMessageId;
-          handleAgentError('Conversation setup failed. Please retry.');
+          handleAgentError('Conversation setup failed. Please retry. $error');
         }
         return;
       }
@@ -1441,11 +1478,14 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     if (remoteCodex && eventThreadId != null && !shouldPromoteRemoteEvent) {
       _ensureRemoteCodexRuntimeForThread(eventThreadId);
     }
-    final normalConversationId =
-        _modeState(ChatPageMode.normal).currentConversationId;
-    final agentConversationId =
-        _modeState(ChatPageMode.agent).currentConversationId;
-    final eventMode = remoteCodex ||
+    final normalConversationId = _modeState(
+      ChatPageMode.normal,
+    ).currentConversationId;
+    final agentConversationId = _modeState(
+      ChatPageMode.agent,
+    ).currentConversationId;
+    final eventMode =
+        remoteCodex ||
             conversationId == agentConversationId ||
             event['conversationMode'] == ConversationMode.agent.storageValue
         ? ChatPageMode.agent
@@ -1547,10 +1587,10 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     } else {
       try {
         await _ensureActiveConversationReadyForStreaming();
-      } catch (_) {
+      } catch (error) {
         if (mounted) {
           _currentDispatchTaskId = aiMessageId;
-          handleAgentError('Conversation setup failed. Please retry.');
+          handleAgentError('Conversation setup failed. Please retry. $error');
         }
         return;
       }

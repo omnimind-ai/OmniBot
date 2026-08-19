@@ -32,8 +32,8 @@
       },
       "presentation": {
         "description": {
-          "zh": "OmniFlow 运行时默认安装，但 GUI/VLM 操作模块默认关闭；需要操作手机时再启用。",
-          "en": "The OmniFlow runtime is installed by default, but its GUI/VLM operation module is disabled until you enable it."
+          "zh": "OmniFlow 运行时和 GUI/VLM 操作模块默认启用；首次使用手机操作前，请确认无障碍服务和 Agent Provider 已配置。",
+          "en": "The OmniFlow runtime and GUI/VLM operation module are enabled by default; configure accessibility and an Agent Provider before the first phone task."
         },
         "readiness": "vlm_provider",
         "usage": [
@@ -55,8 +55,8 @@
               "en": "Ready out of the box"
             },
             "description": {
-              "zh": "默认只安装运行时，不启用操作工具；需要手机操作时，在插件市场启用 OmniFlow。",
-              "en": "Only the runtime is installed by default; operation tools stay disabled until you enable OmniFlow from Plugin Market."
+              "zh": "运行时和操作工具默认启用；需要手机操作时，确认无障碍服务和 Agent Provider 已就绪即可。",
+              "en": "The runtime and operation tools are enabled by default; confirm accessibility and an Agent Provider are ready before phone tasks."
             }
           },
           {

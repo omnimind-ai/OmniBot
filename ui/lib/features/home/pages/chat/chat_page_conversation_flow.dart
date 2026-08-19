@@ -102,6 +102,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       await persistConversationSnapshot(
         generateSummary: false,
         markComplete: false,
+        rethrowOnFailure: true,
       );
     }
     if (_currentConversationId == null) {
@@ -354,8 +355,8 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
           !configuredProfileIds.contains(providerProfileId)) {
         continue;
       }
-      final models = optionsSource[providerProfileId] ??
-          const <ProviderModelOption>[];
+      final models =
+          optionsSource[providerProfileId] ?? const <ProviderModelOption>[];
       if (models.any((model) => model.id == scene.effectiveModel)) {
         return true;
       }
@@ -605,9 +606,9 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
 
     try {
       await _ensureActiveConversationReadyForStreaming();
-    } catch (_) {
+    } catch (error) {
       if (mounted) {
-        handleAgentError('Conversation setup failed. Please retry.');
+        handleAgentError('Conversation setup failed. Please retry. $error');
       }
       return;
     }
@@ -770,9 +771,9 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
   Future<void> _sendPureChatMessage(String aiMessageId) async {
     try {
       await _ensureActiveConversationReadyForStreaming();
-    } catch (_) {
+    } catch (error) {
       if (mounted) {
-        handleAgentError('Conversation setup failed. Please retry.');
+        handleAgentError('Conversation setup failed. Please retry. $error');
       }
       return;
     }
@@ -813,10 +814,12 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
         effort: _activeConversationReasoningEffort,
         conversationMode: activeConversationModeValue.storageValue,
       );
-      _normalAcpSessionId = _asAgentString(response['sessionId']) ??
+      _normalAcpSessionId =
+          _asAgentString(response['sessionId']) ??
           _asAgentString(response['threadId']) ??
           _normalAcpSessionId;
-      _normalAcpTurnId = _asAgentString(response['promptId']) ??
+      _normalAcpTurnId =
+          _asAgentString(response['promptId']) ??
           _asAgentString(response['turnId']) ??
           _normalAcpTurnId;
       if (!remoteRuntime && _normalAcpSessionId == null) {
@@ -905,10 +908,12 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
         effort: _activeConversationReasoningEffort,
         conversationMode: activeConversationModeValue.storageValue,
       );
-      _normalAcpSessionId = _asAgentString(response['sessionId']) ??
+      _normalAcpSessionId =
+          _asAgentString(response['sessionId']) ??
           _asAgentString(response['threadId']) ??
           _normalAcpSessionId;
-      _normalAcpTurnId = _asAgentString(response['promptId']) ??
+      _normalAcpTurnId =
+          _asAgentString(response['promptId']) ??
           _asAgentString(response['turnId']) ??
           _normalAcpTurnId;
       if (_normalAcpSessionId == null && !remoteCodex) {

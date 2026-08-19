@@ -16,6 +16,7 @@ import cn.com.omnimind.bot.agent.WorkspaceMemoryRollupScheduler
 import cn.com.omnimind.bot.agent.WorkspaceScheduledTaskScheduler
 import cn.com.omnimind.bot.activity.StartupThemeResolver
 import cn.com.omnimind.bot.cleanup.LegacyLocalModelDataCleanup
+import cn.com.omnimind.bot.mcp.McpServerManager
 import cn.com.omnimind.bot.plugin.OmniPluginHost
 import cn.com.omnimind.bot.plugin.official.OfficialOmniPluginProviders
 import cn.com.omnimind.bot.quicklog.QuickLogWidgetUpdater
@@ -137,12 +138,11 @@ class App : BaseApplication() {
         }
 
         initSDKsAfterPrivacyConsent()
-        // The MCP server is an optional local service.  Do not bind a socket
-        // during process creation: a stale previous process or another local
-        // service can own the persisted port, and Ktor reports that bind
-        // failure from its accept coroutine.  ACP agents start the same
-        // official MCP endpoint lazily through McpServerManager.ensureRunning,
-        // while the local-service settings page can still start it explicitly.
+        // Restore the persisted local MCP service after the application process
+        // is recreated.  The server still binds on its IO scope, so startup is
+        // not blocked, while the settings channel can synchronously finish the
+        // same restore if the first state query wins the race.
+        McpServerManager.restoreIfEnabled(this)
         CoroutineScope(Dispatchers.IO).launch {
             runCatching {
                 EmbeddedTerminalRuntime.warmup(this@App)

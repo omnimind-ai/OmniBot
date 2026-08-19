@@ -2,6 +2,7 @@ package cn.com.omnimind.bot.plugin
 
 import android.content.Context
 import cn.com.omnimind.bot.agent.AgentToolDefinitions
+import cn.com.omnimind.bot.plugin.official.OmniVlmLiteProvider
 
 class OmniPluginHost private constructor(context: Context) {
     private val applicationContext = context.applicationContext
@@ -12,6 +13,7 @@ class OmniPluginHost private constructor(context: Context) {
         stateStore = SharedPreferencesOmniPluginStateStore(applicationContext),
         reservedToolNames =
             AgentToolDefinitions.reservedToolNames() + PluginDiscoveryToolHandler.TOOL_NAMES,
+        defaultEnabledPluginIds = setOf(OmniVlmLiteProvider.ID),
     )
 
     suspend fun list(): List<OmniPluginState> = platform.list()
