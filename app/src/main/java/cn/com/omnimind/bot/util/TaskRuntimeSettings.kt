@@ -445,7 +445,12 @@ object TaskRuntimeSettings {
     }
 
     private fun normalizeConversationMode(mode: String?): String {
-        return mode?.trim()?.ifEmpty { "normal" } ?: "normal"
+        return when (mode?.trim()?.lowercase()) {
+            null, "", "normal" -> "normal"
+            "agent", "codex", "acp", "coding" -> "agent"
+            "chat", "chatonly", "chat-only" -> "chat_only"
+            else -> mode.trim().lowercase()
+        }
     }
 
     private fun sameConversationTarget(

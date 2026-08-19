@@ -246,8 +246,6 @@ void main() {
                 'providerName': 'OmniMind GPT Luna (Debug)',
                 'model': 'gpt-5.6-sol',
               };
-            case 'pinToHome':
-              return <String, Object?>{'status': 'updated'};
             case 'uninstall':
               plugins = <Map<String, Object?>>[
                 <String, Object?>{
@@ -318,7 +316,7 @@ void main() {
   });
 
   testWidgets(
-    'lists Vibe Builder uninstalled, hides internals, and opens dashboards',
+    'lists plugins while hiding internal runtimes',
     (tester) async {
       plugins = <Map<String, Object?>>[
         <String, Object?>{
@@ -338,13 +336,6 @@ void main() {
           'name': '健身兽',
           'installed': true,
           'enabled': true,
-          'presentation': <String, Object?>{
-            'dashboard': <String, Object?>{
-              'route': '/task/omniflow',
-              'navigation': 'push',
-              'label': <String, Object?>{'zh': '进入', 'en': 'Open'},
-            },
-          },
         },
       ];
 
@@ -360,21 +351,9 @@ void main() {
         find.descendant(of: vibeBuilder, matching: find.text('未安装')),
         findsOneWidget,
       );
-      expect(
-        find.byKey(
-          const ValueKey('plugin-dashboard-com.omnimind.vibe-project-builder'),
-        ),
-        findsNothing,
-      );
       expect(find.text('Internal Runtime'), findsNothing);
       expect(find.text('健身兽'), findsOneWidget);
-      await tester.tap(
-        find.byKey(
-          const ValueKey('plugin-dashboard-local.project.fitness-beast'),
-        ),
-      );
-      await tester.pumpAndSettle();
-      expect(find.text('Execution center route'), findsOneWidget);
+      expect(find.byIcon(Icons.dashboard_outlined), findsNothing);
     },
   );
 
@@ -473,15 +452,6 @@ void main() {
     expect(find.text('去聊天试用'), findsOneWidget);
     expect(find.text('查看已保存操作'), findsOneWidget);
     expect(find.text('已保存操作与执行记录'), findsOneWidget);
-    await tester.scrollUntilVisible(
-      find.byKey(const ValueKey('plugin-add-to-home-screen')),
-      260,
-      scrollable: find.byType(Scrollable).first,
-    );
-    await tester.tap(find.byKey(const ValueKey('plugin-add-to-home-screen')));
-    await tester.pumpAndSettle();
-    expect(calls.any((call) => call.method == 'pinToHome'), isTrue);
-
     await tester.tap(find.text('已保存操作与执行记录'));
     await tester.pumpAndSettle();
     expect(find.text('Execution center route'), findsOneWidget);

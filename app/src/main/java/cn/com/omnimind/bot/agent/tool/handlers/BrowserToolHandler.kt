@@ -13,7 +13,7 @@ class BrowserToolHandler(
     private val helper: SharedHelper,
     private val workspaceManager: cn.com.omnimind.bot.agent.AgentWorkspaceManager
 ) : ToolHandler {
-    override val toolNames: Set<String> = setOf("browser_use")
+    override val toolNames: Set<String> = setOf("browser_use", "webfetch")
 
     override suspend fun execute(
         toolCall: cn.com.omnimind.baselib.llm.AssistantToolCall,

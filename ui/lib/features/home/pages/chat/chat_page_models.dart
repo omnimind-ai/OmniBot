@@ -8,6 +8,25 @@ import 'package:ui/features/home/pages/chat/utils/agent_run_timeline.dart';
 import 'package:ui/models/chat_message_model.dart';
 import 'package:ui/services/agent_message_kinds.dart';
 
+enum ThinkingStage {
+  thinking(1),
+  toolCall(2),
+  executing(3),
+  complete(4),
+  cancelled(5);
+
+  const ThinkingStage(this.value);
+
+  final int value;
+
+  static ThinkingStage fromValue(int value) {
+    return ThinkingStage.values.firstWhere(
+      (stage) => stage.value == value,
+      orElse: () => ThinkingStage.thinking,
+    );
+  }
+}
+
 enum ChatIslandDisplayLayer {
   mode('mode'),
   tools('tools');
@@ -42,6 +61,15 @@ bool shouldReloadConversationMessagesChanged({
       reason == 'agent_stream_snapshot' ||
       reason == 'chat_task_stream_snapshot';
   if (isRuntimeStreamSnapshot && (hasInFlightTask || hasRuntimeMessages)) {
+    return false;
+  }
+  // A local send persists its optimistic user row through the native history
+  // channel, which echoes a generic messages_replaced event. While the turn is
+  // active that database snapshot can still be older than the live runtime;
+  // reloading it would make the just-sent user message flash away. External
+  // device messages use the explicit external_user_message reason and remain
+  // reloadable below.
+  if (reason == 'messages_replaced' && hasInFlightTask) {
     return false;
   }
   if (reason == 'messages_replaced' && suppressLocalSnapshotEcho) {

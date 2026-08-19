@@ -36,7 +36,7 @@ internal data class WebAgentEventUpdate(
     val errorMessage: String? = null
 )
 
-private const val WEB_AGENT_MODE_STORAGE_VALUE = "codex"
+private const val WEB_AGENT_MODE_STORAGE_VALUE = "agent"
 
 private data class WebAgentTextEntryState(
     val entryId: String,
@@ -116,7 +116,10 @@ internal class WebAgentRunBridge(
         val state = WebAgentRunState(
             taskId = taskId,
             conversationId = conversationId,
-            conversationMode = conversationMode.trim().ifEmpty { WEB_AGENT_MODE_STORAGE_VALUE },
+            conversationMode = resolveWebConversationMode(
+                storedMode = null,
+                requestedMode = conversationMode
+            ),
             createdAt = userMessageCreatedAt?.takeIf { it > 0L }
                 ?: System.currentTimeMillis(),
             agentId = agentId?.trim()?.takeIf { it.isNotEmpty() }
@@ -163,6 +166,13 @@ internal class WebAgentRunBridge(
                 threadId = response["threadId"]?.toString(),
                 turnId = response["turnId"]?.toString()
             )
+            if (response["completed"] == true) {
+                if (response["error"] == null) {
+                    finishSuccessfully(state)
+                } else {
+                    finishWithError(state, response["error"].toString())
+                }
+            }
             response
         } catch (error: Throwable) {
             finishWithError(
@@ -333,7 +343,7 @@ internal class WebAgentRunBridge(
             }
         }
         publishMessages(state, finalizeInterruptedEntries = true)
-        publishTerminalEvent(state, "completed")
+        publishTaskEvent(state, "completed")
         removeState(state)
     }
 
@@ -365,7 +375,7 @@ internal class WebAgentRunBridge(
             }
         }
         publishMessages(state, finalizeInterruptedEntries = true)
-        publishTerminalEvent(state, "error", message)
+        publishTaskEvent(state, "error", message)
         removeState(state)
     }
 
@@ -538,29 +548,21 @@ internal class WebAgentRunBridge(
         )
     }
 
-    private fun publishTerminalEvent(
+    private fun publishTaskEvent(
         state: WebAgentRunState,
         kind: String,
         error: String? = null
     ) {
         RealtimeHub.publish(
-            "acp_event",
+            "chat_task_event",
             linkedMapOf<String, Any?>(
-                "method" to "acp/presentation",
+                "kind" to kind,
+                "taskId" to state.taskId,
                 "conversationId" to state.conversationId,
                 "conversationMode" to state.conversationMode,
                 "threadId" to state.threadId,
                 "turnId" to state.turnId,
-                "presentation" to linkedMapOf<String, Any?>(
-                    "kind" to if (kind == "completed") {
-                        "turn_completed"
-                    } else {
-                        "turn_failed"
-                    },
-                    "threadId" to state.threadId,
-                    "turnId" to state.turnId,
-                    "error" to error
-                ).filterValues { it != null }
+                "error" to error
             ).filterValues { it != null }
         )
     }
@@ -1108,7 +1110,7 @@ private fun findRemoteCodexProtocolMessage(
     val direct = normalizeMap(map["msg"])
     if (direct.isNotEmpty()) return direct
     val type = map["type"]?.toString()?.trim().orEmpty()
-    if (type.isNotEmpty() && type != "codex/event") return map
+    if (type.isNotEmpty()) return map
     for (key in listOf("event", "message", "data", "payload", "params")) {
         val nested = findRemoteCodexProtocolMessage(map[key], depth + 1)
         if (nested.isNotEmpty()) return nested

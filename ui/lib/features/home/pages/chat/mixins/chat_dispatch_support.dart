@@ -11,9 +11,9 @@ const String kChatContextStorageKey = 'chat_context_for_summary';
 const String kCompactedContextSummaryPrefix =
     '<context-summary> The following is a summary of the earlier conversation that was compacted to save context space.';
 
-/// 任务执行处理 Mixin
+/// 聊天调度支持 Mixin
 /// 负责处理可执行任务、发送消息等功能
-mixin TaskExecutionHandler<T extends StatefulWidget> on State<T> {
+mixin ChatDispatchSupport<T extends StatefulWidget> on State<T> {
   final Map<String, String> _imageDataUrlCache = <String, String>{};
 
   // ===================== 抽象属性/方法（需要在主类中实现）=====================
@@ -31,8 +31,8 @@ mixin TaskExecutionHandler<T extends StatefulWidget> on State<T> {
   bool get isCheckingExecutableTask;
   set isCheckingExecutableTask(bool value);
 
-  String? get currentDispatchTaskId;
-  set currentDispatchTaskId(String? value);
+  String? get currentDispatchTurnId;
+  set currentDispatchTurnId(String? value);
   int get currentThinkingStage;
   set currentThinkingStage(int value);
   bool get isDeepThinking;

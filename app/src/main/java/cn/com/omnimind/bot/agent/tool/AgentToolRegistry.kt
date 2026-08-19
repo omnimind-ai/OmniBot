@@ -34,7 +34,7 @@ class AgentToolRegistry(
     // Keep the visual-operation entry visible so the Agent can explain how
     // to enable it. VlmToolHandler gates execution until OmniFlow is enabled.
     includeVlmTool: Boolean = true,
-) : AgentToolCatalog {
+    ) : AgentToolCatalog {
     data class RuntimeToolDescriptor(
         val name: String,
         val displayName: String,
@@ -46,7 +46,11 @@ class AgentToolRegistry(
     private val tag = "AgentToolRegistry"
     private val toolSchemas = linkedMapOf<String, JsonObject>()
     private val runtimeDescriptors = linkedMapOf<String, RuntimeToolDescriptor>()
+    private val allToolsByName = linkedMapOf<String, ChatCompletionTool>()
+    private val exposedToolNames = linkedSetOf<String>()
+    override val usesProgressiveDiscovery: Boolean = userMessage != null
     override val toolsForModel: List<ChatCompletionTool>
+        get() = exposedToolNames.mapNotNull { allToolsByName[it] }
 
     init {
         val locale = AppLocaleManager.resolvePromptLocale(context)
@@ -150,11 +154,16 @@ class AgentToolRegistry(
                     ?.lowercase()
                     .orEmpty()
             }
-        val visibleToolNames = userMessage?.let { message ->
+        val modelConversationDefinitions = if (userMessage != null) {
+            AgentToolDefinitions.modelFacingTools(conversationDefinitions)
+        } else {
+            conversationDefinitions
+        }
+        val selectedToolNames = userMessage?.let { message ->
             AgentToolVisibilitySelector.select(
                 userMessage = message,
                 routingMode = toolRoutingMode,
-                candidates = conversationDefinitions.mapNotNull { definition ->
+                candidates = modelConversationDefinitions.mapNotNull { definition ->
                     val function = definition["function"] as? JsonObject
                         ?: return@mapNotNull null
                     val name = function["name"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
@@ -173,21 +182,21 @@ class AgentToolRegistry(
                 },
             )
         }
-        val filteredDefinitions = if (visibleToolNames == null) {
-            conversationDefinitions
+        val initialToolNames = if (selectedToolNames == null) {
+            modelConversationDefinitions
+                .mapNotNull { definition ->
+                    (definition["function"] as? JsonObject)
+                        ?.get("name")
+                        ?.jsonPrimitive
+                        ?.contentOrNull
+                        ?.trim()
+                }
+                .toSet()
         } else {
-            conversationDefinitions.filter { definition ->
-                val toolName = (definition["function"] as? JsonObject)
-                    ?.get("name")
-                    ?.jsonPrimitive
-                    ?.contentOrNull
-                    ?.trim()
-                    .orEmpty()
-                toolName in visibleToolNames
-            }
+            selectedToolNames
         }
 
-        toolsForModel = filteredDefinitions.mapNotNull { definition ->
+        modelConversationDefinitions.mapNotNull { definition ->
             val function = definition["function"] as? JsonObject ?: return@mapNotNull null
             val name = function["name"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
             if (name.isBlank()) return@mapNotNull null
@@ -216,8 +225,14 @@ class AgentToolRegistry(
                     description = description,
                     parameters = parameters
                 )
-            )
+            ).also { allToolsByName[name] = it }
         }
+
+        exposedToolNames += if (selectedToolNames == null) {
+            allToolsByName.keys
+        } else {
+            initialToolNames
+        }.filter { it in allToolsByName }
 
         // Debug dump: full registered tool list to verify which ones the LLM actually receives.
         OmniLog.i(
@@ -237,6 +252,57 @@ class AgentToolRegistry(
             displayName = toolName,
             toolType = "builtin"
         )
+    }
+
+    override fun searchTools(query: String, limit: Int): List<AgentToolSearchEntry> {
+        val normalizedTerms = query
+            .trim()
+            .lowercase()
+            .split(Regex("\\s+|[,，、]"))
+            .map(String::trim)
+            .filter(String::isNotBlank)
+        val scored = runtimeDescriptors.values
+            .asSequence()
+            .filter { it.name != AgentToolVisibilitySelector.TOOL_SEARCH_NAME }
+            .mapNotNull { descriptor ->
+                val tool = allToolsByName[descriptor.name] ?: return@mapNotNull null
+                val haystack = buildString {
+                    append(descriptor.name)
+                    append(' ')
+                    append(descriptor.displayName)
+                    append(' ')
+                    append(tool.function.description)
+                    append(' ')
+                    append(descriptor.serverName.orEmpty())
+                }.lowercase()
+                val score = if (normalizedTerms.isEmpty()) {
+                    0
+                } else {
+                    normalizedTerms.count { term -> haystack.contains(term) }
+                }
+                if (normalizedTerms.isNotEmpty() && score == 0) return@mapNotNull null
+                AgentToolSearchEntry(
+                    name = descriptor.name,
+                    displayName = descriptor.displayName,
+                    description = tool.function.description,
+                    toolType = descriptor.toolType,
+                    serverName = descriptor.serverName,
+                ) to score
+            }
+            .sortedWith(compareByDescending<Pair<AgentToolSearchEntry, Int>> { it.second }
+                .thenBy { it.first.name.lowercase() })
+            .take(limit.coerceIn(1, 50))
+            .map { it.first }
+            .toList()
+        return scored
+    }
+
+    override fun exposeToolNames(names: Set<String>) {
+        names.forEach { name ->
+            if (name in allToolsByName) {
+                exposedToolNames += name
+            }
+        }
     }
 
     private fun canonicalizeJson(value: JsonElement): JsonElement {

@@ -19,6 +19,22 @@ import kotlinx.serialization.json.jsonPrimitive
 
 object AgentToolDefinitions {
     private const val TOOL_TITLE_FIELD = "tool_title"
+
+    /**
+     * Names used by the common coding Harnesses. The implementation remains
+     * OmniBot's existing handler, but the model-facing catalog uses the
+     * stable native vocabulary instead of exposing our private file/terminal
+     * names to Xiaowan.
+     */
+    private val nativeModelToolAliases: Map<String, String> = mapOf(
+        "file_read" to "read",
+        "file_write" to "write",
+        "file_edit" to "edit",
+        "terminal_execute" to "bash",
+        "file_list" to "glob",
+        "file_search" to "grep",
+        "browser_use" to "webfetch",
+    )
     
     private fun currentLocale(): PromptLocale = AppLocaleManager.currentPromptLocale()
 
@@ -524,6 +540,36 @@ object AgentToolDefinitions {
         "subagent 被触发时要立即执行的任务说明。不要把“每天/几点/定时/提醒/闹钟/创建任务”等调度话术写进去，而要写成到点后此刻真正要完成的动作。" to
             "The task instructions that the subagent should execute immediately when triggered. Do not include scheduling phrases such as daily, at a specific time, scheduled, remind me, alarm, or create a task. Describe the real action that should be carried out at execution time."
     )
+
+    val toolSearchTool: JsonObject = buildJsonObject {
+        put("type", "function")
+        putJsonObject("function") {
+            put("name", "tools_search")
+            put("displayName", "查找可用工具")
+            put("toolType", "builtin")
+            put(
+                "description",
+                "按用户目标搜索当前 Agent 可用的内置工具、插件工具和 MCP 工具。工具不在当前列表时，先调用此工具；读取返回的工具名称和说明后，再调用具体工具。不要猜测工具名。"
+            )
+            putJsonObject("parameters") {
+                put("type", "object")
+                putJsonObject("properties") {
+                    putJsonObject("query") {
+                        put("type", "string")
+                        put("description", "要完成的目标或要查找的能力，例如读取文件、设置闹钟、联网搜索、操作手机或查询某个 MCP。")
+                    }
+                    putJsonObject("limit") {
+                        put("type", "integer")
+                        put("description", "返回工具数量上限，默认 8，范围 1-20。")
+                    }
+                }
+                putJsonArray("required") {
+                    add("query")
+                }
+                put("additionalProperties", false)
+            }
+        }
+    }
 
     val contextTimeNowTool: JsonObject = buildJsonObject {
         put("type", "function")
@@ -2156,6 +2202,7 @@ object AgentToolDefinitions {
     }
 
     private val builtinToolDefinitions: List<JsonObject> = listOf(
+        toolSearchTool,
         contextTimeNowTool,
         contextAppsQueryTool,
         vlmTaskTool,
@@ -2247,7 +2294,53 @@ object AgentToolDefinitions {
         includeVlmTool: Boolean = true,
     ): List<JsonObject> =
         builtinTools(locale, terminalDistribution, includeVlmTool) +
-            scheduleTools(locale) + alarmTools(locale) + calendarTools(locale) + musicTools(locale)
+        scheduleTools(locale) + alarmTools(locale) + calendarTools(locale) + musicTools(locale)
+
+    /**
+     * Replace OmniBot's private names with the common Harness-native names
+     * only for the direct Agent model catalog. The MCP server keeps exposing
+     * the original complete catalog to external clients.
+     */
+    fun modelFacingTools(definitions: List<JsonObject>): List<JsonObject> {
+        val existingNames = definitions.mapNotNullTo(linkedSetOf()) { definition ->
+            (definition["function"] as? JsonObject)
+                ?.get("name")
+                ?.jsonPrimitive
+                ?.contentOrNull
+        }
+        return definitions.map { definition ->
+            val function = definition["function"] as? JsonObject ?: return@map definition
+            val currentName = function["name"]?.jsonPrimitive?.contentOrNull
+                ?: return@map definition
+            val modelName = nativeModelToolAliases[currentName]
+                ?: return@map definition
+            if (modelName in existingNames) {
+                // A plugin or remote MCP server already owns this native name;
+                // keep the original name rather than creating an ambiguous
+                // model catalog.
+                return@map definition
+            }
+            JsonObject(
+                definition.mapValues { (key, value) ->
+                    if (key != "function") {
+                        value
+                    } else {
+                        JsonObject(
+                            function.mapValues { (functionKey, functionValue) ->
+                                if (functionKey == "name") {
+                                    JsonPrimitive(modelName)
+                                } else {
+                                    functionValue
+                                }
+                            }
+                        )
+                    }
+                }
+            )
+        }
+    }
+
+    fun modelFacingToolNames(): Set<String> = nativeModelToolAliases.values.toSet()
 
     fun reservedToolNames(): Set<String> {
         val locale = PromptLocale.EN_US
@@ -2266,6 +2359,6 @@ object AgentToolDefinitions {
                 ?.get("name")
                 ?.jsonPrimitive
                 ?.contentOrNull
-        }
+        } + modelFacingToolNames()
     }
 }

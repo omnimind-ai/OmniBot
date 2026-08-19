@@ -6,6 +6,7 @@ import cn.com.omnimind.bot.agent.tool.BuiltInAgentCapabilityModule
 import cn.com.omnimind.bot.agent.tool.handlers.McpToolHandler
 import cn.com.omnimind.bot.agent.tool.handlers.SharedHelper
 import cn.com.omnimind.bot.agent.tool.handlers.ToolHandler
+import cn.com.omnimind.bot.agent.tool.handlers.ToolSearchHandler
 import com.rk.terminal.runtime.TerminalDistribution
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.serialization.json.Json
@@ -18,6 +19,7 @@ class AgentToolRouter(
     private val scheduleToolBridge: AgentScheduleToolBridge,
     private val workspaceManager: AgentWorkspaceManager,
     private val subagentDispatcher: SubagentDispatcher,
+    private val toolCatalog: AgentToolCatalog? = null,
     terminalDistribution: TerminalDistribution.Spec = TerminalDistribution.alpine,
     capabilityModules: List<AgentCapabilityModule> = emptyList(),
     // The handler is a gated entry point: it returns manual-enable guidance
@@ -46,7 +48,8 @@ class AgentToolRouter(
 
     private val mcpFallback = McpToolHandler(helper)
     private val allHandlers: List<ToolHandler> =
-        builtInCapabilities.handlers + capabilityModules.flatMap { it.handlers }
+        listOfNotNull(toolCatalog?.let { ToolSearchHandler(it, helper) }) +
+            builtInCapabilities.handlers + capabilityModules.flatMap { it.handlers }
     private val disposed = AtomicBoolean(false)
 
     private val handlerMap: Map<String, ToolHandler> = buildMap {

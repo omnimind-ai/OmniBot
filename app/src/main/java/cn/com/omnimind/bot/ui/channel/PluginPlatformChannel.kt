@@ -10,8 +10,6 @@ import cn.com.omnimind.bot.BuildConfig
 import cn.com.omnimind.bot.plugin.OmniPluginHost
 import cn.com.omnimind.bot.plugin.OmniPluginState
 import cn.com.omnimind.bot.plugin.sandbox.SandboxPluginBridgeRuntime
-import cn.com.omnimind.bot.plugin.sandbox.SandboxPluginPool
-import cn.com.omnimind.bot.plugin.sandbox.SandboxPluginShortcutManager
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -68,11 +66,6 @@ class PluginPlatformChannel {
                         )
                     )
                     "getVlmReadiness" -> vlmReadiness()
-                    "getDashboard" -> {
-                        val pluginId = call.requirePluginId()
-                        requireEnabled(host, pluginId)
-                        SandboxPluginPool(safeContext).dashboard(pluginId)
-                    }
                     "sandboxInvoke" -> {
                         val pluginId = call.requirePluginId()
                         SandboxPluginBridgeRuntime(safeContext).invoke(
@@ -81,16 +74,8 @@ class PluginPlatformChannel {
                             params = call.argument<Map<*, *>>("params") ?: emptyMap<Any?, Any?>(),
                         )
                     }
-                    "pinToHome" -> {
-                        val pluginId = call.requirePluginId()
-                        requireEnabled(host, pluginId)
-                        SandboxPluginShortcutManager(safeContext)
-                            .pinOrUpdate(pluginId)
-                            .toMap()
-                    }
                     "uninstall" -> {
                         val pluginId = call.requirePluginId()
-                        SandboxPluginShortcutManager(safeContext).disable(pluginId)
                         host.uninstall(pluginId)
                         true
                     }

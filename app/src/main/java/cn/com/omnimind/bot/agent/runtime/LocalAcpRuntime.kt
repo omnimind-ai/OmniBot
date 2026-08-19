@@ -50,7 +50,6 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
@@ -87,6 +86,7 @@ import java.nio.charset.StandardCharsets
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.coroutineContext
 
 internal class LocalAcpRuntime(
     context: Context,
@@ -101,10 +101,19 @@ internal class LocalAcpRuntime(
     private val appContext = context.applicationContext
     private val connectMutex = Mutex()
     private val sessionMutex = Mutex()
+    // Keep request-id lookup and active-turn reservation in one critical
+    // section. A transport retry can arrive before the first start call has
+    // populated promptRequestTurns; without this, the retry is misclassified
+    // as a second active turn.
+    private val turnStartMutex = Mutex()
     private val workspaceManager = AgentWorkspaceManager(appContext)
     private val sessions = ConcurrentHashMap<String, ClientSession>()
     private val sessionCwds = ConcurrentHashMap<String, String>()
     private val activeTurnIds = ConcurrentHashMap<String, String>()
+    // A prompt request may be delivered twice by a client after a transport
+    // timeout. Keep the request-to-turn mapping so the retry returns the
+    // original turn instead of executing the user's tools again.
+    private val promptRequestTurns = ConcurrentHashMap<String, String>()
 
     /**
      * Turn ids that have already emitted their terminal event. [finishTurn] is
@@ -166,6 +175,17 @@ internal class LocalAcpRuntime(
         get() = connection?.isRunning == true && client != null && agentInfo != null
 
     fun hasActiveTurns(): Boolean = activeTurnIds.isNotEmpty()
+
+    /**
+     * Returns the host-owned turn currently running in an ACP session.
+     *
+     * Some ACP agents (notably OpenCode) send `session/update` notifications
+     * without a turn id. The prompt collector still knows the turn, so the
+     * manager must be able to resolve that missing wire field at the runtime
+     * boundary instead of dropping otherwise valid stream updates.
+     */
+    fun activeTurnIdForSession(sessionId: String?): String? =
+        sessionId?.takeIf { it.isNotBlank() }?.let(activeTurnIds::get)
 
     fun activeAgentId(): String = (activeProfile ?: profileStore.selected()).id
 
@@ -395,6 +415,7 @@ internal class LocalAcpRuntime(
         replayingThreads.clear()
         catalogSessionId = null
         activeTurnIds.clear()
+        promptRequestTurns.clear()
         protocol?.close()
         protocol = null
         client = null
@@ -946,11 +967,6 @@ internal class LocalAcpRuntime(
             sessionPermissionBehaviors.remove(threadId)
         }
         bindingRepository.setArchived(threadId, archived)
-        emitPresentation(
-            kind = if (archived) "thread_archived" else "thread_unarchived",
-            threadId = threadId,
-            params = mapOf("threadId" to threadId)
-        )
         return mapOf(
             "ok" to true,
             "threadId" to threadId,
@@ -1180,33 +1196,68 @@ internal class LocalAcpRuntime(
         )
     }
 
-    private suspend fun startTurn(args: Map<String, Any?>): Map<String, Any?> {
+    private suspend fun startTurn(args: Map<String, Any?>): Map<String, Any?> =
+        turnStartMutex.withLock {
+            startTurnLocked(args)
+        }
+
+    private suspend fun startTurnLocked(args: Map<String, Any?>): Map<String, Any?> {
         val session = ensureSessionForTurn(args)
         val threadId = session.sessionId.value
+        val requestId = args.stringValue("requestId")?.takeIf { it.isNotBlank() }
+        val requestKey = requestId?.let { "$threadId|$it" }
+        requestKey?.let { key ->
+            promptRequestTurns[key]?.let { existingTurnId ->
+                return linkedMapOf(
+                    "threadId" to threadId,
+                    "turnId" to existingTurnId,
+                    "conversationId" to bindingRepository
+                        .getBindingByThreadId(threadId)?.conversationId
+                )
+            }
+        }
+        val turnId = UUID.randomUUID().toString()
+        val existingTurnId = activeTurnIds.putIfAbsent(threadId, turnId)
+        if (existingTurnId != null) {
+            val sameRequestTurn = requestKey?.let(promptRequestTurns::get)
+            if (sameRequestTurn != null) {
+                return linkedMapOf(
+                    "threadId" to threadId,
+                    "turnId" to sameRequestTurn,
+                    "conversationId" to bindingRepository
+                        .getBindingByThreadId(threadId)?.conversationId
+                )
+            }
+            throw IllegalStateException("ACP session $threadId already has an active turn.")
+        }
         // startThread applies initial configuration for a new session. After
         // that, the idle session is changed through config/set; do not
         // overwrite Harness-owned state on every turn. Older ACP adapters
         // without configOptions keep the legacy per-turn compatibility path.
-        if (sessionConfigOptions(session).isEmpty()) {
-            applyRunConfig(session, args)
-        } else {
-            sessionPermissionBehaviors[threadId] = resolveAcpPermissionBehavior(args)
+        try {
+            if (sessionConfigOptions(session).isEmpty()) {
+                applyRunConfig(session, args)
+            } else {
+                sessionPermissionBehaviors[threadId] = resolveAcpPermissionBehavior(args)
+            }
+        } catch (error: Throwable) {
+            activeTurnIds.remove(threadId, turnId)
+            throw error
         }
-        if (promptJobs[threadId]?.isActive == true) {
-            throw IllegalStateException("ACP session $threadId already has an active turn.")
+        requestKey?.let { key ->
+            promptRequestTurns[key] = turnId
+            if (promptRequestTurns.size > 256) {
+                promptRequestTurns.keys.firstOrNull()?.let(promptRequestTurns::remove)
+            }
         }
-        val turnId = UUID.randomUUID().toString()
-        val blocks = buildPromptBlocks(args, turnId, threadId)
-        activeTurnIds[threadId] = turnId
-        emitPresentation(
-            kind = "turn_started",
-            threadId = threadId,
-            turnId = turnId,
-            params = mapOf(
-                "threadId" to threadId,
-                "turn" to mapOf("id" to turnId)
-            )
-        )
+        val blocks = try {
+            buildPromptBlocks(args, turnId, threadId)
+        } catch (error: Throwable) {
+            activeTurnIds.remove(threadId, turnId)
+            requestKey?.let(promptRequestTurns::remove)
+            throw error
+        }
+        val completion = CompletableDeferred<Map<String, Any?>>()
         val job = scope.launch(start = CoroutineStart.LAZY) {
             var stopReason: String? = null
             var cancelled = false
@@ -1240,18 +1291,21 @@ internal class LocalAcpRuntime(
                 Log.e(TAG, "ACP prompt failed", error)
                 failure = error
             } finally {
-                // The terminal event is emitted here rather than from the
-                // PromptResponseEvent branch so that a turn is always closed
-                // out: a flow that ends without a prompt response, one that
-                // throws, and one that is cancelled all land in this block.
-                // NonCancellable is required because `emit` suspends and the
-                // coroutine may already be cancelled.
-                promptJobs.remove(threadId)
+                coroutineContext[Job]?.let { promptJobs.remove(threadId, it) }
+                val status = resolveTurnTerminalStatus(stopReason, cancelled, failure)
                 finishTurn(
                     threadId = threadId,
                     turnId = turnId,
-                    status = resolveTurnTerminalStatus(stopReason, cancelled, failure),
+                    status = status,
                     error = failure?.let { it.message ?: it.javaClass.simpleName }
+                )
+                completion.complete(
+                    linkedMapOf<String, Any?>(
+                        "status" to status,
+                        "stopReason" to stopReason,
+                        "error" to failure?.let { it.message ?: it.javaClass.simpleName },
+                        "completed" to true
+                    ).filterValues { it != null }
                 )
             }
         }
@@ -1291,23 +1345,24 @@ internal class LocalAcpRuntime(
         }
         job.invokeOnCompletion { watchdog.cancel() }
         watchdog.start()
-        return linkedMapOf(
+        job.join()
+        watchdog.cancelAndJoin()
+        return linkedMapOf<String, Any?>(
             "threadId" to threadId,
             "turnId" to turnId,
             "conversationId" to bindingRepository.getBindingByThreadId(threadId)?.conversationId
-        )
+        ).apply { putAll(completion.await()) }.filterValues { it != null }
     }
 
     /**
      * The single exit through which a turn is ever declared over.
      *
-     * ACP guarantees a `session/prompt` response carrying a stop reason, but a
-     * misbehaving adapter, a transport error, or a cancelled scope can all end
-     * a prompt without one. The UI treats "turn ended" as the trigger for
-     * finalizing assistant messages, folding the run, and clearing the
-     * processing indicator, so a missing terminal event strands the whole
-     * conversation in a running state. Emitting from here — idempotently and
-     * under [NonCancellable] — makes the terminal event unconditional.
+     * ACP guarantees a `session/prompt` response carrying a stop reason, but
+     * the response is a MethodChannel result and is not visible to the
+     * EventChannel reducer. Emit the terminal lifecycle notification before
+     * releasing the active-turn reservation so both transports observe the
+     * same boundary. The reducer treats duplicate completion from the prompt
+     * response as idempotent.
      */
     private suspend fun finishTurn(
         threadId: String,
@@ -1316,34 +1371,41 @@ internal class LocalAcpRuntime(
         error: String? = null
     ) {
         if (!finishedTurns.add(turnId)) return
+        if (finishedTurns.size > 256) {
+            finishedTurns.firstOrNull()?.let(finishedTurns::remove)
+        }
+        val terminalMethod = if (status == "error" || status == "timeout") {
+            "turn/failed"
+        } else {
+            "turn/completed"
+        }
+        val terminalParams = linkedMapOf<String, Any?>(
+            "sessionId" to threadId,
+            "turnId" to turnId,
+            "status" to status,
+            "stopReason" to status,
+        )
+        error?.takeIf { it.isNotBlank() }?.let { terminalParams["error"] = it }
+        runCatching {
+            onMessage(
+                linkedMapOf(
+                    "method" to terminalMethod,
+                    "params" to terminalParams,
+                    "sessionId" to threadId,
+                    "threadId" to threadId,
+                    "turnId" to turnId,
+                )
+            )
+        }.onFailure { emissionError ->
+            Log.w(
+                TAG,
+                "Unable to emit terminal lifecycle event for turn=$turnId: " +
+                    emissionError.message,
+                emissionError,
+            )
+        }
         activeTurnIds.remove(threadId, turnId)
         lastTurnActivityAt.remove(threadId)
-        withContext(NonCancellable) {
-            if (error == null) {
-                emitPresentation(
-                    kind = "turn_completed",
-                    threadId = threadId,
-                    turnId = turnId,
-                    params = mapOf(
-                        "threadId" to threadId,
-                        "turn" to mapOf("id" to turnId, "status" to status)
-                    )
-                )
-            } else {
-                emitPresentation(
-                    kind = "turn_failed",
-                    threadId = threadId,
-                    turnId = turnId,
-                    params = mapOf(
-                        "threadId" to threadId,
-                        "turnId" to turnId,
-                        "status" to status,
-                        "error" to error,
-                        "willRetry" to false
-                    )
-                )
-            }
-        }
     }
 
     private suspend fun startReview(args: Map<String, Any?>): Map<String, Any?> {
@@ -1385,12 +1447,63 @@ internal class LocalAcpRuntime(
         val threadId = resolveThreadId(args)
         val session = sessions[threadId]
             ?: throw IllegalArgumentException("ACP session is not loaded: $threadId")
-        session.cancel()
         val turnId = activeTurnIds[threadId]
+
+        // There are two independent pieces to stop here:
+        //
+        //  1. Ask the ACP agent to stop the work it is doing.
+        //  2. Stop our prompt collector, which owns the host-side turn
+        //     reservation and waits for the prompt response.
+        //
+        // Previously we only did (1). A non-compliant or slow adapter could
+        // keep the prompt flow alive forever, so the Android runtime stayed
+        // busy and the UI never got a reliable lifecycle boundary.
+        val protocolCancelled = withTimeoutOrNull(CANCEL_REQUEST_TIMEOUT_MS) {
+            try {
+                session.cancel()
+                true
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                Log.w(TAG, "ACP session cancellation request failed", error)
+                false
+            }
+        } == true
+
+        val promptJob = promptJobs[threadId]
+        val collectorStopped = if (promptJob != null) {
+            withTimeoutOrNull(CANCEL_JOIN_TIMEOUT_MS) {
+                promptJob.cancelAndJoin()
+                true
+            } == true
+        } else {
+            true
+        }
+
+        // If the adapter ignored cancellation and the collector did not
+        // terminate, close the ACP process as a last-resort kill switch. The
+        // next prompt will reconnect through ensureLocalAcpConnected(). This
+        // is preferable to leaving a Harness executing tools after the user
+        // explicitly pressed stop.
+        if (turnId != null && (!protocolCancelled || !collectorStopped)) {
+            Log.w(
+                TAG,
+                "ACP cancellation did not settle for session=$threadId " +
+                    "protocolCancelled=$protocolCancelled " +
+                    "collectorStopped=$collectorStopped; closing process"
+            )
+            runCatching { disconnect() }
+                .onFailure { error ->
+                    Log.w(TAG, "Unable to close ACP process after cancellation", error)
+                }
+        }
+
         // Close the turn out explicitly. Cancelling the ACP session does not
-        // reliably produce a prompt response, and the prompt job's own finally
-        // block may never run if the flow simply stops emitting.
-        turnId?.let { finishTurn(threadId, it, status = "cancelled") }
+        // reliably produce a prompt response, and the prompt job may already
+        // have been removed by its finally block.
+        if (turnId != null && activeTurnIds[threadId] == turnId) {
+            finishTurn(threadId, turnId, status = "cancelled")
+        }
         return mapOf(
             "ok" to true,
             "threadId" to threadId,
@@ -1683,20 +1796,21 @@ internal class LocalAcpRuntime(
                 response = CompletableDeferred()
             )
             pendingPermissions[requestId] = pending
-            emitPresentation(
-                kind = "approval_requested",
-                threadId = threadId,
-                turnId = activeTurnIds[threadId],
-                params = mapOf(
-                    "requestId" to requestId,
-                    "item" to mapOf(
-                        "id" to toolCall.toolCallId.value,
-                        "type" to "requestApproval",
-                        "title" to (toolCall.title ?: "Permission required"),
-                        "detail" to permissions.joinToString("\n") { it.name },
-                        "permissionOptions" to permissions.map {
+            onMessage(
+                linkedMapOf(
+                    "jsonrpc" to "2.0",
+                    "id" to requestId,
+                    "method" to "session/request_permission",
+                    "params" to mapOf(
+                        "sessionId" to threadId,
+                        "toolCall" to mapOf(
+                            "toolCallId" to toolCall.toolCallId.value,
+                            "title" to (toolCall.title ?: "Permission required"),
+                            "detail" to permissions.joinToString("\n") { it.name }
+                        ),
+                        "options" to permissions.map {
                             mapOf(
-                                "id" to it.optionId.value,
+                                "optionId" to it.optionId.value,
                                 "name" to it.name,
                                 "kind" to it.kind.name.lowercase()
                             )
@@ -1792,11 +1906,7 @@ internal class LocalAcpRuntime(
         val notification = update.toAcpSessionNotification(threadId) ?: return
         emitAcpNotification(
             sessionId = notification.sessionId,
-            update = notification.update,
-            // Keep the official ACP notification untouched inside params.
-            // This host-only envelope field lets the renderer isolate a
-            // message when an agent (DSH in particular) omits messageId.
-            turnId = resolvedTurnId
+            update = notification.update
         )
     }
 
@@ -1807,37 +1917,15 @@ internal class LocalAcpRuntime(
      */
     private suspend fun emitAcpNotification(
         sessionId: String,
-        update: Map<String, Any?>,
-        turnId: String? = null
+        update: Map<String, Any?>
     ) {
-        onMessage(linkedMapOf<String, Any?>(
+        onMessage(linkedMapOf(
                 "method" to "session/update",
-                "params" to linkedMapOf(
+                "params" to mapOf(
                     "sessionId" to sessionId,
                     "update" to update
                 )
-            ).apply {
-                // This is outside the official ACP params object and is only
-                // consumed by the host presentation bridge.
-                turnId?.takeIf { it.isNotBlank() }?.let { put("turnId", it) }
-            })
-    }
-
-    private suspend fun emitPresentation(
-        kind: String,
-        threadId: String?,
-        turnId: String? = null,
-        params: Map<String, Any?> = emptyMap()
-    ) {
-        onMessage(
-            linkedMapOf(
-                "presentation" to LinkedHashMap(params).apply {
-                    put("kind", kind)
-                    if (!threadId.isNullOrBlank()) putIfAbsent("threadId", threadId)
-                    if (!turnId.isNullOrBlank()) putIfAbsent("turnId", turnId)
-                }
-            )
-        )
+            ))
     }
 
     private fun registerSession(session: ClientSession, cwd: String) {
@@ -1929,6 +2017,8 @@ internal class LocalAcpRuntime(
         private const val TAG = "LocalAcpRuntime"
         private const val INITIALIZE_TIMEOUT_MS = 90_000L
         private const val PROCESS_CLOSE_TIMEOUT_MS = 1_500L
+        private const val CANCEL_REQUEST_TIMEOUT_MS = 2_000L
+        private const val CANCEL_JOIN_TIMEOUT_MS = 2_000L
         private const val COMMAND_PROBE_TIMEOUT_MS = 20_000L
         private const val MAX_FILE_LINES = 20_000
 

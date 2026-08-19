@@ -105,6 +105,38 @@ void main() {
       expect(key.currentState!.persistedConversationIds, isEmpty);
     },
   );
+
+  testWidgets(
+    'loadConversation forwards the in-memory runtime snapshot after refresh',
+    (tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final key = GlobalKey<_ConversationManagerHarnessState>();
+      await tester.pumpWidget(
+        MaterialApp(home: _ConversationManagerHarness(key)),
+      );
+
+      final persistedMessage = ChatMessageModel.assistantMessage(
+        'reply retained in the runtime',
+      );
+      key.currentState!.seedInMemoryConversation(1, <ChatMessageModel>[
+        persistedMessage,
+      ]);
+
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'getConversations') {
+          return <Map<String, dynamic>>[
+            _conversationJson(id: 1, title: 'existing thread'),
+          ];
+        }
+        return 'SUCCESS';
+      });
+
+      await key.currentState!.loadConversation(1);
+
+      expect(key.currentState!.loadedSnapshots, hasLength(1));
+      expect(key.currentState!.loadedSnapshots.single, [persistedMessage]);
+    },
+  );
 }
 
 class _ConversationManagerHarness extends StatefulWidget {
@@ -129,6 +161,10 @@ class _ConversationManagerHarnessState
   int _lifecycleToken = 0;
   int loadedConversationCount = 0;
   final List<int> persistedConversationIds = <int>[];
+  final Map<int, List<ChatMessageModel>> _inMemorySnapshots =
+      <int, List<ChatMessageModel>>{};
+  final List<List<ChatMessageModel>> loadedSnapshots =
+      <List<ChatMessageModel>>[];
 
   @override
   List<ChatMessageModel> get messages => _messages;
@@ -186,9 +222,7 @@ class _ConversationManagerHarnessState
   List<ChatMessageModel>? getInMemoryMessagesForConversation(
     int conversationId,
     ConversationMode mode,
-  ) {
-    return null;
-  }
+  ) => _inMemorySnapshots[conversationId];
 
   @override
   ConversationModel? getInMemoryConversationForConversation(
@@ -206,6 +240,7 @@ class _ConversationManagerHarnessState
     List<ChatMessageModel> messages,
   ) {
     loadedConversationCount += 1;
+    loadedSnapshots.add(messages);
   }
 
   @override
@@ -238,6 +273,13 @@ class _ConversationManagerHarnessState
       _currentConversationId = null;
       _currentConversation = null;
     });
+  }
+
+  void seedInMemoryConversation(
+    int conversationId,
+    List<ChatMessageModel> values,
+  ) {
+    _inMemorySnapshots[conversationId] = List<ChatMessageModel>.from(values);
   }
 
   @override

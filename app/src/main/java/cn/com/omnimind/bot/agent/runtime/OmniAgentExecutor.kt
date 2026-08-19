@@ -295,6 +295,7 @@ class OmniAgentExecutor(
                 scheduleToolBridge = scheduleToolBridge,
                 workspaceManager = workspaceManager,
                 subagentDispatcher = subagentDispatcher,
+                toolCatalog = toolRegistry,
                 terminalDistribution = terminalDistribution,
                 capabilityModules = listOf(
                     AgentToolHandlerModule(activePluginSession.toolHandlers)

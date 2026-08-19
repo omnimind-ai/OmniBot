@@ -18,6 +18,7 @@ void main() {
   Map<String, dynamic> acpEvent(
     String method, {
     required String turnId,
+    String? sessionId,
     Map<String, dynamic> params = const <String, dynamic>{},
     String agentId = 'xiaowan-acp',
     String agentName = '小万',
@@ -25,13 +26,18 @@ void main() {
   }) {
     return <String, dynamic>{
       if (conversationId != null) 'conversationId': conversationId,
+      if (sessionId != null) 'sessionId': sessionId,
       'agentId': agentId,
       'agentName': agentName,
       'threadId': turnId,
       'turnId': turnId,
       'message': <String, dynamic>{
         'method': method,
-        'params': <String, dynamic>{'turnId': turnId, ...params},
+        'params': <String, dynamic>{
+          'turnId': turnId,
+          if (sessionId != null) 'sessionId': sessionId,
+          ...params,
+        },
       },
     };
   }
@@ -40,6 +46,7 @@ void main() {
     int conversationId,
     String method, {
     required String turnId,
+    String? sessionId,
     Map<String, dynamic> params = const <String, dynamic>{},
     String mode = kChatRuntimeModeAgent,
     String agentId = 'xiaowan-acp',
@@ -51,6 +58,7 @@ void main() {
       event: acpEvent(
         method,
         turnId: turnId,
+        sessionId: sessionId,
         params: params,
         agentId: agentId,
         agentName: agentName,
@@ -165,6 +173,74 @@ void main() {
     expect(runtime.isAiResponding, isTrue);
   });
 
+  test('routes ACP lifecycle by admitted turn identity', () {
+    final runtime = coordinator.ensureRuntime(
+      conversationId: 42,
+      mode: kChatRuntimeModeNormal,
+    );
+    runtime.activeAcpTurnId = 'turn-normal-1';
+    runtime.currentDispatchTurnId = 'turn-normal-1';
+
+    expect(
+      coordinator.modeForAcpEvent(conversationId: 42, turnId: 'turn-normal-1'),
+      kChatRuntimeModeNormal,
+    );
+    expect(
+      coordinator.modeForAcpEvent(conversationId: 42, turnId: 'turn-agent-1'),
+      isNull,
+    );
+  });
+
+  test('binds ACP events to one session as well as one turn', () {
+    const conversationId = 43;
+    applyAcp(
+      conversationId,
+      'turn/started',
+      turnId: 'turn-current',
+      sessionId: 'session-current',
+    );
+
+    final runtime = coordinator.runtimeFor(
+      conversationId: conversationId,
+      mode: kChatRuntimeModeAgent,
+    )!;
+    expect(runtime.activeAcpSessionId, 'session-current');
+    expect(
+      coordinator.modeForAcpEvent(
+        conversationId: conversationId,
+        sessionId: 'session-current',
+      ),
+      kChatRuntimeModeAgent,
+    );
+
+    applyAcp(
+      conversationId,
+      'session/update',
+      turnId: 'turn-stale',
+      sessionId: 'session-old',
+      params: <String, dynamic>{
+        'update': <String, dynamic>{
+          'sessionUpdate': 'agent_message_chunk',
+          'messageId': 'stale-message',
+          'content': <String, dynamic>{'text': 'stale'},
+        },
+      },
+    );
+
+    expect(runtime.messages, isEmpty);
+
+    runtime.activeAcpTurnId = null;
+    runtime.currentDispatchTurnId = null;
+    applyAcp(
+      conversationId,
+      'session/update',
+      sessionId: 'session-next',
+      turnId: '',
+      params: <String, dynamic>{'delta': 'new session'},
+    );
+    expect(runtime.activeAcpSessionId, 'session-next');
+  });
+
   test('keeps ACP turns isolated by conversation and finalizes them', () {
     const firstConversation = 2101;
     const secondConversation = 2102;
@@ -222,10 +298,7 @@ void main() {
       turnId: turnId,
       agentId: 'deepseek-harness-acp',
       agentName: 'DeepSeek Harness',
-      params: <String, dynamic>{
-        'itemId': 'thought-1',
-        'delta': '第一阶段：分析工作区。',
-      },
+      params: <String, dynamic>{'itemId': 'thought-1', 'delta': '第一阶段：分析工作区。'},
     );
     applyAcp(
       conversationId,
@@ -248,10 +321,7 @@ void main() {
       turnId: turnId,
       agentId: 'deepseek-harness-acp',
       agentName: 'DeepSeek Harness',
-      params: <String, dynamic>{
-        'itemId': 'thought-2',
-        'delta': '第二阶段：根据结果判断。',
-      },
+      params: <String, dynamic>{'itemId': 'thought-2', 'delta': '第二阶段：根据结果判断。'},
     );
 
     final runtime = coordinator.runtimeFor(
@@ -300,7 +370,7 @@ void main() {
       (replaceCalls.last.arguments as Map).cast<String, dynamic>(),
     );
     expect(args['conversationId'], conversationId);
-    expect(args['mode'], 'codex');
+    expect(args['mode'], kChatRuntimeModeAgent);
     expect(
       (args['messages'] as List).any(
         (message) => (message as Map)['content']?['text'] == 'ACP 回复',
@@ -347,8 +417,8 @@ void main() {
       conversationId: conversationId,
       mode: kChatRuntimeModeAgent,
     );
-    runtime.currentDispatchTaskId = 'turn-clear';
-    runtime.lastAgentTaskId = 'turn-clear';
+    runtime.currentDispatchTurnId = 'turn-clear';
+    runtime.lastAgentTurnId = 'turn-clear';
     runtime.isAiResponding = true;
     runtime.isDeepThinking = true;
     runtime.activeThinkingCardId = 'thought';
@@ -359,8 +429,8 @@ void main() {
       mode: kChatRuntimeModeAgent,
     );
 
-    expect(runtime.currentDispatchTaskId, isNull);
-    expect(runtime.lastAgentTaskId, isNull);
+    expect(runtime.currentDispatchTurnId, isNull);
+    expect(runtime.lastAgentTurnId, isNull);
     expect(runtime.isAiResponding, isFalse);
     expect(runtime.isDeepThinking, isFalse);
     expect(runtime.activeThinkingCardId, isNull);

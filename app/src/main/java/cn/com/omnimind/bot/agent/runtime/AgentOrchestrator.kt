@@ -9,6 +9,7 @@ import cn.com.omnimind.baselib.llm.ChatCompletionTool
 import cn.com.omnimind.baselib.llm.contentText
 import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.agent.tool.AgentToolConcurrencyPolicy
+import cn.com.omnimind.bot.agent.tool.handlers.ToolSearchHandler
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.CancellationException
@@ -588,6 +589,44 @@ class AgentOrchestrator(
                 // (matching pre-refactor semantics: write the error tool message,
                 // skip remaining calls, and advance to the next LLM round).
                 parsePhase@ for (toolCall in toolCalls) {
+                    if (
+                        toolRegistry.usesProgressiveDiscovery &&
+                        toolRegistry.toolsForModel.none { it.function.name == toolCall.function.name }
+                    ) {
+                        val result = ToolExecutionResult.Error(
+                            toolCall.function.name,
+                            t(
+                                "工具 ${toolCall.function.name} 尚未加载，请先调用 tools_search 查找并加载它。",
+                                "Tool ${toolCall.function.name} is not loaded yet. Call tools_search first to discover it."
+                            )
+                        )
+                        val descriptor = toolRegistry.runtimeDescriptor(toolCall.function.name)
+                        descriptorMap[toolCall.id] = descriptor
+                        executedTools.add(result)
+                        callback.onToolCallComplete(
+                            toolCall.id,
+                            toolCall.function.name,
+                            result
+                        )
+                        appendToolResultMessage(
+                            memory = memory,
+                            env = input.executionEnv,
+                            callback = callback,
+                            assistantMessage = assistantMessageForMemory,
+                            toolCall = toolCall,
+                            descriptor = descriptor,
+                            result = result
+                        )
+                        writtenToolCallIds += toolCall.id
+                        hasUserFacingOutput =
+                            hasUserFacingOutput || eventAdapter.hasUserVisibleOutput(result)
+                        advanceToNextRound = true
+                        pendingToolCallBackfillReason = t(
+                            "工具尚未加载，当前 assistant 消息中的剩余 tool_call 未执行。",
+                            "The tool was not loaded, so the remaining tool calls in this assistant message were not executed."
+                        )
+                        break@parsePhase
+                    }
                     val descriptor = toolRegistry.runtimeDescriptor(toolCall.function.name)
                     descriptorMap[toolCall.id] = descriptor
                     val parsedArgs: JsonObject = try {
@@ -749,6 +788,7 @@ class AgentOrchestrator(
                             val desc = descriptorMap.getValue(call.id)
                             val args = parsedArgsMap.getValue(call.id)
                             executedTools.add(result)
+                            activateDiscoveredTools(call.function.name, result)
                             recordSkillCompletionToolAttempt(
                                 policies = completionPolicies,
                                 completionProgress = completionProgress,
@@ -1018,6 +1058,29 @@ class AgentOrchestrator(
             }
         } finally {
             toolHandle.complete()
+        }
+    }
+
+    private fun activateDiscoveredTools(
+        toolName: String,
+        result: ToolExecutionResult,
+    ) {
+        if (toolName != ToolSearchHandler.NAME) return
+        val rawResult = (result as? ToolExecutionResult.ContextResult)?.rawResultJson
+            ?: return
+        val names = runCatching {
+            val payload = json.parseToJsonElement(rawResult) as? JsonObject
+            val tools = payload?.get("tools") as? JsonArray
+            tools.orEmpty().mapNotNull { item ->
+                (item as? JsonObject)?.get("name")?.jsonPrimitive?.contentOrNull
+            }.toSet()
+        }.getOrDefault(emptySet())
+        if (names.isNotEmpty()) {
+            toolRegistry.exposeToolNames(names)
+            logInfo(
+                tag,
+                "tool_discovery activated=${names.size} visible=${toolRegistry.toolsForModel.size}"
+            )
         }
     }
 

@@ -5,7 +5,7 @@ enum ConversationMode {
   chatOnly('chat_only'),
   openclaw('openclaw'),
   subagent('subagent'),
-  agent('codex');
+  agent('agent');
 
   const ConversationMode(this.storageValue);
 
@@ -13,6 +13,19 @@ enum ConversationMode {
 
   static ConversationMode fromStorageValue(String? value) {
     final normalized = value?.trim().toLowerCase() ?? '';
+    switch (normalized) {
+      // `codex` is the legacy database value from an earlier build. The
+      // domain mode is generic Agent; Codex is only one possible Harness.
+      case 'agent':
+      case 'codex':
+      case 'acp':
+      case 'coding':
+        return ConversationMode.agent;
+      case 'chat':
+      case 'chatonly':
+      case 'chat-only':
+        return ConversationMode.chatOnly;
+    }
     for (final mode in ConversationMode.values) {
       if (mode.storageValue == normalized) {
         return mode;
@@ -26,7 +39,6 @@ enum ConversationMode {
     ConversationMode.chatOnly => LegacyTextLocalizer.localize('纯聊天'),
     ConversationMode.openclaw => 'OpenClaw',
     ConversationMode.subagent => 'SubAgent',
-    // `codex` 仅保留为旧数据库的持久化值，代码语义统一使用 Agent。
     ConversationMode.agent => 'Agent',
   };
 }

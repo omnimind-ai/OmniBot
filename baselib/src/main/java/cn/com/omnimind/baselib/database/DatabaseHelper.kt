@@ -612,6 +612,14 @@ object DatabaseHelper {
         return getDatabase().agentConversationEntryDao().countConversationEntries(conversationId)
     }
 
+    suspend fun getAgentConversationIdsWithStreamEvents(): List<Long> {
+        return getDatabase().agentConversationEntryDao().getConversationIdsWithStreamEvents()
+    }
+
+    suspend fun deleteAgentConversationStreamEvents(): Int {
+        return getDatabase().agentConversationEntryDao().deleteStreamEvents()
+    }
+
     suspend fun getAgentConversationEntriesDescPaged(
         conversationId: Long,
         conversationMode: String,

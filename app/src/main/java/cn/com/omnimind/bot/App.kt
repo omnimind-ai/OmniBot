@@ -10,6 +10,7 @@ import cn.com.omnimind.baselib.util.AppSecretStore
 import cn.com.omnimind.baselib.util.CredentialEndpointSecurity
 import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.agent.AgentPromptSettingsStore
+import cn.com.omnimind.bot.agent.AgentConversationHistoryRepository
 import cn.com.omnimind.bot.agent.AgentWorkspaceManager
 import cn.com.omnimind.bot.agent.SkillIndexService
 import cn.com.omnimind.bot.agent.WorkspaceMemoryRollupScheduler
@@ -101,20 +102,26 @@ class App : BaseApplication() {
         setupUncaughtExceptionHandler()
 
         DatabaseHelper.init(this)
+        CoroutineScope(Dispatchers.IO).launch {
+            runCatching {
+                AgentConversationHistoryRepository(this@App).purgeLegacyStreamEvents()
+            }.onSuccess { deleted ->
+                if (deleted > 0) {
+                    OmniLog.i(
+                        "AppStartup",
+                        "Removed $deleted legacy ACP stream events from history",
+                    )
+                }
+            }.onFailure { error ->
+                OmniLog.w(
+                    "AppStartup",
+                    "Legacy ACP stream-event cleanup failed: ${error.message}",
+                )
+            }
+        }
 
-        val nestedStart = System.currentTimeMillis()
         NestedBackgroundStateUtil.init(this)
-        OmniLog.d(
-            "AppStartup",
-            "NestedBackgroundStateUtil.init cost: ${System.currentTimeMillis() - nestedStart}ms"
-        )
-
-        val registryStart = System.currentTimeMillis()
         cn.com.omnimind.baselib.llm.ModelSceneRegistry.init(this)
-        OmniLog.d(
-            "AppStartup",
-            "ModelSceneRegistry.init cost: ${System.currentTimeMillis() - registryStart}ms"
-        )
         runCatching {
             val workspaceManager = AgentWorkspaceManager(this)
             workspaceManager.ensureRuntimeDirectories()

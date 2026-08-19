@@ -13,16 +13,16 @@ void main() {
     messenger.setMockMethodCallHandler(channel, null);
   });
 
-  test('startTurn forwards codex permission payload', () async {
+  test('promptSession forwards ACP permission payload', () async {
     MethodCall? capturedCall;
     messenger.setMockMethodCallHandler(channel, (call) async {
       capturedCall = call;
       return <String, dynamic>{'ok': true};
     });
 
-    await AgentRuntimeService.startTurn(
+    await AgentRuntimeService.promptSession(
       conversationId: 42,
-      threadId: 'thread-1',
+      sessionId: 'thread-1',
       text: 'hello',
       attachments: const <Map<String, dynamic>>[
         <String, dynamic>{
@@ -46,7 +46,7 @@ void main() {
       (capturedCall?.arguments as Map).cast<String, dynamic>(),
     );
     expect(args['conversationId'], 42);
-    expect(args['threadId'], 'thread-1');
+    expect(args['sessionId'], 'thread-1');
     expect(args['text'], 'hello');
     expect(args['attachments'], const <Map<String, dynamic>>[
       <String, dynamic>{
@@ -100,6 +100,23 @@ void main() {
     expect(args['collaborationMode'], 'plan');
   });
 
+  test('session prompt forwards the turn idempotency key', () async {
+    MethodCall? capturedCall;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      capturedCall = call;
+      return <String, dynamic>{'sessionId': 'session-1', 'promptId': 'turn-1'};
+    });
+
+    await AgentRuntimeService.promptSession(
+      conversationId: 42,
+      requestId: 'prompt-1',
+      text: 'hello',
+    );
+
+    expect(capturedCall?.method, 'session/prompt');
+    expect((capturedCall?.arguments as Map)['requestId'], 'prompt-1');
+  });
+
   test('lists codex models, collaboration modes, and config', () async {
     final calls = <MethodCall>[];
     messenger.setMockMethodCallHandler(channel, (call) async {
@@ -110,7 +127,7 @@ void main() {
     await AgentRuntimeService.listModels();
     await AgentRuntimeService.listCollaborationModes();
     await AgentRuntimeService.readConfig();
-    await AgentRuntimeService.listLoadedThreads();
+    await AgentRuntimeService.listLoadedSessions();
 
     expect(calls.map((call) => call.method), [
       'model/list',
@@ -335,19 +352,19 @@ void main() {
     });
   });
 
-  test('readThread requests turns by default', () async {
+  test('readSession requests history by default', () async {
     MethodCall? capturedCall;
     messenger.setMockMethodCallHandler(channel, (call) async {
       capturedCall = call;
       return <String, dynamic>{'ok': true};
     });
 
-    await AgentRuntimeService.readThread(threadId: 'thread-1');
+    await AgentRuntimeService.readSession(sessionId: 'thread-1');
 
     expect(capturedCall?.method, 'session/load');
     expect(capturedCall?.arguments, {
-      'threadId': 'thread-1',
-      'includeTurns': true,
+      'sessionId': 'thread-1',
+      'includeHistory': true,
     });
   });
 

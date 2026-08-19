@@ -32,8 +32,11 @@ object AgentToolConcurrencyPolicy {
 
     private val PARALLEL_SAFE_TOOL_NAMES: Set<String> = setOf(
         "file_read",
+        "read",
         "file_list",
+        "glob",
         "file_search",
+        "grep",
         "file_stat",
         "context_time_now",
         "context_apps_query",
@@ -56,7 +59,7 @@ object AgentToolConcurrencyPolicy {
         if (handler is ToolHandlerConcurrencyHint) {
             handler.concurrencyFor(toolName, args)?.let { return it }
         }
-        if (toolName == "browser_use") {
+        if (toolName == "browser_use" || toolName == "webfetch") {
             val action = (args["action"] as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
             return if (action in BROWSER_USE_PARALLEL_SAFE_ACTIONS) {
                 ToolConcurrency.PARALLEL_SAFE

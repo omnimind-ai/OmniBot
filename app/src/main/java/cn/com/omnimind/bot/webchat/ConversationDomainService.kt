@@ -37,7 +37,8 @@ class ConversationDomainService(
     }
 
     private companion object {
-        const val AGENT_MODE_STORAGE_VALUE = "codex"
+        const val AGENT_MODE_STORAGE_VALUE = "agent"
+        val AGENT_MODE_STORAGE_ALIASES = setOf("agent", "codex", "acp", "coding")
     }
 
     fun listWebAgentProfiles(): List<Map<String, Any?>> {
@@ -62,7 +63,7 @@ class ConversationDomainService(
             else -> DatabaseHelper.getUnarchivedConversations()
         }
         val agentConversationIds = conversations
-            .filter { it.mode == AGENT_MODE_STORAGE_VALUE }
+            .filter { isAgentMode(it.mode) }
             .map { it.id }
         val agentBindings = DatabaseHelper.getAgentSessionBindingsByConversationIds(
             agentConversationIds
@@ -71,7 +72,7 @@ class ConversationDomainService(
             agentBindings.associateBy { binding -> binding.conversationId }
         return conversations.map { conversation ->
             val agentBinding = agentBindingByConversationId[conversation.id]
-            val agentId = if (conversation.mode == AGENT_MODE_STORAGE_VALUE) {
+            val agentId = if (isAgentMode(conversation.mode)) {
                 agentBinding?.let { binding ->
                     acpAgentProfileStore.agentIdForSession(binding.threadId)
                         ?: AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID
@@ -100,12 +101,12 @@ class ConversationDomainService(
 
     suspend fun getConversationPayload(conversationId: Long): Map<String, Any?>? {
         val conversation = DatabaseHelper.getConversationById(conversationId) ?: return null
-        val agentBinding = if (conversation.mode == AGENT_MODE_STORAGE_VALUE) {
+        val agentBinding = if (isAgentMode(conversation.mode)) {
             DatabaseHelper.getAgentSessionBindingByConversationId(conversation.id)
         } else {
             null
         }
-        val agentId = if (conversation.mode == AGENT_MODE_STORAGE_VALUE) {
+        val agentId = if (isAgentMode(conversation.mode)) {
             agentBinding?.let { binding ->
                 acpAgentProfileStore.agentIdForSession(binding.threadId)
                     ?: AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID
@@ -470,8 +471,9 @@ class ConversationDomainService(
         agentCwd: String? = null,
         agentId: String? = null
     ): Map<String, Any?> {
+        val normalizedMode = normalizeConversationMode(conversation.mode)
         val resolvedAgentId = agentId
-            ?: if (conversation.mode == AGENT_MODE_STORAGE_VALUE) {
+            ?: if (normalizedMode == AGENT_MODE_STORAGE_VALUE) {
                 acpAgentProfileStore.agentIdForConversation(conversation.id)
             } else {
                 null
@@ -479,13 +481,14 @@ class ConversationDomainService(
         return linkedMapOf(
             "id" to conversation.id,
             "title" to conversation.title,
-            "mode" to conversation.mode,
+            "mode" to normalizedMode,
             "agentCwd" to agentCwd?.trim()?.takeIf { it.isNotEmpty() },
             "agentId" to resolvedAgentId?.trim()?.takeIf { it.isNotEmpty() },
             "isArchived" to conversation.isArchived,
             "isPinned" to conversation.isPinned,
             "parentConversationId" to conversation.parentConversationId,
-            "parentConversationMode" to conversation.parentConversationMode,
+            "parentConversationMode" to conversation.parentConversationMode
+                ?.let(::normalizeConversationMode),
             "scheduledTaskId" to conversation.scheduledTaskId,
             "summary" to conversation.summary,
             "contextSummary" to conversation.contextSummary,
@@ -504,7 +507,16 @@ class ConversationDomainService(
 
     fun normalizeConversationMode(rawMode: String?): String {
         val normalized = rawMode?.trim()?.lowercase().orEmpty()
-        return if (normalized.isEmpty()) "normal" else normalized
+        return when (normalized) {
+            "", "normal" -> "normal"
+            "agent", "codex", "acp", "coding" -> AGENT_MODE_STORAGE_VALUE
+            "chat", "chatonly", "chat-only" -> "chat_only"
+            else -> normalized
+        }
+    }
+
+    private fun isAgentMode(mode: String?): Boolean {
+        return mode?.trim()?.lowercase() in AGENT_MODE_STORAGE_ALIASES
     }
 
     private fun validateRequestedAgentId(

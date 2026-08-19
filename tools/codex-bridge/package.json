@@ -1,7 +1,7 @@
 {
   "name": "@thuocean/codex-bridge",
   "version": "0.1.5",
-  "description": "Self-hosted PC bridge for Omnibot remote Codex mode.",
+  "description": "Self-hosted ACP bridge for Omnibot remote Codex mode.",
   "license": "MIT",
   "type": "module",
   "bin": {

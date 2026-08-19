@@ -15,7 +15,7 @@ private data class WebAgentRunContext(
     val conversationMode: String
 )
 
-private val WEB_CONVERSATION_MODES = setOf("normal", "codex", "chat_only")
+private val WEB_CONVERSATION_MODES = setOf("normal", "agent", "codex", "chat_only")
 
 internal enum class WebConversationRunKind {
     OMNIAI,
@@ -28,15 +28,19 @@ internal fun resolveWebConversationMode(
     requestedMode: String?
 ): String {
     val normalizedStored = storedMode?.trim()?.lowercase().orEmpty()
-    if (normalizedStored in WEB_CONVERSATION_MODES) return normalizedStored
+    if (normalizedStored in WEB_CONVERSATION_MODES) {
+        return if (normalizedStored == "codex") "agent" else normalizedStored
+    }
     val normalizedRequested = requestedMode?.trim()?.lowercase().orEmpty()
-    return normalizedRequested.takeIf(WEB_CONVERSATION_MODES::contains) ?: "normal"
+    return normalizedRequested
+        .takeIf(WEB_CONVERSATION_MODES::contains)
+        ?.let { if (it == "codex") "agent" else it }
+        ?: "normal"
 }
 
 internal fun resolveWebConversationRunKind(mode: String?): WebConversationRunKind {
     return when (mode?.trim()?.lowercase()) {
-        // `codex` is the legacy database value for the generic ACP Agent mode.
-        "codex" -> WebConversationRunKind.AGENT
+        "agent", "codex" -> WebConversationRunKind.AGENT
         "chat_only" -> WebConversationRunKind.CHAT_ONLY
         else -> WebConversationRunKind.OMNIAI
     }

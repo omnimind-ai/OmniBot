@@ -375,8 +375,8 @@ class _RemoteCodexSettingPageState extends State<RemoteCodexSettingPage> {
                         Text(
                           _enabled
                               ? _text(
-                                  'Agent 聊天将使用远程 Codex app-server。',
-                                  'Agent chat will use the remote Codex app-server.',
+                                  'Agent 聊天将使用远程 ACP。',
+                                  'Agent chat will use the remote ACP runtime.',
                                 )
                               : _text(
                                   '远程连接已关闭，本地聊天使用所选 ACP Agent。',

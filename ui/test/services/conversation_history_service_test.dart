@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/services.dart';
@@ -260,10 +261,52 @@ void main() {
     },
   );
 
+  test('serializes conversation snapshot writes per thread', () async {
+    final firstWriteStarted = Completer<void>();
+    final releaseFirstWrite = Completer<void>();
+    var replaceCallCount = 0;
+    final persistedSnapshots = <List<Map<String, dynamic>>>[];
+
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method != 'replaceConversationMessages') {
+        return 'SUCCESS';
+      }
+      final arguments = Map<String, dynamic>.from(
+        (call.arguments as Map).cast<String, dynamic>(),
+      );
+      persistedSnapshots.add(normalizeMessageList(arguments['messages']));
+      replaceCallCount += 1;
+      if (replaceCallCount == 1) {
+        firstWriteStarted.complete();
+        await releaseFirstWrite.future;
+      }
+      return 'SUCCESS';
+    });
+
+    final firstWrite = ConversationHistoryService.saveConversationMessages(
+      7,
+      <ChatMessageModel>[ChatMessageModel.userMessage('first')],
+    );
+    await firstWriteStarted.future;
+    final secondWrite = ConversationHistoryService.saveConversationMessages(
+      7,
+      <ChatMessageModel>[ChatMessageModel.userMessage('latest')],
+    );
+
+    await Future<void>.delayed(Duration.zero);
+    expect(replaceCallCount, 1);
+
+    releaseFirstWrite.complete();
+    await Future.wait(<Future<void>>[firstWrite, secondWrite]);
+
+    expect(replaceCallCount, 2);
+    expect(persistedSnapshots.last.single['content']['text'], 'latest');
+  });
+
   test(
     'canonicalizes legacy Agent tool metadata restored from storage',
     () async {
-      nativeMessages['codex:12'] = <Map<String, dynamic>>[
+      nativeMessages['agent:12'] = <Map<String, dynamic>>[
         ChatMessageModel.cardMessage(<String, dynamic>{
           'type': 'agent_tool_summary',
           'uiStyle': 'codex_tool',
@@ -415,7 +458,7 @@ void main() {
     );
   });
 
-  test('does not revive legacy messages when metadata expects none', () async {
+  test('preserves legacy messages when metadata incorrectly expects none', () async {
     final prefs = await SharedPreferences.getInstance();
     final legacyMessages = <ChatMessageModel>[
       ChatMessageModel.userMessage('stale cleared message'),
@@ -434,8 +477,11 @@ void main() {
       expectedMessageCount: 0,
     );
 
-    expect(restored, isEmpty);
-    expect(nativeMessages['normal:8'], isNull);
+    expect(restored.single.text, 'stale cleared message');
+    expect(
+      nativeMessages['normal:8']?.single['content']['text'],
+      'stale cleared message',
+    );
     expect(
       prefs.getString(
         ConversationHistoryService.conversationMessagesKey(
@@ -446,6 +492,25 @@ void main() {
       isNull,
     );
   });
+
+  test(
+    'reads legacy Agent history stored under the old agent mode alias',
+    () async {
+      final prefs = await SharedPreferences.getInstance();
+      final message = ChatMessageModel.userMessage('old Agent history');
+      await prefs.setString(
+        'conversation_messages_agent_9',
+        jsonEncode(<Map<String, dynamic>>[message.toJson()]),
+      );
+
+      final restored = await ConversationHistoryService.readConversationHistory(
+        9,
+        mode: ConversationMode.agent,
+      );
+
+      expect(restored.single.text, 'old Agent history');
+    },
+  );
 
   test('clears conversation messages through native', () async {
     await ConversationHistoryService.saveConversationMessages(

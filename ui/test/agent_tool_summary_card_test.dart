@@ -214,57 +214,6 @@ void main() {
     expect(find.text('runlog:gui-run-interrupted'), findsOneWidget);
   });
 
-  testWidgets('published Vibe project opens its dashboard directly', (
-    tester,
-  ) async {
-    final router = GoRouter(
-      initialLocation: '/',
-      routes: [
-        GoRoute(
-          path: '/',
-          builder: (context, state) => Scaffold(
-            body: AgentToolSummaryCard(
-              cardData: {
-                'status': 'success',
-                'toolName': 'project_publish',
-                'displayName': '发布项目',
-                'toolType': 'plugin',
-                'resultPreviewJson': jsonEncode({
-                  'name': '真实 NBA 赛程',
-                  'dashboardRoute':
-                      '/home/plugin_dashboard?pluginId=local.project.nba-live',
-                }),
-              },
-            ),
-          ),
-        ),
-        GoRoute(
-          path: '/home/plugin_dashboard',
-          builder: (context, state) => Scaffold(
-            body: Text('dashboard:${state.uri.queryParameters['pluginId']}'),
-          ),
-        ),
-      ],
-    );
-    addTearDown(router.dispose);
-
-    await tester.pumpWidget(MaterialApp.router(routerConfig: router));
-
-    expect(
-      find.byKey(const ValueKey('published-project-card')),
-      findsOneWidget,
-    );
-    expect(find.text('真实 NBA 赛程'), findsOneWidget);
-    expect(find.text('打开 Dashboard'), findsOneWidget);
-
-    await tester.tap(
-      find.byKey(const ValueKey('published-project-open-dashboard')),
-    );
-    await tester.pumpAndSettle();
-
-    expect(find.text('dashboard:local.project.nba-live'), findsOneWidget);
-  });
-
   testWidgets('tool card opens detail sheet when tapped', (tester) async {
     await tester.pumpWidget(
       MaterialApp(

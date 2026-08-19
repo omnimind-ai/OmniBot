@@ -243,6 +243,8 @@ class ScheduledTaskSchedulerService {
       await AgentRuntimeService.promptSession(
         sessionId: sessionId,
         conversationId: normalizedConversationId,
+        requestId:
+            'scheduled-${task.id}-${DateTime.now().microsecondsSinceEpoch}',
         text: prompt,
         conversationMode: ConversationMode.subagent.storageValue,
       );

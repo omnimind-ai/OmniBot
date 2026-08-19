@@ -71,9 +71,7 @@ import 'package:ui/features/home/pages/agent/codex_remote_workspace_browser.dart
 import 'package:ui/widgets/chat_drawer_gesture_guard.dart';
 
 // 导入 Mixins
-import 'mixins/chat_message_handler.dart';
-import 'mixins/agent_stream_handler.dart';
-import 'mixins/task_execution_handler.dart';
+import 'mixins/chat_dispatch_support.dart';
 import 'mixins/conversation_manager.dart';
 
 // 导入 Widgets
@@ -123,13 +121,14 @@ class ChatPage extends StatefulWidget {
 }
 
 abstract class _ChatPageStateBase extends State<ChatPage>
-    with
-        WidgetsBindingObserver,
-        ChatMessageHandler,
-        AgentStreamHandler,
-        TaskExecutionHandler,
-        ConversationManager
+    with WidgetsBindingObserver, ChatDispatchSupport, ConversationManager
     implements RouteAware {
+  void removeLatestLoadingIfExists() {
+    if (_messages.isNotEmpty && _messages.first.isLoading) {
+      setState(() => _messages.removeAt(0));
+    }
+  }
+
   // ===================== Controllers =====================
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _normalMessageScrollController = ScrollController();
@@ -147,7 +146,13 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   final GlobalKey<ChatInputAreaState> _chatInputAreaKey =
       GlobalKey<ChatInputAreaState>();
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+  // These drawers are mutually exclusive subtrees. They must not share a
+  // GlobalKey, otherwise Flutter reparents one keyed subtree between two
+  // trees during layout changes and can invalidate inherited dependents.
+  final GlobalKey<HomeDrawerState> _embeddedDrawerKey =
+      GlobalKey<HomeDrawerState>();
   final GlobalKey<HomeDrawerState> _drawerKey = GlobalKey<HomeDrawerState>();
+  final GlobalKey _embeddedDrawerSearchFieldKey = GlobalKey();
   final GlobalKey _drawerSearchFieldKey = GlobalKey();
   final GlobalKey _browserOverlayKey = GlobalKey();
   final GlobalKey _slashCommandStripKey = GlobalKey();
@@ -183,6 +188,11 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   // future so a send started from the first rendered frame cannot race that
   // restore and get cleared by _resetLocalConversationState().
   Future<void>? _conversationBootstrapFuture;
+  // A send can be triggered by both the keyboard submit callback and the
+  // composer button before the asynchronous conversation bootstrap returns.
+  // Keep this synchronous entry guard separate from isAiResponding: the
+  // latter is set only after the optimistic user message is inserted.
+  bool _sendMessageInFlight = false;
   final Set<String> _consumedInitialMessageRequests = <String>{};
 
   // OpenClaw 配置与开关
@@ -267,6 +277,7 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   String? _activeAgentThreadId;
   String? _activeAgentTurnId;
   String? _normalAcpSessionId;
+  int? _normalAcpSessionConversationId;
   String? _normalAcpTurnId;
   String? _activeAgentModelId;
   String? _activeAgentReasoningEffort;
@@ -582,7 +593,7 @@ abstract class _ChatPageStateBase extends State<ChatPage>
       runtime.isAiResponding ? '1' : '0',
       runtime.isContextCompressing ? '1' : '0',
       runtime.isCheckingExecutableTask ? '1' : '0',
-      runtime.currentDispatchTaskId ?? '',
+      runtime.currentDispatchTurnId ?? '',
       runtime.currentThinkingStage.toString(),
       runtime.isInputAreaVisible ? '1' : '0',
       runtime.isExecutingTask ? '1' : '0',
@@ -859,16 +870,16 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     _modeState(_activeMode).isDeepThinking = value;
   }
 
-  String? get _currentDispatchTaskId =>
-      _activeRuntime?.currentDispatchTaskId ??
-      _modeState(_activeMode).currentDispatchTaskId;
-  set _currentDispatchTaskId(String? value) {
+  String? get _currentDispatchTurnId =>
+      _activeRuntime?.currentDispatchTurnId ??
+      _modeState(_activeMode).currentDispatchTurnId;
+  set _currentDispatchTurnId(String? value) {
     final runtime = _activeRuntime;
     if (runtime != null) {
-      runtime.currentDispatchTaskId = value;
+      runtime.currentDispatchTurnId = value;
       return;
     }
-    _modeState(_activeMode).currentDispatchTaskId = value;
+    _modeState(_activeMode).currentDispatchTurnId = value;
   }
 
   int get _currentThinkingStage =>
@@ -1183,7 +1194,7 @@ abstract class _ChatPageStateBase extends State<ChatPage>
 
   // ===================== Mixin 接口实现 =====================
 
-  // ChatMessageHandler
+  // Chat dispatch state
   @override
   List<ChatMessageModel> get messages => _messages;
   @override
@@ -1202,15 +1213,15 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   @override
   set isDeepThinking(bool value) => _isDeepThinking = value;
   @override
-  String? get currentDispatchTaskId => _currentDispatchTaskId;
+  String? get currentDispatchTurnId => _currentDispatchTurnId;
   @override
-  set currentDispatchTaskId(String? value) => _currentDispatchTaskId = value;
+  set currentDispatchTurnId(String? value) => _currentDispatchTurnId = value;
   @override
   int get currentThinkingStage => _currentThinkingStage;
   @override
   set currentThinkingStage(int value) => _currentThinkingStage = value;
 
-  // TaskExecutionHandler
+  // ChatDispatchSupport
   @override
   TextEditingController get messageController => _messageController;
   @override
@@ -1296,9 +1307,6 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   }
 
   @override
-  Future<void> persistAgentConversation() => saveConversation();
-
-  @override
   void onConversationReset(ConversationMode mode) {
     _resetLocalConversationState(_pageModeForConversationMode(mode));
   }
@@ -1381,6 +1389,7 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     // Reload the embedded drawer's conversation list so newly persisted
     // conversations appear immediately, matching phone-mode behaviour where
     // the drawer reloads every time it is opened.
+    _embeddedDrawerKey.currentState?.reloadConversations();
     _drawerKey.currentState?.reloadConversations();
   }
 
@@ -1391,62 +1400,19 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   void updateThinkingCard(String taskID) => _updateThinkingCard(taskID);
 
   @override
-  void createThinkingCardForAgent(
-    String taskID, {
-    String? cardId,
-    String? thinkingContent,
-    bool? isLoading,
-    int? stage,
-    Map<String, dynamic>? streamMeta,
-  }) => _createThinkingCard(
-    taskID,
-    cardId: cardId,
-    thinkingContent: thinkingContent,
-    isLoading: isLoading,
-    stage: stage,
-    streamMeta: streamMeta,
-  );
-
-  @override
-  void updateThinkingCardForAgent(
-    String taskID, {
-    String? cardId,
-    String? thinkingContent,
-    bool? isLoading,
-    int? stage,
-    Map<String, dynamic>? streamMeta,
-    bool lockCompleted = true,
-  }) => _updateThinkingCard(
-    taskID,
-    cardId: cardId,
-    thinkingContent: thinkingContent,
-    isLoading: isLoading,
-    stage: stage,
-    streamMeta: streamMeta,
-    lockCompleted: lockCompleted,
-  );
-
-  @override
   void handleValidationError(String taskID, String debugMessage) {
     handleAgentError(debugMessage);
   }
 
   @override
   void resetDispatchState() {
-    _currentDispatchTaskId = null;
+    _currentDispatchTurnId = null;
     _deepThinkingContent = '';
     _isDeepThinking = false;
     clearAgentStreamSessionState();
   }
 
-  @override
-  void fallbackToChat(String taskID) {
-    handleAgentError('统一 Agent 已启用，旧聊天分发链路已移除。');
-  }
-
-  @override
   void clearAgentStreamSessionState() {
-    super.clearAgentStreamSessionState();
     final conversationId = _currentConversationId;
     if (conversationId == null) return;
     _runtimeCoordinator.clearConversationRuntimeSession(
@@ -1455,7 +1421,36 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     );
   }
 
-  @override
+  void handleAgentError(String error) {
+    final runtime = _runtimeForMode(_activeMode);
+    final taskId = runtime?.currentDispatchTurnId;
+    if (runtime == null || taskId == null || taskId.trim().isEmpty) {
+      return;
+    }
+    final messageId = '$taskId-error';
+    final message = ChatMessageModel(
+      id: messageId,
+      type: 1,
+      user: 2,
+      content: <String, dynamic>{'text': error, 'id': messageId},
+      isError: true,
+    );
+    final index = runtime.messages.indexWhere((item) => item.id == messageId);
+    if (index == -1) {
+      runtime.messages.insert(0, message);
+    } else {
+      runtime.messages[index] = message;
+    }
+    runtime.isAiResponding = false;
+    runtime.isCheckingExecutableTask = false;
+    runtime.isExecutingTask = false;
+    clearAgentStreamSessionState();
+    if (mounted) {
+      setState(() {});
+    }
+    unawaited(saveConversation());
+  }
+
   void interruptActiveToolCard({String? summary}) {
     final conversationId = _currentConversationId;
     if (conversationId == null) return;
@@ -1471,7 +1466,8 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     String cardId,
   ) async {
     final activeMode = _activeConversationMode;
-    final isNormalAcp = activeMode == ChatPageMode.normal &&
+    final isNormalAcp =
+        activeMode == ChatPageMode.normal &&
         activeConversationModeValue != ConversationMode.chatOnly;
     final response = await AgentRuntimeService.cancelPrompt(
       conversationId: _currentConversationId,
@@ -1565,6 +1561,13 @@ abstract class _ChatPageStateBase extends State<ChatPage>
       _activeAgentTurnId = null;
     }
     if (mode == ChatPageMode.normal) {
+      // ACP sessions are bound to a conversation. Never carry the previous
+      // conversation's session id into the next prompt, otherwise the local
+      // runtime correctly reuses the explicit old session and the user sees
+      // repeated or cross-conversation context.
+      _normalAcpSessionId = null;
+      _normalAcpSessionConversationId = null;
+      _normalAcpTurnId = null;
       _conversationModelOverride = null;
       _pendingConversationModelOverride = null;
       _showConversationModelMentionChip = false;

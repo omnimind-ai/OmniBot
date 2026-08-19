@@ -6,7 +6,7 @@ const String kAgentToolSummaryCardType = 'agent_tool_summary';
 const String kAgentRequestCardType = 'agent_request';
 
 // Read-only compatibility for conversation snapshots created before Agent mode
-// replaced the former Codex-specific presentation layer.
+// used the shared ACP tool card types.
 const String _legacyAgentToolUiStyle = 'codex_tool';
 const String _legacyAgentRequestCardType = 'codex_request';
 

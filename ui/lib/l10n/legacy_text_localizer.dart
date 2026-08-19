@@ -65,8 +65,7 @@ class LegacyTextLocalizer {
     '管理 ACP Agent、可用状态与统一模型绑定':
         'Manage ACP Agents, availability, and unified model bindings',
     '远程 PC Bridge': 'Remote PC Bridge',
-    '仅配置远程 Codex app-server 连接':
-        'Configure only the remote Codex app-server connection',
+    '仅配置远程 ACP 连接': 'Configure only the remote ACP connection',
     '清除失败': 'Failed to clear',
     '隐藏': 'Hide',
     '显示': 'Show',

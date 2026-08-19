@@ -65,9 +65,9 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
           (_modeState(mode).deepThinkingContent),
       isDeepThinking:
           runtime?.isDeepThinking ?? (_modeState(mode).isDeepThinking),
-      currentDispatchTaskId:
-          runtime?.currentDispatchTaskId ??
-          _modeState(mode).currentDispatchTaskId,
+      currentDispatchTurnId:
+          runtime?.currentDispatchTurnId ??
+          _modeState(mode).currentDispatchTurnId,
       currentThinkingStage:
           runtime?.currentThinkingStage ??
           (_modeState(mode).currentThinkingStage),
@@ -75,7 +75,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
           runtime?.isInputAreaVisible ?? (_modeState(mode).isInputAreaVisible),
       isExecutingTask:
           runtime?.isExecutingTask ?? (_modeState(mode).isExecutingTask),
-      lastAgentTaskId: runtime?.lastAgentTaskId,
+      lastAgentTurnId: runtime?.lastAgentTurnId,
       activeToolCardId: runtime?.activeToolCardId,
       activeThinkingCardId: runtime?.activeThinkingCardId,
       activeContextCompactionMarkerId: runtime?.activeContextCompactionMarkerId,
@@ -438,36 +438,44 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
 
   @override
   Future<void> _sendMessage({String? text}) async {
-    // The chat surface is rendered before the asynchronous conversation
-    // bootstrap finishes. Wait for it before inserting the optimistic user
-    // row; otherwise bootstrap can restore/reset the target immediately after
-    // this method and make the row flash and disappear.
-    final bootstrapFuture = _conversationBootstrapFuture;
-    if (bootstrapFuture != null) {
-      await bootstrapFuture;
-    }
-    final messageText = (text ?? _messageController.text).trim();
-    final hasAttachments = _pendingAttachments.isNotEmpty;
-    if ((messageText.isEmpty && !hasAttachments) || _isAiResponding) return;
-    if (!hasAttachments &&
-        ManualRecordingFlowController.isCommand(messageText)) {
-      await _startManualRecordingCommand(messageText);
-      return;
-    }
-    if (!await _ensureNormalChatModelConfigurationForSend()) return;
+    // Set this before the first await. Two UI submit paths can otherwise both
+    // pass the isAiResponding check while bootstrap/model loading is pending.
+    if (_sendMessageInFlight) return;
+    _sendMessageInFlight = true;
+    try {
+      // The chat surface is rendered before the asynchronous conversation
+      // bootstrap finishes. Wait for it before inserting the optimistic user
+      // row; otherwise bootstrap can restore/reset the target immediately after
+      // this method and make the row flash and disappear.
+      final bootstrapFuture = _conversationBootstrapFuture;
+      if (bootstrapFuture != null) {
+        await bootstrapFuture;
+      }
+      final messageText = (text ?? _messageController.text).trim();
+      final hasAttachments = _pendingAttachments.isNotEmpty;
+      if ((messageText.isEmpty && !hasAttachments) || _isAiResponding) return;
+      if (!hasAttachments &&
+          ManualRecordingFlowController.isCommand(messageText)) {
+        await _startManualRecordingCommand(messageText);
+        return;
+      }
+      if (!await _ensureNormalChatModelConfigurationForSend()) return;
 
-    final attachments = _pendingAttachments
-        .map((item) => item.toMap())
-        .toList();
-    if (attachments.isNotEmpty && mounted) {
-      setState(() => _pendingAttachments.clear());
-    }
+      final attachments = _pendingAttachments
+          .map((item) => item.toMap())
+          .toList();
+      if (attachments.isNotEmpty && mounted) {
+        setState(() => _pendingAttachments.clear());
+      }
 
-    await _dispatchUserMessage(
-      messageText,
-      attachments: attachments,
-      runSlashCommand: true,
-    );
+      await _dispatchUserMessage(
+        messageText,
+        attachments: attachments,
+        runSlashCommand: true,
+      );
+    } finally {
+      _sendMessageInFlight = false;
+    }
   }
 
   @override
@@ -632,7 +640,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
     );
     if (!handled &&
         mounted &&
-        _currentDispatchTaskId == messageIds.aiMessageId) {
+        _currentDispatchTurnId == messageIds.aiMessageId) {
       handleAgentError('统一 Agent 启动失败，请检查模型提供商与场景模型配置。');
     }
   }
@@ -809,9 +817,14 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       final selection =
           _activeConversationModelOverrideSelection ??
           _activeDispatchSceneSelection;
+      final reusableSessionId =
+          !remoteRuntime && _normalAcpSessionConversationId == conversationId
+          ? _normalAcpSessionId
+          : null;
       final response = await AgentRuntimeService.promptSession(
         conversationId: remoteRuntime ? null : conversationId,
-        sessionId: null,
+        sessionId: remoteRuntime ? null : reusableSessionId,
+        requestId: _buildPromptRequestId(aiMessageId),
         agentId: remoteRuntime ? null : status.activeAgentId,
         text: userMessage,
         attachments: userAttachments,
@@ -826,6 +839,9 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
           _asAgentString(response['sessionId']) ??
           _asAgentString(response['threadId']) ??
           _normalAcpSessionId;
+      if (_normalAcpSessionId != null) {
+        _normalAcpSessionConversationId = conversationId;
+      }
       _normalAcpTurnId =
           _asAgentString(response['promptId']) ??
           _asAgentString(response['turnId']) ??
@@ -885,7 +901,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
     List<Map<String, dynamic>>? attachmentsOverride,
   }) async {
     try {
-      _currentDispatchTaskId = aiMessageId;
+      _currentDispatchTurnId = aiMessageId;
       _deepThinkingContent = '';
       _isDeepThinking = false;
       _currentThinkingStage = 1;
@@ -903,9 +919,14 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       }
       final status = await _refreshConnectedAgentRuntimeStatus();
       final remoteCodex = agentModelSourceKey(status) == 'remote';
+      final reusableSessionId =
+          !remoteCodex && _normalAcpSessionConversationId == conversationId
+          ? _normalAcpSessionId
+          : null;
       final response = await AgentRuntimeService.promptSession(
         conversationId: remoteCodex ? null : conversationId,
-        sessionId: remoteCodex ? null : _normalAcpSessionId,
+        sessionId: remoteCodex ? null : reusableSessionId,
+        requestId: _buildPromptRequestId(aiMessageId),
         agentId: remoteCodex ? null : status.activeAgentId,
         text: userMessage,
         attachments: attachments,
@@ -920,6 +941,9 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
           _asAgentString(response['sessionId']) ??
           _asAgentString(response['threadId']) ??
           _normalAcpSessionId;
+      if (_normalAcpSessionId != null) {
+        _normalAcpSessionConversationId = conversationId;
+      }
       _normalAcpTurnId =
           _asAgentString(response['promptId']) ??
           _asAgentString(response['turnId']) ??
@@ -934,12 +958,19 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       );
       return true;
     } catch (e) {
-      if (_currentDispatchTaskId == aiMessageId) {
+      if (_currentDispatchTurnId == aiMessageId) {
         _runtimeCoordinator.unregisterTask(aiMessageId);
       }
       debugPrint('Agent flow error: $e');
       return false;
     }
+  }
+
+  String _buildPromptRequestId(String taskId) {
+    // The assistant placeholder id is the identity of this user submission.
+    // Keep it stable so a transport retry can return the same ACP turn rather
+    // than executing the prompt and its tools a second time.
+    return taskId;
   }
 
   @override
@@ -1044,7 +1075,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       if (_activeConversationMode == ChatPageMode.agent) {
         unawaited(_interruptAgentTurn());
         final taskId =
-            _currentDispatchTaskId ?? _activeRuntime?.lastAgentTaskId;
+            _currentDispatchTurnId ?? _activeRuntime?.lastAgentTurnId;
         if (taskId != null) {
           _runtimeCoordinator.unregisterTask(taskId);
           _upsertCancelledAgentRunMessage(taskId);
@@ -1056,14 +1087,14 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
           _isCheckingExecutableTask = false;
           _isExecutingTask = false;
           _isInputAreaVisible = true;
-          _currentDispatchTaskId = null;
+          _currentDispatchTurnId = null;
           _messages.removeWhere((msg) => msg.isLoading);
         });
         return;
       }
       if (_activeConversationMode == ChatPageMode.normal &&
           activeConversationModeValue != ConversationMode.chatOnly &&
-          (_currentDispatchTaskId != null || _normalAcpTurnId != null)) {
+          (_currentDispatchTurnId != null || _normalAcpTurnId != null)) {
         unawaited(
           AgentRuntimeService.cancelPrompt(
             conversationId: _currentConversationId,
@@ -1071,15 +1102,15 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
             promptId: _normalAcpTurnId,
           ),
         );
-        final taskId = _currentDispatchTaskId;
+        final taskId = _currentDispatchTurnId;
         if (taskId != null) {
           _runtimeCoordinator.unregisterTask(taskId);
         }
         resetDispatchState();
         return;
       }
-      if (_currentDispatchTaskId != null ||
-          _activeRuntime?.lastAgentTaskId != null ||
+      if (_currentDispatchTurnId != null ||
+          _activeRuntime?.lastAgentTurnId != null ||
           _isCheckingExecutableTask ||
           _isExecutingTask) {
         _cancelDispatchTask();
@@ -1112,7 +1143,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
 
   @override
   void _cancelDispatchTask() {
-    final taskId = _currentDispatchTaskId ?? _activeRuntime?.lastAgentTaskId;
+    final taskId = _currentDispatchTurnId ?? _activeRuntime?.lastAgentTurnId;
     interruptActiveToolCard();
     if (_activeConversationMode == ChatPageMode.normal &&
         activeConversationModeValue != ConversationMode.chatOnly) {
@@ -1291,14 +1322,6 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
   }
 
   @override
-  Future<void> onAgentPermissionRequired(List<String> permissionIds) async {
-    if (!mounted || _activeConversationMode != ChatPageMode.normal) {
-      return;
-    }
-    await _requestAuthorizeForExecution(permissionIds);
-  }
-
-  @override
   Future<void> _requestAuthorizeForExecution(
     List<String> requiredPermissionIds,
   ) async {
@@ -1389,7 +1412,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
         aiMessageId,
         userMessageId,
       );
-      if (!handled && mounted && _currentDispatchTaskId == aiMessageId) {
+      if (!handled && mounted && _currentDispatchTurnId == aiMessageId) {
         handleAgentError('统一 Agent 启动失败，请检查模型提供商与场景模型配置。');
       }
     } finally {

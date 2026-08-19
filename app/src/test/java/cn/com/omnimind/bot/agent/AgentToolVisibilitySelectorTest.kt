@@ -6,12 +6,18 @@ import org.junit.Test
 
 class AgentToolVisibilitySelectorTest {
     @Test
-    fun `returns every conversation-approved tool regardless of message intent`() {
+    fun `keeps discovery and common native tools visible before discovery`() {
         val candidates = listOf(
-            tool("context_apps_query"),
+            tool("tools_search"),
+            tool("read"),
+            tool("write"),
+            tool("edit"),
+            tool("bash"),
+            tool("glob"),
+            tool("grep"),
+            tool("webfetch"),
             tool("vlm_task"),
-            tool("terminal_execute"),
-            tool("file_write"),
+            tool("context_time_now"),
             tool("project_check"),
             tool("project_publish"),
             tool("fitness_record", dynamic = true, owner = "local.project.fitness"),
@@ -23,12 +29,15 @@ class AgentToolVisibilitySelectorTest {
             candidates = candidates,
         )
 
-        assertEquals(candidates.mapTo(linkedSetOf()) { it.name }, selected)
+        assertEquals(
+            linkedSetOf("bash", "edit", "glob", "grep", "read", "tools_search", "webfetch", "write"),
+            selected,
+        )
     }
 
     @Test
-    fun `does not cap or rank a large dynamic tool set`() {
-        val candidates = listOf(tool("context_apps_query")) +
+    fun `does not expose a large dynamic tool set before discovery`() {
+        val candidates = listOf(tool("read")) +
             (1..80).map { index ->
                 tool(
                     name = "dynamic_tool_$index",
@@ -42,12 +51,12 @@ class AgentToolVisibilitySelectorTest {
             candidates = candidates,
         )
 
-        assertEquals(candidates.size, selected.size)
-        candidates.forEach { candidate -> assertTrue(candidate.name in selected) }
+        assertEquals(linkedSetOf("read"), selected)
+        assertTrue("dynamic_tool_1" !in selected)
     }
 
     @Test
-    fun `game project request keeps every writing and publishing tool`() {
+    fun `project tools are discovered instead of eagerly exposed`() {
         val requiredTools = listOf(
             "file_write",
             "terminal_execute",
@@ -60,7 +69,7 @@ class AgentToolVisibilitySelectorTest {
             candidates = requiredTools.map(::tool),
         )
 
-        requiredTools.forEach { toolName -> assertTrue(toolName in selected) }
+        requiredTools.forEach { toolName -> assertTrue(toolName !in selected) }
     }
 
     @Test

@@ -36,4 +36,24 @@ class AgentToolDefinitionsVlmTest {
             }
         )
     }
+
+    @Test
+    fun `direct agent catalog uses common native tool names`() {
+        val definitions = AgentToolDefinitions.modelFacingTools(
+            AgentToolDefinitions.staticTools(PromptLocale.EN_US)
+        )
+        val names = definitions.mapNotNull {
+            (it["function"] as? JsonObject)
+                ?.get("name")
+                ?.jsonPrimitive
+                ?.contentOrNull
+        }
+
+        assertTrue(setOf("read", "write", "edit", "bash", "glob", "grep", "webfetch")
+            .all(names::contains))
+        assertTrue("file_read" !in names)
+        assertTrue("terminal_execute" !in names)
+        assertTrue("browser_use" !in names)
+        assertTrue("read" in AgentToolDefinitions.reservedToolNames())
+    }
 }

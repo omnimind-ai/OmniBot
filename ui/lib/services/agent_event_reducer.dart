@@ -1,6 +1,5 @@
 import 'dart:convert';
 
-import 'package:ui/features/home/pages/chat/mixins/agent_stream_handler.dart';
 import 'package:ui/features/home/pages/chat/chat_page_models.dart';
 import 'package:ui/features/home/pages/chat/services/chat_conversation_runtime_coordinator.dart';
 import 'package:ui/models/chat_message_model.dart';
@@ -8,8 +7,6 @@ import 'package:ui/services/agent_stream_meta.dart';
 import 'package:ui/services/agent_diff_parser.dart';
 import 'package:ui/services/agent_message_kinds.dart';
 import 'package:ui/services/agent_tool_call_parser.dart';
-
-part 'agent_event_reducer_legacy_codex.dart';
 
 class AgentReduceResult {
   const AgentReduceResult({
@@ -39,26 +36,35 @@ class AgentEventReducer {
     final message = _asStringMap(event['message']) ?? event;
     final method = _resolveAgentEventMethod(event: event, message: message);
     if (method.isEmpty) {
-      final presentation = _asStringMap(event['presentation']);
-      if (presentation != null) {
-        final projected = _projectPresentationEvent(
-          event: event,
-          presentation: presentation,
-        );
-        if (projected == null) {
-          return const AgentReduceResult(handled: false);
-        }
-        return reduce(runtime: runtime, event: projected);
-      }
       return const AgentReduceResult(handled: false);
     }
 
     final params = _eventParams(event: event, message: message, method: method);
 
     // ACP agents speak the official session/update notification. The reducer
-    // projects that protocol object into the existing presentation reducer so
-    // the UI remains a renderer rather than becoming another ACP dialect.
+    // projects that protocol object into UI state without introducing a
+    // second host-owned event protocol.
     if (method == 'session/update') {
+      final update = _asStringMap(params['update']);
+      final sessionUpdate = _string(update?['sessionUpdate']);
+      final scopedUpdate = sessionUpdate != null &&
+          sessionUpdate != 'current_mode_update' &&
+          sessionUpdate != 'config_option_update';
+      final updateTurnId = _firstString([
+        event['turnId'],
+        event['turn_id'],
+        params['turnId'],
+        params['turn_id'],
+      ]);
+      if (scopedUpdate && updateTurnId == null) {
+        // ACP updates are streamed inside a prompt turn. Never manufacture a
+        // local owner from sessionId or messageId: that reattaches late data
+        // to the next prompt and recreates the duplicate-conversation bug.
+        return AgentReduceResult(handled: true, method: method);
+      }
+      // A turn-scoped ACP update without a turn id is not attributable. Do
+      // not guess from itemId or threadId: doing so is how late tool output
+      // gets attached to the next prompt.
       final projected = _projectAcpSessionUpdate(event: event, params: params);
       if (projected == null) {
         return AgentReduceResult(handled: true, method: method);
@@ -89,8 +95,57 @@ class AgentEventReducer {
       params['processHandle'],
       params['id'],
     ]);
+
+    // One conversation has one active turn. A delayed update from an older
+    // turn must never call _touchActiveTurn and replace the current owner of
+    // the shared streaming state. Terminal events are still allowed through
+    // so that the old turn's cards can be finalized independently.
+    final admittedAcpTurnId = runtime.activeAcpTurnId?.trim();
+    final currentTurnId =
+        admittedAcpTurnId ?? runtime.currentDispatchTurnId?.trim();
+    // Before ACP admits a prompt, currentDispatchTurnId is only the local
+    // request/render key. A real `turn/started` is the event that binds the
+    // official ACP turn id; rejecting it here leaves every following update
+    // looking stale and strands the UI in "processing" forever.
+    // ACP adapters are not required to emit a synthetic `turn/started`
+    // notification. OpenCode, for example, begins with `session/update` and
+    // carries the official turn id on that update. When the UI has exactly
+    // one local request placeholder and no official turn has been admitted,
+    // the first turn-scoped non-terminal event is therefore the admission
+    // boundary. Without this, all OpenCode deltas look stale and the later
+    // terminal event cannot clear the local "processing" state.
+    final isTurnAdmission =
+        method == 'turn/started' ||
+        (turnId != null &&
+            admittedAcpTurnId == null &&
+            runtime.isAiResponding &&
+            runtime.currentDispatchTurnId != null &&
+            runtime.currentDispatchTurnId != turnId &&
+            !_isTerminalAgentEventMethod(method));
+    if (isTurnAdmission && method != 'turn/started') {
+      runtime.activeAcpTurnId = turnId;
+    }
+    if (turnId != null &&
+        currentTurnId != null &&
+        currentTurnId.isNotEmpty &&
+        currentTurnId != turnId &&
+        !isTurnAdmission &&
+        !_isTerminalAgentEventMethod(method)) {
+      return AgentReduceResult(
+        handled: true,
+        method: method,
+        threadId: threadId,
+        turnId: turnId,
+      );
+    }
     final parentTaskId =
-        _firstString([turnId, itemId, threadId]) ??
+        _firstString([
+          turnId,
+          if (method.startsWith('item/')) runtime.activeAcpTurnId,
+          if (method.startsWith('item/')) runtime.currentDispatchTurnId,
+          itemId,
+          threadId,
+        ]) ??
         'agent-${runtime.conversationId}';
 
     if (turnId != null &&
@@ -104,23 +159,8 @@ class AgentEventReducer {
       );
     }
 
-    if (method == 'codex/event') {
-      final protocolResult = reduceLegacyCodexProtocolEvent(
-        this,
-        runtime: runtime,
-        event: event,
-        message: message,
-        params: params,
-        fallbackParentTaskId: parentTaskId,
-        fallbackThreadId: threadId,
-        fallbackTurnId: turnId,
-      );
-      if (protocolResult != null) {
-        return protocolResult;
-      }
-    }
-
     if (method == 'turn/started') {
+      runtime.activeAcpTurnId = turnId ?? parentTaskId;
       _touchActiveTurn(runtime, parentTaskId);
       return AgentReduceResult(
         handled: true,
@@ -163,8 +203,8 @@ class AgentEventReducer {
           _statusIsInactive(status)) {
         final taskId =
             turnId ??
-            runtime.currentDispatchTaskId ??
-            runtime.lastAgentTaskId ??
+            runtime.currentDispatchTurnId ??
+            runtime.lastAgentTurnId ??
             parentTaskId;
         final statusDetail = _turnFailureDetail(params);
         final statusIsFailure =
@@ -534,7 +574,8 @@ class AgentEventReducer {
       );
     }
 
-    if (method.endsWith('requestApproval')) {
+    if (method == 'session/request_permission' ||
+        method.endsWith('requestApproval')) {
       final requestId = message['id'];
       final cardId = '${requestId ?? itemId ?? parentTaskId}-agent-approval';
       _upsertAgentRequestCard(
@@ -692,8 +733,8 @@ class AgentEventReducer {
       );
       final completionTaskId =
           turnId ??
-          runtime.currentDispatchTaskId ??
-          runtime.lastAgentTaskId ??
+          runtime.currentDispatchTurnId ??
+          runtime.lastAgentTurnId ??
           parentTaskId;
       _completeTurn(runtime, completionTaskId, appendCancelIfEmpty: false);
       return AgentReduceResult(
@@ -771,8 +812,8 @@ class AgentEventReducer {
         ),
         touchTurn: false,
       );
-      // codex app-server emits the top-level `error` notification when a
-      // turn fails terminally (network, rate-limit, server error). When
+      // ACP emits the top-level `error` notification when a turn fails
+      // terminally (network, rate-limit, server error). When
       // willRetry=false the server will NOT follow up with turn/completed,
       // so we must finalize the turn ourselves — otherwise runtime stays
       // isAiResponding=true forever.
@@ -780,8 +821,8 @@ class AgentEventReducer {
       if (!willRetry) {
         final completionTaskId =
             turnId ??
-            runtime.currentDispatchTaskId ??
-            runtime.lastAgentTaskId ??
+            runtime.currentDispatchTurnId ??
+            runtime.lastAgentTurnId ??
             parentTaskId;
         _completeTurn(runtime, completionTaskId, appendCancelIfEmpty: false);
       }
@@ -807,8 +848,13 @@ class AgentEventReducer {
   ) {
     runtime.completedAgentTurnIds.remove(parentTaskId);
     runtime.isAiResponding = true;
-    runtime.currentDispatchTaskId = parentTaskId;
-    runtime.lastAgentTaskId = parentTaskId;
+    if (runtime.activeAcpTurnId == null && parentTaskId.trim().isNotEmpty) {
+      // The first official session/update can be the admission boundary for
+      // adapters that do not expose a separate turn/started notification.
+      runtime.activeAcpTurnId = parentTaskId;
+    }
+    runtime.currentDispatchTurnId = parentTaskId;
+    runtime.lastAgentTurnId = parentTaskId;
     runtime.currentThinkingStage = ThinkingStage.thinking.value;
   }
 
@@ -1697,10 +1743,27 @@ class AgentEventReducer {
     String taskId, {
     bool appendCancelIfEmpty = true,
   }) {
-    final wasActive = runtime.activeAgentTaskIds.contains(taskId);
+    final wasActive = runtime.activeAgentTurnIds.contains(taskId);
+    final isCurrentTurn =
+        runtime.currentDispatchTurnId == taskId ||
+        runtime.lastAgentTurnId == taskId ||
+        runtime.activeAcpTurnId == taskId;
+    // A terminal notification for turn N can arrive after turn N+1 has
+    // already started. Finalize only N's cards/messages in that case; never
+    // clear the shared runtime flags or text cache owned by N+1.
+    if (!isCurrentTurn && runtime.currentDispatchTurnId != null) {
+      _markAssistantMessagesFinalForTask(runtime, taskId);
+      _finalizeThinkingCardsForTask(runtime, taskId);
+      _markToolCardsCompleteForTask(runtime, taskId);
+      runtime.currentThinkingMessages.remove(taskId);
+      if (wasActive) {
+        runtime.completedAgentTurnIds.add(taskId);
+      }
+      return;
+    }
     final isManualCancel =
         appendCancelIfEmpty &&
-        taskId == runtime.currentDispatchTaskId &&
+        taskId == runtime.currentDispatchTurnId &&
         !_hasVisibleAssistantTextForTask(runtime, taskId) &&
         !_hasCompletedAgentOutputForTask(runtime, taskId);
     if (isManualCancel) {
@@ -1717,9 +1780,15 @@ class AgentEventReducer {
     runtime.isAiResponding = false;
     runtime.isExecutingTask = false;
     runtime.isCheckingExecutableTask = false;
-    runtime.currentDispatchTaskId = null;
+    runtime.currentDispatchTurnId = null;
+    if (runtime.activeAcpTurnId == taskId) {
+      runtime.activeAcpTurnId = null;
+    }
+    runtime.lastAgentTurnId = null;
     runtime.currentAiMessages.clear();
     runtime.currentThinkingMessages.remove(taskId);
+    runtime.pendingAgentTextTaskId = null;
+    runtime.activeToolCardId = null;
     runtime.deepThinkingContent = '';
     runtime.isDeepThinking = false;
     runtime.activeThinkingCardId = null;
@@ -2773,47 +2842,16 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
     default:
       // Usage, commands, and future ACP update kinds do not affect the chat
       // cards yet. They remain valid ACP notifications and are safely ignored
-      // by this presentation projection.
+      // by this ACP-to-UI projection.
       return null;
   }
 }
 
-/// Local ACP prompt completion is a host lifecycle concern, not an ACP
-/// notification. It arrives as a presentation state and is projected into
-/// the existing card reducer without exposing a second agent protocol.
-Map<String, dynamic>? _projectPresentationEvent({
-  required Map<String, dynamic> event,
-  required Map<String, dynamic> presentation,
-}) {
-  final kind = _string(presentation['kind']);
-  if (kind == null || kind.isEmpty) return null;
-  final params = Map<String, dynamic>.from(presentation)..remove('kind');
-  final threadId = _firstString([presentation['threadId'], event['threadId']]);
-  final turnId = _firstString([presentation['turnId'], event['turnId']]);
-  if (threadId != null) params['threadId'] = threadId;
-  if (turnId != null) params['turnId'] = turnId;
-
-  switch (kind) {
-    case 'thread_started':
-      return <String, dynamic>{'method': 'thread/started', 'params': params};
-    case 'thread_archived':
-      return <String, dynamic>{'method': 'thread/archived', 'params': params};
-    case 'thread_unarchived':
-      return <String, dynamic>{'method': 'thread/unarchived', 'params': params};
-    case 'turn_started':
-      return <String, dynamic>{'method': 'turn/started', 'params': params};
-    case 'turn_completed':
-      return <String, dynamic>{'method': 'turn/completed', 'params': params};
-    case 'turn_failed':
-      return <String, dynamic>{'method': 'turn/failed', 'params': params};
-    case 'approval_requested':
-      return <String, dynamic>{
-        'method': 'item/started',
-        'params': <String, dynamic>{...params, 'item': params['item']},
-      };
-    default:
-      return null;
-  }
+bool _isTerminalAgentEventMethod(String method) {
+  return method == 'turn/completed' ||
+      method == 'turn/failed' ||
+      method == 'thread/closed' ||
+      method == 'error';
 }
 
 Map<String, dynamic> _projectAcpToolCall(Map<String, dynamic> update) {

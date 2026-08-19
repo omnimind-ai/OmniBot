@@ -231,7 +231,7 @@ class ChatMessageAnchorBar extends StatefulWidget {
   const ChatMessageAnchorBar({
     super.key,
     required this.messages,
-    required this.activeAgentTaskIds,
+    required this.activeAgentTurnIds,
     required this.conversationSignature,
     required this.bottomInset,
     required this.visible,
@@ -240,7 +240,7 @@ class ChatMessageAnchorBar extends StatefulWidget {
   });
 
   final List<ChatMessageModel> messages;
-  final Set<String> activeAgentTaskIds;
+  final Set<String> activeAgentTurnIds;
 
   /// 会话/模式标识，变化时立即收起面板。
   final String conversationSignature;
@@ -381,18 +381,18 @@ class _ChatMessageAnchorBarState extends State<ChatMessageAnchorBar>
     if (identical(_anchorsCacheSource, source) &&
         _anchorsCacheRevision == revision &&
         _anchorsCacheLength == source.length &&
-        setEquals(_anchorsCacheTaskIds, widget.activeAgentTaskIds)) {
+        setEquals(_anchorsCacheTaskIds, widget.activeAgentTurnIds)) {
       return _anchorsCache;
     }
     final anchors = buildChatMessageAnchors(
       source,
-      activeTaskIds: widget.activeAgentTaskIds,
+      activeTaskIds: widget.activeAgentTurnIds,
     );
     _anchorsCache = anchors;
     _anchorsCacheSource = source;
     _anchorsCacheRevision = revision;
     _anchorsCacheLength = source.length;
-    _anchorsCacheTaskIds = Set<String>.from(widget.activeAgentTaskIds);
+    _anchorsCacheTaskIds = Set<String>.from(widget.activeAgentTurnIds);
     return anchors;
   }
 

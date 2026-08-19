@@ -6,7 +6,32 @@ object AgentToolVisibilitySelector {
         userMessage: String,
         candidates: List<ToolCandidate>,
         routingMode: AgentToolRoutingMode = AgentToolRoutingMode.DEFAULT,
-    ): Set<String> = candidates.mapTo(linkedSetOf()) { it.name }
+    ): Set<String> {
+        // Tool selection is intentionally delegated to the Agent through the
+        // lightweight discovery tool. Client-side keyword guesses are brittle
+        // for multilingual prompts and cannot reliably select remote MCP tools.
+        // Keep the initial model-visible catalog tiny; the runtime exposes the
+        // concrete schemas after tools_search returns.
+        // Keep only the protocol-neutral discovery entry plus the common
+        // Harness-native workspace tools. OmniBot-specific device/context
+        // capabilities, memory, scheduling, plugins, and remote MCP schemas
+        // remain discoverable on demand.
+        val bootstrapNames = setOf(
+            TOOL_SEARCH_NAME,
+            "read",
+            "write",
+            "edit",
+            "bash",
+            "glob",
+            "grep",
+            "webfetch",
+        )
+        return candidates
+            .map { it.name }
+            .filterTo(linkedSetOf()) { it in bootstrapNames }
+    }
+
+    const val TOOL_SEARCH_NAME = "tools_search"
 
     data class ToolCandidate(
         val name: String,

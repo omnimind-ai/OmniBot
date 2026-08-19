@@ -2,30 +2,21 @@ import 'dart:async';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:ui/l10n/legacy_text_localizer.dart';
-import 'package:ui/models/agent_stream_event.dart';
 import 'package:ui/models/chat_link_preview.dart';
 import 'package:ui/models/chat_message_model.dart';
 import 'package:ui/models/conversation_model.dart';
 import 'widgets/message_bubble.dart';
 import 'widgets/chat_input_area.dart';
-import 'package:ui/utils/data_parser.dart';
-import 'package:ui/services/assists_core_service.dart';
 import 'package:ui/services/agent_runtime_service.dart';
-import 'package:ui/services/acp_agent_stream_projector.dart';
-import 'package:ui/services/agent_stream_meta.dart';
-import 'package:ui/features/home/pages/command_overlay/services/chat_service.dart';
-import 'package:ui/features/home/pages/command_overlay/constants/messages.dart';
 import 'package:ui/features/home/pages/command_overlay/services/manual_recording_flow_controller.dart';
 import 'package:ui/features/home/pages/command_overlay/services/manual_recording_result_card.dart';
 import 'package:ui/features/home/pages/chat/utils/agent_run_timeline.dart';
-import 'package:ui/features/home/pages/chat/utils/stream_text_merge.dart';
 import 'package:ui/features/home/pages/chat/utils/agent_thinking_card_locator.dart';
 import 'package:ui/features/home/pages/chat/utils/deep_thinking_persistence.dart';
 import 'package:ui/features/home/pages/chat/utils/keyboard_inset_motion_tracker.dart';
 import 'package:ui/features/home/pages/chat/widgets/agent_run_group_message.dart';
 import 'package:ui/features/home/pages/chat/widgets/chat_empty_greeting.dart';
 import 'package:ui/services/storage_service.dart';
-import 'package:ui/services/voice_playback_coordinator.dart';
 import 'package:ui/services/screen_dialog_service.dart';
 import 'package:ui/services/conversation_service.dart';
 import 'package:ui/services/conversation_history_service.dart';
@@ -35,7 +26,7 @@ import 'package:ui/services/link_preview_service.dart';
 import 'package:ui/widgets/ai_generated_badge.dart';
 import 'package:ui/constants/openclaw/openclaw_keys.dart';
 import 'package:ui/utils/ui.dart';
-import 'package:ui/features/home/pages/chat/mixins/agent_stream_handler.dart';
+import 'package:ui/features/home/pages/chat/services/chat_conversation_runtime_coordinator.dart';
 import 'package:ui/theme/theme_context.dart';
 
 /// 聊天上下文存储的key
@@ -75,7 +66,7 @@ class ChatBotSheet extends StatefulWidget {
 }
 
 class _ChatBotSheetState extends State<ChatBotSheet>
-    with WidgetsBindingObserver, AgentStreamHandler {
+    with WidgetsBindingObserver {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _messageScrollController = ScrollController();
   final DraggableScrollableController _sheetController =
@@ -99,16 +90,13 @@ class _ChatBotSheetState extends State<ChatBotSheet>
   bool _messageListScrollWasUserDriven = false;
   static const double _messageLatestEdgeTolerance = 48.0;
 
-  // 流式思考内容相关状态
-  String _deepThinkingContent = '';
-  bool _isDeepThinking = false;
-  String? _currentDispatchTaskId;
+  String? _currentDispatchTurnId;
   String? _acpSessionId;
   String? _acpPromptId;
-  final AcpAgentStreamProjector _acpStreamProjector = AcpAgentStreamProjector();
   StreamSubscription<Map<String, dynamic>>? _acpRuntimeSubscription;
-
-  int _currentThinkingStage = 1; // 当前思考阶段：1-识别需求，2-规划任务，3-帮你规划任务，4-完成思考
+  final ChatConversationRuntimeCoordinator _runtimeCoordinator =
+      ChatConversationRuntimeCoordinator.instance;
+  static const String _runtimeMode = 'command_overlay';
 
   // OpenClaw 配置与开关
   bool _openClawEnabled = false;
@@ -135,35 +123,6 @@ class _ChatBotSheetState extends State<ChatBotSheet>
   int? _currentConversationId;
   ConversationModel? _currentConversation;
 
-  // ===================== AgentStreamHandler mixin 接口实现 =====================
-
-  @override
-  String? get currentDispatchTaskId => _currentDispatchTaskId;
-
-  @override
-  String get deepThinkingContent => _deepThinkingContent;
-
-  @override
-  set deepThinkingContent(String value) {
-    _deepThinkingContent = value;
-  }
-
-  @override
-  bool get isDeepThinking => _isDeepThinking;
-
-  @override
-  set isDeepThinking(bool value) {
-    _isDeepThinking = value;
-  }
-
-  @override
-  int get currentThinkingStage => _currentThinkingStage;
-
-  @override
-  set currentThinkingStage(int value) {
-    _currentThinkingStage = value;
-  }
-
   void _persistDeepThinkingCardIfNeeded(ChatMessageModel message) {
     final conversationId = _currentConversationId;
     final cardData = message.cardData;
@@ -182,88 +141,6 @@ class _ChatBotSheetState extends State<ChatBotSheet>
         createdAtMillis: message.createAt.millisecondsSinceEpoch,
       ),
     );
-  }
-
-  void _persistThinkingCardForTask(String taskID, {String? cardId}) {
-    final thinkingCardId = cardId ?? '$taskID-thinking';
-    final index = _messages.indexWhere((msg) => msg.id == thinkingCardId);
-    if (index != -1) {
-      _persistDeepThinkingCardIfNeeded(_messages[index]);
-    }
-  }
-
-  @override
-  List<ChatMessageModel> get messages => _messages;
-
-  @override
-  bool get isAiResponding => _isAiResponding;
-
-  @override
-  set isAiResponding(bool value) {
-    _isAiResponding = value;
-  }
-
-  @override
-  void createThinkingCard(String taskID) => _createThinkingCard(taskID);
-
-  @override
-  void updateThinkingCard(String taskID) => _updateThinkingCard(taskID);
-
-  @override
-  void createThinkingCardForAgent(
-    String taskID, {
-    String? cardId,
-    String? thinkingContent,
-    bool? isLoading,
-    int? stage,
-    Map<String, dynamic>? streamMeta,
-  }) => _createThinkingCard(
-    taskID,
-    cardId: cardId,
-    thinkingContent: thinkingContent,
-    isLoading: isLoading,
-    stage: stage,
-    streamMeta: streamMeta,
-  );
-
-  @override
-  void updateThinkingCardForAgent(
-    String taskID, {
-    String? cardId,
-    String? thinkingContent,
-    bool? isLoading,
-    int? stage,
-    Map<String, dynamic>? streamMeta,
-    bool lockCompleted = true,
-  }) => _updateThinkingCard(
-    taskID,
-    cardId: cardId,
-    thinkingContent: thinkingContent,
-    isLoading: isLoading,
-    stage: stage,
-    streamMeta: streamMeta,
-    lockCompleted: lockCompleted,
-  );
-
-  @override
-  void resetDispatchState() => _resetDispatchState();
-
-  @override
-  void fallbackToChat(String taskID) => _fallbackToChat(taskID);
-
-  @override
-  Future<void> persistAgentConversation() => _saveConversationToDb();
-
-  @override
-  void clearAgentStreamSessionState() {
-    super.clearAgentStreamSessionState();
-  }
-
-  @override
-  void onAgentTextMessageUpdated(String messageId, {bool isFinal = true}) {
-    if (isFinal) {
-      _syncMessageLinkPreviews(messageId);
-    }
   }
 
   @override
@@ -314,6 +191,7 @@ class _ChatBotSheetState extends State<ChatBotSheet>
     _acpRuntimeSubscription = AgentRuntimeService.events.listen(
       _handleIncomingAcpRuntimeEvent,
     );
+    _runtimeCoordinator.ensureInitialized();
   }
 
   Future<void> _loadOpenClawConfig() async {
@@ -779,11 +657,6 @@ class _ChatBotSheetState extends State<ChatBotSheet>
     _saveConversationToDb(generateSummary: true, markComplete: true);
   }
 
-  void _handleIncomingAgentStreamEvent(AgentStreamEvent event) {
-    if (!mounted) return;
-    handleAgentStreamEvent(event);
-  }
-
   @override
   void didChangeMetrics() {
     super.didChangeMetrics();
@@ -833,6 +706,13 @@ class _ChatBotSheetState extends State<ChatBotSheet>
     _openClawUserIdController.dispose();
     _acpRuntimeSubscription?.cancel();
     _acpRuntimeSubscription = null;
+    final conversationId = _currentConversationId;
+    if (conversationId != null) {
+      _runtimeCoordinator.discardConversationRuntime(
+        conversationId: conversationId,
+        mode: _runtimeMode,
+      );
+    }
     super.dispose();
   }
 
@@ -876,84 +756,6 @@ class _ChatBotSheetState extends State<ChatBotSheet>
         ),
       );
     });
-  }
-
-  /// 移除最新的loading消息（如果存在）
-  void _removeLatestLoadingIfExists() {
-    if (_messages.isNotEmpty && _messages[0].isLoading) {
-      setState(() {
-        _messages.removeAt(0);
-      });
-    }
-  }
-
-  void _handleAiMessage(String taskId, String content, String? type) async {
-    final isErrorMessage = type == 'error';
-    final isRateLimited = type == 'rate_limited';
-    final prefillTokensPerSecond = extractChatTaskPrefillTokensPerSecond(
-      content,
-    );
-    final decodeTokensPerSecond = extractChatTaskDecodeTokensPerSecond(content);
-    final hasPerformanceMetrics =
-        prefillTokensPerSecond != null || decodeTokensPerSecond != null;
-    final String messageText;
-    final bool isError;
-    final bool isSummarizing;
-    bool shouldUpdateAiMessage = true;
-
-    // 首次收到消息时移除loading（检查是否是新的taskId）
-    final isFirstChunk = !_currentAiMessages.containsKey(taskId);
-    if (isFirstChunk) {
-      _removeLatestLoadingIfExists();
-    }
-
-    if (isRateLimited) {
-      // 处理 429 限流错误
-      messageText = kRateLimitErrorMessage;
-      isError = true;
-      isSummarizing = false;
-      _currentAiMessages.remove(taskId);
-    } else if (isErrorMessage) {
-      messageText = kNetworkErrorMessage;
-      isError = true;
-      isSummarizing = false;
-      _currentAiMessages.remove(taskId);
-    } else {
-      final text = extractChatTaskText(content, fallbackToRawText: false);
-      if (text.isNotEmpty) {
-        _currentAiMessages[taskId] = mergeLegacyStreamingText(
-          _currentAiMessages[taskId] ?? '',
-          text,
-        );
-      }
-      messageText = _currentAiMessages[taskId] ?? '';
-      isError = false;
-      isSummarizing = false;
-      shouldUpdateAiMessage =
-          messageText.isNotEmpty ||
-          (hasPerformanceMetrics &&
-              _messages.any((message) => message.id == taskId));
-    }
-
-    if (shouldUpdateAiMessage) {
-      _updateOrAddAiMessage(
-        taskId,
-        messageText,
-        isError,
-        isSummarizing: isSummarizing,
-        prefillTokensPerSecond: prefillTokensPerSecond,
-        decodeTokensPerSecond: decodeTokensPerSecond,
-      );
-      if (!isError && !isSummarizing && messageText.trim().isNotEmpty) {
-        unawaited(
-          VoicePlaybackCoordinator.instance.onAssistantMessageUpdated(
-            messageId: taskId,
-            text: messageText,
-            isFinal: false,
-          ),
-        );
-      }
-    }
   }
 
   double _messageLatestOffset(ScrollMetrics metrics) {
@@ -1054,58 +856,6 @@ class _ChatBotSheetState extends State<ChatBotSheet>
       }
       _messageListScrollWasUserDriven = false;
     }
-  }
-
-  void _updateOrAddAiMessage(
-    String taskId,
-    String text,
-    bool isError, {
-    bool isSummarizing = false,
-    double? prefillTokensPerSecond,
-    double? decodeTokensPerSecond,
-  }) {
-    final index = _messages.indexWhere((msg) => msg.id == taskId);
-
-    setState(() {
-      if (index == -1) {
-        final content = <String, dynamic>{'text': text, 'id': taskId};
-        if (prefillTokensPerSecond != null) {
-          content['prefillTokensPerSecond'] = prefillTokensPerSecond;
-        }
-        if (decodeTokensPerSecond != null) {
-          content['decodeTokensPerSecond'] = decodeTokensPerSecond;
-        }
-        _messages.insert(
-          0,
-          ChatMessageModel(
-            id: taskId,
-            type: 1,
-            user: 2,
-            content: content,
-            isLoading: false,
-            isError: isError,
-            isSummarizing: isSummarizing,
-          ),
-        );
-      } else {
-        final existing = _messages[index];
-        final content = Map<String, dynamic>.from(existing.content ?? {});
-        final existingText = content['text'] as String? ?? '';
-        content['text'] = text.isNotEmpty ? text : existingText;
-        if (prefillTokensPerSecond != null) {
-          content['prefillTokensPerSecond'] = prefillTokensPerSecond;
-        }
-        if (decodeTokensPerSecond != null) {
-          content['decodeTokensPerSecond'] = decodeTokensPerSecond;
-        }
-        _messages[index] = existing.copyWith(
-          content: content,
-          isLoading: false,
-          isError: isError,
-          isSummarizing: isSummarizing,
-        );
-      }
-    });
   }
 
   // 悬浮聊天页也复用同一套 linkPreviews 字段，保证两种聊天入口表现一致。
@@ -1257,194 +1007,18 @@ class _ChatBotSheetState extends State<ChatBotSheet>
         left['status'] == right['status'];
   }
 
-  void _handleAiMessageEnd(String taskId) async {
-    setState(() => _isAiResponding = false);
-
-    final index = _messages.indexWhere((msg) => msg.id == taskId);
-    final isErrorMessage = index != -1 && _messages[index].isError;
-    final messageText = isErrorMessage
-        ? (_messages[index].content?['text'] as String? ?? '')
-        : (_currentAiMessages[taskId] ?? '');
-
-    if (messageText.isNotEmpty && index != -1) {
-      setState(() {
-        final existing = _messages[index];
-        _messages[index] = existing.copyWith(content: existing.content);
-        _syncMessageLinkPreviews(taskId);
-      });
-    }
-    if (!isErrorMessage && messageText.trim().isNotEmpty) {
-      unawaited(
-        VoicePlaybackCoordinator.instance.onAssistantMessageCompleted(
-          messageId: taskId,
-          text: messageText,
-        ),
-      );
-    }
-    _currentAiMessages.remove(taskId);
-    await _saveConversationToDb();
-  }
-
-  /// 创建thinking卡片（首次收到有效内容时调用）
-  void _createThinkingCard(
-    String taskID, {
-    String? cardId,
-    String? thinkingContent,
-    bool? isLoading,
-    int? stage,
-    Map<String, dynamic>? streamMeta,
-  }) {
-    // 移除loading消息
-    final loadingIndex = _messages.indexWhere((msg) => msg.id == taskID);
-    if (loadingIndex != -1) {
-      setState(() => _messages.removeAt(loadingIndex));
-    }
-
-    final startTime = DateTime.now().millisecondsSinceEpoch;
-    final thinkingCardId = cardId ?? '$taskID-thinking';
-    final cardData = {
-      'type': 'deep_thinking',
-      'isLoading': isLoading ?? _isDeepThinking,
-      'thinkingContent': thinkingContent ?? '',
-      'stage': stage ?? _currentThinkingStage,
-      'taskID': taskID, // 添加taskID用于创建稳定的key
-      'cardId': thinkingCardId,
-      'startTime': startTime, // 添加开始时间
-      'endTime': null, // 结束时间初始为null
-    };
-
-    setState(() {
-      _messages.insert(
-        0,
-        ChatMessageModel(
-          id: thinkingCardId,
-          type: 2,
-          user: 3,
-          content: {'cardData': cardData, 'id': thinkingCardId},
-          createAt: DateTime.fromMillisecondsSinceEpoch(startTime),
-          streamMeta: ensureAgentStreamMessageMeta(
-            streamMeta,
-            entryId: thinkingCardId,
-          ),
-        ),
-      );
-    });
-  }
-
-  /// 更新thinking卡片内容
-  void _updateThinkingCard(
-    String taskID, {
-    String? cardId,
-    String? thinkingContent,
-    bool? isLoading,
-    int? stage,
-    Map<String, dynamic>? streamMeta,
-    bool lockCompleted = true,
-  }) {
-    final thinkingCardId = cardId ?? '$taskID-thinking';
-    final index = _messages.indexWhere((msg) => msg.id == thinkingCardId);
-    if (index != -1) {
-      setState(() {
-        final existing = _messages[index];
-        final content = Map<String, dynamic>.from(existing.content ?? {});
-        final cardData = Map<String, dynamic>.from(content['cardData'] ?? {});
-
-        // 如果卡片已经完成（stage=4），不允许改回其他状态
-        final currentStage = cardData['stage'] as int? ?? 1;
-        final targetStage = stage ?? _currentThinkingStage;
-        final newStage = (lockCompleted && currentStage == 4) ? 4 : targetStage;
-
-        // 保留开始时间（从现有 cardData 中读取）
-        final startTime = cardData['startTime'] as int?;
-
-        // 如果思考完成且还没有结束时间，记录结束时间
-        int? endTime = cardData['endTime'] as int?;
-        if (newStage == 4 && endTime == null) {
-          endTime = DateTime.now().millisecondsSinceEpoch;
-        }
-
-        // 更新卡片数据
-        cardData['thinkingContent'] = thinkingContent ?? _deepThinkingContent;
-        cardData['isLoading'] = isLoading ?? _isDeepThinking;
-        cardData['stage'] = newStage;
-        cardData['taskID'] = taskID; // 显式保留 taskID，确保 Widget key 不会变化
-        cardData['cardId'] = thinkingCardId;
-        cardData['startTime'] = startTime; // 保留开始时间
-        cardData['endTime'] = endTime; // 更新结束时间
-
-        content['cardData'] = cardData;
-        _messages[index] = existing.copyWith(
-          content: content,
-          streamMeta: ensureAgentStreamMessageMeta(
-            streamMeta ?? existing.streamMeta,
-            entryId: thinkingCardId,
-          ),
-        );
-      });
-    }
-  }
-
-  /// 旧分发链路兜底（开源版不再回退普通聊天）
-  void _fallbackToChat(String taskID) {
-    // 更新思考卡片为完成状态
-    _currentThinkingStage = 4;
-    _isDeepThinking = false;
-    _updateThinkingCard(taskID);
-    _persistThinkingCardForTask(taskID);
-    setState(() {
-      _isAiResponding = false;
-      _messages.removeWhere((msg) => msg.id == taskID && msg.isLoading);
-      _messages.insert(
-        0,
-        ChatMessageModel(
-          id: '$taskID-disabled',
-          type: 1,
-          user: 2,
-          content: {
-            'text': LegacyTextLocalizer.isEnglish
-                ? 'Unified Agent is enabled. The legacy chat dispatch has been removed. Please check your model config and try again.'
-                : '统一 Agent 已启用，旧聊天分发链路已移除，请检查模型配置后重试。',
-            'id': '$taskID-disabled',
-          },
-          isError: true,
-        ),
-      );
-    });
-    _resetDispatchState();
-  }
-
   /// 重置dispatch状态
   void _resetDispatchState() {
-    _currentDispatchTaskId = null;
-    _acpPromptId = null;
-    _deepThinkingContent = '';
-    _isDeepThinking = false;
-    clearAgentStreamSessionState();
-    // 注意：不重置 _currentThinkingStage，避免影响已完成的思考卡片显示
-    // _currentThinkingStage = 1;
-  }
-
-  List<Map<String, dynamic>> _buildConversationHistory() {
-    final List<Map<String, dynamic>> history = [];
-    final recentMessages = ChatService.getRecentMessages(
-      _messages,
-      maxCount: 10,
-    );
-
-    for (final message in recentMessages) {
-      if (message.user == 1) {
-        final text = _buildMessageTextForModel(message);
-        if (text.isNotEmpty) {
-          history.insert(0, {'role': 'user', 'content': text});
-        }
-      } else if (message.user == 2) {
-        final text = message.content?['text'] as String? ?? '';
-        if (text.isNotEmpty) {
-          history.insert(0, {'role': 'assistant', 'content': text});
-        }
-      }
+    final conversationId = _currentConversationId;
+    if (conversationId != null) {
+      _runtimeCoordinator.clearConversationRuntimeSession(
+        conversationId: conversationId,
+        mode: _runtimeMode,
+      );
     }
-    return history;
+    _currentDispatchTurnId = null;
+    _acpPromptId = null;
+    _currentAiMessages.clear();
   }
 
   /// 发送消息（支持输入框发送、初始消息和恢复场景重发）
@@ -1498,8 +1072,9 @@ class _ChatBotSheetState extends State<ChatBotSheet>
     );
     if (!handled &&
         mounted &&
-        _currentDispatchTaskId == messageIds.aiMessageId) {
-      handleAgentError(
+        _currentDispatchTurnId == messageIds.aiMessageId) {
+      _showAcpStartError(
+        messageIds.aiMessageId,
         LegacyTextLocalizer.isEnglish
             ? 'Failed to start unified Agent. Please check model provider and scene model config.'
             : '统一 Agent 启动失败，请检查模型提供商与场景模型配置。',
@@ -1610,13 +1185,8 @@ class _ChatBotSheetState extends State<ChatBotSheet>
   Future<bool> _tryAgentFlow(String aiMessageId, String userMessageId) async {
     try {
       setState(() {
-        _currentDispatchTaskId = aiMessageId;
-        _deepThinkingContent = '';
-        _isDeepThinking = false;
-        _currentThinkingStage = 1;
+        _currentDispatchTurnId = aiMessageId;
       });
-
-      _createThinkingCard(aiMessageId);
 
       final userMessage = _latestUserUtterance();
       final attachments = _latestUserAgentAttachments();
@@ -1624,6 +1194,20 @@ class _ChatBotSheetState extends State<ChatBotSheet>
       if (conversationId == null) {
         throw StateError('conversationId is not ready');
       }
+      _runtimeCoordinator.ensureEphemeralRuntime(
+        conversationId: conversationId,
+        mode: _runtimeMode,
+        initialMessages: _messages,
+        conversation: _currentConversation,
+      );
+      _runtimeCoordinator.replaceConversationSnapshot(
+        conversationId: conversationId,
+        mode: _runtimeMode,
+        messages: _messages,
+        conversation: _currentConversation,
+        isAiResponding: true,
+        currentDispatchTurnId: aiMessageId,
+      );
       var status = await AgentRuntimeService.status();
       if (!status.connected) {
         status = await AgentRuntimeService.connect();
@@ -1635,6 +1219,7 @@ class _ChatBotSheetState extends State<ChatBotSheet>
       final response = await AgentRuntimeService.promptSession(
         sessionId: null,
         conversationId: conversationId,
+        requestId: '$conversationId-${DateTime.now().microsecondsSinceEpoch}',
         agentId: status.activeAgentId,
         text: userMessage,
         attachments: attachments,
@@ -1659,19 +1244,47 @@ class _ChatBotSheetState extends State<ChatBotSheet>
 
   void _handleIncomingAcpRuntimeEvent(Map<String, dynamic> event) {
     final conversationId = _asInt(event['conversationId']);
-    final taskId = _currentDispatchTaskId;
     if (!mounted ||
-        taskId == null ||
+        _currentDispatchTurnId == null ||
+        conversationId == null ||
         conversationId != _currentConversationId) {
       return;
     }
-    final projected = _acpStreamProjector.project(
-      event,
-      taskId: taskId,
-      conversationId: conversationId!,
+    final result = _runtimeCoordinator.applyAgentEvent(
+      conversationId: conversationId,
+      mode: _runtimeMode,
+      event: event,
+      conversation: _currentConversation,
     );
-    if (projected != null) {
-      _handleIncomingAgentStreamEvent(projected);
+    final runtime = _runtimeCoordinator.runtimeFor(
+      conversationId: conversationId,
+      mode: _runtimeMode,
+    );
+    if (!result.handled || runtime == null) {
+      return;
+    }
+    final eventTurnId = result.turnId ?? event['turnId']?.toString().trim();
+    if (eventTurnId != null && eventTurnId.isNotEmpty) {
+      _acpPromptId = eventTurnId;
+    }
+    final nextMessages = List<ChatMessageModel>.from(runtime.messages);
+    setState(() {
+      _messages
+        ..clear()
+        ..addAll(nextMessages);
+      _currentAiMessages
+        ..clear()
+        ..addAll(runtime.currentAiMessages);
+      _isAiResponding = runtime.isAiResponding;
+      _currentDispatchTurnId = runtime.currentDispatchTurnId;
+    });
+    for (final message in nextMessages) {
+      if (message.user == 2 && message.text?.trim().isNotEmpty == true) {
+        _syncMessageLinkPreviews(message.id);
+      }
+    }
+    if (!runtime.isAiResponding) {
+      unawaited(_saveConversationToDb());
     }
   }
 
@@ -1679,18 +1292,6 @@ class _ChatBotSheetState extends State<ChatBotSheet>
     if (value is int) return value;
     if (value is num) return value.toInt();
     return int.tryParse(value?.toString() ?? '');
-  }
-
-  List<Map<String, dynamic>> _historyBeforeLatestUser(
-    List<Map<String, dynamic>> history,
-  ) {
-    if (history.isEmpty) return history;
-    final normalized = List<Map<String, dynamic>>.from(history);
-    final last = normalized.last;
-    if ((last['role'] as String?) == 'user') {
-      normalized.removeLast();
-    }
-    return normalized;
   }
 
   String _latestUserUtterance() {
@@ -1926,27 +1527,58 @@ class _ChatBotSheetState extends State<ChatBotSheet>
   }
 
   void _sendChatMessage(String aiMessageId) {
-    unawaited(_tryAgentFlow(aiMessageId, '').then((success) {
-      if (!success && mounted) {
-        handleAgentError(
-          LegacyTextLocalizer.isEnglish
-              ? 'Failed to start the ACP session.'
-              : 'ACP 会话启动失败，请稍后重试。',
-        );
-      }
-    }));
+    unawaited(
+      _tryAgentFlow(aiMessageId, '').then((success) {
+        if (!success && mounted) {
+          _showAcpStartError(
+            aiMessageId,
+            LegacyTextLocalizer.isEnglish
+                ? 'Failed to start the ACP session.'
+                : 'ACP 会话启动失败，请稍后重试。',
+          );
+        }
+      }),
+    );
+  }
+
+  void _showAcpStartError(String taskId, String message) {
+    if (!mounted) return;
+    final messageId = '$taskId-error';
+    setState(() {
+      _messages.removeWhere((item) => item.isLoading);
+      _messages.removeWhere((item) => item.id == messageId);
+      _messages.insert(
+        0,
+        ChatMessageModel(
+          id: messageId,
+          type: 1,
+          user: 2,
+          content: <String, dynamic>{'text': message, 'id': messageId},
+          isError: true,
+        ),
+      );
+      _isAiResponding = false;
+    });
+    _resetDispatchState();
+    unawaited(_saveConversationToDb());
   }
 
   void _onCancelTask() {
     try {
       // 检查是否有任何正在进行的活动
-      if (_currentDispatchTaskId != null ||
+      if (_currentDispatchTurnId != null ||
           _currentAiMessages.isNotEmpty ||
           _isCheckingExecutableTask ||
           _isExecutingTask) {
-        interruptActiveToolCard();
+        final conversationId = _currentConversationId;
+        if (conversationId != null) {
+          _runtimeCoordinator.interruptActiveToolCard(
+            conversationId: conversationId,
+            mode: _runtimeMode,
+          );
+        }
         final taskId =
-            _currentDispatchTaskId ??
+            _currentDispatchTurnId ??
             (_currentAiMessages.isEmpty ? null : _currentAiMessages.keys.first);
         if (_acpSessionId != null && _currentConversationId != null) {
           unawaited(
@@ -1988,7 +1620,13 @@ class _ChatBotSheetState extends State<ChatBotSheet>
 
   void _onCancelTaskFromCard(String taskId) {
     try {
-      interruptActiveToolCard();
+      final conversationId = _currentConversationId;
+      if (conversationId != null) {
+        _runtimeCoordinator.interruptActiveToolCard(
+          conversationId: conversationId,
+          mode: _runtimeMode,
+        );
+      }
       if (_acpSessionId != null && _currentConversationId != null) {
         unawaited(
           AgentRuntimeService.cancelPrompt(
@@ -2064,15 +1702,12 @@ class _ChatBotSheetState extends State<ChatBotSheet>
       'id': messageId,
       'renderMarkdown': false,
     };
-    final streamMeta = ensureAgentStreamMessageMeta(
-      null,
-      seq: 1000000000,
-      roundIndex: 1000000000,
-      kind: 'text_snapshot',
-      parentTaskId: normalizedTaskId,
-      entryId: messageId,
-      isFinal: true,
-    );
+    final streamMeta = <String, dynamic>{
+      'kind': 'text_snapshot',
+      'parentTaskId': normalizedTaskId,
+      'entryId': messageId,
+      'isFinal': true,
+    };
     final existingIndex = _messages.indexWhere(
       (message) => message.id == messageId,
     );
@@ -2290,7 +1925,13 @@ class _ChatBotSheetState extends State<ChatBotSheet>
       _messages,
       activeTaskIds: {
         ..._currentAiMessages.keys,
-        ...activeAgentStreamTaskIds(),
+        ...(_runtimeCoordinator
+                .runtimeFor(
+                  conversationId: _currentConversationId ?? -1,
+                  mode: _runtimeMode,
+                )
+                ?.activeAgentTurnIds ??
+            const <String>{}),
       },
     );
     return Align(

@@ -466,7 +466,7 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
                       ],
                     ),
                   ],
-                  // 远程 PC Bridge：全局共享配置入口（仅配置远程 Codex app-server 连接）。
+                  // 远程 PC Bridge：全局共享配置入口（仅配置远程 ACP 连接）。
                   const SizedBox(height: 24),
                   _buildSectionLabel(_text('远程运行', 'Remote runtime')),
                   _FlatTile(
@@ -484,12 +484,12 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
                         : _text('未启用', 'Not enabled'),
                     subtitle: _remoteBridgeEnabled
                         ? _text(
-                            'Agent 聊天使用远程 Codex app-server',
-                            'Agent chat runs on the remote Codex app-server',
+                            'Agent 聊天使用远程 ACP',
+                            'Agent chat runs on the remote ACP runtime',
                           )
                         : _text(
-                            '配置远程 Codex app-server 连接',
-                            'Configure a remote Codex app-server connection',
+                            '配置远程 ACP 连接',
+                            'Configure a remote ACP connection',
                           ),
                     onTap: () {
                       GoRouterManager.push('/home/remote_codex_setting');

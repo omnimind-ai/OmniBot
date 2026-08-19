@@ -42,13 +42,6 @@ class _AgentToolSummaryCardState extends State<AgentToolSummaryCard> {
     if (_isCompletedVlmTask(cardData)) {
       return _VlmTaskResultCard(cardData: cardData);
     }
-    final dashboardRoute = _publishedDashboardRoute(cardData);
-    if (dashboardRoute != null) {
-      return _PublishedProjectCard(
-        cardData: cardData,
-        dashboardRoute: dashboardRoute,
-      );
-    }
     if (_usesInlineToolStyle(
       cardData,
       useAgentToolPresentation: widget.useAgentToolPresentation,
@@ -241,106 +234,6 @@ class _AgentToolSummaryCardState extends State<AgentToolSummaryCard> {
               ],
             ),
           ),
-        ),
-      ),
-    );
-  }
-}
-
-String? _publishedDashboardRoute(Map<String, dynamic> cardData) {
-  final toolName = canonicalAgentToolName(
-    (cardData['toolName'] ?? '').toString(),
-  );
-  if (toolName != 'project_publish' ||
-      (cardData['status'] ?? '').toString() != 'success') {
-    return null;
-  }
-  for (final rawJson in [
-    (cardData['resultPreviewJson'] ?? '').toString(),
-    (cardData['rawResultJson'] ?? '').toString(),
-  ]) {
-    final route = (_decodeJsonMap(rawJson)['dashboardRoute'] ?? '')
-        .toString()
-        .trim();
-    if (route.startsWith('/home/plugin_dashboard?pluginId=') &&
-        route.length > '/home/plugin_dashboard?pluginId='.length) {
-      return route;
-    }
-  }
-  return null;
-}
-
-class _PublishedProjectCard extends StatelessWidget {
-  const _PublishedProjectCard({
-    required this.cardData,
-    required this.dashboardRoute,
-  });
-
-  final Map<String, dynamic> cardData;
-  final String dashboardRoute;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = context.omniPalette;
-    final payload = _decodeJsonMap(
-      (cardData['resultPreviewJson'] ?? cardData['rawResultJson'] ?? '')
-          .toString(),
-    );
-    final name = (payload['name'] ?? payload['title'] ?? 'Vibe App')
-        .toString()
-        .trim();
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Container(
-        key: const ValueKey('published-project-card'),
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.sizeOf(context).width * 0.84,
-        ),
-        margin: const EdgeInsets.only(top: 7, bottom: 3),
-        padding: const EdgeInsets.fromLTRB(13, 11, 10, 8),
-        decoration: BoxDecoration(
-          color: context.isDarkTheme
-              ? palette.surfaceSecondary
-              : const Color(0xFFF5F8FC),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: palette.borderSubtle),
-        ),
-        child: Row(
-          children: [
-            const Icon(LucideIcons.layoutDashboard, size: 18),
-            const SizedBox(width: 9),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    name.isEmpty ? 'Vibe App' : name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: palette.textPrimary,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  Text(
-                    LegacyTextLocalizer.localize('已发布并启用'),
-                    style: TextStyle(
-                      color: palette.textSecondary,
-                      fontSize: 11,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            TextButton.icon(
-              key: const ValueKey('published-project-open-dashboard'),
-              onPressed: () => context.push(dashboardRoute),
-              icon: const Icon(LucideIcons.arrowUpRight, size: 15),
-              label: Text(LegacyTextLocalizer.localize('打开 Dashboard')),
-            ),
-          ],
         ),
       ),
     );

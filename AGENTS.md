@@ -149,6 +149,27 @@ OMNI_RELEASE_KEY_PWD=***
 
 ## Development Notes
 
+### ACP Runtime Maintenance Contract
+
+The shared Agent boundary is the official ACP session surface:
+`session/new`, `session/load`, `session/list`, `session/prompt`,
+`session/update`, and `session/cancel`. Every local Agent, PC Bridge, WebChat
+entry point, and future Harness adapter must use this boundary.
+
+Keep Agent state keyed by `conversationId` (local history), `sessionId`,
+`turnId`, `messageId`, and `toolCallId`. Do not add or revive Flutter/Kotlin
+private stream protocols such as `AgentStreamEvent`, `acp/presentation`,
+`codex/event`, page-specific callback buses, or a second Agent reducer. New
+capabilities must be exposed through the shared ACP runtime and MCP/plugin
+modules, then consumed by `AgentEventReducer` and
+`ChatConversationRuntimeCoordinator`.
+
+The plugin system is for MCP/tool capabilities. The standalone external App
+surface, WebView launcher, desktop shortcut, and `window.omni.app` bridge are
+removed. Do not reintroduce them; use an MCP/plugin tool instead. Provider and
+model resolution remains owned by the configured Provider, and ACP transport
+refactors must not modify long-term memory APIs or stored memory data.
+
 ### WebUI Verification Rules
 - Do not use the in-app Browser, Chrome automation, Playwright, or any other browser-based visual/interaction acceptance for WebUI changes unless the user explicitly requests browser verification.
 - Validate WebUI changes with focused source inspection plus `cd webchat && pnpm run typecheck && pnpm run build`.

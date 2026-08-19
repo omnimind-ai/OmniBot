@@ -711,6 +711,50 @@ class AgentRuntimeService {
     });
   }
 
+  static Future<List<DshPlugin>> listDshPlugins() async {
+    final payload = await _invokeMap('agent/plugin/list');
+    final raw = payload['plugins'];
+    if (raw is! List) return const <DshPlugin>[];
+    return raw
+        .whereType<Map>()
+        .map((item) => DshPlugin.fromMap(item))
+        .toList(growable: false);
+  }
+
+  static Future<List<DshPlugin>> installDshPlugin(String specifier) async {
+    final payload = await _invokeMap('agent/plugin/install', {
+      'specifier': specifier.trim(),
+    });
+    return _pluginsFromPayload(payload);
+  }
+
+  static Future<List<DshPlugin>> removeDshPlugin(String packageName) async {
+    final payload = await _invokeMap('agent/plugin/remove', {
+      'packageName': packageName.trim(),
+    });
+    return _pluginsFromPayload(payload);
+  }
+
+  static Future<List<DshPlugin>> setDshPluginEnabled(
+    String packageName,
+    bool enabled,
+  ) async {
+    final payload = await _invokeMap('agent/plugin/set-enabled', {
+      'packageName': packageName.trim(),
+      'enabled': enabled,
+    });
+    return _pluginsFromPayload(payload);
+  }
+
+  static List<DshPlugin> _pluginsFromPayload(Map<String, dynamic> payload) {
+    final raw = payload['plugins'];
+    if (raw is! List) return const <DshPlugin>[];
+    return raw
+        .whereType<Map>()
+        .map((item) => DshPlugin.fromMap(item))
+        .toList(growable: false);
+  }
+
   // Canonical ACP application API. New code must use session/prompt names;
   // the methods below keep the previous Dart surface working for old builds.
   static Future<Map<String, dynamic>> newSession({
@@ -810,6 +854,7 @@ class AgentRuntimeService {
   static Future<Map<String, dynamic>> promptSession({
     String? sessionId,
     int? conversationId,
+    String? requestId,
     String? agentId,
     required String text,
     List<Map<String, dynamic>> attachments = const [],
@@ -825,6 +870,8 @@ class AgentRuntimeService {
     return _invokeMap('session/prompt', {
       if (sessionId != null) 'sessionId': sessionId,
       if (conversationId != null) 'conversationId': conversationId,
+      if (requestId != null && requestId.trim().isNotEmpty)
+        'requestId': requestId.trim(),
       if (agentId != null && agentId.trim().isNotEmpty)
         'agentId': agentId.trim(),
       if (cwd != null && cwd.trim().isNotEmpty) 'cwd': cwd.trim(),
@@ -853,127 +900,6 @@ class AgentRuntimeService {
       if (sessionId != null) 'sessionId': sessionId,
       if (conversationId != null) 'conversationId': conversationId,
       if (promptId != null) 'promptId': promptId,
-    });
-  }
-
-  @Deprecated('Use newSession')
-  static Future<Map<String, dynamic>> startThread({
-    int? conversationId,
-    String? cwd,
-    String? model,
-    String? effort,
-    String? collaborationMode,
-  }) {
-    return newSession(
-      conversationId: conversationId,
-      cwd: cwd,
-      model: model,
-      effort: effort,
-      collaborationMode: collaborationMode,
-    );
-  }
-
-  @Deprecated('Use loadSession')
-  static Future<Map<String, dynamic>> resumeThread({
-    String? threadId,
-    int? conversationId,
-  }) {
-    return _invokeMap('session/load', {
-      if (threadId != null) 'threadId': threadId,
-      if (conversationId != null) 'conversationId': conversationId,
-    });
-  }
-
-  @Deprecated('Use readSession')
-  static Future<Map<String, dynamic>> readThread({
-    String? threadId,
-    int? conversationId,
-    bool includeTurns = true,
-  }) {
-    return _invokeMap('session/load', {
-      if (threadId != null) 'threadId': threadId,
-      if (conversationId != null) 'conversationId': conversationId,
-      'includeTurns': includeTurns,
-    });
-  }
-
-  @Deprecated('Use listSessions')
-  static Future<Map<String, dynamic>> listThreads({
-    int limit = 50,
-    String? cursor,
-  }) {
-    return listSessions(limit: limit, cursor: cursor);
-  }
-
-  @Deprecated('Use listLoadedSessions')
-  static Future<Map<String, dynamic>> listLoadedThreads() {
-    return listLoadedSessions();
-  }
-
-  @Deprecated('Use archiveSession')
-  static Future<Map<String, dynamic>> archiveThread({
-    String? threadId,
-    int? conversationId,
-  }) {
-    return _invokeMap('thread/archive', {
-      if (threadId != null) 'threadId': threadId,
-      if (conversationId != null) 'conversationId': conversationId,
-    });
-  }
-
-  @Deprecated('Use unarchiveSession')
-  static Future<Map<String, dynamic>> unarchiveThread({
-    String? threadId,
-    int? conversationId,
-  }) {
-    return _invokeMap('thread/unarchive', {
-      if (threadId != null) 'threadId': threadId,
-      if (conversationId != null) 'conversationId': conversationId,
-    });
-  }
-
-  @Deprecated('Use setSessionName')
-  static Future<Map<String, dynamic>> setThreadName({
-    String? threadId,
-    int? conversationId,
-    required String name,
-  }) {
-    return _invokeMap('thread/name/set', {
-      if (threadId != null) 'threadId': threadId,
-      if (conversationId != null) 'conversationId': conversationId,
-      'name': name,
-    });
-  }
-
-  @Deprecated('Use promptSession')
-  static Future<Map<String, dynamic>> startTurn({
-    String? threadId,
-    int? conversationId,
-    required String text,
-    List<Map<String, dynamic>> attachments = const [],
-    String? cwd,
-    String? approvalPolicy,
-    String? approvalsReviewer,
-    Map<String, dynamic>? sandboxPolicy,
-    String? model,
-    String? effort,
-    String? collaborationMode,
-  }) {
-    return _invokeMap('session/prompt', {
-      if (threadId != null) 'threadId': threadId,
-      if (conversationId != null) 'conversationId': conversationId,
-      if (cwd != null && cwd.trim().isNotEmpty) 'cwd': cwd.trim(),
-      if (approvalPolicy != null && approvalPolicy.trim().isNotEmpty)
-        'approvalPolicy': approvalPolicy.trim(),
-      if (approvalsReviewer != null && approvalsReviewer.trim().isNotEmpty)
-        'approvalsReviewer': approvalsReviewer.trim(),
-      if (sandboxPolicy != null) 'sandboxPolicy': sandboxPolicy,
-      if (model != null && model.trim().isNotEmpty) 'model': model.trim(),
-      if (effort != null && effort.trim().isNotEmpty) 'effort': effort.trim(),
-      if (collaborationMode != null && collaborationMode.trim().isNotEmpty)
-        'collaborationMode': collaborationMode.trim(),
-      'text': text,
-      if (attachments.isNotEmpty) 'attachments': attachments,
     });
   }
 
@@ -1311,6 +1237,30 @@ class AgentRuntimeService {
     final result = await _methodChannel.invokeMethod<dynamic>(method, args);
     return _normalizeMap(result) ?? <String, dynamic>{};
   }
+}
+
+class DshPlugin {
+  const DshPlugin({
+    required this.packageName,
+    required this.specifier,
+    required this.enabled,
+    this.id = '',
+    this.installedAt,
+  });
+
+  final String id;
+  final String packageName;
+  final String specifier;
+  final bool enabled;
+  final int? installedAt;
+
+  factory DshPlugin.fromMap(Map<dynamic, dynamic> map) => DshPlugin(
+    id: _stringOrNull(map['id']) ?? '',
+    packageName: _stringOrNull(map['packageName']) ?? '',
+    specifier: _stringOrNull(map['specifier']) ?? '',
+    enabled: map['enabled'] != false,
+    installedAt: _intOrNull(map['installedAt']),
+  );
 }
 
 Map<String, dynamic>? _normalizeMap(dynamic value) {

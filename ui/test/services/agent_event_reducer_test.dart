@@ -2,7 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ui/features/home/pages/chat/chat_page.dart';
-import 'package:ui/features/home/pages/chat/mixins/agent_stream_handler.dart';
+import 'package:ui/features/home/pages/chat/chat_page_models.dart';
 import 'package:ui/features/home/pages/chat/services/chat_conversation_runtime_coordinator.dart';
 import 'package:ui/models/chat_message_model.dart';
 import 'package:ui/services/agent_event_reducer.dart';
@@ -39,10 +39,121 @@ void main() {
     expect(runtime.messages.single.user, 2);
   });
 
+  test('one turn completes reasoning and assistant text together', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'params': {
+          'sessionId': 'session-1',
+          'turnId': 'turn-1',
+          'update': {
+            'sessionUpdate': 'agent_thought_chunk',
+            'messageId': 'reason-1',
+            'content': {'text': '先思考'},
+          },
+        },
+      },
+    );
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'params': {
+          'sessionId': 'session-1',
+          'turnId': 'turn-1',
+          'update': {
+            'sessionUpdate': 'agent_message_chunk',
+            'messageId': 'message-1',
+            'content': {'text': '最终答案'},
+          },
+        },
+      },
+    );
+
+    final thinking = runtime.messages.firstWhere(
+      (message) => message.cardData?['type'] == 'deep_thinking',
+    );
+    // Assistant text marks the thinking phase complete; the turn remains
+    // active until the ACP terminal notification arrives.
+    expect(thinking.cardData?['isLoading'], isFalse);
+    expect(runtime.isAiResponding, isTrue);
+
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'turn/completed',
+        'params': {'turnId': 'turn-1'},
+      },
+    );
+
+    expect(thinking.cardData?['isLoading'], isFalse);
+    expect(runtime.isAiResponding, isFalse);
+    expect(runtime.activeAgentTurnIds, isEmpty);
+  });
+
+  test('a text-only turn completes without creating a thinking card', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'params': {
+          'sessionId': 'session-1',
+          'turnId': 'turn-1',
+          'update': {
+            'sessionUpdate': 'agent_message_chunk',
+            'messageId': 'message-1',
+            'content': {'text': '直接回答'},
+          },
+        },
+      },
+    );
+    expect(
+      runtime.messages.where(
+        (message) => message.cardData?['type'] == 'deep_thinking',
+      ),
+      isEmpty,
+    );
+
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'turn/completed',
+        'params': {'turnId': 'turn-1'},
+      },
+    );
+
+    expect(runtime.isAiResponding, isFalse);
+    expect(runtime.messages.single.text, '直接回答');
+  });
+
+  test('official turn completion clears a local dispatch placeholder', () {
+    runtime
+      ..isAiResponding = true
+      ..currentDispatchTurnId = 'local-request'
+      ..lastAgentTurnId = 'local-request'
+      ..activeAcpTurnId = 'turn-1';
+
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'turn/completed',
+        'params': {
+          'sessionId': 'session-1',
+          'turnId': 'turn-1',
+        },
+      },
+    );
+
+    expect(runtime.isAiResponding, isFalse);
+    expect(runtime.currentDispatchTurnId, isNull);
+    expect(runtime.activeAcpTurnId, isNull);
+  });
+
   test('many message ids in one turn stay a single active turn', () {
     // ACP mints a new `agent_message_chunk.messageId` for each assistant
     // message inside a turn, and the reducer caches text per message id. That
-    // cache used to feed `activeAgentTaskIds`, so a five-message turn reported
+    // cache used to feed `activeAgentTurnIds`, so a five-message turn reported
     // five in-flight "tasks" and the chat list drew five agent avatars with
     // five "正在处理" rows. Message identity is not turn identity.
     for (final messageId in <String>['msg-a', 'msg-b', 'msg-c', 'msg-d']) {
@@ -64,7 +175,7 @@ void main() {
 
     expect(runtime.messages, hasLength(4));
     expect(runtime.currentAiMessages, hasLength(4));
-    expect(runtime.activeAgentTaskIds, <String>{'turn-1'});
+    expect(runtime.activeAgentTurnIds, <String>{'turn-1'});
   });
 
   test('turn completion clears the active turn and its text cache', () {
@@ -78,7 +189,7 @@ void main() {
         },
       },
     );
-    expect(runtime.activeAgentTaskIds, <String>{'turn-1'});
+    expect(runtime.activeAgentTurnIds, <String>{'turn-1'});
 
     reducer.reduce(
       runtime: runtime,
@@ -95,8 +206,187 @@ void main() {
     );
 
     expect(runtime.isAiResponding, isFalse);
-    expect(runtime.activeAgentTaskIds, isEmpty);
+    expect(runtime.activeAgentTurnIds, isEmpty);
     expect(runtime.currentAiMessages, isEmpty);
+  });
+
+  test('turn completion clears the official turn owner', () {
+    runtime.currentDispatchTurnId = 'turn-1';
+    runtime.activeAcpTurnId = 'turn-1';
+    runtime.lastAgentTurnId = 'turn-1';
+    runtime.isAiResponding = true;
+
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'method': 'turn/completed',
+          'params': {'turnId': 'turn-1'},
+        },
+      },
+    );
+
+    expect(runtime.activeAgentTurnIds, isEmpty);
+    expect(runtime.lastAgentTurnId, isNull);
+  });
+
+  test('ACP admits a turn after the local request placeholder', () {
+    runtime.currentDispatchTurnId = 'request-1-ai';
+    runtime.lastAgentTurnId = 'request-1-ai';
+    runtime.isAiResponding = true;
+
+    final started = reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'turn/started',
+        'params': {'turnId': 'acp-turn-1'},
+      },
+    );
+
+    expect(started.handled, isTrue);
+    expect(runtime.activeAcpTurnId, 'acp-turn-1');
+    expect(runtime.currentDispatchTurnId, 'acp-turn-1');
+
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'turn/completed',
+        'params': {'turnId': 'acp-turn-1'},
+      },
+    );
+
+    expect(runtime.activeAcpTurnId, isNull);
+    expect(runtime.currentDispatchTurnId, isNull);
+    expect(runtime.isAiResponding, isFalse);
+  });
+
+  test('ACP admits a turn from the first session update when no turn started exists', () {
+    runtime
+      ..currentDispatchTurnId = 'request-1-ai'
+      ..lastAgentTurnId = 'request-1-ai'
+      ..isAiResponding = true;
+
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'params': {
+          'sessionId': 'session-1',
+          'turnId': 'acp-turn-1',
+          'update': {
+            'sessionUpdate': 'agent_message_chunk',
+            'messageId': 'message-1',
+            'content': {'text': 'OpenCode response'},
+          },
+        },
+      },
+    );
+
+    expect(runtime.activeAcpTurnId, 'acp-turn-1');
+    expect(runtime.messages.single.text, 'OpenCode response');
+
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'turn/completed',
+        'params': {'sessionId': 'session-1', 'turnId': 'acp-turn-1'},
+      },
+    );
+
+    expect(runtime.isAiResponding, isFalse);
+    expect(runtime.currentDispatchTurnId, isNull);
+    expect(runtime.activeAcpTurnId, isNull);
+  });
+
+  test('late output from an older turn cannot reclaim the active turn', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'method': 'turn/started',
+          'params': {'turnId': 'turn-old'},
+        },
+      },
+    );
+    // Model the valid post-terminal hand-off without allowing a second
+    // turn/started event to overwrite an active turn.
+    runtime.currentDispatchTurnId = 'turn-new';
+    runtime.lastAgentTurnId = 'turn-new';
+    runtime.activeAcpTurnId = 'turn-new';
+    runtime.isAiResponding = true;
+
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'method': 'item/agentMessage/delta',
+          'params': {
+            'turnId': 'turn-old',
+            'itemId': 'old-message',
+            'delta': '迟到的旧输出',
+          },
+        },
+      },
+    );
+
+    expect(runtime.currentDispatchTurnId, 'turn-new');
+    expect(runtime.messages, isEmpty);
+  });
+
+  test('turn-scoped ACP update without a turn id is ignored', () {
+    runtime.currentDispatchTurnId = 'turn-active';
+    runtime.lastAgentTurnId = 'turn-active';
+    runtime.isAiResponding = true;
+    final result = reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'params': {
+          'sessionId': 'session-1',
+          'update': {
+            'sessionUpdate': 'agent_message_chunk',
+            'messageId': 'message-1',
+            'content': {'type': 'text', 'text': '无法归属'},
+          },
+        },
+      },
+    );
+
+    expect(result.handled, isTrue);
+    expect(runtime.messages, isEmpty);
+    expect(runtime.currentDispatchTurnId, 'turn-active');
+  });
+
+  test('late completion from an older turn does not clear the newer turn', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'method': 'turn/started',
+          'params': {'turnId': 'turn-old'},
+        },
+      },
+    );
+    runtime.currentDispatchTurnId = 'turn-new';
+    runtime.lastAgentTurnId = 'turn-new';
+    runtime.activeAcpTurnId = 'turn-new';
+    runtime.isAiResponding = true;
+    expect(runtime.currentDispatchTurnId, 'turn-new');
+    expect(runtime.isAiResponding, isTrue);
+
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'method': 'turn/completed',
+          'params': {'turnId': 'turn-old'},
+        },
+      },
+    );
+
+    expect(runtime.currentDispatchTurnId, 'turn-new');
+    expect(runtime.lastAgentTurnId, 'turn-new');
+    expect(runtime.isAiResponding, isTrue);
   });
 
   test('ignores ACP updates that arrive after their turn completed', () {
@@ -105,6 +395,7 @@ void main() {
       event: {
         'message': {
           'method': 'session/update',
+          'turnId': 'turn-1',
           'params': {
             'sessionId': 'session-1',
             'turnId': 'turn-1',
@@ -135,6 +426,7 @@ void main() {
       event: {
         'message': {
           'method': 'session/update',
+          'turnId': 'turn-1',
           'params': {
             'sessionId': 'session-1',
             'turnId': 'turn-1',
@@ -199,6 +491,7 @@ void main() {
       event: {
         'message': {
           'method': 'session/update',
+          'turnId': 'turn-1',
           'params': {
             'sessionId': 'session-1',
             'update': {
@@ -220,6 +513,7 @@ void main() {
     final event = <String, dynamic>{
       'message': {
         'method': 'session/update',
+        'turnId': 'turn-1',
         'params': {
           'sessionId': 'session-1',
           'update': {
@@ -244,6 +538,7 @@ void main() {
       Map<String, dynamic> event(String text) => <String, dynamic>{
         'message': {
           'method': 'session/update',
+          'turnId': 'turn-1',
           'params': {
             'sessionId': 'session-1',
             'update': {
@@ -281,6 +576,17 @@ void main() {
         },
       );
       expect(result.handled, isTrue);
+      if (turn == 'turn-1') {
+        reducer.reduce(
+          runtime: runtime,
+          event: {
+            'message': {
+              'method': 'turn/completed',
+              'params': {'turnId': turn},
+            },
+          },
+        );
+      }
     }
 
     expect(runtime.messages, hasLength(2));
@@ -310,38 +616,6 @@ void main() {
     expect(result.handled, isTrue);
     expect(runtime.messages, isEmpty);
   });
-
-  test(
-    'projects local lifecycle state without accepting a fake protocol event',
-    () {
-      final started = reducer.reduce(
-        runtime: runtime,
-        event: {
-          'presentation': {
-            'kind': 'turn_started',
-            'threadId': 'session-1',
-            'turnId': 'turn-1',
-          },
-        },
-      );
-      expect(started.handled, isTrue);
-      expect(runtime.activeAgentTaskIds, <String>{'turn-1'});
-
-      final completed = reducer.reduce(
-        runtime: runtime,
-        event: {
-          'presentation': {
-            'kind': 'turn_completed',
-            'threadId': 'session-1',
-            'turnId': 'turn-1',
-            'turn': {'id': 'turn-1', 'status': 'end_turn'},
-          },
-        },
-      );
-      expect(completed.handled, isTrue);
-      expect(runtime.activeAgentTaskIds, isEmpty);
-    },
-  );
 
   test('maps command output deltas into terminal tool card', () {
     reducer.reduce(
@@ -552,7 +826,7 @@ void main() {
             'item': {
               'id': 'search-cmd-1',
               'type': 'commandExecution',
-              'command': 'rg -n "codex/event" ui/lib',
+              'command': 'rg -n "session/update" ui/lib',
               'status': 'in_progress',
             },
           },
@@ -578,133 +852,6 @@ void main() {
     expect(cardData['toolType'], 'search');
     expect(cardData['terminalOutput'], contains('agent_event_reducer.dart'));
     expect(cardData['status'], 'running');
-  });
-
-  test('maps codex protocol exec command events into terminal cards', () {
-    reducer.reduce(
-      runtime: runtime,
-      event: {
-        'method': 'codex/event',
-        'params': {
-          '_meta': {'threadId': 'thread-1'},
-          'id': 'event-turn-1',
-          'msg': {
-            'type': 'exec_command_begin',
-            'call_id': 'cmd-1',
-            'turn_id': 'turn-1',
-            'command': ['flutter', 'test'],
-            'cwd': '/repo/ui',
-            'parsed_cmd': <dynamic>[],
-          },
-        },
-      },
-    );
-    reducer.reduce(
-      runtime: runtime,
-      event: {
-        'method': 'codex/event',
-        'params': {
-          '_meta': {'threadId': 'thread-1'},
-          'id': 'event-turn-1',
-          'msg': {
-            'type': 'exec_command_output_delta',
-            'call_id': 'cmd-1',
-            'stream': 'stdout',
-            'chunk': base64Encode(utf8.encode('00:01 +1\n')),
-          },
-        },
-      },
-    );
-    final end = reducer.reduce(
-      runtime: runtime,
-      event: {
-        'method': 'codex/event',
-        'params': {
-          '_meta': {'threadId': 'thread-1'},
-          'id': 'event-turn-1',
-          'msg': {
-            'type': 'exec_command_end',
-            'call_id': 'cmd-1',
-            'turn_id': 'turn-1',
-            'command': ['flutter', 'test'],
-            'cwd': '/repo/ui',
-            'parsed_cmd': <dynamic>[],
-            'stdout': '00:01 +1\n',
-            'stderr': '',
-            'aggregated_output': '00:01 +1: All tests passed!\n',
-            'exit_code': 0,
-            'formatted_output': '00:01 +1: All tests passed!\n',
-            'status': 'completed',
-          },
-        },
-      },
-    );
-
-    expect(end.handled, isTrue);
-    expect(end.threadId, 'thread-1');
-    expect(end.turnId, 'turn-1');
-    expect(runtime.messages, hasLength(1));
-    final cardData = runtime.messages.single.cardData!;
-    expect(cardData['toolType'], 'terminal');
-    expect(cardData['toolTitle'], 'flutter test');
-    expect(cardData['status'], 'success');
-    expect(cardData['terminalOutput'], contains('All tests passed'));
-  });
-
-  test('maps codex protocol mcp read events into workspace cards', () {
-    reducer.reduce(
-      runtime: runtime,
-      event: {
-        'method': 'codex/event',
-        'params': {
-          '_meta': {'threadId': 'thread-1'},
-          'id': 'event-turn-1',
-          'msg': {
-            'type': 'mcp_tool_call_begin',
-            'call_id': 'read-1',
-            'invocation': {
-              'server': 'filesystem',
-              'tool': 'read_file',
-              'arguments': {'path': 'README.md'},
-            },
-          },
-        },
-      },
-    );
-    reducer.reduce(
-      runtime: runtime,
-      event: {
-        'method': 'codex/event',
-        'params': {
-          '_meta': {'threadId': 'thread-1'},
-          'id': 'event-turn-1',
-          'msg': {
-            'type': 'mcp_tool_call_end',
-            'call_id': 'read-1',
-            'invocation': {
-              'server': 'filesystem',
-              'tool': 'read_file',
-              'arguments': {'path': 'README.md'},
-            },
-            'result': {
-              'Ok': {
-                'content': [
-                  {'type': 'text', 'text': 'hello'},
-                ],
-              },
-            },
-          },
-        },
-      },
-    );
-
-    expect(runtime.messages, hasLength(1));
-    final cardData = runtime.messages.single.cardData!;
-    expect(cardData['toolType'], 'workspace');
-    expect(cardData['toolTitle'], 'Read README.md');
-    expect(cardData['status'], 'success');
-    expect(cardData['argsJson'], contains('README.md'));
-    expect(cardData['rawResultJson'], contains('hello'));
   });
 
   test('raw function outputs complete and enrich existing tool cards', () {
@@ -1183,140 +1330,6 @@ diff --git a/lib/main.dart b/lib/main.dart
     expect(cardData['summary'], contains('All tests passed'));
   });
 
-  test(
-    'hydrates historical codex protocol command events as one tool card',
-    () {
-      final messages = remoteCodexMessagesFromThreadResponseForTesting({
-        'thread': {
-          'id': 'thread-1',
-          'turns': [
-            {
-              'id': 'turn-1',
-              'events': [
-                {
-                  'method': 'codex/event',
-                  'params': {
-                    '_meta': {'threadId': 'thread-1'},
-                    'id': 'event-turn-1',
-                    'msg': {
-                      'type': 'exec_command_begin',
-                      'call_id': 'cmd-1',
-                      'turn_id': 'turn-1',
-                      'command': ['flutter', 'test'],
-                      'cwd': '/repo/ui',
-                      'parsed_cmd': <dynamic>[],
-                    },
-                  },
-                },
-                {
-                  'method': 'codex/event',
-                  'params': {
-                    '_meta': {'threadId': 'thread-1'},
-                    'id': 'event-turn-1',
-                    'msg': {
-                      'type': 'exec_command_output_delta',
-                      'call_id': 'cmd-1',
-                      'stream': 'stdout',
-                      'chunk': base64Encode(utf8.encode('00:01 +1\n')),
-                    },
-                  },
-                },
-                {
-                  'method': 'codex/event',
-                  'params': {
-                    '_meta': {'threadId': 'thread-1'},
-                    'id': 'event-turn-1',
-                    'msg': {
-                      'type': 'exec_command_end',
-                      'call_id': 'cmd-1',
-                      'turn_id': 'turn-1',
-                      'command': ['flutter', 'test'],
-                      'cwd': '/repo/ui',
-                      'parsed_cmd': <dynamic>[],
-                      'stdout': '00:01 +1\n',
-                      'stderr': '',
-                      'aggregated_output': '00:01 +1: All tests passed!\n',
-                      'exit_code': 0,
-                      'status': 'completed',
-                    },
-                  },
-                },
-              ],
-            },
-          ],
-        },
-      });
-
-      expect(messages, hasLength(1));
-      final cardData = messages.single.cardData!;
-      expect(cardData['toolType'], 'terminal');
-      expect(cardData['toolTitle'], 'flutter test');
-      expect(cardData['terminalOutput'], contains('All tests passed'));
-      expect(cardData['status'], 'success');
-    },
-  );
-
-  test('hydrates historical codex protocol mcp read events', () {
-    final messages = remoteCodexMessagesFromThreadResponseForTesting({
-      'thread': {
-        'id': 'thread-1',
-        'turns': [
-          {
-            'id': 'turn-1',
-            'events': [
-              {
-                'method': 'codex/event',
-                'params': {
-                  '_meta': {'threadId': 'thread-1'},
-                  'id': 'event-turn-1',
-                  'msg': {
-                    'type': 'mcp_tool_call_begin',
-                    'call_id': 'read-1',
-                    'invocation': {
-                      'server': 'filesystem',
-                      'tool': 'read_file',
-                      'arguments': {'path': 'README.md'},
-                    },
-                  },
-                },
-              },
-              {
-                'method': 'codex/event',
-                'params': {
-                  '_meta': {'threadId': 'thread-1'},
-                  'id': 'event-turn-1',
-                  'msg': {
-                    'type': 'mcp_tool_call_end',
-                    'call_id': 'read-1',
-                    'invocation': {
-                      'server': 'filesystem',
-                      'tool': 'read_file',
-                      'arguments': {'path': 'README.md'},
-                    },
-                    'result': {
-                      'Ok': {
-                        'content': [
-                          {'type': 'text', 'text': 'hello'},
-                        ],
-                      },
-                    },
-                  },
-                },
-              },
-            ],
-          },
-        ],
-      },
-    });
-
-    expect(messages, hasLength(1));
-    final cardData = messages.single.cardData!;
-    expect(cardData['toolType'], 'workspace');
-    expect(cardData['toolTitle'], 'Read README.md');
-    expect(cardData['status'], 'success');
-    expect(cardData['rawResultJson'], contains('hello'));
-  });
-
   test('hydrates codex user image blocks as message attachments', () {
     final messages = remoteCodexMessagesFromThreadResponseForTesting({
       'thread': {
@@ -1650,7 +1663,7 @@ diff --git a/lib/main.dart b/lib/main.dart
     expect(result.threadId, 'thread-1');
     expect(result.turnId, 'turn-1');
     expect(runtime.isAiResponding, isTrue);
-    expect(runtime.currentDispatchTaskId, 'turn-1');
+    expect(runtime.currentDispatchTurnId, 'turn-1');
   });
 
   test(
@@ -1788,7 +1801,7 @@ diff --git a/lib/main.dart b/lib/main.dart
     );
 
     expect(runtime.isAiResponding, isFalse);
-    expect(runtime.currentDispatchTaskId, isNull);
+    expect(runtime.currentDispatchTurnId, isNull);
     expect(
       runtime.messages.any((message) => message.id.endsWith('cancelled')),
       isFalse,
@@ -1845,7 +1858,7 @@ diff --git a/lib/main.dart b/lib/main.dart
 
     expect(runtime.messages.single.text, 'Hello');
     expect(runtime.isAiResponding, isFalse);
-    expect(runtime.currentDispatchTaskId, isNull);
+    expect(runtime.currentDispatchTurnId, isNull);
     expect(runtime.currentAiMessages, isEmpty);
   });
 
@@ -1892,7 +1905,7 @@ diff --git a/lib/main.dart b/lib/main.dart
 
     expect(runtime.messages.single.text, 'Hello');
     expect(runtime.isAiResponding, isFalse);
-    expect(runtime.currentDispatchTaskId, isNull);
+    expect(runtime.currentDispatchTurnId, isNull);
   });
 
   test('keeps replay delta offsets across matching snapshot replacement', () {
@@ -2728,7 +2741,7 @@ diff --git a/lib/main.dart b/lib/main.dart
     );
 
     expect(runtime.isAiResponding, isFalse);
-    expect(runtime.currentDispatchTaskId, isNull);
+    expect(runtime.currentDispatchTurnId, isNull);
     final thinking = runtime.messages
         .firstWhere((message) => message.cardData?['type'] == 'deep_thinking')
         .cardData!;
@@ -2763,7 +2776,7 @@ diff --git a/lib/main.dart b/lib/main.dart
     );
 
     expect(runtime.isAiResponding, isTrue);
-    expect(runtime.currentDispatchTaskId, isNotNull);
+    expect(runtime.currentDispatchTurnId, isNotNull);
   });
 
   test(
@@ -2851,43 +2864,6 @@ diff --git a/lib/main.dart b/lib/main.dart
   );
 
   test(
-    'codex protocol exec_command_begin with parsed_cmd read renders as workspace card',
-    () {
-      reducer.reduce(
-        runtime: runtime,
-        event: {
-          'method': 'codex/event',
-          'params': {
-            '_meta': {'threadId': 'thread-1'},
-            'id': 'event-turn-1',
-            'msg': {
-              'type': 'exec_command_begin',
-              'call_id': 'read-1',
-              'turn_id': 'turn-1',
-              'command': ['cat', 'README.md'],
-              'cwd': '/repo',
-              'parsed_cmd': <Map<String, dynamic>>[
-                {
-                  'type': 'read',
-                  'cmd': 'cat README.md',
-                  'name': 'README.md',
-                  'path': 'README.md',
-                },
-              ],
-            },
-          },
-        },
-      );
-
-      final cardData = runtime.messages.single.cardData!;
-      expect(cardData['type'], 'agent_tool_summary');
-      expect(cardData['toolType'], 'workspace');
-      expect(cardData['toolTitle'], 'Read README.md');
-      expect(cardData['status'], 'running');
-    },
-  );
-
-  test(
     'item/started commandExecution with commandActions read uses workspace card and keeps deltas',
     () {
       reducer.reduce(
@@ -2941,42 +2917,6 @@ diff --git a/lib/main.dart b/lib/main.dart
     },
   );
 
-  test(
-    'parsed_cmd search at exec_command_begin classifies card as search before output',
-    () {
-      reducer.reduce(
-        runtime: runtime,
-        event: {
-          'method': 'codex/event',
-          'params': {
-            '_meta': {'threadId': 'thread-1'},
-            'id': 'event-turn-1',
-            'msg': {
-              'type': 'exec_command_begin',
-              'call_id': 'search-1',
-              'turn_id': 'turn-1',
-              'command': ['rg', '-n', 'parsed_cmd', 'ui/lib'],
-              'cwd': '/repo',
-              'parsed_cmd': <Map<String, dynamic>>[
-                {
-                  'type': 'search',
-                  'cmd': 'rg -n parsed_cmd ui/lib',
-                  'query': 'parsed_cmd',
-                  'path': 'ui/lib',
-                },
-              ],
-            },
-          },
-        },
-      );
-
-      final cardData = runtime.messages.single.cardData!;
-      expect(cardData['toolType'], 'search');
-      expect(cardData['toolTitle'], 'Search: parsed_cmd');
-      expect(cardData['status'], 'running');
-    },
-  );
-
   test('parsed_cmd list_files at item/started becomes workspace List card', () {
     reducer.reduce(
       runtime: runtime,
@@ -3010,105 +2950,6 @@ diff --git a/lib/main.dart b/lib/main.dart
     expect(cardData['toolTitle'], 'List ui');
   });
 
-  test('parsed_cmd unknown falls back to terminal classification', () {
-    reducer.reduce(
-      runtime: runtime,
-      event: {
-        'method': 'codex/event',
-        'params': {
-          '_meta': {'threadId': 'thread-1'},
-          'id': 'event-turn-1',
-          'msg': {
-            'type': 'exec_command_begin',
-            'call_id': 'cmd-x',
-            'turn_id': 'turn-1',
-            'command': ['git', 'status'],
-            'cwd': '/repo',
-            'parsed_cmd': <Map<String, dynamic>>[
-              {'type': 'unknown', 'cmd': 'git status'},
-            ],
-          },
-        },
-      },
-    );
-
-    final cardData = runtime.messages.single.cardData!;
-    expect(cardData['toolType'], 'terminal');
-    expect(cardData['toolTitle'], 'git status');
-  });
-
-  test(
-    'mcp_tool_call_end with arguments.title shows title instead of tool name',
-    () {
-      reducer.reduce(
-        runtime: runtime,
-        event: {
-          'method': 'codex/event',
-          'params': {
-            '_meta': {'threadId': 'thread-1'},
-            'id': 'event-turn-1',
-            'msg': {
-              'type': 'mcp_tool_call_end',
-              'call_id': 'call_agQUhiEvZgvXKxX7ursGybbn',
-              'invocation': {
-                'server': 'node_repl',
-                'tool': 'js',
-                'arguments': {
-                  'title': 'Refine flavor parsing',
-                  'code': "nodeRepl.write('ok');",
-                },
-              },
-              'result': {
-                'Ok': {
-                  'content': [
-                    {'type': 'text', 'text': '{"ok":true}'},
-                  ],
-                },
-              },
-            },
-          },
-        },
-      );
-
-      final cardData = runtime.messages.single.cardData!;
-      expect(cardData['type'], 'agent_tool_summary');
-      expect(cardData['toolTitle'], 'Refine flavor parsing');
-      expect(cardData['status'], 'success');
-    },
-  );
-
-  test(
-    'mcp_tool_call_begin streams running card with --title argument as title',
-    () {
-      reducer.reduce(
-        runtime: runtime,
-        event: {
-          'method': 'codex/event',
-          'params': {
-            '_meta': {'threadId': 'thread-1'},
-            'id': 'event-turn-1',
-            'msg': {
-              'type': 'mcp_tool_call_begin',
-              'call_id': 'call_running_js',
-              'invocation': {
-                'server': 'node_repl',
-                'tool': 'js',
-                'arguments': {
-                  'title': 'Read-only project metadata parse',
-                  'code': '/* long js */',
-                },
-              },
-            },
-          },
-        },
-      );
-
-      final cardData = runtime.messages.single.cardData!;
-      expect(cardData['toolTitle'], 'Read-only project metadata parse');
-      expect(cardData['status'], 'running');
-    },
-  );
-
   test('rawResponseItem function_call js with arguments.title shows title', () {
     // Mirrors the OpenAI Responses path: codex app-server forwards
     // EVERY function_call ResponseItem as rawResponseItem/completed. For
@@ -3140,70 +2981,6 @@ diff --git a/lib/main.dart b/lib/main.dart
     expect(cardData['type'], 'agent_tool_summary');
     expect(cardData['toolTitle'], 'Refine flavor parsing');
   });
-
-  test(
-    'rawResponseItem then mcp_tool_call_end for same call_id collapse to one card',
-    () {
-      // Realistic order: function_call rawResponseItem fires first, then the
-      // projected mcp_tool_call_end. They share the same call_id, so the
-      // second event should update the SAME card rather than spawn a second.
-      reducer.reduce(
-        runtime: runtime,
-        event: {
-          'message': {
-            'method': 'rawResponseItem/completed',
-            'params': {
-              'threadId': 'thread-1',
-              'turnId': 'turn-1',
-              'item': {
-                'type': 'function_call',
-                'name': 'js',
-                'call_id': 'call_shared_1',
-                'arguments': jsonEncode({
-                  'title': 'Read-only project metadata parse',
-                  'code': '/* … */',
-                }),
-              },
-            },
-          },
-        },
-      );
-      reducer.reduce(
-        runtime: runtime,
-        event: {
-          'method': 'codex/event',
-          'params': {
-            '_meta': {'threadId': 'thread-1'},
-            'id': 'event-turn-1',
-            'msg': {
-              'type': 'mcp_tool_call_end',
-              'call_id': 'call_shared_1',
-              'invocation': {
-                'server': 'node_repl',
-                'tool': 'js',
-                'arguments': {
-                  'title': 'Read-only project metadata parse',
-                  'code': '/* … */',
-                },
-              },
-              'result': {
-                'Ok': {
-                  'content': [
-                    {'type': 'text', 'text': '{"ok":true}'},
-                  ],
-                },
-              },
-            },
-          },
-        },
-      );
-
-      expect(runtime.messages, hasLength(1));
-      final cardData = runtime.messages.single.cardData!;
-      expect(cardData['toolTitle'], 'Read-only project metadata parse');
-      expect(cardData['status'], 'success');
-    },
-  );
 
   test('rawResponseItem function_call exec_command shows the cmd as title', () {
     // exec_command is the dominant tool in the user-reported session
@@ -3290,240 +3067,6 @@ diff --git a/lib/main.dart b/lib/main.dart
       expect(cardData['toolTitle'], 'pwd');
       expect(cardData['terminalOutput'], contains('/repo'));
       expect(cardData['status'], 'success');
-    },
-  );
-
-  test(
-    'replays the user-reported exec_command turn (19 function_calls + 1 mcp)',
-    () {
-      // Replays the actual session 019e7ca6-bb65-7d43-822f-b7eb78cc3033:
-      // 18 exec_command function_calls + 1 js function_call + 1
-      // load_workspace_dependencies function_call + 1 mcp_tool_call_end.
-      // The user reported that only the MCP card showed up. This test
-      // exercises every event-router path the codex app-server WOULD have
-      // emitted for that turn (turn/started, rawResponseItem/completed for
-      // each function_call, item/started+commandExecution variant, mcp end)
-      // and asserts the runtime ends up with one card per call_id.
-      reducer.reduce(
-        runtime: runtime,
-        event: {
-          'message': {
-            'method': 'turn/started',
-            'params': {
-              'threadId': '019e7ca6-bb65-7d43-822f-b7eb78cc3033',
-              'turnId': 'turn-1',
-            },
-          },
-        },
-      );
-
-      const execCommands = <String>[
-        'pwd',
-        'git status --short --branch',
-        "rg --files -g '!*build*' | sed -n '1,80p'",
-        "find . -maxdepth 2 -type d | sort | sed -n '1,80p'",
-        'rg -n "include\\(|pluginManagement" settings.gradle.kts',
-        "sed -n '1,260p' app/build.gradle.kts",
-        "sed -n '1,220p' ui/pubspec.yaml",
-        "sed -n '1,220p' assists/build.gradle.kts",
-        "sed -n '1,220p' baselib/build.gradle.kts",
-        "rg -n 'class App' app/src/main",
-        "sed -n '1,80p' AGENTS.md",
-        "rg --files app/src | sed -n '1,40p'",
-        'git branch --show-current',
-        'git log --oneline -5',
-        "cat README.md | head -30",
-        "ls -la",
-        "wc -l ui/pubspec.yaml",
-        "git diff --stat",
-      ];
-
-      for (var index = 0; index < execCommands.length; index += 1) {
-        reducer.reduce(
-          runtime: runtime,
-          event: {
-            'message': {
-              'method': 'rawResponseItem/completed',
-              'params': {
-                'threadId': '019e7ca6-bb65-7d43-822f-b7eb78cc3033',
-                'turnId': 'turn-1',
-                'item': {
-                  'type': 'function_call',
-                  'name': 'exec_command',
-                  'call_id': 'call_exec_$index',
-                  'arguments': jsonEncode({
-                    'cmd': execCommands[index],
-                    'workdir': '/Users/ocean/code/OmnibotApp',
-                    'yield_time_ms': 1000,
-                    'max_output_tokens': 2000,
-                  }),
-                },
-              },
-            },
-          },
-        );
-        // function_call_output (the actual exec result) comes right after.
-        reducer.reduce(
-          runtime: runtime,
-          event: {
-            'message': {
-              'method': 'rawResponseItem/completed',
-              'params': {
-                'threadId': '019e7ca6-bb65-7d43-822f-b7eb78cc3033',
-                'turnId': 'turn-1',
-                'item': {
-                  'type': 'function_call_output',
-                  'call_id': 'call_exec_$index',
-                  'output': '(output ${execCommands[index]})\n',
-                },
-              },
-            },
-          },
-        );
-      }
-
-      // The single js function_call + mcp_tool_call_end pair.
-      reducer.reduce(
-        runtime: runtime,
-        event: {
-          'message': {
-            'method': 'rawResponseItem/completed',
-            'params': {
-              'threadId': '019e7ca6-bb65-7d43-822f-b7eb78cc3033',
-              'turnId': 'turn-1',
-              'item': {
-                'type': 'function_call',
-                'name': 'js',
-                'call_id': 'call_js_1',
-                'arguments': jsonEncode({
-                  'title': 'Inspect modules and dependencies',
-                  'code': '/* js code … */',
-                }),
-              },
-            },
-          },
-        },
-      );
-      reducer.reduce(
-        runtime: runtime,
-        event: {
-          'method': 'codex/event',
-          'params': {
-            '_meta': {'threadId': '019e7ca6-bb65-7d43-822f-b7eb78cc3033'},
-            'id': 'mcp-1',
-            'msg': {
-              'type': 'mcp_tool_call_end',
-              'call_id': 'call_js_1',
-              'invocation': {
-                'server': 'node_repl',
-                'tool': 'js',
-                'arguments': {
-                  'title': 'Inspect modules and dependencies',
-                  'code': '/* js code … */',
-                },
-              },
-              'result': {
-                'Ok': {
-                  'content': [
-                    {'type': 'text', 'text': '{"ok":true}'},
-                  ],
-                },
-              },
-            },
-          },
-        },
-      );
-
-      // load_workspace_dependencies is a codex_app namespace function_call.
-      reducer.reduce(
-        runtime: runtime,
-        event: {
-          'message': {
-            'method': 'rawResponseItem/completed',
-            'params': {
-              'threadId': '019e7ca6-bb65-7d43-822f-b7eb78cc3033',
-              'turnId': 'turn-1',
-              'item': {
-                'type': 'function_call',
-                'name': 'load_workspace_dependencies',
-                'namespace': 'codex_app',
-                'call_id': 'call_lwd_1',
-                'arguments': '{}',
-              },
-            },
-          },
-        },
-      );
-
-      reducer.reduce(
-        runtime: runtime,
-        event: {
-          'message': {
-            'method': 'turn/completed',
-            'params': {
-              'threadId': '019e7ca6-bb65-7d43-822f-b7eb78cc3033',
-              'turnId': 'turn-1',
-            },
-          },
-        },
-      );
-
-      // Expectation:
-      //   18 unique exec_command cards (call_exec_0..17, each call_id distinct)
-      //   1 js card (call_js_1, title from arguments.title)
-      //   1 load_workspace_dependencies card (call_lwd_1)
-      //  20 total tool-summary cards. Plus any reasoning/text cards (none here
-      //  because we didn't emit agentMessage/reasoning events).
-      final toolCards = runtime.messages
-          .where(
-            (message) =>
-                (message.cardData?['type'] ?? '').toString() ==
-                'agent_tool_summary',
-          )
-          .toList();
-      expect(
-        toolCards,
-        hasLength(20),
-        reason:
-            'Every function_call (incl. exec_command/js/load_workspace_dependencies) '
-            'should produce its own tool card.',
-      );
-
-      // Verify a few specific cards.
-      final execCard0 = toolCards.firstWhere(
-        (m) => m.id.startsWith('call_exec_0'),
-      );
-      expect(execCard0.cardData!['toolType'], 'terminal');
-      expect(execCard0.cardData!['toolTitle'], 'pwd');
-      expect(execCard0.cardData!['terminalOutput'], contains('output pwd'));
-
-      final searchCard = toolCards.firstWhere(
-        (m) => (m.cardData!['toolTitle'] ?? '').toString().startsWith('rg -n'),
-      );
-      expect(
-        searchCard.cardData!['toolType'],
-        'search',
-        reason:
-            'rg invocations should be classified as search via _inferToolTypeFromCommand',
-      );
-
-      final jsCard = toolCards.firstWhere((m) => m.id.startsWith('call_js_1'));
-      expect(
-        jsCard.cardData!['toolTitle'],
-        'Inspect modules and dependencies',
-        reason:
-            'js tool should show arguments.title instead of "js" '
-            '(the user-reported regression)',
-      );
-      expect(jsCard.cardData!['status'], 'success');
-
-      final lwdCard = toolCards.firstWhere(
-        (m) => m.id.startsWith('call_lwd_1'),
-      );
-      expect(
-        (lwdCard.cardData!['toolTitle'] ?? '').toString(),
-        contains('load_workspace_dependencies'),
-      );
     },
   );
 

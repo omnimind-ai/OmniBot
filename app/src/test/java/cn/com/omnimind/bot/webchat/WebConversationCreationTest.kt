@@ -8,7 +8,7 @@ class WebConversationCreationTest {
     @Test
     fun `stored conversation mode wins over a stale Agent request fallback`() {
         assertEquals(
-            "codex",
+            "agent",
             resolveWebConversationMode(
                 storedMode = "codex",
                 requestedMode = "normal"
@@ -32,6 +32,10 @@ class WebConversationCreationTest {
         assertEquals(
             WebConversationRunKind.AGENT,
             resolveWebConversationRunKind("codex")
+        )
+        assertEquals(
+            "agent",
+            resolveWebConversationMode("codex", "normal")
         )
         assertEquals(
             WebConversationRunKind.CHAT_ONLY,

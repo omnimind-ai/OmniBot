@@ -59,6 +59,65 @@ void main() {
     expect(find.byIcon(Icons.keyboard_arrow_down_rounded), findsNothing);
   });
 
+  testWidgets('does not show elapsed time before thinking is complete', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: DeepThinkingCard(
+            thinkingText: '仍在输出的思考内容',
+            stage: 4,
+            isLoading: true,
+            isCollapsible: true,
+            startTime: 1000,
+          ),
+        ),
+      ),
+    );
+
+    expect(find.byType(DeepThinkingCard), findsOneWidget);
+    expect(find.textContaining('用时'), findsNothing);
+  });
+
+  testWidgets('shows elapsed time only after the terminal thinking update', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: DeepThinkingCard(
+            thinkingText: '思考仍在流式输出',
+            stage: 4,
+            isLoading: true,
+            isCollapsible: true,
+            startTime: 1000,
+          ),
+        ),
+      ),
+    );
+    expect(find.textContaining('用时'), findsNothing);
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: DeepThinkingCard(
+            thinkingText: '思考已经完成',
+            stage: 4,
+            isLoading: false,
+            isCollapsible: true,
+            startTime: 1000,
+            endTime: 13000,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('用时'), findsOneWidget);
+    expect(find.textContaining('12秒'), findsOneWidget);
+  });
+
   testWidgets('thinking expansion stays anchored to the top edge', (
     tester,
   ) async {

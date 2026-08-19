@@ -55,6 +55,7 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
     if (isOpen) {
       _dismissChatInputFocus();
       _composerLiftIntentTracker.reset();
+      _embeddedDrawerKey.currentState?.reloadConversations();
       _drawerKey.currentState?.reloadConversations();
     } else {
       _isHomeDrawerSearchFocused = false;
@@ -866,21 +867,21 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
       fallbackMessages: _modeState(mode).messages,
       preserveFallbackDuringHandoff: _modeState(mode).isAiResponding,
     );
-    // `runtime.activeAgentTaskIds` is the single source of truth for which
+    // `runtime.activeAgentTurnIds` is the single source of truth for which
     // turns are in flight. Only fall back to the page-level dispatch id when
     // there is no runtime yet to own it.
-    final activeAgentTaskIds = <String>{...?runtime?.activeAgentTaskIds};
+    final activeAgentTurnIds = <String>{...?runtime?.activeAgentTurnIds};
     if (runtime == null && mode == ChatPageMode.agent) {
       final isAwaitingAgent = _modeState(mode).isAiResponding;
       final pendingDispatchTaskId =
-          _modeState(mode).currentDispatchTaskId?.trim() ?? '';
+          _modeState(mode).currentDispatchTurnId?.trim() ?? '';
       if (isAwaitingAgent && pendingDispatchTaskId.isNotEmpty) {
-        activeAgentTaskIds.add(pendingDispatchTaskId);
+        activeAgentTurnIds.add(pendingDispatchTaskId);
       }
     }
     final toolActivitySnapshot = resolveAgentToolActivitySnapshot(
       List<ChatMessageModel>.from(resolvedMessages),
-      activeTaskIds: activeAgentTaskIds,
+      activeTaskIds: activeAgentTurnIds,
       preferredCompletedTaskId: _latestExpandedAgentRunTaskIdForMode(mode),
     );
     final showToolActivityStrip = _shouldShowToolActivityStripForMode(
@@ -902,7 +903,7 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
     final homeGreetingSettings = HomeGreetingSettingsService.notifier.value;
     return ChatMessageList(
       messages: resolvedMessages,
-      activeAgentTaskIds: activeAgentTaskIds,
+      activeAgentTurnIds: activeAgentTurnIds,
       useAcpPresentation: mode == ChatPageMode.agent,
       activeAcpAgentId: mode == ChatPageMode.agent ? _activeAcpAgentId : null,
       onRetryAgentMessage: _retryFailedAgentTurn,
@@ -1152,7 +1153,7 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
   }) {
     final toolActivitySnapshot = resolveAgentToolActivitySnapshot(
       List<ChatMessageModel>.from(_messages),
-      activeTaskIds: _activeRuntime?.activeAgentTaskIds ?? const <String>{},
+      activeTaskIds: _activeRuntime?.activeAgentTurnIds ?? const <String>{},
       preferredCompletedTaskId: _latestExpandedAgentRunTaskIdForMode(
         _activeMode,
       ),
@@ -1504,7 +1505,7 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
       fallbackMessages: _modeState(mode).messages,
       preserveFallbackDuringHandoff: _modeState(mode).isAiResponding,
     );
-    final activeTaskIds = runtime?.activeAgentTaskIds ?? const <String>{};
+    final activeTaskIds = runtime?.activeAgentTurnIds ?? const <String>{};
     // composerReservedInset 已含 composer 顶部上方 12px 的安全间距，
     // 回收 6px 让按钮更贴近输入框右上角。
     final bottomInset = math.max(
@@ -1522,7 +1523,7 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
         !_isPopupVisible;
     return ChatMessageAnchorBar(
       messages: messages,
-      activeAgentTaskIds: activeTaskIds,
+      activeAgentTurnIds: activeTaskIds,
       conversationSignature:
           '${mode.name}:${_modeState(mode).currentConversationId ?? ''}',
       bottomInset: bottomInset,
@@ -1651,12 +1652,12 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
                             translucent: backgroundActive,
                             visualProfile: visualProfile,
                             child: HomeDrawer(
-                              key: _drawerKey,
+                              key: _embeddedDrawerKey,
                               embedded: true,
                               closeOnNavigate: false,
                               onSearchFocusChanged:
                                   _handleHomeDrawerSearchFocusChanged,
-                              searchFieldKey: _drawerSearchFieldKey,
+                              searchFieldKey: _embeddedDrawerSearchFieldKey,
                               newConversationMode: _conversationModeForPageMode(
                                 _activeMode,
                               ),

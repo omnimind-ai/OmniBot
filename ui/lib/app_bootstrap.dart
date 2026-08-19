@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -13,7 +15,6 @@ import 'package:ui/services/storage_service.dart';
 import 'package:ui/theme/app_theme_controller.dart';
 import 'package:ui/theme/app_theme_mode.dart';
 import 'package:ui/theme/app_theme.dart';
-import 'package:ui/widgets/embedded_terminal_init_overlay.dart';
 import 'package:ui/widgets/startup_account_prompt.dart';
 
 import 'core/router/go_router_manager.dart';
@@ -42,7 +43,6 @@ Future<void> bootstrapMain(List<String> args) async {
     GoRouterManager.setInitialRoute(initialRoute);
   }
   WidgetsFlutterBinding.ensureInitialized();
-  WidgetsBinding.instance.deferFirstFrame();
   try {
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   } catch (error, stackTrace) {
@@ -62,29 +62,6 @@ Future<void> bootstrapMain(List<String> args) async {
     debugPrint('$stackTrace');
   }
   try {
-    await AppBackgroundService.load();
-  } catch (error, stackTrace) {
-    debugPrint('[FlutterStartup] AppBackgroundService.load failed: $error');
-    debugPrint('$stackTrace');
-  }
-  try {
-    await ScheduledTaskSchedulerService.initialize();
-  } catch (error, stackTrace) {
-    debugPrint(
-      '[FlutterStartup] ScheduledTaskSchedulerService.initialize failed: '
-      '$error',
-    );
-    debugPrint('$stackTrace');
-  }
-  try {
-    await OmnibotResourceService.ensureWorkspacePathsLoaded();
-  } catch (error, stackTrace) {
-    debugPrint(
-      '[FlutterStartup] OmnibotResourceService workspace load failed: $error',
-    );
-    debugPrint('$stackTrace');
-  }
-  try {
     SystemChrome.setSystemUIOverlayStyle(
       AppTheme.overlayStyleForBrightness(
         _resolveStartupBrightness(StorageService.getThemeMode()),
@@ -95,17 +72,45 @@ Future<void> bootstrapMain(List<String> args) async {
     debugPrint('$stackTrace');
   }
 
+  runApp(
+    UncontrolledProviderScope(
+      container: container,
+      child: MyApp(args: args),
+    ),
+  );
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    unawaited(_initializeDeferredStartupServices());
+  });
+}
+
+Future<void> _initializeDeferredStartupServices() async {
+  await Future.wait(<Future<void>>[
+    _runDeferredStartupStep(
+      'AppBackgroundService.load',
+      AppBackgroundService.load,
+    ),
+    _runDeferredStartupStep(
+      'ScheduledTaskSchedulerService.initialize',
+      ScheduledTaskSchedulerService.initialize,
+    ),
+    _runDeferredStartupStep(
+      'OmnibotResourceService.ensureWorkspacePathsLoaded',
+      () async {
+        await OmnibotResourceService.ensureWorkspacePathsLoaded();
+      },
+    ),
+  ]);
+}
+
+Future<void> _runDeferredStartupStep(
+  String name,
+  Future<void> Function() operation,
+) async {
   try {
-    runApp(
-      UncontrolledProviderScope(
-        container: container,
-        child: MyApp(args: args),
-      ),
-    );
-  } finally {
-    // Even if a widget/plugin throws while constructing the root tree, do not
-    // keep the native window permanently behind a deferred first frame.
-    WidgetsBinding.instance.allowFirstFrame();
+    await operation();
+  } catch (error, stackTrace) {
+    debugPrint('[FlutterStartup] $name failed: $error');
+    debugPrint('$stackTrace');
   }
 }
 
@@ -209,7 +214,6 @@ class _MyAppState extends ConsumerState<MyApp> {
               fit: StackFit.expand,
               children: [
                 StartupAccountPrompt(child: child ?? const SizedBox.shrink()),
-                const EmbeddedTerminalInitToastListener(),
               ],
             ),
           ),

@@ -473,7 +473,7 @@ void main() {
             child: ChatMessageList(
               messages: messages,
               scrollController: controller,
-              activeAgentTaskIds: const {'agent-task'},
+              activeAgentTurnIds: const {'agent-task'},
               onBeforeTaskExecute: () async {},
             ),
           ),
@@ -550,7 +550,7 @@ void main() {
           child: ChatMessageList(
             messages: messages,
             scrollController: controller,
-            activeAgentTaskIds: const <String>{'body-task'},
+            activeAgentTurnIds: const <String>{'body-task'},
             onBeforeTaskExecute: () async {},
           ),
         ),
@@ -947,7 +947,7 @@ void main() {
           child: ChatMessageList(
             messages: messages,
             scrollController: controller,
-            activeAgentTaskIds: const <String>{'task-fold'},
+            activeAgentTurnIds: const <String>{'task-fold'},
             onBeforeTaskExecute: () async {},
           ),
         ),
@@ -1010,6 +1010,68 @@ void main() {
     expect(find.textContaining('快照消息'), findsWidgets);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'streaming agent timeline survives group shape changes without element errors',
+    (tester) async {
+      final controller = ScrollController();
+      var messages = <ChatMessageModel>[
+        ChatMessageModel.userMessage('用户问题', id: 'task-1-user'),
+      ];
+      var activeTaskIds = <String>{'task-1'};
+      late StateSetter setState;
+
+      await tester.pumpWidget(
+        _buildLocalizedApp(
+          child: StatefulBuilder(
+            builder: (context, stateSetter) {
+              setState = stateSetter;
+              return SizedBox(
+                width: 400,
+                height: 520,
+                child: ChatMessageList(
+                  messages: messages,
+                  activeAgentTurnIds: activeTaskIds,
+                  useAcpPresentation: true,
+                  scrollController: controller,
+                  onBeforeTaskExecute: () async {},
+                ),
+              );
+            },
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final phases = <({List<ChatMessageModel> messages, Set<String> active})>[
+        (messages: _buildActiveAgentRunMessages(), active: <String>{'task-1'}),
+        (
+          messages: _buildCompletedAcpAgentRunMessages(),
+          active: <String>{'task-1'},
+        ),
+        (messages: _buildCompletedAcpAgentRunMessages(), active: <String>{}),
+        (
+          messages: _buildCompletedAgentRunMessagesWithToolGroup(),
+          active: <String>{},
+        ),
+        (
+          messages: _buildCompletedInterleavedXiaowanRunMessages(),
+          active: <String>{'task-fold'},
+        ),
+      ];
+
+      for (final phase in phases) {
+        setState(() {
+          messages = phase.messages;
+          activeTaskIds = phase.active;
+        });
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 80));
+        await tester.pump(const Duration(milliseconds: 320));
+        expect(tester.takeException(), isNull);
+      }
+    },
+  );
 
   testWidgets('ACP Agent run shows its own brand avatar and processed label', (
     tester,
@@ -1096,7 +1158,7 @@ void main() {
                   id: userMessageId,
                 ).copyWith(createAt: startedAt),
               ],
-              activeAgentTaskIds: <String>{taskId},
+              activeAgentTurnIds: <String>{taskId},
               useAcpPresentation: true,
               activeAcpAgentId: 'codex-acp',
               scrollController: controller,
@@ -1176,7 +1238,7 @@ void main() {
                 height: 520,
                 child: ChatMessageList(
                   messages: messages,
-                  activeAgentTaskIds: activeTaskIds,
+                  activeAgentTurnIds: activeTaskIds,
                   useAcpPresentation: true,
                   scrollController: controller,
                   onBeforeTaskExecute: () async {},
@@ -1644,7 +1706,7 @@ void main() {
                 height: 520,
                 child: ChatMessageList(
                   messages: messages,
-                  activeAgentTaskIds: activeTaskIds,
+                  activeAgentTurnIds: activeTaskIds,
                   scrollController: controller,
                   onBeforeTaskExecute: () async {},
                 ),
@@ -1724,7 +1786,7 @@ void main() {
                 height: 520,
                 child: ChatMessageList(
                   messages: messages,
-                  activeAgentTaskIds: activeTaskIds,
+                  activeAgentTurnIds: activeTaskIds,
                   useAcpPresentation: true,
                   activeAcpAgentId: 'deepseek-harness',
                   scrollController: controller,

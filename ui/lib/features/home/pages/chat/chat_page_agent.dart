@@ -395,7 +395,6 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         status: status,
         assumeActive: target.agentSessionActive == true,
       );
-      _startRemoteCodexSessionSync(resolvedThreadId);
       _rememberRuntimeUiSnapshot(ChatPageMode.agent);
     } catch (error) {
       if (!mounted) return;
@@ -1012,7 +1011,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     required String configId,
     required dynamic value,
   }) async {
-    // Remote Codex keeps its own app-server configuration path. Its turn
+    // Remote ACP keeps its own connection configuration path. Its turn
     // request still carries the selected legacy fields, while config/set is
     // reserved for local ACP sessions that expose ACP configOptions.
     if (_agentRuntimeStatus.runtime == 'remote' ||
@@ -1238,7 +1237,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         await _ensureActiveConversationReadyForStreaming();
       } catch (error) {
         if (mounted) {
-          _currentDispatchTaskId = messageIds.aiMessageId;
+          _currentDispatchTurnId = messageIds.aiMessageId;
           handleAgentError('Conversation setup failed. Please retry. $error');
         }
         return;
@@ -1246,7 +1245,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       conversationId = _currentConversationId;
       if (conversationId == null) {
         if (mounted) {
-          _currentDispatchTaskId = messageIds.aiMessageId;
+          _currentDispatchTurnId = messageIds.aiMessageId;
           handleAgentError('Conversation setup failed. Please retry.');
         }
         return;
@@ -1255,7 +1254,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
 
     final resolvedConversationId = conversationId;
     _syncRuntimeSnapshotForMode(_activeMode);
-    _currentDispatchTaskId = messageIds.aiMessageId;
+    _currentDispatchTurnId = messageIds.aiMessageId;
     _runtimeCoordinator.registerTask(
       taskId: messageIds.aiMessageId,
       conversationId: resolvedConversationId,
@@ -1284,7 +1283,6 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       final resolvedThreadId = _asAgentString(response['threadId']);
       if (resolvedThreadId != null && remoteCodex) {
         _activateRemoteCodexRuntimeForThread(resolvedThreadId);
-        _startRemoteCodexSessionSync(resolvedThreadId);
       }
       _activeAgentThreadId = resolvedThreadId ?? _activeAgentThreadId;
       _activeAgentTurnId =
@@ -1427,11 +1425,11 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     );
     // Log every event individually so the user can `adb logcat -s flutter:V`
     // (or `flutter logs`) during a Agent turn and verify exactly which
-    // app-server methods are reaching the Flutter side. If lines like
+    // ACP methods are reaching the Flutter side. If lines like
     //   [Agent/E] item/started:commandExecution
     //   [Agent/E] item/completed:commandExecution
     // do not show up while pwd/ls/cat run, the events are being dropped
-    // upstream (codex app-server -> codex-bridge -> Kotlin -> EventChannel).
+    // upstream (remote ACP -> codex-bridge -> Kotlin -> EventChannel).
     debugPrint('[Agent/E] $diagnosticMethod');
     final acpUpdate = _asAgentMap(
       (_asAgentMap(event['params']) ?? const <String, dynamic>{})['update'],
@@ -1484,14 +1482,29 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     final agentConversationId = _modeState(
       ChatPageMode.agent,
     ).currentConversationId;
-    final eventMode =
+    final eventParams = _asAgentMap(event['params']);
+    final eventSessionId =
+        _asAgentString(event['sessionId']) ??
+        _asAgentString(eventParams?['sessionId']);
+    final eventTurnId = _asAgentString(event['turnId']);
+    final ownerMode = _runtimeCoordinator.modeForAcpEvent(
+      conversationId: conversationId,
+      sessionId: eventSessionId,
+      turnId: eventTurnId,
+    );
+    final eventMode = switch (ownerMode) {
+      kChatRuntimeModeNormal => ChatPageMode.normal,
+      kChatRuntimeModeAgent => ChatPageMode.agent,
+      kChatRuntimeModeOpenClaw => ChatPageMode.openclaw,
+      _ =>
         remoteCodex ||
-            conversationId == agentConversationId ||
-            event['conversationMode'] == ConversationMode.agent.storageValue
-        ? ChatPageMode.agent
-        : conversationId == normalConversationId
-        ? ChatPageMode.normal
-        : _activeMode;
+                conversationId == agentConversationId ||
+                event['conversationMode'] == ConversationMode.agent.storageValue
+            ? ChatPageMode.agent
+            : conversationId == normalConversationId
+            ? ChatPageMode.normal
+            : _activeMode,
+    };
     final isVisibleConversation =
         conversationId == _modeState(eventMode).currentConversationId &&
         _activeMode == eventMode;
@@ -1504,7 +1517,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
           : null,
     );
     final threadId = _asAgentString(event['threadId']) ?? result.threadId;
-    final turnId = _asAgentString(event['turnId']) ?? result.turnId;
+    final turnId = eventTurnId ?? result.turnId;
     if (eventMode == ChatPageMode.agent &&
         isVisibleConversation &&
         (threadId != null || turnId != null)) {
@@ -1542,7 +1555,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     if (!result.handled &&
         result.method != 'codex/stderr' &&
         result.method != 'codex/parseError') {
-      debugPrint('[Agent] unhandled app-server event: ${jsonEncode(event)}');
+      debugPrint('[Agent] unhandled ACP event: ${jsonEncode(event)}');
     }
     if (_activeMode == ChatPageMode.agent && mounted && isVisibleConversation) {
       setState(() {});
@@ -1563,10 +1576,10 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     // without waiting for the first ACP API event.
     if (mounted) {
       setState(() {
-        _currentDispatchTaskId = aiMessageId;
+        _currentDispatchTurnId = aiMessageId;
         final runtime = _activeRuntime;
         if (runtime != null) {
-          runtime.lastAgentTaskId = aiMessageId;
+          runtime.lastAgentTurnId = aiMessageId;
         }
       });
     }
@@ -1575,7 +1588,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       status = await _refreshConnectedAgentRuntimeStatus();
     } catch (error) {
       if (mounted) {
-        _currentDispatchTaskId = aiMessageId;
+        _currentDispatchTurnId = aiMessageId;
         handleAgentError('Agent 连接失败: $error');
       }
       return;
@@ -1589,7 +1602,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         await _ensureActiveConversationReadyForStreaming();
       } catch (error) {
         if (mounted) {
-          _currentDispatchTaskId = aiMessageId;
+          _currentDispatchTurnId = aiMessageId;
           handleAgentError('Conversation setup failed. Please retry. $error');
         }
         return;
@@ -1597,7 +1610,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       conversationId = _currentConversationId;
       if (conversationId == null) {
         if (mounted) {
-          _currentDispatchTaskId = aiMessageId;
+          _currentDispatchTurnId = aiMessageId;
           handleAgentError('Conversation setup failed. Please retry.');
         }
         return;
@@ -1606,7 +1619,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
 
     final resolvedConversationId = conversationId;
     _syncRuntimeSnapshotForMode(_activeMode);
-    _currentDispatchTaskId = aiMessageId;
+    _currentDispatchTurnId = aiMessageId;
     _runtimeCoordinator.registerTask(
       taskId: aiMessageId,
       conversationId: resolvedConversationId,
@@ -1631,6 +1644,10 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       final response = await AgentRuntimeService.promptSession(
         conversationId: remoteCodex ? null : resolvedConversationId,
         sessionId: _activeAgentThreadId,
+        // Keep the request id stable across a retry of this message. The ACP
+        // runtime uses it to return the original turn instead of replaying
+        // tool calls.
+        requestId: aiMessageId,
         agentId: remoteCodex ? null : _activeAcpAgentId,
         text: messageText,
         attachments: attachments,
@@ -1644,7 +1661,6 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       final resolvedThreadId = _asAgentString(response['threadId']);
       if (resolvedThreadId != null && remoteCodex) {
         _activateRemoteCodexRuntimeForThread(resolvedThreadId);
-        _startRemoteCodexSessionSync(resolvedThreadId);
       }
       _activeAgentThreadId = resolvedThreadId ?? _activeAgentThreadId;
       _activeAgentTurnId =
@@ -1925,14 +1941,14 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     final activeTurnId = isAiResponding
         ? (directActiveTurnId ??
               _remoteCodexLatestTurnIdFromThreadResponse(response) ??
-              runtime?.currentDispatchTaskId ??
-              runtime?.lastAgentTaskId ??
+              runtime?.currentDispatchTurnId ??
+              runtime?.lastAgentTurnId ??
               _activeAgentTurnId)
         : null;
     final activeTaskId = isAiResponding
         ? (activeTurnId ??
-              runtime?.currentDispatchTaskId ??
-              runtime?.lastAgentTaskId ??
+              runtime?.currentDispatchTurnId ??
+              runtime?.lastAgentTurnId ??
               'remote-agent-$resolvedThreadId')
         : null;
     final hasTurns = _remoteCodexThreadResponseHasTurns(response);
@@ -2012,7 +2028,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         _modeState(ChatPageMode.agent).currentThinkingStage = isAiResponding
             ? ThinkingStage.thinking.value
             : ThinkingStage.complete.value;
-        _modeState(ChatPageMode.agent).currentDispatchTaskId = activeTaskId;
+        _modeState(ChatPageMode.agent).currentDispatchTurnId = activeTaskId;
       }
       _modeState(ChatPageMode.agent).messages
         ..clear()
@@ -2036,11 +2052,11 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       isExecutingTask: isAiResponding,
       isDeepThinking: isAiResponding,
       deepThinkingContent: runtime?.deepThinkingContent ?? '',
-      currentDispatchTaskId: activeTaskId,
+      currentDispatchTurnId: activeTaskId,
       currentThinkingStage: isAiResponding
           ? ThinkingStage.thinking.value
           : ThinkingStage.complete.value,
-      lastAgentTaskId: activeTaskId,
+      lastAgentTurnId: activeTaskId,
       chatIslandDisplayLayer: ChatIslandDisplayLayer.mode,
       preserveLiveStreamingState: preserveLiveStreamingState,
     );
@@ -2072,8 +2088,8 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     _modeState(ChatPageMode.agent).deepThinkingContent =
         runtime.deepThinkingContent;
     _modeState(ChatPageMode.agent).isDeepThinking = runtime.isDeepThinking;
-    _modeState(ChatPageMode.agent).currentDispatchTaskId =
-        runtime.currentDispatchTaskId;
+    _modeState(ChatPageMode.agent).currentDispatchTurnId =
+        runtime.currentDispatchTurnId;
     _modeState(ChatPageMode.agent).currentThinkingStage =
         runtime.currentThinkingStage;
     _modeState(ChatPageMode.agent).isInputAreaVisible =
@@ -2223,7 +2239,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     );
     return _modeState(ChatPageMode.agent).messages.isNotEmpty ||
         (runtime?.hasInFlightTask ?? false) ||
-        (_modeState(ChatPageMode.agent).currentDispatchTaskId?.isNotEmpty ??
+        (_modeState(ChatPageMode.agent).currentDispatchTurnId?.isNotEmpty ??
             false);
   }
 

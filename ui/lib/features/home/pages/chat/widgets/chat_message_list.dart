@@ -44,7 +44,7 @@ class ChatMessageList extends StatefulWidget {
   final ValueChanged<ChatMessageModel>? onLatestUserMessageEditTap;
   final Future<void> Function()? onLoadMore;
   final bool hasMore;
-  final Set<String> activeAgentTaskIds;
+  final Set<String> activeAgentTurnIds;
   final bool useAcpPresentation;
   final String? activeAcpAgentId;
   final Set<String>? expandedAgentRunTaskIds;
@@ -75,7 +75,7 @@ class ChatMessageList extends StatefulWidget {
     this.onLatestUserMessageEditTap,
     this.onLoadMore,
     this.hasMore = false,
-    this.activeAgentTaskIds = const <String>{},
+    this.activeAgentTurnIds = const <String>{},
     this.useAcpPresentation = false,
     this.activeAcpAgentId,
     this.expandedAgentRunTaskIds,
@@ -155,6 +155,7 @@ class _ChatMessageListState extends State<ChatMessageList> {
   final Map<String, GlobalKey> _entryRowKeys = <String, GlobalKey>{};
   int _navigatorJumpSerial = 0;
   bool _navigatorJumpUserInterrupted = false;
+  static const String _kListEntryKeyPrefix = 'chat-timeline-entry:';
 
   Set<String> get _expandedAgentRunTaskIds =>
       widget.expandedAgentRunTaskIds ?? _localExpandedAgentRunTaskIds;
@@ -535,6 +536,10 @@ class _ChatMessageListState extends State<ChatMessageList> {
     return _entryRowKeys.putIfAbsent(entryKey, GlobalKey.new);
   }
 
+  ValueKey<String> _listKeyForEntry(String entryKey) {
+    return ValueKey<String>('$_kListEntryKeyPrefix$entryKey');
+  }
+
   void _pruneEntryRowKeys(List<AgentRunTimelineEntry> entries) {
     // 只在 key 数量明显超过当前条目时清理，避免每帧做 set 差集。
     if (_entryRowKeys.length <= entries.length + 32) {
@@ -699,7 +704,7 @@ class _ChatMessageListState extends State<ChatMessageList> {
     if (observable == null) {
       return buildAgentRunTimelineEntries(
         List<ChatMessageModel>.from(messageSource),
-        activeTaskIds: widget.activeAgentTaskIds,
+        activeTaskIds: widget.activeAgentTurnIds,
         conversationAgentId: widget.activeAcpAgentId,
       );
     }
@@ -707,18 +712,18 @@ class _ChatMessageListState extends State<ChatMessageList> {
     if (cached != null &&
         identical(_timelineCacheSource, observable) &&
         _timelineCacheStructureRevision == observable.structureRevision &&
-        setEquals(_timelineCacheActiveTaskIds, widget.activeAgentTaskIds)) {
+        setEquals(_timelineCacheActiveTaskIds, widget.activeAgentTurnIds)) {
       return cached;
     }
     final entries = buildAgentRunTimelineEntries(
       List<ChatMessageModel>.from(observable),
-      activeTaskIds: widget.activeAgentTaskIds,
+      activeTaskIds: widget.activeAgentTurnIds,
       conversationAgentId: widget.activeAcpAgentId,
     );
     _timelineEntriesCache = entries;
     _timelineCacheSource = observable;
     _timelineCacheStructureRevision = observable.structureRevision;
-    _timelineCacheActiveTaskIds = Set<String>.from(widget.activeAgentTaskIds);
+    _timelineCacheActiveTaskIds = Set<String>.from(widget.activeAgentTurnIds);
     return entries;
   }
 
@@ -877,16 +882,11 @@ class _ChatMessageListState extends State<ChatMessageList> {
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
       itemCount: timelineEntries.length,
       findChildIndexCallback: (key) {
-        if (key is! GlobalKey) {
+        if (key is! ValueKey<String> ||
+            !key.value.startsWith(_kListEntryKeyPrefix)) {
           return null;
         }
-        final entryKey = _entryRowKeys.entries
-            .where((item) => identical(item.value, key))
-            .map((item) => item.key)
-            .firstOrNull;
-        if (entryKey == null) {
-          return null;
-        }
+        final entryKey = key.value.substring(_kListEntryKeyPrefix.length);
         final dataIndex = timelineEntries.indexWhere(
           (entry) => entry.key == entryKey,
         );
@@ -897,15 +897,20 @@ class _ChatMessageListState extends State<ChatMessageList> {
         final entry = timelineEntries[dataIndex];
         final isOldestEntry = dataIndex == timelineEntries.length - 1;
         final needTopPadding = isOldestEntry && !entry.isUserMessage;
-        // GlobalKey 供锚点跳转定位已布局的行；行内部仍用 ValueKey 维持
-        // 原有的复用语义。
+        // The list child uses a local ValueKey so sliver reordering does not
+        // reparent a GlobalKey during a live ACP shape change. The nested
+        // GlobalKey is only an already-laid-out scroll anchor; keeping those
+        // identities separate avoids the framework's child == _child race.
         return KeyedSubtree(
-          key: _rowKeyForEntry(entry.key),
-          child: _buildTimelineListRow(
-            messageSource: messageSource,
-            entry: entry,
-            latestUserMessageId: latestUserMessageId,
-            padding: EdgeInsets.only(top: needTopPadding ? 24.0 : 0.0),
+          key: _listKeyForEntry(entry.key),
+          child: KeyedSubtree(
+            key: _rowKeyForEntry(entry.key),
+            child: _buildTimelineListRow(
+              messageSource: messageSource,
+              entry: entry,
+              latestUserMessageId: latestUserMessageId,
+              padding: EdgeInsets.only(top: needTopPadding ? 24.0 : 0.0),
+            ),
           ),
         );
       },

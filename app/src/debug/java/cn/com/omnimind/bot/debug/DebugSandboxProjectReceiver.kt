@@ -17,7 +17,6 @@ import cn.com.omnimind.bot.plugin.OmniPluginHost
 import cn.com.omnimind.bot.plugin.sandbox.SandboxPluginCommand
 import cn.com.omnimind.bot.plugin.sandbox.SandboxPluginPool
 import cn.com.omnimind.bot.plugin.sandbox.SandboxProjectManifest
-import cn.com.omnimind.bot.plugin.sandbox.SandboxPluginShortcutManager
 import com.google.gson.GsonBuilder
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
@@ -73,7 +72,6 @@ class DebugSandboxProjectReceiver : BroadcastReceiver() {
         val current = host.list().firstOrNull { it.descriptor.id == pluginId }
         val state = if (current?.installed == true) host.update(pluginId) else host.install(pluginId)
         if (!state.enabled) host.setEnabled(pluginId, true)
-        val shortcut = SandboxPluginShortcutManager(context).pinOrUpdate(pluginId)
         return mapOf(
             "success" to true,
             "operation" to "publish",
@@ -82,7 +80,6 @@ class DebugSandboxProjectReceiver : BroadcastReceiver() {
             "published" to published.payload,
             "installed" to true,
             "enabled" to true,
-            "shortcut" to shortcut.toMap(),
         )
     }
 

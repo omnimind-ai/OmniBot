@@ -733,7 +733,12 @@ class AssistsCoreManager(private val context: Context) {
     }
 
     private fun normalizeConversationMode(mode: String?): String {
-        return mode?.trim()?.ifEmpty { null } ?: "normal"
+        return when (mode?.trim()?.lowercase()) {
+            null, "", "normal" -> "normal"
+            "agent", "codex", "acp", "coding" -> "agent"
+            "chat", "chatonly", "chat-only" -> "chat_only"
+            else -> mode.trim().lowercase()
+        }
     }
 
     private fun resolveRequiredPermissionIds(missing: List<String>): List<String> {

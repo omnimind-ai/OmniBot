@@ -218,34 +218,24 @@ Use SQL constraints such as `NOT NULL`, `CHECK`, `UNIQUE`, defaults, foreign
 keys, indexes, and triggers when they make the backend more reliable. Do not
 build a REST API or expose raw database paths.
 
-## Xiaowan App Bridge
+## Xiaowan capability bridge
 
-Declare the `xiaowan` permission when the frontend invokes Xiaowan. The frontend must use the Xiaowan App bridge for AI-native interactions. It reuses Xiaowan's conversation history, Skills, registered plugin Tools, streaming transport, cancellation, provider configuration, and retries. Do not build a second Agent loop in JavaScript and do not expose provider credentials.
+Declare the `xiaowan` permission when the frontend invokes Xiaowan. The frontend must use the shared Xiaowan capability bridge for AI-native interactions. It reuses Xiaowan's conversation history, Skills, registered plugin Tools, streaming transport, provider configuration, and retries. Do not build a second Agent loop in JavaScript and do not expose provider credentials.
 
 Use `reasoningEffort: 'none'` by default. Choose `low` or `medium` only when the request genuinely needs multi-step tool selection or synthesis. Fast one-shot generation through `window.omni.ai.generate` always disables provider thinking so a small token budget cannot be consumed before visible output.
 
 Every AI action must have a visible status display. Register the event listener once. `send` returns immediately with a `runId`; render `working`, `text_snapshot`, `tool_started`, `tool_progress`, `tool_completed`, `completed`, and `error` events as they arrive. A `working` event means the model is analyzing, but intentionally contains no raw chain-of-thought. Show a short product-facing label such as “正在分析记录…” rather than model reasoning text. Keep a visible cancel action while a run is active.
 
 ```js
-const unsubscribe = window.omni.app.onEvent((event) => {
-  if (event.type === 'working') showWorkingState(event.label || '正在分析…');
-  if (event.type === 'text_snapshot') renderStreamingText(event.text || '');
-  if (event.type === 'tool_started') showWorkingState(event.displayName);
-  if (event.type === 'completed') showCompletedState(event.turnUsage);
-  if (event.type === 'error') showRetryState(event.error);
-});
-
-const run = await window.omni.app.send({
+const result = await window.omni.xiaowan.invoke({
   text: '根据我的训练记录制定下周计划',
   context: { page: 'weekly-plan', selectedWeek: '2026-W32' },
   reasoningEffort: 'low',
 });
-
-cancelButton.onclick = () => window.omni.app.cancel(run.runId);
-const state = await window.omni.app.getState();
+renderResult(result);
 ```
 
-`window.omni.xiaowan.invoke` remains available only for older projects. New projects must use `window.omni.app` so requests can call the project's Skill and Tools and remain visible in Xiaowan history. The frontend never receives an API key. If AI is unavailable, show a useful retry state while keeping local data features usable.
+`window.omni.xiaowan.invoke` is the supported generic capability entry point. It is backed by the ACP runtime and the project's declared MCP/plugin tools; there is no standalone external-App event bus, run API, or state bridge. The frontend never receives an API key. If AI is unavailable, show a useful retry state while keeping local data features usable.
 
 ## Frontend Quality
 
@@ -253,7 +243,7 @@ Custom HTML/CSS/JavaScript is the user-visible experience and is mandatory. Pref
 
 Create `icon.svg` directly in code with a square `viewBox`, a deliberate background, and a simple high-contrast symbol that remains legible at launcher size. Do not invoke image generation. The SVG stays the canonical source; Android rasterizes it locally only when constructing the launcher shortcut.
 
-Published projects run offline by default. Bundle scripts, styles, fonts, and media inside the project instead of loading CDNs or calling remote APIs. Use `window.omni.app` for Xiaowan Agent access; network credentials and arbitrary outbound requests are intentionally unavailable to project JavaScript.
+Published projects run offline by default. Bundle scripts, styles, fonts, and media inside the project instead of loading CDNs or calling remote APIs. Use `window.omni.xiaowan.invoke` for Xiaowan Agent access; network credentials and arbitrary outbound requests are intentionally unavailable to project JavaScript.
 
 ## Shining Patterns
 
