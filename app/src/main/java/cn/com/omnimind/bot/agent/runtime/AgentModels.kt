@@ -206,6 +206,15 @@ interface AgentCallback {
         progress: String,
         extras: Map<String, Any?> = emptyMap()
     )
+
+    suspend fun onToolCallProgress(
+        toolCallId: String,
+        toolName: String,
+        progress: String,
+        extras: Map<String, Any?> = emptyMap()
+    ) {
+        onToolCallProgress(toolName, progress, extras)
+    }
     
     /**
      * 工具调用完成

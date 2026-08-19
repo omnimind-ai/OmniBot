@@ -3,7 +3,13 @@
 package cn.com.omnimind.bot.agent.runtime
 
 import android.content.Context
+import cn.com.omnimind.assists.controller.http.HttpController
 import cn.com.omnimind.baselib.llm.ChatCompletionMessage
+import cn.com.omnimind.baselib.llm.ModelProviderConfigStore
+import cn.com.omnimind.baselib.llm.OmniOfficialProvider
+import cn.com.omnimind.baselib.llm.PlatformAiProvisioner
+import cn.com.omnimind.baselib.llm.ProviderModelOption
+import cn.com.omnimind.baselib.llm.SceneModelBindingStore
 import cn.com.omnimind.bot.BuildConfig
 import cn.com.omnimind.bot.agent.AgentCallback
 import cn.com.omnimind.bot.agent.AgentConversationModePolicy
@@ -22,11 +28,16 @@ import com.agentclientprotocol.common.Event
 import com.agentclientprotocol.common.SessionCreationParameters
 import com.agentclientprotocol.model.AgentCapabilities
 import com.agentclientprotocol.model.ContentBlock
+import com.agentclientprotocol.model.EmbeddedResourceResource
 import com.agentclientprotocol.model.Implementation
 import com.agentclientprotocol.model.MessageId
+import com.agentclientprotocol.model.ModelId
+import com.agentclientprotocol.model.ModelInfo
 import com.agentclientprotocol.model.PromptResponse
+import com.agentclientprotocol.model.PromptCapabilities
 import com.agentclientprotocol.model.SessionId
 import com.agentclientprotocol.model.SessionUpdate
+import com.agentclientprotocol.model.SetSessionModelResponse
 import com.agentclientprotocol.model.StopReason
 import com.agentclientprotocol.model.ToolCallContent
 import com.agentclientprotocol.model.ToolCallId
@@ -40,6 +51,8 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.JsonElement
@@ -52,6 +65,8 @@ import java.util.UUID
 internal class XiaowanAcpConnection(
     private val context: Context,
     private val scope: CoroutineScope,
+    private val scheduleToolBridge: AgentScheduleToolBridge,
+    private val conversationIdProvider: suspend (String) -> Long? = { null },
 ) : AcpRuntimeConnection {
     private lateinit var clientTransport: LoopbackTransport
     private lateinit var serverTransport: LoopbackTransport
@@ -67,7 +82,15 @@ internal class XiaowanAcpConnection(
         clientTransport.peer = serverTransport
         serverTransport.peer = clientTransport
         serverProtocol = Protocol(parentScope, serverTransport)
-        Agent(serverProtocol, XiaowanAgentSupport(context, scope))
+        Agent(
+            serverProtocol,
+            XiaowanAgentSupport(
+                context = context,
+                scope = scope,
+                scheduleToolBridge = scheduleToolBridge,
+                conversationIdProvider = conversationIdProvider,
+            )
+        )
         return clientTransport
     }
 
@@ -91,10 +114,17 @@ internal class XiaowanAcpConnection(
 private class XiaowanAgentSupport(
     private val context: Context,
     private val scope: CoroutineScope,
+    private val scheduleToolBridge: AgentScheduleToolBridge,
+    private val conversationIdProvider: suspend (String) -> Long?,
 ) : AgentSupport {
     override suspend fun initialize(clientInfo: ClientInfo): AgentInfo = AgentInfo(
         protocolVersion = 1,
-        capabilities = AgentCapabilities(),
+        capabilities = AgentCapabilities(
+            promptCapabilities = PromptCapabilities(
+                image = true,
+                embeddedContext = true,
+            )
+        ),
         authMethods = emptyList(),
         implementation = Implementation(
             name = "xiaowan",
@@ -105,38 +135,122 @@ private class XiaowanAgentSupport(
     )
 
     override suspend fun createSession(
-        parameters: SessionCreationParameters,
-    ): AgentSession = XiaowanAgentSession(
-        context = context,
-        scope = scope,
-        sessionId = SessionId(UUID.randomUUID().toString()),
-    )
+        sessionParameters: SessionCreationParameters,
+    ): AgentSession {
+        val models = loadXiaowanModels()
+        return XiaowanAgentSession(
+            context = context,
+            scope = scope,
+            scheduleToolBridge = scheduleToolBridge,
+            conversationIdProvider = conversationIdProvider,
+            availableModels = models.available,
+            configuredModelId = models.configuredModelId,
+            sessionId = SessionId(UUID.randomUUID().toString()),
+        )
+    }
+
+    private suspend fun loadXiaowanModels(): XiaowanModels {
+        val binding = SceneModelBindingStore.getBinding("scene.dispatch.model")
+            ?: throw IllegalStateException(
+                "The scene Provider/model binding is required for Xiaowan ACP"
+            )
+        val profile = binding.providerProfileId.let(ModelProviderConfigStore::getProfile)
+            ?: PlatformAiProvisioner.officialProfileOrNull()
+                ?.takeIf { OmniOfficialProvider.isOfficialProfile(binding.providerProfileId) }
+            ?: throw IllegalStateException(
+                "The configured scene Provider is unavailable: ${binding.providerProfileId}"
+            )
+        val models = if (OmniOfficialProvider.isOfficialProfile(profile.id)) {
+            PlatformAiProvisioner.ensureReadyAndGetModels("text")
+        } else {
+            HttpController.fetchProviderModels(
+                apiBase = profile.baseUrl,
+                apiKey = profile.apiKey,
+                customHeaders = profile.customHeaders,
+                protocolType = profile.protocolType,
+                wireApi = profile.wireApi,
+            )
+        }
+        val available = models
+            .filter { it.id.isNotBlank() }
+            .distinctBy(ProviderModelOption::id)
+            .map { model ->
+                ModelInfo(
+                    ModelId(model.id),
+                    model.displayName.ifBlank { model.id },
+                    model.ownedBy.orEmpty(),
+                    JsonNull,
+                )
+            }
+        val configuredModelId = binding.modelId.trim()
+        require(configuredModelId.isNotEmpty()) {
+            "The scene Provider/model binding has no model"
+        }
+        require(available.any { it.modelId.value == configuredModelId }) {
+            "The configured scene model is not present in the current Provider /models response: $configuredModelId"
+        }
+        return XiaowanModels(available = available, configuredModelId = configuredModelId)
+    }
 }
+
+private data class XiaowanModels(
+    val available: List<ModelInfo>,
+    val configuredModelId: String,
+)
 
 private class XiaowanAgentSession(
     private val context: Context,
     scope: CoroutineScope,
+    private val scheduleToolBridge: AgentScheduleToolBridge,
+    private val conversationIdProvider: suspend (String) -> Long?,
+    override val availableModels: List<ModelInfo>,
+    private val configuredModelId: String,
     override val sessionId: SessionId,
 ) : AgentSession {
     private val messages = mutableListOf<ChatCompletionMessage>()
+    private val promptMutex = Mutex()
+    private var selectedModelId: String = configuredModelId
     private val executor = OmniAgentExecutor(
         context = context,
         scope = scope,
-        scheduleToolBridge = NoOpScheduleToolBridge,
+        scheduleToolBridge = object : AgentScheduleToolBridge {
+            override suspend fun createTask(arguments: Map<String, Any?>) =
+                scheduleToolBridge.createTask(withConversationParent(arguments))
+
+            override suspend fun listTasks(): List<Map<String, Any?>> =
+                scheduleToolBridge.listTasks()
+
+            override suspend fun updateTask(arguments: Map<String, Any?>) =
+                scheduleToolBridge.updateTask(withConversationParent(arguments))
+
+            override suspend fun deleteTask(arguments: Map<String, Any?>) =
+                scheduleToolBridge.deleteTask(arguments)
+
+            private suspend fun withConversationParent(
+                arguments: Map<String, Any?>
+            ): Map<String, Any?> {
+                val conversationId = conversationIdProvider(sessionId.value)
+                    ?.takeIf { it > 0L }
+                    ?.toString()
+                    ?: return arguments
+                return arguments + mapOf(
+                    "parentConversationId" to conversationId,
+                    "parentConversationMode" to AgentConversationModePolicy.NORMAL_MODE
+                )
+            }
+        },
     )
 
     override suspend fun prompt(
         content: List<ContentBlock>,
         _meta: JsonElement?,
     ): Flow<Event> = channelFlow {
-        val text = content.joinToString("") { block ->
-            when (block) {
-                is ContentBlock.Text -> block.text
-                is ContentBlock.ResourceLink -> block.title ?: block.name
-                else -> ""
-            }
-        }.trim()
-        require(text.isNotEmpty()) { "Xiaowan ACP prompt is empty" }
+        promptMutex.withLock {
+        val promptParts = buildXiaowanPromptParts(content)
+        val text = promptParts.text
+        require(text.isNotEmpty() || promptParts.attachments.isNotEmpty()) {
+            "Xiaowan ACP prompt is empty"
+        }
         val streamBridge = XiaowanAcpEventBridge { update ->
             // AgentCallback can arrive from provider/tool worker coroutines.
             // `flow { emit(...) }` is not thread-safe and drops the whole turn
@@ -145,33 +259,37 @@ private class XiaowanAgentSession(
             // session/update event.
             send(Event.SessionUpdateEvent(update))
         }
+        val conversationId = conversationIdProvider(sessionId.value)
         val result = executor.processUserMessage(
             userMessage = text,
             conversationHistory = emptyList(),
             runtimeContextRepository = AgentRuntimeContextRepository(context),
-            attachments = emptyList(),
-            conversationId = null,
+            attachments = promptParts.attachments,
+            conversationId = conversationId,
             conversationMode = AgentConversationModePolicy.NORMAL_MODE,
-            modelOverride = null,
+            modelOverride = selectedModelOverride(),
             reasoningEffort = null,
             terminalEnvironment = emptyMap(),
             callback = streamBridge,
             runControl = NoOpAgentRunControl,
-            historyMessagesOverride = messages.toList(),
+            historyMessagesOverride = messages.toList().takeIf { conversationId == null },
         )
         val answer = when (result) {
-            is AgentResult.Success -> result.response.content
+            is AgentResult.Success -> {
+                val response = result.response.content
+                messages += ChatCompletionMessage(
+                    role = "user",
+                    content = JsonPrimitive(text),
+                )
+                messages += ChatCompletionMessage(
+                    role = "assistant",
+                    content = JsonPrimitive(response),
+                )
+                response
+            }
             is AgentResult.Error -> throw result.exception
                 ?: IllegalStateException(result.message)
         }
-        messages += ChatCompletionMessage(
-            role = "user",
-            content = JsonPrimitive(text),
-        )
-        messages += ChatCompletionMessage(
-            role = "assistant",
-            content = JsonPrimitive(answer),
-        )
         // The executor reports cumulative snapshots through AgentCallback. The
         // bridge already converted those snapshots to ACP chunks; this final
         // call only fills a gap when a provider returned content without any
@@ -185,7 +303,124 @@ private class XiaowanAgentSession(
                 )
             )
         )
+        }
     }
+
+    override val defaultModel: ModelId
+        get() = ModelId(configuredModelId)
+
+    override suspend fun setModel(
+        modelId: ModelId,
+        _meta: JsonElement?,
+    ): SetSessionModelResponse {
+        require(availableModels.any { it.modelId == modelId }) {
+            "Model is not available from the configured Provider: ${modelId.value}"
+        }
+        selectedModelId = modelId.value
+        return SetSessionModelResponse(JsonNull)
+    }
+
+    private fun selectedModelOverride(): cn.com.omnimind.bot.agent.AgentModelOverride? {
+        val modelId = selectedModelId.trim()
+        if (modelId.isEmpty()) return null
+        val binding = SceneModelBindingStore.getBinding("scene.dispatch.model")
+            ?: return null
+        val profile = binding.providerProfileId.let(ModelProviderConfigStore::getProfile)
+            ?: PlatformAiProvisioner.officialProfileOrNull()
+                ?.takeIf { OmniOfficialProvider.isOfficialProfile(binding.providerProfileId) }
+            ?: return null
+        if (!profile.isConfigured()) return null
+        return cn.com.omnimind.bot.agent.AgentModelOverride(
+            providerProfileId = profile.id,
+            providerProfileName = profile.name,
+            modelId = modelId,
+            apiBase = profile.baseUrl,
+            apiKey = profile.apiKey,
+            customHeaders = profile.customHeaders,
+            protocolType = profile.protocolType,
+            wireApi = profile.wireApi,
+        )
+    }
+}
+
+internal data class XiaowanPromptParts(
+    val text: String,
+    val attachments: List<Map<String, Any?>>
+)
+
+internal fun buildXiaowanPromptParts(content: List<ContentBlock>): XiaowanPromptParts {
+    val textParts = mutableListOf<String>()
+    val attachments = mutableListOf<Map<String, Any?>>()
+    content.forEach { block ->
+        when (block) {
+            is ContentBlock.Text -> block.text.takeIf(String::isNotBlank)?.let(textParts::add)
+            is ContentBlock.Image -> {
+                val mimeType = block.mimeType.trim().ifEmpty { "image/*" }
+                val uri = block.uri?.trim().orEmpty()
+                val data = block.data.trim()
+                if (data.isEmpty() && uri.isEmpty()) return@forEach
+                val dataUrl = if (data.startsWith("data:", ignoreCase = true)) {
+                    data
+                } else {
+                    "data:$mimeType;base64,$data"
+                }
+                attachments += buildMap<String, Any?> {
+                    put("name", "image")
+                    put("fileName", "image")
+                    put("mimeType", mimeType)
+                    put("isImage", true)
+                    put("sendToModel", true)
+                    if (data.isNotEmpty()) put("dataUrl", dataUrl)
+                    if (uri.isNotEmpty()) put("url", uri)
+                }
+            }
+            is ContentBlock.ResourceLink -> {
+                val uri = block.uri.trim()
+                if (uri.isEmpty()) return@forEach
+                val isImage = block.mimeType?.startsWith("image/", ignoreCase = true) == true
+                val localPath = uri.removePrefix("file://")
+                attachments += buildMap<String, Any?> {
+                    put("name", block.name)
+                    put("fileName", block.name)
+                    put("mimeType", block.mimeType ?: "application/octet-stream")
+                    put("isImage", isImage)
+                    put("sendToModel", isImage)
+                    put("path", if (uri.startsWith("file://")) localPath else uri)
+                    put("promptPath", uri)
+                    put("workspacePath", uri)
+                    if (!uri.startsWith("file://")) put("url", uri)
+                    block.size?.let { put("size", it) }
+                }
+            }
+            is ContentBlock.Resource -> when (val resource = block.resource) {
+                is EmbeddedResourceResource.TextResourceContents -> {
+                    resource.text.takeIf(String::isNotBlank)?.let(textParts::add)
+                }
+                is EmbeddedResourceResource.BlobResourceContents -> {
+                    val mimeType = resource.mimeType?.trim()
+                        ?.ifEmpty { "application/octet-stream" }
+                        ?: "application/octet-stream"
+                    val uri = resource.uri.orEmpty()
+                    if (mimeType.startsWith("image/")) {
+                        attachments += buildMap<String, Any?> {
+                            put("name", uri)
+                            put("fileName", uri)
+                            put("mimeType", mimeType)
+                            put("isImage", true)
+                            put("sendToModel", true)
+                            put("dataUrl", "data:$mimeType;base64,${resource.blob}")
+                            put("promptPath", uri)
+                        }
+                    }
+                }
+            }
+            else -> Unit
+        }
+    }
+    return XiaowanPromptParts(
+        text = textParts.joinToString("\n").trim(),
+        attachments = attachments
+    )
 }
 
 /** Convert the executor's cumulative snapshots into append-only ACP chunks. */
@@ -199,16 +434,23 @@ internal fun acpSnapshotDelta(previous: String, next: String): String? {
     return next
 }
 
-private class XiaowanAcpEventBridge(
+internal class XiaowanAcpEventBridge(
     private val emitUpdate: suspend (SessionUpdate) -> Unit,
 ) : AgentCallback {
+    private val callbackMutex = Mutex()
     private var assistantSnapshot = ""
     private var thoughtSnapshot = ""
     private var assistantMessageId = MessageId(UUID.randomUUID().toString())
     private var thoughtMessageId = MessageId(UUID.randomUUID().toString())
-    private val toolIdsByName = mutableMapOf<String, String>()
+    private val toolIdsByName = mutableMapOf<String, ArrayDeque<String>>()
 
     suspend fun emitAssistantSnapshot(snapshot: String) {
+        callbackMutex.withLock {
+            emitAssistantSnapshotLocked(snapshot)
+        }
+    }
+
+    private suspend fun emitAssistantSnapshotLocked(snapshot: String) {
         emitTextSnapshot(
             snapshot = snapshot,
             previous = assistantSnapshot,
@@ -228,34 +470,40 @@ private class XiaowanAcpEventBridge(
     }
 
     override suspend fun onThinkingStart() {
-        thoughtSnapshot = ""
-        thoughtMessageId = MessageId(UUID.randomUUID().toString())
+        callbackMutex.withLock {
+            thoughtSnapshot = ""
+            thoughtMessageId = MessageId(UUID.randomUUID().toString())
+        }
     }
 
     override suspend fun onThinkingUpdate(thinking: String) {
-        emitTextSnapshot(
-            snapshot = thinking,
-            previous = thoughtSnapshot,
-            messageId = thoughtMessageId,
-            emit = { delta, id ->
-                thoughtSnapshot = thinking
-                thoughtMessageId = id
-                emitUpdate(
-                    SessionUpdate.AgentThoughtChunk(
-                        content = ContentBlock.Text(delta),
-                        messageId = id,
-                        _meta = JsonNull,
+        callbackMutex.withLock {
+            emitTextSnapshot(
+                snapshot = thinking,
+                previous = thoughtSnapshot,
+                messageId = thoughtMessageId,
+                emit = { delta, id ->
+                    thoughtSnapshot = thinking
+                    thoughtMessageId = id
+                    emitUpdate(
+                        SessionUpdate.AgentThoughtChunk(
+                            content = ContentBlock.Text(delta),
+                            messageId = id,
+                            _meta = JsonNull,
+                        )
                     )
-                )
-            }
-        )
+                }
+            )
+        }
     }
 
     override suspend fun onToolCallStart(
         toolName: String,
         arguments: kotlinx.serialization.json.JsonObject,
     ) {
-        emitToolStart(UUID.randomUUID().toString(), toolName, arguments)
+        callbackMutex.withLock {
+            emitToolStart(UUID.randomUUID().toString(), toolName, arguments)
+        }
     }
 
     override suspend fun onToolCallStart(
@@ -263,7 +511,9 @@ private class XiaowanAcpEventBridge(
         toolName: String,
         arguments: kotlinx.serialization.json.JsonObject,
     ) {
-        emitToolStart(toolCallId.ifBlank { UUID.randomUUID().toString() }, toolName, arguments)
+        callbackMutex.withLock {
+            emitToolStart(toolCallId.ifBlank { UUID.randomUUID().toString() }, toolName, arguments)
+        }
     }
 
     private suspend fun emitToolStart(
@@ -271,7 +521,7 @@ private class XiaowanAcpEventBridge(
         toolName: String,
         arguments: kotlinx.serialization.json.JsonObject,
     ) {
-        toolIdsByName[toolName] = toolCallId
+        toolIdsByName.getOrPut(toolName) { ArrayDeque() }.addLast(toolCallId)
         emitUpdate(
             SessionUpdate.ToolCall(
                 toolCallId = ToolCallId(toolCallId),
@@ -294,9 +544,42 @@ private class XiaowanAcpEventBridge(
         progress: String,
         extras: Map<String, Any?>,
     ) {
-        val toolCallId = toolIdsByName[toolName] ?: UUID.randomUUID().toString().also {
-            toolIdsByName[toolName] = it
+        callbackMutex.withLock {
+            emitToolProgress(
+                toolIdsByName[toolName]?.lastOrNull()
+                    ?: UUID.randomUUID().toString().also {
+                        toolIdsByName.getOrPut(toolName) { ArrayDeque() }.addLast(it)
+                },
+                toolName,
+                progress,
+                extras,
+            )
         }
+    }
+
+    override suspend fun onToolCallProgress(
+        toolCallId: String,
+        toolName: String,
+        progress: String,
+        extras: Map<String, Any?>,
+    ) {
+        callbackMutex.withLock {
+            val resolvedId = toolCallId.ifBlank {
+                toolIdsByName[toolName]?.lastOrNull()
+                    ?: UUID.randomUUID().toString().also {
+                        toolIdsByName.getOrPut(toolName) { ArrayDeque() }.addLast(it)
+                    }
+            }
+            emitToolProgress(resolvedId, toolName, progress, extras)
+        }
+    }
+
+    private suspend fun emitToolProgress(
+        toolCallId: String,
+        toolName: String,
+        progress: String,
+        extras: Map<String, Any?>,
+    ) {
         emitUpdate(
             SessionUpdate.ToolCallUpdate(
                 toolCallId = ToolCallId(toolCallId),
@@ -307,7 +590,7 @@ private class XiaowanAcpEventBridge(
                     ToolCallContent.Content(ContentBlock.Text(progress))
                 ),
                 locations = emptyList(),
-                rawInput = JsonNull,
+                rawInput = jsonObjectFromMap(extras),
                 rawOutput = JsonNull,
                 _meta = JsonNull,
             )
@@ -318,7 +601,9 @@ private class XiaowanAcpEventBridge(
         toolName: String,
         result: ToolExecutionResult,
     ) {
-        emitToolComplete(toolIdsByName[toolName], toolName, result)
+        callbackMutex.withLock {
+            emitToolComplete(removeToolCallId(toolName, null), toolName, result)
+        }
     }
 
     override suspend fun onToolCallComplete(
@@ -326,11 +611,13 @@ private class XiaowanAcpEventBridge(
         toolName: String,
         result: ToolExecutionResult,
     ) {
-        emitToolComplete(
-            toolCallId.ifBlank { toolIdsByName[toolName] },
-            toolName,
-            result,
-        )
+        callbackMutex.withLock {
+            emitToolComplete(
+                removeToolCallId(toolName, toolCallId.ifBlank { null }),
+                toolName,
+                result,
+            )
+        }
     }
 
     private suspend fun emitToolComplete(
@@ -339,7 +626,6 @@ private class XiaowanAcpEventBridge(
         result: ToolExecutionResult,
     ) {
         val resolvedToolCallId = toolCallId ?: UUID.randomUUID().toString()
-        toolIdsByName[toolName] = resolvedToolCallId
         val text = toolResultText(result)
         emitUpdate(
             SessionUpdate.ToolCallUpdate(
@@ -362,12 +648,28 @@ private class XiaowanAcpEventBridge(
         )
     }
 
+    private fun removeToolCallId(toolName: String, requestedId: String?): String? {
+        val ids = toolIdsByName[toolName] ?: return requestedId
+        val resolved = requestedId ?: ids.removeLastOrNull()
+        if (requestedId != null) {
+            ids.remove(requestedId)
+        }
+        if (ids.isEmpty()) {
+            toolIdsByName.remove(toolName)
+        }
+        return resolved
+    }
+
     override suspend fun onChatMessage(message: String) {
-        emitAssistantSnapshot(message)
+        callbackMutex.withLock {
+            emitAssistantSnapshotLocked(message)
+        }
     }
 
     override suspend fun onChatMessage(message: String, isFinal: Boolean) {
-        emitAssistantSnapshot(message)
+        callbackMutex.withLock {
+            emitAssistantSnapshotLocked(message)
+        }
     }
 
     override suspend fun onChatMessage(
@@ -376,13 +678,42 @@ private class XiaowanAcpEventBridge(
         prefillTokensPerSecond: Double?,
         decodeTokensPerSecond: Double?,
     ) {
-        emitAssistantSnapshot(message)
+        callbackMutex.withLock {
+            emitAssistantSnapshotLocked(message)
+        }
     }
 
-    override suspend fun onClarifyRequired(question: String, missingFields: List<String>?) = Unit
+    override suspend fun onClarifyRequired(question: String, missingFields: List<String>?) {
+        callbackMutex.withLock {
+            emitAssistantNotice(question)
+        }
+    }
     override suspend fun onComplete(result: AgentResult) = Unit
-    override suspend fun onError(error: String) = Unit
-    override suspend fun onPermissionRequired(missing: List<String>) = Unit
+    override suspend fun onError(error: String) {
+        callbackMutex.withLock {
+            emitAssistantNotice(error)
+        }
+    }
+    override suspend fun onPermissionRequired(missing: List<String>) {
+        callbackMutex.withLock {
+            val details = missing.filter(String::isNotBlank).joinToString("、")
+            emitAssistantNotice(
+                if (details.isEmpty()) "需要额外权限才能继续。" else "需要以下权限才能继续：$details"
+            )
+        }
+    }
+
+    private suspend fun emitAssistantNotice(text: String) {
+        val normalized = text.trim()
+        if (normalized.isEmpty()) return
+        emitUpdate(
+            SessionUpdate.AgentMessageChunk(
+                content = ContentBlock.Text(normalized),
+                messageId = MessageId(UUID.randomUUID().toString()),
+                _meta = JsonNull,
+            )
+        )
+    }
 
     private suspend fun emitTextSnapshot(
         snapshot: String,
@@ -398,6 +729,21 @@ private class XiaowanAcpEventBridge(
         }
         emit(delta, id)
     }
+}
+
+private fun jsonObjectFromMap(values: Map<String, Any?>): kotlinx.serialization.json.JsonObject =
+    kotlinx.serialization.json.JsonObject(values.mapValues { (_, value) -> jsonElementFromAny(value) })
+
+private fun jsonElementFromAny(value: Any?): JsonElement = when (value) {
+    null -> JsonNull
+    is JsonElement -> value
+    is Map<*, *> -> jsonObjectFromMap(
+        value.entries.associate { (key, entry) -> key.toString() to entry }
+    )
+    is Iterable<*> -> kotlinx.serialization.json.JsonArray(value.map(::jsonElementFromAny))
+    is Boolean -> JsonPrimitive(value)
+    is Number -> JsonPrimitive(value.toString())
+    else -> JsonPrimitive(value.toString())
 }
 
 private fun toolResultSucceeded(result: ToolExecutionResult): Boolean = when (result) {
@@ -424,19 +770,6 @@ private fun toolResultText(result: ToolExecutionResult): String = when (result) 
     is ToolExecutionResult.TerminalResult -> result.summaryText.ifBlank { result.terminalOutput }
     is ToolExecutionResult.Interrupted -> result.summaryText
     is ToolExecutionResult.ContextResult -> result.summaryText.ifBlank { result.rawResultJson }
-}
-
-private object NoOpScheduleToolBridge : AgentScheduleToolBridge {
-    override suspend fun createTask(arguments: Map<String, Any?>): Map<String, Any?> =
-        mapOf("success" to false, "error" to "Scheduling is not available through ACP session metadata.")
-
-    override suspend fun listTasks(): List<Map<String, Any?>> = emptyList()
-
-    override suspend fun updateTask(arguments: Map<String, Any?>): Map<String, Any?> =
-        mapOf("success" to false, "error" to "Scheduling is not available through ACP session metadata.")
-
-    override suspend fun deleteTask(arguments: Map<String, Any?>): Map<String, Any?> =
-        mapOf("success" to false, "error" to "Scheduling is not available through ACP session metadata.")
 }
 
 private class LoopbackTransport : BaseTransport() {

@@ -2,9 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:ui/models/agent_stream_event.dart';
 import 'package:ui/models/conversation_model.dart';
-import 'package:ui/services/assists_core_service.dart';
 import 'package:ui/services/vibe_app_agent_bridge.dart';
 
 void main() {
@@ -44,17 +42,14 @@ void main() {
       expect(gateway.startedMessage, contains('"page":"weekly-plan"'));
       expect(events.single['type'], 'started');
 
-      gateway.emit(_event(taskId: 'another-task', text: 'ignore'));
-      gateway.emit(_event(taskId: 'vibe-run-1', text: '第一天深蹲'));
+      gateway.emit(_acpTextEvent(42, '第一天深蹲'));
       await Future<void>.delayed(Duration.zero);
 
       expect(events, hasLength(2));
       expect(events.last['type'], 'text_snapshot');
       expect(events.last['text'], '第一天深蹲');
 
-      gateway.emit(
-        _event(taskId: 'vibe-run-1', kind: AgentStreamEventKind.completed),
-      );
+      gateway.emit(_acpCompletionEvent(42));
       await Future<void>.delayed(Duration.zero);
       expect((await bridge.getState())['running'], isFalse);
       bridge.dispose();
@@ -77,28 +72,8 @@ void main() {
       'text': '综合最近记录制定计划',
       'reasoningEffort': 'low',
     });
-    gateway.emit(
-      AgentStreamEvent(
-        taskId: 'vibe-run-reasoning',
-        seq: 2,
-        kind: AgentStreamEventKind.thinkingSnapshot,
-        createdAtMs: 101,
-        thinking: '不应暴露给 HTML 的原始思考',
-        raw: const <String, dynamic>{
-          'kind': 'thinking_snapshot',
-          'thinking': '不应暴露给 HTML 的原始思考',
-        },
-      ),
-    );
-    gateway.emit(
-      AgentStreamEvent(
-        taskId: 'vibe-run-reasoning',
-        seq: 3,
-        kind: AgentStreamEventKind.thinkingSnapshot,
-        createdAtMs: 102,
-        thinking: '第二段也不应暴露',
-      ),
-    );
+    gateway.emit(_acpThinkingEvent(42, '不应暴露给 HTML 的原始思考'));
+    gateway.emit(_acpThinkingEvent(42, '第二段也不应暴露'));
     await Future<void>.delayed(Duration.zero);
 
     expect(gateway.startedReasoningEffort, 'low');
@@ -140,19 +115,37 @@ void main() {
   });
 }
 
-AgentStreamEvent _event({
-  required String taskId,
-  AgentStreamEventKind kind = AgentStreamEventKind.textSnapshot,
-  String text = '',
-}) {
-  return AgentStreamEvent(
-    taskId: taskId,
-    seq: 1,
-    kind: kind,
-    createdAtMs: 100,
-    text: text,
-    raw: <String, dynamic>{'taskId': taskId, 'kind': kind.value, 'text': text},
-  );
+Map<String, dynamic> _acpTextEvent(int conversationId, String text) {
+  return <String, dynamic>{
+    'conversationId': conversationId,
+    'method': 'session/update',
+    'params': <String, dynamic>{
+      'update': <String, dynamic>{
+        'sessionUpdate': 'agent_message_chunk',
+        'content': <String, dynamic>{'text': text},
+      },
+    },
+  };
+}
+
+Map<String, dynamic> _acpThinkingEvent(int conversationId, String text) {
+  return <String, dynamic>{
+    'conversationId': conversationId,
+    'method': 'session/update',
+    'params': <String, dynamic>{
+      'update': <String, dynamic>{
+        'sessionUpdate': 'agent_thought_chunk',
+        'content': <String, dynamic>{'text': text},
+      },
+    },
+  };
+}
+
+Map<String, dynamic> _acpCompletionEvent(int conversationId) {
+  return <String, dynamic>{
+    'conversationId': conversationId,
+    'presentation': <String, dynamic>{'kind': 'turn_completed'},
+  };
 }
 
 ConversationModel _conversation(int id) {
@@ -170,19 +163,40 @@ class _FakeGateway implements VibeAppAgentGateway {
   _FakeGateway({this.conversations = const <ConversationModel>[]});
 
   final List<ConversationModel> conversations;
-  final List<AgentStreamEventCallback> listeners = <AgentStreamEventCallback>[];
+  final StreamController<Map<String, dynamic>> events =
+      StreamController<Map<String, dynamic>>.broadcast();
   int createConversationCount = 0;
   int? startedConversationId;
   String? startedMessage;
   String? startedReasoningEffort;
 
   @override
-  void addStreamListener(AgentStreamEventCallback listener) {
-    listeners.add(listener);
+  Stream<Map<String, dynamic>> get runtimeEvents => events.stream;
+
+  @override
+  Future<Map<String, dynamic>> ensureAcpSession({
+    required int conversationId,
+  }) async => <String, dynamic>{'sessionId': 'session-$conversationId'};
+
+  @override
+  Future<Map<String, dynamic>> promptAcpSession({
+    required int conversationId,
+    required String sessionId,
+    required String text,
+    required String reasoningEffort,
+  }) async {
+    startedConversationId = conversationId;
+    startedMessage = text;
+    startedReasoningEffort = reasoningEffort;
+    return <String, dynamic>{'promptId': 'prompt-$conversationId'};
   }
 
   @override
-  Future<bool> cancelTask(String taskId) async => true;
+  Future<Map<String, dynamic>> cancelAcpPrompt({
+    required int conversationId,
+    required String sessionId,
+    String? promptId,
+  }) async => <String, dynamic>{'ok': true, 'status': 'cancelled'};
 
   @override
   Future<int?> createConversation({
@@ -196,27 +210,5 @@ class _FakeGateway implements VibeAppAgentGateway {
   @override
   Future<List<ConversationModel>> getConversations() async => conversations;
 
-  @override
-  void removeStreamListener(AgentStreamEventCallback listener) {
-    listeners.remove(listener);
-  }
-
-  @override
-  Future<bool> startTask({
-    required String taskId,
-    required String userMessage,
-    required int conversationId,
-    required String reasoningEffort,
-  }) async {
-    startedConversationId = conversationId;
-    startedMessage = userMessage;
-    startedReasoningEffort = reasoningEffort;
-    return true;
-  }
-
-  void emit(AgentStreamEvent event) {
-    for (final listener in List<AgentStreamEventCallback>.from(listeners)) {
-      listener(event);
-    }
-  }
+  void emit(Map<String, dynamic> event) => events.add(event);
 }

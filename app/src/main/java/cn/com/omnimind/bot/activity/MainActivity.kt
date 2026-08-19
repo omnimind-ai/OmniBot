@@ -19,7 +19,6 @@ import cn.com.omnimind.bot.ui.channel.FileSaveChannel
 import cn.com.omnimind.bot.ui.platformview.AgentBrowserPlatformViewFactory
 import cn.com.omnimind.bot.ui.platformview.EmbeddedTerminalPlatformViewFactory
 import cn.com.omnimind.bot.update.AppUpdateManager
-import cn.com.omnimind.bot.util.AssistsUtil
 import cn.com.omnimind.bot.util.SchemeUtil
 import cn.com.omnimind.bot.util.TaskRuntimeSettings
 import io.flutter.embedding.android.FlutterActivity
@@ -69,11 +68,6 @@ class MainActivity : FlutterActivity() {
         val channelStart = System.currentTimeMillis()
         channelManager.onCreate(this)
         OmniLog.d(TAG, "MainActivity channelManager.onCreate cost: ${System.currentTimeMillis() - channelStart}ms")
-
-        if (!AssistsUtil.Core.isInitialized()) {
-            AssistsUtil.Core.initCore(App.instance)
-            OmniLog.d(TAG, "MainActivity initialized remaining chat task core")
-        }
 
         SchemeUtil.pushRoute(intent, channelManager, null)
 
@@ -153,9 +147,6 @@ class MainActivity : FlutterActivity() {
         TaskRuntimeSettings.onActivityResumed(this)
         AppUpdateManager.requestSilentCheckIfDue(this)
 
-        if (!AssistsUtil.Core.isInitialized()) {
-            AssistsUtil.Core.initCore(App.instance)
-        }
     }
 
     override fun onDestroy() {

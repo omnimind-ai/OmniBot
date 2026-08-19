@@ -21,6 +21,8 @@ import cn.com.omnimind.bot.agent.AgentAttachmentPromptSupport
 import cn.com.omnimind.bot.agent.AgentImageAttachmentSupport
 import cn.com.omnimind.bot.agent.AgentWorkspaceAttachmentSupport
 import cn.com.omnimind.bot.agent.AgentWorkspaceManager
+import cn.com.omnimind.bot.agent.AgentScheduleToolBridge
+import cn.com.omnimind.bot.agent.WorkspaceScheduledTaskScheduler
 import cn.com.omnimind.bot.mcp.McpServerManager
 import cn.com.omnimind.bot.terminal.EmbeddedTerminalSetupManager
 import cn.com.omnimind.bot.task.runtime.TaskRuntime
@@ -73,15 +75,53 @@ class AgentRuntimeManager private constructor(
     private val historyRepository = AgentConversationHistoryRepository(appContext)
     private val remoteConfigStore = CodexRemoteBridgeConfigStore(appContext)
     private val acpAgentProfileStore = AcpAgentProfileStore(appContext)
+    private val scheduledTaskScheduler by lazy {
+        WorkspaceScheduledTaskScheduler(appContext)
+    }
+    private val xiaowanScheduleToolBridge = object : AgentScheduleToolBridge {
+        override suspend fun createTask(arguments: Map<String, Any?>): Map<String, Any?> =
+            scheduledTaskScheduler.upsertTask(arguments)
+
+        override suspend fun listTasks(): List<Map<String, Any?>> =
+            scheduledTaskScheduler.listTasks()
+
+        override suspend fun updateTask(arguments: Map<String, Any?>): Map<String, Any?> =
+            scheduledTaskScheduler.updateTask(arguments)
+
+        override suspend fun deleteTask(arguments: Map<String, Any?>): Map<String, Any?> =
+            mapOf(
+                "deleted" to scheduledTaskScheduler.deleteTask(
+                    arguments["taskId"]?.toString()
+                        ?: arguments["id"]?.toString().orEmpty()
+                )
+            )
+    }
     private val localAcpRuntime = LocalAcpRuntime(
         context = appContext,
         scope = scope,
         bindingRepository = bindingRepository,
         profileStore = acpAgentProfileStore,
         prepareLaunchEnvironment = ::prepareLocalAcpLaunch,
+        buildHandoffContext = ::buildLocalAcpHandoffContext,
+        scheduleToolBridge = xiaowanScheduleToolBridge,
         onMessage = ::handleServerMessage
     )
     private val activeTurnsByThreadId = ConcurrentHashMap<String, String>()
+
+    private suspend fun buildLocalAcpHandoffContext(
+        conversationId: Long,
+        currentPrompt: String?
+    ): String? {
+        val promptSeed = historyRepository.buildPromptSeed(
+            conversationId = conversationId,
+            conversationMode = "codex"
+        )
+        return AgentHandoffContext.format(
+            conversationId = conversationId,
+            messages = promptSeed.historyMessages,
+            currentPrompt = currentPrompt
+        )
+    }
 
     /**
      * One lifecycle boundary for every Agent backend. ACP, a remote Codex
@@ -2807,7 +2847,19 @@ internal fun isRecoverableAgentThreadError(message: String): Boolean {
     val normalized = message.lowercase()
     return normalized.contains("thread not found") ||
         normalized.contains("unknown session") ||
-        normalized.contains("did not advertise session resume or loadsession")
+        normalized.contains("did not advertise session resume or loadsession") ||
+        normalized.contains("session not found") ||
+        normalized.contains("session does not exist") ||
+        normalized.contains("session file") && (
+            normalized.contains("not found") ||
+                normalized.contains("missing") ||
+                normalized.contains("does not exist")
+            ) ||
+        normalized.contains("metadata") && (
+            normalized.contains("not found") ||
+                normalized.contains("missing") ||
+                normalized.contains("does not exist")
+            )
 }
 
 internal fun buildCodexConfigToml(

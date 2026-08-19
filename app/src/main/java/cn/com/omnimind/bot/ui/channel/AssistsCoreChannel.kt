@@ -7,9 +7,8 @@ import cn.com.omnimind.bot.App
 import cn.com.omnimind.bot.manager.AssistsCoreManager
 import cn.com.omnimind.bot.omniflow.OmniFlowToolChannel
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 
 /**
  * Native task and Agent bridge.
@@ -18,7 +17,6 @@ class AssistsCoreChannel {
     var TAG = "[AssistsCoreChannel]"
     private val EVENT_CHANNEL = "cn.com.omnimind.bot/AssistCoreEvent" // Flutter 事件通道
     private var channel: MethodChannel? = null
-    private var mainJob:CoroutineScope= CoroutineScope(Dispatchers.Main)
 
     @SuppressLint("StaticFieldLeak")
     private var assistsCoreManager: AssistsCoreManager? = null
@@ -26,7 +24,6 @@ class AssistsCoreChannel {
     fun onCreate(context: Context) {
         assistsCoreManager = AssistsCoreManager.sharedInstanceOrCreate(context)
         omniFlowToolChannel = OmniFlowToolChannel(context)
-
     }
 
 
@@ -43,16 +40,6 @@ class AssistsCoreChannel {
                 return@setMethodCallHandler
             }
             when (call.method) {
-                "createChatTask" -> {
-                    assistsCoreManager!!.createChatTask( call, result)
-                }
-
-                "createAgentTask" -> {
-                    assistsCoreManager!!.createAgentTask( call, result)
-                }
-                "recoverAgentRuntime" -> {
-                    assistsCoreManager!!.recoverAgentRuntime(result)
-                }
                 "agentSkillList" -> {
                     assistsCoreManager!!.agentSkillList(call, result)
                 }
@@ -195,23 +182,6 @@ class AssistsCoreChannel {
                     assistsCoreManager!!.syncWorkspaceScheduledTasks(call, result)
                 }
 
-                "cancelChatTask" -> {
-                    OmniLog.d(TAG, "cancelChatTask")
-                    assistsCoreManager!!.cancelChatTask( call, result)
-                }
-
-                "cancelRunningTask" -> {
-                    assistsCoreManager!!.cancelRunningTask( call, result)
-                }
-                "stopAgentToolCall" -> {
-                    assistsCoreManager!!.stopAgentToolCall(call, result)
-                }
-                "retryAgentTask" -> {
-                    assistsCoreManager!!.retryAgentTask(call, result)
-                }
-                "continueAgentTask" -> {
-                    assistsCoreManager!!.continueAgentTask(call, result)
-                }
                 "getInstalledApplications" -> {
                     assistsCoreManager!!.getInstalledApplications( call, result)
                 }
@@ -327,8 +297,9 @@ class AssistsCoreChannel {
                     assistsCoreManager!!.setCurrentConversationId(call, result)
                 }
                 else -> result.notImplemented()
-            }
         }
+    }
+
     }
 
     fun clear() {

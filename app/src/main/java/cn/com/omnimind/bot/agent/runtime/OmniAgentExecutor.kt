@@ -6,6 +6,7 @@ import cn.com.omnimind.baselib.i18n.AppLocaleManager
 import cn.com.omnimind.baselib.llm.ChatCompletionMessage
 import cn.com.omnimind.bot.agent.workspace.memory.LongTermMemoryIndex
 import cn.com.omnimind.bot.agent.workspace.memory.TurnMemoryLoadTracker
+import cn.com.omnimind.bot.agent.tool.AgentToolHandlerModule
 import cn.com.omnimind.bot.mcp.RemoteMcpDiscoveryRegistry
 import cn.com.omnimind.bot.plugin.OmniPluginHost
 import cn.com.omnimind.bot.plugin.OmniPluginSession
@@ -295,7 +296,9 @@ class OmniAgentExecutor(
                 workspaceManager = workspaceManager,
                 subagentDispatcher = subagentDispatcher,
                 terminalDistribution = terminalDistribution,
-                pluginHandlers = activePluginSession.toolHandlers
+                capabilityModules = listOf(
+                    AgentToolHandlerModule(activePluginSession.toolHandlers)
+                )
             )
             pluginSession = null
             routerRef.set(toolRouter)

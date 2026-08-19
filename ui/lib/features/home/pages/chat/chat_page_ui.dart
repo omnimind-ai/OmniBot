@@ -2491,7 +2491,15 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
       });
     }
 
-    final success = await AssistsMessageService.retryAgentTask(taskId: taskId);
+    final userMessage = _agentPromptForFailedTurn(message);
+    final success = await _tryAgentFlow(
+      taskId,
+      '',
+      promptText: userMessage?.text,
+      attachmentsOverride: userMessage == null
+          ? const []
+          : _extractRetryAttachments(userMessage),
+    );
     _pendingManualAgentRetryTaskIds.remove(taskId);
     if (!mounted) {
       return;
@@ -2577,8 +2585,16 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
       });
     }
 
-    final success = await AssistsMessageService.continueAgentTask(
-      taskId: taskId,
+    final userMessage = _agentPromptForFailedTurn(message);
+    final success = await _tryAgentFlow(
+      taskId,
+      '',
+      promptText: userMessage == null
+          ? null
+          : '请继续完成上一个任务。保留已有上下文，只处理尚未完成的部分。\n\n${userMessage.text ?? ''}',
+      attachmentsOverride: userMessage == null
+          ? const []
+          : _extractRetryAttachments(userMessage),
     );
     _pendingManualAgentContinueTaskIds.remove(taskId);
     if (!mounted) {
@@ -2621,6 +2637,16 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
         .whereType<Map>()
         .map((item) => item.map((k, v) => MapEntry(k.toString(), v)))
         .toList();
+  }
+
+  ChatMessageModel? _agentPromptForFailedTurn(ChatMessageModel message) {
+    final messageIndex = _messages.indexWhere((item) => item.id == message.id);
+    if (messageIndex < 0) return null;
+    for (var index = messageIndex - 1; index >= 0; index--) {
+      final candidate = _messages[index];
+      if (candidate.user == 1) return candidate;
+    }
+    return null;
   }
 
   String? _resolveRetryableAgentTaskId(ChatMessageModel message) {

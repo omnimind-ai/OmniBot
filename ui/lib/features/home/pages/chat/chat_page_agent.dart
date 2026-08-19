@@ -1441,25 +1441,42 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     if (remoteCodex && eventThreadId != null && !shouldPromoteRemoteEvent) {
       _ensureRemoteCodexRuntimeForThread(eventThreadId);
     }
+    final normalConversationId =
+        _modeState(ChatPageMode.normal).currentConversationId;
+    final agentConversationId =
+        _modeState(ChatPageMode.agent).currentConversationId;
+    final eventMode = remoteCodex ||
+            conversationId == agentConversationId ||
+            event['conversationMode'] == ConversationMode.agent.storageValue
+        ? ChatPageMode.agent
+        : conversationId == normalConversationId
+        ? ChatPageMode.normal
+        : _activeMode;
     final isVisibleConversation =
-        conversationId == _modeState(ChatPageMode.agent).currentConversationId;
+        conversationId == _modeState(eventMode).currentConversationId &&
+        _activeMode == eventMode;
     final result = _runtimeCoordinator.applyAgentEvent(
       conversationId: conversationId,
       event: event,
+      mode: _modeKey(eventMode),
       conversation: isVisibleConversation
-          ? _modeState(ChatPageMode.agent).currentConversation
+          ? _modeState(eventMode).currentConversation
           : null,
     );
     final threadId = _asAgentString(event['threadId']) ?? result.threadId;
     final turnId = _asAgentString(event['turnId']) ?? result.turnId;
-    if (isVisibleConversation && (threadId != null || turnId != null)) {
+    if (eventMode == ChatPageMode.agent &&
+        isVisibleConversation &&
+        (threadId != null || turnId != null)) {
       _activeAgentThreadId = threadId ?? _activeAgentThreadId;
       _activeAgentTurnId = turnId ?? _activeAgentTurnId;
     }
-    if (isVisibleConversation) {
+    if (eventMode == ChatPageMode.agent && isVisibleConversation) {
       _syncAgentCollaborationModeFromServer(result.collaborationMode);
     }
-    if (isVisibleConversation && result.method == 'turn/completed') {
+    if (eventMode == ChatPageMode.agent &&
+        isVisibleConversation &&
+        result.method == 'turn/completed') {
       final completedTurnId = result.turnId;
       final completedPlanTurn =
           completedTurnId != null && _agentPlanTurnIds.remove(completedTurnId);
@@ -1470,7 +1487,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       }
       _activeAgentTurnId = null;
     }
-    if (isVisibleConversation) {
+    if (eventMode == ChatPageMode.agent && isVisibleConversation) {
       final runtime = _runtimeCoordinator.runtimeFor(
         conversationId: conversationId,
         mode: kChatRuntimeModeAgent,

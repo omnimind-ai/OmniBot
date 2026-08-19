@@ -99,6 +99,59 @@ void main() {
     expect(runtime.currentAiMessages, isEmpty);
   });
 
+  test('ignores ACP updates that arrive after their turn completed', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'method': 'session/update',
+          'params': {
+            'sessionId': 'session-1',
+            'turnId': 'turn-1',
+            'update': {
+              'sessionUpdate': 'agent_message_chunk',
+              'messageId': 'message-1',
+              'content': {'type': 'text', 'text': '首段'},
+            },
+          },
+        },
+      },
+    );
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'method': 'turn/completed',
+          'params': {
+            'turnId': 'turn-1',
+            'turn': {'id': 'turn-1', 'status': 'end_turn'},
+          },
+        },
+      },
+    );
+
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'method': 'session/update',
+          'params': {
+            'sessionId': 'session-1',
+            'turnId': 'turn-1',
+            'update': {
+              'sessionUpdate': 'agent_message_chunk',
+              'messageId': 'message-1',
+              'content': {'type': 'text', 'text': '迟到尾帧'},
+            },
+          },
+        },
+      },
+    );
+
+    expect(runtime.isAiResponding, isFalse);
+    expect(runtime.messages.single.text, '首段');
+  });
+
   test('maps reasoning deltas into deep thinking card', () {
     reducer.reduce(
       runtime: runtime,
@@ -185,26 +238,29 @@ void main() {
     expect(runtime.messages.single.text, '来自 DSH 的完整消息');
   });
 
-  test('accepts cumulative committed ACP assistant blocks without repetition', () {
-    Map<String, dynamic> event(String text) => <String, dynamic>{
-      'message': {
-        'method': 'session/update',
-        'params': {
-          'sessionId': 'session-1',
-          'update': {
-            'sessionUpdate': 'agent_message_chunk',
-            'messageId': 'message-1',
-            'content': {'type': 'text', 'text': text},
+  test(
+    'accepts cumulative committed ACP assistant blocks without repetition',
+    () {
+      Map<String, dynamic> event(String text) => <String, dynamic>{
+        'message': {
+          'method': 'session/update',
+          'params': {
+            'sessionId': 'session-1',
+            'update': {
+              'sessionUpdate': 'agent_message_chunk',
+              'messageId': 'message-1',
+              'content': {'type': 'text', 'text': text},
+            },
           },
         },
-      },
-    };
+      };
 
-    reducer.reduce(runtime: runtime, event: event('第一段'));
-    reducer.reduce(runtime: runtime, event: event('第一段第二段'));
+      reducer.reduce(runtime: runtime, event: event('第一段'));
+      reducer.reduce(runtime: runtime, event: event('第一段第二段'));
 
-    expect(runtime.messages.single.text, '第一段第二段');
-  });
+      expect(runtime.messages.single.text, '第一段第二段');
+    },
+  );
 
   test('isolates ACP chunks without messageId by host turn', () {
     for (final turn in <String>['turn-1', 'turn-2']) {

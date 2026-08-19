@@ -2,6 +2,9 @@ package cn.com.omnimind.bot.mcp
 
 import android.content.Context
 import cn.com.omnimind.bot.agent.AgentRuntimeContextRepository
+import cn.com.omnimind.bot.agent.AgentAlarmCreateRequest
+import cn.com.omnimind.bot.agent.AgentAlarmToolService
+import cn.com.omnimind.bot.agent.WorkspaceScheduledTaskScheduler
 import cn.com.omnimind.bot.agent.HttpAgentLlmClient
 import cn.com.omnimind.bot.omniflow.OmniFlow
 import cn.com.omnimind.bot.omniflow.OmniFlowFunctionRegistration
@@ -112,6 +115,80 @@ internal object AndroidDeviceMcpServer {
                 "limit" to schema("integer", "Maximum number of files."),
             ),
         ),
+        DeviceTool(
+            name = "schedule_task_create",
+            operation = "schedule_task_create",
+            description = "Create a persistent scheduled Agent task on this device.",
+            properties = mapOf(
+                "taskId" to schema("string", "Stable task id."),
+                "title" to schema("string", "Task title."),
+                "scheduleType" to schema("string", "fixed_time or countdown."),
+                "fixedTime" to schema("string", "ISO local date-time for fixed_time."),
+                "countdownMinutes" to schema("integer", "Delay in minutes for countdown."),
+                "repeatDaily" to schema("boolean", "Repeat every day."),
+                "enabled" to schema("boolean", "Whether the task is enabled."),
+                "subagentPrompt" to schema("string", "Prompt executed when triggered."),
+                "notificationEnabled" to schema("boolean", "Show completion notification."),
+            ),
+            required = listOf("taskId", "title", "subagentPrompt"),
+        ),
+        DeviceTool(
+            name = "schedule_task_list",
+            operation = "schedule_task_list",
+            description = "List persistent scheduled Agent tasks on this device.",
+            properties = mapOf("limit" to schema("integer", "Maximum number of tasks.")),
+        ),
+        DeviceTool(
+            name = "schedule_task_update",
+            operation = "schedule_task_update",
+            description = "Update a persistent scheduled Agent task.",
+            properties = mapOf(
+                "taskId" to schema("string", "Stable task id."),
+                "title" to schema("string", "Task title."),
+                "scheduleType" to schema("string", "fixed_time or countdown."),
+                "fixedTime" to schema("string", "ISO local date-time for fixed_time."),
+                "countdownMinutes" to schema("integer", "Delay in minutes for countdown."),
+                "repeatDaily" to schema("boolean", "Repeat every day."),
+                "enabled" to schema("boolean", "Whether the task is enabled."),
+                "subagentPrompt" to schema("string", "Prompt executed when triggered."),
+                "notificationEnabled" to schema("boolean", "Show completion notification."),
+            ),
+            required = listOf("taskId"),
+        ),
+        DeviceTool(
+            name = "schedule_task_delete",
+            operation = "schedule_task_delete",
+            description = "Delete a persistent scheduled Agent task.",
+            properties = mapOf("taskId" to schema("string", "Stable task id.")),
+            required = listOf("taskId"),
+        ),
+        DeviceTool(
+            name = "alarm_reminder_create",
+            operation = "alarm_reminder_create",
+            description = "Create a persistent reminder alarm on this device.",
+            properties = mapOf(
+                "mode" to schema("string", "exact_alarm or clock_app."),
+                "title" to schema("string", "Reminder title."),
+                "triggerAt" to schema("string", "ISO timestamp or local date-time."),
+                "message" to schema("string", "Optional reminder message."),
+                "timezone" to schema("string", "Optional IANA timezone."),
+                "allowWhileIdle" to schema("boolean", "Allow delivery while idle."),
+                "skipUi" to schema("boolean", "Do not open the system clock UI."),
+            ),
+            required = listOf("mode", "title", "triggerAt"),
+        ),
+        DeviceTool(
+            name = "alarm_reminder_list",
+            operation = "alarm_reminder_list",
+            description = "List persistent reminder alarms on this device.",
+        ),
+        DeviceTool(
+            name = "alarm_reminder_delete",
+            operation = "alarm_reminder_delete",
+            description = "Delete a reminder alarm on this device.",
+            properties = mapOf("alarmId" to schema("string", "Reminder alarm id.")),
+            required = listOf("alarmId"),
+        ),
     )
 
     internal val publicToolNames: Set<String> = omniFlowTools.mapTo(linkedSetOf()) { it.name }
@@ -134,7 +211,7 @@ internal object AndroidDeviceMcpServer {
                     tools = ServerCapabilities.Tools(listChanged = false),
                 ),
             ),
-            instructions = "Use the official OmniBot MCP server to access Android GUI, Functions, files, and app context.",
+            instructions = "Use the official OmniBot MCP server to access Android GUI, Functions, files, app context, schedules, and reminders.",
         ).apply {
             omniFlowTools.forEach { tool ->
                 addTool(
@@ -260,6 +337,37 @@ internal object AndroidDeviceMcpServer {
             )
         }
         "file_transfer" -> McpToolExecutors.executeFileTransfer(arguments)
+        "schedule_task_create" -> WorkspaceScheduledTaskScheduler(context).upsertTask(arguments)
+        "schedule_task_list" -> {
+            val tasks = WorkspaceScheduledTaskScheduler(context).listTasks()
+            val limit = (arguments["limit"] as? Number)?.toInt()?.coerceIn(1, 100) ?: 100
+            mapOf("count" to minOf(limit, tasks.size), "items" to tasks.take(limit))
+        }
+        "schedule_task_update" -> WorkspaceScheduledTaskScheduler(context).updateTask(arguments)
+        "schedule_task_delete" -> mapOf(
+            "taskId" to arguments["taskId"].toString(),
+            "deleted" to WorkspaceScheduledTaskScheduler(context).deleteTask(
+                arguments["taskId"]?.toString().orEmpty()
+            ),
+        )
+        "alarm_reminder_create" -> AgentAlarmToolService(context).createReminder(
+            AgentAlarmCreateRequest(
+                mode = arguments["mode"]?.toString().orEmpty(),
+                title = arguments["title"]?.toString().orEmpty(),
+                triggerAt = arguments["triggerAt"]?.toString().orEmpty(),
+                message = arguments["message"]?.toString(),
+                timezone = arguments["timezone"]?.toString(),
+                allowWhileIdle = arguments["allowWhileIdle"] as? Boolean ?: true,
+                skipUi = arguments["skipUi"] as? Boolean ?: false,
+            )
+        )
+        "alarm_reminder_list" -> {
+            val items = AgentAlarmToolService(context).listExactReminders()
+            mapOf("count" to items.size, "items" to items)
+        }
+        "alarm_reminder_delete" -> AgentAlarmToolService(context).deleteExactReminder(
+            arguments["alarmId"]?.toString().orEmpty()
+        )
         else -> OmniFlow.callTool(
             context = context,
             toolCall = OmniFlow.ToolCall(tool.operation, arguments),

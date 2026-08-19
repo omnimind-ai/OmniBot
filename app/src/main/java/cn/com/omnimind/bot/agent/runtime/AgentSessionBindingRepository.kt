@@ -27,7 +27,8 @@ internal class AgentSessionBindingRepository(
         conversationId: Long? = null,
         cwd: String = AgentRuntimeDefaults.DEFAULT_WORKSPACE_CWD,
         title: String? = null,
-        archived: Boolean? = null
+        archived: Boolean? = null,
+        conversationMode: String = AGENT_MODE_STORAGE_VALUE
     ): Long {
         val normalizedThreadId = threadId.trim()
         require(normalizedThreadId.isNotEmpty()) { "threadId is required" }
@@ -42,6 +43,7 @@ internal class AgentSessionBindingRepository(
                     cwd = cwd,
                     title = title,
                     archived = archived,
+                    conversationMode = conversationMode,
                     updatedAt = now
                 )
                 if (reboundConversation != null) {
@@ -59,6 +61,7 @@ internal class AgentSessionBindingRepository(
                     conversation = it,
                     title = titleForUpdate,
                     archived = archived,
+                    conversationMode = conversationMode,
                     updatedAt = now
                 )
             }
@@ -79,7 +82,7 @@ internal class AgentSessionBindingRepository(
             ?.let { DatabaseHelper.getConversationById(it) }
             ?.let {
                 val updated = it.copy(
-                    mode = AGENT_MODE_STORAGE_VALUE,
+                    mode = normalizeConversationMode(conversationMode),
                     updatedAt = now
                 )
                 if (updated != it) {
@@ -92,6 +95,7 @@ internal class AgentSessionBindingRepository(
                 title = title?.trim().takeUnless { it.isNullOrEmpty() }
                     ?: defaultConversationTitle(normalizedThreadId),
                 archived = archived == true,
+                mode = normalizeConversationMode(conversationMode),
                 now = now
             )
 
@@ -112,12 +116,13 @@ internal class AgentSessionBindingRepository(
         cwd: String,
         title: String?,
         archived: Boolean?,
+        conversationMode: String,
         updatedAt: Long
     ): Long? {
         val targetConversation = DatabaseHelper.getConversationById(conversationId) ?: return null
         val normalizedTitle = title?.trim().orEmpty()
         val updatedTarget = targetConversation.copy(
-            mode = AGENT_MODE_STORAGE_VALUE,
+            mode = normalizeConversationMode(conversationMode),
             title = if (targetConversation.title.isBlank() && normalizedTitle.isNotEmpty()) {
                 normalizedTitle
             } else {
@@ -181,12 +186,13 @@ internal class AgentSessionBindingRepository(
     private suspend fun createConversation(
         title: String,
         archived: Boolean,
+        mode: String,
         now: Long
     ): Conversation {
         val conversation = Conversation(
             id = 0,
             title = title.ifBlank { "Agent" },
-            mode = AGENT_MODE_STORAGE_VALUE,
+            mode = mode,
             isArchived = archived,
             status = 0,
             createdAt = now,
@@ -204,11 +210,12 @@ internal class AgentSessionBindingRepository(
         conversation: Conversation,
         title: String?,
         archived: Boolean?,
+        conversationMode: String,
         updatedAt: Long
     ): Conversation {
         val normalizedTitle = title?.trim().orEmpty()
         return conversation.copy(
-            mode = AGENT_MODE_STORAGE_VALUE,
+            mode = normalizeConversationMode(conversationMode),
             title = normalizedTitle.ifEmpty { conversation.title },
             isArchived = archived ?: conversation.isArchived,
             updatedAt = updatedAt
@@ -234,6 +241,10 @@ internal class AgentSessionBindingRepository(
     private fun defaultConversationTitle(threadId: String): String {
         val suffix = threadId.takeLast(6).ifBlank { "thread" }
         return "Agent $suffix"
+    }
+
+    private fun normalizeConversationMode(value: String): String {
+        return value.trim().ifEmpty { AGENT_MODE_STORAGE_VALUE }
     }
 
     private suspend fun cleanupGeneratedEmptyConversation(

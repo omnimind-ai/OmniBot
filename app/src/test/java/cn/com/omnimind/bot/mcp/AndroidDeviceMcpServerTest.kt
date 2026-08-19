@@ -17,6 +17,13 @@ class AndroidDeviceMcpServerTest {
                 "register_function",
                 "context_apps_query",
                 "file_transfer",
+                "schedule_task_create",
+                "schedule_task_list",
+                "schedule_task_update",
+                "schedule_task_delete",
+                "alarm_reminder_create",
+                "alarm_reminder_list",
+                "alarm_reminder_delete",
             ),
             AndroidDeviceMcpServer.publicToolNames,
         )

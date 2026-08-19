@@ -101,7 +101,8 @@ export type RealtimeEventName =
   | "conversation_updated"
   | "conversation_deleted"
   | "messages_replaced"
-  | "agent_stream_event"
+  | "acp_event"
+  | "chat_task_event"
   | "browser_snapshot_updated"
   | "workspace_changed";
 

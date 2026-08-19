@@ -40,40 +40,6 @@ class WebConversationCreationTest {
     }
 
     @Test
-    fun `pure chat content keeps history and current image input`() {
-        val content = buildWebPureChatContent(
-            existingMessages = listOf(
-                mapOf(
-                    "id" to "assistant-1",
-                    "type" to 1,
-                    "user" to 2,
-                    "content" to mapOf("text" to "上一条回复")
-                ),
-                mapOf(
-                    "id" to "user-1",
-                    "type" to 1,
-                    "user" to 1,
-                    "content" to mapOf("text" to "上一条问题")
-                )
-            ),
-            userMessage = "继续",
-            attachments = listOf(
-                mapOf(
-                    "fileName" to "photo.png",
-                    "mimeType" to "image/png",
-                    "isImage" to true,
-                    "dataUrl" to "data:image/png;base64,AA=="
-                )
-            )
-        )
-
-        assertEquals(listOf("user", "assistant", "user"), content.map { it["role"] })
-        val currentBlocks = content.last()["content"] as List<*>
-        assertEquals("text", (currentBlocks[0] as Map<*, *>)["type"])
-        assertEquals("image_url", (currentBlocks[1] as Map<*, *>)["type"])
-    }
-
-    @Test
     fun `agent stream events are mapped to web updates`() {
         val assistantUpdate = parseWebAgentEvent(
             mapOf(
@@ -111,13 +77,52 @@ class WebConversationCreationTest {
     }
 
     @Test
+    fun `official ACP session updates are mapped to web updates`() {
+        val message = parseWebAgentEvent(
+            mapOf(
+                "method" to "session/update",
+                "turnId" to "turn-acp-1",
+                "params" to mapOf(
+                    "sessionId" to "session-1",
+                    "update" to mapOf(
+                        "sessionUpdate" to "agent_message_chunk",
+                        "content" to mapOf("text" to "hello")
+                    )
+                )
+            )
+        )
+        assertEquals("hello", message.assistantDelta)
+        assertEquals("turn-acp-1", message.parentTaskId)
+
+        val tool = parseWebAgentEvent(
+            mapOf(
+                "method" to "session/update",
+                "turnId" to "turn-acp-1",
+                "params" to mapOf(
+                    "update" to mapOf(
+                        "sessionUpdate" to "tool_call_update",
+                        "toolCallId" to "tool-1",
+                        "title" to "Read file",
+                        "status" to "completed"
+                    )
+                )
+            )
+        ).tool
+        assertEquals("tool-1-agent-file", tool?.entryId)
+        assertEquals("success", tool?.status)
+    }
+
+    @Test
     fun `web agent runs explicitly request full access`() {
         val arguments = buildWebAgentTurnArguments(
             conversationId = 42L,
             userMessage = "检查权限",
             attachments = emptyList(),
             cwd = " /workspace ",
-            agentId = " claude-code-acp "
+            agentId = " claude-code-acp ",
+            model = "deepseek-v4-pro",
+            effort = "high",
+            conversationMode = "chat_only"
         )
 
         assertEquals(42L, arguments["conversationId"])
@@ -130,6 +135,9 @@ class WebConversationCreationTest {
         )
         assertEquals("/workspace", arguments["cwd"])
         assertEquals("claude-code-acp", arguments["agentId"])
+        assertEquals("deepseek-v4-pro", arguments["model"])
+        assertEquals("high", arguments["effort"])
+        assertEquals("chat_only", arguments["conversationMode"])
     }
 
     @Test

@@ -8,6 +8,8 @@ import android.util.Log
 import cn.com.omnimind.bot.BuildConfig
 import cn.com.omnimind.bot.agent.AgentWorkspaceAttachmentSupport
 import cn.com.omnimind.bot.agent.AgentWorkspaceManager
+import cn.com.omnimind.bot.agent.AgentScheduleToolBridge
+import cn.com.omnimind.baselib.llm.ChatCompletionMessage
 import cn.com.omnimind.bot.mcp.McpServerManager
 import com.ai.assistance.operit.terminal.TerminalManager
 import com.agentclientprotocol.agent.AgentInfo
@@ -71,10 +73,12 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
 import java.io.File
 import java.io.IOException
@@ -90,6 +94,8 @@ internal class LocalAcpRuntime(
     private val bindingRepository: AgentSessionBindingRepository,
     private val profileStore: AcpAgentProfileStore,
     private val prepareLaunchEnvironment: suspend (AcpAgentProfile) -> Map<String, String>,
+    private val buildHandoffContext: suspend (Long, String?) -> String?,
+    private val scheduleToolBridge: AgentScheduleToolBridge,
     private val onMessage: suspend (Map<String, Any?>) -> Unit
 ) {
     private val appContext = context.applicationContext
@@ -99,16 +105,6 @@ internal class LocalAcpRuntime(
     private val sessions = ConcurrentHashMap<String, ClientSession>()
     private val sessionCwds = ConcurrentHashMap<String, String>()
     private val activeTurnIds = ConcurrentHashMap<String, String>()
-
-    /**
-     * Last turn a thread ran, kept after the turn ends. ACP delivers session
-     * updates through [ClientSessionOperations.notify] whenever no prompt is
-     * in flight, and those carry no turn id. Without this fallback such a
-     * straggler reaches Flutter with a null turn id, where it degrades into a
-     * per-item pseudo turn and renders its own agent avatar + "processing"
-     * header.
-     */
-    private val lastTurnIds = ConcurrentHashMap<String, String>()
 
     /**
      * Turn ids that have already emitted their terminal event. [finishTurn] is
@@ -146,6 +142,7 @@ internal class LocalAcpRuntime(
         ConcurrentHashMap<String, PendingPermissionRequest>()
     private val sessionPermissionBehaviors =
         ConcurrentHashMap<String, AcpPermissionBehavior>()
+    private val pendingHandoffConversationIds = ConcurrentHashMap<String, Long>()
 
     @Volatile
     private var connection: AcpRuntimeConnection? = null
@@ -203,9 +200,16 @@ internal class LocalAcpRuntime(
             throw wrapped
         }
         val nextConnection: AcpRuntimeConnection = if (
-            profile.id == AcpAgentProfileStore.XIAOWAN_AGENT_ID
-        ) {
-            XiaowanAcpConnection(appContext, scope)
+        profile.id == AcpAgentProfileStore.XIAOWAN_AGENT_ID
+    ) {
+            XiaowanAcpConnection(
+                context = appContext,
+                scope = scope,
+                scheduleToolBridge = scheduleToolBridge,
+                conversationIdProvider = { threadId ->
+                    bindingRepository.getBindingByThreadId(threadId)?.conversationId
+                }
+            )
         } else {
             val launchEnvironment = baseEnvironment + profile.environment
             AcpProcessConnection(
@@ -387,6 +391,7 @@ internal class LocalAcpRuntime(
         sessions.clear()
         sessionCwds.clear()
         sessionPermissionBehaviors.clear()
+        pendingHandoffConversationIds.clear()
         replayingThreads.clear()
         catalogSessionId = null
         activeTurnIds.clear()
@@ -741,6 +746,9 @@ internal class LocalAcpRuntime(
     private suspend fun startThread(args: Map<String, Any?>): Map<String, Any?> =
         sessionMutex.withLock {
             val cwd = normalizeCwd(args.stringValue("cwd"))
+            val previousBinding = args.longValue("conversationId")?.let {
+                bindingRepository.getBindingByConversationId(it)
+            }
             val catalogSession = catalogSessionId
                 ?.let(sessions::get)
                 ?.takeIf { sessionCwds[it.sessionId.value] == cwd }
@@ -756,9 +764,14 @@ internal class LocalAcpRuntime(
             val conversationId = bindingRepository.ensureBinding(
                 threadId = session.sessionId.value,
                 conversationId = args.longValue("conversationId"),
-                cwd = cwd
+                cwd = cwd,
+                conversationMode = args.stringValue("conversationMode")
+                    ?: AgentSessionBindingRepository.AGENT_MODE_STORAGE_VALUE
             )
             profileStore.bindConversation(conversationId, activeAgentId())
+            if (previousBinding != null && previousBinding.threadId != session.sessionId.value) {
+                pendingHandoffConversationIds[session.sessionId.value] = conversationId
+            }
             sessionPayload(session, conversationId)
         }
 
@@ -781,9 +794,12 @@ internal class LocalAcpRuntime(
                     threadId = fresh.sessionId.value,
                     conversationId = args.longValue("conversationId")
                         ?: bindingRepository.getBindingByThreadId(threadId)?.conversationId,
-                    cwd = cwd
+                    cwd = cwd,
+                    conversationMode = args.stringValue("conversationMode")
+                        ?: AgentSessionBindingRepository.AGENT_MODE_STORAGE_VALUE
                 )
                 profileStore.bindConversation(conversationId, activeAgentId())
+                pendingHandoffConversationIds[fresh.sessionId.value] = conversationId
                 return@withLock sessionPayload(fresh, conversationId).plus(
                     mapOf(
                         "sessionRestored" to false,
@@ -803,56 +819,66 @@ internal class LocalAcpRuntime(
                     ?: bindingRepository.getBindingByThreadId(threadId)?.cwd
             )
             val parameters = sessionCreationParameters(cwd)
-            val restored = when {
-                capabilities.sessionCapabilities.resume != null ->
-                    requireClient().resumeSession(
-                        SessionId(threadId),
-                        parameters,
-                        operationsFactory()
-                    )
-                capabilities.loadSession -> {
-                    // loadSession replays the conversation as session updates
-                    // before it returns; suppress that replay for the duration.
-                    replayingThreads.add(threadId)
-                    try {
-                        requireClient().loadSession(
+            val restored = try {
+                when {
+                    capabilities.sessionCapabilities.resume != null ->
+                        requireClient().resumeSession(
                             SessionId(threadId),
                             parameters,
                             operationsFactory()
                         )
-                    } finally {
-                        replayingThreads.remove(threadId)
+                    capabilities.loadSession -> {
+                        replayingThreads.add(threadId)
+                        try {
+                            requireClient().loadSession(
+                                SessionId(threadId),
+                                parameters,
+                                operationsFactory()
+                            )
+                        } finally {
+                            replayingThreads.remove(threadId)
+                        }
                     }
+                    else -> null
                 }
-                else -> {
-                    // ACP agents are allowed to expose prompt/new-session only.
-                    // When restore is not advertised, continue the app
-                    // conversation on a fresh official ACP session instead of
-                    // inventing a private resume protocol.
-                    val fresh = requireClient().newSession(
-                        parameters,
-                        operationsFactory()
-                    )
-                    registerSession(fresh, cwd)
-                    profileStore.bindSession(fresh.sessionId.value, activeAgentId())
-                    val conversationId = bindingRepository.ensureBinding(
-                        threadId = fresh.sessionId.value,
-                        conversationId = args.longValue("conversationId")
-                            ?: bindingRepository.getBindingByThreadId(threadId)?.conversationId,
-                        cwd = cwd
-                    )
-                    profileStore.bindConversation(conversationId, activeAgentId())
-                    return@withLock sessionPayload(fresh, conversationId).plus(
-                        "sessionRestored" to false
-                    )
+            } catch (error: Throwable) {
+                if (!isRecoverableAgentThreadError(error.message.orEmpty())) {
+                    throw error
                 }
+                null
+            }
+            if (restored == null) {
+                val fresh = requireClient().newSession(
+                    parameters,
+                    operationsFactory()
+                )
+                registerSession(fresh, cwd)
+                profileStore.bindSession(fresh.sessionId.value, activeAgentId())
+                val conversationId = bindingRepository.ensureBinding(
+                    threadId = fresh.sessionId.value,
+                    conversationId = args.longValue("conversationId")
+                        ?: bindingRepository.getBindingByThreadId(threadId)?.conversationId,
+                    cwd = cwd,
+                    conversationMode = args.stringValue("conversationMode")
+                        ?: AgentSessionBindingRepository.AGENT_MODE_STORAGE_VALUE
+                )
+                profileStore.bindConversation(conversationId, activeAgentId())
+                pendingHandoffConversationIds[fresh.sessionId.value] = conversationId
+                return@withLock sessionPayload(fresh, conversationId).plus(
+                    mapOf(
+                        "sessionRestored" to false,
+                        "previousSessionId" to threadId
+                    )
+                )
             }
             registerSession(restored, cwd)
             profileStore.bindSession(restored.sessionId.value, activeAgentId())
             val conversationId = bindingRepository.ensureBinding(
                 threadId = threadId,
                 conversationId = args.longValue("conversationId"),
-                cwd = cwd
+                cwd = cwd,
+                conversationMode = args.stringValue("conversationMode")
+                    ?: AgentSessionBindingRepository.AGENT_MODE_STORAGE_VALUE
             )
             profileStore.bindConversation(conversationId, activeAgentId())
             sessionPayload(restored, conversationId)
@@ -1170,7 +1196,7 @@ internal class LocalAcpRuntime(
             throw IllegalStateException("ACP session $threadId already has an active turn.")
         }
         val turnId = UUID.randomUUID().toString()
-        val blocks = buildPromptBlocks(args, turnId)
+        val blocks = buildPromptBlocks(args, turnId, threadId)
         activeTurnIds[threadId] = turnId
         emitPresentation(
             kind = "turn_started",
@@ -1291,7 +1317,6 @@ internal class LocalAcpRuntime(
     ) {
         if (!finishedTurns.add(turnId)) return
         activeTurnIds.remove(threadId, turnId)
-        lastTurnIds[threadId] = turnId
         lastTurnActivityAt.remove(threadId)
         withContext(NonCancellable) {
             if (error == null) {
@@ -1560,12 +1585,19 @@ internal class LocalAcpRuntime(
         }
     }
 
-    private fun buildPromptBlocks(
+    private suspend fun buildPromptBlocks(
         args: Map<String, Any?>,
-        turnId: String
+        turnId: String,
+        threadId: String
     ): List<ContentBlock> {
         val capabilities = requireAgentInfo().capabilities.promptCapabilities
         val blocks = mutableListOf<ContentBlock>()
+        pendingHandoffConversationIds[threadId]?.let { conversationId ->
+            val handoff = buildHandoffContext(conversationId, args.stringValue("text"))
+            if (pendingHandoffConversationIds.remove(threadId, conversationId) && handoff != null) {
+                blocks += ContentBlock.Text(handoff)
+            }
+        }
         val text = args.stringValue("text").orEmpty()
         if (text.isNotEmpty()) {
             blocks += ContentBlock.Text(text)
@@ -1740,11 +1772,10 @@ internal class LocalAcpRuntime(
         // none, and downstream they would fall back to a per-item id — which
         // spawns a duplicate agent avatar and "processing" header per item.
         // The SDK closes the prompt's update channel before it emits the
-        // prompt response, so late stragglers legitimately belong to the turn
-        // that just ended; lastTurnIds keeps them attached to it.
+        // prompt response. A notification received after that point has no
+        // active turn and must not be assigned to the previous turn.
         val resolvedTurnId = turnId?.takeIf { it.isNotBlank() }
             ?: activeTurnIds[threadId]
-            ?: lastTurnIds[threadId]
         if (resolvedTurnId == null && update.isTurnScoped()) {
             Log.w(TAG, "Dropping turn-scoped ACP update with no resolvable turn: $update")
             return
@@ -2320,3 +2351,68 @@ private fun Map<String, Any?>.listOfMaps(key: String): List<Map<String, Any?>> =
 
 private fun shellQuoteAcp(value: String): String =
     "'" + value.replace("'", "'\"'\"'") + "'"
+
+internal object AgentHandoffContext {
+    private const val MAX_HANDOFF_CHARS = 96_000
+
+    fun format(
+        conversationId: Long,
+        messages: List<ChatCompletionMessage>,
+        currentPrompt: String? = null
+    ): String? {
+        val handoffMessages = messages.toMutableList().apply {
+            val normalizedPrompt = currentPrompt?.trim().orEmpty()
+            if (normalizedPrompt.isNotEmpty()) {
+                val currentMessageIndex = indexOfLast { message ->
+                    message.role.equals("user", ignoreCase = true) &&
+                        renderContent(message).trim() == normalizedPrompt
+                }
+                if (currentMessageIndex >= 0) {
+                    removeAt(currentMessageIndex)
+                }
+            }
+        }
+        if (handoffMessages.isEmpty()) return null
+        val rendered = buildString {
+            appendLine("[OmniBot handoff]")
+            appendLine("Continue the existing OmniBot conversation.")
+            appendLine("Conversation ID: $conversationId")
+            appendLine("The following is persisted conversation context. Treat it as prior context, not a new user request.")
+            appendLine()
+            handoffMessages.forEach { message ->
+                append(message.role.trim().ifEmpty { "message" })
+                append(": ")
+                appendLine(renderContent(message))
+            }
+        }.trim()
+        if (rendered.length <= MAX_HANDOFF_CHARS) return rendered
+        return buildString {
+            appendLine("[OmniBot handoff]")
+            appendLine("Older context was omitted from this handoff and remains available in local history; continue from the retained tail.")
+            appendLine("Conversation ID: $conversationId")
+            appendLine()
+            append(rendered.takeLast(MAX_HANDOFF_CHARS))
+        }
+    }
+
+    private fun renderContent(message: ChatCompletionMessage): String {
+        val parts = buildList {
+            message.content?.let { add(renderJson(it)) }
+            message.reasoningContent?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                add("reasoning=$it")
+            }
+            message.toolCalls?.takeIf { it.isNotEmpty() }?.let {
+                add("tool_calls=${it.joinToString()}")
+            }
+        }
+        return parts.joinToString(" ").ifBlank { "(no text content)" }
+    }
+
+    private fun renderJson(element: JsonElement): String {
+        return if (element is JsonPrimitive) {
+            element.contentOrNull ?: element.toString()
+        } else {
+            element.toString()
+        }
+    }
+}

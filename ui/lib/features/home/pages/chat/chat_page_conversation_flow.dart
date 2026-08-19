@@ -763,76 +763,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
 
   @override
   Future<void> _sendChatMessage(String aiMessageId) async {
-    if (!_isOpenClawSurface) {
-      handleAgentError('统一 Agent 已启用，旧聊天链路已移除，请检查配置后重试。');
-      return;
-    }
-    try {
-      await _ensureActiveConversationReadyForStreaming();
-    } catch (_) {
-      if (mounted) {
-        handleAgentError('Conversation setup failed. Please retry.');
-      }
-      return;
-    }
-    final conversationId = _currentConversationId;
-    if (conversationId == null) {
-      if (mounted) {
-        handleAgentError('Conversation setup failed. Please retry.');
-      }
-      return;
-    }
-    final history = buildConversationHistory();
-    final userMessage = latestUserUtterance();
-    final userAttachments = await _latestUserAttachments();
-    final openClawConfig = {
-      'baseUrl': _openClawBaseUrl,
-      if (_openClawToken.isNotEmpty) 'token': _openClawToken,
-      if (_openClawUserId.isNotEmpty) 'userId': _openClawUserId,
-      'sessionKey': _buildOpenClawSessionKey(conversationId),
-    };
-    _showOpenClawWaitingCard(aiMessageId);
-    _syncRuntimeSnapshotForMode(_activeMode);
-    _registerActiveTaskBinding(aiMessageId);
-    _runtimeCoordinator.primePureChatThinking(
-      taskId: aiMessageId,
-      conversationId: conversationId,
-      mode: _modeKey(_activeMode),
-    );
-    final success = await AssistsMessageService.createChatTask(
-      aiMessageId,
-      history,
-      provider: 'openclaw',
-      openClawConfig: openClawConfig,
-      conversationId: conversationId,
-      conversationMode: activeConversationModeValue.storageValue,
-      userMessage: userMessage,
-      userAttachments: userAttachments,
-    );
-    if (success) return;
-    _runtimeCoordinator.unregisterTask(aiMessageId);
-
-    try {
-      throw Exception('createChatTask returned false');
-    } catch (error) {
-      if (!mounted) return;
-      final errorId = DateTime.now().millisecondsSinceEpoch.toString();
-      _removeOpenClawWaitingCard(aiMessageId);
-      setState(() {
-        _isAiResponding = false;
-        _isContextCompressing = false;
-        removeLatestLoadingIfExists();
-        _messages.insert(
-          0,
-          ChatMessageModel(
-            id: errorId,
-            type: 1,
-            user: 2,
-            content: {'text': '抱歉，发送消息失败：$error', 'id': errorId},
-          ),
-        );
-      });
-    }
+    await _sendPureChatMessage(aiMessageId);
   }
 
   @override
@@ -853,7 +784,6 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       return;
     }
 
-    final history = buildConversationHistory();
     final userMessage = latestUserUtterance();
     final userAttachments = await _latestUserAttachments();
 
@@ -864,44 +794,63 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       conversationId: conversationId,
       mode: _modeKey(_activeMode),
     );
-    final success = await AssistsMessageService.createChatTask(
-      aiMessageId,
-      history,
-      conversationId: conversationId,
-      conversationMode: activeConversationModeValue.storageValue,
-      userMessage: userMessage,
-      userAttachments: userAttachments,
-      modelOverride: _buildChatModelOverridePayload(),
-      reasoningEffort: _activeConversationReasoningEffort,
-    );
-    if (success) {
-      return;
-    }
-    _runtimeCoordinator.clearPureChatThinking(
-      taskId: aiMessageId,
-      conversationId: conversationId,
-      mode: _modeKey(_activeMode),
-    );
-    _runtimeCoordinator.unregisterTask(aiMessageId);
-
-    if (!mounted) {
-      return;
-    }
-    final errorId = DateTime.now().millisecondsSinceEpoch.toString();
-    setState(() {
-      _isAiResponding = false;
-      _isContextCompressing = false;
-      removeLatestLoadingIfExists();
-      _messages.insert(
-        0,
-        ChatMessageModel(
-          id: errorId,
-          type: 1,
-          user: 2,
-          content: {'text': '抱歉，发送消息失败，请稍后重试。', 'id': errorId},
-        ),
+    try {
+      final status = await _refreshConnectedAgentRuntimeStatus();
+      final remoteRuntime = agentModelSourceKey(status) == 'remote';
+      final selection =
+          _activeConversationModelOverrideSelection ??
+          _activeDispatchSceneSelection;
+      final response = await AgentRuntimeService.promptSession(
+        conversationId: remoteRuntime ? null : conversationId,
+        sessionId: null,
+        agentId: remoteRuntime ? null : status.activeAgentId,
+        text: userMessage,
+        attachments: userAttachments,
+        approvalPolicy: _agentPermissionMode.approvalPolicy,
+        approvalsReviewer: _agentPermissionMode.approvalsReviewer,
+        sandboxPolicy: _agentPermissionMode.sandboxPolicy,
+        model: selection?.modelId,
+        effort: _activeConversationReasoningEffort,
+        conversationMode: activeConversationModeValue.storageValue,
       );
-    });
+      _normalAcpSessionId = _asAgentString(response['sessionId']) ??
+          _asAgentString(response['threadId']) ??
+          _normalAcpSessionId;
+      _normalAcpTurnId = _asAgentString(response['promptId']) ??
+          _asAgentString(response['turnId']) ??
+          _normalAcpTurnId;
+      if (!remoteRuntime && _normalAcpSessionId == null) {
+        throw StateError('ACP did not return a session id');
+      }
+      await ConversationHistoryService.saveConversationMessages(
+        conversationId,
+        List<ChatMessageModel>.from(_messages),
+        mode: activeConversationModeValue,
+      );
+    } catch (error) {
+      _runtimeCoordinator.clearPureChatThinking(
+        taskId: aiMessageId,
+        conversationId: conversationId,
+        mode: _modeKey(_activeMode),
+      );
+      _runtimeCoordinator.unregisterTask(aiMessageId);
+      if (!mounted) return;
+      final errorId = DateTime.now().millisecondsSinceEpoch.toString();
+      setState(() {
+        _isAiResponding = false;
+        _isContextCompressing = false;
+        removeLatestLoadingIfExists();
+        _messages.insert(
+          0,
+          ChatMessageModel(
+            id: errorId,
+            type: 1,
+            user: 2,
+            content: {'text': '抱歉，发送消息失败：$error', 'id': errorId},
+          ),
+        );
+      });
+    }
   }
 
   @override
@@ -918,7 +867,12 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
   }
 
   @override
-  Future<bool> _tryAgentFlow(String aiMessageId, String userMessageId) async {
+  Future<bool> _tryAgentFlow(
+    String aiMessageId,
+    String userMessageId, {
+    String? promptText,
+    List<Map<String, dynamic>>? attachmentsOverride,
+  }) async {
     try {
       _currentDispatchTaskId = aiMessageId;
       _deepThinkingContent = '';
@@ -929,29 +883,47 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       _syncRuntimeSnapshotForMode(_activeMode);
       _registerActiveTaskBinding(aiMessageId);
 
-      final userMessage = latestUserUtterance();
-      final attachments = _latestUserAgentAttachments();
-
-      final success = await AssistsMessageService.createAgentTask(
-        taskId: aiMessageId,
-        userMessage: userMessage,
+      final userMessage = promptText ?? latestUserUtterance();
+      final attachments = attachmentsOverride ?? _latestUserAgentAttachments();
+      await _ensureActiveConversationReadyForStreaming();
+      final conversationId = _currentConversationId;
+      if (conversationId == null) {
+        throw StateError('conversationId is not ready');
+      }
+      final status = await _refreshConnectedAgentRuntimeStatus();
+      final remoteCodex = agentModelSourceKey(status) == 'remote';
+      final response = await AgentRuntimeService.promptSession(
+        conversationId: remoteCodex ? null : conversationId,
+        sessionId: remoteCodex ? null : _normalAcpSessionId,
+        agentId: remoteCodex ? null : status.activeAgentId,
+        text: userMessage,
         attachments: attachments,
-        conversationId: _currentConversationId,
+        approvalPolicy: _agentPermissionMode.approvalPolicy,
+        approvalsReviewer: _agentPermissionMode.approvalsReviewer,
+        sandboxPolicy: _agentPermissionMode.sandboxPolicy,
+        model: _activeDispatchSceneSelection?.modelId,
+        effort: _activeConversationReasoningEffort,
         conversationMode: activeConversationModeValue.storageValue,
-        userMessageCreatedAtMillis: userMessageId.endsWith('-user')
-            ? int.tryParse(userMessageId.split('-').first)
-            : null,
-        modelOverride: _buildAgentModelOverridePayload(),
-        reasoningEffort: _activeConversationReasoningEffort,
-        terminalEnvironment: _buildAgentTerminalEnvironmentPayload(),
       );
-      if (!success) {
+      _normalAcpSessionId = _asAgentString(response['sessionId']) ??
+          _asAgentString(response['threadId']) ??
+          _normalAcpSessionId;
+      _normalAcpTurnId = _asAgentString(response['promptId']) ??
+          _asAgentString(response['turnId']) ??
+          _normalAcpTurnId;
+      if (_normalAcpSessionId == null && !remoteCodex) {
+        throw StateError('ACP did not return a session id');
+      }
+      await ConversationHistoryService.saveConversationMessages(
+        conversationId,
+        List<ChatMessageModel>.from(_messages),
+        mode: activeConversationModeValue,
+      );
+      return true;
+    } catch (e) {
+      if (_currentDispatchTaskId == aiMessageId) {
         _runtimeCoordinator.unregisterTask(aiMessageId);
       }
-
-      return success;
-    } catch (e) {
-      _runtimeCoordinator.unregisterTask(aiMessageId);
       debugPrint('Agent flow error: $e');
       return false;
     }
@@ -1076,16 +1048,35 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
         });
         return;
       }
+      if (_activeConversationMode == ChatPageMode.normal &&
+          activeConversationModeValue != ConversationMode.chatOnly &&
+          (_currentDispatchTaskId != null || _normalAcpTurnId != null)) {
+        unawaited(
+          AgentRuntimeService.cancelPrompt(
+            conversationId: _currentConversationId,
+            sessionId: _normalAcpSessionId,
+            promptId: _normalAcpTurnId,
+          ),
+        );
+        final taskId = _currentDispatchTaskId;
+        if (taskId != null) {
+          _runtimeCoordinator.unregisterTask(taskId);
+        }
+        resetDispatchState();
+        return;
+      }
       if (_currentDispatchTaskId != null ||
           _activeRuntime?.lastAgentTaskId != null ||
           _isCheckingExecutableTask ||
           _isExecutingTask) {
         _cancelDispatchTask();
       } else {
-        AssistsMessageService.cancelChatTask(
-          taskId: _currentAiMessages.keys.isEmpty
-              ? null
-              : _currentAiMessages.keys.first,
+        unawaited(
+          AgentRuntimeService.cancelPrompt(
+            conversationId: _currentConversationId,
+            sessionId: _normalAcpSessionId,
+            promptId: _normalAcpTurnId,
+          ),
         );
       }
 
@@ -1110,7 +1101,26 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
   void _cancelDispatchTask() {
     final taskId = _currentDispatchTaskId ?? _activeRuntime?.lastAgentTaskId;
     interruptActiveToolCard();
-    AssistsMessageService.cancelRunningTask(taskId: taskId);
+    if (_activeConversationMode == ChatPageMode.normal &&
+        activeConversationModeValue != ConversationMode.chatOnly) {
+      unawaited(
+        AgentRuntimeService.cancelPrompt(
+          conversationId: _currentConversationId,
+          sessionId: _normalAcpSessionId,
+          promptId: _normalAcpTurnId,
+        ),
+      );
+    }
+    if (!(_activeConversationMode == ChatPageMode.normal &&
+        activeConversationModeValue != ConversationMode.chatOnly)) {
+      unawaited(
+        AgentRuntimeService.cancelPrompt(
+          conversationId: _currentConversationId,
+          sessionId: _activeAgentThreadId,
+          promptId: _activeAgentTurnId,
+        ),
+      );
+    }
     if (taskId != null) {
       _updateThinkingCardToCancelled(taskId);
       _upsertCancelledAgentRunMessage(taskId);
@@ -1125,7 +1135,26 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
   void _onCancelTaskFromCard(String taskId) {
     try {
       interruptActiveToolCard();
-      AssistsMessageService.cancelRunningTask(taskId: taskId);
+      if (_activeConversationMode == ChatPageMode.normal &&
+          activeConversationModeValue != ConversationMode.chatOnly) {
+        unawaited(
+          AgentRuntimeService.cancelPrompt(
+            conversationId: _currentConversationId,
+            sessionId: _normalAcpSessionId,
+            promptId: _normalAcpTurnId,
+          ),
+        );
+      }
+      if (!(_activeConversationMode == ChatPageMode.normal &&
+          activeConversationModeValue != ConversationMode.chatOnly)) {
+        unawaited(
+          AgentRuntimeService.cancelPrompt(
+            conversationId: _currentConversationId,
+            sessionId: _activeAgentThreadId,
+            promptId: _activeAgentTurnId,
+          ),
+        );
+      }
       _runtimeCoordinator.unregisterTask(taskId);
       _updateThinkingCardToCancelled(taskId);
       _upsertCancelledAgentRunMessage(taskId);

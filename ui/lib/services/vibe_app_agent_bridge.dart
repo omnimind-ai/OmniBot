@@ -2,43 +2,82 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:ui/models/agent_stream_event.dart';
 import 'package:ui/models/conversation_model.dart';
-import 'package:ui/services/assists_core_service.dart';
+import 'package:ui/services/agent_runtime_service.dart';
 import 'package:ui/services/conversation_service.dart';
 
 typedef VibeAppEventSink = FutureOr<void> Function(Map<String, dynamic> event);
 
 abstract interface class VibeAppAgentGateway {
-  void addStreamListener(AgentStreamEventCallback listener);
+  Stream<Map<String, dynamic>> get runtimeEvents;
 
-  void removeStreamListener(AgentStreamEventCallback listener);
+  Future<Map<String, dynamic>> ensureAcpSession({
+    required int conversationId,
+  });
+
+  Future<Map<String, dynamic>> promptAcpSession({
+    required int conversationId,
+    required String sessionId,
+    required String text,
+    required String reasoningEffort,
+  });
+
+  Future<Map<String, dynamic>> cancelAcpPrompt({
+    required int conversationId,
+    required String sessionId,
+    String? promptId,
+  });
 
   Future<List<ConversationModel>> getConversations();
 
   Future<int?> createConversation({required String title, String? summary});
 
-  Future<bool> startTask({
-    required String taskId,
-    required String userMessage,
-    required int conversationId,
-    required String reasoningEffort,
-  });
-
-  Future<bool> cancelTask(String taskId);
 }
 
 class XiaowanVibeAppAgentGateway implements VibeAppAgentGateway {
   const XiaowanVibeAppAgentGateway();
 
   @override
-  void addStreamListener(AgentStreamEventCallback listener) {
-    AssistsMessageService.setOnAgentStreamEventCallback(listener);
+  Stream<Map<String, dynamic>> get runtimeEvents => AgentRuntimeService.events;
+
+  @override
+  Future<Map<String, dynamic>> ensureAcpSession({
+    required int conversationId,
+  }) async {
+    await AgentRuntimeService.selectAgent('xiaowan-acp');
+    return AgentRuntimeService.newSession(
+      conversationId: conversationId,
+      conversationMode: ConversationMode.normal.storageValue,
+    );
   }
 
   @override
-  void removeStreamListener(AgentStreamEventCallback listener) {
-    AssistsMessageService.removeOnAgentStreamEventCallback(listener);
+  Future<Map<String, dynamic>> promptAcpSession({
+    required int conversationId,
+    required String sessionId,
+    required String text,
+    required String reasoningEffort,
+  }) {
+    return AgentRuntimeService.promptSession(
+      conversationId: conversationId,
+      sessionId: sessionId,
+      text: text,
+      effort: reasoningEffort,
+      conversationMode: ConversationMode.normal.storageValue,
+    );
+  }
+
+  @override
+  Future<Map<String, dynamic>> cancelAcpPrompt({
+    required int conversationId,
+    required String sessionId,
+    String? promptId,
+  }) {
+    return AgentRuntimeService.cancelPrompt(
+      conversationId: conversationId,
+      sessionId: sessionId,
+      promptId: promptId,
+    );
   }
 
   @override
@@ -55,26 +94,6 @@ class XiaowanVibeAppAgentGateway implements VibeAppAgentGateway {
     );
   }
 
-  @override
-  Future<bool> startTask({
-    required String taskId,
-    required String userMessage,
-    required int conversationId,
-    required String reasoningEffort,
-  }) {
-    return AssistsMessageService.createAgentTask(
-      taskId: taskId,
-      userMessage: userMessage,
-      conversationId: conversationId,
-      conversationMode: ConversationMode.normal.storageValue,
-      reasoningEffort: reasoningEffort,
-    );
-  }
-
-  @override
-  Future<bool> cancelTask(String taskId) {
-    return AssistsMessageService.cancelRunningTask(taskId: taskId);
-  }
 }
 
 class VibeAppAgentBridge {
@@ -96,6 +115,11 @@ class VibeAppAgentBridge {
   final String Function() _taskIdFactory;
   final Set<String> _activeRunIds = <String>{};
   final Set<String> _workingRunIds = <String>{};
+  StreamSubscription<Map<String, dynamic>>? _runtimeSubscription;
+  String? _acpSessionId;
+  String? _acpPromptId;
+  String _acpTextSnapshot = '';
+  int _acpEventSequence = 0;
 
   int? _conversationId;
   bool _initialized = false;
@@ -104,7 +128,9 @@ class VibeAppAgentBridge {
   Future<void> initialize() async {
     if (_initialized) return;
     _initialized = true;
-    _gateway.addStreamListener(_handleStreamEvent);
+    _runtimeSubscription = _gateway.runtimeEvents.listen(
+      _handleAcpRuntimeEvent,
+    );
     await _restoreConversation();
   }
 
@@ -124,27 +150,32 @@ class VibeAppAgentBridge {
       'conversationId': conversationId,
       'reasoningEffort': reasoningEffort,
     });
-    final accepted = await _gateway.startTask(
-      taskId: runId,
-      userMessage: _buildUserMessage(text, params['context']),
+    final session = await _gateway.ensureAcpSession(
       conversationId: conversationId,
+    );
+    _acpSessionId = session['sessionId']?.toString().trim().isNotEmpty == true
+        ? session['sessionId'].toString().trim()
+        : session['threadId']?.toString().trim();
+    if ((_acpSessionId ?? '').isEmpty) {
+      throw StateError('ACP did not return a session id');
+    }
+    _acpTextSnapshot = '';
+    _acpEventSequence = 0;
+    final prompt = await _gateway.promptAcpSession(
+      conversationId: conversationId,
+      sessionId: _acpSessionId!,
+      text: _buildUserMessage(text, params['context']),
       reasoningEffort: reasoningEffort,
     );
-    if (!accepted) {
-      _activeRunIds.remove(runId);
-      _workingRunIds.remove(runId);
-      await _emit(<String, dynamic>{
-        'type': 'error',
-        'runId': runId,
-        'conversationId': conversationId,
-        'error': 'Xiaowan did not accept the task',
-      });
-      throw StateError('Xiaowan did not accept the task');
-    }
+    _acpPromptId = prompt['promptId']?.toString().trim().isNotEmpty == true
+        ? prompt['promptId'].toString().trim()
+        : prompt['turnId']?.toString().trim();
     return <String, dynamic>{
       'accepted': true,
       'runId': runId,
       'conversationId': conversationId,
+      'sessionId': _acpSessionId,
+      if (_acpPromptId != null) 'promptId': _acpPromptId,
     };
   }
 
@@ -157,7 +188,12 @@ class VibeAppAgentBridge {
     if (!_activeRunIds.contains(runId)) {
       return <String, dynamic>{'cancelled': false, 'runId': runId};
     }
-    final cancelled = await _gateway.cancelTask(runId);
+    final response = await _gateway.cancelAcpPrompt(
+      conversationId: _conversationId!,
+      sessionId: _acpSessionId ?? '',
+      promptId: _acpPromptId,
+    );
+    final cancelled = response['status'] == 'cancelled' || response['ok'] == true;
     if (cancelled) {
       _activeRunIds.remove(runId);
       _workingRunIds.remove(runId);
@@ -184,7 +220,8 @@ class VibeAppAgentBridge {
     if (_disposed) return;
     _disposed = true;
     if (_initialized) {
-      _gateway.removeStreamListener(_handleStreamEvent);
+      _runtimeSubscription?.cancel();
+      _runtimeSubscription = null;
     }
   }
 
@@ -245,34 +282,107 @@ User request: $text
     }
   }
 
-  void _handleStreamEvent(AgentStreamEvent event) {
-    if (_disposed || !_activeRunIds.contains(event.taskId)) return;
-    if (event.kind == AgentStreamEventKind.thinkingStarted ||
-        event.kind == AgentStreamEventKind.thinkingSnapshot) {
-      if (!_workingRunIds.add(event.taskId)) return;
+  void _handleAcpRuntimeEvent(Map<String, dynamic> event) {
+    if (_disposed || _activeRunIds.isEmpty) return;
+    final conversationId = _asInt(event['conversationId']);
+    if (conversationId == null || conversationId != _conversationId) return;
+    final presentation = _asMap(event['presentation']);
+    final presentationKind = presentation?['kind']?.toString().trim();
+    if (presentationKind == 'turn_completed' ||
+        presentationKind == 'turn_failed') {
+      final runId = _activeRunIds.first;
+      final isFailure = presentationKind == 'turn_failed';
       unawaited(
         _emit(<String, dynamic>{
-          'type': 'working',
-          'runId': event.taskId,
-          'createdAt': event.createdAtMs,
-          'stage': 'analyzing',
-          'label': '小万正在分析…',
+          'type': isFailure ? 'error' : 'completed',
+          'runId': runId,
+          'conversationId': conversationId,
+          if (isFailure) 'error': presentation?['error'] ?? 'Agent failed',
+        }),
+      );
+      _activeRunIds.remove(runId);
+      _workingRunIds.remove(runId);
+      return;
+    }
+    final params = _asMap(event['params']);
+    final update = _asMap(params?['update']);
+    final kind = update?['sessionUpdate']?.toString().trim();
+    if (kind == null || kind.isEmpty) return;
+    final runId = _activeRunIds.first;
+    _acpEventSequence += 1;
+    final createdAt = DateTime.now().millisecondsSinceEpoch;
+    if (kind == 'agent_thought_chunk') {
+      if (_workingRunIds.add(runId)) {
+        unawaited(
+          _emit(<String, dynamic>{
+            'type': 'working',
+            'runId': runId,
+            'conversationId': conversationId,
+            'createdAt': createdAt,
+            'stage': 'analyzing',
+            'label': '小万正在分析…',
+          }),
+        );
+      }
+      return;
+    }
+    if (kind == 'agent_message_chunk') {
+      final text = _extractText(update?['content']);
+      if (text.isEmpty) return;
+      _acpTextSnapshot += text;
+      unawaited(
+        _emit(<String, dynamic>{
+          'type': 'text_snapshot',
+          'runId': runId,
+          'conversationId': conversationId,
+          'seq': _acpEventSequence,
+          'createdAt': createdAt,
+          'text': _acpTextSnapshot,
+          'isFinal': false,
         }),
       );
       return;
     }
-    final payload = <String, dynamic>{
-      ...event.raw,
-      'type': event.kind.value,
-      'runId': event.taskId,
-      'createdAt': event.createdAtMs,
-    };
-    unawaited(_emit(payload));
-    if (event.kind == AgentStreamEventKind.completed ||
-        event.kind == AgentStreamEventKind.error) {
-      _activeRunIds.remove(event.taskId);
-      _workingRunIds.remove(event.taskId);
+    if (kind == 'tool_call' || kind == 'tool_call_update') {
+      final status = update?['status']?.toString().trim().toLowerCase();
+      final type = kind == 'tool_call'
+          ? 'tool_started'
+          : (status == 'completed' ||
+                status == 'failed' ||
+                status == 'cancelled')
+          ? 'tool_completed'
+          : 'tool_progress';
+      unawaited(
+        _emit(<String, dynamic>{
+          ...?update,
+          'type': type,
+          'runId': runId,
+          'conversationId': conversationId,
+          'seq': _acpEventSequence,
+          'createdAt': createdAt,
+        }),
+      );
     }
+  }
+
+  static Map<String, dynamic>? _asMap(dynamic value) {
+    if (value is! Map) return null;
+    return value.map((key, item) => MapEntry(key.toString(), item));
+  }
+
+  static int? _asInt(dynamic value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value?.toString() ?? '');
+  }
+
+  static String _extractText(dynamic value) {
+    if (value is String) return value;
+    final map = _asMap(value);
+    if (map != null) {
+      return (map['text'] ?? map['content'] ?? '').toString();
+    }
+    return '';
   }
 
   Future<void> _emit(Map<String, dynamic> event) async {

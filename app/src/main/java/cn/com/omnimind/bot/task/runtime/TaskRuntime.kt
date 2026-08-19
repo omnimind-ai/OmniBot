@@ -9,30 +9,12 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * Stable entry point for long-running task lifecycle.
  *
- * The first migration keeps the existing Agent runner intact and only moves
- * its process-lifetime signal to a foreground service. Future runners (for
- * example DSH) must enter through this same boundary instead of coupling the
- * task to an Activity or Flutter engine.
+ * ACP owns the Agent turn lifecycle. This object only keeps the Android
+ * foreground-service lease alive while a turn is running.
  */
 object TaskRuntime {
     private const val TAG = "TaskRuntime"
     private val activeTaskIds = ConcurrentHashMap.newKeySet<String>()
-
-    fun enqueueAgent(
-        context: Context,
-        taskId: String,
-        payload: Map<String, Any?>,
-    ): Boolean {
-        val normalizedTaskId = taskId.trim()
-        if (normalizedTaskId.isEmpty()) return false
-        if (!TaskRuntimeStore.putAgent(context, normalizedTaskId, payload)) {
-            OmniLog.e(TAG, "Unable to persist agent task taskId=$normalizedTaskId")
-            return false
-        }
-        if (start(context, normalizedTaskId)) return true
-        TaskRuntimeStore.remove(context, normalizedTaskId)
-        return false
-    }
 
     fun start(context: Context, taskId: String): Boolean {
         val normalizedTaskId = taskId.trim()
@@ -53,8 +35,7 @@ object TaskRuntime {
             return false
         }
         activeTaskIds.remove(normalizedTaskId)
-        TaskRuntimeStore.remove(context, normalizedTaskId)
-        if (activeTaskIds.isNotEmpty() || TaskRuntimeStore.listPending(context).isNotEmpty()) return true
+        if (activeTaskIds.isNotEmpty()) return true
 
         return runCatching {
             context.applicationContext.stopService(
@@ -81,10 +62,9 @@ object TaskRuntime {
             }
             true
         }.onFailure { error ->
-            // Android may reject a foreground-service start when a task is
-            // restored from a background-only entry point. The Agent runner
-            // remains responsible for reporting the task failure; this
-            // boundary must never crash the existing execution path.
+            // Android may reject a foreground-service start when a turn is
+            // restored from a background-only entry point. ACP remains
+            // responsible for reporting the turn failure.
             OmniLog.w(
                 TAG,
                 "Unable to start task runtime foreground service: ${error.message}",

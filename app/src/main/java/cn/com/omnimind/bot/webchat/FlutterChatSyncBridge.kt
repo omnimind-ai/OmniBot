@@ -64,7 +64,7 @@ object FlutterChatSyncBridge {
      *
      * 为什么需要直推：
      * - onConversationMessagesChanged 在 Flutter 端走的是 StreamController 微任务，
-     *   而 onAgentStreamEvent 是同步回调，常常先到达并把 hasInFlightTask 翻为 true，
+     *   而旧 Agent callback 是同步回调，常常先到达并把 hasInFlightTask 翻为 true，
      *   导致后续 messagesChanged 走 in-memory 分支吞掉用户消息；
      * - 即便强制 DB 重载，replaceConversationSnapshot 也会清掉 agent 流状态，引发
      *   连锁问题。直推可以把用户气泡确定无误地插入 runtime.messages，

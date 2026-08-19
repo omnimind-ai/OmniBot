@@ -72,7 +72,6 @@ import 'package:ui/widgets/chat_drawer_gesture_guard.dart';
 
 // 导入 Mixins
 import 'mixins/chat_message_handler.dart';
-import 'mixins/dispatch_stream_handler.dart';
 import 'mixins/agent_stream_handler.dart';
 import 'mixins/task_execution_handler.dart';
 import 'mixins/conversation_manager.dart';
@@ -127,7 +126,6 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     with
         WidgetsBindingObserver,
         ChatMessageHandler,
-        DispatchStreamHandler,
         AgentStreamHandler,
         TaskExecutionHandler,
         ConversationManager
@@ -264,6 +262,8 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   int? _activeRemoteCodexRuntimeId;
   String? _activeAgentThreadId;
   String? _activeAgentTurnId;
+  String? _normalAcpSessionId;
+  String? _normalAcpTurnId;
   String? _activeAgentModelId;
   String? _activeAgentReasoningEffort;
   String? _activeAgentCollaborationMode;
@@ -1188,7 +1188,7 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   set isAiResponding(bool value) => _isAiResponding = value;
   @override
   Map<String, String> get currentAiMessages => _currentAiMessages;
-  // DispatchStreamHandler
+  // Agent stream state
   @override
   String get deepThinkingContent => _deepThinkingContent;
   @override
@@ -1423,6 +1423,24 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   );
 
   @override
+  void handleValidationError(String taskID, String debugMessage) {
+    handleAgentError(debugMessage);
+  }
+
+  @override
+  void resetDispatchState() {
+    _currentDispatchTaskId = null;
+    _deepThinkingContent = '';
+    _isDeepThinking = false;
+    clearAgentStreamSessionState();
+  }
+
+  @override
+  void fallbackToChat(String taskID) {
+    handleAgentError('统一 Agent 已启用，旧聊天分发链路已移除。');
+  }
+
+  @override
   void clearAgentStreamSessionState() {
     super.clearAgentStreamSessionState();
     final conversationId = _currentConversationId;
@@ -1448,10 +1466,15 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     String taskId,
     String cardId,
   ) async {
-    return AssistsMessageService.stopAgentToolCall(
-      taskId: taskId,
-      cardId: cardId,
+    final activeMode = _activeConversationMode;
+    final isNormalAcp = activeMode == ChatPageMode.normal &&
+        activeConversationModeValue != ConversationMode.chatOnly;
+    final response = await AgentRuntimeService.cancelPrompt(
+      conversationId: _currentConversationId,
+      sessionId: isNormalAcp ? _normalAcpSessionId : _activeAgentThreadId,
+      promptId: isNormalAcp ? _normalAcpTurnId : _activeAgentTurnId,
     );
+    return response['cancelled'] == true || response['status'] == 'cancelled';
   }
 
   String _buildOpenClawSessionKey(int conversationId) {
@@ -1680,6 +1703,8 @@ abstract class _ChatPageStateBase extends State<ChatPage>
 
   Future<void> _interruptAgentTurn();
 
+  Future<AgentRuntimeStatus> _refreshConnectedAgentRuntimeStatus();
+
   Future<void> _loadOpenClawConfig();
 
   Future<void> _ensureOpenClawUserId();
@@ -1888,7 +1913,12 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     String userMessageId,
   );
 
-  Future<bool> _tryAgentFlow(String aiMessageId, String userMessageId);
+  Future<bool> _tryAgentFlow(
+    String aiMessageId,
+    String userMessageId, {
+    String? promptText,
+    List<Map<String, dynamic>>? attachmentsOverride,
+  });
 
   Future<List<Map<String, dynamic>>> _latestUserAttachments();
 

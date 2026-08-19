@@ -1,6 +1,5 @@
 package cn.com.omnimind.assists.controller.http
 
-import cn.com.omnimind.assists.api.bean.TaskParams
 import cn.com.omnimind.assists.api.bean.ResultBean
 import cn.com.omnimind.baselib.account.AiRequestTransportPolicy
 import cn.com.omnimind.baselib.account.AiTransportRoute
@@ -232,14 +231,6 @@ object HttpController {
             return sceneDefaultModel?.trim()?.takeIf { it.isNotEmpty() }
         }
         return sharedAgentModel?.trim()?.takeIf { it.isNotEmpty() }
-    }
-
-    private val openClawStreamClient: OkHttpClient by lazy {
-        OkHttpClient.Builder()
-            .connectTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
-            .readTimeout(0, java.util.concurrent.TimeUnit.SECONDS)
-            .writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
-            .build()
     }
 
     private val sceneCompletionClient: OkHttpClient by lazy {
@@ -3158,85 +3149,6 @@ object HttpController {
             forceHttp1 = forceHttp1
         )
     }
-
-    /**
-     * 发送 OpenClaw 的 OpenAI 兼容流式请求（/v1/chat/completions）
-     *
-     * @param openClawConfig OpenClaw 配置（baseUrl/token/userId/sessionKey）
-     * @param messages 对话消息列表
-     * @param event 事件监听器
-     * @return EventSource 事件源
-     */
-    suspend fun postOpenClawChatCompletionsStream(
-        openClawConfig: TaskParams.OpenClawConfig,
-        messages: List<Map<String, Any>>,
-        event: EventSourceListener
-    ): EventSource {
-        val baseUrl = openClawConfig.baseUrl.trim().trimEnd('/')
-        val url = "$baseUrl/v1/chat/completions"
-        val authToken = openClawConfig.token?.trim()
-
-        OmniLog.i(
-            "HttpController",
-            "OpenClaw stream url=$url messages=${messages.size} user=${openClawConfig.userId?.trim()} auth=${!authToken.isNullOrBlank()} sessionKey=${!openClawConfig.sessionKey.isNullOrBlank()}"
-        )
-
-        val jsonObject = JSONObject()
-        val messagesArray = JSONArray()
-        for (message in messages) {
-            val messageObject = JSONObject()
-            for ((key, value) in message) {
-                messageObject.put(key, value)
-            }
-            messagesArray.put(messageObject)
-        }
-        jsonObject.put("model", "openclaw")
-        jsonObject.put("stream", true)
-        jsonObject.put("messages", messagesArray)
-        val userId = openClawConfig.userId?.trim()
-        if (!userId.isNullOrEmpty()) {
-            jsonObject.put("user", userId)
-        }
-
-        val requestBody = jsonObject.toString().toRequestBody("application/json".toMediaType())
-        val requestBuilder = Request.Builder()
-            .url(url)
-            .addHeader("Accept", "text/event-stream")
-            .addHeader("Content-Type", "application/json")
-
-        if (!authToken.isNullOrEmpty()) {
-            requestBuilder.addHeader("Authorization", "Bearer $authToken")
-        }
-
-        val sessionKey = openClawConfig.sessionKey?.trim()
-        if (!sessionKey.isNullOrEmpty()) {
-            requestBuilder.addHeader("X-OpenClaw-Session-Key", sessionKey)
-        }
-
-        val request = requestBuilder.post(requestBody).build()
-        OmniLog.i(
-            "HttpController",
-            "OpenClaw request ready bodyBytes=${jsonObject.toString().length}"
-        )
-
-        return EventSources.createFactory(openClawStreamClient)
-            .newEventSource(
-                request,
-                createLoggingEventListener(
-                    "[openclaw/v1/chat/completions]",
-                    event,
-                    requestLogSeed = AiRequestLogSeed(
-                        label = "openclaw/chat.completions.stream",
-                        model = "openclaw",
-                        protocolType = "openai_compatible",
-                        url = url,
-                        stream = true,
-                        requestJson = jsonObject.toString()
-                    )
-                )
-            )
-    }
-
 
     /**
      * 发送 LLM 请求并获取响应（普通返回）

@@ -719,6 +719,7 @@ class AgentRuntimeService {
     String? model,
     String? effort,
     String? collaborationMode,
+    String? conversationMode,
   }) {
     return _invokeMap('session/new', {
       if (conversationId != null) 'conversationId': conversationId,
@@ -727,6 +728,8 @@ class AgentRuntimeService {
       if (effort != null && effort.trim().isNotEmpty) 'effort': effort.trim(),
       if (collaborationMode != null && collaborationMode.trim().isNotEmpty)
         'collaborationMode': collaborationMode.trim(),
+      if (conversationMode != null && conversationMode.trim().isNotEmpty)
+        'conversationMode': conversationMode.trim(),
     });
   }
 
@@ -817,6 +820,7 @@ class AgentRuntimeService {
     String? model,
     String? effort,
     String? collaborationMode,
+    String? conversationMode,
   }) {
     return _invokeMap('session/prompt', {
       if (sessionId != null) 'sessionId': sessionId,
@@ -833,6 +837,8 @@ class AgentRuntimeService {
       if (effort != null && effort.trim().isNotEmpty) 'effort': effort.trim(),
       if (collaborationMode != null && collaborationMode.trim().isNotEmpty)
         'collaborationMode': collaborationMode.trim(),
+      if (conversationMode != null && conversationMode.trim().isNotEmpty)
+        'conversationMode': conversationMode.trim(),
       'text': text,
       if (attachments.isNotEmpty) 'attachments': attachments,
     });

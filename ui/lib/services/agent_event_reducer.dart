@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:ui/features/home/pages/chat/mixins/agent_stream_handler.dart';
+import 'package:ui/features/home/pages/chat/chat_page_models.dart';
 import 'package:ui/features/home/pages/chat/services/chat_conversation_runtime_coordinator.dart';
 import 'package:ui/models/chat_message_model.dart';
 import 'package:ui/services/agent_stream_meta.dart';
@@ -91,6 +92,17 @@ class AgentEventReducer {
     final parentTaskId =
         _firstString([turnId, itemId, threadId]) ??
         'agent-${runtime.conversationId}';
+
+    if (turnId != null &&
+        method != 'turn/started' &&
+        runtime.completedAgentTurnIds.contains(turnId)) {
+      return AgentReduceResult(
+        handled: true,
+        method: method,
+        threadId: threadId,
+        turnId: turnId,
+      );
+    }
 
     if (method == 'codex/event') {
       final protocolResult = reduceLegacyCodexProtocolEvent(
@@ -328,7 +340,9 @@ class AgentEventReducer {
           '';
       if (delta.isNotEmpty) {
         _finalizeActiveThinkingCardForTask(runtime, parentTaskId);
-        final entryId = '${itemId ?? parentTaskId}-agent-message';
+        final entryId =
+            _string(params['entryId']) ??
+            '${itemId ?? parentTaskId}-agent-message';
         _appendAssistantText(
           runtime,
           parentTaskId: parentTaskId,
@@ -353,7 +367,9 @@ class AgentEventReducer {
           _extractText(params['part']) ??
           '';
       if (text.isNotEmpty) {
-        final entryId = '${itemId ?? parentTaskId}-agent-thinking';
+        final entryId =
+            _string(params['entryId']) ??
+            '${itemId ?? parentTaskId}-agent-thinking';
         _appendThinking(
           runtime,
           parentTaskId: parentTaskId,
@@ -789,6 +805,7 @@ class AgentEventReducer {
     ChatConversationRuntimeState runtime,
     String parentTaskId,
   ) {
+    runtime.completedAgentTurnIds.remove(parentTaskId);
     runtime.isAiResponding = true;
     runtime.currentDispatchTaskId = parentTaskId;
     runtime.lastAgentTaskId = parentTaskId;
@@ -1151,6 +1168,9 @@ class AgentEventReducer {
       );
     }
     runtime.lastAgentToolType = effectiveToolType;
+    if (effectiveToolType == 'terminal' || effectiveToolType == 'browser') {
+      runtime.chatIslandDisplayLayer = ChatIslandDisplayLayer.tools;
+    }
   }
 
   void _upsertAgentRequestCard(
@@ -1366,7 +1386,8 @@ class AgentEventReducer {
         _extractText(item['content']) ??
         '';
     if (itemType == 'agentMessage') {
-      final messageId = '${itemId ?? taskId}-agent-message';
+      final messageId =
+          _string(item['entryId']) ?? '${itemId ?? taskId}-agent-message';
       final existingText = _assistantTextForEntry(runtime, messageId);
       if (text.isNotEmpty && existingText.isEmpty) {
         _appendAssistantText(
@@ -1404,7 +1425,8 @@ class AgentEventReducer {
       // Keep the thinking card streaming until the entire turn ends.
       // _completeTurn() will call _finalizeThinkingCardsForTask() once
       // turn/completed (or thread/closed/inactive) arrives.
-      final cardId = '${itemId ?? taskId}-agent-thinking';
+      final cardId =
+          _string(item['entryId']) ?? '${itemId ?? taskId}-agent-thinking';
       _markThinkingItemCompleted(runtime, taskId, cardId);
       runtime.agentReplayDeltaOffsets.remove(cardId);
     }
@@ -1675,6 +1697,7 @@ class AgentEventReducer {
     String taskId, {
     bool appendCancelIfEmpty = true,
   }) {
+    final wasActive = runtime.activeAgentTaskIds.contains(taskId);
     final isManualCancel =
         appendCancelIfEmpty &&
         taskId == runtime.currentDispatchTaskId &&
@@ -1706,6 +1729,14 @@ class AgentEventReducer {
       _finalizeThinkingCardsForTask(runtime, taskId);
     }
     _markToolCardsCompleteForTask(runtime, taskId);
+    if (wasActive) {
+      runtime.completedAgentTurnIds.add(taskId);
+      if (runtime.completedAgentTurnIds.length > 128) {
+        runtime.completedAgentTurnIds.remove(
+          runtime.completedAgentTurnIds.first,
+        );
+      }
+    }
   }
 
   void _recordTurnFailure(
@@ -2674,6 +2705,7 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
           // DSH's official update may omit messageId. A turn-scoped fallback
           // prevents the next turn from appending to the previous message.
           'itemId': update['messageId'] ?? turnId,
+          if (update['entryId'] != null) 'entryId': update['entryId'],
           'delta': _extractText(update['content']) ?? '',
         }),
       };
@@ -2682,6 +2714,7 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
         'method': 'item/reasoning/delta',
         'params': projectedParams(<String, dynamic>{
           'itemId': update['messageId'] ?? turnId,
+          if (update['entryId'] != null) 'entryId': update['entryId'],
           'delta': _extractText(update['content']) ?? '',
         }),
       };

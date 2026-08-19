@@ -121,6 +121,7 @@ class ChatConversationRuntimeState {
   final Map<String, int> agentEntrySequences = <String, int>{};
   final Map<String, int> agentEntryStartTimes = <String, int>{};
   final Map<String, int> agentReplayDeltaOffsets = <String, int>{};
+  final Set<String> completedAgentTurnIds = <String>{};
   int agentNextEntrySequence = 0;
   bool isAiResponding = false;
   bool isContextCompressing = false;
@@ -191,6 +192,7 @@ class ChatConversationRuntimeState {
     agentEntrySequences.clear();
     agentEntryStartTimes.clear();
     agentReplayDeltaOffsets.clear();
+    completedAgentTurnIds.clear();
     messages.dispose();
   }
 }
@@ -262,26 +264,9 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     unawaited(VoicePlaybackCoordinator.instance.ensureInitialized());
 
     AssistsMessageService.initialize();
-    AssistsMessageService.addOnChatTaskMessageCallBack(_handleChatTaskMessage);
-    AssistsMessageService.addOnChatTaskMessageEndCallBack(
-      _handleChatTaskMessageEnd,
-    );
-    AssistsMessageService.setOnAgentStreamEventCallback(
-      _handleAgentStreamEvent,
-    );
-    AssistsMessageService.addOnAgentRuntimeRecoveryCallback(
-      _handleAgentRuntimeRecovery,
-    );
     AssistsMessageService.addOnExternalUserMessageAppendedCallback(
       _handleExternalUserMessageAppended,
     );
-    AssistsMessageService.setOnAgentPromptTokenUsageCallback(
-      _handleAgentPromptTokenUsageChanged,
-    );
-    AssistsMessageService.setOnAgentContextCompactionStateCallback(
-      _handleAgentContextCompactionStateChanged,
-    );
-    unawaited(AssistsMessageService.recoverAgentRuntime());
   }
 
   ChatConversationRuntimeState? runtimeFor({
@@ -589,12 +574,13 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
   AgentReduceResult applyAgentEvent({
     required int conversationId,
     required Map<String, dynamic> event,
+    String mode = kChatRuntimeModeAgent,
     ConversationModel? conversation,
   }) {
     ensureInitialized();
     final runtime = ensureRuntime(
       conversationId: conversationId,
-      mode: kChatRuntimeModeAgent,
+      mode: mode,
       conversation: conversation,
       initialChatIslandDisplayLayer: ChatIslandDisplayLayer.mode,
     );
@@ -604,7 +590,7 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
       notifyListeners();
       if (!isEphemeralRuntime(
         conversationId: conversationId,
-        mode: kChatRuntimeModeAgent,
+        mode: mode,
       )) {
         schedulePersistRuntimeConversation(
           conversationId: conversationId,
@@ -750,6 +736,9 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     if (runtime == null) return;
     _flushRuntimeStreamingText(runtime);
     runtime.currentDispatchTaskId = null;
+    runtime.isAiResponding = false;
+    runtime.isExecutingTask = false;
+    runtime.isCheckingExecutableTask = false;
     runtime.isContextCompressing = false;
     runtime.deepThinkingContent = '';
     runtime.isDeepThinking = false;
