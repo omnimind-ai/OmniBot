@@ -209,6 +209,12 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     if (normalized.isEmpty || _isAcpAgentSwitching) {
       return;
     }
+    // Agent selection may take several seconds while the ACP process starts.
+    // A new-chat/navigation request can arrive during that await. Do not let
+    // the old target captured below overwrite the newer conversation target
+    // when selection finally completes; that was the source of history and
+    // harness cross-talk after switching modes from the drawer.
+    final switchTargetRequestId = _conversationTargetRequestId;
     final selectsRemote = normalized == _kRemoteCodexModeAgentId;
     // A conversation binding describes which Agent owns the visible history;
     // it is not proof that the native ACP runtime is currently selected. On
@@ -242,7 +248,8 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       // Select/connect the adapter before creating the new conversation. This
       // prevents the first prompt from being routed to the previous agent
       // while the ACP process is still switching.
-      if (selected) {
+      if (selected &&
+          _isConversationTargetRequestCurrent(switchTargetRequestId)) {
         await _applyConversationThreadTarget(target);
       }
     } finally {
@@ -254,7 +261,8 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       }
     }
     if (!selected) {
-      if (mounted) {
+      if (mounted &&
+          _isConversationTargetRequestCurrent(switchTargetRequestId)) {
         await _applyConversationThreadTarget(previousTarget);
       }
       return;
