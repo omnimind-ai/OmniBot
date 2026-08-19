@@ -438,6 +438,14 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
 
   @override
   Future<void> _sendMessage({String? text}) async {
+    // The chat surface is rendered before the asynchronous conversation
+    // bootstrap finishes. Wait for it before inserting the optimistic user
+    // row; otherwise bootstrap can restore/reset the target immediately after
+    // this method and make the row flash and disappear.
+    final bootstrapFuture = _conversationBootstrapFuture;
+    if (bootstrapFuture != null) {
+      await bootstrapFuture;
+    }
     final messageText = (text ?? _messageController.text).trim();
     final hasAttachments = _pendingAttachments.isNotEmpty;
     if ((messageText.isEmpty && !hasAttachments) || _isAiResponding) return;

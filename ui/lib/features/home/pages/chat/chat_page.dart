@@ -179,6 +179,10 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   SharedOpenDraftPayload? _stagedSharedOpenDraft;
   int? _stagedSharedOpenDraftExpiresAt;
   int _conversationTargetRequestId = 0;
+  // Conversation bootstrap restores the last target asynchronously. Keep the
+  // future so a send started from the first rendered frame cannot race that
+  // restore and get cleared by _resetLocalConversationState().
+  Future<void>? _conversationBootstrapFuture;
   final Set<String> _consumedInitialMessageRequests = <String>{};
 
   // OpenClaw 配置与开关

@@ -75,7 +75,9 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
 
     _inputFocusNode.addListener(_onFocusChange);
     _messageController.addListener(_handleSlashCommandInput);
-    unawaited(_bootstrapConversationThread());
+    final bootstrapFuture = _bootstrapConversationThread();
+    _conversationBootstrapFuture = bootstrapFuture;
+    unawaited(bootstrapFuture);
   }
 
   @override
