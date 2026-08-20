@@ -37,8 +37,8 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       return false;
     }
     // Every local ACP Agent consumes the app's configured Provider catalog.
-    // The Harness is an execution runtime, not a model authority. Keeping an
-    // allow-list here caused newly installed Harnesses (and legacy DSH IDs)
+    // The Harness is an execution runtime, not a model authority. An allow-list
+    // here caused newly installed Harnesses (and legacy DSH IDs)
     // to fall back to their own one-model catalog.
     return true;
   }
@@ -57,9 +57,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
             modelId: binding.modelId,
           );
         }
-      } catch (_) {
-        // The normal chat context may still be loading.
-      }
+      } catch (_) {}
     }
     final resolvedSelection = selection;
     if (resolvedSelection == null) return const <String>[];
@@ -141,6 +139,21 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     AgentRuntimeStatus status;
     try {
       status = await AgentRuntimeService.status();
+      if (!status.ready && !status.remoteEnabled) {
+        final catalog = await AgentRuntimeService.listAgents();
+        final selected = catalog.selectedAgent;
+        if (selected?.managedAdapter == true) {
+          final prepared = await AgentRuntimeService.testAgent(selected!.id);
+          if (prepared['ok'] == true) {
+            status = await AgentRuntimeService.status();
+          } else {
+            throw StateError(
+              prepared['error']?.toString() ??
+                  'Failed to prepare the selected ACP Agent.',
+            );
+          }
+        }
+      }
       if (status.ready && !status.connected) {
         status = await AgentRuntimeService.connect();
         unawaited(AgentRuntimeService.listSessions());
@@ -169,8 +182,12 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       }
       _showSnackBar(
         LegacyTextLocalizer.isEnglish
-            ? 'The selected ACP Agent is unavailable'
-            : '所选 ACP Agent 当前不可用',
+            ? (status.error?.trim().isNotEmpty == true
+                  ? status.error!.trim()
+                  : 'The selected ACP Agent is unavailable')
+            : (status.error?.trim().isNotEmpty == true
+                  ? status.error!.trim()
+                  : '所选 ACP Agent 当前不可用'),
       );
       GoRouterManager.push('/home/agent_mode_setting');
       return;
@@ -196,7 +213,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       return;
     }
     // Agent selection may take several seconds while the ACP process starts.
-    // A user-initiated switch owns the next conversation lifecycle request:
+    // A user-initiated switch owns the next lifecycle request:
     // invalidate the bootstrap/old navigation request immediately, then use
     // this same id when applying the new target. Previously we only captured
     // the old id. Any still-running bootstrap could therefore make the switch
@@ -209,8 +226,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         !await _ensureSharedProviderModelReadyForSwitch()) {
       return;
     }
-    // A conversation binding describes which Agent owns the visible history;
-    // it is not proof that the native ACP runtime is currently selected. On
+    // A conversation binding is not proof that the native ACP runtime is selected. On
     // restart the binding can still point at Xiaowan while the persisted ACP
     // profile is Codex (or another Agent). Always reconcile that mismatch
     // instead of treating the shortcut tap as a no-op.

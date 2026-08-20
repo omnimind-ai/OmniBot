@@ -90,8 +90,8 @@ void main() {
     expect(find.byType(PopupMenuButton<String>), findsNothing);
     expect(find.text('初始化检测'), findsNothing);
     expect(find.text('重新检测'), findsNWidgets(2));
-    expect(find.text('准备并初始化'), findsOneWidget);
-    expect(find.text('配置'), findsNWidgets(4));
+    expect(find.text('安装官方 Harness'), findsOneWidget);
+    expect(find.text('配置'), findsNWidgets(3));
     // 4 Agent 配置入口 + 1 远程 PC Bridge 入口。
     expect(find.byIcon(LucideIcons.chevronRight), findsNWidgets(5));
     expect(

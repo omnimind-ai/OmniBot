@@ -10,7 +10,7 @@
       "publisher": "OmniMind",
       "kind": "runtime_bundle",
       "downloadSizeBytes": 941767,
-      "required": false,
+      "required": true,
       "installByDefault": true,
       "capabilities": [
         "Manual recording",

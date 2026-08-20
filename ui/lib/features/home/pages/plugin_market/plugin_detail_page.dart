@@ -745,8 +745,6 @@ class _PluginDetailPageState extends State<PluginDetailPage> {
                     ),
                   ],
                 )
-              : plugin.required
-              ? const SizedBox.shrink()
               : SizedBox(
                   width: double.infinity,
                   height: 46,

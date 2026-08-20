@@ -579,6 +579,15 @@ internal class LocalAcpRuntime(
             Log.i(TAG, "Switching ACP agent to ${selected.id}; closing previous process")
             disconnect()
         }
+        // Selecting a managed Agent is also the one-click install/start
+        // action.  Previously the Flutter shortcut only persisted the
+        // selected profile and then called `status()`.  A missing managed
+        // command therefore made `status.ready` false, so connect() — the
+        // only boundary that installs the official runtime — was never
+        // reached.  Keep preparation here at the ACP boundary so every
+        // caller (top shortcut, settings, restored mode, and future clients)
+        // gets the same official installation path.
+        connect(profile = selected)
         return agentsPayload(refreshAvailability = false)
     }
 

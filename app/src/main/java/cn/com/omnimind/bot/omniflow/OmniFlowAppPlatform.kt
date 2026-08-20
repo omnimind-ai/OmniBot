@@ -6,6 +6,7 @@ import cn.com.omnimind.assists.controller.http.HttpController
 import cn.com.omnimind.assists.controller.http.SceneChatCompletionResponse
 import cn.com.omnimind.baselib.llm.ChatCompletionRequest
 import cn.com.omnimind.bot.terminal.EmbeddedTerminalRuntime
+import cn.com.omnimind.bot.terminal.EmbeddedTerminalSetupManager
 import cn.com.omnimind.bot.plugin.runtime.RuntimeSkillBundleManager
 import com.ai.assistance.operit.terminal.TerminalManager
 import com.rk.terminal.runtime.TerminalDistribution
@@ -42,6 +43,13 @@ internal class OmniFlowAppPlatform(
         )
         require(terminalStatus.success && terminalStatus.initialized) {
             terminalStatus.message.ifBlank { "omniflow_terminal_runtime_unavailable" }
+        }
+        val pythonBootstrap = EmbeddedTerminalSetupManager(appContext).installPackages(
+            selectedPackageIds = listOf("python"),
+        )
+        require(pythonBootstrap.success) {
+            pythonBootstrap.message.ifBlank { pythonBootstrap.output }
+                .ifBlank { "omniflow_python_install_failed" }
         }
         val prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val distribution = TerminalDistribution.selected()
@@ -150,7 +158,14 @@ internal fun buildOmniFlowPythonPrepareCommand(
     val repairCommand = if (distributionId == "ubuntu") {
         "DEBIAN_FRONTEND=noninteractive apt-get install -y --reinstall --no-install-recommends python3-numpy"
     } else {
-        "apk --wait 300 fix --no-cache py3-numpy"
+        """
+            if apk --wait 300 fix --no-cache py3-numpy; then
+              :
+            else
+              apk --no-check-certificate update &&
+                apk --no-check-certificate add --no-cache py3-numpy
+            fi
+        """.trimIndent()
     }
     return """
         set -e
