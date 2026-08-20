@@ -57,6 +57,12 @@ internal class RemoteCodexAppServerSession(
                 )
             }
             sendNotification("initialized", null)
+            onServerMessage(
+                mapOf(
+                    "method" to "codex/connected",
+                    "params" to mapOf("clientVersion" to clientVersion),
+                )
+            )
         } catch (error: Throwable) {
             disconnect()
             if (error is TimeoutCancellationException) {
@@ -136,6 +142,12 @@ internal class RemoteCodexAppServerSession(
             )
         }
         pending.clear()
+        onServerMessage(
+            mapOf(
+                "method" to "codex/disconnected",
+                "params" to mapOf("exitCode" to exitCode),
+            )
+        )
     }
 
     private suspend fun handleStdoutLine(line: String) {
@@ -146,7 +158,7 @@ internal class RemoteCodexAppServerSession(
         } catch (error: Throwable) {
             onServerMessage(
                 mapOf(
-                    "method" to "error",
+                    "method" to "codex/parseError",
                     "params" to mapOf(
                         "error" to (error.message ?: error.javaClass.simpleName),
                         "raw" to line
@@ -187,6 +199,7 @@ internal class RemoteCodexAppServerSession(
                 "version" to clientVersion
             ),
             "clientCapabilities" to mapOf(
+                "experimentalApi" to true,
                 "fs" to mapOf(
                     "readTextFile" to true,
                     "writeTextFile" to true

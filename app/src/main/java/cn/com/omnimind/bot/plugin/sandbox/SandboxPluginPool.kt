@@ -73,6 +73,7 @@ class SandboxPluginPool(
                     require(directory == pluginDirectory(manifest.id)) {
                         "Sandbox plugin directory does not match id: ${manifest.id}"
                     }
+                    ensureRuntimeCurrent(directory)
                     SandboxPluginProvider(this, directory, manifest)
                 }.getOrNull()
             }
