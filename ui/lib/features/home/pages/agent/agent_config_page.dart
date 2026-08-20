@@ -42,11 +42,6 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
   String _permissionMode = 'workspace-write';
   bool _sharedModelLoading = true;
   bool _sharedModelSaving = false;
-  bool _dshPluginsLoading = false;
-  bool _dshPluginMutating = false;
-  List<DshPlugin> _dshPlugins = const <DshPlugin>[];
-  String? _dshPluginNotice;
-  bool _dshPluginNoticeIsError = false;
   List<ModelProviderProfileSummary> _providerProfiles = const [];
   Map<String, List<ProviderModelOption>> _providerModels = {};
   SceneModelBindingEntry? _sharedModelBinding;
@@ -110,9 +105,6 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
       });
       if (agent.builtIn) {
         unawaited(_loadSharedModelSelection());
-        if (agent.id == 'deepseek-harness-acp') {
-          unawaited(_loadDshPlugins());
-        }
       }
     } catch (error) {
       if (!mounted) return;
@@ -121,184 +113,6 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
         _error = error.toString();
       });
     }
-  }
-
-  Future<void> _loadDshPlugins() async {
-    if (!mounted || _dshPluginsLoading) return;
-    setState(() => _dshPluginsLoading = true);
-    try {
-      final plugins = await AgentRuntimeService.listDshPlugins();
-      if (!mounted) return;
-      setState(() {
-        _dshPlugins = plugins;
-        _dshPluginsLoading = false;
-      });
-    } catch (error) {
-      if (!mounted) return;
-      setState(() => _dshPluginsLoading = false);
-      debugPrint('Load DSH plugins failed: $error');
-    }
-  }
-
-  Future<void> _installDshPlugin() async {
-    final controller = TextEditingController();
-    final specifier = await showDialog<String>(
-      context: context,
-      // Keep the dialog in the shell navigator that owns this page.
-      useRootNavigator: false,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(_text('安装 DSH 插件', 'Install DSH plugin')),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: InputDecoration(
-            labelText: _text('npm 包或精确版本', 'npm package or exact version'),
-            hintText: '@scope/dsh-plugin@1.2.3',
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: Text(_text('取消', 'Cancel')),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(dialogContext).pop(controller.text),
-            child: Text(_text('安装', 'Install')),
-          ),
-        ],
-      ),
-    );
-    // showDialog completes as soon as Navigator.pop is requested, while the
-    // dialog's TextField is still being deactivated. Do not dispose its
-    // controller in that same frame; doing so races the route teardown and can
-    // leave an inherited dependent alive when Flutter deactivates the route.
-    await WidgetsBinding.instance.endOfFrame;
-    controller.dispose();
-    final value = specifier?.trim() ?? '';
-    if (value.isEmpty || _dshPluginMutating || !mounted) return;
-
-    // The dialog route has just been removed. Wait until that removal has
-    // completed before starting the native install/restart sequence. The
-    // native side may close the ACP process, so this must not overlap the
-    // dialog/InheritedWidget deactivation frame.
-    await WidgetsBinding.instance.endOfFrame;
-    if (!mounted || _dshPluginMutating) return;
-    setState(() => _dshPluginMutating = true);
-    try {
-      final plugins = await AgentRuntimeService.installDshPlugin(value);
-      if (!mounted) return;
-      setState(() {
-        _dshPlugins = plugins;
-        _dshPluginNotice = _text(
-          '插件已安装；下次 DSH 启动时生效。',
-          'Plugin installed; it applies on the next DSH start.',
-        );
-        _dshPluginNoticeIsError = false;
-      });
-    } catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _dshPluginNotice = error.toString();
-        _dshPluginNoticeIsError = true;
-      });
-    } finally {
-      if (mounted) setState(() => _dshPluginMutating = false);
-    }
-  }
-
-  Future<void> _setDshPluginEnabled(DshPlugin plugin, bool enabled) async {
-    if (_dshPluginMutating) return;
-    setState(() => _dshPluginMutating = true);
-    try {
-      final plugins = await AgentRuntimeService.setDshPluginEnabled(
-        plugin.packageName,
-        enabled,
-      );
-      if (!mounted) return;
-      setState(() {
-        _dshPlugins = plugins;
-        _dshPluginNotice = _text('插件状态已更新。', 'Plugin state updated.');
-        _dshPluginNoticeIsError = false;
-      });
-    } catch (error) {
-      if (mounted) {
-        setState(() {
-          _dshPluginNotice = error.toString();
-          _dshPluginNoticeIsError = true;
-        });
-      }
-    } finally {
-      if (mounted) setState(() => _dshPluginMutating = false);
-    }
-  }
-
-  Widget _buildDshPluginManager() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const SizedBox(height: 18),
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                _text('DSH 插件', 'DSH plugins'),
-                style: Theme.of(context).textTheme.titleSmall,
-              ),
-            ),
-            IconButton(
-              tooltip: _text('安装插件', 'Install plugin'),
-              onPressed: _dshPluginMutating ? null : _installDshPlugin,
-              icon: const Icon(LucideIcons.plus),
-            ),
-            IconButton(
-              tooltip: _text('刷新', 'Refresh'),
-              onPressed: _dshPluginMutating ? null : _loadDshPlugins,
-              icon: const Icon(LucideIcons.refreshCw),
-            ),
-          ],
-        ),
-        Text(
-          _text(
-            '插件安装到官方 DSH profile；安装大型插件可能需要几分钟，完成后重启 DSH ACP 才会挂载。',
-            'Plugins are installed into the official DSH profile. Large packages may take minutes and are mounted after the DSH ACP restarts.',
-          ),
-          style: Theme.of(context).textTheme.bodySmall,
-        ),
-        if (_dshPluginNotice != null)
-          Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: Text(
-              _dshPluginNotice!,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: _dshPluginNoticeIsError
-                    ? Theme.of(context).colorScheme.error
-                    : Theme.of(context).colorScheme.primary,
-              ),
-            ),
-          ),
-        if (_dshPluginsLoading)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 12),
-            child: LinearProgressIndicator(),
-          )
-        else if (_dshPlugins.isEmpty)
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 12),
-            child: Text(_text('还没有额外插件。', 'No extra plugins installed.')),
-          )
-        else
-          for (final plugin in _dshPlugins)
-            SwitchListTile.adaptive(
-              contentPadding: EdgeInsets.zero,
-              title: Text(plugin.packageName),
-              subtitle: Text(plugin.specifier),
-              value: plugin.enabled,
-              onChanged: _dshPluginMutating
-                  ? null
-                  : (value) => _setDshPluginEnabled(plugin, value),
-            ),
-      ],
-    );
   }
 
   void _syncAgent(AcpAgentProfile agent) {
@@ -881,7 +695,6 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
             if (value != null) setState(() => _permissionMode = value);
           },
         ),
-        _buildDshPluginManager(),
       ],
     );
   }

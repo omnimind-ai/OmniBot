@@ -711,50 +711,6 @@ class AgentRuntimeService {
     });
   }
 
-  static Future<List<DshPlugin>> listDshPlugins() async {
-    final payload = await _invokeMap('agent/plugin/list');
-    final raw = payload['plugins'];
-    if (raw is! List) return const <DshPlugin>[];
-    return raw
-        .whereType<Map>()
-        .map((item) => DshPlugin.fromMap(item))
-        .toList(growable: false);
-  }
-
-  static Future<List<DshPlugin>> installDshPlugin(String specifier) async {
-    final payload = await _invokeMap('agent/plugin/install', {
-      'specifier': specifier.trim(),
-    });
-    return _pluginsFromPayload(payload);
-  }
-
-  static Future<List<DshPlugin>> removeDshPlugin(String packageName) async {
-    final payload = await _invokeMap('agent/plugin/remove', {
-      'packageName': packageName.trim(),
-    });
-    return _pluginsFromPayload(payload);
-  }
-
-  static Future<List<DshPlugin>> setDshPluginEnabled(
-    String packageName,
-    bool enabled,
-  ) async {
-    final payload = await _invokeMap('agent/plugin/set-enabled', {
-      'packageName': packageName.trim(),
-      'enabled': enabled,
-    });
-    return _pluginsFromPayload(payload);
-  }
-
-  static List<DshPlugin> _pluginsFromPayload(Map<String, dynamic> payload) {
-    final raw = payload['plugins'];
-    if (raw is! List) return const <DshPlugin>[];
-    return raw
-        .whereType<Map>()
-        .map((item) => DshPlugin.fromMap(item))
-        .toList(growable: false);
-  }
-
   // Canonical ACP application API. New code must use session/prompt names;
   // the methods below keep the previous Dart surface working for old builds.
   static Future<Map<String, dynamic>> newSession({
@@ -1237,30 +1193,6 @@ class AgentRuntimeService {
     final result = await _methodChannel.invokeMethod<dynamic>(method, args);
     return _normalizeMap(result) ?? <String, dynamic>{};
   }
-}
-
-class DshPlugin {
-  const DshPlugin({
-    required this.packageName,
-    required this.specifier,
-    required this.enabled,
-    this.id = '',
-    this.installedAt,
-  });
-
-  final String id;
-  final String packageName;
-  final String specifier;
-  final bool enabled;
-  final int? installedAt;
-
-  factory DshPlugin.fromMap(Map<dynamic, dynamic> map) => DshPlugin(
-    id: _stringOrNull(map['id']) ?? '',
-    packageName: _stringOrNull(map['packageName']) ?? '',
-    specifier: _stringOrNull(map['specifier']) ?? '',
-    enabled: map['enabled'] != false,
-    installedAt: _intOrNull(map['installedAt']),
-  );
 }
 
 Map<String, dynamic>? _normalizeMap(dynamic value) {

@@ -339,21 +339,6 @@ class AgentRuntimeManager private constructor(
         if (method == "agent/config/write") {
             return writeAgentConfig(canonicalArgs)
         }
-        if (method == "agent/plugin/list") {
-            return listDeepSeekHarnessPlugins()
-        }
-        if (method == "agent/plugin/install") {
-            return installDeepSeekHarnessPlugin(canonicalArgs)
-        }
-        if (method == "agent/plugin/remove") {
-            return removeDeepSeekHarnessPlugin(canonicalArgs)
-        }
-        if (method == "agent/plugin/set-enabled") {
-            return setDeepSeekHarnessPluginEnabled(canonicalArgs)
-        }
-        if (method == "agent/plugin/reload") {
-            return reloadDeepSeekHarnessPlugins(canonicalArgs)
-        }
         if (method.startsWith("agent/")) {
             return localAcpRuntime.handleMethod(method, canonicalArgs)
         }
@@ -449,167 +434,6 @@ class AgentRuntimeManager private constructor(
             "respondToServerRequest" -> respondToServerRequest(args)
             else -> request(method, args)
         }
-    }
-
-    private fun requireDeepSeekHarnessSelected() {
-        require(
-            acpAgentProfileStore.selected().id == AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID
-        ) {
-            "DSH plugin management requires DeepSeek Harness to be selected."
-        }
-    }
-
-    private suspend fun readDeepSeekHarnessPluginRecords(): List<DshPluginRecord> {
-        return DshPluginManager.parse(
-            readTerminalTextFile(
-                path = DshPluginManager.MANIFEST_PATH,
-                executorKey = "deepseek-harness-plugin-manifest-read"
-            )
-        )
-    }
-
-    private suspend fun writeDeepSeekHarnessPluginRecords(records: List<DshPluginRecord>) {
-        writeTerminalTextFile(
-            path = DshPluginManager.MANIFEST_PATH,
-            content = DshPluginManager.encode(records),
-            executorKey = "deepseek-harness-plugin-manifest-write"
-        )
-    }
-
-    private suspend fun listDeepSeekHarnessPlugins(): Map<String, Any?> {
-        requireDeepSeekHarnessSelected()
-        val records = readDeepSeekHarnessPluginRecords()
-        return deepSeekHarnessPluginPayload(records)
-    }
-
-    private fun deepSeekHarnessPluginPayload(
-        records: List<DshPluginRecord>
-    ): Map<String, Any?> = mapOf(
-        "agentId" to AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID,
-        "profilePath" to DshPluginManager.PROFILE_PATH,
-        "plugins" to records.map(DshPluginManager::toPayload)
-    )
-
-    private fun deepSeekHarnessPluginPayload(
-        records: List<DshPluginRecord>,
-        vararg fields: Pair<String, Any?>
-    ): Map<String, Any?> = deepSeekHarnessPluginPayload(records) + fields.toMap()
-
-    private suspend fun installDeepSeekHarnessPlugin(args: Map<String, Any?>): Map<String, Any?> {
-        requireDeepSeekHarnessSelected()
-        require(activeTurnsByThreadId.isEmpty() && pendingTurnThreads.isEmpty()) {
-            "Stop the active DSH turn before installing a plugin."
-        }
-        val specifier = DshPluginManager.normalizeSpecifier(
-            args.stringValue("specifier")
-                ?: args.stringValue("package")
-                ?: throw IllegalArgumentException("Plugin package is required.")
-        )
-        val packageName = DshPluginManager.packageName(specifier)
-        val previous = readDeepSeekHarnessPluginRecords()
-        val previousRecord = previous.firstOrNull { it.packageName == packageName }
-        val result = TerminalManager.getInstance(appContext).executeHiddenCommand(
-            command = "export PATH=\"/root/.npm-global/bin:${'$'}PATH\"; " +
-                DshPluginManager.installCommand(specifier),
-            executorKey = "deepseek-harness-plugin-install-${packageName.hashCode()}",
-            timeoutMs = MANAGED_ACP_INSTALL_TIMEOUT_MS
-        )
-        if (!result.isOk || result.exitCode != 0) {
-            throw IllegalStateException(
-                result.output.trim().ifBlank {
-                    result.rawOutputPreview.trim().ifBlank {
-                        result.error.trim().ifBlank { "DSH plugin installation failed." }
-                    }
-                }.takeLast(2_000)
-            )
-        }
-        val next = previous.filterNot { it.packageName == packageName } + DshPluginRecord(
-            id = DshPluginManager.pluginId(packageName),
-            packageName = packageName,
-            specifier = specifier,
-            enabled = previousRecord?.enabled ?: true,
-            installedAt = System.currentTimeMillis()
-        )
-        runCatching { writeDeepSeekHarnessPluginRecords(next) }.getOrElse { error ->
-            // The npm install is recoverable; remove the package if the host
-            // manifest cannot be published, so DSH never sees an untracked
-            // extension on the next boot.
-            runCatching {
-                TerminalManager.getInstance(appContext).executeHiddenCommand(
-                    command = DshPluginManager.uninstallCommand(packageName),
-                    executorKey = "deepseek-harness-plugin-install-rollback-${packageName.hashCode()}",
-                    timeoutMs = 120_000L
-                )
-            }
-            throw error
-        }
-        // Plugin installation is a profile mutation, not an ACP lifecycle
-        // mutation. Keep the current session alive and let the next DSH
-        // start/reload consume the new manifest. Closing ACP from inside this
-        // platform call races Flutter route deactivation and can leave an
-        // InheritedElement with live dependents.
-        return deepSeekHarnessPluginPayload(next,
-            "installed" to packageName,
-            "restartRequired" to true
-        )
-    }
-
-    private suspend fun removeDeepSeekHarnessPlugin(args: Map<String, Any?>): Map<String, Any?> {
-        requireDeepSeekHarnessSelected()
-        require(activeTurnsByThreadId.isEmpty() && pendingTurnThreads.isEmpty()) {
-            "Stop the active DSH turn before removing a plugin."
-        }
-        val packageName = args.stringValue("packageName")
-            ?: args.stringValue("package")
-            ?: throw IllegalArgumentException("Plugin package is required.")
-        val records = readDeepSeekHarnessPluginRecords()
-        if (records.none { it.packageName == packageName }) {
-            throw IllegalArgumentException("DSH plugin is not managed by OmniBot: $packageName")
-        }
-        val result = TerminalManager.getInstance(appContext).executeHiddenCommand(
-            command = "export PATH=\"/root/.npm-global/bin:${'$'}PATH\"; " +
-                DshPluginManager.uninstallCommand(packageName),
-            executorKey = "deepseek-harness-plugin-remove-${packageName.hashCode()}",
-            timeoutMs = 120_000L
-        )
-        if (!result.isOk || result.exitCode != 0) {
-            throw IllegalStateException(
-                result.output.trim().ifBlank { result.error.trim().ifBlank { "DSH plugin removal failed." } }
-            )
-        }
-        writeDeepSeekHarnessPluginRecords(records.filterNot { it.packageName == packageName })
-        return deepSeekHarnessPluginPayload(records.filterNot { it.packageName == packageName },
-            "removed" to packageName,
-            "restartRequired" to true
-        )
-    }
-
-    private suspend fun setDeepSeekHarnessPluginEnabled(args: Map<String, Any?>): Map<String, Any?> {
-        requireDeepSeekHarnessSelected()
-        val packageName = args.stringValue("packageName")
-            ?: args.stringValue("package")
-            ?: throw IllegalArgumentException("Plugin package is required.")
-        val enabled = args["enabled"] as? Boolean
-            ?: throw IllegalArgumentException("enabled is required.")
-        val records = readDeepSeekHarnessPluginRecords()
-        require(records.any { it.packageName == packageName }) {
-            "DSH plugin is not managed by OmniBot: $packageName"
-        }
-        val next = records.map { record ->
-            if (record.packageName == packageName) record.copy(enabled = enabled) else record
-        }
-        writeDeepSeekHarnessPluginRecords(next)
-        return deepSeekHarnessPluginPayload(next, "restartRequired" to true)
-    }
-
-    private suspend fun reloadDeepSeekHarnessPlugins(args: Map<String, Any?>): Map<String, Any?> {
-        requireDeepSeekHarnessSelected()
-        localAcpRuntime.disconnect()
-        clearActiveTurns()
-        if (args["reconnect"] == true) {
-            connectLocalAcp()
-        }
-        return listDeepSeekHarnessPlugins() + mapOf("reloaded" to true)
     }
 
     private suspend fun startRemoteAcpSession(
@@ -1480,11 +1304,6 @@ class AgentRuntimeManager private constructor(
             ""
         }
         val deepSeekConfig = parseDeepSeekHarnessConfig(existingDeepSeekConfig)
-        val deepSeekPlugins = if (officialDeepSeek) {
-            readDeepSeekHarnessPluginRecords()
-        } else {
-            emptyList()
-        }
         val resolvedModel = resolveAcpLaunchModel(
             providerModelIds = providerModelIds,
             boundModel = boundModel
@@ -1557,7 +1376,7 @@ class AgentRuntimeManager private constructor(
                 if (officialDeepSeek) {
                     writeTerminalTextFile(
                         path = DEEPSEEK_HARNESS_CORDIS_PATH,
-                        content = buildDeepSeekHarnessCordisConfig(deepSeekPlugins),
+                        content = buildDeepSeekHarnessCordisConfig(),
                         executorKey = "deepseek-harness-cordis-write"
                     )
                 }
@@ -1704,7 +1523,15 @@ class AgentRuntimeManager private constructor(
         val adapterHealthy = runtime.managedAdapterHealthCommand
             ?.let { isTerminalShellCommandSuccessful(it) }
             ?: true
-        if (commandAvailable && allPackagesReady && adapterHealthy) {
+        // DSH is intentionally tracked by the moving official `next` tag.
+        // Re-run the complete official install on each DSH start so a device
+        // that already has an older Harness revision is upgraded before the
+        // static mobile composition mounts it.
+        val refreshOfficialDeepSeekHarness =
+            profile.id == AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID
+        if (commandAvailable && allPackagesReady && adapterHealthy &&
+            !refreshOfficialDeepSeekHarness
+        ) {
             return
         }
         if (!isTerminalCommandAvailable("npm")) {
@@ -2800,6 +2627,10 @@ internal data class DeepSeekHarnessConfig(
             "max" -> "high"
             else -> reasoningEffort
         },
+        // The active mobile route is DSH's official generic pi-ai adapter. It
+        // supports DSH's full effort vocabulary, so do not collapse `max` to
+        // `high` on this route.
+        "DSH_PI_AI_REASONING_EFFORT" to reasoningEffort,
         "DSH_THINKING" to if (reasoningEffort == "off") "disabled" else "enabled",
         "DSH_PERMISSION_MODE" to permissionMode,
         "DSH_ACP_HOME" to DEEPSEEK_HARNESS_PERSISTENCE_HOME,
@@ -2947,39 +2778,7 @@ internal fun buildOpenCodeConfigJson(
  * This keeps DSH native while avoiding a private mobile protocol or a plugin
  * tree that can never become ready on the phone.
  */
-internal fun buildDeepSeekHarnessCordisConfig(
-    userPlugins: List<DshPluginRecord> = emptyList()
-): String {
-    val officialPackageNames = setOf(
-        "@deepseek-ai/dsh-llm-deepseek",
-        "@deepseek-ai/dsh-llm-pi-ai",
-        "@deepseek-ai/dsh-subprocess-local",
-        "@deepseek-ai/dsh-user-approval",
-        "@deepseek-ai/dsh-acp-demo",
-        "@deepseek-ai/dsh-token-meter",
-        "@deepseek-ai/dsh-compaction-basic",
-        "@deepseek-ai/dsh-session-projection",
-        "@deepseek-ai/dsh-subagent",
-        "@deepseek-ai/dsh-subagent-spawn-in-process",
-        "@deepseek-ai/dsh-subagent-fork-in-process",
-        "@deepseek-ai/dsh-tool-subagent-control",
-        "@deepseek-ai/dsh-tool-subagent-control/list-agents",
-        "@deepseek-ai/dsh-tool-subagent-report",
-        "@deepseek-ai/dsh-tool-subagent",
-        "@deepseek-ai/dsh-workflow-worker-thread",
-        "@deepseek-ai/dsh-tool-workflow",
-        "@deepseek-ai/dsh-tool-ralph",
-        "@deepseek-ai/dsh-tool-todo",
-        "@deepseek-ai/dsh-repeat-tool-reminder",
-        "@deepseek-ai/dsh-sandbox-policy",
-        "@deepseek-ai/dsh-fs-sandbox",
-        "@deepseek-ai/dsh-fs-observation-policy",
-        "@deepseek-ai/dsh-tool-fs",
-        "@deepseek-ai/dsh-skill",
-        "@deepseek-ai/dsh-skill-filesystem",
-        "@deepseek-ai/dsh-tool-skill",
-        "@deepseek-ai/dsh-mcp-client"
-    )
+internal fun buildDeepSeekHarnessCordisConfig(): String {
     return """
     - id: llm-deepseek
       name: '@deepseek-ai/dsh-llm-deepseek'
@@ -2999,8 +2798,17 @@ internal fun buildDeepSeekHarnessCordisConfig(
             apiKeyEnv: DEEPSEEK_API_KEY
             api: openai-completions
             baseURL: !!js process.env.DEEPSEEK_BASE_URL
+            compat:
+              thinkingFormat: deepseek
+              supportsReasoningEffort: true
+              requiresReasoningContentOnAssistantMessages: true
+            reasoning: !!js "process.env.DSH_PI_AI_REASONING_EFFORT ?? 'max'"
             models:
               - id: !!js "process.env.DSH_MODEL"
+                reasoningEfforts:
+                  off:
+                  high: high
+                  max: max
             defaultContextWindow: 128000
             defaultMaxTokens: 8192
 
@@ -3019,14 +2827,12 @@ internal fun buildDeepSeekHarnessCordisConfig(
         model: !!js process.env.DSH_MODEL
         persistenceRoot: !!js "(process.env.DSH_ACP_HOME ?? '/root/.dsh/omnibot-acp-clean') + '/sessions'"
         persistenceCompression: !!js "process.env.DSH_PERSISTENCE_COMPRESSION ?? 'zstd'"
-        # Keep the official Harness defaults for workspace context, skills,
-        # jobs, goals, and tool transport. The host does not disable them.
+        # Keep the official Harness defaults for workspace context, jobs,
+        # goals, and tool transport. The host does not disable them.
         workspaceContext:
           maxBytes: 65536
         persona: |
           You are a coding assistant powered by the {{model}} model. Your working directory is {{cwd}}. On Android, use the official MCP tools and the read/write/edit filesystem tools; a desktop bash sandbox is not available in this mobile runtime.
-
-          Reusable extensions are official DSH skills, not OmniBot private plugins. When the user asks you to create a skill/plugin, use the official write tool to create {{cwd}}/.dsh/skills/<kebab-case-name>/SKILL.md with YAML frontmatter containing name and description, then use the official skill tool with the exact name to load and verify it. Do not use an OmniBot plugin-project API or invent another extension protocol.
 
           Verify your work by running the code or tests. Keep answers brief and factual.
 
@@ -3122,26 +2928,15 @@ internal fun buildDeepSeekHarnessCordisConfig(
     - id: tool-fs
       name: '@deepseek-ai/dsh-tool-fs'
 
-    # Official DSH reusable-extension surface. Skills are discovered from
-    # the DSH workspace and user roots, then exposed through the native
-    # `skill` tool; no OmniBot plugin-project schema is injected into DSH.
-    - id: skills
-      name: '@deepseek-ai/dsh-skill'
+    # Official self-referential Cordis composition. The host runner owns the
+    # live dynamic registry; the tool package exposes the model-facing
+    # cordis_inspect/define/run/stop/undefine tools. This is the same opt-in
+    # composition used by the official ACP Cordis example.
+    - id: cordis-host-runner
+      name: '@deepseek-ai/dsh-cordis-host-runner'
 
-    - id: skills-filesystem
-      name: '@deepseek-ai/dsh-skill-filesystem'
-      config:
-        dshHome: !!js process.env.DSH_HOME
-        # Android/proot filesystems do not reliably deliver native watcher events.
-        # Keep the official provider, but use its polling watcher so a newly
-        # written DSH skill is visible to the next ACP step.
-        watchUsePolling: true
-        watchPollIntervalMs: 250
-
-    - id: tool-skill
-      name: '@deepseek-ai/dsh-tool-skill'
-
-${DshPluginManager.cordisEntries(userPlugins, officialPackageNames)}
+    - id: tool-cordis
+      name: '@deepseek-ai/dsh-tool-cordis'
 
     - id: mcp-omnibot
       name: '@deepseek-ai/dsh-mcp-client'

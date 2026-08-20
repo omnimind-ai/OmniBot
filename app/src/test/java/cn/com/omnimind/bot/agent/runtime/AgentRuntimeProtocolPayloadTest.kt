@@ -157,7 +157,7 @@ class AgentRuntimeProtocolPayloadTest {
             deepSeek.arguments
         )
         val deepSeekRuntime = AcpAgentProfileStore.officialRuntime(deepSeek)
-        assertEquals("node", deepSeekRuntime?.discoveryCommand)
+        assertEquals("dsh", deepSeekRuntime?.discoveryCommand)
         assertTrue(
             deepSeekRuntime?.managedAdapterPackages.orEmpty().contains(
                 "@deepseek-ai/dsh-acp-demo@next"
@@ -165,64 +165,10 @@ class AgentRuntimeProtocolPayloadTest {
         )
         assertTrue(
             deepSeekRuntime?.managedAdapterPackages.orEmpty().contains(
-                "@deepseek-ai/dsh-llm-deepseek@next"
+                "@deepseek-ai/dsh@next"
             )
         )
-        assertTrue(
-            deepSeekRuntime?.managedAdapterPackages.orEmpty().contains(
-                "@deepseek-ai/dsh-llm-pi-ai@next"
-            )
-        )
-        assertTrue(
-            deepSeekRuntime?.managedAdapterPackages.orEmpty().contains(
-                "@deepseek-ai/dsh-mcp-client@next"
-            )
-        )
-        assertTrue(
-            deepSeekRuntime?.managedAdapterPackages.orEmpty().contains(
-                "@deepseek-ai/dsh-sandbox-policy@next"
-            )
-        )
-        assertTrue(
-            deepSeekRuntime?.managedAdapterPackages.orEmpty().contains(
-                "@deepseek-ai/dsh-fs-sandbox@next"
-            )
-        )
-        assertTrue(
-            deepSeekRuntime?.managedAdapterPackages.orEmpty().contains(
-                "@deepseek-ai/dsh-fs-observation-policy@next"
-            )
-        )
-        assertTrue(
-            deepSeekRuntime?.managedAdapterPackages.orEmpty().contains(
-                "@deepseek-ai/dsh-compaction-basic@next"
-            )
-        )
-        assertTrue(
-            deepSeekRuntime?.managedAdapterPackages.orEmpty().contains(
-                "@deepseek-ai/dsh-tool-fs@next"
-            )
-        )
-        assertTrue(
-            deepSeekRuntime?.managedAdapterPackages.orEmpty().contains(
-                "@deepseek-ai/dsh-skill@next"
-            )
-        )
-        assertTrue(
-            deepSeekRuntime?.managedAdapterPackages.orEmpty().contains(
-                "@deepseek-ai/dsh-skill-filesystem@next"
-            )
-        )
-        assertTrue(
-            deepSeekRuntime?.managedAdapterPackages.orEmpty().contains(
-                "@deepseek-ai/dsh-tool-skill@next"
-            )
-        )
-        assertTrue(
-            deepSeekRuntime?.managedAdapterPackages.orEmpty().contains(
-                "@deepseek-ai/dsh-tool-subagent@next"
-            )
-        )
+        assertEquals(2, deepSeekRuntime?.managedAdapterPackages?.size)
         assertTrue(
             deepSeekRuntime?.managedAdapterPackages.orEmpty()
                 .all { it.endsWith("@next") }
@@ -305,9 +251,14 @@ class AgentRuntimeProtocolPayloadTest {
         assertEquals("https://gateway.example/v1", restored.toEnvironment()["DEEPSEEK_BASE_URL"])
         assertEquals("deepseek-custom", restored.toEnvironment()["DSH_MODEL"])
         assertEquals("high", restored.toEnvironment()["DSH_REASONING_EFFORT"])
+        assertEquals("high", restored.toEnvironment()["DSH_PI_AI_REASONING_EFFORT"])
         assertEquals(
             "high",
             DeepSeekHarnessConfig(reasoningEffort = "max").toEnvironment()["DSH_REASONING_EFFORT"]
+        )
+        assertEquals(
+            "max",
+            DeepSeekHarnessConfig(reasoningEffort = "max").toEnvironment()["DSH_PI_AI_REASONING_EFFORT"]
         )
         assertEquals(
             "enabled",
@@ -432,12 +383,10 @@ class AgentRuntimeProtocolPayloadTest {
         assertTrue(config.contains("name: '@deepseek-ai/dsh-fs-observation-policy'"))
         assertTrue(config.contains("name: '@deepseek-ai/dsh-compaction-basic'"))
         assertTrue(config.contains("name: '@deepseek-ai/dsh-tool-fs'"))
-        assertTrue(config.contains("name: '@deepseek-ai/dsh-skill'"))
-        assertTrue(config.contains("name: '@deepseek-ai/dsh-skill-filesystem'"))
-        assertTrue(config.contains("name: '@deepseek-ai/dsh-tool-skill'"))
-        assertTrue(config.contains("dshHome: !!js process.env.DSH_HOME"))
-        assertTrue(config.contains("watchUsePolling: true"))
-        assertTrue(config.contains("watchPollIntervalMs: 250"))
+        assertTrue(config.contains("name: '@deepseek-ai/dsh-cordis-host-runner'"))
+        assertTrue(config.contains("name: '@deepseek-ai/dsh-tool-cordis'"))
+        assertFalse(config.contains("name: '@deepseek-ai/dsh-skill'"))
+        assertFalse(config.contains("name: '@deepseek-ai/dsh-tool-skill'"))
         assertTrue(config.contains("name: '@deepseek-ai/dsh-tool-subagent'"))
         assertTrue(config.contains("name: '@deepseek-ai/dsh-tool-workflow'"))
         assertTrue(config.contains("serverName: omnibot"))
@@ -445,6 +394,10 @@ class AgentRuntimeProtocolPayloadTest {
         assertTrue(config.contains("apiKeyEnv: DEEPSEEK_API_KEY"))
         assertTrue(config.contains("api: openai-completions"))
         assertTrue(config.contains("baseURL: !!js process.env.DEEPSEEK_BASE_URL"))
+        assertTrue(config.contains("thinkingFormat: deepseek"))
+        assertTrue(config.contains("supportsReasoningEffort: true"))
+        assertTrue(config.contains("requiresReasoningContentOnAssistantMessages: true"))
+        assertTrue(config.contains("reasoningEfforts:"))
         assertTrue(config.contains("id: !!js \"process.env.DSH_MODEL\""))
         assertTrue(config.contains("process.env.OMNIBOT_MCP_URL"))
         assertTrue(config.contains("process.env.OMNIBOT_MCP_TOKEN"))
@@ -458,10 +411,9 @@ class AgentRuntimeProtocolPayloadTest {
         assertTrue(config.contains("maxBytes: 65536"))
         assertTrue(config.contains("process.env.DSH_MODEL"))
         assertTrue(config.contains("process.env.DSH_REASONING_EFFORT"))
+        assertTrue(config.contains("process.env.DSH_PI_AI_REASONING_EFFORT"))
         assertTrue(config.contains("process.env.DSH_PERMISSION_MODE"))
-        assertTrue(config.contains("official DSH skills"))
-        assertTrue(config.contains("official write tool"))
-        assertTrue(config.contains("official skill tool"))
+        assertTrue(config.contains("Verify your work by running the code or tests."))
         assertFalse(config.contains("pluginProjectSchema"))
         assertTrue(config.contains("policy: !!js"))
         assertFalse(config.contains("name: '@deepseek-ai/dsh-bash-sandbox'"))

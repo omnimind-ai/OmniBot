@@ -225,8 +225,8 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
         (agent.status == 'unchecked' || agent.status == 'missing')) {
       showToast(
         _text(
-          '首次检测会自动准备 ACP 适配器；也可在终端环境页统一安装，下载可能需要一些时间。',
-          'The first check prepares the ACP adapter. You can also install it from Terminal Environment; the download may take a moment.',
+          '首次点击会自动安装完整的官方 DeepSeek Harness；也可在终端环境页统一安装，下载可能需要一些时间。',
+          'The first click installs the complete official DeepSeek Harness. You can also install it from Terminal Environment; the download may take a moment.',
         ),
       );
     }
@@ -615,11 +615,14 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
         (agent.status == 'unchecked' || agent.status == 'missing') &&
         (agent.lastCheckError?.contains('will be prepared') == true ||
             agent.status == 'missing');
-    final testLabel = needsManagedPreparation
-        ? _text('准备并初始化', 'Prepare & initialize')
-        : agent.status == 'unchecked'
-        ? _text('检测', 'Check')
-        : _text('重新检测', 'Check again');
+    final isDeepSeekHarness = agent.id == 'deepseek-harness-acp';
+    final testLabel = needsManagedPreparation && isDeepSeekHarness
+        ? _text('安装官方 Harness', 'Install official Harness')
+        : needsManagedPreparation
+            ? _text('准备并初始化', 'Prepare & initialize')
+            : agent.status == 'unchecked'
+                ? _text('检测', 'Check')
+                : _text('重新检测', 'Check again');
     final installEntry = agent.managedAdapter && agent.status != 'online';
     return _FlatTile(
       tileKey: Key('agent-config-${agent.id}'),

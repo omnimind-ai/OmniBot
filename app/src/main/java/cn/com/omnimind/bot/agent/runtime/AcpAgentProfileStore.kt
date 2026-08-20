@@ -71,46 +71,12 @@ internal data class AcpOfficialRuntime(
 
 internal const val DEEPSEEK_HARNESS_NPM_CHANNEL = "next"
 internal val DEEPSEEK_HARNESS_NPM_PACKAGE_NAMES = listOf(
-    // Install the complete official DSH CLI at runtime. The APK only carries
-    // the installer and ACP bridge; the full Harness remains user-managed in
-    // the terminal environment and provides `dsh plugin`/profile support.
+    // Install the official Harness product package instead of maintaining a
+    // second hand-written list of every transitive DSH plugin. `@deepseek-ai/dsh` owns the
+    // complete CLI/profile/bundle graph; the ACP demo is the official stdio
+    // surface used by this app's ACP bridge.
     "@deepseek-ai/dsh",
     "@deepseek-ai/dsh-acp-demo",
-    "@deepseek-ai/dsh-llm-deepseek",
-    "@deepseek-ai/dsh-llm-pi-ai",
-    "@deepseek-ai/dsh-subprocess-local",
-    "@deepseek-ai/dsh-user-approval",
-    "@deepseek-ai/dsh-mcp-client",
-    "@deepseek-ai/dsh-fs",
-    // Official mobile-safe filesystem stack. dsh-fs-sandbox is the
-    // in-process workspace fence; dsh-sandbox-policy owns the shared policy
-    // vocabulary and dsh-fs-observation-policy owns read-before-write/edit.
-    "@deepseek-ai/dsh-sandbox-policy",
-    "@deepseek-ai/dsh-fs-sandbox",
-    "@deepseek-ai/dsh-fs-observation-policy",
-    // Official ACP example composition: preserve the Harness capability
-    // surface instead of shipping a reduced host-owned tool loop.
-    "@deepseek-ai/dsh-token-meter",
-    "@deepseek-ai/dsh-compaction-basic",
-    "@deepseek-ai/dsh-session-projection",
-    "@deepseek-ai/dsh-subagent",
-    "@deepseek-ai/dsh-subagent-spawn-in-process",
-    "@deepseek-ai/dsh-subagent-fork-in-process",
-    "@deepseek-ai/dsh-tool-subagent-control",
-    "@deepseek-ai/dsh-tool-subagent-report",
-    "@deepseek-ai/dsh-tool-subagent",
-    "@deepseek-ai/dsh-workflow-worker-thread",
-    "@deepseek-ai/dsh-tool-workflow",
-    "@deepseek-ai/dsh-tool-ralph",
-    "@deepseek-ai/dsh-tool-todo",
-    "@deepseek-ai/dsh-repeat-tool-reminder",
-    "@deepseek-ai/dsh-tool-fs",
-    // Official Harness skill registry and filesystem-backed skill provider.
-    // These are DSH's native reusable-extension surface; they are not the
-    // app's private plugin-project protocol.
-    "@deepseek-ai/dsh-skill",
-    "@deepseek-ai/dsh-skill-filesystem",
-    "@deepseek-ai/dsh-tool-skill",
 )
 internal val DEEPSEEK_HARNESS_NPM_PACKAGE_SPECS =
     DEEPSEEK_HARNESS_NPM_PACKAGE_NAMES.map { packageName ->
@@ -509,7 +475,11 @@ internal class AcpAgentProfileStore(context: Context) {
                 managedAdapterPackage = "opencode-ai@latest"
             ),
             DEEPSEEK_HARNESS_AGENT_ID to AcpOfficialRuntime(
-                discoveryCommand = "node",
+                // The product package exposes the official `dsh` CLI.  The
+                // ACP bridge below still launches the official dsh-acp-demo
+                // entry point, because this app speaks ACP rather than the
+                // web/headless CLI protocol.
+                discoveryCommand = "dsh",
                 managedAdapterPackage = DEEPSEEK_HARNESS_NPM_PACKAGE_SPECS.first(),
                 managedAdapterPackages = DEEPSEEK_HARNESS_NPM_PACKAGE_SPECS,
                 requiresNativeBuildTools = true,

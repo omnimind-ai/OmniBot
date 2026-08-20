@@ -168,7 +168,7 @@ class EnvironmentSetupLogicTest {
         val npmInstall = commands.first { it.contains("install_deepseek_harness_packages") }
         assertTrue(npmInstall.contains("@deepseek-ai/dsh@next"))
         assertTrue(npmInstall.contains("@deepseek-ai/dsh-acp-demo@next"))
-        assertTrue(npmInstall.contains("@deepseek-ai/dsh-llm-deepseek@next"))
+        assertTrue(!npmInstall.contains("@deepseek-ai/dsh-llm-deepseek@next"))
         assertTrue(!npmInstall.contains("0.1.0-rc.6"))
         assertTrue(npmInstall.contains("omnibot-node-gyp-copy"))
         assertTrue(npmInstall.contains("exec /bin/ln"))
@@ -194,7 +194,7 @@ class EnvironmentSetupLogicTest {
         assertTrue(command.contains("command -v dsh-acp-demo"))
         assertTrue(command.contains("@deepseek-ai/dsh/package.json"))
         assertTrue(command.contains("@deepseek-ai/dsh-acp-demo/package.json"))
-        assertTrue(command.contains("@deepseek-ai/dsh-user-approval/package.json"))
+        assertTrue(!command.contains("@deepseek-ai/dsh-user-approval/package.json"))
         assertTrue(command.contains("node-pty"))
         assertTrue(command.contains("createRequire"))
         assertTrue(command.contains("node -p"))
