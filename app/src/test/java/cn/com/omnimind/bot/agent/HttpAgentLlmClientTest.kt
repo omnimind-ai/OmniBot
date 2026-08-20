@@ -558,7 +558,7 @@ class HttpAgentLlmClientTest {
     }
 
     @Test
-    fun `closed stream without completion signal fails instead of silently succeeding`() = runBlocking {
+    fun `closed stream with assistant payload completes without terminal marker`() = runBlocking {
         val scope = CoroutineScope(Job() + Dispatchers.Default)
         try {
             val client = HttpAgentLlmClient(
@@ -580,14 +580,9 @@ class HttpAgentLlmClientTest {
                 json = json
             )
 
-            val error = runCatching {
-                client.streamTurn(request = simpleRequest())
-            }.exceptionOrNull()
+            val turn = client.streamTurn(request = simpleRequest())
 
-            requireNotNull(error)
-            assertTrue(
-                error.message.orEmpty().contains("closed before completion signal")
-            )
+            assertEquals("还没输出完", turn.message.contentText())
         } finally {
             scope.cancel()
         }
