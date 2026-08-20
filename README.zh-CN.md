@@ -209,6 +209,15 @@ cd ..
 ./gradlew :app:installDevelopStandardDebug -Ptarget=lib/main_standard.dart
 ```
 
+真机验收可以使用仓库提供的 LLMTHU 安装入口。它默认启用 LLMTHU
+Provider，并从当前 shell 的 `LLMTHU_API_KEY` 读取密钥；未配置密钥时会直接
+失败，不会生成无效的验收包。普通 Release 和 CI 仍不会自动内置密钥。
+
+```bash
+export LLMTHU_API_KEY='你的密钥'
+./scripts/install_release_llmthu_device.sh
+```
+
 <h2 id="architecture">架构概览</h2>
 ```text
 OpenOmniBot/

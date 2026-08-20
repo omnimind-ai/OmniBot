@@ -212,6 +212,7 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   List<ModelProviderProfileSummary> _modelProviderProfiles = const [];
   Map<String, List<ProviderModelOption>> _modelOptionsByProfileId = const {};
   List<SceneCatalogItem> _sceneCatalog = const [];
+  int _chatModelCatalogRefreshSerial = 0;
   int _dispatchSceneModelSelectionSerial = 0;
   ConversationModelOverride? _conversationModelOverride;
   _ChatModelOverrideSelection? _pendingConversationModelOverride;

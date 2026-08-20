@@ -6,7 +6,6 @@ const String _kAgentCollaborationModePreferenceKey = 'collaboration_mode';
 const String _kAgentPreferenceStoragePrefix = 'chat_agent_command_preference';
 const String _kLegacyAgentPreferenceStoragePrefix =
     'chat_codex_command_preference';
-const String _kXiaowanAcpAgentId = 'xiaowan-acp';
 const String _kDeepSeekHarnessAgentId = 'deepseek-harness-acp';
 const Duration _remoteCodexExternalActiveGrace = Duration(seconds: 6);
 const List<String> _kAgentModelListResponseKeys = <String>[
@@ -33,17 +32,15 @@ Keep the file practical and avoid generic advice. If AGENTS.md already exists, p
 mixin _ChatPageAgentMixin on _ChatPageStateBase {
   bool _usesSharedProviderModel(String? agentId) {
     final normalizedAgentId = agentId?.trim() ?? '';
-    final agentKey = normalizedAgentId.startsWith('local-')
-        ? normalizedAgentId.substring('local-'.length)
-        : normalizedAgentId;
-    return switch (agentKey) {
-      _kXiaowanAcpAgentId ||
-      'codex-acp' ||
-      'claude-code-acp' ||
-      'opencode-acp' ||
-      _kDeepSeekHarnessAgentId => true,
-      _ => false,
-    };
+    if (normalizedAgentId.isEmpty ||
+        normalizedAgentId == _kRemoteCodexModeAgentId) {
+      return false;
+    }
+    // Every local ACP Agent consumes the app's configured Provider catalog.
+    // The Harness is an execution runtime, not a model authority. Keeping an
+    // allow-list here caused newly installed Harnesses (and legacy DSH IDs)
+    // to fall back to their own one-model catalog.
+    return true;
   }
 
   Future<List<String>> _loadSharedProviderModelIds() async {
@@ -79,24 +76,13 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       return const <String>[];
     }
 
-    // The normal chat model context already owns the complete Provider
-    // catalog. Keep it as the baseline and merge a fresh /models response on
-    // top so a partial/transient response cannot reduce the Agent picker to
-    // only the currently bound model.
+    // The normal chat model context already owns the Provider catalog. Keep
+    // this path cache-only: fetching /models here duplicated the normal chat
+    // refresh and made entering Agent mode wait on the same Provider again.
+    // The active Provider is refreshed by the shared chat model context.
     final providerOptions = <ProviderModelOption>[
       ...?_modelOptionsByProfileId[profile.id],
     ];
-    var freshOptions = const <ProviderModelOption>[];
-    try {
-      freshOptions = await ModelProviderConfigService.fetchModels(
-        profileId: profile.id,
-        providerName: profile.name,
-        capability: 'text',
-      );
-      providerOptions.addAll(freshOptions);
-    } catch (_) {
-      // Agent selection only accepts models verified by this Provider.
-    }
     final cachedOptions =
         await ModelProviderConfigService.getCachedFetchedModels(
           profileId: profile.id,
