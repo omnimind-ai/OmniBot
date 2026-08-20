@@ -196,12 +196,19 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       return;
     }
     // Agent selection may take several seconds while the ACP process starts.
-    // A new-chat/navigation request can arrive during that await. Do not let
-    // the old target captured below overwrite the newer conversation target
-    // when selection finally completes; that was the source of history and
-    // harness cross-talk after switching modes from the drawer.
-    final switchTargetRequestId = _conversationTargetRequestId;
+    // A user-initiated switch owns the next conversation lifecycle request:
+    // invalidate the bootstrap/old navigation request immediately, then use
+    // this same id when applying the new target. Previously we only captured
+    // the old id. Any still-running bootstrap could therefore make the switch
+    // look stale after the ACP process had already started, leaving the page
+    // on the old mode while the runtime had moved to the new Agent.
+    final switchTargetRequestId = _beginConversationTargetRequest();
     final selectsRemote = normalized == _kRemoteCodexModeAgentId;
+    if (!selectsRemote &&
+        _usesSharedProviderModel(normalized) &&
+        !await _ensureSharedProviderModelReadyForSwitch()) {
+      return;
+    }
     // A conversation binding describes which Agent owns the visible history;
     // it is not proof that the native ACP runtime is currently selected. On
     // restart the binding can still point at Xiaowan while the persisted ACP
@@ -236,7 +243,10 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       // while the ACP process is still switching.
       if (selected &&
           _isConversationTargetRequestCurrent(switchTargetRequestId)) {
-        await _applyConversationThreadTarget(target);
+        await _applyConversationThreadTarget(
+          target,
+          requestId: switchTargetRequestId,
+        );
       }
     } finally {
       if (mounted) {
@@ -253,6 +263,41 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       }
       return;
     }
+  }
+
+  /// A local ACP adapter is only an execution harness. Its Provider and model
+  /// come from the shared Agent scene binding. Check that binding before
+  /// stopping the currently visible harness; otherwise a missing Provider
+  /// model causes a needless process teardown followed by a rollback to the
+  /// previous Agent, which looks like a broken mode switch to the user.
+  Future<bool> _ensureSharedProviderModelReadyForSwitch() async {
+    if (_activeDispatchSceneSelection != null) {
+      return true;
+    }
+
+    try {
+      final catalog = await SceneModelConfigService.getSceneCatalog();
+      final dispatchScene = catalog
+          .where((item) => item.sceneId == 'scene.dispatch.model')
+          .firstOrNull;
+      final providerId = dispatchScene?.effectiveProviderProfileId.trim() ?? '';
+      final modelId = dispatchScene?.effectiveModel.trim() ?? '';
+      if (providerId.isNotEmpty && modelId.isNotEmpty) {
+        return true;
+      }
+    } catch (error) {
+      debugPrint('[Agent] failed to resolve shared Provider model: $error');
+    }
+
+    if (mounted) {
+      _showSnackBar(
+        LegacyTextLocalizer.isEnglish
+            ? 'Select a verified Provider model before switching Agent.'
+            : '请先选择已验证的 Provider 模型，再切换 Agent。',
+      );
+      GoRouterManager.push('/home/agent_mode_setting');
+    }
+    return false;
   }
 
   Future<void> _leaveAgentMode() async {
