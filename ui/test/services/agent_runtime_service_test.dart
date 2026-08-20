@@ -563,6 +563,20 @@ void main() {
     expect(model, 'DeepSeek-V4-Pro');
   });
 
+  test('Agent switch falls back to an existing persisted Provider binding', () {
+    final selection = resolveSharedAgentProviderSelection(
+      effectiveProviderProfileId: null,
+      effectiveModel: null,
+      boundProviderProfileId: 'debug-provider',
+      boundModel: 'GLM-5.1',
+    );
+
+    expect(selection, const <String, String>{
+      'providerProfileId': 'debug-provider',
+      'modelId': 'GLM-5.1',
+    });
+  });
+
   test('local Agent requests do not read a separate Codex API model', () {
     final model = selectAgentRequestModel(
       status: const AgentRuntimeStatus(

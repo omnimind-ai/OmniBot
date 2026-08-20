@@ -451,6 +451,44 @@ String? selectAgentRequestModel({
   );
 }
 
+/// Resolves the shared Agent Provider/model without throwing away a persisted
+/// binding when the scene catalog is temporarily empty or stale.
+///
+/// The catalog's effective fields are the preferred projection. The bound
+/// fields are the durable source of truth and are intentionally a fallback so
+/// switching Harnesses does not require the model catalog request to win a
+/// race with the ACP runtime startup.
+Map<String, String>? resolveSharedAgentProviderSelection({
+  required String? effectiveProviderProfileId,
+  required String? effectiveModel,
+  required String? boundProviderProfileId,
+  required String? boundModel,
+}) {
+  String? normalized(String? value) {
+    final result = value?.trim() ?? '';
+    return result.isEmpty ? null : result;
+  }
+
+  final effectiveProvider = normalized(effectiveProviderProfileId);
+  final effectiveModelId = normalized(effectiveModel);
+  if (effectiveProvider != null && effectiveModelId != null) {
+    return <String, String>{
+      'providerProfileId': effectiveProvider,
+      'modelId': effectiveModelId,
+    };
+  }
+
+  final boundProvider = normalized(boundProviderProfileId);
+  final boundModelId = normalized(boundModel);
+  if (boundProvider != null && boundModelId != null) {
+    return <String, String>{
+      'providerProfileId': boundProvider,
+      'modelId': boundModelId,
+    };
+  }
+  return null;
+}
+
 bool isCurrentAgentModelLoad({
   required int requestId,
   required int activeRequestId,

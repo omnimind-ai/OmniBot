@@ -292,13 +292,44 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     }
 
     try {
-      final catalog = await SceneModelConfigService.getSceneCatalog();
+      final results = await Future.wait<dynamic>([
+        SceneModelConfigService.getSceneCatalog(),
+        SceneModelConfigService.getSceneModelBindings(),
+      ]);
+      final catalog = results[0] as List<SceneCatalogItem>;
+      final bindings = results[1] as List<SceneModelBindingEntry>;
       final dispatchScene = catalog
           .where((item) => item.sceneId == 'scene.dispatch.model')
           .firstOrNull;
-      final providerId = dispatchScene?.effectiveProviderProfileId.trim() ?? '';
-      final modelId = dispatchScene?.effectiveModel.trim() ?? '';
-      if (providerId.isNotEmpty && modelId.isNotEmpty) {
+      final effectiveSelection = resolveSharedAgentProviderSelection(
+        effectiveProviderProfileId: dispatchScene?.effectiveProviderProfileId,
+        effectiveModel: dispatchScene?.effectiveModel,
+        boundProviderProfileId: null,
+        boundModel: null,
+      );
+      if (effectiveSelection != null) {
+        return true;
+      }
+      final persistedBinding = bindings
+          .where((item) => item.sceneId == 'scene.dispatch.model')
+          .firstOrNull;
+      final selection = resolveSharedAgentProviderSelection(
+        effectiveProviderProfileId: null,
+        effectiveModel: null,
+        boundProviderProfileId:
+            persistedBinding?.providerProfileId ??
+            dispatchScene?.boundProviderProfileId,
+        boundModel: persistedBinding?.modelId ?? dispatchScene?.overrideModel,
+      );
+      final providerId = selection?['providerProfileId'] ?? '';
+      final modelId = selection?['modelId'] ?? '';
+      final profiles = await ModelProviderConfigService.listProfiles();
+      final provider = profiles.profiles
+          .where((item) => item.id == providerId)
+          .firstOrNull;
+      if (providerId.isNotEmpty &&
+          modelId.isNotEmpty &&
+          provider?.configured == true) {
         return true;
       }
     } catch (error) {
