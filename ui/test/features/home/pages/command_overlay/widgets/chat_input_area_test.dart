@@ -961,6 +961,81 @@ void main() {
     expect(sendCount, 1);
   });
 
+  testWidgets('large composer enables send after text input', (tester) async {
+    var sendCount = 0;
+    final controller = TextEditingController();
+    final focusNode = FocusNode();
+    addTearDown(controller.dispose);
+    addTearDown(focusNode.dispose);
+
+    await tester.pumpWidget(
+      DefaultAssetBundle(
+        bundle: _TestAssetBundle(),
+        child: MaterialApp(
+          home: Scaffold(
+            body: ChatInputArea(
+              controller: controller,
+              focusNode: focusNode,
+              isProcessing: false,
+              onSendMessage: () => sendCount += 1,
+              onCancelTask: () {},
+              useLargeComposerStyle: true,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.enterText(find.byType(TextField), 'test command');
+    await tester.pump();
+
+    final sendButton = find.byKey(
+      const ValueKey('chat-input-send-or-stop-button'),
+    );
+    expect(tester.widget<IconButton>(sendButton).onPressed, isNotNull);
+
+    await tester.tap(sendButton);
+    await tester.pump();
+    expect(sendCount, 1);
+  });
+
+  testWidgets('large composer enables send after external draft restore', (
+    tester,
+  ) async {
+    final controller = TextEditingController();
+    final focusNode = FocusNode();
+    addTearDown(controller.dispose);
+    addTearDown(focusNode.dispose);
+
+    await tester.pumpWidget(
+      DefaultAssetBundle(
+        bundle: _TestAssetBundle(),
+        child: MaterialApp(
+          home: Scaffold(
+            body: ChatInputArea(
+              controller: controller,
+              focusNode: focusNode,
+              isProcessing: false,
+              onSendMessage: () {},
+              onCancelTask: () {},
+              useLargeComposerStyle: true,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    controller.value = const TextEditingValue(text: 'restored draft');
+    await tester.pump();
+
+    final sendButton = find.byKey(
+      const ValueKey('chat-input-send-or-stop-button'),
+    );
+    expect(tester.widget<IconButton>(sendButton).onPressed, isNotNull);
+  });
+
   testWidgets(
     'user message editing keeps only cancel and send composer actions',
     (tester) async {

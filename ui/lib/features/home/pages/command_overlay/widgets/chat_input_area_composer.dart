@@ -125,16 +125,24 @@ mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
 
   /// 构建输入框内容区域（按钮、文本框等）
   Widget _buildInputContent() {
-    return ValueListenableBuilder<ChatComposerState>(
-      valueListenable: _composerStateMachine,
-      builder: (context, composerState, _) {
-        final openClawButton = _buildOpenClawButton();
-        return Row(
-          children: [
-            Expanded(child: _buildTextField()),
-            const SizedBox(width: 9),
-            _buildAnimatedButtonRow(openClawButton: openClawButton),
-          ],
+    return AnimatedBuilder(
+      // Draft restoration and platform IME updates can change the controller
+      // without producing the expected composer-state transition. The
+      // controller is the source of truth for whether send is available.
+      animation: widget.controller,
+      builder: (context, _) {
+        return ValueListenableBuilder<ChatComposerState>(
+          valueListenable: _composerStateMachine,
+          builder: (context, composerState, _) {
+            final openClawButton = _buildOpenClawButton();
+            return Row(
+              children: [
+                Expanded(child: _buildTextField()),
+                const SizedBox(width: 9),
+                _buildAnimatedButtonRow(openClawButton: openClawButton),
+              ],
+            );
+          },
         );
       },
     );
@@ -367,6 +375,7 @@ mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
       isProcessing: widget.isProcessing,
       hasAttachments: widget.attachments.isNotEmpty,
       hasExternalPayload: widget.hasExternalSendPayload,
+      hasTextOverride: widget.controller.text.trim().isNotEmpty,
     );
     final canTap = action != ChatComposerPrimaryAction.disabled;
     final icon = action == ChatComposerPrimaryAction.cancel

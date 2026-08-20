@@ -4,6 +4,18 @@ import cn.com.omnimind.bot.agent.workspace.memory.LongTermMemoryIndex
 import cn.com.omnimind.bot.agent.workspace.memory.TurnMemoryLoadTracker
 import kotlinx.serialization.json.JsonObject
 
+/**
+ * Separate switches for the temporary clean Agent baseline.
+ *
+ * Keep local plugins available for first-party Function management while the
+ * optional inbound MCP listener remains isolated. The in-app Agent never
+ * routes through MCP; it uses the native capability catalog directly.
+ */
+object AgentRuntimeFeatureFlags {
+    const val ENABLE_PLUGIN_RUNTIME: Boolean = true
+    const val ENABLE_LOCAL_MCP_SERVER: Boolean = false
+}
+
 interface AgentExecutionEnvironment {
     val agentRunId: String
     val userMessage: String

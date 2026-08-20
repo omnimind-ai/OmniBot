@@ -11,6 +11,7 @@ import cn.com.omnimind.baselib.util.CredentialEndpointSecurity
 import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.agent.AgentPromptSettingsStore
 import cn.com.omnimind.bot.agent.AgentConversationHistoryRepository
+import cn.com.omnimind.bot.agent.AgentRuntimeFeatureFlags
 import cn.com.omnimind.bot.agent.AgentWorkspaceManager
 import cn.com.omnimind.bot.agent.SkillIndexService
 import cn.com.omnimind.bot.agent.WorkspaceMemoryRollupScheduler
@@ -130,7 +131,9 @@ class App : BaseApplication() {
         // Seed built-in skills before restoring enabled runtime-bundle plugins.
         // Both paths materialize files under the same skills directory; starting
         // plugin recovery first can race the seeder and leave the plugin disabled.
-        initializeOfficialPlugins()
+        if (AgentRuntimeFeatureFlags.ENABLE_PLUGIN_RUNTIME) {
+            initializeOfficialPlugins()
+        }
         runCatching {
             WorkspaceMemoryRollupScheduler(this).ensureScheduledIfEnabled()
         }
@@ -149,7 +152,13 @@ class App : BaseApplication() {
         // is recreated.  The server still binds on its IO scope, so startup is
         // not blocked, while the settings channel can synchronously finish the
         // same restore if the first state query wins the race.
-        McpServerManager.restoreIfEnabled(this)
+        if (AgentRuntimeFeatureFlags.ENABLE_LOCAL_MCP_SERVER) {
+            McpServerManager.restoreIfEnabled(this)
+        } else {
+            // Stop a previously persisted server so the clean baseline has no
+            // local MCP listener or background MCP work at all.
+            McpServerManager.stopServer()
+        }
         CoroutineScope(Dispatchers.IO).launch {
             runCatching {
                 EmbeddedTerminalRuntime.warmup(this@App)

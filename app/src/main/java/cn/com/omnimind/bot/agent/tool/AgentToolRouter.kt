@@ -3,7 +3,6 @@ package cn.com.omnimind.bot.agent
 import android.content.Context
 import cn.com.omnimind.bot.agent.tool.AgentCapabilityModule
 import cn.com.omnimind.bot.agent.tool.BuiltInAgentCapabilityModule
-import cn.com.omnimind.bot.agent.tool.handlers.McpToolHandler
 import cn.com.omnimind.bot.agent.tool.handlers.SharedHelper
 import cn.com.omnimind.bot.agent.tool.handlers.ToolHandler
 import cn.com.omnimind.bot.agent.tool.handlers.ToolSearchHandler
@@ -46,7 +45,6 @@ class AgentToolRouter(
         includeVlmTool = includeVlmTool,
     )
 
-    private val mcpFallback = McpToolHandler(helper)
     private val allHandlers: List<ToolHandler> =
         listOfNotNull(toolCatalog?.let { ToolSearchHandler(it, helper) }) +
             builtInCapabilities.handlers + capabilityModules.flatMap { it.handlers }
@@ -76,7 +74,10 @@ class AgentToolRouter(
         return if (handler != null) {
             handler.execute(toolCall, args, runtimeDescriptor, env, toolCallback, toolHandle)
         } else {
-            mcpFallback.execute(toolCall, args, runtimeDescriptor, env, toolCallback, toolHandle)
+            ToolExecutionResult.Error(
+                toolName,
+                "Unknown native capability: $toolName. Use tools_search to discover installed local capabilities."
+            )
         }
     }
 

@@ -128,7 +128,7 @@ class HttpAgentLlmClient(
                 )
         }
     },
-    private val streamIdleWatchdogMs: Long = 0L,
+    private val streamIdleWatchdogMs: Long = DEFAULT_STREAM_IDLE_WATCHDOG_MS,
     private val maxTransientStreamRetries: Int = 2,
     private val transientStreamRetryDelayMs: Long = 750L,
     private val json: Json = Json {
@@ -163,6 +163,8 @@ class HttpAgentLlmClient(
         // before the vision model is called. A vision turn only needs the current
         // image question; subsequent text turns still use the normal agent context.
         const val PLATFORM_VISION_MAX_COMPLETION_TOKENS = 1_024
+        const val DEFAULT_STREAM_IDLE_WATCHDOG_MS = 45_000L
+        const val PAYLOAD_STREAM_IDLE_WATCHDOG_MS = 15_000L
     }
 
     internal data class StreamRequestVariant(
@@ -471,7 +473,14 @@ class HttpAgentLlmClient(
         }
 
         fun scheduleWatchdog() {
-            val timeoutMs = streamIdleWatchdogMs
+            val timeoutMs = when {
+                streamIdleWatchdogMs <= 0L -> 0L
+                accumulator.hasAssistantPayload() -> minOf(
+                    streamIdleWatchdogMs,
+                    PAYLOAD_STREAM_IDLE_WATCHDOG_MS
+                )
+                else -> streamIdleWatchdogMs
+            }
             if (timeoutMs <= 0L) {
                 return
             }

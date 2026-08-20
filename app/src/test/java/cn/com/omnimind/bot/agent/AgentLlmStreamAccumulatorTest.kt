@@ -129,6 +129,18 @@ class AgentLlmStreamAccumulatorTest {
     }
 
     @Test
+    fun `finalizes content when provider closes without a terminal marker`() {
+        val accumulator = AgentLlmStreamAccumulator(json = json)
+
+        accumulator.consume(
+            """{"choices":[{"delta":{"content":"网关已返回完整答案"}}]}"""
+        )
+
+        assertTrue(accumulator.canFinalizeOnClosed())
+        assertEquals("网关已返回完整答案", accumulator.buildTurn().message.contentText())
+    }
+
+    @Test
     fun `can retain reasoning content on assistant message for deepseek tool rounds`() {
         val accumulator = AgentLlmStreamAccumulator(
             json = json,

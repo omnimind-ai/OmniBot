@@ -198,6 +198,7 @@ extension _ChatInputActionSupport on _ChatInputAreaStateBase {
       isProcessing: widget.isProcessing,
       hasAttachments: widget.attachments.isNotEmpty,
       hasExternalPayload: widget.hasExternalSendPayload,
+      hasTextOverride: widget.controller.text.trim().isNotEmpty,
       supportsAttachmentFallback:
           widget.useAttachmentPickerForPlus && widget.onPickAttachment != null,
     );

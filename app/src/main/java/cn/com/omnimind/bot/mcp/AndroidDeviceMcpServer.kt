@@ -387,7 +387,6 @@ internal object AndroidDeviceMcpServer {
         private val terminalDistribution = TerminalDistribution.selected()
         private val catalog = AgentToolRegistry(
             context = appContext,
-            discoveredServers = emptyList(),
             conversationMode = cn.com.omnimind.bot.agent.AgentConversationModePolicy.NORMAL_MODE,
             terminalDistribution = terminalDistribution,
             includeVlmTool = false,

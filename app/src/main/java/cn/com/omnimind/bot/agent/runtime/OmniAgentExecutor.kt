@@ -7,7 +7,6 @@ import cn.com.omnimind.baselib.llm.ChatCompletionMessage
 import cn.com.omnimind.bot.agent.workspace.memory.LongTermMemoryIndex
 import cn.com.omnimind.bot.agent.workspace.memory.TurnMemoryLoadTracker
 import cn.com.omnimind.bot.agent.tool.AgentToolHandlerModule
-import cn.com.omnimind.bot.mcp.RemoteMcpDiscoveryRegistry
 import cn.com.omnimind.bot.plugin.OmniPluginHost
 import cn.com.omnimind.bot.plugin.OmniPluginSession
 import com.rk.terminal.runtime.TerminalDistribution
@@ -39,6 +38,11 @@ class OmniAgentExecutor(
     )
 
     companion object {
+        /**
+         * Keep a clean native-tool baseline while MCP/plugin discovery is
+         * being measured. The capability implementations remain installed;
+         * this switch only prevents them from entering a normal Agent turn.
+         */
         private const val EPHEMERAL_CACHE_TYPE = "ephemeral"
         internal const val TIME_CONTEXT_MIN_REFRESH_MILLIS = 60 * 60 * 1000L
         private val timeContextCacheLock = Any()
@@ -212,15 +216,17 @@ class OmniAgentExecutor(
             // skills_read and become replayable tool results instead of a volatile
             // leading message that invalidates the full conversation prefix.
             val resolvedSkills = emptyList<ResolvedSkillContext>()
-            val discoveredServers = RemoteMcpDiscoveryRegistry.discoverEnabledServers()
-            val activePluginSession = OmniPluginHost.get(context).openSession()
+            val activePluginSession = if (AgentRuntimeFeatureFlags.ENABLE_PLUGIN_RUNTIME) {
+                OmniPluginHost.get(context).openSession()
+            } else {
+                null
+            }
             pluginSession = activePluginSession
             val toolRegistry = AgentToolRegistry(
                 context = context,
-                discoveredServers = discoveredServers,
                 conversationMode = conversationMode,
                 terminalDistribution = terminalDistribution,
-                pluginToolDefinitions = activePluginSession.toolDefinitions,
+                pluginToolDefinitions = activePluginSession?.toolDefinitions.orEmpty(),
                 userMessage = userMessage,
                 toolRoutingMode = AgentToolRoutingMode.fromSkillFrontmatter(
                     resolvedSkills.map(ResolvedSkillContext::frontmatter),
@@ -297,9 +303,11 @@ class OmniAgentExecutor(
                 subagentDispatcher = subagentDispatcher,
                 toolCatalog = toolRegistry,
                 terminalDistribution = terminalDistribution,
-                capabilityModules = listOf(
-                    AgentToolHandlerModule(activePluginSession.toolHandlers)
-                )
+                capabilityModules = if (activePluginSession != null) {
+                    listOf(AgentToolHandlerModule(activePluginSession.toolHandlers))
+                } else {
+                    emptyList()
+                }
             )
             pluginSession = null
             routerRef.set(toolRouter)
