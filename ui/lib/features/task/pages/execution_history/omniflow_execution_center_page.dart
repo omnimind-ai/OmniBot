@@ -30,7 +30,10 @@ class OmniFlowExecutionCenterPage extends StatefulWidget {
 @visibleForTesting
 String buildFunctionEnhancementPrompt(Map<String, dynamic> function) {
   final functionId = _string(function['function_id']);
-  return '请增强下面的 OmniFlow 复用指令。先用 get_function 读取完整内容，分析参数化、稳定性和可复用性，再通过 OmniFlow 工具保存更新；不要执行该指令。\n\n'
+  return '请增强下面的 OmniFlow 复用指令，但不要执行它。先用 get_function 读取完整 Function，'
+      '再用 list_run_logs 找到与它对应的成功源 RunLog。最后必须使用官方 save_function 管线保存：'
+      '传入该 RunLog 的 run_id、functions=[完整的现有 Function]、enhance=true 和 instruction；'
+      '不要调用 update_function、create_function，也不要凭空改写步骤。\n\n'
       'function_id: $functionId\n'
       '当前信息：${jsonEncode(function)}';
 }

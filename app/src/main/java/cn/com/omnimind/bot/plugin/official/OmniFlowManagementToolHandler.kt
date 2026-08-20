@@ -15,7 +15,6 @@ import cn.com.omnimind.baselib.runlog.InternalRunLogStore
 import cn.com.omnimind.bot.omniflow.OmniFlow
 import cn.com.omnimind.bot.omniflow.OmniFlowPluginRuntime
 import cn.com.omnimind.bot.omniflow.OmniFlowPythonRuntime
-import cn.com.omnimind.bot.omniflow.OmniFlowFunctionRegistration
 import cn.com.omnimind.bot.omniflow.asOmniFlowModelClient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -80,21 +79,11 @@ class OmniFlowManagementToolHandler(context: Context) : ToolHandler {
                 } else {
                     null
                 }
-            val payload = if (toolName == OmniFlowManagementTools.SAVE_FUNCTION) {
-                OmniFlowFunctionRegistration.saveRunLog(
-                    context = helper.context,
-                    runId = normalizedArguments["run_id"]?.toString().orEmpty(),
-                    agentVisible = normalizedArguments["agent_visible"] != false,
-                    modelClient = modelClient,
-                    source = "agent_function_registration",
-                )
-            } else {
-                OmniFlow.callTool(
-                    context = helper.context,
-                    toolCall = OmniFlow.ToolCall(toolName, normalizedArguments),
-                    modelClient = modelClient,
-                ).payload
-            }
+            val payload = OmniFlow.callTool(
+                context = helper.context,
+                toolCall = OmniFlow.ToolCall(toolName, normalizedArguments),
+                modelClient = modelClient,
+            ).payload
             val encoded = helper.mapToJsonElement(payload).toString()
             if (payload["success"] == false) {
                 ToolExecutionResult.Error(
@@ -209,12 +198,6 @@ internal fun normalizeOmniFlowManagementArguments(
     // remains independent of Android Context and is easy to regression-test.
     args.entries.forEach { (key, value) ->
         put(key, jsonElementToManagementValue(value))
-    }
-    if (
-        toolName == OmniFlowManagementTools.SAVE_FUNCTION &&
-        !args.containsKey("agent_visible")
-    ) {
-        put("agent_visible", true)
     }
 }
 

@@ -489,7 +489,10 @@ object InternalRunLogStore {
             "task_name" to record.toolName.ifBlank { "vlm_task" },
             "goal" to record.goal,
             "task_parameters" to linkedMapOf<String, Any?>("goal" to record.goal),
-            "seed" to null,
+            // Android RunLogs do not have an AndroidWorld random seed. Use a
+            // stable non-null sentinel so the official OmniFlow RunLog schema
+            // survives the JSON bridge and can be consumed by save_function.
+            "seed" to 0,
             "status" to status,
             "success" to success,
             "validator" to linkedMapOf(
@@ -542,12 +545,23 @@ object InternalRunLogStore {
         stateId: String,
     ): Map<String, Any?> {
         val state = statePayload(context, stateId)
+        val display = stringMap(state["display"])
+        val screenshotPath = state["screenshot_path"]?.toString()
+            ?.takeIf(String::isNotBlank)
+            ?: "/workspace/.omnibot/omniflow/missing-screenshot.jpg"
         return linkedMapOf(
-            // State screenshots and XML remain available through get_run_log_state.
-            // The public RunLog schema permits a null pixel reference when the
-            // recording only persisted the state id.
-            "pixels" to null,
-            "forest" to null,
+            // Keep state evidence in the RunLog itself as required by the
+            // official Function compiler. Native Android recordings persist a
+            // screenshot path alongside the XML forest; the Python runtime
+            // only needs the absolute reference for the official RunLog
+            // contract and does not replay source-device pixels directly.
+            "pixels" to linkedMapOf(
+                "path" to screenshotPath,
+                "width" to numberToLong(display["width"]),
+                "height" to numberToLong(display["height"]),
+                "mime_type" to "image/jpeg",
+            ).filterValues { it != null },
+            "forest" to state["xml"]?.toString().orEmpty(),
             "ui_elements" to emptyList<Any?>(),
             "auxiliaries" to linkedMapOf<String, Any?>(
                 "state_id" to stateId,

@@ -366,8 +366,11 @@ void main() {
     });
 
     expect(prompt, contains('get_function'));
+    expect(prompt, contains('list_run_logs'));
+    expect(prompt, contains('save_function'));
+    expect(prompt, contains('enhance=true'));
     expect(prompt, contains('function_id: function.demo'));
-    expect(prompt, contains('不要执行该指令'));
+    expect(prompt, contains('不要执行它'));
   });
 
   testWidgets('opens the requested Function directly', (tester) async {
@@ -541,7 +544,10 @@ void main() {
       );
       expect(find.text('刚注册的指令'), findsWidgets);
       expect(find.text('复用指令'), findsWidgets);
-      expect(toolCalls.where((call) => call['name'] == 'get_function'), isEmpty);
+      expect(
+        toolCalls.where((call) => call['name'] == 'get_function'),
+        isEmpty,
+      );
       expect(find.textContaining('StateError: 注册失败'), findsNothing);
     },
   );

@@ -83,7 +83,7 @@ class OmniFlowToolClient {
   }
 
   static Future<Map<String, dynamic>> saveFunctionFromRunLog(String runId) {
-    return _call('save_function', {'run_id': runId, 'agent_visible': true});
+    return _call('save_function', {'run_id': runId});
   }
 
   static Future<OmniFlowFunctionRegistrationResult> registerFunctionFromRunLog(
@@ -119,22 +119,6 @@ class OmniFlowToolClient {
 
   static Future<Map<String, dynamic>> deleteFunction(String functionId) {
     return _call('delete_function', {'function_id': functionId});
-  }
-
-  static Future<Map<String, dynamic>> enhanceFunction(
-    String functionId, {
-    String? runId,
-    String? instruction,
-  }) {
-    final normalizedRunId = runId?.trim() ?? '';
-    final normalizedInstruction = instruction?.trim() ?? '';
-    return _call('update_function', {
-      'function_id': functionId,
-      'mode': 'enhance',
-      if (normalizedRunId.isNotEmpty) 'run_id': normalizedRunId,
-      if (normalizedInstruction.isNotEmpty)
-        'instruction': normalizedInstruction,
-    });
   }
 
   static Future<Map<String, dynamic>> replayFunction(

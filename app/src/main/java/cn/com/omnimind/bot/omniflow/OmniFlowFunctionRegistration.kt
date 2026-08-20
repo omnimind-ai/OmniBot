@@ -22,7 +22,10 @@ object OmniFlowFunctionRegistration {
             context = context.applicationContext,
             toolCall = OmniFlow.ToolCall(
                 name = "save_function",
-                arguments = mapOf("function" to function),
+                arguments = mapOf(
+                    "run_id" to normalizedRunId,
+                    "functions" to listOf(function),
+                ),
             ),
             source = source,
             modelClient = modelClient,

@@ -48,7 +48,13 @@ class OmniFlowToolChannel(context: Context) {
                     } else {
                         null
                     }
-                if (name == TOOL_SAVE_FUNCTION && arguments["function"] == null) {
+                if (
+                    name == TOOL_SAVE_FUNCTION &&
+                    arguments["function"] == null &&
+                    arguments["functions"] == null &&
+                    arguments["run_log"] == null &&
+                    arguments["enhance"] != true
+                ) {
                     OmniFlowFunctionRegistration.saveRunLog(
                         context = appContext,
                         runId = arguments["run_id"]?.toString().orEmpty(),
