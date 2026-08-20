@@ -469,11 +469,7 @@ class OmniFlowDeviceDispatcher internal constructor(
             ).also {
                 currentStateId = it.state.stateId
                 currentState = it.state
-            }.let {
-                it.state.asHostMap(includeImage = captureScreenshot) + mapOf(
-                    "stabilization" to it.stabilization,
-                )
-            }
+            }.state.asHostMap(includeImage = captureScreenshot)
         } finally {
             if (suppressOverlay) afterScreenshot()
         }
