@@ -71,6 +71,10 @@ internal data class AcpOfficialRuntime(
 
 internal const val DEEPSEEK_HARNESS_NPM_CHANNEL = "next"
 internal val DEEPSEEK_HARNESS_NPM_PACKAGE_NAMES = listOf(
+    // Install the complete official DSH CLI at runtime. The APK only carries
+    // the installer and ACP bridge; the full Harness remains user-managed in
+    // the terminal environment and provides `dsh plugin`/profile support.
+    "@deepseek-ai/dsh",
     "@deepseek-ai/dsh-acp-demo",
     "@deepseek-ai/dsh-llm-deepseek",
     "@deepseek-ai/dsh-llm-pi-ai",

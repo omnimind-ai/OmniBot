@@ -20,11 +20,12 @@ object EnvironmentSetupLogic {
         }
     private val DEEPSEEK_HARNESS_CHECK_COMMAND =
         "PATH=\"/root/.npm-global/bin:${'$'}PATH\"; export PATH; " +
+            "command -v dsh >/dev/null 2>&1 && " +
             "command -v dsh-acp-demo >/dev/null 2>&1 && " +
             DEEPSEEK_HARNESS_PACKAGE_FILES + " && " +
             DEEPSEEK_HARNESS_NATIVE_HEALTH_COMMAND
     private const val DEEPSEEK_HARNESS_VERSION_COMMAND =
-        "node -p \"require('/root/.npm-global/lib/node_modules/@deepseek-ai/dsh-acp-demo/package.json').version\""
+        "node -p \"require('/root/.npm-global/lib/node_modules/@deepseek-ai/dsh/package.json').version\""
 
     val packageDefinitions: List<PackageDefinition> = listOf(
         PackageDefinition("nodejs", "node --version", "dev"),
@@ -193,6 +194,7 @@ object EnvironmentSetupLogic {
         }
         if ("deepseek_harness" in requested) {
             commands += DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND
+            commands += "ln -sf /root/.npm-global/bin/dsh /usr/local/bin/dsh || true"
             commands += "ln -sf /root/.npm-global/bin/dsh-acp-demo /usr/local/bin/dsh-acp-demo || true"
         }
         if ("openssh_server" in requested) {
