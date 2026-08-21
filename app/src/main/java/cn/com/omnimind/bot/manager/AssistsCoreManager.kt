@@ -54,6 +54,7 @@ import cn.com.omnimind.bot.agent.AgentImageAttachmentSupport
 import cn.com.omnimind.bot.agent.AgentWorkspaceAttachmentSupport
 import cn.com.omnimind.bot.agent.AgentTextSanitizer
 import cn.com.omnimind.bot.agent.AgentModelOverride
+import cn.com.omnimind.bot.agent.AgentRuntimeErrorSupport
 import cn.com.omnimind.bot.agent.AgentConversationHistoryRepository
 import cn.com.omnimind.bot.agent.AgentConversationHistorySupport
 import cn.com.omnimind.bot.agent.AgentRuntimeContextRepository
@@ -1681,8 +1682,11 @@ class AssistsCoreManager(private val context: Context) {
                 withContext(Dispatchers.Main) {
                     result.error(
                         "FETCH_PROVIDER_MODELS_ERROR",
-                        "Provider model fetch failed.",
-                        null
+                        AgentRuntimeErrorSupport.userFacingMessage(e)
+                            ?: "Provider model fetch failed.",
+                        AgentRuntimeErrorSupport.failureKind(e)?.let {
+                            mapOf("failureKind" to it)
+                        }
                     )
                 }
             }

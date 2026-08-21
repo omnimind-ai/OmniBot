@@ -21,6 +21,7 @@ import '../authorize/authorize_page_args.dart';
 import '../command_overlay/widgets/chat_input_area.dart';
 import '../command_overlay/services/manual_recording_flow_controller.dart';
 import '../command_overlay/services/manual_recording_result_card.dart';
+import 'package:ui/features/task/run_log/omniflow_tool_client.dart';
 import '../command_overlay/services/tool_card_detail_gesture_gate.dart';
 import '../common/openclaw_connection_checker.dart';
 import '../omnibot_workspace/widgets/omnibot_workspace_browser.dart';
@@ -408,6 +409,9 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   }
 
   String? get _activeAcpAgentId {
+    // Pure chat is still an ACP session; it only disables tool capabilities.
+    // Keep the selected Agent identity available so the chat chrome and run
+    // headers render the same brand avatar after switching Harnesses.
     final optimisticAgentId = _optimisticAcpAgentId?.trim() ?? '';
     if (optimisticAgentId.isNotEmpty) {
       return optimisticAgentId;
@@ -445,13 +449,7 @@ abstract class _ChatPageStateBase extends State<ChatPage>
         return statusName;
       }
     }
-    return switch (activeAgentId) {
-      'codex-acp' => 'Codex',
-      'claude-code-acp' => 'Claude Code',
-      'opencode-acp' => 'OpenCode',
-      'deepseek-harness-acp' => 'DeepSeek Harness',
-      _ => 'Agent',
-    };
+    return activeAgentId.isEmpty ? 'Agent' : activeAgentId;
   }
 
   List<ChatAcpAgentModeOption> get _chatAcpAgentModeOptions {
@@ -1904,7 +1902,7 @@ abstract class _ChatPageStateBase extends State<ChatPage>
 
   Future<void> _startManualRecordingCommand(String messageText);
 
-  Future<void> _sendMessage({String? text});
+  Future<void> _sendMessage({String? text, bool waitForBootstrap = true});
 
   Future<void> _retryUserMessageText(
     String text, {

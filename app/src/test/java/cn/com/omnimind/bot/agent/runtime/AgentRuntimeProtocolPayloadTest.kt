@@ -12,6 +12,48 @@ import org.junit.Test
 
 class AgentRuntimeProtocolPayloadTest {
     @Test
+    fun deepSeekHarnessModeCompatibilityFillsOnlyMissingDisplayNames() {
+        val raw = """
+            {"jsonrpc":"2.0","id":7,"result":{"sessionId":"s-1","modes":{
+              "currentModeId":"workspace-write",
+              "availableModes":[
+                {"id":"workspace-write","description":"Write in workspace"},
+                {"id":"read-only","name":"Read only","description":"Read files"}
+              ]
+            }}}
+        """.trimIndent()
+
+        val normalized = normalizeDeepSeekHarnessAcpModeNames(raw, enabled = true)
+
+        assertTrue(normalized.contains("\"id\":\"workspace-write\",\"description\":\"Write in workspace\",\"name\":\"workspace-write\""))
+        assertTrue(normalized.contains("\"id\":\"read-only\",\"name\":\"Read only\""))
+    }
+
+    @Test
+    fun deepSeekHarnessConfigCompatibilityFillsMissingSelectNames() {
+        val raw = """
+            {"jsonrpc":"2.0","id":8,"result":{"configOptions":[
+              {"id":"permission_mode","type":"select","options":[
+                {"value":"workspace-write","description":"Write in workspace"},
+                {"value":"read-only","label":"Read only"}
+              ]}
+            ]}}
+        """.trimIndent()
+
+        val normalized = normalizeDeepSeekHarnessAcpModeNames(raw, enabled = true)
+
+        assertTrue(normalized.contains("\"value\":\"workspace-write\",\"description\":\"Write in workspace\",\"name\":\"workspace-write\""))
+        assertTrue(normalized.contains("\"value\":\"read-only\",\"label\":\"Read only\",\"name\":\"Read only\""))
+    }
+
+    @Test
+    fun deepSeekHarnessModeCompatibilityIsDisabledForOtherAgents() {
+        val raw = "{\"result\":{\"availableModes\":[{\"id\":\"workspace-write\"}]}}"
+
+        assertEquals(raw, normalizeDeepSeekHarnessAcpModeNames(raw, enabled = false))
+    }
+
+    @Test
     fun deepSeekHarnessConfigSupportsPartialPermissionUpdates() {
         val current = DeepSeekHarnessConfig(
             baseUrl = "https://provider.example/v1",
@@ -111,6 +153,20 @@ class AgentRuntimeProtocolPayloadTest {
     }
 
     @Test
+    fun canonicalSessionResponseKeepsSessionIdsWhenLegacyImplementationUsesThreadIds() {
+        val response = mapOf<String, Any?>(
+            "threadId" to "session-1",
+            "turnId" to "prompt-1"
+        ).withAcpSessionId()
+
+        assertEquals("session-1", response["sessionId"])
+        assertEquals("prompt-1", response["promptId"])
+        // Old fields remain response-only compatibility aliases.
+        assertEquals("session-1", response["threadId"])
+        assertEquals("prompt-1", response["turnId"])
+    }
+
+    @Test
     fun managedAcpCatalogIncludesSupportedAgentsWithoutGemini() {
         assertEquals(
             listOf("小万", "Codex", "Claude Code", "OpenCode", "DeepSeek Harness"),
@@ -122,7 +178,7 @@ class AgentRuntimeProtocolPayloadTest {
             AcpAgentProfileStore.OFFICIAL_AGENTS.map { it.id }.toSet().size
         )
         val codex = AcpAgentProfileStore.OFFICIAL_AGENTS.first {
-            it.id == AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID
+            it.id == AcpAgentProfileStore.CODEX_AGENT_ID
         }
         assertEquals(
             "codex",
@@ -151,16 +207,13 @@ class AgentRuntimeProtocolPayloadTest {
         val deepSeek = AcpAgentProfileStore.OFFICIAL_AGENTS.first {
             it.id == AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID
         }
-        assertEquals("dsh-acp-demo", deepSeek.command)
-        assertEquals(
-            listOf("--config", "/root/.dsh/omnibot-acp/cordis.yml"),
-            deepSeek.arguments
-        )
+        assertEquals("dsh-acp", deepSeek.command)
+        assertTrue(deepSeek.arguments.isEmpty())
         val deepSeekRuntime = AcpAgentProfileStore.officialRuntime(deepSeek)
         assertEquals("dsh", deepSeekRuntime?.discoveryCommand)
         assertTrue(
             deepSeekRuntime?.managedAdapterPackages.orEmpty().contains(
-                "@deepseek-ai/dsh-acp-demo@next"
+                "@openma/deepseek-harness-acp@latest"
             )
         )
         assertTrue(
@@ -169,10 +222,7 @@ class AgentRuntimeProtocolPayloadTest {
             )
         )
         assertEquals(2, deepSeekRuntime?.managedAdapterPackages?.size)
-        assertTrue(
-            deepSeekRuntime?.managedAdapterPackages.orEmpty()
-                .all { it.endsWith("@next") }
-        )
+        assertTrue(deepSeekRuntime?.managedAdapterPackages.orEmpty().contains("@deepseek-ai/dsh@next"))
         assertTrue(deepSeekRuntime?.requiresNativeBuildTools == true)
         assertTrue(
             deepSeekRuntime?.managedAdapterHealthCommand.orEmpty().contains("node-pty")
@@ -253,7 +303,7 @@ class AgentRuntimeProtocolPayloadTest {
         assertEquals("high", restored.toEnvironment()["DSH_REASONING_EFFORT"])
         assertEquals("high", restored.toEnvironment()["DSH_PI_AI_REASONING_EFFORT"])
         assertEquals(
-            "high",
+            "max",
             DeepSeekHarnessConfig(reasoningEffort = "max").toEnvironment()["DSH_REASONING_EFFORT"]
         )
         assertEquals(
@@ -270,7 +320,12 @@ class AgentRuntimeProtocolPayloadTest {
         )
         assertEquals("read-only", restored.toEnvironment()["DSH_PERMISSION_MODE"])
         assertEquals("/root/.dsh/omnibot-acp-clean", restored.toEnvironment()["DSH_ACP_HOME"])
+        assertEquals(
+            "/root/.dsh/omnibot-acp-clean/sessions",
+            restored.toEnvironment()["DSH_SESSION_ROOT"]
+        )
         assertEquals("/root/.dsh/omnibot-acp", restored.toEnvironment()["DSH_HOME"])
+        assertEquals("deepseek-official", restored.toEnvironment()["DSH_PROVIDER"])
         assertEquals("1", restored.toEnvironment()["NODE_NO_WARNINGS"])
     }
 
@@ -338,15 +393,16 @@ class AgentRuntimeProtocolPayloadTest {
                 agentId = AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID,
                 provider = credentials,
                 model = "glm-5.1",
+                harnessAdapter = AcpHarnessAdapters.deepSeekHarness,
                 deepSeekConfig = DeepSeekHarnessConfig(reasoningEffort = "max")
             )
         )
         assertEquals("glm-5.1", dsh.deepSeekConfig?.model)
-        assertEquals("high", dsh.environment["DSH_REASONING_EFFORT"])
+        assertEquals("max", dsh.environment["DSH_REASONING_EFFORT"])
 
         val codex = AgentConfigAdapterRegistry.map(
             AgentProviderMappingInput(
-                agentId = AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID,
+                agentId = AcpAgentProfileStore.CODEX_AGENT_ID,
                 provider = credentials,
                 model = "glm-5.1"
             )
@@ -362,72 +418,39 @@ class AgentRuntimeProtocolPayloadTest {
     fun managedAgentInstallationUsesTheExistingOfficialTerminalSetupIds() {
         assertEquals(
             "deepseek_harness",
-            managedAgentTerminalPackageId(AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID)
-        )
-        assertEquals("codex", managedAgentTerminalPackageId("codex-acp"))
-        assertEquals("claude_code", managedAgentTerminalPackageId("claude-code-acp"))
-        assertEquals("opencode", managedAgentTerminalPackageId("opencode-acp"))
-        assertNull(managedAgentTerminalPackageId(AcpAgentProfileStore.XIAOWAN_AGENT_ID))
-    }
-
-    @Test
-    fun deepSeekHarnessCordisCompositionUsesTheOfficialAcpPlugin() {
-        val config = buildDeepSeekHarnessCordisConfig()
-
-        assertTrue(config.contains("name: '@deepseek-ai/dsh-llm-deepseek'"))
-        assertTrue(config.contains("name: '@deepseek-ai/dsh-llm-pi-ai'"))
-        assertTrue(config.contains("name: '@deepseek-ai/dsh-acp-demo'"))
-        assertTrue(config.contains("name: '@deepseek-ai/dsh-mcp-client'"))
-        assertTrue(config.contains("name: '@deepseek-ai/dsh-sandbox-policy'"))
-        assertTrue(config.contains("name: '@deepseek-ai/dsh-fs-sandbox'"))
-        assertTrue(config.contains("name: '@deepseek-ai/dsh-fs-observation-policy'"))
-        assertTrue(config.contains("name: '@deepseek-ai/dsh-compaction-basic'"))
-        assertTrue(config.contains("name: '@deepseek-ai/dsh-tool-fs'"))
-        assertTrue(config.contains("name: '@deepseek-ai/dsh-cordis-host-runner'"))
-        assertTrue(config.contains("name: '@deepseek-ai/dsh-tool-cordis'"))
-        assertFalse(config.contains("name: '@deepseek-ai/dsh-skill'"))
-        assertFalse(config.contains("name: '@deepseek-ai/dsh-tool-skill'"))
-        assertTrue(config.contains("name: '@deepseek-ai/dsh-tool-subagent'"))
-        assertTrue(config.contains("name: '@deepseek-ai/dsh-tool-workflow'"))
-        assertTrue(config.contains("serverName: omnibot"))
-        assertTrue(config.contains("provider: omnibot"))
-        assertTrue(config.contains("apiKeyEnv: DEEPSEEK_API_KEY"))
-        assertTrue(config.contains("api: openai-completions"))
-        assertTrue(config.contains("baseURL: !!js process.env.DEEPSEEK_BASE_URL"))
-        assertTrue(config.contains("thinkingFormat: deepseek"))
-        assertTrue(config.contains("supportsReasoningEffort: true"))
-        assertTrue(config.contains("requiresReasoningContentOnAssistantMessages: true"))
-        assertTrue(config.contains("reasoningEfforts:"))
-        assertTrue(config.contains("id: !!js \"process.env.DSH_MODEL\""))
-        assertTrue(config.contains("process.env.OMNIBOT_MCP_URL"))
-        assertTrue(config.contains("process.env.OMNIBOT_MCP_TOKEN"))
-        assertTrue(config.contains("cwd: !!js process.cwd()"))
-        assertTrue(config.contains("persistenceCompression: !!js"))
-        assertTrue(
-            config.contains(
-                "persistenceRoot: !!js \"(process.env.DSH_ACP_HOME ?? '/root/.dsh/omnibot-acp-clean') + '/sessions'\""
+            managedAgentTerminalPackageId(
+                AcpAgentProfileStore.OFFICIAL_AGENTS.first {
+                    it.id == AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID
+                }
             )
         )
-        assertTrue(config.contains("maxBytes: 65536"))
-        assertTrue(config.contains("process.env.DSH_MODEL"))
-        assertTrue(config.contains("process.env.DSH_REASONING_EFFORT"))
-        assertTrue(config.contains("process.env.DSH_PI_AI_REASONING_EFFORT"))
-        assertTrue(config.contains("process.env.DSH_PERMISSION_MODE"))
-        assertTrue(config.contains("Verify your work by running the code or tests."))
-        assertFalse(config.contains("pluginProjectSchema"))
-        assertTrue(config.contains("policy: !!js"))
-        assertFalse(config.contains("name: '@deepseek-ai/dsh-bash-sandbox'"))
-        assertFalse(config.contains("name: '@deepseek-ai/dsh-fs-local'"))
-        assertFalse(config.contains("name: '@deepseek-ai/dsh-hooks-claude-code'"))
-        assertFalse(config.contains("name: '@deepseek-ai/dsh-hooks-codex'"))
-        assertFalse(config.contains("omnibot-acp-demo.mjs"))
-        assertFalse(config.contains("skills:\n          enabled: false"))
-        assertFalse(config.contains("toolJobs: false"))
-        assertFalse(config.contains("goals: false"))
+        assertEquals(
+            "codex",
+            managedAgentTerminalPackageId(AcpAgentProfileStore.OFFICIAL_AGENTS.first {
+                it.id == AcpAgentProfileStore.CODEX_AGENT_ID
+            })
+        )
+        assertEquals(
+            "claude_code",
+            managedAgentTerminalPackageId(AcpAgentProfileStore.OFFICIAL_AGENTS.first {
+                it.id == "claude-code-acp"
+            })
+        )
+        assertEquals(
+            "opencode",
+            managedAgentTerminalPackageId(AcpAgentProfileStore.OFFICIAL_AGENTS.first {
+                it.id == "opencode-acp"
+            })
+        )
+        assertNull(
+            managedAgentTerminalPackageId(AcpAgentProfileStore.OFFICIAL_AGENTS.first {
+                it.id == AcpAgentProfileStore.XIAOWAN_AGENT_ID
+            })
+        )
     }
 
     @Test
-    fun localAgentMcpUsesAcpSessionInjectionExceptForDeepSeekHarness() {
+    fun localAgentMcpUsesTheSelectedHarnessCapability() {
         val state = McpServerState(
             enabled = true,
             running = true,
@@ -437,7 +460,7 @@ class AgentRuntimeProtocolPayloadTest {
         )
 
         val codexServers = buildLocalAgentAcpMcpServers(
-            agentId = AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID,
+            harnessAdapter = AcpHarnessAdapters.standard,
             supportsHttp = true,
             state = state
         )
@@ -449,14 +472,14 @@ class AgentRuntimeProtocolPayloadTest {
 
         assertTrue(
             buildLocalAgentAcpMcpServers(
-                agentId = AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID,
+                harnessAdapter = AcpHarnessAdapters.deepSeekHarness,
                 supportsHttp = false,
                 state = state
             ).isEmpty()
         )
         assertTrue(
             buildLocalAgentAcpMcpServers(
-                agentId = "custom-acp-agent",
+                harnessAdapter = AcpHarnessAdapters.standard,
                 supportsHttp = false,
                 state = state
             ).isEmpty()
@@ -464,8 +487,8 @@ class AgentRuntimeProtocolPayloadTest {
     }
 
     @Test
-    fun deepSeekHarnessMcpConnectionIsSuppliedOnlyThroughLaunchEnvironment() {
-        val environment = buildDeepSeekHarnessMcpEnvironment(
+    fun environmentBoundHarnessMcpConnectionIsSuppliedOnlyThroughAdapterEnvironment() {
+        val environment = AcpHarnessAdapters.deepSeekHarness.mcpEnvironment(
             McpServerState(
                 enabled = true,
                 running = true,
@@ -495,8 +518,8 @@ class AgentRuntimeProtocolPayloadTest {
     @Test
     fun managedNpmPackageSpecsResolveTheirInstalledPackageNames() {
         assertEquals(
-            "@deepseek-ai/dsh-acp-demo",
-            npmPackageName("@deepseek-ai/dsh-acp-demo@next")
+            "@openma/deepseek-harness-acp",
+            npmPackageName("@openma/deepseek-harness-acp@latest")
         )
         assertEquals("plain-package", npmPackageName("plain-package@1.2.3"))
         assertEquals("@scope/package", npmPackageName("@scope/package"))

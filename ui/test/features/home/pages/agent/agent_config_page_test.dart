@@ -387,7 +387,7 @@ Map<String, dynamic> _catalog(Map<String, dynamic> agent) {
 Map<String, dynamic> _agent(String id, String name) {
   final command = switch (id) {
     'codex-acp' => 'codex-acp',
-    'deepseek-harness-acp' => 'dsh-acp-demo',
+    'deepseek-harness-acp' => 'dsh-acp',
     _ => 'claude-agent-acp',
   };
   return <String, dynamic>{

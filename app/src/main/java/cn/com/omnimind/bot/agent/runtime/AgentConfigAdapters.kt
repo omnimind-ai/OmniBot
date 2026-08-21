@@ -25,6 +25,7 @@ internal data class AgentProviderMappingInput(
     val agentId: String,
     val provider: AgentProviderCredentials?,
     val model: String?,
+    val harnessAdapter: AcpHarnessAdapter = AcpHarnessAdapters.standard,
     val deepSeekConfig: DeepSeekHarnessConfig = DeepSeekHarnessConfig(),
 )
 
@@ -52,19 +53,19 @@ internal object AgentConfigAdapterRegistry {
     )
 
     fun map(input: AgentProviderMappingInput): AgentProviderMapping {
-        return adapters.firstOrNull { it.supports(input.agentId) }
+        return adapters.firstOrNull { it.supports(input) }
             ?.map(input)
             ?: AgentProviderMapping()
     }
 
-    private fun AgentConfigAdapter.supports(agentId: String): Boolean {
+    private fun AgentConfigAdapter.supports(input: AgentProviderMappingInput): Boolean {
         return when (this) {
             DeepSeekHarnessConfigAdapter ->
-                agentId == AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID
+                input.harnessAdapter === AcpHarnessAdapters.deepSeekHarness
             CodexConfigAdapter ->
-                agentId == AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID
-            ClaudeCodeConfigAdapter -> agentId == CLAUDE_CODE_AGENT_ID
-            OpenCodeConfigAdapter -> agentId == OPENCODE_AGENT_ID
+                input.agentId == AcpAgentProfileStore.CODEX_AGENT_ID
+            ClaudeCodeConfigAdapter -> input.agentId == CLAUDE_CODE_AGENT_ID
+            OpenCodeConfigAdapter -> input.agentId == OPENCODE_AGENT_ID
             else -> false
         }
     }
@@ -190,6 +191,27 @@ internal fun resolveAcpLaunchModel(
         providerModelIds = providerModelIds,
         boundModel = boundModel
     )
+}
+
+/**
+ * Resolves an ACP launch model while preserving an explicit scene binding
+ * when the Provider model catalog is temporarily unavailable. A non-empty
+ * Provider catalog remains authoritative: a bound model that is absent from
+ * that catalog must still fail instead of silently launching an old model.
+ */
+internal fun resolveAcpLaunchModelWithBindingFallback(
+    providerModelIds: List<String>?,
+    boundModel: String?
+): String? {
+    val normalizedBoundModel = boundModel.normalizedModelId() ?: return null
+    val normalizedProviderModels = providerModelIds
+        ?.mapNotNull { it.normalizedModelId() }
+        ?.distinctBy(String::lowercase)
+        .orEmpty()
+    if (normalizedProviderModels.isEmpty()) {
+        return normalizedBoundModel
+    }
+    return normalizedBoundModel.findMatchingModel(normalizedProviderModels)
 }
 
 internal fun buildCodexModelCatalogJson(

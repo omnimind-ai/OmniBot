@@ -10,6 +10,7 @@ import 'widgets/chat_input_area.dart';
 import 'package:ui/services/agent_runtime_service.dart';
 import 'package:ui/features/home/pages/command_overlay/services/manual_recording_flow_controller.dart';
 import 'package:ui/features/home/pages/command_overlay/services/manual_recording_result_card.dart';
+import 'package:ui/features/task/run_log/omniflow_tool_client.dart';
 import 'package:ui/features/home/pages/chat/utils/agent_run_timeline.dart';
 import 'package:ui/features/home/pages/chat/utils/agent_thinking_card_locator.dart';
 import 'package:ui/features/home/pages/chat/utils/deep_thinking_persistence.dart';
@@ -93,6 +94,7 @@ class _ChatBotSheetState extends State<ChatBotSheet>
   String? _currentDispatchTurnId;
   String? _acpSessionId;
   String? _acpPromptId;
+  String? _activeAcpAgentId;
   StreamSubscription<Map<String, dynamic>>? _acpRuntimeSubscription;
   final ChatConversationRuntimeCoordinator _runtimeCoordinator =
       ChatConversationRuntimeCoordinator.instance;
@@ -192,6 +194,18 @@ class _ChatBotSheetState extends State<ChatBotSheet>
       _handleIncomingAcpRuntimeEvent,
     );
     _runtimeCoordinator.ensureInitialized();
+    unawaited(_loadActiveAcpAgentIdentity());
+  }
+
+  Future<void> _loadActiveAcpAgentIdentity() async {
+    try {
+      final status = await AgentRuntimeService.status();
+      final agentId = status.activeAgentId?.trim() ?? '';
+      if (!mounted || agentId.isEmpty) return;
+      setState(() => _activeAcpAgentId = agentId);
+    } catch (error) {
+      debugPrint('加载 ACP Agent 身份失败: $error');
+    }
   }
 
   Future<void> _loadOpenClawConfig() async {
@@ -1136,7 +1150,7 @@ class _ChatBotSheetState extends State<ChatBotSheet>
 
   String _manualRecordingResultText(Map<String, dynamic> result) {
     if (result['success'] == true) {
-      return result['function'] is Map
+      return hasOmniFlowRegisteredFunction(result)
           ? '手动录制完成，复用指令已保存'
           : '手动录制完成，RunLog 已保存；复用指令生成失败';
     }
@@ -1211,6 +1225,10 @@ class _ChatBotSheetState extends State<ChatBotSheet>
       var status = await AgentRuntimeService.status();
       if (!status.connected) {
         status = await AgentRuntimeService.connect();
+      }
+      final activeAgentId = status.activeAgentId?.trim() ?? '';
+      if (activeAgentId.isNotEmpty) {
+        _activeAcpAgentId = activeAgentId;
       }
       final catalog = await SceneModelConfigService.getSceneCatalog();
       final dispatchScene = catalog
@@ -1923,6 +1941,7 @@ class _ChatBotSheetState extends State<ChatBotSheet>
     }
     final timelineEntries = buildAgentRunTimelineEntries(
       _messages,
+      conversationAgentId: _activeAcpAgentId,
       activeTaskIds: {
         ..._currentAiMessages.keys,
         ...(_runtimeCoordinator
@@ -1980,6 +1999,7 @@ class _ChatBotSheetState extends State<ChatBotSheet>
             child: AgentRunGroupMessage(
               key: ValueKey('overlay-agent-run-${group.taskId}'),
               group: group,
+              useAcpPresentation: true,
               expanded: _expandedAgentRunTaskIds.contains(group.taskId),
               onToggleExpanded: () => _toggleAgentRunGroup(group.taskId),
               onBeforeTaskExecute: _handleBeforeTaskExecute,

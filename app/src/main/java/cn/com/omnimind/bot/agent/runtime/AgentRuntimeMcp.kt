@@ -12,16 +12,17 @@ private const val LOCAL_AGENT_MCP_HOST = "127.0.0.1"
 /**
  * Builds the standard ACP session-level MCP declaration used by local agents.
  *
- * DeepSeek Harness is the one exception: its ACP transport intentionally does
- * not consume session-level MCP declarations, so its official
- * `dsh-mcp-client` plugin receives the same endpoint through launch env vars.
+ * A Harness that cannot consume session-level MCP declarations receives the
+ * same endpoint through its adapter-owned launch environment instead.
  */
 internal fun buildLocalAgentAcpMcpServers(
-    agentId: String,
+    harnessAdapter: AcpHarnessAdapter,
     supportsHttp: Boolean,
     state: McpServerState,
 ): List<McpServer> {
-    if (!supportsHttp || agentId == AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID) {
+    if (!supportsHttp ||
+        harnessAdapter.mcpTransport != AcpHarnessMcpTransport.SESSION_DECLARATION
+    ) {
         return emptyList()
     }
     require(state.running) { "Omnibot MCP server is not running." }
@@ -41,7 +42,7 @@ internal fun buildLocalAgentAcpMcpServers(
     )
 }
 
-internal fun buildDeepSeekHarnessMcpEnvironment(
+internal fun buildEnvironmentMcpBinding(
     state: McpServerState,
 ): Map<String, String> {
     require(state.running) { "Omnibot MCP server is not running." }
@@ -49,7 +50,7 @@ internal fun buildDeepSeekHarnessMcpEnvironment(
     require(state.token.isNotBlank()) { "Omnibot MCP server token is missing." }
     return mapOf(
         "OMNIBOT_MCP_URL" to localAgentMcpUrl(state),
-        "OMNIBOT_MCP_TOKEN" to state.token
+        "OMNIBOT_MCP_TOKEN" to state.token,
     )
 }
 

@@ -901,11 +901,18 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
         mode == _activeMode &&
         _emptyGreetingKeyboardLiftTracker.resolveForBuild(bottomInset);
     final homeGreetingSettings = HomeGreetingSettingsService.notifier.value;
+    final activeAcpAgentId = _activeAcpAgentId;
+    // Both normal and pure-chat conversations are ACP-backed. The selected
+    // identity can be temporarily empty during bootstrap or Harness switch,
+    // but that must not send the turn back through the legacy user-avatar
+    // renderer. Keep the ACP header and let its neutral icon be the boundary
+    // fallback until the runtime identity arrives.
+    final useAcpPresentation = !_isOpenClawSurface;
     return ChatMessageList(
       messages: resolvedMessages,
       activeAgentTurnIds: activeAgentTurnIds,
-      useAcpPresentation: mode == ChatPageMode.agent,
-      activeAcpAgentId: mode == ChatPageMode.agent ? _activeAcpAgentId : null,
+      useAcpPresentation: useAcpPresentation,
+      activeAcpAgentId: activeAcpAgentId,
       onRetryAgentMessage: _retryFailedAgentTurn,
       onContinueAgentMessage: _continueFailedAgentTurn,
       expandedAgentRunTaskIds: _expandedAgentRunTaskIdsForMode(mode),

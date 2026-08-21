@@ -359,7 +359,7 @@ class OmniFlowPythonClient(
             export OMNITRANSFER_MATCHER_CHECKPOINT='$shellOmniTransferCheckpointPath'
             python_bin="${'$'}(command -v python3 || true)"
             if [ -z "${'$'}python_bin" ]; then echo 'omniflow_python_not_installed' >&2; exit 127; fi
-            exec "${'$'}python_bin" -u -m omniflow.bridge --store /workspace/.omnibot/omniflow/omniflow.json
+            exec "${'$'}python_bin" -u -m omniflow.bridge --store /workspace/.omnibot/omniflow/omniflow.json --catalog default
             """.trimIndent()
         }
 

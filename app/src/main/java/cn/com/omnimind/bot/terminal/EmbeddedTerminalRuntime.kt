@@ -592,8 +592,13 @@ object EmbeddedTerminalRuntime {
         onProcessStarted: ((Process) -> Unit)? = null,
         onLiveUpdate: suspend (TermuxLiveUpdate) -> Unit = {}
     ): CommandResult {
-        val status = ensureCommandEnvironmentReady(context) { progress ->
-            if (progress.message.isBlank()) return@ensureCommandEnvironmentReady
+        // A shell command must not implicitly install the optional Agent CLI
+        // bundle.  The bundle contains node/pnpm and other tools used by the
+        // environment screen, but it is unrelated to executing `bash`,
+        // `pwd`, or another already-available shell command.  Installing it
+        // here serialized package-manager/network latency into the ACP turn.
+        val status = ensureRuntimeEnvironmentReady(context) { progress ->
+            if (progress.message.isBlank()) return@ensureRuntimeEnvironmentReady
             onLiveUpdate(
                 TermuxLiveUpdate(
                     sessionId = "env-bootstrap",
@@ -718,7 +723,7 @@ object EmbeddedTerminalRuntime {
         workingDirectory: String?,
         environment: Map<String, String> = emptyMap()
     ): SessionStartResult {
-        val status = ensureCommandEnvironmentReady(context)
+        val status = ensureRuntimeEnvironmentReady(context)
         require(status.success) { status.message }
 
         val sessionAccess = ReTerminalSessionBridge.ensureHeadlessSession(
@@ -789,7 +794,7 @@ object EmbeddedTerminalRuntime {
                 errorMessage = "终端会话不存在：$sessionId"
             )
 
-        val status = ensureCommandEnvironmentReady(context)
+        val status = ensureRuntimeEnvironmentReady(context)
         if (!status.success) {
             return SessionCommandResult(
                 sessionId = sessionId,
@@ -907,7 +912,7 @@ object EmbeddedTerminalRuntime {
         workingDirectory: String?,
         environment: Map<String, String> = emptyMap()
     ): BackgroundServiceLaunchResult {
-        val status = ensureCommandEnvironmentReady(context)
+        val status = ensureRuntimeEnvironmentReady(context)
         if (!status.success) {
             return BackgroundServiceLaunchResult(
                 sessionId = sessionId,
@@ -1531,21 +1536,13 @@ object EmbeddedTerminalRuntime {
         return "${KEY_BASE_PACKAGE_VERSION}_${TerminalDistribution.selected().id}"
     }
 
-    private suspend fun ensureCommandEnvironmentReady(
+    private suspend fun ensureRuntimeEnvironmentReady(
         context: Context,
         onProgress: suspend (EnvironmentProgress) -> Unit = {}
     ): EnvironmentStatus {
-        val status = prepareEnvironment(
-            context = context,
-            installBasePackages = false,
-            onProgress = onProgress
-        )
-        if (!status.success || status.basePackagesReady) {
-            return status
-        }
         return prepareEnvironment(
             context = context,
-            installBasePackages = true,
+            installBasePackages = false,
             onProgress = onProgress
         )
     }

@@ -1,5 +1,39 @@
 import 'package:ui/services/assists_core_service.dart';
 
+/// The official OmniFlow bridge returns `functions`/`function_ids` because a
+/// run can compile more than one Function. Older app builds returned a single
+/// `function`; keep both shapes at this shared boundary so every caller uses
+/// the same registration result contract.
+Map<String, dynamic> omniFlowRegisteredFunction(Map<String, dynamic> payload) {
+  final nested = payload['function'];
+  if (nested is Map) {
+    return _normalizeFunctionMap(nested);
+  }
+  final functions = payload['functions'];
+  if (functions is List && functions.isNotEmpty && functions.first is Map) {
+    return _normalizeFunctionMap(functions.first as Map);
+  }
+  final rawIds = payload['function_ids'];
+  final firstId = rawIds is List && rawIds.isNotEmpty
+      ? rawIds.first?.toString().trim() ?? ''
+      : '';
+  return firstId.isEmpty
+      ? <String, dynamic>{}
+      : <String, dynamic>{'function_id': firstId};
+}
+
+Map<String, dynamic> _normalizeFunctionMap(Map raw) {
+  final normalized = <String, dynamic>{};
+  raw.forEach((key, value) {
+    normalized[key.toString()] = value;
+  });
+  return normalized;
+}
+
+bool hasOmniFlowRegisteredFunction(Map<String, dynamic> payload) {
+  return omniFlowRegisteredFunction(payload).isNotEmpty;
+}
+
 class OmniFlowFunctionRegistrationResult {
   const OmniFlowFunctionRegistrationResult({
     required this.function,
@@ -25,14 +59,16 @@ class OmniFlowFunctionRegistrationResult {
             '注册失败',
       );
     }
-    final nested = payload['function'];
-    final function = nested is Map
-        ? nested.map((key, value) => MapEntry(key.toString(), value))
-        : <String, dynamic>{};
+    final function = omniFlowRegisteredFunction(payload);
+    final rawFunctionIds = payload['function_ids'];
+    final firstFunctionId = rawFunctionIds is List && rawFunctionIds.isNotEmpty
+        ? rawFunctionIds.first
+        : null;
     final functionId =
         (function['function_id'] ??
                 payload['function_id'] ??
-                payload['registered_function_id'])
+                payload['registered_function_id'] ??
+                firstFunctionId)
             ?.toString()
             .trim() ??
         '';

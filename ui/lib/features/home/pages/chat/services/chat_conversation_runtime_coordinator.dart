@@ -199,6 +199,15 @@ class ChatConversationRuntimeState {
     if (incomingSessionId.isEmpty) {
       return true;
     }
+    final incomingTurnId = turnId?.trim() ?? '';
+    // A completed turn remains fenced even after its session becomes idle.
+    // Without this check, a delayed event from the previous Harness can be
+    // the first event seen after a Xiaowan/DSH switch and silently rebind the
+    // runtime to the old session.
+    if (incomingTurnId.isNotEmpty &&
+        completedAgentTurnIds.contains(incomingTurnId)) {
+      return false;
+    }
     final currentSessionId = activeAcpSessionId?.trim() ?? '';
     if (currentSessionId.isEmpty) {
       activeAcpSessionId = incomingSessionId;
@@ -207,12 +216,15 @@ class ChatConversationRuntimeState {
     if (currentSessionId == incomingSessionId) {
       return true;
     }
-    final incomingTurnId = turnId?.trim() ?? '';
     final currentTurnId =
         activeAcpTurnId?.trim() ?? currentDispatchTurnId?.trim() ?? '';
-    // A different session may only replace an idle runtime. A late event
-    // from another session must never mutate the current turn's state.
-    if (currentTurnId.isNotEmpty) {
+    // A different session may replace the previous session only while the
+    // current local task is waiting for its first official ACP turn. Once an
+    // official turn has been admitted, a late event from another session must
+    // never mutate the current turn's state. The completed-turn fence above
+    // covers delayed events from the previous turn during that admission gap.
+    if (currentTurnId.isNotEmpty &&
+        activeAcpTurnId?.trim().isNotEmpty == true) {
       return false;
     }
     // Once the old runtime is idle, the first event from the new session
@@ -419,7 +431,11 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     ChatBrowserSessionSnapshot? browserSessionSnapshot,
     bool preserveLiveStreamingState = false,
   }) {
-    final normalizedMessages = _dedupeEquivalentAgentUserMessages(messages);
+    final normalizedMessages = _normalizeIdleThinkingCards(
+      _dedupeEquivalentAgentUserMessages(messages),
+      isAiResponding: isAiResponding,
+      preserveLiveStreamingState: preserveLiveStreamingState,
+    );
     final runtime = ensureRuntime(
       conversationId: conversationId,
       mode: mode,
@@ -483,9 +499,41 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     runtime._streamingTextBatches.clear();
     runtime.agentEntrySequences.clear();
     runtime.agentEntryStartTimes.clear();
-    _pruneAgentReplayDeltaOffsets(runtime, messages);
+    _pruneAgentReplayDeltaOffsets(runtime, normalizedMessages);
     runtime.agentNextEntrySequence = 0;
     notifyListeners();
+  }
+
+  /// A persisted snapshot can outlive the terminal ACP event (for example if
+  /// the app was backgrounded during the final frame). Never resurrect its
+  /// pre-created thinking spinner when the runtime is already idle.
+  List<ChatMessageModel> _normalizeIdleThinkingCards(
+    List<ChatMessageModel> messages, {
+    required bool isAiResponding,
+    required bool preserveLiveStreamingState,
+  }) {
+    if (isAiResponding || preserveLiveStreamingState) {
+      return messages;
+    }
+    final now = DateTime.now().millisecondsSinceEpoch;
+    return messages
+        .map((message) {
+          final existingCardData = message.cardData;
+          if (message.type != 2 ||
+              existingCardData?['type'] != 'deep_thinking' ||
+              existingCardData?['isLoading'] != true) {
+            return message;
+          }
+          final cardData = Map<String, dynamic>.from(existingCardData!);
+          cardData['isLoading'] = false;
+          cardData['stage'] = ThinkingStage.complete.value;
+          cardData['endTime'] ??= now;
+          cardData['isCollapsible'] = true;
+          return message.copyWith(
+            content: <String, dynamic>{'cardData': cardData, 'id': message.id},
+          );
+        })
+        .toList(growable: false);
   }
 
   void _replaceRuntimeMessagesIfChanged(
@@ -551,7 +599,11 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     );
   }
 
-  void primePureChatThinking({
+  /// Creates the render-side thinking state as soon as an ACP prompt is
+  /// admitted locally. The first provider reasoning delta can arrive much
+  /// later (or be absent for a non-thinking model), so the UI must not use
+  /// that delta as the turn-start signal.
+  void primeAcpThinking({
     required String taskId,
     required int conversationId,
     required String mode,
@@ -563,9 +615,21 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
       mode: mode,
     );
 
+    runtime.isAiResponding = true;
+    runtime.currentDispatchTurnId = taskId;
     runtime.lastAgentTurnId = taskId;
     runtime.currentThinkingStage = ThinkingStage.thinking.value;
     runtime.isDeepThinking = true;
+
+    // Agent status refresh can complete after this method was already called
+    // in the optimistic preflight path. Keep priming idempotent; otherwise a
+    // second call would split the empty placeholder into a phantom thinking
+    // round before the first real reasoning chunk arrives.
+    final existingCardId = runtime.activeThinkingCardId;
+    if (existingCardId != null &&
+        runtime.messages.any((message) => message.id == existingCardId)) {
+      return;
+    }
 
     if (runtime.thinkingRound == 0) {
       runtime.thinkingRound = 1;
@@ -607,6 +671,20 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     runtime.pendingThinkingRoundSplit = true;
     notifyListeners();
     schedulePersistRuntimeConversation(
+      conversationId: conversationId,
+      mode: mode,
+    );
+  }
+
+  /// Compatibility name for older pure-chat call sites. Pure chat is still
+  /// an ACP turn; it only has an empty tool catalog.
+  void primePureChatThinking({
+    required String taskId,
+    required int conversationId,
+    required String mode,
+  }) {
+    primeAcpThinking(
+      taskId: taskId,
       conversationId: conversationId,
       mode: mode,
     );
@@ -669,9 +747,7 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     if (normalized.isEmpty) return;
     runtime.completedAgentTurnIds.add(normalized);
     while (runtime.completedAgentTurnIds.length > 128) {
-      runtime.completedAgentTurnIds.remove(
-        runtime.completedAgentTurnIds.first,
-      );
+      runtime.completedAgentTurnIds.remove(runtime.completedAgentTurnIds.first);
     }
   }
 

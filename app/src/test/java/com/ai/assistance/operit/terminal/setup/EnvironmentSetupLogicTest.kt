@@ -167,7 +167,7 @@ class EnvironmentSetupLogicTest {
         assertTrue(apkAdd.contains("python3"))
         val npmInstall = commands.first { it.contains("install_deepseek_harness_packages") }
         assertTrue(npmInstall.contains("@deepseek-ai/dsh@next"))
-        assertTrue(npmInstall.contains("@deepseek-ai/dsh-acp-demo@next"))
+        assertTrue(npmInstall.contains("@openma/deepseek-harness-acp@latest"))
         assertTrue(!npmInstall.contains("@deepseek-ai/dsh-llm-deepseek@next"))
         assertTrue(!npmInstall.contains("0.1.0-rc.6"))
         assertTrue(npmInstall.contains("omnibot-node-gyp-copy"))
@@ -179,7 +179,7 @@ class EnvironmentSetupLogicTest {
         )
         assertTrue(
             commands.contains(
-                "ln -sf /root/.npm-global/bin/dsh-acp-demo /usr/local/bin/dsh-acp-demo || true"
+                "ln -sf /root/.npm-global/bin/dsh-acp /usr/local/bin/dsh-acp || true"
             )
         )
     }
@@ -191,9 +191,9 @@ class EnvironmentSetupLogicTest {
         )
 
         assertTrue(command.contains("command -v dsh"))
-        assertTrue(command.contains("command -v dsh-acp-demo"))
+        assertTrue(command.contains("command -v dsh-acp"))
         assertTrue(command.contains("@deepseek-ai/dsh/package.json"))
-        assertTrue(command.contains("@deepseek-ai/dsh-acp-demo/package.json"))
+        assertTrue(command.contains("@openma/deepseek-harness-acp/package.json"))
         assertTrue(!command.contains("@deepseek-ai/dsh-user-approval/package.json"))
         assertTrue(command.contains("node-pty"))
         assertTrue(command.contains("createRequire"))

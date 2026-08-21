@@ -75,7 +75,7 @@ class ConversationDomainService(
             val agentId = if (isAgentMode(conversation.mode)) {
                 agentBinding?.let { binding ->
                     acpAgentProfileStore.agentIdForSession(binding.threadId)
-                        ?: AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID
+                        ?: AcpAgentProfileStore.DEFAULT_AGENT_ID
                 } ?: acpAgentProfileStore.agentIdForConversation(conversation.id)
             } else {
                 null
@@ -109,7 +109,7 @@ class ConversationDomainService(
         val agentId = if (isAgentMode(conversation.mode)) {
             agentBinding?.let { binding ->
                 acpAgentProfileStore.agentIdForSession(binding.threadId)
-                    ?: AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID
+                    ?: AcpAgentProfileStore.DEFAULT_AGENT_ID
             } ?: acpAgentProfileStore.agentIdForConversation(conversation.id)
         } else {
             null

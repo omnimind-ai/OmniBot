@@ -3,6 +3,7 @@ part of 'chat_widgets.dart';
 const String _kChatAppBarUpdateSparklesAsset =
     'assets/home/chat/update_sparkles.svg';
 const String _kChatAppBarAgentIconAsset = 'assets/home/avatar.svg';
+const String _kChatAppBarSurfaceAgentIconAsset = 'assets/home/chat/agent.svg';
 const String _kChatAppBarModeMenuClosedIconAsset =
     'assets/home/chat/mode_menu_closed.svg';
 const String _kChatAppBarModeMenuOpenIconAsset =
@@ -36,7 +37,6 @@ double _chatAppBarModeMenuAgentIconSize(String agentId) {
     'codex-acp' || 'codex-remote' => 19,
     'claude-code-acp' => 21,
     'opencode-acp' => 22,
-    'deepseek-harness-acp' => 20,
     _ => 20,
   };
 }
@@ -166,16 +166,15 @@ class ChatAppBar extends StatelessWidget {
         : context.isDarkTheme
         ? palette.textPrimary
         : Colors.grey[800]!;
-    final primaryModeIconAsset = isAgentSelected
-        ? null
-        : isPureChatSelected
+    // The center island is the surface switch (normal chat vs workspace), not
+    // the Harness selector. Keep it on a stable mode glyph so the selected
+    // Harness is not shown twice beside the right-hand Harness menu. The
+    // selected brand remains visible in the right-hand selector and in each
+    // ACP run header.
+    final primaryModeIconAsset = isPureChatSelected
         ? _kChatAppBarPureChatIconAsset
-        : _kChatAppBarAgentIconAsset;
-    final primaryModeAgentId = isAgentSelected
-        ? (activeAcpAgentId?.trim().isNotEmpty == true
-              ? activeAcpAgentId!.trim()
-              : 'generic-agent')
-        : null;
+        : _kChatAppBarSurfaceAgentIconAsset;
+    final primaryModeAgentId = null;
     const updateTint = Color(0xFFD4A017);
     final showWorkspaceButton =
         showWorkspacePaneButton && onWorkspacePaneTap != null;
@@ -591,8 +590,8 @@ class _ChatAppBarModeShortcutButtonState
         widget.isAgentSelected ||
         (!widget.isPureChatToggleLocked && widget.onPureChatToggleTap != null);
     // Keep every enabled managed Agent visible. Installation/configuration is
-    // part of selecting the Agent, so hiding missing or unchecked entries
-    // makes DSH impossible to start and gives the user no recovery action.
+    // part of selecting the Agent, so hiding unavailable entries removes the
+    // user's recovery action.
     final acpAgentModes = widget.acpAgentModes
         .where((agent) => agent.enabled)
         .toList(growable: false);
@@ -625,7 +624,9 @@ class _ChatAppBarModeShortcutButtonState
                   action: _ChatAppBarModeShortcutAction.omniAi,
                   iconAsset: _kChatAppBarAgentIconAsset,
                   tooltip: isEnglish ? 'OmniAi' : '小万',
-                  selected: widget.isOmniAiSelected,
+                  selected:
+                      widget.isOmniAiSelected &&
+                      (widget.activeAcpAgentId?.trim().isEmpty ?? true),
                   // Xiaowan is the built-in Agent and is always a valid
                   // selection. The parent keeps the legacy callback as a
                   // compatibility fallback when ACP is not supplied.
@@ -638,9 +639,9 @@ class _ChatAppBarModeShortcutButtonState
                   iconAsset: _kChatAppBarAgentIconAsset,
                   tooltip: xiaowan.name,
                   selected:
-                      widget.isOmniAiSelected ||
-                      (widget.isAgentSelected &&
-                          xiaowan.id == widget.activeAcpAgentId),
+                      xiaowan.id == widget.activeAcpAgentId ||
+                      (widget.isOmniAiSelected &&
+                          (widget.activeAcpAgentId?.trim().isEmpty ?? true)),
                   // Do not make the built-in Agent depend on asynchronous
                   // callback/catalog refresh state. Selection is handled by
                   // the common action-return path below.
@@ -658,12 +659,10 @@ class _ChatAppBarModeShortcutButtonState
                   action: _ChatAppBarModeShortcutAction.acpAgent(agent.id),
                   agentId: agent.id,
                   tooltip: agent.name,
-                  selected:
-                      widget.isAgentSelected &&
-                      agent.id == widget.activeAcpAgentId,
+                  selected: agent.id == widget.activeAcpAgentId,
                   enabled:
                       (widget.onAcpAgentTap != null ||
-                          widget.onAgentTap != null),
+                      widget.onAgentTap != null),
                   iconSize: _chatAppBarModeMenuAgentIconSize(agent.id),
                 ),
               _ChatAppBarModeShortcutMenuItemData(
@@ -732,7 +731,7 @@ class _ChatAppBarModeShortcutButtonState
   }
 
   Widget _buildClosedIcon(Color color) {
-    if (widget.isAgentLoading && !widget.isAgentSelected) {
+    if (widget.isAgentLoading) {
       return SizedBox(
         width: 18,
         height: 18,
@@ -742,17 +741,21 @@ class _ChatAppBarModeShortcutButtonState
         ),
       );
     }
-    if (widget.isAgentSelected) {
+    final activeAgentId = widget.activeAcpAgentId?.trim() ?? '';
+    if (!widget.isPureChatSelected && activeAgentId.isNotEmpty) {
       return AgentBrandIcon(
         key: ValueKey(
-          'chat-app-bar-active-agent-icon-${widget.activeAcpAgentId ?? 'generic-agent'}',
+          'chat-app-bar-active-agent-icon-$activeAgentId',
         ),
-        agentId: widget.activeAcpAgentId ?? 'generic-agent',
+        agentId: activeAgentId,
         size: 22,
         tint: color,
       );
     }
-    const iconSize = 20.0;
+    // Keep the closed surface icons at the same visual size as the ACP brand
+    // icon. A 20dp fallback made the selected Xiaowan/pure-chat avatar jump
+    // when switching Harnesses.
+    const iconSize = 22.0;
     return SvgPicture.asset(
       _closedIconAsset(),
       width: iconSize,
@@ -777,7 +780,8 @@ class _ChatAppBarModeShortcutButtonState
     final hasSelectedMode =
         widget.isOmniAiSelected ||
         widget.isAgentSelected ||
-        widget.isPureChatSelected;
+        widget.isPureChatSelected ||
+        (widget.activeAcpAgentId?.trim().isNotEmpty ?? false);
     final effectiveIconColor = _isOpen || hasSelectedMode
         ? selectedColor
         : widget.iconTint;

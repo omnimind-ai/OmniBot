@@ -66,29 +66,89 @@ internal data class AcpOfficialRuntime(
         ?.let { listOf(it) }
         .orEmpty(),
     val requiresNativeBuildTools: Boolean = false,
-    val managedAdapterHealthCommand: String? = null
+    val managedAdapterHealthCommand: String? = null,
+    val harnessAdapter: AcpHarnessAdapter = AcpHarnessAdapters.standard,
+    val usesSharedProvider: Boolean = false,
+    val terminalPackageId: String? = null,
+    val managedInstallScriptPath: String? = null,
+    val managedInstallCommand: String? = null,
 )
 
 internal const val DEEPSEEK_HARNESS_NPM_CHANNEL = "next"
 internal val DEEPSEEK_HARNESS_NPM_PACKAGE_NAMES = listOf(
-    // Install the official Harness product package instead of maintaining a
-    // second hand-written list of every transitive DSH plugin. `@deepseek-ai/dsh` owns the
-    // complete CLI/profile/bundle graph; the ACP demo is the official stdio
-    // surface used by this app's ACP bridge.
+    // Install the official Harness product and the existing ACP adapter. The
+    // adapter composes DSH in-process and projects assistant/chunk into ACP
+    // text and thought chunks; the app does not maintain another agent loop.
     "@deepseek-ai/dsh",
-    "@deepseek-ai/dsh-acp-demo",
+    "@openma/deepseek-harness-acp",
 )
-internal val DEEPSEEK_HARNESS_NPM_PACKAGE_SPECS =
-    DEEPSEEK_HARNESS_NPM_PACKAGE_NAMES.map { packageName ->
-        "$packageName@$DEEPSEEK_HARNESS_NPM_CHANNEL"
-    }
+internal val DEEPSEEK_HARNESS_NPM_PACKAGE_SPECS = listOf(
+    "@deepseek-ai/dsh@$DEEPSEEK_HARNESS_NPM_CHANNEL",
+    "@openma/deepseek-harness-acp@latest",
+)
+internal const val DEEPSEEK_HARNESS_INSTALL_SCRIPT_PATH =
+    "/root/.dsh/omnibot-acp/install-dsh-runtime.sh"
 internal const val DEEPSEEK_HARNESS_NATIVE_HEALTH_COMMAND =
-    "node -e 'const { createRequire } = require(\"node:module\"); " +
-        "createRequire(\"/root/.npm-global/lib/node_modules/" +
-        "@deepseek-ai/dsh-subprocess-local/package.json\")(\"node-pty\");'"
+    "node -e 'const fs = require(\"node:fs\"); " +
+        "const { createRequire } = require(\"node:module\"); " +
+        "const adapterPackageJson = \"/root/.npm-global/lib/node_modules/" +
+        "@openma/deepseek-harness-acp/package.json\"; " +
+        "const dshPackageJson = \"/root/.npm-global/lib/node_modules/" +
+        "@deepseek-ai/dsh/package.json\"; " +
+        "const adapter = JSON.parse(fs.readFileSync(adapterPackageJson)); " +
+        "const dsh = JSON.parse(fs.readFileSync(dshPackageJson)); " +
+        "if (adapter.name !== \"@openma/deepseek-harness-acp\" || " +
+        "dsh.name !== \"@deepseek-ai/dsh\" || " +
+        "!fs.existsSync(\"/root/.npm-global/lib/node_modules/@openma/" +
+        "deepseek-harness-acp/node_modules/@deepseek-ai/dsh-credentials\")) " +
+        "process.exit(1); " +
+        "createRequire(\"/root/.npm-global/lib/node_modules/@deepseek-ai/dsh/" +
+        "node_modules/@deepseek-ai/dsh-subprocess-local/package.json\")(\"node-pty\");'"
+internal val DEEPSEEK_HARNESS_ACP_DEPENDENCY_MOUNT_COMMAND = """
+    set -eu
+    source_root=/root/.npm-global/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai
+    target_root=/root/.npm-global/lib/node_modules/@openma/deepseek-harness-acp/node_modules/@deepseek-ai
+    mkdir -p "${'$'}target_root"
+    [ -e "${'$'}target_root/dsh" ] || ln -s /root/.npm-global/lib/node_modules/@deepseek-ai/dsh "${'$'}target_root/dsh"
+    for source in "${'$'}source_root"/*; do
+      [ -d "${'$'}source" ] || continue
+      package_name="${'$'}(basename "${'$'}source")"
+      target="${'$'}target_root/${'$'}package_name"
+      [ -e "${'$'}target" ] || ln -s "${'$'}source" "${'$'}target"
+    done
+""".trimIndent()
 internal val DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND = """
+    cleanup_deepseek_harness_npm_staging() {
+      # npm uses hidden sibling directories while publishing scoped packages.
+      # A cancelled/failed Android install can leave one behind; npm then
+      # fails its next rename with ENOTEMPTY before it can repair the package.
+      for staging_dir in /root/.npm-global/lib/node_modules/@deepseek-ai/.dsh-*; do
+        [ -e "${'$'}staging_dir" ] || continue
+        # A recursive delete through Android's proot can block the foreground
+        # ACP switch for minutes. Rename within the same filesystem first,
+        # then reclaim the explicit temporary directory asynchronously.
+        stale_dir="/tmp/omnibot-dsh-stale-${'$'}{staging_dir##*/}-${'$'}${'$'}"
+        if mv "${'$'}staging_dir" "${'$'}stale_dir" 2>/dev/null; then
+          (rm -rf "${'$'}stale_dir" >/dev/null 2>&1 || true) &
+        else
+          rm -rf "${'$'}staging_dir"
+        fi
+      done
+    }
+    find_deepseek_harness_node_pty_dir() {
+      for candidate in \
+        /root/.npm-global/lib/node_modules/@deepseek-ai/dsh/node_modules/node-pty \
+        /root/.npm-global/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-subprocess-local/node_modules/node-pty; do
+        if [ -f "${'$'}candidate/package.json" ]; then
+          printf '%s\n' "${'$'}candidate"
+          return 0
+        fi
+      done
+      return 1
+    }
     repair_deepseek_harness_node_pty() {
-      node_pty_dir='/root/.npm-global/lib/node_modules/@deepseek-ai/dsh-subprocess-local/node_modules/node-pty'
+      node_pty_dir="${'$'}(find_deepseek_harness_node_pty_dir || true)"
+      [ -n "${'$'}node_pty_dir" ] || return 0
       if [ -f "${'$'}node_pty_dir/package.json" ] &&
          ! $DEEPSEEK_HARNESS_NATIVE_HEALTH_COMMAND >/dev/null 2>&1; then
         (
@@ -100,16 +160,30 @@ internal val DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND = """
       fi
     }
     install_deepseek_harness_packages() {
+      # Once published, keep the package directory stable: Android's proot
+      # can leave a populated scoped directory that npm cannot rename over.
+      # The health check below still verifies the official DSH + ACP graph;
+      # a missing package is the only case that needs a fresh npm install.
+      if [ -f /root/.npm-global/lib/node_modules/@deepseek-ai/dsh/package.json ] &&
+         [ -f /root/.npm-global/lib/node_modules/@openma/deepseek-harness-acp/package.json ]; then
+        return 0
+      fi
+      cleanup_deepseek_harness_npm_staging
       hardlink_helper='/tmp/omnibot-node-gyp-copy'
       rm -rf "${'$'}hardlink_helper"
       mkdir -p "${'$'}hardlink_helper"
       printf '%s\n' \
         '#!/bin/sh' \
-        'if [ "${'$'}1" = "-f" ]; then exit 1; fi' \
+        'if [ "${'$'}1" = "-f" ]; then' \
+        '  shift' \
+        '  src="${'$'}1"' \
+        '  dst="${'$'}2"' \
+        '  exec cp -af "${'$'}src" "${'$'}dst"' \
+        'fi' \
         'exec /bin/ln "${'$'}@"' > "${'$'}hardlink_helper/ln"
       chmod 755 "${'$'}hardlink_helper/ln"
       if PATH="${'$'}hardlink_helper:${'$'}PATH" npm install -g --prefix /root/.npm-global \
-          --no-audit --no-fund ${DEEPSEEK_HARNESS_NPM_PACKAGE_SPECS.joinToString(" ")}; then
+          --include=peer --no-audit --no-fund ${DEEPSEEK_HARNESS_NPM_PACKAGE_SPECS.joinToString(" ")}; then
         install_status=0
       else
         install_status=${'$'}?
@@ -118,6 +192,7 @@ internal val DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND = """
       return "${'$'}install_status"
     }
     install_deepseek_harness_packages
+    $DEEPSEEK_HARNESS_ACP_DEPENDENCY_MOUNT_COMMAND
     # npm may replace node-pty during the install above, so the native repair
     # must run after package publication as well as on later health checks.
     repair_deepseek_harness_node_pty
@@ -407,9 +482,10 @@ internal class AcpAgentProfileStore(context: Context) {
     }
 
     companion object {
-        const val DEFAULT_CODEX_AGENT_ID = "codex-acp"
+        const val CODEX_AGENT_ID = "codex-acp"
         const val DEEPSEEK_HARNESS_AGENT_ID = "deepseek-harness-acp"
         const val XIAOWAN_AGENT_ID = "xiaowan-acp"
+        const val DEFAULT_AGENT_ID = XIAOWAN_AGENT_ID
 
         val OFFICIAL_AGENTS = listOf(
             AcpAgentProfile(
@@ -420,7 +496,7 @@ internal class AcpAgentProfileStore(context: Context) {
                 builtIn = true
             ),
             AcpAgentProfile(
-                id = DEFAULT_CODEX_AGENT_ID,
+                id = CODEX_AGENT_ID,
                 name = "Codex",
                 description = "OpenAI Codex through its managed ACP adapter",
                 command = "codex-acp",
@@ -444,23 +520,24 @@ internal class AcpAgentProfileStore(context: Context) {
             AcpAgentProfile(
                 id = DEEPSEEK_HARNESS_AGENT_ID,
                 name = "DeepSeek Harness",
-                description = "DeepSeek Harness coding agent through its official ACP server",
-                command = "dsh-acp-demo",
-                arguments = listOf("--config", DEEPSEEK_HARNESS_CORDIS_PATH),
+                description = "DeepSeek Harness through the existing streaming ACP adapter",
+                command = "dsh-acp",
                 builtIn = true
             )
         )
-        val DEFAULT_CODEX_AGENT = OFFICIAL_AGENTS.first { it.id == DEFAULT_CODEX_AGENT_ID }
+        val CODEX_AGENT = OFFICIAL_AGENTS.first { it.id == CODEX_AGENT_ID }
         private val OFFICIAL_AGENT_IDS = OFFICIAL_AGENTS.mapTo(linkedSetOf()) { it.id }
         private val RETIRED_AGENT_IDS = setOf("gemini-cli-acp")
         private val OFFICIAL_RUNTIMES = mapOf(
-            DEFAULT_CODEX_AGENT_ID to AcpOfficialRuntime(
+            CODEX_AGENT_ID to AcpOfficialRuntime(
                 discoveryCommand = "codex",
                 managedAdapterPackage = "@openai/codex@latest",
                 managedAdapterPackages = listOf(
                     "@openai/codex@latest",
                     "@agentclientprotocol/codex-acp@1.1.7"
-                )
+                ),
+                terminalPackageId = "codex",
+                usesSharedProvider = true,
             ),
             "claude-code-acp" to AcpOfficialRuntime(
                 discoveryCommand = "claude",
@@ -468,24 +545,34 @@ internal class AcpAgentProfileStore(context: Context) {
                 managedAdapterPackages = listOf(
                     "@anthropic-ai/claude-code@latest",
                     "@agentclientprotocol/claude-agent-acp@0.61.0"
-                )
+                ),
+                terminalPackageId = "claude_code",
+                usesSharedProvider = true,
             ),
             "opencode-acp" to AcpOfficialRuntime(
                 discoveryCommand = "opencode",
-                managedAdapterPackage = "opencode-ai@latest"
+                managedAdapterPackage = "opencode-ai@latest",
+                terminalPackageId = "opencode",
+                usesSharedProvider = true,
             ),
             DEEPSEEK_HARNESS_AGENT_ID to AcpOfficialRuntime(
-                // The product package exposes the official `dsh` CLI.  The
-                // ACP bridge below still launches the official dsh-acp-demo
-                // entry point, because this app speaks ACP rather than the
-                // web/headless CLI protocol.
+                // The existing adapter composes the official `dsh` package
+                // in-process and exposes text plus reasoning deltas.
                 discoveryCommand = "dsh",
-                managedAdapterPackage = DEEPSEEK_HARNESS_NPM_PACKAGE_SPECS.first(),
+                managedAdapterPackage = DEEPSEEK_HARNESS_NPM_PACKAGE_SPECS.last(),
                 managedAdapterPackages = DEEPSEEK_HARNESS_NPM_PACKAGE_SPECS,
                 requiresNativeBuildTools = true,
-                managedAdapterHealthCommand = DEEPSEEK_HARNESS_NATIVE_HEALTH_COMMAND
+                managedAdapterHealthCommand = DEEPSEEK_HARNESS_NATIVE_HEALTH_COMMAND,
+                harnessAdapter = AcpHarnessAdapters.deepSeekHarness,
+                terminalPackageId = "deepseek_harness",
+                managedInstallScriptPath = DEEPSEEK_HARNESS_INSTALL_SCRIPT_PATH,
+                managedInstallCommand = DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND,
+                usesSharedProvider = true,
             ),
-            XIAOWAN_AGENT_ID to AcpOfficialRuntime(discoveryCommand = "omnibot-xiaowan-acp")
+            XIAOWAN_AGENT_ID to AcpOfficialRuntime(
+                discoveryCommand = "omnibot-xiaowan-acp",
+                usesSharedProvider = true,
+            )
         )
 
         fun officialRuntime(profile: AcpAgentProfile): AcpOfficialRuntime? {
@@ -499,6 +586,9 @@ internal class AcpAgentProfileStore(context: Context) {
             }
             return OFFICIAL_RUNTIMES[profile.id]
         }
+
+        fun usesSharedProvider(profile: AcpAgentProfile): Boolean =
+            officialRuntime(profile)?.usesSharedProvider == true
 
         internal fun isLegacyXiaowanAlias(profile: AcpAgentProfile): Boolean {
             if (profile.id == XIAOWAN_AGENT_ID) return false

@@ -7,6 +7,7 @@ import kotlinx.serialization.json.jsonPrimitive
 object AgentConversationModePolicy {
     const val NORMAL_MODE = "normal"
     const val SUBAGENT_MODE = "subagent"
+    const val CHAT_ONLY_MODE = "chat_only"
 
     private val subagentRestrictedToolNames = setOf(
         "schedule_task_create",
@@ -31,10 +32,17 @@ object AgentConversationModePolicy {
         return conversationMode?.trim()?.equals(SUBAGENT_MODE, ignoreCase = true) == true
     }
 
+    fun isChatOnlyMode(conversationMode: String?): Boolean {
+        return conversationMode?.trim()?.equals(CHAT_ONLY_MODE, ignoreCase = true) == true
+    }
+
     fun isToolRestrictedInConversationMode(
         toolName: String,
         conversationMode: String?
     ): Boolean {
+        if (isChatOnlyMode(conversationMode)) {
+            return true
+        }
         if (!isSubagentMode(conversationMode)) {
             return false
         }
@@ -42,7 +50,12 @@ object AgentConversationModePolicy {
     }
 
     fun restrictedToolNamesForConversationMode(conversationMode: String?): Set<String> {
-        return if (isSubagentMode(conversationMode)) {
+        return if (isChatOnlyMode(conversationMode)) {
+            // chat_only is handled as a deny-all policy by the definition
+            // filter below; this set remains useful to callers that ask
+            // whether an individual known tool is restricted.
+            emptySet()
+        } else if (isSubagentMode(conversationMode)) {
             subagentRestrictedToolNames
         } else {
             emptySet()
@@ -53,6 +66,9 @@ object AgentConversationModePolicy {
         definitions: List<JsonObject>,
         conversationMode: String?
     ): List<JsonObject> {
+        if (isChatOnlyMode(conversationMode)) {
+            return emptyList()
+        }
         val restricted = restrictedToolNamesForConversationMode(conversationMode)
         if (restricted.isEmpty()) {
             return definitions

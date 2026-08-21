@@ -152,6 +152,7 @@ class _ChatMessageListState extends State<ChatMessageList> {
   ObservableChatMessageList? _timelineCacheSource;
   int _timelineCacheStructureRevision = -1;
   Set<String>? _timelineCacheActiveTaskIds;
+  String? _timelineCacheAgentId;
   final Map<String, GlobalKey> _entryRowKeys = <String, GlobalKey>{};
   int _navigatorJumpSerial = 0;
   bool _navigatorJumpUserInterrupted = false;
@@ -712,7 +713,8 @@ class _ChatMessageListState extends State<ChatMessageList> {
     if (cached != null &&
         identical(_timelineCacheSource, observable) &&
         _timelineCacheStructureRevision == observable.structureRevision &&
-        setEquals(_timelineCacheActiveTaskIds, widget.activeAgentTurnIds)) {
+        setEquals(_timelineCacheActiveTaskIds, widget.activeAgentTurnIds) &&
+        _timelineCacheAgentId == widget.activeAcpAgentId) {
       return cached;
     }
     final entries = buildAgentRunTimelineEntries(
@@ -724,6 +726,7 @@ class _ChatMessageListState extends State<ChatMessageList> {
     _timelineCacheSource = observable;
     _timelineCacheStructureRevision = observable.structureRevision;
     _timelineCacheActiveTaskIds = Set<String>.from(widget.activeAgentTurnIds);
+    _timelineCacheAgentId = widget.activeAcpAgentId;
     return entries;
   }
 

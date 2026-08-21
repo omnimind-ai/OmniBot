@@ -979,7 +979,7 @@ class AgentRuntimeService {
     required String configId,
     required dynamic value,
   }) {
-    return _invokeMap('config/set', {
+    return _invokeMap('session/set_config_option', {
       if (sessionId != null && sessionId.trim().isNotEmpty)
         'sessionId': sessionId.trim(),
       if (conversationId != null) 'conversationId': conversationId,
@@ -997,7 +997,7 @@ class AgentRuntimeService {
     required String configId,
     required dynamic value,
   }) {
-    return _invokeMap('config/set', {
+    return _invokeMap('session/set_config_option', {
       if (threadId != null && threadId.trim().isNotEmpty)
         'threadId': threadId.trim(),
       if (conversationId != null) 'conversationId': conversationId,

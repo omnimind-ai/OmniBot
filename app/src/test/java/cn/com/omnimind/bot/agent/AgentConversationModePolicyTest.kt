@@ -35,4 +35,24 @@ class AgentConversationModePolicyTest {
         assertTrue(toolNames.contains("subagent_dispatch"))
         assertTrue(toolNames.contains("memory_search"))
     }
+
+    @Test
+    fun chatOnlyModeExposesNoTools() {
+        val definitions = AgentToolDefinitions.staticTools(PromptLocale.ZH_CN) +
+            AgentToolDefinitions.memoryTools(PromptLocale.ZH_CN) +
+            AgentToolDefinitions.subagentTools(PromptLocale.ZH_CN)
+
+        val filtered = AgentConversationModePolicy.filterToolDefinitionsForConversationMode(
+            definitions = definitions,
+            conversationMode = AgentConversationModePolicy.CHAT_ONLY_MODE
+        )
+
+        assertTrue(filtered.isEmpty())
+        assertTrue(
+            AgentConversationModePolicy.isToolRestrictedInConversationMode(
+                toolName = "terminal_execute",
+                conversationMode = AgentConversationModePolicy.CHAT_ONLY_MODE
+            )
+        )
+    }
 }

@@ -76,9 +76,11 @@ internal class OmniFlowAppPlatform(
             },
         )
         require(result.isOk && result.exitCode == 0) {
-            result.error.takeIf(String::isNotBlank)
-                ?: result.output.takeLast(800).trim()
-                    .ifBlank { "omniflow_python_runtime_not_preinstalled" }
+            buildOmniFlowPythonFailureMessage(
+                error = result.error,
+                output = result.output,
+                rawOutputPreview = result.rawOutputPreview,
+            )
         }
         prefs.edit().putString(READY_VERSION_KEY, environmentVersion).apply()
         log(
@@ -145,6 +147,21 @@ internal class OmniFlowAppPlatform(
 
 }
 
+internal fun buildOmniFlowPythonFailureMessage(
+    error: String,
+    output: String,
+    rawOutputPreview: String,
+): String {
+    val details = sequenceOf(error, output, rawOutputPreview)
+        .map(EmbeddedTerminalRuntime::sanitizeTerminalNoise)
+        .map(String::trim)
+        .filter(String::isNotBlank)
+        .distinct()
+        .joinToString("\n")
+        .takeLast(1200)
+    return details.ifBlank { "omniflow_python_runtime_not_preinstalled" }
+}
+
 internal fun buildOmniFlowPythonPrepareCommand(
     expectedVersion: String,
     distributionId: String = "alpine",
@@ -159,12 +176,8 @@ internal fun buildOmniFlowPythonPrepareCommand(
         "DEBIAN_FRONTEND=noninteractive apt-get install -y --reinstall --no-install-recommends python3-numpy"
     } else {
         """
-            if apk --wait 300 fix --no-cache py3-numpy; then
-              :
-            else
-              apk --no-check-certificate update &&
-                apk --no-check-certificate add --no-cache py3-numpy
-            fi
+            apk --no-check-certificate update
+            apk --no-check-certificate add --no-cache py3-numpy
         """.trimIndent()
     }
     return """

@@ -47,7 +47,8 @@ class AgentEventReducer {
     if (method == 'session/update') {
       final update = _asStringMap(params['update']);
       final sessionUpdate = _string(update?['sessionUpdate']);
-      final scopedUpdate = sessionUpdate != null &&
+      final scopedUpdate =
+          sessionUpdate != null &&
           sessionUpdate != 'current_mode_update' &&
           sessionUpdate != 'config_option_update';
       final updateTurnId = _firstString([
@@ -1747,10 +1748,25 @@ class AgentEventReducer {
     bool appendCancelIfEmpty = false,
   }) {
     final wasActive = runtime.activeAgentTurnIds.contains(taskId);
+    // The UI primes a local render task before ACP has emitted its official
+    // turn id. Most adapters bind that placeholder on their first
+    // session/update, but an adapter is allowed to answer with only terminal
+    // lifecycle data. In that case the terminal event still belongs to the
+    // only locally active turn; treating it as an unrelated stale turn leaves
+    // the pre-created thinking card loading forever.
+    final pendingLocalTaskId =
+        runtime.isAiResponding &&
+            runtime.activeAcpTurnId == null &&
+            runtime.currentDispatchTurnId != null &&
+            runtime.currentDispatchTurnId != taskId
+        ? runtime.currentDispatchTurnId
+        : null;
+    final ownerTaskId = pendingLocalTaskId ?? taskId;
+    final ownerWasActive = runtime.activeAgentTurnIds.contains(ownerTaskId);
     final isCurrentTurn =
-        runtime.currentDispatchTurnId == taskId ||
-        runtime.lastAgentTurnId == taskId ||
-        runtime.activeAcpTurnId == taskId;
+        runtime.currentDispatchTurnId == ownerTaskId ||
+        runtime.lastAgentTurnId == ownerTaskId ||
+        runtime.activeAcpTurnId == ownerTaskId;
     // A terminal notification for turn N can arrive after turn N+1 has
     // already started. Finalize only N's cards/messages in that case; never
     // clear the shared runtime flags or text cache owned by N+1.
@@ -1766,19 +1782,19 @@ class AgentEventReducer {
     }
     final isManualCancel =
         appendCancelIfEmpty &&
-        taskId == runtime.currentDispatchTurnId &&
-        !_hasVisibleAssistantTextForTask(runtime, taskId) &&
-        !_hasCompletedAgentOutputForTask(runtime, taskId);
+        ownerTaskId == runtime.currentDispatchTurnId &&
+        !_hasVisibleAssistantTextForTask(runtime, ownerTaskId) &&
+        !_hasCompletedAgentOutputForTask(runtime, ownerTaskId);
     if (isManualCancel) {
       _appendAssistantText(
         runtime,
-        parentTaskId: taskId,
-        entryId: '$taskId-cancelled',
+        parentTaskId: ownerTaskId,
+        entryId: '$ownerTaskId-cancelled',
         delta: '任务已取消',
         isFinal: true,
         replace: true,
       );
-      _cancelThinkingCardsForTask(runtime, taskId);
+      _cancelThinkingCardsForTask(runtime, ownerTaskId);
     }
     runtime.isAiResponding = false;
     runtime.isExecutingTask = false;
@@ -1789,20 +1805,23 @@ class AgentEventReducer {
     }
     runtime.lastAgentTurnId = null;
     runtime.currentAiMessages.clear();
-    runtime.currentThinkingMessages.remove(taskId);
+    runtime.currentThinkingMessages.remove(ownerTaskId);
     runtime.pendingAgentTextTaskId = null;
     runtime.activeToolCardId = null;
     runtime.deepThinkingContent = '';
     runtime.isDeepThinking = false;
     runtime.activeThinkingCardId = null;
     runtime.currentThinkingStage = ThinkingStage.complete.value;
-    _markAssistantMessagesFinalForTask(runtime, taskId);
+    _markAssistantMessagesFinalForTask(runtime, ownerTaskId);
     if (!isManualCancel) {
-      _finalizeThinkingCardsForTask(runtime, taskId);
+      _finalizeThinkingCardsForTask(runtime, ownerTaskId);
     }
-    _markToolCardsCompleteForTask(runtime, taskId);
-    if (wasActive) {
+    _markToolCardsCompleteForTask(runtime, ownerTaskId);
+    if (wasActive || ownerWasActive) {
       runtime.completedAgentTurnIds.add(taskId);
+      if (ownerTaskId != taskId) {
+        runtime.completedAgentTurnIds.add(ownerTaskId);
+      }
       if (runtime.completedAgentTurnIds.length > 128) {
         runtime.completedAgentTurnIds.remove(
           runtime.completedAgentTurnIds.first,
@@ -2761,6 +2780,23 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
   final sessionUpdate = _string(update['sessionUpdate']);
   if (sessionUpdate == null || sessionUpdate.isEmpty) return null;
 
+  // ACP messageId identifies a message within an ACP session, not an entry
+  // in the host conversation. DeepSeek Harness currently reuses values such
+  // as `1:1` on later prompts, so using it directly makes the reducer append a
+  // new answer to the first answer in the timeline. Scope projected entries
+  // by the host-owned turn while keeping all chunks from the same turn
+  // together.
+  String? turnScopedEntryId(Object? rawId) {
+    final id = _string(rawId)?.trim();
+    if (id == null || id.isEmpty) return null;
+    final owner = turnId?.trim();
+    if (owner == null || owner.isEmpty) return id;
+    return '$owner-$id';
+  }
+
+  final scopedMessageId = turnScopedEntryId(update['messageId']) ?? turnId;
+  final scopedEntryId = turnScopedEntryId(update['entryId']);
+
   Map<String, dynamic> projectedParams(Map<String, dynamic> values) {
     return <String, dynamic>{
       ...values,
@@ -2774,10 +2810,10 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
       return <String, dynamic>{
         'method': 'item/agentMessage/delta',
         'params': projectedParams(<String, dynamic>{
-          // DSH's official update may omit messageId. A turn-scoped fallback
-          // prevents the next turn from appending to the previous message.
-          'itemId': update['messageId'] ?? turnId,
-          if (update['entryId'] != null) 'entryId': update['entryId'],
+          // DSH may omit messageId, and when present it is only session
+          // scoped. Both forms need a turn-scoped host entry id.
+          'itemId': scopedMessageId,
+          if (scopedEntryId != null) 'entryId': scopedEntryId,
           'delta': _extractText(update['content']) ?? '',
         }),
       };
@@ -2785,8 +2821,8 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
       return <String, dynamic>{
         'method': 'item/reasoning/delta',
         'params': projectedParams(<String, dynamic>{
-          'itemId': update['messageId'] ?? turnId,
-          if (update['entryId'] != null) 'entryId': update['entryId'],
+          'itemId': scopedMessageId,
+          if (scopedEntryId != null) 'entryId': scopedEntryId,
           'delta': _extractText(update['content']) ?? '',
         }),
       };

@@ -76,7 +76,11 @@ private object DefaultOmniFlowPluginBackend : OmniFlowPluginBackend {
     ) = OmniFlow.configure(platform, runtimeProvider)
 
     override suspend fun prepareAndStart(context: Context) {
-        OmniFlow.prepareAndStart(context)
+        // Plugin registration must not probe or repair Python.  The plugin is
+        // installed and its ACP tool definitions are available immediately;
+        // OmniFlow.callTool awaits the resident runtime only when a tool is
+        // actually selected.  This keeps ordinary chat independent from
+        // numpy/APKINDEX/network work during application startup.
     }
 
     override suspend fun shutdown() = OmniFlow.shutdown()

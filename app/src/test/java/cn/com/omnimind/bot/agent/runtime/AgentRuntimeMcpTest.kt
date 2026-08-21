@@ -18,7 +18,7 @@ class AgentRuntimeMcpTest {
     @Test
     fun standardAcpAgentReceivesOfficialHttpMcpDeclaration() {
         val servers = buildLocalAgentAcpMcpServers(
-            agentId = AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID,
+            harnessAdapter = AcpHarnessAdapters.standard,
             supportsHttp = true,
             state = runningState,
         )
@@ -34,10 +34,10 @@ class AgentRuntimeMcpTest {
     }
 
     @Test
-    fun deepSeekHarnessUsesOfficialMcpClientEnvironmentInsteadOfSessionDeclaration() {
+    fun environmentBoundHarnessUsesAdapterEnvironmentInsteadOfSessionDeclaration() {
         assertTrue(
             buildLocalAgentAcpMcpServers(
-                agentId = AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID,
+                harnessAdapter = AcpHarnessAdapters.deepSeekHarness,
                 supportsHttp = true,
                 state = runningState,
             ).isEmpty(),
@@ -48,7 +48,7 @@ class AgentRuntimeMcpTest {
                 "OMNIBOT_MCP_URL" to "http://127.0.0.1:18765/mcp",
                 "OMNIBOT_MCP_TOKEN" to "test-token",
             ),
-            buildDeepSeekHarnessMcpEnvironment(runningState),
+            AcpHarnessAdapters.deepSeekHarness.mcpEnvironment(runningState),
         )
     }
 
@@ -58,7 +58,7 @@ class AgentRuntimeMcpTest {
 
         try {
             buildLocalAgentAcpMcpServers(
-                agentId = AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID,
+                harnessAdapter = AcpHarnessAdapters.standard,
                 supportsHttp = true,
                 state = stopped,
             )
@@ -68,22 +68,4 @@ class AgentRuntimeMcpTest {
         }
     }
 
-    @Test
-    fun deepSeekHarnessCompositionUsesOnlyOfficialExtensionSurfaces() {
-        val config = buildDeepSeekHarnessCordisConfig()
-
-        assertTrue(config.contains("@deepseek-ai/dsh-acp-demo"))
-        assertTrue(config.contains("provider: omnibot"))
-        assertTrue(config.contains("reasoningEfforts:"))
-        assertTrue(config.contains("thinkingFormat: deepseek"))
-        assertTrue(config.contains("supportsReasoningEffort: true"))
-        assertTrue(config.contains("requiresReasoningContentOnAssistantMessages: true"))
-        assertTrue(config.contains("@deepseek-ai/dsh-mcp-client"))
-        assertTrue(config.contains("@deepseek-ai/dsh-cordis-host-runner"))
-        assertTrue(config.contains("@deepseek-ai/dsh-tool-cordis"))
-        assertTrue(!config.contains("name: '@deepseek-ai/dsh-skill'"))
-        assertTrue(!config.contains("name: '@deepseek-ai/dsh-tool-skill'"))
-        assertTrue(!config.contains("plugin-project:"))
-        assertTrue(!config.contains("OmniBotPlugin"))
-    }
 }

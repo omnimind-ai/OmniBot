@@ -60,6 +60,7 @@ import org.json.JSONArray
 object HttpController {
     private const val TAG = "HttpController"
     private const val RESPONSE_LOG_CHUNK_SIZE = 3500
+    private const val PROVIDER_MODELS_TIMEOUT_SECONDS = 4L
     private const val ROUTE_CUSTOM_OPENAI_COMPAT = "custom_openai_compat"
     private const val ANTHROPIC_EPHEMERAL_CACHE_TYPE = "ephemeral"
     private const val ANTHROPIC_MAX_CACHE_BREAKPOINTS = 4
@@ -3577,7 +3578,26 @@ object HttpController {
             "[provider models protocol=$protocolType]",
             request.headers.toMultimap().mapValues { it.value.joinToString(",") }
         )
-        val response = OkHttpClient().newCall(request).execute()
+        // This endpoint is used while creating a local ACP session when the
+        // shared scene model binding has not been created yet. Keep the
+        // blocking OkHttp call itself bounded; a coroutine timeout alone
+        // cannot interrupt execute() while it is waiting on the socket.
+        val response = OkHttpClient.Builder()
+            .callTimeout(
+                PROVIDER_MODELS_TIMEOUT_SECONDS,
+                java.util.concurrent.TimeUnit.SECONDS,
+            )
+            .connectTimeout(
+                PROVIDER_MODELS_TIMEOUT_SECONDS,
+                java.util.concurrent.TimeUnit.SECONDS,
+            )
+            .readTimeout(
+                PROVIDER_MODELS_TIMEOUT_SECONDS,
+                java.util.concurrent.TimeUnit.SECONDS,
+            )
+            .build()
+            .newCall(request)
+            .execute()
         val responseBody = response.body?.string()
         if (!response.isSuccessful) {
             throw IllegalStateException(

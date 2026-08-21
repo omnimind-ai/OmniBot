@@ -52,6 +52,7 @@ class OmniFlowPythonClientTest {
         assertTrue(command.contains("export OMNITRANSFER_ROOT="))
         assertTrue(command.contains("export OMNITRANSFER_MATCHER_CHECKPOINT="))
         assertTrue(command.contains("-m omniflow.bridge"))
+        assertTrue(command.contains("--catalog default"))
         assertFalse(command.contains("/workspace/.venv"))
     }
 

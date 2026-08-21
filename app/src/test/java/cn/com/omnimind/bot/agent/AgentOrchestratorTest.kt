@@ -598,6 +598,29 @@ class AgentOrchestratorTest {
     }
 
     @Test
+    fun noneReasoningEffortDisablesThinkingOnTheWire() = runBlocking {
+        val llmClient = FakeLlmClient(
+            turns = listOf(assistantTurn(content = "你好"))
+        )
+
+        createOrchestrator(llmClient, FakeToolExecutor()).run(
+            AgentOrchestrator.Input(
+                callback = RecordingCallback(),
+                initialMessages = initialMessages("hello"),
+                executionEnv = FakeExecutionEnvironment(
+                    "hello",
+                    reasoningEffort = "none"
+                )
+            )
+        )
+
+        val request = llmClient.requests.single()
+        assertEquals(false, request.enableThinking)
+        assertEquals(null, request.reasoningEffort)
+        assertEquals("disabled", request.thinking?.type)
+    }
+
+    @Test
     fun longReasoningUpdatesAreNotTruncated() = runBlocking {
         val longReasoning = buildString {
             repeat(900) { index ->

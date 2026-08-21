@@ -437,7 +437,10 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
   }
 
   @override
-  Future<void> _sendMessage({String? text}) async {
+  Future<void> _sendMessage({
+    String? text,
+    bool waitForBootstrap = true,
+  }) async {
     // Set this before the first await. Two UI submit paths can otherwise both
     // pass the isAiResponding check while bootstrap/model loading is pending.
     if (_sendMessageInFlight) return;
@@ -448,7 +451,10 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       // row; otherwise bootstrap can restore/reset the target immediately after
       // this method and make the row flash and disappear.
       final bootstrapFuture = _conversationBootstrapFuture;
-      if (bootstrapFuture != null) {
+      // _sendInitialMessageIfNeeded is called from inside this very bootstrap
+      // future. Waiting for it here would await the current Future forever,
+      // leaving enhancement/replay prompts with no user message or request.
+      if (waitForBootstrap && bootstrapFuture != null) {
         await bootstrapFuture;
       }
       final messageText = (text ?? _messageController.text).trim();
@@ -498,7 +504,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
         if (!mounted) return;
         final succeeded = result['success'] == true;
         final text = succeeded
-            ? result['function'] is Map
+            ? hasOmniFlowRegisteredFunction(result)
                   ? '手动录制完成，复用指令已保存'
                   : '手动录制完成，RunLog 已保存；复用指令生成失败'
             : ((result['error_message'] ?? '').toString().trim().isEmpty
@@ -806,7 +812,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
 
     _syncRuntimeSnapshotForMode(_activeMode);
     _registerActiveTaskBinding(aiMessageId);
-    _runtimeCoordinator.primePureChatThinking(
+    _runtimeCoordinator.primeAcpThinking(
       taskId: aiMessageId,
       conversationId: conversationId,
       mode: _modeKey(_activeMode),
@@ -825,7 +831,11 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
         conversationId: remoteRuntime ? null : conversationId,
         sessionId: remoteRuntime ? null : reusableSessionId,
         requestId: _buildPromptRequestId(aiMessageId),
-        agentId: remoteRuntime ? null : status.activeAgentId,
+        // Pure chat is an ACP turn with tools disabled, not a provider-only
+        // transport. Keep the selected Harness explicit so a DSH/Xiaowan
+        // switch cannot route the turn through whichever process was last
+        // connected.
+        agentId: remoteRuntime ? null : _activeAcpAgentId,
         text: userMessage,
         attachments: userAttachments,
         approvalPolicy: _agentPermissionMode.approvalPolicy,
@@ -927,7 +937,10 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
         conversationId: remoteCodex ? null : conversationId,
         sessionId: remoteCodex ? null : reusableSessionId,
         requestId: _buildPromptRequestId(aiMessageId),
-        agentId: remoteCodex ? null : status.activeAgentId,
+        // The visible conversation target is authoritative. Runtime status
+        // can briefly describe the previous process during an ACP switch;
+        // using it here can send the first turn to the old Harness.
+        agentId: remoteCodex ? null : _activeAcpAgentId,
         text: userMessage,
         attachments: attachments,
         approvalPolicy: _agentPermissionMode.approvalPolicy,

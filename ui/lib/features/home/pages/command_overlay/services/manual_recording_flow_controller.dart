@@ -168,7 +168,7 @@ class ManualRecordingFlowController {
 
   static void _showCompletionToast(Locale locale, Map<String, dynamic> result) {
     final recordingSuccess = _recordingSucceeded(result);
-    final conversionSuccess = result['function'] is Map;
+    final conversionSuccess = hasOmniFlowRegisteredFunction(result);
     showToast(
       recordingSuccess
           ? (conversionSuccess

@@ -353,8 +353,16 @@ class RunLogStepDetailSheet extends StatelessWidget {
     final tool = _string(action['tool']).isEmpty
         ? _string(action['type'])
         : _string(action['tool']);
-    final beforeStateId = _string(step['before_state_id']);
-    final afterStateId = _string(step['after_state_id']);
+    // Official OmniFlow RunLog steps carry state ids in observation.auxiliaries;
+    // keep accepting the old explicit fields for legacy stored payloads.
+    final beforeStateId = _firstText([
+      step['before_state_id'],
+      _map(_map(step['observation'])['auxiliaries'])['state_id'],
+    ]);
+    final afterStateId = _firstText([
+      step['after_state_id'],
+      _map(_map(step['next_observation'])['auxiliaries'])['state_id'],
+    ]);
     final metadata = _map(step['metadata']);
     final summary = _string(metadata['summary']);
     final thinking = _string(metadata['thinking']);

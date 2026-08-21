@@ -39,7 +39,7 @@ void main() {
               _agent(
                 'deepseek-harness-acp',
                 'DeepSeek Harness',
-                'dsh-acp-demo',
+                'dsh-acp',
                 'unchecked',
                 managedAdapter: true,
                 lastCheckError:

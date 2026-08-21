@@ -117,6 +117,35 @@ void main() {
     expect((capturedCall?.arguments as Map)['requestId'], 'prompt-1');
   });
 
+  test(
+    'pure chat remains canonical ACP without selecting a Harness agent',
+    () async {
+      MethodCall? capturedCall;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        capturedCall = call;
+        return <String, dynamic>{
+          'sessionId': 'xiaowan-chat-session',
+          'promptId': 'turn-1',
+        };
+      });
+
+      await AgentRuntimeService.promptSession(
+        conversationId: 42,
+        text: 'hello',
+        conversationMode: 'chat_only',
+        model: 'selected-provider-model',
+      );
+
+      expect(capturedCall?.method, 'session/prompt');
+      final args = Map<String, dynamic>.from(
+        (capturedCall?.arguments as Map).cast<String, dynamic>(),
+      );
+      expect(args['conversationMode'], 'chat_only');
+      expect(args['model'], 'selected-provider-model');
+      expect(args.containsKey('agentId'), isFalse);
+    },
+  );
+
   test('lists codex models, collaboration modes, and config', () async {
     final calls = <MethodCall>[];
     messenger.setMockMethodCallHandler(channel, (call) async {
@@ -151,7 +180,7 @@ void main() {
       value: 'agent-full-access',
     );
 
-    expect(capturedCall?.method, 'config/set');
+    expect(capturedCall?.method, 'session/set_config_option');
     expect(capturedCall?.arguments, {
       'threadId': 'thread-1',
       'configId': 'mode',
@@ -174,7 +203,7 @@ void main() {
         value: 'provider-model',
       );
 
-      expect(capturedCall?.method, 'config/set');
+      expect(capturedCall?.method, 'session/set_config_option');
       expect(capturedCall?.arguments, {
         'agentId': 'custom-agent',
         'configId': 'model',

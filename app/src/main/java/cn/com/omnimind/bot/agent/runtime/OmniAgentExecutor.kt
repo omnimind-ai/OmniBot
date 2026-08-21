@@ -216,7 +216,14 @@ class OmniAgentExecutor(
             // skills_read and become replayable tool results instead of a volatile
             // leading message that invalidates the full conversation prefix.
             val resolvedSkills = emptyList<ResolvedSkillContext>()
-            val activePluginSession = if (AgentRuntimeFeatureFlags.ENABLE_PLUGIN_RUNTIME) {
+            // chat_only is still an ACP turn, but it has no tool capability.
+            // Do not initialize the plugin/MCP session only to discard every
+            // definition a few lines later; this keeps pure chat independent
+            // from plugin startup while preserving the normal Agent catalog.
+            val activePluginSession = if (
+                AgentRuntimeFeatureFlags.ENABLE_PLUGIN_RUNTIME &&
+                !AgentConversationModePolicy.isChatOnlyMode(conversationMode)
+            ) {
                 OmniPluginHost.get(context).openSession()
             } else {
                 null

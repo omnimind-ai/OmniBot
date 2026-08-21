@@ -69,6 +69,7 @@ class AgentConfigAdaptersTest {
                 agentId = AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID,
                 provider = provider,
                 model = model,
+                harnessAdapter = AcpHarnessAdapters.deepSeekHarness,
             ),
         )
         assertEquals("https://llmapi.paratera.com/v1", dsh.environment["DEEPSEEK_BASE_URL"])
@@ -77,7 +78,7 @@ class AgentConfigAdaptersTest {
 
         val codex = AgentConfigAdapterRegistry.map(
             AgentProviderMappingInput(
-                agentId = AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID,
+                agentId = AcpAgentProfileStore.CODEX_AGENT_ID,
                 provider = provider,
                 model = model,
             ),
@@ -118,7 +119,7 @@ class AgentConfigAdaptersTest {
     fun missingProviderDoesNotInventCredentials() {
         val mapping = AgentConfigAdapterRegistry.map(
             AgentProviderMappingInput(
-                agentId = AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID,
+                agentId = AcpAgentProfileStore.CODEX_AGENT_ID,
                 provider = null,
                 model = "GLM-5.1",
             ),
@@ -187,6 +188,31 @@ class AgentConfigAdaptersTest {
     }
 
     @Test
+    fun acpLaunchKeepsExplicitBindingWhenProviderCatalogIsUnavailable() {
+        assertEquals(
+            "bound-model",
+            resolveAcpLaunchModelWithBindingFallback(
+                providerModelIds = null,
+                boundModel = "bound-model",
+            ),
+        )
+        assertEquals(
+            "bound-model",
+            resolveAcpLaunchModelWithBindingFallback(
+                providerModelIds = emptyList(),
+                boundModel = "bound-model",
+            ),
+        )
+        assertEquals(
+            null,
+            resolveAcpLaunchModelWithBindingFallback(
+                providerModelIds = listOf("new-model"),
+                boundModel = "removed-model",
+            ),
+        )
+    }
+
+    @Test
     fun authoritativeProviderModelPayloadNeverUsesAcpDefaults() {
         val payload = buildAuthoritativeProviderModelPayload(
             providerModelIds = listOf("first-model", "deepseek-v4-pro"),
@@ -235,7 +261,7 @@ class AgentConfigAdaptersTest {
     fun adaptersDoNotUseOldModelOverrides() {
         listOf(
             AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID,
-            AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID,
+            AcpAgentProfileStore.CODEX_AGENT_ID,
             CLAUDE_CODE_AGENT_ID,
             OPENCODE_AGENT_ID,
         ).forEach { agentId ->
@@ -244,12 +270,15 @@ class AgentConfigAdaptersTest {
                     agentId = agentId,
                     provider = provider,
                     model = null,
+                    harnessAdapter = if (
+                        agentId == AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID
+                    ) AcpHarnessAdapters.deepSeekHarness else AcpHarnessAdapters.standard,
                 ),
             )
             when (agentId) {
                 AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID ->
                     assertEquals("", mapping.deepSeekConfig?.model)
-                AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID ->
+                AcpAgentProfileStore.CODEX_AGENT_ID ->
                     assertEquals(null, mapping.codexModel)
                 CLAUDE_CODE_AGENT_ID ->
                     assertEquals(null, mapping.environment["ANTHROPIC_MODEL"])
@@ -260,7 +289,7 @@ class AgentConfigAdaptersTest {
 
         val noPreviousModel = AgentConfigAdapterRegistry.map(
             AgentProviderMappingInput(
-                agentId = AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID,
+                agentId = AcpAgentProfileStore.CODEX_AGENT_ID,
                 provider = provider,
                 model = null,
             ),

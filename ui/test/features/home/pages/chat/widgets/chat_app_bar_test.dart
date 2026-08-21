@@ -1350,7 +1350,9 @@ void main() {
     expect(agentIcon.height, 22);
   });
 
-  testWidgets('uses current chat mode icon in surface slider', (tester) async {
+  testWidgets('keeps the surface slider icon independent from Harness brand', (
+    tester,
+  ) async {
     Future<void> pumpAppBar({
       bool isOmniAiSelected = false,
       bool isAgentSelected = false,
@@ -1392,10 +1394,10 @@ void main() {
     }
 
     await pumpAppBar(isOmniAiSelected: true);
-    expect(primaryIconIdentity(), contains('assets/home/avatar.svg'));
+    expect(primaryIconIdentity(), contains('assets/home/chat/agent.svg'));
 
     await pumpAppBar(isAgentSelected: true);
-    expect(primaryIconIdentity(), 'agent:codex-acp');
+    expect(primaryIconIdentity(), contains('assets/home/chat/agent.svg'));
 
     await pumpAppBar(isPureChatSelected: true);
     expect(primaryIconIdentity(), contains('assets/home/chat/pure_chat.svg'));

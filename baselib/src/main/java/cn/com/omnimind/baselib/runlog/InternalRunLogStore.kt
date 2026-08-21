@@ -524,14 +524,12 @@ object InternalRunLogStore {
         val beforeState = statePayload(context, beforeStateId)
         val payload = linkedMapOf<String, Any?>(
             "step_index" to (numberToLong(step["step_index"]) ?: 0L).toInt(),
-            "before_state_id" to beforeStateId,
             "observation" to externalStatePayload(context, beforeStateId),
             "action" to externalActionPayload(
                 action = stringMap(step["action"]),
                 display = stringMap(beforeState["display"]),
             ),
             "result" to externalResultPayload(stringMap(step["result"])),
-            "after_state_id" to afterStateId,
             "next_observation" to externalStatePayload(context, afterStateId),
         )
         stringMap(step["metadata"]).takeIf { it.isNotEmpty() }?.let {
@@ -546,21 +544,13 @@ object InternalRunLogStore {
     ): Map<String, Any?> {
         val state = statePayload(context, stateId)
         val display = stringMap(state["display"])
-        val screenshotPath = state["screenshot_path"]?.toString()
-            ?.takeIf(String::isNotBlank)
-            ?: "/workspace/.omnibot/omniflow/missing-screenshot.jpg"
         return linkedMapOf(
-            // Keep state evidence in the RunLog itself as required by the
-            // official Function compiler. Native Android recordings persist a
-            // screenshot path alongside the XML forest; the Python runtime
-            // only needs the absolute reference for the official RunLog
-            // contract and does not replay source-device pixels directly.
-            "pixels" to linkedMapOf(
-                "path" to screenshotPath,
-                "width" to numberToLong(display["width"]),
-                "height" to numberToLong(display["height"]),
-                "mime_type" to "image/jpeg",
-            ).filterValues { it != null },
+            // The official RunLog schema requires a complete screenshot
+            // reference (including sha256). Android's internal state store
+            // has a path but not a content hash, so expose null rather than
+            // sending an invalid partial screenshot object. The XML forest,
+            // display metadata and state id remain the transfer evidence.
+            "pixels" to null,
             "forest" to state["xml"]?.toString().orEmpty(),
             "ui_elements" to emptyList<Any?>(),
             "auxiliaries" to linkedMapOf<String, Any?>(

@@ -1138,6 +1138,51 @@ void main() {
     );
   });
 
+  testWidgets('refreshes the ACP avatar when the selected Agent changes', (
+    tester,
+  ) async {
+    final controller = ScrollController();
+    final messages = ObservableChatMessageList()
+      ..replaceAllMessages(_buildCompletedLegacyAcpTextRunMessages());
+    var activeAgentId = 'deepseek-harness-acp';
+    late StateSetter setState;
+
+    await tester.pumpWidget(
+      _buildLocalizedApp(
+        child: StatefulBuilder(
+          builder: (context, stateSetter) {
+            setState = stateSetter;
+            return SizedBox(
+              width: 400,
+              height: 520,
+              child: ChatMessageList(
+                messages: messages,
+                useAcpPresentation: true,
+                activeAcpAgentId: activeAgentId,
+                scrollController: controller,
+                onBeforeTaskExecute: () async {},
+              ),
+            );
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    setState(() {
+      activeAgentId = 'xiaowan-acp';
+    });
+    await tester.pumpAndSettle();
+
+    final brandIcon = tester.widget<AgentBrandIcon>(
+      find.descendant(
+        of: find.byKey(const ValueKey('agent-run-acp-avatar-task-1')),
+        matching: find.byType(AgentBrandIcon),
+      ),
+    );
+    expect(brandIcon.agentId, 'xiaowan-acp');
+  });
+
   testWidgets(
     'ACP run shows its avatar and processing timer before the first response',
     (tester) async {

@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:ui/services/agent_avatar_service.dart';
 import 'package:ui/theme/theme_context.dart';
+import 'package:ui/widgets/agent_avatar.dart';
 
 /// ACP Agent 品牌图标。
 ///
-/// 已知的内置 Agent（小万 / Codex / Claude Code / OpenCode / DeepSeek Harness）渲染各自来自 Lobe Icons
-/// (https://icons.lobehub.com) 的原始品牌 SVG；未识别的自定义 Agent 回退到默认
-/// 机器人图标 [Icons.smart_toy_outlined]。
+/// 已知的内置 Agent（Codex / Claude Code / OpenCode / DeepSeek Harness）渲染各自来自 Lobe Icons
+/// (https://icons.lobehub.com) 的原始品牌 SVG。小万沿用可编辑的 AgentAvatarService，
+/// 让头像选择器同时影响 ACP 顶部、运行头和旧兼容卡片；未识别的自定义 Agent
+/// 回退到默认机器人图标 [Icons.smart_toy_outlined]。
 class AgentBrandIcon extends StatelessWidget {
   const AgentBrandIcon({
     super.key,
@@ -46,7 +49,11 @@ class AgentBrandIcon extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.omniPalette;
-    final brand = _brands[agentId.trim()];
+    final normalizedAgentId = agentId.trim();
+    if (normalizedAgentId == 'xiaowan-acp') {
+      return _XiaowanAgentAvatar(size: size);
+    }
+    final brand = _brands[normalizedAgentId];
     if (brand == null) {
       return Icon(
         Icons.smart_toy_outlined,
@@ -62,6 +69,40 @@ class AgentBrandIcon extends StatelessWidget {
       width: size,
       height: size,
       colorFilter: ColorFilter.mode(effectiveTint, BlendMode.srcIn),
+    );
+  }
+}
+
+/// The Xiaowan ACP identity is user-customizable, unlike other managed Agent
+/// brands. Keep the same state source as the existing picker so every
+/// presentation layer updates through the notifier without a second setting.
+class _XiaowanAgentAvatar extends StatefulWidget {
+  const _XiaowanAgentAvatar({required this.size});
+
+  final double size;
+
+  @override
+  State<_XiaowanAgentAvatar> createState() => _XiaowanAgentAvatarState();
+}
+
+class _XiaowanAgentAvatarState extends State<_XiaowanAgentAvatar> {
+  @override
+  void initState() {
+    super.initState();
+    AgentAvatarService.ensureLoaded();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ValueListenableBuilder<AgentAvatarState>(
+      valueListenable: AgentAvatarService.avatarStateNotifier,
+      builder: (context, state, _) {
+        return AgentAvatarCircle(
+          state: state,
+          size: widget.size,
+          showBorder: false,
+        );
+      },
     );
   }
 }

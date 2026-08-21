@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:ui/models/chat_message_model.dart';
 import 'package:ui/services/agent_message_kinds.dart';
+import 'package:ui/features/task/run_log/omniflow_tool_client.dart';
 
 ChatMessageModel buildManualRecordingResultCard({
   required String messageId,
@@ -11,7 +12,7 @@ ChatMessageModel buildManualRecordingResultCard({
   final succeeded = result['success'] == true;
   final runLog = _map(result['run_log']);
   final runId = (runLog['run_id'] ?? '').toString().trim();
-  final function = _map(result['function']);
+  final function = omniFlowRegisteredFunction(result);
   final functionId = (function['function_id'] ?? '').toString().trim();
   final payload = <String, dynamic>{
     'context_type': 'manual_recording_result',

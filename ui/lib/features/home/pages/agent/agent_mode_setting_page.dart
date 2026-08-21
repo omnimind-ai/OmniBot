@@ -159,10 +159,9 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
       AcpAgentProfile(
         id: 'deepseek-harness-acp',
         name: 'DeepSeek Harness',
-        command: 'dsh-acp-demo',
+        command: 'dsh-acp',
         description:
             'DeepSeek Harness coding agent through its official ACP server',
-        arguments: <String>['--config', '/root/.dsh/omnibot-acp/cordis.yml'],
         builtIn: true,
         source: 'official',
         status: 'unchecked',
@@ -619,10 +618,10 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
     final testLabel = needsManagedPreparation && isDeepSeekHarness
         ? _text('安装官方 Harness', 'Install official Harness')
         : needsManagedPreparation
-            ? _text('准备并初始化', 'Prepare & initialize')
-            : agent.status == 'unchecked'
-                ? _text('检测', 'Check')
-                : _text('重新检测', 'Check again');
+        ? _text('准备并初始化', 'Prepare & initialize')
+        : agent.status == 'unchecked'
+        ? _text('检测', 'Check')
+        : _text('重新检测', 'Check again');
     final installEntry = agent.managedAdapter && agent.status != 'online';
     return _FlatTile(
       tileKey: Key('agent-config-${agent.id}'),

@@ -12,7 +12,7 @@ from zipfile import ZipFile
 COMPONENT_ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY_ROOT = COMPONENT_ROOT.parents[1]
 CATALOG_PATH = REPOSITORY_ROOT / "plugins/catalog.v1.json"
-ARCHIVE_PATH = REPOSITORY_ROOT / "artifacts/omniflow-gui-runtime-2.1.7.zip"
+ARCHIVE_PATH = REPOSITORY_ROOT / "artifacts/omniflow-gui-runtime-2.1.8.zip"
 OMNIFLOW_ROOT = REPOSITORY_ROOT.parent / "OmniFlow-exp"
 OMNITRANSFER_ROOT = REPOSITORY_ROOT.parent / "OmniTransfer"
 
@@ -64,11 +64,20 @@ class RuntimeBundleTest(unittest.TestCase):
             "INSTALL_DIR.json",
             "SKILL.md",
             "scripts/runtime/python/omniflow/bridge.py",
+            "scripts/runtime/python/config/paper_androidworld.json",
             "vendor/site-packages/json_repair/__init__.py",
             "scripts/runtime/python/schemas/oob/omniflow_android_bridge.v2.json",
             "scripts/runtime/.runtime/omnitransfer/src/omnitransfer/runtime.py",
         }
         self.assertTrue(required <= self.names)
+        self.assertIn(
+            "scripts/runtime/python/omniflow/catalog/releases/2026.08.06.2/function_store.json",
+            self.names,
+        )
+        self.assertIn(
+            "scripts/runtime/python/omniflow/catalog/releases/2026.08.06.2/states.json.xz.b64",
+            self.names,
+        )
         self.assertFalse(any(name.endswith((".zip", ".whl")) for name in self.names))
         self.assertNotIn("pyproject.toml", self.names)
         self.assertNotIn("uv.lock", self.names)

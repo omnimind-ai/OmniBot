@@ -69,6 +69,12 @@ class AgentToolRouter(
     ): ToolExecutionResult {
         helper.ensureRunActive()
         val toolName = toolCall.function.name
+        if (AgentConversationModePolicy.isChatOnlyMode(env.conversationMode)) {
+            return ToolExecutionResult.Error(
+                toolName,
+                "Tool execution is disabled in chat-only ACP sessions."
+            )
+        }
         val toolCallback = callback.scopedToToolCall(toolCall.id, toolName)
         val handler = handlerMap[toolName]
         return if (handler != null) {

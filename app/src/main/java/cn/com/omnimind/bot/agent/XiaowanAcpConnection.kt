@@ -2,13 +2,16 @@
 
 package cn.com.omnimind.bot.agent.runtime
 
+import android.util.Log
 import android.content.Context
 import cn.com.omnimind.assists.controller.http.HttpController
 import cn.com.omnimind.baselib.llm.ChatCompletionMessage
 import cn.com.omnimind.baselib.llm.ModelProviderConfigStore
+import cn.com.omnimind.baselib.llm.ModelProviderProfile
 import cn.com.omnimind.baselib.llm.OmniOfficialProvider
 import cn.com.omnimind.baselib.llm.PlatformAiProvisioner
 import cn.com.omnimind.baselib.llm.ProviderModelOption
+import cn.com.omnimind.baselib.llm.SceneModelBindingEntry
 import cn.com.omnimind.baselib.llm.SceneModelBindingStore
 import cn.com.omnimind.bot.BuildConfig
 import cn.com.omnimind.bot.agent.AgentCallback
@@ -19,6 +22,7 @@ import cn.com.omnimind.bot.agent.AgentScheduleToolBridge
 import cn.com.omnimind.bot.agent.NoOpAgentRunControl
 import cn.com.omnimind.bot.agent.OmniAgentExecutor
 import cn.com.omnimind.bot.agent.ToolExecutionResult
+import cn.com.omnimind.bot.plugin.sandbox.XiaowanChatCompletionRequestFactory
 import com.agentclientprotocol.agent.Agent
 import com.agentclientprotocol.agent.AgentInfo
 import com.agentclientprotocol.agent.AgentSession
@@ -48,14 +52,22 @@ import com.agentclientprotocol.rpc.JsonRpcMessage
 import com.agentclientprotocol.transport.BaseTransport
 import com.agentclientprotocol.transport.Transport
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import java.util.UUID
 
 /**
@@ -71,6 +83,7 @@ internal class XiaowanAcpConnection(
     private lateinit var clientTransport: LoopbackTransport
     private lateinit var serverTransport: LoopbackTransport
     private lateinit var serverProtocol: Protocol
+    private lateinit var serverProtocolScope: CoroutineScope
 
     override val exitSignal = CompletableDeferred<Int?>()
     override val isRunning: Boolean
@@ -81,7 +94,21 @@ internal class XiaowanAcpConnection(
         serverTransport = LoopbackTransport()
         clientTransport.peer = serverTransport
         serverTransport.peer = clientTransport
-        serverProtocol = Protocol(parentScope, serverTransport)
+        // The loopback Agent is still the official ACP server/client pair,
+        // but its protocol reader must not share the caller's uncaught
+        // exception path. A cancelled ACP request is normal (route changes,
+        // stop, or a client timeout); an exception in the SDK's cancellation
+        // handler must fail this loopback connection, not abort the Android
+        // process and make Enhance look like a dead button.
+        val parentJob = parentScope.coroutineContext[Job]
+        serverProtocolScope = CoroutineScope(
+            parentScope.coroutineContext +
+                SupervisorJob(parentJob) +
+                CoroutineExceptionHandler { _, error ->
+                    Log.e(TAG, "Loopback ACP server failed", error)
+                }
+        )
+        serverProtocol = Protocol(serverProtocolScope, serverTransport)
         Agent(
             serverProtocol,
             XiaowanAgentSupport(
@@ -106,8 +133,13 @@ internal class XiaowanAcpConnection(
 
     override suspend fun close() {
         if (::serverProtocol.isInitialized) serverProtocol.close()
+        if (::serverProtocolScope.isInitialized) serverProtocolScope.cancel()
         if (::clientTransport.isInitialized) clientTransport.close()
         if (::serverTransport.isInitialized) serverTransport.close()
+    }
+
+    private companion object {
+        private const val TAG = "XiaowanAcpConnection"
     }
 }
 
@@ -117,6 +149,10 @@ private class XiaowanAgentSupport(
     private val scheduleToolBridge: AgentScheduleToolBridge,
     private val conversationIdProvider: suspend (String) -> Long?,
 ) : AgentSupport {
+    companion object {
+        private const val MODEL_DISCOVERY_TIMEOUT_MS = 4_000L
+    }
+
     override suspend fun initialize(clientInfo: ClientInfo): AgentInfo = AgentInfo(
         protocolVersion = 1,
         capabilities = AgentCapabilities(
@@ -145,31 +181,43 @@ private class XiaowanAgentSupport(
             conversationIdProvider = conversationIdProvider,
             availableModels = models.available,
             configuredModelId = models.configuredModelId,
+            providerProfile = models.providerProfile,
             sessionId = SessionId(UUID.randomUUID().toString()),
         )
     }
 
     private suspend fun loadXiaowanModels(): XiaowanModels {
-        val binding = SceneModelBindingStore.getBinding("scene.dispatch.model")
-            ?: throw IllegalStateException(
-                "The scene Provider/model binding is required for Xiaowan ACP"
-            )
-        val profile = binding.providerProfileId.let(ModelProviderConfigStore::getProfile)
+        val existingBinding = SceneModelBindingStore.getBinding("scene.dispatch.model")
+        val profileId = existingBinding?.providerProfileId
+            ?: ModelProviderConfigStore.getEditingProfileId()
+        val profile = profileId.let(ModelProviderConfigStore::getProfile)
             ?: PlatformAiProvisioner.officialProfileOrNull()
-                ?.takeIf { OmniOfficialProvider.isOfficialProfile(binding.providerProfileId) }
+                ?.takeIf { OmniOfficialProvider.isOfficialProfile(profileId) }
             ?: throw IllegalStateException(
-                "The configured scene Provider is unavailable: ${binding.providerProfileId}"
+                "The configured scene Provider is unavailable: $profileId"
             )
-        val models = if (OmniOfficialProvider.isOfficialProfile(profile.id)) {
-            PlatformAiProvisioner.ensureReadyAndGetModels("text")
-        } else {
-            HttpController.fetchProviderModels(
-                apiBase = profile.baseUrl,
-                apiKey = profile.apiKey,
-                customHeaders = profile.customHeaders,
-                protocolType = profile.protocolType,
-                wireApi = profile.wireApi,
-            )
+        val boundModels = buildXiaowanModelsFromBinding(existingBinding)
+        // A valid shared binding is already the user's selected Provider and
+        // model. Re-querying /models for every ACP session makes an ordinary
+        // Xiaowan turn wait on network discovery before it can stream its
+        // first chunk. The shared model/list surface still refreshes the
+        // authoritative catalog when the user opens model settings; session
+        // creation only needs the bound model.
+        boundModels?.let {
+            return it.copy(providerProfile = profile.toSessionSnapshot())
+        }
+        val models = withXiaowanModelDiscoveryTimeout(MODEL_DISCOVERY_TIMEOUT_MS) {
+            if (OmniOfficialProvider.isOfficialProfile(profile.id)) {
+                PlatformAiProvisioner.ensureReadyAndGetModels("text")
+            } else {
+                HttpController.fetchProviderModels(
+                    apiBase = profile.baseUrl,
+                    apiKey = profile.apiKey,
+                    customHeaders = profile.customHeaders,
+                    protocolType = profile.protocolType,
+                    wireApi = profile.wireApi,
+                )
+            }
         }
         val available = models
             .filter { it.id.isNotBlank() }
@@ -182,6 +230,20 @@ private class XiaowanAgentSupport(
                     JsonNull,
                 )
             }
+        val binding = resolveSharedAgentProviderBinding(
+            currentBinding = existingBinding,
+            editingProfile = profile,
+            availableModels = models,
+        ) ?: throw IllegalStateException(
+            "No verified model is available for the configured Agent Provider"
+        )
+        if (existingBinding == null) {
+            SceneModelBindingStore.saveBinding(
+                sceneId = binding.sceneId,
+                providerProfileId = binding.providerProfileId,
+                modelId = binding.modelId,
+            )
+        }
         val configuredModelId = binding.modelId.trim()
         require(configuredModelId.isNotEmpty()) {
             "The scene Provider/model binding has no model"
@@ -189,14 +251,88 @@ private class XiaowanAgentSupport(
         require(available.any { it.modelId.value == configuredModelId }) {
             "The configured scene model is not present in the current Provider /models response: $configuredModelId"
         }
-        return XiaowanModels(available = available, configuredModelId = configuredModelId)
+        return XiaowanModels(
+            available = available,
+            configuredModelId = configuredModelId,
+            providerProfileId = binding.providerProfileId,
+            providerProfile = profile.toSessionSnapshot(),
+        )
     }
 }
 
-private data class XiaowanModels(
+internal suspend fun <T> withXiaowanModelDiscoveryTimeout(
+    timeoutMillis: Long,
+    block: suspend () -> T,
+): T {
+    return try {
+        withTimeout(timeoutMillis) { block() }
+    } catch (error: TimeoutCancellationException) {
+        throw IllegalStateException(
+            "Provider model discovery timed out after ${timeoutMillis}ms; " +
+                "bind a model in scene.dispatch.model and retry",
+            error,
+        )
+    }
+}
+
+internal fun resolveSharedAgentProviderBinding(
+    currentBinding: SceneModelBindingEntry?,
+    editingProfile: ModelProviderProfile?,
+    availableModels: List<ProviderModelOption>,
+): SceneModelBindingEntry? {
+    currentBinding
+        ?.takeIf { it.providerProfileId.trim().isNotEmpty() && it.modelId.trim().isNotEmpty() }
+        ?.let { return it }
+
+    val profile = editingProfile?.takeIf(ModelProviderProfile::isConfigured) ?: return null
+    val model = availableModels
+        .firstOrNull { it.id.trim().isNotEmpty() }
+        ?.id
+        ?.trim()
+        ?: return null
+    return SceneModelBindingEntry(
+        sceneId = "scene.dispatch.model",
+        providerProfileId = profile.id,
+        modelId = model,
+    )
+}
+
+internal data class XiaowanModels(
     val available: List<ModelInfo>,
     val configuredModelId: String,
+    val providerProfileId: String,
+    val providerProfile: ModelProviderProfile,
 )
+
+internal fun buildXiaowanModelsFromBinding(
+    binding: SceneModelBindingEntry?,
+): XiaowanModels? {
+    val modelId = binding
+        ?.modelId
+        ?.trim()
+        ?.takeIf(String::isNotEmpty)
+        ?: return null
+    val providerProfileId = binding.providerProfileId
+        .trim()
+        .takeIf(String::isNotEmpty)
+        ?: return null
+    return XiaowanModels(
+        available = listOf(
+            ModelInfo(
+                ModelId(modelId),
+                modelId,
+                "",
+                JsonNull,
+            )
+        ),
+        configuredModelId = modelId,
+        providerProfileId = providerProfileId,
+        providerProfile = ModelProviderProfile(id = providerProfileId, name = ""),
+    )
+}
+
+private fun ModelProviderProfile.toSessionSnapshot(): ModelProviderProfile =
+    copy(customHeaders = customHeaders.toMap())
 
 private class XiaowanAgentSession(
     private val context: Context,
@@ -205,6 +341,7 @@ private class XiaowanAgentSession(
     private val conversationIdProvider: suspend (String) -> Long?,
     override val availableModels: List<ModelInfo>,
     private val configuredModelId: String,
+    private val providerProfile: ModelProviderProfile,
     override val sessionId: SessionId,
 ) : AgentSession {
     private val messages = mutableListOf<ChatCompletionMessage>()
@@ -243,7 +380,7 @@ private class XiaowanAgentSession(
 
     override suspend fun prompt(
         content: List<ContentBlock>,
-        _meta: JsonElement?,
+        meta: JsonElement?,
     ): Flow<Event> = channelFlow {
         promptMutex.withLock {
         val promptParts = buildXiaowanPromptParts(content)
@@ -260,15 +397,26 @@ private class XiaowanAgentSession(
             send(Event.SessionUpdateEvent(update))
         }
         val conversationId = conversationIdProvider(sessionId.value)
+        val conversationMode = (meta as? JsonObject)
+            ?.get("conversationMode")
+            ?.jsonPrimitive
+            ?.content
+            ?: AgentConversationModePolicy.NORMAL_MODE
+        val reasoningEffort = normalizeXiaowanReasoningEffort(
+            (meta as? JsonObject)
+                ?.get("reasoningEffort")
+                ?.jsonPrimitive
+                ?.content
+        )
         val result = executor.processUserMessage(
             userMessage = text,
             conversationHistory = emptyList(),
             runtimeContextRepository = AgentRuntimeContextRepository(context),
             attachments = promptParts.attachments,
             conversationId = conversationId,
-            conversationMode = AgentConversationModePolicy.NORMAL_MODE,
+            conversationMode = conversationMode,
             modelOverride = selectedModelOverride(),
-            reasoningEffort = null,
+            reasoningEffort = reasoningEffort,
             terminalEnvironment = emptyMap(),
             callback = streamBridge,
             runControl = NoOpAgentRunControl,
@@ -306,6 +454,12 @@ private class XiaowanAgentSession(
         }
     }
 
+    /**
+     * The shared ACP UI exposes a superset of effort names used by external
+     * Agents. Xiaowan's OpenAI-compatible request factory accepts the common
+     * four-level vocabulary, so map aliases at this adapter boundary and keep
+     * the shared ACP contract provider-agnostic.
+     */
     override val defaultModel: ModelId
         get() = ModelId(configuredModelId)
 
@@ -323,23 +477,38 @@ private class XiaowanAgentSession(
     private fun selectedModelOverride(): cn.com.omnimind.bot.agent.AgentModelOverride? {
         val modelId = selectedModelId.trim()
         if (modelId.isEmpty()) return null
-        val binding = SceneModelBindingStore.getBinding("scene.dispatch.model")
-            ?: return null
-        val profile = binding.providerProfileId.let(ModelProviderConfigStore::getProfile)
-            ?: PlatformAiProvisioner.officialProfileOrNull()
-                ?.takeIf { OmniOfficialProvider.isOfficialProfile(binding.providerProfileId) }
-            ?: return null
-        if (!profile.isConfigured()) return null
+        if (!providerProfile.isConfigured()) return null
         return cn.com.omnimind.bot.agent.AgentModelOverride(
-            providerProfileId = profile.id,
-            providerProfileName = profile.name,
+            providerProfileId = providerProfile.id,
+            providerProfileName = providerProfile.name,
             modelId = modelId,
-            apiBase = profile.baseUrl,
-            apiKey = profile.apiKey,
-            customHeaders = profile.customHeaders,
-            protocolType = profile.protocolType,
-            wireApi = profile.wireApi,
+            apiBase = providerProfile.baseUrl,
+            apiKey = providerProfile.apiKey,
+            customHeaders = providerProfile.customHeaders,
+            protocolType = providerProfile.protocolType,
+            wireApi = providerProfile.wireApi,
         )
+    }
+}
+
+/**
+ * Maps the shared ACP vocabulary at the Xiaowan adapter boundary. Keeping
+ * this pure makes the provider-facing contract testable without constructing
+ * an Android Agent session.
+ */
+internal fun normalizeXiaowanReasoningEffort(value: String?): String? {
+    return when (value?.trim()?.lowercase()) {
+        // The Provider's default may enable deep thinking even for a
+        // one-word greeting. ACP effort is optional, so Xiaowan follows
+        // its request factory and keeps thinking opt-in rather than
+        // turning every ordinary Agent turn into a long deliberation.
+        null, "" -> XiaowanChatCompletionRequestFactory.DEFAULT_REASONING_EFFORT
+        "no", "none", "off" -> "none"
+        "min", "minimal", "minimum", "low" -> "low"
+        "med", "medium" -> "medium"
+        "high", "extra_high", "extra-high", "very_high", "very-high",
+        "x-high", "x high", "xhigh", "max" -> "high"
+        else -> null
     }
 }
 

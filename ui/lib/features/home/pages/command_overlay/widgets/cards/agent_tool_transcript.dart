@@ -274,13 +274,10 @@ String _resolveAgentToolPromptAgentName(Map<String, dynamic> cardData) {
   if (explicit.isNotEmpty) {
     return explicit;
   }
-  return switch ((cardData['agentId'] ?? '').toString().trim()) {
-    'codex-acp' || 'codex-remote' => 'Codex',
-    'claude-code-acp' => 'Claude Code',
-    'opencode-acp' => 'OpenCode',
-    'deepseek-harness-acp' => 'DeepSeek Harness',
-    _ => '',
-  };
+  // The native ACP event carries the resolved display name when available.
+  // Keep an id fallback for custom/ newly-installed Harnesses instead of
+  // maintaining a vendor allow-list in the card renderer.
+  return (cardData['agentId'] ?? '').toString().trim();
 }
 
 String _resolveAgentToolPromptTitle(

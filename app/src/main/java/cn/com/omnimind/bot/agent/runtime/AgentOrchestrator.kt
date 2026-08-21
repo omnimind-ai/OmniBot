@@ -239,8 +239,16 @@ class AgentOrchestrator(
         val memory: AgentChatMemory = MutableListChatMemory(input.initialMessages)
         val primaryUserGoal = resolvePrimaryUserGoal(input)
         val completionPolicies = resolveSkillCompletionPolicies(input.executionEnv.resolvedSkills)
-        val availableToolNames = toolRegistry.toolsForModel
-            .mapTo(linkedSetOf()) { it.function.name }
+        // Keep this as an explicit loop instead of the inline `mapTo` call.
+        // This code runs inside the ACP request coroutine and can be resumed
+        // while a counterpart sends $/cancelRequest.  The generated inline
+        // collection bridge is needlessly fragile on Android/R8 in that
+        // cancellation path; the mutable set is also clearer about the
+        // de-duplication contract used by tool-choice recovery.
+        val availableToolNames = linkedSetOf<String>()
+        for (tool in toolRegistry.toolsForModel) {
+            availableToolNames += tool.function.name
+        }
         val completionProgress = mutableMapOf<String, Int>()
         val completionRecoveryRounds = mutableMapOf<String, Int>()
         val executedTools = mutableListOf<ToolExecutionResult>()
@@ -293,7 +301,19 @@ class AgentOrchestrator(
                     messages = requestMessages,
                     tools = toolRegistry.toolsForModel
                 )
-                val disableThinking = input.executionEnv.reasoningEffort == "no"
+                // ACP/Xiaowan uses the shared vocabulary where `none` is the
+                // normal no-thinking value.  Treat all no-thinking aliases as
+                // an explicit wire-level disable; checking only `no` leaves
+                // GLM-style providers free to enable their default reasoning
+                // path, which can delay the first token for a simple greeting.
+                val normalizedReasoningEffort =
+                    input.executionEnv.reasoningEffort?.trim()?.lowercase()
+                val disableThinking = normalizedReasoningEffort in setOf(
+                    "no",
+                    "none",
+                    "off",
+                    "disabled",
+                )
                 val turn = try {
                     streamTurnWithRetry(
                         callback = callback,
@@ -305,6 +325,11 @@ class AgentOrchestrator(
                             streamOptions = ChatCompletionStreamOptions(includeUsage = true),
                             enableThinking = if (disableThinking) false else null,
                             reasoningEffort = if (disableThinking) null else input.executionEnv.reasoningEffort,
+                            thinking = if (disableThinking) {
+                                cn.com.omnimind.baselib.llm.ChatCompletionThinking(type = "disabled")
+                            } else {
+                                null
+                            },
                             promptCacheKey = input.promptCacheKey,
                             tools = toolRegistry.toolsForModel,
                             toolChoice = toolChoiceForRound,

@@ -173,6 +173,39 @@ void main() {
     expect(runtime.isAiResponding, isTrue);
   });
 
+  test(
+    'primes one visible thinking placeholder before the first ACP chunk',
+    () {
+      const conversationId = 2003;
+      const taskId = 'local-task-before-acp';
+
+      coordinator.primeAcpThinking(
+        taskId: taskId,
+        conversationId: conversationId,
+        mode: kChatRuntimeModeAgent,
+      );
+      coordinator.primeAcpThinking(
+        taskId: taskId,
+        conversationId: conversationId,
+        mode: kChatRuntimeModeAgent,
+      );
+
+      final runtime = coordinator.runtimeFor(
+        conversationId: conversationId,
+        mode: kChatRuntimeModeAgent,
+      )!;
+      expect(runtime.isAiResponding, isTrue);
+      expect(runtime.currentDispatchTurnId, taskId);
+      expect(
+        runtime.messages
+            .where((message) => message.cardData?['type'] == 'deep_thinking')
+            .length,
+        1,
+      );
+      expect(runtime.messages.first.cardData?['isLoading'], isTrue);
+    },
+  );
+
   test('routes ACP lifecycle by admitted turn identity', () {
     final runtime = coordinator.ensureRuntime(
       conversationId: 42,
@@ -239,6 +272,60 @@ void main() {
       params: <String, dynamic>{'delta': 'new session'},
     );
     expect(runtime.activeAcpSessionId, 'session-next');
+  });
+
+  test('does not let a completed old session reclaim a new Xiaowan turn', () {
+    const conversationId = 44;
+    applyAcp(
+      conversationId,
+      'turn/started',
+      turnId: 'turn-xiaowan-old',
+      sessionId: 'session-xiaowan-old',
+    );
+    applyAcp(
+      conversationId,
+      'turn/completed',
+      turnId: 'turn-xiaowan-old',
+      sessionId: 'session-xiaowan-old',
+    );
+
+    coordinator.primeAcpThinking(
+      taskId: 'local-xiaowan-new',
+      conversationId: conversationId,
+      mode: kChatRuntimeModeAgent,
+    );
+    applyAcp(
+      conversationId,
+      'session/update',
+      turnId: 'turn-xiaowan-old',
+      sessionId: 'session-xiaowan-old',
+      params: <String, dynamic>{
+        'update': <String, dynamic>{
+          'sessionUpdate': 'agent_message_chunk',
+          'messageId': 'late-old-message',
+          'content': <String, dynamic>{'text': '旧会话延迟输出'},
+        },
+      },
+    );
+
+    final runtime = coordinator.runtimeFor(
+      conversationId: conversationId,
+      mode: kChatRuntimeModeAgent,
+    )!;
+    expect(runtime.activeAcpSessionId, 'session-xiaowan-old');
+    expect(
+      runtime.messages.where((message) => message.text == '旧会话延迟输出'),
+      isEmpty,
+    );
+
+    applyAcp(
+      conversationId,
+      'turn/started',
+      turnId: 'turn-xiaowan-new',
+      sessionId: 'session-xiaowan-new',
+    );
+    expect(runtime.activeAcpSessionId, 'session-xiaowan-new');
+    expect(runtime.activeAcpTurnId, 'turn-xiaowan-new');
   });
 
   test('keeps ACP turns isolated by conversation and finalizes them', () {

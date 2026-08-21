@@ -92,6 +92,39 @@ void main() {
     expect(runtime.activeAgentTurnIds, isEmpty);
   });
 
+  test(
+    'projects native ACP session updates when turn id is on the envelope',
+    () {
+      // AgentRuntimeManager keeps session/update protocol params untouched and
+      // attaches the host-owned turn id to the outer event envelope. This is
+      // the shape emitted by LocalAcpRuntime for official DSH; the reducer must
+      // not require a non-ACP turnId field inside params.update.
+      reducer.reduce(
+        runtime: runtime,
+        event: {
+          'method': 'session/update',
+          'turnId': 'native-turn-1',
+          'threadId': 'native-session-1',
+          'params': {
+            'sessionId': 'native-session-1',
+            'update': {
+              'sessionUpdate': 'agent_thought_chunk',
+              'messageId': 'thought-1',
+              'content': {'type': 'text', 'text': '来自 DSH 的思考'},
+            },
+          },
+        },
+      );
+
+      final thinking = runtime.messages.firstWhere(
+        (message) => message.cardData?['type'] == 'deep_thinking',
+      );
+      expect(thinking.cardData?['thinkingContent'], '来自 DSH 的思考');
+      expect(thinking.cardData?['taskID'], 'native-turn-1');
+      expect(runtime.isAiResponding, isTrue);
+    },
+  );
+
   test('a text-only turn completes without creating a thinking card', () {
     reducer.reduce(
       runtime: runtime,
@@ -148,6 +181,48 @@ void main() {
     expect(runtime.isAiResponding, isFalse);
     expect(runtime.currentDispatchTurnId, isNull);
     expect(runtime.activeAcpTurnId, isNull);
+  });
+
+  test('terminal event closes a primed turn that never admitted its ACP id', () {
+    runtime
+      ..isAiResponding = true
+      ..currentDispatchTurnId = 'local-request'
+      ..lastAgentTurnId = 'local-request'
+      ..isDeepThinking = true
+      ..activeThinkingCardId = 'local-request-thinking';
+    runtime.messages.add(
+      ChatMessageModel(
+        id: 'local-request-thinking',
+        type: 2,
+        user: 3,
+        content: {
+          'cardData': {
+            'type': 'deep_thinking',
+            'taskID': 'local-request',
+            'cardId': 'local-request-thinking',
+            'isLoading': true,
+            'stage': ThinkingStage.thinking.value,
+            'thinkingContent': '',
+          },
+          'id': 'local-request-thinking',
+        },
+      ),
+    );
+
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'turn/completed',
+        'params': {'turnId': 'official-turn-1'},
+      },
+    );
+
+    final card = runtime.messages.single.cardData!;
+    expect(runtime.isAiResponding, isFalse);
+    expect(runtime.isDeepThinking, isFalse);
+    expect(runtime.currentDispatchTurnId, isNull);
+    expect(card['isLoading'], isFalse);
+    expect(card['stage'], ThinkingStage.complete.value);
   });
 
   test('many message ids in one turn stay a single active turn', () {
@@ -593,6 +668,57 @@ void main() {
     expect(runtime.messages.map((message) => message.text).toSet(), {
       'turn-1',
       'turn-2',
+    });
+  });
+
+  test('isolates reused ACP message ids by host turn', () {
+    Map<String, dynamic> messageEvent({
+      required String turnId,
+      required String text,
+    }) {
+      return <String, dynamic>{
+        'message': {
+          'method': 'session/update',
+          'turnId': turnId,
+          'params': {
+            'sessionId': 'session-1',
+            'update': {
+              'sessionUpdate': 'agent_message_chunk',
+              // DeepSeek Harness reuses this ACP messageId in later turns.
+              'messageId': '1:1',
+              'content': {'type': 'text', 'text': text},
+            },
+          },
+        },
+      };
+    }
+
+    reducer.reduce(
+      runtime: runtime,
+      event: messageEvent(turnId: 'turn-1', text: '第一轮'),
+    );
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'method': 'turn/completed',
+          'params': {'turnId': 'turn-1'},
+        },
+      },
+    );
+    reducer.reduce(
+      runtime: runtime,
+      event: messageEvent(turnId: 'turn-2', text: '第二轮'),
+    );
+
+    expect(runtime.messages, hasLength(2));
+    expect(runtime.messages.map((message) => message.text).toSet(), {
+      '第一轮',
+      '第二轮',
+    });
+    expect(runtime.messages.map((message) => message.id).toSet(), {
+      'turn-1-1:1-agent-message',
+      'turn-2-1:1-agent-message',
     });
   });
 

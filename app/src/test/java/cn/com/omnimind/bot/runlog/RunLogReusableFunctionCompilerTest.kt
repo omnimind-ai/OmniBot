@@ -67,6 +67,39 @@ class RunLogReusableFunctionCompilerTest {
         assertFalse(first["agent_visible"] as Boolean)
     }
 
+    @Test
+    fun dropsTransientGroundingFieldsBeforeOfficialSaveFunction() {
+        val record = CanonicalRunLogRecord(
+            goal = "点击设置",
+            status = "succeeded",
+            success = true,
+            steps = listOf(
+                step(
+                    index = 0,
+                    beforeStateId = "state-1",
+                    tool = "click",
+                    args = mapOf(
+                        "target_description" to "设置按钮",
+                        "node_id" to "node-7",
+                        "node_resource_id" to "com.example:id/settings",
+                        "x" to 120.0,
+                        "y" to 240.0,
+                    ),
+                ),
+            ),
+            diagnostics = mapOf("done_reason" to "finished"),
+        )
+
+        val function = RunLogReusableFunctionCompiler.compile(record)
+        val action = ((function["steps"] as List<*>).single() as Map<*, *>)
+            .get("action") as Map<*, *>
+
+        val args = action["args"] as Map<*, *>
+        assertEquals(setOf("x", "y"), args.keys)
+        assertEquals(120.0, (args["x"] as Number).toDouble(), 0.0)
+        assertEquals(240.0, (args["y"] as Number).toDouble(), 0.0)
+    }
+
     private fun step(
         index: Int,
         beforeStateId: String,

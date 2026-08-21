@@ -305,7 +305,11 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     }
     final requestKey = target.requestKey ?? message;
     if (!_consumedInitialMessageRequests.add(requestKey)) return;
-    await _sendMessage(text: message);
+    // This method is invoked by _applyConversationThreadTarget while the
+    // bootstrap Future is still running. The conversation has already been
+    // initialized above, so waiting for that same Future inside _sendMessage
+    // would deadlock the initial prompt (notably OmniFlow enhancement).
+    await _sendMessage(text: message, waitForBootstrap: false);
   }
 
   void _restoreLocalAgentThreadIdFromTarget(ConversationThreadTarget target) {

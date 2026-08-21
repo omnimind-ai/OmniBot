@@ -71,7 +71,9 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -100,6 +102,10 @@ internal class LocalAcpRuntime(
 ) {
     private val appContext = context.applicationContext
     private val connectMutex = Mutex()
+    // A connect attempt includes adapter preparation and ACP initialization.
+    // Agent switching must be able to cancel that attempt before waiting for
+    // the mutex; otherwise a stalled DSH npm/proot process blocks Xiaowan.
+    private val pendingConnectJobs = ConcurrentHashMap.newKeySet<Job>()
     private val sessionMutex = Mutex()
     // Keep request-id lookup and active-turn reservation in one critical
     // section. A transport retry can arrive before the first start call has
@@ -197,7 +203,11 @@ internal class LocalAcpRuntime(
 
     suspend fun connect(
         profile: AcpAgentProfile = profileStore.selected()
-    ) = connectMutex.withLock {
+    ) {
+        val callerJob = coroutineContext[Job]
+        callerJob?.let(pendingConnectJobs::add)
+        try {
+            connectMutex.withLock {
         Log.i(TAG, "Connecting ACP agent id=${profile.id} command=${profile.command}")
         require(profile.enabled) { "ACP agent ${profile.name} is disabled." }
         if (isConnected && activeProfile?.id == profile.id) {
@@ -214,6 +224,7 @@ internal class LocalAcpRuntime(
                 }
             }
         } catch (error: Throwable) {
+            if (error is CancellationException) throw error
             Log.e(TAG, "ACP launch preparation failed for ${profile.id}: ${error.message}", error)
             val wrapped = wrapInitializationError(profile, error)
             profileStore.saveHealth(profile.id, failedAgentHealth(wrapped))
@@ -289,7 +300,6 @@ internal class LocalAcpRuntime(
             client = nextClient
             agentInfo = initialized
             activeProfile = profile
-            profileStore.select(profile.id)
             profileStore.saveHealth(
                 profile.id,
                 AcpAgentHealth(
@@ -300,6 +310,7 @@ internal class LocalAcpRuntime(
                 )
             )
         } catch (error: Throwable) {
+            if (error is CancellationException) throw error
             nextProtocol.close()
             val diagnostics = nextConnection.diagnosticSummary()
             Log.e(
@@ -331,6 +342,23 @@ internal class LocalAcpRuntime(
                 failedAgentHealth(wrapped)
             )
             throw wrapped
+        }
+            }
+        } finally {
+            callerJob?.let(pendingConnectJobs::remove)
+        }
+    }
+
+    private suspend fun cancelPendingConnectAttempts() {
+        val currentJob = coroutineContext[Job]
+        val pending = pendingConnectJobs.filter { it !== currentJob }
+        if (pending.isEmpty()) return
+        Log.i(TAG, "Cancelling ${pending.size} pending ACP connect attempt(s) before switch")
+        pending.forEach(Job::cancel)
+        pending.forEach { job ->
+            withTimeoutOrNull(CONNECT_CANCEL_TIMEOUT_MS) {
+                job.join()
+            }
         }
     }
 
@@ -391,8 +419,16 @@ internal class LocalAcpRuntime(
         )
     }
 
-    suspend fun disconnect() = connectMutex.withLock {
-        disconnectLocked()
+    suspend fun disconnect() {
+        // A switch may arrive while the previous connect is still preparing
+        // an official adapter (npm/proot/provider discovery).  That work is
+        // tracked independently of the mutex, so cancel it before waiting
+        // for the mutex; otherwise the switch waits behind the very connect
+        // it is supposed to replace.
+        cancelPendingConnectAttempts()
+        connectMutex.withLock {
+            disconnectLocked()
+        }
     }
 
     private suspend fun disconnectLocked() {
@@ -483,9 +519,15 @@ internal class LocalAcpRuntime(
             "session/list" -> listAcpSessions(canonicalArgs)
             "session/prompt" -> promptAcpSession(canonicalArgs)
             "session/cancel" -> cancelAcpSession(canonicalArgs)
-            "session/archive" -> archiveThread(canonicalArgs, true)
-            "session/unarchive" -> archiveThread(canonicalArgs, false)
-            "session/name/set" -> setThreadName(canonicalArgs)
+            "session/set_mode" -> setSessionMode(canonicalArgs)
+            "session/set_config_option" -> setSessionConfigOption(canonicalArgs)
+            "session/close" -> closeAcpSession(canonicalArgs)
+            // The session surface is canonical. The implementation below
+            // still uses the historical thread-named helpers, so normalize
+            // their response back to sessionId/promptId at this boundary.
+            "session/archive" -> archiveThread(canonicalArgs, true).withAcpSessionId()
+            "session/unarchive" -> archiveThread(canonicalArgs, false).withAcpSessionId()
+            "session/name/set" -> setThreadName(canonicalArgs).withAcpSessionId()
             "thread/archive" -> archiveThread(args, true)
             "thread/unarchive" -> archiveThread(args, false)
             "thread/name/set" -> setThreadName(args)
@@ -554,6 +596,69 @@ internal class LocalAcpRuntime(
         return interruptTurn(normalized).withAcpSessionId()
     }
 
+    /** Official ACP mode mutation; the old config/set entry remains below for compatibility. */
+    private suspend fun setSessionMode(args: Map<String, Any?>): Map<String, Any?> {
+        val session = resolveSessionForMutation(args)
+        val modeId = args.stringValue("modeId")
+            ?: args.stringValue("mode")
+            ?: throw IllegalArgumentException("modeId is required")
+        require(session.availableModes.any { it.id.value == modeId }) {
+            "Invalid ACP session mode '$modeId'."
+        }
+        session.setMode(SessionModeId(modeId))
+        val sessionId = session.sessionId.value
+        emitAcpNotification(
+            sessionId = sessionId,
+            update = mapOf(
+                "sessionUpdate" to "current_mode_update",
+                "currentModeId" to modeId
+            )
+        )
+        return emptyMap()
+    }
+
+    /** Official ACP config mutation; keep the response on the ACP wire shape. */
+    private suspend fun setSessionConfigOption(
+        args: Map<String, Any?>
+    ): Map<String, Any?> {
+        val result = setConfigOption(args)
+        return mapOf("configOptions" to result["configOptions"])
+    }
+
+    /** Official ACP session close. Closing a session must not archive its local history. */
+    private suspend fun closeAcpSession(args: Map<String, Any?>): Map<String, Any?> {
+        val sessionId = args.stringValue("sessionId")
+            ?: args.stringValue("threadId")
+            ?: throw IllegalArgumentException("sessionId is required")
+        activeTurnIds[sessionId]?.let {
+            runCatching {
+                interruptTurn(mapOf("threadId" to sessionId, "turnId" to it))
+            }
+        }
+        sessions.remove(sessionId)?.close()
+        sessionCwds.remove(sessionId)
+        sessionPermissionBehaviors.remove(sessionId)
+        return emptyMap()
+    }
+
+    private suspend fun resolveSessionForMutation(
+        args: Map<String, Any?>
+    ): ClientSession {
+        val requestedThreadId = args.stringValue("sessionId")
+            ?: args.stringValue("threadId")
+            ?: args.longValue("conversationId")?.let {
+                bindingRepository.getBindingByConversationId(it)?.threadId
+            }
+        if (requestedThreadId.isNullOrBlank()) {
+            return ensureCatalogSession(args)
+        }
+        return sessions[requestedThreadId] ?: run {
+            resumeThread(args + mapOf("threadId" to requestedThreadId))
+            sessions[requestedThreadId]
+                ?: throw IllegalStateException("Failed to restore ACP session.")
+        }
+    }
+
     private fun Map<String, Any?>.withAcpSessionId(): Map<String, Any?> {
         val sessionId = stringValue("sessionId") ?: stringValue("threadId")
         val promptId = stringValue("promptId") ?: stringValue("turnId")
@@ -569,6 +674,8 @@ internal class LocalAcpRuntime(
     }
 
     private suspend fun selectAgent(id: String): Map<String, Any?> {
+        cancelPendingConnectAttempts()
+        val previous = profileStore.selected()
         val selected = profileStore.select(id)
         // A provider switch is a process boundary.  Do not rely on the
         // in-memory `isConnected` flag here: after an app restart or a
@@ -587,8 +694,20 @@ internal class LocalAcpRuntime(
         // reached.  Keep preparation here at the ACP boundary so every
         // caller (top shortcut, settings, restored mode, and future clients)
         // gets the same official installation path.
-        connect(profile = selected)
-        return agentsPayload(refreshAvailability = false)
+        return try {
+            connect(profile = selected)
+            agentsPayload(refreshAvailability = false)
+        } catch (error: Throwable) {
+            if (previous.id != selected.id) {
+                profileStore.select(previous.id)
+                Log.w(
+                    TAG,
+                    "ACP switch to ${selected.id} failed; restored ${previous.id}",
+                    error
+                )
+            }
+            throw error
+        }
     }
 
     private suspend fun saveAgent(args: Map<String, Any?>): Map<String, Any?> {
@@ -628,6 +747,18 @@ internal class LocalAcpRuntime(
             ?: profileStore.selected()
         val wasSelected = profileStore.selected()
         val wasConnected = isConnected
+        // `agent/test` is the explicit install/retry boundary. Normal
+        // session restore and Agent switching must not immediately repeat a
+        // failed npm/native preparation attempt.
+        if (AcpAgentProfileStore.officialRuntime(profile)?.managedAdapterPackage != null) {
+            profileStore.saveHealth(
+                profile.id,
+                profileStore.health(profile.id).copy(
+                    status = AcpAgentHealth.STATUS_UNCHECKED,
+                    error = null
+                )
+            )
+        }
         return runCatching {
             connect(profile = profile)
             linkedMapOf(
@@ -1072,15 +1203,7 @@ internal class LocalAcpRuntime(
             ?: args.longValue("conversationId")?.let {
                 bindingRepository.getBindingByConversationId(it)?.threadId
             }
-        val session = if (requestedThreadId.isNullOrBlank()) {
-            ensureCatalogSession(args)
-        } else {
-            sessions[requestedThreadId] ?: run {
-                resumeThread(args + mapOf("threadId" to requestedThreadId))
-                sessions[requestedThreadId]
-                    ?: throw IllegalStateException("Failed to restore ACP session.")
-            }
-        }
+        val session = resolveSessionForMutation(args)
         val threadId = session.sessionId.value
         check(!activeTurnIds.containsKey(threadId)) {
             "ACP session $threadId is running; configuration changes apply when idle."
@@ -1279,7 +1402,7 @@ internal class LocalAcpRuntime(
                 // stream open for session-scoped updates after responding;
                 // collecting until that transport closes leaves the UI in
                 // "thinking" forever even though the turn already ended.
-                session.prompt(blocks).takeWhile { event ->
+                session.prompt(blocks, promptMeta(args)).takeWhile { event ->
                     lastTurnActivityAt[threadId] = System.currentTimeMillis()
                     when (event) {
                         is Event.SessionUpdateEvent -> {
@@ -1632,7 +1755,7 @@ internal class LocalAcpRuntime(
         }
         if (binding != null) {
             val bindingAgentId = profileStore.agentIdForSession(binding.threadId)
-                ?: AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID
+                ?: AcpAgentProfileStore.DEFAULT_AGENT_ID
             if (bindingAgentId == activeAgentId()) {
                 return sessions[binding.threadId] ?: run {
                     val response = resumeThread(args + mapOf("threadId" to binding.threadId))
@@ -1647,6 +1770,23 @@ internal class LocalAcpRuntime(
         val created = startThread(args)
         return sessions[created["threadId"]?.toString()]
             ?: throw IllegalStateException("Failed to create ACP session.")
+    }
+
+    private fun promptMeta(args: Map<String, Any?>): JsonElement? {
+        val conversationMode = args.stringValue("conversationMode")
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+        val reasoningEffort = args.stringValue("effort")
+            ?: args.stringValue("reasoningEffort")
+        if (conversationMode == null && reasoningEffort == null) return null
+        // This metadata is local ACP session metadata. External ACP agents may
+        // ignore it; the built-in Xiaowan adapter uses it to apply the same
+        // chat_only policy and run setting without introducing a second
+        // transport.
+        return buildJsonObject {
+            conversationMode?.let { put("conversationMode", it) }
+            reasoningEffort?.let { put("reasoningEffort", it) }
+        }
     }
 
     private suspend fun ensureCatalogSession(args: Map<String, Any?>): ClientSession {
@@ -1680,7 +1820,7 @@ internal class LocalAcpRuntime(
         return SessionCreationParameters(
             cwd = cwd,
             mcpServers = buildLocalAgentAcpMcpServers(
-                agentId = profile.id,
+                harnessAdapter = AcpHarnessAdapters.forProfile(profile),
                 supportsHttp = supportsHttp,
                 state = mcpState
             )
@@ -2053,9 +2193,14 @@ internal class LocalAcpRuntime(
     }
 
     private suspend fun resolveThreadId(args: Map<String, Any?>): String {
+        // `threadId` remains accepted for old clients, but every new session
+        // caller uses the ACP name `sessionId`. Keep the conversion here at
+        // the implementation boundary so the main path never needs to know
+        // which historical helper is underneath it.
+        args.stringValue("sessionId")?.let { return it }
         args.stringValue("threadId")?.let { return it }
         val conversationId = args.longValue("conversationId")
-            ?: throw IllegalArgumentException("threadId or conversationId is required")
+            ?: throw IllegalArgumentException("sessionId or conversationId is required")
         return bindingRepository.getBindingByConversationId(conversationId)?.threadId
             ?: throw IllegalArgumentException(
             "No ACP session is bound to conversation $conversationId"
@@ -2093,6 +2238,7 @@ internal class LocalAcpRuntime(
         private const val TAG = "LocalAcpRuntime"
         private const val INITIALIZE_TIMEOUT_MS = 90_000L
         private const val PROCESS_CLOSE_TIMEOUT_MS = 1_500L
+        private const val CONNECT_CANCEL_TIMEOUT_MS = 2_000L
         private const val CANCEL_REQUEST_TIMEOUT_MS = 2_000L
         private const val CANCEL_JOIN_TIMEOUT_MS = 2_000L
         private const val COMMAND_PROBE_TIMEOUT_MS = 20_000L
@@ -2206,6 +2352,7 @@ private class AcpProcessConnection(
             extraEnvironment = environment
         )
         process = started
+        val harnessAdapter = AcpHarnessAdapters.forProfile(profile)
         Log.i(
             "LocalAcpRuntime",
             "Launched ACP process profile=${profile.id} alive=${started.isAlive}"
@@ -2213,7 +2360,11 @@ private class AcpProcessConnection(
         writer = OutputStreamWriter(started.outputStream, StandardCharsets.UTF_8)
         readerJob = scope.launch {
             try {
-                lineFlow(started).collect { inputChannel.send(it) }
+                lineFlow(started).collect {
+                    inputChannel.send(
+                        harnessAdapter.normalizeStdioLine(it)
+                    )
+                }
             } catch (error: IOException) {
                 handleStreamReadFailure(
                     streamName = "stdout",
@@ -2334,9 +2485,11 @@ private class AcpProcessConnection(
     override suspend fun close() {
         closing = true
         val current = process
+        val processTree = collectManagedProcessIds(profile.command)
         Log.i(
             "LocalAcpRuntime",
-            "Closing ACP process profile=${profile.id} alive=${current?.isAlive == true}"
+            "Closing ACP process profile=${profile.id} alive=${current?.isAlive == true} " +
+                "descendants=${processTree.size}"
         )
         process = null
         readerJob?.cancel()
@@ -2346,6 +2499,7 @@ private class AcpProcessConnection(
         // Process stream can block while its child is still alive; doing the
         // pipe cleanup first used to hold the runtime mutex indefinitely and
         // prevented every subsequent ACP agent from starting.
+        killProcessTree(processTree)
         runCatching { current?.destroy() }
         Log.i(
             "LocalAcpRuntime",
@@ -2380,10 +2534,59 @@ private class AcpProcessConnection(
             stderrJob?.cancelAndJoin()
             waitJob?.cancelAndJoin()
         }
+        // PRoot launches the managed Node process as a same-UID child. On
+        // Android, destroying the Java Process wrapper can reap only the
+        // linker/proot parent and leave Node alive. Re-scan once after the
+        // parent shutdown and terminate any descendants that survived it.
+        killProcessTree(collectManagedProcessIds(profile.command))
         readerJob = null
         stderrJob = null
         waitJob = null
         inputChannel.close()
+    }
+
+    private fun collectManagedProcessIds(commandToken: String): List<Int> {
+        if (commandToken.isBlank()) return emptyList()
+        val parentByPid = mutableMapOf<Int, Int>()
+        val commandByPid = mutableMapOf<Int, String>()
+        File("/proc").listFiles().orEmpty().forEach { entry ->
+            val pid = entry.name.toIntOrNull() ?: return@forEach
+            val stat = runCatching {
+                File(entry, "stat").readText(StandardCharsets.UTF_8)
+            }.getOrNull() ?: return@forEach
+            val match = PROCESS_STAT_PATTERN.find(stat) ?: return@forEach
+            val parentPid = match.groupValues[1].toIntOrNull() ?: return@forEach
+            val command = runCatching {
+                String(File(entry, "cmdline").readBytes(), StandardCharsets.UTF_8)
+                    .replace('\u0000', ' ')
+            }.getOrNull().orEmpty()
+            parentByPid[pid] = parentPid
+            commandByPid[pid] = command
+        }
+        val roots = commandByPid
+            .asSequence()
+            .filter { (_, command) -> command.contains(commandToken) }
+            .map { (pid, _) -> pid }
+            .toSet()
+        val managed = LinkedHashSet<Int>()
+        var frontier = roots
+        while (frontier.isNotEmpty()) {
+            managed.addAll(frontier)
+            frontier = parentByPid
+                .asSequence()
+                .filter { (pid, parentPid) -> parentPid in frontier && pid !in managed }
+                .map { (pid, _) -> pid }
+                .toSet()
+        }
+        return managed.toList()
+    }
+
+    private fun killProcessTree(processIds: List<Int>) {
+        processIds
+            .asReversed()
+            .forEach { pid ->
+                runCatching { android.os.Process.killProcess(pid) }
+            }
     }
 
     private fun lineFlow(process: Process): Flow<String> = flow {
@@ -2398,6 +2601,7 @@ private class AcpProcessConnection(
     }.flowOn(Dispatchers.IO)
 
     companion object {
+        private val PROCESS_STAT_PATTERN = Regex("^\\d+ \\([^)]*\\) \\S+ (\\d+)")
         private const val MAX_STDERR_LINES = 60
         private const val MAX_STDERR_CHARS = 6_000
     }
