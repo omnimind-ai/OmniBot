@@ -4,7 +4,6 @@ import android.content.Context
 import cn.com.omnimind.baselib.i18n.AppLocaleManager
 import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.agent.AgentWorkspaceManager
-import cn.com.omnimind.bot.activity.MainActivity
 import cn.com.omnimind.bot.activity.StartupThemeResolver
 import cn.com.omnimind.bot.quicklog.QuickLogWidgetUpdater
 import cn.com.omnimind.bot.share.SharedOpenDraftStore
@@ -38,22 +37,6 @@ class AppStateChannel {
 
     private fun handleMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
-            "exitApp" -> {
-                OmniLog.d(TAG, "Received exitApp call from Flutter")
-                val context = this.context
-                if (context is MainActivity) {
-                    // Return to launcher immediately on back from home chat page.
-                    // Avoid delayed process kill, which makes users press back repeatedly.
-                    val movedToBackground = context.moveTaskToBack(true)
-                    if (!movedToBackground) {
-                        context.finish()
-                    }
-                    result.success(true)
-                } else {
-                    OmniLog.e(TAG, "Context is not MainActivity, cannot exit app")
-                    result.error("INVALID_CONTEXT", "Context is not MainActivity", null)
-                }
-            }
             "getPendingShareDraft" -> {
                 val appContext = context?.applicationContext
                 if (appContext == null) {

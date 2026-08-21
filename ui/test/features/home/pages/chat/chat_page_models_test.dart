@@ -1,9 +1,35 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ui/features/home/pages/chat/chat_page_models.dart';
 import 'package:ui/features/home/pages/chat/services/chat_conversation_runtime_coordinator.dart';
 import 'package:ui/models/chat_message_model.dart';
 
 void main() {
+  test('model selector ignores repeated opens during a slow refresh', () async {
+    final guard = ConversationModelSelectorOpeningGuard();
+    final release = Completer<void>();
+
+    Future<bool> open() async {
+      if (!guard.tryBegin()) return false;
+      try {
+        await release.future;
+        return true;
+      } finally {
+        guard.finish();
+      }
+    }
+
+    final first = open();
+    expect(guard.isOpening, isTrue);
+    expect(await open(), isFalse);
+    release.complete();
+    expect(await first, isTrue);
+    expect(guard.isOpening, isFalse);
+    expect(guard.tryBegin(), isTrue);
+    guard.finish();
+  });
+
   group('ChatConversationRuntimeCoordinator.replaceConversationSnapshot '
       'preserveLiveStreamingState', () {
     final coordinator = ChatConversationRuntimeCoordinator.instance;

@@ -365,6 +365,7 @@ class _ConversationModelSelectorContentState
     required ModelProviderProfileSummary profile,
     required ProviderModelOption model,
   }) {
+    final displayName = model.displayName.trim();
     final selected =
         widget.currentSelection?.providerProfileId == profile.id &&
         widget.currentSelection?.modelId == model.id;
@@ -420,7 +421,7 @@ class _ConversationModelSelectorContentState
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
-                    model.id,
+                    displayName.isEmpty ? model.id : displayName,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(

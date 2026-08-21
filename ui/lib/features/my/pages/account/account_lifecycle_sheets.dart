@@ -185,11 +185,12 @@ class _SessionsSheetState extends State<SessionsSheet> {
   }
 
   Future<void> _revoke(AccountDeviceSession session) async {
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showSettingsDetailSheet<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(_text('退出这个设备？', 'Sign out this device?')),
-        content: Text(
+      builder: (sheetContext) => SettingsDetailSheet(
+        key: ValueKey('revoke-session-sheet-${session.id}'),
+        title: _text('退出这个设备？', 'Sign out this device?'),
+        body: Text(
           _text(
             '这个设备需要重新输入邮箱和密码才能使用账号。',
             'This device must sign in again with the email and password.',
@@ -197,12 +198,17 @@ class _SessionsSheetState extends State<SessionsSheet> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
+            style: settingsDetailSheetActionStyle(sheetContext),
+            onPressed: () => Navigator.pop(sheetContext, false),
             child: Text(_text('取消', 'Cancel')),
           ),
-          FilledButton(
+          TextButton(
             key: const ValueKey('confirm-revoke-session'),
-            onPressed: () => Navigator.pop(dialogContext, true),
+            style: settingsDetailSheetActionStyle(
+              sheetContext,
+              foregroundColor: Theme.of(sheetContext).colorScheme.error,
+            ),
+            onPressed: () => Navigator.pop(sheetContext, true),
             child: Text(_text('确认退出', 'Sign out')),
           ),
         ],
@@ -243,11 +249,12 @@ class _SessionsSheetState extends State<SessionsSheet> {
   }
 
   Future<void> _revokeOtherSessions() async {
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showSettingsDetailSheet<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text(_text('退出全部其他设备？', 'Sign out all other devices?')),
-        content: Text(
+      builder: (sheetContext) => SettingsDetailSheet(
+        key: const ValueKey('revoke-other-sessions-sheet'),
+        title: _text('退出全部其他设备？', 'Sign out all other devices?'),
+        body: Text(
           _text(
             '当前设备会保持登录，其他设备都需要重新登录。',
             'This device stays signed in. Other devices must sign in again.',
@@ -255,12 +262,17 @@ class _SessionsSheetState extends State<SessionsSheet> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
+            style: settingsDetailSheetActionStyle(sheetContext),
+            onPressed: () => Navigator.pop(sheetContext, false),
             child: Text(_text('取消', 'Cancel')),
           ),
-          FilledButton(
+          TextButton(
             key: const ValueKey('confirm-revoke-other-sessions'),
-            onPressed: () => Navigator.pop(dialogContext, true),
+            style: settingsDetailSheetActionStyle(
+              sheetContext,
+              foregroundColor: Theme.of(sheetContext).colorScheme.error,
+            ),
+            onPressed: () => Navigator.pop(sheetContext, true),
             child: Text(_text('全部退出', 'Sign out all')),
           ),
         ],

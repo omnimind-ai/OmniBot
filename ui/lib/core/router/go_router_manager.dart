@@ -105,8 +105,7 @@ class GoRouterManager {
         transitionDuration: const Duration(milliseconds: 250),
         reverseTransitionDuration: const Duration(milliseconds: 250),
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          // 开关开启时统一为滑动手势转场(对齐 Miuix 的预测性返回风格),
-          // 关闭时回退为应用原有 Fade 转场。
+          // 开关开启时统一为全宽滑动手势转场，关闭时回退为原有 Fade 转场。
           return PredictiveBackGestureWrapper(
             animation: animation,
             secondaryAnimation: secondaryAnimation,

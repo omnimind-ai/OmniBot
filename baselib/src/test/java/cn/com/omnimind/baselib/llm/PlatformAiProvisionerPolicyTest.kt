@@ -1,11 +1,47 @@
 package cn.com.omnimind.baselib.llm
 
+import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.yield
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PlatformAiProvisionerPolicyTest {
+    @Test
+    fun `overlapping catalog requests share one in-flight refresh`() = runBlocking {
+        val coalescer = SuspendRequestCoalescer<String>()
+        val calls = AtomicInteger()
+        val started = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+
+        val first = async {
+            coalescer.run {
+                calls.incrementAndGet()
+                started.complete(Unit)
+                release.await()
+                "fresh catalog"
+            }
+        }
+        started.await()
+        val second = async {
+            coalescer.run {
+                calls.incrementAndGet()
+                "duplicate catalog"
+            }
+        }
+        yield()
+
+        assertEquals(1, calls.get())
+        release.complete(Unit)
+        assertEquals("fresh catalog", first.await())
+        assertEquals("fresh catalog", second.await())
+        assertEquals(1, calls.get())
+    }
+
     @Test
     fun `official model lists are selected by requested capability`() {
         val status = PlatformAiProvisioningStatus(

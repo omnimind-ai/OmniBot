@@ -1,14 +1,18 @@
 import 'dart:convert';
 
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ui/features/home/pages/plugin_market/plugin_detail_page.dart';
 import 'package:ui/features/home/pages/plugin_market/plugin_market_page.dart';
 import 'package:ui/l10n/generated/app_localizations.dart';
 import 'package:ui/models/omni_plugin_item.dart';
+import 'package:ui/services/storage_service.dart';
 import 'package:ui/theme/app_theme.dart';
+import 'package:ui/widgets/predictive_back_gesture_wrapper.dart';
 
 class _SvgTestAssetBundle extends CachingAssetBundle {
   static final Uint8List _svgBytes = Uint8List.fromList(
@@ -26,6 +30,46 @@ class _SvgTestAssetBundle extends CachingAssetBundle {
   Future<String> loadString(String key, {bool cache = true}) async {
     return utf8.decode(_svgBytes);
   }
+}
+
+class _PredictivePluginDetailRoute extends PageRouteBuilder<bool> {
+  _PredictivePluginDetailRoute({required OmniPluginItem plugin})
+    : super(
+        transitionDuration: const Duration(milliseconds: 300),
+        reverseTransitionDuration: const Duration(milliseconds: 300),
+        pageBuilder: (context, animation, secondaryAnimation) =>
+            PluginDetailPage(pluginId: plugin.id, initialPlugin: plugin),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          return PredictiveBackGestureWrapper(
+            animation: animation,
+            secondaryAnimation: secondaryAnimation,
+            transitionBuilder:
+                (context, animation, secondaryAnimation, child) =>
+                    CupertinoPageTransition(
+                      primaryRouteAnimation: animation,
+                      secondaryRouteAnimation: secondaryAnimation,
+                      linearTransition: false,
+                      child: child,
+                    ),
+            child: child,
+          );
+        },
+      );
+}
+
+Future<void> _sendBackGesture(
+  WidgetTester tester,
+  String method, [
+  Map<String, dynamic>? arguments,
+]) async {
+  final message = const StandardMethodCodec().encodeMethodCall(
+    MethodCall(method, arguments),
+  );
+  await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+    'flutter/backgesture',
+    message,
+    (ByteData? _) {},
+  );
 }
 
 Widget _app({Locale locale = const Locale('zh')}) {
@@ -315,6 +359,135 @@ void main() {
     expect(find.textContaining('自动准备 OmniFlow 运行环境'), findsOneWidget);
     expect(find.textContaining('即使不安装插件，也可以直接让小万在线操作手机'), findsOneWidget);
     expect(find.text('安装'), findsOneWidget);
+  });
+
+  testWidgets('lists plugins while hiding internal runtimes', (tester) async {
+    plugins = <Map<String, Object?>>[
+      <String, Object?>{
+        ..._runtimePlugin(),
+        'id': 'com.omnimind.vibe-project-builder',
+        'name': 'Vibe Builder',
+      },
+      <String, Object?>{
+        ..._runtimePlugin(),
+        'id': 'com.omnimind.internal-runtime',
+        'name': 'Internal Runtime',
+        'presentation': <String, Object?>{'visibility': 'hidden'},
+      },
+      <String, Object?>{
+        ..._runtimePlugin(),
+        'id': 'local.project.fitness-beast',
+        'name': '健身兽',
+        'installed': true,
+        'enabled': true,
+      },
+    ];
+
+    await tester.pumpWidget(_app());
+    await tester.pumpAndSettle();
+
+    final vibeBuilder = find.ancestor(
+      of: find.text('Vibe Builder'),
+      matching: find.byType(InkWell),
+    );
+    expect(vibeBuilder, findsOneWidget);
+    expect(
+      find.descendant(of: vibeBuilder, matching: find.text('未安装')),
+      findsOneWidget,
+    );
+    expect(find.text('Internal Runtime'), findsNothing);
+    expect(find.text('健身兽'), findsOneWidget);
+    expect(find.byIcon(Icons.dashboard_outlined), findsNothing);
+  });
+  testWidgets(
+    'plugin detail allows predictive back to drive its route',
+    (tester) async {
+      plugins = <Map<String, Object?>>[_runtimePlugin()];
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      await StorageService.init();
+      await StorageService.setPredictiveBackEnabled(true);
+
+      tester.view.physicalSize = const Size(1080, 2200);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.lightTheme,
+          locale: const Locale('zh'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          builder: (context, child) =>
+              DefaultAssetBundle(bundle: _SvgTestAssetBundle(), child: child!),
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => TextButton(
+                onPressed: () => Navigator.of(context).push(
+                  _PredictivePluginDetailRoute(
+                    plugin: OmniPluginItem.fromMap(plugins.single),
+                  ),
+                ),
+                child: const Text('open plugin detail'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('open plugin detail'));
+      await tester.pumpAndSettle();
+
+      final route = ModalRoute.of(
+        tester.element(find.byType(PluginDetailPage)),
+      )!;
+      expect(route.popGestureEnabled, isTrue);
+
+      await _sendBackGesture(tester, 'startBackGesture', <String, dynamic>{
+        'touchOffset': <double>[0.0, 300.0],
+        'progress': 0.0,
+        'swipeEdge': 0,
+      });
+      await tester.pump();
+
+      expect(route.popGestureInProgress, isTrue);
+      expect(
+        tester
+            .widget<PredictiveBackPageTransition>(
+              find.ancestor(
+                of: find.byType(PluginDetailPage),
+                matching: find.byType(PredictiveBackPageTransition),
+              ),
+            )
+            .isGestureDriven(),
+        isTrue,
+      );
+
+      await _sendBackGesture(tester, 'cancelBackGesture');
+      await tester.pumpAndSettle();
+      expect(find.byType(PluginDetailPage), findsOneWidget);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.android),
+  );
+
+  testWidgets('system back refreshes the plugin catalog', (tester) async {
+    plugins = <Map<String, Object?>>[_runtimePlugin()];
+
+    await tester.pumpWidget(_app());
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('OmniFlow'));
+    await tester.pumpAndSettle();
+    final listCallsBeforeBack = calls
+        .where((call) => call.method == 'list')
+        .length;
+
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+
+    expect(find.text('插件市场'), findsOneWidget);
+    expect(
+      calls.where((call) => call.method == 'list').length,
+      greaterThan(listCallsBeforeBack),
+    );
   });
 
   testWidgets('lists plugins while hiding internal runtimes', (tester) async {

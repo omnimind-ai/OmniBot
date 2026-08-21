@@ -1,15 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 原生层启动窗口背景：纯色 + 居中图标 -->
+<!-- 浅色主题启动窗口：与 Flutter pageBackground 保持一致。 -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item>
         <shape android:shape="rectangle">
-            <solid android:color="#151617" />
+            <solid android:color="#F4F7FB" />
         </shape>
     </item>
 
-    <!-- 居中图标：200dp × 200dp，使用 center 避免裁剪 -->
-    <item
-        android:gravity="center">
+    <item android:gravity="center">
         <bitmap
             android:src="@drawable/splash_logo"
             android:gravity="center"

@@ -3,9 +3,11 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ui/features/home/pages/authorize/widgets/permission_prompt_sheet.dart';
 import 'package:ui/features/home/pages/authorize/widgets/permission_section.dart';
 import 'package:ui/features/home/pages/chat/widgets/pet_overlay_permission_sheet.dart';
 import 'package:ui/l10n/legacy_text_localizer.dart';
+import 'package:ui/widgets/omni_glass.dart';
 
 class _SvgTestAssetBundle extends CachingAssetBundle {
   static final Uint8List _svgBytes = Uint8List.fromList(
@@ -79,6 +81,8 @@ void main() {
     final continueButton = find.byKey(
       const ValueKey('pet-overlay-permission-continue-button'),
     );
+    expect(find.byType(PermissionPromptSheet), findsOneWidget);
+    expect(find.byType(OmniGlassPanel), findsOneWidget);
     expect(find.text('请检查下列权限'), findsOneWidget);
     expect(find.text('悬浮窗权限'), findsOneWidget);
     expect(tester.widget<GestureDetector>(continueButton).onTap, isNull);

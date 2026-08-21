@@ -8,15 +8,6 @@ class AppStateService {
     'cn.com.omnimind.bot/app_state',
   );
 
-  static Future<bool> exitApp() async {
-    try {
-      final result = await _channel.invokeMethod('exitApp');
-      return result == true;
-    } catch (e) {
-      return false;
-    }
-  }
-
   static Future<Map<dynamic, dynamic>?> getPendingShareDraft() async {
     try {
       return await _channel.invokeMethod<Map<dynamic, dynamic>>(

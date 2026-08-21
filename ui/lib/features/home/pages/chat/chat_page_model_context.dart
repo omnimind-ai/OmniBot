@@ -2,7 +2,10 @@ part of 'chat_page.dart';
 
 mixin _ChatPageModelContextMixin on _ChatPageStateBase {
   @override
-  Future<void> _loadNormalChatModelContext() async {
+  Future<void> _loadNormalChatModelContext() =>
+      _loadNormalChatModelContextInternal();
+
+  Future<void> _loadNormalChatModelContextInternal() async {
     try {
       final results = await Future.wait<dynamic>([
         ModelProviderConfigService.loadChatModelGroups(refresh: false),
@@ -28,9 +31,9 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
           overrideSelection: _activeConversationModelOverrideSelection,
         );
       });
-      // The first frame must use the Provider cache. Refresh only the active
-      // Provider in the background so an 88-model /models response (or an
-      // unrelated configured Provider) cannot block the chat page.
+      // Normal page loading paints from cache immediately. Provider refreshes
+      // remain background work; only the explicit selector path force-refreshes
+      // the small official catalog before it opens.
       unawaited(_refreshActiveChatProviderModelsInBackground());
       await _syncInvalidNormalConversationOverrideIfNeeded();
       await _syncActiveNormalConversationPromptTokenThreshold();
@@ -93,6 +96,44 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
     } catch (_) {
       // Cached Provider models remain usable when the background refresh
       // fails. The next explicit model-picker refresh can retry it.
+    }
+  }
+
+  Future<void> _refreshOfficialChatProviderModelsForSelector() async {
+    try {
+      final group =
+          await ModelProviderConfigService.refreshOfficialChatModelGroup();
+      if (!mounted || group == null) {
+        return;
+      }
+      final profiles = List<ModelProviderProfileSummary>.from(
+        _modelProviderProfiles,
+      );
+      final profileIndex = profiles.indexWhere(
+        (profile) => profile.id == group.profile.id,
+      );
+      if (profileIndex >= 0) {
+        profiles[profileIndex] = group.profile;
+      } else {
+        profiles.add(group.profile);
+      }
+      final next = <String, List<ProviderModelOption>>{
+        for (final entry in _modelOptionsByProfileId.entries)
+          entry.key: List<ProviderModelOption>.from(entry.value),
+        group.profile.id: List<ProviderModelOption>.from(group.models),
+      };
+      setState(() {
+        _modelProviderProfiles = profiles;
+        _modelOptionsByProfileId = _mergeChatModelOptions(
+          profiles: profiles,
+          source: next,
+          sceneCatalog: _sceneCatalog,
+          overrideSelection: _activeConversationModelOverrideSelection,
+        );
+      });
+    } catch (_) {
+      // Keep the already-loaded cache available while offline. The next
+      // explicit selector opening will retry the official catalog refresh.
     }
   }
 
@@ -518,108 +559,126 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
   Future<void> _openConversationModelSelector(
     BuildContext anchorContext,
   ) async {
-    if (_conversationModelSelectorHandle != null) {
-      // 已经开着,不重开。
+    if (_conversationModelSelectorHandle != null ||
+        !_conversationModelSelectorOpeningGuard.tryBegin()) {
+      // 已经打开或正在等待目录刷新，不重开。
       return;
     }
-    if (_showSlashCommandPanel ||
-        _showModelMentionPanel ||
-        _openClawPanelExpanded) {
-      setState(() {
-        _showSlashCommandPanel = false;
-        _showModelMentionPanel = false;
-        _openClawPanelExpanded = false;
-      });
-    }
-    final activeSelection = _activeDispatchSceneSelection;
-    // Refresh the scene binding and Provider catalog at the point of use.
-    // ACP runtime startup can finish before the Flutter scene snapshot does;
-    // relying on the initial snapshot can therefore show the Provider's
-    // default model even after a different Provider model was selected.
-    await _loadNormalChatModelContext();
-    final refreshedSelection = _activeDispatchSceneSelection ?? activeSelection;
-    final refreshedProviderModels = refreshedSelection == null
-        ? const <ProviderModelOption>[]
-        : (_modelOptionsByProfileId[refreshedSelection.providerProfileId] ??
-              const <ProviderModelOption>[]);
-    if (refreshedSelection != null && refreshedProviderModels.length <= 1) {
-      await _loadCachedProviderModelsForChatSelector(refreshedSelection);
-    }
-    final selectorProfiles = _modelProviderProfiles;
-    final selectorOptions = _modelOptionsByProfileId;
-    final hasSelectorModels = selectorProfiles.any((profile) {
-      return profile.configured &&
-          (selectorOptions[profile.id] ?? const <ProviderModelOption>[])
-              .isNotEmpty;
-    });
-    if (!hasSelectorModels) {
-      return;
-    }
-    // 关键：不能调 `_inputFocusNode.unfocus()`，也不能用 `showGlassPopup`
-    // (push Navigator route)。两条路径都会让 TextField 失焦 → 软键盘塌陷 →
-    // 输入栏下沉 → popup 锚点错位(锚点是 popup 弹出瞬间按按钮在屏幕上的位置算的，
-    // 键盘塌陷后按钮位置已经变了)。
-    //
-    // Flutter 框架细节(重要)：`Route.requestFocus = false` **不能** 阻止 push
-    // 时的焦点迁移——`ModalRoute.didPush` 里检查的是 `navigator.widget.requestFocus`
-    // (Navigator 的 requestFocus),不是 Route 的。详见 routes.dart:1668。要彻底
-    // 跳过这条焦点迁移路径，唯一干净的办法是不走 Navigator 路由——直接挂到 Overlay。
-    // 这里走 [showOverlayGlassPopup],它把 OverlayEntry + Material + tap-outside +
-    // BackButtonListener + DismissOverlayOnKeyboardHide + playReverse 清理时序
-    // 都封装好了。
-    final anchorBox = anchorContext.findRenderObject() as RenderBox?;
-    final anchorRect = glassPopupAnchorFromContext(anchorContext);
-    if (anchorBox == null || !anchorBox.hasSize || anchorRect == null) {
-      return;
-    }
-    final popupWidth = math
-        .max(260.0, anchorBox.size.width)
-        .clamp(260.0, 320.0)
-        .toDouble();
-    const popupMaxHeight = 360.0;
-
-    final currentSelection = _activeDispatchSceneSelection == null
-        ? null
-        : ConversationModelSelection(
-            providerProfileId: _activeDispatchSceneSelection!.providerProfileId,
-            modelId: _activeDispatchSceneSelection!.modelId,
-          );
-    final handle = showOverlayGlassPopup<ConversationModelSelection>(
-      context: context,
-      anchor: anchorRect,
-      builder: (handle) => ConversationModelSelectorContent(
-        width: popupWidth,
-        maxHeight: popupMaxHeight,
-        profiles: selectorProfiles,
-        providerModelsByProfileId: selectorOptions,
-        currentSelection: currentSelection,
-        // 软键盘"确定"提交搜索时:先打开 popup 的"一次性键盘隐藏豁免",再 unfocus
-        // —— 这样 IME 塌陷不会被 DismissOverlayOnKeyboardHide 当作"用户想关 popup"
-        // 误关掉,搜索结果列表得以保留。
-        onSearchSubmitted: () {
-          handle.keepOpenOnNextKeyboardHide();
-          FocusManager.instance.primaryFocus?.unfocus();
-        },
-        // dismiss 内部会立刻 complete future,让下面 await 的逻辑并行起跑;
-        // 收起动画在后台跑完,UI 更响应。
-        onSelect: (selection) => unawaited(handle.dismiss(selection)),
-      ),
-    );
-    _conversationModelSelectorHandle = handle;
-
     try {
-      final selected = await handle.future;
-      if (selected == null) {
+      if (_showSlashCommandPanel ||
+          _showModelMentionPanel ||
+          _openClawPanelExpanded) {
+        setState(() {
+          _showSlashCommandPanel = false;
+          _showModelMentionPanel = false;
+          _openClawPanelExpanded = false;
+        });
+      }
+      final activeSelection = _activeDispatchSceneSelection;
+      // Refresh the scene binding at the point of use, then independently
+      // force-refresh the configured official profile. The active Provider may
+      // be BYOK, while the selector still shows the official group.
+      await _loadNormalChatModelContextInternal();
+      await _refreshOfficialChatProviderModelsForSelector();
+      final refreshedSelection =
+          _activeDispatchSceneSelection ?? activeSelection;
+      final refreshedProviderModels = refreshedSelection == null
+          ? const <ProviderModelOption>[]
+          : (_modelOptionsByProfileId[refreshedSelection.providerProfileId] ??
+                const <ProviderModelOption>[]);
+      if (refreshedSelection != null && refreshedProviderModels.length <= 1) {
+        await _loadCachedProviderModelsForChatSelector(refreshedSelection);
+      }
+      final selectorProfiles = _modelProviderProfiles;
+      final selectorOptions = _modelOptionsByProfileId;
+      final hasSelectorModels = selectorProfiles.any((profile) {
+        return profile.configured &&
+            (selectorOptions[profile.id] ?? const <ProviderModelOption>[])
+                .isNotEmpty;
+      });
+      if (!hasSelectorModels) {
         return;
       }
-      await _applyDispatchSceneModelSelection(
-        providerProfileId: selected.providerProfileId,
-        modelId: selected.modelId,
-      );
-    } finally {
-      if (_conversationModelSelectorHandle == handle) {
-        _conversationModelSelectorHandle = null;
+      if (!mounted || !anchorContext.mounted) {
+        return;
       }
+      // 关键：不能调 `_inputFocusNode.unfocus()`，也不能用 `showGlassPopup`
+      // (push Navigator route)。两条路径都会让 TextField 失焦 → 软键盘塌陷 →
+      // 输入栏下沉 → popup 锚点错位(锚点是 popup 弹出瞬间按按钮在屏幕上的位置算的，
+      // 键盘塌陷后按钮位置已经变了)。
+      //
+      // Flutter 框架细节(重要)：`Route.requestFocus = false` **不能** 阻止 push
+      // 时的焦点迁移——`ModalRoute.didPush` 里检查的是 `navigator.widget.requestFocus`
+      // (Navigator 的 requestFocus),不是 Route 的。详见 routes.dart:1668。要彻底
+      // 跳过这条焦点迁移路径，唯一干净的办法是不走 Navigator 路由——直接挂到 Overlay。
+      // 这里走 [showOverlayGlassPopup],它把 OverlayEntry + Material + tap-outside +
+      // BackButtonListener + DismissOverlayOnKeyboardHide + playReverse 清理时序
+      // 都封装好了。
+      final anchorBox = anchorContext.findRenderObject() as RenderBox?;
+      final anchorRect = glassPopupAnchorFromContext(anchorContext);
+      if (anchorBox == null || !anchorBox.hasSize || anchorRect == null) {
+        return;
+      }
+      final popupWidth = math
+          .max(260.0, anchorBox.size.width)
+          .clamp(260.0, 320.0)
+          .toDouble();
+      const popupMaxHeight = 360.0;
+
+      final currentSelection = _activeDispatchSceneSelection == null
+          ? null
+          : ConversationModelSelection(
+              providerProfileId:
+                  _activeDispatchSceneSelection!.providerProfileId,
+              modelId: _activeDispatchSceneSelection!.modelId,
+            );
+      final handle = showOverlayGlassPopup<ConversationModelSelection>(
+        context: context,
+        anchor: anchorRect,
+        builder: (handle) => ConversationModelSelectorContent(
+          width: popupWidth,
+          maxHeight: popupMaxHeight,
+          profiles: selectorProfiles,
+          providerModelsByProfileId: selectorOptions,
+          currentSelection: currentSelection,
+          // 软键盘"确定"提交搜索时:先打开 popup 的"一次性键盘隐藏豁免",再 unfocus
+          // —— 这样 IME 塌陷不会被 DismissOverlayOnKeyboardHide 当作"用户想关 popup"
+          // 误关掉,搜索结果列表得以保留。
+          onSearchSubmitted: () {
+            handle.keepOpenOnNextKeyboardHide();
+            FocusManager.instance.primaryFocus?.unfocus();
+          },
+          // dismiss 内部会立刻 complete future,让下面 await 的逻辑并行起跑;
+          // 收起动画在后台跑完,UI 更响应。
+          onSelect: (selection) => unawaited(handle.dismiss(selection)),
+        ),
+      );
+      setState(() {
+        _conversationModelSelectorHandle = handle;
+      });
+
+      try {
+        final selected = await handle.future;
+        if (selected == null) {
+          return;
+        }
+        await _applyDispatchSceneModelSelection(
+          providerProfileId: selected.providerProfileId,
+          modelId: selected.modelId,
+        );
+      } finally {
+        if (_conversationModelSelectorHandle == handle) {
+          if (mounted) {
+            setState(() {
+              _conversationModelSelectorHandle = null;
+            });
+          } else {
+            _conversationModelSelectorHandle = null;
+          }
+        }
+      }
+    } finally {
+      _conversationModelSelectorOpeningGuard.finish();
     }
   }
 

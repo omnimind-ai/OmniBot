@@ -36,6 +36,10 @@ class AccountApiClientTest {
                     "base_url":"https://internal.invalid",
                     "key":"must-not-be-mapped"
                   },{
+                    "id":"opus-6",
+                    "owned_by":"custom",
+                    "supported_endpoint_types":["openai"]
+                  },{
                     "id":"image-model",
                     "supported_endpoint_types":["image-generation"]
                   },{
@@ -46,6 +50,10 @@ class AccountApiClientTest {
                   }],
                   "official_catalog":{
                     "version":"2",
+                    "display_names":{
+                      "opus-6":"opus 6☺️",
+                      "hidden-model":"Must not leak"
+                    },
                     "defaults":{
                       "text":"Qwen3.5-Plus",
                       "image":"image-model",
@@ -55,7 +63,7 @@ class AccountApiClientTest {
                       "tts_voice":"default_zh"
                     },
                     "capabilities":{
-                      "text":["Qwen3.5-Plus"],
+                      "text":["Qwen3.5-Plus","opus-6"],
                       "image":["image-model"],
                       "embedding":["embedding-model"],
                       "vision":["Qwen3.5-Plus"],
@@ -77,12 +85,13 @@ class AccountApiClientTest {
         val models = catalog.models
 
         assertEquals(
-            listOf("Qwen3.5-Plus", "image-model", "embedding-model", "voice-model"),
+            listOf("Qwen3.5-Plus", "opus-6", "image-model", "embedding-model", "voice-model"),
             models.map(PlatformModel::id),
         )
         assertEquals(listOf("openai"), models.first().supportedEndpointTypes)
         assertTrue(catalog.hasOfficialCatalog)
         assertEquals("2", catalog.version)
+        assertEquals(mapOf("opus-6" to "opus 6☺️"), catalog.displayNames)
         assertEquals("image-model", catalog.defaults.image)
         assertEquals("embedding-model", catalog.defaults.embedding)
         assertEquals("voice-model", catalog.defaults.tts)

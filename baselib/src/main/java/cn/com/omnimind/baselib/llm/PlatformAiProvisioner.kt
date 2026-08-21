@@ -5,6 +5,7 @@ import cn.com.omnimind.baselib.account.OmniAccount
 import cn.com.omnimind.baselib.account.PlatformModel
 import cn.com.omnimind.baselib.account.PlatformModelsUnavailableException
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -79,12 +80,47 @@ internal fun preserveLastKnownGoodCatalogOrFailure(
         PlatformAiProvisioningStatus(statusText = failureStatusText)
     }
 
+/** Coalesces overlapping catalog requests instead of queuing another fetch. */
+internal class SuspendRequestCoalescer<T> {
+    private val gate = Any()
+    private var inFlight: CompletableDeferred<T>? = null
+
+    suspend fun run(block: suspend () -> T): T {
+        lateinit var request: CompletableDeferred<T>
+        var ownsRequest = false
+        synchronized(gate) {
+            request = inFlight ?: CompletableDeferred<T>().also {
+                inFlight = it
+                ownsRequest = true
+            }
+        }
+        if (!ownsRequest) {
+            return request.await()
+        }
+
+        return try {
+            block().also(request::complete)
+        } catch (error: Throwable) {
+            request.completeExceptionally(error)
+            throw error
+        } finally {
+            synchronized(gate) {
+                if (inFlight === request) {
+                    inFlight = null
+                }
+            }
+        }
+    }
+}
+
 /**
  * Keeps the official provider catalog separate from device BYOK configuration.
  * Synchronizing the catalog never mutates the user's scene bindings.
  */
 object PlatformAiProvisioner {
     private val mutex = Mutex()
+    private val catalogSynchronization =
+        SuspendRequestCoalescer<PlatformAiProvisioningStatus>()
     private val embeddingRefreshGate = Any()
 
     @Volatile
@@ -109,6 +145,17 @@ object PlatformAiProvisioner {
         settings: AiSettings? = null,
         forceRefresh: Boolean = settings != null,
         preserveReadyCatalogOnFailure: Boolean = false,
+    ): PlatformAiProvisioningStatus =
+        catalogSynchronization.run {
+            synchronizeOnce(
+                forceRefresh = forceRefresh,
+                preserveReadyCatalogOnFailure = preserveReadyCatalogOnFailure,
+            )
+        }
+
+    private suspend fun synchronizeOnce(
+        forceRefresh: Boolean,
+        preserveReadyCatalogOnFailure: Boolean,
     ): PlatformAiProvisioningStatus =
         mutex.withLock {
             if (!OmniOfficialProvider.shouldExpose()) {
@@ -155,16 +202,16 @@ object PlatformAiProvisioner {
                     ready = true,
                     statusText = "官方文本模型已就绪",
                     defaultModelId = selected.id,
-                    models = selection.textModels.toOptions(),
+                    models = selection.textModels.toOptions(catalog.displayNames),
                     catalogVersion = catalog.version,
                     defaultVisionModelId = selection.defaultVisionModel?.id,
                     defaultImageModelId = selection.defaultImageModel?.id,
                     defaultEmbeddingModelId = selection.defaultEmbeddingModel?.id,
                     defaultTtsModelId = selection.defaultTtsModel?.id,
-                    visionModels = selection.visionModels.toOptions(),
-                    imageModels = selection.imageModels.toOptions(),
-                    embeddingModels = selection.embeddingModels.toOptions(),
-                    ttsModels = selection.ttsModels.toOptions(),
+                    visionModels = selection.visionModels.toOptions(catalog.displayNames),
+                    imageModels = selection.imageModels.toOptions(catalog.displayNames),
+                    embeddingModels = selection.embeddingModels.toOptions(catalog.displayNames),
+                    ttsModels = selection.ttsModels.toOptions(catalog.displayNames),
                     ttsVoiceAliases = selection.ttsVoiceAliases,
                     defaultTtsVoiceAlias = selection.defaultTtsVoiceAlias,
                 )
@@ -229,6 +276,22 @@ object PlatformAiProvisioner {
         return readyStatus.modelsForCapability(normalizedCapability)
     }
 
+    suspend fun refreshAndGetModels(
+        capability: String? = null,
+    ): List<ProviderModelOption> {
+        val normalizedCapability = capability?.trim()?.lowercase().orEmpty()
+        val refreshed = synchronize(
+            forceRefresh = true,
+            preserveReadyCatalogOnFailure = true,
+        )
+        if (!refreshed.hasReadyTextCatalog()) {
+            throw PlatformModelsUnavailableException(
+                refreshed.statusText.ifBlank { "官方模型暂时不可用" }
+            )
+        }
+        return refreshed.modelsForCapability(normalizedCapability)
+    }
+
     suspend fun deactivate() {
         mutex.withLock { deactivateLocked() }
     }
@@ -268,11 +331,13 @@ object PlatformAiProvisioner {
         }
     }
 
-    private fun List<PlatformModel>.toOptions(): List<ProviderModelOption> =
+    private fun List<PlatformModel>.toOptions(
+        displayNames: Map<String, String>,
+    ): List<ProviderModelOption> =
         map { model ->
             ProviderModelOption(
                 id = model.id,
-                displayName = model.id,
+                displayName = displayNames[model.id].orEmpty().ifBlank { model.id },
                 ownedBy = model.ownedBy,
             )
         }

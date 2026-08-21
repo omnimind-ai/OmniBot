@@ -158,9 +158,153 @@ void main() {
       );
       expect(arguments['expectedProfileRevision'], 9);
       expect(arguments['capability'], 'embedding');
+      expect(arguments.containsKey('forceRefresh'), isFalse);
       expect(
         arguments['expectedProfileBaseUrl'],
         'https://provider.example/v1',
+      );
+    },
+  );
+
+  test(
+    'explicit official refresh works with active BYOK and a cold cache',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      await StorageService.init();
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      final fetchCalls = <MethodCall>[];
+      var officialCatalogReady = false;
+      messenger.setMockMethodCallHandler(assistCoreChannel, (call) async {
+        switch (call.method) {
+          case 'listModelProviderProfiles':
+            return <String, dynamic>{
+              'profiles': <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'id': 'byok-provider',
+                  'name': 'BYOK Provider',
+                  'baseUrl': 'https://byok.example/v1',
+                  'configured': true,
+                  'revision': 4,
+                },
+                if (officialCatalogReady)
+                  <String, dynamic>{
+                    'id': 'omnibot-official-ai',
+                    'name': 'OmniBot 官方 AI',
+                    'sourceType': 'omnibot_official',
+                    'readOnly': true,
+                    'ready': true,
+                    'configured': true,
+                    'revision': 0,
+                  },
+              ],
+              'editingProfileId': 'byok-provider',
+            };
+          case 'fetchProviderModels':
+            fetchCalls.add(call);
+            officialCatalogReady = true;
+            return <Map<String, dynamic>>[
+              <String, dynamic>{'id': 'opus-6', 'displayName': 'opus 6☺️'},
+            ];
+          default:
+            throw PlatformException(code: 'unexpected_method');
+        }
+      });
+      addTearDown(
+        () => messenger.setMockMethodCallHandler(assistCoreChannel, null),
+      );
+
+      final group =
+          await ModelProviderConfigService.refreshOfficialChatModelGroup();
+
+      expect(group, isNotNull);
+      expect(group!.profile.id, 'omnibot-official-ai');
+      expect(group.profile.sourceType, 'omnibot_official');
+      expect(group.models.single.id, 'opus-6');
+      expect(group.models.single.displayName, 'opus 6☺️');
+      final arguments = Map<dynamic, dynamic>.from(
+        fetchCalls.single.arguments as Map,
+      );
+      expect(arguments['profileId'], 'omnibot-official-ai');
+      expect(arguments['capability'], 'text');
+      expect(arguments['forceRefresh'], isTrue);
+      expect(
+        (await ModelProviderConfigService.getCachedFetchedModels(
+          profileId: 'omnibot-official-ai',
+          profileRevision: 0,
+        )).single.displayName,
+        'opus 6☺️',
+      );
+    },
+  );
+
+  test(
+    'explicit official refresh replaces an expired cached catalog',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      await StorageService.init();
+      await ModelProviderConfigService.saveCachedFetchedModels(
+        profileId: 'omnibot-official-ai',
+        apiBase: '',
+        profileRevision: 0,
+        models: const <ProviderModelOption>[
+          ProviderModelOption(id: 'old-model', displayName: 'old-model'),
+        ],
+      );
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      final fetchCalls = <MethodCall>[];
+      messenger.setMockMethodCallHandler(assistCoreChannel, (call) async {
+        switch (call.method) {
+          case 'listModelProviderProfiles':
+            return <String, dynamic>{
+              'profiles': <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'id': 'byok-provider',
+                  'name': 'BYOK Provider',
+                  'baseUrl': 'https://byok.example/v1',
+                  'configured': true,
+                  'revision': 4,
+                },
+                <String, dynamic>{
+                  'id': 'omnibot-official-ai',
+                  'name': 'OmniBot 官方 AI',
+                  'sourceType': 'omnibot_official',
+                  'readOnly': true,
+                  'ready': true,
+                  'configured': true,
+                  'revision': 0,
+                },
+              ],
+              'editingProfileId': 'byok-provider',
+            };
+          case 'fetchProviderModels':
+            fetchCalls.add(call);
+            return <Map<String, dynamic>>[
+              <String, dynamic>{'id': 'new-model', 'displayName': 'New Model'},
+            ];
+          default:
+            throw PlatformException(code: 'unexpected_method');
+        }
+      });
+      addTearDown(
+        () => messenger.setMockMethodCallHandler(assistCoreChannel, null),
+      );
+
+      final group =
+          await ModelProviderConfigService.refreshOfficialChatModelGroup();
+
+      expect(group!.models.map((model) => model.id), <String>['new-model']);
+      final arguments = Map<dynamic, dynamic>.from(
+        fetchCalls.single.arguments as Map,
+      );
+      expect(arguments['forceRefresh'], isTrue);
+      expect(
+        (await ModelProviderConfigService.getCachedFetchedModels(
+          profileId: 'omnibot-official-ai',
+          profileRevision: 0,
+        )).map((model) => model.id),
+        <String>['new-model'],
       );
     },
   );
@@ -494,6 +638,7 @@ void main() {
         fetchCalls.single.arguments as Map,
       );
       expect(arguments['capability'], 'text');
+      expect(arguments.containsKey('forceRefresh'), isFalse);
       expect(
         (await ModelProviderConfigService.getCachedFetchedModels(
           profileId: 'omnibot-official-ai',

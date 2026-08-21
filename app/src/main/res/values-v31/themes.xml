@@ -1,24 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-   <style name="Theme.OmnibotApp.Splash" parent="android:Theme.Material.NoActionBar">
+   <style name="Theme.OmnibotApp.Splash" parent="android:Theme.Material.Light.NoActionBar">
        <!-- Android 12+ Splash Screen API 配置 -->
-       <item name="android:windowSplashScreenBackground">#151617</item>
+       <item name="android:windowSplashScreenBackground">#F4F7FB</item>
        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_logo</item>
-       <item name="android:windowSplashScreenIconBackgroundColor">#151617</item>
+       <item name="android:windowSplashScreenIconBackgroundColor">#F4F7FB</item>
        <item name="android:windowSplashScreenAnimationDuration">200</item>
       
        <!-- 主窗口：使用与低版本相同的背景 -->
-       <item name="android:windowBackground">@drawable/splash_background_dark</item>
-       <item name="android:statusBarColor">#151617</item>
+       <item name="android:windowBackground">@drawable/splash_background</item>
+       <item name="android:statusBarColor">#F4F7FB</item>
        <item name="android:navigationBarColor">@android:color/transparent</item>
        <item name="android:enforceNavigationBarContrast">false</item>
-       <item name="android:windowLightStatusBar">false</item>
+       <item name="android:windowLightStatusBar">true</item>
+       <item name="android:windowLightNavigationBar">true</item>
        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
    </style>
 
    <style name="Theme.OmnibotApp.Splash.Dark" parent="android:Theme.Material.NoActionBar">
        <item name="android:windowSplashScreenBackground">#151617</item>
-       <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_logo</item>
+       <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_logo_dark</item>
        <item name="android:windowSplashScreenIconBackgroundColor">#151617</item>
        <item name="android:windowSplashScreenAnimationDuration">200</item>
        <item name="android:windowBackground">@drawable/splash_background_dark</item>
@@ -26,6 +27,7 @@
        <item name="android:navigationBarColor">@android:color/transparent</item>
        <item name="android:enforceNavigationBarContrast">false</item>
        <item name="android:windowLightStatusBar">false</item>
+       <item name="android:windowLightNavigationBar">false</item>
        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
    </style>
 </resources>

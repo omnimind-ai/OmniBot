@@ -224,20 +224,26 @@ class _AccountPageState extends State<AccountPage> {
   }
 
   Future<void> _logout() async {
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showSettingsDetailSheet<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: Text(_text('退出登录', 'Sign out')),
-        content: Text(
+      builder: (sheetContext) => SettingsDetailSheet(
+        key: const ValueKey('sign-out-sheet'),
+        title: _text('退出登录', 'Sign out'),
+        body: Text(
           _text('只会退出当前设备，其他设备不受影响。', 'Only this device will be signed out.'),
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context, false),
+            style: settingsDetailSheetActionStyle(sheetContext),
+            onPressed: () => Navigator.pop(sheetContext, false),
             child: Text(_text('取消', 'Cancel')),
           ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
+          TextButton(
+            style: settingsDetailSheetActionStyle(
+              sheetContext,
+              foregroundColor: Theme.of(sheetContext).colorScheme.error,
+            ),
+            onPressed: () => Navigator.pop(sheetContext, true),
             child: Text(_text('退出', 'Sign out')),
           ),
         ],
@@ -277,164 +283,164 @@ class _AccountPageState extends State<AccountPage> {
     var showPassword = false;
 
     try {
-      final reset = await showDialog<bool>(
+      final reset = await showSettingsDetailSheet<bool>(
         context: context,
-        barrierDismissible: false,
-        builder: (dialogContext) => StatefulBuilder(
+        isScrollControlled: true,
+        isDismissible: false,
+        enableDrag: false,
+        builder: (sheetContext) => StatefulBuilder(
           builder: (context, setDialogState) => PopScope(
             canPop: !submitting && !sendingCode,
-            child: AlertDialog(
-              title: Text(_text('重置密码', 'Reset password')),
-              content: SingleChildScrollView(
-                child: Form(
-                  key: formKey,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Text(
-                        _text(
-                          '验证码会发送到注册邮箱。重置成功后，其他设备需要重新登录。',
-                          'A code will be sent to your registered email. Other devices must sign in again after reset.',
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      TextFormField(
-                        key: const ValueKey('auth-email-field'),
-                        initialValue: emailValue,
-                        onChanged: (value) => emailValue = value,
-                        keyboardType: TextInputType.emailAddress,
-                        decoration: InputDecoration(
-                          labelText: _text('邮箱', 'Email'),
-                          suffixIcon: TextButton(
-                            onPressed: submitting || sendingCode
-                                ? null
-                                : () async {
-                                    final email = emailValue.trim();
-                                    if (!_looksLikeEmail(email)) {
-                                      setDialogState(() {
-                                        dialogError = _text(
-                                          '请输入正确的邮箱',
-                                          'Enter a valid email',
-                                        );
-                                      });
-                                      return;
-                                    }
+            child: SettingsDetailSheet(
+              key: const ValueKey('reset-password-sheet'),
+              title: _text('重置密码', 'Reset password'),
+              subtitle: _text(
+                '验证码会发送到注册邮箱。重置成功后，其他设备需要重新登录。',
+                'A code will be sent to your registered email. Other devices must sign in again after reset.',
+              ),
+              avoidKeyboard: true,
+              body: Form(
+                key: formKey,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    TextFormField(
+                      key: const ValueKey('auth-email-field'),
+                      initialValue: emailValue,
+                      onChanged: (value) => emailValue = value,
+                      keyboardType: TextInputType.emailAddress,
+                      decoration: InputDecoration(
+                        labelText: _text('邮箱', 'Email'),
+                        suffixIcon: TextButton(
+                          onPressed: submitting || sendingCode
+                              ? null
+                              : () async {
+                                  final email = emailValue.trim();
+                                  if (!_looksLikeEmail(email)) {
                                     setDialogState(() {
-                                      sendingCode = true;
-                                      dialogError = null;
+                                      dialogError = _text(
+                                        '请输入正确的邮箱',
+                                        'Enter a valid email',
+                                      );
                                     });
-                                    try {
-                                      final result =
-                                          await AccountService.requestPasswordResetCode(
-                                            email,
-                                          );
-                                      if (!dialogContext.mounted) return;
-                                      setDialogState(() {
-                                        request = result;
-                                        requestEmail = email;
-                                        sendingCode = false;
-                                      });
-                                    } on PlatformException catch (error) {
-                                      if (!dialogContext.mounted) return;
-                                      setDialogState(() {
-                                        sendingCode = false;
-                                        dialogError = _messageFor(error);
-                                      });
-                                    } catch (_) {
-                                      if (!dialogContext.mounted) return;
-                                      setDialogState(() {
-                                        sendingCode = false;
-                                        dialogError = _text(
-                                          '验证码发送失败，请稍后重试',
-                                          'Could not send the code. Try again later.',
+                                    return;
+                                  }
+                                  setDialogState(() {
+                                    sendingCode = true;
+                                    dialogError = null;
+                                  });
+                                  try {
+                                    final result =
+                                        await AccountService.requestPasswordResetCode(
+                                          email,
                                         );
-                                      });
-                                    }
-                                  },
-                            child: sendingCode
-                                ? const SizedBox.square(
-                                    dimension: 16,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                    ),
-                                  )
-                                : Text(
-                                    request == null
-                                        ? _text('发送', 'Send')
-                                        : _text('重新发送', 'Resend'),
+                                    if (!sheetContext.mounted) return;
+                                    setDialogState(() {
+                                      request = result;
+                                      requestEmail = email;
+                                      sendingCode = false;
+                                    });
+                                  } on PlatformException catch (error) {
+                                    if (!sheetContext.mounted) return;
+                                    setDialogState(() {
+                                      sendingCode = false;
+                                      dialogError = _messageFor(error);
+                                    });
+                                  } catch (_) {
+                                    if (!sheetContext.mounted) return;
+                                    setDialogState(() {
+                                      sendingCode = false;
+                                      dialogError = _text(
+                                        '验证码发送失败，请稍后重试',
+                                        'Could not send the code. Try again later.',
+                                      );
+                                    });
+                                  }
+                                },
+                          child: sendingCode
+                              ? const SizedBox.square(
+                                  dimension: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
                                   ),
-                          ),
+                                )
+                              : Text(
+                                  request == null
+                                      ? _text('发送', 'Send')
+                                      : _text('重新发送', 'Resend'),
+                                ),
                         ),
-                        validator: (value) =>
-                            _looksLikeEmail(value?.trim() ?? '')
-                            ? null
-                            : _text('请输入正确的邮箱', 'Enter a valid email'),
                       ),
-                      const SizedBox(height: 12),
-                      TextFormField(
-                        key: const ValueKey('auth-password-field'),
-                        onChanged: (value) => passwordValue = value,
-                        obscureText: !showPassword,
-                        autofillHints: const [AutofillHints.newPassword],
-                        decoration: InputDecoration(
-                          labelText: _text('新密码', 'New password'),
-                          helperText: _text('8 到 16 个字符', '8 to 16 characters'),
-                        ),
-                        validator: _passwordValidationMessage,
+                      validator: (value) => _looksLikeEmail(value?.trim() ?? '')
+                          ? null
+                          : _text('请输入正确的邮箱', 'Enter a valid email'),
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      key: const ValueKey('auth-password-field'),
+                      onChanged: (value) => passwordValue = value,
+                      obscureText: !showPassword,
+                      autofillHints: const [AutofillHints.newPassword],
+                      decoration: InputDecoration(
+                        labelText: _text('新密码', 'New password'),
+                        helperText: _text('8 到 16 个字符', '8 to 16 characters'),
                       ),
-                      const SizedBox(height: 12),
-                      TextFormField(
-                        key: const ValueKey('auth-confirm-password-field'),
-                        onChanged: (value) => confirmValue = value,
-                        obscureText: !showPassword,
-                        autofillHints: const [AutofillHints.newPassword],
-                        decoration: InputDecoration(
-                          labelText: _text('确认新密码', 'Confirm new password'),
-                        ),
-                        validator: (_) => confirmValue == passwordValue
-                            ? null
-                            : _text('两次密码不一致', 'Passwords do not match'),
+                      validator: _passwordValidationMessage,
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      key: const ValueKey('auth-confirm-password-field'),
+                      onChanged: (value) => confirmValue = value,
+                      obscureText: !showPassword,
+                      autofillHints: const [AutofillHints.newPassword],
+                      decoration: InputDecoration(
+                        labelText: _text('确认新密码', 'Confirm new password'),
                       ),
-                      const SizedBox(height: 12),
-                      TextFormField(
-                        key: const ValueKey('auth-verification-code-field'),
-                        onChanged: (value) => codeValue = value,
-                        keyboardType: TextInputType.number,
-                        maxLength: 6,
-                        decoration: InputDecoration(
-                          labelText: _text('邮箱验证码', 'Email verification code'),
-                          counterText: '',
-                        ),
-                        validator: (value) => (value ?? '').trim().length == 6
-                            ? null
-                            : _text('请输入 6 位验证码', 'Enter the 6-digit code'),
+                      validator: (_) => confirmValue == passwordValue
+                          ? null
+                          : _text('两次密码不一致', 'Passwords do not match'),
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      key: const ValueKey('auth-verification-code-field'),
+                      onChanged: (value) => codeValue = value,
+                      keyboardType: TextInputType.number,
+                      maxLength: 6,
+                      decoration: InputDecoration(
+                        labelText: _text('邮箱验证码', 'Email verification code'),
+                        counterText: '',
                       ),
-                      CheckboxListTile(
-                        value: showPassword,
-                        contentPadding: EdgeInsets.zero,
-                        controlAffinity: ListTileControlAffinity.leading,
-                        onChanged: submitting
-                            ? null
-                            : (value) => setDialogState(
-                                () => showPassword = value ?? false,
-                              ),
-                        title: Text(_text('显示密码', 'Show passwords')),
-                      ),
-                      if (dialogError != null) _errorBanner(dialogError!),
-                    ],
-                  ),
+                      validator: (value) => (value ?? '').trim().length == 6
+                          ? null
+                          : _text('请输入 6 位验证码', 'Enter the 6-digit code'),
+                    ),
+                    CheckboxListTile(
+                      value: showPassword,
+                      contentPadding: EdgeInsets.zero,
+                      controlAffinity: ListTileControlAffinity.leading,
+                      onChanged: submitting
+                          ? null
+                          : (value) => setDialogState(
+                              () => showPassword = value ?? false,
+                            ),
+                      title: Text(_text('显示密码', 'Show passwords')),
+                    ),
+                    if (dialogError != null) _errorBanner(dialogError!),
+                  ],
                 ),
               ),
               actions: [
                 TextButton(
+                  style: settingsDetailSheetActionStyle(sheetContext),
                   onPressed: submitting || sendingCode
                       ? null
-                      : () => Navigator.pop(dialogContext, false),
+                      : () => Navigator.pop(sheetContext, false),
                   child: Text(_text('取消', 'Cancel')),
                 ),
-                FilledButton(
+                TextButton(
                   key: const ValueKey('submit-auth'),
+                  style: settingsDetailSheetActionStyle(sheetContext),
                   onPressed: submitting || sendingCode
                       ? null
                       : () async {
@@ -462,17 +468,17 @@ class _AccountPageState extends State<AccountPage> {
                               verificationRequestId: request!.requestId,
                               verificationCode: codeValue.trim(),
                             );
-                            if (dialogContext.mounted) {
-                              Navigator.pop(dialogContext, true);
+                            if (sheetContext.mounted) {
+                              Navigator.pop(sheetContext, true);
                             }
                           } on PlatformException catch (error) {
-                            if (!dialogContext.mounted) return;
+                            if (!sheetContext.mounted) return;
                             setDialogState(() {
                               submitting = false;
                               dialogError = _messageFor(error);
                             });
                           } catch (_) {
-                            if (!dialogContext.mounted) return;
+                            if (!sheetContext.mounted) return;
                             setDialogState(() {
                               submitting = false;
                               dialogError = _text(
@@ -506,16 +512,14 @@ class _AccountPageState extends State<AccountPage> {
     }
   }
 
-  Future<void> _showPlatformUsage() => showModalBottomSheet<void>(
+  Future<void> _showPlatformUsage() => showSettingsDetailSheet<void>(
     context: context,
-    backgroundColor: context.omniPalette.surfacePrimary,
     builder: (context) =>
         PlatformUsageSheet(english: _english, errorMessage: _messageFor),
   );
 
-  Future<void> _showSessions() => showModalBottomSheet<void>(
+  Future<void> _showSessions() => showSettingsDetailSheet<void>(
     context: context,
-    backgroundColor: context.omniPalette.surfacePrimary,
     builder: (context) =>
         SessionsSheet(english: _english, errorMessage: _messageFor),
   );
@@ -528,143 +532,136 @@ class _AccountPageState extends State<AccountPage> {
     var submitting = false;
     var showPasswords = false;
     String? dialogError;
-    final changed = await showModalBottomSheet<bool>(
+    final changed = await showSettingsDetailSheet<bool>(
       context: context,
-      backgroundColor: context.omniPalette.surfacePrimary,
       isScrollControlled: true,
       isDismissible: true,
       enableDrag: true,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) => PopScope(
           canPop: !submitting,
-          child: AnimatedPadding(
-            duration: const Duration(milliseconds: 180),
-            curve: Curves.easeOutCubic,
-            padding: EdgeInsets.only(
-              bottom: MediaQuery.viewInsetsOf(context).bottom,
+          child: SettingsDetailSheet(
+            key: const ValueKey('change-password-sheet'),
+            title: _text('修改密码', 'Change password'),
+            subtitle: _text(
+              '修改成功后，其他设备会退出登录，当前设备不受影响。',
+              'Other devices will be signed out. This device stays signed in.',
             ),
-            child: SettingsDetailSheet(
-              key: const ValueKey('change-password-sheet'),
-              title: _text('修改密码', 'Change password'),
-              subtitle: _text(
-                '修改成功后，其他设备会退出登录，当前设备不受影响。',
-                'Other devices will be signed out. This device stays signed in.',
-              ),
-              body: Form(
-                key: formKey,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    TextFormField(
-                      key: const ValueKey('current-password-field'),
-                      obscureText: !showPasswords,
-                      onChanged: (value) => currentPassword = value,
-                      decoration: InputDecoration(
-                        labelText: _text('当前密码', 'Current password'),
-                      ),
-                      validator: (value) => (value ?? '').isEmpty
-                          ? _text('请输入当前密码', 'Enter your current password')
-                          : null,
+            avoidKeyboard: true,
+            body: Form(
+              key: formKey,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  TextFormField(
+                    key: const ValueKey('current-password-field'),
+                    obscureText: !showPasswords,
+                    onChanged: (value) => currentPassword = value,
+                    decoration: InputDecoration(
+                      labelText: _text('当前密码', 'Current password'),
                     ),
+                    validator: (value) => (value ?? '').isEmpty
+                        ? _text('请输入当前密码', 'Enter your current password')
+                        : null,
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    key: const ValueKey('new-password-field'),
+                    obscureText: !showPasswords,
+                    onChanged: (value) => newPassword = value,
+                    decoration: InputDecoration(
+                      labelText: _text('新密码', 'New password'),
+                      helperText: _text('8 到 16 个字符', '8 to 16 characters'),
+                    ),
+                    validator: _passwordValidationMessage,
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    key: const ValueKey('confirm-new-password-field'),
+                    obscureText: !showPasswords,
+                    onChanged: (value) => confirmedPassword = value,
+                    decoration: InputDecoration(
+                      labelText: _text('确认新密码', 'Confirm new password'),
+                    ),
+                    validator: (_) => confirmedPassword == newPassword
+                        ? null
+                        : _text('两次密码不一致', 'Passwords do not match'),
+                  ),
+                  if (dialogError != null) ...[
                     const SizedBox(height: 12),
-                    TextFormField(
-                      key: const ValueKey('new-password-field'),
-                      obscureText: !showPasswords,
-                      onChanged: (value) => newPassword = value,
-                      decoration: InputDecoration(
-                        labelText: _text('新密码', 'New password'),
-                        helperText: _text('8 到 16 个字符', '8 to 16 characters'),
-                      ),
-                      validator: _passwordValidationMessage,
-                    ),
-                    const SizedBox(height: 12),
-                    TextFormField(
-                      key: const ValueKey('confirm-new-password-field'),
-                      obscureText: !showPasswords,
-                      onChanged: (value) => confirmedPassword = value,
-                      decoration: InputDecoration(
-                        labelText: _text('确认新密码', 'Confirm new password'),
-                      ),
-                      validator: (_) => confirmedPassword == newPassword
-                          ? null
-                          : _text('两次密码不一致', 'Passwords do not match'),
-                    ),
-                    if (dialogError != null) ...[
-                      const SizedBox(height: 12),
-                      _errorBanner(dialogError!),
-                    ],
-                    const SizedBox(height: 4),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: CheckboxListTile(
-                            key: const ValueKey('show-change-passwords'),
-                            value: showPasswords,
-                            dense: true,
-                            visualDensity: VisualDensity.compact,
-                            contentPadding: EdgeInsets.zero,
-                            controlAffinity: ListTileControlAffinity.leading,
-                            onChanged: submitting
-                                ? null
-                                : (value) => setDialogState(
-                                    () => showPasswords = value ?? false,
-                                  ),
-                            title: Text(_text('显示密码', 'Show passwords')),
-                          ),
-                        ),
-                        const SizedBox(width: 12),
-                        FilledButton(
-                          key: const ValueKey('confirm-change-password'),
-                          onPressed: submitting
-                              ? null
-                              : () async {
-                                  if (!(formKey.currentState?.validate() ??
-                                      false)) {
-                                    return;
-                                  }
-                                  setDialogState(() {
-                                    submitting = true;
-                                    dialogError = null;
-                                  });
-                                  try {
-                                    await AccountService.changePassword(
-                                      currentPassword: currentPassword,
-                                      newPassword: newPassword,
-                                    );
-                                    if (dialogContext.mounted) {
-                                      Navigator.pop(dialogContext, true);
-                                    }
-                                  } on PlatformException catch (error) {
-                                    if (!dialogContext.mounted) return;
-                                    setDialogState(() {
-                                      submitting = false;
-                                      dialogError = _messageFor(error);
-                                    });
-                                  } catch (_) {
-                                    if (!dialogContext.mounted) return;
-                                    setDialogState(() {
-                                      submitting = false;
-                                      dialogError = _text(
-                                        '修改失败，请稍后重试',
-                                        'Could not change the password. Try again later.',
-                                      );
-                                    });
-                                  }
-                                },
-                          child: submitting
-                              ? const SizedBox.square(
-                                  dimension: 18,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : Text(_text('确认修改', 'Change password')),
-                        ),
-                      ],
-                    ),
+                    _errorBanner(dialogError!),
                   ],
-                ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: CheckboxListTile(
+                          key: const ValueKey('show-change-passwords'),
+                          value: showPasswords,
+                          dense: true,
+                          visualDensity: VisualDensity.compact,
+                          contentPadding: EdgeInsets.zero,
+                          controlAffinity: ListTileControlAffinity.leading,
+                          onChanged: submitting
+                              ? null
+                              : (value) => setDialogState(
+                                  () => showPasswords = value ?? false,
+                                ),
+                          title: Text(_text('显示密码', 'Show passwords')),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      FilledButton(
+                        key: const ValueKey('confirm-change-password'),
+                        onPressed: submitting
+                            ? null
+                            : () async {
+                                if (!(formKey.currentState?.validate() ??
+                                    false)) {
+                                  return;
+                                }
+                                setDialogState(() {
+                                  submitting = true;
+                                  dialogError = null;
+                                });
+                                try {
+                                  await AccountService.changePassword(
+                                    currentPassword: currentPassword,
+                                    newPassword: newPassword,
+                                  );
+                                  if (dialogContext.mounted) {
+                                    Navigator.pop(dialogContext, true);
+                                  }
+                                } on PlatformException catch (error) {
+                                  if (!dialogContext.mounted) return;
+                                  setDialogState(() {
+                                    submitting = false;
+                                    dialogError = _messageFor(error);
+                                  });
+                                } catch (_) {
+                                  if (!dialogContext.mounted) return;
+                                  setDialogState(() {
+                                    submitting = false;
+                                    dialogError = _text(
+                                      '修改失败，请稍后重试',
+                                      'Could not change the password. Try again later.',
+                                    );
+                                  });
+                                }
+                              },
+                        child: submitting
+                            ? const SizedBox.square(
+                                dimension: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : Text(_text('确认修改', 'Change password')),
+                      ),
+                    ],
+                  ),
+                ],
               ),
             ),
           ),
@@ -679,28 +676,43 @@ class _AccountPageState extends State<AccountPage> {
   Future<void> _showDeleteAccountFlow() async {
     final overview = _overview;
     if (overview == null) return;
-    final proceed = await showDialog<bool>(
+    final proceed = await showSettingsDetailSheet<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        icon: Icon(
-          LucideIcons.triangleAlert,
-          color: Theme.of(dialogContext).colorScheme.error,
-        ),
-        title: Text(_text('永久删除账号？', 'Permanently delete account?')),
-        content: Text(
-          _text(
-            '服务器中的账号、登录会话和平台额度信息会永久删除，无法恢复。本机聊天和文件不会自动清理。',
-            'Your server-side account, sessions, and platform quota data will be permanently deleted. Local chats and files are not removed automatically.',
-          ),
+      builder: (sheetContext) => SettingsDetailSheet(
+        key: const ValueKey('delete-account-warning-sheet'),
+        title: _text('永久删除账号？', 'Permanently delete account?'),
+        body: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              LucideIcons.triangleAlert,
+              size: 18,
+              color: Theme.of(sheetContext).colorScheme.error,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                _text(
+                  '服务器中的账号、登录会话和平台额度信息会永久删除，无法恢复。本机聊天和文件不会自动清理。',
+                  'Your server-side account, sessions, and platform quota data will be permanently deleted. Local chats and files are not removed automatically.',
+                ),
+              ),
+            ),
+          ],
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
+            style: settingsDetailSheetActionStyle(sheetContext),
+            onPressed: () => Navigator.pop(sheetContext, false),
             child: Text(_text('取消', 'Cancel')),
           ),
-          FilledButton(
+          TextButton(
             key: const ValueKey('continue-delete-account'),
-            onPressed: () => Navigator.pop(dialogContext, true),
+            style: settingsDetailSheetActionStyle(
+              sheetContext,
+              foregroundColor: Theme.of(sheetContext).colorScheme.error,
+            ),
+            onPressed: () => Navigator.pop(sheetContext, true),
             child: Text(_text('继续验证', 'Continue')),
           ),
         ],
@@ -713,66 +725,73 @@ class _AccountPageState extends State<AccountPage> {
     var currentPassword = '';
     var submitting = false;
     String? dialogError;
-    final deleted = await showDialog<bool>(
+    final deleted = await showSettingsDetailSheet<bool>(
       context: context,
-      barrierDismissible: false,
-      builder: (dialogContext) => StatefulBuilder(
+      isScrollControlled: true,
+      isDismissible: false,
+      enableDrag: false,
+      builder: (sheetContext) => StatefulBuilder(
         builder: (context, setDialogState) => PopScope(
           canPop: !submitting,
-          child: AlertDialog(
-            title: Text(_text('最后确认', 'Final confirmation')),
-            content: SingleChildScrollView(
-              child: Form(
-                key: formKey,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextFormField(
-                      key: const ValueKey('delete-account-email-field'),
-                      keyboardType: TextInputType.emailAddress,
-                      onChanged: (value) => confirmationEmail = value,
-                      decoration: InputDecoration(
-                        labelText: _text('账号邮箱', 'Account email'),
-                        hintText: overview.user.email,
-                      ),
-                      validator: (_) =>
-                          confirmationEmail.trim().toLowerCase() ==
-                              overview.user.email.trim().toLowerCase()
-                          ? null
-                          : _text(
-                              '请输入当前账号的完整邮箱',
-                              'Enter the full email for this account.',
-                            ),
+          child: SettingsDetailSheet(
+            key: const ValueKey('delete-account-confirmation-sheet'),
+            title: _text('最后确认', 'Final confirmation'),
+            avoidKeyboard: true,
+            body: Form(
+              key: formKey,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextFormField(
+                    key: const ValueKey('delete-account-email-field'),
+                    keyboardType: TextInputType.emailAddress,
+                    onChanged: (value) => confirmationEmail = value,
+                    decoration: InputDecoration(
+                      labelText: _text('账号邮箱', 'Account email'),
+                      hintText: overview.user.email,
                     ),
+                    validator: (_) =>
+                        confirmationEmail.trim().toLowerCase() ==
+                            overview.user.email.trim().toLowerCase()
+                        ? null
+                        : _text(
+                            '请输入当前账号的完整邮箱',
+                            'Enter the full email for this account.',
+                          ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    key: const ValueKey('delete-account-password-field'),
+                    obscureText: true,
+                    onChanged: (value) => currentPassword = value,
+                    decoration: InputDecoration(
+                      labelText: _text('当前密码', 'Current password'),
+                    ),
+                    validator: (value) => (value ?? '').isEmpty
+                        ? _text('请输入当前密码', 'Enter your current password')
+                        : null,
+                  ),
+                  if (dialogError != null) ...[
                     const SizedBox(height: 12),
-                    TextFormField(
-                      key: const ValueKey('delete-account-password-field'),
-                      obscureText: true,
-                      onChanged: (value) => currentPassword = value,
-                      decoration: InputDecoration(
-                        labelText: _text('当前密码', 'Current password'),
-                      ),
-                      validator: (value) => (value ?? '').isEmpty
-                          ? _text('请输入当前密码', 'Enter your current password')
-                          : null,
-                    ),
-                    if (dialogError != null) ...[
-                      const SizedBox(height: 12),
-                      _errorBanner(dialogError!),
-                    ],
+                    _errorBanner(dialogError!),
                   ],
-                ),
+                ],
               ),
             ),
             actions: [
               TextButton(
+                style: settingsDetailSheetActionStyle(sheetContext),
                 onPressed: submitting
                     ? null
-                    : () => Navigator.pop(dialogContext, false),
+                    : () => Navigator.pop(sheetContext, false),
                 child: Text(_text('取消', 'Cancel')),
               ),
-              FilledButton(
+              TextButton(
                 key: const ValueKey('confirm-delete-account'),
+                style: settingsDetailSheetActionStyle(
+                  sheetContext,
+                  foregroundColor: Theme.of(sheetContext).colorScheme.error,
+                ),
                 onPressed: submitting
                     ? null
                     : () async {
@@ -785,17 +804,17 @@ class _AccountPageState extends State<AccountPage> {
                         });
                         try {
                           await AccountService.deleteAccount(currentPassword);
-                          if (dialogContext.mounted) {
-                            Navigator.pop(dialogContext, true);
+                          if (sheetContext.mounted) {
+                            Navigator.pop(sheetContext, true);
                           }
                         } on PlatformException catch (error) {
-                          if (!dialogContext.mounted) return;
+                          if (!sheetContext.mounted) return;
                           setDialogState(() {
                             submitting = false;
                             dialogError = _messageFor(error);
                           });
                         } catch (_) {
-                          if (!dialogContext.mounted) return;
+                          if (!sheetContext.mounted) return;
                           setDialogState(() {
                             submitting = false;
                             dialogError = _text(

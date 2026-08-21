@@ -1618,13 +1618,18 @@ class AssistsCoreManager(private val context: Context) {
         val useProvidedCustomHeaders = call.argument<Boolean>("useProvidedCustomHeaders") == true
         val profileId = call.argument<String>("profileId")?.trim()
         val capability = call.argument<String>("capability")?.trim()
+        val forceRefresh = call.argument<Boolean>("forceRefresh") == true
         val expectedProfileRevision = call.argument<Number>("expectedProfileRevision")?.toLong()
         val expectedProfileBaseUrl = call.argument<String>("expectedProfileBaseUrl")?.trim().orEmpty()
 
         workJob.launch {
             try {
                 if (OmniOfficialProvider.isOfficialProfile(profileId)) {
-                    val models = PlatformAiProvisioner.ensureReadyAndGetModels(capability)
+                    val models = if (forceRefresh) {
+                        PlatformAiProvisioner.refreshAndGetModels(capability)
+                    } else {
+                        PlatformAiProvisioner.ensureReadyAndGetModels(capability)
+                    }
                     withContext(Dispatchers.Main) {
                         result.success(models.map { it.toMap() })
                     }

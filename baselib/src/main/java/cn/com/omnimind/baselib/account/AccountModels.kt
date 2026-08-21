@@ -97,6 +97,7 @@ data class PlatformModelCatalog(
     val version: String? = null,
     val defaults: PlatformModelDefaults = PlatformModelDefaults(),
     val capabilities: PlatformModelCapabilities = PlatformModelCapabilities(),
+    val displayNames: Map<String, String> = emptyMap(),
     val hasOfficialCatalog: Boolean = false,
 )
 

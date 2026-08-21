@@ -6,12 +6,13 @@
         <item name="android:enforceNavigationBarContrast">false</item>
     </style>
 
-    <style name="Theme.OmnibotApp.Splash" parent="android:Theme.Material.NoActionBar">
-        <item name="android:windowBackground">@drawable/splash_background_dark</item>
-        <item name="android:statusBarColor">#151617</item>
+    <style name="Theme.OmnibotApp.Splash" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@drawable/splash_background</item>
+        <item name="android:statusBarColor">#F4F7FB</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:enforceNavigationBarContrast">false</item>
-        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
     </style>
 
     <style name="Theme.OmnibotApp.Splash.Dark" parent="android:Theme.Material.NoActionBar">
@@ -20,6 +21,7 @@
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:enforceNavigationBarContrast">false</item>
         <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
     </style>
 
     <!-- 一键登录Activity主题：禁用返回手势 -->

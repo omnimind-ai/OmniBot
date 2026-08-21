@@ -51,6 +51,24 @@ enum ChatIslandDisplayLayer {
 
 enum ChatMessageListMutationKind { none, content, structure }
 
+/// Prevents a second selector open from entering while the first is awaiting
+/// its catalog refresh and has not created an overlay handle yet.
+class ConversationModelSelectorOpeningGuard {
+  bool _opening = false;
+
+  bool get isOpening => _opening;
+
+  bool tryBegin() {
+    if (_opening) return false;
+    _opening = true;
+    return true;
+  }
+
+  void finish() {
+    _opening = false;
+  }
+}
+
 bool shouldReloadConversationMessagesChanged({
   required String? reason,
   required bool hasInFlightTask,

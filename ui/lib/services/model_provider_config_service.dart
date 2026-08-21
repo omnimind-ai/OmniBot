@@ -355,6 +355,9 @@ class ProviderModelGroup {
 }
 
 class ModelProviderConfigService {
+  static const String _kOfficialProfileId = 'omnibot-official-ai';
+  static const String _kOfficialSourceType = 'omnibot_official';
+  static const String _kOfficialProfileName = 'OmniBot 官方 AI';
   static const String _kManualModelIdsKey = 'manual_provider_model_ids_v2';
   static const String _kHiddenChatModelIdsKey =
       'hidden_chat_provider_model_ids_v1';
@@ -622,6 +625,7 @@ class ModelProviderConfigService {
     String? profileId,
     String providerName = '',
     String? capability,
+    bool forceRefresh = false,
   }) async {
     // Capture the persisted profile before starting the network request. A
     // response obtained for an older profile revision must never replace the
@@ -642,6 +646,7 @@ class ModelProviderConfigService {
             'profileId': profileId.trim(),
           if (capability != null && capability.trim().isNotEmpty)
             'capability': capability.trim(),
+          if (forceRefresh) 'forceRefresh': true,
           if (profileSnapshot != null)
             'expectedProfileRevision': profileSnapshot.revision,
           if (profileSnapshot != null)
@@ -652,17 +657,30 @@ class ModelProviderConfigService {
         .where((item) => item.id.isNotEmpty)
         .toList();
 
-    var cacheBase = normalizeApiBase(apiBase) ?? '';
-    if (cacheBase.isEmpty && profileSnapshot != null) {
-      cacheBase = normalizeApiBase(profileSnapshot.baseUrl) ?? '';
+    // A cold official catalog may not expose its synthetic profile until the
+    // forced native refresh finishes. Resolve it again so that first response
+    // is cached for subsequent page loads just like an already-ready catalog.
+    var cacheProfileSnapshot = profileSnapshot;
+    if (cacheProfileSnapshot == null &&
+        targetProfileId == _kOfficialProfileId) {
+      final refreshedProfile = await _findProfileById(_kOfficialProfileId);
+      if (refreshedProfile?.sourceType == _kOfficialSourceType) {
+        cacheProfileSnapshot = refreshedProfile;
+      }
     }
-    if (cacheBase.isEmpty) {
+
+    var cacheBase = normalizeApiBase(apiBase) ?? '';
+    if (cacheBase.isEmpty && cacheProfileSnapshot != null) {
+      cacheBase = normalizeApiBase(cacheProfileSnapshot.baseUrl) ?? '';
+    }
+    if (cacheBase.isEmpty &&
+        cacheProfileSnapshot?.sourceType != _kOfficialSourceType) {
       final config = await getConfig();
       cacheBase = normalizeApiBase(config.baseUrl) ?? '';
     }
     var resolvedProviderName = providerName.trim();
-    if (resolvedProviderName.isEmpty && profileSnapshot != null) {
-      resolvedProviderName = profileSnapshot.name;
+    if (resolvedProviderName.isEmpty && cacheProfileSnapshot != null) {
+      resolvedProviderName = cacheProfileSnapshot.name;
     }
     final enrichedModels = await enrichModelsForProfile(
       profileId: targetProfileId ?? '',
@@ -672,27 +690,28 @@ class ModelProviderConfigService {
     );
     final normalizedCapability = capability?.trim().toLowerCase() ?? '';
     final isNonTextCapabilityScopedOfficialRequest =
-        profileSnapshot?.sourceType == 'omnibot_official' &&
+        cacheProfileSnapshot?.sourceType == _kOfficialSourceType &&
         normalizedCapability.isNotEmpty &&
         normalizedCapability != 'text';
     if (targetProfileId != null &&
-        profileSnapshot != null &&
+        cacheProfileSnapshot != null &&
         !isNonTextCapabilityScopedOfficialRequest) {
       try {
         final latestProfile = await _findProfileById(targetProfileId);
         final requestedBase = normalizeApiBase(apiBase) ?? '';
-        final snapshotBase = normalizeApiBase(profileSnapshot.baseUrl) ?? '';
+        final snapshotBase =
+            normalizeApiBase(cacheProfileSnapshot.baseUrl) ?? '';
         final requestMatchesSnapshot =
             requestedBase.isEmpty ||
             (snapshotBase.isNotEmpty && requestedBase == snapshotBase);
         if (latestProfile != null &&
             requestMatchesSnapshot &&
-            _sameProfileCacheIdentity(profileSnapshot, latestProfile)) {
+            _sameProfileCacheIdentity(cacheProfileSnapshot, latestProfile)) {
           await _saveCachedFetchedModels(
             profileId: targetProfileId,
             apiBase: cacheBase,
             models: enrichedModels,
-            profileRevision: profileSnapshot.revision,
+            profileRevision: cacheProfileSnapshot.revision,
           );
         }
       } catch (_) {
@@ -996,6 +1015,32 @@ class ModelProviderConfigService {
         );
         return ProviderModelGroup(profile: profile, models: models);
       }),
+    );
+  }
+
+  /// Forces the small platform-owned text catalog independently of whichever
+  /// BYOK/custom profile is currently active in the conversation.
+  static Future<ProviderModelGroup?> refreshOfficialChatModelGroup() async {
+    var officialProfile = await _findProfileById(_kOfficialProfileId);
+    final fetched = await fetchModels(
+      profileId: _kOfficialProfileId,
+      providerName: officialProfile?.name ?? _kOfficialProfileName,
+      capability: 'text',
+      forceRefresh: true,
+    );
+    officialProfile ??= await _findProfileById(_kOfficialProfileId);
+    if (officialProfile == null ||
+        officialProfile.sourceType != _kOfficialSourceType ||
+        !officialProfile.configured) {
+      return null;
+    }
+    final cached = await getChatModelOptionsForProfile(
+      officialProfile.id,
+      profile: officialProfile,
+    );
+    return ProviderModelGroup(
+      profile: officialProfile,
+      models: cached.isNotEmpty ? cached : fetched,
     );
   }
 

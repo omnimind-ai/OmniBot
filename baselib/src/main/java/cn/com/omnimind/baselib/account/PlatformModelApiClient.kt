@@ -115,6 +115,8 @@ class PlatformModelApiClient(
         @SerializedName("defaults") val defaults: CatalogDefaultsResponse? = null,
         @SerializedName("capabilities")
         val capabilities: CatalogCapabilitiesResponse? = null,
+        @SerializedName("display_names")
+        val displayNames: Map<String, String>? = null,
     )
 
     private data class CatalogDefaultsResponse(
@@ -151,6 +153,16 @@ class PlatformModelApiClient(
         }
         val legacyVoiceDefault = defaults?.legacyVoice.normalizedId()
         val legacyVoiceModels = capabilities?.legacyVoice.normalizedIds()
+        val availableModelIds = models.mapTo(mutableSetOf(), PlatformModel::id)
+        val safeDisplayNames = displayNames.orEmpty().mapNotNull { (rawId, rawName) ->
+            val modelId = rawId.trim()
+            val displayName = rawName.trim()
+            if (modelId in availableModelIds && displayName.isNotEmpty()) {
+                modelId to displayName
+            } else {
+                null
+            }
+        }.toMap()
         return PlatformModelCatalog(
             models = models,
             version = version.normalizedId(),
@@ -170,6 +182,7 @@ class PlatformModelApiClient(
                 tts = firstIds(capabilities?.tts, capabilities?.textToSpeech, legacyVoiceModels),
                 ttsVoices = capabilities?.ttsVoices?.normalizedIds(),
             ),
+            displayNames = safeDisplayNames,
             hasOfficialCatalog = true,
         )
     }

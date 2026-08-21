@@ -171,7 +171,7 @@ android {
         targetSdk = 35
         // Android package versions must increase monotonically for upgrades.
         versionCode = 2
-        versionName = "0.5.8.10"
+        versionName = "0.5.8.12"
         buildConfigField("String", "IMAGE_BASE_URL", buildConfigString(omnibotImageBaseUrl))
         buildConfigField("String", "IMAGE_MODEL", buildConfigString(omnibotImageModel))
         buildConfigField("String", "IMAGE_API_KEY", buildConfigString(omnibotImageApiKey))
