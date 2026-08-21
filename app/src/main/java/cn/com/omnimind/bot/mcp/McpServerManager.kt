@@ -28,6 +28,7 @@ import io.ktor.server.engine.EmbeddedServer
 import io.ktor.server.engine.embeddedServer
 import io.ktor.server.plugins.calllogging.CallLogging
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.server.plugins.BadRequestException
 import io.ktor.server.request.host
 import io.ktor.server.request.path
 import io.ktor.server.response.header
@@ -184,11 +185,22 @@ object McpServerManager {
             call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Access denied"))
             return
         }
-        val body = runCatching { call.receiveWebChatJsonObject() }.getOrDefault(emptyMap())
+        val body = try {
+            call.receiveOptionalWebChatJsonObject()
+        } catch (_: BadRequestException) {
+            call.respondWebChatJson(
+                mapOf("error" to "Invalid JSON request body"),
+                HttpStatusCode.BadRequest
+            )
+            return
+        }
         val token = body["token"]?.toString()
             ?: call.request.headers["Authorization"]?.removePrefix("Bearer ")?.trim()
         if (token.isNullOrBlank() || !timingSafeEquals(token, ensureToken())) {
-            call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Authentication failed"))
+            call.respondWebChatJson(
+                mapOf("error" to "Authentication failed"),
+                HttpStatusCode.Forbidden
+            )
             return
         }
         pruneExpiredWebChatSessions()
@@ -205,7 +217,7 @@ object McpServerManager {
                 maxAge = (WEBCHAT_SESSION_TTL_MS / 1000L).toInt()
             )
         )
-        call.respond(
+        call.respondWebChatJson(
             mapOf(
                 "success" to true,
                 "server" to currentState().toMap()

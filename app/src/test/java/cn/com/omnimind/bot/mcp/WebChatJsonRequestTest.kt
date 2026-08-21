@@ -1,12 +1,71 @@
 package cn.com.omnimind.bot.mcp
 
 import com.google.gson.JsonSyntaxException
+import com.google.gson.JsonParser
+import io.ktor.client.statement.bodyAsText
+import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
+import io.ktor.server.application.install
+import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.server.routing.post
+import io.ktor.server.routing.routing
+import io.ktor.server.testing.testApplication
+import io.ktor.serialization.gson.gson
+import io.ktor.serialization.kotlinx.json.json
+import io.modelcontextprotocol.kotlin.sdk.types.McpJson
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class WebChatJsonRequestTest {
+    @Test
+    fun sessionBootstrapRouteReturnsValidJsonWithProductionConverterOrder() = testApplication {
+        application {
+            install(ContentNegotiation) {
+                json(McpJson)
+                gson()
+            }
+            routing {
+                post("/webchat/api/session/bootstrap") {
+                    call.respondWebChatJson(
+                        mapOf(
+                            "success" to true,
+                            "server" to mapOf("running" to true, "port" to 8899),
+                        )
+                    )
+                }
+            }
+        }
+
+        val response = client.post("/webchat/api/session/bootstrap")
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(
+            response.headers[HttpHeaders.ContentType]
+                .orEmpty()
+                .startsWith(ContentType.Application.Json.toString())
+        )
+        val payload = JsonParser.parseString(response.bodyAsText()).asJsonObject
+        assertTrue(payload.get("success").asBoolean)
+        assertEquals(8899, payload.getAsJsonObject("server").get("port").asInt)
+    }
+
+    @Test
+    fun serializesHeterogeneousSessionBootstrapPayloadAsValidJson() {
+        val json = serializeWebChatJson(
+            mapOf(
+                "success" to true,
+                "server" to mapOf("running" to true, "port" to 8899),
+            )
+        )
+        val payload = JsonParser.parseString(json).asJsonObject
+
+        assertTrue(payload.get("success").asBoolean)
+        assertTrue(payload.getAsJsonObject("server").get("running").asBoolean)
+        assertEquals(8899, payload.getAsJsonObject("server").get("port").asInt)
+    }
+
     @Test
     fun parsesHeterogeneousJsonObject() {
         val payload = parseWebChatJsonObject(
