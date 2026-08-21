@@ -2,13 +2,13 @@ package cn.com.omnimind.bot.mcp
 
 import com.google.gson.JsonSyntaxException
 import com.google.gson.JsonParser
+import io.ktor.client.request.post
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.install
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
-import io.ktor.server.routing.post
 import io.ktor.server.routing.routing
 import io.ktor.server.testing.testApplication
 import io.ktor.serialization.gson.gson
@@ -28,7 +28,7 @@ class WebChatJsonRequestTest {
                 gson()
             }
             routing {
-                post("/webchat/api/session/bootstrap") {
+                io.ktor.server.routing.post("/webchat/api/session/bootstrap") {
                     call.respondWebChatJson(
                         mapOf(
                             "success" to true,
