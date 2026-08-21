@@ -2,6 +2,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ui/features/home/pages/chat/chat_page_models.dart';
 import 'package:ui/features/home/pages/chat/services/chat_conversation_runtime_coordinator.dart';
+import 'package:ui/features/home/pages/chat/utils/agent_run_timeline.dart';
 import 'package:ui/models/chat_message_model.dart';
 import 'package:ui/services/voice_playback_coordinator.dart';
 
@@ -410,6 +411,99 @@ void main() {
     expect(runtime.messages.single.text, '普通聊天回复');
     expect(runtime.isAiResponding, isFalse);
   });
+
+  test(
+    'pure chat adopts its local thinking placeholder into the official turn',
+    () {
+      const conversationId = 2302;
+      const localTurnId = '1787284617430-ai';
+      const officialTurnId = 'turn-normal-official';
+      final runtime = coordinator.ensureRuntime(
+        conversationId: conversationId,
+        mode: kChatRuntimeModeNormal,
+      );
+
+      coordinator.primePureChatThinking(
+        taskId: localTurnId,
+        conversationId: conversationId,
+        mode: kChatRuntimeModeNormal,
+      );
+
+      expect(runtime.currentDispatchTurnId, localTurnId);
+      expect(runtime.activeAgentTurnIds, <String>{localTurnId});
+      expect(runtime.messages.single.cardData?['isLoading'], isTrue);
+
+      final adoptionRunningStates = <bool>[];
+      void captureAdoptionState() {
+        final hasOfficialThinkingCard = runtime.messages.any(
+          (message) =>
+              message.cardData?['type'] == 'deep_thinking' &&
+              message.cardData?['taskID'] == officialTurnId,
+        );
+        if (!hasOfficialThinkingCard) return;
+        final entries = buildAgentRunTimelineEntries(
+          runtime.messages,
+          activeTaskIds: runtime.activeAgentTurnIds,
+        );
+        final officialGroup = entries
+            .map((entry) => entry.group)
+            .whereType<AgentRunTimelineGroup>()
+            .where((group) => group.taskId == officialTurnId)
+            .firstOrNull;
+        adoptionRunningStates.add(officialGroup?.isRunning ?? false);
+      }
+
+      runtime.messages.addListener(captureAdoptionState);
+
+      // The physical-device runtime starts with session/update and does not
+      // emit a synthetic turn/started event first.
+      applyAcp(
+        conversationId,
+        'session/update',
+        turnId: officialTurnId,
+        mode: kChatRuntimeModeNormal,
+        params: <String, dynamic>{
+          'sessionId': 'session-normal',
+          'update': <String, dynamic>{
+            'sessionUpdate': 'agent_message_chunk',
+            'messageId': 'message-normal',
+            'content': <String, dynamic>{'text': '纯聊天回复'},
+          },
+        },
+      );
+
+      final thinkingCard = runtime.messages.singleWhere(
+        (message) => message.cardData?['type'] == 'deep_thinking',
+      );
+      expect(thinkingCard.cardData?['taskID'], officialTurnId);
+      expect(thinkingCard.streamMeta?['parentTaskId'], officialTurnId);
+      expect(thinkingCard.cardData?['isLoading'], isFalse);
+      expect(runtime.activeAgentTurnIds, <String>{officialTurnId});
+      expect(adoptionRunningStates, isNotEmpty);
+      expect(adoptionRunningStates.every((isRunning) => isRunning), isTrue);
+      runtime.messages.removeListener(captureAdoptionState);
+
+      applyAcp(
+        conversationId,
+        'turn/completed',
+        turnId: officialTurnId,
+        mode: kChatRuntimeModeNormal,
+        params: <String, dynamic>{'status': 'completed'},
+      );
+
+      expect(runtime.activeAgentTurnIds, isEmpty);
+      expect(
+        runtime.messages
+            .where((message) => message.cardData?['type'] == 'deep_thinking')
+            .every((message) => message.cardData?['isLoading'] == false),
+        isTrue,
+      );
+      final entries = buildAgentRunTimelineEntries(runtime.messages);
+      expect(entries, hasLength(1));
+      expect(entries.single.group?.taskId, officialTurnId);
+      expect(entries.single.group?.status, AgentRunStatus.finished);
+    },
+  );
 
   test('clears transient runtime state when an ACP session ends', () {
     const conversationId = 2401;

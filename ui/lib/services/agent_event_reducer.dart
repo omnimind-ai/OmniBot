@@ -122,6 +122,15 @@ class AgentEventReducer {
             runtime.currentDispatchTurnId != null &&
             runtime.currentDispatchTurnId != turnId &&
             !_isTerminalAgentEventMethod(method));
+    final shouldAdoptOfficialTurn =
+        turnId != null &&
+        runtime.currentDispatchTurnId != null &&
+        runtime.currentDispatchTurnId != turnId &&
+        ((admittedAcpTurnId == null && isTurnAdmission) ||
+            admittedAcpTurnId == turnId);
+    if (shouldAdoptOfficialTurn) {
+      _adoptOfficialTurnId(runtime, turnId);
+    }
     if (isTurnAdmission && method != 'turn/started') {
       runtime.activeAcpTurnId = turnId;
     }
@@ -856,6 +865,83 @@ class AgentEventReducer {
     runtime.currentDispatchTurnId = parentTaskId;
     runtime.lastAgentTurnId = parentTaskId;
     runtime.currentThinkingStage = ThinkingStage.thinking.value;
+  }
+
+  /// Moves locally primed UI state under the official ACP turn identity.
+  ///
+  /// Pure chat creates its thinking card before the runtime returns a turn id.
+  /// If only the active flags are rebound, that card keeps the local request id
+  /// forever, so `turn/completed` cannot finalize or fold it with the reply.
+  void _adoptOfficialTurnId(
+    ChatConversationRuntimeState runtime,
+    String officialTurnId,
+  ) {
+    final localTurnId = runtime.currentDispatchTurnId?.trim() ?? '';
+    final normalizedOfficialTurnId = officialTurnId.trim();
+    if (localTurnId.isEmpty ||
+        normalizedOfficialTurnId.isEmpty ||
+        localTurnId == normalizedOfficialTurnId) {
+      return;
+    }
+
+    // Publish the new active identity before rebinding any observable
+    // messages. Replacing a message notifies the timeline synchronously; if
+    // the card moves first, that notification sees an official parent id but
+    // only the old local id in activeAgentTurnIds and briefly renders the run
+    // as finished. That one-frame mismatch makes the avatar disappear until
+    // the first streaming update touches the official turn.
+    runtime.currentDispatchTurnId = normalizedOfficialTurnId;
+    if (runtime.lastAgentTurnId == localTurnId) {
+      runtime.lastAgentTurnId = normalizedOfficialTurnId;
+    }
+
+    for (var index = 0; index < runtime.messages.length; index += 1) {
+      final message = runtime.messages[index];
+      final cardData = message.cardData;
+      final streamParentTaskId = _string(message.streamMeta?['parentTaskId']);
+      final cardTaskId =
+          _string(cardData?['taskID']) ?? _string(cardData?['taskId']);
+      if (streamParentTaskId != localTurnId && cardTaskId != localTurnId) {
+        continue;
+      }
+
+      final content = Map<String, dynamic>.from(
+        message.content ?? const <String, dynamic>{},
+      );
+      if (cardData != null) {
+        final reboundCardData = Map<String, dynamic>.from(cardData);
+        if (_string(reboundCardData['taskID']) == localTurnId ||
+            reboundCardData['type'] == 'deep_thinking') {
+          reboundCardData['taskID'] = normalizedOfficialTurnId;
+        }
+        if (_string(reboundCardData['taskId']) == localTurnId) {
+          reboundCardData['taskId'] = normalizedOfficialTurnId;
+        }
+        content['cardData'] = reboundCardData;
+      }
+      runtime.messages[index] = message.copyWith(
+        content: content,
+        streamMeta: ensureAgentStreamMessageMeta(
+          message.streamMeta,
+          parentTaskId: normalizedOfficialTurnId,
+          entryId: message.id,
+        ),
+      );
+    }
+
+    final localThinking = runtime.currentThinkingMessages.remove(localTurnId);
+    if (localThinking != null && localThinking.isNotEmpty) {
+      runtime.currentThinkingMessages.putIfAbsent(
+        normalizedOfficialTurnId,
+        () => localThinking,
+      );
+    }
+    if (runtime.pendingAgentTextTaskId == localTurnId) {
+      runtime.pendingAgentTextTaskId = normalizedOfficialTurnId;
+    }
+    if (runtime.waitingThinkingBeforeAgentTextTaskId == localTurnId) {
+      runtime.waitingThinkingBeforeAgentTextTaskId = normalizedOfficialTurnId;
+    }
   }
 
   void _appendAssistantText(

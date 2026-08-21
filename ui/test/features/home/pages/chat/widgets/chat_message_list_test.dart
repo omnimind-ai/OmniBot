@@ -1,6 +1,7 @@
 import 'package:dotted_border/dotted_border.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ui/features/home/pages/command_overlay/widgets/message_bubble.dart';
 import 'package:ui/features/home/pages/command_overlay/widgets/cards/deep_thinking_card.dart';
 import 'package:ui/features/home/pages/chat/chat_page_models.dart';
 import 'package:ui/features/home/pages/chat/widgets/chat_widgets.dart';
@@ -1763,6 +1764,127 @@ void main() {
       expect(find.text('详细思考过程'), findsNothing);
       expect(find.text('运行 git status'), findsNothing);
       expect(find.text('最终回答'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'pure chat keeps the avatar before and after thinking card adoption',
+    (tester) async {
+      final controller = ScrollController();
+      const localTurnId = '1787284617430-ai';
+      const officialTurnId = 'turn-normal-official';
+      const thinkingCardId = '$localTurnId-thinking';
+      ChatMessageModel thinkingMessage(String taskId) =>
+          ChatMessageModel.cardMessage(
+            <String, dynamic>{
+              'type': 'deep_thinking',
+              'thinkingContent': '',
+              'stage': 1,
+              'isLoading': true,
+              'taskID': taskId,
+              // ACP adoption deliberately preserves this local render identity.
+              'cardId': thinkingCardId,
+            },
+            id: thinkingCardId,
+            streamMeta: <String, dynamic>{
+              'parentTaskId': taskId,
+              'kind': 'thinking_snapshot',
+              'entryId': thinkingCardId,
+              'isFinal': false,
+            },
+          );
+      var messages = <ChatMessageModel>[
+        thinkingMessage(localTurnId),
+        ChatMessageModel.userMessage('用户问题', id: '1787284617430-user'),
+      ];
+      var activeTaskIds = <String>{localTurnId};
+      late StateSetter setState;
+
+      await tester.pumpWidget(
+        _buildLocalizedApp(
+          child: StatefulBuilder(
+            builder: (context, stateSetter) {
+              setState = stateSetter;
+              return SizedBox(
+                width: 400,
+                height: 520,
+                child: ChatMessageList(
+                  messages: messages,
+                  activeAgentTurnIds: activeTaskIds,
+                  scrollController: controller,
+                  onBeforeTaskExecute: () async {},
+                ),
+              );
+            },
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final thinkingCard = find.byType(DeepThinkingCard);
+      expect(thinkingCard, findsOneWidget);
+      final thinkingCardWidget = tester.widget<DeepThinkingCard>(thinkingCard);
+      expect(thinkingCardWidget.isLoading, isTrue);
+      expect(thinkingCardWidget.showStatusAvatar, isTrue);
+      expect(
+        find.descendant(
+          of: thinkingCard,
+          matching: find.byType(AgentAvatarButton),
+        ),
+        findsOneWidget,
+      );
+
+      // During ACP adoption the card can publish its official parent one
+      // frame before the parent widget receives the matching active turn id.
+      // A still-loading card must retain its avatar through that hand-off.
+      setState(() {
+        messages = <ChatMessageModel>[
+          thinkingMessage(officialTurnId),
+          ChatMessageModel.userMessage('用户问题', id: '1787284617430-user'),
+        ];
+      });
+      await tester.pump();
+
+      final handoffThinkingCard = find.byType(DeepThinkingCard);
+      expect(handoffThinkingCard, findsOneWidget);
+      final handoffMessageBubble = tester
+          .widgetList<MessageBubble>(find.byType(MessageBubble))
+          .singleWhere((bubble) => bubble.message.id == thinkingCardId);
+      expect(handoffMessageBubble.showThinkingAvatarOverride, isTrue);
+      expect(
+        tester.widget<DeepThinkingCard>(handoffThinkingCard).showStatusAvatar,
+        isTrue,
+      );
+      expect(
+        find.descendant(
+          of: handoffThinkingCard,
+          matching: find.byType(AgentAvatarButton),
+        ),
+        findsOneWidget,
+      );
+
+      setState(() {
+        activeTaskIds = <String>{officialTurnId};
+      });
+      await tester.pump();
+
+      final adoptedThinkingCard = find.byType(DeepThinkingCard);
+      expect(adoptedThinkingCard, findsOneWidget);
+      expect(
+        tester.widget<DeepThinkingCard>(adoptedThinkingCard).showStatusAvatar,
+        isTrue,
+      );
+      expect(
+        find.descendant(
+          of: adoptedThinkingCard,
+          matching: find.byType(AgentAvatarButton),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('agent-run-summary-$officialTurnId')),
+        findsNothing,
+      );
     },
   );
 

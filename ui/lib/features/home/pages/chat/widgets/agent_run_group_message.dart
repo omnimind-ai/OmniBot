@@ -364,10 +364,13 @@ class _AgentRunGroupMessageState extends State<AgentRunGroupMessage>
     ChatMessageModel message, {
     String? firstThinkingMessageId,
   }) {
-    final hideAvatar =
-        firstThinkingMessageId != null &&
-        message.id == firstThinkingMessageId &&
-        (widget.useAcpPresentation || !widget.group.isRunning);
+    final isFirstThinkingMessage =
+        firstThinkingMessageId != null && message.id == firstThinkingMessageId;
+    final thinkingCardIsLoading = message.cardData?['isLoading'] == true;
+    final bool? showThinkingAvatarOverride = isFirstThinkingMessage
+        ? !widget.useAcpPresentation &&
+              (widget.group.isRunning || thinkingCardIsLoading)
+        : null;
     return MessageBubble(
       key: ValueKey('agent-run-${widget.group.taskId}-${message.id}'),
       message: message,
@@ -385,7 +388,15 @@ class _AgentRunGroupMessageState extends State<AgentRunGroupMessage>
       // thinking card in its normal collapsed state.
       thinkingAutoCollapseOnComplete: widget.group.isRunning || widget.expanded,
       useAgentToolPresentation: widget.useAcpPresentation,
-      showThinkingAvatarOverride: hideAvatar ? false : null,
+      // A pure-chat placeholder keeps its stable local card id when ACP adopts
+      // the official turn id. The card-level id heuristic can no longer
+      // recognize it as the first thinking card after that hand-off, so the
+      // running group must explicitly keep the avatar visible. A still-loading
+      // card also keeps ownership during the one-frame identity hand-off,
+      // before the parent publishes the official active turn id. Once truly
+      // finished, isLoading is false and the outer "Processed" header owns the
+      // only avatar as before.
+      showThinkingAvatarOverride: showThinkingAvatarOverride,
       parentScrollController: widget.parentScrollController,
       onParentScrollHandoff: widget.onParentScrollHandoff,
       onRequestAuthorize: widget.onRequestAuthorize,

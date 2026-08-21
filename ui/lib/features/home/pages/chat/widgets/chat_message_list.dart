@@ -1022,6 +1022,11 @@ class _ChatTimelineListRow extends StatelessWidget {
   Widget _buildBubble(ChatMessageModel currentMessage) {
     final isLatestUserMessage =
         currentMessage.user == 1 && currentMessage.id == latestUserMessageId;
+    final cardData = currentMessage.cardData;
+    final keepPureChatThinkingAvatarDuringHandoff =
+        !useAcpPresentation &&
+        cardData?['type'] == 'deep_thinking' &&
+        cardData?['isLoading'] == true;
     final bubble = MessageBubble(
       message: currentMessage,
       key: ValueKey(
@@ -1034,7 +1039,13 @@ class _ChatTimelineListRow extends StatelessWidget {
           onContinueAgentMessage?.call(currentMessage),
       enableThinkingCollapse: true,
       useAgentToolPresentation: useAcpPresentation,
-      showThinkingAvatarOverride: null,
+      // Before the official turn id reaches activeTaskIds, a pure-chat
+      // placeholder can be ungrouped for one frame. It still owns the avatar
+      // while loading; completed cards leave this false so the folded run
+      // header remains the sole avatar owner.
+      showThinkingAvatarOverride: keepPureChatThinkingAvatarDuringHandoff
+          ? true
+          : null,
       parentScrollController: parentScrollController,
       onParentScrollHandoff: onParentScrollHandoff,
       onRequestAuthorize: onRequestAuthorize,

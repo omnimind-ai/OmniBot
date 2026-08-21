@@ -563,6 +563,13 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
       mode: mode,
     );
 
+    // Pure chat renders a local thinking placeholder before ACP has admitted
+    // the prompt and assigned its official turn id. Keep that local id as the
+    // active dispatch owner until the first turn-scoped update arrives so the
+    // reducer can migrate the placeholder into the official turn instead of
+    // leaving an orphaned "thinking" card behind after completion.
+    runtime.currentDispatchTurnId = taskId;
+    runtime.isAiResponding = true;
     runtime.lastAgentTurnId = taskId;
     runtime.currentThinkingStage = ThinkingStage.thinking.value;
     runtime.isDeepThinking = true;
