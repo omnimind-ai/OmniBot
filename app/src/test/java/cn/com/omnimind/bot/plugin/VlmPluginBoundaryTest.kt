@@ -26,6 +26,8 @@ class VlmPluginBoundaryTest {
 
         assertTrue(provider.contains("RuntimeBundleAdapter"))
         assertTrue(provider.contains("runtimeProvider.install(appContext, platform)"))
+        assertTrue(provider.contains("OmniFlow.shutdown()"))
+        assertTrue(provider.contains("RuntimeBundlePrepareMode.UPDATE"))
         assertFalse(provider.contains("OmniFlow.prepareAndStart(appContext)"))
         assertFalse(provider.contains("RuntimeBundlePrepareMode.INSTALL -> Unit"))
         assertTrue(provider.contains("OmniFlowPluginRuntime.enable(appContext)"))

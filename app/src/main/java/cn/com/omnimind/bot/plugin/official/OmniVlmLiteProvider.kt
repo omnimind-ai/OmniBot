@@ -3,6 +3,7 @@ package cn.com.omnimind.bot.plugin.official
 import android.content.Context
 import cn.com.omnimind.bot.BuildConfig
 import cn.com.omnimind.bot.omniflow.OmniFlowAppPlatform
+import cn.com.omnimind.bot.omniflow.OmniFlow
 import cn.com.omnimind.bot.omniflow.OmniFlowPluginRuntime
 import cn.com.omnimind.bot.omniflow.OmniFlowRuntimeProvider
 import cn.com.omnimind.bot.plugin.OmniPlugin
@@ -32,7 +33,15 @@ class OmniVlmLiteProvider(
         OmniFlowPluginRuntime.install(platform, runtimeProvider)
         when (mode) {
             RuntimeBundlePrepareMode.INSTALL -> runtimeProvider.install(appContext, platform)
-            RuntimeBundlePrepareMode.UPDATE -> runtimeProvider.update(appContext, platform)
+            RuntimeBundlePrepareMode.UPDATE -> {
+                // The component directory is replaced atomically, but the
+                // resident Python bridge is a long-lived process.  Stop it
+                // before switching the runtime files so an update cannot
+                // continue executing modules/checkpoints from the previous
+                // OmniFlow/OmniTransfer bundle.
+                OmniFlow.shutdown()
+                runtimeProvider.update(appContext, platform)
+            }
         }
     }
 
