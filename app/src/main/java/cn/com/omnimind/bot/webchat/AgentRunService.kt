@@ -32,13 +32,17 @@ internal fun resolveWebConversationMode(
 ): String {
     val normalizedStored = storedMode?.trim()?.lowercase().orEmpty()
     if (normalizedStored in WEB_CONVERSATION_MODES) {
-        return if (normalizedStored in setOf("codex", "acp", "coding")) "agent" else normalizedStored
+        return if (normalizedStored in setOf("normal", "codex", "acp", "coding")) {
+            "agent"
+        } else {
+            normalizedStored
+        }
     }
     val normalizedRequested = requestedMode?.trim()?.lowercase().orEmpty()
     return normalizedRequested
         .takeIf(WEB_CONVERSATION_MODES::contains)
-        ?.let { if (it in setOf("codex", "acp", "coding")) "agent" else it }
-        ?: "normal"
+        ?.let { if (it in setOf("normal", "codex", "acp", "coding")) "agent" else it }
+        ?: "agent"
 }
 
 internal fun resolveWebConversationRunKind(mode: String?): WebConversationRunKind {

@@ -78,7 +78,7 @@ object TaskRuntimeSettings {
                 if (parts.size < 3) return null
                 val notificationId = parts[0].toIntOrNull() ?: return null
                 val conversationId = parts[1].takeIf { it.isNotBlank() }?.toLongOrNull()
-                val conversationMode = parts[2].ifBlank { "normal" }
+                val conversationMode = parts[2].ifBlank { "agent" }
                 return ActiveNotificationEntry(
                     id = notificationId,
                     conversationId = conversationId,
@@ -157,7 +157,7 @@ object TaskRuntimeSettings {
     ) {
         isChatPageVisible = visible
         currentVisibleConversationId = if (visible) conversationId?.takeIf { it > 0 } else null
-        currentVisibleConversationMode = conversationMode?.trim()?.ifEmpty { "normal" } ?: "normal"
+        currentVisibleConversationMode = conversationMode?.trim()?.ifEmpty { "agent" } ?: "agent"
         if (isChatPageVisible) {
             clearOverlayHint()
             clearTaskCompletionNotificationsForVisibleChat(
@@ -446,8 +446,7 @@ object TaskRuntimeSettings {
 
     private fun normalizeConversationMode(mode: String?): String {
         return when (mode?.trim()?.lowercase()) {
-            null, "", "normal" -> "normal"
-            "agent", "codex", "acp", "coding" -> "agent"
+            null, "", "normal", "codex", "acp", "coding" -> "agent"
             "chat", "chatonly", "chat-only" -> "chat_only"
             else -> mode.trim().lowercase()
         }

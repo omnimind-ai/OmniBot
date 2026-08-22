@@ -158,7 +158,7 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     if (normalizedPreferredMode == null &&
         StorageService.getChatStartupBehavior() ==
             ChatStartupBehavior.newConversation) {
-      return _newThreadTargetForConversationMode(ConversationMode.normal);
+      return _newThreadTargetForConversationMode(ConversationMode.agent);
     }
 
     if (normalizedPreferredMode == null) {

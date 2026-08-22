@@ -345,7 +345,7 @@ class AssistsCoreManager(private val context: Context) {
 
     // 当前活跃的对话ID
     private var currentConversationId: Long? = null
-    private var currentConversationMode: String = "normal"
+    private var currentConversationMode: String = "agent"
 
     private fun ModelProviderConfig.toMap(): Map<String, Any?> {
         val official = OmniOfficialProvider.isOfficialProfile(id)
@@ -736,8 +736,7 @@ class AssistsCoreManager(private val context: Context) {
 
     private fun normalizeConversationMode(mode: String?): String {
         return when (mode?.trim()?.lowercase()) {
-            null, "", "normal" -> "normal"
-            "agent", "codex", "acp", "coding" -> "agent"
+            null, "", "normal", "codex", "acp", "coding" -> "agent"
             "chat", "chatonly", "chat-only" -> "chat_only"
             else -> mode.trim().lowercase()
         }
@@ -3457,7 +3456,7 @@ class AssistsCoreManager(private val context: Context) {
             is String -> raw.toLongOrNull()
             else -> null
         }?.takeIf { it > 0 }
-        val mode = (call.argument<String>("mode") ?: "normal").trim().ifEmpty { "normal" }
+        val mode = (call.argument<String>("mode") ?: "agent").trim().ifEmpty { "agent" }
         TaskRuntimeSettings.setVisibleConversation(context, conversationId, mode, visible)
         mainJob.launch(Dispatchers.Main) {
             result.success("SUCCESS")
@@ -3490,7 +3489,7 @@ class AssistsCoreManager(private val context: Context) {
      */
     fun setCurrentConversationId(call: MethodCall, result: MethodChannel.Result) {
         val conversationId = (call.argument<Int>("conversationId") ?: 0).toLong()
-        val mode = (call.argument<String>("mode") ?: "normal").trim().ifEmpty { "normal" }
+        val mode = (call.argument<String>("mode") ?: "agent").trim().ifEmpty { "agent" }
         currentConversationId = if (conversationId > 0) conversationId else null
         currentConversationMode = mode
         mainJob.launch(Dispatchers.Main) {

@@ -245,9 +245,7 @@ internal class AgentSessionBindingRepository(
 
     private fun normalizeConversationMode(value: String): String {
         return when (value.trim().lowercase()) {
-            "" -> AGENT_MODE_STORAGE_VALUE
-            "normal" -> "normal"
-            "codex", "acp", "coding" -> AGENT_MODE_STORAGE_VALUE
+            "", "normal", "codex", "acp", "coding" -> AGENT_MODE_STORAGE_VALUE
             else -> value.trim().lowercase()
         }
     }

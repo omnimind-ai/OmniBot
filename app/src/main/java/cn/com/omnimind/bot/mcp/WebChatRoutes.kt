@@ -94,7 +94,7 @@ object WebChatRoutes {
                 call.respondJson(
                     conversationService.createConversation(
                         title = body["title"]?.toString() ?: "新对话",
-                        mode = body["mode"]?.toString() ?: "normal",
+                        mode = body["mode"]?.toString() ?: "agent",
                         summary = body["summary"]?.toString(),
                         parentConversationId = (body["parentConversationId"] as? Number)
                             ?.toLong(),
@@ -138,7 +138,7 @@ object WebChatRoutes {
                     call.respondJson(mapOf("error" to "INVALID_CONVERSATION_ID"), HttpStatusCode.BadRequest)
                     return@get
                 }
-                val mode = call.request.queryParameters["mode"] ?: "normal"
+                val mode = call.request.queryParameters["mode"] ?: "agent"
                 val finalizeInterruptedEntries = !agentRunService.hasActiveConversationRun(
                     conversationId = conversationId,
                     conversationMode = mode

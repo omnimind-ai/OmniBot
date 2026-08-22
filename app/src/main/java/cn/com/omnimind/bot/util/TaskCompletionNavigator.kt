@@ -131,7 +131,7 @@ object TaskCompletionNavigator {
                         is String -> rawId.toLongOrNull()
                         else -> null
                     }?.takeIf { it > 0 }
-                    val mode = normalizeConversationMode(json.optString("mode", "normal"))
+                    val mode = normalizeConversationMode(json.optString("mode", "agent"))
                     val isNewConversation = json.optBoolean("isNewConversation", false)
                     if (isNewConversation) {
                         OmniLog.d(TAG, "使用 Flutter 上次可见空白线程兜底回跳: mode=$mode")
@@ -155,7 +155,7 @@ object TaskCompletionNavigator {
             if (parsedId != null) {
                 OmniLog.d(TAG, "使用 Flutter 持久化会话ID兜底回跳: $parsedId")
             }
-            ResolvedChatTarget(parsedId, "normal")
+            ResolvedChatTarget(parsedId, "agent")
         } catch (e: Exception) {
             OmniLog.e(TAG, "读取 Flutter 会话ID兜底值失败: ${e.message}")
             ResolvedChatTarget(null, normalizedPreferredMode)
@@ -164,8 +164,7 @@ object TaskCompletionNavigator {
 
     private fun normalizeConversationMode(mode: String?): String {
         return when (mode?.trim()?.lowercase()) {
-            null, "", "normal" -> "normal"
-            "agent", "codex", "acp", "coding" -> "agent"
+            null, "", "normal", "codex", "acp", "coding" -> "agent"
             "chat", "chatonly", "chat-only" -> "chat_only"
             else -> mode.trim().lowercase()
         }
