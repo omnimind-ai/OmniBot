@@ -367,7 +367,7 @@ private class XiaowanAgentSession(
                     ?: return arguments
                 return arguments + mapOf(
                     "parentConversationId" to conversationId,
-                    "parentConversationMode" to AgentConversationModePolicy.NORMAL_MODE
+                    "parentConversationMode" to AgentConversationModePolicy.AGENT_MODE
                 )
             }
         },
@@ -398,11 +398,35 @@ private class XiaowanAgentSession(
                 "inMemoryMessages=${messages.size} historySource=" +
                 if (conversationId != null) "conversation" else "session_memory"
         )
-        val conversationMode = (meta as? JsonObject)
+        val requestedConversationMode = (meta as? JsonObject)
             ?.get("conversationMode")
             ?.jsonPrimitive
             ?.content
-            ?: AgentConversationModePolicy.NORMAL_MODE
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+        // The durable Conversation is authoritative when an older caller
+        // omits local ACP metadata. Otherwise a session/prompt silently
+        // falls back to `normal` and reads an empty bucket from an Agent
+        // conversation, even though the database contains the full history.
+        val persistedConversationMode = conversationId
+            ?.let { id ->
+                runCatching {
+                    cn.com.omnimind.baselib.database.DatabaseHelper
+                        .getConversationById(id)
+                        ?.mode
+                        ?.trim()
+                        ?.takeIf { it.isNotEmpty() }
+                }.getOrNull()
+            }
+        val conversationMode = persistedConversationMode
+            ?: requestedConversationMode
+            ?: AgentConversationModePolicy.AGENT_MODE
+        Log.i(
+            TAG,
+            "prompt context conversation=${conversationId ?: "unbound"} " +
+                "conversationMode=$conversationMode " +
+                "modeSource=${if (persistedConversationMode != null) "conversation" else "acp_meta_or_agent_default"}"
+        )
         val reasoningEffort = normalizeXiaowanReasoningEffort(
             (meta as? JsonObject)
                 ?.get("reasoningEffort")

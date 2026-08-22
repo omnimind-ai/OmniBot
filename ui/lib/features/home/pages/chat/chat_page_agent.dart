@@ -1729,6 +1729,10 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         model: turnModel,
         effort: _activeAgentReasoningEffort,
         collaborationMode: collaborationModeForTurn,
+        // The Agent page owns ConversationMode.agent. Keep the mode on the
+        // canonical ACP prompt so built-in agents read the same durable
+        // history bucket that this page writes.
+        conversationMode: ConversationMode.agent.storageValue,
       );
       final resolvedThreadId = _asAgentString(response['threadId']);
       if (resolvedThreadId != null && remoteCodex) {

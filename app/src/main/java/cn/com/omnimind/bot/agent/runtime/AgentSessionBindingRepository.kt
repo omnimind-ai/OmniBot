@@ -273,7 +273,9 @@ internal class AgentSessionBindingRepository(
     }
 
     companion object {
-        const val AGENT_MODE_STORAGE_VALUE = "codex"
+        // `codex` remains a read-compatible legacy alias, but new bindings
+        // must use the canonical Agent conversation mode.
+        const val AGENT_MODE_STORAGE_VALUE = "agent"
     }
 }
 
