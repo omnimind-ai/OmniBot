@@ -3,9 +3,9 @@ package cn.com.omnimind.bot.omniflow
 import android.content.Context
 import cn.com.omnimind.baselib.runlog.InternalRunLogStore
 import cn.com.omnimind.baselib.util.OmniLog
-import cn.com.omnimind.bot.runlog.RunLogReusableFunctionCompiler
 
 object OmniFlowFunctionRegistration {
+    @Suppress("UNUSED_PARAMETER")
     suspend fun saveRunLog(
         context: Context,
         runId: String,
@@ -18,14 +18,22 @@ object OmniFlowFunctionRegistration {
         val record = requireNotNull(
             InternalRunLogStore.getRun(context.applicationContext, normalizedRunId),
         ) { "run_log_not_found:$normalizedRunId" }
-        val function = RunLogReusableFunctionCompiler.compile(record, agentVisible)
+        // Send the canonical RunLog snapshot with the Function draft.  The
+        // Python compiler must freeze transfer_states.json from the same
+        // evidence that produced this Function; resolving the RunLog again
+        // through the Android host introduces a race with RunLog cleanup and
+        // was the source of missing source_state failures on replay.
+        val sourceRunLog = InternalRunLogStore.timelinePayload(
+            context.applicationContext,
+            normalizedRunId,
+        )
         val payload = OmniFlow.callTool(
             context = context.applicationContext,
             toolCall = OmniFlow.ToolCall(
                 name = "save_function",
                 arguments = mapOf(
                     "run_id" to normalizedRunId,
-                    "functions" to listOf(function),
+                    "run_log" to sourceRunLog,
                 ),
             ),
             source = source,

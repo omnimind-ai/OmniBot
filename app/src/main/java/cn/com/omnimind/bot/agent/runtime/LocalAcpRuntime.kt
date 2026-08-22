@@ -55,7 +55,6 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.flow
@@ -145,23 +144,6 @@ internal class LocalAcpRuntime(
      * teardown, so it has to be idempotent.
      */
     private val finishedTurns = ConcurrentHashMap.newKeySet<String>()
-
-    /**
-     * Wall-clock time of the last session update seen for an in-flight turn.
-     *
-     * ACP closes a turn with the `session/prompt` *response* (carrying the stop
-     * reason), and the SDK's prompt flow only completes when that response
-     * arrives. At least one adapter (codex-acp / MiMo Code) streams its full
-     * answer as session updates and then never sends the response, leaving the
-     * flow — and therefore the prompt job's `finally` — suspended forever. The
-     * turn stays "running" in the UI indefinitely.
-     *
-     * The stall watchdog uses this timestamp to detect that situation: a turn
-     * that has produced nothing for [STALL_DEADLINE_MS] is finalized
-     * synthetically. Adapters that send the response complete normally first,
-     * so this only ever fires for a genuinely stalled flow.
-     */
-    private val lastTurnActivityAt = ConcurrentHashMap<String, Long>()
 
     /** Redacted, in-memory timing state for the active local ACP turns. */
     private val turnTimings = ConcurrentHashMap<String, AcpTurnTiming>()
@@ -569,10 +551,42 @@ internal class LocalAcpRuntime(
     }
 
     private suspend fun loadAcpSession(args: Map<String, Any?>): Map<String, Any?> {
-        val normalized = if (args.stringValue("sessionId") != null &&
+        val explicitSessionId = args.stringValue("sessionId")
+            ?: args.stringValue("threadId")
+        val requestedConversationId = args.longValue("conversationId")
+        val explicitBinding = explicitSessionId?.let {
+            bindingRepository.getBindingByThreadId(it)
+        }
+        Log.i(
+            TAG,
+            "ACP session/load requested session=${explicitSessionId?.let(::compactId)} " +
+                "conversation=${requestedConversationId ?: "none"}"
+        )
+        // A stale page can send the previous session id together with the new
+        // conversation id. Never load that session into the new conversation;
+        // let the durable conversation binding resolve the correct session.
+        val staleExplicitSession = !explicitThreadMatchesConversation(
+            explicitThreadId = explicitSessionId,
+            requestedConversationId = requestedConversationId,
+            boundConversationId = explicitBinding?.conversationId,
+        )
+        if (staleExplicitSession) {
+            Log.w(
+                TAG,
+                "ACP session/load ignored stale session=${explicitSessionId?.let(::compactId)} " +
+                    "for conversation=$requestedConversationId"
+            )
+        }
+        val normalized = if (!staleExplicitSession &&
+            args.stringValue("sessionId") != null &&
             args.stringValue("threadId") == null
         ) {
             args + ("threadId" to args.stringValue("sessionId"))
+        } else if (staleExplicitSession) {
+            LinkedHashMap(args).apply {
+                remove("sessionId")
+                remove("threadId")
+            }
         } else {
             args
         }
@@ -928,9 +942,6 @@ internal class LocalAcpRuntime(
     private suspend fun startThread(args: Map<String, Any?>): Map<String, Any?> =
         sessionMutex.withLock {
             val cwd = normalizeCwd(args.stringValue("cwd"))
-            val previousBinding = args.longValue("conversationId")?.let {
-                bindingRepository.getBindingByConversationId(it)
-            }
             val catalogSession = catalogSessionId
                 ?.let(sessions::get)
                 ?.takeIf { sessionCwds[it.sessionId.value] == cwd }
@@ -969,7 +980,12 @@ internal class LocalAcpRuntime(
                     ?: AgentSessionBindingRepository.AGENT_MODE_STORAGE_VALUE
             )
             profileStore.bindConversation(conversationId, activeAgentId())
-            if (previousBinding != null && previousBinding.threadId != session.sessionId.value) {
+            if (activeAgentId() != AcpAgentProfileStore.XIAOWAN_AGENT_ID) {
+                // A new external Harness session has no ACP-native history.
+                // Carry the durable OmniBot conversation into its first turn;
+                // subsequent turns use the same session and do not duplicate
+                // the handoff. Xiaowan reads the same history natively in its
+                // Provider adapter, so injecting it there would duplicate it.
                 pendingHandoffConversationIds[session.sessionId.value] = conversationId
             }
             sessionPayload(session, conversationId)
@@ -999,7 +1015,9 @@ internal class LocalAcpRuntime(
                         ?: AgentSessionBindingRepository.AGENT_MODE_STORAGE_VALUE
                 )
                 profileStore.bindConversation(conversationId, activeAgentId())
-                pendingHandoffConversationIds[fresh.sessionId.value] = conversationId
+                if (activeAgentId() != AcpAgentProfileStore.XIAOWAN_AGENT_ID) {
+                    pendingHandoffConversationIds[fresh.sessionId.value] = conversationId
+                }
                 return@withLock sessionPayload(fresh, conversationId).plus(
                     mapOf(
                         "sessionRestored" to false,
@@ -1008,6 +1026,10 @@ internal class LocalAcpRuntime(
                 )
             }
             sessions[threadId]?.let {
+                Log.i(
+                    TAG,
+                    "ACP session/load restored in-memory session=${compactId(threadId)}"
+                )
                 return@withLock sessionPayload(
                     it,
                     bindingRepository.getBindingByThreadId(threadId)?.conversationId
@@ -1048,6 +1070,11 @@ internal class LocalAcpRuntime(
                 null
             }
             if (restored == null) {
+                Log.w(
+                    TAG,
+                    "ACP session/load could not restore session=${compactId(threadId)}; " +
+                        "creating a fresh session with the same conversation binding"
+                )
                 val fresh = requireClient().newSession(
                     parameters,
                     operationsFactory()
@@ -1063,7 +1090,9 @@ internal class LocalAcpRuntime(
                         ?: AgentSessionBindingRepository.AGENT_MODE_STORAGE_VALUE
                 )
                 profileStore.bindConversation(conversationId, activeAgentId())
-                pendingHandoffConversationIds[fresh.sessionId.value] = conversationId
+                if (activeAgentId() != AcpAgentProfileStore.XIAOWAN_AGENT_ID) {
+                    pendingHandoffConversationIds[fresh.sessionId.value] = conversationId
+                }
                 return@withLock sessionPayload(fresh, conversationId).plus(
                     mapOf(
                         "sessionRestored" to false,
@@ -1072,6 +1101,10 @@ internal class LocalAcpRuntime(
                 )
             }
             registerSession(restored, cwd)
+            Log.i(
+                TAG,
+                "ACP session/load restored persisted session=${compactId(threadId)}"
+            )
             profileStore.bindSession(restored.sessionId.value, activeAgentId())
             val conversationId = bindingRepository.ensureBinding(
                 threadId = threadId,
@@ -1451,7 +1484,6 @@ internal class LocalAcpRuntime(
                 // "thinking" forever even though the turn already ended.
                 markTurnTiming(threadId, turnId, "prompt_sent")
                 session.prompt(blocks, promptMeta(args)).takeWhile { event ->
-                    lastTurnActivityAt[threadId] = System.currentTimeMillis()
                     when (event) {
                         is Event.SessionUpdateEvent -> {
                             handleSessionUpdate(threadId, turnId, event.update)
@@ -1492,8 +1524,6 @@ internal class LocalAcpRuntime(
             }
         }
         promptJobs[threadId] = job
-        lastTurnActivityAt[threadId] = System.currentTimeMillis()
-        var watchdog: Job? = null
         var exitWatcher: Job? = null
 
         // A process exit is not guaranteed to close an in-flight ACP prompt
@@ -1538,61 +1568,12 @@ internal class LocalAcpRuntime(
             }
         }
 
-        // Guards against an adapter that streams its answer and then never
-        // sends the `session/prompt` response (see [lastTurnActivityAt]). The
-        // watchdog cancels itself as soon as the prompt job ends for any other
-        // reason, so it only ever finalizes a genuinely stalled turn.  A
-        // timed-out process is also closed; otherwise the next prompt can be
-        // sent to the same broken ACP session and appear to require a new chat.
-        watchdog = scope.launch(start = CoroutineStart.LAZY) {
-            val startedAt = System.currentTimeMillis()
-            while (true) {
-                delay(STALL_CHECK_INTERVAL_MS)
-                val last = lastTurnActivityAt[threadId] ?: return@launch
-                val now = System.currentTimeMillis()
-                if (now - startedAt >= STALL_DEADLINE_MS ||
-                    now - last >= STALL_DEADLINE_MS
-                ) {
-                    Log.w(
-                        TAG,
-                        "ACP turn=$turnId on session=$threadId produced no updates for " +
-                            "$STALL_DEADLINE_MS ms; finalizing because the adapter did not " +
-                            "send a session/prompt response."
-                    )
-                    finishTurn(
-                        threadId = threadId,
-                        turnId = turnId,
-                        status = "timeout",
-                        error = "ACP agent did not finish this turn within " +
-                            "${STALL_DEADLINE_MS / 1000}s."
-                    )
-                    if (connection === activeConnection) {
-                        runCatching { disconnect() }
-                            .onFailure { closeError ->
-                                Log.w(
-                                    TAG,
-                                    "Unable to reset stalled ACP runtime: " +
-                                        (closeError.message ?: closeError.javaClass.simpleName),
-                                    closeError
-                                )
-                            }
-                    } else {
-                        runCatching { job.cancelAndJoin() }
-                    }
-                    return@launch
-                }
-            }
-        }
-
         job.invokeOnCompletion {
-            watchdog?.cancel()
             exitWatcher?.cancel()
         }
-        watchdog?.start()
         exitWatcher?.start()
         job.start()
         job.join()
-        watchdog?.cancelAndJoin()
         exitWatcher?.cancelAndJoin()
         return linkedMapOf<String, Any?>(
             "threadId" to threadId,
@@ -1654,7 +1635,6 @@ internal class LocalAcpRuntime(
         markTurnTiming(threadId, turnId, "terminal_$status")
         turnTimings.remove(turnId)
         activeTurnIds.remove(threadId, turnId)
-        lastTurnActivityAt.remove(threadId)
     }
 
     private suspend fun startReview(args: Map<String, Any?>): Map<String, Any?> {
@@ -1788,7 +1768,16 @@ internal class LocalAcpRuntime(
 
     private suspend fun ensureSessionForTurn(args: Map<String, Any?>): ClientSession {
         val explicitThreadId = args.stringValue("threadId")
-        if (!explicitThreadId.isNullOrBlank()) {
+        val conversationId = args.longValue("conversationId")
+        val explicitBinding = explicitThreadId
+            ?.takeIf { it.isNotBlank() }
+            ?.let { bindingRepository.getBindingByThreadId(it) }
+        val canReuseExplicitThread = explicitThreadMatchesConversation(
+            explicitThreadId = explicitThreadId,
+            requestedConversationId = conversationId,
+            boundConversationId = explicitBinding?.conversationId,
+        )
+        if (!explicitThreadId.isNullOrBlank() && canReuseExplicitThread) {
             return sessions[explicitThreadId] ?: run {
                 val response = resumeThread(args)
                 val resolvedThreadId = response.stringValue("threadId")
@@ -1798,7 +1787,6 @@ internal class LocalAcpRuntime(
                     ?: throw IllegalStateException("Failed to restore ACP session.")
             }
         }
-        val conversationId = args.longValue("conversationId")
         val binding = if (conversationId != null) {
             bindingRepository.getBindingByConversationId(conversationId)
         } else {
@@ -2336,14 +2324,6 @@ internal class LocalAcpRuntime(
         private const val COMMAND_PROBE_TIMEOUT_MS = 20_000L
         private const val MAX_FILE_LINES = 20_000
 
-        // How long a turn may stay silent before the stall watchdog finalizes
-        // it. Picked well above the longest gap a healthy turn produces between
-        // updates — a tool that runs for a while still emits output deltas, so
-        // a gap this wide means the adapter stopped without sending the
-        // `session/prompt` response. Lower recovers stuck turns faster but
-        // risks cutting off a slow one; 120 s is the conservative default.
-        private const val STALL_DEADLINE_MS = 120_000L
-        private const val STALL_CHECK_INTERVAL_MS = 15_000L
     }
 }
 

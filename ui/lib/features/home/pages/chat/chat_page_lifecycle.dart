@@ -264,6 +264,9 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
       _isBrowserOverlayVisible = false;
       _isSurfacePageScrolling = false;
     });
+    // A new Harness target without a conversationId is a new conversation.
+    // The previous conversation remains persisted in history and is not
+    // implicitly inherited by the new Harness.
     _resetLocalConversationState(targetMode);
     _restoreLocalAgentThreadIdFromTarget(effectiveTarget);
     if (_shouldSyncExistingLocalAgentTarget(effectiveTarget)) {
@@ -950,6 +953,13 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
         if (!mounted) return;
         _jumpToCurrentModePage(animate: animate);
       });
+      return;
+    }
+    // PageController.page/position and animateToPage require exactly one
+    // attached PageView.  During a layout branch swap the old PageView can
+    // still be attached for one frame; wait for the next lifecycle event
+    // instead of throwing from the chat build.
+    if (_modePageController.positions.length != 1) {
       return;
     }
     final currentPage = _modePageController.page?.round();

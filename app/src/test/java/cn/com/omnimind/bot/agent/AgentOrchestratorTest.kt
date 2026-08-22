@@ -1311,12 +1311,12 @@ class AgentOrchestratorTest {
     }
 
     @Test
-    fun `does not retry an already timed out chat stream`() = runBlocking {
+    fun `surfaces a provider stream failure without retrying`() = runBlocking {
         val llmClient = FakeLlmClient(
             turns = emptyList(),
             failures = listOf(
                 IllegalStateException(
-                    "chat completion stream idle timeout after 60000ms"
+                    "provider stream failed"
                 )
             )
         )
@@ -1333,7 +1333,7 @@ class AgentOrchestratorTest {
         assertTrue(result is AgentResult.Error)
         assertEquals(1, llmClient.requests.size)
         assertTrue(callback.retryingEvents.isEmpty())
-        assertTrue(callback.errors.single().contains("stream idle timeout"))
+        assertEquals("provider stream failed", callback.errors.single())
     }
 
     @Test

@@ -126,7 +126,7 @@ class AgentRuntimeManager private constructor(
     ): String? {
         val promptSeed = historyRepository.buildPromptSeed(
             conversationId = conversationId,
-            conversationMode = "codex"
+            conversationMode = "agent"
         )
         return AgentHandoffContext.format(
             conversationId = conversationId,
@@ -405,7 +405,13 @@ class AgentRuntimeManager private constructor(
         if (resolveRuntime().kind == AgentRuntimeKind.REMOTE) {
             when (method) {
                 "session/new" -> return startRemoteAcpSession(canonicalArgs)
-                "session/load" -> return startRemoteAcpSession(canonicalArgs)
+                // Loading must resume the existing Codex thread. Starting a
+                // new remote session here silently discarded the conversation
+                // after an app restart or when opening an older chat.
+                "session/load" -> return requestWithResolvedThread(
+                    "thread/resume",
+                    canonicalArgs
+                ).withAcpSessionId()
                 "session/list" -> return mapOf("sessions" to emptyList<Any?>())
                 "session/prompt" -> return promptRemoteAcpSession(canonicalArgs)
                 "session/cancel" -> return cancelRemoteAcpSession(canonicalArgs)
@@ -1755,6 +1761,9 @@ class AgentRuntimeManager private constructor(
         val conversationAgentId = conversationId?.let {
             acpAgentProfileStore.agentIdForConversation(it)
         }
+        val conversationBindingAgentId = conversationBinding?.threadId?.let {
+            acpAgentProfileStore.agentIdForSession(it)
+        }
         val selectedAgentId = acpAgentProfileStore.selected().id
         val targetAgentId = if (chatOnly) {
             // Pure chat is still ACP, but it is not an Agent/Harness session.
@@ -1763,8 +1772,9 @@ class AgentRuntimeManager private constructor(
             AcpAgentProfileStore.XIAOWAN_AGENT_ID
         } else {
             requestedAgentId
-                ?: boundAgentId
                 ?: conversationAgentId
+                ?: conversationBindingAgentId
+                ?: boundAgentId
                 ?: selectedAgentId
         }
         val targetProfile = targetAgentId?.let { agentId ->
@@ -1790,10 +1800,26 @@ class AgentRuntimeManager private constructor(
             boundAgentId != null &&
             targetProfile != null &&
             boundAgentId != targetProfile.id
+        val explicitThreadConversationId = explicitThreadId?.let {
+            bindingRepository.getBindingByThreadId(it)?.conversationId
+        }
+        // The Flutter page can retain the previous session id while the user
+        // switches conversations. A live ACP session is not a conversation
+        // identity: reusing it here makes XiaowanAcpConnection resolve the
+        // previous binding (or null) and the provider receives no durable
+        // history. Let the conversation binding win and create/resume the
+        // correct ACP session below.
+        val explicitThreadBelongsToAnotherConversation =
+            !explicitThreadMatchesConversation(
+                explicitThreadId = explicitThreadId,
+                requestedConversationId = conversationId,
+                boundConversationId = explicitThreadConversationId,
+            )
         val threadBelongsToAnotherAgent =
             boundThreadBelongsToAnotherAgent || unownedExplicitPrompt ||
                 (chatOnly && boundAgentId != null &&
                     targetProfile != null && boundAgentId != targetProfile.id)
+        val staleExplicitThread = explicitThreadBelongsToAnotherConversation
         if (targetProfile != null &&
             (!localAcpRuntime.isConnected ||
                 localAcpRuntime.activeAgentId() != targetProfile.id)
@@ -1816,7 +1842,7 @@ class AgentRuntimeManager private constructor(
         if (localAcpRuntime.isConnected) {
             activeRuntime = AgentRuntimeKind.LOCAL
             activeLocalDistributionId = TerminalDistribution.selected().id
-            return if (threadBelongsToAnotherAgent) {
+            return if (threadBelongsToAnotherAgent || staleExplicitThread) {
                 LinkedHashMap(args).apply {
                     remove("threadId")
                     remove("sessionId")

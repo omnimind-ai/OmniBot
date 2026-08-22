@@ -485,8 +485,15 @@ abstract class _ChatPageStateBase extends State<ChatPage>
           id: profile.id,
           name: profile.name,
           enabled: profile.enabled,
-          installed: profile.installed == true,
-          status: profile.status,
+          // The embedded non-managed Agent is part of the APK and has no
+          // download state. Managed Harnesses must report installed=true
+          // before they can enter the top-right runtime switcher.
+          installed:
+              profile.installed == true ||
+              (profile.builtIn && !profile.managedAdapter),
+          status: profile.builtIn && !profile.managedAdapter
+              ? 'online'
+              : profile.status,
         ),
       if (_agentRuntimeStatus.remoteConfigured)
         ChatAcpAgentModeOption(
@@ -497,6 +504,18 @@ abstract class _ChatPageStateBase extends State<ChatPage>
         ),
     ];
     return options;
+  }
+
+  /// The app-bar identity is presentation-only. Keep the conversation's
+  /// stored Harness binding intact, but do not render a brand avatar for a
+  /// Harness that is no longer installed or ready to run.
+  String? get _appBarActiveAcpAgentId {
+    final activeId = _activeAcpAgentId?.trim() ?? '';
+    if (activeId.isEmpty) return null;
+    final isVisible = _chatAcpAgentModeOptions.any(
+      (agent) => agent.id == activeId && agent.isAvailable,
+    );
+    return isVisible ? activeId : null;
   }
 
   ConversationMode _conversationModeForPageMode(ChatPageMode mode) {
@@ -612,9 +631,18 @@ abstract class _ChatPageStateBase extends State<ChatPage>
         runtime?.messages.lastMutationRevision ?? 0;
   }
 
+  bool get _hasSingleModePagePosition =>
+      _modePageController.hasClients &&
+      _modePageController.positions.length == 1;
+
   double get _surfacePageProgress {
     final fallback = _pageIndexForSurface(_activeSurfaceMode).toDouble();
-    if (!_modePageController.hasClients) {
+    // A surface switch/orientation change can briefly leave the controller
+    // attached to both the old and the new PageView.  PageController.page is
+    // only defined for exactly one attached position; reading it during that
+    // transition throws and replaces the visible chat subtree with the
+    // app-wide ErrorWidget.
+    if (!_hasSingleModePagePosition) {
       return fallback;
     }
     final page = _modePageController.page;
@@ -1428,10 +1456,7 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     final taskId = runtime?.currentDispatchTurnId;
     if (runtime == null || taskId == null || taskId.trim().isEmpty) {
       if (mounted) {
-        showToast(
-          formatAgentRuntimeErrorForUser(error),
-          type: ToastType.error,
-        );
+        showToast(formatAgentRuntimeErrorForUser(error), type: ToastType.error);
       }
       return;
     }

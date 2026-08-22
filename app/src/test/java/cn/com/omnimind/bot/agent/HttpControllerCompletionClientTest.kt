@@ -14,7 +14,7 @@ class HttpControllerCompletionClientTest {
         val client = getter.invoke(HttpController) as OkHttpClient
 
         assertEquals(60_000, client.connectTimeoutMillis)
-        assertEquals(180_000, client.readTimeoutMillis)
+        assertEquals(0, client.readTimeoutMillis)
         assertEquals(60_000, client.writeTimeoutMillis)
     }
 }

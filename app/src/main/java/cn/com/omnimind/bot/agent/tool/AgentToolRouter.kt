@@ -5,7 +5,6 @@ import cn.com.omnimind.bot.agent.tool.AgentCapabilityModule
 import cn.com.omnimind.bot.agent.tool.BuiltInAgentCapabilityModule
 import cn.com.omnimind.bot.agent.tool.handlers.SharedHelper
 import cn.com.omnimind.bot.agent.tool.handlers.ToolHandler
-import cn.com.omnimind.bot.agent.tool.handlers.ToolSearchHandler
 import com.rk.terminal.runtime.TerminalDistribution
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.serialization.json.Json
@@ -46,8 +45,7 @@ class AgentToolRouter(
     )
 
     private val allHandlers: List<ToolHandler> =
-        listOfNotNull(toolCatalog?.let { ToolSearchHandler(it, helper) }) +
-            builtInCapabilities.handlers + capabilityModules.flatMap { it.handlers }
+        builtInCapabilities.handlers + capabilityModules.flatMap { it.handlers }
     private val disposed = AtomicBoolean(false)
 
     private val handlerMap: Map<String, ToolHandler> = buildMap {
@@ -82,7 +80,7 @@ class AgentToolRouter(
         } else {
             ToolExecutionResult.Error(
                 toolName,
-                "Unknown native capability: $toolName. Use tools_search to discover installed local capabilities."
+                "Unknown capability: $toolName. All installed capabilities are already available in this turn."
             )
         }
     }

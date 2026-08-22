@@ -8,7 +8,6 @@ class AgentToolVisibilitySelectorTest {
     @Test
     fun `keeps every native tool visible before discovery`() {
         val candidates = listOf(
-            tool("tools_search"),
             tool("read"),
             tool("write"),
             tool("edit"),
@@ -29,27 +28,11 @@ class AgentToolVisibilitySelectorTest {
             candidates = candidates,
         )
 
-        assertEquals(
-            linkedSetOf(
-                "tools_search",
-                "read",
-                "write",
-                "edit",
-                "bash",
-                "glob",
-                "grep",
-                "webfetch",
-                "vlm_task",
-                "context_time_now",
-                "project_check",
-                "project_publish",
-            ),
-            selected,
-        )
+        assertEquals(candidates.map { it.name }.toSet(), selected)
     }
 
     @Test
-    fun `does not expose a large dynamic tool set before discovery`() {
+    fun `exposes dynamic tools in the complete catalog`() {
         val candidates = listOf(tool("read")) +
             (1..80).map { index ->
                 tool(
@@ -64,8 +47,8 @@ class AgentToolVisibilitySelectorTest {
             candidates = candidates,
         )
 
-        assertEquals(linkedSetOf("read"), selected)
-        assertTrue("dynamic_tool_1" !in selected)
+        assertEquals(candidates.map { it.name }.toSet(), selected)
+        assertTrue("dynamic_tool_1" in selected)
     }
 
     @Test

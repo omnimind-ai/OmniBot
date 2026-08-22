@@ -237,7 +237,11 @@ object HttpController {
     private val sceneCompletionClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
             .connectTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
-            .readTimeout(180, java.util.concurrent.TimeUnit.SECONDS)
+            // Model completion may legitimately spend longer than three
+            // minutes before the response is complete.  Cancellation is
+            // owned by the request coroutine/user action, not a wall-clock
+            // generation deadline.
+            .readTimeout(0, java.util.concurrent.TimeUnit.SECONDS)
             .writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
             .build()
     }

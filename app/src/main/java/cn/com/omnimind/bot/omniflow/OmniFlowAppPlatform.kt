@@ -44,19 +44,27 @@ internal class OmniFlowAppPlatform(
         require(terminalStatus.success && terminalStatus.initialized) {
             terminalStatus.message.ifBlank { "omniflow_terminal_runtime_unavailable" }
         }
+        val prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val distribution = TerminalDistribution.selected()
+        val environmentVersion = "$expectedVersion+system-numpy-v3+${distribution.id}"
+        if (prefs.getString(READY_VERSION_KEY, null) == environmentVersion) {
+            val cachedProbe = TerminalManager.getInstance(appContext).executeHiddenCommand(
+                command = "python3 -c 'import sys,numpy; raise SystemExit(0 if (\"%d.%d\" % sys.version_info[:2]) == \"$expectedVersion\" else 1)'",
+                executorKey = "omniflow-python-cache-probe",
+                timeoutMs = 10_000L,
+            )
+            if (cachedProbe.isOk && cachedProbe.exitCode == 0) {
+                log("python_ready_cached version=$environmentVersion")
+                return
+            }
+            log("python_cache_stale version=$environmentVersion")
+        }
         val pythonBootstrap = EmbeddedTerminalSetupManager(appContext).installPackages(
             selectedPackageIds = listOf("python"),
         )
         require(pythonBootstrap.success) {
             pythonBootstrap.message.ifBlank { pythonBootstrap.output }
                 .ifBlank { "omniflow_python_install_failed" }
-        }
-        val prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val distribution = TerminalDistribution.selected()
-        val environmentVersion = "$expectedVersion+system-numpy-v3+${distribution.id}"
-        if (prefs.getString(READY_VERSION_KEY, null) == environmentVersion) {
-            log("python_ready_cached version=$environmentVersion")
-            return
         }
         val startedAt = System.currentTimeMillis()
         log("python_probe_start version=$expectedVersion")
@@ -173,11 +181,20 @@ internal fun buildOmniFlowPythonPrepareCommand(
         "unsupported_terminal_distribution"
     }
     val repairCommand = if (distributionId == "ubuntu") {
-        "DEBIAN_FRONTEND=noninteractive apt-get install -y --reinstall --no-install-recommends python3-numpy"
+        """
+            if ! DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3-numpy; then
+              echo 'OMNIFLOW_PYTHON_STAGE=repair_index_refresh package=python-numpy'
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3-numpy
+            fi
+        """.trimIndent()
     } else {
         """
-            apk --no-check-certificate update
-            apk --no-check-certificate add --no-cache py3-numpy
+            if ! apk --no-check-certificate add --no-cache py3-numpy; then
+              echo 'OMNIFLOW_PYTHON_STAGE=repair_index_refresh package=python-numpy'
+              apk --no-check-certificate update
+              apk --no-check-certificate add --no-cache py3-numpy
+            fi
         """.trimIndent()
     }
     return """

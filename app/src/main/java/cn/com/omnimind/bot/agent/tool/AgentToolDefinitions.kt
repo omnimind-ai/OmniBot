@@ -2202,7 +2202,6 @@ object AgentToolDefinitions {
     }
 
     private val builtinToolDefinitions: List<JsonObject> = listOf(
-        toolSearchTool,
         contextTimeNowTool,
         contextAppsQueryTool,
         vlmTaskTool,

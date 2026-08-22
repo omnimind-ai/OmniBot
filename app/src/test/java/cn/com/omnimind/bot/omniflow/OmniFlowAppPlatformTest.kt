@@ -18,8 +18,12 @@ class OmniFlowAppPlatformTest {
         assertTrue(command.contains("reason=python_missing"))
         assertTrue(command.contains("reason=python_version_mismatch"))
         assertTrue(command.contains("if ! python3 -c 'import numpy'"))
-        assertTrue(command.contains("apk --no-check-certificate update"))
         assertTrue(command.contains("apk --no-check-certificate add --no-cache py3-numpy"))
+        assertTrue(command.contains("OMNIFLOW_PYTHON_STAGE=repair_index_refresh"))
+        assertTrue(
+            command.indexOf("apk --no-check-certificate add --no-cache py3-numpy") <
+                command.indexOf("apk --no-check-certificate update")
+        )
         assertTrue(command.contains("python3 -c 'import numpy'"))
         assertTrue(command.contains("OMNIFLOW_PYTHON_STAGE=repair_start package=python-numpy"))
         assertTrue(command.contains("OMNIFLOW_PYTHON_STAGE=probe_ready source=environment"))
@@ -41,10 +45,12 @@ class OmniFlowAppPlatformTest {
             distributionId = "ubuntu",
         )
 
-        assertTrue(command.contains("apt-get install -y --reinstall"))
+        assertTrue(command.contains("apt-get install -y --no-install-recommends python3-numpy"))
         assertTrue(command.contains("python3-numpy"))
         assertTrue(command.contains("ubuntu-python3.12-numpy-v1"))
-        assertFalse(command.contains("apt-get update"))
+        assertTrue(command.contains("apt-get update"))
+        assertTrue(command.contains("OMNIFLOW_PYTHON_STAGE=repair_index_refresh"))
+        assertFalse(command.contains("--reinstall"))
         assertFalse(command.contains("python3-pip"))
         assertFalse(command.contains("setup-ubuntu-repository"))
         assertFalse(command.contains("apk --wait"))

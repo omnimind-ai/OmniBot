@@ -83,7 +83,6 @@ class HttpAgentLlmClientTest {
                     source
                 },
                 resolvePlatformVisionModelOp = { "official-vision-model" },
-                streamIdleWatchdogMs = 5_000L,
                 json = json,
             )
             val request = ChatCompletionRequest(
@@ -191,7 +190,6 @@ class HttpAgentLlmClientTest {
                 resolvePlatformVisionModelOp = {
                     throw PlatformModelsUnavailableException("no official vision model")
                 },
-                streamIdleWatchdogMs = 5_000L,
                 json = json,
             )
             val request = ChatCompletionRequest(
@@ -357,7 +355,6 @@ class HttpAgentLlmClientTest {
                     refreshCount += 1
                     true
                 },
-                streamIdleWatchdogMs = 5_000L,
                 json = json,
             )
 
@@ -576,7 +573,6 @@ class HttpAgentLlmClientTest {
                     listener.onClosed(source)
                     source
                 },
-                streamIdleWatchdogMs = 5_000L,
                 json = json
             )
 
@@ -589,7 +585,7 @@ class HttpAgentLlmClientTest {
     }
 
     @Test
-    fun `idle watchdog fails stalled stream with explicit error`() = runBlocking {
+    fun `slow stream remains alive until provider closes it`() = runBlocking {
         val scope = CoroutineScope(Job() + Dispatchers.Default)
         try {
             val client = HttpAgentLlmClient(
@@ -604,18 +600,21 @@ class HttpAgentLlmClientTest {
                         "message",
                         """{"choices":[{"delta":{"content":"先来一段"}}]}"""
                     )
+                    kotlinx.coroutines.delay(75L)
+                    listener.onEvent(
+                        source,
+                        null,
+                        "message",
+                        """{"choices":[{"delta":{"content":"完成"},"finish_reason":"stop"}]}"""
+                    )
+                    listener.onEvent(source, null, "message", "[DONE]")
                     source
                 },
-                streamIdleWatchdogMs = 50L,
                 json = json
             )
 
-            val error = runCatching {
-                client.streamTurn(request = simpleRequest())
-            }.exceptionOrNull()
-
-            requireNotNull(error)
-            assertTrue(error.message.orEmpty().contains("idle timeout"))
+            val turn = client.streamTurn(request = simpleRequest())
+            assertEquals("先来一段完成", turn.message.contentText())
         } finally {
             scope.cancel()
         }
@@ -640,7 +639,6 @@ class HttpAgentLlmClientTest {
                     listener.onEvent(source, null, "message", "[DONE]")
                     source
                 },
-                streamIdleWatchdogMs = 5_000L,
                 json = json
             )
 
@@ -679,7 +677,6 @@ class HttpAgentLlmClientTest {
                     listener.onEvent(source, null, "message", "[DONE]")
                     source
                 },
-                streamIdleWatchdogMs = 5_000L,
                 json = json,
             )
 
@@ -720,7 +717,6 @@ class HttpAgentLlmClientTest {
                     listener.onEvent(source, null, "message", "[DONE]")
                     source
                 },
-                streamIdleWatchdogMs = 5_000L,
                 json = json
             )
 
@@ -760,7 +756,6 @@ class HttpAgentLlmClientTest {
                     listener.onEvent(source, null, "message", "[DONE]")
                     source
                 },
-                streamIdleWatchdogMs = 5_000L,
                 json = json
             )
 
@@ -824,7 +819,6 @@ class HttpAgentLlmClientTest {
                     listener.onEvent(source, null, "message", "[DONE]")
                     source
                 },
-                streamIdleWatchdogMs = 5_000L,
                 json = json
             )
 
@@ -965,7 +959,6 @@ class HttpAgentLlmClientTest {
                     listener.onEvent(source, null, "message", "[DONE]")
                     source
                 },
-                streamIdleWatchdogMs = 5_000L,
                 json = json
             )
 

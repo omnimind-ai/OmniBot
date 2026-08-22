@@ -162,8 +162,9 @@ class OmniFlowRuntimeProvider {
         manifest: OmniFlowRuntimeManifest,
     ) {
         val required = requiredOmniFlowRuntimePaths(manifest)
-        require(required.all { File(skillRoot, it).isFile }) {
-            "omniflow_skill_runtime_incomplete"
+        val missing = required.filterNot { File(skillRoot, it).isFile }
+        require(missing.isEmpty()) {
+            "omniflow_skill_runtime_incomplete:" + missing.joinToString(",")
         }
     }
 
@@ -179,8 +180,10 @@ class OmniFlowRuntimeProvider {
             "scripts/runtime/python/schemas/oob/omniflow_checker_rule.v1.json",
             "scripts/runtime/python/schemas/oob/omniflow_android_bridge.v2.json",
             "scripts/runtime/.runtime/omnitransfer/src/omnitransfer/runtime.py",
-            "scripts/runtime/.runtime/omnitransfer/src/omnitransfer/numpy_matcher.py",
             "scripts/runtime/.runtime/omnitransfer/src/omnitransfer/numpy_v9_matcher.py",
+            "scripts/runtime/.runtime/omnitransfer/src/omnitransfer/page_embedding.py",
+            "scripts/runtime/.runtime/omnitransfer/src/omnitransfer/unified_alignment.py",
+            "scripts/runtime/.runtime/omnitransfer/src/omnitransfer/visual_descriptor.py",
             "scripts/runtime/.runtime/omnitransfer/src/omnitransfer/${manifest.omniTransferCheckpoint}",
         )
 

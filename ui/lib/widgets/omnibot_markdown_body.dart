@@ -46,6 +46,44 @@ const List<md.BlockSyntax> _kBlockSyntaxes = <md.BlockSyntax>[
   OmnibotMathBlockSyntax(),
 ];
 
+bool _omnibotMarkdownNeedsSafetyPreflight(String source) {
+  final lines = source.split('\n');
+  for (var index = 0; index < lines.length; index += 1) {
+    if (OmnibotTableSyntax._tableDividerPattern.hasMatch(lines[index]) ||
+        lines[index].trimLeft().startsWith(r'$$')) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool _omnibotMarkdownIsParseable(
+  String source, {
+  required bool hasTrailingInline,
+}) {
+  if (!_omnibotMarkdownNeedsSafetyPreflight(source)) {
+    return true;
+  }
+  try {
+    final document = md.Document(
+      blockSyntaxes: _kBlockSyntaxes,
+      inlineSyntaxes: hasTrailingInline
+          ? _kInlineSyntaxesWithTrailing
+          : _kInlineSyntaxesWithoutTrailing,
+      extensionSet: md.ExtensionSet.gitHubFlavored,
+      encodeHtml: false,
+    );
+    document.parseLines(const LineSplitter().convert(source));
+    return true;
+  } catch (error, stack) {
+    // Keep the content visible even if a future Markdown package or custom
+    // syntax regression rejects one streamed snapshot.
+    debugPrint('[Omni][Markdown] preflight failed: $error');
+    debugPrintStack(stackTrace: stack);
+    return false;
+  }
+}
+
 // ── StyleSheet LRU cache ──
 // `MarkdownStyleSheet.fromTheme(...).copyWith(...)` 是重型操作；同等条件下
 // 复用同一引用可以让 flutter_markdown 在 didUpdateWidget 中跳过 _parseMarkdown，
@@ -579,9 +617,30 @@ class OmnibotMarkdownBody extends StatelessWidget {
   }) {
     final styleSheet = _resolveMarkdownStyleSheet(context, baseStyle);
     final resolvedSelectable = selectableOverride ?? selectable;
+    final renderedSource = _linkifyBareOmnibotUris(
+      _withTrailingInlineToken(source),
+    );
+    if (!_omnibotMarkdownIsParseable(
+      renderedSource,
+      hasTrailingInline: trailingInline != null,
+    )) {
+      final plainText = resolvedSelectable
+          ? SelectableText(source, style: baseStyle)
+          : Text(source, style: baseStyle);
+      return RepaintBoundary(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            plainText,
+            if (trailingInline != null) trailingInline!,
+          ],
+        ),
+      );
+    }
     return RepaintBoundary(
       child: MarkdownBody(
-        data: _linkifyBareOmnibotUris(_withTrailingInlineToken(source)),
+        data: renderedSource,
         selectable: resolvedSelectable,
         onTapLink: (text, href, title) {
           if (href == null) return;
@@ -948,7 +1007,28 @@ class OmnibotTableSyntax extends md.BlockSyntax {
 
   @override
   bool canParse(md.BlockParser parser) {
-    return parser.matchesNext(_tableDividerPattern);
+    if (!parser.matchesNext(_tableDividerPattern)) {
+      return false;
+    }
+
+    // `parse` consumes the current header row and the following divider.  A
+    // provider can stream the divider before the header has become a valid
+    // table, however.  Returning true for that partial shape and then
+    // returning null from `parse` leaves BlockParser at the same line and
+    // triggers its "parseLines is not advancing" assertion.
+    final divider = parser.next;
+    if (divider == null) {
+      return false;
+    }
+    final alignments = _parseAlignments(divider.content);
+    if (alignments.isEmpty) {
+      return false;
+    }
+    final headerCells = _parseMarkdownTableCells(
+      parser.current.content,
+      alignments,
+    );
+    return headerCells.length == alignments.length;
   }
 
   @override
@@ -957,8 +1037,11 @@ class OmnibotTableSyntax extends md.BlockSyntax {
     final columnCount = alignments.length;
     final headRow = _parseRowCells(parser, alignments);
     if (headRow.length != columnCount) {
-      parser.retreat();
-      return null;
+      // `canParse` performs the same shape check, so this is defensive only.
+      // Consume the current line and render it as ordinary paragraph text if
+      // a future markdown package changes parser state between the two calls.
+      final header = headRow.map((cell) => cell.source).join(' | ');
+      return md.Element.text('p', header);
     }
 
     parser.advance();

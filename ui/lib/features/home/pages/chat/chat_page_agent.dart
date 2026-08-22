@@ -245,7 +245,9 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     final target = _newAgentThreadTarget(
       agentId: normalized,
       agentRuntime: selectsRemote ? 'remote' : 'local',
-      conversationId: _modeState(ChatPageMode.agent).currentConversationId,
+      // A Harness switch starts a fresh conversation. The previous
+      // conversation remains in history and is never handed off to the new
+      // Harness.
     );
     setState(() {
       _optimisticAcpAgentId = normalized;

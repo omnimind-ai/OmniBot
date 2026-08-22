@@ -335,6 +335,10 @@ private class XiaowanAgentSession(
     private val providerProfile: ModelProviderProfile,
     override val sessionId: SessionId,
 ) : AgentSession {
+    private companion object {
+        private const val TAG = "XiaowanAcpConnection"
+    }
+
     private val messages = mutableListOf<ChatCompletionMessage>()
     private val promptMutex = Mutex()
     private var selectedModelId: String = configuredModelId
@@ -388,6 +392,12 @@ private class XiaowanAgentSession(
             send(Event.SessionUpdateEvent(update))
         }
         val conversationId = conversationIdProvider(sessionId.value)
+        Log.i(
+            TAG,
+            "prompt session=${sessionId.value} conversationId=${conversationId ?: "unbound"} " +
+                "inMemoryMessages=${messages.size} historySource=" +
+                if (conversationId != null) "conversation" else "session_memory"
+        )
         val conversationMode = (meta as? JsonObject)
             ?.get("conversationMode")
             ?.jsonPrimitive

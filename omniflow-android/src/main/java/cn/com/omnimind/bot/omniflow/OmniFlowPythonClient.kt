@@ -77,9 +77,10 @@ class OmniFlowPythonClient(
                     ),
                 ),
             )
-            val result = withTimeout(INITIALIZE_TIMEOUT_MS) {
-                readResponse(activeSession, requestId, hostCall = null)
-            }
+            // Initialization ends on the JSON-RPC response, process exit, or
+            // coroutine cancellation.  A slow Python/bootstrap path must not
+            // be converted into a synthetic timeout failure.
+            val result = readResponse(activeSession, requestId, hostCall = null)
             writeNotification(activeSession.writer, "notifications/initialized")
             result
         } catch (error: Throwable) {
@@ -92,16 +93,17 @@ class OmniFlowPythonClient(
         operation: String,
         payload: Map<String, Any?> = emptyMap(),
         hostCall: OmniFlowPythonHostCall? = null,
-        timeoutMs: Long = defaultTimeoutMs(operation, payload),
+        timeoutMs: Long? = defaultTimeoutMs(operation, payload),
     ): Map<String, Any?> = callMutex.withLock {
         check(!closed) { "omniflow_python_client_closed" }
         val activeSession = ensureSession()
         try {
             val requestId = requestIdFactory()
             writeRequest(activeSession.writer, requestId, operation, payload)
-            withTimeout(timeoutMs) {
+            val response = suspend {
                 readResponse(activeSession, requestId, hostCall)
             }
+            if (timeoutMs == null) response() else withTimeout(timeoutMs) { response() }
         } catch (error: Throwable) {
             if (
                 error is CancellationException ||
@@ -311,10 +313,7 @@ class OmniFlowPythonClient(
         private const val HOST_METHOD_PREFIX = "omniflow/"
         private const val PROCESS_EXIT_GRACE_MS = 1_000L
         private const val STDERR_TAIL_CHARS = 8_192
-        internal const val INITIALIZE_TIMEOUT_MS = 120_000L
         private const val DEFAULT_CALL_TIMEOUT_MS = 30_000L
-        private const val SEMANTIC_COMPILE_TIMEOUT_MS = 210_000L
-        private const val RUN_TIMEOUT_MS = 10 * 60_000L
     private val gson = GsonBuilder()
         .disableHtmlEscaping()
         // RunLog v1 requires explicit nullable fields such as `seed`. The
@@ -359,16 +358,19 @@ class OmniFlowPythonClient(
             export OMNITRANSFER_MATCHER_CHECKPOINT='$shellOmniTransferCheckpointPath'
             python_bin="${'$'}(command -v python3 || true)"
             if [ -z "${'$'}python_bin" ]; then echo 'omniflow_python_not_installed' >&2; exit 127; fi
-            exec "${'$'}python_bin" -u -m omniflow.bridge --store /workspace/.omnibot/omniflow/omniflow.json --catalog default
+            exec "${'$'}python_bin" -u -m omniflow.bridge --store /workspace/.omnibot/omniflow/omniflow.json
             """.trimIndent()
         }
 
         fun defaultTimeoutMs(
             operation: String,
             payload: Map<String, Any?> = emptyMap(),
-        ): Long = when {
-            operation == "tools/call" && payload["name"] == "run_gui" -> RUN_TIMEOUT_MS
-            operation == "tools/call" -> SEMANTIC_COMPILE_TIMEOUT_MS
+        ): Long? = when {
+            // Tool execution is completed by the Python bridge response, the
+            // bridge process exiting, or caller cancellation. A fixed wall
+            // clock deadline would incorrectly fail long VLM/replay and
+            // Function enhancement operations.
+            operation == "tools/call" -> null
             else -> DEFAULT_CALL_TIMEOUT_MS
         }
     }

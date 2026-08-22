@@ -49,4 +49,36 @@ class AgentRuntimeManagerConfigTest {
                 .getAsJsonObject("options").get("baseURL").asString,
         )
     }
+
+    @Test
+    fun `stale explicit ACP session is not reused after conversation switch`() {
+        assertEquals(
+            false,
+            explicitThreadMatchesConversation(
+                explicitThreadId = "old-session",
+                requestedConversationId = 41L,
+                boundConversationId = 40L,
+            )
+        )
+    }
+
+    @Test
+    fun `current conversation keeps its ACP session and session-only calls stay compatible`() {
+        assertEquals(
+            true,
+            explicitThreadMatchesConversation(
+                explicitThreadId = "current-session",
+                requestedConversationId = 41L,
+                boundConversationId = 41L,
+            )
+        )
+        assertEquals(
+            true,
+            explicitThreadMatchesConversation(
+                explicitThreadId = "session-only",
+                requestedConversationId = null,
+                boundConversationId = null,
+            )
+        )
+    }
 }

@@ -24,7 +24,7 @@ object RemoteMcpDiscoveryRegistry {
      * Return descriptors already known by this process without touching the
      * network. This is intentionally used on the ordinary prompt path.
      * Stale entries are still useful for model routing; an explicit discovery
-     * refresh will reconcile them before tools_search returns.
+     * refresh will reconcile them before the next model request.
      */
     fun cachedEnabledServers(): List<RemoteMcpDiscoveredServer> {
         return RemoteMcpConfigStore.listEnabledServers().mapNotNull { config ->

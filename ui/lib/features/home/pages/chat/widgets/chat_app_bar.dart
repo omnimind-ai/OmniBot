@@ -589,11 +589,12 @@ class _ChatAppBarModeShortcutButtonState
     final canSelectPureChat =
         widget.isAgentSelected ||
         (!widget.isPureChatToggleLocked && widget.onPureChatToggleTap != null);
-    // Keep every enabled managed Agent visible. Installation/configuration is
-    // part of selecting the Agent, so hiding unavailable entries removes the
-    // user's recovery action.
+    // The mode menu is a runtime switcher, not the installation screen. Only
+    // an enabled, installed and healthy Harness belongs here. Uninstalled
+    // Harnesses remain discoverable from Agent settings, but must not appear
+    // in the top-right switcher as if they were ready to run.
     final acpAgentModes = widget.acpAgentModes
-        .where((agent) => agent.enabled)
+        .where((agent) => agent.isAvailable)
         .toList(growable: false);
     ChatAcpAgentModeOption? xiaowan;
     for (final agent in acpAgentModes) {
@@ -744,9 +745,7 @@ class _ChatAppBarModeShortcutButtonState
     final activeAgentId = widget.activeAcpAgentId?.trim() ?? '';
     if (!widget.isPureChatSelected && activeAgentId.isNotEmpty) {
       return AgentBrandIcon(
-        key: ValueKey(
-          'chat-app-bar-active-agent-icon-$activeAgentId',
-        ),
+        key: ValueKey('chat-app-bar-active-agent-icon-$activeAgentId'),
         agentId: activeAgentId,
         size: 22,
         tint: color,

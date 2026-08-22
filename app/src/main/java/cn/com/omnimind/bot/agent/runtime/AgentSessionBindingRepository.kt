@@ -282,3 +282,19 @@ internal object AgentRuntimeDefaults {
     const val DEFAULT_WORKSPACE_CWD = "/workspace"
     const val FALLBACK_CWD = "/root"
 }
+
+/**
+ * A session id is reusable only when it is still bound to the conversation
+ * addressed by the request. A session-only ACP request remains valid because
+ * the session binding itself is the source of the conversation identity.
+ */
+internal fun explicitThreadMatchesConversation(
+    explicitThreadId: String?,
+    requestedConversationId: Long?,
+    boundConversationId: Long?
+): Boolean {
+    if (explicitThreadId.isNullOrBlank() || requestedConversationId == null) {
+        return true
+    }
+    return boundConversationId == requestedConversationId
+}

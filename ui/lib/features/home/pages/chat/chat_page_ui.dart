@@ -962,9 +962,9 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
       },
       onBeforeTaskExecute: handleBeforeTaskExecute,
       onCancelTask: _onCancelTaskFromCard,
-      onRequestAuthorize: mode == ChatPageMode.normal
-          ? _requestAuthorizeForExecution
-          : null,
+      onRequestAuthorize: mode == ChatPageMode.openclaw
+          ? null
+          : _requestAuthorizeForExecution,
       onUserMessageLongPressStart: switch (mode) {
         ChatPageMode.normal => _handleUserMessageLongPressStart,
         ChatPageMode.agent =>
@@ -1307,7 +1307,7 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
               isOmniAiSelected:
                   _activeMode == ChatPageMode.normal && !_isPureChatSelected,
               acpAgentModes: _chatAcpAgentModeOptions,
-              activeAcpAgentId: _activeAcpAgentId,
+              activeAcpAgentId: _appBarActiveAcpAgentId,
               showAppUpdateIndicator: showAppUpdateIndicator,
               appUpdateTooltip: appUpdateTooltip,
               onAppUpdateTap: showAppUpdateIndicator
