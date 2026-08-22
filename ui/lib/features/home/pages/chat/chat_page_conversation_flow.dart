@@ -1357,7 +1357,6 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
     List<String> requiredPermissionIds,
   ) async {
     if (_isAwaitingAuthorizeResult) return;
-    if (latestUserUtterance().trim().isEmpty) return;
 
     _isAwaitingAuthorizeResult = true;
     try {
