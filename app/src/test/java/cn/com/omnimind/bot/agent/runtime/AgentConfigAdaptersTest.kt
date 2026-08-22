@@ -81,6 +81,7 @@ class AgentConfigAdaptersTest {
                 agentId = AcpAgentProfileStore.CODEX_AGENT_ID,
                 provider = provider,
                 model = model,
+                harnessAdapter = AcpHarnessAdapters.codex,
             ),
         )
         assertEquals(provider.apiKey, codex.environment["OPENAI_API_KEY"])
@@ -94,6 +95,7 @@ class AgentConfigAdaptersTest {
                 agentId = CLAUDE_CODE_AGENT_ID,
                 provider = provider,
                 model = model,
+                harnessAdapter = AcpHarnessAdapters.claudeCode,
             ),
         )
         assertEquals(provider.apiKey, claude.environment["ANTHROPIC_API_KEY"])
@@ -107,6 +109,7 @@ class AgentConfigAdaptersTest {
                 agentId = OPENCODE_AGENT_ID,
                 provider = provider,
                 model = model,
+                harnessAdapter = AcpHarnessAdapters.openCode,
             ),
         )
         assertEquals(provider.apiKey, openCode.environment["OPENAI_API_KEY"])
@@ -122,6 +125,7 @@ class AgentConfigAdaptersTest {
                 agentId = AcpAgentProfileStore.CODEX_AGENT_ID,
                 provider = null,
                 model = "GLM-5.1",
+                harnessAdapter = AcpHarnessAdapters.codex,
             ),
         )
 
