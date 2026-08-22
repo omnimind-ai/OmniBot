@@ -839,7 +839,12 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
       if (!isEphemeralRuntime(conversationId: conversationId, mode: mode)) {
         schedulePersistRuntimeConversation(
           conversationId: conversationId,
-          mode: kChatRuntimeModeAgent,
+          // ACP execution can be hosted by the normal chat runtime (for
+          // example Xiaowan) as well as the dedicated Agent page. Persist
+          // into the runtime that admitted the event; using the Agent mode
+          // here strands normal-chat history in a different storage bucket,
+          // so the next Xiaowan prompt cannot reconstruct its context.
+          mode: mode,
           persistMessages: true,
         );
       }

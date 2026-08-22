@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ui/features/home/pages/chat/chat_page_models.dart';
 import 'package:ui/features/home/pages/chat/services/chat_conversation_runtime_coordinator.dart';
 import 'package:ui/models/chat_message_model.dart';
+import 'package:ui/models/conversation_model.dart';
 import 'package:ui/services/voice_playback_coordinator.dart';
 
 void main() {
@@ -172,6 +173,47 @@ void main() {
     );
     expect(runtime.isAiResponding, isTrue);
   });
+
+  test(
+    'persists normal ACP events into the normal conversation history',
+    () async {
+      const conversationId = 2005;
+      const turnId = 'turn-xiaowan-normal-history';
+
+      applyAcp(
+        conversationId,
+        'turn/started',
+        turnId: turnId,
+        mode: kChatRuntimeModeNormal,
+      );
+      applyAcp(
+        conversationId,
+        'session/update',
+        turnId: turnId,
+        mode: kChatRuntimeModeNormal,
+        params: <String, dynamic>{
+          'sessionId': 'session-xiaowan-normal-history',
+          'update': <String, dynamic>{
+            'sessionUpdate': 'agent_message_chunk',
+            'messageId': 'message-normal-history',
+            'content': <String, dynamic>{'text': '第一轮回复'},
+          },
+        },
+      );
+
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+
+      final replaceCalls = recordedMethodCalls
+          .where((call) => call.method == 'replaceConversationMessages')
+          .toList();
+      expect(replaceCalls, isNotEmpty);
+      expect(replaceCalls.last.arguments['conversationId'], conversationId);
+      expect(
+        replaceCalls.last.arguments['mode'],
+        ConversationMode.normal.storageValue,
+      );
+    },
+  );
 
   test(
     'begins a turn without a visible thinking placeholder before ACP output',
