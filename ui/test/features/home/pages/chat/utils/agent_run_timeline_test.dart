@@ -3,6 +3,27 @@ import 'package:ui/features/home/pages/chat/utils/agent_run_timeline.dart';
 import 'package:ui/models/chat_message_model.dart';
 
 void main() {
+  test('groups by canonical runId before legacy parentTaskId', () {
+    final message = ChatMessageModel(
+      id: 'run-1-text',
+      type: 1,
+      user: 2,
+      content: const {'text': '答案', 'id': 'run-1-text'},
+      streamMeta: const {
+        'runId': 'run-1',
+        'parentTaskId': 'official-turn-1',
+        'entrySeq': 1,
+        'seq': 1,
+        'isFinal': true,
+      },
+    );
+
+    final entries = buildAgentRunTimelineEntries([message]);
+
+    expect(entries.single.group?.runId, 'run-1');
+    expect(entries.single.group?.taskId, 'run-1');
+  });
+
   test('groups completed agent run by parent task id', () {
     final entries = buildAgentRunTimelineEntries(_buildCompletedRunMessages());
 
@@ -11,6 +32,33 @@ void main() {
     expect(entries.first.group?.thinkingCount, 1);
     expect(entries.first.group?.toolCount, 1);
     expect(entries.first.group?.visibleMessagesNewestFirst.single.text, '最终回答');
+  });
+
+  test('uses turn-owned content anchors over a stale tool timestamp', () {
+    final startedAt = DateTime(2026, 8, 22, 14, 29, 24, 493);
+    final messages = _buildCompletedRunMessages()
+        .map((message) {
+          if (message.id == 'task-1-tool') {
+            return message.copyWith(
+              createAt: startedAt.subtract(const Duration(minutes: 2)),
+            );
+          }
+          if (message.id == 'task-1-thinking') {
+            return message.copyWith(createAt: startedAt);
+          }
+          if (message.id == 'task-1-text') {
+            return message.copyWith(
+              createAt: startedAt.add(const Duration(seconds: 4)),
+            );
+          }
+          return message;
+        })
+        .toList(growable: false);
+
+    final group = buildAgentRunTimelineEntries(messages).first.group!;
+
+    expect(group.startedAt, startedAt);
+    expect(group.finishedAt, startedAt.add(const Duration(seconds: 4)));
   });
 
   test('keeps every prose message visible when history lacks isFinal', () {
@@ -489,6 +537,44 @@ void main() {
   );
 
   test(
+    'orders persisted ACP terminal frames by seq when entrySeq is absent',
+    () {
+      final taskId = 'persisted-acp-turn';
+      final messages = <ChatMessageModel>[
+        _cardMessage(
+          id: '$taskId-tool',
+          taskId: taskId,
+          kind: 'tool_completed',
+          seq: 2,
+          isFinal: true,
+          cardData: _toolCard('读取工具结果'),
+        ),
+        _thinkingCard(
+          id: '$taskId-thinking',
+          taskId: taskId,
+          seq: 1,
+          isFinal: true,
+        ),
+        _assistantMessage(
+          id: '$taskId-text',
+          taskId: taskId,
+          kind: 'text_snapshot',
+          seq: 3,
+          text: '最终回答',
+          isFinal: true,
+        ),
+      ];
+
+      final group = buildAgentRunTimelineEntries(messages).single.group!;
+
+      expect(
+        group.allMessagesOldestFirst.map((message) => message.id),
+        <String>['$taskId-thinking', '$taskId-tool', '$taskId-text'],
+      );
+    },
+  );
+
+  test(
     'restores partially sequenced Xiaowan prose inside its chronological tool rounds',
     () {
       const timestamp = '1786765957366';
@@ -773,6 +859,7 @@ ChatMessageModel _thinkingCard({
   required String taskId,
   required int seq,
   int? entrySeq,
+  bool? isFinal = false,
 }) {
   return _cardMessage(
     id: id,
@@ -780,6 +867,7 @@ ChatMessageModel _thinkingCard({
     kind: 'thinking_snapshot',
     seq: seq,
     entrySeq: entrySeq,
+    isFinal: isFinal,
     cardData: <String, dynamic>{
       'type': 'deep_thinking',
       'thinkingContent': '思考过程',
@@ -818,6 +906,7 @@ ChatMessageModel _cardMessage({
   required String kind,
   required int seq,
   int? entrySeq,
+  bool? isFinal = false,
   required Map<String, dynamic> cardData,
 }) {
   return ChatMessageModel.cardMessage(
@@ -829,7 +918,7 @@ ChatMessageModel _cardMessage({
       'seq': seq,
       if (entrySeq != null) 'entrySeq': entrySeq,
       'entryId': id,
-      'isFinal': false,
+      if (isFinal != null) 'isFinal': isFinal,
     },
   );
 }

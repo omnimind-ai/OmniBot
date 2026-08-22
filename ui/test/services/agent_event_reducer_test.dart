@@ -6,6 +6,7 @@ import 'package:ui/features/home/pages/chat/chat_page_models.dart';
 import 'package:ui/features/home/pages/chat/services/chat_conversation_runtime_coordinator.dart';
 import 'package:ui/models/chat_message_model.dart';
 import 'package:ui/services/agent_event_reducer.dart';
+import 'package:ui/services/agent_identity.dart';
 
 void main() {
   late AgentEventReducer reducer;
@@ -21,6 +22,25 @@ void main() {
 
   tearDown(() {
     runtime.dispose();
+  });
+
+  test('reads ACP identity through the bridge event envelope', () {
+    final event = <String, dynamic>{
+      'message': {
+        'method': 'session/update',
+        'params': {
+          'sessionId': 'session-nested',
+          'turnId': 'turn-nested',
+          'update': {
+            'sessionUpdate': 'agent_thought_chunk',
+            'content': {'text': 'nested reasoning'},
+          },
+        },
+      },
+    };
+
+    expect(acpEventSessionId(event), 'session-nested');
+    expect(acpEventTurnId(event), 'turn-nested');
   });
 
   test('maps agent message deltas into assistant text', () {
@@ -171,10 +191,7 @@ void main() {
       runtime: runtime,
       event: {
         'method': 'turn/completed',
-        'params': {
-          'sessionId': 'session-1',
-          'turnId': 'turn-1',
-        },
+        'params': {'sessionId': 'session-1', 'turnId': 'turn-1'},
       },
     );
 
@@ -183,47 +200,50 @@ void main() {
     expect(runtime.activeAcpTurnId, isNull);
   });
 
-  test('terminal event closes a primed turn that never admitted its ACP id', () {
-    runtime
-      ..isAiResponding = true
-      ..currentDispatchTurnId = 'local-request'
-      ..lastAgentTurnId = 'local-request'
-      ..isDeepThinking = true
-      ..activeThinkingCardId = 'local-request-thinking';
-    runtime.messages.add(
-      ChatMessageModel(
-        id: 'local-request-thinking',
-        type: 2,
-        user: 3,
-        content: {
-          'cardData': {
-            'type': 'deep_thinking',
-            'taskID': 'local-request',
-            'cardId': 'local-request-thinking',
-            'isLoading': true,
-            'stage': ThinkingStage.thinking.value,
-            'thinkingContent': '',
+  test(
+    'terminal event closes a primed turn that never admitted its ACP id',
+    () {
+      runtime
+        ..isAiResponding = true
+        ..currentDispatchTurnId = 'local-request'
+        ..lastAgentTurnId = 'local-request'
+        ..isDeepThinking = true
+        ..activeThinkingCardId = 'local-request-thinking';
+      runtime.messages.add(
+        ChatMessageModel(
+          id: 'local-request-thinking',
+          type: 2,
+          user: 3,
+          content: {
+            'cardData': {
+              'type': 'deep_thinking',
+              'taskID': 'local-request',
+              'cardId': 'local-request-thinking',
+              'isLoading': true,
+              'stage': ThinkingStage.thinking.value,
+              'thinkingContent': '',
+            },
+            'id': 'local-request-thinking',
           },
-          'id': 'local-request-thinking',
+        ),
+      );
+
+      reducer.reduce(
+        runtime: runtime,
+        event: {
+          'method': 'turn/completed',
+          'params': {'turnId': 'official-turn-1'},
         },
-      ),
-    );
+      );
 
-    reducer.reduce(
-      runtime: runtime,
-      event: {
-        'method': 'turn/completed',
-        'params': {'turnId': 'official-turn-1'},
-      },
-    );
-
-    final card = runtime.messages.single.cardData!;
-    expect(runtime.isAiResponding, isFalse);
-    expect(runtime.isDeepThinking, isFalse);
-    expect(runtime.currentDispatchTurnId, isNull);
-    expect(card['isLoading'], isFalse);
-    expect(card['stage'], ThinkingStage.complete.value);
-  });
+      final card = runtime.messages.single.cardData!;
+      expect(runtime.isAiResponding, isFalse);
+      expect(runtime.isDeepThinking, isFalse);
+      expect(runtime.currentDispatchTurnId, isNull);
+      expect(card['isLoading'], isFalse);
+      expect(card['stage'], ThinkingStage.complete.value);
+    },
+  );
 
   test('many message ids in one turn stay a single active turn', () {
     // ACP mints a new `agent_message_chunk.messageId` for each assistant
@@ -335,43 +355,80 @@ void main() {
     expect(runtime.isAiResponding, isFalse);
   });
 
-  test('ACP admits a turn from the first session update when no turn started exists', () {
+  test('keeps local run identity stable after ACP turn admission', () {
     runtime
-      ..currentDispatchTurnId = 'request-1-ai'
-      ..lastAgentTurnId = 'request-1-ai'
+      ..currentDispatchTurnId = 'local-run-1'
+      ..activeRunId = 'local-run-1'
       ..isAiResponding = true;
 
     reducer.reduce(
       runtime: runtime,
       event: {
-        'method': 'session/update',
+        'method': 'turn/started',
+        'params': {'sessionId': 'session-1', 'turnId': 'official-turn-1'},
+      },
+    );
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'item/agentMessage/delta',
         'params': {
           'sessionId': 'session-1',
-          'turnId': 'acp-turn-1',
-          'update': {
-            'sessionUpdate': 'agent_message_chunk',
-            'messageId': 'message-1',
-            'content': {'text': 'OpenCode response'},
-          },
+          'turnId': 'official-turn-1',
+          'itemId': 'item-1',
+          'delta': 'hello',
         },
       },
     );
 
-    expect(runtime.activeAcpTurnId, 'acp-turn-1');
-    expect(runtime.messages.single.text, 'OpenCode response');
-
-    reducer.reduce(
-      runtime: runtime,
-      event: {
-        'method': 'turn/completed',
-        'params': {'sessionId': 'session-1', 'turnId': 'acp-turn-1'},
-      },
-    );
-
-    expect(runtime.isAiResponding, isFalse);
-    expect(runtime.currentDispatchTurnId, isNull);
-    expect(runtime.activeAcpTurnId, isNull);
+    final message = runtime.messages.single;
+    expect(runtime.activeRunId, 'local-run-1');
+    expect(runtime.activeAcpTurnId, 'official-turn-1');
+    expect(message.runId, 'local-run-1');
+    expect(message.turnId, 'official-turn-1');
+    expect(message.streamMeta?['runId'], 'local-run-1');
   });
+
+  test(
+    'ACP admits a turn from the first session update when no turn started exists',
+    () {
+      runtime
+        ..currentDispatchTurnId = 'request-1-ai'
+        ..lastAgentTurnId = 'request-1-ai'
+        ..isAiResponding = true;
+
+      reducer.reduce(
+        runtime: runtime,
+        event: {
+          'method': 'session/update',
+          'params': {
+            'sessionId': 'session-1',
+            'turnId': 'acp-turn-1',
+            'update': {
+              'sessionUpdate': 'agent_message_chunk',
+              'messageId': 'message-1',
+              'content': {'text': 'OpenCode response'},
+            },
+          },
+        },
+      );
+
+      expect(runtime.activeAcpTurnId, 'acp-turn-1');
+      expect(runtime.messages.single.text, 'OpenCode response');
+
+      reducer.reduce(
+        runtime: runtime,
+        event: {
+          'method': 'turn/completed',
+          'params': {'sessionId': 'session-1', 'turnId': 'acp-turn-1'},
+        },
+      );
+
+      expect(runtime.isAiResponding, isFalse);
+      expect(runtime.currentDispatchTurnId, isNull);
+      expect(runtime.activeAcpTurnId, isNull);
+    },
+  );
 
   test('late output from an older turn cannot reclaim the active turn', () {
     reducer.reduce(
@@ -560,6 +617,43 @@ void main() {
     expect(message.cardData?['thinkingContent'], '先确认用户消息与当前轮次');
   });
 
+  test('appends multiple ACP reasoning rounds to one thinking card', () {
+    const event = {
+      'method': 'item/reasoning/delta',
+      'params': {
+        'turnId': 'turn-multi-round',
+        'itemId': 'thought-for-one-prompt',
+      },
+    };
+
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        ...event,
+        'params': {
+          ...event['params'] as Map<String, dynamic>,
+          'delta': '第一轮思考',
+        },
+      },
+    );
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        ...event,
+        'params': {
+          ...event['params'] as Map<String, dynamic>,
+          'delta': '第二轮思考',
+        },
+      },
+    );
+
+    final thinkingMessages = runtime.messages
+        .where((message) => message.cardData?['type'] == 'deep_thinking')
+        .toList();
+    expect(thinkingMessages, hasLength(1));
+    expect(thinkingMessages.single.cardData?['thinkingContent'], '第一轮思考第二轮思考');
+  });
+
   test('renders the official ACP session/update envelope', () {
     final result = reducer.reduce(
       runtime: runtime,
@@ -582,6 +676,105 @@ void main() {
     expect(result.handled, isTrue);
     expect(runtime.messages.single.text, '来自标准 ACP');
     expect(runtime.messages.single.user, 2);
+  });
+
+  test('uses sessionId and toolCallId as the canonical tool identity', () {
+    Map<String, dynamic> event({
+      required String status,
+      required String title,
+    }) {
+      return <String, dynamic>{
+        'message': {
+          'method': 'session/update',
+          'turnId': 'turn-1',
+          'params': {
+            'sessionId': 'session-1',
+            'update': {
+              'sessionUpdate': 'tool_call_update',
+              'toolCallId': 'tool-1',
+              'kind': 'execute',
+              'title': title,
+              'status': status,
+              'rawOutput': {'type': 'text', 'text': 'done'},
+            },
+          },
+        },
+      };
+    }
+
+    reducer.reduce(
+      runtime: runtime,
+      event: event(status: 'in_progress', title: 'run'),
+    );
+    reducer.reduce(
+      runtime: runtime,
+      event: event(status: 'completed', title: 'run done'),
+    );
+
+    expect(runtime.messages, hasLength(1));
+    final message = runtime.messages.single;
+    final cardData = message.cardData!;
+    expect(cardData['sessionId'], 'session-1');
+    expect(cardData['turnId'], 'turn-1');
+    expect(cardData['toolCallId'], 'tool-1');
+    expect(cardData['toolKey'], 'session-1:tool-1');
+    expect(message.id, 'tool:session-1:tool-1:command');
+  });
+
+  test('turns an ACP missing-accessibility result into an authorization card', () {
+    final base = <String, dynamic>{
+      'message': {
+        'method': 'session/update',
+        'turnId': 'turn-permission',
+        'params': {
+          'sessionId': 'session-permission',
+          'update': {
+            'sessionUpdate': 'tool_call',
+            'toolCallId': 'tool-permission',
+            'kind': 'other',
+            'title': 'vlm_task',
+            'status': 'in_progress',
+            'rawInput': <String, dynamic>{},
+          },
+        },
+      },
+    };
+    reducer.reduce(runtime: runtime, event: base);
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'method': 'session/update',
+          'turnId': 'turn-permission',
+          'params': {
+            'sessionId': 'session-permission',
+            'update': {
+              'sessionUpdate': 'tool_call_update',
+              'toolCallId': 'tool-permission',
+              'kind': 'other',
+              'title': 'vlm_task',
+              'status': 'failed',
+              'rawOutput': {
+                'type': 'permission_section',
+                'requiredPermissionIds': ['accessibility'],
+                'missing': ['无障碍权限'],
+              },
+            },
+          },
+        },
+      },
+    );
+
+    expect(runtime.messages, hasLength(1));
+    expect(runtime.messages.single.cardData?['type'], 'permission_section');
+    expect(
+      runtime.messages.single.cardData?['requiredPermissionIds'],
+      ['accessibility'],
+    );
+    expect(
+      runtime.messages.single.cardData?['autoOpenAuthorization'],
+      isTrue,
+    );
   });
 
   test('deduplicates repeated committed ACP assistant blocks', () {
@@ -2398,6 +2591,70 @@ diff --git a/lib/main.dart b/lib/main.dart
     expect(runtime.messages.single.streamMeta?['seq'], 1);
   });
 
+  test('reused provider tool ids cannot rewrite a previous turn card', () {
+    void reduceToolTurn(String turnId) {
+      reducer.reduce(
+        runtime: runtime,
+        event: {
+          'message': {
+            'method': 'item/started',
+            'params': {
+              'turnId': turnId,
+              'item': {
+                'id': 'call-1',
+                'type': 'commandExecution',
+                'command': 'echo $turnId',
+              },
+            },
+          },
+        },
+      );
+      reducer.reduce(
+        runtime: runtime,
+        event: {
+          'message': {
+            'method': 'item/completed',
+            'params': {
+              'turnId': turnId,
+              'item': {
+                'id': 'call-1',
+                'type': 'commandExecution',
+                'command': 'echo $turnId',
+                'status': 'completed',
+              },
+            },
+          },
+        },
+      );
+      reducer.reduce(
+        runtime: runtime,
+        event: {
+          'message': {
+            'method': 'turn/completed',
+            'params': {'turnId': turnId},
+          },
+        },
+      );
+    }
+
+    reduceToolTurn('turn-1');
+    reduceToolTurn('turn-2');
+
+    expect(runtime.messages, hasLength(2));
+    expect(runtime.messages.map((message) => message.id).toSet(), <String>{
+      'call-1-agent-command',
+      'turn-2-call-1-agent-command',
+    });
+    final first = runtime.messages.firstWhere(
+      (message) => message.id == 'call-1-agent-command',
+    );
+    final second = runtime.messages.firstWhere(
+      (message) => message.id == 'turn-2-call-1-agent-command',
+    );
+    expect(first.cardData?['taskId'], 'turn-1');
+    expect(second.cardData?['taskId'], 'turn-2');
+  });
+
   test('maps approval requests into codex request card', () {
     reducer.reduce(
       runtime: runtime,
@@ -2695,7 +2952,7 @@ diff --git a/lib/main.dart b/lib/main.dart
     },
   );
 
-  test('new reasoning item finalizes previous loading thinking card', () {
+  test('new reasoning item ids stay in one loading thinking card', () {
     reducer.reduce(
       runtime: runtime,
       event: {
@@ -2748,16 +3005,34 @@ diff --git a/lib/main.dart b/lib/main.dart
       },
     );
 
-    final first = runtime.messages.firstWhere(
-      (message) => message.id == 'reason-1-agent-thinking',
+    final thinkingMessages = runtime.messages
+        .where((message) => message.cardData?['type'] == 'deep_thinking')
+        .toList();
+    expect(thinkingMessages, hasLength(1));
+    expect(thinkingMessages.single.cardData!['isLoading'], isTrue);
+    expect(
+      thinkingMessages.single.cardData!['thinkingContent'],
+      'first thoughtsecond thought',
     );
-    final second = runtime.messages.firstWhere(
-      (message) => message.id == 'reason-2-agent-thinking',
+
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'method': 'turn/completed',
+          'params': {'turnId': 'turn-1'},
+        },
+      },
     );
-    expect(first.cardData!['isLoading'], isFalse);
-    expect(first.cardData!['stage'], ThinkingStage.complete.value);
-    expect(second.cardData!['isLoading'], isTrue);
-    expect(second.cardData!['thinkingContent'], 'second thought');
+
+    final completedThinkingMessages = runtime.messages
+        .where((message) => message.cardData?['type'] == 'deep_thinking')
+        .toList();
+    expect(completedThinkingMessages, hasLength(1));
+    expect(
+      completedThinkingMessages.single.cardData?['stage'],
+      ThinkingStage.complete.value,
+    );
   });
 
   test('turn/completed finalizes the thinking card after reasoning ends', () {

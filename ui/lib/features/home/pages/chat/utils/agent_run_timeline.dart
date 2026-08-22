@@ -65,6 +65,10 @@ class AgentRunTimelineGroup {
   });
 
   final String taskId;
+
+  /// Canonical UI run identity. [taskId] remains as a source-compatible
+  /// compatibility name for expansion state and older callers.
+  String get runId => taskId;
   final AgentRunStatus status;
 
   /// Resolved once, when the group is built, so the live and restored render
@@ -159,7 +163,7 @@ List<AgentRunTimelineEntry> buildAgentRunTimelineEntries(
   final entries = <AgentRunTimelineEntry>[];
 
   for (final message in messages) {
-    final taskId = agentRunParentTaskId(message);
+    final taskId = agentRunId(message);
     if (taskId == null) {
       entries.add(AgentRunTimelineEntry.message(message));
       continue;
@@ -342,12 +346,24 @@ DateTime? _boundaryTimestamp(
   return boundary;
 }
 
-String? agentRunParentTaskId(ChatMessageModel message) {
-  final raw =
-      message.streamMeta?['parentTaskId'] ??
-      message.cardData?['taskID'] ??
-      message.cardData?['taskId'];
-  final normalized = raw?.toString().trim() ?? '';
+/// A provider tool id can be reused on a later turn. If an old persisted tool
+/// snapshot survived with that id, its timestamp is not a reliable boundary
+/// for the current run. Reasoning/text entries are turn-owned anchors, so use
+/// them whenever available; a tool-only run still falls back to its tool
+/// timestamp.
+DateTime? _runBoundaryTimestamp(
+  List<ChatMessageModel> messages, {
+  required bool earliest,
+}) {
+  final contentMessages = messages
+      .where((message) => _cardType(message) != 'agent_tool_summary')
+      .toList(growable: false);
+  return _boundaryTimestamp(contentMessages, earliest: earliest) ??
+      _boundaryTimestamp(messages, earliest: earliest);
+}
+
+String? agentRunId(ChatMessageModel message) {
+  final normalized = message.runId?.trim() ?? '';
   if (normalized.isNotEmpty) {
     return normalized;
   }
@@ -357,6 +373,9 @@ String? agentRunParentTaskId(ChatMessageModel message) {
   return _agentTaskIdFromEntryId(message.id) ??
       _agentTaskIdFromEntryId(message.contentId);
 }
+
+/// Compatibility alias for old callers and persisted-data adapters.
+String? agentRunParentTaskId(ChatMessageModel message) => agentRunId(message);
 
 String agentRunKind(ChatMessageModel message) {
   return (message.streamMeta?['kind'] ?? '').toString().trim().toLowerCase();
@@ -370,7 +389,7 @@ AgentRunTimelineGroup? _buildTimelineGroup(
 }) {
   final taskMessages = _stabilizeTaskMessagesNewestFirst(
     messages
-        .where((message) => agentRunParentTaskId(message) == taskId)
+        .where((message) => agentRunId(message) == taskId)
         .where(_isAgentRunCandidateMessage)
         .toList(growable: false),
   );
@@ -395,10 +414,10 @@ AgentRunTimelineGroup? _buildTimelineGroup(
       conversationAgentId: conversationAgentId,
     ),
     startedAt:
-        _boundaryTimestamp(taskMessages, earliest: true) ?? DateTime.now(),
+        _runBoundaryTimestamp(taskMessages, earliest: true) ?? DateTime.now(),
     finishedAt: isActive
         ? null
-        : _boundaryTimestamp(taskMessages, earliest: false),
+        : _runBoundaryTimestamp(taskMessages, earliest: false),
     segmentsOldestFirst: segments,
   );
 }
@@ -416,13 +435,56 @@ List<ChatMessageModel> _stabilizeTaskMessagesNewestFirst(
   }
   final indexed = <({ChatMessageModel message, int entrySeq, int order})>[];
   final seenSequences = <int>{};
+  var hasStableEntrySequences = true;
   for (var index = 0; index < messages.length; index += 1) {
     final message = messages[index];
     final entrySeq = _wholeIntFromDynamic(message.streamMeta?['entrySeq']);
     if (entrySeq == null || !seenSequences.add(entrySeq)) {
-      return _stabilizePartiallySequencedLegacyTaskNewestFirst(messages);
+      hasStableEntrySequences = false;
+      break;
     }
     indexed.add((message: message, entrySeq: entrySeq, order: index));
+  }
+  // Native history deliberately keeps only the compact display stream meta.
+  // Older persisted ACP snapshots therefore have no entrySeq, even though
+  // their terminal frames still carry a unique seq.  Restore those snapshots
+  // in newest-first seq order; otherwise a run reopens as tool -> thinking ->
+  // answer and the thinking card ends up below the viewport.  Live snapshots
+  // can reuse seq while an entry is being updated, so they stay on the
+  // reducer-owned list order unless every item is a final frame.
+  final finalSequences = <int>[];
+  var allMessagesAreFinal = true;
+  for (final message in messages) {
+    final sequence = _wholeIntFromDynamic(message.streamMeta?['seq']);
+    final isFinal = message.streamMeta?['isFinal'] == true;
+    if (sequence == null || !isFinal) {
+      allMessagesAreFinal = false;
+      break;
+    }
+    finalSequences.add(sequence);
+  }
+  if (allMessagesAreFinal &&
+      finalSequences.length == messages.length &&
+      finalSequences.toSet().length == messages.length) {
+    final ordered = <({ChatMessageModel message, int sequence, int order})>[];
+    for (var index = 0; index < messages.length; index += 1) {
+      ordered.add((
+        message: messages[index],
+        sequence: finalSequences[index],
+        order: index,
+      ));
+    }
+    ordered.sort((left, right) {
+      final sequenceCompare = right.sequence.compareTo(left.sequence);
+      if (sequenceCompare != 0) {
+        return sequenceCompare;
+      }
+      return left.order.compareTo(right.order);
+    });
+    return ordered.map((item) => item.message).toList(growable: false);
+  }
+  if (!hasStableEntrySequences) {
+    return _stabilizePartiallySequencedLegacyTaskNewestFirst(messages);
   }
   indexed.sort((left, right) {
     final sequenceCompare = right.entrySeq.compareTo(left.entrySeq);
@@ -442,10 +504,7 @@ List<ChatMessageModel> _stabilizeTaskMessagesNewestFirst(
 List<ChatMessageModel> _stabilizePartiallySequencedLegacyTaskNewestFirst(
   List<ChatMessageModel> messages,
 ) {
-  final taskIds = messages
-      .map(agentRunParentTaskId)
-      .whereType<String>()
-      .toSet();
+  final taskIds = messages.map(agentRunId).whereType<String>().toSet();
   if (taskIds.length != 1 || !_legacyAgentTaskId.hasMatch(taskIds.single)) {
     return messages;
   }

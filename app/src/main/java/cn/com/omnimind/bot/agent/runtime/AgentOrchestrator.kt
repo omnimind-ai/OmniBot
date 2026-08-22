@@ -1426,6 +1426,16 @@ class AgentOrchestrator(
     }
 
     private fun classifyRetryableTurnFailure(error: Throwable): RetryDecision {
+        // The LLM client already owns the stream-idle deadline. Retrying this
+        // exact request from the orchestrator only multiplies a dead-provider
+        // wait (45s x 3 previously) and leaves ACP/UI stuck on "thinking".
+        // Surface the failure so the user can retry explicitly.
+        if (error.message.orEmpty().contains("chat completion stream idle timeout")) {
+            return RetryDecision(
+                retryable = false,
+                reason = error.message.orEmpty()
+            )
+        }
         if (error is AgentStreamRequestException) {
             val statusCode = error.statusCode
             val providerFailureText = buildString {

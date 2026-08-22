@@ -157,16 +157,60 @@ class AgentConversationHistoryRepository(
         fallbackStatus: String = STATUS_RUNNING,
         fallbackSummary: String = ""
     ) = withContext(Dispatchers.IO) {
+        val normalizedEntryId = entryId.trim()
         val existing = loadThreadEntryByIdSafe(
             conversationId = conversationId,
             conversationMode = conversationMode,
-            entryId = entryId
+            entryId = normalizedEntryId
         )
+        // ACP tool/call ids are scoped to a single provider turn. Providers
+        // are allowed to reuse ids such as `call_1` on the next prompt, while
+        // our conversation table keys entries by conversation + entryId. If
+        // we reuse the raw id here, the new turn updates the old row and
+        // inherits its createdAt, which makes the UI show a wrong duration and
+        // can make the old turn lose its tool card entirely.
+        val incomingTaskId = payload["taskId"]?.toString()?.trim().orEmpty()
+        val existingTaskId = existing
+            ?.takeIf { it.entryType == ENTRY_TYPE_TOOL_EVENT }
+            ?.let { AgentConversationHistorySupport.readMap(it.payloadJson)["taskId"] }
+            ?.toString()
+            ?.trim()
+            .orEmpty()
+        val storageEntryId = if (
+            normalizedEntryId.isNotEmpty() &&
+            incomingTaskId.isNotEmpty() &&
+            existingTaskId.isNotEmpty() &&
+            existingTaskId != incomingTaskId
+        ) {
+            "$incomingTaskId-$normalizedEntryId"
+        } else {
+            normalizedEntryId
+        }
+        val storageExisting = if (storageEntryId == normalizedEntryId) {
+            existing
+        } else {
+            loadThreadEntryByIdSafe(
+                conversationId = conversationId,
+                conversationMode = conversationMode,
+                entryId = storageEntryId
+            )
+        }
+        val storagePayload = payload.toMutableMap().apply {
+            put("cardId", storageEntryId)
+            val streamMeta = (get("streamMeta") as? Map<*, *>)
+                ?.entries
+                ?.associate { (key, value) -> key.toString() to value }
+                ?.toMutableMap()
+            if (streamMeta != null) {
+                streamMeta["entryId"] = storageEntryId
+                put("streamMeta", streamMeta)
+            }
+        }
         val mergedPayload = mergeToolPayload(
-            existing = existing?.takeIf { it.entryType == ENTRY_TYPE_TOOL_EVENT }?.let {
+            existing = storageExisting?.takeIf { it.entryType == ENTRY_TYPE_TOOL_EVENT }?.let {
                 AgentConversationHistorySupport.readMap(it.payloadJson)
             }.orEmpty(),
-            incoming = payload,
+            incoming = storagePayload,
             fallbackStatus = fallbackStatus,
             fallbackSummary = fallbackSummary
         )
@@ -179,15 +223,15 @@ class AgentConversationHistoryRepository(
 
         upsertEntry(
             AgentConversationEntry(
-                id = existing?.id ?: 0,
+                id = storageExisting?.id ?: 0,
                 conversationId = conversationId,
                 conversationMode = conversationMode,
-                entryId = entryId,
+                entryId = storageEntryId,
                 entryType = ENTRY_TYPE_TOOL_EVENT,
                 status = normalizedStatus,
                 summary = normalizedSummary,
                 payloadJson = gson.toJson(mergedPayload),
-                createdAt = existing?.createdAt ?: System.currentTimeMillis(),
+                createdAt = storageExisting?.createdAt ?: System.currentTimeMillis(),
                 updatedAt = System.currentTimeMillis()
             )
         )

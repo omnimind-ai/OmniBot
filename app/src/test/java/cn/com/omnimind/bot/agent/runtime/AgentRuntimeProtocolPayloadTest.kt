@@ -2,6 +2,7 @@ package cn.com.omnimind.bot.agent.runtime
 
 import cn.com.omnimind.bot.mcp.McpServerState
 import cn.com.omnimind.baselib.llm.ModelProviderProfile
+import cn.com.omnimind.baselib.llm.ProviderModelOption
 import com.agentclientprotocol.model.McpServer
 import java.io.File
 import org.junit.Assert.assertEquals
@@ -330,6 +331,19 @@ class AgentRuntimeProtocolPayloadTest {
     }
 
     @Test
+    fun deepSeekHarnessDefaultReasoningEffortKeepsSimpleTurnsResponsive() {
+        val environment = DeepSeekHarnessConfig(
+            baseUrl = "https://gateway.example/v1",
+            model = "deepseek-custom",
+            apiKey = "sk-test"
+        ).toEnvironment()
+
+        assertEquals("high", environment["DSH_REASONING_EFFORT"])
+        assertEquals("high", environment["DSH_PI_AI_REASONING_EFFORT"])
+        assertEquals("enabled", environment["DSH_THINKING"])
+    }
+
+    @Test
     fun deepSeekHarnessProviderConfigEditPreservesComposerPermissionDefault() {
         val restored = deepSeekHarnessConfigFromArgs(
             args = mapOf(
@@ -404,13 +418,70 @@ class AgentRuntimeProtocolPayloadTest {
             AgentProviderMappingInput(
                 agentId = AcpAgentProfileStore.CODEX_AGENT_ID,
                 provider = credentials,
-                model = "glm-5.1"
+                model = "glm-5.1",
+                harnessAdapter = AcpHarnessAdapters.codex,
             )
         )
         assertEquals("glm-5.1", codex.codexModel)
         assertEquals(
             "https://gateway.example/v1",
             codex.environment["OPENAI_BASE_URL"]
+        )
+    }
+
+    @Test
+    fun launchConfigWritesAreSelectedByHarnessAdapterNotDshName() {
+        val credentials = AgentProviderCredentials(
+            baseUrl = "https://gateway.example/v1",
+            apiKey = "sk-shared",
+        )
+        val providerModels = listOf(ProviderModelOption(id = "glm-5.1"))
+
+        val openCodeInput = AgentProviderMappingInput(
+            agentId = "opencode-acp",
+            provider = credentials,
+            model = "glm-5.1",
+            harnessAdapter = AcpHarnessAdapters.openCode,
+        )
+        val openCodeMapping = AgentConfigAdapterRegistry.map(openCodeInput)
+        val openCodeWrites = AgentConfigAdapterRegistry.launchConfigWrites(
+            input = openCodeInput,
+            mapping = openCodeMapping,
+            providerModels = providerModels,
+            existingConfig = "{\"mcp\":{\"existing\":{}}}",
+        )
+        assertEquals(1, openCodeWrites.size)
+        assertEquals(OPENCODE_CONFIG_PATH, openCodeWrites.single().path)
+        assertTrue(openCodeWrites.single().content.contains("\"existing\""))
+
+        val dshWithStandardAdapter = AgentConfigAdapterRegistry.map(
+            AgentProviderMappingInput(
+                agentId = AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID,
+                provider = credentials,
+                model = "glm-5.1",
+                harnessAdapter = AcpHarnessAdapters.standard,
+            )
+        )
+        assertNull(dshWithStandardAdapter.deepSeekConfig)
+        assertTrue(
+            AgentConfigAdapterRegistry.launchConfigWrites(
+                input = AgentProviderMappingInput(
+                    agentId = AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID,
+                    provider = credentials,
+                    model = "glm-5.1",
+                    harnessAdapter = AcpHarnessAdapters.deepSeekHarness,
+                ),
+                mapping = AgentConfigAdapterRegistry.map(
+                    AgentProviderMappingInput(
+                        agentId = AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID,
+                        provider = credentials,
+                        model = "glm-5.1",
+                        harnessAdapter = AcpHarnessAdapters.deepSeekHarness,
+                    )
+                ),
+                providerModels = providerModels,
+                existingConfig = "",
+            ).isEmpty()
         )
     }
 

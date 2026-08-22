@@ -13,6 +13,7 @@ import 'package:ui/models/chat_message_model.dart';
 import 'package:ui/models/conversation_model.dart';
 import 'package:ui/services/assists_core_service.dart';
 import 'package:ui/services/agent_event_reducer.dart';
+import 'package:ui/services/agent_identity.dart';
 import 'package:ui/services/agent_message_kinds.dart';
 import 'package:ui/services/agent_tool_call_parser.dart';
 import 'package:ui/services/conversation_history_service.dart';
@@ -116,6 +117,12 @@ class ChatConversationRuntimeState {
   final Map<String, int> agentEntryStartTimes = <String, int>{};
   final Map<String, int> agentReplayDeltaOffsets = <String, int>{};
   final Set<String> completedAgentTurnIds = <String>{};
+
+  /// Official ACP turn -> stable local run. The map is retained after a run
+  /// completes so a delayed terminal/update event can still finalize the
+  /// correct historical cards without stealing the next run.
+  final Map<String, String> acpTurnToRunIds = <String, String>{};
+  final Set<String> completedAcpTurnIds = <String>{};
   int agentNextEntrySequence = 0;
   bool isAiResponding = false;
   bool isContextCompressing = false;
@@ -123,6 +130,10 @@ class ChatConversationRuntimeState {
   String deepThinkingContent = '';
   bool isDeepThinking = false;
   String? currentDispatchTurnId;
+
+  /// Stable UI ownership key. Unlike [activeAcpTurnId], this never changes
+  /// when the provider admits its official turn id.
+  String? activeRunId;
 
   /// Official ACP identity of the turn owning this runtime. The dispatch id
   /// remains a local request/render key only until ACP admits the prompt.
@@ -146,6 +157,20 @@ class ChatConversationRuntimeState {
   ChatBrowserSessionSnapshot? browserSessionSnapshot;
   int _localSnapshotEchoSuppressionUntilMillis = 0;
 
+  /// The single host-facing run identity. Protocol consumers should use the
+  /// ACP fields inside this value instead of treating taskId, turnId, or
+  /// sessionId as interchangeable.
+  AgentRunIdentity? get activeRunIdentity {
+    final runId = (activeRunId ?? currentDispatchTurnId)?.trim() ?? '';
+    if (runId.isEmpty) return null;
+    return AgentRunIdentity(
+      runId: runId,
+      conversationId: conversationId,
+      sessionId: activeAcpSessionId,
+      turnId: activeAcpTurnId,
+    );
+  }
+
   bool get hasInFlightTask =>
       isAiResponding ||
       isCheckingExecutableTask ||
@@ -163,16 +188,29 @@ class ChatConversationRuntimeState {
         .millisecondsSinceEpoch;
   }
 
-  /// Turns currently believed to be producing output.
+  /// Runs currently believed to be producing output.
   ///
-  /// Every member must be a TURN id. The text caches are deliberately excluded:
-  /// their keys are per-message, and mixing the two id spaces is what produced
-  /// one agent avatar and one "processing" row per streamed message.
+  /// Every member is a stable UI run id. ACP turn ids and per-message text
+  /// cache keys are deliberately excluded: mixing those scopes is what
+  /// produced one agent avatar and one "processing" row per streamed message.
   Set<String> get activeAgentTurnIds {
     final ids = <String>{};
-    final currentTaskId = currentDispatchTurnId?.trim() ?? '';
-    if (currentTaskId.isNotEmpty) {
-      ids.add(currentTaskId);
+    // A run id is an ownership key, not proof that a run is still alive.
+    // Restored conversations retain message runIds, and an older snapshot can
+    // also leave activeRunId behind after the terminal event. Only expose the
+    // id to the timeline while the runtime has live work to render.
+    final hasLiveWork =
+        isAiResponding ||
+        isCheckingExecutableTask ||
+        isExecutingTask ||
+        currentAiMessages.isNotEmpty ||
+        currentThinkingMessages.isNotEmpty;
+    if (hasLiveWork) {
+      final currentTaskId =
+          (activeRunId ?? currentDispatchTurnId)?.trim() ?? '';
+      if (currentTaskId.isNotEmpty) {
+        ids.add(currentTaskId);
+      }
     }
     final lastTaskId = lastAgentTurnId?.trim() ?? '';
     if (isAiResponding && lastTaskId.isNotEmpty) {
@@ -180,7 +218,7 @@ class ChatConversationRuntimeState {
     }
     final pendingTaskId = pendingAgentTextTaskId?.trim() ?? '';
     if (pendingTaskId.isNotEmpty) {
-      ids.add(pendingTaskId);
+      ids.add((activeRunId ?? pendingTaskId).trim());
     }
     return ids;
   }
@@ -191,7 +229,44 @@ class ChatConversationRuntimeState {
     agentEntryStartTimes.clear();
     agentReplayDeltaOffsets.clear();
     completedAgentTurnIds.clear();
+    acpTurnToRunIds.clear();
+    completedAcpTurnIds.clear();
     messages.dispose();
+  }
+
+  String? resolveRunId({String? sessionId, String? turnId, String? fallback}) {
+    final key = acpTurnKey(sessionId: sessionId, turnId: turnId);
+    if (key.isNotEmpty) {
+      final existing = acpTurnToRunIds[key];
+      if (existing != null) return existing;
+      final turnOnlyKey = acpTurnKey(turnId: turnId);
+      final turnOnly = acpTurnToRunIds[turnOnlyKey];
+      if (turnOnly != null) return turnOnly;
+    }
+    final active = activeRunId?.trim() ?? '';
+    if (active.isNotEmpty) {
+      if (key.isNotEmpty) acpTurnToRunIds[key] = active;
+      final turnOnlyKey = acpTurnKey(turnId: turnId);
+      if (turnOnlyKey.isNotEmpty) acpTurnToRunIds[turnOnlyKey] = active;
+      return active;
+    }
+    final normalizedFallback = fallback?.trim() ?? '';
+    if (normalizedFallback.isEmpty) return null;
+    activeRunId = normalizedFallback;
+    if (key.isNotEmpty) acpTurnToRunIds[key] = normalizedFallback;
+    return normalizedFallback;
+  }
+
+  String? acpTurnIdForRun(String runId) {
+    final normalized = runId.trim();
+    if (normalized.isEmpty) return null;
+    if (activeRunId == normalized) return activeAcpTurnId;
+    for (final entry in acpTurnToRunIds.entries) {
+      if (entry.value != normalized) continue;
+      final separator = entry.key.lastIndexOf(':');
+      return separator == -1 ? entry.key : entry.key.substring(separator + 1);
+    }
+    return null;
   }
 
   bool acceptsAcpEvent({String? sessionId, String? turnId}) {
@@ -205,7 +280,8 @@ class ChatConversationRuntimeState {
     // the first event seen after a Xiaowan/DSH switch and silently rebind the
     // runtime to the old session.
     if (incomingTurnId.isNotEmpty &&
-        completedAgentTurnIds.contains(incomingTurnId)) {
+        (completedAgentTurnIds.contains(incomingTurnId) ||
+            completedAcpTurnIds.contains(incomingTurnId))) {
       return false;
     }
     final currentSessionId = activeAcpSessionId?.trim() ?? '';
@@ -474,13 +550,32 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     runtime.deepThinkingContent = deepThinkingContent;
     runtime.isDeepThinking = isDeepThinking;
     runtime.currentDispatchTurnId = currentDispatchTurnId;
+    final snapshotRunId = normalizedMessages
+        .map((message) => message.runId)
+        .whereType<String>()
+        .map((value) => value.trim())
+        .firstWhere((value) => value.isNotEmpty, orElse: () => '');
+    final snapshotHasLiveWork =
+        isAiResponding ||
+        isCheckingExecutableTask ||
+        isExecutingTask ||
+        (currentAiMessages?.isNotEmpty ?? false) ||
+        (currentThinkingMessages?.isNotEmpty ?? false);
+    runtime.activeRunId = snapshotHasLiveWork
+        ? (currentDispatchTurnId?.trim().isNotEmpty == true
+              ? currentDispatchTurnId
+              : (snapshotRunId.isEmpty ? null : snapshotRunId))
+        : null;
     // A snapshot carries only a render hint. The official ACP turn identity
     // must be admitted by `turn/started`/`session/update`, never guessed from
     // a local placeholder id.
     runtime.activeAcpTurnId = null;
-    if (!hadInFlightTask) {
-      runtime.activeAcpSessionId = null;
-    }
+    // An idle persisted snapshot is authoritative during restore. Do not
+    // carry the previous session into a completed conversation merely because
+    // the runtime still had a stale dispatch id before this replacement.
+    runtime.activeAcpSessionId = snapshotHasLiveWork && hadInFlightTask
+        ? runtime.activeAcpSessionId
+        : null;
     runtime.currentThinkingStage = currentThinkingStage;
     runtime.isInputAreaVisible = isInputAreaVisible;
     runtime.isExecutingTask = isExecutingTask;
@@ -592,18 +687,25 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     // official id claim the new prompt's terminal event.
     if (runtime.currentDispatchTurnId != taskId) {
       runtime.activeAcpTurnId = null;
+      runtime.activeRunId = taskId;
     }
+    runtime.activeRunId ??= taskId;
     _taskBindings[taskId] = _TaskBinding(
       conversationId: conversationId,
       mode: mode,
     );
   }
 
-  /// Creates the render-side thinking state as soon as an ACP prompt is
-  /// admitted locally. The first provider reasoning delta can arrive much
-  /// later (or be absent for a non-thinking model), so the UI must not use
-  /// that delta as the turn-start signal.
-  void primeAcpThinking({
+  /// Marks an ACP turn as locally active without creating a visible thinking
+  /// card. The old implementation eagerly inserted an empty
+  /// `deep_thinking` card here, which made every execution start with a
+  /// misleading "正在思考" popup before ACP had emitted any reasoning.
+  ///
+  /// Actual reasoning/item/tool/text events still create their cards through
+  /// the reducer. Keeping the active-turn bookkeeping here is important for
+  /// adapters that do not emit a synthetic `turn/started` notification: their
+  /// first turn-scoped event still needs to be admitted to this local turn.
+  void beginAcpTurn({
     required String taskId,
     required int conversationId,
     required String mode,
@@ -617,63 +719,21 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
 
     runtime.isAiResponding = true;
     runtime.currentDispatchTurnId = taskId;
+    runtime.activeRunId = taskId;
     runtime.lastAgentTurnId = taskId;
     runtime.currentThinkingStage = ThinkingStage.thinking.value;
-    runtime.isDeepThinking = true;
-
-    // Agent status refresh can complete after this method was already called
-    // in the optimistic preflight path. Keep priming idempotent; otherwise a
-    // second call would split the empty placeholder into a phantom thinking
-    // round before the first real reasoning chunk arrives.
-    final existingCardId = runtime.activeThinkingCardId;
-    if (existingCardId != null &&
-        runtime.messages.any((message) => message.id == existingCardId)) {
-      return;
-    }
-
-    if (runtime.thinkingRound == 0) {
-      runtime.thinkingRound = 1;
-      runtime.activeThinkingCardId = _baseThinkingCardId(taskId);
-      final exists = runtime.messages.any(
-        (msg) => msg.id == runtime.activeThinkingCardId,
-      );
-      if (exists) {
-        _updateThinkingCard(
-          runtime,
-          taskId,
-          cardId: runtime.activeThinkingCardId,
-          isLoading: true,
-          stage: ThinkingStage.thinking.value,
-          lockCompleted: false,
-        );
-      } else {
-        _createThinkingCard(
-          runtime,
-          taskId,
-          cardId: runtime.activeThinkingCardId,
-          isLoading: true,
-          stage: ThinkingStage.thinking.value,
-        );
-      }
-      notifyListeners();
-      schedulePersistRuntimeConversation(
-        conversationId: conversationId,
-        mode: mode,
-      );
-      return;
-    }
-
-    _flushThinkingBatch(
-      runtime,
-      taskId,
-      _StreamingTextStreamKind.pureChatThinking,
-    );
-    runtime.pendingThinkingRoundSplit = true;
     notifyListeners();
-    schedulePersistRuntimeConversation(
-      conversationId: conversationId,
-      mode: mode,
-    );
+  }
+
+  /// Compatibility name for older callers. Starting a turn must stay
+  /// presentation-free; real ACP events are the only source of thinking
+  /// cards.
+  void primeAcpThinking({
+    required String taskId,
+    required int conversationId,
+    required String mode,
+  }) {
+    beginAcpTurn(taskId: taskId, conversationId: conversationId, mode: mode);
   }
 
   /// Compatibility name for older pure-chat call sites. Pure chat is still
@@ -683,11 +743,7 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     required int conversationId,
     required String mode,
   }) {
-    primeAcpThinking(
-      taskId: taskId,
-      conversationId: conversationId,
-      mode: mode,
-    );
+    beginAcpTurn(taskId: taskId, conversationId: conversationId, mode: mode);
   }
 
   void unregisterTask(String taskId) {
@@ -702,6 +758,7 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
       _rememberCompletedTurn(runtime, taskId);
       if (officialTurnId != null && officialTurnId.isNotEmpty) {
         _rememberCompletedTurn(runtime, officialTurnId);
+        runtime.completedAcpTurnIds.add(officialTurnId);
       }
       _flushStreamingTextForTask(runtime, taskId);
       _clearStreamingTextBatchesForTask(runtime, taskId);
@@ -709,6 +766,9 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
       runtime.currentThinkingMessages.remove(taskId);
       if (runtime.currentDispatchTurnId == taskId) {
         runtime.currentDispatchTurnId = null;
+      }
+      if (runtime.activeRunId == taskId) {
+        runtime.activeRunId = null;
       }
       if (runtime.activeAcpTurnId == taskId) {
         runtime.activeAcpTurnId = null;
@@ -764,14 +824,8 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
       conversation: conversation,
       initialChatIslandDisplayLayer: ChatIslandDisplayLayer.mode,
     );
-    final params = event['params'];
-    final eventParams = params is Map ? params : const <String, dynamic>{};
-    final eventSessionId = _runtimeEventString(
-      event['sessionId'] ?? eventParams['sessionId'],
-    );
-    final eventTurnId = _runtimeEventString(
-      event['turnId'] ?? eventParams['turnId'],
-    );
+    final eventSessionId = acpEventSessionId(event);
+    final eventTurnId = acpEventTurnId(event);
     if (!runtime.acceptsAcpEvent(
       sessionId: eventSessionId,
       turnId: eventTurnId,
@@ -791,11 +845,6 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
       }
     }
     return result;
-  }
-
-  String? _runtimeEventString(dynamic value) {
-    final normalized = value?.toString().trim() ?? '';
-    return normalized.isEmpty ? null : normalized;
   }
 
   void _annotateAgentMessages(
@@ -831,10 +880,19 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
         stringValue(event['agentName']) ??
         stringValue(params?['agentName']) ??
         stringValue(envelope?['agentName']);
-    final taskId =
+    final protocolTurnId =
         result.turnId ??
         stringValue(event['turnId']) ??
         stringValue(params?['turnId']);
+    final protocolSessionId =
+        stringValue(event['sessionId']) ??
+        stringValue(params?['sessionId']) ??
+        stringValue(envelope?['sessionId']);
+    final taskId = runtime.resolveRunId(
+      sessionId: protocolSessionId,
+      turnId: protocolTurnId,
+      fallback: runtime.activeRunId ?? runtime.currentDispatchTurnId,
+    );
 
     for (var index = 0; index < runtime.messages.length; index += 1) {
       final message = runtime.messages[index];
@@ -852,7 +910,9 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
       }
       final parentTaskId = stringValue(
         message.streamMeta?['parentTaskId'] ??
+            message.streamMeta?['runId'] ??
             cardData?['taskId'] ??
+            cardData?['runId'] ??
             cardData?['taskID'],
       );
       if (taskId != null && parentTaskId != null && parentTaskId != taskId) {
@@ -882,6 +942,23 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     required String mode,
     bool removeCard = true,
   }) {
+    clearTaskThinkingPresentation(
+      taskId: taskId,
+      conversationId: conversationId,
+      mode: mode,
+      removeCard: removeCard,
+    );
+  }
+
+  /// Removes the optimistic thinking surface when a turn fails before the
+  /// first official ACP update. Without this, a Provider/connect error leaves
+  /// the chat showing an infinite "正在思考" card even though the turn ended.
+  void clearTaskThinkingPresentation({
+    required String taskId,
+    required int conversationId,
+    required String mode,
+    bool removeCard = true,
+  }) {
     final runtime = runtimeFor(conversationId: conversationId, mode: mode);
     if (runtime == null) return;
 
@@ -890,11 +967,22 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
       taskId,
       _StreamingTextStreamKind.pureChatThinking,
     );
+    _flushThinkingBatch(
+      runtime,
+      taskId,
+      _StreamingTextStreamKind.agentThinking,
+    );
     runtime.currentThinkingMessages.remove(taskId);
     runtime.deepThinkingContent = '';
     runtime.isDeepThinking = false;
-    runtime.lastAgentTurnId = null;
-    runtime.activeThinkingCardId = null;
+    if (runtime.lastAgentTurnId == taskId) {
+      runtime.lastAgentTurnId = null;
+    }
+    if (runtime.activeThinkingCardId != null &&
+        (runtime.activeThinkingCardId == taskId ||
+            runtime.activeThinkingCardId!.startsWith('$taskId-thinking'))) {
+      runtime.activeThinkingCardId = null;
+    }
     runtime.pendingThinkingRoundSplit = false;
     runtime.thinkingRound = 0;
     if (removeCard) {

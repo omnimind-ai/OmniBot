@@ -537,6 +537,7 @@ internal class AcpAgentProfileStore(context: Context) {
                     "@agentclientprotocol/codex-acp@1.1.7"
                 ),
                 terminalPackageId = "codex",
+                harnessAdapter = AcpHarnessAdapters.codex,
                 usesSharedProvider = true,
             ),
             "claude-code-acp" to AcpOfficialRuntime(
@@ -547,12 +548,14 @@ internal class AcpAgentProfileStore(context: Context) {
                     "@agentclientprotocol/claude-agent-acp@0.61.0"
                 ),
                 terminalPackageId = "claude_code",
+                harnessAdapter = AcpHarnessAdapters.claudeCode,
                 usesSharedProvider = true,
             ),
             "opencode-acp" to AcpOfficialRuntime(
                 discoveryCommand = "opencode",
                 managedAdapterPackage = "opencode-ai@latest",
                 terminalPackageId = "opencode",
+                harnessAdapter = AcpHarnessAdapters.openCode,
                 usesSharedProvider = true,
             ),
             DEEPSEEK_HARNESS_AGENT_ID to AcpOfficialRuntime(

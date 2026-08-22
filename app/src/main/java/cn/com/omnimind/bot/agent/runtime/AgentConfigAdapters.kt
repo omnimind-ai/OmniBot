@@ -37,11 +37,27 @@ internal data class AgentProviderMapping(
     val codexBaseUrl: String? = null,
     /** Official OpenCode model reference (provider/model), written to opencode.json. */
     val openCodeModel: String? = null,
-    val openCodeBaseUrl: String? = null
+    val openCodeBaseUrl: String? = null,
+    /** Optional Harness-owned config file read before launch. */
+    val launchConfigPath: String? = null,
+    val launchConfigExecutorKey: String? = null,
+)
+
+internal data class AgentConfigWrite(
+    val path: String,
+    val content: String,
+    val executorKey: String,
 )
 
 internal interface AgentConfigAdapter {
     fun map(input: AgentProviderMappingInput): AgentProviderMapping
+
+    fun launchConfigWrites(
+        input: AgentProviderMappingInput,
+        mapping: AgentProviderMapping,
+        providerModels: List<ProviderModelOption>,
+        existingConfig: String,
+    ): List<AgentConfigWrite> = emptyList()
 }
 
 internal object AgentConfigAdapterRegistry {
@@ -58,14 +74,30 @@ internal object AgentConfigAdapterRegistry {
             ?: AgentProviderMapping()
     }
 
+    fun launchConfigWrites(
+        input: AgentProviderMappingInput,
+        mapping: AgentProviderMapping,
+        providerModels: List<ProviderModelOption>,
+        existingConfig: String,
+    ): List<AgentConfigWrite> = adapters.firstOrNull { it.supports(input) }
+        ?.launchConfigWrites(
+            input = input,
+            mapping = mapping,
+            providerModels = providerModels,
+            existingConfig = existingConfig,
+        )
+        .orEmpty()
+
     private fun AgentConfigAdapter.supports(input: AgentProviderMappingInput): Boolean {
         return when (this) {
             DeepSeekHarnessConfigAdapter ->
                 input.harnessAdapter === AcpHarnessAdapters.deepSeekHarness
             CodexConfigAdapter ->
-                input.agentId == AcpAgentProfileStore.CODEX_AGENT_ID
-            ClaudeCodeConfigAdapter -> input.agentId == CLAUDE_CODE_AGENT_ID
-            OpenCodeConfigAdapter -> input.agentId == OPENCODE_AGENT_ID
+                input.harnessAdapter === AcpHarnessAdapters.codex
+            ClaudeCodeConfigAdapter ->
+                input.harnessAdapter === AcpHarnessAdapters.claudeCode
+            OpenCodeConfigAdapter ->
+                input.harnessAdapter === AcpHarnessAdapters.openCode
             else -> false
         }
     }
@@ -109,6 +141,38 @@ private object CodexConfigAdapter : AgentConfigAdapter {
             codexBaseUrl = provider?.baseUrl?.let(::normalizeCodexBaseUrl)
         )
     }
+
+    override fun launchConfigWrites(
+        input: AgentProviderMappingInput,
+        mapping: AgentProviderMapping,
+        providerModels: List<ProviderModelOption>,
+        existingConfig: String,
+    ): List<AgentConfigWrite> {
+        val provider = input.provider ?: return emptyList()
+        val model = mapping.codexModel ?: return emptyList()
+        return listOf(
+            AgentConfigWrite(
+                path = CODEX_CONFIG_TOML_PATH,
+                content = buildCodexConfigToml(
+                    baseUrl = mapping.codexBaseUrl ?: provider.baseUrl,
+                    model = model,
+                    wireApi = mapping.codexWireApi ?: OpenAiWireApi.RESPONSES,
+                    modelCatalogPath = CODEX_MODEL_CATALOG_JSON_PATH,
+                ),
+                executorKey = "codex-agent-config-write",
+            ),
+            AgentConfigWrite(
+                path = CODEX_AUTH_JSON_PATH,
+                content = buildCodexAuthJson(provider.apiKey),
+                executorKey = "codex-agent-config-write",
+            ),
+            AgentConfigWrite(
+                path = CODEX_MODEL_CATALOG_JSON_PATH,
+                content = buildCodexModelCatalogJson(providerModels),
+                executorKey = "codex-agent-config-write",
+            ),
+        )
+    }
 }
 
 private object ClaudeCodeConfigAdapter : AgentConfigAdapter {
@@ -142,7 +206,30 @@ private object OpenCodeConfigAdapter : AgentConfigAdapter {
                 "OPENAI_API_KEY" to provider.apiKey
             ),
             openCodeModel = model?.let { "$OPEN_CODE_PROVIDER_ID/$it" },
-            openCodeBaseUrl = normalizeOpenCodeBaseUrl(provider.baseUrl)
+            openCodeBaseUrl = normalizeOpenCodeBaseUrl(provider.baseUrl),
+            launchConfigPath = OPENCODE_CONFIG_PATH,
+            launchConfigExecutorKey = "opencode-agent-config-read",
+        )
+    }
+
+    override fun launchConfigWrites(
+        input: AgentProviderMappingInput,
+        mapping: AgentProviderMapping,
+        providerModels: List<ProviderModelOption>,
+        existingConfig: String,
+    ): List<AgentConfigWrite> {
+        val provider = input.provider ?: return emptyList()
+        val model = mapping.openCodeModel ?: return emptyList()
+        return listOf(
+            AgentConfigWrite(
+                path = OPENCODE_CONFIG_PATH,
+                content = buildOpenCodeConfigJson(
+                    model = model,
+                    baseUrl = mapping.openCodeBaseUrl ?: provider.baseUrl,
+                    existingConfigJson = existingConfig,
+                ),
+                executorKey = "opencode-agent-config-write",
+            )
         )
     }
 }
@@ -358,11 +445,18 @@ internal fun buildSharedAgentProviderEnvironment(
     agentId: String,
     credentials: AgentProviderCredentials?
 ): Map<String, String> {
+    // Compatibility helper for older callers that still pass an agent id.
+    // The actual mapping is still selected by the resolved Harness adapter.
+    val harnessAdapter = AcpAgentProfileStore.OFFICIAL_AGENTS
+        .firstOrNull { it.id == agentId }
+        ?.let(AcpHarnessAdapters::forProfile)
+        ?: AcpHarnessAdapters.standard
     return AgentConfigAdapterRegistry.map(
         AgentProviderMappingInput(
             agentId = agentId,
             provider = credentials,
-            model = null
+            model = null,
+            harnessAdapter = harnessAdapter,
         )
     ).environment
 }

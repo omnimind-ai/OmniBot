@@ -4,7 +4,6 @@ package cn.com.omnimind.bot.agent.runtime
 
 import android.util.Log
 import android.content.Context
-import cn.com.omnimind.assists.controller.http.HttpController
 import cn.com.omnimind.baselib.llm.ChatCompletionMessage
 import cn.com.omnimind.baselib.llm.ModelProviderConfigStore
 import cn.com.omnimind.baselib.llm.ModelProviderProfile
@@ -22,6 +21,7 @@ import cn.com.omnimind.bot.agent.AgentScheduleToolBridge
 import cn.com.omnimind.bot.agent.NoOpAgentRunControl
 import cn.com.omnimind.bot.agent.OmniAgentExecutor
 import cn.com.omnimind.bot.agent.ToolExecutionResult
+import cn.com.omnimind.bot.agent.resolveAgentPermissionIds
 import cn.com.omnimind.bot.plugin.sandbox.XiaowanChatCompletionRequestFactory
 import com.agentclientprotocol.agent.Agent
 import com.agentclientprotocol.agent.AgentInfo
@@ -61,8 +61,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withTimeout
-import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.JsonElement
@@ -149,31 +147,60 @@ private class XiaowanAgentSupport(
     private val scheduleToolBridge: AgentScheduleToolBridge,
     private val conversationIdProvider: suspend (String) -> Long?,
 ) : AgentSupport {
-    companion object {
-        private const val MODEL_DISCOVERY_TIMEOUT_MS = 4_000L
+    private companion object {
+        private const val TAG = "XiaowanAcpConnection"
     }
 
-    override suspend fun initialize(clientInfo: ClientInfo): AgentInfo = AgentInfo(
-        protocolVersion = 1,
-        capabilities = AgentCapabilities(
-            promptCapabilities = PromptCapabilities(
-                image = true,
-                embeddedContext = true,
+    @Volatile
+    private var cachedModels: XiaowanModels? = null
+
+    override suspend fun initialize(clientInfo: ClientInfo): AgentInfo {
+        // Provider/model resolution is owned by the shared binding surface.
+        // Validate it during ACP initialization so a Harness switch cannot
+        // appear connected and only fail on the first session/new call.
+        try {
+            loadXiaowanModels()
+        } catch (error: Throwable) {
+            Log.w(
+                TAG,
+                "ACP timing agent=xiaowan stage=initialize_model_failed " +
+                    "reason=${error.javaClass.simpleName}"
             )
-        ),
-        authMethods = emptyList(),
-        implementation = Implementation(
-            name = "xiaowan",
-            version = BuildConfig.VERSION_NAME,
-            title = "小万",
-        ),
-        _meta = JsonNull,
-    )
+            throw error
+        }
+        return AgentInfo(
+            protocolVersion = 1,
+            capabilities = AgentCapabilities(
+                promptCapabilities = PromptCapabilities(
+                    image = true,
+                    embeddedContext = true,
+                )
+            ),
+            authMethods = emptyList(),
+            implementation = Implementation(
+                name = "xiaowan",
+                version = BuildConfig.VERSION_NAME,
+                title = "小万",
+            ),
+            _meta = JsonNull,
+        )
+    }
 
     override suspend fun createSession(
         sessionParameters: SessionCreationParameters,
     ): AgentSession {
-        val models = loadXiaowanModels()
+        val startedAtNanos = System.nanoTime()
+        val models = try {
+            loadXiaowanModels()
+        } catch (error: Throwable) {
+            Log.w(
+                TAG,
+                "ACP timing agent=xiaowan stage=session_model_failed " +
+                    "elapsedMs=${elapsedMillis(startedAtNanos)} " +
+                    "reason=${error.javaClass.simpleName}"
+            )
+            throw error
+        }
         return XiaowanAgentSession(
             context = context,
             scope = scope,
@@ -188,6 +215,18 @@ private class XiaowanAgentSupport(
 
     private suspend fun loadXiaowanModels(): XiaowanModels {
         val existingBinding = SceneModelBindingStore.getBinding("scene.dispatch.model")
+        cachedModels?.let { cached ->
+            val bindingStillMatches = existingBinding?.providerProfileId
+                ?.trim()
+                ?.equals(cached.providerProfileId, ignoreCase = false) == true &&
+                existingBinding.modelId.trim() == cached.configuredModelId
+            if (bindingStillMatches) {
+                Log.i(TAG, "ACP timing agent=xiaowan stage=model_ready source=connection_cache")
+                return cached
+            }
+            cachedModels = null
+        }
+        val startedAtNanos = System.nanoTime()
         val profileId = existingBinding?.providerProfileId
             ?: ModelProviderConfigStore.getEditingProfileId()
         val profile = profileId.let(ModelProviderConfigStore::getProfile)
@@ -204,76 +243,28 @@ private class XiaowanAgentSupport(
         // authoritative catalog when the user opens model settings; session
         // creation only needs the bound model.
         boundModels?.let {
-            return it.copy(providerProfile = profile.toSessionSnapshot())
-        }
-        val models = withXiaowanModelDiscoveryTimeout(MODEL_DISCOVERY_TIMEOUT_MS) {
-            if (OmniOfficialProvider.isOfficialProfile(profile.id)) {
-                PlatformAiProvisioner.ensureReadyAndGetModels("text")
-            } else {
-                HttpController.fetchProviderModels(
-                    apiBase = profile.baseUrl,
-                    apiKey = profile.apiKey,
-                    customHeaders = profile.customHeaders,
-                    protocolType = profile.protocolType,
-                    wireApi = profile.wireApi,
-                )
-            }
-        }
-        val available = models
-            .filter { it.id.isNotBlank() }
-            .distinctBy(ProviderModelOption::id)
-            .map { model ->
-                ModelInfo(
-                    ModelId(model.id),
-                    model.displayName.ifBlank { model.id },
-                    model.ownedBy.orEmpty(),
-                    JsonNull,
-                )
-            }
-        val binding = resolveSharedAgentProviderBinding(
-            currentBinding = existingBinding,
-            editingProfile = profile,
-            availableModels = models,
-        ) ?: throw IllegalStateException(
-            "No verified model is available for the configured Agent Provider"
-        )
-        if (existingBinding == null) {
-            SceneModelBindingStore.saveBinding(
-                sceneId = binding.sceneId,
-                providerProfileId = binding.providerProfileId,
-                modelId = binding.modelId,
+            val resolved = it.copy(providerProfile = profile.toSessionSnapshot())
+            cachedModels = resolved
+            Log.i(
+                TAG,
+                "ACP timing agent=xiaowan stage=model_ready source=binding " +
+                    "elapsedMs=${elapsedMillis(startedAtNanos)}"
             )
+            return resolved
         }
-        val configuredModelId = binding.modelId.trim()
-        require(configuredModelId.isNotEmpty()) {
-            "The scene Provider/model binding has no model"
-        }
-        require(available.any { it.modelId.value == configuredModelId }) {
-            "The configured scene model is not present in the current Provider /models response: $configuredModelId"
-        }
-        return XiaowanModels(
-            available = available,
-            configuredModelId = configuredModelId,
-            providerProfileId = binding.providerProfileId,
-            providerProfile = profile.toSessionSnapshot(),
+        // Model discovery belongs to the explicit Provider/model settings
+        // surface. Never put a network /models request on ACP session/new:
+        // one slow or unreachable Provider used to make a normal Xiaowan
+        // prompt look frozen before the Provider request even started.
+        throw IllegalStateException(
+            "No verified Provider/model binding for Xiaowan ACP. " +
+                "Select a model in scene.dispatch.model and retry."
         )
     }
 }
 
-internal suspend fun <T> withXiaowanModelDiscoveryTimeout(
-    timeoutMillis: Long,
-    block: suspend () -> T,
-): T {
-    return try {
-        withTimeout(timeoutMillis) { block() }
-    } catch (error: TimeoutCancellationException) {
-        throw IllegalStateException(
-            "Provider model discovery timed out after ${timeoutMillis}ms; " +
-                "bind a model in scene.dispatch.model and retry",
-            error,
-        )
-    }
-}
+private fun elapsedMillis(startedAtNanos: Long): Long =
+    (System.nanoTime() - startedAtNanos) / 1_000_000L
 
 internal fun resolveSharedAgentProviderBinding(
     currentBinding: SceneModelBindingEntry?,
@@ -641,7 +632,11 @@ internal class XiaowanAcpEventBridge(
     override suspend fun onThinkingStart() {
         callbackMutex.withLock {
             thoughtSnapshot = ""
-            thoughtMessageId = MessageId(UUID.randomUUID().toString())
+            // The bridge is scoped to one ACP prompt. A prompt may contain
+            // several provider/tool rounds, but they are one user-visible
+            // reasoning card. Keep the message id stable across those rounds
+            // so the shared ACP reducer appends to the same card instead of
+            // rendering another "思考完成" section for every round.
         }
     }
 
@@ -796,6 +791,19 @@ internal class XiaowanAcpEventBridge(
     ) {
         val resolvedToolCallId = toolCallId ?: UUID.randomUUID().toString()
         val text = toolResultText(result)
+        val permissionPayload = (result as? ToolExecutionResult.PermissionRequired)
+            ?.let { permissionResult ->
+                jsonObjectFromMap(
+                    mapOf(
+                        "type" to "permission_section",
+                        "requiredPermissionIds" to resolveAgentPermissionIds(
+                            permissionResult.missing
+                        ),
+                        "missing" to permissionResult.missing,
+                        "message" to text,
+                    )
+                )
+            }
         emitUpdate(
             SessionUpdate.ToolCallUpdate(
                 toolCallId = ToolCallId(resolvedToolCallId),
@@ -811,7 +819,7 @@ internal class XiaowanAcpEventBridge(
                 }.orEmpty(),
                 locations = emptyList(),
                 rawInput = JsonNull,
-                rawOutput = JsonPrimitive(text),
+                rawOutput = permissionPayload ?: JsonPrimitive(text),
                 _meta = JsonNull,
             )
         )
@@ -864,12 +872,9 @@ internal class XiaowanAcpEventBridge(
         }
     }
     override suspend fun onPermissionRequired(missing: List<String>) {
-        callbackMutex.withLock {
-            val details = missing.filter(String::isNotBlank).joinToString("、")
-            emitAssistantNotice(
-                if (details.isEmpty()) "需要额外权限才能继续。" else "需要以下权限才能继续：$details"
-            )
-        }
+        // The structured permission card is emitted with the corresponding
+        // ACP tool_call_update. Do not also emit an assistant sentence here:
+        // that used to leave the user with text only.
     }
 
     private suspend fun emitAssistantNotice(text: String) {

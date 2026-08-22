@@ -7,6 +7,17 @@ import org.junit.Test
 
 class AgentRuntimeManagerConfigTest {
     @Test
+    fun `persisted model remains usable when provider catalog is offline`() {
+        assertEquals(
+            "glm-5.1",
+            resolveAcpLaunchModelWithBindingFallback(
+                providerModelIds = emptyList(),
+                boundModel = "glm-5.1",
+            )
+        )
+    }
+
+    @Test
     fun `OpenCode provider sync preserves user MCP configuration`() {
         val config = buildOpenCodeConfigJson(
             model = "omnibot/gpt-5",

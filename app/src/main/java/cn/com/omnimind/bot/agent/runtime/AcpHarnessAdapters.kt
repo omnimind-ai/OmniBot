@@ -66,6 +66,21 @@ internal object AcpHarnessAdapters {
         override val mcpTransport = AcpHarnessMcpTransport.SESSION_DECLARATION
     }
 
+    // Keep these capability identities separate even when their transport is
+    // currently identical. Provider/config mapping belongs to the selected
+    // Harness adapter, not to a vendor branch in the shared runtime.
+    val codex: AcpHarnessAdapter = object : AcpHarnessAdapter {
+        override val mcpTransport = AcpHarnessMcpTransport.SESSION_DECLARATION
+    }
+
+    val claudeCode: AcpHarnessAdapter = object : AcpHarnessAdapter {
+        override val mcpTransport = AcpHarnessMcpTransport.SESSION_DECLARATION
+    }
+
+    val openCode: AcpHarnessAdapter = object : AcpHarnessAdapter {
+        override val mcpTransport = AcpHarnessMcpTransport.SESSION_DECLARATION
+    }
+
     val deepSeekHarness: AcpHarnessAdapter = object : AcpHarnessAdapter {
         override val mcpTransport = AcpHarnessMcpTransport.ENVIRONMENT
         override val launchConfigPath = DEEPSEEK_HARNESS_CONFIG_PATH
@@ -211,7 +226,9 @@ internal val ACP_FILESYSTEM_COMPAT_SCRIPT = """
 """.trimIndent() + "\n"
 private const val DEEPSEEK_PUBLIC_BASE_URL = "https://api.deepseek.com"
 private const val DEEPSEEK_HARNESS_DEFAULT_MODEL = ""
-private const val DEEPSEEK_HARNESS_DEFAULT_REASONING_EFFORT = "max"
+// Keep ordinary prompts responsive. Users can still select `max` explicitly
+// through the official ACP config surface for complex tasks.
+private const val DEEPSEEK_HARNESS_DEFAULT_REASONING_EFFORT = "high"
 private const val DEEPSEEK_HARNESS_DEFAULT_PERMISSION_MODE = "workspace-write"
 private val DEEPSEEK_HARNESS_REASONING_EFFORTS = setOf("off", "high", "max")
 private val DEEPSEEK_HARNESS_PERMISSION_MODES = setOf(

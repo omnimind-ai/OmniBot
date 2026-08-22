@@ -106,6 +106,7 @@ class _AgentRunHeaderState extends State<AgentRunHeader> {
     final isEnglish =
         Localizations.maybeLocaleOf(context)?.languageCode == 'en';
     final running = widget.isRunning;
+    final canToggleExpanded = !running && widget.onToggleExpanded != null;
     final label = running
         ? (isEnglish
               ? 'Processing ${_elapsedSeconds}s'
@@ -170,7 +171,7 @@ class _AgentRunHeaderState extends State<AgentRunHeader> {
             duration: const Duration(milliseconds: 180),
             switchInCurve: Curves.easeOutCubic,
             switchOutCurve: Curves.easeOutCubic,
-            child: running
+            child: running || !canToggleExpanded
                 ? const SizedBox(key: ValueKey('agent-run-chevron-running'))
                 : AnimatedRotation(
                     key: const ValueKey('agent-run-chevron-finished'),

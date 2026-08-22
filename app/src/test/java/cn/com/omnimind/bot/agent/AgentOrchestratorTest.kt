@@ -1311,6 +1311,32 @@ class AgentOrchestratorTest {
     }
 
     @Test
+    fun `does not retry an already timed out chat stream`() = runBlocking {
+        val llmClient = FakeLlmClient(
+            turns = emptyList(),
+            failures = listOf(
+                IllegalStateException(
+                    "chat completion stream idle timeout after 60000ms"
+                )
+            )
+        )
+        val callback = RecordingCallback()
+
+        val result = createOrchestrator(llmClient, FakeToolExecutor()).run(
+            AgentOrchestrator.Input(
+                callback = callback,
+                initialMessages = initialMessages("hello"),
+                executionEnv = FakeExecutionEnvironment("hello")
+            )
+        )
+
+        assertTrue(result is AgentResult.Error)
+        assertEquals(1, llmClient.requests.size)
+        assertTrue(callback.retryingEvents.isEmpty())
+        assertTrue(callback.errors.single().contains("stream idle timeout"))
+    }
+
+    @Test
     fun `detects provider context overflow without confusing throttling`() {
         assertTrue(
             isContextOverflowTurnFailure(

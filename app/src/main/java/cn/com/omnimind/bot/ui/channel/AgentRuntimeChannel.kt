@@ -75,10 +75,7 @@ class AgentRuntimeChannel {
             }.onSuccess { payload ->
                 result.success(payload)
             }.onFailure { error ->
-                val detail = generateSequence(error) { it.cause }
-                    .mapNotNull { it.message?.trim()?.takeIf(String::isNotEmpty) }
-                    .distinct()
-                    .joinToString("; ")
+                val detail = AgentRuntimeErrorSupport.safeDiagnosticMessage(error)
                 val failureKind = AgentRuntimeErrorSupport.failureKind(error)
                 result.error(
                     "AGENT_RUNTIME_CALL_FAILED",

@@ -381,9 +381,10 @@ class _AgentRunGroupMessageState extends State<AgentRunGroupMessage>
       // While the run itself is finishing, let the outer 320 ms fold own the
       // transition. Running the thinking card's 170 ms height/opacity collapse
       // at the same time multiplies both animations and looks like a flash.
-      // A manually re-opened finished run still initializes each completed
-      // thinking card in its normal collapsed state.
-      thinkingAutoCollapseOnComplete: widget.group.isRunning || widget.expanded,
+      // Once the user re-opens a finished run, keep the thinking card visible;
+      // otherwise the outer fold opens onto the tool result while the actual
+      // reasoning card is silently collapsed a second time.
+      thinkingAutoCollapseOnComplete: widget.group.isRunning,
       useAgentToolPresentation: widget.useAcpPresentation,
       showThinkingAvatarOverride: hideAvatar ? false : null,
       parentScrollController: widget.parentScrollController,
@@ -700,6 +701,7 @@ class _LegacyAgentRunSummaryHeader extends StatelessWidget {
 String _agentRunElapsedLabel(AgentRunTimelineGroup group) {
   int? earliestMs;
   int? latestMs;
+  int? earliestContentMs;
   void visit(Iterable<ChatMessageModel> messages) {
     for (final message in messages) {
       final ms = message.createAt.millisecondsSinceEpoch;
@@ -712,11 +714,23 @@ String _agentRunElapsedLabel(AgentRunTimelineGroup group) {
       if (latestMs == null || ms > latestMs!) {
         latestMs = ms;
       }
+      // A persisted tool card can carry an old createdAt when a provider
+      // reuses its call id on a later turn. Text and reasoning entries are
+      // turn-owned anchors; prefer them as the start boundary so one stale
+      // tool timestamp cannot inflate the visible Xiaowan duration.
+      if (_cardTypeForElapsed(message) != 'agent_tool_summary' &&
+          (earliestContentMs == null || ms < earliestContentMs!)) {
+        earliestContentMs = ms;
+      }
     }
   }
 
   visit(group.allMessagesOldestFirst);
   if (earliestMs == null || latestMs == null || latestMs! <= earliestMs!) {
+    return '';
+  }
+  earliestMs = earliestContentMs ?? earliestMs;
+  if (latestMs! <= earliestMs!) {
     return '';
   }
   final elapsedSec = ((latestMs! - earliestMs!) / 1000).round();
@@ -740,4 +754,8 @@ String _agentRunElapsedLabel(AgentRunTimelineGroup group) {
     return '${hours}h';
   }
   return '${hours}h ${remainingMinutes}m';
+}
+
+String _cardTypeForElapsed(ChatMessageModel message) {
+  return (message.cardData?['type'] ?? '').toString().trim();
 }

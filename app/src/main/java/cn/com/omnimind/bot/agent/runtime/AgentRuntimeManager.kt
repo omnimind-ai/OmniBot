@@ -184,6 +184,8 @@ class AgentRuntimeManager private constructor(
     @Volatile
     private var activeLocalDistributionId: String? = null
     @Volatile
+    private var localProbeCache: LocalProbeCache? = null
+    @Volatile
     private var eventListener: ((Map<String, Any?>) -> Unit)? = null
     private val supplementalEventListeners =
         ConcurrentHashMap<String, (Map<String, Any?>) -> Unit>()
@@ -213,7 +215,18 @@ class AgentRuntimeManager private constructor(
         }
         val probe = when (runtime.kind) {
             AgentRuntimeKind.REMOTE -> probeRemoteCodex(runtime.remoteConfig)
-            AgentRuntimeKind.LOCAL -> probeLocalAcpAgent()
+            AgentRuntimeKind.LOCAL -> if (connected && localAcpRuntime.isConnected) {
+                // A live ACP transport is stronger evidence than a second
+                // shell `command -v` probe. This is the normal single-turn
+                // path and must never wait on npm/terminal health checks.
+                AgentRuntimeProbe(
+                    ready = true,
+                    version = localAcpRuntime.agentVersion(),
+                    error = null
+                )
+            } else {
+                probeLocalAcpAgentCached()
+            }
         }
         return linkedMapOf<String, Any?>(
             "connected" to connected,
@@ -251,6 +264,7 @@ class AgentRuntimeManager private constructor(
 
     suspend fun connect(): Map<String, Any?> {
         sessionMutex.withLock {
+            invalidateLocalProbeCache()
             val runtime = resolveRuntime()
             val localDistributionId = if (runtime.kind == AgentRuntimeKind.LOCAL) {
                 TerminalDistribution.selected().id
@@ -325,6 +339,7 @@ class AgentRuntimeManager private constructor(
 
     suspend fun disconnect(): Map<String, Any?> {
         sessionMutex.withLock {
+            invalidateLocalProbeCache()
             session?.disconnect()
             session = null
             localAcpRuntime.disconnect()
@@ -346,6 +361,9 @@ class AgentRuntimeManager private constructor(
             return writeAgentConfig(canonicalArgs)
         }
         if (method.startsWith("agent/")) {
+            if (method == "agent/select" || method == "agent/refresh") {
+                invalidateLocalProbeCache()
+            }
             val response = localAcpRuntime.handleMethod(method, canonicalArgs)
             if (method == "agent/select" && localAcpRuntime.isConnected) {
                 activeRuntime = AgentRuntimeKind.LOCAL
@@ -1325,9 +1343,12 @@ class AgentRuntimeManager private constructor(
                     binding.providerProfileId
             }
         }
-        val providerModelResolution = if (usesSharedProvider) {
-            // A persisted Agent binding is enough to launch ACP. Do not make
-            // an Agent switch wait on a slow/offline /models endpoint.
+        val providerModelResolution = if (
+            usesSharedProvider && boundModel.isNullOrBlank()
+        ) {
+            // A persisted Agent binding is enough to launch ACP. Only fall
+            // back to /models when the binding is incomplete; a normal
+            // Harness switch must not wait on a slow/offline catalog endpoint.
             resolveCurrentProviderModelIds(
                 profile = sharedProviderProfile,
                 timeoutMs = AGENT_PROVIDER_MODEL_LOOKUP_TIMEOUT_MS,
@@ -1379,14 +1400,6 @@ class AgentRuntimeManager private constructor(
                     ?: "harness-launch-config-read"
             )
         }.orEmpty()
-        val existingOpenCodeConfig = if (profile.id == OPENCODE_AGENT_ID) {
-            readTerminalTextFile(
-                path = OPENCODE_CONFIG_PATH,
-                executorKey = "opencode-agent-config-read"
-            )
-        } else {
-            ""
-        }
         val mapping = AgentConfigAdapterRegistry.map(
             AgentProviderMappingInput(
                 agentId = profile.id,
@@ -1395,6 +1408,13 @@ class AgentRuntimeManager private constructor(
                 harnessAdapter = harnessAdapter,
             )
         )
+        val existingAdapterConfig = mapping.launchConfigPath?.let { path ->
+            readTerminalTextFile(
+                path = path,
+                executorKey = mapping.launchConfigExecutorKey
+                    ?: "harness-launch-config-read"
+            )
+        }.orEmpty()
         val mcpState = if (
             harnessAdapter.mcpTransport == AcpHarnessMcpTransport.ENVIRONMENT
         ) {
@@ -1417,44 +1437,25 @@ class AgentRuntimeManager private constructor(
             content = ACP_FILESYSTEM_COMPAT_SCRIPT,
             executorKey = "acp-filesystem-compat-write"
         )
-        return when (profile.id) {
-            AcpAgentProfileStore.CODEX_AGENT_ID -> {
-                if (sharedProvider != null) {
-                    writeCodexConfigFiles(
-                        configToml = buildCodexConfigToml(
-                            baseUrl = mapping.codexBaseUrl ?: sharedProvider.baseUrl,
-                            model = mapping.codexModel
-                                ?: throw IllegalStateException(
-                                    "Codex 没有可用模型，拒绝写入无匹配配置。"
-                                ),
-                            wireApi = mapping.codexWireApi
-                                ?: OpenAiWireApi.normalize(sharedProvider.wireApi),
-                            modelCatalogPath = CODEX_MODEL_CATALOG_JSON_PATH
-                        ),
-                        authJson = buildCodexAuthJson(sharedProvider.apiKey),
-                        modelCatalogJson = buildCodexModelCatalogJson(
-                            providerModelsForAdapter
-                        )
-                    )
-                }
-                mapping.environment
-            }
-            OPENCODE_AGENT_ID -> {
-                if (sharedProvider != null && mapping.openCodeModel != null) {
-                    writeTerminalTextFile(
-                        path = OPENCODE_CONFIG_PATH,
-                        content = buildOpenCodeConfigJson(
-                            model = mapping.openCodeModel,
-                            baseUrl = mapping.openCodeBaseUrl ?: sharedProvider.baseUrl,
-                            existingConfigJson = existingOpenCodeConfig,
-                        ),
-                        executorKey = "opencode-agent-config-write"
-                    )
-                }
-                mapping.environment
-            }
-            else -> harnessEnvironment
+        val launchConfigWrites = AgentConfigAdapterRegistry.launchConfigWrites(
+            input = AgentProviderMappingInput(
+                agentId = profile.id,
+                provider = sharedProvider,
+                model = resolvedModel,
+                harnessAdapter = harnessAdapter,
+            ),
+            mapping = mapping,
+            providerModels = providerModelsForAdapter,
+            existingConfig = existingAdapterConfig,
+        )
+        launchConfigWrites.forEach { write ->
+            writeTerminalTextFile(
+                path = write.path,
+                content = write.content,
+                executorKey = write.executorKey,
+            )
         }
+        return if (launchConfigWrites.isNotEmpty()) mapping.environment else harnessEnvironment
     }
 
     private fun currentAgentProviderProfile(): ModelProviderProfile? = runCatching {
@@ -2211,6 +2212,47 @@ class AgentRuntimeManager private constructor(
         }
     }
 
+    /**
+     * `status()` is called at the beginning of every visible turn. A command
+     * probe is useful on an explicit refresh or after a Harness switch, but
+     * repeating it for every prompt adds a 15s shell timeout to the hot path.
+     * Keep the result briefly and invalidate it at lifecycle/configuration
+     * boundaries above.
+     */
+    private suspend fun probeLocalAcpAgentCached(): AgentRuntimeProbe {
+        val profile = acpAgentProfileStore.selected()
+        val fingerprint = localProbeFingerprint(profile)
+        val now = System.currentTimeMillis()
+        localProbeCache?.let { cached ->
+            if (
+                cached.profileFingerprint == fingerprint &&
+                now - cached.checkedAtMs in 0 until LOCAL_PROBE_CACHE_TTL_MS
+            ) {
+                return cached.probe
+            }
+        }
+        val probe = probeLocalAcpAgent()
+        localProbeCache = LocalProbeCache(
+            profileFingerprint = fingerprint,
+            checkedAtMs = System.currentTimeMillis(),
+            probe = probe
+        )
+        return probe
+    }
+
+    private fun invalidateLocalProbeCache() {
+        localProbeCache = null
+    }
+
+    private fun localProbeFingerprint(profile: AcpAgentProfile): String =
+        listOf(
+            profile.id,
+            profile.command,
+            profile.enabled,
+            AcpAgentProfileStore.officialRuntime(profile)?.managedAdapterPackage,
+            profile.environment.hashCode()
+        ).joinToString("|")
+
     private suspend fun probeRemoteCodex(config: CodexRemoteBridgeConfig): AgentRuntimeProbe {
         val probe = probeCodexRemoteBridge(config)
         return AgentRuntimeProbe(
@@ -2374,9 +2416,17 @@ class AgentRuntimeManager private constructor(
         val details: Map<String, Any?> = emptyMap()
     )
 
+    private data class LocalProbeCache(
+        val profileFingerprint: String,
+        val checkedAtMs: Long,
+        val probe: AgentRuntimeProbe
+    )
+
     companion object {
         @Volatile
         private var INSTANCE: AgentRuntimeManager? = null
+
+        private const val LOCAL_PROBE_CACHE_TTL_MS = 15_000L
 
         fun getInstance(context: Context): AgentRuntimeManager {
             return INSTANCE ?: synchronized(this) {
@@ -2446,7 +2496,7 @@ internal val MANAGED_NATIVE_BUILD_PREREQUISITES_COMMAND = """
     }
     ensure_native_build_tools
 """.trimIndent()
-private const val OPENCODE_CONFIG_PATH = "/root/.config/opencode/opencode.json"
+internal const val OPENCODE_CONFIG_PATH = "/root/.config/opencode/opencode.json"
 private val LOCAL_ACP_METHODS = setOf(
     "session/new",
     "session/load",
@@ -3033,9 +3083,9 @@ private fun Map<String, Any?>.longValue(key: String): Long? {
 
 internal const val CLAUDE_CODE_AGENT_ID = "claude-code-acp"
 internal const val OPENCODE_AGENT_ID = "opencode-acp"
-private const val CODEX_CONFIG_TOML_PATH = "/root/.codex/config.toml"
-private const val CODEX_AUTH_JSON_PATH = "/root/.codex/auth.json"
-private const val CODEX_MODEL_CATALOG_JSON_PATH = "/root/.codex/provider-model-catalog.json"
+internal const val CODEX_CONFIG_TOML_PATH = "/root/.codex/config.toml"
+internal const val CODEX_AUTH_JSON_PATH = "/root/.codex/auth.json"
+internal const val CODEX_MODEL_CATALOG_JSON_PATH = "/root/.codex/provider-model-catalog.json"
 private const val CLAUDE_SETTINGS_JSON_PATH = "/root/.claude/settings.json"
 private const val OPENCODE_CONFIG_JSON_PATH = "/root/.config/opencode/opencode.json"
 private const val CODEX_CONFIG_TOML_DISPLAY_PATH = "~/.codex/config.toml"

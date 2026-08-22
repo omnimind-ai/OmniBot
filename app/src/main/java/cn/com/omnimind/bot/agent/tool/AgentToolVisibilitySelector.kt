@@ -7,28 +7,20 @@ object AgentToolVisibilitySelector {
         candidates: List<ToolCandidate>,
         routingMode: AgentToolRoutingMode = AgentToolRoutingMode.DEFAULT,
     ): Set<String> {
-        // Tool selection is intentionally delegated to the Agent through the
-        // lightweight discovery tool. Client-side keyword guesses are brittle
-        // for multilingual prompts and cannot reliably select remote MCP tools.
-        // Keep the initial model-visible catalog tiny; the runtime exposes the
-        // concrete schemas after tools_search returns.
-        // Keep only the protocol-neutral discovery entry plus the common
-        // Harness-native workspace tools. OmniBot-specific device/context
-        // capabilities, memory, scheduling, plugins, and remote MCP schemas
-        // remain discoverable on demand.
-        val bootstrapNames = setOf(
-            TOOL_SEARCH_NAME,
-            "read",
-            "write",
-            "edit",
-            "bash",
-            "glob",
-            "grep",
-            "webfetch",
-        )
+        // Native schemas are stable, local, and small enough to expose in the
+        // first request. Hiding them behind tools_search caused a common
+        // failure loop: a phone task could not see vlm_task, searched for it,
+        // then searched again when the provider did not retain the injected
+        // schema on the following round. Dynamic plugin/MCP schemas remain
+        // progressive because their catalog can be large or change at runtime.
+        val nativeNames = candidates
+            .asSequence()
+            .filter { !it.dynamic }
+            .map { it.name }
+            .toCollection(linkedSetOf())
         return candidates
             .map { it.name }
-            .filterTo(linkedSetOf()) { it in bootstrapNames }
+            .filterTo(linkedSetOf()) { it in nativeNames }
     }
 
     const val TOOL_SEARCH_NAME = "tools_search"

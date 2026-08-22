@@ -43,6 +43,13 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
   }
 
   Future<void> _refreshActiveChatProviderModelsInBackground() async {
+    // Agent mode has a durable Provider/model binding and its ACP runtime is
+    // already responsible for the active turn. Do not start a second network
+    // catalog refresh while a Harness is being connected; the normal chat
+    // surface will refresh the same Provider when it becomes visible.
+    if (_activeMode == ChatPageMode.agent) {
+      return;
+    }
     final selection = _activeDispatchSceneSelection;
     if (selection == null) {
       return;
@@ -614,7 +621,7 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
       // 这里走 [showOverlayGlassPopup],它把 OverlayEntry + Material + tap-outside +
       // BackButtonListener + DismissOverlayOnKeyboardHide + playReverse 清理时序
       // 都封装好了。
-      final anchorBox = anchorContext.findRenderObject() as RenderBox?;
+      final anchorBox = findActiveRenderObject(anchorContext) as RenderBox?;
       final anchorRect = glassPopupAnchorFromContext(anchorContext);
       if (anchorBox == null || !anchorBox.hasSize || anchorRect == null) {
         return;

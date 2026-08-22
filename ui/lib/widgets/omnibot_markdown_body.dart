@@ -66,9 +66,145 @@ class OmnibotStreamingTableBlock {
   final bool isCompleteTable;
 }
 
+/// Repairs the small set of Markdown formatting mistakes that the configured
+/// providers commonly produce while streaming.  This is deliberately a
+/// renderer-boundary compatibility layer: the stored assistant content stays
+/// untouched, and all Harnesses get the same treatment.
+///
+/// In particular, some provider responses omit the space after a heading
+/// marker (`###标题`) and concatenate table rows (`| a | b || c | d |`).
+/// Neither form is valid enough for flutter_markdown to recognize reliably,
+/// which used to expose the Markdown source as plain text.  Code fences are
+/// excluded so examples and tool payloads retain their exact contents.
+String normalizeOmnibotMarkdown(String source) {
+  if (source.isEmpty) {
+    return source;
+  }
+
+  final lines = source.replaceAll('\r\n', '\n').split('\n');
+  final normalized = <String>[];
+  String? fenceCharacter;
+  var fenceLength = 0;
+
+  for (var lineIndex = 0; lineIndex < lines.length; lineIndex += 1) {
+    final rawLine = lines[lineIndex];
+    final isInsideFence = fenceCharacter != null;
+    if (isInsideFence) {
+      normalized.add(rawLine);
+    } else {
+      var line = rawLine;
+      // A provider can glue the table header to the preceding prose while
+      // still emitting a valid divider on the next line. Keep the prose as a
+      // paragraph and move the first table pipe to its own line; otherwise the
+      // custom table syntax sees a malformed header, retreats, and markdown's
+      // block parser can report "parseLines is not advancing".
+      if (lineIndex + 1 < lines.length &&
+          OmnibotTableSyntax._tableDividerPattern.hasMatch(
+            lines[lineIndex + 1],
+          )) {
+        final firstPipe = line.indexOf('|');
+        if (firstPipe > 0 && line.substring(0, firstPipe).trim().isNotEmpty) {
+          line =
+              '${line.substring(0, firstPipe).trimRight()}\n${line.substring(firstPipe)}';
+        }
+      }
+      // A missing newline between two table rows is emitted as `||`.  Restrict
+      // this repair to table-shaped lines: `||` is also valid prose (for
+      // example, a shell/boolean expression) and must not be turned into a
+      // paragraph break.  The divider check covers tables whose first cell is
+      // not preceded by a leading pipe.
+      if (line.contains('||') &&
+          (line.trimLeft().startsWith('|') ||
+              line.contains(RegExp(r'\|\s*-{3,}')))) {
+        line = line.replaceAll('||', '|\n|');
+      }
+      // Providers occasionally append the next heading directly after the
+      // last table cell (`| value|### 下一节`).
+      line = line.replaceAllMapped(
+        RegExp(r'\|(?=#{1,6}(?!#)\S)'),
+        (_) => '|\n\n',
+      );
+      // A table row is sometimes immediately followed by a bold section
+      // label (`|value|**生活指数：**`).  Split only labels that end in a
+      // colon and are truly glued to the preceding cell.  The look-behind
+      // excludes the opening pipe and normal cells such as `| **湿度：** |`.
+      line = line.replaceAllMapped(
+        RegExp(r'(?<=\S)\|(?=\*\*[^*\n|]+(?:：|:)\*\*)'),
+        (_) => '|\n\n',
+      );
+      // The same section labels can be glued to prose without a newline
+      // (`72%**未来几天预报：**`).
+      line = line.replaceAllMapped(
+        RegExp(r'([^\s])(\*\*[^*\n]+(?:：|:)\*\*)'),
+        (match) => '${match.group(1)}\n\n${match.group(2)}',
+      );
+      // Keep a horizontal rule separate from a following heading
+      // (`少发---###⚠️`).
+      line = line.replaceAllMapped(
+        RegExp(r'---(?=#{1,6}(?!#)\S)'),
+        (_) => '\n\n',
+      );
+      // Provider list markers often omit the required space (`-☀️`), which
+      // makes the whole list render as one paragraph.  Keep `*italic*` and
+      // negative numbers intact: both are valid non-list prose at line start.
+      line = line.replaceAllMapped(
+        RegExp(r'^([ \t]{0,3}[-+])(?=[^\s\d\-+])'),
+        (match) => '${match.group(1)} ',
+      );
+      // Ordered-list and blockquote markers are emitted without the optional
+      // space by the same providers (`1.明天` and `>说明`).  Repair only a
+      // marker at the beginning of a line so decimals and comparison prose
+      // are not changed.
+      line = line.replaceAllMapped(
+        RegExp(r'^([ \t]{0,3}\d{1,9}[.)])(?=[^\s\d])'),
+        (match) => '${match.group(1)} ',
+      );
+      line = line.replaceAllMapped(
+        RegExp(r'^([ \t]{0,3}>)(?=\S)'),
+        (match) => '${match.group(1)} ',
+      );
+      // Some generated list items are concatenated on one line and use an
+      // emoji as the next marker (`-👕...-🚗...`).  Split those markers while
+      // leaving ordinary hyphens in prose and numeric ranges unchanged.
+      line = line.replaceAllMapped(
+        RegExp(r'(?<=\S)-(?=[☀️👕🚗🤧🌤️⚠️])'),
+        (_) => '\n- ',
+      );
+      line = line.split('\n').map(_normalizeOmnibotHeadingLine).join('\n');
+      normalized.add(line);
+    }
+
+    final fence = _markdownFenceStartPattern.firstMatch(rawLine);
+    if (fence == null) {
+      continue;
+    }
+    final marker = fence.group(1)!;
+    final character = marker.substring(0, 1);
+    if (fenceCharacter == null) {
+      fenceCharacter = character;
+      fenceLength = marker.length;
+    } else if (character == fenceCharacter && marker.length >= fenceLength) {
+      fenceCharacter = null;
+      fenceLength = 0;
+    }
+  }
+  return normalized.join('\n');
+}
+
+String _normalizeOmnibotHeadingLine(String line) {
+  return line.replaceFirstMapped(
+    RegExp(r'^([ \t]{0,3}#{1,6})(?!#)(?=\S)'),
+    (match) => '${match.group(1)} ',
+  );
+}
+
 bool omnibotMarkdownContainsTableCandidate(String source) {
+  source = normalizeOmnibotMarkdown(source);
   final lines = source.split('\n');
   for (var index = 0; index < lines.length; index++) {
+    if (_isMarkdownLineInsideFencedCode(lines, index)) {
+      continue;
+    }
     if (_tryParseMarkdownTable(lines, index) != null) {
       return true;
     }
@@ -80,6 +216,7 @@ bool omnibotMarkdownContainsTableCandidate(String source) {
 }
 
 OmnibotStreamingTableBlock? omnibotMarkdownTrailingTableBlock(String source) {
+  source = normalizeOmnibotMarkdown(source);
   final lines = source.split('\n');
   final lastContentIndex = lines.lastIndexWhere(
     (line) => line.trim().isNotEmpty,
@@ -90,6 +227,10 @@ OmnibotStreamingTableBlock? omnibotMarkdownTrailingTableBlock(String source) {
 
   var index = 0;
   while (index <= lastContentIndex) {
+    if (_isMarkdownLineInsideFencedCode(lines, index)) {
+      index += 1;
+      continue;
+    }
     final table = _tryParseMarkdownTable(lines, index);
     if (table == null) {
       index += 1;
@@ -110,6 +251,10 @@ OmnibotStreamingTableBlock? omnibotMarkdownTrailingTableBlock(String source) {
   int? candidateStartIndex;
   index = 0;
   while (index <= lastContentIndex) {
+    if (_isMarkdownLineInsideFencedCode(lines, index)) {
+      index += 1;
+      continue;
+    }
     final table = _tryParseMarkdownTable(lines, index);
     if (table != null) {
       candidateStartIndex = null;
@@ -160,6 +305,7 @@ OmnibotStreamingTableBlock _buildTrailingTableBlock(
 }
 
 String omnibotMarkdownWithoutTrailingTableCandidate(String source) {
+  source = normalizeOmnibotMarkdown(source);
   final lines = source.split('\n');
   final lastContentIndex = lines.lastIndexWhere(
     (line) => line.trim().isNotEmpty,
@@ -171,6 +317,10 @@ String omnibotMarkdownWithoutTrailingTableCandidate(String source) {
   int? candidateStartIndex;
   var index = 0;
   while (index <= lastContentIndex) {
+    if (_isMarkdownLineInsideFencedCode(lines, index)) {
+      index += 1;
+      continue;
+    }
     final table = _tryParseMarkdownTable(lines, index);
     if (table != null) {
       candidateStartIndex = null;
@@ -250,6 +400,10 @@ int _trailingTableCandidateRemovalStart(
 bool _hasParsedMarkdownTableBefore(List<String> lines, int endIndex) {
   var index = 0;
   while (index < endIndex) {
+    if (_isMarkdownLineInsideFencedCode(lines, index)) {
+      index += 1;
+      continue;
+    }
     final table = _tryParseMarkdownTable(lines, index);
     if (table != null) {
       return true;
@@ -275,6 +429,43 @@ bool _paragraphAppearsEarlier(
 
   final earlierText = lines.sublist(0, startIndex).join('\n');
   return earlierText.contains(paragraph);
+}
+
+final RegExp _markdownFenceStartPattern = RegExp(r'^[ ]{0,3}(`{3,}|~{3,})');
+
+/// Returns whether [targetIndex] is part of a fenced code block.
+///
+/// The custom table splitter runs before flutter_markdown. Without this
+/// guard, a code sample containing a table-shaped payload is incorrectly
+/// promoted to a real Flutter [Table], which changes both its layout and the
+/// copied text. Fence lines themselves are included so they are never treated
+/// as table rows either.
+bool _isMarkdownLineInsideFencedCode(List<String> lines, int targetIndex) {
+  String? fenceCharacter;
+  var fenceLength = 0;
+  for (var index = 0; index <= targetIndex; index += 1) {
+    final match = _markdownFenceStartPattern.firstMatch(lines[index]);
+    if (match != null) {
+      final marker = match.group(1)!;
+      final character = marker.substring(0, 1);
+      if (fenceCharacter == null) {
+        fenceCharacter = character;
+        fenceLength = marker.length;
+        if (index == targetIndex) return true;
+        continue;
+      }
+      if (character == fenceCharacter && marker.length >= fenceLength) {
+        if (index == targetIndex) return true;
+        fenceCharacter = null;
+        fenceLength = 0;
+        continue;
+      }
+    }
+    if (index == targetIndex) {
+      return fenceCharacter != null;
+    }
+  }
+  return fenceCharacter != null;
 }
 
 MarkdownStyleSheet _resolveMarkdownStyleSheet(
@@ -331,7 +522,8 @@ class OmnibotMarkdownBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final segments = _splitMarkdownTableSegments(data);
+    final normalizedData = normalizeOmnibotMarkdown(data);
+    final segments = _splitMarkdownTableSegments(normalizedData);
     if (segments.length > 1 ||
         (segments.length == 1 && segments.first.tableRows != null)) {
       final styleSheet = _resolveMarkdownStyleSheet(context, baseStyle);
@@ -376,7 +568,7 @@ class OmnibotMarkdownBody extends StatelessWidget {
     }
     return KeyedSubtree(
       key: const ValueKey('omnibot-markdown-plain-root'),
-      child: _buildMarkdownBody(context, data),
+      child: _buildMarkdownBody(context, normalizedData),
     );
   }
 
@@ -515,7 +707,9 @@ List<_OmnibotMarkdownSegment> _splitMarkdownTableSegments(String source) {
   }
 
   while (index < lines.length) {
-    final table = _tryParseMarkdownTable(lines, index);
+    final table = _isMarkdownLineInsideFencedCode(lines, index)
+        ? null
+        : _tryParseMarkdownTable(lines, index);
     if (table == null) {
       if (textBuffer.isNotEmpty) {
         textBuffer.writeln();

@@ -334,14 +334,6 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
           provider?.configured == true) {
         return true;
       }
-      // A configured Provider may not have an explicit Agent scene binding
-      // yet. The native Xiaowan ACP boundary can verify /models, choose the
-      // first valid model, and persist the binding atomically while it starts.
-      // Do not reject the Harness switch before that authoritative step runs.
-      if (selection == null &&
-          profiles.profiles.any((item) => item.configured)) {
-        return true;
-      }
     } catch (error) {
       debugPrint('[Agent] failed to resolve shared Provider model: $error');
     }
@@ -1530,11 +1522,8 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     final agentConversationId = _modeState(
       ChatPageMode.agent,
     ).currentConversationId;
-    final eventParams = _asAgentMap(event['params']);
-    final eventSessionId =
-        _asAgentString(event['sessionId']) ??
-        _asAgentString(eventParams?['sessionId']);
-    final eventTurnId = _asAgentString(event['turnId']);
+    final eventSessionId = acpEventSessionId(event);
+    final eventTurnId = acpEventTurnId(event);
     final ownerMode = _runtimeCoordinator.modeForAcpEvent(
       conversationId: conversationId,
       sessionId: eventSessionId,
@@ -1631,10 +1620,10 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         }
       });
     }
-    // Prime against the already visible local conversation before asking the
-    // native runtime for status. DSH preparation/provider probes may take
-    // several seconds; the selected ACP run must be visible during that
-    // interval rather than looking idle or getting stuck on an old turn.
+    // Register against the already visible local conversation before asking
+    // the native runtime for status. DSH preparation/provider probes may take
+    // several seconds, but no empty thinking card should be shown before ACP
+    // emits a real reasoning/tool/text event.
     final preflightConversationId = _currentConversationId;
     if (preflightConversationId != null) {
       _syncRuntimeSnapshotForMode(_activeMode);
@@ -1643,7 +1632,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         conversationId: preflightConversationId,
         mode: _modeKey(_activeMode),
       );
-      _runtimeCoordinator.primeAcpThinking(
+      _runtimeCoordinator.beginAcpTurn(
         taskId: aiMessageId,
         conversationId: preflightConversationId,
         mode: _modeKey(_activeMode),
@@ -1701,7 +1690,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       conversationId: resolvedConversationId,
       mode: _modeKey(_activeMode),
     );
-    _runtimeCoordinator.primeAcpThinking(
+    _runtimeCoordinator.beginAcpTurn(
       taskId: aiMessageId,
       conversationId: resolvedConversationId,
       mode: _modeKey(_activeMode),
@@ -1777,7 +1766,10 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       await _writeAgentCommandPreferencesForCurrentConversation();
     } catch (error) {
       if (mounted) {
-        handleAgentError('$_activeAcpAgentDisplayName 启动失败: $error');
+        handleAgentError(
+          '$_activeAcpAgentDisplayName 启动失败: '
+          '${formatAgentRuntimeErrorForUser(error)}',
+        );
       }
       _runtimeCoordinator.unregisterTask(aiMessageId);
     }
@@ -2385,7 +2377,6 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     var status = await AgentRuntimeService.status();
     if (!status.connected) {
       status = await AgentRuntimeService.connect();
-      unawaited(AgentRuntimeService.listSessions());
     }
     _applyRefreshedAgentRuntimeStatus(status);
     return status;

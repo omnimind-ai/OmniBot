@@ -83,13 +83,11 @@ class VlmToolHandler(context: Context) : ToolHandler {
         val permission = AndroidAutomationPermissionGate.check(helper.context)
         if (!permission.granted) {
             persistFailure(runId, goal, "permission_required", "缺少无障碍权限")
-            helper.permissionRequiredResult(callback, permission.displayNames)
-            return failedRunResult(
-                runId = runId,
-                goal = goal,
-                doneReason = "permission_required",
-                message = "缺少无障碍权限",
-            )
+            // Keep the typed result all the way through the Agent executor.
+            // Calling the callback alone is not enough: the ACP adapter uses
+            // PermissionRequired to project a permission_section card instead
+            // of letting the model turn this into an assistant-only sentence.
+            return helper.permissionRequiredResult(callback, permission.displayNames)
         }
         prepareOfficialModelRoute()?.let { message ->
             persistFailure(runId, goal, "provider_unavailable", message)

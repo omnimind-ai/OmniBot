@@ -62,6 +62,29 @@ void main() {
     },
   );
 
+  testWidgets('finished header without fold history has no chevron', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _wrap(
+        AgentRunHeader(
+          taskId: 'turn-no-history',
+          agentId: 'codex-acp',
+          status: AgentRunStatus.finished,
+          startedAt: DateTime(2026, 7, 25, 15, 48, 0),
+          finishedAt: DateTime(2026, 7, 25, 15, 48, 1),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey('acp-processed-label')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('agent-run-summary-chevron-turn-no-history')),
+      findsNothing,
+    );
+  });
+
   testWidgets('header renders the agent brand exactly once', (tester) async {
     await tester.pumpWidget(
       _wrap(

@@ -6,7 +6,7 @@ import org.junit.Test
 
 class AgentToolVisibilitySelectorTest {
     @Test
-    fun `keeps discovery and common native tools visible before discovery`() {
+    fun `keeps every native tool visible before discovery`() {
         val candidates = listOf(
             tool("tools_search"),
             tool("read"),
@@ -30,7 +30,20 @@ class AgentToolVisibilitySelectorTest {
         )
 
         assertEquals(
-            linkedSetOf("bash", "edit", "glob", "grep", "read", "tools_search", "webfetch", "write"),
+            linkedSetOf(
+                "tools_search",
+                "read",
+                "write",
+                "edit",
+                "bash",
+                "glob",
+                "grep",
+                "webfetch",
+                "vlm_task",
+                "context_time_now",
+                "project_check",
+                "project_publish",
+            ),
             selected,
         )
     }
@@ -56,7 +69,7 @@ class AgentToolVisibilitySelectorTest {
     }
 
     @Test
-    fun `project tools are discovered instead of eagerly exposed`() {
+    fun `native project tools are eagerly exposed`() {
         val requiredTools = listOf(
             "file_write",
             "terminal_execute",
@@ -69,7 +82,7 @@ class AgentToolVisibilitySelectorTest {
             candidates = requiredTools.map(::tool),
         )
 
-        requiredTools.forEach { toolName -> assertTrue(toolName !in selected) }
+        requiredTools.forEach { toolName -> assertTrue(toolName in selected) }
     }
 
     @Test

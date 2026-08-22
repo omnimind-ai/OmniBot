@@ -1,10 +1,12 @@
 import 'dart:convert';
 
+import 'package:ui/features/home/pages/authorize/authorize_page_args.dart';
 import 'package:ui/features/home/pages/chat/chat_page_models.dart';
 import 'package:ui/features/home/pages/chat/services/chat_conversation_runtime_coordinator.dart';
 import 'package:ui/models/chat_message_model.dart';
 import 'package:ui/services/agent_stream_meta.dart';
 import 'package:ui/services/agent_diff_parser.dart';
+import 'package:ui/services/agent_identity.dart';
 import 'package:ui/services/agent_message_kinds.dart';
 import 'package:ui/services/agent_tool_call_parser.dart';
 
@@ -78,6 +80,12 @@ class AgentEventReducer {
       params['thread_id'],
       _asStringMap(params['thread'])?['id'],
     ]);
+    final sessionId = _firstString([
+      event['sessionId'],
+      event['session_id'],
+      params['sessionId'],
+      params['session_id'],
+    ]);
     final turnId = _firstString([
       event['turnId'],
       params['turnId'],
@@ -139,14 +147,22 @@ class AgentEventReducer {
         turnId: turnId,
       );
     }
+    // Resolve protocol identity exactly once. All projected messages use the
+    // stable local run id for grouping; the official ACP turn remains in
+    // streamMeta/cardData for protocol correlation. This prevents a provider
+    // turn id arriving after the prompt from renaming the visible run.
     final parentTaskId =
-        _firstString([
-          turnId,
-          if (method.startsWith('item/')) runtime.activeAcpTurnId,
-          if (method.startsWith('item/')) runtime.currentDispatchTurnId,
-          itemId,
-          threadId,
-        ]) ??
+        runtime.resolveRunId(
+          sessionId: sessionId,
+          turnId: turnId,
+          fallback: _firstString([
+            runtime.activeRunId,
+            runtime.currentDispatchTurnId,
+            turnId,
+            itemId,
+            threadId,
+          ]),
+        ) ??
         'agent-${runtime.conversationId}';
 
     if (turnId != null &&
@@ -182,7 +198,7 @@ class AgentEventReducer {
     }
 
     if (method == 'turn/completed' || method == 'thread/closed') {
-      _completeTurn(runtime, parentTaskId);
+      _completeTurn(runtime, parentTaskId, acpTurnId: turnId);
       return AgentReduceResult(
         handled: true,
         method: method,
@@ -221,6 +237,7 @@ class AgentEventReducer {
         _completeTurn(
           runtime,
           taskId,
+          acpTurnId: turnId,
           appendCancelIfEmpty: !statusIsFailure && _statusIsCancelled(status),
         );
       }
@@ -248,7 +265,11 @@ class AgentEventReducer {
           parentTaskId;
       _touchActiveTurn(runtime, parentTaskId);
       if (itemType == 'reasoning') {
-        final thinkingEntryId = '$startedItemId-agent-thinking';
+        final thinkingEntryId = _thinkingCardIdForTask(
+          runtime,
+          parentTaskId: parentTaskId,
+          requestedCardId: '$startedItemId-agent-thinking',
+        );
         final text =
             _extractText(item['text']) ??
             _extractText(item['summary']) ??
@@ -282,7 +303,16 @@ class AgentEventReducer {
         }
       } else if (isAgentToolItemType(itemType)) {
         _finalizeActiveThinkingCardForTask(runtime, parentTaskId);
-        final existingCardId = _findToolCardIdForCallId(runtime, startedItemId);
+        final existingCardId = _findToolCardIdForCallId(
+          runtime,
+          startedItemId,
+          taskId: parentTaskId,
+          sessionId: _firstString([
+            item['sessionId'],
+            item['session_id'],
+            sessionId,
+          ]),
+        );
         final existingMessage = existingCardId == null
             ? null
             : runtime.messages.cast<ChatMessageModel?>().firstWhere(
@@ -292,7 +322,12 @@ class AgentEventReducer {
         final existing = existingCardId == null
             ? null
             : _toolCardData(runtime, existingCardId);
-        final mergedItem = _mergeAgentToolUpdate(existing, item);
+        final itemWithIdentity = <String, dynamic>{
+          ...item,
+          if (sessionId != null) 'sessionId': sessionId,
+          if (turnId != null) 'turnId': turnId,
+        };
+        final mergedItem = _mergeAgentToolUpdate(existing, itemWithIdentity);
         final toolInfo = normalizeAgentToolCall(
           mergedItem,
           itemType: canonicalAgentItemType(
@@ -305,7 +340,19 @@ class AgentEventReducer {
         );
         final cardId =
             existingCardId ??
-            '$startedItemId-agent-${agentToolCardSuffix(toolInfo.toolType, itemType: toolInfo.itemType)}';
+            _taskScopedCardId(
+              runtime,
+              taskId: parentTaskId,
+              baseCardId: _toolCardBaseId(
+                raw: mergedItem,
+                fallback:
+                    '$startedItemId-agent-${agentToolCardSuffix(toolInfo.toolType, itemType: toolInfo.itemType)}',
+                suffix: agentToolCardSuffix(
+                  toolInfo.toolType,
+                  itemType: toolInfo.itemType,
+                ),
+              ),
+            );
         _upsertToolCard(
           runtime,
           cardId: cardId,
@@ -432,7 +479,11 @@ class AgentEventReducer {
           _extractText(params['plan']) ??
           _extractText(params['text']) ??
           '';
-      final cardId = '${itemId ?? parentTaskId}-agent-plan';
+      final cardId = _taskScopedCardId(
+        runtime,
+        taskId: parentTaskId,
+        baseCardId: '${itemId ?? parentTaskId}-agent-plan',
+      );
       _upsertToolCard(
         runtime,
         cardId: cardId,
@@ -466,11 +517,21 @@ class AgentEventReducer {
           _extractText(params['text']) ??
           '';
       final callId = itemId ?? parentTaskId;
-      final existingCardId = _findToolCardIdForCallId(runtime, callId);
+      final existingCardId = _findToolCardIdForCallId(
+        runtime,
+        callId,
+        taskId: parentTaskId,
+      );
       final existing = existingCardId == null
           ? null
           : _toolCardData(runtime, existingCardId);
-      final cardId = existingCardId ?? '$callId-agent-command';
+      final cardId =
+          existingCardId ??
+          _taskScopedCardId(
+            runtime,
+            taskId: parentTaskId,
+            baseCardId: '$callId-agent-command',
+          );
       final toolType = (existing?['toolType'] ?? '').toString().trim();
       final title =
           (existing?['toolTitle'] ?? existing?['displayName'])?.toString() ??
@@ -504,7 +565,11 @@ class AgentEventReducer {
         method == 'process/outputDelta') {
       final delta = _standaloneProcessOutputDelta(params);
       final standaloneId = _standaloneProcessId(params, method: method);
-      final cardId = '$standaloneId-agent-command';
+      final cardId = _taskScopedCardId(
+        runtime,
+        taskId: parentTaskId,
+        baseCardId: '$standaloneId-agent-command',
+      );
       _appendToolOutput(
         runtime,
         cardId: cardId,
@@ -551,7 +616,11 @@ class AgentEventReducer {
           _extractText(params['output']) ??
           _extractText(params['text']) ??
           '';
-      final cardId = '${itemId ?? parentTaskId}-agent-file';
+      final cardId = _taskScopedCardId(
+        runtime,
+        taskId: parentTaskId,
+        baseCardId: '${itemId ?? parentTaskId}-agent-file',
+      );
       _appendToolOutput(
         runtime,
         cardId: cardId,
@@ -639,7 +708,11 @@ class AgentEventReducer {
           _extractText(params['message']) ??
           _extractText(params['progress']) ??
           '';
-      final cardId = '${itemId ?? parentTaskId}-agent-tool';
+      final cardId = _taskScopedCardId(
+        runtime,
+        taskId: parentTaskId,
+        baseCardId: '${itemId ?? parentTaskId}-agent-tool',
+      );
       final existing = _toolCardData(runtime, cardId);
       _upsertToolCard(
         runtime,
@@ -677,8 +750,12 @@ class AgentEventReducer {
       final dynamicItemId =
           _firstString([params['callId'], params['itemId'], itemId]) ??
           parentTaskId;
-      final cardId =
-          '$dynamicItemId-agent-${agentToolCardSuffix(toolInfo.toolType, itemType: toolInfo.itemType)}';
+      final cardId = _taskScopedCardId(
+        runtime,
+        taskId: parentTaskId,
+        baseCardId:
+            '$dynamicItemId-agent-${agentToolCardSuffix(toolInfo.toolType, itemType: toolInfo.itemType)}',
+      );
       _upsertToolCard(
         runtime,
         cardId: cardId,
@@ -854,8 +931,18 @@ class AgentEventReducer {
       // adapters that do not expose a separate turn/started notification.
       runtime.activeAcpTurnId = parentTaskId;
     }
-    runtime.currentDispatchTurnId = parentTaskId;
-    runtime.lastAgentTurnId = parentTaskId;
+    runtime.activeRunId ??= parentTaskId;
+    // currentDispatchTurnId/lastAgentTurnId are compatibility names used by
+    // older page state. Their value is now always the stable run id, never an
+    // ACP turn id.
+    runtime.currentDispatchTurnId ??= runtime.activeRunId;
+    // Keep the old field observable for native/page compatibility. The UI
+    // active-id getter above uses activeRunId, so this protocol alias cannot
+    // create a second visible run.
+    if (runtime.activeAcpTurnId != null) {
+      runtime.currentDispatchTurnId = runtime.activeAcpTurnId;
+    }
+    runtime.lastAgentTurnId = runtime.activeRunId;
     runtime.currentThinkingStage = ThinkingStage.thinking.value;
   }
 
@@ -933,6 +1020,15 @@ class AgentEventReducer {
     required String cardId,
     required String delta,
   }) {
+    // A single ACP turn may expose several reasoning item ids (for example
+    // one before a tool call and one after it). They are protocol items, not
+    // separate user-visible thoughts. Keep one card per host turn so the
+    // timeline cannot show two identical completion labels.
+    cardId = _thinkingCardIdForTask(
+      runtime,
+      parentTaskId: parentTaskId,
+      requestedCardId: cardId,
+    );
     final index = runtime.messages.indexWhere(
       (message) => message.id == cardId,
     );
@@ -1016,6 +1112,7 @@ class AgentEventReducer {
           : (existingCardData['thinkingContent'] ?? '').toString(),
       'stage': stage,
       'taskID': taskId,
+      'runId': taskId,
       'cardId': cardId,
       'startTime': startTime,
       'endTime': endTime,
@@ -1073,6 +1170,56 @@ class AgentEventReducer {
     );
   }
 
+  void _upsertPermissionCard(
+    ChatConversationRuntimeState runtime, {
+    required String cardId,
+    required String taskId,
+    required Map<String, dynamic> permission,
+    required Map<String, dynamic> streamMeta,
+  }) {
+    final index = runtime.messages.indexWhere(
+      (message) => message.id == cardId,
+    );
+    final existing = index == -1 ? null : runtime.messages[index];
+    final requiredPermissionIds = resolveExecutionPermissionIds(
+      permission['requiredPermissionIds'] as Iterable<dynamic>?,
+    );
+    final missing =
+        (permission['missing'] as Iterable<dynamic>?)
+            ?.map((value) => value.toString())
+            .where((value) => value.trim().isNotEmpty)
+            .toList(growable: false) ??
+        const <String>[];
+    final cardData = <String, dynamic>{
+      'type': 'permission_section',
+      'taskId': taskId,
+      'runId': taskId,
+      'cardId': cardId,
+      'requiredPermissionIds': requiredPermissionIds,
+      'missing': missing,
+      // This flag is intentionally live-only. Permission cards restored from
+      // history do not carry it, so reopening a conversation cannot launch a
+      // settings page unexpectedly.
+      'autoOpenAuthorization': true,
+      'permissionSource': 'acp_tool_result',
+    };
+    final message = ChatMessageModel.cardMessage(
+      cardData,
+      id: cardId,
+      streamMeta: streamMeta,
+    );
+    if (index == -1) {
+      runtime.messages.insert(0, message);
+    } else {
+      runtime.messages[index] = existing!.copyWith(
+        content: {'cardData': cardData, 'id': cardId},
+        streamMeta: streamMeta,
+      );
+    }
+    runtime.isAiResponding = true;
+    runtime.lastAgentToolType = 'permission';
+  }
+
   void _upsertToolCard(
     ChatConversationRuntimeState runtime, {
     required String cardId,
@@ -1095,6 +1242,10 @@ class AgentEventReducer {
     );
     final existing = index == -1 ? null : runtime.messages[index];
     final existingCardData = existing?.cardData ?? const <String, dynamic>{};
+    final identity = AgentToolIdentity.fromMaps(
+      raw: raw,
+      existing: existingCardData,
+    );
     final toolInfo = normalizeAgentToolCall(
       raw,
       fallbackToolType: toolType,
@@ -1158,11 +1309,18 @@ class AgentEventReducer {
       'type': 'agent_tool_summary',
       'uiStyle': kAgentToolUiStyle,
       'taskId': taskId,
+      'runId': taskId,
       'toolName': toolInfo.toolName,
       'displayName': toolInfo.displayName,
       'toolTitle': effectiveTitle,
       'cardId': cardId,
       'toolType': effectiveToolType,
+      if (identity.sessionId != null) 'sessionId': identity.sessionId,
+      if (identity.turnId != null) 'turnId': identity.turnId,
+      if (identity.toolCallId != null) 'toolCallId': identity.toolCallId,
+      if (identity.rawProviderToolCallId != null)
+        'rawProviderToolCallId': identity.rawProviderToolCallId,
+      if (identity.toolKey != null) 'toolKey': identity.toolKey,
       if (toolInfo.serverName != null) 'serverName': toolInfo.serverName,
       'status': status,
       'summary': effectiveSummary,
@@ -1259,6 +1417,7 @@ class AgentEventReducer {
     final cardData = <String, dynamic>{
       'type': kAgentRequestCardType,
       'taskId': taskId,
+      'runId': taskId,
       'requestId': requestId,
       'requestKind': requestKind,
       'title': title,
@@ -1427,6 +1586,42 @@ class AgentEventReducer {
   ) {
     final item = _asStringMap(params['item']) ?? params;
     final itemType = canonicalAgentItemType(_string(item['type']));
+    final permissionCard = _permissionCardFromAcpItem(item);
+    if (permissionCard != null) {
+      final completedItemId = itemId ?? _string(item['id']) ?? taskId;
+      final existingCardId = _findToolCardIdForCallId(
+        runtime,
+        completedItemId,
+        taskId: taskId,
+        sessionId: _firstString([
+          item['sessionId'],
+          item['session_id'],
+          params['sessionId'],
+          params['session_id'],
+        ]),
+      );
+      final cardId =
+          existingCardId ??
+          _taskScopedCardId(
+            runtime,
+            taskId: taskId,
+            baseCardId: '$completedItemId-agent-permission',
+          );
+      _upsertPermissionCard(
+        runtime,
+        cardId: cardId,
+        taskId: taskId,
+        permission: permissionCard,
+        streamMeta: _streamMeta(
+          runtime,
+          parentTaskId: taskId,
+          entryId: cardId,
+          kind: 'permission_required',
+          isFinal: true,
+        ),
+      );
+      return;
+    }
     final text =
         _extractText(item['text']) ??
         _extractText(item['message']) ??
@@ -1479,7 +1674,17 @@ class AgentEventReducer {
     }
     if (isAgentToolItemType(itemType)) {
       final completedItemId = itemId ?? _string(item['id']) ?? taskId;
-      final existingCardId = _findToolCardIdForCallId(runtime, completedItemId);
+      final existingCardId = _findToolCardIdForCallId(
+        runtime,
+        completedItemId,
+        taskId: taskId,
+        sessionId: _firstString([
+          item['sessionId'],
+          item['session_id'],
+          params['sessionId'],
+          params['session_id'],
+        ]),
+      );
       final existingMessage = existingCardId == null
           ? null
           : runtime.messages.cast<ChatMessageModel?>().firstWhere(
@@ -1489,7 +1694,14 @@ class AgentEventReducer {
       final existing = existingCardId == null
           ? null
           : _toolCardData(runtime, existingCardId);
-      final mergedItem = _mergeAgentToolUpdate(existing, item);
+      final itemWithIdentity = <String, dynamic>{
+        ...item,
+        if (params['sessionId'] != null) 'sessionId': params['sessionId'],
+        if (params['session_id'] != null) 'session_id': params['session_id'],
+        if (params['turnId'] != null) 'turnId': params['turnId'],
+        if (params['turn_id'] != null) 'turn_id': params['turn_id'],
+      };
+      final mergedItem = _mergeAgentToolUpdate(existing, itemWithIdentity);
       final mergedItemType = canonicalAgentItemType(
         _string(mergedItem['type']) ?? itemType,
       );
@@ -1505,7 +1717,17 @@ class AgentEventReducer {
         toolInfo.toolType,
         itemType: mergedItemType,
       );
-      final cardId = existingCardId ?? '$completedItemId-agent-$suffix';
+      final cardId =
+          existingCardId ??
+          _taskScopedCardId(
+            runtime,
+            taskId: taskId,
+            baseCardId: _toolCardBaseId(
+              raw: mergedItem,
+              fallback: '$completedItemId-agent-$suffix',
+              suffix: suffix,
+            ),
+          );
       _upsertToolCard(
         runtime,
         cardId: cardId,
@@ -1568,7 +1790,11 @@ class AgentEventReducer {
       fallbackStatus: 'success',
     );
     final suffix = agentToolCardSuffix(toolInfo.toolType, itemType: itemType);
-    final cardId = '$rawItemId-agent-$suffix';
+    final cardId = _taskScopedCardId(
+      runtime,
+      taskId: taskId,
+      baseCardId: '$rawItemId-agent-$suffix',
+    );
     _upsertToolCard(
       runtime,
       cardId: cardId,
@@ -1607,7 +1833,17 @@ class AgentEventReducer {
     ]);
     final existingCardId = callId == null
         ? null
-        : _findToolCardIdForCallId(runtime, callId);
+        : _findToolCardIdForCallId(
+            runtime,
+            callId,
+            taskId: taskId,
+            sessionId: _firstString([
+              item['sessionId'],
+              item['session_id'],
+              params['sessionId'],
+              params['session_id'],
+            ]),
+          );
     final existingMessage = existingCardId == null
         ? null
         : runtime.messages.cast<ChatMessageModel?>().firstWhere(
@@ -1635,8 +1871,24 @@ class AgentEventReducer {
       fallbackStatus: 'success',
     );
     final rawItemId = _rawResponseItemId(params, item, taskId);
+    final rawWithIdentity = <String, dynamic>{
+      ...item,
+      if (callId != null) 'toolCallId': callId,
+      if (params['sessionId'] != null) 'sessionId': params['sessionId'],
+      if (params['session_id'] != null) 'session_id': params['session_id'],
+    };
     final suffix = agentToolCardSuffix(toolInfo.toolType, itemType: itemType);
-    final cardId = existingCardId ?? '$rawItemId-agent-$suffix';
+    final cardId =
+        existingCardId ??
+        _taskScopedCardId(
+          runtime,
+          taskId: taskId,
+          baseCardId: _toolCardBaseId(
+            raw: rawWithIdentity,
+            fallback: '$rawItemId-agent-$suffix',
+            suffix: suffix,
+          ),
+        );
     final outputText = _extractAgentRawOutputText(item).trimRight();
     final existingTerminalOutput = (existing?['terminalOutput'] ?? '')
         .toString();
@@ -1661,7 +1913,7 @@ class AgentEventReducer {
       summary: summary,
       progress: summary,
       terminalOutput: terminalOutput,
-      raw: item,
+      raw: rawWithIdentity,
       streamMeta: _streamMeta(
         runtime,
         parentTaskId: taskId,
@@ -1699,7 +1951,11 @@ class AgentEventReducer {
     String method,
   ) {
     final standaloneId = _standaloneProcessId(params, method: method);
-    final cardId = '$standaloneId-agent-command';
+    final cardId = _taskScopedCardId(
+      runtime,
+      taskId: taskId,
+      baseCardId: '$standaloneId-agent-command',
+    );
     final existing = _toolCardData(runtime, cardId);
     final existingOutput = (existing?['terminalOutput'] ?? '').toString();
     final stdout = _streamOutputBlock(params['stdout'], stream: 'stdout');
@@ -1742,6 +1998,7 @@ class AgentEventReducer {
   void _completeTurn(
     ChatConversationRuntimeState runtime,
     String taskId, {
+    String? acpTurnId,
     // A normal ACP turn/completed is successful even when the turn only
     // produced reasoning or tool activity. Cancellation is represented by an
     // explicit cancelled thread status, not by an empty assistant message.
@@ -1763,10 +2020,17 @@ class AgentEventReducer {
         : null;
     final ownerTaskId = pendingLocalTaskId ?? taskId;
     final ownerWasActive = runtime.activeAgentTurnIds.contains(ownerTaskId);
+    final protocolTurnMatchesCurrent =
+        acpTurnId == null ||
+        runtime.activeAcpTurnId == null ||
+        runtime.activeAcpTurnId == acpTurnId;
     final isCurrentTurn =
-        runtime.currentDispatchTurnId == ownerTaskId ||
-        runtime.lastAgentTurnId == ownerTaskId ||
-        runtime.activeAcpTurnId == ownerTaskId;
+        protocolTurnMatchesCurrent &&
+        (runtime.activeRunId == ownerTaskId ||
+            runtime.currentDispatchTurnId == ownerTaskId ||
+            runtime.lastAgentTurnId == ownerTaskId ||
+            runtime.activeAcpTurnId == acpTurnId ||
+            runtime.activeAcpTurnId == ownerTaskId);
     // A terminal notification for turn N can arrive after turn N+1 has
     // already started. Finalize only N's cards/messages in that case; never
     // clear the shared runtime flags or text cache owned by N+1.
@@ -1800,8 +2064,14 @@ class AgentEventReducer {
     runtime.isExecutingTask = false;
     runtime.isCheckingExecutableTask = false;
     runtime.currentDispatchTurnId = null;
-    if (runtime.activeAcpTurnId == taskId) {
-      runtime.activeAcpTurnId = null;
+    final completedOfficialTurn =
+        acpTurnId ?? runtime.acpTurnIdForRun(ownerTaskId);
+    if (completedOfficialTurn != null && completedOfficialTurn.isNotEmpty) {
+      runtime.completedAcpTurnIds.add(completedOfficialTurn);
+    }
+    runtime.activeAcpTurnId = null;
+    if (runtime.activeRunId == ownerTaskId) {
+      runtime.activeRunId = null;
     }
     runtime.lastAgentTurnId = null;
     runtime.currentAiMessages.clear();
@@ -1819,6 +2089,12 @@ class AgentEventReducer {
     _markToolCardsCompleteForTask(runtime, ownerTaskId);
     if (wasActive || ownerWasActive) {
       runtime.completedAgentTurnIds.add(taskId);
+      if (completedOfficialTurn != null && completedOfficialTurn.isNotEmpty) {
+        // Keep the protocol id in the legacy fence as well. Older callers
+        // inspect completedAgentTurnIds directly; the canonical fence is
+        // completedAcpTurnIds above.
+        runtime.completedAgentTurnIds.add(completedOfficialTurn);
+      }
       if (ownerTaskId != taskId) {
         runtime.completedAgentTurnIds.add(ownerTaskId);
       }
@@ -2043,6 +2319,7 @@ class AgentEventReducer {
     cardData['isLoading'] = false;
     cardData['stage'] = ThinkingStage.complete.value;
     cardData['taskID'] = parentTaskId;
+    cardData['runId'] = parentTaskId;
     cardData['cardId'] = cardId;
     cardData['startTime'] = startTime;
     cardData['endTime'] ??= DateTime.now().millisecondsSinceEpoch;
@@ -2067,6 +2344,11 @@ class AgentEventReducer {
     String parentTaskId,
     String cardId,
   ) {
+    cardId = _thinkingCardIdForTask(
+      runtime,
+      parentTaskId: parentTaskId,
+      requestedCardId: cardId,
+    );
     final index = runtime.messages.indexWhere(
       (message) => message.id == cardId,
     );
@@ -2107,6 +2389,7 @@ class AgentEventReducer {
     cardData['isLoading'] = false;
     cardData['stage'] = ThinkingStage.cancelled.value;
     cardData['taskID'] = parentTaskId;
+    cardData['runId'] = parentTaskId;
     cardData['cardId'] = cardId;
     cardData['startTime'] = startTime;
     cardData['endTime'] ??= DateTime.now().millisecondsSinceEpoch;
@@ -2226,6 +2509,46 @@ class AgentEventReducer {
     }
   }
 
+  String _thinkingCardIdForTask(
+    ChatConversationRuntimeState runtime, {
+    required String parentTaskId,
+    required String requestedCardId,
+  }) {
+    final activeCardId = runtime.activeThinkingCardId;
+    if (activeCardId != null) {
+      final activeIndex = runtime.messages.indexWhere(
+        (message) => message.id == activeCardId,
+      );
+      if (activeIndex != -1 &&
+          _thinkingCardBelongsToTask(
+            runtime.messages[activeIndex],
+            parentTaskId,
+          )) {
+        return activeCardId;
+      }
+    }
+
+    for (final message in runtime.messages) {
+      if (_thinkingCardBelongsToTask(message, parentTaskId)) {
+        return message.id;
+      }
+    }
+    return requestedCardId;
+  }
+
+  bool _thinkingCardBelongsToTask(
+    ChatMessageModel message,
+    String parentTaskId,
+  ) {
+    if (message.cardData?['type'] != 'deep_thinking') {
+      return false;
+    }
+    final cardTaskId =
+        _string(message.cardData?['taskID']) ??
+        _string(message.streamMeta?['parentTaskId']);
+    return cardTaskId == parentTaskId;
+  }
+
   void _markToolCardsCompleteForTask(
     ChatConversationRuntimeState runtime,
     String parentTaskId,
@@ -2297,11 +2620,33 @@ class AgentEventReducer {
 
   String? _findToolCardIdForCallId(
     ChatConversationRuntimeState runtime,
-    String callId,
-  ) {
+    String callId, {
+    required String taskId,
+    String? sessionId,
+  }) {
     final normalizedCallId = callId.trim();
     if (normalizedCallId.isEmpty) {
       return null;
+    }
+    final normalizedTaskId = taskId.trim();
+    final normalizedSessionId = sessionId?.trim() ?? '';
+    // ACP defines toolCallId as unique within a session. Prefer the explicit
+    // identity fields before inspecting legacy JSON payloads. The task check
+    // also protects the UI when a non-conforming provider reuses an id in a
+    // later turn.
+    for (final message in runtime.messages) {
+      final cardData = message.cardData;
+      if (cardData?['type'] != 'agent_tool_summary' ||
+          !_cardBelongsToTask(cardData!, normalizedTaskId)) {
+        continue;
+      }
+      final cardToolCallId = _string(cardData['toolCallId'])?.trim();
+      final cardSessionId = _string(cardData['sessionId'])?.trim() ?? '';
+      if (cardToolCallId == normalizedCallId &&
+          (normalizedSessionId.isEmpty ||
+              cardSessionId == normalizedSessionId)) {
+        return message.id;
+      }
     }
     for (final suffix in const <String>[
       'command',
@@ -2313,9 +2658,17 @@ class AgentEventReducer {
       'image',
       'tool',
     ]) {
-      final cardId = '$normalizedCallId-agent-$suffix';
-      if (_toolCardData(runtime, cardId) != null) {
-        return cardId;
+      final baseCardId = '$normalizedCallId-agent-$suffix';
+      final candidateIds = <String>[
+        baseCardId,
+        if (normalizedTaskId.isNotEmpty) '$normalizedTaskId-$baseCardId',
+      ];
+      for (final cardId in candidateIds) {
+        final cardData = _toolCardData(runtime, cardId);
+        if (cardData != null &&
+            _cardBelongsToTask(cardData, normalizedTaskId)) {
+          return cardId;
+        }
       }
     }
     for (final message in runtime.messages) {
@@ -2323,11 +2676,45 @@ class AgentEventReducer {
       if (cardData?['type'] != 'agent_tool_summary') {
         continue;
       }
-      if (_toolCardContainsCallId(cardData!, normalizedCallId)) {
+      if (_cardBelongsToTask(cardData!, normalizedTaskId) &&
+          _toolCardContainsCallId(cardData, normalizedCallId)) {
         return message.id;
       }
     }
     return null;
+  }
+
+  /// Legacy events may not carry a sessionId. Keep their compact ids when
+  /// possible, but allocate a task-scoped id on collision. Official ACP
+  /// cards use the session-scoped identity generated by [_toolCardBaseId].
+  String _taskScopedCardId(
+    ChatConversationRuntimeState runtime, {
+    required String taskId,
+    required String baseCardId,
+  }) {
+    final existing = _toolCardData(runtime, baseCardId);
+    if (existing == null || _cardBelongsToTask(existing, taskId)) {
+      return baseCardId;
+    }
+    return '${taskId.trim()}-$baseCardId';
+  }
+
+  String _toolCardBaseId({
+    required Map<String, dynamic> raw,
+    required String fallback,
+    required String suffix,
+  }) {
+    final identity = AgentToolIdentity.fromMaps(raw: raw);
+    return identity.cardId(suffix: suffix, fallback: fallback);
+  }
+
+  bool _cardBelongsToTask(Map<String, dynamic> cardData, String taskId) {
+    final normalizedTaskId = taskId.trim();
+    if (normalizedTaskId.isEmpty) {
+      return false;
+    }
+    final cardTaskId = _firstString([cardData['taskId'], cardData['taskID']]);
+    return cardTaskId?.trim() == normalizedTaskId;
   }
 
   bool _toolCardContainsCallId(Map<String, dynamic> cardData, String callId) {
@@ -2418,6 +2805,10 @@ class AgentEventReducer {
           seq: seq,
           roundIndex: seq,
           kind: kind,
+          runId: parentTaskId,
+          sessionId: runtime.activeAcpSessionId,
+          turnId: runtime.acpTurnIdForRun(parentTaskId),
+          cardId: entryId,
           parentTaskId: parentTaskId,
           entryId: entryId,
           isFinal: isFinal,
@@ -2767,6 +3158,8 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
   final update = _asStringMap(params['update']);
   if (update == null) return null;
   final sessionId = _firstString([
+    event['sessionId'],
+    event['session_id'],
     params['sessionId'],
     params['session_id'],
     event['threadId'],
@@ -2800,6 +3193,7 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
   Map<String, dynamic> projectedParams(Map<String, dynamic> values) {
     return <String, dynamic>{
       ...values,
+      if (sessionId != null) 'sessionId': sessionId,
       if (sessionId != null) 'threadId': sessionId,
       if (turnId != null) 'turnId': turnId,
     };
@@ -2830,11 +3224,19 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
       return <String, dynamic>{
         'method': 'item/started',
         'params': projectedParams(<String, dynamic>{
-          'item': _projectAcpToolCall(update),
+          'item': _projectAcpToolCall(
+            update,
+            sessionId: sessionId,
+            turnId: turnId,
+          ),
         }),
       };
     case 'tool_call_update':
-      final item = _projectAcpToolCall(update);
+      final item = _projectAcpToolCall(
+        update,
+        sessionId: sessionId,
+        turnId: turnId,
+      );
       final status = _string(item['status'])?.toLowerCase();
       return <String, dynamic>{
         'method':
@@ -2893,9 +3295,17 @@ bool _isTerminalAgentEventMethod(String method) {
       method == 'error';
 }
 
-Map<String, dynamic> _projectAcpToolCall(Map<String, dynamic> update) {
+Map<String, dynamic> _projectAcpToolCall(
+  Map<String, dynamic> update, {
+  String? sessionId,
+  String? turnId,
+}) {
+  final permissionCard = _acpPermissionCard(update['rawOutput']);
   return <String, dynamic>{
     'id': update['toolCallId'],
+    'toolCallId': update['toolCallId'],
+    if (sessionId != null) 'sessionId': sessionId,
+    if (turnId != null) 'turnId': turnId,
     'type': _acpToolUiType(_string(update['kind'])),
     'title': update['title'],
     'status': update['status'],
@@ -2903,7 +3313,31 @@ Map<String, dynamic> _projectAcpToolCall(Map<String, dynamic> update) {
     'locations': update['locations'],
     'rawInput': update['rawInput'],
     'rawOutput': update['rawOutput'],
+    if (permissionCard != null) 'permissionCard': permissionCard,
   };
+}
+
+Map<String, dynamic>? _permissionCardFromAcpItem(Map<String, dynamic> item) {
+  final explicit = _asStringMap(item['permissionCard']);
+  if (explicit != null) return explicit;
+  return _acpPermissionCard(item['rawOutput']);
+}
+
+Map<String, dynamic>? _acpPermissionCard(Object? rawOutput) {
+  final decoded = rawOutput is String
+      ? _decodeAcpJsonValue(rawOutput)
+      : rawOutput;
+  final map = _asStringMap(decoded);
+  if (map == null || map['type'] != 'permission_section') return null;
+  return map;
+}
+
+dynamic _decodeAcpJsonValue(String text) {
+  try {
+    return jsonDecode(text);
+  } catch (_) {
+    return text;
+  }
 }
 
 String _acpToolUiType(String? kind) {

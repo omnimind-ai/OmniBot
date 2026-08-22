@@ -13,6 +13,7 @@ import 'package:ui/services/agent_avatar_service.dart';
 import 'package:ui/theme/app_theme.dart';
 import 'package:ui/theme/theme_context.dart';
 import 'package:ui/widgets/agent_avatar.dart';
+import 'package:ui/widgets/glass_popup.dart';
 
 import '../chat_page_models.dart';
 import '../utils/agent_run_timeline.dart';
@@ -528,7 +529,8 @@ class _ChatMessageAnchorBarState extends State<ChatMessageAnchorBar>
   }
 
   void _updateDragSelection(Offset globalPosition) {
-    final fanBox = _fanBoxKey.currentContext?.findRenderObject() as RenderBox?;
+    final fanBox =
+        findActiveRenderObject(_fanBoxKey.currentContext) as RenderBox?;
     if (fanBox == null || !fanBox.hasSize) {
       return;
     }
@@ -580,7 +582,8 @@ class _ChatMessageAnchorBarState extends State<ChatMessageAnchorBar>
   // ==================== 圆环旋转（普通拖动） ====================
 
   void _handleFanPanStart(DragStartDetails details) {
-    final fanBox = _fanBoxKey.currentContext?.findRenderObject() as RenderBox?;
+    final fanBox =
+        findActiveRenderObject(_fanBoxKey.currentContext) as RenderBox?;
     if (fanBox == null || !fanBox.hasSize) {
       return;
     }
@@ -594,7 +597,8 @@ class _ChatMessageAnchorBarState extends State<ChatMessageAnchorBar>
   }
 
   void _handleFanPanUpdate(DragUpdateDetails details) {
-    final fanBox = _fanBoxKey.currentContext?.findRenderObject() as RenderBox?;
+    final fanBox =
+        findActiveRenderObject(_fanBoxKey.currentContext) as RenderBox?;
     if (fanBox == null || !fanBox.hasSize) {
       return;
     }

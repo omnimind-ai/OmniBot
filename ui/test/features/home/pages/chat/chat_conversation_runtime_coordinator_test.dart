@@ -174,17 +174,17 @@ void main() {
   });
 
   test(
-    'primes one visible thinking placeholder before the first ACP chunk',
+    'begins a turn without a visible thinking placeholder before ACP output',
     () {
       const conversationId = 2003;
       const taskId = 'local-task-before-acp';
 
-      coordinator.primeAcpThinking(
+      coordinator.beginAcpTurn(
         taskId: taskId,
         conversationId: conversationId,
         mode: kChatRuntimeModeAgent,
       );
-      coordinator.primeAcpThinking(
+      coordinator.beginAcpTurn(
         taskId: taskId,
         conversationId: conversationId,
         mode: kChatRuntimeModeAgent,
@@ -200,9 +200,8 @@ void main() {
         runtime.messages
             .where((message) => message.cardData?['type'] == 'deep_thinking')
             .length,
-        1,
+        0,
       );
-      expect(runtime.messages.first.cardData?['isLoading'], isTrue);
     },
   );
 
@@ -222,6 +221,35 @@ void main() {
       coordinator.modeForAcpEvent(conversationId: 42, turnId: 'turn-agent-1'),
       isNull,
     );
+  });
+
+  test('does not restore a completed run as an active timeline group', () {
+    const conversationId = 2004;
+    final runtime = coordinator.ensureRuntime(
+      conversationId: conversationId,
+      mode: kChatRuntimeModeAgent,
+    );
+    runtime.isAiResponding = true;
+    runtime.isExecutingTask = true;
+    runtime.currentDispatchTurnId = 'completed-run';
+    runtime.activeRunId = 'completed-run';
+    runtime.lastAgentTurnId = 'completed-run';
+    runtime.activeAcpSessionId = 'old-session';
+
+    coordinator.replaceConversationSnapshot(
+      conversationId: conversationId,
+      mode: kChatRuntimeModeAgent,
+      messages: <ChatMessageModel>[ChatMessageModel.userMessage('已经完成的请求')],
+      isAiResponding: false,
+      isExecutingTask: false,
+      currentDispatchTurnId: null,
+      lastAgentTurnId: null,
+    );
+
+    expect(runtime.activeAgentTurnIds, isEmpty);
+    expect(runtime.activeRunId, isNull);
+    expect(runtime.currentDispatchTurnId, isNull);
+    expect(runtime.activeAcpSessionId, isNull);
   });
 
   test('binds ACP events to one session as well as one turn', () {
@@ -376,7 +404,7 @@ void main() {
     expect(second.isAiResponding, isTrue);
   });
 
-  test('keeps DSH ACP reasoning steps separate', () {
+  test('keeps DSH ACP reasoning in the turn card around tool activity', () {
     const conversationId = 2103;
     const turnId = 'dsh-turn';
     applyAcp(
@@ -418,10 +446,16 @@ void main() {
     final thinking = runtime.messages
         .where((message) => message.cardData?['type'] == 'deep_thinking')
         .toList();
-    expect(thinking, hasLength(2));
+    expect(thinking, hasLength(1));
     expect(
-      thinking.map((message) => message.cardData?['thinkingContent']).toSet(),
-      <String>{'第一阶段：分析工作区。', '第二阶段：根据结果判断。'},
+      thinking.single.cardData?['thinkingContent'],
+      '第一阶段：分析工作区。第二阶段：根据结果判断。',
+    );
+    expect(
+      runtime.messages.any(
+        (message) => message.cardData?['type'] == 'agent_tool_summary',
+      ),
+      isTrue,
     );
   });
 

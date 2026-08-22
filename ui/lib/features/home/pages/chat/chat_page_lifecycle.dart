@@ -905,7 +905,7 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
 
   @override
   double _popupMenuBottomOffset() {
-    final renderObject = _inputAreaKey.currentContext?.findRenderObject();
+    final renderObject = findActiveRenderObject(_inputAreaKey.currentContext);
     if (renderObject is! RenderBox || !renderObject.hasSize) {
       return 72;
     }

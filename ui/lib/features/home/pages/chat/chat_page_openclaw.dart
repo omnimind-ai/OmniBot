@@ -155,7 +155,7 @@ mixin _ChatPageOpenClawMixin on _ChatPageStateBase {
   bool _isPointerInside(GlobalKey key, Offset position) {
     final context = key.currentContext;
     if (context == null) return false;
-    final renderBox = context.findRenderObject() as RenderBox?;
+    final renderBox = findActiveRenderObject(context) as RenderBox?;
     if (renderBox == null || !renderBox.hasSize) return false;
     final offset = renderBox.localToGlobal(Offset.zero);
     final rect = offset & renderBox.size;

@@ -53,8 +53,8 @@ mixin _ChatPageTerminalEnvMixin on _ChatPageStateBase {
       });
     }
     _inputFocusNode.unfocus();
-    final overlay =
-        Overlay.of(context).context.findRenderObject() as RenderBox?;
+    final overlayState = Overlay.maybeOf(context);
+    final overlay = findActiveRenderObject(overlayState?.context) as RenderBox?;
     final anchorRect = glassPopupAnchorFromContext(anchorContext);
     if (overlay == null || anchorRect == null) {
       return;

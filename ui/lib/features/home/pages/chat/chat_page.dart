@@ -15,6 +15,7 @@ import '../../../../models/conversation_thread_target.dart';
 import '../../../../models/chat_link_preview.dart';
 import '../../../../models/chat_message_model.dart';
 import '../../../../services/agent_stream_meta.dart';
+import '../../../../services/agent_identity.dart';
 import '../../../../services/assists_core_service.dart';
 import '../../widgets/home_drawer.dart';
 import '../authorize/authorize_page_args.dart';
@@ -1426,14 +1427,26 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     final runtime = _runtimeForMode(_activeMode);
     final taskId = runtime?.currentDispatchTurnId;
     if (runtime == null || taskId == null || taskId.trim().isEmpty) {
+      if (mounted) {
+        showToast(
+          formatAgentRuntimeErrorForUser(error),
+          type: ToastType.error,
+        );
+      }
       return;
     }
+    final displayError = formatAgentRuntimeErrorForUser(error);
+    _runtimeCoordinator.clearTaskThinkingPresentation(
+      taskId: taskId,
+      conversationId: runtime.conversationId,
+      mode: _modeKey(_activeMode),
+    );
     final messageId = '$taskId-error';
     final message = ChatMessageModel(
       id: messageId,
       type: 1,
       user: 2,
-      content: <String, dynamic>{'text': error, 'id': messageId},
+      content: <String, dynamic>{'text': displayError, 'id': messageId},
       isError: true,
     );
     final index = runtime.messages.indexWhere((item) => item.id == messageId);
@@ -1442,6 +1455,10 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     } else {
       runtime.messages[index] = message;
     }
+    // Fence the failed task here as well as in individual send catches. This
+    // covers preflight/setup failures that reach the shared error handler and
+    // prevents a late ACP update from reviving the failed thinking card.
+    _runtimeCoordinator.unregisterTask(taskId);
     runtime.isAiResponding = false;
     runtime.isCheckingExecutableTask = false;
     runtime.isExecutingTask = false;

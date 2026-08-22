@@ -163,8 +163,13 @@ class HttpAgentLlmClient(
         // before the vision model is called. A vision turn only needs the current
         // image question; subsequent text turns still use the normal agent context.
         const val PLATFORM_VISION_MAX_COMPLETION_TOKENS = 1_024
-        const val DEFAULT_STREAM_IDLE_WATCHDOG_MS = 45_000L
-        const val PAYLOAD_STREAM_IDLE_WATCHDOG_MS = 15_000L
+        // Providers can legitimately spend longer before the first SSE event
+        // after a tool result, because they rebuild the context and select the
+        // next action.  The ACP/UI already exposes the live turn while this
+        // happens, so the watchdog must protect against a dead stream without
+        // converting normal post-tool latency into turn/failed.
+        const val DEFAULT_STREAM_IDLE_WATCHDOG_MS = 60_000L
+        const val PAYLOAD_STREAM_IDLE_WATCHDOG_MS = 20_000L
     }
 
     internal data class StreamRequestVariant(
@@ -429,6 +434,10 @@ class HttpAgentLlmClient(
     ): ChatCompletionTurn {
         val streamDone = CompletableDeferred<ChatCompletionTurn>()
         val completed = AtomicBoolean(false)
+        val startedAtMs = System.currentTimeMillis()
+        var firstEventLogged = false
+        var firstReasoningLogged = false
+        var firstContentLogged = false
         val routeInfo = resolveRouteInfoOp(
             model,
             modelOverride?.apiBase,
@@ -599,6 +608,12 @@ class HttpAgentLlmClient(
                 emitContent()
                 turn
             }.onSuccess { turn ->
+                OmniLog.i(
+                    tag,
+                    "ACP provider timing stage=stream_completed " +
+                        "elapsedMs=${System.currentTimeMillis() - startedAtMs} " +
+                        "protocol=${routeInfo.protocolType}"
+                )
                 streamDone.complete(turn)
             }.onFailure { error ->
                 streamDone.completeExceptionally(error)
@@ -608,6 +623,12 @@ class HttpAgentLlmClient(
 
         val listener = object : EventSourceListener() {
             override fun onOpen(eventSource: EventSource, response: Response) {
+                OmniLog.i(
+                    tag,
+                    "ACP provider timing stage=stream_open " +
+                        "elapsedMs=${System.currentTimeMillis() - startedAtMs} " +
+                        "protocol=${routeInfo.protocolType}"
+                )
                 scheduleWatchdog()
             }
 
@@ -619,8 +640,35 @@ class HttpAgentLlmClient(
             ) {
                 if (completed.get()) return
                 runCatching {
+                    if (!firstEventLogged) {
+                        firstEventLogged = true
+                        OmniLog.i(
+                            tag,
+                            "ACP provider timing stage=first_event " +
+                                "elapsedMs=${System.currentTimeMillis() - startedAtMs} " +
+                                "protocol=${routeInfo.protocolType}"
+                        )
+                    }
                     scheduleWatchdog()
                     val done = accumulator.consume(data)
+                    if (!firstReasoningLogged && accumulator.currentReasoningLength() > 0) {
+                        firstReasoningLogged = true
+                        OmniLog.i(
+                            tag,
+                            "ACP provider timing stage=first_reasoning " +
+                                "elapsedMs=${System.currentTimeMillis() - startedAtMs} " +
+                                "protocol=${routeInfo.protocolType}"
+                        )
+                    }
+                    if (!firstContentLogged && accumulator.currentContent().isNotEmpty()) {
+                        firstContentLogged = true
+                        OmniLog.i(
+                            tag,
+                            "ACP provider timing stage=first_content " +
+                                "elapsedMs=${System.currentTimeMillis() - startedAtMs} " +
+                                "protocol=${routeInfo.protocolType}"
+                        )
+                    }
                     emitReasoning()
                     emitContent()
                     if (done) {
@@ -659,6 +707,13 @@ class HttpAgentLlmClient(
             override fun onFailure(eventSource: EventSource, t: Throwable?, response: Response?) {
                 if (!completed.compareAndSet(false, true)) return
                 cancelWatchdog()
+                OmniLog.w(
+                    tag,
+                    "ACP provider timing stage=stream_failed " +
+                        "elapsedMs=${System.currentTimeMillis() - startedAtMs} " +
+                        "status=${response?.code ?: "none"} " +
+                        "protocol=${routeInfo.protocolType}"
+                )
                 val responseBody = extractRawResponseBody(response)
                 parseSuccessfulNonStreamingResponsesTurn(
                     statusCode = response?.code,
@@ -693,6 +748,12 @@ class HttpAgentLlmClient(
                 modelOverride?.protocolType,
                 modelOverride?.wireApi,
                 forceHttp1
+            )
+            OmniLog.i(
+                tag,
+                "ACP provider timing stage=request_dispatched " +
+                    "elapsedMs=${System.currentTimeMillis() - startedAtMs} " +
+                    "protocol=${routeInfo.protocolType}"
             )
             scheduleWatchdog()
             return streamDone.await()

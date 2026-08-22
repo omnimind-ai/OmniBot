@@ -138,6 +138,32 @@ class OmniAgentExecutor(
             return messages
         }
 
+        /**
+         * Pure chat shares the ACP transport, but it is not an Agent replay.
+         * Never carry tool calls/results (or an assistant placeholder that only
+         * represented a tool turn) into a no-tools request. Apart from making
+         * the provider interpret old execution state as current context, that
+         * can make the UI restore tool/thinking cards for a pure-chat turn.
+         */
+        internal fun filterChatOnlyHistoryMessages(
+            historyMessages: List<ChatCompletionMessage>
+        ): List<ChatCompletionMessage> {
+            return historyMessages.mapNotNull { message ->
+                when (message.role.trim().lowercase()) {
+                    "user" -> message.takeIf { it.content != null }
+                    "assistant" -> {
+                        message.takeIf { it.content != null }?.copy(
+                            toolCalls = null,
+                            toolCallId = null,
+                            name = null,
+                            reasoningContent = null
+                        )
+                    }
+                    else -> null
+                }
+            }
+        }
+
         private fun isUserTurnMessage(message: ChatCompletionMessage): Boolean {
             return message.role == "user" &&
                 !AgentConversationHistorySupport.isContextSummaryMessage(message)
@@ -255,6 +281,7 @@ class OmniAgentExecutor(
                 resolvedSkills = resolvedSkills,
                 memoryContext = promptIdentityContext,
                 terminalDistribution = terminalDistribution,
+                conversationMode = conversationMode,
                 historyMessagesOverride = historyMessagesOverride
             )
 
@@ -376,28 +403,50 @@ class OmniAgentExecutor(
         resolvedSkills: List<ResolvedSkillContext>,
         memoryContext: WorkspaceMemoryPromptContext?,
         terminalDistribution: TerminalDistribution.Spec = TerminalDistribution.alpine,
+        conversationMode: String = AgentConversationModePolicy.NORMAL_MODE,
         historyMessagesOverride: List<ChatCompletionMessage>? = null
     ): List<ChatCompletionMessage> {
-        val systemPrompt = AgentSystemPrompt.build(
-            workspace = workspaceDescriptor,
-            installedSkills = installedSkills,
-            skillsRootShellPath = skillsRootShellPath,
-            skillsRootAndroidPath = skillsRootAndroidPath,
-            resolvedSkills = resolvedSkills,
-            memoryContext = memoryContext,
-            locale = AppLocaleManager.resolvePromptLocale(context),
-            terminalDistribution = terminalDistribution
-        )
         val locale = AppLocaleManager.resolvePromptLocale(context)
-        return mergeInitialPromptMessages(
-            leadingMessages = buildList {
+        val chatOnly = AgentConversationModePolicy.isChatOnlyMode(conversationMode)
+        val leadingMessages = if (chatOnly) {
+            val chatPrompt = AgentPromptSettingsStore.readChatPrompt(context).trim()
+            buildList {
+                if (chatPrompt.isNotEmpty()) {
+                    add(
+                        ChatCompletionMessage(
+                            role = "system",
+                            content = JsonPrimitive(chatPrompt)
+                        )
+                    )
+                }
+            }
+        } else {
+            val systemPrompt = AgentSystemPrompt.build(
+                workspace = workspaceDescriptor,
+                installedSkills = installedSkills,
+                skillsRootShellPath = skillsRootShellPath,
+                skillsRootAndroidPath = skillsRootAndroidPath,
+                resolvedSkills = resolvedSkills,
+                memoryContext = memoryContext,
+                locale = locale,
+                terminalDistribution = terminalDistribution
+            )
+            buildList {
                 add(ChatCompletionMessage(
                     role = "system",
                     content = buildCachedSystemPromptContent(systemPrompt)
                 ))
                 add(buildCachedTimeContextMessage(locale))
+            }
+        }
+        val historyMessages = historyMessagesOverride ?: promptSeed.historyMessages
+        return mergeInitialPromptMessages(
+            leadingMessages = leadingMessages,
+            historyMessages = if (chatOnly) {
+                filterChatOnlyHistoryMessages(historyMessages)
+            } else {
+                historyMessages
             },
-            historyMessages = historyMessagesOverride ?: promptSeed.historyMessages,
             currentUserMessage = buildCurrentUserMessage(userMessage, attachments),
             continueMode = continueMode
         )

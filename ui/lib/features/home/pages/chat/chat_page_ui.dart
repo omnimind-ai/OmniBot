@@ -153,7 +153,7 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
       double nextHeight = 0;
       if (visible) {
         final context = _openClawPanelKey.currentContext;
-        final renderBox = context?.findRenderObject() as RenderBox?;
+        final renderBox = findActiveRenderObject(context) as RenderBox?;
         if (renderBox != null && renderBox.hasSize) {
           nextHeight = renderBox.size.height;
         }
@@ -610,8 +610,8 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
       return fallbackGeometry;
     }
     final inputContext = _chatInputAreaKey.currentContext;
-    final inputBox = inputContext?.findRenderObject();
-    final stackBox = layoutContext.findRenderObject();
+    final inputBox = findActiveRenderObject(inputContext);
+    final stackBox = findActiveRenderObject(layoutContext);
     if (inputBox is! RenderBox ||
         stackBox is! RenderBox ||
         !inputBox.hasSize ||
@@ -640,8 +640,8 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
       return null;
     }
     final inputContext = _chatInputAreaKey.currentContext;
-    final inputBox = inputContext?.findRenderObject();
-    final stackBox = layoutContext.findRenderObject();
+    final inputBox = findActiveRenderObject(inputContext);
+    final stackBox = findActiveRenderObject(layoutContext);
     if (inputBox is! RenderBox ||
         stackBox is! RenderBox ||
         !inputBox.hasSize ||
@@ -867,12 +867,31 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
       fallbackMessages: _modeState(mode).messages,
       preserveFallbackDuringHandoff: _modeState(mode).isAiResponding,
     );
+    final chatOnly =
+        _conversationModeForPageMode(mode) == ConversationMode.chatOnly;
+    // Chat-only disables tool execution, not reasoning. Keep reasoning cards
+    // in the ordinary conversation surface so ACP providers do not appear to
+    // have lost all thought output; only tool/request cards are execution UI.
+    final visibleMessages = chatOnly
+        ? resolvedMessages
+              .where((message) {
+                final cardType = message.cardData?['type']?.toString();
+                return cardType != 'agent_tool_summary' &&
+                    cardType != 'agent_request';
+              })
+              .toList(growable: false)
+        : resolvedMessages;
     // `runtime.activeAgentTurnIds` is the single source of truth for which
     // turns are in flight. Only fall back to the page-level dispatch id when
     // there is no runtime yet to own it.
     final activeAgentTurnIds = <String>{...?runtime?.activeAgentTurnIds};
-    if (runtime == null && mode == ChatPageMode.agent) {
-      final isAwaitingAgent = _modeState(mode).isAiResponding;
+    if (mode == ChatPageMode.agent && activeAgentTurnIds.isEmpty) {
+      // The runtime can already exist while a handoff/snapshot briefly has
+      // not copied its active-turn ids yet. The page-level dispatch state is
+      // still authoritative for this short window; use it to render the
+      // single processing header, but never manufacture a thinking card.
+      final isAwaitingAgent =
+          runtime?.isAiResponding == true || _modeState(mode).isAiResponding;
       final pendingDispatchTaskId =
           _modeState(mode).currentDispatchTurnId?.trim() ?? '';
       if (isAwaitingAgent && pendingDispatchTaskId.isNotEmpty) {
@@ -880,7 +899,7 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
       }
     }
     final toolActivitySnapshot = resolveAgentToolActivitySnapshot(
-      List<ChatMessageModel>.from(resolvedMessages),
+      List<ChatMessageModel>.from(visibleMessages),
       activeTaskIds: activeAgentTurnIds,
       preferredCompletedTaskId: _latestExpandedAgentRunTaskIdForMode(mode),
     );
@@ -902,14 +921,15 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
         _emptyGreetingKeyboardLiftTracker.resolveForBuild(bottomInset);
     final homeGreetingSettings = HomeGreetingSettingsService.notifier.value;
     final activeAcpAgentId = _activeAcpAgentId;
-    // Both normal and pure-chat conversations are ACP-backed. The selected
-    // identity can be temporarily empty during bootstrap or Harness switch,
-    // but that must not send the turn back through the legacy user-avatar
-    // renderer. Keep the ACP header and let its neutral icon be the boundary
-    // fallback until the runtime identity arrives.
-    final useAcpPresentation = !_isOpenClawSurface;
+    // Normal chat is ACP-backed at the transport/session layer, but it keeps
+    // the Xiaowan conversation layout for compatibility with the previous
+    // release: no run header, fold wrapper, or Agent tool capsules. The ACP
+    // All chat modes now use the same ACP run presentation. The selected
+    // Harness changes the provider identity and capabilities, not the event
+    // or card layout. Pure chat is simply an ACP run with no tool cards.
+    final useAcpPresentation = true;
     return ChatMessageList(
-      messages: resolvedMessages,
+      messages: visibleMessages,
       activeAgentTurnIds: activeAgentTurnIds,
       useAcpPresentation: useAcpPresentation,
       activeAcpAgentId: activeAcpAgentId,

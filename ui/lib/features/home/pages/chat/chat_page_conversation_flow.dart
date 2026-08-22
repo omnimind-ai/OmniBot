@@ -377,6 +377,18 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
     if (_activeMode != ChatPageMode.normal || _isOpenClawSurface) {
       return true;
     }
+    // The durable scene binding is already sufficient for an ACP turn. Do
+    // not block the first visible message on refreshing the whole Provider
+    // catalog; the native boundary will report a stale/missing binding as a
+    // typed error if it cannot use this selection.
+    final persistedSelection =
+        _activeConversationModelOverrideSelection ??
+        _activeDispatchSceneSelection;
+    if (persistedSelection != null &&
+        persistedSelection.providerProfileId.trim().isNotEmpty &&
+        persistedSelection.modelId.trim().isNotEmpty) {
+      return true;
+    }
     if (_hasConfiguredNormalChatProviderModel()) {
       return true;
     }
@@ -812,11 +824,8 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
 
     _syncRuntimeSnapshotForMode(_activeMode);
     _registerActiveTaskBinding(aiMessageId);
-    _runtimeCoordinator.primeAcpThinking(
-      taskId: aiMessageId,
-      conversationId: conversationId,
-      mode: _modeKey(_activeMode),
-    );
+    // Pure chat deliberately has no Agent/Harness thinking card. Its ACP
+    // stream updates the ordinary assistant text when content arrives.
     try {
       final status = await _refreshConnectedAgentRuntimeStatus();
       final remoteRuntime = agentModelSourceKey(status) == 'remote';
@@ -832,10 +841,12 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
         sessionId: remoteRuntime ? null : reusableSessionId,
         requestId: _buildPromptRequestId(aiMessageId),
         // Pure chat is an ACP turn with tools disabled, not a provider-only
-        // transport. Keep the selected Harness explicit so a DSH/Xiaowan
-        // switch cannot route the turn through whichever process was last
-        // connected.
-        agentId: remoteRuntime ? null : _activeAcpAgentId,
+        // transport. It deliberately has no Harness identity: otherwise a
+        // previous DSH/Xiaowan switch leaks into the pure-chat session and
+        // the runtime can reconnect the wrong Agent.
+        agentId: activeConversationModeValue == ConversationMode.chatOnly
+            ? null
+            : (remoteRuntime ? null : _activeAcpAgentId),
         text: userMessage,
         attachments: userAttachments,
         approvalPolicy: _agentPermissionMode.approvalPolicy,
@@ -883,7 +894,10 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
             id: errorId,
             type: 1,
             user: 2,
-            content: {'text': '抱歉，发送消息失败：$error', 'id': errorId},
+            content: {
+              'text': '抱歉，发送消息失败：${formatAgentRuntimeErrorForUser(error)}',
+              'id': errorId,
+            },
           ),
         );
       });
@@ -916,7 +930,6 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       _isDeepThinking = false;
       _currentThinkingStage = 1;
 
-      createThinkingCard(aiMessageId);
       _syncRuntimeSnapshotForMode(_activeMode);
       _registerActiveTaskBinding(aiMessageId);
 
@@ -928,6 +941,11 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
         throw StateError('conversationId is not ready');
       }
       final status = await _refreshConnectedAgentRuntimeStatus();
+      _runtimeCoordinator.beginAcpTurn(
+        taskId: aiMessageId,
+        conversationId: conversationId,
+        mode: _modeKey(_activeMode),
+      );
       final remoteCodex = agentModelSourceKey(status) == 'remote';
       final reusableSessionId =
           !remoteCodex && _normalAcpSessionConversationId == conversationId

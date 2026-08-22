@@ -55,6 +55,7 @@ import cn.com.omnimind.bot.agent.AgentWorkspaceAttachmentSupport
 import cn.com.omnimind.bot.agent.AgentTextSanitizer
 import cn.com.omnimind.bot.agent.AgentModelOverride
 import cn.com.omnimind.bot.agent.AgentRuntimeErrorSupport
+import cn.com.omnimind.bot.agent.resolveAgentPermissionIds
 import cn.com.omnimind.bot.agent.AgentConversationHistoryRepository
 import cn.com.omnimind.bot.agent.AgentConversationHistorySupport
 import cn.com.omnimind.bot.agent.AgentRuntimeContextRepository
@@ -743,20 +744,7 @@ class AssistsCoreManager(private val context: Context) {
     }
 
     private fun resolveRequiredPermissionIds(missing: List<String>): List<String> {
-        val nameToId = linkedMapOf(
-            "悬浮窗权限" to "overlay",
-            "Overlay" to "overlay",
-            "应用列表读取权限" to "installed_apps",
-            "Installed Apps Access" to "installed_apps",
-            "Shizuku 权限" to "shizuku",
-            "Shizuku Permission" to "shizuku",
-            WorkspaceStorageAccess.REQUIRED_PERMISSION_NAME to "workspace_storage",
-            PublicStorageAccess.REQUIRED_PERMISSION_NAME to "public_storage",
-            "Public Storage Access" to "public_storage"
-        )
-        return missing.mapNotNull { raw ->
-            nameToId[raw.trim()]
-        }.distinct()
+        return resolveAgentPermissionIds(missing)
     }
 
     private fun buildPermissionCardData(requiredPermissionIds: List<String>): Map<String, Any?> {

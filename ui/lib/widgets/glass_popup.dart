@@ -581,11 +581,50 @@ class _UnfoldClipper extends CustomClipper<Rect> {
       alignment != old.alignment;
 }
 
+/// 读取仍处于活动树中的 context 对应的 render object。
+///
+/// 页面切换时，旧页面的 State 可能还 mounted，但它的 Element 已经进入
+/// inactive 状态。此时直接调用 `findRenderObject()` 会在 debug/profile 设备
+/// 上触发 Flutter 断言，尤其容易发生在 post-frame 的弹窗锚点测量中。
+bool isActiveBuildContext(BuildContext? context) {
+  if (context == null || !context.mounted) {
+    return false;
+  }
+
+  var active = true;
+  assert(() {
+    if (context is Element) {
+      active = context.debugIsActive;
+    }
+    return true;
+  }());
+  return active;
+}
+
+RenderObject? findActiveRenderObject(BuildContext? context) {
+  if (!isActiveBuildContext(context)) {
+    return null;
+  }
+  final activeContext = context!;
+
+  try {
+    return activeContext.findRenderObject();
+  } on FlutterError {
+    // The element can be deactivated between the checks and the lookup while
+    // a route transition is being committed. Treat it as not measurable.
+    return null;
+  }
+}
+
 /// 从 [BuildContext] 对应的 [RenderBox] 中提取 anchor 矩形（overlay 坐标系）。
 /// 调用前请确保 widget 已经完成 layout（`hasSize == true`）。
 Rect? glassPopupAnchorFromContext(BuildContext anchorContext) {
-  final overlay = Overlay.of(anchorContext).context.findRenderObject() as RenderBox?;
-  final anchorBox = anchorContext.findRenderObject() as RenderBox?;
+  if (!isActiveBuildContext(anchorContext)) {
+    return null;
+  }
+  final overlayState = Overlay.maybeOf(anchorContext);
+  final overlay = findActiveRenderObject(overlayState?.context) as RenderBox?;
+  final anchorBox = findActiveRenderObject(anchorContext) as RenderBox?;
   if (overlay == null || anchorBox == null || !anchorBox.hasSize) {
     return null;
   }
@@ -602,7 +641,11 @@ Rect? glassPopupAnchorFromGlobalPosition(
   BuildContext context,
   Offset globalPosition,
 ) {
-  final overlay = Overlay.of(context).context.findRenderObject() as RenderBox?;
+  if (!isActiveBuildContext(context)) {
+    return null;
+  }
+  final overlayState = Overlay.maybeOf(context);
+  final overlay = findActiveRenderObject(overlayState?.context) as RenderBox?;
   if (overlay == null) return null;
   final local = overlay.globalToLocal(globalPosition);
   return Rect.fromLTWH(local.dx, local.dy, 0, 0);

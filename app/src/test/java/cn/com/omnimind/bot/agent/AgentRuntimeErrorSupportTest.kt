@@ -53,4 +53,30 @@ class AgentRuntimeErrorSupportTest {
                 .contains("选择 Provider 和模型")
         )
     }
+
+    @Test
+    fun `xiaowan missing verified binding maps to provider not bound`() {
+        val error = IllegalStateException(
+            "No verified Provider/model binding for Xiaowan ACP. " +
+                "Select a model in scene.dispatch.model and retry."
+        )
+
+        assertEquals(
+            AgentRuntimeErrorSupport.PROVIDER_NOT_BOUND,
+            AgentRuntimeErrorSupport.failureKind(error)
+        )
+    }
+
+    @Test
+    fun `diagnostic messages redact credentials and stay bounded`() {
+        val error = IllegalStateException(
+            "request failed Bearer abc.def token=secret-value " + "x".repeat(500)
+        )
+
+        val diagnostic = AgentRuntimeErrorSupport.safeDiagnosticMessage(error)
+
+        assertTrue(diagnostic.length <= 300)
+        assertTrue(!diagnostic.contains("abc.def"))
+        assertTrue(!diagnostic.contains("secret-value"))
+    }
 }

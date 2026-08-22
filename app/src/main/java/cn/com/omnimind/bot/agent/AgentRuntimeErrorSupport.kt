@@ -38,10 +38,34 @@ internal object AgentRuntimeErrorSupport {
         }
     }
 
+    /** Keep native diagnostics useful without returning credentials to Dart or logs. */
+    fun safeDiagnosticMessage(error: Throwable, maxLength: Int = 300): String {
+        val raw = generateSequence(error) { it.cause }
+            .mapNotNull { it.message?.trim()?.takeIf(String::isNotEmpty) }
+            .distinct()
+            .joinToString("; ")
+            .ifBlank { error.javaClass.simpleName }
+        val redacted = raw
+            .replace(
+                Regex("Bearer\\s+[A-Za-z0-9._~+/=-]+", RegexOption.IGNORE_CASE),
+                "Bearer ***"
+            )
+            .replace(
+                Regex(
+                    "(api[_-]?key|token|authorization)\\s*[:=]\\s*[^,;\\s]+",
+                    RegexOption.IGNORE_CASE
+                ),
+                "\\$1=***"
+            )
+        return redacted.take(maxLength)
+    }
+
     private fun isProviderNotBound(error: Throwable): Boolean =
         errorMessages(error).any {
             it.contains("not bound to scene.dispatch.model") ||
-                it.contains("provider is not bound")
+                it.contains("provider is not bound") ||
+                it.contains("scene.dispatch.model") &&
+                it.contains("no verified provider/model binding")
         }
 
     private fun isProviderModelUnavailable(error: Throwable): Boolean =

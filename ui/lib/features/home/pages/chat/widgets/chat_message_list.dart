@@ -394,7 +394,8 @@ class _ChatMessageListState extends State<ChatMessageList> {
     }
     _suspendAutoStickForAgentRunToggle();
     final nextExpandedTaskIds = Set<String>.from(_expandedAgentRunTaskIds);
-    if (nextExpandedTaskIds.contains(normalizedTaskId)) {
+    final wasExpanded = nextExpandedTaskIds.contains(normalizedTaskId);
+    if (wasExpanded) {
       nextExpandedTaskIds.remove(normalizedTaskId);
     } else {
       nextExpandedTaskIds.add(normalizedTaskId);
@@ -408,6 +409,21 @@ class _ChatMessageListState extends State<ChatMessageList> {
           ..addAll(nextExpandedTaskIds);
       });
       widget.onExpandedAgentRunTaskIdsChanged?.call(nextExpandedTaskIds);
+    }
+    if (!wasExpanded) {
+      // Expanding a run increases its height below the header. When the run
+      // is near the latest edge, the newly revealed reasoning can otherwise
+      // land underneath the composer and look like it was not restored at
+      // all. Scroll the whole run into view after the expansion animation has
+      // laid out, without changing the user's position when they are reading
+      // an older part of the conversation.
+      final wasNearLatest = _isNearLatest(null);
+      if (wasNearLatest) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          unawaited(_animateToEntryKey('agent-run-$normalizedTaskId'));
+        });
+      }
     }
   }
 
@@ -859,9 +875,18 @@ class _ChatMessageListState extends State<ChatMessageList> {
             )
           : const SizedBox.expand();
       if (pageBackgroundColor == null) {
-        return content;
+        return Padding(
+          padding: EdgeInsets.only(bottom: reservedBottomInset),
+          child: content,
+        );
       }
-      return ColoredBox(color: pageBackgroundColor, child: content);
+      return ColoredBox(
+        color: pageBackgroundColor,
+        child: Padding(
+          padding: EdgeInsets.only(bottom: reservedBottomInset),
+          child: content,
+        ),
+      );
     }
 
     String? latestUserMessageId;

@@ -16,6 +16,7 @@ import 'package:ui/theme/app_theme_controller.dart';
 import 'package:ui/theme/app_theme_mode.dart';
 import 'package:ui/theme/app_theme.dart';
 import 'package:ui/widgets/startup_account_prompt.dart';
+import 'package:ui/widgets/omnibot_error_widget.dart';
 
 import 'core/router/go_router_manager.dart';
 import 'services/event_bus.dart';
@@ -43,6 +44,7 @@ Future<void> bootstrapMain(List<String> args) async {
     GoRouterManager.setInitialRoute(initialRoute);
   }
   WidgetsFlutterBinding.ensureInitialized();
+  installOmnibotErrorWidget();
   try {
     await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   } catch (error, stackTrace) {

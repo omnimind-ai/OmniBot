@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ui/features/home/pages/command_overlay/widgets/cards/deep_thinking_card.dart';
 import 'package:ui/features/home/pages/chat/chat_page_models.dart';
+import 'package:ui/features/home/pages/chat/widgets/chat_empty_greeting.dart';
 import 'package:ui/features/home/pages/chat/widgets/chat_widgets.dart';
 import 'package:ui/l10n/generated/app_localizations.dart';
 import 'package:ui/models/chat_message_model.dart';
@@ -27,12 +28,16 @@ void main() {
 
     await tester.pump();
 
-    final animatedPadding = tester.widget<AnimatedPadding>(
-      find.byType(AnimatedPadding),
+    final reservedPadding = tester.widget<Padding>(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is Padding &&
+            widget.padding == const EdgeInsets.only(bottom: 128),
+      ),
     );
 
-    expect(animatedPadding.padding, const EdgeInsets.only(bottom: 128));
-    expect(find.text('有什么可以帮助你的？'), findsOneWidget);
+    expect(reservedPadding.padding, const EdgeInsets.only(bottom: 128));
+    expect(find.byType(ChatEmptyGreeting), findsOneWidget);
   });
 
   testWidgets(
@@ -812,10 +817,57 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('运行 git status'), findsOneWidget);
-    expect(find.text('详细思考过程'), findsNothing);
+    expect(find.text('详细思考过程'), findsOneWidget);
     expect(find.byType(AgentAvatarCircle), findsOneWidget);
     expect(find.byType(AgentAvatarButton), findsNothing);
   });
+
+  testWidgets(
+    'stale Xiaowan tool timestamp does not inflate the processed duration',
+    (tester) async {
+      final controller = ScrollController();
+      final runStartedAt = DateTime(2026, 8, 22, 14, 29, 24, 493);
+      final messages = _buildCompletedAgentRunMessages()
+          .map((message) {
+            if (message.id == 'task-1-tool') {
+              return message.copyWith(
+                // Reproduces a provider reusing a raw call id from an older
+                // turn. The card still belongs to this task, but its stored
+                // createdAt predates the turn by more than two minutes.
+                createAt: runStartedAt.subtract(const Duration(minutes: 2)),
+              );
+            }
+            if (message.id == 'task-1-thinking') {
+              return message.copyWith(createAt: runStartedAt);
+            }
+            if (message.id == 'task-1-text') {
+              return message.copyWith(
+                createAt: runStartedAt.add(const Duration(seconds: 4)),
+              );
+            }
+            return message;
+          })
+          .toList(growable: false);
+
+      await tester.pumpWidget(
+        _buildLocalizedApp(
+          child: SizedBox(
+            width: 400,
+            height: 520,
+            child: ChatMessageList(
+              messages: messages,
+              scrollController: controller,
+              onBeforeTaskExecute: () async {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('已处理  4s'), findsOneWidget);
+      expect(find.textContaining('2m'), findsNothing);
+    },
+  );
 
   testWidgets('collapsed Xiaowan run shows only its final prose segment', (
     tester,
@@ -848,7 +900,7 @@ void main() {
     expect(find.text('第一段过程正文'), findsOneWidget);
     expect(find.text('第二段过程正文'), findsOneWidget);
     expect(find.text('读取项目状态'), findsOneWidget);
-    expect(find.text('最后整理思路'), findsNothing);
+    expect(find.text('最后整理思路'), findsOneWidget);
     expect(find.text('最终结论'), findsOneWidget);
     expect(
       tester.getTopLeft(find.text('第一段过程正文')).dy,
@@ -1511,7 +1563,7 @@ void main() {
     expect(find.text('读取 README.md'), findsOneWidget);
   });
 
-  testWidgets('reopening run collapses thinking details by default again', (
+  testWidgets('reopening run restores thinking details with the process fold', (
     tester,
   ) async {
     final controller = ScrollController();
@@ -1538,6 +1590,7 @@ void main() {
     await tester.tap(summaryToggle);
     await tester.pumpAndSettle();
 
+    expect(find.text('详细思考过程'), findsOneWidget);
     final thinkingToggle = find.descendant(
       of: find.byType(DeepThinkingCard),
       matching: find.byType(InkWell),
@@ -1546,7 +1599,7 @@ void main() {
 
     await tester.tap(thinkingToggle);
     await tester.pumpAndSettle();
-    expect(find.text('详细思考过程'), findsOneWidget);
+    expect(find.text('详细思考过程'), findsNothing);
 
     await tester.tap(summaryToggle);
     await tester.pumpAndSettle();
@@ -1555,7 +1608,7 @@ void main() {
     await tester.tap(summaryToggle);
     await tester.pumpAndSettle();
     expect(find.byType(DeepThinkingCard), findsOneWidget);
-    expect(find.text('详细思考过程'), findsNothing);
+    expect(find.text('详细思考过程'), findsOneWidget);
   });
 
   testWidgets('agent run expansion can be controlled by the parent page', (
@@ -1762,6 +1815,7 @@ void main() {
       );
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 32));
+      await tester.pump(const Duration(milliseconds: 200));
 
       expect(
         find.byKey(const ValueKey('agent-run-summary-task-1')),
@@ -1776,7 +1830,7 @@ void main() {
       );
       expect(find.text('详细思考过程'), findsOneWidget);
       expect(find.text('运行 git status'), findsOneWidget);
-      expect(find.text('最终回答'), findsOneWidget);
+      expect(find.text('最终回答', skipOffstage: false), findsOneWidget);
 
       // Finishing one thinking/content stage collapses that thinking card, but
       // must not fold the whole run while the task is still active.
@@ -1792,7 +1846,7 @@ void main() {
       expect(find.byType(DeepThinkingCard), findsOneWidget);
       expect(find.text('详细思考过程'), findsNothing);
       expect(find.text('运行 git status'), findsOneWidget);
-      expect(find.text('最终回答'), findsOneWidget);
+      expect(find.text('最终回答', skipOffstage: false), findsOneWidget);
 
       setState(() {
         activeTaskIds = <String>{};
@@ -1807,7 +1861,7 @@ void main() {
       expect(find.byType(DeepThinkingCard), findsNothing);
       expect(find.text('详细思考过程'), findsNothing);
       expect(find.text('运行 git status'), findsNothing);
-      expect(find.text('最终回答'), findsOneWidget);
+      expect(find.text('最终回答', skipOffstage: false), findsOneWidget);
     },
   );
 

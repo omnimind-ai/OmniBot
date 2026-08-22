@@ -57,8 +57,12 @@ class CardWidgetFactory {
           cardData['isCollapsible'],
           fallback: enableThinkingCollapse,
         );
-        final key = taskID != null
-            ? ValueKey('deep_thinking_${taskID}_${startTime ?? 'na'}')
+        final keyIdentity = cardId ?? taskID;
+        // cardId is the replacement identity. Including a mutable timestamp
+        // remounts the typewriter whenever a restored card receives a new
+        // boundary and makes a single reasoning stream look duplicated.
+        final key = keyIdentity != null
+            ? ValueKey('deep_thinking_$keyIdentity')
             : null;
         return DeepThinkingCard(
           key: key,

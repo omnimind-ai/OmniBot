@@ -90,6 +90,24 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.coroutineContext
 
+/**
+ * Host-side timing for one ACP turn. This intentionally contains only
+ * lifecycle stages and elapsed milliseconds; it must never contain prompt
+ * text, Provider credentials, or model response content.
+ */
+private class AcpTurnTiming {
+    private val startedAtNanos = System.nanoTime()
+    private val stages = linkedMapOf<String, Long>()
+
+    @Synchronized
+    fun mark(stage: String): Long? {
+        if (stages.containsKey(stage)) return null
+        val elapsed = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAtNanos)
+        stages[stage] = elapsed
+        return elapsed
+    }
+}
+
 internal class LocalAcpRuntime(
     context: Context,
     private val scope: CoroutineScope,
@@ -144,6 +162,9 @@ internal class LocalAcpRuntime(
      * so this only ever fires for a genuinely stalled flow.
      */
     private val lastTurnActivityAt = ConcurrentHashMap<String, Long>()
+
+    /** Redacted, in-memory timing state for the active local ACP turns. */
+    private val turnTimings = ConcurrentHashMap<String, AcpTurnTiming>()
 
     /**
      * Threads currently inside a `session/load` call. Per the ACP spec the
@@ -913,10 +934,28 @@ internal class LocalAcpRuntime(
             val catalogSession = catalogSessionId
                 ?.let(sessions::get)
                 ?.takeIf { sessionCwds[it.sessionId.value] == cwd }
-            val session = catalogSession ?: requireClient().newSession(
-                sessionCreationParameters(cwd),
-                operationsFactory()
-            ).also { registerSession(it, cwd) }
+            val session = if (catalogSession != null) {
+                Log.i(
+                    TAG,
+                    "ACP timing agent=${activeAgentId()} stage=session_reused " +
+                        "session=${compactId(catalogSession.sessionId.value)}"
+                )
+                catalogSession
+            } else {
+                val startedAtNanos = System.nanoTime()
+                requireClient().newSession(
+                    sessionCreationParameters(cwd),
+                    operationsFactory()
+                ).also {
+                    registerSession(it, cwd)
+                    Log.i(
+                        TAG,
+                        "ACP timing agent=${activeAgentId()} stage=session_created " +
+                            "session=${compactId(it.sessionId.value)} " +
+                            "elapsedMs=${elapsedMillis(startedAtNanos)}"
+                    )
+                }
+            }
             if (catalogSession != null) {
                 catalogSessionId = null
             }
@@ -1362,6 +1401,8 @@ internal class LocalAcpRuntime(
             }
             throw IllegalStateException("ACP session $threadId already has an active turn.")
         }
+        turnTimings[turnId] = AcpTurnTiming()
+        markTurnTiming(threadId, turnId, "turn_reserved")
         // startThread applies initial configuration for a new session. After
         // that, the idle session is changed through config/set; do not
         // overwrite Harness-owned state on every turn. Older ACP adapters
@@ -1374,6 +1415,7 @@ internal class LocalAcpRuntime(
             }
         } catch (error: Throwable) {
             activeTurnIds.remove(threadId, turnId)
+            turnTimings.remove(turnId)
             throw error
         }
         requestKey?.let { key ->
@@ -1386,12 +1428,17 @@ internal class LocalAcpRuntime(
             buildPromptBlocks(args, turnId, threadId)
         } catch (error: Throwable) {
             activeTurnIds.remove(threadId, turnId)
+            turnTimings.remove(turnId)
             requestKey?.let(promptRequestTurns::remove)
             throw error
         }
         val completion = CompletableDeferred<Map<String, Any?>>()
         val activeConnection = connection
-            ?: throw IllegalStateException("ACP agent connection is not available.")
+            ?: throw IllegalStateException("ACP agent connection is not available.").also {
+                turnTimings.remove(turnId)
+                activeTurnIds.remove(threadId, turnId)
+                requestKey?.let(promptRequestTurns::remove)
+            }
         val job = scope.launch(start = CoroutineStart.LAZY) {
             var stopReason: String? = null
             var cancelled = false
@@ -1402,6 +1449,7 @@ internal class LocalAcpRuntime(
                 // stream open for session-scoped updates after responding;
                 // collecting until that transport closes leaves the UI in
                 // "thinking" forever even though the turn already ended.
+                markTurnTiming(threadId, turnId, "prompt_sent")
                 session.prompt(blocks, promptMeta(args)).takeWhile { event ->
                     lastTurnActivityAt[threadId] = System.currentTimeMillis()
                     when (event) {
@@ -1603,6 +1651,8 @@ internal class LocalAcpRuntime(
                 emissionError,
             )
         }
+        markTurnTiming(threadId, turnId, "terminal_$status")
+        turnTimings.remove(turnId)
         activeTurnIds.remove(threadId, turnId)
         lastTurnActivityAt.remove(threadId)
     }
@@ -1647,6 +1697,7 @@ internal class LocalAcpRuntime(
         val session = sessions[threadId]
             ?: throw IllegalArgumentException("ACP session is not loaded: $threadId")
         val turnId = activeTurnIds[threadId]
+        turnId?.let { markTurnTiming(threadId, it, "cancel_requested") }
 
         // There are two independent pieces to stop here:
         //
@@ -2111,6 +2162,20 @@ internal class LocalAcpRuntime(
             return
         }
 
+        resolvedTurnId?.let { resolvedId ->
+            markTurnTiming(threadId, resolvedId, "first_update")
+            when (update) {
+                is SessionUpdate.AgentThoughtChunk ->
+                    markTurnTiming(threadId, resolvedId, "first_reasoning")
+                is SessionUpdate.AgentMessageChunk ->
+                    markTurnTiming(threadId, resolvedId, "first_text")
+                is SessionUpdate.ToolCall,
+                is SessionUpdate.ToolCallUpdate ->
+                    markTurnTiming(threadId, resolvedId, "first_tool")
+                else -> Unit
+            }
+        }
+
         // A session title is the one update with a side effect of its own.
         if (update is SessionUpdate.SessionInfoUpdate && !update.title.isNullOrBlank()) {
             bindingRepository.updateTitle(threadId, update.title)
@@ -2122,7 +2187,9 @@ internal class LocalAcpRuntime(
         val notification = update.toAcpSessionNotification(threadId) ?: return
         emitAcpNotification(
             sessionId = notification.sessionId,
-            update = notification.update
+            update = notification.update,
+            timingThreadId = threadId,
+            timingTurnId = resolvedTurnId,
         )
     }
 
@@ -2133,7 +2200,9 @@ internal class LocalAcpRuntime(
      */
     private suspend fun emitAcpNotification(
         sessionId: String,
-        update: Map<String, Any?>
+        update: Map<String, Any?>,
+        timingThreadId: String? = null,
+        timingTurnId: String? = null,
     ) {
         onMessage(linkedMapOf(
                 "method" to "session/update",
@@ -2142,12 +2211,35 @@ internal class LocalAcpRuntime(
                     "update" to update
                 )
             ))
+        if (timingThreadId != null && timingTurnId != null) {
+            markTurnTiming(timingThreadId, timingTurnId, "event_delivered")
+        }
     }
 
     private fun registerSession(session: ClientSession, cwd: String) {
         sessions[session.sessionId.value] = session
         sessionCwds[session.sessionId.value] = cwd
     }
+
+    private fun markTurnTiming(
+        threadId: String,
+        turnId: String,
+        stage: String,
+    ) {
+        val elapsed = turnTimings[turnId]?.mark(stage) ?: return
+        Log.i(
+            TAG,
+            "ACP timing agent=${activeAgentId()} stage=$stage " +
+                "session=${compactId(threadId)} turn=${compactId(turnId)} " +
+                "elapsedMs=$elapsed"
+        )
+    }
+
+    private fun compactId(value: String): String =
+        value.trim().takeLast(8).ifBlank { "none" }
+
+    private fun elapsedMillis(startedAtNanos: Long): Long =
+        TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAtNanos)
 
     private fun sessionPayload(
         session: ClientSession,

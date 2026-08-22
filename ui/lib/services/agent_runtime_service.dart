@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/services.dart';
+import 'package:ui/features/home/pages/command_overlay/utils/error_message_formatter.dart';
 
 enum CodexLoginType {
   chatgpt('chatgpt'),
@@ -98,6 +99,40 @@ String agentModelSourceKey(AgentRuntimeStatus status) {
     return 'remote';
   }
   return 'local-${status.activeAgentId ?? 'agent'}';
+}
+
+/// Converts an ACP boundary error into short, actionable UI text. Native
+/// errors carry a stable `failureKind` in PlatformException.details; use that
+/// instead of exposing adapter stack traces or waiting for a raw error string
+/// to render in the chat.
+String formatAgentRuntimeErrorForUser(Object? error) {
+  String? failureKind;
+  String? rawMessage;
+  if (error is PlatformException) {
+    rawMessage = error.message;
+    final details = error.details;
+    if (details is Map) {
+      failureKind = details['failureKind']?.toString().trim();
+    }
+  } else if (error != null) {
+    rawMessage = error.toString();
+  }
+
+  switch (failureKind) {
+    case 'provider_not_bound':
+      return '尚未绑定统一 Agent Provider / 模型，请在 Agent 设置中选择后重试。';
+    case 'provider_unavailable':
+      return '统一 Agent Provider 不可用或凭据不完整，请检查 Provider 配置。';
+    case 'provider_model_unavailable':
+      return '统一 Agent 模型当前不可用，请刷新模型列表后重新选择。';
+    case 'provider_tls_certificate_failure':
+      return 'Provider HTTPS 证书校验失败，请检查设备时间和证书链。';
+  }
+
+  return formatErrorMessageForUser(
+    rawMessage,
+    fallback: 'Agent 执行失败，请重试。',
+  );
 }
 
 /// Extracts only model choices from an ACP model/config response.

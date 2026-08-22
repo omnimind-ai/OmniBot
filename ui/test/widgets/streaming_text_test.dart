@@ -614,6 +614,43 @@ void main() {
     },
   );
 
+  testWidgets(
+    'completed Markdown ignores stale streaming length and renders the full table',
+    (tester) async {
+      const prefix = '表格如下：\n\n';
+      const fullText =
+          '$prefix| 名称 | 状态 |\n'
+          '| --- | --- |\n'
+          '| A | 通过 |';
+
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: StreamingText(
+              enableMarkdown: true,
+              selectable: true,
+              isFinal: true,
+              // A persisted intermediate snapshot may retain this value.
+              markdownRenderedLength: prefix.length,
+              fullText: fullText,
+              style: TextStyle(fontSize: 14),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(tester.takeException(), isNull);
+      expect(find.byType(Table), findsOneWidget);
+      expect(find.text('A'), findsOneWidget);
+      expect(find.text('通过'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('omnibot-streaming-table-tail')),
+        findsNothing,
+      );
+    },
+  );
+
   testWidgets('long press can copy table cells with surrounding prose', (
     tester,
   ) async {
