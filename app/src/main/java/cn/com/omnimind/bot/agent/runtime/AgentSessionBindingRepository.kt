@@ -244,7 +244,10 @@ internal class AgentSessionBindingRepository(
     }
 
     private fun normalizeConversationMode(value: String): String {
-        return value.trim().ifEmpty { AGENT_MODE_STORAGE_VALUE }
+        return when (value.trim().lowercase()) {
+            "", "normal", "codex", "acp", "coding" -> AGENT_MODE_STORAGE_VALUE
+            else -> value.trim().lowercase()
+        }
     }
 
     private suspend fun cleanupGeneratedEmptyConversation(

@@ -403,7 +403,7 @@ class OmniAgentExecutor(
         resolvedSkills: List<ResolvedSkillContext>,
         memoryContext: WorkspaceMemoryPromptContext?,
         terminalDistribution: TerminalDistribution.Spec = TerminalDistribution.alpine,
-        conversationMode: String = AgentConversationModePolicy.NORMAL_MODE,
+        conversationMode: String = AgentConversationModePolicy.AGENT_MODE,
         historyMessagesOverride: List<ChatCompletionMessage>? = null
     ): List<ChatCompletionMessage> {
         val locale = AppLocaleManager.resolvePromptLocale(context)

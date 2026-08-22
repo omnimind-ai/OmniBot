@@ -36,7 +36,7 @@ class ConversationHistoryService {
   /// 保存当前对话ID
   static Future<void> saveCurrentConversationId(
     int? conversationId, {
-    ConversationMode mode = ConversationMode.normal,
+    ConversationMode mode = ConversationMode.agent,
   }) async {
     final prefs = await SharedPreferences.getInstance();
     final modeKey = _conversationIdKeyForMode(mode);
@@ -55,7 +55,7 @@ class ConversationHistoryService {
 
   /// 获取当前对话ID
   static Future<int?> getCurrentConversationId({
-    ConversationMode mode = ConversationMode.normal,
+    ConversationMode mode = ConversationMode.agent,
   }) async {
     final prefs = await SharedPreferences.getInstance();
     final id =
@@ -187,7 +187,7 @@ class ConversationHistoryService {
 
   static String conversationMessagesKey(
     int conversationId, {
-    ConversationMode mode = ConversationMode.normal,
+    ConversationMode mode = ConversationMode.agent,
   }) {
     return '$_conversationMessagesKey${mode.storageValue}_$conversationId';
   }
@@ -197,7 +197,7 @@ class ConversationHistoryService {
   /// user-visible copy and never becomes a second history protocol.
   static Future<bool> exportConversation(
     int conversationId, {
-    ConversationMode mode = ConversationMode.normal,
+    ConversationMode mode = ConversationMode.agent,
   }) async {
     final messages = await getConversationMessages(conversationId, mode: mode);
     final payload = const JsonEncoder.withIndent('  ').convert({
@@ -271,7 +271,7 @@ class ConversationHistoryService {
   static Future<void> saveConversationMessages(
     int conversationId,
     List<ChatMessageModel> messages, {
-    ConversationMode mode = ConversationMode.normal,
+    ConversationMode mode = ConversationMode.agent,
   }) {
     final key = '${mode.storageValue}:$conversationId';
     final snapshot = List<ChatMessageModel>.from(messages);
@@ -349,7 +349,7 @@ class ConversationHistoryService {
   /// 获取对话消息列表
   static Future<List<ChatMessageModel>> getConversationMessages(
     int conversationId, {
-    ConversationMode mode = ConversationMode.normal,
+    ConversationMode mode = ConversationMode.agent,
     int? expectedMessageCount,
   }) => readConversationHistory(
     conversationId,
@@ -368,7 +368,7 @@ class ConversationHistoryService {
   /// history rather than proof of an intentional clear.
   static Future<List<ChatMessageModel>> readConversationHistory(
     int conversationId, {
-    ConversationMode mode = ConversationMode.normal,
+    ConversationMode mode = ConversationMode.agent,
     int? expectedMessageCount,
   }) async {
     try {
@@ -400,7 +400,7 @@ class ConversationHistoryService {
   static Future<({List<ChatMessageModel> messages, bool hasMore})>
   getConversationMessagesPaged(
     int conversationId, {
-    ConversationMode mode = ConversationMode.normal,
+    ConversationMode mode = ConversationMode.agent,
     int limit = 20,
     int offset = 0,
     int? expectedMessageCount,
@@ -694,7 +694,7 @@ class ConversationHistoryService {
     required String entryId,
     required Map<String, dynamic> cardData,
     int? createdAtMillis,
-    ConversationMode mode = ConversationMode.normal,
+    ConversationMode mode = ConversationMode.agent,
   }) async {
     final normalizedEntryId = entryId.trim();
     if (normalizedEntryId.isEmpty) return;
@@ -716,7 +716,7 @@ class ConversationHistoryService {
   /// 清除对话消息
   static Future<void> clearConversationMessages(
     int conversationId, {
-    ConversationMode mode = ConversationMode.normal,
+    ConversationMode mode = ConversationMode.agent,
   }) async {
     try {
       await _assistCore.invokeMethod('clearConversationMessages', {

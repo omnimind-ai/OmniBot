@@ -22,7 +22,7 @@ import kotlinx.serialization.json.jsonPrimitive
 
 class AgentToolRegistry(
     private val context: Context,
-    private val conversationMode: String = AgentConversationModePolicy.NORMAL_MODE,
+    private val conversationMode: String = AgentConversationModePolicy.AGENT_MODE,
     terminalDistribution: TerminalDistribution.Spec = TerminalDistribution.alpine,
     pluginToolDefinitions: List<OmniPluginToolDefinition> = emptyList(),
     userMessage: String? = null,

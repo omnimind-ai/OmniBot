@@ -143,7 +143,7 @@ class ConversationService {
   static Future<int?> createConversation({
     required String title,
     String? summary,
-    ConversationMode mode = ConversationMode.normal,
+    ConversationMode mode = ConversationMode.agent,
     int? parentConversationId,
     ConversationMode? parentConversationMode,
     String? scheduledTaskId,
@@ -300,7 +300,7 @@ class ConversationService {
       }
       await ConversationHistoryService.clearConversationMessages(
         conversationId,
-        mode: mode ?? ConversationMode.normal,
+        mode: mode ?? ConversationMode.agent,
       );
       await ConversationHistoryService.clearConversationThreadReferences(
         conversationId,
@@ -449,7 +449,7 @@ class ConversationService {
   static Future<bool> updateConversationTitle({
     required int conversationId,
     required String newTitle,
-    ConversationMode mode = ConversationMode.normal,
+    ConversationMode mode = ConversationMode.agent,
   }) async {
     if (mode == ConversationMode.agent) {
       try {
@@ -522,7 +522,7 @@ class ConversationService {
 
   static Future<bool> setCurrentConversationId(
     int? conversationId, {
-    ConversationMode mode = ConversationMode.normal,
+    ConversationMode mode = ConversationMode.agent,
   }) async {
     try {
       final result = await _assistCore.invokeMethod<dynamic>(
@@ -544,7 +544,7 @@ class ConversationService {
   ) async {
     return setCurrentConversationId(
       target?.conversationId,
-      mode: target?.mode ?? ConversationMode.normal,
+      mode: target?.mode ?? ConversationMode.agent,
     );
   }
 
