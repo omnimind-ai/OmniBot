@@ -75,7 +75,7 @@ class ConversationModel {
 
   ConversationModel({
     required this.id,
-    this.mode = ConversationMode.normal,
+    this.mode = ConversationMode.agent,
     this.agentCwd,
     this.agentId,
     this.isArchived = false,

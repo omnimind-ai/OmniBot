@@ -170,7 +170,7 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
       }
     }
 
-    final resolvedMode = normalizedPreferredMode ?? ConversationMode.normal;
+    final resolvedMode = normalizedPreferredMode ?? ConversationMode.agent;
     final savedTarget =
         await ConversationHistoryService.getCurrentConversationTarget(
           mode: resolvedMode,
@@ -354,6 +354,7 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
         conversationId: conversationId,
         agentId: requestedAgentId.isEmpty ? null : requestedAgentId,
         includeHistory: false,
+        conversationMode: target.mode.storageValue,
       );
       try {
         status = await AgentRuntimeService.status();
@@ -1064,7 +1065,7 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     final staged = _activeStagedSharedOpenDraft();
     if (staged != null && staged.hasContent) {
       return ConversationThreadTarget.newConversation(
-        mode: ConversationMode.normal,
+        mode: ConversationMode.agent,
         fromNativeRoute: true,
         requestKey: staged.requestKey,
       );
@@ -1078,7 +1079,7 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     _stagedSharedOpenDraftExpiresAt =
         DateTime.now().millisecondsSinceEpoch + 5000;
     return ConversationThreadTarget.newConversation(
-      mode: ConversationMode.normal,
+      mode: ConversationMode.agent,
       fromNativeRoute: true,
       requestKey: payload.requestKey,
     );

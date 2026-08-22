@@ -215,6 +215,7 @@ class _AgentSessionsPageState extends State<AgentSessionsPage> {
       }
       final response = await AgentRuntimeService.loadSession(
         sessionId: session.threadId,
+        conversationMode: ConversationMode.agent.storageValue,
       );
       final conversationId = _intValue(response['conversationId']);
       if (conversationId == null) {

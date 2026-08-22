@@ -205,7 +205,9 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   String _openClawToken = '';
   String _openClawUserId = '';
   ChatSurfaceMode _activeSurfaceMode = ChatSurfaceMode.normal;
-  ChatPageMode _activeConversationMode = ChatPageMode.normal;
+  // The default Xiaowan surface is the built-in ACP Agent. `normal` remains
+  // a compatibility page state for old routes, not a second runtime mode.
+  ChatPageMode _activeConversationMode = ChatPageMode.agent;
   bool _showSlashCommandPanel = false;
   bool _showModelMentionPanel = false;
   bool _openClawPanelExpanded = false;
@@ -540,7 +542,9 @@ abstract class _ChatPageStateBase extends State<ChatPage>
         return targetMode!;
       }
     }
-    return ConversationMode.normal;
+    // Xiaowan used to be exposed as `normal`. Keep the page state compatible,
+    // but route its durable conversation and ACP history through Agent.
+    return ConversationMode.agent;
   }
 
   ChatPageMode _pageModeForConversationMode(ConversationMode mode) =>
@@ -777,7 +781,7 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     }
     _storeDraftForActiveConversationMode();
     await _persistVisibleThreadTargetIfNeeded();
-    final target = _newThreadTargetForConversationMode(ConversationMode.normal);
+    final target = _newThreadTargetForConversationMode(ConversationMode.agent);
     if (!mounted) {
       return;
     }
@@ -803,7 +807,7 @@ abstract class _ChatPageStateBase extends State<ChatPage>
 
   Future<void> _togglePureChatConversationMode() async {
     final nextMode = _isPureChatSelected
-        ? ConversationMode.normal
+        ? ConversationMode.agent
         : ConversationMode.chatOnly;
     final nextTarget = _newThreadTargetForConversationMode(nextMode);
     await _applyConversationThreadTarget(nextTarget);

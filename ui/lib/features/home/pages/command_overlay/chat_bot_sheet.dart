@@ -1242,7 +1242,7 @@ class _ChatBotSheetState extends State<ChatBotSheet>
         text: userMessage,
         attachments: attachments,
         model: dispatchScene?.effectiveModel.trim(),
-        conversationMode: ConversationMode.normal.storageValue,
+        conversationMode: ConversationMode.agent.storageValue,
       );
       _acpSessionId = (response['sessionId'] ?? response['threadId'])
           ?.toString()

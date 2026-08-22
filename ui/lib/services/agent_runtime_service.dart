@@ -810,12 +810,15 @@ class AgentRuntimeService {
     String? sessionId,
     int? conversationId,
     String? agentId,
+    String? conversationMode,
   }) {
     return _invokeMap('session/load', {
       if (sessionId != null) 'sessionId': sessionId,
       if (conversationId != null) 'conversationId': conversationId,
       if (agentId != null && agentId.trim().isNotEmpty)
         'agentId': agentId.trim(),
+      if (conversationMode != null && conversationMode.trim().isNotEmpty)
+        'conversationMode': conversationMode.trim(),
     });
   }
 
@@ -824,6 +827,7 @@ class AgentRuntimeService {
     int? conversationId,
     String? agentId,
     bool includeHistory = true,
+    String? conversationMode,
   }) {
     return _invokeMap('session/load', {
       if (sessionId != null) 'sessionId': sessionId,
@@ -831,6 +835,8 @@ class AgentRuntimeService {
       if (agentId != null && agentId.trim().isNotEmpty)
         'agentId': agentId.trim(),
       'includeHistory': includeHistory,
+      if (conversationMode != null && conversationMode.trim().isNotEmpty)
+        'conversationMode': conversationMode.trim(),
     });
   }
 
