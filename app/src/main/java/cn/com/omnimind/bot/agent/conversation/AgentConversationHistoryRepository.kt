@@ -785,48 +785,6 @@ class AgentConversationHistoryRepository(
                 .thenByDescending { it.id })
     }
 
-    private suspend fun loadThreadEntriesDescWindowSafe(
-        conversationId: Long,
-        conversationModes: List<String>,
-        maxEntriesPerMode: Int
-    ): List<AgentConversationEntry> {
-        val boundedSize = maxEntriesPerMode.coerceAtLeast(1)
-        return conversationModes
-            .flatMap { storageMode ->
-                loadThreadEntriesDescWindowSafeForMode(
-                    conversationId = conversationId,
-                    conversationMode = storageMode,
-                    maxEntries = boundedSize
-                )
-            }
-            .distinctBy { entry -> entry.entryId }
-            .sortedWith(compareByDescending<AgentConversationEntry> { it.createdAt }
-                .thenByDescending { it.id })
-    }
-
-    private suspend fun loadThreadEntriesDescWindowSafeForMode(
-        conversationId: Long,
-        conversationMode: String,
-        maxEntries: Int
-    ): List<AgentConversationEntry> {
-        val entries = mutableListOf<AgentConversationEntry>()
-        var offset = 0
-        val boundedSize = maxEntries.coerceAtLeast(1)
-        while (entries.size < boundedSize) {
-            val page = loadThreadEntriesDescPagedSafe(
-                conversationId = conversationId,
-                conversationMode = conversationMode,
-                limit = minOf(SAFE_HISTORY_PAGE_SIZE, boundedSize - entries.size),
-                offset = offset
-            )
-            if (page.isEmpty()) break
-            entries += page
-            offset += page.size
-            if (page.size < SAFE_HISTORY_PAGE_SIZE) break
-        }
-        return entries
-    }
-
     private suspend fun loadThreadEntriesDescSafePagedForMode(
         conversationId: Long,
         conversationMode: String
