@@ -137,15 +137,6 @@ void main() {
       );
 
       expect(brandIcon.size, 30);
-      if (agentId == 'xiaowan-acp') {
-        final presetContent = tester.widget<Transform>(
-          find.descendant(
-            of: runAvatar,
-            matching: find.byKey(const ValueKey('agent-avatar-preset-content')),
-          ),
-        );
-        expect(presetContent.transform.storage[0], greaterThan(1));
-      }
     });
   }
 

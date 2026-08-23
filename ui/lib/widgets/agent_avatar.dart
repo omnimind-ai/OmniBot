@@ -208,45 +208,27 @@ class _AvatarImage extends StatelessWidget {
   final String customImagePath;
   final double size;
 
-  double get _presetContentScale => switch (presetIndex) {
-    // The source illustrations have different amounts of baked-in whitespace.
-    // Normalize their optical size so the chosen Xiaowan avatar actually
-    // fills compact 22-30dp chat slots. Uploaded avatars are already cropped
-    // by the picker and deliberately do not use this extra scaling.
-    0 => 1.42,
-    1 => 1.10,
-    2 => 1.20,
-    3 => 1.22,
-    4 => 1.38,
-    5 => 1.10,
-    _ => 1.22,
-  };
-
   @override
   Widget build(BuildContext context) {
     final palette = context.omniPalette;
     final presetAsset = AgentAvatarService.assetForIndex(presetIndex);
 
     Widget fallback() {
-      return Transform.scale(
-        key: const ValueKey('agent-avatar-preset-content'),
-        scale: _presetContentScale,
-        child: Image.asset(
-          presetAsset,
-          width: size,
-          height: size,
-          fit: BoxFit.cover,
-          errorBuilder: (_, _, _) {
-            return ColoredBox(
-              color: palette.surfaceElevated,
-              child: Icon(
-                Icons.smart_toy_outlined,
-                size: size * 0.54,
-                color: palette.textSecondary,
-              ),
-            );
-          },
-        ),
+      return Image.asset(
+        presetAsset,
+        width: size,
+        height: size,
+        fit: BoxFit.cover,
+        errorBuilder: (_, _, _) {
+          return ColoredBox(
+            color: palette.surfaceElevated,
+            child: Icon(
+              Icons.smart_toy_outlined,
+              size: size * 0.54,
+              color: palette.textSecondary,
+            ),
+          );
+        },
       );
     }
 
