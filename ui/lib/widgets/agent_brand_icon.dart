@@ -49,14 +49,14 @@ class AgentBrandIcon extends StatelessWidget {
     ),
   };
 
-  /// Whether [agentId] is represented by a complete avatar image rather than
-  /// a glyph that needs a host-provided background.
+  /// Whether [agentId] has an explicit visual identity supplied by the app.
   ///
-  /// Presentation metadata lives here so chat surfaces do not accumulate
-  /// Harness-name conditionals of their own.
-  static bool usesFullBleedAvatar(String agentId) {
-    return _brands[agentId.trim()]?.presentation ==
-        _AgentBrandPresentation.avatar;
+  /// Known Harness artwork is already a complete mark. Presentation layers
+  /// should render it directly instead of shrinking it into another circular
+  /// badge, which produces the visible "circle inside a circle" for marks
+  /// such as Codex. Unknown custom Harnesses still use the generic host badge.
+  static bool hasKnownBrand(String agentId) {
+    return _brands.containsKey(agentId.trim());
   }
 
   @override

@@ -107,33 +107,38 @@ void main() {
     );
   });
 
-  testWidgets('Xiaowan avatar fills the run avatar without a nested circle', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      _wrap(
-        AgentRunHeader(
-          taskId: 'turn-xiaowan',
-          agentId: 'xiaowan-acp',
-          status: AgentRunStatus.running,
-          startedAt: DateTime.now(),
+  for (final agentId in const <String>[
+    'xiaowan-acp',
+    'codex-acp',
+    'claude-code-acp',
+    'opencode-acp',
+    'deepseek-harness-acp',
+  ]) {
+    testWidgets('$agentId brand fills the run avatar without a nested circle', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _wrap(
+          AgentRunHeader(
+            taskId: 'turn-$agentId',
+            agentId: agentId,
+            status: AgentRunStatus.running,
+            startedAt: DateTime.now(),
+          ),
         ),
-      ),
-    );
-    await tester.pump();
+      );
+      await tester.pump();
 
-    final runAvatar = find.byKey(
-      const ValueKey('agent-run-acp-avatar-turn-xiaowan'),
-    );
-    final brandIcon = tester.widget<AgentBrandIcon>(
-      find.descendant(of: runAvatar, matching: find.byType(AgentBrandIcon)),
-    );
+      final runAvatar = find.byKey(
+        ValueKey('agent-run-acp-avatar-turn-$agentId'),
+      );
+      final brandIcon = tester.widget<AgentBrandIcon>(
+        find.descendant(of: runAvatar, matching: find.byType(AgentBrandIcon)),
+      );
 
-    // Xiaowan is a complete circular avatar image rather than a brand glyph.
-    // It must fill the 30dp run-avatar slot instead of being shrunk into an
-    // additional circular brand container.
-    expect(brandIcon.size, 30);
-  });
+      expect(brandIcon.size, 30);
+    });
+  }
 
   testWidgets(
     'completion cross-fades the running label into the folded header',
