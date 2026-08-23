@@ -192,11 +192,19 @@ extension _HomeDrawerConversationList on HomeDrawerState {
     for (final result in results) {
       final mode = result.conversation.mode;
       if (mode == ConversationMode.agent) {
-        agentResults.add(result);
+        final agentId = result.conversation.agentId?.trim() ?? '';
+        if (agentId.isEmpty || agentId == 'xiaowan-acp') {
+          // Old Xiaowan rows predate durable Harness ownership. Native now
+          // supplies xiaowan-acp for them, but the empty fallback keeps a
+          // partially migrated local snapshot in the Xiaowan section too.
+          omniAiResults.add(result);
+        } else {
+          agentResults.add(result);
+        }
       } else if (mode == ConversationMode.chatOnly) {
         chatOnlyResults.add(result);
       } else {
-        // normal / subagent / openclaw 统一归入小万（OmniAi）区块。
+        // subagent / openclaw 统一归入小万（OmniAi）区块。
         omniAiResults.add(result);
       }
     }
@@ -1297,7 +1305,7 @@ extension _HomeDrawerConversationList on HomeDrawerState {
           focusedErrorBorder: InputBorder.none,
         ),
         onTapOutside: (_) => _commitTitleEdit(),
-        onSubmitted: (_) => _commitTitleEdit(),
+        onSubmitted: _commitTitleEdit,
       );
     }
 

@@ -8,6 +8,7 @@ import 'package:ui/services/agent_stream_meta.dart';
 import 'package:ui/services/agent_diff_parser.dart';
 import 'package:ui/services/agent_identity.dart';
 import 'package:ui/services/agent_message_kinds.dart';
+import 'package:ui/services/agent_runtime_service.dart';
 import 'package:ui/services/agent_tool_call_parser.dart';
 
 class AgentReduceResult {
@@ -918,10 +919,11 @@ class AgentEventReducer {
     }
 
     if (method == 'error') {
-      final detail =
+      final rawDetail =
           _extractText(params['message']) ??
           _extractText(params['error']) ??
           _safeJson(params);
+      final detail = formatAgentRuntimeErrorForUser(rawDetail);
       final cardId = '$parentTaskId-agent-status';
       _upsertToolCard(
         runtime,
@@ -2544,9 +2546,11 @@ class AgentEventReducer {
         _extractText(params['reason']) ??
         _extractText(params['error']);
     if (detail != null && detail.trim().isNotEmpty) {
-      return detail.trim();
+      return formatAgentRuntimeErrorForUser(detail.trim());
     }
-    return fallbackToPayload ? _safeJson(params) : null;
+    return fallbackToPayload
+        ? formatAgentRuntimeErrorForUser(_safeJson(params))
+        : null;
   }
 
   bool _hasVisibleAssistantTextForTask(

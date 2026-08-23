@@ -44,6 +44,7 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
   set currentConversation(ConversationModel? value);
   ConversationThreadTarget? get routeThreadTarget;
   ConversationMode get activeConversationModeValue;
+  String? get agentIdForNewConversation => null;
   bool get hasMoreMessages;
   set hasMoreMessages(bool value);
   bool get isLoadingMore;
@@ -728,6 +729,9 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
           title: title,
           summary: summary,
           mode: snapshotMode,
+          agentId: snapshotMode == ConversationMode.agent
+              ? agentIdForNewConversation
+              : null,
           rethrowOnError: rethrowOnFailure,
         );
 

@@ -1294,6 +1294,11 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   ConversationMode get activeConversationModeValue =>
       _conversationModeForPageMode(_activeMode);
   @override
+  String? get agentIdForNewConversation =>
+      activeConversationModeValue == ConversationMode.agent
+      ? _activeAcpAgentId
+      : null;
+  @override
   bool get hasMoreMessages => _modeState(_activeMode).hasMoreMessages;
   @override
   set hasMoreMessages(bool value) =>

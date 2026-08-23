@@ -134,11 +134,11 @@ extension _HomeDrawerActions on HomeDrawerState {
     }
   }
 
-  Future<void> _commitTitleEdit() async {
+  Future<void> _commitTitleEdit([String? submittedTitle]) async {
     final threadKey = _editingThreadKey;
     if (threadKey == null) return;
 
-    final newTitle = _titleEditingController.text.trim();
+    final newTitle = (submittedTitle ?? _titleEditingController.text).trim();
     final conversation = _allConversations
         .cast<ConversationModel?>()
         .firstWhere((c) => c!.threadKey == threadKey, orElse: () => null);

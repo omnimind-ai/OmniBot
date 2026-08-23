@@ -135,6 +135,13 @@ String formatAgentRuntimeErrorForUser(Object? error) {
       return 'Provider HTTPS 证书校验失败，请检查设备时间和证书链。';
   }
 
+  final normalizedRaw = rawMessage?.toLowerCase() ?? '';
+  if (normalizedRaw.contains('unknown variant namespace') &&
+      normalizedRaw.contains('tools')) {
+    return '当前 Responses Provider 不支持 Codex 的 MCP 工具格式。请重试；'
+        '如仍失败，请改用支持 namespace tools 的 Provider。';
+  }
+
   return formatErrorMessageForUser(rawMessage, fallback: 'Agent 执行失败，请重试。');
 }
 
@@ -525,6 +532,20 @@ Map<String, String>? resolveSharedAgentProviderSelection({
     };
   }
   return null;
+}
+
+/// A Provider/model pair is launchable only while its Provider still exists
+/// in the latest configured profile snapshot. A non-empty cached selection is
+/// not sufficient because settings changes can delete or clear that profile.
+bool isSharedAgentProviderSelectionReady({
+  required Map<String, String>? selection,
+  required Set<String> configuredProviderIds,
+}) {
+  final providerId = selection?['providerProfileId']?.trim() ?? '';
+  final modelId = selection?['modelId']?.trim() ?? '';
+  return providerId.isNotEmpty &&
+      modelId.isNotEmpty &&
+      configuredProviderIds.contains(providerId);
 }
 
 bool isCurrentAgentModelLoad({

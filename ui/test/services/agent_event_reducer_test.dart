@@ -1220,7 +1220,7 @@ void main() {
           },
         },
       },
-    );
+      );
 
     final cardData = runtime.messages
         .firstWhere(
@@ -1237,6 +1237,64 @@ void main() {
     );
     expect(artifact.cardData?['artifact']?['title'], 'result.txt');
   });
+
+  test(
+    'turns an ACP missing-accessibility result into an authorization card',
+    () {
+      final base = <String, dynamic>{
+        'message': {
+          'method': 'session/update',
+          'turnId': 'turn-permission',
+          'params': {
+            'sessionId': 'session-permission',
+            'update': {
+              'sessionUpdate': 'tool_call',
+              'toolCallId': 'tool-permission',
+              'kind': 'other',
+              'title': 'vlm_task',
+              'status': 'in_progress',
+              'rawInput': <String, dynamic>{},
+            },
+          },
+        },
+      };
+      reducer.reduce(runtime: runtime, event: base);
+      reducer.reduce(
+        runtime: runtime,
+        event: {
+          'message': {
+            'method': 'session/update',
+            'turnId': 'turn-permission',
+            'params': {
+              'sessionId': 'session-permission',
+              'update': {
+                'sessionUpdate': 'tool_call_update',
+                'toolCallId': 'tool-permission',
+                'kind': 'other',
+                'title': 'vlm_task',
+                'status': 'failed',
+                'rawOutput': {
+                  'type': 'permission_section',
+                  'requiredPermissionIds': ['accessibility'],
+                  'missing': ['无障碍权限'],
+                },
+              },
+            },
+          },
+        },
+      );
+
+      expect(runtime.messages, hasLength(1));
+      expect(runtime.messages.single.cardData?['type'], 'permission_section');
+      expect(runtime.messages.single.cardData?['requiredPermissionIds'], [
+        'accessibility',
+      ]);
+      expect(
+        runtime.messages.single.cardData?['autoOpenAuthorization'],
+        isTrue,
+      );
+    },
+  );
 
   test(
     'routes generic ACP context results by their concrete tool capability',
@@ -3818,6 +3876,35 @@ diff --git a/lib/main.dart b/lib/main.dart
         .cardData!;
     expect(thinking['isLoading'], isFalse);
     expect(thinking['stage'], ThinkingStage.complete.value);
+  });
+
+  test('top-level nested Provider error is rendered as a concise message', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'method': 'error',
+          'params': {
+            'threadId': 'thread-1',
+            'turnId': 'turn-1',
+            'willRetry': false,
+            'error': {
+              'message': 'Invalid JSON data: tools[8].type is unsupported',
+              'type': 'invalid_request_error',
+            },
+          },
+        },
+      },
+    );
+
+    final statusCard = runtime.messages.firstWhere(
+      (message) => message.cardData?['toolType'] == 'status',
+    );
+    expect(
+      statusCard.cardData?['summary'],
+      'Invalid JSON data: tools[8].type is unsupported',
+    );
+    expect(statusCard.cardData?['summary'], isNot(contains('{"error"')));
   });
 
   test('top-level error with willRetry=true keeps the turn active', () {
