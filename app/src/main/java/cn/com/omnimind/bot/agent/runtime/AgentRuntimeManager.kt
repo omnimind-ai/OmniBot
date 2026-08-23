@@ -151,7 +151,7 @@ class AgentRuntimeManager private constructor(
         bindingRepository = bindingRepository,
         profileStore = acpAgentProfileStore,
         prepareLaunchEnvironment = ::prepareLocalAcpLaunch,
-        ensureSharedProviderBinding = { ensureSharedAgentProviderBinding() },
+        prepareSharedProviderBinding = ::prepareSharedProviderBinding,
         buildHandoffContext = ::buildLocalAcpHandoffContext,
         scheduleToolBridge = xiaowanScheduleToolBridge,
         onMessage = ::handleServerMessage
@@ -1540,6 +1540,10 @@ class AgentRuntimeManager private constructor(
                 "model=${migrated.modelId}",
         )
         return migrated
+    }
+
+    private suspend fun prepareSharedProviderBinding() {
+        ensureSharedAgentProviderBinding()
     }
 
     private fun currentAgentProviderProfile(): ModelProviderProfile? = runCatching {
