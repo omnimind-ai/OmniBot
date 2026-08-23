@@ -59,7 +59,7 @@ class ChatAcpAgentModeOption {
   final String status;
 
   bool get isAvailable =>
-      enabled && installed && status.trim().toLowerCase() == 'online';
+      enabled && installed && status.trim().toLowerCase() != 'missing';
 }
 
 const List<ChatSurfaceMode> kVisibleChatSurfaceModes = <ChatSurfaceMode>[
@@ -589,10 +589,7 @@ class _ChatAppBarModeShortcutButtonState
     final canSelectPureChat =
         widget.isAgentSelected ||
         (!widget.isPureChatToggleLocked && widget.onPureChatToggleTap != null);
-    // The mode menu is a runtime switcher, not the installation screen. Only
-    // an enabled, installed and healthy Harness belongs here. Uninstalled
-    // Harnesses remain discoverable from Agent settings, but must not appear
-    // in the top-right switcher as if they were ready to run.
+    // The mode menu is a runtime switcher, not the installation screen.
     final acpAgentModes = widget.acpAgentModes
         .where((agent) => agent.isAvailable)
         .toList(growable: false);

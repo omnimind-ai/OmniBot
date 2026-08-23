@@ -7,7 +7,6 @@ import android.content.Context
 import cn.com.omnimind.baselib.llm.ChatCompletionMessage
 import cn.com.omnimind.baselib.llm.ModelProviderConfigStore
 import cn.com.omnimind.baselib.llm.ModelProviderProfile
-import cn.com.omnimind.baselib.llm.OmniOfficialProvider
 import cn.com.omnimind.baselib.llm.PlatformAiProvisioner
 import cn.com.omnimind.baselib.llm.ProviderModelOption
 import cn.com.omnimind.baselib.llm.SceneModelBindingEntry
@@ -52,6 +51,7 @@ import com.agentclientprotocol.rpc.JsonRpcMessage
 import com.agentclientprotocol.transport.BaseTransport
 import com.agentclientprotocol.transport.Transport
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -61,6 +61,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.JsonElement
@@ -70,6 +71,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import java.util.UUID
+import kotlin.coroutines.coroutineContext
 
 /**
  * Xiaowan is a built-in ACP Agent. The loopback transport is only the official
@@ -158,9 +160,9 @@ private class XiaowanAgentSupport(
     private var cachedModels: XiaowanModels? = null
 
     override suspend fun initialize(clientInfo: ClientInfo): AgentInfo {
-        // Provider/model resolution is owned by the shared binding surface.
-        // Validate it during ACP initialization so a Harness switch cannot
-        // appear connected and only fail on the first session/new call.
+        // Provider/model resolution is owned by Dispatch Model. A persisted
+        // scene binding is only an optional override; the editing Provider
+        // and its verified catalog are enough to initialize ACP.
         try {
             loadXiaowanModels()
         } catch (error: Throwable) {
@@ -230,14 +232,16 @@ private class XiaowanAgentSupport(
             cachedModels = null
         }
         val startedAtNanos = System.nanoTime()
-        val profileId = existingBinding?.providerProfileId
-            ?: ModelProviderConfigStore.getEditingProfileId()
-        val profile = profileId.let(ModelProviderConfigStore::getProfile)
-            ?: PlatformAiProvisioner.officialProfileOrNull()
-                ?.takeIf { OmniOfficialProvider.isOfficialProfile(profileId) }
-            ?: throw IllegalStateException(
-                "The configured scene Provider is unavailable: $profileId"
-            )
+        val profile = resolveDispatchAgentProviderProfile(
+            boundProviderProfileId = existingBinding?.providerProfileId,
+            configuredProfile = existingBinding
+                ?.providerProfileId
+                ?.let(ModelProviderConfigStore::getProfile),
+            editingProfile = ModelProviderConfigStore.getEditingProfile(),
+            officialProfile = PlatformAiProvisioner.officialProfileOrNull(),
+        ) ?: throw IllegalStateException(
+            "Dispatch Model Provider is not configured. Configure the default Provider and retry."
+        )
         val boundModels = buildXiaowanModelsFromBinding(existingBinding)
         // A valid shared binding is already the user's selected Provider and
         // model. Re-querying /models for every ACP session makes an ordinary
@@ -255,14 +259,37 @@ private class XiaowanAgentSupport(
             )
             return resolved
         }
-        // Model discovery belongs to the explicit Provider/model settings
-        // surface. Never put a network /models request on ACP session/new:
-        // one slow or unreachable Provider used to make a normal Xiaowan
-        // prompt look frozen before the Provider request even started.
-        throw IllegalStateException(
-            "No verified Provider/model binding for Xiaowan ACP. " +
-                "Select a model in scene.dispatch.model and retry."
+        // There is no persisted scene binding yet. Use the current Dispatch
+        // Provider catalog for an ephemeral default; do not write a binding
+        // merely to make ACP startup succeed.
+        val availableModels = runCatching {
+            withTimeoutOrNull(AGENT_PROVIDER_MODEL_LOOKUP_TIMEOUT_MS) {
+                fetchAgentProviderModels(profile)
+            }.orEmpty()
+        }.onFailure { error ->
+            Log.w(
+                TAG,
+                "Provider /models failed for Xiaowan ACP: " +
+                    (error.message ?: error.javaClass.simpleName),
+            )
+        }.getOrDefault(emptyList())
+        val fallbackBinding = resolveSharedAgentProviderBinding(
+            currentBinding = null,
+            editingProfile = profile,
+            availableModels = availableModels,
         )
+        val resolved = buildXiaowanModelsFromBinding(fallbackBinding)
+            ?: throw IllegalStateException(
+                "Dispatch Model has no usable model. Refresh the current Provider model list and retry."
+            )
+        val resolvedWithProvider = resolved.copy(providerProfile = profile.toSessionSnapshot())
+        cachedModels = resolvedWithProvider
+        Log.i(
+            TAG,
+            "ACP timing agent=xiaowan stage=model_ready source=dispatch_catalog " +
+                "elapsedMs=${elapsedMillis(startedAtNanos)}"
+        )
+        return resolvedWithProvider
     }
 }
 
@@ -344,6 +371,8 @@ private class XiaowanAgentSession(
 
     private val messages = mutableListOf<ChatCompletionMessage>()
     private val promptMutex = Mutex()
+    @Volatile
+    private var activePromptJob: Job? = null
     private var selectedModelId: String = configuredModelId
     private val executor = OmniAgentExecutor(
         context = context,
@@ -370,7 +399,7 @@ private class XiaowanAgentSession(
                     ?: return arguments
                 return arguments + mapOf(
                     "parentConversationId" to conversationId,
-                    "parentConversationMode" to AgentConversationModePolicy.NORMAL_MODE
+                    "parentConversationMode" to AgentConversationModePolicy.AGENT_MODE
                 )
             }
         },
@@ -380,7 +409,10 @@ private class XiaowanAgentSession(
         content: List<ContentBlock>,
         meta: JsonElement?,
     ): Flow<Event> = channelFlow {
-        promptMutex.withLock {
+        val promptJob = coroutineContext[Job]
+        activePromptJob = promptJob
+        try {
+            promptMutex.withLock {
         val promptParts = buildXiaowanPromptParts(content)
         val text = promptParts.text
         require(text.isNotEmpty() || promptParts.attachments.isNotEmpty()) {
@@ -401,11 +433,35 @@ private class XiaowanAgentSession(
                 "inMemoryMessages=${messages.size} historySource=" +
                 if (conversationId != null) "conversation" else "session_memory"
         )
-        val conversationMode = (meta as? JsonObject)
+        val requestedConversationMode = (meta as? JsonObject)
             ?.get("conversationMode")
             ?.jsonPrimitive
             ?.content
-            ?: AgentConversationModePolicy.NORMAL_MODE
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+        // The durable Conversation is authoritative when an older caller
+        // omits local ACP metadata. Otherwise a session/prompt silently
+        // falls back to `normal` and reads an empty bucket from an Agent
+        // conversation, even though the database contains the full history.
+        val persistedConversationMode = conversationId
+            ?.let { id ->
+                runCatching {
+                    cn.com.omnimind.baselib.database.DatabaseHelper
+                        .getConversationById(id)
+                        ?.mode
+                        ?.trim()
+                        ?.takeIf { it.isNotEmpty() }
+                }.getOrNull()
+            }
+        val conversationMode = persistedConversationMode
+            ?: requestedConversationMode
+            ?: AgentConversationModePolicy.AGENT_MODE
+        Log.i(
+            TAG,
+            "prompt context conversation=${conversationId ?: "unbound"} " +
+                "conversationMode=$conversationMode " +
+                "modeSource=${if (persistedConversationMode != null) "conversation" else "acp_meta_or_agent_default"}"
+        )
         val reasoningEffort = normalizeXiaowanReasoningEffort(
             (meta as? JsonObject)
                 ?.get("reasoningEffort")
@@ -456,6 +512,15 @@ private class XiaowanAgentSession(
             )
         )
         }
+        } finally {
+            if (activePromptJob === promptJob) {
+                activePromptJob = null
+            }
+        }
+    }
+
+    override suspend fun cancel() {
+        activePromptJob?.cancel(CancellationException("ACP session turn cancelled"))
     }
 
     /**
@@ -627,7 +692,7 @@ internal class XiaowanAcpEventBridge(
         snapshot: String,
         meta: JsonElement = JsonNull,
     ) {
-        emitTextSnapshot(
+        val emittedText = emitTextSnapshot(
             snapshot = snapshot,
             previous = assistantSnapshot,
             messageId = assistantMessageId,
@@ -643,6 +708,12 @@ internal class XiaowanAcpEventBridge(
                 )
             }
         )
+        // The provider reports throughput only after the final cumulative
+        // snapshot. Its text is usually identical to the last streamed
+        // snapshot, but the metadata still has to update that same message.
+        if (!emittedText && meta !is JsonNull) {
+            emitAssistantStatus(meta)
+        }
     }
 
     override suspend fun onThinkingStart() {
@@ -653,6 +724,13 @@ internal class XiaowanAcpEventBridge(
             // reasoning card. Keep the message id stable across those rounds
             // so the shared ACP reducer appends to the same card instead of
             // rendering another "思考完成" section for every round.
+            emitUpdate(
+                SessionUpdate.AgentThoughtChunk(
+                    content = ContentBlock.Text(""),
+                    messageId = thoughtMessageId,
+                    _meta = reasoningAcpMeta(""),
+                )
+            )
         }
     }
 
@@ -949,10 +1027,32 @@ internal class XiaowanAcpEventBridge(
 
     override suspend fun onClarifyRequired(question: String, missingFields: List<String>?) {
         callbackMutex.withLock {
-            emitAssistantNotice(question)
+            emitAssistantNotice(
+                text = question,
+                meta = acpPresentationMeta(
+                    "clarification" to mapOf(
+                        "question" to question,
+                        "missingFields" to (missingFields ?: emptyList<String>()),
+                    )
+                ),
+            )
         }
     }
-    override suspend fun onComplete(result: AgentResult) = Unit
+    override suspend fun onComplete(result: AgentResult) {
+        val success = result as? AgentResult.Success ?: return
+        val turnUsage = agentTurnUsageAcpPayload(success) ?: return
+        callbackMutex.withLock {
+            emitAssistantStatus(
+                acpPresentationMeta(
+                    "usage" to mapOf(
+                        "latestPromptTokens" to success.latestPromptTokens,
+                        "promptTokenThreshold" to success.promptTokenThreshold,
+                        "turnUsage" to turnUsage,
+                    )
+                )
+            )
+        }
+    }
     override suspend fun onError(error: String) {
         onError(error, retryable = false)
     }
@@ -1006,14 +1106,15 @@ internal class XiaowanAcpEventBridge(
         previous: String,
         messageId: MessageId,
         emit: suspend (String, MessageId) -> Unit,
-    ) {
-        val delta = acpSnapshotDelta(previous, snapshot) ?: return
+    ): Boolean {
+        val delta = acpSnapshotDelta(previous, snapshot) ?: return false
         val id = if (previous.isNotEmpty() && !snapshot.startsWith(previous)) {
             MessageId(UUID.randomUUID().toString())
         } else {
             messageId
         }
         emit(delta, id)
+        return true
     }
 }
 
@@ -1079,6 +1180,33 @@ private fun reasoningAcpMeta(thinking: String): JsonObject {
         copy("memoryActions")
     }
     return acpPresentationMeta("reasoning" to reasoning)
+}
+
+private fun agentTurnUsageAcpPayload(result: AgentResult.Success): Map<String, Any?>? {
+    val promptTokens = result.latestPromptTokens ?: result.response.latestPromptTokens ?: return null
+    val completionTokens = result.completionTokens ?: result.response.completionTokens ?: 0
+    val cachedTokens = (result.cachedTokens ?: result.response.cachedTokens ?: 0)
+        .coerceIn(0, promptTokens)
+    val cacheWriteTokens = (result.cacheCreationTokens ?: result.response.cacheCreationTokens ?: 0)
+        .coerceAtLeast(0)
+    val totalTokens = result.totalTokens ?: result.response.totalTokens
+        ?: (promptTokens + completionTokens)
+    return linkedMapOf(
+        "ctx" to promptTokens,
+        "in" to promptTokens,
+        "out" to completionTokens,
+        "cache" to cachedTokens,
+        "totalInputTokens" to promptTokens,
+        "uncachedInputTokens" to (promptTokens - cachedTokens).coerceAtLeast(0),
+        "cacheReadTokens" to cachedTokens,
+        "cacheWriteTokens" to cacheWriteTokens,
+        "promptTokens" to promptTokens,
+        "completionTokens" to completionTokens,
+        "totalTokens" to totalTokens,
+        "promptTokenThreshold" to (
+            result.promptTokenThreshold ?: result.response.promptTokenThreshold
+            ),
+    )
 }
 
 private fun structuredReasoning(thinking: String): JsonObject? = runCatching {

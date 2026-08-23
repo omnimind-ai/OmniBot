@@ -3,6 +3,8 @@ package cn.com.omnimind.bot.agent
 import cn.com.omnimind.bot.agent.runtime.AcpAgentProfileStore
 import cn.com.omnimind.bot.agent.runtime.shouldPrepareManagedAcpAdapter
 import cn.com.omnimind.bot.agent.runtime.shouldReuseManagedAcpPreparation
+import cn.com.omnimind.bot.agent.runtime.resolveAcpLaunchModelForDispatch
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -29,6 +31,17 @@ class ManagedAcpAdapterPreparationTest {
                 allPackagesReady = false,
                 adapterHealthy = false,
             )
+        )
+    }
+
+    @Test
+    fun `Dispatch catalog supplies the default launch model without a binding`() {
+        assertEquals(
+            "dispatch-model",
+            resolveAcpLaunchModelForDispatch(
+                providerModelIds = listOf("dispatch-model", "other-model"),
+                dispatchModel = null,
+            ),
         )
     }
 

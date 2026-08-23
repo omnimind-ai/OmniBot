@@ -45,6 +45,23 @@ class AgentConversationHistoryRepository(
         const val STATUS_TIMEOUT = "timeout"
         const val STATUS_INTERRUPTED = "interrupted"
 
+        /**
+         * Applies pagination after the compatibility reader has merged the
+         * canonical Agent bucket with legacy Xiaowan buckets. Paginating the
+         * database query first loses legacy `normal` rows because they live in
+         * a separate conversationMode partition.
+         */
+        internal fun pageConversationEntries(
+            entries: List<AgentConversationEntry>,
+            limit: Int,
+            offset: Int
+        ): Pair<List<AgentConversationEntry>, Boolean> {
+            val safeOffset = offset.coerceAtLeast(0)
+            val remaining = entries.drop(safeOffset)
+            val page = if (limit > 0) remaining.take(limit) else remaining
+            return page to (safeOffset + page.size < entries.size)
+        }
+
     }
 
     private val gson = Gson()
@@ -157,10 +174,11 @@ class AgentConversationHistoryRepository(
         fallbackStatus: String = STATUS_RUNNING,
         fallbackSummary: String = ""
     ) = withContext(Dispatchers.IO) {
+        val effectiveConversationMode = resolveConversationMode(conversationId, conversationMode)
         val normalizedEntryId = entryId.trim()
         val existing = loadThreadEntryByIdSafe(
             conversationId = conversationId,
-            conversationMode = conversationMode,
+            conversationMode = effectiveConversationMode,
             entryId = normalizedEntryId
         )
         // ACP tool/call ids are scoped to a single provider turn. Providers
@@ -191,7 +209,7 @@ class AgentConversationHistoryRepository(
         } else {
             loadThreadEntryByIdSafe(
                 conversationId = conversationId,
-                conversationMode = conversationMode,
+                conversationMode = effectiveConversationMode,
                 entryId = storageEntryId
             )
         }
@@ -225,7 +243,7 @@ class AgentConversationHistoryRepository(
             AgentConversationEntry(
                 id = storageExisting?.id ?: 0,
                 conversationId = conversationId,
-                conversationMode = conversationMode,
+                conversationMode = effectiveConversationMode,
                 entryId = storageEntryId,
                 entryType = ENTRY_TYPE_TOOL_EVENT,
                 status = normalizedStatus,
@@ -245,10 +263,11 @@ class AgentConversationHistoryRepository(
         payload: Map<String, Any?>,
         createdAt: Long = System.currentTimeMillis()
     ) = withContext(Dispatchers.IO) {
+        val effectiveConversationMode = resolveConversationMode(conversationId, conversationMode)
         upsertEntry(
             AgentConversationEntry(
                 conversationId = conversationId,
-                conversationMode = conversationMode,
+                conversationMode = effectiveConversationMode,
                 entryId = entryId,
                 entryType = ENTRY_TYPE_STREAM_EVENT,
                 status = STATUS_SUCCESS,
@@ -266,7 +285,11 @@ class AgentConversationHistoryRepository(
         messages: List<Map<String, Any?>>
     ) = withContext(Dispatchers.IO) {
         val existingConversation = DatabaseHelper.getConversationById(conversationId)
-        val existingEntries = loadThreadEntriesAscSafePaged(conversationId, conversationMode)
+        val effectiveConversationMode = resolveConversationMode(conversationId, conversationMode)
+        val existingEntries = loadThreadEntriesAscSafePaged(
+            conversationId,
+            effectiveConversationMode
+        )
         val existingToolPayloads = existingEntries
             .filter { it.entryType == ENTRY_TYPE_TOOL_EVENT }
             .associate { entry ->
@@ -283,7 +306,7 @@ class AgentConversationHistoryRepository(
             incomingMessages = messages
         )
         var remappedCutoffEntryDbId: Long? = null
-        conversationModeCandidates(conversationMode).forEach { storageMode ->
+        conversationModeCandidates(effectiveConversationMode).forEach { storageMode ->
             DatabaseHelper.deleteAgentConversationThread(conversationId, storageMode)
         }
         ConversationSnapshotOrdering.prepareForStorage(mergedMessages).forEach { prepared ->
@@ -331,7 +354,7 @@ class AgentConversationHistoryRepository(
             val insertedId = upsertEntry(
                 AgentConversationEntry(
                     conversationId = conversationId,
-                    conversationMode = conversationMode,
+                    conversationMode = effectiveConversationMode,
                     entryId = entryId,
                     entryType = type,
                     status = status,
@@ -368,7 +391,8 @@ class AgentConversationHistoryRepository(
         conversationMode: String,
         finalizeInterruptedEntries: Boolean = true
     ): List<Map<String, Any?>> = withContext(Dispatchers.IO) {
-        val entries = loadThreadEntriesDescSafePaged(conversationId, conversationMode)
+        val effectiveConversationMode = resolveConversationMode(conversationId, conversationMode)
+        val entries = loadThreadEntriesDescSafePaged(conversationId, effectiveConversationMode)
         val displayEntries = if (finalizeInterruptedEntries) {
             normalizeEntriesForDisplay(entries)
         } else {
@@ -384,10 +408,24 @@ class AgentConversationHistoryRepository(
         limit: Int,
         offset: Int
     ): Pair<List<Map<String, Any?>>, Boolean> = withContext(Dispatchers.IO) {
-        val totalCount = DatabaseHelper.countAgentConversationThreadEntries(
-            conversationId, conversationMode
+        val effectiveConversationMode = resolveConversationMode(conversationId, conversationMode)
+        // Read a bounded window from every compatibility bucket before
+        // slicing the page. The old implementation queried only `agent`, so
+        // conversations written as `normal` appeared empty after the default
+        // switched to canonical Agent mode. Do not load the entire history on
+        // every scroll request.
+        val candidateModes = conversationModeCandidates(effectiveConversationMode)
+        val windowSize = offset.coerceAtLeast(0) + limit.coerceAtLeast(1)
+        val allEntries = loadThreadEntriesDescWindowSafe(
+            conversationId = conversationId,
+            conversationModes = candidateModes,
+            maxEntriesPerMode = windowSize
         )
-        val entries = loadThreadEntriesDescPagedSafe(conversationId, conversationMode, limit, offset)
+        val (entries, hasMore) = pageConversationEntries(
+            entries = allEntries,
+            limit = limit,
+            offset = offset
+        )
         val normalized = if (offset == 0) {
             normalizeEntriesForDisplay(entries)
         } else {
@@ -395,15 +433,21 @@ class AgentConversationHistoryRepository(
         }
         val messagePayloads = normalized.mapNotNull { entry -> entryToMessagePayload(entry) }
         val sorted = ConversationSnapshotOrdering.sortForDisplay(messagePayloads)
-        val hasMore = offset + entries.size < totalCount
-        Pair(sorted, hasMore)
+        val hasUnloadedEntries = candidateModes.any { storageMode ->
+            DatabaseHelper.countAgentConversationThreadEntries(
+                conversationId = conversationId,
+                conversationMode = storageMode
+            ) > windowSize
+        }
+        Pair(sorted, hasMore || hasUnloadedEntries)
     }
 
     suspend fun clearConversationMessages(
         conversationId: Long,
         conversationMode: String
     ) = withContext(Dispatchers.IO) {
-        conversationModeCandidates(conversationMode).forEach { storageMode ->
+        val effectiveConversationMode = resolveConversationMode(conversationId, conversationMode)
+        conversationModeCandidates(effectiveConversationMode).forEach { storageMode ->
             DatabaseHelper.deleteAgentConversationThread(conversationId, storageMode)
         }
         resetContextSummary(conversationId)
@@ -437,8 +481,9 @@ class AgentConversationHistoryRepository(
             return@withContext PromptSeed(emptyList())
         }
         val conversation = DatabaseHelper.getConversationById(conversationId)
+        val effectiveConversationMode = resolveConversationMode(conversationId, conversationMode)
         val normalizedEntries = normalizeInterruptedToolEntries(
-            loadThreadEntriesAscSafePaged(conversationId, conversationMode)
+            loadThreadEntriesAscSafePaged(conversationId, effectiveConversationMode)
         )
         AgentConversationHistorySupport.buildPromptSeedFromEntries(
             entries = normalizedEntries,
@@ -452,8 +497,9 @@ class AgentConversationHistoryRepository(
         conversationMode: String
     ): ContextCompactionCandidate? = withContext(Dispatchers.IO) {
         val conversation = DatabaseHelper.getConversationById(conversationId) ?: return@withContext null
+        val effectiveConversationMode = resolveConversationMode(conversationId, conversationMode)
         val normalizedEntries = normalizeInterruptedToolEntries(
-            loadThreadEntriesAscSafePaged(conversationId, conversationMode)
+            loadThreadEntriesAscSafePaged(conversationId, effectiveConversationMode)
         )
         val selection = AgentConversationHistorySupport.selectEntriesToCompact(
             entries = normalizedEntries,
@@ -514,9 +560,10 @@ class AgentConversationHistoryRepository(
         status: String,
         createdAt: Long
     ) = withContext(Dispatchers.IO) {
+        val effectiveConversationMode = resolveConversationMode(conversationId, conversationMode)
         val existing = loadThreadEntryByIdSafe(
             conversationId = conversationId,
-            conversationMode = conversationMode,
+            conversationMode = effectiveConversationMode,
             entryId = entryId
         )
         val resolvedPayload = if (
@@ -536,7 +583,7 @@ class AgentConversationHistoryRepository(
             AgentConversationEntry(
                 id = existing?.id ?: 0,
                 conversationId = conversationId,
-                conversationMode = conversationMode,
+                conversationMode = effectiveConversationMode,
                 entryId = entryId,
                 entryType = entryType,
                 status = status,
@@ -559,6 +606,7 @@ class AgentConversationHistoryRepository(
 
     private fun canonicalConversationMode(mode: String): String {
         return when (mode.trim().lowercase()) {
+            "", "normal" -> "normal"
             "agent", "codex", "acp", "coding" -> "agent"
             else -> mode.trim().lowercase().ifEmpty { "normal" }
         }
@@ -747,13 +795,73 @@ class AgentConversationHistoryRepository(
         return entries
     }
 
+    private suspend fun loadThreadEntriesDescWindowSafe(
+        conversationId: Long,
+        conversationModes: List<String>,
+        maxEntriesPerMode: Int
+    ): List<AgentConversationEntry> {
+        val boundedSize = maxEntriesPerMode.coerceAtLeast(1)
+        return conversationModes
+            .flatMap { storageMode ->
+                loadThreadEntriesDescWindowSafeForMode(
+                    conversationId = conversationId,
+                    conversationMode = storageMode,
+                    maxEntries = boundedSize
+                )
+            }
+            .distinctBy { entry -> entry.entryId }
+            .sortedWith(compareByDescending<AgentConversationEntry> { it.createdAt }
+                .thenByDescending { it.id })
+    }
+
+    private suspend fun loadThreadEntriesDescWindowSafeForMode(
+        conversationId: Long,
+        conversationMode: String,
+        maxEntries: Int
+    ): List<AgentConversationEntry> {
+        val entries = mutableListOf<AgentConversationEntry>()
+        var offset = 0
+        val boundedSize = maxEntries.coerceAtLeast(1)
+        while (entries.size < boundedSize) {
+            val page = loadThreadEntriesDescPagedSafe(
+                conversationId = conversationId,
+                conversationMode = conversationMode,
+                limit = minOf(SAFE_HISTORY_PAGE_SIZE, boundedSize - entries.size),
+                offset = offset
+            )
+            if (page.isEmpty()) break
+            entries += page
+            offset += page.size
+            if (page.size < SAFE_HISTORY_PAGE_SIZE) break
+        }
+        return entries
+    }
+
     private fun conversationModeCandidates(conversationMode: String): List<String> {
         val normalized = conversationMode.trim().lowercase().ifEmpty { "normal" }
-        return if (normalized in setOf("agent", "codex", "acp", "coding")) {
-            listOf("agent", "codex")
-        } else {
-            listOf(normalized)
+        return when (normalized) {
+            "normal" -> listOf("normal", "agent", "codex")
+            "agent", "codex", "acp", "coding" -> listOf("agent", "codex", "normal")
+            else -> listOf(normalized)
         }
+    }
+
+    /**
+     * The Conversation row is the durable ownership boundary. UI callers may
+     * still arrive through an old route and say `normal`/`codex`; allowing
+     * that hint to select a different history bucket is what made context
+     * disappear after a refresh or session/load. Use the requested mode only
+     * for a not-yet-materialized conversation.
+     */
+    private suspend fun resolveConversationMode(
+        conversationId: Long,
+        requestedMode: String
+    ): String {
+        val persistedMode = DatabaseHelper.getConversationById(conversationId)
+            ?.mode
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+        return canonicalConversationMode(persistedMode ?: requestedMode)
     }
 
     private suspend fun loadThreadEntriesDescPagedSafe(

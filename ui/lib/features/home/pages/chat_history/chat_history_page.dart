@@ -233,6 +233,7 @@ class _ChatHistoryPageState extends State<ChatHistoryPage> {
     GoRouterManager.push(
       '/home/chat',
       extra: ConversationThreadTarget.newConversation(
+        mode: ConversationMode.agent,
         requestKey: DateTime.now().microsecondsSinceEpoch.toString(),
       ),
     );

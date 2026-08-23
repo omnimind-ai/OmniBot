@@ -2,6 +2,7 @@ package cn.com.omnimind.bot.webchat
 
 import android.content.Context
 import cn.com.omnimind.bot.agent.runtime.AgentRuntimeManager
+import cn.com.omnimind.bot.agent.runtime.AcpAgentProfileStore
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
@@ -15,7 +16,9 @@ private data class WebAgentRunContext(
     val conversationMode: String
 )
 
-private val WEB_CONVERSATION_MODES = setOf("normal", "agent", "codex", "chat_only")
+private val WEB_CONVERSATION_MODES = setOf(
+    "normal", "agent", "codex", "acp", "coding", "chat_only"
+)
 
 internal enum class WebConversationRunKind {
     OMNIAI,
@@ -29,18 +32,18 @@ internal fun resolveWebConversationMode(
 ): String {
     val normalizedStored = storedMode?.trim()?.lowercase().orEmpty()
     if (normalizedStored in WEB_CONVERSATION_MODES) {
-        return if (normalizedStored == "codex") "agent" else normalizedStored
+        return if (normalizedStored in setOf("codex", "acp", "coding")) "agent" else normalizedStored
     }
     val normalizedRequested = requestedMode?.trim()?.lowercase().orEmpty()
     return normalizedRequested
         .takeIf(WEB_CONVERSATION_MODES::contains)
-        ?.let { if (it == "codex") "agent" else it }
+        ?.let { if (it in setOf("codex", "acp", "coding")) "agent" else it }
         ?: "normal"
 }
 
 internal fun resolveWebConversationRunKind(mode: String?): WebConversationRunKind {
     return when (mode?.trim()?.lowercase()) {
-        "agent", "codex" -> WebConversationRunKind.AGENT
+        "normal", "agent", "codex", "acp", "coding" -> WebConversationRunKind.AGENT
         "chat_only" -> WebConversationRunKind.CHAT_ONLY
         else -> WebConversationRunKind.OMNIAI
     }
@@ -48,10 +51,17 @@ internal fun resolveWebConversationRunKind(mode: String?): WebConversationRunKin
 
 internal fun resolveWebAgentId(
     storedAgentId: String?,
-    requestedAgentId: String?
+    requestedAgentId: String?,
+    conversationMode: String? = null,
 ): String? {
     val stored = storedAgentId?.trim()?.takeIf { it.isNotEmpty() }
     val requested = requestedAgentId?.trim()?.takeIf { it.isNotEmpty() }
+    if (conversationMode?.trim()?.equals("normal", ignoreCase = true) == true) {
+        require(requested == null || requested == AcpAgentProfileStore.XIAOWAN_AGENT_ID) {
+            "Xiaowan conversations cannot switch Harness; create a new conversation."
+        }
+        return AcpAgentProfileStore.XIAOWAN_AGENT_ID
+    }
     require(stored == null || requested == null || stored == requested) {
         "The requested Agent does not match this conversation."
     }
@@ -385,7 +395,8 @@ class AgentRunService(
         val agentId = if (runKind == WebConversationRunKind.AGENT) {
             resolveWebAgentId(
                 storedAgentId = storedConversation["agentId"]?.toString(),
-                requestedAgentId = request["agentId"]?.toString()
+                requestedAgentId = request["agentId"]?.toString(),
+                conversationMode = conversationMode,
             )
         } else {
             null

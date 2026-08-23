@@ -172,6 +172,10 @@ class EnvironmentSetupLogicTest {
         assertTrue(!npmInstall.contains("0.1.0-rc.6"))
         assertTrue(npmInstall.contains("omnibot-node-gyp-copy"))
         assertTrue(npmInstall.contains("exec /bin/ln"))
+        assertTrue(npmInstall.contains("registry.npmmirror.com"))
+        assertTrue(npmInstall.contains("registry.npmjs.org"))
+        assertTrue(npmInstall.contains("fetch-retries=5"))
+        assertTrue(npmInstall.contains("fetch-timeout=120000"))
         assertTrue(
             commands.contains(
                 "ln -sf /root/.npm-global/bin/dsh /usr/local/bin/dsh || true"

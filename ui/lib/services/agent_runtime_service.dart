@@ -101,6 +101,12 @@ String agentModelSourceKey(AgentRuntimeStatus status) {
   return 'local-${status.activeAgentId ?? 'agent'}';
 }
 
+bool isAgentCancellationSuccessful(Map<String, dynamic> response) {
+  return response['ok'] == true ||
+      response['cancelled'] == true ||
+      response['status'] == 'cancelled';
+}
+
 /// Converts an ACP boundary error into short, actionable UI text. Native
 /// errors carry a stable `failureKind` in PlatformException.details; use that
 /// instead of exposing adapter stack traces or waiting for a raw error string
@@ -129,10 +135,7 @@ String formatAgentRuntimeErrorForUser(Object? error) {
       return 'Provider HTTPS 证书校验失败，请检查设备时间和证书链。';
   }
 
-  return formatErrorMessageForUser(
-    rawMessage,
-    fallback: 'Agent 执行失败，请重试。',
-  );
+  return formatErrorMessageForUser(rawMessage, fallback: 'Agent 执行失败，请重试。');
 }
 
 /// Extracts only model choices from an ACP model/config response.
@@ -760,6 +763,10 @@ class AgentRuntimeService {
     return _invokeMap('agent/test', {'agentId': agentId.trim()});
   }
 
+  static Future<Map<String, dynamic>> prepareAgent(String agentId) {
+    return _invokeMap('agent/prepare', {'agentId': agentId.trim()});
+  }
+
   static Future<Map<String, dynamic>> readAgentConfig(String agentId) {
     return _invokeMap('agent/config/read', {'agentId': agentId.trim()});
   }
@@ -810,12 +817,15 @@ class AgentRuntimeService {
     String? sessionId,
     int? conversationId,
     String? agentId,
+    String? conversationMode,
   }) {
     return _invokeMap('session/load', {
       if (sessionId != null) 'sessionId': sessionId,
       if (conversationId != null) 'conversationId': conversationId,
       if (agentId != null && agentId.trim().isNotEmpty)
         'agentId': agentId.trim(),
+      if (conversationMode != null && conversationMode.trim().isNotEmpty)
+        'conversationMode': conversationMode.trim(),
     });
   }
 
@@ -824,6 +834,7 @@ class AgentRuntimeService {
     int? conversationId,
     String? agentId,
     bool includeHistory = true,
+    String? conversationMode,
   }) {
     return _invokeMap('session/load', {
       if (sessionId != null) 'sessionId': sessionId,
@@ -831,6 +842,8 @@ class AgentRuntimeService {
       if (agentId != null && agentId.trim().isNotEmpty)
         'agentId': agentId.trim(),
       'includeHistory': includeHistory,
+      if (conversationMode != null && conversationMode.trim().isNotEmpty)
+        'conversationMode': conversationMode.trim(),
     });
   }
 
@@ -924,11 +937,13 @@ class AgentRuntimeService {
     String? sessionId,
     int? conversationId,
     String? promptId,
+    String? runId,
   }) {
     return _invokeMap('session/cancel', {
       if (sessionId != null) 'sessionId': sessionId,
       if (conversationId != null) 'conversationId': conversationId,
       if (promptId != null) 'promptId': promptId,
+      if (runId != null && runId.trim().isNotEmpty) 'runId': runId.trim(),
     });
   }
 

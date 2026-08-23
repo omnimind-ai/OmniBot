@@ -387,7 +387,7 @@ internal object AndroidDeviceMcpServer {
         private val terminalDistribution = TerminalDistribution.selected()
         private val catalog = AgentToolRegistry(
             context = appContext,
-            conversationMode = cn.com.omnimind.bot.agent.AgentConversationModePolicy.NORMAL_MODE,
+            conversationMode = cn.com.omnimind.bot.agent.AgentConversationModePolicy.AGENT_MODE,
             terminalDistribution = terminalDistribution,
             includeVlmTool = false,
         )
@@ -449,7 +449,7 @@ internal object AndroidDeviceMcpServer {
             resolvedSkills = emptyList(),
             workspaceManager = workspaceManager,
             workspaceMemoryService = WorkspaceMemoryService(appContext, workspaceManager),
-            conversationMode = cn.com.omnimind.bot.agent.AgentConversationModePolicy.NORMAL_MODE,
+            conversationMode = cn.com.omnimind.bot.agent.AgentConversationModePolicy.AGENT_MODE,
             terminalEnvironment = emptyMap(),
             runControl = NoOpAgentRunControl,
             longTermMemoryIndex = LongTermMemoryIndex(workspaceManager),

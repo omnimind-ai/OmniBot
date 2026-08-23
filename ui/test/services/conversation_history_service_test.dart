@@ -142,6 +142,108 @@ void main() {
     );
   });
 
+  test('normal remains the default conversation storage', () async {
+    const normalTarget = ConversationThreadTarget.existing(
+      conversationId: 31,
+      mode: ConversationMode.normal,
+    );
+
+    await ConversationHistoryService.saveCurrentConversationTarget(
+      normalTarget,
+      mode: ConversationMode.normal,
+    );
+
+    final restored =
+        await ConversationHistoryService.getCurrentConversationTarget(
+          mode: ConversationMode.normal,
+        );
+
+    expect(restored?.conversationId, 31);
+    expect(restored?.mode, ConversationMode.normal);
+    expect(
+      ConversationHistoryService.conversationMessagesKey(
+        31,
+        mode: ConversationMode.normal,
+      ),
+      'conversation_messages_normal_31',
+    );
+  });
+
+  test('missing non-normal targets never fall back to normal', () async {
+    await ConversationHistoryService.saveCurrentConversationTarget(
+      const ConversationThreadTarget.existing(
+        conversationId: 41,
+        mode: ConversationMode.normal,
+      ),
+      mode: ConversationMode.normal,
+    );
+
+    expect(
+      await ConversationHistoryService.getCurrentConversationTarget(
+        mode: ConversationMode.openclaw,
+      ),
+      isNull,
+    );
+    expect(
+      await ConversationHistoryService.getCurrentConversationId(
+        mode: ConversationMode.openclaw,
+      ),
+      isNull,
+    );
+  });
+
+  test('clearing another mode does not clear normal conversation', () async {
+    await ConversationHistoryService.saveCurrentConversationTarget(
+      const ConversationThreadTarget.existing(
+        conversationId: 51,
+        mode: ConversationMode.normal,
+      ),
+      mode: ConversationMode.normal,
+    );
+    await ConversationHistoryService.saveCurrentConversationTarget(
+      const ConversationThreadTarget.existing(
+        conversationId: 52,
+        mode: ConversationMode.openclaw,
+      ),
+      mode: ConversationMode.openclaw,
+    );
+
+    await ConversationHistoryService.saveCurrentConversationTarget(
+      null,
+      mode: ConversationMode.openclaw,
+    );
+
+    expect(
+      await ConversationHistoryService.getCurrentConversationId(
+        mode: ConversationMode.normal,
+      ),
+      51,
+    );
+    expect(
+      await ConversationHistoryService.getCurrentConversationTarget(
+        mode: ConversationMode.openclaw,
+      ),
+      isNull,
+    );
+  });
+
+  test('clearing normal removes the pre-mode legacy id', () async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('current_conversation_id', 61);
+
+    await ConversationHistoryService.saveCurrentConversationId(
+      null,
+      mode: ConversationMode.normal,
+    );
+
+    expect(
+      await ConversationHistoryService.getCurrentConversationId(
+        mode: ConversationMode.normal,
+      ),
+      isNull,
+    );
+  });
+
   test('round-trips chat_only storage keys through parser', () {
     final parsed = ConversationHistoryService.tryParseConversationMessagesKey(
       ConversationHistoryService.conversationMessagesKey(
@@ -338,10 +440,7 @@ void main() {
         ChatMessageModel.userMessage('legacy normal thread'),
       ];
       await prefs.setString(
-        ConversationHistoryService.conversationMessagesKey(
-          3,
-          mode: ConversationMode.normal,
-        ),
+        'conversation_messages_normal_3',
         jsonEncode(legacyMessages.map((message) => message.toJson()).toList()),
       );
 
@@ -352,15 +451,7 @@ void main() {
 
       expect(restored.single.text, 'legacy normal thread');
       expect(nativeMessages['normal:3']?.single['id'], restored.single.id);
-      expect(
-        prefs.getString(
-          ConversationHistoryService.conversationMessagesKey(
-            3,
-            mode: ConversationMode.normal,
-          ),
-        ),
-        isNull,
-      );
+      expect(prefs.getString('conversation_messages_normal_3'), isNull);
     },
   );
 
@@ -428,10 +519,7 @@ void main() {
       ChatMessageModel.userMessage('legacy oldest', id: 'legacy-oldest'),
     ];
     await prefs.setString(
-      ConversationHistoryService.conversationMessagesKey(
-        6,
-        mode: ConversationMode.normal,
-      ),
+      'conversation_messages_normal_6',
       jsonEncode(legacyMessages.map((message) => message.toJson()).toList()),
     );
 
@@ -447,51 +535,46 @@ void main() {
     expect(restored.map((message) => message.text), contains('legacy newest'));
     expect(restored.map((message) => message.text), contains('legacy oldest'));
     expect(nativeMessages['normal:6'], hasLength(3));
-    expect(
-      prefs.getString(
-        ConversationHistoryService.conversationMessagesKey(
-          6,
-          mode: ConversationMode.normal,
-        ),
-      ),
-      isNull,
-    );
+    expect(prefs.getString('conversation_messages_normal_6'), isNull);
   });
 
-  test('preserves legacy messages when metadata incorrectly expects none', () async {
-    final prefs = await SharedPreferences.getInstance();
-    final legacyMessages = <ChatMessageModel>[
-      ChatMessageModel.userMessage('stale cleared message'),
-    ];
-    await prefs.setString(
-      ConversationHistoryService.conversationMessagesKey(
-        8,
-        mode: ConversationMode.normal,
-      ),
-      jsonEncode(legacyMessages.map((message) => message.toJson()).toList()),
-    );
-
-    final restored = await ConversationHistoryService.getConversationMessages(
-      8,
-      mode: ConversationMode.normal,
-      expectedMessageCount: 0,
-    );
-
-    expect(restored.single.text, 'stale cleared message');
-    expect(
-      nativeMessages['normal:8']?.single['content']['text'],
-      'stale cleared message',
-    );
-    expect(
-      prefs.getString(
+  test(
+    'preserves legacy messages when metadata incorrectly expects none',
+    () async {
+      final prefs = await SharedPreferences.getInstance();
+      final legacyMessages = <ChatMessageModel>[
+        ChatMessageModel.userMessage('stale cleared message'),
+      ];
+      await prefs.setString(
         ConversationHistoryService.conversationMessagesKey(
           8,
           mode: ConversationMode.normal,
         ),
-      ),
-      isNull,
-    );
-  });
+        jsonEncode(legacyMessages.map((message) => message.toJson()).toList()),
+      );
+
+      final restored = await ConversationHistoryService.getConversationMessages(
+        8,
+        mode: ConversationMode.normal,
+        expectedMessageCount: 0,
+      );
+
+      expect(restored.single.text, 'stale cleared message');
+      expect(
+        nativeMessages['normal:8']?.single['content']['text'],
+        'stale cleared message',
+      );
+      expect(
+        prefs.getString(
+          ConversationHistoryService.conversationMessagesKey(
+            8,
+            mode: ConversationMode.normal,
+          ),
+        ),
+        isNull,
+      );
+    },
+  );
 
   test(
     'reads legacy Agent history stored under the old agent mode alias',

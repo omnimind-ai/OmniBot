@@ -75,6 +75,10 @@ internal data class AcpOfficialRuntime(
 )
 
 internal const val DEEPSEEK_HARNESS_NPM_CHANNEL = "next"
+private const val DEEPSEEK_HARNESS_NPM_PRIMARY_REGISTRY =
+    "https://registry.npmmirror.com"
+private const val DEEPSEEK_HARNESS_NPM_FALLBACK_REGISTRY =
+    "https://registry.npmjs.org"
 internal val DEEPSEEK_HARNESS_NPM_PACKAGE_NAMES = listOf(
     // Install the official Harness product and the existing ACP adapter. The
     // adapter composes DSH in-process and projects assistant/chunk into ACP
@@ -182,9 +186,26 @@ internal val DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND = """
         'fi' \
         'exec /bin/ln "${'$'}@"' > "${'$'}hardlink_helper/ln"
       chmod 755 "${'$'}hardlink_helper/ln"
-      if PATH="${'$'}hardlink_helper:${'$'}PATH" npm install -g --prefix /root/.npm-global \
-          --include=peer --no-audit --no-fund ${DEEPSEEK_HARNESS_NPM_PACKAGE_SPECS.joinToString(" ")}; then
+      install_deepseek_harness_from_registry() {
+        registry="${'$'}1"
+        PATH="${'$'}hardlink_helper:${'$'}PATH" npm install -g --prefix /root/.npm-global \
+          --include=peer --no-audit --no-fund --prefer-offline \
+          --fetch-retries=5 --fetch-retry-factor=2 \
+          --fetch-retry-mintimeout=1000 --fetch-retry-maxtimeout=15000 \
+          --fetch-timeout=120000 --loglevel=notice \
+          --registry="${'$'}registry" ${DEEPSEEK_HARNESS_NPM_PACKAGE_SPECS.joinToString(" ")}
+      }
+      npm_registry="${'$'}{OMNIBOT_NPM_REGISTRY:-$DEEPSEEK_HARNESS_NPM_PRIMARY_REGISTRY}"
+      if install_deepseek_harness_from_registry "${'$'}npm_registry"; then
         install_status=0
+      elif [ "${'$'}npm_registry" != "$DEEPSEEK_HARNESS_NPM_FALLBACK_REGISTRY" ]; then
+        echo "Primary npm registry failed; retrying with $DEEPSEEK_HARNESS_NPM_FALLBACK_REGISTRY" >&2
+        cleanup_deepseek_harness_npm_staging
+        if install_deepseek_harness_from_registry "$DEEPSEEK_HARNESS_NPM_FALLBACK_REGISTRY"; then
+          install_status=0
+        else
+          install_status=${'$'}?
+        fi
       else
         install_status=${'$'}?
       fi
@@ -260,6 +281,22 @@ internal class AcpAgentProfileStore(context: Context) {
 
     @Synchronized
     fun bindConversation(conversationId: Long, agentId: String) {
+        if (conversationId <= 0L) return
+        val normalizedAgentId = agentId.trim()
+        if (normalizedAgentId.isEmpty()) return
+        val bindings = conversationBindings().toMutableMap()
+        val currentAgentId = bindings[conversationId.toString()]
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+        if (currentAgentId != null && currentAgentId != normalizedAgentId) {
+            return
+        }
+        bindings[conversationId.toString()] = normalizedAgentId
+        preferences.edit().putString(KEY_CONVERSATION_BINDINGS, gson.toJson(bindings)).apply()
+    }
+
+    @Synchronized
+    fun repairConversationBinding(conversationId: Long, agentId: String) {
         if (conversationId <= 0L) return
         val normalizedAgentId = agentId.trim()
         if (normalizedAgentId.isEmpty()) return

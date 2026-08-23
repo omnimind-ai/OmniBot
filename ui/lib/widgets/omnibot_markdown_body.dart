@@ -182,6 +182,14 @@ String normalizeOmnibotMarkdown(String source) {
         RegExp(r'---(?=#{1,6}(?!#)\S)'),
         (_) => '\n\n',
       );
+      // A resource link card can be followed by a new section without the
+      // provider emitting a newline (`[report](omnibot://...)### 概览`).
+      // Split only a heading glued directly to a closing parenthesis; code
+      // fences are excluded by the surrounding normalization boundary.
+      line = line.replaceAllMapped(
+        RegExp(r'(?<=\))(?=#{1,6}(?!#)(?:[ \t]+\S|\S))'),
+        (_) => '\n\n',
+      );
       // Provider list markers often omit the required space (`-☀️`), which
       // makes the whole list render as one paragraph.  Keep `*italic*` and
       // negative numbers intact: both are valid non-list prose at line start.
@@ -631,10 +639,7 @@ class OmnibotMarkdownBody extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
-          children: [
-            plainText,
-            if (trailingInline != null) trailingInline!,
-          ],
+          children: [plainText, if (trailingInline != null) trailingInline!],
         ),
       );
     }

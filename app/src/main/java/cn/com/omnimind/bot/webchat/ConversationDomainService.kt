@@ -38,7 +38,7 @@ class ConversationDomainService(
 
     private companion object {
         const val AGENT_MODE_STORAGE_VALUE = "agent"
-        val AGENT_MODE_STORAGE_ALIASES = setOf("agent", "codex", "acp", "coding")
+        val AGENT_MODE_STORAGE_ALIASES = setOf("normal", "agent", "codex", "acp", "coding")
     }
 
     fun listWebAgentProfiles(): List<Map<String, Any?>> {
@@ -473,7 +473,7 @@ class ConversationDomainService(
     ): Map<String, Any?> {
         val normalizedMode = normalizeConversationMode(conversation.mode)
         val resolvedAgentId = agentId
-            ?: if (normalizedMode == AGENT_MODE_STORAGE_VALUE) {
+            ?: if (isAgentMode(normalizedMode)) {
                 acpAgentProfileStore.agentIdForConversation(conversation.id)
             } else {
                 null
@@ -525,8 +525,13 @@ class ConversationDomainService(
     ): String? {
         val normalizedAgentId = requestedAgentId?.trim()?.takeIf { it.isNotEmpty() }
             ?: return null
-        require(conversationMode == AGENT_MODE_STORAGE_VALUE) {
+        require(isAgentMode(conversationMode)) {
             "agentId is only supported for Agent conversations."
+        }
+        if (normalizeConversationMode(conversationMode) == "normal") {
+            require(normalizedAgentId == AcpAgentProfileStore.XIAOWAN_AGENT_ID) {
+                "Xiaowan conversations cannot switch Harness; create a new conversation."
+            }
         }
         val profile = acpAgentProfileStore.list().firstOrNull { it.id == normalizedAgentId }
             ?: throw IllegalArgumentException("Unknown ACP agent: $normalizedAgentId")

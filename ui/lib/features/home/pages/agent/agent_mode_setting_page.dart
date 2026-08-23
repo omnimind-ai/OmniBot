@@ -221,25 +221,43 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
 
   Future<void> _test(AcpAgentProfile agent) async {
     if (_busyAgentId != null || !agent.enabled) return;
-    if (agent.managedAdapter &&
-        (agent.status == 'unchecked' || agent.status == 'missing')) {
-      showToast(
-        _text(
-          '首次点击会自动安装完整的官方 DeepSeek Harness；也可在终端环境页统一安装，下载可能需要一些时间。',
-          'The first click installs the complete official DeepSeek Harness. You can also install it from Terminal Environment; the download may take a moment.',
-        ),
-      );
-    }
+    await _runAgentAction(agent, prepare: false);
+  }
+
+  Future<void> _prepare(AcpAgentProfile agent) async {
+    if (_busyAgentId != null || !agent.enabled) return;
+    await _runAgentAction(agent, prepare: true);
+  }
+
+  Future<void> _runAgentAction(
+    AcpAgentProfile agent, {
+    required bool prepare,
+  }) async {
     setState(() => _busyAgentId = agent.id);
     try {
-      final result = await AgentRuntimeService.testAgent(agent.id);
+      final result = prepare
+          ? await AgentRuntimeService.prepareAgent(agent.id)
+          : await AgentRuntimeService.testAgent(agent.id);
       if (!mounted) return;
       await _load();
       if (!mounted) return;
       final ok = result['ok'] == true;
-      final title = ok
-          ? _text('Agent 检测成功', 'Agent check succeeded')
-          : _text('Agent 检测失败', 'Agent check failed');
+      final installed = result['agent'] is Map &&
+          (result['agent'] as Map)['installed'] == true;
+      final providerConfigurationPending =
+          prepare && !ok && installed;
+      final title = prepare
+          ? (ok
+                ? _text('Harness 安装成功', 'Harness installation succeeded')
+                : providerConfigurationPending
+                ? _text(
+                    'Harness 已准备，等待 Dispatch Model 配置',
+                    'Harness is ready; Dispatch Model configuration is pending',
+                  )
+                : _text('Harness 安装失败', 'Harness installation failed'))
+          : (ok
+                ? _text('Agent 检测成功', 'Agent check succeeded')
+                : _text('Agent 检测失败', 'Agent check failed'));
       await showSettingsDetailSheet<void>(
         context: context,
         builder: (sheetContext) => SettingsDetailSheet(
@@ -611,6 +629,7 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
         agent.managedAdapter &&
         (agent.status == 'unchecked' || agent.status == 'missing') &&
         (agent.lastCheckError?.contains('will be prepared') == true ||
+            agent.lastCheckError?.contains('未初始化') == true ||
             agent.status == 'missing');
     final isDeepSeekHarness = agent.id == 'deepseek-harness-acp';
     final testLabel = needsManagedPreparation && isDeepSeekHarness
@@ -621,6 +640,7 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
         ? _text('检测', 'Check')
         : _text('重新检测', 'Check again');
     final installEntry = agent.managedAdapter && agent.status != 'online';
+    final action = needsManagedPreparation ? _prepare : _test;
     return _FlatTile(
       tileKey: Key('agent-config-${agent.id}'),
       leading: AgentBrandIcon(
@@ -638,13 +658,15 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
       errorText: hasError ? agent.lastCheckError : null,
       actionLabel: canTest ? testLabel : null,
       actionKey: Key('agent-check-${agent.id}'),
-      onAction: canTest ? () => _test(agent) : null,
+      onAction: canTest ? () => action(agent) : null,
       navigationLabel: installEntry
           ? _text('安装', 'Install')
           : _text('配置', 'Configure'),
       navigationKey: Key('agent-navigation-${agent.id}'),
       busy: busy,
-      onTap: installEntry ? () => _test(agent) : () => _openAgentConfig(agent),
+      onTap: installEntry
+          ? () => _prepare(agent)
+          : () => _openAgentConfig(agent),
     );
   }
 }

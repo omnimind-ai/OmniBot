@@ -60,6 +60,91 @@ void main() {
     expect(runtime.messages.single.user, 2);
   });
 
+  test('ACP assistant chunks preserve Markdown whitespace byte for byte', () {
+    const chunks = <String>[
+      '程序运行成功了！',
+      '\n\n',
+      '---\n\n## 完成情况',
+      '\n\n### 程序效果\n\n',
+      '```text\n第一行\n第二行\n```',
+      '\n\n后续 **加粗** 和 [链接](https://example.com)',
+    ];
+
+    for (final chunk in chunks) {
+      reducer.reduce(
+        runtime: runtime,
+        event: {
+          'method': 'session/update',
+          'params': {
+            'sessionId': 'session-markdown',
+            'turnId': 'turn-markdown',
+            'update': {
+              'sessionUpdate': 'agent_message_chunk',
+              'messageId': 'message-markdown',
+              'content': {'type': 'text', 'text': chunk},
+            },
+          },
+        },
+      );
+    }
+
+    expect(runtime.messages.single.text, chunks.join());
+  });
+
+  test('ACP assistant chunks preserve spaces at token boundaries', () {
+    for (final chunk in const <String>[
+      'POSIX',
+      ' Shell',
+      ' and',
+      ' Markdown',
+    ]) {
+      reducer.reduce(
+        runtime: runtime,
+        event: {
+          'method': 'session/update',
+          'params': {
+            'sessionId': 'session-spaces',
+            'turnId': 'turn-spaces',
+            'update': {
+              'sessionUpdate': 'agent_message_chunk',
+              'messageId': 'message-spaces',
+              'content': {'text': chunk},
+            },
+          },
+        },
+      );
+    }
+
+    expect(runtime.messages.single.text, 'POSIX Shell and Markdown');
+  });
+
+  test('ACP reasoning chunks preserve Markdown whitespace', () {
+    const chunks = <String>['分析步骤', '\n\n', '- 第一项', '\n- 第二项'];
+
+    for (final chunk in chunks) {
+      reducer.reduce(
+        runtime: runtime,
+        event: {
+          'method': 'session/update',
+          'params': {
+            'sessionId': 'session-reasoning',
+            'turnId': 'turn-reasoning',
+            'update': {
+              'sessionUpdate': 'agent_thought_chunk',
+              'messageId': 'reasoning-message',
+              'content': {'type': 'text', 'text': chunk},
+            },
+          },
+        },
+      );
+    }
+
+    final thinking = runtime.messages.singleWhere(
+      (message) => message.cardData?['type'] == 'deep_thinking',
+    );
+    expect(thinking.cardData?['thinkingContent'], chunks.join());
+  });
+
   test('one turn completes reasoning and assistant text together', () {
     reducer.reduce(
       runtime: runtime,
@@ -659,6 +744,34 @@ void main() {
     expect(cardData['memoryActions'], ['保留旧卡片字段']);
   });
 
+  test('projects an empty ACP thought start into a loading thinking card', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'turnId': 'turn-thinking-start',
+        'params': {
+          'sessionId': 'session-thinking-start',
+          'update': {
+            'sessionUpdate': 'agent_thought_chunk',
+            'messageId': 'thought-start',
+            'content': {'type': 'text', 'text': ''},
+            '_meta': {
+              'cn.com.omnimind.agent': {
+                'reasoning': {'stage': 'thinking'},
+              },
+            },
+          },
+        },
+      },
+    );
+
+    final card = runtime.messages.single;
+    expect(card.cardData?['type'], 'deep_thinking');
+    expect(card.cardData?['thinkingContent'], '');
+    expect(card.cardData?['isLoading'], isTrue);
+  });
+
   test(
     'projects standard ACP usage updates into conversation context usage',
     () {
@@ -692,6 +805,62 @@ void main() {
       expect(runtime.conversation?.latestPromptTokensUpdatedAt, greaterThan(0));
     },
   );
+
+  test('projects ACP turn usage into the shared assistant footer', () {
+    const base = <String, dynamic>{
+      'method': 'session/update',
+      'turnId': 'turn-usage-footer',
+      'params': {
+        'sessionId': 'session-usage-footer',
+        'update': {
+          'sessionUpdate': 'agent_message_chunk',
+          'messageId': 'message-usage-footer',
+        },
+      },
+    };
+
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        ...base,
+        'params': {
+          ...(base['params'] as Map<String, dynamic>),
+          'update': {
+            ...((base['params'] as Map<String, dynamic>)['update']
+                as Map<String, dynamic>),
+            'content': {'type': 'text', 'text': '带用量的统一正文'},
+          },
+        },
+      },
+    );
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        ...base,
+        'params': {
+          ...(base['params'] as Map<String, dynamic>),
+          'update': {
+            ...((base['params'] as Map<String, dynamic>)['update']
+                as Map<String, dynamic>),
+            'content': {'type': 'text', 'text': ''},
+            '_meta': {
+              'cn.com.omnimind.agent': {
+                'usage': {
+                  'latestPromptTokens': 100,
+                  'promptTokenThreshold': 128000,
+                  'turnUsage': {'ctx': 100, 'in': 100, 'out': 20, 'cache': 10},
+                },
+              },
+            },
+          },
+        },
+      },
+    );
+
+    final message = runtime.messages.single;
+    expect(message.text, '带用量的统一正文');
+    expect(message.turnUsage, {'ctx': 100, 'in': 100, 'out': 20, 'cache': 10});
+  });
 
   test('projects ACP retry state into the next shared assistant message', () {
     const base = <String, dynamic>{
@@ -743,6 +912,76 @@ void main() {
     expect(message.text, '恢复后的统一正文');
     expect(message.content?['agentRetrying'], isNull);
   });
+
+  test('projects ACP recovery state into the existing error presentation', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'turnId': 'turn-recovery',
+        'params': {
+          'sessionId': 'session-recovery',
+          'update': {
+            'sessionUpdate': 'agent_message_chunk',
+            'messageId': 'message-recovery',
+            'content': {'type': 'text', 'text': '网络连接中断'},
+            '_meta': {
+              'cn.com.omnimind.agent': {
+                'recovery': {
+                  'error': '网络连接中断',
+                  'retryable': true,
+                  'continueable': false,
+                },
+              },
+            },
+          },
+        },
+      },
+    );
+
+    final message = runtime.messages.single;
+    expect(message.isError, isTrue);
+    expect(message.content?['agentErrorText'], '网络连接中断');
+    expect(message.content?['agentRetryable'], isTrue);
+    expect(message.content?['agentContinueable'], isFalse);
+  });
+
+  test(
+    'preserves ACP clarification fields on the existing assistant reply',
+    () {
+      reducer.reduce(
+        runtime: runtime,
+        event: {
+          'method': 'session/update',
+          'turnId': 'turn-clarification',
+          'params': {
+            'sessionId': 'session-clarification',
+            'update': {
+              'sessionUpdate': 'agent_message_chunk',
+              'messageId': 'message-clarification',
+              'content': {'type': 'text', 'text': '是否继续执行？'},
+              '_meta': {
+                'cn.com.omnimind.agent': {
+                  'clarification': {
+                    'question': '是否继续执行？',
+                    'missingFields': ['arguments.confirmed'],
+                  },
+                },
+              },
+            },
+          },
+        },
+      );
+
+      final message = runtime.messages.single;
+      expect(message.text, '是否继续执行？');
+      expect(message.content?['agentClarificationRequired'], isTrue);
+      expect(message.content?['agentClarificationQuestion'], '是否继续执行？');
+      expect(message.content?['agentClarificationMissingFields'], [
+        'arguments.confirmed',
+      ]);
+    },
+  );
 
   test('projects ACP context compaction into the shared marker card', () {
     const base = <String, dynamic>{

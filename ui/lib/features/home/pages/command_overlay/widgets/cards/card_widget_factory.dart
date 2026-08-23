@@ -9,6 +9,7 @@ import 'deep_thinking_card.dart';
 import 'permission_section_card.dart';
 import 'stage_hint_card.dart';
 import 'openclaw_attachment_card.dart';
+import 'package:ui/services/agent_acp_card_normalizer.dart';
 
 /// 任务执行前的回调类型
 typedef OnBeforeTaskExecute = Future<void> Function();
@@ -35,6 +36,7 @@ class CardWidgetFactory {
     AppBackgroundVisualProfile visualProfile =
         AppBackgroundVisualProfile.defaultProfile,
   }) {
+    cardData = AgentAcpCardNormalizer.normalize(cardData);
     final type = cardData['type'] as String? ?? 'unknown';
     if (isAgentRequestCardType(type)) {
       return AgentRequestCard(cardData: cardData);

@@ -188,6 +188,22 @@ $$
     },
   );
 
+  testWidgets('repairs a heading glued to a Markdown resource link', (
+    tester,
+  ) async {
+    const malformed =
+        '[report.md](omnibot://workspace/report.md)### 📋汇报内容概览\n\n正文';
+
+    expect(
+      normalizeOmnibotMarkdown(malformed),
+      '[report.md](omnibot://workspace/report.md)\n\n### 📋汇报内容概览\n\n正文',
+    );
+
+    await expectNoException(tester, data: malformed);
+    expect(find.textContaining('###'), findsNothing);
+    expect(find.text('📋汇报内容概览'), findsOneWidget);
+  });
+
   testWidgets('repairs provider Markdown before rendering', (tester) async {
     const malformed = '''###🌤️今日天气 —北京
 

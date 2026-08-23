@@ -744,7 +744,7 @@ void main() {
     },
   );
 
-  testWidgets('shows only enabled online ACP Agents in the mode menu', (
+  testWidgets('shows enabled installed ACP Agents in the mode menu', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -811,10 +811,14 @@ void main() {
       find.byKey(const ValueKey('chat-app-bar-mode-menu-acp-codex-acp')),
       findsOneWidget,
     );
+    for (final agentId in const <String>['unchecked-agent', 'offline-agent']) {
+      expect(
+        find.byKey(ValueKey('chat-app-bar-mode-menu-acp-$agentId')),
+        findsOneWidget,
+      );
+    }
     for (final agentId in const <String>[
       'disabled-agent',
-      'unchecked-agent',
-      'offline-agent',
       'missing-agent',
       'not-installed-agent',
       'codex-remote',
@@ -847,6 +851,7 @@ void main() {
                 ChatAcpAgentModeOption(
                   id: 'unchecked-agent',
                   name: 'Unchecked',
+                  installed: false,
                   status: 'unchecked',
                 ),
               ],

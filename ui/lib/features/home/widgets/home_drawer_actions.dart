@@ -49,7 +49,7 @@ extension _HomeDrawerActions on HomeDrawerState {
     // 都会被 AgentConversationModePolicy 过滤掉)。chatOnly 保持继承,因为那是用户
     // 主动选择的纯聊天模式。
     final newMode = widget.newConversationMode == ConversationMode.subagent
-        ? ConversationMode.normal
+        ? ConversationMode.agent
         : widget.newConversationMode;
     _openThreadTarget(
       ConversationThreadTarget.newConversation(

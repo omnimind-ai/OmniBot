@@ -60,7 +60,7 @@ object TaskRuntimeSettings {
     private var currentVisibleConversationId: Long? = null
 
     @Volatile
-    private var currentVisibleConversationMode: String = "normal"
+    private var currentVisibleConversationMode: String = "agent"
 
     private data class ActiveNotificationEntry(
         val id: Int,

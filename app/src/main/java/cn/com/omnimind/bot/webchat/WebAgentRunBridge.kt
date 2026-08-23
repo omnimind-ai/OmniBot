@@ -36,7 +36,7 @@ internal data class WebAgentEventUpdate(
     val errorMessage: String? = null
 )
 
-private const val WEB_AGENT_MODE_STORAGE_VALUE = "agent"
+private const val WEB_AGENT_MODE_STORAGE_VALUE = "normal"
 
 private data class WebAgentTextEntryState(
     val entryId: String,

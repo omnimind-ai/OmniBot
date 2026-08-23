@@ -473,6 +473,9 @@ class AgentEventReducer {
 
     if (_isReasoningMethod(method)) {
       final presentation = _asStringMap(params['acpPresentation']);
+      final entryId =
+          _string(params['entryId']) ??
+          '${itemId ?? parentTaskId}-agent-thinking';
       final text =
           _extractText(params['delta']) ??
           _extractText(params['text']) ??
@@ -480,9 +483,6 @@ class AgentEventReducer {
           _extractText(params['part']) ??
           '';
       if (text.isNotEmpty) {
-        final entryId =
-            _string(params['entryId']) ??
-            '${itemId ?? parentTaskId}-agent-thinking';
         _applyAcpPresentation(
           runtime,
           parentTaskId: parentTaskId,
@@ -500,11 +500,22 @@ class AgentEventReducer {
         _applyAcpPresentation(
           runtime,
           parentTaskId: parentTaskId,
-          entryId:
-              _string(params['entryId']) ??
-              '${itemId ?? parentTaskId}-agent-thinking',
+          entryId: entryId,
           presentation: presentation,
         );
+        // An empty ACP thought chunk is still meaningful: adapters use it to
+        // announce that reasoning has started before the first text arrives.
+        // Reuse the existing deep-thinking card and only project its loading
+        // state; no new presentation protocol or card type is introduced.
+        if (_asStringMap(presentation?['reasoning']) != null) {
+          _appendThinking(
+            runtime,
+            parentTaskId: parentTaskId,
+            cardId: entryId,
+            delta: '',
+            reasoningCardData: _acpReasoningCardData(presentation),
+          );
+        }
       }
       return AgentReduceResult(
         handled: true,
@@ -988,6 +999,14 @@ class AgentEventReducer {
         recovery: recovery,
       );
     }
+    final clarification = _asStringMap(presentation['clarification']);
+    if (clarification != null) {
+      _applyAcpClarificationPresentation(
+        runtime,
+        entryId: entryId,
+        clarification: clarification,
+      );
+    }
     final compaction = _asStringMap(presentation['compaction']);
     if (compaction != null) {
       _touchActiveTurn(runtime, parentTaskId);
@@ -1026,7 +1045,8 @@ class AgentEventReducer {
   }) {
     final prefill = _asDouble(usage['prefillTokensPerSecond']);
     final decode = _asDouble(usage['decodeTokensPerSecond']);
-    if (prefill == null && decode == null) {
+    final turnUsage = _asStringMap(usage['turnUsage']);
+    if (prefill == null && decode == null && turnUsage == null) {
       return;
     }
     final index = runtime.messages.indexWhere(
@@ -1039,7 +1059,12 @@ class AgentEventReducer {
     final content = Map<String, dynamic>.from(existing.content ?? const {});
     if (prefill != null) content['prefillTokensPerSecond'] = prefill;
     if (decode != null) content['decodeTokensPerSecond'] = decode;
-    runtime.messages[index] = existing.copyWith(content: content);
+    runtime.messages[index] = existing.copyWith(
+      content: content,
+      turnUsage: turnUsage == null
+          ? existing.turnUsage
+          : <String, dynamic>{...?existing.turnUsage, ...turnUsage},
+    );
   }
 
   void _upsertAcpRetryPresentation(
@@ -1120,6 +1145,33 @@ class AgentEventReducer {
       content: content,
       isError: error != null && error.isNotEmpty,
     );
+  }
+
+  void _applyAcpClarificationPresentation(
+    ChatConversationRuntimeState runtime, {
+    required String entryId,
+    required Map<String, dynamic> clarification,
+  }) {
+    final index = runtime.messages.indexWhere(
+      (message) => message.id == entryId,
+    );
+    if (index == -1) {
+      return;
+    }
+    final existing = runtime.messages[index];
+    final content = Map<String, dynamic>.from(existing.content ?? const {});
+    final question = _extractText(clarification['question']);
+    final missingFields = _acpStringList(
+      clarification['missingFields'] ?? clarification['missing_fields'],
+    );
+    content['agentClarificationRequired'] = true;
+    if (question != null && question.isNotEmpty) {
+      content['agentClarificationQuestion'] = question;
+    }
+    if (missingFields.isNotEmpty) {
+      content['agentClarificationMissingFields'] = missingFields;
+    }
+    runtime.messages[index] = existing.copyWith(content: content);
   }
 
   void _upsertAcpContextCompactionCard(
@@ -3581,7 +3633,13 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
           // scoped. Both forms need a turn-scoped host entry id.
           'itemId': scopedMessageId,
           if (scopedEntryId != null) 'entryId': scopedEntryId,
-          'delta': _extractText(update['content']) ?? '',
+          // ACP ContentBlock.Text is a map (`{type: text, text: ...}`). The
+          // generic extractor trims map values because it is also used for
+          // ids and statuses. Streaming text must instead preserve every
+          // leading/trailing space and newline across chunk boundaries;
+          // otherwise valid Markdown is glued into malformed headings and
+          // code fences.
+          'delta': _extractStreamingText(update['content']) ?? '',
           if (presentation != null) 'acpPresentation': presentation,
         }),
       };
@@ -3763,7 +3821,7 @@ String _acpReasoningText(
   Map<String, dynamic> update,
   Map<String, dynamic>? presentation,
 ) {
-  final fallback = _extractText(update['content']) ?? '';
+  final fallback = _extractStreamingText(update['content']) ?? '';
   if (fallback.isNotEmpty) {
     return fallback;
   }
@@ -4215,6 +4273,38 @@ String? _extractText(dynamic value) {
   }
   if (value is List) {
     return value.map(_extractText).whereType<String>().join();
+  }
+  return value.toString();
+}
+
+/// Extracts streamed ACP text without normalizing its whitespace.
+///
+/// Markdown structure can be split at arbitrary token boundaries, including
+/// chunks made entirely of spaces or newlines. This helper is intentionally
+/// separate from [_extractText]/[_firstString], whose trimming behavior is
+/// still required for protocol identifiers, statuses, and display labels.
+String? _extractStreamingText(dynamic value) {
+  if (value == null) return null;
+  if (value is String) return value;
+  if (value is num || value is bool) return value.toString();
+  final map = _asStringMap(value);
+  if (map != null) {
+    for (final candidate in <dynamic>[
+      map['text'],
+      map['content'],
+      map['message'],
+      map['value'],
+      map['delta'],
+    ]) {
+      final text = _extractStreamingText(candidate);
+      if (text != null && text.isNotEmpty) {
+        return text;
+      }
+    }
+    return null;
+  }
+  if (value is List) {
+    return value.map(_extractStreamingText).whereType<String>().join();
   }
   return value.toString();
 }

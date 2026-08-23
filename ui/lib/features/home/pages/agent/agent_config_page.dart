@@ -605,8 +605,8 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
         'Edit $_configPath directly. OpenCode supports JSON and JSONC.',
       ),
       'deepseek-harness' => _text(
-        '默认直接复用统一 Provider 和模型；这里仅保留官方 DSH 配置入口。首次检测会准备官方 dsh ACP 运行组件。',
-        'The shared Provider and model are used by default. This page only keeps the official DSH configuration entry. The first check prepares the official dsh ACP runtime.',
+        '默认直接复用统一 Provider 和模型；这里仅保留官方 DSH 配置入口。安装官方 Harness 后，检测只检查当前运行状态。',
+        'The shared Provider and model are used by default. This page only keeps the official DSH configuration entry. After installation, Check only verifies the current runtime state.',
       ),
       'profile' => _text(
         '自定义 Agent 只管理 ACP 启动命令、参数与环境；Provider 和模型仍由统一 Agent 配置提供。',

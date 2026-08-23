@@ -95,7 +95,7 @@ class HomeDrawer extends ConsumerStatefulWidget {
   const HomeDrawer({
     super.key,
     this.memoryCount,
-    this.newConversationMode = ConversationMode.normal,
+    this.newConversationMode = ConversationMode.agent,
     this.embedded = false,
     this.closeOnNavigate = true,
     this.onThreadTargetSelected,

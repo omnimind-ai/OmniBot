@@ -742,8 +742,20 @@ class HttpAgentLlmClient(
         request: ChatCompletionRequest,
         routeInfo: HttpController.ChatCompletionRouteInfo
     ): List<StreamRequestVariant> {
-        val compatibleRequest = normalizeMultimodalMessageContent(request, routeInfo).let {
-            if (isParateraGlm(routeInfo)) it.copy(streamOptions = null) else it
+        val normalizedRequest = normalizeMultimodalMessageContent(request, routeInfo)
+        val requiresNativeToolCalls = normalizedRequest.tools.isNotEmpty() &&
+            normalizedRequest.parallelToolCalls == false &&
+            (normalizedRequest.toolChoice as? JsonPrimitive)
+                ?.contentOrNull
+                ?.equals("required", ignoreCase = true) == true
+        // Paratera's GLM VLM route needs the conservative request shape used
+        // by the direct GUI action loop. Ordinary Agent turns should still ask
+        // for standard OpenAI-compatible streaming usage; a 400 response will
+        // fall through to the existing no_stream_options variant below.
+        val compatibleRequest = if (isParateraGlm(routeInfo) && requiresNativeToolCalls) {
+            normalizedRequest.copy(streamOptions = null)
+        } else {
+            normalizedRequest
         }
         val variants = mutableListOf<StreamRequestVariant>()
         val seenRequests = LinkedHashSet<ChatCompletionRequest>()
@@ -775,11 +787,6 @@ class HttpAgentLlmClient(
             "no_stream_options",
             compatibleRequest.copy(streamOptions = null)
         )
-        val requiresNativeToolCalls = compatibleRequest.tools.isNotEmpty() &&
-            compatibleRequest.parallelToolCalls == false &&
-            (compatibleRequest.toolChoice as? JsonPrimitive)
-                ?.contentOrNull
-                ?.equals("required", ignoreCase = true) == true
         if (requiresNativeToolCalls) {
             return variants
         }

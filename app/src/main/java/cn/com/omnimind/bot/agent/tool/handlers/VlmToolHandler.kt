@@ -20,7 +20,6 @@ import cn.com.omnimind.bot.runlog.firstNonBlank
 import cn.com.omnimind.bot.runlog.mapArg
 import cn.com.omnimind.bot.update.AppUpdateManager
 import cn.com.omnimind.bot.util.AndroidAutomationPermissionGate
-import cn.com.omnimind.bot.util.TaskCompletionNavigator
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -45,7 +44,7 @@ class VlmToolHandler(context: Context) : ToolHandler {
         toolCall: AssistantToolCall,
         args: JsonObject,
         runtimeDescriptor: AgentToolRegistry.RuntimeToolDescriptor,
-        env: AgentExecutionEnvironment,
+        _env: AgentExecutionEnvironment,
         callback: AgentCallback,
         toolHandle: AgentToolExecutionHandle,
     ): ToolExecutionResult {
@@ -121,13 +120,6 @@ class VlmToolHandler(context: Context) : ToolHandler {
                             progress = progress,
                             extras = extras + ("run_id" to progressRunId),
                             toolHandle = toolHandle,
-                        )
-                    },
-                    afterExecution = {
-                        TaskCompletionNavigator.navigateBackToChat(
-                            context = helper.context,
-                            conversationId = null,
-                            mode = env.conversationMode,
                         )
                     },
                 ),

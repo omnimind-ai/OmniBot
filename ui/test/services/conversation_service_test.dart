@@ -575,7 +575,7 @@ void main() {
       );
 
       expect(archived, isTrue);
-      expect(agentRuntimeCalls.single.method, 'thread/archive');
+      expect(agentRuntimeCalls.single.method, 'session/archive');
       expect(nativeConversations.single['isArchived'], isTrue);
     },
   );
@@ -605,7 +605,7 @@ void main() {
       );
 
       expect(deleted, isTrue);
-      expect(agentRuntimeCalls.single.method, 'thread/archive');
+      expect(agentRuntimeCalls.single.method, 'session/archive');
       expect(nativeConversations.single['isArchived'], isTrue);
 
       final visibleConversations =

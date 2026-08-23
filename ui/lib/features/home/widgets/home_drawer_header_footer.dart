@@ -47,7 +47,7 @@ extension _HomeDrawerHeaderFooter on HomeDrawerState {
       _DrawerShortcutAction(
         label: context.trLegacy('轨迹'),
         svgString: _kDrawerUsageStatisticsIconSvg,
-        onTap: () => _navigateTo('/task/omniflow?tab=run_logs'),
+        onTap: () => _navigateTo('/task/execution_history'),
       ),
       _DrawerShortcutAction(
         label: context.l10n.homeDrawerScheduled,

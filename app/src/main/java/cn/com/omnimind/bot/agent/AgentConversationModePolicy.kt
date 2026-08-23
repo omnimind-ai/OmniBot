@@ -5,9 +5,66 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
 object AgentConversationModePolicy {
+    /** Canonical durable mode for the shared Agent/ACP conversation surface. */
+    const val AGENT_MODE = "normal"
     const val NORMAL_MODE = "normal"
     const val SUBAGENT_MODE = "subagent"
     const val CHAT_ONLY_MODE = "chat_only"
+
+    internal data class HarnessResolution(
+        val agentId: String,
+        val requestedAgentId: String?,
+        val conflictWithAgentId: String? = null,
+    ) {
+        val hasConflict: Boolean
+            get() = conflictWithAgentId != null
+    }
+
+    internal fun resolveHarness(
+        conversationMode: String?,
+        requestedAgentId: String?,
+        conversationAgentId: String?,
+        sessionAgentId: String?,
+        selectedAgentId: String?,
+        xiaowanAgentId: String,
+    ): HarnessResolution {
+        val normalizedRequested = requestedAgentId.normalizedAgentId()
+        val normalizedConversation = conversationAgentId.normalizedAgentId()
+        val normalizedSession = sessionAgentId.normalizedAgentId()
+        val normalizedSelected = selectedAgentId.normalizedAgentId()
+        val normalizedXiaowan = xiaowanAgentId.normalizedAgentId()
+            ?: xiaowanAgentId
+
+        if (isNormalMode(conversationMode) || isChatOnlyMode(conversationMode)) {
+            return HarnessResolution(
+                agentId = normalizedXiaowan,
+                requestedAgentId = normalizedRequested,
+                conflictWithAgentId = normalizedRequested
+                    ?.takeUnless { it == normalizedXiaowan },
+            )
+        }
+
+        val persistedOwner = normalizedConversation ?: normalizedSession
+        val resolvedAgent = persistedOwner ?: normalizedRequested
+            ?: normalizedSelected ?: normalizedXiaowan
+        return HarnessResolution(
+            agentId = resolvedAgent,
+            requestedAgentId = normalizedRequested,
+            conflictWithAgentId = if (
+                persistedOwner != null &&
+                normalizedRequested != null &&
+                persistedOwner != normalizedRequested
+            ) {
+                persistedOwner
+            } else {
+                null
+            },
+        )
+    }
+
+    fun isNormalMode(conversationMode: String?): Boolean {
+        return conversationMode?.trim()?.equals(NORMAL_MODE, ignoreCase = true) == true
+    }
 
     private val subagentRestrictedToolNames = setOf(
         "schedule_task_create",
@@ -83,4 +140,8 @@ object AgentConversationModePolicy {
             restricted.contains(toolName)
         }
     }
+}
+
+private fun String?.normalizedAgentId(): String? {
+    return this?.trim()?.takeIf { it.isNotEmpty() }
 }

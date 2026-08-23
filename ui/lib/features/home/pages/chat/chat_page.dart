@@ -110,6 +110,7 @@ enum ChatPageMode { normal, openclaw, agent }
 enum _SlashCommandPanelRoute { root, effort, agentModel }
 
 const String _kRemoteCodexModeAgentId = 'codex-remote';
+const String _kXiaowanAcpAgentId = 'xiaowan-acp';
 
 class ChatPage extends StatefulWidget {
   final ConversationThreadTarget? threadTarget;
@@ -418,6 +419,10 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     final optimisticAgentId = _optimisticAcpAgentId?.trim() ?? '';
     if (optimisticAgentId.isNotEmpty) {
       return optimisticAgentId;
+    }
+    if (_activeMode == ChatPageMode.normal &&
+        activeConversationModeValue == ConversationMode.normal) {
+      return _kXiaowanAcpAgentId;
     }
     final targetAgentId = _resolvedThreadTarget?.agentId?.trim() ?? '';
     if (targetAgentId.isNotEmpty) {
@@ -1512,12 +1517,29 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     final isNormalAcp =
         activeMode == ChatPageMode.normal &&
         activeConversationModeValue != ConversationMode.chatOnly;
+    String? runId;
+    for (final message
+        in _activeRuntime?.messages ?? const <ChatMessageModel>[]) {
+      final cardData = message.cardData;
+      final messageCardId = (cardData?['cardId'] ?? '').toString().trim();
+      if (message.id != cardId && messageCardId != cardId) {
+        continue;
+      }
+      final candidate = (cardData?['runId'] ?? cardData?['run_id'])
+          ?.toString()
+          .trim();
+      if (candidate != null && candidate.isNotEmpty) {
+        runId = candidate;
+      }
+      break;
+    }
     final response = await AgentRuntimeService.cancelPrompt(
       conversationId: _currentConversationId,
       sessionId: isNormalAcp ? _normalAcpSessionId : _activeAgentThreadId,
       promptId: isNormalAcp ? _normalAcpTurnId : _activeAgentTurnId,
+      runId: runId,
     );
-    return response['cancelled'] == true || response['status'] == 'cancelled';
+    return isAgentCancellationSuccessful(response);
   }
 
   String _buildOpenClawSessionKey(int conversationId) {

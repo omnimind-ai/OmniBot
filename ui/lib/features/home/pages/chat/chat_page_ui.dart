@@ -945,6 +945,9 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
       emptyGreetingPinnedQuickPromptIds:
           homeGreetingSettings.pinnedQuickPromptIds,
       onQuickPromptSelected: _applyHomeQuickPrompt,
+      emptyGreetingAgentName: mode == ChatPageMode.agent
+          ? _activeAcpAgentDisplayName
+          : null,
       emptyGreetingAgentWorkspaceName: mode == ChatPageMode.agent
           ? _remoteCodexWorkspaceNameForGreeting()
           : null,
@@ -1271,7 +1274,7 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
                 // Xiaowan and the built-in Xiaowan ACP profile are one
                 // visible Agent. Keep the old shortcut callback only as the
                 // UI compatibility boundary and route it through ACP.
-                unawaited(_handleAcpAgentModeShortcutTap('xiaowan-acp'));
+                unawaited(_handleAcpAgentModeShortcutTap(_kXiaowanAcpAgentId));
               },
               onPureChatToggleTap: () {
                 unawaited(_handlePureChatModeShortcutTap());

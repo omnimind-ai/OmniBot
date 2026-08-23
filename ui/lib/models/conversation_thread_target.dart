@@ -78,7 +78,7 @@ class ConversationThreadTarget {
     final idPart = agentSessionId?.trim().isNotEmpty == true
         ? 'agent-session:${agentSessionId!.trim()}'
         : conversationId?.toString() ?? 'none';
-    return '${mode.storageValue}:$type:$idPart';
+    return '${mode.canonicalStorageValue}:$type:$idPart';
   }
 
   ConversationThreadTarget copyWith({

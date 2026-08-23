@@ -11,6 +11,8 @@ enum ConversationMode {
 
   final String storageValue;
 
+  String get canonicalStorageValue => storageValue;
+
   static ConversationMode fromStorageValue(String? value) {
     final normalized = value?.trim().toLowerCase() ?? '';
     switch (normalized) {
@@ -281,5 +283,5 @@ class ConversationModel {
     return latestPromptTokens / promptTokenThreshold;
   }
 
-  String get threadKey => '${mode.storageValue}:$id';
+  String get threadKey => '${mode.canonicalStorageValue}:$id';
 }

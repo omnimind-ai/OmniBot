@@ -26,7 +26,7 @@ class WebConversationCreationTest {
     @Test
     fun `each stored mode selects its own runtime`() {
         assertEquals(
-            WebConversationRunKind.OMNIAI,
+            WebConversationRunKind.AGENT,
             resolveWebConversationRunKind("normal")
         )
         assertEquals(
@@ -167,6 +167,27 @@ class WebConversationCreationTest {
         resolveWebAgentId(
             storedAgentId = "codex-acp",
             requestedAgentId = "opencode-acp"
+        )
+    }
+
+    @Test
+    fun `normal web conversation always resolves to Xiaowan`() {
+        assertEquals(
+            "xiaowan-acp",
+            resolveWebAgentId(
+                storedAgentId = null,
+                requestedAgentId = null,
+                conversationMode = "normal",
+            )
+        )
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun `normal web conversation rejects another Harness`() {
+        resolveWebAgentId(
+            storedAgentId = null,
+            requestedAgentId = "dsh",
+            conversationMode = "normal",
         )
     }
 

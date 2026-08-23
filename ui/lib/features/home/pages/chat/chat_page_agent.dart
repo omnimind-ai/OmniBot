@@ -142,7 +142,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         final catalog = await AgentRuntimeService.listAgents();
         final selected = catalog.selectedAgent;
         if (selected?.managedAdapter == true) {
-          final prepared = await AgentRuntimeService.testAgent(selected!.id);
+          final prepared = await AgentRuntimeService.prepareAgent(selected!.id);
           if (prepared['ok'] == true) {
             status = await AgentRuntimeService.status();
           } else {
@@ -242,13 +242,20 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       return;
     }
     final previousTarget = _threadTargetForMode;
-    final target = _newAgentThreadTarget(
-      agentId: normalized,
-      agentRuntime: selectsRemote ? 'remote' : 'local',
-      // A Harness switch starts a fresh conversation. The previous
-      // conversation remains in history and is never handed off to the new
-      // Harness.
-    );
+    final target = normalized == _kXiaowanAcpAgentId
+        ? ConversationThreadTarget.newConversation(
+            mode: ConversationMode.normal,
+            requestKey: DateTime.now().microsecondsSinceEpoch.toString(),
+            agentId: normalized,
+            agentRuntime: 'local',
+          )
+        : _newAgentThreadTarget(
+            agentId: normalized,
+            agentRuntime: selectsRemote ? 'remote' : 'local',
+            // A Harness switch starts a fresh conversation. The previous
+            // conversation remains in history and is never handed off to the
+            // new Harness.
+          );
     setState(() {
       _optimisticAcpAgentId = normalized;
       _isAcpAgentSwitching = true;
@@ -467,6 +474,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       }
       final response = await AgentRuntimeService.loadSession(
         sessionId: threadId,
+        conversationMode: ConversationMode.agent.storageValue,
       );
       if (!mounted) return;
       final resolvedThreadId =
@@ -1729,6 +1737,10 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         model: turnModel,
         effort: _activeAgentReasoningEffort,
         collaborationMode: collaborationModeForTurn,
+        // The Agent page owns ConversationMode.agent. Keep the mode on the
+        // canonical ACP prompt so built-in agents read the same durable
+        // history bucket that this page writes.
+        conversationMode: ConversationMode.agent.storageValue,
       );
       final resolvedThreadId = _asAgentString(response['threadId']);
       if (resolvedThreadId != null && remoteCodex) {
@@ -1947,10 +1959,16 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     String threadId,
   ) async {
     try {
-      return await AgentRuntimeService.readSession(sessionId: threadId);
+      return await AgentRuntimeService.readSession(
+        sessionId: threadId,
+        conversationMode: ConversationMode.agent.storageValue,
+      );
     } catch (error) {
       debugPrint('Agent thread/read failed, falling back to resume: $error');
-      return AgentRuntimeService.loadSession(sessionId: threadId);
+      return AgentRuntimeService.loadSession(
+        sessionId: threadId,
+        conversationMode: ConversationMode.agent.storageValue,
+      );
     }
   }
 

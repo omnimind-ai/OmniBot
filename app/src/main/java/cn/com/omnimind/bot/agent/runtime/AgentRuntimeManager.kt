@@ -6,6 +6,7 @@ import android.os.Looper
 import android.util.Log
 import com.ai.assistance.operit.terminal.TerminalManager
 import com.ai.assistance.operit.terminal.setup.buildAlpinePackageInstallCommand
+import cn.com.omnimind.baselib.account.OmniAccount
 import cn.com.omnimind.baselib.database.DatabaseHelper
 import cn.com.omnimind.baselib.llm.ModelProviderProfile
 import cn.com.omnimind.baselib.llm.ModelProviderConfigStore
@@ -42,12 +43,9 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * A scene binding is only valid for the Provider it names. Older builds could
- * The Agent scene binding is the shared Provider/model source for every ACP
- * adapter. The Provider settings page can have a different editing profile;
- * that profile must not cause ACP to discard the model selected for Agent.
- * Never borrow the scene's built-in default because it may not exist at the
- * configured Provider.
+ * A persisted scene binding is an optional Provider/model override for ACP.
+ * When it is absent or stale, Dispatch falls back to the current editing
+ * Provider and its verified model catalog; startup must not require a binding.
  */
 internal fun resolveSharedAgentModel(
     boundProviderProfileId: String?,
@@ -62,6 +60,46 @@ internal fun resolveSharedAgentModel(
         normalizedBoundModel
     } else {
         null
+    }
+}
+
+internal fun resolveAgentProviderProfile(
+    boundProviderProfileId: String?,
+    configuredProfile: ModelProviderProfile?,
+    officialProfile: ModelProviderProfile?,
+): ModelProviderProfile? {
+    val normalizedId = boundProviderProfileId?.trim().orEmpty()
+    return configuredProfile?.takeIf { it.id == normalizedId }
+        ?: officialProfile?.takeIf {
+            it.id == normalizedId && OmniOfficialProvider.isOfficialProfile(normalizedId)
+        }
+}
+
+internal fun resolveAgentProviderApiKey(
+    profile: ModelProviderProfile,
+    officialBearerToken: String?,
+): String? {
+    val key = if (OmniOfficialProvider.isOfficialProfile(profile.id)) {
+        officialBearerToken
+    } else {
+        profile.apiKey
+    }
+    return key?.trim()?.takeIf(String::isNotEmpty)
+}
+
+internal suspend fun fetchAgentProviderModels(
+    profile: ModelProviderProfile,
+): List<ProviderModelOption> {
+    return if (OmniOfficialProvider.isOfficialProfile(profile.id)) {
+        PlatformAiProvisioner.ensureReadyAndGetModels()
+    } else {
+        HttpController.fetchProviderModels(
+            apiBase = profile.baseUrl,
+            apiKey = profile.apiKey,
+            customHeaders = profile.customHeaders,
+            protocolType = profile.protocolType,
+            wireApi = profile.wireApi
+        )
     }
 }
 
@@ -1326,27 +1364,21 @@ class AgentRuntimeManager private constructor(
         val usesSharedProvider = AcpAgentProfileStore
             .officialRuntime(profile)
             ?.usesSharedProvider == true
-        val sceneBinding = SceneModelBindingStore.getBinding("scene.dispatch.model")
+        // Installing a Harness is independent from the Dispatch Provider
+        // selection. A missing scene override must not block npm/native
+        // preparation or make a switch look like an install failure.
+        ensureManagedAcpAdapter(profile)
         val sharedProviderProfile = currentAgentProviderProfile()
         val sharedProvider = currentAgentProviderCredentials()
         val boundModel = currentAgentBoundModel()
         if (usesSharedProvider) {
-            val binding = sceneBinding
-                ?: throw IllegalStateException(
-                    "Agent Provider is not bound to scene.dispatch.model. " +
-                        "Select an Agent Provider and model before switching Harness."
-                )
             checkNotNull(sharedProviderProfile) {
-                "The bound Agent Provider is unavailable or not configured: " +
-                    binding.providerProfileId
+                "Dispatch Model Provider is not configured. " +
+                    "Configure the default Provider before starting Harness."
             }
             checkNotNull(sharedProvider) {
-                "The bound Agent Provider has no usable credentials: " +
-                    binding.providerProfileId
-            }
-            checkNotNull(boundModel) {
-                "The Agent Provider binding has no model: " +
-                    binding.providerProfileId
+                "Dispatch Model Provider has no usable credentials. " +
+                    "Check the default Provider configuration before starting Harness."
             }
         }
         val providerModelResolution = if (
@@ -1367,14 +1399,14 @@ class AgentRuntimeManager private constructor(
             ?.models
             .orEmpty()
         val resolvedModel = if (usesSharedProvider) {
-            val model = resolveAcpLaunchModelWithBindingFallback(
+            val model = resolveAcpLaunchModelForDispatch(
                 providerModelIds = providerModels.map(ProviderModelOption::id),
-                boundModel = boundModel
+                dispatchModel = boundModel,
             )
             if (model == null) {
                 throw IllegalStateException(
-                    "The bound Agent model '$boundModel' is not available from " +
-                        "the current Provider /models response. Refresh the Provider model list."
+                    "Dispatch Model has no usable model. " +
+                        "Refresh the current Provider model list and choose a model."
                 )
             }
             model
@@ -1434,7 +1466,6 @@ class AgentRuntimeManager private constructor(
             rawConfig = existingHarnessConfig,
             mcpState = mcpState,
         ) ?: mapping.environment
-        ensureManagedAcpAdapter(profile)
         // Official ACP persistence uses hard-link publication. Android's app
         // sandbox rejects hard links, so install one narrow Node compatibility
         // preload while keeping upstream ACP packages untouched.
@@ -1466,33 +1497,47 @@ class AgentRuntimeManager private constructor(
 
     private fun currentAgentProviderProfile(): ModelProviderProfile? = runCatching {
         val binding = SceneModelBindingStore.getBinding("scene.dispatch.model")
-            ?: return@runCatching null
-        ModelProviderConfigStore.getProfile(binding.providerProfileId)
-            ?.takeIf { it.baseUrl.isNotBlank() && it.apiKey.isNotBlank() }
+        val editingProfile = ModelProviderConfigStore.getEditingProfile()
+        val configuredProfile = binding
+            ?.providerProfileId
+            ?.let(ModelProviderConfigStore::getProfile)
+        resolveDispatchAgentProviderProfile(
+            boundProviderProfileId = binding?.providerProfileId,
+            configuredProfile = configuredProfile,
+            editingProfile = editingProfile,
+            officialProfile = PlatformAiProvisioner.officialProfileOrNull(),
+        )
     }.getOrNull()
 
     private fun currentAgentProviderCredentials(): AgentProviderCredentials? =
         currentAgentProviderProfile()
-            ?.takeIf { it.apiKey.isNotBlank() }
-            ?.let {
+            ?.let { profile ->
+                val apiKey = resolveAgentProviderApiKey(
+                    profile = profile,
+                    officialBearerToken = OmniAccount.currentAiRequestAccess().bearerToken,
+                ) ?: return@let null
                 AgentProviderCredentials(
-                    baseUrl = it.baseUrl,
-                    apiKey = it.apiKey,
-                    wireApi = it.wireApi,
-                    customHeaders = it.customHeaders,
-                    protocolType = it.protocolType
+                    baseUrl = profile.baseUrl,
+                    apiKey = apiKey,
+                    wireApi = profile.wireApi,
+                    customHeaders = profile.customHeaders,
+                    protocolType = profile.protocolType
                 )
             }
 
     private fun currentAgentBoundModel(): String? = runCatching {
         val binding = SceneModelBindingStore.getBinding("scene.dispatch.model")
-        val boundProfile = binding?.providerProfileId
-            ?.let(ModelProviderConfigStore::getProfile)
-            ?.takeIf { it.baseUrl.isNotBlank() && it.apiKey.isNotBlank() }
+        val boundProfile = binding?.let {
+            resolveAgentProviderProfile(
+                boundProviderProfileId = it.providerProfileId,
+                configuredProfile = ModelProviderConfigStore.getProfile(it.providerProfileId),
+                officialProfile = PlatformAiProvisioner.officialProfileOrNull(),
+            )
+        }?.takeIf { it.baseUrl.isNotBlank() }
             ?: return@runCatching null
         resolveSharedAgentModel(
-            boundProviderProfileId = binding?.providerProfileId,
-            boundModel = binding?.modelId
+            boundProviderProfileId = binding.providerProfileId,
+            boundModel = binding.modelId
         )
     }.getOrNull()
 
@@ -1511,10 +1556,10 @@ class AgentRuntimeManager private constructor(
         profile ?: return null
         val fetched = runCatching {
             val models = if (timeoutMs == null) {
-                fetchProviderModels(profile)
+                fetchAgentProviderModels(profile)
             } else {
                 withTimeoutOrNull(timeoutMs) {
-                    fetchProviderModels(profile)
+                    fetchAgentProviderModels(profile)
                 } ?: throw IllegalStateException(
                     "Provider /models lookup timed out after ${timeoutMs}ms"
                 )
@@ -1531,22 +1576,6 @@ class AgentRuntimeManager private constructor(
             ProviderModelResolution(
                 models = models,
                 authoritative = true
-            )
-        }
-    }
-
-    private suspend fun fetchProviderModels(
-        profile: ModelProviderProfile,
-    ): List<ProviderModelOption> {
-        return if (OmniOfficialProvider.isOfficialProfile(profile.id)) {
-            PlatformAiProvisioner.ensureReadyAndGetModels()
-        } else {
-            HttpController.fetchProviderModels(
-                apiBase = profile.baseUrl,
-                apiKey = profile.apiKey,
-                customHeaders = profile.customHeaders,
-                protocolType = profile.protocolType,
-                wireApi = profile.wireApi
             )
         }
     }
@@ -1747,11 +1776,16 @@ class AgentRuntimeManager private constructor(
         method: String,
         args: Map<String, Any?>
     ): Map<String, Any?> {
-        val chatOnly = args.stringValue("conversationMode")
-            ?.equals(AgentConversationModePolicy.CHAT_ONLY_MODE, ignoreCase = true) == true
+        val conversationId = args.longValue("conversationId")
+        val persistedConversation = conversationId?.let {
+            DatabaseHelper.getConversationById(it)
+        }
+        val conversationMode = persistedConversation?.mode
+            ?: args.stringValue("conversationMode")
+        val chatOnly = AgentConversationModePolicy.isChatOnlyMode(conversationMode)
+        val normalConversation = AgentConversationModePolicy.isNormalMode(conversationMode)
         val requestedAgentId = args.stringValue("agentId")
         val explicitThreadId = args.stringValue("threadId")
-        val conversationId = args.longValue("conversationId")
         val conversationBinding = conversationId
             ?.let { bindingRepository.getBindingByConversationId(it) }
         val requestedThreadId = explicitThreadId ?: conversationBinding?.threadId
@@ -1764,27 +1798,48 @@ class AgentRuntimeManager private constructor(
         val conversationBindingAgentId = conversationBinding?.threadId?.let {
             acpAgentProfileStore.agentIdForSession(it)
         }
-        val selectedAgentId = acpAgentProfileStore.selected().id
-        val targetAgentId = if (chatOnly) {
-            // Pure chat is still ACP, but it is not an Agent/Harness session.
-            // Route it through the built-in ACP provider adapter so the
-            // selected Harness can never leak into the chat-only turn.
-            AcpAgentProfileStore.XIAOWAN_AGENT_ID
+        val explicitThreadConversationId = explicitThreadId?.let {
+            bindingRepository.getBindingByThreadId(it)?.conversationId
+        }
+        val explicitThreadBelongsToAnotherConversation =
+            !explicitThreadMatchesConversation(
+                explicitThreadId = explicitThreadId,
+                requestedConversationId = conversationId,
+                boundConversationId = explicitThreadConversationId,
+            )
+        val sessionAgentIdForConversation = if (
+            explicitThreadId == null || !explicitThreadBelongsToAnotherConversation
+        ) {
+            boundAgentId
         } else {
-            requestedAgentId
-                ?: conversationAgentId
-                ?: conversationBindingAgentId
-                ?: boundAgentId
-                ?: selectedAgentId
+            null
         }
-        val targetProfile = targetAgentId?.let { agentId ->
-            acpAgentProfileStore.list().firstOrNull { it.id == agentId }
-                ?: throw IllegalArgumentException("Unknown ACP agent: $agentId")
-        }
-        if (targetProfile != null) {
-            require(targetProfile.enabled) {
-                "ACP agent ${targetProfile.name} is disabled."
+        val selectedAgentId = acpAgentProfileStore.selected().id
+        val harnessResolution = AgentConversationModePolicy.resolveHarness(
+            conversationMode = conversationMode,
+            requestedAgentId = requestedAgentId,
+            conversationAgentId = conversationAgentId,
+            sessionAgentId = conversationBindingAgentId ?: sessionAgentIdForConversation,
+            selectedAgentId = selectedAgentId,
+            xiaowanAgentId = AcpAgentProfileStore.XIAOWAN_AGENT_ID,
+        )
+        require(!harnessResolution.hasConflict) {
+            val owner = harnessResolution.conflictWithAgentId
+            val requested = harnessResolution.requestedAgentId
+            if (conversationId != null) {
+                "Conversation $conversationId is bound to ACP agent $owner; " +
+                    "create a new conversation to switch to $requested."
+            } else {
+                "ACP session is bound to agent $owner; " +
+                    "create a new conversation to switch to $requested."
             }
+        }
+        val targetAgentId = harnessResolution.agentId
+        val targetProfile = acpAgentProfileStore.list()
+            .firstOrNull { it.id == targetAgentId }
+            ?: throw IllegalArgumentException("Unknown ACP agent: $targetAgentId")
+        require(targetProfile.enabled) {
+            "ACP agent ${targetProfile.name} is disabled."
         }
         // An explicit session with an explicit Agent id but no persisted owner
         // binding is legacy/untrusted state. For a prompt, do not resume it on
@@ -1800,21 +1855,12 @@ class AgentRuntimeManager private constructor(
             boundAgentId != null &&
             targetProfile != null &&
             boundAgentId != targetProfile.id
-        val explicitThreadConversationId = explicitThreadId?.let {
-            bindingRepository.getBindingByThreadId(it)?.conversationId
-        }
         // The Flutter page can retain the previous session id while the user
         // switches conversations. A live ACP session is not a conversation
         // identity: reusing it here makes XiaowanAcpConnection resolve the
         // previous binding (or null) and the provider receives no durable
         // history. Let the conversation binding win and create/resume the
         // correct ACP session below.
-        val explicitThreadBelongsToAnotherConversation =
-            !explicitThreadMatchesConversation(
-                explicitThreadId = explicitThreadId,
-                requestedConversationId = conversationId,
-                boundConversationId = explicitThreadConversationId,
-            )
         val threadBelongsToAnotherAgent =
             boundThreadBelongsToAnotherAgent || unownedExplicitPrompt ||
                 (chatOnly && boundAgentId != null &&
@@ -1837,7 +1883,14 @@ class AgentRuntimeManager private constructor(
             connectLocalAcp(profile = targetProfile)
         }
         if (conversationId != null && targetProfile != null) {
-            acpAgentProfileStore.bindConversation(conversationId, targetProfile.id)
+            if (normalConversation && conversationAgentId != targetProfile.id) {
+                acpAgentProfileStore.repairConversationBinding(
+                    conversationId = conversationId,
+                    agentId = targetProfile.id,
+                )
+            } else {
+                acpAgentProfileStore.bindConversation(conversationId, targetProfile.id)
+            }
         }
         if (localAcpRuntime.isConnected) {
             activeRuntime = AgentRuntimeKind.LOCAL
@@ -2464,6 +2517,27 @@ class AgentRuntimeManager private constructor(
     }
 }
 
+/**
+ * Resolves the Provider that currently drives Dispatch Model execution.
+ *
+ * The scene binding is an optional override, not a prerequisite for running a
+ * Harness. If it is missing or stale, use the Provider settings page's editing
+ * profile as the Dispatch default.
+ */
+internal fun resolveDispatchAgentProviderProfile(
+    boundProviderProfileId: String?,
+    configuredProfile: ModelProviderProfile?,
+    editingProfile: ModelProviderProfile?,
+    officialProfile: ModelProviderProfile?,
+): ModelProviderProfile? {
+    return resolveAgentProviderProfile(
+        boundProviderProfileId = boundProviderProfileId,
+        configuredProfile = configuredProfile,
+        officialProfile = officialProfile,
+    )?.takeIf { it.isConfigured() }
+        ?: editingProfile?.takeIf { it.isConfigured() }
+}
+
 private data class AgentRuntime(
     val kind: AgentRuntimeKind,
     val remoteConfig: CodexRemoteBridgeConfig
@@ -2480,7 +2554,7 @@ private enum class AgentRuntimeKind(val payloadValue: String) {
 // attempt and lets the UI surface its error so the user can retry explicitly.
 private const val MANAGED_ACP_INSTALL_TIMEOUT_MS = 8 * 60 * 1_000L
 private const val MANAGED_ACP_PROBE_TIMEOUT_MS = 5_000L
-private const val AGENT_PROVIDER_MODEL_LOOKUP_TIMEOUT_MS = 3_000L
+internal const val AGENT_PROVIDER_MODEL_LOOKUP_TIMEOUT_MS = 3_000L
 
 internal fun shouldPrepareManagedAcpAdapter(
     agentId: String,

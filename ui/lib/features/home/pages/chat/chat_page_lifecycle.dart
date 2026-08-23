@@ -354,6 +354,7 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
         conversationId: conversationId,
         agentId: requestedAgentId.isEmpty ? null : requestedAgentId,
         includeHistory: false,
+        conversationMode: target.mode.storageValue,
       );
       try {
         status = await AgentRuntimeService.status();
@@ -1091,9 +1092,12 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     if (payload == null ||
         !payload.hasContent ||
         !target.isNewConversation ||
-        target.mode != ConversationMode.normal) {
+        (target.mode != ConversationMode.agent &&
+            target.mode != ConversationMode.normal)) {
       return;
     }
+
+    final targetPageMode = _pageModeForConversationMode(target.mode);
 
     final attachments = payload.attachments
         .map(
@@ -1114,13 +1118,13 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
       return;
     }
     setState(() {
-      _modeState(ChatPageMode.normal).draftMessage = payload.text ?? '';
-      _modeState(ChatPageMode.normal).pendingAttachments
+      _modeState(targetPageMode).draftMessage = payload.text ?? '';
+      _modeState(targetPageMode).pendingAttachments
         ..clear()
         ..addAll(attachments);
     });
-    if (_activeConversationMode == ChatPageMode.normal) {
-      _applyDraftForConversationMode(ChatPageMode.normal);
+    if (_activeConversationMode == targetPageMode) {
+      _applyDraftForConversationMode(targetPageMode);
     }
     await SharedOpenDraftService.clearPendingDraft();
   }

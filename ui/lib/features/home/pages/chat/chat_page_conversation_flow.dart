@@ -827,18 +827,16 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
     // Pure chat deliberately has no Agent/Harness thinking card. Its ACP
     // stream updates the ordinary assistant text when content arrives.
     try {
-      final status = await _refreshConnectedAgentRuntimeStatus();
-      final remoteRuntime = agentModelSourceKey(status) == 'remote';
       final selection =
           _activeConversationModelOverrideSelection ??
           _activeDispatchSceneSelection;
       final reusableSessionId =
-          !remoteRuntime && _normalAcpSessionConversationId == conversationId
+          _normalAcpSessionConversationId == conversationId
           ? _normalAcpSessionId
           : null;
       final response = await AgentRuntimeService.promptSession(
-        conversationId: remoteRuntime ? null : conversationId,
-        sessionId: remoteRuntime ? null : reusableSessionId,
+        conversationId: conversationId,
+        sessionId: reusableSessionId,
         requestId: _buildPromptRequestId(aiMessageId),
         // Pure chat is an ACP turn with tools disabled, not a provider-only
         // transport. It deliberately has no Harness identity: otherwise a
@@ -846,7 +844,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
         // the runtime can reconnect the wrong Agent.
         agentId: activeConversationModeValue == ConversationMode.chatOnly
             ? null
-            : (remoteRuntime ? null : _activeAcpAgentId),
+            : _kXiaowanAcpAgentId,
         text: userMessage,
         attachments: userAttachments,
         approvalPolicy: _agentPermissionMode.approvalPolicy,
@@ -867,7 +865,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
           _asAgentString(response['promptId']) ??
           _asAgentString(response['turnId']) ??
           _normalAcpTurnId;
-      if (!remoteRuntime && _normalAcpSessionId == null) {
+      if (_normalAcpSessionId == null) {
         throw StateError('ACP did not return a session id');
       }
       await ConversationHistoryService.saveConversationMessages(
@@ -940,25 +938,23 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       if (conversationId == null) {
         throw StateError('conversationId is not ready');
       }
-      final status = await _refreshConnectedAgentRuntimeStatus();
       _runtimeCoordinator.beginAcpTurn(
         taskId: aiMessageId,
         conversationId: conversationId,
         mode: _modeKey(_activeMode),
       );
-      final remoteCodex = agentModelSourceKey(status) == 'remote';
       final reusableSessionId =
-          !remoteCodex && _normalAcpSessionConversationId == conversationId
+          _normalAcpSessionConversationId == conversationId
           ? _normalAcpSessionId
           : null;
       final response = await AgentRuntimeService.promptSession(
-        conversationId: remoteCodex ? null : conversationId,
-        sessionId: remoteCodex ? null : reusableSessionId,
+        conversationId: conversationId,
+        sessionId: reusableSessionId,
         requestId: _buildPromptRequestId(aiMessageId),
         // The visible conversation target is authoritative. Runtime status
         // can briefly describe the previous process during an ACP switch;
         // using it here can send the first turn to the old Harness.
-        agentId: remoteCodex ? null : _activeAcpAgentId,
+        agentId: _kXiaowanAcpAgentId,
         text: userMessage,
         attachments: attachments,
         approvalPolicy: _agentPermissionMode.approvalPolicy,
@@ -979,7 +975,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
           _asAgentString(response['promptId']) ??
           _asAgentString(response['turnId']) ??
           _normalAcpTurnId;
-      if (_normalAcpSessionId == null && !remoteCodex) {
+      if (_normalAcpSessionId == null) {
         throw StateError('ACP did not return a session id');
       }
       await ConversationHistoryService.saveConversationMessages(

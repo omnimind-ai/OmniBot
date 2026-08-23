@@ -64,12 +64,37 @@ extension _ChatRuntimeToolSupport on ChatConversationRuntimeCoordinator {
                   : null) ??
               (existingCardData['filePath'] ?? '').toString()
         : '';
+    String? runIdFromRawInput(Object? rawInput) {
+      if (rawInput is Map) {
+        final value = rawInput['run_id'] ?? rawInput['runId'];
+        final normalized = value?.toString().trim() ?? '';
+        return normalized.isEmpty ? null : normalized;
+      }
+      if (rawInput is String && rawInput.trim().isNotEmpty) {
+        try {
+          return runIdFromRawInput(jsonDecode(rawInput));
+        } catch (_) {
+          return null;
+        }
+      }
+      return null;
+    }
+
+    final existingRunIdValue =
+        existingCardData['runId'] ?? existingCardData['run_id'];
+    final existingRunId = existingRunIdValue == null
+        ? null
+        : existingRunIdValue.toString().trim();
+    final runId = runIdFromRawInput(event.raw['rawInput']) ??
+        runIdFromRawInput(event.raw['raw_input']) ??
+        (existingRunId?.isNotEmpty == true ? existingRunId : null);
     final cardData = <String, dynamic>{
       'type': 'agent_tool_summary',
       'uiStyle': event.uiStyle.isNotEmpty
           ? event.uiStyle
           : (existingCardData['uiStyle'] ?? '').toString(),
       'taskId': taskId,
+      if (runId != null && runId.isNotEmpty) 'runId': runId,
       'toolName': event.toolName,
       'displayName': event.displayName,
       'toolTitle': event.toolTitle.isNotEmpty

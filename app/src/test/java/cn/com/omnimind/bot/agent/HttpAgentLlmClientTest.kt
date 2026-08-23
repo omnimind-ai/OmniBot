@@ -513,6 +513,37 @@ class HttpAgentLlmClientTest {
     }
 
     @Test
+    fun `Paratera GLM Agent route requests exact streaming usage before compatibility fallback`() {
+        val scope = CoroutineScope(Job() + Dispatchers.Default)
+        try {
+            val client = HttpAgentLlmClient(scope = scope, modelOverride = testOverride())
+            val request = simpleRequest().copy(
+                streamOptions = ChatCompletionStreamOptions(),
+            )
+
+            val variants = client.buildRequestVariants(
+                request = request,
+                routeInfo = routeInfo(
+                    requestedModel = "scene.dispatch.model",
+                    resolvedModel = "GLM-5.1",
+                    protocolType = "openai_compatible",
+                    requiresReasoningEcho = false,
+                    apiBase = "https://llmapi.paratera.com/v1/chat/completions",
+                ),
+            )
+
+            assertEquals(
+                listOf("default", "no_stream_options"),
+                variants.take(2).map { it.name },
+            )
+            assertEquals(true, variants.first().request.streamOptions?.includeUsage)
+            assertNull(variants[1].request.streamOptions)
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
     fun `successful non streaming responses body completes a stream turn`() = runBlocking {
         val scope = CoroutineScope(Job() + Dispatchers.Default)
         try {

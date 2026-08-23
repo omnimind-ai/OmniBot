@@ -187,10 +187,15 @@ void main() {
       },
     );
 
-    expect(find.text('ctx:20k  in:10k  out:87  cache:10k'), findsOneWidget);
-    expect(find.byType(FilledButton), findsOneWidget);
+    // The existing pill presents input/output/cache with icons, so those
+    // values are separate text nodes rather than one legacy sentence.
+    expect(find.text('ctx:20k'), findsOneWidget);
+    expect(find.text('10k'), findsNWidgets(2));
+    expect(find.text('87'), findsOneWidget);
+    final continueAction = find.byIcon(Icons.play_arrow_rounded);
+    expect(continueAction, findsOneWidget);
 
-    await tester.tap(find.byType(FilledButton));
+    await tester.tap(continueAction);
     await tester.pump();
 
     expect(continueTapped, 1);

@@ -50,8 +50,20 @@ class AgentRuntimeErrorSupportTest {
         assertTrue(
             AgentRuntimeErrorSupport.userFacingMessage(error)
                 .orEmpty()
-                .contains("选择 Provider 和模型")
+                .contains("Dispatch Model")
         )
+    }
+
+    @Test
+    fun `provider binding error names the Agent scene and explains the boundary`() {
+        val message = AgentRuntimeErrorSupport.userFacingMessage(
+            IllegalStateException(
+                "Agent Provider is not bound to scene.dispatch.model."
+            )
+        ).orEmpty()
+
+        assertTrue(message.contains("scene.dispatch.model"))
+        assertTrue(message.contains("Harness 安装不依赖这个绑定"))
     }
 
     @Test

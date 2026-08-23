@@ -19,7 +19,8 @@ internal object AgentRuntimeErrorSupport {
         return when {
             isCertificateValidationFailure(error) -> CERTIFICATE_ERROR_MESSAGE
             isProviderNotBound(error) ->
-                "尚未绑定统一 Agent Provider / 模型。请在 Agent 设置中选择 Provider 和模型后重试。"
+                "Agent Provider / 模型还没有对齐到 Dispatch Model（scene.dispatch.model）。" +
+                    "Harness 安装不依赖这个绑定；请检查默认 Provider 和模型后重试。"
             isProviderUnavailable(error) ->
                 "统一 Agent Provider 不可用或凭据不完整。请检查 Provider 配置后重试。"
             isProviderModelUnavailable(error) ->

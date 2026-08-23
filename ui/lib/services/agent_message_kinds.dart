@@ -42,8 +42,20 @@ String canonicalAgentRequestCardType(Object? value) {
 /// definitions, so the same card counted as a tool call in one file and not in
 /// another.
 bool isAgentToolSummaryMessage(ChatMessageModel message) {
-  return (message.cardData?['type'] ?? '').toString().trim() ==
-      kAgentToolSummaryCardType;
+  final type = (message.cardData?['type'] ?? '').toString().trim();
+  return type == kAgentToolSummaryCardType ||
+      type == 'tool_call' ||
+      type == 'tool_call_update' ||
+      type == 'commandExecution' ||
+      type == 'command_execution' ||
+      type == 'mcpToolCall' ||
+      type == 'mcp_tool_call' ||
+      type == 'webSearch' ||
+      type == 'web_search' ||
+      type == 'fileChange' ||
+      type == 'file_change' ||
+      type == 'plan' ||
+      type == 'todo_list';
 }
 
 /// Whether the message is a tool-summary card produced by an ACP agent.

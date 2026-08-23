@@ -11,6 +11,7 @@ import cn.com.omnimind.bot.agent.AgentWorkspaceManager
 import cn.com.omnimind.bot.agent.AgentScheduleToolBridge
 import cn.com.omnimind.baselib.llm.ChatCompletionMessage
 import cn.com.omnimind.bot.mcp.McpServerManager
+import cn.com.omnimind.bot.omniflow.OmniVlmPlugin
 import com.ai.assistance.operit.terminal.TerminalManager
 import com.agentclientprotocol.agent.AgentInfo
 import com.agentclientprotocol.client.Client
@@ -513,6 +514,7 @@ internal class LocalAcpRuntime(
             "agent/save" -> saveAgent(args)
             "agent/delete" -> deleteAgent(args.stringValue("agentId").orEmpty())
             "agent/test" -> testAgent(args.stringValue("agentId"))
+            "agent/prepare" -> prepareAgent(args.stringValue("agentId"))
             // Public ACP surface. The app keeps the legacy conversation
             // terminology out of the client-facing transport; these names
             // are the protocol's session operations and are shared by every
@@ -590,6 +592,25 @@ internal class LocalAcpRuntime(
         } else {
             args
         }
+        val hasConversationBinding = requestedConversationId?.let { conversationId ->
+            bindingRepository.getBindingByConversationId(conversationId) != null
+        } == true
+        if (shouldCreateSessionForConversationLoad(
+                explicitSessionId = normalized.stringValue("sessionId"),
+                explicitThreadId = normalized.stringValue("threadId"),
+                conversationId = requestedConversationId,
+                hasConversationBinding = hasConversationBinding
+            )
+        ) {
+            Log.i(
+                TAG,
+                "ACP session/load creating missing binding for conversation=$requestedConversationId"
+            )
+            return startThread(
+                normalized,
+                allowCatalogReuse = false
+            ).withAcpSessionId().plus("sessionRestored" to false)
+        }
         return resumeThread(normalized).withAcpSessionId()
     }
 
@@ -627,6 +648,17 @@ internal class LocalAcpRuntime(
             args + ("threadId" to args.stringValue("sessionId"))
         } else {
             args
+        }
+        val runId = normalized.stringValue("runId")?.trim().orEmpty()
+        if (runId.isNotEmpty() && OmniVlmPlugin.stop(runId)) {
+            return mapOf(
+                "ok" to true,
+                "cancelled" to true,
+                "runId" to runId,
+                "sessionId" to normalized.stringValue("sessionId"),
+                "threadId" to normalized.stringValue("threadId"),
+                "turnId" to normalized.stringValue("turnId"),
+            ).filterValues { it != null }
         }
         return interruptTurn(normalized).withAcpSessionId()
     }
@@ -780,11 +812,75 @@ internal class LocalAcpRuntime(
     private suspend fun testAgent(id: String?): Map<String, Any?> {
         val profile = profileStore.list().firstOrNull { it.id == id }
             ?: profileStore.selected()
+        val runtime = AcpAgentProfileStore.officialRuntime(profile)
+
+        // Detection must remain read-only. In particular, a managed Harness
+        // can only be installed from the explicit `agent/prepare` action;
+        // clicking Check must never start npm, node-gyp, or a network download.
+        if (runtime?.managedAdapterPackage != null) {
+            refreshAgentAvailability()
+            val health = profileStore.health(profile.id)
+            val ready = health.status == AcpAgentHealth.STATUS_ONLINE
+            val error = if (ready) {
+                null
+            } else if (health.status == AcpAgentHealth.STATUS_MISSING) {
+                "${profile.name} 尚未安装。请点击“安装官方 Harness”准备运行组件。"
+            } else {
+                "${profile.name} 尚未完成初始化。请点击“安装官方 Harness”准备运行组件。"
+            }
+            return linkedMapOf(
+                "ok" to ready,
+                "agent" to profile.toPayload(
+                    selected = profile.id == profileStore.selected().id,
+                    health = health
+                ),
+                "status" to health.status,
+                "error" to error,
+                "capabilities" to emptyMap<String, Any?>(),
+            )
+        }
+
         val wasSelected = profileStore.selected()
         val wasConnected = isConnected
-        // `agent/test` is the explicit install/retry boundary. Normal
-        // session restore and Agent switching must not immediately repeat a
-        // failed npm/native preparation attempt.
+        return runCatching {
+            connect(profile = profile)
+            linkedMapOf(
+                "ok" to true,
+                "agent" to profile.toPayload(
+                    selected = profile.id == profileStore.selected().id,
+                    health = profileStore.health(profile.id)
+                ),
+                "protocolVersion" to protocolVersion(),
+                "implementation" to statusPayload()["agentImplementation"],
+                "capabilities" to statusPayload()["capabilities"]
+            )
+        }.getOrElse { error ->
+            val health = failedAgentHealth(error)
+            profileStore.saveHealth(profile.id, health)
+            linkedMapOf(
+                "ok" to false,
+                "agent" to profile.toPayload(false, health),
+                "status" to health.status,
+                "error" to (error.message ?: error.javaClass.simpleName)
+            )
+        }.also {
+            if (profile.id != wasSelected.id) {
+                disconnect()
+                profileStore.select(wasSelected.id)
+                if (wasConnected) {
+                    connect(profile = wasSelected)
+                }
+            }
+        }
+    }
+
+    private suspend fun prepareAgent(id: String?): Map<String, Any?> {
+        val profile = profileStore.list().firstOrNull { it.id == id }
+            ?: profileStore.selected()
+        val wasSelected = profileStore.selected()
+        val wasConnected = isConnected
+        // Explicit preparation is the only path allowed to reset the managed
+        // Harness health and enter connect(), which may install dependencies.
         if (AcpAgentProfileStore.officialRuntime(profile)?.managedAdapterPackage != null) {
             profileStore.saveHealth(
                 profile.id,
@@ -835,23 +931,38 @@ internal class LocalAcpRuntime(
         val command = MANAGED_NPM_PATH_PREFIX + "\n" + externalProfiles.flatMap { profile ->
             val id = shellQuoteAcp(profile.id)
             val runtime = AcpAgentProfileStore.officialRuntime(profile)
-            buildList {
-                add("launch" to profile.command)
-                // A managed adapter is the official ACP entry point.  Its
-                // vendor CLI (for example `codex`) is not required to be
-                // installed separately and must not make an ACP profile look
-                // missing after the adapter itself was installed.
-                if (runtime?.managedAdapterPackage == null) {
-                    runtime?.discoveryCommand
-                        ?.takeIf { it != profile.command }
-                        ?.let { add("discovery" to it) }
+            val launchExecutable = shellQuoteAcp(profile.command)
+            val launchProbe =
+                "if command -v $launchExecutable >/dev/null 2>&1; then " +
+                    "printf '__OMNI_ACP_AGENT__\\t%s\\tlaunch\\t1\\n' $id; " +
+                    "else printf '__OMNI_ACP_AGENT__\\t%s\\tlaunch\\t0\\n' $id; fi"
+            val healthProbe = if (runtime?.managedAdapterPackage != null) {
+                val healthCommand = runtime.managedAdapterHealthCommand
+                if (healthCommand == null) {
+                    "printf '__OMNI_ACP_AGENT__\\t%s\\thealth\\t1\\n' $id"
+                } else {
+                    "if command -v $launchExecutable >/dev/null 2>&1 && " +
+                        "$healthCommand >/dev/null 2>&1; then " +
+                        "printf '__OMNI_ACP_AGENT__\\t%s\\thealth\\t1\\n' $id; " +
+                        "else printf '__OMNI_ACP_AGENT__\\t%s\\thealth\\t0\\n' $id; fi"
                 }
-            }.map { (kind, rawCommand) ->
-                val executable = shellQuoteAcp(rawCommand)
-                "if command -v $executable >/dev/null 2>&1; then " +
-                    "printf '__OMNI_ACP_AGENT__\\t%s\\t%s\\t1\\n' $id '$kind'; else " +
-                    "printf '__OMNI_ACP_AGENT__\\t%s\\t%s\\t0\\n' $id '$kind'; fi"
+            } else {
+                ""
             }
+            val discoveryProbe = if (runtime?.managedAdapterPackage != null) {
+                ""
+            } else {
+                runtime?.discoveryCommand
+                    ?.takeIf { it != profile.command }
+                    ?.let { rawCommand ->
+                        val executable = shellQuoteAcp(rawCommand)
+                        "if command -v $executable >/dev/null 2>&1; then " +
+                            "printf '__OMNI_ACP_AGENT__\\t%s\\tdiscovery\\t1\\n' $id; " +
+                            "else printf '__OMNI_ACP_AGENT__\\t%s\\tdiscovery\\t0\\n' $id; fi"
+                    }
+                    .orEmpty()
+            }
+            listOf(launchProbe, healthProbe, discoveryProbe).filter(String::isNotBlank)
         }.joinToString("\n")
         val availabilityById = if (externalProfiles.isEmpty()) {
             emptyMap()
@@ -880,6 +991,7 @@ internal class LocalAcpRuntime(
             val launchInstalled = availability["launch"] == true
             val discoveryInstalled = availability["discovery"] == true
             val managedAdapter = runtime?.managedAdapterPackage != null
+            val managedHealthCheckPassed = availability["health"]
             val installed = builtIn || launchInstalled ||
                 (!managedAdapter && discoveryInstalled)
             val previous = profileStore.health(profile.id)
@@ -895,6 +1007,20 @@ internal class LocalAcpRuntime(
                     error = null,
                     checkedAt = checkedAt
                 )
+                managedAdapter -> managedAgentHealthFromProbe(
+                    enabled = profile.enabled,
+                    launchInstalled = launchInstalled,
+                    healthCheckPassed = managedHealthCheckPassed,
+                    previous = previous,
+                ).let { health ->
+                    if (health.status == AcpAgentHealth.STATUS_MISSING) {
+                        health.copy(
+                            error = "Agent command not found: ${profile.command}",
+                        )
+                    } else {
+                        health
+                    }
+                }
                 !installed -> AcpAgentHealth(
                     status = AcpAgentHealth.STATUS_MISSING,
                     installed = false,
@@ -902,13 +1028,6 @@ internal class LocalAcpRuntime(
                         profile.command,
                     checkedAt = checkedAt
                 )
-                !launchInstalled && runtime?.managedAdapterPackage != null ->
-                    AcpAgentHealth(
-                        status = AcpAgentHealth.STATUS_UNCHECKED,
-                        installed = true,
-                        error = "ACP adapter will be prepared during Initialize.",
-                        checkedAt = checkedAt
-                    )
                 previous.installed != true ||
                     previous.status == AcpAgentHealth.STATUS_MISSING -> AcpAgentHealth(
                     status = AcpAgentHealth.STATUS_UNCHECKED,
@@ -939,12 +1058,19 @@ internal class LocalAcpRuntime(
         )
     }
 
-    private suspend fun startThread(args: Map<String, Any?>): Map<String, Any?> =
+    private suspend fun startThread(
+        args: Map<String, Any?>,
+        allowCatalogReuse: Boolean = true
+    ): Map<String, Any?> =
         sessionMutex.withLock {
             val cwd = normalizeCwd(args.stringValue("cwd"))
-            val catalogSession = catalogSessionId
-                ?.let(sessions::get)
-                ?.takeIf { sessionCwds[it.sessionId.value] == cwd }
+            val catalogSession = if (allowCatalogReuse) {
+                catalogSessionId
+                    ?.let(sessions::get)
+                    ?.takeIf { sessionCwds[it.sessionId.value] == cwd }
+            } else {
+                null
+            }
             val session = if (catalogSession != null) {
                 Log.i(
                     TAG,
@@ -2327,6 +2453,20 @@ internal class LocalAcpRuntime(
     }
 }
 
+internal fun shouldCreateSessionForConversationLoad(
+    explicitSessionId: String?,
+    explicitThreadId: String?,
+    conversationId: Long?,
+    hasConversationBinding: Boolean
+): Boolean {
+    val hasExplicitSession = !explicitSessionId.isNullOrBlank() ||
+        !explicitThreadId.isNullOrBlank()
+    return !hasExplicitSession &&
+        conversationId != null &&
+        conversationId > 0L &&
+        !hasConversationBinding
+}
+
 internal enum class AcpPermissionBehavior {
     ASK_USER,
     ALLOW_WITHOUT_PROMPT
@@ -2790,6 +2930,41 @@ private fun Map<String, Any?>.listOfMaps(key: String): List<Map<String, Any?>> =
             mapKey.toString() to value
         }
     }.orEmpty()
+
+internal fun managedAgentHealthFromProbe(
+    enabled: Boolean,
+    launchInstalled: Boolean,
+    healthCheckPassed: Boolean?,
+    previous: AcpAgentHealth,
+): AcpAgentHealth {
+    val checkedAt = System.currentTimeMillis()
+    return when {
+        !enabled -> previous.copy(
+            status = AcpAgentHealth.STATUS_OFFLINE,
+            installed = launchInstalled,
+            error = "Agent is disabled.",
+            checkedAt = checkedAt,
+        )
+        !launchInstalled -> AcpAgentHealth(
+            status = AcpAgentHealth.STATUS_MISSING,
+            installed = false,
+            error = "Agent command is not installed.",
+            checkedAt = checkedAt,
+        )
+        healthCheckPassed == false -> AcpAgentHealth(
+            status = AcpAgentHealth.STATUS_OFFLINE,
+            installed = true,
+            error = "Harness 健康检查失败，请点击“安装官方 Harness”重新初始化。",
+            checkedAt = checkedAt,
+        )
+        else -> AcpAgentHealth(
+            status = AcpAgentHealth.STATUS_ONLINE,
+            installed = true,
+            error = null,
+            checkedAt = checkedAt,
+        )
+    }
+}
 
 private fun shellQuoteAcp(value: String): String =
     "'" + value.replace("'", "'\"'\"'") + "'"

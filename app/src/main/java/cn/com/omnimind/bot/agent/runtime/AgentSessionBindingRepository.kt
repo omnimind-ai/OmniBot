@@ -244,7 +244,12 @@ internal class AgentSessionBindingRepository(
     }
 
     private fun normalizeConversationMode(value: String): String {
-        return value.trim().ifEmpty { AGENT_MODE_STORAGE_VALUE }
+        return when (value.trim().lowercase()) {
+            "" -> AGENT_MODE_STORAGE_VALUE
+            "normal" -> "normal"
+            "codex", "acp", "coding" -> AGENT_MODE_STORAGE_VALUE
+            else -> value.trim().lowercase()
+        }
     }
 
     private suspend fun cleanupGeneratedEmptyConversation(
@@ -273,7 +278,9 @@ internal class AgentSessionBindingRepository(
     }
 
     companion object {
-        const val AGENT_MODE_STORAGE_VALUE = "codex"
+        // `codex` remains a read-compatible legacy alias, but new bindings
+        // must use the canonical Agent conversation mode.
+        const val AGENT_MODE_STORAGE_VALUE = "agent"
     }
 }
 

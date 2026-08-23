@@ -43,8 +43,7 @@ void main() {
                 'dsh-acp',
                 'unchecked',
                 managedAdapter: true,
-                lastCheckError:
-                    'ACP adapter will be prepared during Initialize.',
+                lastCheckError: 'Harness 未初始化，请点击“安装官方 Harness”准备运行组件。',
               ),
             ],
           };

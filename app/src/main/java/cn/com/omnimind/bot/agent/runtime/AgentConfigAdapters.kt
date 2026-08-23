@@ -301,6 +301,27 @@ internal fun resolveAcpLaunchModelWithBindingFallback(
     return normalizedBoundModel.findMatchingModel(normalizedProviderModels)
 }
 
+/**
+ * Resolves the model used by an ACP adapter from the Dispatch Model source.
+ *
+ * A persisted scene binding is an optional user preference. When it is absent,
+ * the first verified model in the current Dispatch Provider catalog is the
+ * default, so Harness installation and startup do not depend on a binding
+ * record existing in MMKV.
+ */
+internal fun resolveAcpLaunchModelForDispatch(
+    providerModelIds: List<String>?,
+    dispatchModel: String?,
+): String? {
+    return resolveAcpLaunchModelWithBindingFallback(
+        providerModelIds = providerModelIds,
+        boundModel = dispatchModel,
+    ) ?: providerModelIds
+        ?.mapNotNull { it.normalizedModelId() }
+        ?.distinctBy(String::lowercase)
+        ?.firstOrNull()
+}
+
 internal fun buildCodexModelCatalogJson(
     providerModels: List<ProviderModelOption>
 ): String {

@@ -62,7 +62,7 @@ class OmniVlmPlugin internal constructor(
         const val MODEL_SCENE = "scene.vlm.operation.primary"
         const val RUN_GUI_TOOL = "run_gui"
         const val RUN_LOG_TOOL = "vlm_task"
-        const val DEFAULT_MAX_STEPS = 30
+        const val DEFAULT_MAX_STEPS = 20
         private val shared = OmniVlmPlugin(DefaultOmniVlmBackend)
 
         suspend fun execute(

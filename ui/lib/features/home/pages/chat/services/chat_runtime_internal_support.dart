@@ -108,7 +108,9 @@ extension _ChatRuntimeInternalSupport on ChatConversationRuntimeCoordinator {
         : switch (conversation?.mode) {
             ConversationMode.chatOnly => ConversationMode.chatOnly,
             ConversationMode.subagent => ConversationMode.subagent,
-            _ => ConversationMode.normal,
+            // `normal` is the legacy Xiaowan page/runtime label. Durable
+            // Agent conversations now use the canonical ACP mode.
+            _ => ConversationMode.agent,
           };
   }
 

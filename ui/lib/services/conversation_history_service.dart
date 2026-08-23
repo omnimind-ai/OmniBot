@@ -26,11 +26,11 @@ class ConversationHistoryService {
       <String, Future<void>>{};
 
   static String _conversationIdKeyForMode(ConversationMode mode) {
-    return '$_conversationIdKeyPrefix${mode.storageValue}';
+    return '$_conversationIdKeyPrefix${mode.canonicalStorageValue}';
   }
 
   static String _conversationTargetKeyForMode(ConversationMode mode) {
-    return '$_conversationTargetKeyPrefix${mode.storageValue}';
+    return '$_conversationTargetKeyPrefix${mode.canonicalStorageValue}';
   }
 
   /// 保存当前对话ID
@@ -47,9 +47,6 @@ class ConversationHistoryService {
       }
     } else {
       await prefs.setInt(modeKey, conversationId);
-      if (mode == ConversationMode.normal) {
-        await prefs.setInt(_legacyConversationIdKey, conversationId);
-      }
     }
   }
 
@@ -123,6 +120,7 @@ class ConversationHistoryService {
       return;
     }
     final sanitized = target.copyWith(
+      mode: target.mode,
       fromNativeRoute: false,
       clearRequestKey: true,
     );
@@ -146,7 +144,8 @@ class ConversationHistoryService {
       return null;
     }
     try {
-      return ConversationThreadTarget.fromEncodedJson(raw);
+      final target = ConversationThreadTarget.fromEncodedJson(raw);
+      return target;
     } catch (e) {
       debugPrint('解析上次可见线程失败: $e');
       return null;
@@ -170,7 +169,9 @@ class ConversationHistoryService {
     final lastVisible = await getLastVisibleThreadTarget();
     if (lastVisible != null &&
         lastVisible.conversationId == conversationId &&
-        (mode == null || lastVisible.mode == mode)) {
+        (mode == null ||
+            lastVisible.mode.canonicalStorageValue ==
+                mode.canonicalStorageValue)) {
       await saveLastVisibleThreadTarget(null);
     }
   }
@@ -189,7 +190,7 @@ class ConversationHistoryService {
     int conversationId, {
     ConversationMode mode = ConversationMode.normal,
   }) {
-    return '$_conversationMessagesKey${mode.storageValue}_$conversationId';
+    return '$_conversationMessagesKey${mode.canonicalStorageValue}_$conversationId';
   }
 
   /// Exports the durable conversation snapshot through the app's existing
@@ -202,7 +203,7 @@ class ConversationHistoryService {
     final messages = await getConversationMessages(conversationId, mode: mode);
     final payload = const JsonEncoder.withIndent('  ').convert({
       'conversationId': conversationId,
-      'mode': mode.storageValue,
+      'mode': mode.canonicalStorageValue,
       'messages': messages.map((message) => message.toJson()).toList(),
     });
     return OmnibotResourceService.shareText(payload);
@@ -217,10 +218,11 @@ class ConversationHistoryService {
     required ConversationMode mode,
   }) {
     final keys = <String>[conversationMessagesKey(conversationId, mode: mode)];
-    if (mode == ConversationMode.normal) {
+    if (mode == ConversationMode.normal || mode == ConversationMode.agent) {
+      keys.add(
+        '$_conversationMessagesKey${ConversationMode.normal.storageValue}_$conversationId',
+      );
       keys.add(_legacyConversationMessagesKey(conversationId));
-    }
-    if (mode == ConversationMode.agent) {
       // Read both the canonical generic Agent key and the old Codex-named
       // key. Codex is a Harness, not the conversation domain mode.
       keys.add(
@@ -273,7 +275,7 @@ class ConversationHistoryService {
     List<ChatMessageModel> messages, {
     ConversationMode mode = ConversationMode.normal,
   }) {
-    final key = '${mode.storageValue}:$conversationId';
+    final key = '${mode.canonicalStorageValue}:$conversationId';
     final snapshot = List<ChatMessageModel>.from(messages);
     final previous =
         _conversationMessageWriteQueues[key] ?? Future<void>.value();
@@ -333,7 +335,7 @@ class ConversationHistoryService {
     try {
       await _assistCore.invokeMethod('replaceConversationMessages', {
         'conversationId': conversationId,
-        'mode': mode.storageValue,
+        'mode': mode.canonicalStorageValue,
         'messages': jsonList,
       });
       return true;
@@ -374,7 +376,7 @@ class ConversationHistoryService {
     try {
       final result = await _assistCore.invokeMethod<List<dynamic>>(
         'getConversationMessages',
-        {'conversationId': conversationId, 'mode': mode.storageValue},
+        {'conversationId': conversationId, 'mode': mode.canonicalStorageValue},
       );
       final nativeMessages = _decodeMessageList(result, mode: mode);
       return _resolveNativeAndLegacyMessages(
@@ -409,7 +411,7 @@ class ConversationHistoryService {
       final result = await _assistCore
           .invokeMethod<Map<dynamic, dynamic>>('getConversationMessagesPaged', {
             'conversationId': conversationId,
-            'mode': mode.storageValue,
+            'mode': mode.canonicalStorageValue,
             'limit': limit,
             'offset': offset,
           });
@@ -488,7 +490,8 @@ class ConversationHistoryService {
           final message = ChatMessageModel.fromJson(
             Map<String, dynamic>.from(json.cast<String, dynamic>()),
           );
-          return mode == ConversationMode.agent
+          return mode == ConversationMode.agent ||
+                  mode == ConversationMode.normal
               ? canonicalizeAgentHistoryMessage(message)
               : message;
         })
@@ -701,7 +704,7 @@ class ConversationHistoryService {
     try {
       await _assistCore.invokeMethod('upsertConversationUiCard', {
         'conversationId': conversationId,
-        'mode': mode.storageValue,
+        'mode': mode.canonicalStorageValue,
         'entryId': normalizedEntryId,
         'cardData': cardData,
         'createdAt': createdAtMillis,
@@ -721,7 +724,7 @@ class ConversationHistoryService {
     try {
       await _assistCore.invokeMethod('clearConversationMessages', {
         'conversationId': conversationId,
-        'mode': mode.storageValue,
+        'mode': mode.canonicalStorageValue,
       });
     } on PlatformException catch (e) {
       debugPrint('清理对话历史失败: ${e.message}');
@@ -741,5 +744,5 @@ class ConversationMessageStorageKey {
   final int conversationId;
   final ConversationMode mode;
 
-  String get threadKey => '${mode.storageValue}:$conversationId';
+  String get threadKey => '${mode.canonicalStorageValue}:$conversationId';
 }
