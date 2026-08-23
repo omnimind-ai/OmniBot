@@ -76,6 +76,7 @@ internal class XiaowanAcpConnection(
     private val context: Context,
     private val scope: CoroutineScope,
     private val scheduleToolBridge: AgentScheduleToolBridge,
+    private val ensureSharedProviderBinding: suspend () -> Unit = {},
     private val conversationIdProvider: suspend (String) -> Long? = { null },
 ) : AcpRuntimeConnection {
     private lateinit var clientTransport: LoopbackTransport
@@ -113,6 +114,7 @@ internal class XiaowanAcpConnection(
                 context = context,
                 scope = scope,
                 scheduleToolBridge = scheduleToolBridge,
+                ensureSharedProviderBinding = ensureSharedProviderBinding,
                 conversationIdProvider = conversationIdProvider,
             )
         )
@@ -145,6 +147,7 @@ private class XiaowanAgentSupport(
     private val context: Context,
     private val scope: CoroutineScope,
     private val scheduleToolBridge: AgentScheduleToolBridge,
+    private val ensureSharedProviderBinding: suspend () -> Unit,
     private val conversationIdProvider: suspend (String) -> Long?,
 ) : AgentSupport {
     private companion object {
@@ -214,7 +217,15 @@ private class XiaowanAgentSupport(
     }
 
     private suspend fun loadXiaowanModels(): XiaowanModels {
-        val existingBinding = SceneModelBindingStore.getBinding("scene.dispatch.model")
+        var existingBinding = SceneModelBindingStore.getBinding("scene.dispatch.model")
+        if (!hasUsableSharedProviderBinding(existingBinding)) {
+            // The in-process Xiaowan adapter does not run the external
+            // Harness preparation callback. Reconcile the shared binding at
+            // the model boundary as well, so an existing ACP connection can
+            // recover after Provider edits or old installs with no binding.
+            ensureSharedProviderBinding()
+            existingBinding = SceneModelBindingStore.getBinding("scene.dispatch.model")
+        }
         cachedModels?.let { cached ->
             val bindingStillMatches = existingBinding?.providerProfileId
                 ?.trim()
@@ -261,6 +272,14 @@ private class XiaowanAgentSupport(
                 "Select a model in scene.dispatch.model and retry."
         )
     }
+}
+
+private fun hasUsableSharedProviderBinding(binding: SceneModelBindingEntry?): Boolean {
+    if (binding == null || binding.providerProfileId.isBlank() || binding.modelId.isBlank()) {
+        return false
+    }
+    val profile = ModelProviderConfigStore.getProfile(binding.providerProfileId) ?: return false
+    return profile.baseUrl.isNotBlank() && profile.apiKey.isNotBlank()
 }
 
 private fun elapsedMillis(startedAtNanos: Long): Long =

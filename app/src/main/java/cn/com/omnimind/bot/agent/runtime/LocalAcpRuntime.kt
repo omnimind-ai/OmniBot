@@ -113,7 +113,7 @@ internal class LocalAcpRuntime(
     private val bindingRepository: AgentSessionBindingRepository,
     private val profileStore: AcpAgentProfileStore,
     private val prepareLaunchEnvironment: suspend (AcpAgentProfile) -> Map<String, String>,
-    private val ensureSharedProviderBinding: suspend () -> Unit = {},
+    private val prepareSharedProviderBinding: suspend () -> Unit = {},
     private val buildHandoffContext: suspend (Long, String?) -> String?,
     private val scheduleToolBridge: AgentScheduleToolBridge,
     private val onMessage: suspend (Map<String, Any?>) -> Unit
@@ -227,13 +227,6 @@ internal class LocalAcpRuntime(
         workspaceManager.ensureRuntimeDirectories()
         val baseEnvironment = try {
             if (profile.id == AcpAgentProfileStore.XIAOWAN_AGENT_ID) {
-                // Xiaowan is an in-process ACP adapter and therefore does not
-                // pass through prepareLaunchEnvironment. It still consumes
-                // the same shared Provider binding as every other Harness;
-                // migrate old installs before its initialize() validates the
-                // binding, otherwise switching back to Xiaowan fails with
-                // provider_unavailable even though the Provider is configured.
-                ensureSharedProviderBinding()
                 emptyMap()
             } else {
                 prepareLaunchEnvironment(profile).also {
@@ -254,6 +247,7 @@ internal class LocalAcpRuntime(
                 context = appContext,
                 scope = scope,
                 scheduleToolBridge = scheduleToolBridge,
+                ensureSharedProviderBinding = prepareSharedProviderBinding,
                 conversationIdProvider = { threadId ->
                     bindingRepository.getBindingByThreadId(threadId)?.conversationId
                 }
