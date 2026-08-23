@@ -1583,6 +1583,10 @@ class AgentEventReducer {
       if (raw['terminalStreamState'] != null)
         'terminalStreamState': raw['terminalStreamState'],
       if (raw['workspaceId'] != null) 'workspaceId': raw['workspaceId'],
+      if (raw['imageDataUrl'] != null) 'imageDataUrl': raw['imageDataUrl'],
+      if (raw['taskId'] != null) 'sourceTaskId': raw['taskId'],
+      if (raw['runId'] != null) 'runId': raw['runId'],
+      if (raw['run_id'] != null) 'run_id': raw['run_id'],
       'artifacts': artifacts.isNotEmpty
           ? artifacts
           : (existingCardData['artifacts'] ?? const <Map<String, dynamic>>[]),
@@ -3695,14 +3699,23 @@ Map<String, dynamic> _acpStructuredToolOutput(Map<String, dynamic>? output) {
   if (output == null || output.isEmpty) {
     return const <String, dynamic>{};
   }
+  final explicitToolType = _string(output['toolType'])?.toLowerCase();
   final result =
       output['result'] ??
       output['resultPreview'] ??
       output['preview'] ??
       output['previewJson'];
   return <String, dynamic>{
+    // `ContextResult` is the native result envelope, not a visual capability.
+    // If it overwrites the initial call here, file writes, browser actions,
+    // image tasks, and subagent calls all fall back to a generic card. Leave
+    // those envelopes to the shared tool-name inference while retaining every
+    // concrete type an ACP adapter intentionally supplies.
+    if (explicitToolType != null &&
+        explicitToolType.isNotEmpty &&
+        explicitToolType != 'context')
+      'toolType': output['toolType'],
     for (final key in const <String>[
-      'toolType',
       'toolName',
       'displayName',
       'serverName',
@@ -3719,6 +3732,12 @@ Map<String, dynamic> _acpStructuredToolOutput(Map<String, dynamic>? output) {
       'success',
       'exitCode',
       'error',
+      'timedOut',
+      'imageDataUrl',
+      'taskId',
+      'runId',
+      'run_id',
+      'contextType',
     ])
       if (output[key] != null) key: output[key],
     if (result != null) 'result': result,

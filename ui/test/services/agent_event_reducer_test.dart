@@ -913,6 +913,159 @@ void main() {
   });
 
   test(
+    'routes generic ACP context results by their concrete tool capability',
+    () {
+      reducer.reduce(
+        runtime: runtime,
+        event: {
+          'message': {
+            'method': 'session/update',
+            'turnId': 'turn-context-file',
+            'params': {
+              'sessionId': 'session-context-file',
+              'update': {
+                'sessionUpdate': 'tool_call',
+                'toolCallId': 'file-1',
+                'kind': 'other',
+                'title': 'write',
+                'status': 'in_progress',
+                'rawInput': {'path': '/workspace/note.md'},
+              },
+            },
+          },
+        },
+      );
+      reducer.reduce(
+        runtime: runtime,
+        event: {
+          'message': {
+            'method': 'session/update',
+            'turnId': 'turn-context-file',
+            'params': {
+              'sessionId': 'session-context-file',
+              'update': {
+                'sessionUpdate': 'tool_call_update',
+                'toolCallId': 'file-1',
+                'kind': 'other',
+                'title': 'write',
+                'status': 'completed',
+                'rawOutput': {
+                  // ContextResult is the native result envelope. It must not
+                  // erase the file card route selected by the tool itself.
+                  'toolType': 'context',
+                  'toolName': 'write',
+                  'summary': 'Wrote note.md',
+                  'result': {'path': '/workspace/note.md'},
+                  'imageDataUrl': 'data:image/png;base64,AA==',
+                },
+              },
+            },
+          },
+        },
+      );
+
+      final cardData = runtime.messages
+          .firstWhere(
+            (message) => message.cardData?['type'] == 'agent_tool_summary',
+          )
+          .cardData!;
+      expect(cardData['toolType'], 'file');
+      expect(cardData['toolName'], 'write');
+      expect(cardData['imageDataUrl'], 'data:image/png;base64,AA==');
+    },
+  );
+
+  test(
+    'keeps every context-backed ACP capability on its existing card route',
+    () {
+      for (final route
+          in const <({String id, String toolName, String toolType})>[
+            (id: 'browser-1', toolName: 'webfetch', toolType: 'browser'),
+            (id: 'image-1', toolName: 'image_generate', toolType: 'image'),
+            (id: 'subagent-1', toolName: 'subagent_run', toolType: 'subagent'),
+          ]) {
+        reducer.reduce(
+          runtime: runtime,
+          event: {
+            'message': {
+              'method': 'session/update',
+              'turnId': 'turn-${route.id}',
+              'params': {
+                'sessionId': 'session-context-routes',
+                'update': {
+                  'sessionUpdate': 'tool_call_update',
+                  'toolCallId': route.id,
+                  'kind': 'other',
+                  'title': route.toolName,
+                  'status': 'completed',
+                  'rawOutput': {
+                    'toolType': 'context',
+                    'toolName': route.toolName,
+                    'summary': '${route.toolName} completed',
+                    'result': const <String, dynamic>{},
+                  },
+                },
+              },
+            },
+          },
+        );
+      }
+
+      for (final route
+          in const <({String id, String toolName, String toolType})>[
+            (id: 'browser-1', toolName: 'webfetch', toolType: 'browser'),
+            (id: 'image-1', toolName: 'image_generate', toolType: 'image'),
+            (id: 'subagent-1', toolName: 'subagent_run', toolType: 'subagent'),
+          ]) {
+        final cardData = runtime.messages
+            .firstWhere(
+              (message) => message.cardData?['toolCallId'] == route.id,
+            )
+            .cardData!;
+        expect(cardData['toolType'], route.toolType);
+      }
+    },
+  );
+
+  test(
+    'preserves an ACP terminal timeout as the existing timeout card state',
+    () {
+      reducer.reduce(
+        runtime: runtime,
+        event: {
+          'message': {
+            'method': 'session/update',
+            'turnId': 'turn-terminal-timeout',
+            'params': {
+              'sessionId': 'session-terminal-timeout',
+              'update': {
+                'sessionUpdate': 'tool_call_update',
+                'toolCallId': 'terminal-timeout-1',
+                'kind': 'other',
+                'title': 'bash',
+                'status': 'failed',
+                'rawOutput': {
+                  'toolType': 'terminal',
+                  'toolName': 'bash',
+                  'summary': 'Command timed out',
+                  'success': false,
+                  'timedOut': true,
+                  'terminalOutput': 'partial output',
+                },
+              },
+            },
+          },
+        },
+      );
+
+      final cardData = runtime.messages.single.cardData!;
+      expect(cardData['toolType'], 'terminal');
+      expect(cardData['status'], 'timeout');
+      expect(cardData['terminalOutput'], 'partial output');
+    },
+  );
+
+  test(
     'turns an ACP missing-accessibility result into an authorization card',
     () {
       final base = <String, dynamic>{

@@ -147,6 +147,11 @@ String normalizeAgentToolStatus(
   Map<String, dynamic> raw, {
   String fallbackStatus = 'running',
 }) {
+  // ACP tool updates can be terminal with `status: failed` while preserving
+  // the more specific timeout reason in adapter-defined rawOutput.
+  if (raw['timedOut'] == true || raw['timed_out'] == true) {
+    return 'timeout';
+  }
   if (raw['error'] != null) {
     return 'error';
   }
