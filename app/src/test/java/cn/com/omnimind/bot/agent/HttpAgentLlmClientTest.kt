@@ -586,6 +586,58 @@ class HttpAgentLlmClientTest {
     }
 
     @Test
+    fun `responses route restores namespaced ACP tool name before execution`() = runBlocking {
+        val scope = CoroutineScope(Job() + Dispatchers.Default)
+        var sentWireName = ""
+        try {
+            val client = HttpAgentLlmClient(
+                scope = scope,
+                modelOverride = testOverride().copy(wireApi = OpenAiWireApi.RESPONSES),
+                resolveRouteInfoOp = { model, _, _, _, _, protocolType, _ ->
+                    routeInfo(
+                        requestedModel = model,
+                        resolvedModel = "gpt-5.6-sol",
+                        protocolType = protocolType ?: "openai_compatible",
+                        requiresReasoningEcho = false,
+                        wireApi = OpenAiWireApi.RESPONSES,
+                    )
+                },
+                streamRequestOp = { _, body, listener, _, _, _, _, _, _, _ ->
+                    val root = json.parseToJsonElement(body).jsonObject
+                    sentWireName = root["tools"]!!.let { it as JsonArray }[0]
+                        .jsonObject["function"]!!.jsonObject["name"]!!.jsonPrimitive.content
+                    val source = dummyEventSource()
+                    listener.onOpen(source, okResponse())
+                    listener.onEvent(
+                        source,
+                        null,
+                        "message",
+                        """{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"$sentWireName","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}""",
+                    )
+                    listener.onEvent(source, null, "message", "[DONE]")
+                    source
+                },
+                json = json,
+            )
+            val request = simpleRequest().copy(
+                tools = listOf(
+                    ChatCompletionTool(
+                        function = ChatCompletionFunction(name = "agent.status"),
+                    ),
+                ),
+            )
+
+            val turn = client.streamTurn(request)
+
+            assertTrue(sentWireName.matches(Regex("^[a-zA-Z0-9_-]+$")))
+            assertTrue(sentWireName.length <= 64)
+            assertEquals("agent.status", turn.message.toolCalls?.single()?.function?.name)
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
     fun `closed stream with assistant payload completes without terminal marker`() = runBlocking {
         val scope = CoroutineScope(Job() + Dispatchers.Default)
         try {

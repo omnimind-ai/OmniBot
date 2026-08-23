@@ -12,6 +12,7 @@ import cn.com.omnimind.baselib.llm.ChatCompletionUsage
 import cn.com.omnimind.baselib.llm.DeepSeekProvider
 import cn.com.omnimind.baselib.llm.ModelProviderConfigStore
 import cn.com.omnimind.baselib.llm.OpenAiWireApi
+import cn.com.omnimind.baselib.llm.OpenAiResponsesFunctionNameCodec
 import cn.com.omnimind.baselib.llm.OmniOfficialProvider
 import cn.com.omnimind.baselib.llm.PlatformAiProvisioner
 import cn.com.omnimind.baselib.llm.ReasoningStreamUpdatePolicy
@@ -262,11 +263,18 @@ class HttpAgentLlmClient(
                     }
                     // Encode lazily, one variant at a time, so we never hold multiple
                     // copies of a potentially huge request payload in memory at once.
-                    val requestJson = json.encodeToString(variant.request)
+                    val responsesNamePlan = if (OpenAiWireApi.isResponses(routeInfo.wireApi)) {
+                        OpenAiResponsesFunctionNameCodec.planFor(variant.request)
+                    } else {
+                        null
+                    }
+                    val wireRequest = responsesNamePlan?.encodeRequest(variant.request)
+                        ?: variant.request
+                    val requestJson = json.encodeToString(wireRequest)
                     if (AiRequestTransportPolicy.isPlatformRoute(routeInfo.routeTag)) {
                         PlatformMediaProtocol.requirePlatformJsonRequestWithinLimit(requestJson)
                     }
-                    return streamTurnWithPlatformAuthRetry(
+                    val turn = streamTurnWithPlatformAuthRetry(
                         model = candidateModel,
                         requestJson = requestJson,
                         explicitModel = effectiveExplicitModel,
@@ -274,6 +282,7 @@ class HttpAgentLlmClient(
                         onReasoningUpdate = onReasoningUpdate,
                         onContentUpdate = onContentUpdate
                     )
+                    return responsesNamePlan?.restoreTurn(turn) ?: turn
                 } catch (error: AgentStreamRequestException) {
                     lastFailure = error
                     val canRetryVariant =

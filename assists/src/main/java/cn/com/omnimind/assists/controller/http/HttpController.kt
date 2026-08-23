@@ -20,6 +20,7 @@ import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.baselib.llm.ModelSceneRegistry
 import cn.com.omnimind.baselib.llm.OpenAiWireApi
 import cn.com.omnimind.baselib.llm.OpenAIResponsesRequest
+import cn.com.omnimind.baselib.llm.OpenAiResponsesFunctionNameCodec
 import cn.com.omnimind.baselib.llm.OmniOfficialProvider
 import cn.com.omnimind.baselib.llm.PlatformAiProvisioner
 import cn.com.omnimind.baselib.llm.ProviderModelOption
@@ -2620,8 +2621,11 @@ object HttpController {
         requestBodyJson: String,
         resolvedModel: String
     ): String {
-        val parsedRequest = completionJson.decodeFromString<ChatCompletionRequest>(requestBodyJson)
+        val decodedRequest = completionJson.decodeFromString<ChatCompletionRequest>(requestBodyJson)
             .copy(model = resolvedModel)
+        val parsedRequest = OpenAiResponsesFunctionNameCodec
+            .planFor(decodedRequest)
+            .encodeRequest(decodedRequest)
         val systemInstructions = parsedRequest.messages
             .filter { it.role == "system" }
             .mapNotNull { it.contentText().trim().takeIf { text -> text.isNotEmpty() } }
