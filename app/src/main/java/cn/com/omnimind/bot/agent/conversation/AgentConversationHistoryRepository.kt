@@ -409,19 +409,29 @@ class AgentConversationHistoryRepository(
         offset: Int
     ): Pair<List<Map<String, Any?>>, Boolean> = withContext(Dispatchers.IO) {
         val effectiveConversationMode = resolveConversationMode(conversationId, conversationMode)
-        // Read and merge all compatibility buckets before slicing the page.
-        // The old implementation queried only `agent`, so conversations
-        // written as `normal` appeared empty after the default switched to
-        // canonical Agent mode.
-        val allEntries = loadThreadEntriesDescSafePaged(
+        // Read a bounded window from every compatibility bucket before
+        // slicing the page. The old implementation queried only `agent`, so
+        // conversations written as `normal` appeared empty after the default
+        // switched to canonical Agent mode. Do not load the entire history on
+        // every scroll request.
+        val candidateModes = conversationModeCandidates(effectiveConversationMode)
+        val windowSize = (offset.coerceAtLeast(0) + limit.coerceAtLeast(1))
+        val allEntries = loadThreadEntriesDescWindowSafe(
             conversationId = conversationId,
-            conversationMode = effectiveConversationMode
+            conversationModes = candidateModes,
+            maxEntriesPerMode = windowSize
         )
         val (entries, hasMore) = pageConversationEntries(
             entries = allEntries,
             limit = limit,
             offset = offset
         )
+        val hasUnloadedEntries = candidateModes.any { storageMode ->
+            DatabaseHelper.countAgentConversationThreadEntries(
+                conversationId = conversationId,
+                conversationMode = storageMode
+            ) > windowSize
+        }
         val normalized = if (offset == 0) {
             normalizeEntriesForDisplay(entries)
         } else {
@@ -429,7 +439,7 @@ class AgentConversationHistoryRepository(
         }
         val messagePayloads = normalized.mapNotNull { entry -> entryToMessagePayload(entry) }
         val sorted = ConversationSnapshotOrdering.sortForDisplay(messagePayloads)
-        Pair(sorted, hasMore)
+        Pair(sorted, hasMore || hasUnloadedEntries)
     }
 
     suspend fun clearConversationMessages(
@@ -763,6 +773,48 @@ class AgentConversationHistoryRepository(
                 .thenByDescending { it.id })
     }
 
+    private suspend fun loadThreadEntriesDescWindowSafe(
+        conversationId: Long,
+        conversationModes: List<String>,
+        maxEntriesPerMode: Int
+    ): List<AgentConversationEntry> {
+        val boundedSize = maxEntriesPerMode.coerceAtLeast(1)
+        return conversationModes
+            .flatMap { storageMode ->
+                loadThreadEntriesDescWindowSafeForMode(
+                    conversationId = conversationId,
+                    conversationMode = storageMode,
+                    maxEntries = boundedSize
+                )
+            }
+            .distinctBy { entry -> entry.entryId }
+            .sortedWith(compareByDescending<AgentConversationEntry> { it.createdAt }
+                .thenByDescending { it.id })
+    }
+
+    private suspend fun loadThreadEntriesDescWindowSafeForMode(
+        conversationId: Long,
+        conversationMode: String,
+        maxEntries: Int
+    ): List<AgentConversationEntry> {
+        val entries = mutableListOf<AgentConversationEntry>()
+        var offset = 0
+        val boundedSize = maxEntries.coerceAtLeast(1)
+        while (entries.size < boundedSize) {
+            val page = loadThreadEntriesDescPagedSafe(
+                conversationId = conversationId,
+                conversationMode = conversationMode,
+                limit = minOf(SAFE_HISTORY_PAGE_SIZE, boundedSize - entries.size),
+                offset = offset
+            )
+            if (page.isEmpty()) break
+            entries += page
+            offset += page.size
+            if (page.size < SAFE_HISTORY_PAGE_SIZE) break
+        }
+        return entries
+    }
+
     private suspend fun loadThreadEntriesDescSafePagedForMode(
         conversationId: Long,
         conversationMode: String
@@ -785,7 +837,7 @@ class AgentConversationHistoryRepository(
     }
 
     private fun conversationModeCandidates(conversationMode: String): List<String> {
-        val normalized = conversationMode.trim().lowercase().ifEmpty { "normal" }
+        val normalized = conversationMode.trim().lowercase().ifEmpty { "agent" }
         return if (normalized in setOf("agent", "codex", "acp", "coding")) {
             // `normal` is the pre-ACP Xiaowan bucket. Keep it readable while
             // all new writes use canonical `agent`.

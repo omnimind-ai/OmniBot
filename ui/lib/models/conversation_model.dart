@@ -20,6 +20,7 @@ enum ConversationMode {
       case 'codex':
       case 'acp':
       case 'coding':
+      case 'normal':
         return ConversationMode.agent;
       case 'chat':
       case 'chatonly':
@@ -31,7 +32,9 @@ enum ConversationMode {
         return mode;
       }
     }
-    return ConversationMode.normal;
+    // Missing/unknown mode is a new-data boundary. `normal` is handled above
+    // as a legacy alias, so no new conversation can re-enter that split path.
+    return ConversationMode.agent;
   }
 
   String get displayLabel => switch (this) {

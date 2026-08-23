@@ -34,6 +34,19 @@ void main() {
     expect(ConversationMode.fromStorageValue('acp'), ConversationMode.agent);
   });
 
+  test('missing or unknown conversation mode defaults to agent', () {
+    expect(ConversationMode.fromStorageValue(null), ConversationMode.agent);
+    expect(ConversationMode.fromStorageValue(''), ConversationMode.agent);
+    expect(
+      ConversationMode.fromStorageValue('future_mode'),
+      ConversationMode.agent,
+    );
+    expect(
+      ConversationMode.fromStorageValue('normal'),
+      ConversationMode.agent,
+    );
+  });
+
   test('ScheduledTask keeps subagent fields through json', () {
     final now = DateTime.now().millisecondsSinceEpoch;
     final task = ScheduledTask(

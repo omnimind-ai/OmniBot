@@ -590,6 +590,30 @@ internal class LocalAcpRuntime(
         } else {
             args
         }
+        val hasConversationBinding = requestedConversationId?.let { conversationId ->
+            bindingRepository.getBindingByConversationId(conversationId) != null
+        } == true
+        if (shouldCreateSessionForConversationLoad(
+                explicitSessionId = normalized.stringValue("sessionId"),
+                explicitThreadId = normalized.stringValue("threadId"),
+                conversationId = requestedConversationId,
+                hasConversationBinding = hasConversationBinding
+            )
+        ) {
+            // Pre-ACP Xiaowan conversations have durable messages but no ACP
+            // binding. Loading such a conversation must materialize the first
+            // ACP session instead of failing with "No ACP session is bound".
+            Log.i(
+                TAG,
+                "ACP session/load creating missing binding for conversation=$requestedConversationId"
+            )
+            return startThread(
+                normalized,
+                allowCatalogReuse = false
+            ).withAcpSessionId().plus(
+                "sessionRestored" to false
+            )
+        }
         return resumeThread(normalized).withAcpSessionId()
     }
 
@@ -939,12 +963,19 @@ internal class LocalAcpRuntime(
         )
     }
 
-    private suspend fun startThread(args: Map<String, Any?>): Map<String, Any?> =
+    private suspend fun startThread(
+        args: Map<String, Any?>,
+        allowCatalogReuse: Boolean = true
+    ): Map<String, Any?> =
         sessionMutex.withLock {
             val cwd = normalizeCwd(args.stringValue("cwd"))
-            val catalogSession = catalogSessionId
-                ?.let(sessions::get)
-                ?.takeIf { sessionCwds[it.sessionId.value] == cwd }
+            val catalogSession = if (allowCatalogReuse) {
+                catalogSessionId
+                    ?.let(sessions::get)
+                    ?.takeIf { sessionCwds[it.sessionId.value] == cwd }
+            } else {
+                null
+            }
             val session = if (catalogSession != null) {
                 Log.i(
                     TAG,
@@ -2325,6 +2356,20 @@ internal class LocalAcpRuntime(
         private const val MAX_FILE_LINES = 20_000
 
     }
+}
+
+internal fun shouldCreateSessionForConversationLoad(
+    explicitSessionId: String?,
+    explicitThreadId: String?,
+    conversationId: Long?,
+    hasConversationBinding: Boolean
+): Boolean {
+    val hasExplicitSession = !explicitSessionId.isNullOrBlank() ||
+        !explicitThreadId.isNullOrBlank()
+    return !hasExplicitSession &&
+        conversationId != null &&
+        conversationId > 0L &&
+        !hasConversationBinding
 }
 
 internal enum class AcpPermissionBehavior {

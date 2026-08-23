@@ -61,6 +61,33 @@ class AgentConversationHistorySupportTest {
     }
 
     @Test
+    fun `paged history reports more entries outside the bounded window`() {
+        val entries = (1..3).map { index ->
+            AgentConversationEntry(
+                id = index.toLong(),
+                conversationId = 7,
+                conversationMode = "agent",
+                entryId = "entry-$index",
+                entryType = AgentConversationHistoryRepository.ENTRY_TYPE_USER_MESSAGE,
+                status = AgentConversationHistoryRepository.STATUS_SUCCESS,
+                summary = "消息 $index",
+                payloadJson = "{}",
+                createdAt = index.toLong(),
+                updatedAt = index.toLong()
+            )
+        }
+
+        val (page, hasMore) = AgentConversationHistoryRepository.pageConversationEntries(
+            entries = entries,
+            limit = 1,
+            offset = 0
+        )
+
+        assertEquals(listOf("entry-3"), page.map { it.entryId })
+        assertTrue(hasMore)
+    }
+
+    @Test
     fun `stale ui snapshot cannot delete a pending external user message`() {
         val externalUser = mapOf<String, Any?>(
             "id" to "web-run-user",

@@ -227,6 +227,12 @@ class ConversationHistoryService {
         '$_conversationMessagesKey${ConversationMode.agent.name}_$conversationId',
       );
       keys.add('${_conversationMessagesKey}codex_$conversationId');
+      // Older Xiaowan builds wrote these snapshots before the conversation
+      // domain switched from `normal` to canonical `agent`.
+      keys.add(
+        '$_conversationMessagesKey${ConversationMode.normal.storageValue}_$conversationId',
+      );
+      keys.add(_legacyConversationMessagesKey(conversationId));
     }
     return keys;
   }
@@ -609,6 +615,7 @@ class ConversationHistoryService {
     if (prefs == null) {
       return <ChatMessageModel>[];
     }
+    final snapshots = <List<ChatMessageModel>>[];
     for (final key in _legacyConversationMessageKeys(
       conversationId,
       mode: mode,
@@ -621,13 +628,25 @@ class ConversationHistoryService {
         final decoded = jsonDecode(raw);
         final messages = _decodeMessageList(decoded, mode: mode);
         if (messages.isNotEmpty) {
-          return messages;
+          snapshots.add(messages);
         }
       } catch (e) {
         debugPrint('解析旧版对话历史失败 key=$key: $e');
       }
     }
-    return <ChatMessageModel>[];
+    if (snapshots.isEmpty) {
+      return <ChatMessageModel>[];
+    }
+    if (snapshots.length == 1) {
+      return snapshots.single;
+    }
+    // A conversation can have been written to more than one legacy bucket
+    // during the normal -> agent migration. Read all buckets and merge by
+    // stable message identity instead of stopping at the first non-empty key.
+    return _mergeMessageSnapshots(
+      nativeMessages: const <ChatMessageModel>[],
+      legacyMessages: snapshots.expand((snapshot) => snapshot).toList(),
+    );
   }
 
   static Future<void> _writeLegacyConversationMessages(
