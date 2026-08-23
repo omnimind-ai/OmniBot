@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ui/features/home/pages/chat/chat_page.dart';
 import 'package:ui/features/home/pages/chat/chat_page_models.dart';
 import 'package:ui/features/home/pages/chat/services/chat_conversation_runtime_coordinator.dart';
+import 'package:ui/features/home/pages/chat/utils/agent_run_timeline.dart';
 import 'package:ui/models/chat_message_model.dart';
 import 'package:ui/models/conversation_model.dart';
 import 'package:ui/services/agent_event_reducer.dart';
@@ -1177,6 +1178,159 @@ void main() {
         .toList();
     expect(thinkingMessages, hasLength(1));
     expect(thinkingMessages.single.cardData?['thinkingContent'], '第一轮思考第二轮思考');
+  });
+
+  test('keeps reasoning segments interleaved around ACP tool calls', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'item/reasoning/textDelta',
+        'params': {
+          'turnId': 'turn-interleaved',
+          'itemId': 'reason-before-tool',
+          'delta': '先检查工作区',
+        },
+      },
+    );
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'item/started',
+        'params': {
+          'turnId': 'turn-interleaved',
+          'item': {
+            'id': 'tool-1',
+            'type': 'commandExecution',
+            'command': 'pwd',
+            'status': 'in_progress',
+          },
+        },
+      },
+    );
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'item/reasoning/textDelta',
+        'params': {
+          'turnId': 'turn-interleaved',
+          'itemId': 'reason-after-tool',
+          'delta': '根据工具结果继续判断',
+        },
+      },
+    );
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'item/started',
+        'params': {
+          'turnId': 'turn-interleaved',
+          'item': {
+            'id': 'tool-2',
+            'type': 'commandExecution',
+            'command': 'git status',
+            'status': 'in_progress',
+          },
+        },
+      },
+    );
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'item/reasoning/textDelta',
+        'params': {
+          'turnId': 'turn-interleaved',
+          'itemId': 'reason-after-second-tool',
+          'delta': '确认第二个工具结果',
+        },
+      },
+    );
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'item/agentMessage/delta',
+        'params': {
+          'turnId': 'turn-interleaved',
+          'itemId': 'answer-1',
+          'delta': '最终答案',
+        },
+      },
+    );
+
+    final group = buildAgentRunTimelineEntries(runtime.messages).single.group!;
+    expect(
+      group.allMessagesOldestFirst.map(
+        (message) => message.cardData?['type'] ?? 'assistant_text',
+      ),
+      <String>[
+        'deep_thinking',
+        'agent_tool_summary',
+        'deep_thinking',
+        'agent_tool_summary',
+        'deep_thinking',
+        'assistant_text',
+      ],
+    );
+    final thinkingCards = group.allMessagesOldestFirst
+        .where((message) => message.cardData?['type'] == 'deep_thinking')
+        .toList(growable: false);
+    expect(
+      thinkingCards.map((message) => message.cardData?['thinkingContent']),
+      <String>['先检查工作区', '根据工具结果继续判断', '确认第二个工具结果'],
+    );
+    expect(thinkingCards.map((message) => message.id), <String>[
+      'reason-before-tool-agent-thinking',
+      'reason-after-tool-agent-thinking',
+      'reason-after-second-tool-agent-thinking',
+    ]);
+    for (final card in thinkingCards) {
+      expect(card.cardData?['isLoading'], isFalse);
+      expect(card.cardData?['startTime'], isA<int>());
+      expect(card.cardData?['endTime'], isA<int>());
+    }
+  });
+
+  test('segments ACP reasoning without message ids across tool calls', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'item/reasoning/textDelta',
+        'params': {'turnId': 'turn-without-message-id', 'delta': '工具前'},
+      },
+    );
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'item/started',
+        'params': {
+          'turnId': 'turn-without-message-id',
+          'item': {
+            'id': 'tool-without-message-id',
+            'type': 'commandExecution',
+            'command': 'pwd',
+            'status': 'in_progress',
+          },
+        },
+      },
+    );
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'item/reasoning/textDelta',
+        'params': {'turnId': 'turn-without-message-id', 'delta': '工具后'},
+      },
+    );
+
+    final thinkingCards = runtime.messages.reversed
+        .where((message) => message.cardData?['type'] == 'deep_thinking')
+        .toList(growable: false);
+    expect(
+      thinkingCards.map((message) => message.cardData?['thinkingContent']),
+      <String>['工具前', '工具后'],
+    );
+    expect(thinkingCards.map((message) => message.id), <String>[
+      'turn-without-message-id-agent-thinking',
+      'turn-without-message-id-agent-thinking-segment-2',
+    ]);
   });
 
   test('renders the official ACP session/update envelope', () {

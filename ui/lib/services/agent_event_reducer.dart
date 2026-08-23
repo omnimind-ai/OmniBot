@@ -1368,10 +1368,9 @@ class AgentEventReducer {
     required String delta,
     Map<String, dynamic> reasoningCardData = const <String, dynamic>{},
   }) {
-    // A single ACP turn may expose several reasoning item ids (for example
-    // one before a tool call and one after it). They are protocol items, not
-    // separate user-visible thoughts. Keep one card per host turn so the
-    // timeline cannot show two identical completion labels.
+    // Merge chunks only while the same continuous reasoning segment is
+    // active. Tool and output boundaries finalize that segment, so later
+    // reasoning in the same ACP turn starts a separate timeline card.
     cardId = _thinkingCardIdForTask(
       runtime,
       parentTaskId: parentTaskId,
@@ -2966,12 +2965,23 @@ class AgentEventReducer {
       }
     }
 
-    for (final message in runtime.messages) {
-      if (_thinkingCardBelongsToTask(message, parentTaskId)) {
-        return message.id;
-      }
+    final requestedIdExists = runtime.messages.any(
+      (message) => message.id == requestedCardId,
+    );
+    if (!requestedIdExists) {
+      return requestedCardId;
     }
-    return requestedCardId;
+
+    // Some ACP adapters omit reasoning messageId. The turn-scoped fallback
+    // then repeats after every tool boundary, so allocate a deterministic
+    // segment suffix instead of reopening the completed card.
+    var segmentIndex = 2;
+    while (runtime.messages.any(
+      (message) => message.id == '$requestedCardId-segment-$segmentIndex',
+    )) {
+      segmentIndex += 1;
+    }
+    return '$requestedCardId-segment-$segmentIndex';
   }
 
   bool _thinkingCardBelongsToTask(

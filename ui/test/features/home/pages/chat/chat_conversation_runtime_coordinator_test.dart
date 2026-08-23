@@ -446,7 +446,7 @@ void main() {
     expect(second.isAiResponding, isTrue);
   });
 
-  test('keeps DSH ACP reasoning in the turn card around tool activity', () {
+  test('keeps DSH ACP reasoning interleaved around tool activity', () {
     const conversationId = 2103;
     const turnId = 'dsh-turn';
     applyAcp(
@@ -488,16 +488,16 @@ void main() {
     final thinking = runtime.messages
         .where((message) => message.cardData?['type'] == 'deep_thinking')
         .toList();
-    expect(thinking, hasLength(1));
+    expect(thinking, hasLength(2));
     expect(
-      thinking.single.cardData?['thinkingContent'],
-      '第一阶段：分析工作区。第二阶段：根据结果判断。',
+      runtime.messages.reversed.map(
+        (message) => message.cardData?['type'] ?? 'assistant_text',
+      ),
+      <String>['deep_thinking', 'agent_tool_summary', 'deep_thinking'],
     );
     expect(
-      runtime.messages.any(
-        (message) => message.cardData?['type'] == 'agent_tool_summary',
-      ),
-      isTrue,
+      thinking.reversed.map((message) => message.cardData?['thinkingContent']),
+      <String>['第一阶段：分析工作区。', '第二阶段：根据结果判断。'],
     );
   });
 
