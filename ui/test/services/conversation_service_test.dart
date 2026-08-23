@@ -72,6 +72,7 @@ void main() {
             'parentConversationId': args['parentConversationId'],
             'parentConversationMode': args['parentConversationMode'],
             'scheduledTaskId': args['scheduledTaskId'],
+            'agentId': args['agentId'],
             'status': 0,
             'lastMessage': null,
             'messageCount': 0,
@@ -502,14 +503,14 @@ void main() {
         await ConversationHistoryService.getLastVisibleThreadTarget(),
         const ConversationThreadTarget.existing(
           conversationId: 1,
-          mode: ConversationMode.normal,
+          mode: ConversationMode.agent,
         ),
       );
 
       final remaining = await ConversationService.getAllConversations();
       expect(remaining, hasLength(1));
       expect(remaining.single.id, 1);
-      expect(remaining.single.mode, ConversationMode.normal);
+      expect(remaining.single.mode, ConversationMode.agent);
     },
   );
 
@@ -525,6 +526,23 @@ void main() {
     );
     expect(created['mode'], ConversationMode.chatOnly.storageValue);
   });
+
+  test(
+    'binds an Agent conversation to its Harness when it is created',
+    () async {
+      final conversationId = await ConversationService.createConversation(
+        title: 'DSH 对话',
+        mode: ConversationMode.agent,
+        agentId: 'deepseek-harness-acp',
+      );
+
+      final created = nativeConversations.singleWhere(
+        (item) => item['id'] == conversationId,
+      );
+      expect(created['mode'], ConversationMode.agent.storageValue);
+      expect(created['agentId'], 'deepseek-harness-acp');
+    },
+  );
 
   test(
     'creates scheduled subagent run conversations with parent metadata',
@@ -575,7 +593,7 @@ void main() {
       );
 
       expect(archived, isTrue);
-      expect(agentRuntimeCalls.single.method, 'thread/archive');
+      expect(agentRuntimeCalls.single.method, 'session/archive');
       expect(nativeConversations.single['isArchived'], isTrue);
     },
   );
@@ -605,7 +623,7 @@ void main() {
       );
 
       expect(deleted, isTrue);
-      expect(agentRuntimeCalls.single.method, 'thread/archive');
+      expect(agentRuntimeCalls.single.method, 'session/archive');
       expect(nativeConversations.single['isArchived'], isTrue);
 
       final visibleConversations =

@@ -3216,6 +3216,7 @@ class AssistsCoreManager(private val context: Context) {
             ?.takeIf { it > 0L }
         val parentConversationMode = call.argument<String>("parentConversationMode")
         val scheduledTaskId = call.argument<String>("scheduledTaskId")
+        val agentId = call.argument<String>("agentId")
 
         workJob.launch {
             try {
@@ -3225,7 +3226,8 @@ class AssistsCoreManager(private val context: Context) {
                     summary = summary,
                     parentConversationId = parentConversationId,
                     parentConversationMode = parentConversationMode,
-                    scheduledTaskId = scheduledTaskId
+                    scheduledTaskId = scheduledTaskId,
+                    agentId = agentId
                 )
                 withContext(Dispatchers.Main) {
                     result.success((conversation["id"] as? Number)?.toLong())

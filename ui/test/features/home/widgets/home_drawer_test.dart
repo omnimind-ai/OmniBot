@@ -111,7 +111,7 @@ void main() {
     await tester.tap(find.text('开始对话'));
     await tester.pumpAndSettle();
 
-    expect(selectedMode, ConversationMode.normal);
+    expect(selectedMode, ConversationMode.agent);
   });
 
   testWidgets('shows the restored trajectory footer shortcut', (tester) async {
@@ -865,9 +865,16 @@ void main() {
       (widget) => widget is TextField && widget.controller?.text == '主会话',
     );
     expect(titleField, findsOneWidget);
+    final titleEditor = tester.widget<TextField>(titleField);
 
     await tester.enterText(titleField, '主会话改名');
-    await tester.testTextInput.receiveAction(TextInputAction.done);
+    titleEditor.onSubmitted?.call('主会话改名');
+    await tester.pumpAndSettle();
+    await tester.runAsync(() async {
+      for (var attempt = 0; attempt < 20 && renamedTitle == null; attempt++) {
+        await Future<void>.delayed(const Duration(milliseconds: 1));
+      }
+    });
     await tester.pumpAndSettle();
 
     expect(renamedTitle, '主会话改名');
@@ -1002,7 +1009,7 @@ void main() {
     );
     expect(rawState, contains('__home_drawer_scheduled__'));
     expect(rawState, contains('__home_drawer_pinned__'));
-    expect(rawState, contains('__home_drawer_scheduled_normal:1'));
+    expect(rawState, contains('__home_drawer_scheduled_agent:1'));
     expect(rawState, contains(dateKey));
 
     await tester.pumpWidget(const SizedBox.shrink());
@@ -1031,6 +1038,7 @@ void main() {
         'id': 11,
         'title': '修复登录问题',
         'mode': ConversationMode.agent.storageValue,
+        'agentId': 'codex-acp',
         'agentCwd': '/root/blog',
         'summary': null,
         'status': 0,
@@ -1043,6 +1051,7 @@ void main() {
         'id': 12,
         'title': '写周报脚本',
         'mode': ConversationMode.agent.storageValue,
+        'agentId': 'codex-acp',
         'agentCwd': '/root/blog/',
         'summary': null,
         'status': 0,
@@ -1055,6 +1064,7 @@ void main() {
         'id': 13,
         'title': '优化首页响应式',
         'mode': ConversationMode.agent.storageValue,
+        'agentId': 'codex-acp',
         'agentCwd': '/root/CoffeeMux',
         'summary': null,
         'status': 0,
@@ -1067,6 +1077,7 @@ void main() {
         'id': 14,
         'title': 'Agent 会话',
         'mode': ConversationMode.normal.storageValue,
+        'agentId': 'xiaowan-acp',
         'summary': null,
         'status': 0,
         'lastMessage': null,

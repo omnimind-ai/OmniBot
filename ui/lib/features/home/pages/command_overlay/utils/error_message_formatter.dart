@@ -17,12 +17,7 @@ String formatErrorMessageForUser(
 
   if (decoded is Map) {
     final map = decoded.cast<String, dynamic>();
-    message =
-        (map['message'] as String?) ??
-        (map['error'] as String?) ??
-        (map['detail'] as String?) ??
-        (map['text'] as String?) ??
-        (map['msg'] as String?);
+    message = _extractNestedErrorMessage(map);
 
     final dynamic codeValue = map['code'] ?? map['errorCode'];
     if (codeValue is String) code = codeValue;
@@ -41,13 +36,48 @@ String formatErrorMessageForUser(
 
   final prefixParts = <String>[];
   if (statusCode != null && statusCode > 0) prefixParts.add('HTTP $statusCode');
-  if (code != null && code!.trim().isNotEmpty) prefixParts.add(code!.trim());
+  if (code != null && code.trim().isNotEmpty) prefixParts.add(code.trim());
 
   final prefix = prefixParts.isEmpty ? '' : '${prefixParts.join(' / ')}：';
 
   var out = '$prefix$normalized';
   if (out.length > maxLength) out = '${out.substring(0, maxLength)}…';
   return out;
+}
+
+String? _extractNestedErrorMessage(dynamic value, [int depth = 0]) {
+  if (value == null || depth > 5) return null;
+  if (value is String) {
+    final text = value.trim();
+    if (text.isEmpty) return null;
+    if ((text.startsWith('{') && text.endsWith('}')) ||
+        (text.startsWith('[') && text.endsWith(']'))) {
+      final decoded = safeJsonDecodeV2(text, fallback: null);
+      final nested = _extractNestedErrorMessage(decoded, depth + 1);
+      if (nested != null) return nested;
+    }
+    return text;
+  }
+  if (value is Map) {
+    for (final key in const <String>[
+      'message',
+      'detail',
+      'text',
+      'msg',
+      'error',
+    ]) {
+      final nested = _extractNestedErrorMessage(value[key], depth + 1);
+      if (nested != null) return nested;
+    }
+    return null;
+  }
+  if (value is List) {
+    for (final item in value) {
+      final nested = _extractNestedErrorMessage(item, depth + 1);
+      if (nested != null) return nested;
+    }
+  }
+  return null;
 }
 
 String _sanitizeErrorMessage(String s) {
@@ -74,4 +104,3 @@ String _sanitizeErrorMessage(String s) {
   out = out.replaceAll(RegExp(r'\s+'), ' ').trim();
   return out;
 }
-

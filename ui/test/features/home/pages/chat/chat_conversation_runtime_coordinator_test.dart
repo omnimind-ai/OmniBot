@@ -175,7 +175,7 @@ void main() {
   });
 
   test(
-    'persists normal ACP events into the normal conversation history',
+    'persists legacy normal ACP events into canonical agent history',
     () async {
       const conversationId = 2005;
       const turnId = 'turn-xiaowan-normal-history';
@@ -210,7 +210,7 @@ void main() {
       expect(replaceCalls.last.arguments['conversationId'], conversationId);
       expect(
         replaceCalls.last.arguments['mode'],
-        ConversationMode.normal.storageValue,
+        ConversationMode.agent.storageValue,
       );
     },
   );

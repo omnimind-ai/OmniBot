@@ -25,6 +25,10 @@ class ConversationHistoryService {
   static final Map<String, Future<void>> _conversationMessageWriteQueues =
       <String, Future<void>>{};
 
+  static ConversationMode _canonicalConversationMode(ConversationMode mode) {
+    return mode == ConversationMode.normal ? ConversationMode.agent : mode;
+  }
+
   static String _conversationIdKeyForMode(ConversationMode mode) {
     return '$_conversationIdKeyPrefix${mode.storageValue}';
   }
@@ -75,7 +79,7 @@ class ConversationHistoryService {
       try {
         final target = ConversationThreadTarget.fromEncodedJson(raw);
         return target.copyWith(
-          mode: mode,
+          mode: _canonicalConversationMode(mode),
           fromNativeRoute: false,
           clearRequestKey: true,
         );
@@ -89,7 +93,7 @@ class ConversationHistoryService {
     }
     return ConversationThreadTarget.existing(
       conversationId: conversationId,
-      mode: mode,
+      mode: _canonicalConversationMode(mode),
     );
   }
 
@@ -106,7 +110,7 @@ class ConversationHistoryService {
     }
 
     final sanitized = target.copyWith(
-      mode: mode,
+      mode: _canonicalConversationMode(mode),
       fromNativeRoute: false,
       clearRequestKey: true,
     );

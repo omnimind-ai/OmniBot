@@ -91,56 +91,61 @@ void main() {
     );
   });
 
-  test('stores blank current thread targets independently per mode', () async {
-    const normalTarget = ConversationThreadTarget.newConversation(
-      mode: ConversationMode.normal,
-    );
-    const chatOnlyTarget = ConversationThreadTarget.newConversation(
-      mode: ConversationMode.chatOnly,
-    );
-    const openClawTarget = ConversationThreadTarget.existing(
-      conversationId: 22,
-      mode: ConversationMode.openclaw,
-    );
-
-    await ConversationHistoryService.saveCurrentConversationTarget(
-      normalTarget,
-      mode: ConversationMode.normal,
-    );
-    await ConversationHistoryService.saveCurrentConversationTarget(
-      chatOnlyTarget,
-      mode: ConversationMode.chatOnly,
-    );
-    await ConversationHistoryService.saveCurrentConversationTarget(
-      openClawTarget,
-      mode: ConversationMode.openclaw,
-    );
-
-    expect(
-      await ConversationHistoryService.getCurrentConversationTarget(
+  test(
+    'canonicalizes legacy normal thread targets while keeping mode keys',
+    () async {
+      const normalTarget = ConversationThreadTarget.newConversation(
         mode: ConversationMode.normal,
-      ),
-      normalTarget,
-    );
-    expect(
-      await ConversationHistoryService.getCurrentConversationTarget(
+      );
+      const chatOnlyTarget = ConversationThreadTarget.newConversation(
         mode: ConversationMode.chatOnly,
-      ),
-      chatOnlyTarget,
-    );
-    expect(
-      await ConversationHistoryService.getCurrentConversationTarget(
+      );
+      const openClawTarget = ConversationThreadTarget.existing(
+        conversationId: 22,
         mode: ConversationMode.openclaw,
-      ),
-      openClawTarget,
-    );
-    expect(
-      await ConversationHistoryService.getCurrentConversationId(
+      );
+
+      await ConversationHistoryService.saveCurrentConversationTarget(
+        normalTarget,
         mode: ConversationMode.normal,
-      ),
-      isNull,
-    );
-  });
+      );
+      await ConversationHistoryService.saveCurrentConversationTarget(
+        chatOnlyTarget,
+        mode: ConversationMode.chatOnly,
+      );
+      await ConversationHistoryService.saveCurrentConversationTarget(
+        openClawTarget,
+        mode: ConversationMode.openclaw,
+      );
+
+      expect(
+        await ConversationHistoryService.getCurrentConversationTarget(
+          mode: ConversationMode.normal,
+        ),
+        const ConversationThreadTarget.newConversation(
+          mode: ConversationMode.agent,
+        ),
+      );
+      expect(
+        await ConversationHistoryService.getCurrentConversationTarget(
+          mode: ConversationMode.chatOnly,
+        ),
+        chatOnlyTarget,
+      );
+      expect(
+        await ConversationHistoryService.getCurrentConversationTarget(
+          mode: ConversationMode.openclaw,
+        ),
+        openClawTarget,
+      );
+      expect(
+        await ConversationHistoryService.getCurrentConversationId(
+          mode: ConversationMode.normal,
+        ),
+        isNull,
+      );
+    },
+  );
 
   test('round-trips chat_only storage keys through parser', () {
     final parsed = ConversationHistoryService.tryParseConversationMessagesKey(
@@ -226,7 +231,9 @@ void main() {
 
       expect(
         await ConversationHistoryService.getLastVisibleThreadTarget(),
-        target,
+        const ConversationThreadTarget.newConversation(
+          mode: ConversationMode.agent,
+        ),
       );
     },
   );

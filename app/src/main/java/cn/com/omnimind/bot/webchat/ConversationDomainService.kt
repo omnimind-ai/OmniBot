@@ -12,6 +12,32 @@ import cn.com.omnimind.bot.agent.runtime.AcpAgentProfileStore
 
 private const val WEB_CONVERSATION_TITLE_LIMIT = 20
 
+/**
+ * Resolves the immutable Harness owner of one durable conversation.
+ *
+ * The conversation binding is authoritative. A session binding can recover
+ * older ACP conversations that predate it, while the original storage mode is
+ * the final migration signal. A canonical Agent row without either binding
+ * must resolve deterministically to the default Harness; otherwise whichever
+ * Harness happens to be selected in the UI can steal the conversation.
+ */
+internal fun resolveConversationHarnessOwner(
+    storedMode: String?,
+    sessionAgentId: String?,
+    conversationAgentId: String?,
+): String? {
+    val conversationOwner = conversationAgentId?.trim()?.takeIf { it.isNotEmpty() }
+    if (conversationOwner != null) return conversationOwner
+    val sessionOwner = sessionAgentId?.trim()?.takeIf { it.isNotEmpty() }
+    if (sessionOwner != null) return sessionOwner
+    return when (storedMode?.trim()?.lowercase()) {
+        "", "agent", "normal", "acp", "coding" ->
+            AcpAgentProfileStore.DEFAULT_AGENT_ID
+        "codex" -> AcpAgentProfileStore.CODEX_AGENT_ID
+        else -> null
+    }
+}
+
 internal fun deriveWebConversationTitle(firstUserMessage: String?): String? {
     val normalized = AgentTextSanitizer.sanitizeUtf16(firstUserMessage.orEmpty()).trim()
     if (normalized.isEmpty()) return null
@@ -81,10 +107,14 @@ class ConversationDomainService(
         return conversations.map { conversation ->
             val agentBinding = agentBindingByConversationId[conversation.id]
             val agentId = if (isAgentMode(conversation.mode)) {
-                agentBinding?.let { binding ->
-                    acpAgentProfileStore.agentIdForSession(binding.threadId)
-                        ?: AcpAgentProfileStore.DEFAULT_AGENT_ID
-                } ?: acpAgentProfileStore.agentIdForConversation(conversation.id)
+                resolveConversationHarnessOwner(
+                    storedMode = conversation.mode,
+                    sessionAgentId = agentBinding?.let { binding ->
+                        acpAgentProfileStore.agentIdForSession(binding.threadId)
+                    },
+                    conversationAgentId = acpAgentProfileStore
+                        .agentIdForConversation(conversation.id),
+                )
             } else {
                 null
             }
@@ -115,10 +145,14 @@ class ConversationDomainService(
             null
         }
         val agentId = if (isAgentMode(conversation.mode)) {
-            agentBinding?.let { binding ->
-                acpAgentProfileStore.agentIdForSession(binding.threadId)
-                    ?: AcpAgentProfileStore.DEFAULT_AGENT_ID
-            } ?: acpAgentProfileStore.agentIdForConversation(conversation.id)
+            resolveConversationHarnessOwner(
+                storedMode = conversation.mode,
+                sessionAgentId = agentBinding?.let { binding ->
+                    acpAgentProfileStore.agentIdForSession(binding.threadId)
+                },
+                conversationAgentId = acpAgentProfileStore
+                    .agentIdForConversation(conversation.id),
+            )
         } else {
             null
         }
@@ -482,7 +516,12 @@ class ConversationDomainService(
         val normalizedMode = normalizeConversationMode(conversation.mode)
         val resolvedAgentId = agentId
             ?: if (normalizedMode == AGENT_MODE_STORAGE_VALUE) {
-                acpAgentProfileStore.agentIdForConversation(conversation.id)
+                resolveConversationHarnessOwner(
+                    storedMode = conversation.mode,
+                    sessionAgentId = null,
+                    conversationAgentId = acpAgentProfileStore
+                        .agentIdForConversation(conversation.id),
+                )
             } else {
                 null
             }

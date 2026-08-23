@@ -5,6 +5,51 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class WebConversationCreationTest {
+
+    @Test
+    fun `conversation harness ownership prefers durable conversation binding`() {
+        assertEquals(
+            "deepseek-harness-acp",
+            resolveConversationHarnessOwner(
+                storedMode = "agent",
+                sessionAgentId = "xiaowan-acp",
+                conversationAgentId = "deepseek-harness-acp",
+            ),
+        )
+    }
+
+    @Test
+    fun `legacy conversation modes recover their original harness`() {
+        assertEquals(
+            "xiaowan-acp",
+            resolveConversationHarnessOwner(
+                storedMode = "normal",
+                sessionAgentId = null,
+                conversationAgentId = null,
+            ),
+        )
+        assertEquals(
+            "codex-acp",
+            resolveConversationHarnessOwner(
+                storedMode = "codex",
+                sessionAgentId = null,
+                conversationAgentId = null,
+            ),
+        )
+    }
+
+    @Test
+    fun `unbound canonical agent conversation cannot inherit selected harness`() {
+        assertEquals(
+            "xiaowan-acp",
+            resolveConversationHarnessOwner(
+                storedMode = "agent",
+                sessionAgentId = null,
+                conversationAgentId = null,
+            ),
+        )
+    }
+
     @Test
     fun `stored conversation mode wins over a stale Agent request fallback`() {
         assertEquals(

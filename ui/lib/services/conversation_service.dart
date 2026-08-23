@@ -144,6 +144,7 @@ class ConversationService {
     required String title,
     String? summary,
     ConversationMode mode = ConversationMode.agent,
+    String? agentId,
     int? parentConversationId,
     ConversationMode? parentConversationMode,
     String? scheduledTaskId,
@@ -155,6 +156,8 @@ class ConversationService {
             'title': title,
             'summary': summary,
             'mode': mode.storageValue,
+            if (agentId != null && agentId.trim().isNotEmpty)
+              'agentId': agentId.trim(),
             if (parentConversationId != null && parentConversationId > 0)
               'parentConversationId': parentConversationId,
             if (parentConversationMode != null)
@@ -451,16 +454,20 @@ class ConversationService {
     required String newTitle,
     ConversationMode mode = ConversationMode.agent,
   }) async {
+    var acpSessionRenamed = false;
     if (mode == ConversationMode.agent) {
       try {
         await AgentRuntimeService.setSessionName(
           conversationId: conversationId,
           name: newTitle,
         );
-        return true;
+        acpSessionRenamed = true;
       } catch (e) {
-        debugPrint('更新 Agent 对话标题失败: $e');
-        return false;
+        // Pre-ACP Xiaowan conversations can have durable history without an
+        // ACP session binding. Rename the durable Conversation row below so
+        // those conversations remain fully manageable; a future session/load
+        // can materialize their ACP session on demand.
+        debugPrint('更新 ACP 会话标题失败，回退对话标题: $e');
       }
     }
     try {
@@ -470,13 +477,13 @@ class ConversationService {
             'newTitle': newTitle,
             'mode': mode.storageValue,
           });
-      return result == 'SUCCESS';
+      return result == 'SUCCESS' || acpSessionRenamed;
     } on PlatformException catch (e) {
       debugPrint('更新对话标题失败: ${e.message}');
-      return false;
+      return acpSessionRenamed;
     } catch (e) {
       debugPrint('更新对话标题失败: $e');
-      return false;
+      return acpSessionRenamed;
     }
   }
 

@@ -662,8 +662,9 @@ class _ChatAppBarModeShortcutButtonState
                   tooltip: agent.name,
                   selected: agent.id == widget.activeAcpAgentId,
                   enabled:
+                      !isAgentLoading &&
                       (widget.onAcpAgentTap != null ||
-                      widget.onAgentTap != null),
+                          widget.onAgentTap != null),
                   iconSize: _chatAppBarModeMenuAgentIconSize(agent.id),
                 ),
               _ChatAppBarModeShortcutMenuItemData(
@@ -886,20 +887,24 @@ class _ChatAppBarModeShortcutMenuContent extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 6),
-            Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                for (final item in items)
-                  _ChatAppBarModeShortcutMenuRow(
-                    key: ValueKey(
-                      'chat-app-bar-mode-menu-${_chatModeShortcutActionSlug(item.action)}',
-                    ),
-                    item: item,
-                    selectedColor: selectedColor,
-                    iconTint: iconTint,
-                    disabledTint: disabledTint,
-                  ),
-              ],
+            Flexible(
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (final item in items)
+                      _ChatAppBarModeShortcutMenuRow(
+                        key: ValueKey(
+                          'chat-app-bar-mode-menu-${_chatModeShortcutActionSlug(item.action)}',
+                        ),
+                        item: item,
+                        selectedColor: selectedColor,
+                        iconTint: iconTint,
+                        disabledTint: disabledTint,
+                      ),
+                  ],
+                ),
+              ),
             ),
             const SizedBox(height: 6),
           ],
@@ -912,24 +917,7 @@ class _ChatAppBarModeShortcutMenuContent extends StatelessWidget {
         constraints: BoxConstraints(
           maxHeight: maxHeight.clamp(120.0, 720.0).toDouble(),
         ),
-        child: Stack(
-          clipBehavior: Clip.none,
-          children: [
-            panel,
-            if (items.isNotEmpty)
-              Positioned(
-                top: _kChatAppBarAccessoryButtonSize + 6,
-                left: 0,
-                right: 0,
-                height: _kChatAppBarAccessoryButtonSize,
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () => Navigator.of(context).pop(items.first.action),
-                  child: const SizedBox.expand(),
-                ),
-              ),
-          ],
-        ),
+        child: panel,
       ),
     );
   }

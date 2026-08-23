@@ -606,6 +606,39 @@ void main() {
     });
   });
 
+  test('Agent switch rejects a stale or unconfigured Provider binding', () {
+    const selection = <String, String>{
+      'providerProfileId': 'deleted-provider',
+      'modelId': 'GLM-5.1',
+    };
+
+    expect(
+      isSharedAgentProviderSelectionReady(
+        selection: selection,
+        configuredProviderIds: const <String>{'active-provider'},
+      ),
+      isFalse,
+    );
+    expect(
+      isSharedAgentProviderSelectionReady(
+        selection: selection,
+        configuredProviderIds: const <String>{'deleted-provider'},
+      ),
+      isTrue,
+    );
+  });
+
+  test('namespace tool incompatibility has an actionable error', () {
+    final message = formatAgentRuntimeErrorForUser(
+      '{"error":{"message":"tools[8].type: unknown variant namespace, '
+      'expected one of function, web_search_preview, code_interpreter, mcp"}}',
+    );
+
+    expect(message, contains('Responses Provider'));
+    expect(message, contains('MCP'));
+    expect(message, isNot(contains('{"error"')));
+  });
+
   test('local Agent requests do not read a separate Codex API model', () {
     final model = selectAgentRequestModel(
       status: const AgentRuntimeStatus(
