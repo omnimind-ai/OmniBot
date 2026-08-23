@@ -18,7 +18,9 @@ internal data class AgentProviderCredentials(
     val apiKey: String,
     val wireApi: String = "chat_completions",
     val customHeaders: Map<String, String> = emptyMap(),
-    val protocolType: String = "openai_compatible"
+    val protocolType: String = "openai_compatible",
+    /** First-party Responses endpoints understand Codex's namespace tools. */
+    val supportsNamespaceTools: Boolean = false,
 )
 
 internal data class AgentProviderMappingInput(

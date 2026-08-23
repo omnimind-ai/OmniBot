@@ -44,6 +44,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
 
   Future<List<String>> _loadSharedProviderModelIds() async {
     var selection = _activeDispatchSceneSelection;
+    var profilesPayload = await ModelProviderConfigService.listProfiles();
     if (selection == null) {
       try {
         final bindings = await SceneModelConfigService.getSceneModelBindings();
@@ -58,15 +59,28 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         }
       } catch (_) {}
     }
-    final resolvedSelection = selection;
-    if (resolvedSelection == null) return const <String>[];
-    var profile = _modelProviderProfiles
-        .where((item) => item.id == resolvedSelection.providerProfileId)
-        .firstOrNull;
+    var resolvedSelection = selection;
+    var profile = resolvedSelection == null
+        ? null
+        : _modelProviderProfiles
+              .where((item) => item.id == resolvedSelection!.providerProfileId)
+              .firstOrNull;
+    profile ??= resolvedSelection == null
+        ? null
+        : profilesPayload.profiles
+              .where((item) => item.id == resolvedSelection!.providerProfileId)
+              .firstOrNull;
     if (profile == null) {
-      final payload = await ModelProviderConfigService.listProfiles();
-      profile = payload.profiles
-          .where((item) => item.id == resolvedSelection.providerProfileId)
+      // Older builds let normal-chat model selection live only in Flutter
+      // state. Agent/Harness startup now has one durable binding, so migrate
+      // that state on first Agent entry: use the configured editing Provider
+      // and its first verified/cached model, then persist the canonical
+      // scene.dispatch.model binding before ACP connect.
+      profile = profilesPayload.profiles
+          .where((item) => item.id == profilesPayload.editingProfileId)
+          .firstOrNull;
+      profile ??= profilesPayload.profiles
+          .where((item) => item.configured)
           .firstOrNull;
     }
     if (profile == null || !profile.configured) {
@@ -92,11 +106,48 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
           enrichMetadata: false,
         );
     providerOptions.addAll(storedOptions);
-    return providerOptions
+    var modelIds = providerOptions
         .map((item) => item.id.trim())
         .where((item) => item.isNotEmpty)
         .toSet()
         .toList(growable: false);
+    if (modelIds.isEmpty) {
+      // A first Agent launch may have no warm cache. Do one explicit catalog
+      // refresh for the migration path; after the binding is persisted normal
+      // Harness switching remains cache/binding-only.
+      try {
+        final fetched = await ModelProviderConfigService.fetchModels(
+          profileId: profile.id,
+          providerName: profile.name,
+          capability: 'text',
+        );
+        modelIds = fetched
+            .map((item) => item.id.trim())
+            .where((item) => item.isNotEmpty)
+            .toSet()
+            .toList(growable: false);
+      } catch (_) {
+        modelIds = const <String>[];
+      }
+    }
+    if (resolvedSelection == null && modelIds.isNotEmpty) {
+      resolvedSelection = _ChatModelOverrideSelection(
+        providerProfileId: profile.id,
+        modelId: modelIds.first,
+      );
+      try {
+        await SceneModelConfigService.saveSceneModelBinding(
+          sceneId: 'scene.dispatch.model',
+          providerProfileId: resolvedSelection.providerProfileId,
+          modelId: resolvedSelection.modelId,
+        );
+        unawaited(_loadNormalChatModelContext());
+      } catch (_) {
+        // The caller still gets the model list; ACP will report the binding
+        // failure only if persistence itself is unavailable.
+      }
+    }
+    return modelIds;
   }
 
   @override
