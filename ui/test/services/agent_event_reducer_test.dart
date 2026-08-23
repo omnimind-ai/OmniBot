@@ -5,6 +5,7 @@ import 'package:ui/features/home/pages/chat/chat_page.dart';
 import 'package:ui/features/home/pages/chat/chat_page_models.dart';
 import 'package:ui/features/home/pages/chat/services/chat_conversation_runtime_coordinator.dart';
 import 'package:ui/models/chat_message_model.dart';
+import 'package:ui/models/conversation_model.dart';
 import 'package:ui/services/agent_event_reducer.dart';
 import 'package:ui/services/agent_identity.dart';
 
@@ -635,6 +636,8 @@ void main() {
                   'taskDescription': '检查 ACP 投影是否完整',
                   'subTasks': ['保留工具结果', '渲染统一卡片'],
                   'preparation': '先确认会话归属',
+                  'taskTitle': '统一展示层检查',
+                  'memoryActions': ['保留旧卡片字段'],
                   'stage': 'planning',
                 },
               },
@@ -647,9 +650,48 @@ void main() {
     final cardData = runtime.messages.single.cardData!;
     expect(cardData['type'], 'deep_thinking');
     expect(cardData['thinkingContent'], contains('检查 ACP 投影是否完整'));
+    expect(cardData['thinkingContent'], contains('统一展示层检查'));
     expect(cardData['thinkingContent'], contains('保留工具结果'));
     expect(cardData['thinkingContent'], contains('先确认会话归属'));
+    expect(cardData['thinkingContent'], contains('保留旧卡片字段'));
+    expect(cardData['taskTitle'], '统一展示层检查');
+    expect(cardData['subTasks'], ['保留工具结果', '渲染统一卡片']);
+    expect(cardData['memoryActions'], ['保留旧卡片字段']);
   });
+
+  test(
+    'projects standard ACP usage updates into conversation context usage',
+    () {
+      runtime.conversation = ConversationModel(
+        id: 42,
+        title: 'ACP usage',
+        status: 0,
+        messageCount: 0,
+        createdAt: 1,
+        updatedAt: 1,
+      );
+
+      final result = reducer.reduce(
+        runtime: runtime,
+        event: {
+          'method': 'session/update',
+          'params': {
+            'sessionId': 'session-usage',
+            'update': {
+              'sessionUpdate': 'usage_update',
+              'used': 12345,
+              'size': 128000,
+            },
+          },
+        },
+      );
+
+      expect(result.handled, isTrue);
+      expect(runtime.conversation?.latestPromptTokens, 12345);
+      expect(runtime.conversation?.promptTokenThreshold, 128000);
+      expect(runtime.conversation?.latestPromptTokensUpdatedAt, greaterThan(0));
+    },
+  );
 
   test('projects ACP retry state into the next shared assistant message', () {
     const base = <String, dynamic>{

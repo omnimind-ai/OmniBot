@@ -52,7 +52,11 @@ class AgentEventReducer {
       final scopedUpdate =
           sessionUpdate != null &&
           sessionUpdate != 'current_mode_update' &&
-          sessionUpdate != 'config_option_update';
+          sessionUpdate != 'config_option_update' &&
+          // ACP usage is session-level state. It can legitimately arrive
+          // after a streamed turn has completed, so it must not be rejected
+          // merely because the notification has no turn id.
+          sessionUpdate != 'usage_update';
       final updateTurnId = _firstString([
         event['turnId'],
         event['turn_id'],
@@ -64,6 +68,20 @@ class AgentEventReducer {
         // local owner from sessionId or messageId: that reattaches late data
         // to the next prompt and recreates the duplicate-conversation bug.
         return AgentReduceResult(handled: true, method: method);
+      }
+      if (sessionUpdate == 'usage_update' && update != null) {
+        _applyAcpUsage(runtime, _acpStandardUsage(update));
+        return AgentReduceResult(
+          handled: true,
+          method: method,
+          threadId: _firstString([
+            event['sessionId'],
+            event['session_id'],
+            params['sessionId'],
+            params['session_id'],
+          ]),
+          turnId: updateTurnId,
+        );
       }
       // A turn-scoped ACP update without a turn id is not attributable. Do
       // not guess from itemId or threadId: doing so is how late tool output
@@ -454,6 +472,7 @@ class AgentEventReducer {
     }
 
     if (_isReasoningMethod(method)) {
+      final presentation = _asStringMap(params['acpPresentation']);
       final text =
           _extractText(params['delta']) ??
           _extractText(params['text']) ??
@@ -468,13 +487,14 @@ class AgentEventReducer {
           runtime,
           parentTaskId: parentTaskId,
           entryId: entryId,
-          presentation: _asStringMap(params['acpPresentation']),
+          presentation: presentation,
         );
         _appendThinking(
           runtime,
           parentTaskId: parentTaskId,
           cardId: entryId,
           delta: text,
+          reasoningCardData: _acpReasoningCardData(presentation),
         );
       } else {
         _applyAcpPresentation(
@@ -483,7 +503,7 @@ class AgentEventReducer {
           entryId:
               _string(params['entryId']) ??
               '${itemId ?? parentTaskId}-agent-thinking',
-          presentation: _asStringMap(params['acpPresentation']),
+          presentation: presentation,
         );
       }
       return AgentReduceResult(
@@ -1259,6 +1279,7 @@ class AgentEventReducer {
     required String parentTaskId,
     required String cardId,
     required String delta,
+    Map<String, dynamic> reasoningCardData = const <String, dynamic>{},
   }) {
     // A single ACP turn may expose several reasoning item ids (for example
     // one before a tool call and one after it). They are protocol items, not
@@ -1305,6 +1326,7 @@ class AgentEventReducer {
       thinkingContent: nextContent,
       isLoading: true,
       stage: ThinkingStage.thinking.value,
+      reasoningCardData: reasoningCardData,
       streamMeta: _streamMeta(
         runtime,
         parentTaskId: parentTaskId,
@@ -1322,6 +1344,7 @@ class AgentEventReducer {
     required String thinkingContent,
     required bool isLoading,
     required int stage,
+    Map<String, dynamic> reasoningCardData = const <String, dynamic>{},
     required Map<String, dynamic> streamMeta,
   }) {
     if (isLoading) {
@@ -1357,6 +1380,8 @@ class AgentEventReducer {
       'startTime': startTime,
       'endTime': endTime,
       'isCollapsible': !isLoading,
+      ..._preservedAcpReasoningCardData(existingCardData),
+      ...reasoningCardData,
     };
     final message = ChatMessageModel(
       id: cardId,
@@ -3678,6 +3703,62 @@ Map<String, dynamic>? _acpPresentationMeta(Map<String, dynamic> update) {
   return _asStringMap(meta?['cn.com.omnimind.agent']);
 }
 
+/// ACP's standard usage update is provider-neutral. Translate it once at the
+/// shared reducer boundary, rather than making every Harness add a private UI
+/// metadata event just to show context consumption.
+Map<String, dynamic> _acpStandardUsage(Map<String, dynamic> update) {
+  return <String, dynamic>{
+    if (update['used'] != null) 'latestPromptTokens': update['used'],
+    if (update['size'] != null) 'promptTokenThreshold': update['size'],
+  };
+}
+
+Map<String, dynamic> _acpReasoningCardData(Map<String, dynamic>? presentation) {
+  final reasoning = _asStringMap(presentation?['reasoning']);
+  if (reasoning == null) return const <String, dynamic>{};
+  final taskTitle = _string(reasoning['taskTitle'] ?? reasoning['task_title']);
+  final preparation = _string(reasoning['preparation']);
+  final subTasks = _acpStringList(
+    reasoning['subTasks'] ?? reasoning['sub_tasks'],
+  );
+  final memoryActions = _acpStringList(
+    reasoning['memoryActions'] ?? reasoning['memory_actions'],
+  );
+  return <String, dynamic>{
+    if (taskTitle != null) 'taskTitle': taskTitle,
+    if (subTasks.isNotEmpty) 'subTasks': subTasks,
+    if (preparation != null) 'preparation': preparation,
+    if (memoryActions.isNotEmpty) 'memoryActions': memoryActions,
+  };
+}
+
+Map<String, dynamic> _preservedAcpReasoningCardData(
+  Map<String, dynamic> cardData,
+) {
+  return <String, dynamic>{
+    if (_string(cardData['taskTitle']) != null)
+      'taskTitle': cardData['taskTitle'],
+    if (cardData['subTasks'] is List) 'subTasks': cardData['subTasks'],
+    if (_string(cardData['preparation']) != null)
+      'preparation': cardData['preparation'],
+    if (cardData['memoryActions'] is List)
+      'memoryActions': cardData['memoryActions'],
+  };
+}
+
+List<String> _acpStringList(Object? value) {
+  if (value is List) {
+    return value
+        .map(_extractText)
+        .whereType<String>()
+        .map((item) => item.trim())
+        .where((item) => item.isNotEmpty)
+        .toList(growable: false);
+  }
+  final text = _extractText(value)?.trim();
+  return text == null || text.isEmpty ? const <String>[] : <String>[text];
+}
+
 String _acpReasoningText(
   Map<String, dynamic> update,
   Map<String, dynamic>? presentation,
@@ -3693,9 +3774,17 @@ String _acpReasoningText(
   final taskDescription = _extractText(
     reasoning['taskDescription'] ?? reasoning['task_description'],
   )?.trim();
+  final taskTitle = _extractText(
+    reasoning['taskTitle'] ?? reasoning['task_title'],
+  )?.trim();
   final preparation = _extractText(reasoning['preparation'])?.trim();
   final subTasks = reasoning['subTasks'] ?? reasoning['sub_tasks'];
+  final memoryActions =
+      reasoning['memoryActions'] ?? reasoning['memory_actions'];
   final lines = <String>[];
+  if (taskTitle != null && taskTitle.isNotEmpty) {
+    lines.add(taskTitle);
+  }
   if (taskDescription != null && taskDescription.isNotEmpty) {
     lines.add(taskDescription);
   }
@@ -3712,6 +3801,10 @@ String _acpReasoningText(
   }
   if (preparation != null && preparation.isNotEmpty) {
     lines.add(preparation);
+  }
+  final memoryItems = _acpStringList(memoryActions);
+  if (memoryItems.isNotEmpty) {
+    lines.add('记忆：${memoryItems.join('、')}');
   }
   return lines.isEmpty ? fallback : lines.join('\n\n');
 }
