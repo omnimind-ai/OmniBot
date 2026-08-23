@@ -285,13 +285,15 @@ internal class AcpAgentProfileStore(context: Context) {
         val normalizedAgentId = agentId.trim()
         if (normalizedAgentId.isEmpty()) return
         val bindings = conversationBindings().toMutableMap()
-        val currentAgentId = bindings[conversationId.toString()]
+        val key = conversationId.toString()
+        val currentAgentId = bindings[key]
             ?.trim()
             ?.takeIf { it.isNotEmpty() }
-        if (currentAgentId != null && currentAgentId != normalizedAgentId) {
-            return
-        }
-        bindings[conversationId.toString()] = normalizedAgentId
+            ?.takeUnless { it in RETIRED_AGENT_IDS }
+        // Existing ownership is immutable. Harness switching creates a new
+        // conversation; only retired aliases may be replaced by migration.
+        if (currentAgentId != null) return
+        bindings[key] = normalizedAgentId
         preferences.edit().putString(KEY_CONVERSATION_BINDINGS, gson.toJson(bindings)).apply()
     }
 

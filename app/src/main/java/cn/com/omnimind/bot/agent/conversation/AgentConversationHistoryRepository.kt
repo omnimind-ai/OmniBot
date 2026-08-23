@@ -56,10 +56,22 @@ class AgentConversationHistoryRepository(
             limit: Int,
             offset: Int
         ): Pair<List<AgentConversationEntry>, Boolean> {
+            // Compatibility buckets are merged before this boundary and are
+            // not guaranteed to arrive in the same order in tests, Room
+            // implementations, or future storage adapters. Pagination must be
+            // based on one deterministic newest-first timeline; otherwise the
+            // first page can expose the oldest message and make later context
+            // appear missing.
+            val ordered = entries
+                .distinctBy { it.entryId }
+                .sortedWith(
+                    compareByDescending<AgentConversationEntry> { it.createdAt }
+                        .thenByDescending { it.id }
+                )
             val safeOffset = offset.coerceAtLeast(0)
-            val remaining = entries.drop(safeOffset)
+            val remaining = ordered.drop(safeOffset)
             val page = if (limit > 0) remaining.take(limit) else remaining
-            return page to (safeOffset + page.size < entries.size)
+            return page to (safeOffset + page.size < ordered.size)
         }
 
     }

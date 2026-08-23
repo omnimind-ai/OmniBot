@@ -231,6 +231,13 @@ class AgentRunAvatar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (AgentBrandIcon.usesFullBleedAvatar(agentId)) {
+      return SizedBox.square(
+        dimension: 30,
+        child: AgentBrandIcon(agentId: agentId, size: 30),
+      );
+    }
+
     final palette = context.omniPalette;
     final backgroundColor = context.isDarkTheme
         ? palette.surfaceSecondary.withValues(alpha: 0.66)

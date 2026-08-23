@@ -86,9 +86,22 @@ internal class AccessibilityAndroidGuiPlatform(
     override suspend fun observe(captureScreenshot: Boolean): AndroidGuiPlatformState = coroutineScope {
         val service = awaitService()
         val display = displaySize()
-        val root = withContext(Dispatchers.Main.immediate) { service.rootInActiveWindow }
-        val windowId = root?.windowId
-        val xmlDeferred = async(Dispatchers.Default) { AndroidGuiXml.serialize(root) }
+        val (roots, windowId) = withContext(Dispatchers.Main.immediate) {
+            val activeRoot = service.rootInActiveWindow
+            val seenWindowIds = mutableSetOf<Int>()
+            val allRoots = buildList {
+                fun addRoot(root: AccessibilityNodeInfo?) {
+                    if (root != null && seenWindowIds.add(root.windowId)) add(root)
+                }
+                addRoot(activeRoot)
+                service.windows.forEach { window -> addRoot(window.root) }
+            }
+            allRoots to activeRoot?.windowId
+        }
+        // Tablet/foldable Settings may expose visible panes as separate
+        // accessibility windows.  The active root contains only one pane;
+        // serialize every visible window into the single observation graph.
+        val xmlDeferred = async(Dispatchers.Default) { AndroidGuiXml.serialize(roots) }
         val screenshotDeferred = if (captureScreenshot) {
             async { captureScreenshot(service, windowId) }
         } else {
