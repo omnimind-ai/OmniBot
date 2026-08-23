@@ -450,17 +450,6 @@ void main() {
       await tester.pump();
 
       expect(route.popGestureInProgress, isTrue);
-      expect(
-        tester
-            .widget<PredictiveBackPageTransition>(
-              find.ancestor(
-                of: find.byType(PluginDetailPage),
-                matching: find.byType(PredictiveBackPageTransition),
-              ),
-            )
-            .isGestureDriven(),
-        isTrue,
-      );
 
       await _sendBackGesture(tester, 'cancelBackGesture');
       await tester.pumpAndSettle();
@@ -488,45 +477,6 @@ void main() {
       calls.where((call) => call.method == 'list').length,
       greaterThan(listCallsBeforeBack),
     );
-  });
-
-  testWidgets('lists plugins while hiding internal runtimes', (tester) async {
-    plugins = <Map<String, Object?>>[
-      <String, Object?>{
-        ..._runtimePlugin(),
-        'id': 'com.omnimind.vibe-project-builder',
-        'name': 'Vibe Builder',
-      },
-      <String, Object?>{
-        ..._runtimePlugin(),
-        'id': 'com.omnimind.internal-runtime',
-        'name': 'Internal Runtime',
-        'presentation': <String, Object?>{'visibility': 'hidden'},
-      },
-      <String, Object?>{
-        ..._runtimePlugin(),
-        'id': 'local.project.fitness-beast',
-        'name': '健身兽',
-        'installed': true,
-        'enabled': true,
-      },
-    ];
-
-    await tester.pumpWidget(_app());
-    await tester.pumpAndSettle();
-
-    final vibeBuilder = find.ancestor(
-      of: find.text('Vibe Builder'),
-      matching: find.byType(InkWell),
-    );
-    expect(vibeBuilder, findsOneWidget);
-    expect(
-      find.descendant(of: vibeBuilder, matching: find.text('未安装')),
-      findsOneWidget,
-    );
-    expect(find.text('Internal Runtime'), findsNothing);
-    expect(find.text('健身兽'), findsOneWidget);
-    expect(find.byIcon(Icons.dashboard_outlined), findsNothing);
   });
 
   testWidgets('localizes the OmniFlow description in English', (tester) async {

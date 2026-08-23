@@ -76,6 +76,7 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
   bool _isLoading = true;
   bool _isRefreshingModels = false;
   Completer<void>? _providerRefreshCompleter;
+  Map<String, Future<void>> _officialCapabilityRefreshes = {};
   int _providerRefreshGeneration = 0;
   bool _isSavingVoiceConfig = false;
 
@@ -231,6 +232,11 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
 
   Future<void> _ensureOfficialCapabilityLoaded(String capability) async {
     if (_isOfficialCapabilityLoaded(capability)) {
+      return;
+    }
+    final capabilityRefresh = _officialCapabilityRefreshes[capability];
+    if (capabilityRefresh != null) {
+      await capabilityRefresh;
       return;
     }
     await _refreshProviderModelsInBackground();
@@ -446,6 +452,17 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
               ),
           },
       };
+      final officialProfiles = snapshots.where(_isOfficialProfile).toList();
+      final capabilityRefreshes = <String, Future<void>>{
+        for (final capability in _requiredOfficialCapabilities)
+          capability: _refreshOfficialCapability(
+            capability: capability,
+            profiles: officialProfiles,
+            refreshGeneration: refreshGeneration,
+            target: nextOfficialModels,
+          ),
+      };
+      _officialCapabilityRefreshes = capabilityRefreshes;
       for (final profile in snapshots) {
         if (!_isProviderRefreshActive(refreshGeneration)) return;
         final isOfficial = _isOfficialProfile(profile);
@@ -453,23 +470,6 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
           continue;
         }
         if (isOfficial) {
-          for (final capability in _requiredOfficialCapabilities) {
-            if (!_isProviderRefreshActive(refreshGeneration)) return;
-            try {
-              final remoteModels = await _fetchModelsForSnapshot(
-                profile,
-                refreshGeneration: refreshGeneration,
-                capability: capability,
-              );
-              if (!_isProviderRefreshActive(refreshGeneration)) return;
-              nextOfficialModels.putIfAbsent(
-                capability,
-                () => <String, List<ProviderModelOption>>{},
-              )[profile.id] = remoteModels;
-            } catch (_) {
-              // Preserve the last capability-specific official list.
-            }
-          }
           continue;
         }
         try {
@@ -491,6 +491,7 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
           // scene settings with dialogs or transient network error toasts.
         }
       }
+      await Future.wait(capabilityRefreshes.values);
 
       if (!_isProviderRefreshActive(refreshGeneration)) return;
       final merged = _mergeBindingModels(
@@ -510,6 +511,7 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
     } finally {
       if (refreshGeneration == _providerRefreshGeneration) {
         _isRefreshingModels = false;
+        _officialCapabilityRefreshes = {};
       }
       if (!refreshCompleter.isCompleted) {
         refreshCompleter.complete();
@@ -518,6 +520,43 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
         _providerRefreshCompleter = null;
       }
     }
+  }
+
+  Future<void> _refreshOfficialCapability({
+    required String capability,
+    required List<ModelProviderProfileSummary> profiles,
+    required int refreshGeneration,
+    required Map<String, Map<String, List<ProviderModelOption>>> target,
+  }) async {
+    final capabilityModels = <String, List<ProviderModelOption>>{
+      for (final entry
+          in (target[capability] ?? const <String, List<ProviderModelOption>>{})
+              .entries)
+        entry.key: List<ProviderModelOption>.from(entry.value),
+    };
+    for (final profile in profiles) {
+      if (!_isProviderRefreshActive(refreshGeneration)) return;
+      try {
+        capabilityModels[profile.id] = await _fetchModelsForSnapshot(
+          profile,
+          refreshGeneration: refreshGeneration,
+          capability: capability,
+        );
+      } catch (_) {
+        // Preserve the last capability-specific official list.
+      }
+    }
+    if (!_isProviderRefreshActive(refreshGeneration)) return;
+    target[capability] = capabilityModels;
+    setState(() {
+      _officialProviderModelsByCapability = {
+        ..._officialProviderModelsByCapability,
+        capability: {
+          for (final entry in capabilityModels.entries)
+            entry.key: List<ProviderModelOption>.from(entry.value),
+        },
+      };
+    });
   }
 
   Future<List<ProviderModelOption>> _fetchModelsForSnapshot(
