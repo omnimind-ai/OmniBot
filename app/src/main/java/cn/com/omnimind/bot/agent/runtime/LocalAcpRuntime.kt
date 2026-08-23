@@ -444,6 +444,11 @@ internal class LocalAcpRuntime(
 
     private suspend fun disconnectLocked() {
         Log.i(TAG, "Disconnecting ACP runtime profile=${activeProfile?.id ?: "none"}")
+        // Session MCP capability belongs to one Harness launch. A custom
+        // Responses-backed Codex launch can disable it, but the next Harness
+        // (including in-process Xiaowan, which has no external preparation
+        // callback) must start from the default enabled capability.
+        sessionMcpEnabled = true
         // Close every in-flight turn before tearing the transport down.
         // Cancelling the prompt jobs first would leave their finally blocks
         // racing a dead connection, and the UI would keep showing those turns

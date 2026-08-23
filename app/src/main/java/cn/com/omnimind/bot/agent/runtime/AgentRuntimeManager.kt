@@ -43,6 +43,29 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
 /**
+ * A durable conversation owns exactly one Harness. A caller may carry a stale
+ * UI selection, but that selection must never rebind an existing conversation
+ * to another ACP process. New conversations have no owner yet, so their
+ * explicit requested Harness becomes the owner.
+ */
+internal fun resolveConversationHarnessId(
+    chatOnly: Boolean,
+    requestedAgentId: String?,
+    conversationAgentId: String?,
+    conversationBindingAgentId: String?,
+    sessionAgentId: String?,
+    selectedAgentId: String,
+): String = if (chatOnly) {
+    AcpAgentProfileStore.XIAOWAN_AGENT_ID
+} else {
+    conversationAgentId?.takeIf(String::isNotBlank)
+        ?: conversationBindingAgentId?.takeIf(String::isNotBlank)
+        ?: requestedAgentId?.takeIf(String::isNotBlank)
+        ?: sessionAgentId?.takeIf(String::isNotBlank)
+        ?: selectedAgentId
+}
+
+/**
  * A scene binding is only valid for the Provider it names. Older builds could
  * The Agent scene binding is the shared Provider/model source for every ACP
  * adapter. The Provider settings page can have a different editing profile;
@@ -352,6 +375,42 @@ class AgentRuntimeManager private constructor(
             promptRequestTurns.clear()
         }
         return status()
+    }
+
+    /**
+     * Provider credentials and the scene model binding are launch inputs for
+     * every shared-provider Harness. Once either changes, the old process and
+     * Xiaowan's in-process session snapshot are stale. Tear down only the
+     * affected local runtime; the next ACP request reconnects from the new
+     * canonical configuration.
+     */
+    suspend fun invalidateSharedProviderRuntime(changedProviderProfileId: String? = null) {
+        sessionMutex.withLock {
+            val activeProfile = acpAgentProfileStore.list()
+                .firstOrNull { it.id == localAcpRuntime.activeAgentId() }
+                ?: return@withLock
+            if (!AcpAgentProfileStore.usesSharedProvider(activeProfile)) {
+                return@withLock
+            }
+            val boundProviderId = SceneModelBindingStore
+                .getBinding("scene.dispatch.model")
+                ?.providerProfileId
+                ?.trim()
+            if (!changedProviderProfileId.isNullOrBlank() &&
+                boundProviderId != changedProviderProfileId.trim()
+            ) {
+                return@withLock
+            }
+            invalidateLocalProbeCache()
+            localAcpRuntime.disconnect()
+            if (activeRuntime == AgentRuntimeKind.LOCAL) {
+                activeRuntime = null
+                activeLocalDistributionId = null
+                clearActiveTurns()
+                pendingTurnThreads.clear()
+                promptRequestTurns.clear()
+            }
+        }
     }
 
     suspend fun handleMethod(method: String, args: Map<String, Any?>): Any? {
@@ -1821,18 +1880,14 @@ class AgentRuntimeManager private constructor(
             acpAgentProfileStore.agentIdForSession(it)
         }
         val selectedAgentId = acpAgentProfileStore.selected().id
-        val targetAgentId = if (chatOnly) {
-            // Pure chat is still ACP, but it is not an Agent/Harness session.
-            // Route it through the built-in ACP provider adapter so the
-            // selected Harness can never leak into the chat-only turn.
-            AcpAgentProfileStore.XIAOWAN_AGENT_ID
-        } else {
-            requestedAgentId
-                ?: conversationAgentId
-                ?: conversationBindingAgentId
-                ?: boundAgentId
-                ?: selectedAgentId
-        }
+        val targetAgentId = resolveConversationHarnessId(
+            chatOnly = chatOnly,
+            requestedAgentId = requestedAgentId,
+            conversationAgentId = conversationAgentId,
+            conversationBindingAgentId = conversationBindingAgentId,
+            sessionAgentId = boundAgentId,
+            selectedAgentId = selectedAgentId,
+        )
         val targetProfile = targetAgentId?.let { agentId ->
             acpAgentProfileStore.list().firstOrNull { it.id == agentId }
                 ?: throw IllegalArgumentException("Unknown ACP agent: $agentId")
@@ -2517,6 +2572,8 @@ class AgentRuntimeManager private constructor(
                 }
             }
         }
+
+        fun getIfInitialized(): AgentRuntimeManager? = INSTANCE
     }
 }
 

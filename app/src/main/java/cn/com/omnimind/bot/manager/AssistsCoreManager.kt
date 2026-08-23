@@ -61,6 +61,7 @@ import cn.com.omnimind.bot.agent.AgentConversationHistorySupport
 import cn.com.omnimind.bot.agent.AgentRuntimeContextRepository
 import cn.com.omnimind.bot.agent.AgentScheduleToolBridge
 import cn.com.omnimind.bot.agent.AgentWorkspaceManager
+import cn.com.omnimind.bot.agent.runtime.AgentRuntimeManager
 import cn.com.omnimind.bot.agent.LiveAgentBrowserSessionManager
 import cn.com.omnimind.bot.agent.SkillIndexEntry
 import cn.com.omnimind.bot.agent.SkillIndexService
@@ -1484,6 +1485,8 @@ class AssistsCoreManager(private val context: Context) {
                     protocolType = protocolType,
                     wireApi = wireApi,
                 )
+                AgentRuntimeManager.getIfInitialized()
+                    ?.invalidateSharedProviderRuntime(saved.id)
                 withContext(Dispatchers.Main) {
                     result.success(saved.toMap())
                 }
@@ -1502,6 +1505,8 @@ class AssistsCoreManager(private val context: Context) {
         workJob.launch {
             try {
                 val profiles = ModelProviderConfigStore.deleteProfile(profileId)
+                AgentRuntimeManager.getIfInitialized()
+                    ?.invalidateSharedProviderRuntime(profileId)
                 withContext(Dispatchers.Main) {
                     result.success(
                         mapOf(
@@ -1567,6 +1572,8 @@ class AssistsCoreManager(private val context: Context) {
                     customHeaders,
                 )
                 val saved = ModelProviderConfigStore.getConfig()
+                AgentRuntimeManager.getIfInitialized()
+                    ?.invalidateSharedProviderRuntime(current.id)
                 withContext(Dispatchers.Main) {
                     result.success(saved.toMap())
                 }
@@ -1582,7 +1589,10 @@ class AssistsCoreManager(private val context: Context) {
     fun clearModelProviderConfig(call: MethodCall, result: MethodChannel.Result) {
         workJob.launch {
             try {
+                val profileId = ModelProviderConfigStore.getEditingProfileId()
                 ModelProviderConfigStore.clearConfig()
+                AgentRuntimeManager.getIfInitialized()
+                    ?.invalidateSharedProviderRuntime(profileId)
                 withContext(Dispatchers.Main) {
                     result.success(ModelProviderConfigStore.getConfig().toMap())
                 }
@@ -1799,6 +1809,10 @@ class AssistsCoreManager(private val context: Context) {
                         SceneOperationConfig(useOfficialService = false)
                     )
                 }
+                if (sceneId == "scene.dispatch.model") {
+                    AgentRuntimeManager.getIfInitialized()
+                        ?.invalidateSharedProviderRuntime()
+                }
                 withContext(Dispatchers.Main) {
                     result.success(SceneModelBindingStore.getBindingEntries().map { it.toMap() })
                 }
@@ -1817,6 +1831,10 @@ class AssistsCoreManager(private val context: Context) {
         workJob.launch {
             try {
                 SceneModelBindingStore.clearBinding(sceneId)
+                if (sceneId == "scene.dispatch.model") {
+                    AgentRuntimeManager.getIfInitialized()
+                        ?.invalidateSharedProviderRuntime()
+                }
                 withContext(Dispatchers.Main) {
                     result.success(SceneModelBindingStore.getBindingEntries().map { it.toMap() })
                 }

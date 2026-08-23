@@ -227,18 +227,6 @@ private class XiaowanAgentSupport(
             existingBinding = SceneModelBindingStore.getBinding("scene.dispatch.model")
         }
         val usableBinding = existingBinding?.takeIf(::hasUsableSharedProviderBinding)
-        cachedModels?.let { cached ->
-            val bindingStillMatches = usableBinding?.providerProfileId
-                ?.trim()
-                ?.equals(cached.providerProfileId, ignoreCase = false) == true &&
-                usableBinding.modelId.trim() == cached.configuredModelId
-            if (bindingStillMatches) {
-                Log.i(TAG, "ACP timing agent=xiaowan stage=model_ready source=connection_cache")
-                return cached
-            }
-            cachedModels = null
-        }
-        val startedAtNanos = System.nanoTime()
         val profileId = usableBinding?.providerProfileId
             ?: ModelProviderConfigStore.getEditingProfileId()
         val profile = profileId.let(ModelProviderConfigStore::getProfile)
@@ -247,6 +235,14 @@ private class XiaowanAgentSupport(
             ?: throw IllegalStateException(
                 "The configured scene Provider is unavailable: $profileId"
             )
+        cachedModels?.let { cached ->
+            if (canReuseXiaowanModels(usableBinding, profile, cached)) {
+                Log.i(TAG, "ACP timing agent=xiaowan stage=model_ready source=connection_cache")
+                return cached
+            }
+            cachedModels = null
+        }
+        val startedAtNanos = System.nanoTime()
         val boundModels = buildXiaowanModelsFromBinding(usableBinding)
         // A valid shared binding is already the user's selected Provider and
         // model. Re-querying /models for every ACP session makes an ordinary
@@ -314,6 +310,22 @@ internal data class XiaowanModels(
     val providerProfileId: String,
     val providerProfile: ModelProviderProfile,
 )
+
+/**
+ * Xiaowan sessions own an immutable Provider snapshot. Reuse is safe only
+ * while both the scene binding and the complete Provider profile still match;
+ * comparing only Provider/model ids kept old API keys and base URLs alive
+ * after a profile was edited in Settings.
+ */
+internal fun canReuseXiaowanModels(
+    binding: SceneModelBindingEntry?,
+    profile: ModelProviderProfile,
+    cached: XiaowanModels,
+): Boolean {
+    return binding?.providerProfileId?.trim() == cached.providerProfileId &&
+        binding.modelId.trim() == cached.configuredModelId &&
+        profile.toSessionSnapshot() == cached.providerProfile
+}
 
 internal fun buildXiaowanModelsFromBinding(
     binding: SceneModelBindingEntry?,

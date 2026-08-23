@@ -32,7 +32,10 @@ class AgentBrandIcon extends StatelessWidget {
   final Color? tint;
 
   static const Map<String, _AgentBrand> _brands = {
-    'xiaowan-acp': _AgentBrand('assets/home/avatar.svg'),
+    'xiaowan-acp': _AgentBrand(
+      'assets/home/avatar.svg',
+      presentation: _AgentBrandPresentation.avatar,
+    ),
     'codex-acp': _AgentBrand('assets/agents/codex.svg'),
     'codex-remote': _AgentBrand('assets/agents/codex.svg'),
     'claude-code-acp': _AgentBrand(
@@ -46,14 +49,24 @@ class AgentBrandIcon extends StatelessWidget {
     ),
   };
 
+  /// Whether [agentId] is represented by a complete avatar image rather than
+  /// a glyph that needs a host-provided background.
+  ///
+  /// Presentation metadata lives here so chat surfaces do not accumulate
+  /// Harness-name conditionals of their own.
+  static bool usesFullBleedAvatar(String agentId) {
+    return _brands[agentId.trim()]?.presentation ==
+        _AgentBrandPresentation.avatar;
+  }
+
   @override
   Widget build(BuildContext context) {
     final palette = context.omniPalette;
     final normalizedAgentId = agentId.trim();
-    if (normalizedAgentId == 'xiaowan-acp') {
+    final brand = _brands[normalizedAgentId];
+    if (brand?.presentation == _AgentBrandPresentation.avatar) {
       return _XiaowanAgentAvatar(size: size);
     }
-    final brand = _brands[normalizedAgentId];
     if (brand == null) {
       return Icon(
         Icons.smart_toy_outlined,
@@ -108,10 +121,17 @@ class _XiaowanAgentAvatarState extends State<_XiaowanAgentAvatar> {
 }
 
 class _AgentBrand {
-  const _AgentBrand(this.asset, {this.brandColor});
+  const _AgentBrand(
+    this.asset, {
+    this.brandColor,
+    this.presentation = _AgentBrandPresentation.glyph,
+  });
 
   final String asset;
+  final _AgentBrandPresentation presentation;
 
   /// 固定品牌色（如 Claude 的珊瑚橘）；为 null 时跟随主题文字色。
   final Color? brandColor;
 }
+
+enum _AgentBrandPresentation { glyph, avatar }

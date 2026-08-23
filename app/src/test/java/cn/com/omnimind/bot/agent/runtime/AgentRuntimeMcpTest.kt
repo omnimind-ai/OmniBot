@@ -114,4 +114,43 @@ class AgentRuntimeMcpTest {
         )
     }
 
+    @Test
+    fun conversationHarnessOwnerWinsOverAConflictingRequestedHarness() {
+        assertEquals(
+            "codex-acp",
+            resolveConversationHarnessId(
+                chatOnly = false,
+                requestedAgentId = "deepseek-harness",
+                conversationAgentId = "codex-acp",
+                conversationBindingAgentId = null,
+                sessionAgentId = null,
+                selectedAgentId = "xiaowan",
+            ),
+        )
+        assertEquals(
+            "deepseek-harness",
+            resolveConversationHarnessId(
+                chatOnly = false,
+                requestedAgentId = "deepseek-harness",
+                conversationAgentId = null,
+                conversationBindingAgentId = null,
+                // A new conversation may briefly carry the previous page's
+                // session id. The explicit new Harness must win over it.
+                sessionAgentId = "codex-acp",
+                selectedAgentId = "xiaowan",
+            ),
+        )
+        assertEquals(
+            AcpAgentProfileStore.XIAOWAN_AGENT_ID,
+            resolveConversationHarnessId(
+                chatOnly = true,
+                requestedAgentId = "deepseek-harness",
+                conversationAgentId = "codex-acp",
+                conversationBindingAgentId = null,
+                sessionAgentId = null,
+                selectedAgentId = "deepseek-harness",
+            ),
+        )
+    }
+
 }
