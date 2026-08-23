@@ -195,9 +195,10 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   Future<void>? _conversationBootstrapFuture;
   // A send can be triggered by both the keyboard submit callback and the
   // composer button before the asynchronous conversation bootstrap returns.
-  // Keep this synchronous entry guard separate from isAiResponding: the
-  // latter is set only after the optimistic user message is inserted.
-  bool _sendMessageInFlight = false;
+  // Guard each visible conversation target independently: a prompt remains
+  // in flight until its ACP turn completes, but that must not block sending
+  // from another conversation that the user opens in the meantime.
+  final Set<int> _sendMessageInFlightTargetIds = <int>{};
   final Set<String> _consumedInitialMessageRequests = <String>{};
 
   // OpenClaw 配置与开关

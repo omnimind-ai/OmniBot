@@ -108,6 +108,34 @@ private class AcpTurnTiming {
     }
 }
 
+/**
+ * Serializes only the short reservation phase of an ACP turn.
+ *
+ * The returned operation is deliberately invoked after releasing [mutex]. A
+ * prompt can run for minutes, and holding the reservation lock while awaiting
+ * it would make otherwise independent ACP sessions execute one after another.
+ */
+internal class AcpTurnStartCoordinator {
+    private val mutex = Mutex()
+
+    suspend fun <T> run(
+        reserve: suspend () -> (suspend () -> T),
+    ): T {
+        val execute = mutex.withLock { reserve() }
+        return execute()
+    }
+}
+
+internal fun shouldPrepareManagedAgentWithoutSwitchingRuntime(
+    managedAdapter: Boolean,
+    runtimeConnected: Boolean,
+    activeAgentId: String?,
+    requestedAgentId: String,
+): Boolean = managedAdapter &&
+    runtimeConnected &&
+    !activeAgentId.isNullOrBlank() &&
+    activeAgentId != requestedAgentId
+
 internal class LocalAcpRuntime(
     context: Context,
     private val scope: CoroutineScope,
@@ -132,7 +160,7 @@ internal class LocalAcpRuntime(
     // section. A transport retry can arrive before the first start call has
     // populated promptRequestTurns; without this, the retry is misclassified
     // as a second active turn.
-    private val turnStartMutex = Mutex()
+    private val turnStartCoordinator = AcpTurnStartCoordinator()
     private val workspaceManager = AgentWorkspaceManager(appContext)
     private val sessions = ConcurrentHashMap<String, ClientSession>()
     private val sessionCwds = ConcurrentHashMap<String, String>()
@@ -897,9 +925,12 @@ internal class LocalAcpRuntime(
             ?: profileStore.selected()
         val wasSelected = profileStore.selected()
         val wasConnected = isConnected
+        val managedAdapter = AcpAgentProfileStore
+            .officialRuntime(profile)
+            ?.managedAdapterPackage != null
         // Explicit preparation is the only path allowed to reset the managed
         // Harness health and enter connect(), which may install dependencies.
-        if (AcpAgentProfileStore.officialRuntime(profile)?.managedAdapterPackage != null) {
+        if (managedAdapter) {
             profileStore.saveHealth(
                 profile.id,
                 profileStore.health(profile.id).copy(
@@ -907,6 +938,46 @@ internal class LocalAcpRuntime(
                     error = null
                 )
             )
+        }
+        if (shouldPrepareManagedAgentWithoutSwitchingRuntime(
+                managedAdapter = managedAdapter,
+                runtimeConnected = wasConnected,
+                activeAgentId = activeProfile?.id,
+                requestedAgentId = profile.id,
+            )
+        ) {
+            // Installing another official Harness must not tear down the
+            // connection currently serving chat turns. Prepare its managed
+            // command in place; the normal agent/select path performs the ACP
+            // handshake when the user actually switches to that Harness.
+            return runCatching {
+                prepareLaunchEnvironment(profile)
+                requireLaunchCommand(profile)
+                val health = AcpAgentHealth(
+                    status = AcpAgentHealth.STATUS_UNCHECKED,
+                    installed = true,
+                    checkedAt = System.currentTimeMillis(),
+                )
+                profileStore.saveHealth(profile.id, health)
+                linkedMapOf(
+                    "ok" to true,
+                    "agent" to profile.toPayload(
+                        selected = profile.id == wasSelected.id,
+                        health = health,
+                    ),
+                    "status" to health.status,
+                    "capabilities" to emptyMap<String, Any?>(),
+                )
+            }.getOrElse { error ->
+                val health = failedAgentHealth(error)
+                profileStore.saveHealth(profile.id, health)
+                linkedMapOf(
+                    "ok" to false,
+                    "agent" to profile.toPayload(false, health),
+                    "status" to health.status,
+                    "error" to (error.message ?: error.javaClass.simpleName),
+                )
+            }
         }
         return runCatching {
             connect(profile = profile)
@@ -1545,23 +1616,27 @@ internal class LocalAcpRuntime(
     }
 
     private suspend fun startTurn(args: Map<String, Any?>): Map<String, Any?> =
-        turnStartMutex.withLock {
-            startTurnLocked(args)
+        turnStartCoordinator.run {
+            prepareTurn(args)
         }
 
-    private suspend fun startTurnLocked(args: Map<String, Any?>): Map<String, Any?> {
+    private suspend fun prepareTurn(
+        args: Map<String, Any?>,
+    ): suspend () -> Map<String, Any?> {
         val session = ensureSessionForTurn(args)
         val threadId = session.sessionId.value
         val requestId = args.stringValue("requestId")?.takeIf { it.isNotBlank() }
         val requestKey = requestId?.let { "$threadId|$it" }
         requestKey?.let { key ->
             promptRequestTurns[key]?.let { existingTurnId ->
-                return linkedMapOf(
-                    "threadId" to threadId,
-                    "turnId" to existingTurnId,
-                    "conversationId" to bindingRepository
-                        .getBindingByThreadId(threadId)?.conversationId
-                )
+                return {
+                    linkedMapOf(
+                        "threadId" to threadId,
+                        "turnId" to existingTurnId,
+                        "conversationId" to bindingRepository
+                            .getBindingByThreadId(threadId)?.conversationId
+                    )
+                }
             }
         }
         val turnId = UUID.randomUUID().toString()
@@ -1569,12 +1644,14 @@ internal class LocalAcpRuntime(
         if (existingTurnId != null) {
             val sameRequestTurn = requestKey?.let(promptRequestTurns::get)
             if (sameRequestTurn != null) {
-                return linkedMapOf(
-                    "threadId" to threadId,
-                    "turnId" to sameRequestTurn,
-                    "conversationId" to bindingRepository
-                        .getBindingByThreadId(threadId)?.conversationId
-                )
+                return {
+                    linkedMapOf(
+                        "threadId" to threadId,
+                        "turnId" to sameRequestTurn,
+                        "conversationId" to bindingRepository
+                            .getBindingByThreadId(threadId)?.conversationId
+                    )
+                }
             }
             throw IllegalStateException("ACP session $threadId already has an active turn.")
         }
@@ -1668,14 +1745,12 @@ internal class LocalAcpRuntime(
             }
         }
         promptJobs[threadId] = job
-        var exitWatcher: Job? = null
-
         // A process exit is not guaranteed to close an in-flight ACP prompt
         // flow.  StdioTransport may remain suspended on the input channel even
         // after the child has gone away, so observing the connection only while
         // initializing is insufficient.  Keep the process lifecycle and the
         // host turn lifecycle joined for every prompt.
-        exitWatcher = scope.launch(start = CoroutineStart.LAZY) {
+        val exitWatcher = scope.launch(start = CoroutineStart.LAZY) {
             val exitCode = activeConnection.exitSignal.await()
             if (
                 activeTurnIds[threadId] != turnId ||
@@ -1713,17 +1788,20 @@ internal class LocalAcpRuntime(
         }
 
         job.invokeOnCompletion {
-            exitWatcher?.cancel()
+            exitWatcher.cancel()
         }
-        exitWatcher?.start()
-        job.start()
-        job.join()
-        exitWatcher?.cancelAndJoin()
-        return linkedMapOf<String, Any?>(
-            "threadId" to threadId,
-            "turnId" to turnId,
-            "conversationId" to bindingRepository.getBindingByThreadId(threadId)?.conversationId
-        ).apply { putAll(completion.await()) }.filterValues { it != null }
+        return {
+            exitWatcher.start()
+            job.start()
+            job.join()
+            exitWatcher.cancelAndJoin()
+            linkedMapOf<String, Any?>(
+                "threadId" to threadId,
+                "turnId" to turnId,
+                "conversationId" to bindingRepository
+                    .getBindingByThreadId(threadId)?.conversationId
+            ).apply { putAll(completion.await()) }.filterValues { it != null }
+        }
     }
 
     /**

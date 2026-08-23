@@ -455,8 +455,10 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
   }) async {
     // Set this before the first await. Two UI submit paths can otherwise both
     // pass the isAiResponding check while bootstrap/model loading is pending.
-    if (_sendMessageInFlight) return;
-    _sendMessageInFlight = true;
+    // The target request id changes whenever the page moves to another
+    // conversation, allowing independent ACP sessions to send concurrently.
+    final sendTargetId = _conversationTargetRequestId;
+    if (!_sendMessageInFlightTargetIds.add(sendTargetId)) return;
     try {
       // The chat surface is rendered before the asynchronous conversation
       // bootstrap finishes. Wait for it before inserting the optimistic user
@@ -492,7 +494,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
         runSlashCommand: true,
       );
     } finally {
-      _sendMessageInFlight = false;
+      _sendMessageInFlightTargetIds.remove(sendTargetId);
     }
   }
 
