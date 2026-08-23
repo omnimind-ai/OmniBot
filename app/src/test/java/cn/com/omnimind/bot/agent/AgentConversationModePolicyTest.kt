@@ -13,6 +13,11 @@ import org.junit.Test
 class AgentConversationModePolicyTest {
 
     @Test
+    fun sharedAgentRuntimeUsesCanonicalAgentStorageMode() {
+        assertEquals("agent", AgentConversationModePolicy.AGENT_MODE)
+    }
+
+    @Test
     fun normalConversationAlwaysUsesXiaowanAndRejectsHarnessSwitch() {
         val resolution = AgentConversationModePolicy.resolveHarness(
             conversationMode = AgentConversationModePolicy.NORMAL_MODE,

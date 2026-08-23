@@ -147,7 +147,7 @@ void main() {
     },
   );
 
-  test('normal remains the default conversation storage', () async {
+  test('legacy normal target restores as Agent while retaining its mode key', () async {
     const normalTarget = ConversationThreadTarget.existing(
       conversationId: 31,
       mode: ConversationMode.normal,
@@ -164,7 +164,7 @@ void main() {
         );
 
     expect(restored?.conversationId, 31);
-    expect(restored?.mode, ConversationMode.normal);
+    expect(restored?.mode, ConversationMode.agent);
     expect(
       ConversationHistoryService.conversationMessagesKey(
         31,
