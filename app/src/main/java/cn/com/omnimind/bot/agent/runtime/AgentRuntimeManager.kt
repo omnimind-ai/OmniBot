@@ -113,6 +113,7 @@ class AgentRuntimeManager private constructor(
         bindingRepository = bindingRepository,
         profileStore = acpAgentProfileStore,
         prepareLaunchEnvironment = ::prepareLocalAcpLaunch,
+        ensureSharedProviderBinding = { ensureSharedAgentProviderBinding() },
         buildHandoffContext = ::buildLocalAcpHandoffContext,
         scheduleToolBridge = xiaowanScheduleToolBridge,
         onMessage = ::handleServerMessage
@@ -1481,6 +1482,10 @@ class AgentRuntimeManager private constructor(
     private suspend fun ensureSharedAgentProviderBinding(): SceneModelBindingEntry? {
         val current = SceneModelBindingStore.getBinding("scene.dispatch.model")
             ?.takeIf { it.providerProfileId.isNotBlank() && it.modelId.isNotBlank() }
+            ?.takeIf { binding ->
+                ModelProviderConfigStore.getProfile(binding.providerProfileId)
+                    ?.let { it.baseUrl.isNotBlank() && it.apiKey.isNotBlank() } == true
+            }
         if (current != null) return current
 
         val editingProfile = runCatching {

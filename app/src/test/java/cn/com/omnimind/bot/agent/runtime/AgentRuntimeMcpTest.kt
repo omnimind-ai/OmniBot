@@ -1,6 +1,9 @@
 package cn.com.omnimind.bot.agent.runtime
 
 import cn.com.omnimind.baselib.llm.OpenAiWireApi
+import cn.com.omnimind.baselib.llm.ModelProviderProfile
+import cn.com.omnimind.baselib.llm.ProviderModelOption
+import cn.com.omnimind.baselib.llm.SceneModelBindingEntry
 import cn.com.omnimind.bot.mcp.McpServerState
 import com.agentclientprotocol.model.McpServer
 import org.junit.Assert.assertEquals
@@ -83,6 +86,31 @@ class AgentRuntimeMcpTest {
             AcpHarnessAdapters.codex.supportsSessionMcp(
                 provider.copy(supportsNamespaceTools = true),
             ),
+        )
+    }
+
+    @Test
+    fun missingSharedBindingCanBeMigratedFromEditingProviderModel() {
+        val migrated = resolveSharedAgentProviderBinding(
+            currentBinding = null,
+            editingProfile = ModelProviderProfile(
+                id = "deepseek-v4",
+                name = "DeepSeek V4",
+                baseUrl = "https://gateway.example/v1",
+                apiKey = "test-key",
+            ),
+            availableModels = listOf(
+                ProviderModelOption(id = "deepseek-v4"),
+            ),
+        )
+
+        assertEquals(
+            SceneModelBindingEntry(
+                sceneId = "scene.dispatch.model",
+                providerProfileId = "deepseek-v4",
+                modelId = "deepseek-v4",
+            ),
+            migrated,
         )
     }
 
