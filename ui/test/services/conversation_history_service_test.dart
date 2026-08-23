@@ -450,8 +450,16 @@ void main() {
       );
 
       expect(restored.single.text, 'legacy normal thread');
-      expect(nativeMessages['normal:3']?.single['id'], restored.single.id);
-      expect(prefs.getString('conversation_messages_normal_3'), isNull);
+      expect(nativeMessages['agent:3']?.single['id'], restored.single.id);
+      expect(
+        prefs.getString(
+          ConversationHistoryService.conversationMessagesKey(
+            3,
+            mode: ConversationMode.normal,
+          ),
+        ),
+        isNull,
+      );
     },
   );
 
@@ -471,7 +479,7 @@ void main() {
     );
 
     expect(restored.single.text, 'legacy before modes');
-    expect(nativeMessages['normal:4'], hasLength(1));
+    expect(nativeMessages['agent:4'], hasLength(1));
     expect(prefs.getString('conversation_messages_4'), isNull);
   });
 
@@ -508,7 +516,7 @@ void main() {
 
   test('merges partial native history with richer legacy snapshot', () async {
     final prefs = await SharedPreferences.getInstance();
-    nativeMessages['normal:6'] = <Map<String, dynamic>>[
+    nativeMessages['agent:6'] = <Map<String, dynamic>>[
       ChatMessageModel.userMessage(
         'new native message',
         id: 'native-new',
@@ -534,8 +542,16 @@ void main() {
     );
     expect(restored.map((message) => message.text), contains('legacy newest'));
     expect(restored.map((message) => message.text), contains('legacy oldest'));
-    expect(nativeMessages['normal:6'], hasLength(3));
-    expect(prefs.getString('conversation_messages_normal_6'), isNull);
+    expect(nativeMessages['agent:6'], hasLength(3));
+    expect(
+      prefs.getString(
+        ConversationHistoryService.conversationMessagesKey(
+          6,
+          mode: ConversationMode.normal,
+        ),
+      ),
+      isNull,
+    );
   });
 
   test(
@@ -561,7 +577,7 @@ void main() {
 
       expect(restored.single.text, 'stale cleared message');
       expect(
-        nativeMessages['normal:8']?.single['content']['text'],
+        nativeMessages['agent:8']?.single['content']['text'],
         'stale cleared message',
       );
       expect(
@@ -592,6 +608,53 @@ void main() {
       );
 
       expect(restored.single.text, 'old Agent history');
+    },
+  );
+
+  test(
+    'agent history recovers snapshots stored under legacy normal and bare keys',
+    () async {
+      final prefs = await SharedPreferences.getInstance();
+      final normalMessage = ChatMessageModel.userMessage(
+        'old normal history',
+        id: 'old-normal',
+      );
+      final bareMessage = ChatMessageModel.userMessage(
+        'old bare history',
+        id: 'old-bare',
+      );
+      await prefs.setString(
+        ConversationHistoryService.conversationMessagesKey(
+          10,
+          mode: ConversationMode.normal,
+        ),
+        jsonEncode(<Map<String, dynamic>>[normalMessage.toJson()]),
+      );
+      await prefs.setString(
+        'conversation_messages_10',
+        jsonEncode(<Map<String, dynamic>>[bareMessage.toJson()]),
+      );
+
+      final restored = await ConversationHistoryService.getConversationMessages(
+        10,
+        mode: ConversationMode.agent,
+      );
+
+      expect(
+        restored.map((message) => message.text),
+        containsAll(<String>['old normal history', 'old bare history']),
+      );
+      expect(nativeMessages['agent:10'], hasLength(2));
+      expect(
+        prefs.getString(
+          ConversationHistoryService.conversationMessagesKey(
+            10,
+            mode: ConversationMode.normal,
+          ),
+        ),
+        isNull,
+      );
+      expect(prefs.getString('conversation_messages_10'), isNull);
     },
   );
 

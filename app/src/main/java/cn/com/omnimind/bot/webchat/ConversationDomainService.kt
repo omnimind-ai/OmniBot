@@ -38,7 +38,15 @@ class ConversationDomainService(
 
     private companion object {
         const val AGENT_MODE_STORAGE_VALUE = "agent"
-        val AGENT_MODE_STORAGE_ALIASES = setOf("normal", "agent", "codex", "acp", "coding")
+        // `normal` is the pre-ACP Xiaowan storage value. It is still an Agent
+        // conversation for binding/session restoration purposes.
+        val AGENT_MODE_STORAGE_ALIASES = setOf(
+            "agent",
+            "normal",
+            "codex",
+            "acp",
+            "coding"
+        )
     }
 
     fun listWebAgentProfiles(): List<Map<String, Any?>> {

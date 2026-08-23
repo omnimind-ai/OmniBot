@@ -602,6 +602,9 @@ internal class LocalAcpRuntime(
                 hasConversationBinding = hasConversationBinding
             )
         ) {
+            // Pre-ACP Xiaowan conversations have durable messages but no ACP
+            // binding. Loading such a conversation must materialize the first
+            // ACP session instead of failing with "No ACP session is bound".
             Log.i(
                 TAG,
                 "ACP session/load creating missing binding for conversation=$requestedConversationId"
@@ -609,7 +612,9 @@ internal class LocalAcpRuntime(
             return startThread(
                 normalized,
                 allowCatalogReuse = false
-            ).withAcpSessionId().plus("sessionRestored" to false)
+            ).withAcpSessionId().plus(
+                "sessionRestored" to false
+            )
         }
         return resumeThread(normalized).withAcpSessionId()
     }

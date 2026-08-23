@@ -426,6 +426,12 @@ class AgentConversationHistoryRepository(
             limit = limit,
             offset = offset
         )
+        val hasUnloadedEntries = candidateModes.any { storageMode ->
+            DatabaseHelper.countAgentConversationThreadEntries(
+                conversationId = conversationId,
+                conversationMode = storageMode
+            ) > windowSize
+        }
         val normalized = if (offset == 0) {
             normalizeEntriesForDisplay(entries)
         } else {
@@ -433,12 +439,6 @@ class AgentConversationHistoryRepository(
         }
         val messagePayloads = normalized.mapNotNull { entry -> entryToMessagePayload(entry) }
         val sorted = ConversationSnapshotOrdering.sortForDisplay(messagePayloads)
-        val hasUnloadedEntries = candidateModes.any { storageMode ->
-            DatabaseHelper.countAgentConversationThreadEntries(
-                conversationId = conversationId,
-                conversationMode = storageMode
-            ) > windowSize
-        }
         Pair(sorted, hasMore || hasUnloadedEntries)
     }
 
@@ -606,9 +606,8 @@ class AgentConversationHistoryRepository(
 
     private fun canonicalConversationMode(mode: String): String {
         return when (mode.trim().lowercase()) {
-            "", "normal" -> "normal"
-            "agent", "codex", "acp", "coding" -> "agent"
-            else -> mode.trim().lowercase().ifEmpty { "normal" }
+            "", "normal", "agent", "codex", "acp", "coding" -> "agent"
+            else -> mode.trim().lowercase().ifEmpty { "agent" }
         }
     }
 
@@ -774,6 +773,48 @@ class AgentConversationHistoryRepository(
                 .thenByDescending { it.id })
     }
 
+    private suspend fun loadThreadEntriesDescWindowSafe(
+        conversationId: Long,
+        conversationModes: List<String>,
+        maxEntriesPerMode: Int
+    ): List<AgentConversationEntry> {
+        val boundedSize = maxEntriesPerMode.coerceAtLeast(1)
+        return conversationModes
+            .flatMap { storageMode ->
+                loadThreadEntriesDescWindowSafeForMode(
+                    conversationId = conversationId,
+                    conversationMode = storageMode,
+                    maxEntries = boundedSize
+                )
+            }
+            .distinctBy { entry -> entry.entryId }
+            .sortedWith(compareByDescending<AgentConversationEntry> { it.createdAt }
+                .thenByDescending { it.id })
+    }
+
+    private suspend fun loadThreadEntriesDescWindowSafeForMode(
+        conversationId: Long,
+        conversationMode: String,
+        maxEntries: Int
+    ): List<AgentConversationEntry> {
+        val entries = mutableListOf<AgentConversationEntry>()
+        var offset = 0
+        val boundedSize = maxEntries.coerceAtLeast(1)
+        while (entries.size < boundedSize) {
+            val page = loadThreadEntriesDescPagedSafe(
+                conversationId = conversationId,
+                conversationMode = conversationMode,
+                limit = minOf(SAFE_HISTORY_PAGE_SIZE, boundedSize - entries.size),
+                offset = offset
+            )
+            if (page.isEmpty()) break
+            entries += page
+            offset += page.size
+            if (page.size < SAFE_HISTORY_PAGE_SIZE) break
+        }
+        return entries
+    }
+
     private suspend fun loadThreadEntriesDescSafePagedForMode(
         conversationId: Long,
         conversationMode: String
@@ -838,11 +879,13 @@ class AgentConversationHistoryRepository(
     }
 
     private fun conversationModeCandidates(conversationMode: String): List<String> {
-        val normalized = conversationMode.trim().lowercase().ifEmpty { "normal" }
-        return when (normalized) {
-            "normal" -> listOf("normal", "agent", "codex")
-            "agent", "codex", "acp", "coding" -> listOf("agent", "codex", "normal")
-            else -> listOf(normalized)
+        val normalized = conversationMode.trim().lowercase().ifEmpty { "agent" }
+        return if (normalized in setOf("normal", "agent", "codex", "acp", "coding")) {
+            // `normal` is the pre-ACP Xiaowan bucket. Keep it readable while
+            // all new writes use canonical `agent`.
+            listOf("agent", "codex", "normal")
+        } else {
+            listOf(normalized)
         }
     }
 
