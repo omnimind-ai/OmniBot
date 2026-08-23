@@ -861,6 +861,51 @@ void main() {
     expect(message.id, 'tool:session-1:tool-1:command');
   });
 
+  test(
+    'does not regress a completed ACP tool card on a stale running update',
+    () {
+      Map<String, dynamic> event({
+        required String status,
+        String? terminalOutput,
+      }) {
+        return <String, dynamic>{
+          'message': {
+            'method': 'session/update',
+            'turnId': 'turn-terminal-ordering',
+            'params': {
+              'sessionId': 'session-terminal-ordering',
+              'update': {
+                'sessionUpdate': 'tool_call_update',
+                'toolCallId': 'terminal-ordering-1',
+                'kind': 'other',
+                'title': 'bash',
+                'status': status,
+                'rawOutput': {
+                  'toolType': 'terminal',
+                  'toolName': 'bash',
+                  if (terminalOutput != null) 'terminalOutput': terminalOutput,
+                },
+              },
+            },
+          },
+        };
+      }
+
+      reducer.reduce(
+        runtime: runtime,
+        event: event(status: 'completed', terminalOutput: 'finished'),
+      );
+      reducer.reduce(
+        runtime: runtime,
+        event: event(status: 'in_progress'),
+      );
+
+      final cardData = runtime.messages.single.cardData!;
+      expect(cardData['status'], 'success');
+      expect(cardData['terminalOutput'], 'finished');
+    },
+  );
+
   test('projects structured ACP tool output into the shared terminal card', () {
     reducer.reduce(
       runtime: runtime,

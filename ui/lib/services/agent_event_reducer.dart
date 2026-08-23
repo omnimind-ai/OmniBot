@@ -2930,15 +2930,39 @@ class AgentEventReducer {
       return Map<String, dynamic>.from(incoming);
     }
     final merged = Map<String, dynamic>.from(existingMap);
+    final existingStatus =
+        _string(existingCardData?['status']) ??
+        normalizeAgentToolStatus(existingMap, fallbackStatus: 'running');
+    final incomingStatus = normalizeAgentToolStatus(
+      incoming,
+      fallbackStatus: 'running',
+    );
+    final keepsTerminalState =
+        _isTerminalAgentToolStatus(existingStatus) &&
+        !_isTerminalAgentToolStatus(incomingStatus);
     for (final entry in incoming.entries) {
       // ACP tool_call_update is a sparse patch. LocalAcpRuntime keeps absent
       // fields as explicit nulls while projecting it to a Map, so a shallow
       // spread would erase kind/title/input/content from the initial call.
-      if (entry.value != null) {
+      // A reconnect may replay an older running update after the completed
+      // update. A tool lifecycle is monotonic in the UI: terminal cards keep
+      // their terminal state while still accepting any newly supplied facts.
+      if (entry.value != null &&
+          (!keepsTerminalState ||
+              (entry.key != 'status' && entry.key != 'state'))) {
         merged[entry.key] = entry.value;
       }
     }
     return merged;
+  }
+
+  bool _isTerminalAgentToolStatus(String status) {
+    return const <String>{
+      'success',
+      'error',
+      'timeout',
+      'interrupted',
+    }.contains(status.trim().toLowerCase());
   }
 
   String? _findToolCardIdForCallId(
@@ -3699,22 +3723,16 @@ Map<String, dynamic> _acpStructuredToolOutput(Map<String, dynamic>? output) {
   if (output == null || output.isEmpty) {
     return const <String, dynamic>{};
   }
-  final explicitToolType = _string(output['toolType'])?.toLowerCase();
   final result =
       output['result'] ??
       output['resultPreview'] ??
       output['preview'] ??
       output['previewJson'];
   return <String, dynamic>{
-    // `ContextResult` is the native result envelope, not a visual capability.
-    // If it overwrites the initial call here, file writes, browser actions,
-    // image tasks, and subagent calls all fall back to a generic card. Leave
-    // those envelopes to the shared tool-name inference while retaining every
-    // concrete type an ACP adapter intentionally supplies.
-    if (explicitToolType != null &&
-        explicitToolType.isNotEmpty &&
-        explicitToolType != 'context')
-      'toolType': output['toolType'],
+    // Keep adapter facts intact. The shared tool parser owns the distinction
+    // between a transport envelope (such as ContextResult) and a visual
+    // capability, so every Harness follows the same card-routing rule.
+    if (output['toolType'] != null) 'toolType': output['toolType'],
     for (final key in const <String>[
       'toolName',
       'displayName',

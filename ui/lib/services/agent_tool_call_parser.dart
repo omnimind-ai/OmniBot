@@ -48,7 +48,9 @@ AgentToolCallInfo normalizeAgentToolCall(
   );
   final toolType = _inferToolType(
     itemType: type,
-    explicitToolType: _firstString([raw['toolType'], raw['tool_type']]),
+    explicitToolType: _visualToolType(
+      _firstString([raw['toolType'], raw['tool_type']]),
+    ),
     fallbackToolType: fallbackToolType,
     toolName: rawToolName,
     arguments: arguments,
@@ -528,6 +530,17 @@ String? _resolveToolName(Map<String, dynamic> raw, {required String itemType}) {
     raw['execution'],
     toolString,
   ]);
+}
+
+/// Some adapters use `context` as a result-envelope name rather than a UI
+/// capability. Keep that protocol detail out of every event source and infer
+/// the actual shared card route from the tool's concrete facts instead.
+String? _visualToolType(String? value) {
+  final normalized = value?.trim();
+  if (normalized == null || normalized.isEmpty) {
+    return null;
+  }
+  return normalized.toLowerCase() == 'context' ? null : normalized;
 }
 
 String _inferToolType({
