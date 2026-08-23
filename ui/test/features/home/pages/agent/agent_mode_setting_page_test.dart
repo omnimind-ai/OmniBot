@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -224,6 +226,92 @@ void main() {
 
       expect(find.text('添加自定义 ACP Agent'), findsNothing);
       expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'managed Harness installation keeps unrelated settings interactive',
+    (tester) async {
+      final preparation = Completer<Map<String, dynamic>>();
+      var preparationCalls = 0;
+      addTearDown(() {
+        if (!preparation.isCompleted) {
+          preparation.complete(<String, dynamic>{
+            'ok': false,
+            'error': 'test cleanup',
+          });
+        }
+      });
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(agentRuntimeChannel, (call) async {
+            switch (call.method) {
+              case 'agent/list':
+                return <String, dynamic>{
+                  'selectedAgentId': 'codex-acp',
+                  'agents': <Map<String, dynamic>>[
+                    _agent('codex-acp', 'Codex', 'codex-acp', 'online'),
+                    _agent(
+                      'deepseek-harness-acp',
+                      'DeepSeek Harness',
+                      'dsh-acp',
+                      'missing',
+                      managedAdapter: true,
+                    ),
+                  ],
+                };
+              case 'agent/prepare':
+                preparationCalls += 1;
+                expect(call.arguments, <String, Object?>{
+                  'agentId': 'deepseek-harness-acp',
+                });
+                return preparation.future;
+            }
+            return null;
+          });
+      tester.view.physicalSize = const Size(1080, 2200);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      Widget buildPage() => MaterialApp(
+        theme: AppTheme.lightTheme,
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        locale: const Locale('zh'),
+        home: const AgentModeSettingPage(),
+      );
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      await tester.tap(
+        find.byKey(const Key('agent-check-deepseek-harness-acp')),
+      );
+      await tester.pump();
+
+      expect(find.text('后台安装中'), findsOneWidget);
+      await tester.tap(find.byTooltip('添加自定义 ACP Agent'));
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text('添加自定义 ACP Agent'), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      await tester.pumpWidget(buildPage());
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(find.text('后台安装中'), findsOneWidget);
+
+      await tester.tap(
+        find.byKey(const Key('agent-navigation-deepseek-harness-acp')),
+      );
+      await tester.pump();
+      expect(preparationCalls, 1);
+
+      preparation.complete(<String, dynamic>{
+        'ok': false,
+        'error': 'expected test completion',
+      });
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(find.text('后台安装中'), findsNothing);
     },
   );
 }

@@ -729,12 +729,26 @@ class AgentRuntimeService {
 
   static final StreamController<Map<String, dynamic>> _eventController =
       StreamController<Map<String, dynamic>>.broadcast();
+  static final Map<String, Future<Map<String, dynamic>>>
+  _agentPreparationTasks = <String, Future<Map<String, dynamic>>>{};
+  static final StreamController<Set<String>> _agentPreparationController =
+      StreamController<Set<String>>.broadcast();
   static StreamSubscription<dynamic>? _nativeEventSubscription;
 
   static Stream<Map<String, dynamic>> get events {
     _ensureEventSubscription();
     return _eventController.stream;
   }
+
+  /// Harness preparation can spend minutes downloading npm/native packages.
+  /// Keep the operation owned by the service instead of a settings page so it
+  /// continues when that page is popped and a rebuilt page can recover the
+  /// in-flight state without starting the same installation again.
+  static Set<String> get preparingAgentIds =>
+      Set<String>.unmodifiable(_agentPreparationTasks.keys);
+
+  static Stream<Set<String>> get agentPreparationChanges =>
+      _agentPreparationController.stream;
 
   static Future<AgentRuntimeStatus> status() async {
     final result = await _invokeMap('status');
@@ -786,6 +800,38 @@ class AgentRuntimeService {
 
   static Future<Map<String, dynamic>> prepareAgent(String agentId) {
     return _invokeMap('agent/prepare', {'agentId': agentId.trim()});
+  }
+
+  static Future<Map<String, dynamic>> prepareAgentInBackground(String agentId) {
+    final normalizedId = agentId.trim();
+    final existing = _agentPreparationTasks[normalizedId];
+    if (existing != null) return existing;
+
+    final task = prepareAgent(normalizedId);
+    _agentPreparationTasks[normalizedId] = task;
+    _emitAgentPreparationState();
+    unawaited(
+      task.then<void>(
+        (_) => _finishAgentPreparation(normalizedId, task),
+        onError: (Object _, StackTrace __) {
+          _finishAgentPreparation(normalizedId, task);
+        },
+      ),
+    );
+    return task;
+  }
+
+  static void _finishAgentPreparation(
+    String agentId,
+    Future<Map<String, dynamic>> task,
+  ) {
+    if (!identical(_agentPreparationTasks[agentId], task)) return;
+    _agentPreparationTasks.remove(agentId);
+    _emitAgentPreparationState();
+  }
+
+  static void _emitAgentPreparationState() {
+    _agentPreparationController.add(preparingAgentIds);
   }
 
   static Future<Map<String, dynamic>> readAgentConfig(String agentId) {

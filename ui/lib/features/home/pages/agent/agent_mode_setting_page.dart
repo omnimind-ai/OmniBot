@@ -31,6 +31,8 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
   bool _refreshing = false;
   String? _error;
   String? _busyAgentId;
+  late Set<String> _preparingAgentIds;
+  StreamSubscription<Set<String>>? _preparationSubscription;
   String _sharedModelLabel = '';
   // 远程 PC Bridge 状态：先用缓存同步渲染，后台再刷新，避免一帧加载闪烁。
   bool _remoteBridgeEnabled =
@@ -44,9 +46,23 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
   @override
   void initState() {
     super.initState();
+    _preparingAgentIds = AgentRuntimeService.preparingAgentIds;
+    _preparationSubscription = AgentRuntimeService.agentPreparationChanges
+        .listen((agentIds) {
+          if (!mounted) return;
+          final completed = _preparingAgentIds.difference(agentIds).isNotEmpty;
+          setState(() => _preparingAgentIds = agentIds);
+          if (completed) unawaited(_load());
+        });
     unawaited(_load());
     unawaited(_loadSharedModel());
     unawaited(_loadRemoteBridge());
+  }
+
+  @override
+  void dispose() {
+    unawaited(_preparationSubscription?.cancel());
+    super.dispose();
   }
 
   Future<void> _loadSharedModel() async {
@@ -220,32 +236,36 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
   }
 
   Future<void> _test(AcpAgentProfile agent) async {
-    if (_busyAgentId != null || !agent.enabled) return;
+    if (_busyAgentId == agent.id ||
+        _preparingAgentIds.contains(agent.id) ||
+        !agent.enabled) {
+      return;
+    }
     await _runAgentAction(agent, prepare: false);
   }
 
-  Future<void> _prepare(AcpAgentProfile agent) async {
-    if (_busyAgentId != null || !agent.enabled) return;
-    await _runAgentAction(agent, prepare: true);
+  void _prepare(AcpAgentProfile agent) {
+    if (_preparingAgentIds.contains(agent.id) || !agent.enabled) return;
+    unawaited(_runAgentAction(agent, prepare: true));
   }
 
   Future<void> _runAgentAction(
     AcpAgentProfile agent, {
     required bool prepare,
   }) async {
-    setState(() => _busyAgentId = agent.id);
+    if (!prepare) setState(() => _busyAgentId = agent.id);
     try {
       final result = prepare
-          ? await AgentRuntimeService.prepareAgent(agent.id)
+          ? await AgentRuntimeService.prepareAgentInBackground(agent.id)
           : await AgentRuntimeService.testAgent(agent.id);
       if (!mounted) return;
       await _load();
       if (!mounted) return;
       final ok = result['ok'] == true;
-      final installed = result['agent'] is Map &&
+      final installed =
+          result['agent'] is Map &&
           (result['agent'] as Map)['installed'] == true;
-      final providerConfigurationPending =
-          prepare && !ok && installed;
+      final providerConfigurationPending = prepare && !ok && installed;
       final title = prepare
           ? (ok
                 ? _text('Harness 安装成功', 'Harness installation succeeded')
@@ -280,7 +300,7 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
       if (!mounted) return;
       showToast(error.toString(), type: ToastType.error);
     } finally {
-      if (mounted) setState(() => _busyAgentId = null);
+      if (!prepare && mounted) setState(() => _busyAgentId = null);
     }
   }
 
@@ -364,7 +384,7 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
           ),
           IconButton(
             tooltip: _text('添加自定义 ACP Agent', 'Add custom ACP Agent'),
-            onPressed: _busyAgentId == null ? _addCustomAgent : null,
+            onPressed: _addCustomAgent,
             icon: const Icon(LucideIcons.plus),
           ),
         ],
@@ -624,7 +644,8 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
         (agent.lastCheckError ?? '').isNotEmpty && agent.status != 'online';
     final canTest =
         agent.enabled && (agent.status != 'missing' || agent.managedAdapter);
-    final busy = agent.id == _busyAgentId;
+    final preparing = _preparingAgentIds.contains(agent.id);
+    final busy = agent.id == _busyAgentId || preparing;
     final needsManagedPreparation =
         agent.managedAdapter &&
         (agent.status == 'unchecked' || agent.status == 'missing') &&
@@ -649,13 +670,17 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
         fallbackColor: palette.accentPrimary,
       ),
       title: agent.name,
-      statusColor: statusColor,
-      statusLabel: !agent.enabled ? _text('已停用', 'Disabled') : status.label,
+      statusColor: preparing ? const Color(0xFFE3A52B) : statusColor,
+      statusLabel: preparing
+          ? _text('后台安装中', 'Installing in background')
+          : !agent.enabled
+          ? _text('已停用', 'Disabled')
+          : status.label,
       subtitle: agent.description.isNotEmpty
           ? agent.description
           : ([agent.command, ...agent.arguments]).join(' '),
       subtitleMonospace: agent.description.isEmpty,
-      errorText: hasError ? agent.lastCheckError : null,
+      errorText: hasError && !preparing ? agent.lastCheckError : null,
       actionLabel: canTest ? testLabel : null,
       actionKey: Key('agent-check-${agent.id}'),
       onAction: canTest ? () => action(agent) : null,
@@ -664,7 +689,9 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
           : _text('配置', 'Configure'),
       navigationKey: Key('agent-navigation-${agent.id}'),
       busy: busy,
-      onTap: installEntry
+      onTap: preparing
+          ? () {}
+          : installEntry
           ? () => _prepare(agent)
           : () => _openAgentConfig(agent),
     );
