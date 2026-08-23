@@ -128,7 +128,7 @@ internal class AccessibilityAndroidGuiPlatform(
                 service = service,
                 x1 = number(action, OobActionSchema.ARG_X),
                 y1 = number(action, OobActionSchema.ARG_Y),
-                durationMs = 1L,
+                durationMs = CLICK_GESTURE_DURATION_MS,
             )
 
             OobActionSchema.TOOL_LONG_PRESS -> gesture(
@@ -504,6 +504,8 @@ internal class AccessibilityAndroidGuiPlatform(
         val PACKAGE = Regex("package=\\\"([^\\\"]+)\\\"")
     }
 }
+
+internal const val CLICK_GESTURE_DURATION_MS = 100L
 
 internal enum class InputNodeLookup(
     val allowFallbackAfterCoordinateMiss: Boolean,

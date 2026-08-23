@@ -199,6 +199,13 @@ class AndroidGuiEnvironment internal constructor(
             )
         }
         return try {
+            val stateBeforeAction = if (
+                awaitStabilization && action.tool != OobActionSchema.TOOL_WAIT
+            ) {
+                platform.observe(captureScreenshot = false).uiFingerprint()
+            } else {
+                null
+            }
             val result = platform.dispatch(canonicalForDisplay(action))
             if (!result.success) return result
             if (!awaitStabilization) {
@@ -208,18 +215,20 @@ class AndroidGuiEnvironment internal constructor(
                 return result.withStabilization("completed_by_action")
             }
             val stable = withTimeoutOrNull(stateStabilizationTimeoutMs(action.tool)) {
-                var previous: String? = null
+                var previous = stateBeforeAction
+                var stateChanged = false
                 while (true) {
                     delay(STATE_STABILIZATION_POLL_MS)
-                    val observed = platform.observe(captureScreenshot = false)
-                    val fingerprint = buildString {
-                        append(observed.packageName)
-                        append('\u0000')
-                        append(observed.activityName)
-                        append('\u0000')
-                        append(observed.xml)
+                    val fingerprint = platform.observe(
+                        captureScreenshot = false,
+                    ).uiFingerprint()
+                    if (!stateChanged) {
+                        if (fingerprint != stateBeforeAction) {
+                            stateChanged = true
+                        }
+                    } else if (fingerprint == previous) {
+                        return@withTimeoutOrNull true
                     }
-                    if (fingerprint == previous) return@withTimeoutOrNull true
                     previous = fingerprint
                 }
                 @Suppress("UNREACHABLE_CODE")
@@ -243,6 +252,14 @@ class AndroidGuiEnvironment internal constructor(
                 message = error.message ?: "android_gui_action_failed",
             )
         }
+    }
+
+    private fun AndroidGuiPlatformState.uiFingerprint(): String = buildString {
+        append(packageName)
+        append('\u0000')
+        append(activityName)
+        append('\u0000')
+        append(xml)
     }
 
     private fun AndroidGuiActionResult.withStabilization(result: String) = copy(
