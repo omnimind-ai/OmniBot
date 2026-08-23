@@ -28,6 +28,39 @@ class AgentConversationHistorySupportTest {
     }
 
     @Test
+    fun `paged history keeps legacy normal entries after agent migration`() {
+        val legacyEntry = AgentConversationEntry(
+            id = 1,
+            conversationId = 7,
+            conversationMode = "normal",
+            entryId = "legacy-user",
+            entryType = AgentConversationHistoryRepository.ENTRY_TYPE_USER_MESSAGE,
+            status = AgentConversationHistoryRepository.STATUS_SUCCESS,
+            summary = "旧对话内容",
+            payloadJson = "{}",
+            createdAt = 1,
+            updatedAt = 1
+        )
+        val canonicalEntry = legacyEntry.copy(
+            id = 2,
+            conversationMode = "agent",
+            entryId = "new-user",
+            summary = "新对话内容",
+            createdAt = 2,
+            updatedAt = 2
+        )
+
+        val (page, hasMore) = AgentConversationHistoryRepository.pageConversationEntries(
+            entries = listOf(canonicalEntry, legacyEntry),
+            limit = 20,
+            offset = 0
+        )
+
+        assertEquals(listOf("new-user", "legacy-user"), page.map { it.entryId })
+        assertFalse(hasMore)
+    }
+
+    @Test
     fun `stale ui snapshot cannot delete a pending external user message`() {
         val externalUser = mapOf<String, Any?>(
             "id" to "web-run-user",

@@ -45,6 +45,23 @@ class AgentConversationHistoryRepository(
         const val STATUS_TIMEOUT = "timeout"
         const val STATUS_INTERRUPTED = "interrupted"
 
+        /**
+         * Applies pagination after the compatibility reader has merged the
+         * canonical Agent bucket with legacy Xiaowan buckets. Paginating the
+         * database query first loses legacy `normal` rows because they live in
+         * a separate conversationMode partition.
+         */
+        internal fun pageConversationEntries(
+            entries: List<AgentConversationEntry>,
+            limit: Int,
+            offset: Int
+        ): Pair<List<AgentConversationEntry>, Boolean> {
+            val safeOffset = offset.coerceAtLeast(0)
+            val remaining = entries.drop(safeOffset)
+            val page = if (limit > 0) remaining.take(limit) else remaining
+            return page to (safeOffset + page.size < entries.size)
+        }
+
     }
 
     private val gson = Gson()
@@ -392,14 +409,18 @@ class AgentConversationHistoryRepository(
         offset: Int
     ): Pair<List<Map<String, Any?>>, Boolean> = withContext(Dispatchers.IO) {
         val effectiveConversationMode = resolveConversationMode(conversationId, conversationMode)
-        val totalCount = DatabaseHelper.countAgentConversationThreadEntries(
-            conversationId, effectiveConversationMode
+        // Read and merge all compatibility buckets before slicing the page.
+        // The old implementation queried only `agent`, so conversations
+        // written as `normal` appeared empty after the default switched to
+        // canonical Agent mode.
+        val allEntries = loadThreadEntriesDescSafePaged(
+            conversationId = conversationId,
+            conversationMode = effectiveConversationMode
         )
-        val entries = loadThreadEntriesDescPagedSafe(
-            conversationId,
-            effectiveConversationMode,
-            limit,
-            offset
+        val (entries, hasMore) = pageConversationEntries(
+            entries = allEntries,
+            limit = limit,
+            offset = offset
         )
         val normalized = if (offset == 0) {
             normalizeEntriesForDisplay(entries)
@@ -408,7 +429,6 @@ class AgentConversationHistoryRepository(
         }
         val messagePayloads = normalized.mapNotNull { entry -> entryToMessagePayload(entry) }
         val sorted = ConversationSnapshotOrdering.sortForDisplay(messagePayloads)
-        val hasMore = offset + entries.size < totalCount
         Pair(sorted, hasMore)
     }
 
