@@ -226,11 +226,12 @@ private class XiaowanAgentSupport(
             ensureSharedProviderBinding()
             existingBinding = SceneModelBindingStore.getBinding("scene.dispatch.model")
         }
+        val usableBinding = existingBinding?.takeIf(::hasUsableSharedProviderBinding)
         cachedModels?.let { cached ->
-            val bindingStillMatches = existingBinding?.providerProfileId
+            val bindingStillMatches = usableBinding?.providerProfileId
                 ?.trim()
                 ?.equals(cached.providerProfileId, ignoreCase = false) == true &&
-                existingBinding.modelId.trim() == cached.configuredModelId
+                usableBinding.modelId.trim() == cached.configuredModelId
             if (bindingStillMatches) {
                 Log.i(TAG, "ACP timing agent=xiaowan stage=model_ready source=connection_cache")
                 return cached
@@ -238,7 +239,7 @@ private class XiaowanAgentSupport(
             cachedModels = null
         }
         val startedAtNanos = System.nanoTime()
-        val profileId = existingBinding?.providerProfileId
+        val profileId = usableBinding?.providerProfileId
             ?: ModelProviderConfigStore.getEditingProfileId()
         val profile = profileId.let(ModelProviderConfigStore::getProfile)
             ?: PlatformAiProvisioner.officialProfileOrNull()
@@ -246,7 +247,7 @@ private class XiaowanAgentSupport(
             ?: throw IllegalStateException(
                 "The configured scene Provider is unavailable: $profileId"
             )
-        val boundModels = buildXiaowanModelsFromBinding(existingBinding)
+        val boundModels = buildXiaowanModelsFromBinding(usableBinding)
         // A valid shared binding is already the user's selected Provider and
         // model. Re-querying /models for every ACP session makes an ordinary
         // Xiaowan turn wait on network discovery before it can stream its
