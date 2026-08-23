@@ -1,5 +1,6 @@
 package cn.com.omnimind.bot.agent.runtime
 
+import cn.com.omnimind.baselib.llm.OpenAiWireApi
 import cn.com.omnimind.bot.mcp.McpServerState
 import com.agentclientprotocol.model.McpServer
 import org.junit.Assert.assertEquals
@@ -66,6 +67,23 @@ class AgentRuntimeMcpTest {
         } catch (error: IllegalArgumentException) {
             assertEquals("Omnibot MCP server is not running.", error.message)
         }
+    }
+
+    @Test
+    fun codexSkipsMcpDeclarationForCustomResponsesProvider() {
+        val provider = AgentProviderCredentials(
+            baseUrl = "https://gateway.example/v1",
+            apiKey = "test-key",
+            wireApi = OpenAiWireApi.RESPONSES,
+            supportsNamespaceTools = false,
+        )
+
+        assertTrue(!AcpHarnessAdapters.codex.supportsSessionMcp(provider))
+        assertTrue(
+            AcpHarnessAdapters.codex.supportsSessionMcp(
+                provider.copy(supportsNamespaceTools = true),
+            ),
+        )
     }
 
 }

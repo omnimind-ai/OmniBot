@@ -1,6 +1,7 @@
 package cn.com.omnimind.bot.agent.runtime
 
 import cn.com.omnimind.bot.mcp.McpServerState
+import cn.com.omnimind.baselib.llm.OpenAiWireApi
 import com.google.gson.GsonBuilder
 import com.google.gson.JsonParser
 import kotlinx.serialization.json.Json
@@ -59,6 +60,14 @@ internal interface AcpHarnessAdapter {
     fun normalizeStdioLine(line: String): String = line
 
     fun mcpEnvironment(state: McpServerState): Map<String, String> = emptyMap()
+
+    /**
+     * Whether this Harness may receive the host MCP declaration for the
+     * selected Provider. This is a capability negotiation boundary: ACP and
+     * MCP stay enabled, but a Provider that cannot deserialize Codex's
+     * namespace tool container must not be sent that declaration.
+     */
+    fun supportsSessionMcp(provider: AgentProviderCredentials?): Boolean = true
 }
 
 internal object AcpHarnessAdapters {
@@ -71,6 +80,17 @@ internal object AcpHarnessAdapters {
     // Harness adapter, not to a vendor branch in the shared runtime.
     val codex: AcpHarnessAdapter = object : AcpHarnessAdapter {
         override val mcpTransport = AcpHarnessMcpTransport.SESSION_DECLARATION
+
+        override fun supportsSessionMcp(provider: AgentProviderCredentials?): Boolean {
+            // Codex currently groups MCP tools into the Responses-only
+            // `type=namespace` container. Custom Responses-compatible
+            // gateways generally accept only function/web_search/mcp tool
+            // types, so sending our MCP declaration makes every request fail
+            // before the model sees the prompt. First-party OpenAI providers
+            // keep the full MCP surface.
+            return provider?.supportsNamespaceTools == true ||
+                !OpenAiWireApi.isResponses(provider?.wireApi)
+        }
     }
 
     val claudeCode: AcpHarnessAdapter = object : AcpHarnessAdapter {

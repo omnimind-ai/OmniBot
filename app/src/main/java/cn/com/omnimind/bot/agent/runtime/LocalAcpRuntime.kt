@@ -120,6 +120,8 @@ internal class LocalAcpRuntime(
 ) {
     private val appContext = context.applicationContext
     private val connectMutex = Mutex()
+    @Volatile
+    private var sessionMcpEnabled = true
     // A connect attempt includes adapter preparation and ACP initialization.
     // Agent switching must be able to cancel that attempt before waiting for
     // the mutex; otherwise a stalled DSH npm/proot process blocks Xiaowan.
@@ -183,6 +185,10 @@ internal class LocalAcpRuntime(
 
     val isConnected: Boolean
         get() = connection?.isRunning == true && client != null && agentInfo != null
+
+    fun setSessionMcpEnabled(enabled: Boolean) {
+        sessionMcpEnabled = enabled
+    }
 
     fun hasActiveTurns(): Boolean = activeTurnIds.isNotEmpty()
 
@@ -1982,18 +1988,22 @@ internal class LocalAcpRuntime(
     private fun sessionCreationParameters(cwd: String): SessionCreationParameters {
         val profile = activeProfile ?: profileStore.selected()
         val supportsHttp = requireAgentInfo().capabilities.mcpCapabilities.http
-        val mcpState = if (supportsHttp) {
+        val mcpState = if (sessionMcpEnabled && supportsHttp) {
             McpServerManager.ensureRunning(appContext)
         } else {
             McpServerManager.currentState()
         }
         return SessionCreationParameters(
             cwd = cwd,
-            mcpServers = buildLocalAgentAcpMcpServers(
-                harnessAdapter = AcpHarnessAdapters.forProfile(profile),
-                supportsHttp = supportsHttp,
-                state = mcpState
-            )
+            mcpServers = if (sessionMcpEnabled) {
+                buildLocalAgentAcpMcpServers(
+                    harnessAdapter = AcpHarnessAdapters.forProfile(profile),
+                    supportsHttp = supportsHttp,
+                    state = mcpState
+                )
+            } else {
+                emptyList()
+            }
         )
     }
 

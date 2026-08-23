@@ -15,6 +15,7 @@ import cn.com.omnimind.baselib.llm.OpenAiWireApi
 import cn.com.omnimind.baselib.llm.PlatformAiProvisioner
 import cn.com.omnimind.baselib.llm.ProviderModelOption
 import cn.com.omnimind.baselib.llm.SceneModelBindingStore
+import cn.com.omnimind.baselib.llm.SceneModelBindingEntry
 import cn.com.omnimind.assists.controller.http.HttpController
 import cn.com.omnimind.bot.BuildConfig
 import cn.com.omnimind.bot.agent.AgentConversationModePolicy
@@ -1431,6 +1432,9 @@ class AgentRuntimeManager private constructor(
             providerModels
         }
         val harnessAdapter = AcpHarnessAdapters.forProfile(profile)
+        localAcpRuntime.setSessionMcpEnabled(
+            harnessAdapter.supportsSessionMcp(sharedProvider)
+        )
         val existingHarnessConfig = harnessAdapter.launchConfigPath?.let { path ->
             readTerminalTextFile(
                 path = path,
@@ -1495,6 +1499,44 @@ class AgentRuntimeManager private constructor(
         return if (launchConfigWrites.isNotEmpty()) mapping.environment else harnessEnvironment
     }
 
+    /**
+     * Migrate old installs whose Provider/model was configured in normal chat
+     * but never written to the canonical Agent scene binding. This runs only
+     * when the binding is absent/incomplete; ordinary Harness switches remain
+     * a local binding lookup and do not call /models.
+     */
+    private suspend fun ensureSharedAgentProviderBinding(): SceneModelBindingEntry? {
+        val current = SceneModelBindingStore.getBinding("scene.dispatch.model")
+            ?.takeIf { it.providerProfileId.isNotBlank() && it.modelId.isNotBlank() }
+        if (current != null) return current
+
+        val editingProfile = runCatching {
+            ModelProviderConfigStore.getEditingProfile()
+        }.getOrNull()?.takeIf {
+            it.baseUrl.isNotBlank() && it.apiKey.isNotBlank()
+        } ?: return null
+        val models = resolveCurrentProviderModelIds(
+            profile = editingProfile,
+            timeoutMs = AGENT_PROVIDER_MODEL_LOOKUP_TIMEOUT_MS,
+        )?.models.orEmpty()
+        val migrated = resolveSharedAgentProviderBinding(
+            currentBinding = current,
+            editingProfile = editingProfile,
+            availableModels = models,
+        ) ?: return null
+        SceneModelBindingStore.saveBinding(
+            sceneId = migrated.sceneId,
+            providerProfileId = migrated.providerProfileId,
+            modelId = migrated.modelId,
+        )
+        Log.i(
+            "AgentRuntimeManager",
+            "Migrated Agent Provider binding profile=${migrated.providerProfileId} " +
+                "model=${migrated.modelId}",
+        )
+        return migrated
+    }
+
     private fun currentAgentProviderProfile(): ModelProviderProfile? = runCatching {
         val binding = SceneModelBindingStore.getBinding("scene.dispatch.model")
         val editingProfile = ModelProviderConfigStore.getEditingProfile()
@@ -1521,7 +1563,8 @@ class AgentRuntimeManager private constructor(
                     apiKey = apiKey,
                     wireApi = profile.wireApi,
                     customHeaders = profile.customHeaders,
-                    protocolType = profile.protocolType
+                    protocolType = profile.protocolType,
+                    supportsNamespaceTools = OmniOfficialProvider.isOfficialProfile(profile.id),
                 )
             }
 
