@@ -24,6 +24,7 @@ import com.agentclientprotocol.model.ClientCapabilities
 import com.agentclientprotocol.model.ContentBlock
 import com.agentclientprotocol.model.FileSystemCapability
 import com.agentclientprotocol.model.Implementation
+import com.agentclientprotocol.model.MessageId
 import com.agentclientprotocol.model.PermissionOption
 import com.agentclientprotocol.model.PermissionOptionKind
 import com.agentclientprotocol.model.PlanCapabilities
@@ -165,6 +166,10 @@ internal class LocalAcpRuntime(
     private val sessions = ConcurrentHashMap<String, ClientSession>()
     private val sessionCwds = ConcurrentHashMap<String, String>()
     private val activeTurnIds = ConcurrentHashMap<String, String>()
+    // PromptResponse.usage arrives after the final streamed chunk. Keep the
+    // last official assistant message id per turn so its footer metadata is
+    // projected onto the existing message rather than a duplicate empty row.
+    private val lastAssistantMessageIds = ConcurrentHashMap<String, MessageId>()
     // A prompt request may be delivered twice by a client after a transport
     // timeout. Keep the request-to-turn mapping so the retry returns the
     // original turn instead of executing the user's tools again.
@@ -1712,6 +1717,16 @@ internal class LocalAcpRuntime(
                         }
                         is Event.PromptResponseEvent -> {
                             stopReason = event.response.stopReason.name.lowercase()
+                            event.response.toAcpTurnUsageUpdate(
+                                lastAssistantMessageIds[turnId]
+                            )?.let { usageUpdate ->
+                                emitAcpNotification(
+                                    sessionId = threadId,
+                                    update = usageUpdate,
+                                    timingThreadId = threadId,
+                                    timingTurnId = turnId,
+                                )
+                            }
                             Log.i(
                                 TAG,
                                 "ACP prompt response for turn=$turnId stopReason=$stopReason"
@@ -1856,6 +1871,7 @@ internal class LocalAcpRuntime(
         }
         markTurnTiming(threadId, turnId, "terminal_$status")
         turnTimings.remove(turnId)
+        lastAssistantMessageIds.remove(turnId)
         activeTurnIds.remove(threadId, turnId)
     }
 
@@ -2381,8 +2397,10 @@ internal class LocalAcpRuntime(
             when (update) {
                 is SessionUpdate.AgentThoughtChunk ->
                     markTurnTiming(threadId, resolvedId, "first_reasoning")
-                is SessionUpdate.AgentMessageChunk ->
+                is SessionUpdate.AgentMessageChunk -> {
+                    update.messageId?.let { lastAssistantMessageIds[resolvedId] = it }
                     markTurnTiming(threadId, resolvedId, "first_text")
+                }
                 is SessionUpdate.ToolCall,
                 is SessionUpdate.ToolCallUpdate ->
                     markTurnTiming(threadId, resolvedId, "first_tool")

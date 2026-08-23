@@ -862,6 +862,110 @@ void main() {
     expect(message.turnUsage, {'ctx': 100, 'in': 100, 'out': 20, 'cache': 10});
   });
 
+  test('ACP v2 plan update and removal share the plan card route', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'turnId': 'turn-plan-v2',
+        'params': {
+          'sessionId': 'session-plan-v2',
+          'update': {
+            'sessionUpdate': 'plan_update',
+            'plan': {
+              'type': 'markdown',
+              'id': 'plan-1',
+              'content': '# Plan\n\n1. inspect',
+            },
+          },
+        },
+      },
+    );
+
+    expect(runtime.messages, hasLength(1));
+    expect(runtime.messages.single.cardData?['toolType'], 'plan');
+    expect(runtime.messages.single.cardData?['planId'], 'plan-1');
+    expect(runtime.messages.single.cardData?['summary'], contains('inspect'));
+
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'turnId': 'turn-plan-v2',
+        'params': {
+          'sessionId': 'session-plan-v2',
+          'update': {'sessionUpdate': 'plan_removed', 'id': 'plan-1'},
+        },
+      },
+    );
+
+    expect(runtime.messages, isEmpty);
+  });
+
+  test('standard ACP image tool content reaches the shared image card', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'turnId': 'turn-image-content',
+        'params': {
+          'sessionId': 'session-image-content',
+          'update': {
+            'sessionUpdate': 'tool_call_update',
+            'toolCallId': 'image-1',
+            'kind': 'other',
+            'title': 'Generated image',
+            'status': 'completed',
+            'content': [
+              {
+                'type': 'content',
+                'content': {
+                  'type': 'image',
+                  'data': 'AAAA',
+                  'mimeType': 'image/png',
+                },
+              },
+            ],
+            'rawOutput': {'toolType': 'context'},
+          },
+        },
+      },
+    );
+
+    final card = runtime.messages.single.cardData!;
+    expect(card['toolType'], 'image');
+    expect(card['imageDataUrl'], 'data:image/png;base64,AAAA');
+    expect(card['resultPreviewJson'], contains('image/png'));
+  });
+
+  test('standard ACP terminal content keeps the shared terminal session', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'turnId': 'turn-terminal-content',
+        'params': {
+          'sessionId': 'session-terminal-content',
+          'update': {
+            'sessionUpdate': 'tool_call_update',
+            'toolCallId': 'terminal-content-1',
+            'kind': 'execute',
+            'title': 'Run tests',
+            'status': 'completed',
+            'content': [
+              {'type': 'terminal', 'terminalId': 'shell-1'},
+            ],
+          },
+        },
+      },
+    );
+
+    final card = runtime.messages.single.cardData!;
+    expect(card['toolType'], 'terminal');
+    expect(card['terminalSessionId'], 'shell-1');
+    expect(card['resultPreviewJson'], contains('terminalId'));
+  });
+
   test('projects ACP retry state into the next shared assistant message', () {
     const base = <String, dynamic>{
       'method': 'session/update',
@@ -1220,7 +1324,7 @@ void main() {
           },
         },
       },
-      );
+    );
 
     final cardData = runtime.messages
         .firstWhere(

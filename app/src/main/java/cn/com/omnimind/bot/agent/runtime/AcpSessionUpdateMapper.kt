@@ -2,8 +2,13 @@
 
 package cn.com.omnimind.bot.agent.runtime
 
+import com.agentclientprotocol.model.Annotations
 import com.agentclientprotocol.model.ContentBlock
+import com.agentclientprotocol.model.EmbeddedResourceResource
+import com.agentclientprotocol.model.MessageId
+import com.agentclientprotocol.model.PlanEntry
 import com.agentclientprotocol.model.PlanVariant
+import com.agentclientprotocol.model.PromptResponse
 import com.agentclientprotocol.model.SessionConfigOption
 import com.agentclientprotocol.model.SessionConfigSelectOptions
 import com.agentclientprotocol.model.SessionUpdate
@@ -22,6 +27,49 @@ internal data class AcpSessionNotification(
     val sessionId: String,
     val update: Map<String, Any?>
 )
+
+/**
+ * Projects the standard per-prompt ACP usage response into the same
+ * presentation metadata consumed by every assistant footer.
+ *
+ * `usage_update` is session-scoped context occupancy; it cannot describe the
+ * input/output/cache split for one completed turn. Harnesses such as Claude
+ * Code provide that split on [PromptResponse.usage], so the host forwards it
+ * as an empty official message chunk for the last assistant message instead
+ * of introducing a Harness-specific UI event.
+ */
+internal fun PromptResponse.toAcpTurnUsageUpdate(
+    messageId: MessageId? = null,
+): Map<String, Any?>? {
+    val promptUsage = usage ?: return null
+    val cacheReadTokens = promptUsage.cachedReadTokens ?: 0L
+    val cacheWriteTokens = promptUsage.cachedWriteTokens ?: 0L
+    val totalInputTokens = promptUsage.inputTokens + cacheReadTokens + cacheWriteTokens
+    val turnUsage = linkedMapOf<String, Any?>(
+        "ctx" to totalInputTokens,
+        "in" to totalInputTokens,
+        "out" to promptUsage.outputTokens,
+        "cache" to cacheReadTokens,
+        "totalInputTokens" to totalInputTokens,
+        "uncachedInputTokens" to promptUsage.inputTokens,
+        "cacheReadTokens" to cacheReadTokens,
+        "cacheWriteTokens" to cacheWriteTokens,
+        "promptTokens" to totalInputTokens,
+        "completionTokens" to promptUsage.outputTokens,
+        "totalTokens" to promptUsage.totalTokens,
+    )
+    return linkedMapOf<String, Any?>(
+        "sessionUpdate" to "agent_message_chunk",
+        "content" to mapOf("type" to "text", "text" to ""),
+        "_meta" to mapOf(
+            "cn.com.omnimind.agent" to mapOf(
+                "usage" to mapOf("turnUsage" to turnUsage)
+            )
+        ),
+    ).apply {
+        messageId?.value?.let { put("messageId", it) }
+    }
+}
 
 /**
  * Maps one ACP session update to the official ACP `session/update` payload, or
@@ -69,54 +117,26 @@ internal fun SessionUpdate.toAcpSessionNotification(
 
     is SessionUpdate.PlanUpdate -> AcpSessionNotification(
         sessionId = threadId,
-        update = mapOf(
+        update = linkedMapOf<String, Any?>(
             "sessionUpdate" to "plan",
-            "entries" to entries.map {
-                mapOf(
-                    "content" to it.content,
-                    "priority" to it.priority.name.lowercase(),
-                    "status" to it.status.name.lowercase()
-                )
-            }
-        )
+            "entries" to entries.map(PlanEntry::acpPayload),
+        ).apply { putAcpMeta(_meta) }
     )
 
     is SessionUpdate.PlanUpdateV2 -> AcpSessionNotification(
         sessionId = threadId,
-        update = mapOf(
-            "sessionUpdate" to "plan",
-            "entries" to when (val variant = plan) {
-                is PlanVariant.Items -> variant.entries.map {
-                    mapOf(
-                        "content" to it.content,
-                        "priority" to it.priority.name.lowercase(),
-                        "status" to it.status.name.lowercase()
-                    )
-                }
-                is PlanVariant.Markdown -> listOf(
-                    mapOf(
-                        "content" to variant.content,
-                        "priority" to "medium",
-                        "status" to "in_progress"
-                    )
-                )
-                is PlanVariant.File -> listOf(
-                    mapOf(
-                        "content" to variant.uri,
-                        "priority" to "medium",
-                        "status" to "in_progress"
-                    )
-                )
-            }
-        )
+        update = linkedMapOf<String, Any?>(
+            "sessionUpdate" to "plan_update",
+            "plan" to plan.acpPayload(),
+        ).apply { putAcpMeta(_meta) }
     )
 
     is SessionUpdate.PlanRemoved -> AcpSessionNotification(
         sessionId = threadId,
-        update = mapOf(
-            "sessionUpdate" to "plan",
-            "entries" to emptyList<Map<String, Any?>>()
-        )
+        update = linkedMapOf<String, Any?>(
+            "sessionUpdate" to "plan_removed",
+            "id" to id,
+        ).apply { putAcpMeta(_meta) }
     )
 
     is SessionUpdate.CurrentModeUpdate -> AcpSessionNotification(
@@ -129,10 +149,10 @@ internal fun SessionUpdate.toAcpSessionNotification(
 
     is SessionUpdate.ConfigOptionUpdate -> AcpSessionNotification(
         sessionId = threadId,
-        update = mapOf(
+        update = linkedMapOf<String, Any?>(
             "sessionUpdate" to "config_option_update",
             "configOptions" to configOptions.map(::acpConfigOptionPayload)
-        )
+        ).apply { putAcpMeta(_meta) }
     )
 
     is SessionUpdate.SessionInfoUpdate -> title
@@ -140,21 +160,24 @@ internal fun SessionUpdate.toAcpSessionNotification(
         ?.let {
             AcpSessionNotification(
                 sessionId = threadId,
-                update = mapOf(
+                update = linkedMapOf<String, Any?>(
                     "sessionUpdate" to "session_info_update",
-                    "title" to it
-                )
+                    "title" to it,
+                ).apply {
+                    updatedAt?.let { timestamp -> put("updatedAt", timestamp) }
+                    putAcpMeta(_meta)
+                }
             )
         }
 
     is SessionUpdate.UsageUpdate -> AcpSessionNotification(
         sessionId = threadId,
-        update = mapOf(
+        update = linkedMapOf<String, Any?>(
             "sessionUpdate" to "usage_update",
             "used" to used,
             "size" to size,
             "cost" to cost?.let { mapOf("amount" to it.amount, "currency" to it.currency) }
-        )
+        ).apply { putAcpMeta(_meta) }
     )
 
     is SessionUpdate.AvailableCommandsUpdate -> AcpSessionNotification(
@@ -232,18 +255,88 @@ private fun SessionConfigOption.acpCurrentValuePayload(): Any? = when (this) {
     is SessionConfigOption.BooleanOption -> currentValue
 }
 
-private fun ContentBlock.textPayload(): String = when (this) {
-    is ContentBlock.Text -> text
-    is ContentBlock.ResourceLink -> title ?: name
-    is ContentBlock.Image -> uri ?: ""
-    is ContentBlock.Audio -> ""
-    is ContentBlock.Resource -> resource.toString()
+/** Preserve the official ACP content-block union at the platform boundary. */
+private fun ContentBlock.acpPayload(): Map<String, Any?> = when (this) {
+    is ContentBlock.Text -> linkedMapOf<String, Any?>(
+        "type" to "text",
+        "text" to text,
+    )
+    is ContentBlock.Image -> linkedMapOf<String, Any?>(
+        "type" to "image",
+        "data" to data,
+        "mimeType" to mimeType,
+    ).apply { uri?.let { put("uri", it) } }
+    is ContentBlock.Audio -> linkedMapOf<String, Any?>(
+        "type" to "audio",
+        "data" to data,
+        "mimeType" to mimeType,
+    )
+    is ContentBlock.ResourceLink -> linkedMapOf<String, Any?>(
+        "type" to "resource_link",
+        "name" to name,
+        "uri" to uri,
+    ).apply {
+        description?.let { put("description", it) }
+        mimeType?.let { put("mimeType", it) }
+        put("size", size)
+        title?.let { put("title", it) }
+    }
+    is ContentBlock.Resource -> linkedMapOf<String, Any?>(
+        "type" to "resource",
+        "resource" to resource.acpPayload(),
+    )
+}.apply {
+    annotations?.let { put("annotations", it.acpPayload()) }
+    putAcpMeta(_meta)
 }
 
-private fun ContentBlock.acpPayload(): Map<String, Any?> = mapOf(
-    "type" to "text",
-    "text" to textPayload()
-)
+private fun Annotations.acpPayload(): Map<String, Any?> = linkedMapOf<String, Any?>().apply {
+    audience?.let { roles -> put("audience", roles.map { it.name.lowercase() }) }
+    priority?.let { put("priority", it) }
+    lastModified?.let { put("lastModified", it) }
+    putAcpMeta(_meta)
+}
+
+private fun EmbeddedResourceResource.acpPayload(): Map<String, Any?> = when (this) {
+    is EmbeddedResourceResource.TextResourceContents -> linkedMapOf<String, Any?>(
+        "text" to text,
+        "uri" to uri,
+    ).apply {
+        mimeType?.let { put("mimeType", it) }
+        putAcpMeta(_meta)
+    }
+    is EmbeddedResourceResource.BlobResourceContents -> linkedMapOf<String, Any?>(
+        "blob" to blob,
+        "uri" to uri,
+    ).apply {
+        mimeType?.let { put("mimeType", it) }
+        putAcpMeta(_meta)
+    }
+}
+
+private fun PlanEntry.acpPayload(): Map<String, Any?> = linkedMapOf<String, Any?>(
+    "content" to content,
+    "priority" to priority.name.lowercase(),
+    "status" to status.name.lowercase(),
+).apply { putAcpMeta(_meta) }
+
+private fun PlanVariant.acpPayload(): Map<String, Any?> = when (this) {
+    is PlanVariant.Items -> linkedMapOf<String, Any?>(
+        "type" to "items",
+        "id" to id,
+        "entries" to entries.map(PlanEntry::acpPayload),
+    ).apply { putAcpMeta(_meta) }
+    is PlanVariant.Markdown -> linkedMapOf<String, Any?>(
+        "type" to "markdown",
+        "id" to id,
+        "content" to content,
+    ).apply { putAcpMeta(_meta) }
+    is PlanVariant.File -> linkedMapOf<String, Any?>(
+        "type" to "file",
+        "id" to id,
+        "uri" to uri,
+    ).apply { putAcpMeta(_meta) }
+}
 
 private fun toolPayload(update: SessionUpdate.ToolCall): Map<String, Any?> =
     linkedMapOf(
@@ -291,16 +384,16 @@ private fun List<ToolCallContent>.toolContentPayload(): List<Map<String, Any?>> 
             "type" to "content",
             "content" to it.content.acpPayload()
         )
-        is ToolCallContent.Diff -> mapOf(
+        is ToolCallContent.Diff -> linkedMapOf<String, Any?>(
             "type" to "diff",
             "path" to it.path,
             "oldText" to it.oldText,
             "newText" to it.newText
-        )
-        is ToolCallContent.Terminal -> mapOf(
+        ).apply { putAcpMeta(it._meta) }
+        is ToolCallContent.Terminal -> linkedMapOf<String, Any?>(
             "type" to "terminal",
             "terminalId" to it.terminalId
-        )
+        ).apply { putAcpMeta(it._meta) }
     }
 }
 

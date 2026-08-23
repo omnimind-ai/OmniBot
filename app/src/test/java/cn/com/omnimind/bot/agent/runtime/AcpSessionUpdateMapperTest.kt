@@ -4,9 +4,14 @@ package cn.com.omnimind.bot.agent.runtime
 
 import com.agentclientprotocol.model.ContentBlock
 import com.agentclientprotocol.model.MessageId
+import com.agentclientprotocol.model.PlanVariant
+import com.agentclientprotocol.model.PromptResponse
 import com.agentclientprotocol.model.SessionUpdate
+import com.agentclientprotocol.model.StopReason
 import com.agentclientprotocol.model.ToolCallId
+import com.agentclientprotocol.model.ToolCallContent
 import com.agentclientprotocol.model.ToolCallStatus
+import com.agentclientprotocol.model.Usage
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
@@ -20,6 +25,140 @@ import org.junit.Test
  * agents, so its official envelope is a contract worth pinning down.
  */
 class AcpSessionUpdateMapperTest {
+
+    @Test
+    fun promptResponseUsageBecomesSharedTurnUsagePresentation() {
+        val update = PromptResponse(
+            stopReason = StopReason.END_TURN,
+            usage = Usage(
+                inputTokens = 40,
+                outputTokens = 7,
+                totalTokens = 82,
+                cachedReadTokens = 30,
+                cachedWriteTokens = 5,
+            ),
+        ).toAcpTurnUsageUpdate(messageId = MessageId("msg_usage"))
+
+        assertEquals("agent_message_chunk", update?.get("sessionUpdate"))
+        assertEquals("msg_usage", update?.get("messageId"))
+        assertEquals(mapOf("type" to "text", "text" to ""), update?.get("content"))
+        assertEquals(
+            mapOf(
+                "cn.com.omnimind.agent" to mapOf(
+                    "usage" to mapOf(
+                        "turnUsage" to mapOf(
+                            "ctx" to 75L,
+                            "in" to 75L,
+                            "out" to 7L,
+                            "cache" to 30L,
+                            "totalInputTokens" to 75L,
+                            "uncachedInputTokens" to 40L,
+                            "cacheReadTokens" to 30L,
+                            "cacheWriteTokens" to 5L,
+                            "promptTokens" to 75L,
+                            "completionTokens" to 7L,
+                            "totalTokens" to 82L,
+                        )
+                    )
+                )
+            ),
+            update?.get("_meta"),
+        )
+    }
+
+    @Test
+    fun planV2AndRemovalKeepTheirOfficialAcpShapes() {
+        val update = SessionUpdate.PlanUpdateV2(
+            plan = PlanVariant.Markdown(
+                id = "plan-1",
+                content = "# Plan\n\n1. inspect",
+            ),
+            _meta = JsonObject(mapOf("source" to JsonPrimitive("claude"))),
+        ).toAcpSessionNotification("thread-1")
+
+        assertEquals("plan_update", update?.update?.get("sessionUpdate"))
+        assertEquals(
+            mapOf(
+                "type" to "markdown",
+                "id" to "plan-1",
+                "content" to "# Plan\n\n1. inspect",
+            ),
+            update?.update?.get("plan"),
+        )
+        assertEquals(mapOf("source" to "claude"), update?.update?.get("_meta"))
+
+        val removed = SessionUpdate.PlanRemoved(
+            id = "plan-1",
+            _meta = JsonObject(mapOf("reason" to JsonPrimitive("finished"))),
+        ).toAcpSessionNotification("thread-1")
+
+        assertEquals("plan_removed", removed?.update?.get("sessionUpdate"))
+        assertEquals("plan-1", removed?.update?.get("id"))
+        assertEquals(mapOf("reason" to "finished"), removed?.update?.get("_meta"))
+    }
+
+    @Test
+    fun toolContentKeepsStandardImageBlocksForSharedImageCards() {
+        val event = SessionUpdate.ToolCallUpdate(
+            toolCallId = ToolCallId("image-1"),
+            content = listOf(
+                ToolCallContent.Content(
+                    ContentBlock.Image(data = "AAAA", mimeType = "image/png")
+                )
+            ),
+        ).toAcpSessionNotification("thread-1")
+
+        assertEquals(
+            listOf(
+                mapOf(
+                    "type" to "content",
+                    "content" to mapOf(
+                        "type" to "image",
+                        "data" to "AAAA",
+                        "mimeType" to "image/png",
+                    ),
+                )
+            ),
+            event?.update?.get("content"),
+        )
+    }
+
+    @Test
+    fun toolContentKeepsStandardDiffTerminalAndMetadata() {
+        val event = SessionUpdate.ToolCallUpdate(
+            toolCallId = ToolCallId("tool-content-1"),
+            content = listOf(
+                ToolCallContent.Diff(
+                    path = "lib/main.dart",
+                    oldText = "old",
+                    newText = "new",
+                    _meta = JsonObject(mapOf("source" to JsonPrimitive("acp"))),
+                ),
+                ToolCallContent.Terminal(
+                    terminalId = "shell-1",
+                    _meta = JsonObject(mapOf("interactive" to JsonPrimitive(true))),
+                ),
+            ),
+        ).toAcpSessionNotification("thread-1")
+
+        assertEquals(
+            listOf(
+                mapOf(
+                    "type" to "diff",
+                    "path" to "lib/main.dart",
+                    "oldText" to "old",
+                    "newText" to "new",
+                    "_meta" to mapOf("source" to "acp"),
+                ),
+                mapOf(
+                    "type" to "terminal",
+                    "terminalId" to "shell-1",
+                    "_meta" to mapOf("interactive" to true),
+                ),
+            ),
+            event?.update?.get("content"),
+        )
+    }
 
     @Test
     fun agentMessageChunkKeepsItsMessageIdAsTheItemId() {

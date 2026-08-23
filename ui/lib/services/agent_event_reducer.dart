@@ -536,6 +536,25 @@ class AgentEventReducer {
       );
     }
 
+    if (method == 'turn/plan/removed') {
+      final planId = _firstString([params['planId'], params['id'], itemId]);
+      runtime.messages.removeWhere((message) {
+        final cardData = message.cardData;
+        if (cardData?['toolType'] != 'plan' ||
+            !_cardBelongsToTask(cardData!, parentTaskId)) {
+          return false;
+        }
+        final cardPlanId = _string(cardData['planId']);
+        return planId == null || cardPlanId == null || cardPlanId == planId;
+      });
+      return AgentReduceResult(
+        handled: true,
+        method: method,
+        threadId: threadId,
+        turnId: turnId,
+      );
+    }
+
     if (method == 'item/plan/delta' || method == 'turn/plan/updated') {
       final text =
           _extractText(params['delta']) ??
@@ -556,7 +575,11 @@ class AgentEventReducer {
         status: 'running',
         summary: text,
         progress: text,
-        raw: params,
+        raw: <String, dynamic>{
+          ...params,
+          if (_firstString([params['planId'], itemId]) != null)
+            'planId': _firstString([params['planId'], itemId]),
+        },
         streamMeta: _streamMeta(
           runtime,
           parentTaskId: parentTaskId,
@@ -1672,6 +1695,7 @@ class AgentEventReducer {
       if (raw['terminalStreamState'] != null)
         'terminalStreamState': raw['terminalStreamState'],
       if (raw['workspaceId'] != null) 'workspaceId': raw['workspaceId'],
+      if (raw['planId'] != null) 'planId': raw['planId'],
       if (raw['imageDataUrl'] != null) 'imageDataUrl': raw['imageDataUrl'],
       if (raw['taskId'] != null) 'sourceTaskId': raw['taskId'],
       if (raw['runId'] != null) 'runId': raw['runId'],
@@ -3711,6 +3735,43 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
               '',
         }),
       };
+    case 'plan_update':
+      final plan = _asStringMap(update['plan']);
+      final planType = _string(plan?['type'])?.toLowerCase();
+      final entries = (plan?['entries'] as List?)
+          ?.whereType<Map>()
+          .map((entry) => Map<String, dynamic>.from(entry))
+          .toList();
+      final planText = switch (planType) {
+        'markdown' => _extractStreamingText(plan?['content']) ?? '',
+        'file' => _string(plan?['uri']) ?? '',
+        _ =>
+          entries
+                  ?.map(
+                    (entry) =>
+                        '- [${entry['status'] ?? 'pending'}] ${entry['content'] ?? ''}',
+                  )
+                  .join('\n') ??
+              '',
+      };
+      return <String, dynamic>{
+        'method': 'turn/plan/updated',
+        'params': projectedParams(<String, dynamic>{
+          if (_string(plan?['id']) != null) 'itemId': plan!['id'],
+          if (_string(plan?['id']) != null) 'planId': plan!['id'],
+          'entries': entries ?? const <Map<String, dynamic>>[],
+          'plan': planText,
+          'planData': plan,
+        }),
+      };
+    case 'plan_removed':
+      return <String, dynamic>{
+        'method': 'turn/plan/removed',
+        'params': projectedParams(<String, dynamic>{
+          if (_string(update['id']) != null) 'itemId': update['id'],
+          if (_string(update['id']) != null) 'planId': update['id'],
+        }),
+      };
     case 'current_mode_update':
       return <String, dynamic>{
         'method': 'thread/settings/updated',
@@ -3748,6 +3809,7 @@ Map<String, dynamic> _projectAcpToolCall(
   String? turnId,
 }) {
   final permissionCard = _acpPermissionCard(update['rawOutput']);
+  final standardContent = _acpStandardToolContent(update['content']);
   final structuredOutput = _asStringMap(
     update['rawOutput'] is String
         ? _decodeAcpJsonValue(update['rawOutput'] as String)
@@ -3766,7 +3828,48 @@ Map<String, dynamic> _projectAcpToolCall(
     'rawInput': update['rawInput'],
     'rawOutput': update['rawOutput'],
     ..._acpStructuredToolOutput(structuredOutput),
+    if (standardContent.isNotEmpty) 'contentItems': standardContent,
+    // Standard content is a concrete capability signal. It takes precedence
+    // over generic adapter envelopes such as `toolType: context`.
+    ..._acpStandardToolPresentation(standardContent),
     if (permissionCard != null) 'permissionCard': permissionCard,
+  };
+}
+
+List<Map<String, dynamic>> _acpStandardToolContent(Object? value) {
+  if (value is! List) return const <Map<String, dynamic>>[];
+  return value
+      .whereType<Map>()
+      .map((item) => item.map((key, nested) => MapEntry('$key', nested)))
+      .toList(growable: false);
+}
+
+/// Derives visual hints from standard ACP tool content once, before all
+/// Harnesses enter the existing shared card router.
+Map<String, dynamic> _acpStandardToolPresentation(
+  List<Map<String, dynamic>> contentItems,
+) {
+  String? imageDataUrl;
+  String? terminalSessionId;
+  for (final item in contentItems) {
+    final itemType = _string(item['type'])?.toLowerCase();
+    if (itemType == 'terminal') {
+      terminalSessionId ??= _string(item['terminalId']);
+      continue;
+    }
+    if (itemType != 'content') continue;
+    final block = _asStringMap(item['content']);
+    if (_string(block?['type'])?.toLowerCase() != 'image') continue;
+    final data = _string(block?['data']);
+    final mimeType = _string(block?['mimeType']) ?? 'image/png';
+    imageDataUrl ??= data == null || data.isEmpty
+        ? _string(block?['uri'])
+        : 'data:$mimeType;base64,$data';
+  }
+  return <String, dynamic>{
+    if (imageDataUrl != null) 'toolType': 'image',
+    if (imageDataUrl != null) 'imageDataUrl': imageDataUrl,
+    if (terminalSessionId != null) 'terminalSessionId': terminalSessionId,
   };
 }
 
