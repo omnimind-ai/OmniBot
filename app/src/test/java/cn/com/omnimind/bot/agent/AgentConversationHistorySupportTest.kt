@@ -518,6 +518,45 @@ class AgentConversationHistorySupportTest {
     }
 
     @Test
+    fun `prepareEntryForStorage keeps assistant turn usage`() {
+        val payload = AgentConversationHistorySupport.buildTextMessagePayload(
+            messageId = "a-usage",
+            user = 2,
+            text = "完成首轮",
+            isError = false,
+            streamMeta = null,
+            turnUsage = mapOf(
+                "ctx" to 18_797,
+                "in" to 18_797,
+                "out" to 296,
+                "cache" to 13_157
+            ),
+            createdAt = 1L
+        )
+        val entry = AgentConversationEntry(
+            id = 12,
+            conversationId = 7,
+            conversationMode = "normal",
+            entryId = "a-usage",
+            entryType = AgentConversationHistoryRepository.ENTRY_TYPE_ASSISTANT_MESSAGE,
+            status = AgentConversationHistoryRepository.STATUS_SUCCESS,
+            summary = "完成首轮",
+            payloadJson = gson.toJson(payload),
+            createdAt = 1,
+            updatedAt = 1
+        )
+
+        val stored = AgentConversationHistorySupport.prepareEntryForStorage(entry)
+        val storedPayload = AgentConversationHistorySupport.readMap(stored.payloadJson)
+        val storedUsage = storedPayload["turnUsage"] as Map<*, *>
+
+        assertEquals(18_797L, (storedUsage["ctx"] as Number).toLong())
+        assertEquals(18_797L, (storedUsage["in"] as Number).toLong())
+        assertEquals(296L, (storedUsage["out"] as Number).toLong())
+        assertEquals(13_157L, (storedUsage["cache"] as Number).toLong())
+    }
+
+    @Test
     fun `buildPromptRelevantMessages replays tool turn reasoning content from tool payload`() {
         val entry = AgentConversationEntry(
             id = 12,

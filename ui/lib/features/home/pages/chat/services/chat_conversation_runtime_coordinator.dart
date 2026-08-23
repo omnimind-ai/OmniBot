@@ -269,7 +269,11 @@ class ChatConversationRuntimeState {
     return null;
   }
 
-  bool acceptsAcpEvent({String? sessionId, String? turnId}) {
+  bool acceptsAcpEvent({
+    String? sessionId,
+    String? turnId,
+    bool allowCompletedTurnMetadata = false,
+  }) {
     final incomingSessionId = sessionId?.trim() ?? '';
     if (incomingSessionId.isEmpty) {
       return true;
@@ -282,7 +286,16 @@ class ChatConversationRuntimeState {
     if (incomingTurnId.isNotEmpty &&
         (completedAgentTurnIds.contains(incomingTurnId) ||
             completedAcpTurnIds.contains(incomingTurnId))) {
-      return false;
+      final activeTurnId =
+          activeAcpTurnId?.trim() ?? currentDispatchTurnId?.trim() ?? '';
+      final currentSessionId = activeAcpSessionId?.trim() ?? '';
+      if (!allowCompletedTurnMetadata ||
+          activeTurnId.isNotEmpty ||
+          (currentSessionId.isNotEmpty &&
+              currentSessionId != incomingSessionId)) {
+        return false;
+      }
+      return true;
     }
     final currentSessionId = activeAcpSessionId?.trim() ?? '';
     if (currentSessionId.isEmpty) {
@@ -826,15 +839,32 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     );
     final eventSessionId = acpEventSessionId(event);
     final eventTurnId = acpEventTurnId(event);
+    final presentation = acpEventPresentation(event);
+    final carriesFinalTurnUsage = acpEventCarriesFinalTurnUsage(event);
     if (!runtime.acceptsAcpEvent(
       sessionId: eventSessionId,
       turnId: eventTurnId,
+      allowCompletedTurnMetadata: carriesFinalTurnUsage,
     )) {
       return const AgentReduceResult(handled: false);
     }
     final result = _agentEventReducer.reduce(runtime: runtime, event: event);
     if (result.handled) {
       _annotateAgentMessages(runtime, event, result);
+      if (presentation?['compaction'] is Map) {
+        final markerIndex = runtime.messages.indexWhere(
+          (message) =>
+              message.type == 2 &&
+              message.cardData?['type'] == 'context_compaction_marker',
+        );
+        if (markerIndex != -1) {
+          _persistContextCompactionMarkerIfNeeded(
+            conversationId: conversationId,
+            mode: mode,
+            message: runtime.messages[markerIndex],
+          );
+        }
+      }
       notifyListeners();
       if (!isEphemeralRuntime(conversationId: conversationId, mode: mode)) {
         schedulePersistRuntimeConversation(
@@ -846,6 +876,11 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
           // so the next Xiaowan prompt cannot reconstruct its context.
           mode: mode,
           persistMessages: true,
+          // Exact usage can legally trail turn/completed. Persist it now so
+          // leaving the page cannot strand the footer in memory only.
+          delay: carriesFinalTurnUsage
+              ? Duration.zero
+              : const Duration(milliseconds: 350),
         );
       }
     }

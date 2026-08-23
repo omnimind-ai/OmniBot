@@ -542,6 +542,149 @@ void main() {
     );
   });
 
+  test(
+    'accepts final ACP turn usage after the turn completion fence',
+    () async {
+      const conversationId = 2202;
+      const turnId = 'turn-late-usage';
+      const sessionId = 'session-late-usage';
+      const messageId = 'message-late-usage';
+
+      applyAcp(
+        conversationId,
+        'turn/started',
+        turnId: turnId,
+        sessionId: sessionId,
+      );
+      applyAcp(
+        conversationId,
+        'session/update',
+        turnId: turnId,
+        sessionId: sessionId,
+        params: const <String, dynamic>{
+          'update': <String, dynamic>{
+            'sessionUpdate': 'agent_message_chunk',
+            'messageId': messageId,
+            'content': <String, dynamic>{'type': 'text', 'text': '最终回复'},
+          },
+        },
+      );
+      applyAcp(
+        conversationId,
+        'turn/completed',
+        turnId: turnId,
+        sessionId: sessionId,
+      );
+      applyAcp(
+        conversationId,
+        'session/update',
+        turnId: turnId,
+        sessionId: sessionId,
+        params: const <String, dynamic>{
+          'update': <String, dynamic>{
+            'sessionUpdate': 'agent_message_chunk',
+            'messageId': messageId,
+            'content': <String, dynamic>{'type': 'text', 'text': ''},
+            '_meta': <String, dynamic>{
+              'cn.com.omnimind.agent': <String, dynamic>{
+                'usage': <String, dynamic>{
+                  'latestPromptTokens': 16076,
+                  'promptTokenThreshold': 128000,
+                  'turnUsage': <String, dynamic>{
+                    'ctx': 16076,
+                    'in': 16076,
+                    'out': 1470,
+                    'cache': 10770,
+                  },
+                },
+              },
+            },
+          },
+        },
+      );
+
+      final runtime = coordinator.runtimeFor(
+        conversationId: conversationId,
+        mode: kChatRuntimeModeAgent,
+      )!;
+      final answer = runtime.messages.singleWhere(
+        (message) => message.id == '$turnId-$messageId-agent-message',
+      );
+      expect(answer.turnUsage, const <String, dynamic>{
+        'ctx': 16076,
+        'in': 16076,
+        'out': 1470,
+        'cache': 10770,
+      });
+      expect(runtime.isAiResponding, isFalse);
+
+      await coordinator.flushPendingPersistence(
+        conversationId: conversationId,
+        mode: kChatRuntimeModeAgent,
+      );
+      final replaceCalls = recordedMethodCalls
+          .where((call) => call.method == 'replaceConversationMessages')
+          .toList();
+      expect(replaceCalls, isNotEmpty);
+      final persisted = Map<String, dynamic>.from(
+        ((replaceCalls.last.arguments as Map)['messages'] as List)
+            .cast<Map>()
+            .singleWhere((message) => message['id'] == answer.id)
+            .cast<String, dynamic>(),
+      );
+      expect(persisted['turnUsage'], answer.turnUsage);
+    },
+  );
+
+  test('persists ACP context compaction marker immediately', () async {
+    const conversationId = 2203;
+    const turnId = 'turn-compaction-persist';
+    const sessionId = 'session-compaction-persist';
+
+    applyAcp(
+      conversationId,
+      'turn/started',
+      turnId: turnId,
+      sessionId: sessionId,
+    );
+    applyAcp(
+      conversationId,
+      'session/update',
+      turnId: turnId,
+      sessionId: sessionId,
+      params: const <String, dynamic>{
+        'update': <String, dynamic>{
+          'sessionUpdate': 'agent_thought_chunk',
+          'messageId': 'thought-compaction-persist',
+          'content': <String, dynamic>{'type': 'text', 'text': ''},
+          '_meta': <String, dynamic>{
+            'cn.com.omnimind.agent': <String, dynamic>{
+              'compaction': <String, dynamic>{
+                'status': 'completed',
+                'trigger': 'auto',
+                'latestPromptTokens': 126000,
+                'promptTokenThreshold': 128000,
+              },
+            },
+          },
+        },
+      },
+    );
+    await Future<void>.delayed(Duration.zero);
+
+    final upsertCalls = recordedMethodCalls
+        .where((call) => call.method == 'upsertConversationUiCard')
+        .toList();
+    expect(upsertCalls, hasLength(1));
+    final args = Map<String, dynamic>.from(
+      (upsertCalls.single.arguments as Map).cast<String, dynamic>(),
+    );
+    expect(args['conversationId'], conversationId);
+    expect(args['mode'], kChatRuntimeModeAgent);
+    expect((args['cardData'] as Map)['type'], 'context_compaction_marker');
+    expect((args['cardData'] as Map)['status'], 'completed');
+  });
+
   test('routes normal chat chunks through the ACP stream', () {
     const conversationId = 2301;
     const turnId = 'turn-normal';

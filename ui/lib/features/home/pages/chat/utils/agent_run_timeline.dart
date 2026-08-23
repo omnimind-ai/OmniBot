@@ -163,6 +163,13 @@ List<AgentRunTimelineEntry> buildAgentRunTimelineEntries(
   final entries = <AgentRunTimelineEntry>[];
 
   for (final message in messages) {
+    // Artifact metadata is already carried by the corresponding tool card and
+    // powers the activity strip above the composer. Rendering the reducer's
+    // standalone compatibility card as well puts a large duplicate file card
+    // between the user's prompt and the Agent response.
+    if (_cardType(message) == 'artifact_card') {
+      continue;
+    }
     final taskId = agentRunId(message);
     if (taskId == null) {
       entries.add(AgentRunTimelineEntry.message(message));
@@ -635,6 +642,12 @@ String? _agentTaskIdFromEntryId(String? raw) {
   final id = raw?.trim() ?? '';
   if (id.isEmpty) {
     return null;
+  }
+  // Legacy Xiaowan final replies used the run id itself as the message id.
+  // Keep that id intact so the reply rejoins its thinking/tool entries and is
+  // rendered through the same review header as every other Harness run.
+  if (_legacyAgentTaskId.hasMatch(id)) {
+    return id;
   }
   const suffixes = <String>[
     '-assistant',

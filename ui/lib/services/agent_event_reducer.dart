@@ -184,9 +184,19 @@ class AgentEventReducer {
         ) ??
         'agent-${runtime.conversationId}';
 
+    final finalTurnUsagePresentation =
+        method == 'item/agentMessage/delta' &&
+        (_extractText(params['delta']) ?? '').isEmpty &&
+        _asStringMap(
+              _asStringMap(
+                _asStringMap(params['acpPresentation'])?['usage'],
+              )?['turnUsage'],
+            ) !=
+            null;
     if (turnId != null &&
         method != 'turn/started' &&
-        runtime.completedAgentTurnIds.contains(turnId)) {
+        runtime.completedAgentTurnIds.contains(turnId) &&
+        !finalTurnUsagePresentation) {
       return AgentReduceResult(
         handled: true,
         method: method,
@@ -3763,6 +3773,36 @@ Map<String, dynamic> _projectAcpToolCall(
 Map<String, dynamic>? _acpPresentationMeta(Map<String, dynamic> update) {
   final meta = _asStringMap(update['_meta']) ?? _asStringMap(update['meta']);
   return _asStringMap(meta?['cn.com.omnimind.agent']);
+}
+
+/// Reads the shared presentation metadata from an ACP session update,
+/// regardless of which supported bridge envelope contains it.
+Map<String, dynamic>? acpEventPresentation(Map<String, dynamic> event) {
+  for (final envelope in _agentEnvelopeMaps(event)) {
+    final update = _asStringMap(envelope['update']);
+    if (update == null) continue;
+    final presentation = _acpPresentationMeta(update);
+    if (presentation != null) return presentation;
+  }
+  return null;
+}
+
+/// A Harness may report exact turn usage in a final empty message chunk after
+/// `turn/completed`. This is metadata for the completed answer, not a delayed
+/// text mutation, so the conversation fence may safely admit this one shape.
+bool acpEventCarriesFinalTurnUsage(Map<String, dynamic> event) {
+  for (final envelope in _agentEnvelopeMaps(event)) {
+    final update = _asStringMap(envelope['update']);
+    if (update == null ||
+        _string(update['sessionUpdate']) != 'agent_message_chunk') {
+      continue;
+    }
+    final presentation = _acpPresentationMeta(update);
+    final usage = _asStringMap(presentation?['usage']);
+    if (_asStringMap(usage?['turnUsage']) == null) continue;
+    if ((_extractStreamingText(update['content']) ?? '').isEmpty) return true;
+  }
+  return false;
 }
 
 /// ACP's standard usage update is provider-neutral. Translate it once at the

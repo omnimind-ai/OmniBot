@@ -24,6 +24,39 @@ void main() {
     expect(entries.single.group?.taskId, 'run-1');
   });
 
+  test('restores review header for legacy Xiaowan timestamp-ai reply', () {
+    const timestamp = '1787481000000';
+    final messages = <ChatMessageModel>[
+      ChatMessageModel(
+        id: '$timestamp-ai',
+        type: 1,
+        user: 2,
+        content: const <String, dynamic>{
+          'id': '$timestamp-ai',
+          'text': '旧小万最终回复',
+        },
+      ),
+      _thinkingCard(
+        id: '$timestamp-ai-thinking',
+        taskId: '$timestamp-ai',
+        seq: 1,
+      ),
+      ChatMessageModel.userMessage('旧问题', id: '$timestamp-user'),
+    ];
+
+    final entries = buildAgentRunTimelineEntries(messages);
+
+    expect(entries, hasLength(2));
+    expect(entries.first.group?.taskId, '$timestamp-ai');
+    expect(
+      entries.first.group?.visibleMessagesNewestFirst.single.text,
+      '旧小万最终回复',
+    );
+    expect(entries.first.group?.thinkingCount, 1);
+    expect(entries.first.group?.hasProcessMessages, isTrue);
+    expect(entries.last.message?.id, '$timestamp-user');
+  });
+
   test('groups completed agent run by parent task id', () {
     final entries = buildAgentRunTimelineEntries(_buildCompletedRunMessages());
 
@@ -32,6 +65,34 @@ void main() {
     expect(entries.first.group?.thinkingCount, 1);
     expect(entries.first.group?.toolCount, 1);
     expect(entries.first.group?.visibleMessagesNewestFirst.single.text, '最终回答');
+  });
+
+  test('hides standalone artifact card between prompt and Agent response', () {
+    final messages = <ChatMessageModel>[
+      ChatMessageModel.cardMessage(
+        const <String, dynamic>{
+          'type': 'artifact_card',
+          'artifact': <String, dynamic>{'title': 'result.md'},
+          'taskId': 'task-1',
+          'runId': 'task-1',
+          'cardId': 'task-1-artifact-result',
+        },
+        id: 'task-1-artifact-result',
+        streamMeta: const <String, dynamic>{
+          'runId': 'task-1',
+          'parentTaskId': 'task-1',
+          'kind': 'artifact',
+        },
+      ),
+      ..._buildCompletedRunMessages(),
+    ];
+
+    final entries = buildAgentRunTimelineEntries(messages);
+
+    expect(entries, hasLength(2));
+    expect(entries.any((entry) => entry.key.contains('artifact')), isFalse);
+    expect(entries.first.group?.taskId, 'task-1');
+    expect(entries.last.message?.id, 'user-1');
   });
 
   test('uses turn-owned content anchors over a stale tool timestamp', () {
