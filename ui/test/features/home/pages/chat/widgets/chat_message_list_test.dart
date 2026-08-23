@@ -817,7 +817,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('运行 git status'), findsOneWidget);
-    expect(find.text('详细思考过程'), findsOneWidget);
+    expect(find.text('详细思考过程'), findsNothing);
+    expect(find.byType(DeepThinkingCard), findsOneWidget);
     expect(find.byType(AgentAvatarCircle), findsOneWidget);
     expect(find.byType(AgentAvatarButton), findsNothing);
   });
@@ -900,7 +901,7 @@ void main() {
     expect(find.text('第一段过程正文'), findsOneWidget);
     expect(find.text('第二段过程正文'), findsOneWidget);
     expect(find.text('读取项目状态'), findsOneWidget);
-    expect(find.text('最后整理思路'), findsOneWidget);
+    expect(find.text('最后整理思路'), findsNothing);
     expect(find.text('最终结论'), findsOneWidget);
     expect(
       tester.getTopLeft(find.text('第一段过程正文')).dy,
@@ -1563,7 +1564,7 @@ void main() {
     expect(find.text('读取 README.md'), findsOneWidget);
   });
 
-  testWidgets('reopening run restores thinking details with the process fold', (
+  testWidgets('reopening run keeps thinking folded until requested', (
     tester,
   ) async {
     final controller = ScrollController();
@@ -1590,7 +1591,7 @@ void main() {
     await tester.tap(summaryToggle);
     await tester.pumpAndSettle();
 
-    expect(find.text('详细思考过程'), findsOneWidget);
+    expect(find.text('详细思考过程'), findsNothing);
     final thinkingToggle = find.descendant(
       of: find.byType(DeepThinkingCard),
       matching: find.byType(InkWell),
@@ -1599,7 +1600,7 @@ void main() {
 
     await tester.tap(thinkingToggle);
     await tester.pumpAndSettle();
-    expect(find.text('详细思考过程'), findsNothing);
+    expect(find.text('详细思考过程'), findsOneWidget);
 
     await tester.tap(summaryToggle);
     await tester.pumpAndSettle();
@@ -1608,7 +1609,7 @@ void main() {
     await tester.tap(summaryToggle);
     await tester.pumpAndSettle();
     expect(find.byType(DeepThinkingCard), findsOneWidget);
-    expect(find.text('详细思考过程'), findsOneWidget);
+    expect(find.text('详细思考过程'), findsNothing);
   });
 
   testWidgets('agent run expansion can be controlled by the parent page', (
@@ -1979,15 +1980,30 @@ void main() {
 
       expect(find.byType(DeepThinkingCard), findsNWidgets(2));
       expect(find.text('读取 README.md'), findsOneWidget);
-      expect(find.text('我先检查工作区。'), findsOneWidget);
+      expect(find.text('先定位需要读取的文件。'), findsNothing);
+      expect(find.text('根据工具结果继续检查。'), findsNothing);
+
+      final firstThinkingHeader = find.descendant(
+        of: find.byKey(const ValueKey('deep_thinking_dsh-thinking-step-1')),
+        matching: find.byType(InkWell),
+      );
+      await tester.tap(firstThinkingHeader);
+      await tester.pumpAndSettle();
+
+      expect(find.text('先定位需要读取的文件。'), findsOneWidget);
+      expect(find.text('根据工具结果继续检查。'), findsNothing);
       expect(
-        tester.getTopLeft(find.text('我先检查工作区。')).dy,
+        tester.getTopLeft(find.text('先定位需要读取的文件。')).dy,
         lessThan(tester.getTopLeft(find.text('读取 README.md')).dy),
       );
       expect(
         tester.getTopLeft(find.text('读取 README.md')).dy,
         lessThan(tester.getTopLeft(find.text('检查完成，这是最终回答。')).dy),
       );
+
+      await tester.tap(firstThinkingHeader);
+      await tester.pumpAndSettle();
+      expect(find.text('先定位需要读取的文件。'), findsNothing);
     },
   );
 

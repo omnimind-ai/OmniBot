@@ -141,12 +141,6 @@ class _DeepThinkingCardState extends State<DeepThinkingCard>
             oldWidget.isLoading != widget.isLoading ||
             oldWidget.isCollapsible != widget.isCollapsible ||
             oldWidget.autoCollapseOnComplete != widget.autoCollapseOnComplete);
-    final outerRunReopenedThinking =
-        oldWidget.autoCollapseOnComplete &&
-        !widget.autoCollapseOnComplete &&
-        widget.stage == 4 &&
-        !widget.isLoading;
-
     if (becameCompleted) {
       _stopTimer();
     }
@@ -163,11 +157,6 @@ class _DeepThinkingCardState extends State<DeepThinkingCard>
         markCompletionHandled: true,
         followParentDuringAnimation: true,
       );
-    } else if (outerRunReopenedThinking && _isCollapsed) {
-      // The inner card may have auto-collapsed when reasoning ended while the
-      // outer ACP turn was still running. Once the finished run is reopened,
-      // restore the reasoning details instead of opening onto tools only.
-      _setCollapsed(false);
     } else if (becameThinking && _isCollapsed) {
       _setCollapsed(false);
     }

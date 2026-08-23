@@ -381,10 +381,10 @@ class _AgentRunGroupMessageState extends State<AgentRunGroupMessage>
       // While the run itself is finishing, let the outer 320 ms fold own the
       // transition. Running the thinking card's 170 ms height/opacity collapse
       // at the same time multiplies both animations and looks like a flash.
-      // Once the user re-opens a finished run, keep the thinking card visible;
-      // otherwise the outer fold opens onto the tool result while the actual
-      // reasoning card is silently collapsed a second time.
-      thinkingAutoCollapseOnComplete: widget.group.isRunning,
+      // A manually re-opened finished run still initializes each completed
+      // thinking card in its compact collapsed state. Users can expand only
+      // the reasoning segment they want to inspect.
+      thinkingAutoCollapseOnComplete: widget.group.isRunning || widget.expanded,
       useAgentToolPresentation: widget.useAcpPresentation,
       showThinkingAvatarOverride: hideAvatar ? false : null,
       parentScrollController: widget.parentScrollController,
