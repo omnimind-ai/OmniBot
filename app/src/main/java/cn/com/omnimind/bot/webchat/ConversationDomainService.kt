@@ -508,7 +508,9 @@ class ConversationDomainService(
     fun normalizeConversationMode(rawMode: String?): String {
         val normalized = rawMode?.trim()?.lowercase().orEmpty()
         return when (normalized) {
-            "", "normal" -> "normal"
+            // Xiaowan used to be stored as `normal`. It is now the built-in
+            // ACP Agent. Pure chat has its explicit `chat_only` mode.
+            "", "normal" -> AGENT_MODE_STORAGE_VALUE
             "agent", "codex", "acp", "coding" -> AGENT_MODE_STORAGE_VALUE
             "chat", "chatonly", "chat-only" -> "chat_only"
             else -> normalized
