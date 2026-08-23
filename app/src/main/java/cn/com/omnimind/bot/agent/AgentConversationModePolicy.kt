@@ -6,7 +6,7 @@ import kotlinx.serialization.json.jsonPrimitive
 
 object AgentConversationModePolicy {
     /** Canonical durable mode for the shared Agent/ACP conversation surface. */
-    const val AGENT_MODE = "normal"
+    const val AGENT_MODE = "agent"
     const val NORMAL_MODE = "normal"
     const val SUBAGENT_MODE = "subagent"
     const val CHAT_ONLY_MODE = "chat_only"
