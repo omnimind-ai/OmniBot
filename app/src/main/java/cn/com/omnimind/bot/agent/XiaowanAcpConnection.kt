@@ -65,6 +65,9 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import java.util.UUID
 
@@ -620,7 +623,10 @@ internal class XiaowanAcpEventBridge(
         }
     }
 
-    private suspend fun emitAssistantSnapshotLocked(snapshot: String) {
+    private suspend fun emitAssistantSnapshotLocked(
+        snapshot: String,
+        meta: JsonElement = JsonNull,
+    ) {
         emitTextSnapshot(
             snapshot = snapshot,
             previous = assistantSnapshot,
@@ -632,7 +638,7 @@ internal class XiaowanAcpEventBridge(
                     SessionUpdate.AgentMessageChunk(
                         content = ContentBlock.Text(delta),
                         messageId = id,
-                        _meta = JsonNull,
+                        _meta = meta,
                     )
                 )
             }
@@ -652,18 +658,19 @@ internal class XiaowanAcpEventBridge(
 
     override suspend fun onThinkingUpdate(thinking: String) {
         callbackMutex.withLock {
+            val displayText = reasoningDisplayText(thinking)
             emitTextSnapshot(
-                snapshot = thinking,
+                snapshot = displayText,
                 previous = thoughtSnapshot,
                 messageId = thoughtMessageId,
                 emit = { delta, id ->
-                    thoughtSnapshot = thinking
+                    thoughtSnapshot = displayText
                     thoughtMessageId = id
                     emitUpdate(
                         SessionUpdate.AgentThoughtChunk(
                             content = ContentBlock.Text(delta),
                             messageId = id,
-                            _meta = JsonNull,
+                            _meta = reasoningAcpMeta(thinking),
                         )
                     )
                 }
@@ -814,6 +821,7 @@ internal class XiaowanAcpEventBridge(
                     )
                 )
             }
+        val rawOutput = permissionPayload ?: toolResultAcpPayload(result)
         emitUpdate(
             SessionUpdate.ToolCallUpdate(
                 toolCallId = ToolCallId(resolvedToolCallId),
@@ -829,7 +837,7 @@ internal class XiaowanAcpEventBridge(
                 }.orEmpty(),
                 locations = emptyList(),
                 rawInput = JsonNull,
-                rawOutput = permissionPayload ?: JsonPrimitive(text),
+                rawOutput = rawOutput,
                 _meta = JsonNull,
             )
         )
@@ -866,7 +874,76 @@ internal class XiaowanAcpEventBridge(
         decodeTokensPerSecond: Double?,
     ) {
         callbackMutex.withLock {
-            emitAssistantSnapshotLocked(message)
+            emitAssistantSnapshotLocked(
+                snapshot = message,
+                meta = acpPresentationMeta(
+                    "usage" to mapOf(
+                        "prefillTokensPerSecond" to prefillTokensPerSecond,
+                        "decodeTokensPerSecond" to decodeTokensPerSecond,
+                    )
+                ),
+            )
+        }
+    }
+
+    override suspend fun onRetrying(
+        retryCount: Int,
+        maxRetries: Int,
+        retryDelayMs: Long,
+        message: String,
+        retryReason: String?,
+    ) {
+        callbackMutex.withLock {
+            emitAssistantStatus(
+                acpPresentationMeta(
+                    "retry" to mapOf(
+                        "count" to retryCount,
+                        "maxRetries" to maxRetries,
+                        "delayMs" to retryDelayMs,
+                        "message" to message,
+                        "reason" to retryReason,
+                    )
+                )
+            )
+        }
+    }
+
+    override suspend fun onPromptTokenUsageChanged(
+        latestPromptTokens: Int,
+        promptTokenThreshold: Int?,
+    ) {
+        callbackMutex.withLock {
+            emitAssistantStatus(
+                acpPresentationMeta(
+                    "usage" to mapOf(
+                        "latestPromptTokens" to latestPromptTokens,
+                        "promptTokenThreshold" to promptTokenThreshold,
+                    )
+                )
+            )
+        }
+    }
+
+    override suspend fun onContextCompactionStateChanged(
+        isCompacting: Boolean,
+        latestPromptTokens: Int?,
+        promptTokenThreshold: Int?,
+    ) {
+        callbackMutex.withLock {
+            emitUpdate(
+                SessionUpdate.AgentThoughtChunk(
+                    content = ContentBlock.Text(""),
+                    messageId = thoughtMessageId,
+                    _meta = acpPresentationMeta(
+                        "compaction" to mapOf(
+                            "status" to if (isCompacting) "compressing" else "completed",
+                            "trigger" to "auto",
+                            "latestPromptTokens" to latestPromptTokens,
+                            "promptTokenThreshold" to promptTokenThreshold,
+                        )
+                    ),
+                )
+            )
         }
     }
 
@@ -877,8 +954,20 @@ internal class XiaowanAcpEventBridge(
     }
     override suspend fun onComplete(result: AgentResult) = Unit
     override suspend fun onError(error: String) {
+        onError(error, retryable = false)
+    }
+    override suspend fun onError(error: String, retryable: Boolean) {
         callbackMutex.withLock {
-            emitAssistantNotice(error)
+            emitAssistantNotice(
+                text = error,
+                meta = acpPresentationMeta(
+                    "recovery" to mapOf(
+                        "error" to error,
+                        "retryable" to retryable,
+                        "continueable" to false,
+                    )
+                ),
+            )
         }
     }
     override suspend fun onPermissionRequired(missing: List<String>) {
@@ -887,14 +976,27 @@ internal class XiaowanAcpEventBridge(
         // that used to leave the user with text only.
     }
 
-    private suspend fun emitAssistantNotice(text: String) {
+    private suspend fun emitAssistantStatus(meta: JsonElement) {
+        emitUpdate(
+            SessionUpdate.AgentMessageChunk(
+                content = ContentBlock.Text(""),
+                messageId = assistantMessageId,
+                _meta = meta,
+            )
+        )
+    }
+
+    private suspend fun emitAssistantNotice(
+        text: String,
+        meta: JsonElement = JsonNull,
+    ) {
         val normalized = text.trim()
         if (normalized.isEmpty()) return
         emitUpdate(
             SessionUpdate.AgentMessageChunk(
                 content = ContentBlock.Text(normalized),
                 messageId = MessageId(UUID.randomUUID().toString()),
-                _meta = JsonNull,
+                _meta = meta,
             )
         )
     }
@@ -954,6 +1056,168 @@ private fun toolResultText(result: ToolExecutionResult): String = when (result) 
     is ToolExecutionResult.TerminalResult -> result.summaryText.ifBlank { result.terminalOutput }
     is ToolExecutionResult.Interrupted -> result.summaryText
     is ToolExecutionResult.ContextResult -> result.summaryText.ifBlank { result.rawResultJson }
+}
+
+private fun reasoningAcpMeta(thinking: String): JsonObject {
+    val reasoning = linkedMapOf<String, Any?>(
+        "stage" to "thinking",
+        "content" to thinking,
+    )
+    val structured = structuredReasoning(thinking)
+    if (structured != null) {
+        fun copy(source: String, target: String = source) {
+            structured[source]?.let { reasoning[target] = it }
+        }
+        copy("task_description", "taskDescription")
+        copy("taskDescription")
+        copy("sub_tasks", "subTasks")
+        copy("subTasks")
+        copy("preparation")
+        copy("task_title", "taskTitle")
+        copy("taskTitle")
+        copy("memory_actions", "memoryActions")
+        copy("memoryActions")
+    }
+    return acpPresentationMeta("reasoning" to reasoning)
+}
+
+private fun structuredReasoning(thinking: String): JsonObject? = runCatching {
+    Json.parseToJsonElement(thinking) as? JsonObject
+}.getOrNull()
+
+private fun reasoningDisplayText(thinking: String): String {
+    val structured = structuredReasoning(thinking) ?: return thinking
+    val lines = mutableListOf<String>()
+    val taskDescription = (
+        structured["task_description"]?.presentationText()
+            ?: structured["taskDescription"]?.presentationText()
+        ).orEmpty().trim()
+    if (taskDescription.isNotEmpty()) {
+        lines += taskDescription
+    }
+    val subTasks = (structured["sub_tasks"] ?: structured["subTasks"]) as? JsonArray
+    val subTaskLines = subTasks
+        ?.mapNotNull { it.presentationText()?.trim()?.takeIf(String::isNotEmpty) }
+        .orEmpty()
+    if (subTaskLines.isNotEmpty()) {
+        lines += subTaskLines.joinToString("\n") { "- $it" }
+    }
+    structured["preparation"]?.presentationText()
+        ?.takeIf { it.isNotBlank() }
+        ?.let(lines::add)
+    return lines.takeIf { it.isNotEmpty() }?.joinToString("\n\n") ?: thinking
+}
+
+private fun JsonElement.presentationText(): String? = when (this) {
+    is JsonPrimitive -> contentOrNull
+    is JsonObject -> listOf("content", "text", "title", "description")
+        .asSequence()
+        .mapNotNull { key -> this[key]?.presentationText() }
+        .firstOrNull()
+    else -> toString()
+}
+
+private fun acpPresentationMeta(vararg values: Pair<String, Any?>): JsonObject =
+    jsonObjectFromMap(
+        mapOf(
+            "cn.com.omnimind.agent" to values.toMap()
+        )
+    )
+
+/**
+ * Preserves the common tool-result vocabulary inside ACP [rawOutput].
+ *
+ * ACP deliberately leaves tool output unconstrained. Keeping this shape here
+ * means every Harness can feed the same frontend card projection without a
+ * Xiaowan-only event or widget path.
+ */
+private fun toolResultAcpPayload(result: ToolExecutionResult): JsonObject {
+    val payload = linkedMapOf<String, Any?>(
+        "summary" to toolResultText(result),
+        "success" to toolResultSucceeded(result),
+        "artifacts" to result.artifacts.map { it.toPayload() },
+        "workspaceId" to result.workspaceId,
+        "actions" to result.actions.map { it.toPayload() },
+    )
+    when (result) {
+        is ToolExecutionResult.ChatMessage -> {
+            payload["toolType"] = "message"
+            payload["result"] = result.message
+        }
+        is ToolExecutionResult.Clarify -> {
+            payload["toolType"] = "clarify"
+            payload["result"] = mapOf(
+                "question" to result.question,
+                "missingFields" to (result.missingFields ?: emptyList<String>()),
+            )
+        }
+        is ToolExecutionResult.Error -> {
+            payload["toolType"] = "tool"
+            payload["toolName"] = result.toolName
+            payload["error"] = result.message
+        }
+        is ToolExecutionResult.PermissionRequired -> {
+            // Permission results use the dedicated ACP permission payload in
+            // emitToolComplete, but keeping this branch total makes this
+            // serializer safe for future callers.
+            payload["toolType"] = "permission"
+            payload["missing"] = result.missing
+        }
+        is ToolExecutionResult.ScheduleResult -> {
+            payload["toolType"] = "schedule"
+            payload["toolName"] = result.toolName
+            payload["result"] = jsonElementFromJsonText(result.previewJson)
+            payload["taskId"] = result.taskId
+        }
+        is ToolExecutionResult.McpResult -> {
+            payload["toolType"] = "mcp"
+            payload["toolName"] = result.toolName
+            payload["serverName"] = result.serverName
+            payload["result"] = jsonElementFromJsonText(result.previewJson)
+            payload["rawResult"] = jsonElementFromJsonText(result.rawResultJson)
+        }
+        is ToolExecutionResult.MemoryResult -> {
+            payload["toolType"] = "memory"
+            payload["toolName"] = result.toolName
+            payload["result"] = jsonElementFromJsonText(result.previewJson)
+            payload["rawResult"] = jsonElementFromJsonText(result.rawResultJson)
+        }
+        is ToolExecutionResult.TerminalResult -> {
+            payload["toolType"] = "terminal"
+            payload["toolName"] = result.toolName
+            payload["result"] = jsonElementFromJsonText(result.previewJson)
+            payload["rawResult"] = jsonElementFromJsonText(result.rawResultJson)
+            payload["timedOut"] = result.timedOut
+            payload["terminalOutput"] = result.terminalOutput
+            payload["terminalSessionId"] = result.terminalSessionId
+            payload["terminalStreamState"] = result.terminalStreamState
+        }
+        is ToolExecutionResult.Interrupted -> {
+            payload["toolType"] = "terminal"
+            payload["toolName"] = result.toolName
+            payload["result"] = jsonElementFromJsonText(result.previewJson)
+            payload["rawResult"] = jsonElementFromJsonText(result.rawResultJson)
+            payload["terminalOutput"] = result.terminalOutput
+            payload["terminalSessionId"] = result.terminalSessionId
+            payload["terminalStreamState"] = result.terminalStreamState
+            payload["interruptedBy"] = result.interruptedBy
+            payload["interruptionReason"] = result.interruptionReason
+        }
+        is ToolExecutionResult.ContextResult -> {
+            payload["toolType"] = "context"
+            payload["toolName"] = result.toolName
+            payload["result"] = jsonElementFromJsonText(result.previewJson)
+            payload["rawResult"] = jsonElementFromJsonText(result.rawResultJson)
+            payload["imageDataUrl"] = result.imageDataUrl
+        }
+    }
+    return jsonObjectFromMap(payload)
+}
+
+private fun jsonElementFromJsonText(text: String): JsonElement = runCatching {
+    Json.parseToJsonElement(text)
+}.getOrElse {
+    JsonPrimitive(text)
 }
 
 private class LoopbackTransport : BaseTransport() {

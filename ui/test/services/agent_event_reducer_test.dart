@@ -617,6 +617,146 @@ void main() {
     expect(message.cardData?['thinkingContent'], '先确认用户消息与当前轮次');
   });
 
+  test('projects structured ACP reasoning into the shared thinking card', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'turnId': 'turn-structured-thinking',
+        'params': {
+          'sessionId': 'session-structured-thinking',
+          'update': {
+            'sessionUpdate': 'agent_thought_chunk',
+            'messageId': 'thought-structured',
+            'content': {'type': 'text', 'text': ''},
+            '_meta': {
+              'cn.com.omnimind.agent': {
+                'reasoning': {
+                  'taskDescription': '检查 ACP 投影是否完整',
+                  'subTasks': ['保留工具结果', '渲染统一卡片'],
+                  'preparation': '先确认会话归属',
+                  'stage': 'planning',
+                },
+              },
+            },
+          },
+        },
+      },
+    );
+
+    final cardData = runtime.messages.single.cardData!;
+    expect(cardData['type'], 'deep_thinking');
+    expect(cardData['thinkingContent'], contains('检查 ACP 投影是否完整'));
+    expect(cardData['thinkingContent'], contains('保留工具结果'));
+    expect(cardData['thinkingContent'], contains('先确认会话归属'));
+  });
+
+  test('projects ACP retry state into the next shared assistant message', () {
+    const base = <String, dynamic>{
+      'method': 'session/update',
+      'turnId': 'turn-retry',
+      'params': {
+        'sessionId': 'session-retry',
+        'update': {
+          'sessionUpdate': 'agent_message_chunk',
+          'messageId': 'message-retry',
+          'content': {'type': 'text', 'text': ''},
+          '_meta': {
+            'cn.com.omnimind.agent': {
+              'retry': {
+                'count': 1,
+                'maxRetries': 3,
+                'delayMs': 1000,
+                'message': '请求失败，正在重试',
+                'reason': 'timeout',
+              },
+            },
+          },
+        },
+      },
+    };
+    reducer.reduce(runtime: runtime, event: base);
+
+    final retryMessage = runtime.messages.single;
+    expect(retryMessage.content?['agentRetrying'], isTrue);
+    expect(retryMessage.content?['agentRetryCount'], 1);
+    expect(retryMessage.content?['agentMaxRetries'], 3);
+
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        ...base,
+        'params': {
+          ...(base['params'] as Map<String, dynamic>),
+          'update': {
+            'sessionUpdate': 'agent_message_chunk',
+            'messageId': 'message-retry',
+            'content': {'type': 'text', 'text': '恢复后的统一正文'},
+          },
+        },
+      },
+    );
+
+    final message = runtime.messages.single;
+    expect(message.text, '恢复后的统一正文');
+    expect(message.content?['agentRetrying'], isNull);
+  });
+
+  test('projects ACP context compaction into the shared marker card', () {
+    const base = <String, dynamic>{
+      'method': 'session/update',
+      'turnId': 'turn-compaction',
+      'params': {
+        'sessionId': 'session-compaction',
+        'update': {
+          'sessionUpdate': 'agent_thought_chunk',
+          'messageId': 'thought-compaction',
+          'content': {'type': 'text', 'text': ''},
+          '_meta': {
+            'cn.com.omnimind.agent': {
+              'compaction': {
+                'status': 'compressing',
+                'trigger': 'auto',
+                'latestPromptTokens': 126000,
+                'promptTokenThreshold': 128000,
+              },
+            },
+          },
+        },
+      },
+    };
+    reducer.reduce(runtime: runtime, event: base);
+
+    final activeMarker = runtime.messages.single;
+    expect(activeMarker.cardData?['type'], 'context_compaction_marker');
+    expect(activeMarker.cardData?['status'], 'compressing');
+    expect(runtime.isContextCompressing, isTrue);
+
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        ...base,
+        'params': {
+          ...(base['params'] as Map<String, dynamic>),
+          'update': {
+            'sessionUpdate': 'agent_thought_chunk',
+            'messageId': 'thought-compaction',
+            'content': {'type': 'text', 'text': ''},
+            '_meta': {
+              'cn.com.omnimind.agent': {
+                'compaction': {'status': 'completed'},
+              },
+            },
+          },
+        },
+      },
+    );
+
+    expect(runtime.messages, hasLength(1));
+    expect(runtime.messages.single.cardData?['status'], 'completed');
+    expect(runtime.isContextCompressing, isFalse);
+  });
+
   test('appends multiple ACP reasoning rounds to one thinking card', () {
     const event = {
       'method': 'item/reasoning/delta',
@@ -721,43 +861,34 @@ void main() {
     expect(message.id, 'tool:session-1:tool-1:command');
   });
 
-  test('turns an ACP missing-accessibility result into an authorization card', () {
-    final base = <String, dynamic>{
-      'message': {
-        'method': 'session/update',
-        'turnId': 'turn-permission',
-        'params': {
-          'sessionId': 'session-permission',
-          'update': {
-            'sessionUpdate': 'tool_call',
-            'toolCallId': 'tool-permission',
-            'kind': 'other',
-            'title': 'vlm_task',
-            'status': 'in_progress',
-            'rawInput': <String, dynamic>{},
-          },
-        },
-      },
-    };
-    reducer.reduce(runtime: runtime, event: base);
+  test('projects structured ACP tool output into the shared terminal card', () {
     reducer.reduce(
       runtime: runtime,
       event: {
         'message': {
           'method': 'session/update',
-          'turnId': 'turn-permission',
+          'turnId': 'turn-tool-rich',
           'params': {
-            'sessionId': 'session-permission',
+            'sessionId': 'session-tool-rich',
             'update': {
               'sessionUpdate': 'tool_call_update',
-              'toolCallId': 'tool-permission',
+              'toolCallId': 'terminal-1',
               'kind': 'other',
-              'title': 'vlm_task',
-              'status': 'failed',
+              'title': 'terminal',
+              'status': 'completed',
               'rawOutput': {
-                'type': 'permission_section',
-                'requiredPermissionIds': ['accessibility'],
-                'missing': ['无障碍权限'],
+                'toolType': 'terminal',
+                'summary': 'Command completed',
+                'resultPreview': {'exitCode': 0},
+                'terminalOutput': 'hello from the shared ACP card',
+                'terminalSessionId': 'shell-1',
+                'artifacts': [
+                  {
+                    'id': 'artifact-1',
+                    'title': 'result.txt',
+                    'uri': 'file:///workspace/result.txt',
+                  },
+                ],
               },
             },
           },
@@ -765,17 +896,79 @@ void main() {
       },
     );
 
-    expect(runtime.messages, hasLength(1));
-    expect(runtime.messages.single.cardData?['type'], 'permission_section');
-    expect(
-      runtime.messages.single.cardData?['requiredPermissionIds'],
-      ['accessibility'],
+    final cardData = runtime.messages
+        .firstWhere(
+          (message) => message.cardData?['type'] == 'agent_tool_summary',
+        )
+        .cardData!;
+    expect(cardData['toolType'], 'terminal');
+    expect(cardData['summary'], 'Command completed');
+    expect(cardData['terminalOutput'], 'hello from the shared ACP card');
+    expect(cardData['terminalSessionId'], 'shell-1');
+    expect(cardData['artifacts'], hasLength(1));
+    final artifact = runtime.messages.firstWhere(
+      (message) => message.cardData?['type'] == 'artifact_card',
     );
-    expect(
-      runtime.messages.single.cardData?['autoOpenAuthorization'],
-      isTrue,
-    );
+    expect(artifact.cardData?['artifact']?['title'], 'result.txt');
   });
+
+  test(
+    'turns an ACP missing-accessibility result into an authorization card',
+    () {
+      final base = <String, dynamic>{
+        'message': {
+          'method': 'session/update',
+          'turnId': 'turn-permission',
+          'params': {
+            'sessionId': 'session-permission',
+            'update': {
+              'sessionUpdate': 'tool_call',
+              'toolCallId': 'tool-permission',
+              'kind': 'other',
+              'title': 'vlm_task',
+              'status': 'in_progress',
+              'rawInput': <String, dynamic>{},
+            },
+          },
+        },
+      };
+      reducer.reduce(runtime: runtime, event: base);
+      reducer.reduce(
+        runtime: runtime,
+        event: {
+          'message': {
+            'method': 'session/update',
+            'turnId': 'turn-permission',
+            'params': {
+              'sessionId': 'session-permission',
+              'update': {
+                'sessionUpdate': 'tool_call_update',
+                'toolCallId': 'tool-permission',
+                'kind': 'other',
+                'title': 'vlm_task',
+                'status': 'failed',
+                'rawOutput': {
+                  'type': 'permission_section',
+                  'requiredPermissionIds': ['accessibility'],
+                  'missing': ['无障碍权限'],
+                },
+              },
+            },
+          },
+        },
+      );
+
+      expect(runtime.messages, hasLength(1));
+      expect(runtime.messages.single.cardData?['type'], 'permission_section');
+      expect(runtime.messages.single.cardData?['requiredPermissionIds'], [
+        'accessibility',
+      ]);
+      expect(
+        runtime.messages.single.cardData?['autoOpenAuthorization'],
+        isTrue,
+      );
+    },
+  );
 
   test('deduplicates repeated committed ACP assistant blocks', () {
     final event = <String, dynamic>{

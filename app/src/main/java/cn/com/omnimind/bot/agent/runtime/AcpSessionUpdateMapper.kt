@@ -42,6 +42,7 @@ internal fun SessionUpdate.toAcpSessionNotification(
             "content" to content.acpPayload()
         ).apply {
             messageId?.value?.let { put("messageId", it) }
+            putAcpMeta(_meta)
         }
     )
 
@@ -52,6 +53,7 @@ internal fun SessionUpdate.toAcpSessionNotification(
             "content" to content.acpPayload()
         ).apply {
             messageId?.value?.let { put("messageId", it) }
+            putAcpMeta(_meta)
         }
     )
 
@@ -255,7 +257,9 @@ private fun toolPayload(update: SessionUpdate.ToolCall): Map<String, Any?> =
         },
         "rawInput" to update.rawInput?.toAcpValue(),
         "rawOutput" to update.rawOutput?.toAcpValue()
-    )
+    ).apply {
+        putAcpMeta(update._meta)
+    }
 
 private fun toolPayload(update: SessionUpdate.ToolCallUpdate): Map<String, Any?> =
     linkedMapOf(
@@ -269,7 +273,17 @@ private fun toolPayload(update: SessionUpdate.ToolCallUpdate): Map<String, Any?>
         },
         "rawInput" to update.rawInput?.toAcpValue(),
         "rawOutput" to update.rawOutput?.toAcpValue()
-    )
+    ).apply {
+        putAcpMeta(update._meta)
+    }
+
+private fun MutableMap<String, Any?>.putAcpMeta(
+    meta: kotlinx.serialization.json.JsonElement?
+) {
+    if (meta != null && meta !is kotlinx.serialization.json.JsonNull) {
+        put("_meta", meta.toAcpValue())
+    }
+}
 
 private fun List<ToolCallContent>.toolContentPayload(): List<Map<String, Any?>> = map {
     when (it) {

@@ -7,6 +7,8 @@ import com.agentclientprotocol.model.MessageId
 import com.agentclientprotocol.model.SessionUpdate
 import com.agentclientprotocol.model.ToolCallId
 import com.agentclientprotocol.model.ToolCallStatus
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -52,6 +54,28 @@ class AcpSessionUpdateMapperTest {
         assertEquals(
             mapOf("type" to "text", "text" to "先检查消息顺序"),
             event?.update?.get("content")
+        )
+    }
+
+    @Test
+    fun sessionUpdatePreservesNamespacedPresentationMeta() {
+        val event = SessionUpdate.AgentThoughtChunk(
+            content = ContentBlock.Text("thinking"),
+            messageId = MessageId("msg_thinking"),
+            _meta = JsonObject(
+                mapOf(
+                    "cn.com.omnimind.agent" to JsonObject(
+                        mapOf("phase" to JsonPrimitive("thinking"))
+                    )
+                )
+            )
+        ).toAcpSessionNotification("thread-1")
+
+        assertEquals(
+            mapOf(
+                "cn.com.omnimind.agent" to mapOf("phase" to "thinking")
+            ),
+            event?.update?.get("_meta")
         )
     }
 

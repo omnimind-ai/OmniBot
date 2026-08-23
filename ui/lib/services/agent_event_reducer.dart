@@ -426,11 +426,11 @@ class AgentEventReducer {
           _extractText(params['text']) ??
           _extractText(params['message']) ??
           '';
+      final entryId =
+          _string(params['entryId']) ??
+          '${itemId ?? parentTaskId}-agent-message';
       if (delta.isNotEmpty) {
         _finalizeActiveThinkingCardForTask(runtime, parentTaskId);
-        final entryId =
-            _string(params['entryId']) ??
-            '${itemId ?? parentTaskId}-agent-message';
         _appendAssistantText(
           runtime,
           parentTaskId: parentTaskId,
@@ -439,6 +439,12 @@ class AgentEventReducer {
           isFinal: false,
         );
       }
+      _applyAcpPresentation(
+        runtime,
+        parentTaskId: parentTaskId,
+        entryId: entryId,
+        presentation: _asStringMap(params['acpPresentation']),
+      );
       return AgentReduceResult(
         handled: true,
         method: method,
@@ -458,11 +464,26 @@ class AgentEventReducer {
         final entryId =
             _string(params['entryId']) ??
             '${itemId ?? parentTaskId}-agent-thinking';
+        _applyAcpPresentation(
+          runtime,
+          parentTaskId: parentTaskId,
+          entryId: entryId,
+          presentation: _asStringMap(params['acpPresentation']),
+        );
         _appendThinking(
           runtime,
           parentTaskId: parentTaskId,
           cardId: entryId,
           delta: text,
+        );
+      } else {
+        _applyAcpPresentation(
+          runtime,
+          parentTaskId: parentTaskId,
+          entryId:
+              _string(params['entryId']) ??
+              '${itemId ?? parentTaskId}-agent-thinking',
+          presentation: _asStringMap(params['acpPresentation']),
         );
       }
       return AgentReduceResult(
@@ -920,6 +941,225 @@ class AgentEventReducer {
     );
   }
 
+  void _applyAcpPresentation(
+    ChatConversationRuntimeState runtime, {
+    required String parentTaskId,
+    required String entryId,
+    required Map<String, dynamic>? presentation,
+  }) {
+    if (presentation == null || presentation.isEmpty) {
+      return;
+    }
+    final usage = _asStringMap(presentation['usage']);
+    if (usage != null) {
+      _applyAcpUsage(runtime, usage);
+      _applyAcpPerformanceMetrics(runtime, entryId: entryId, usage: usage);
+    }
+    final retry = _asStringMap(presentation['retry']);
+    if (retry != null) {
+      _touchActiveTurn(runtime, parentTaskId);
+      _upsertAcpRetryPresentation(runtime, entryId: entryId, retry: retry);
+    }
+    final recovery = _asStringMap(presentation['recovery']);
+    if (recovery != null) {
+      _upsertAcpRecoveryPresentation(
+        runtime,
+        entryId: entryId,
+        recovery: recovery,
+      );
+    }
+    final compaction = _asStringMap(presentation['compaction']);
+    if (compaction != null) {
+      _touchActiveTurn(runtime, parentTaskId);
+      _upsertAcpContextCompactionCard(
+        runtime,
+        taskId: parentTaskId,
+        compaction: compaction,
+      );
+    }
+  }
+
+  void _applyAcpUsage(
+    ChatConversationRuntimeState runtime,
+    Map<String, dynamic> usage,
+  ) {
+    final conversation = runtime.conversation;
+    final latestPromptTokens = _asInt(
+      usage['latestPromptTokens'] ?? usage['promptTokens'],
+    );
+    final promptTokenThreshold = _asInt(usage['promptTokenThreshold']);
+    if (conversation == null ||
+        (latestPromptTokens == null && promptTokenThreshold == null)) {
+      return;
+    }
+    runtime.conversation = conversation.copyWith(
+      latestPromptTokens: latestPromptTokens,
+      promptTokenThreshold: promptTokenThreshold,
+      latestPromptTokensUpdatedAt: DateTime.now().millisecondsSinceEpoch,
+    );
+  }
+
+  void _applyAcpPerformanceMetrics(
+    ChatConversationRuntimeState runtime, {
+    required String entryId,
+    required Map<String, dynamic> usage,
+  }) {
+    final prefill = _asDouble(usage['prefillTokensPerSecond']);
+    final decode = _asDouble(usage['decodeTokensPerSecond']);
+    if (prefill == null && decode == null) {
+      return;
+    }
+    final index = runtime.messages.indexWhere(
+      (message) => message.id == entryId,
+    );
+    if (index == -1) {
+      return;
+    }
+    final existing = runtime.messages[index];
+    final content = Map<String, dynamic>.from(existing.content ?? const {});
+    if (prefill != null) content['prefillTokensPerSecond'] = prefill;
+    if (decode != null) content['decodeTokensPerSecond'] = decode;
+    runtime.messages[index] = existing.copyWith(content: content);
+  }
+
+  void _upsertAcpRetryPresentation(
+    ChatConversationRuntimeState runtime, {
+    required String entryId,
+    required Map<String, dynamic> retry,
+  }) {
+    final index = runtime.messages.indexWhere(
+      (message) => message.id == entryId,
+    );
+    final existing = index == -1 ? null : runtime.messages[index];
+    final content = Map<String, dynamic>.from(existing?.content ?? const {});
+    content.addAll(<String, dynamic>{
+      'text': (content['text'] ?? '').toString(),
+      'id': entryId,
+      'agentRetrying': true,
+      'agentRetryStatusText': _extractText(retry['message']) ?? '正在重试…',
+      if (_asInt(retry['count']) != null)
+        'agentRetryCount': _asInt(retry['count']),
+      if (_asInt(retry['maxRetries']) != null)
+        'agentMaxRetries': _asInt(retry['maxRetries']),
+      if (_asInt(retry['delayMs']) != null)
+        'agentRetryDelayMs': _asInt(retry['delayMs']),
+      if (_extractText(retry['reason']) != null)
+        'agentRetryReason': _extractText(retry['reason']),
+      'agentRetryable': true,
+    });
+    final message = ChatMessageModel(
+      id: entryId,
+      type: 1,
+      user: 2,
+      content: content,
+      streamMeta: _streamMeta(
+        runtime,
+        parentTaskId: runtime.activeRunId ?? entryId,
+        entryId: entryId,
+        kind: 'retrying',
+        existingMessage: existing,
+      ),
+      createAt: DateTime.fromMillisecondsSinceEpoch(
+        _startTimeForEntry(runtime, entryId, existingMessage: existing),
+      ),
+    );
+    if (index == -1) {
+      runtime.messages.insert(0, message);
+    } else {
+      runtime.messages[index] = existing!.copyWith(
+        content: content,
+        isError: false,
+        streamMeta: message.streamMeta,
+      );
+    }
+  }
+
+  void _upsertAcpRecoveryPresentation(
+    ChatConversationRuntimeState runtime, {
+    required String entryId,
+    required Map<String, dynamic> recovery,
+  }) {
+    final index = runtime.messages.indexWhere(
+      (message) => message.id == entryId,
+    );
+    if (index == -1) {
+      return;
+    }
+    final existing = runtime.messages[index];
+    final content = Map<String, dynamic>.from(existing.content ?? const {});
+    final error = _extractText(recovery['error']);
+    if (error != null && error.isNotEmpty) {
+      content['agentErrorText'] = error;
+    }
+    content['agentRetryable'] = recovery['retryable'] == true;
+    content['agentContinueable'] = recovery['continueable'] == true;
+    if (recovery['resumeMode'] != null) {
+      content['agentContinueResumeMode'] = recovery['resumeMode'];
+    }
+    runtime.messages[index] = existing.copyWith(
+      content: content,
+      isError: error != null && error.isNotEmpty,
+    );
+  }
+
+  void _upsertAcpContextCompactionCard(
+    ChatConversationRuntimeState runtime, {
+    required String taskId,
+    required Map<String, dynamic> compaction,
+  }) {
+    final status = (_extractText(compaction['status']) ?? 'completed').trim();
+    final markerId =
+        runtime.activeContextCompactionMarkerId ??
+        '$taskId-context-compaction-${runtime.agentNextEntrySequence++}';
+    runtime.activeContextCompactionMarkerId = status == 'compressing'
+        ? markerId
+        : null;
+    runtime.isContextCompressing = status == 'compressing';
+    final index = runtime.messages.indexWhere(
+      (message) => message.id == markerId,
+    );
+    final existing = index == -1 ? null : runtime.messages[index];
+    final existingCardData = existing?.cardData ?? const <String, dynamic>{};
+    final startTime =
+        _asInt(existingCardData['startTime']) ??
+        DateTime.now().millisecondsSinceEpoch;
+    final cardData = <String, dynamic>{
+      'type': 'context_compaction_marker',
+      'status': status,
+      'label': _acpContextCompactionLabel(status),
+      'trigger': _extractText(compaction['trigger']) ?? 'auto',
+      'startTime': startTime,
+      'endTime': status == 'compressing'
+          ? null
+          : DateTime.now().millisecondsSinceEpoch,
+      'latestPromptTokens': _asInt(compaction['latestPromptTokens']),
+      'promptTokenThreshold': _asInt(compaction['promptTokenThreshold']),
+    };
+    final message = ChatMessageModel(
+      id: markerId,
+      type: 2,
+      user: 3,
+      content: {'cardData': cardData, 'id': markerId},
+      createAt: DateTime.fromMillisecondsSinceEpoch(startTime),
+    );
+    if (index == -1) {
+      runtime.messages.insert(0, message);
+    } else {
+      runtime.messages[index] = existing!.copyWith(
+        content: {'cardData': cardData, 'id': markerId},
+      );
+    }
+  }
+
+  String _acpContextCompactionLabel(String status) {
+    return switch (status) {
+      'compressing' => '正在压缩',
+      'noop' => '无需压缩',
+      'failed' => '压缩失败',
+      _ => '已压缩',
+    };
+  }
+
   void _touchActiveTurn(
     ChatConversationRuntimeState runtime,
     String parentTaskId,
@@ -1305,6 +1545,8 @@ class AgentEventReducer {
                   : null) ??
               (existingCardData['filePath'] ?? '').toString()
         : '';
+    final artifacts = _asMapList(raw['artifacts']);
+    final actions = _asMapList(raw['actions']);
     final cardData = <String, dynamic>{
       'type': 'agent_tool_summary',
       'uiStyle': kAgentToolUiStyle,
@@ -1336,6 +1578,20 @@ class AgentEventReducer {
           : _safeJson(raw),
       'terminalOutput': effectiveTerminalOutput,
       'terminalOutputDelta': normalizedProgress,
+      if (raw['terminalSessionId'] != null)
+        'terminalSessionId': raw['terminalSessionId'],
+      if (raw['terminalStreamState'] != null)
+        'terminalStreamState': raw['terminalStreamState'],
+      if (raw['workspaceId'] != null) 'workspaceId': raw['workspaceId'],
+      'artifacts': artifacts.isNotEmpty
+          ? artifacts
+          : (existingCardData['artifacts'] ?? const <Map<String, dynamic>>[]),
+      'actions': actions.isNotEmpty
+          ? actions
+          : (existingCardData['actions'] ?? const <Map<String, dynamic>>[]),
+      'showArtifactAction':
+          artifacts.isNotEmpty ||
+          existingCardData['showArtifactAction'] == true,
       'showTerminalOutput':
           (effectiveTerminalOutput.isNotEmpty && diffText.isEmpty) ||
           effectiveToolType == 'terminal',
@@ -1372,9 +1628,72 @@ class AgentEventReducer {
         streamMeta: streamMeta,
       );
     }
+    _upsertArtifactCards(
+      runtime,
+      taskId: taskId,
+      parentCardId: cardId,
+      artifacts: artifacts,
+    );
     runtime.lastAgentToolType = effectiveToolType;
     if (effectiveToolType == 'terminal' || effectiveToolType == 'browser') {
       runtime.chatIslandDisplayLayer = ChatIslandDisplayLayer.tools;
+    }
+  }
+
+  void _upsertArtifactCards(
+    ChatConversationRuntimeState runtime, {
+    required String taskId,
+    required String parentCardId,
+    required List<Map<String, dynamic>> artifacts,
+  }) {
+    for (var index = 0; index < artifacts.length; index++) {
+      final artifact = artifacts[index];
+      final rawArtifactId = _string(artifact['id'])?.trim();
+      final artifactId = rawArtifactId == null || rawArtifactId.isEmpty
+          ? index.toString()
+          : rawArtifactId;
+      final cardId = '$parentCardId-artifact-$artifactId';
+      final existingIndex = runtime.messages.indexWhere(
+        (message) => message.id == cardId,
+      );
+      final existing = existingIndex == -1
+          ? null
+          : runtime.messages[existingIndex];
+      final startTime = _startTimeForEntry(
+        runtime,
+        cardId,
+        existingMessage: existing,
+      );
+      final cardData = <String, dynamic>{
+        'type': 'artifact_card',
+        'artifact': artifact,
+        'taskId': taskId,
+        'runId': taskId,
+        'cardId': cardId,
+      };
+      final message = ChatMessageModel(
+        id: cardId,
+        type: 2,
+        user: 3,
+        content: {'cardData': cardData, 'id': cardId},
+        streamMeta: _streamMeta(
+          runtime,
+          parentTaskId: taskId,
+          entryId: cardId,
+          kind: 'artifact',
+          isFinal: true,
+          existingMessage: existing,
+        ),
+        createAt: DateTime.fromMillisecondsSinceEpoch(startTime),
+      );
+      if (existingIndex == -1) {
+        runtime.messages.insert(0, message);
+      } else {
+        runtime.messages[existingIndex] = existing!.copyWith(
+          content: {'cardData': cardData, 'id': cardId},
+          streamMeta: message.streamMeta,
+        );
+      }
     }
   }
 
@@ -3189,6 +3508,7 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
 
   final scopedMessageId = turnScopedEntryId(update['messageId']) ?? turnId;
   final scopedEntryId = turnScopedEntryId(update['entryId']);
+  final presentation = _acpPresentationMeta(update);
 
   Map<String, dynamic> projectedParams(Map<String, dynamic> values) {
     return <String, dynamic>{
@@ -3209,6 +3529,7 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
           'itemId': scopedMessageId,
           if (scopedEntryId != null) 'entryId': scopedEntryId,
           'delta': _extractText(update['content']) ?? '',
+          if (presentation != null) 'acpPresentation': presentation,
         }),
       };
     case 'agent_thought_chunk':
@@ -3217,7 +3538,8 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
         'params': projectedParams(<String, dynamic>{
           'itemId': scopedMessageId,
           if (scopedEntryId != null) 'entryId': scopedEntryId,
-          'delta': _extractText(update['content']) ?? '',
+          'delta': _acpReasoningText(update, presentation),
+          if (presentation != null) 'acpPresentation': presentation,
         }),
       };
     case 'tool_call':
@@ -3301,6 +3623,11 @@ Map<String, dynamic> _projectAcpToolCall(
   String? turnId,
 }) {
   final permissionCard = _acpPermissionCard(update['rawOutput']);
+  final structuredOutput = _asStringMap(
+    update['rawOutput'] is String
+        ? _decodeAcpJsonValue(update['rawOutput'] as String)
+        : update['rawOutput'],
+  );
   return <String, dynamic>{
     'id': update['toolCallId'],
     'toolCallId': update['toolCallId'],
@@ -3313,7 +3640,88 @@ Map<String, dynamic> _projectAcpToolCall(
     'locations': update['locations'],
     'rawInput': update['rawInput'],
     'rawOutput': update['rawOutput'],
+    ..._acpStructuredToolOutput(structuredOutput),
     if (permissionCard != null) 'permissionCard': permissionCard,
+  };
+}
+
+Map<String, dynamic>? _acpPresentationMeta(Map<String, dynamic> update) {
+  final meta = _asStringMap(update['_meta']) ?? _asStringMap(update['meta']);
+  return _asStringMap(meta?['cn.com.omnimind.agent']);
+}
+
+String _acpReasoningText(
+  Map<String, dynamic> update,
+  Map<String, dynamic>? presentation,
+) {
+  final fallback = _extractText(update['content']) ?? '';
+  if (fallback.isNotEmpty) {
+    return fallback;
+  }
+  final reasoning = _asStringMap(presentation?['reasoning']);
+  if (reasoning == null) {
+    return fallback;
+  }
+  final taskDescription = _extractText(
+    reasoning['taskDescription'] ?? reasoning['task_description'],
+  )?.trim();
+  final preparation = _extractText(reasoning['preparation'])?.trim();
+  final subTasks = reasoning['subTasks'] ?? reasoning['sub_tasks'];
+  final lines = <String>[];
+  if (taskDescription != null && taskDescription.isNotEmpty) {
+    lines.add(taskDescription);
+  }
+  if (subTasks is List) {
+    final items = subTasks
+        .map(_extractText)
+        .whereType<String>()
+        .map((item) => item.trim())
+        .where((item) => item.isNotEmpty)
+        .toList(growable: false);
+    if (items.isNotEmpty) {
+      lines.add(items.map((item) => '- $item').join('\n'));
+    }
+  }
+  if (preparation != null && preparation.isNotEmpty) {
+    lines.add(preparation);
+  }
+  return lines.isEmpty ? fallback : lines.join('\n\n');
+}
+
+/// ACP reserves [rawOutput] for adapter-specific tool results. Preserve the
+/// common result vocabulary at the shared card seam instead of forcing every
+/// Harness to duplicate a UI-specific event stream.
+Map<String, dynamic> _acpStructuredToolOutput(Map<String, dynamic>? output) {
+  if (output == null || output.isEmpty) {
+    return const <String, dynamic>{};
+  }
+  final result =
+      output['result'] ??
+      output['resultPreview'] ??
+      output['preview'] ??
+      output['previewJson'];
+  return <String, dynamic>{
+    for (final key in const <String>[
+      'toolType',
+      'toolName',
+      'displayName',
+      'serverName',
+      'summary',
+      'progress',
+      'terminalOutput',
+      'terminalSessionId',
+      'terminalStreamState',
+      'workspaceId',
+      'interruptedBy',
+      'interruptionReason',
+      'artifacts',
+      'actions',
+      'success',
+      'exitCode',
+      'error',
+    ])
+      if (output[key] != null) key: output[key],
+    if (result != null) 'result': result,
   };
 }
 
@@ -3646,6 +4054,20 @@ Map<String, dynamic>? _asStringMap(dynamic value) {
   return value.map((key, nestedValue) => MapEntry(key.toString(), nestedValue));
 }
 
+List<Map<String, dynamic>> _asMapList(dynamic value) {
+  if (value is! List) {
+    return const <Map<String, dynamic>>[];
+  }
+  return value
+      .whereType<Map>()
+      .map(
+        (item) => item.map(
+          (key, nestedValue) => MapEntry(key.toString(), nestedValue),
+        ),
+      )
+      .toList(growable: false);
+}
+
 String? _extractText(dynamic value) {
   if (value == null) return null;
   if (value is String) return value;
@@ -3816,6 +4238,11 @@ int? _asInt(dynamic value) {
   if (value is int) return value;
   if (value is num) return value.toInt();
   return int.tryParse(value?.toString() ?? '');
+}
+
+double? _asDouble(dynamic value) {
+  if (value is num) return value.toDouble();
+  return double.tryParse(value?.toString() ?? '');
 }
 
 String _safeJson(dynamic value) {
