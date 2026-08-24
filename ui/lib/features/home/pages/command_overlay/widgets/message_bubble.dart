@@ -13,9 +13,11 @@ import 'package:ui/widgets/image_preview_overlay.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../../../../../models/chat_message_model.dart';
 import '../../../../../services/app_background_service.dart';
+import '../../../../../services/assists_core_service.dart';
 import '../../../../../services/voice_playback_channel_service.dart';
 import '../../../../../services/voice_playback_coordinator.dart';
 import '../../../../../theme/theme_context.dart';
+import '../../../../../utils/ui.dart';
 import '../../../../../widgets/streaming_text.dart';
 import 'thinking_dots_indicator.dart';
 import 'cards/card_widget_factory.dart';
@@ -1106,7 +1108,11 @@ class MessageBubble extends StatelessWidget {
     final aiText = _buildAiText(
       context,
       text,
-      trailing: showVoiceButton ? _buildVoiceAction(context, text) : null,
+      trailing: _buildAssistantActions(
+        context,
+        text,
+        showVoiceButton: showVoiceButton,
+      ),
     );
     final continueStatus = _buildAgentContinueStatus(context);
     final retryingStatus = _buildAgentRetryingStatus(context);
@@ -1469,6 +1475,45 @@ class MessageBubble extends StatelessWidget {
           icon: icon,
         );
       },
+    );
+  }
+
+  Widget? _buildAssistantActions(
+    BuildContext context,
+    String text, {
+    required bool showVoiceButton,
+  }) {
+    final showCopyButton = text.trim().isNotEmpty;
+    if (!showVoiceButton && !showCopyButton) {
+      return null;
+    }
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (showCopyButton) _buildCopyAction(context, text),
+        if (showVoiceButton) _buildVoiceAction(context, text),
+      ],
+    );
+  }
+
+  Widget _buildCopyAction(BuildContext context, String text) {
+    final iconColor = _resolvedAiSecondaryTextColor(context);
+    return IconButton(
+      visualDensity: VisualDensity.compact,
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints.tightFor(width: 22, height: 22),
+      splashRadius: 12,
+      tooltip: LegacyTextLocalizer.isEnglish ? 'Copy reply' : '复制回复',
+      onPressed: () async {
+        final copied = await AssistsMessageService.copyToClipboard(text);
+        showToast(
+          copied
+              ? (LegacyTextLocalizer.isEnglish ? 'Copied' : '已复制')
+              : (LegacyTextLocalizer.isEnglish ? 'Copy failed' : '复制失败'),
+          type: copied ? ToastType.success : ToastType.error,
+        );
+      },
+      icon: Icon(LucideIcons.copy, size: 16, color: iconColor),
     );
   }
 

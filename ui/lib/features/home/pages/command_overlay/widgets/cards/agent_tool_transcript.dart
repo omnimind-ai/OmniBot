@@ -12,8 +12,10 @@ import 'package:ui/l10n/legacy_text_localizer.dart';
 import 'package:ui/services/chat_detail_sheet_preferences.dart';
 import 'package:ui/services/agent_diff_parser.dart';
 import 'package:ui/services/agent_tool_call_parser.dart';
+import 'package:ui/services/assists_core_service.dart';
 import 'package:ui/services/omnibot_resource_service.dart';
 import 'package:ui/theme/app_colors.dart';
+import 'package:ui/utils/ui.dart';
 import 'package:ui/widgets/omni_glass.dart';
 
 const Color _kTimeoutStatusColor = Color(0xFFFF8A3D);
@@ -987,6 +989,11 @@ class _AgentToolDetailContent extends StatelessWidget {
     final isDiffView = diffSummary?.files.isNotEmpty == true;
     final detailSpan = isDiffView ? null : _buildDetailTextSpan(transcript);
     final actions = _resolveAgentToolActions(cardData);
+    final copyText = _agentToolCopyText(
+      cardData,
+      transcript,
+      isDiffView: isDiffView,
+    );
 
     return Column(
       children: [
@@ -1012,6 +1019,38 @@ class _AgentToolDetailContent extends StatelessWidget {
               _DialogMetaTag(label: typeLabel),
               const SizedBox(width: 6),
               _DialogStatusTag(status: status, label: statusLabel),
+              const SizedBox(width: 2),
+              IconButton(
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints.tightFor(
+                  width: 28,
+                  height: 28,
+                ),
+                splashRadius: 14,
+                tooltip: LegacyTextLocalizer.isEnglish
+                    ? 'Copy details'
+                    : '复制详情',
+                onPressed: copyText.isEmpty
+                    ? null
+                    : () async {
+                        final copied =
+                            await AssistsMessageService.copyToClipboard(
+                              copyText,
+                            );
+                        showToast(
+                          copied
+                              ? (LegacyTextLocalizer.isEnglish
+                                    ? 'Copied'
+                                    : '已复制')
+                              : (LegacyTextLocalizer.isEnglish
+                                    ? 'Copy failed'
+                                    : '复制失败'),
+                          type: copied ? ToastType.success : ToastType.error,
+                        );
+                      },
+                icon: const Icon(LucideIcons.copy, size: 15),
+              ),
             ],
           ),
         ),
@@ -1031,6 +1070,21 @@ class _AgentToolDetailContent extends StatelessWidget {
       ],
     );
   }
+}
+
+String _agentToolCopyText(
+  Map<String, dynamic> cardData,
+  AgentToolTranscript transcript, {
+  required bool isDiffView,
+}) {
+  final body = isDiffView
+      ? (cardData['diffText'] ?? '').toString()
+      : transcript.outputText;
+  final prompt = transcript.promptLine.trimRight();
+  final output = body.trimRight();
+  if (prompt.isEmpty) return output;
+  if (output.isEmpty) return prompt;
+  return '$prompt\n$output';
 }
 
 List<Map<String, dynamic>> _resolveAgentToolActions(

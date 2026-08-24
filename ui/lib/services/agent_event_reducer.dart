@@ -82,27 +82,30 @@ class AgentEventReducer {
         _rememberAcpExtensionMetadata(runtime, update);
       }
       final hasRawAcpUpdate = update?.containsKey('rawUpdate') == true;
+      final renderableRawAcpUpdate =
+          update != null && _isRenderableAcpRawUpdate(update);
       final scopedUpdate =
           sessionUpdate != null &&
-          sessionUpdate != 'current_mode_update' &&
-          sessionUpdate != 'config_option_update' &&
-          // ACP usage is session-level state. It can legitimately arrive
-          // after a streamed turn has completed, so it must not be rejected
-          // merely because the notification has no turn id.
-          sessionUpdate != 'usage_update' &&
-          // Session metadata is not owned by a prompt turn. Xiaowan used
-          // this information to keep the conversation title in sync, so it
-          // must reach the host even when it arrives between turns.
-          sessionUpdate != 'session_info_update' &&
-          sessionUpdate != 'available_commands_update' &&
-          // User messages can be replayed by session/load without belonging
-          // to a prompt turn. Live echoes are ignored by the projector.
-          sessionUpdate != 'user_message_chunk' &&
-          // UnknownSessionUpdate is forwarded with rawUpdate. Its scope and
-          // shape are provider-defined (it may be a scalar or list, not only
-          // an object), so do not reject it before the shared extension
-          // retention path has a chance to preserve it.
-          !hasRawAcpUpdate;
+          (sessionUpdate != 'current_mode_update' &&
+              sessionUpdate != 'config_option_update' &&
+              // ACP usage is session-level state. It can legitimately arrive
+              // after a streamed turn has completed, so it must not be rejected
+              // merely because the notification has no turn id.
+              sessionUpdate != 'usage_update' &&
+              // Session metadata is not owned by a prompt turn. Xiaowan used
+              // this information to keep the conversation title in sync, so it
+              // must reach the host even when it arrives between turns.
+              sessionUpdate != 'session_info_update' &&
+              sessionUpdate != 'available_commands_update' &&
+              // User messages can be replayed by session/load without belonging
+              // to a prompt turn. Live echoes are ignored by the projector.
+              sessionUpdate != 'user_message_chunk' &&
+              // UnknownSessionUpdate is forwarded with rawUpdate. Its scope and
+              // shape are provider-defined (it may be a scalar or list, not only
+              // an object), so do not reject it before the shared extension
+              // retention path has a chance to preserve it.
+              !hasRawAcpUpdate ||
+              renderableRawAcpUpdate);
       final updateTurnId = _firstString([
         event['turnId'],
         event['turn_id'],
@@ -166,7 +169,7 @@ class AgentEventReducer {
         runtime.acpSessionInfo = Map<String, dynamic>.from(update)
           ..remove('sessionUpdate');
       }
-      if (hasRawAcpUpdate && update != null) {
+      if (hasRawAcpUpdate && update != null && !renderableRawAcpUpdate) {
         _rememberAcpExtensionUpdate(runtime, update);
         return AgentReduceResult(
           handled: true,
@@ -183,7 +186,10 @@ class AgentEventReducer {
       // A turn-scoped ACP update without a turn id is not attributable. Do
       // not guess from itemId or threadId: doing so is how late tool output
       // gets attached to the next prompt.
-      final projected = _projectAcpSessionUpdate(event: event, params: params);
+      final projected = _projectAcpSessionUpdate(
+        event: event,
+        params: _renderableAcpParams(params),
+      );
       if (projected == null) {
         return AgentReduceResult(handled: true, method: method);
       }
@@ -342,6 +348,34 @@ class AgentEventReducer {
 
     if (method == 'turn/completed' || method == 'thread/closed') {
       _completeTurn(runtime, parentTaskId, acpTurnId: turnId);
+      return AgentReduceResult(
+        handled: true,
+        method: method,
+        threadId: threadId,
+        turnId: turnId,
+      );
+    }
+
+    // ACP v2 can stream tool content independently from the tool lifecycle.
+    // Keep that stream on the same card identity instead of turning it into a
+    // provider-specific event or dropping it as an unknown extension.
+    if (method == 'item/tool/contentDelta') {
+      _appendAcpToolContent(
+        runtime,
+        taskId: parentTaskId,
+        toolCallId: _firstString([
+          params['toolCallId'],
+          params['tool_call_id'],
+          params['callId'],
+          params['call_id'],
+          params['itemId'],
+          params['item_id'],
+          params['terminalId'],
+          params['terminal_id'],
+        ]),
+        content: params['content'],
+        raw: params,
+      );
       return AgentReduceResult(
         handled: true,
         method: method,
@@ -2011,6 +2045,80 @@ class AgentEventReducer {
     );
   }
 
+  void _appendAcpToolContent(
+    ChatConversationRuntimeState runtime, {
+    required String taskId,
+    required String? toolCallId,
+    required Object? content,
+    required Map<String, dynamic> raw,
+  }) {
+    final callId = toolCallId?.trim();
+    if (callId == null || callId.isEmpty) {
+      return;
+    }
+    final existingCardId = _findToolCardIdForCallId(
+      runtime,
+      callId,
+      taskId: taskId,
+    );
+    final existing = existingCardId == null
+        ? null
+        : _toolCardData(runtime, existingCardId);
+    final existingContent = _acpContentItems(existing?['contentItems']);
+    final incomingContent = _acpContentItems(content);
+    if (incomingContent.isEmpty && _extractStreamingText(content) == null) {
+      return;
+    }
+    final mergedContent = <Map<String, dynamic>>[
+      ...existingContent,
+      ...incomingContent,
+    ];
+    final presentation = _acpStandardToolPresentation(mergedContent);
+    final textDelta = _extractStreamingText(content) ?? '';
+    final existingStatus = (existing?['status'] ?? 'running').toString();
+    final cardId =
+        existingCardId ??
+        _taskScopedCardId(
+          runtime,
+          taskId: taskId,
+          baseCardId: '$callId-agent-tool',
+        );
+    final existingRaw = _asStringMap(
+      _decodeJsonValue((existing?['rawResultJson'] ?? '').toString()),
+    );
+    final rawCard = <String, dynamic>{
+      ...?existingRaw,
+      ...raw,
+      'toolCallId': callId,
+      'contentItems': mergedContent,
+      'content': mergedContent,
+      ...presentation,
+    };
+    _upsertToolCard(
+      runtime,
+      cardId: cardId,
+      taskId: taskId,
+      toolType: (presentation['toolType'] ?? existing?['toolType'] ?? 'tool')
+          .toString(),
+      title: (existing?['toolTitle'] ?? existing?['displayName'] ?? '工具')
+          .toString(),
+      status: existingStatus,
+      summary: textDelta,
+      progress: textDelta,
+      terminalOutput: existing?['terminalOutput']?.toString() ?? '',
+      raw: rawCard,
+      streamMeta: _streamMeta(
+        runtime,
+        parentTaskId: taskId,
+        entryId: cardId,
+        kind: 'tool_content_delta',
+        existingMessage: existing == null
+            ? null
+            : runtime.messages.firstWhere((message) => message.id == cardId),
+      ),
+    );
+  }
+
   void _upsertPermissionCard(
     ChatConversationRuntimeState runtime, {
     required String cardId,
@@ -2154,6 +2262,9 @@ class AgentEventReducer {
         : '';
     final artifacts = _asMapList(raw['artifacts']);
     final actions = _asMapList(raw['actions']);
+    final contentItems = _acpContentItems(
+      raw['contentItems'] ?? raw['content'],
+    );
     final cardData = <String, dynamic>{
       'type': 'agent_tool_summary',
       'uiStyle': kAgentToolUiStyle,
@@ -2185,6 +2296,9 @@ class AgentEventReducer {
           : _safeJson(raw),
       'terminalOutput': effectiveTerminalOutput,
       'terminalOutputDelta': normalizedProgress,
+      'contentItems': contentItems.isNotEmpty
+          ? contentItems
+          : _acpContentItems(existingCardData['contentItems']),
       if (raw['terminalSessionId'] != null)
         'terminalSessionId': raw['terminalSessionId'],
       if (raw['terminalStreamState'] != null)
@@ -3742,6 +3856,13 @@ class AgentEventReducer {
               cardSessionId == normalizedSessionId)) {
         return message.id;
       }
+      final terminalSessionId = _string(cardData['terminalSessionId']);
+      if (terminalSessionId == normalizedCallId &&
+          (normalizedSessionId.isEmpty ||
+              cardSessionId.isEmpty ||
+              cardSessionId == normalizedSessionId)) {
+        return message.id;
+      }
     }
     for (final suffix in const <String>[
       'command',
@@ -4246,6 +4367,51 @@ class _AgentQuestion {
   final String detail;
 }
 
+const Set<String> _renderableAcpIncrementTypes = <String>{
+  'tool_call_content_chunk',
+  'terminal_output_chunk',
+  'terminal_update',
+};
+
+bool _isRenderableAcpRawUpdate(Map<String, dynamic> update) {
+  final sessionUpdate = _string(update['sessionUpdate']);
+  if (_renderableAcpIncrementTypes.contains(sessionUpdate)) {
+    return true;
+  }
+  final raw = _asStringMap(update['rawUpdate']);
+  final rawType = _string(
+    raw?['sessionUpdate'] ?? raw?['type'] ?? raw?['kind'] ?? raw?['updateType'],
+  );
+  return _renderableAcpIncrementTypes.contains(rawType);
+}
+
+Map<String, dynamic> _renderableAcpParams(Map<String, dynamic> params) {
+  final update = _asStringMap(params['update']);
+  if (update == null || !_isRenderableAcpRawUpdate(update)) {
+    return params;
+  }
+  final raw = _asStringMap(update['rawUpdate']);
+  if (raw == null) {
+    return params;
+  }
+  final rawType = _string(
+    raw['sessionUpdate'] ?? raw['type'] ?? raw['kind'] ?? raw['updateType'],
+  );
+  final updateType = _string(update['sessionUpdate']);
+  final effectiveType = _renderableAcpIncrementTypes.contains(updateType)
+      ? updateType
+      : rawType;
+  return <String, dynamic>{
+    ...params,
+    'update': <String, dynamic>{
+      ...raw,
+      ...update,
+      if (effectiveType != null) 'sessionUpdate': effectiveType,
+      'rawUpdate': update['rawUpdate'],
+    },
+  };
+}
+
 Map<String, dynamic>? _projectAcpSessionUpdate({
   required Map<String, dynamic> event,
   required Map<String, dynamic> params,
@@ -4292,12 +4458,12 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
   // projection seam so the timeline remains reasoning -> tool -> reasoning
   // even when the upstream messageId is reused.
   final reasoningSegmentIndex = _acpReasoningSegmentIndex(presentation);
-  final scopedReasoningMessageId = reasoningSegmentIndex == null ||
-          scopedMessageId == null
+  final scopedReasoningMessageId =
+      reasoningSegmentIndex == null || scopedMessageId == null
       ? scopedMessageId
       : '$scopedMessageId-reasoning-$reasoningSegmentIndex';
-  final scopedReasoningEntryId = reasoningSegmentIndex == null ||
-          scopedEntryId == null
+  final scopedReasoningEntryId =
+      reasoningSegmentIndex == null || scopedEntryId == null
       ? scopedEntryId
       : '$scopedEntryId-reasoning-$reasoningSegmentIndex';
 
@@ -4338,8 +4504,7 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
         'method': 'item/reasoning/delta',
         'params': projectedParams(<String, dynamic>{
           'itemId': scopedReasoningMessageId,
-          if (scopedReasoningEntryId != null)
-            'entryId': scopedReasoningEntryId,
+          if (scopedReasoningEntryId != null) 'entryId': scopedReasoningEntryId,
           'delta': _acpReasoningText(update, presentation),
           if (presentation != null) 'acpPresentation': presentation,
         }),
@@ -4385,6 +4550,82 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
             ? 'item/completed'
             : 'item/updated',
         'params': projectedParams(<String, dynamic>{'item': item}),
+      };
+    case 'tool_call_content_chunk':
+      return <String, dynamic>{
+        'method': 'item/tool/contentDelta',
+        'params': projectedParams(<String, dynamic>{
+          'toolCallId': _firstString([
+            update['toolCallId'],
+            update['tool_call_id'],
+            update['callId'],
+            update['call_id'],
+          ]),
+          'content': update['content'] ?? update['chunk'] ?? update['data'],
+          'rawUpdate': update,
+        }),
+      };
+    case 'terminal_output_chunk':
+      return <String, dynamic>{
+        'method': 'item/commandExecution/outputDelta',
+        'params': projectedParams(<String, dynamic>{
+          'itemId': _firstString([
+            update['toolCallId'],
+            update['tool_call_id'],
+            update['callId'],
+            update['call_id'],
+            update['terminalId'],
+            update['terminal_id'],
+          ]),
+          'terminalId': update['terminalId'] ?? update['terminal_id'],
+          'terminalSessionId': update['terminalId'] ?? update['terminal_id'],
+          'delta': _acpTerminalOutputDelta(update),
+          'rawUpdate': update,
+        }),
+      };
+    case 'terminal_update':
+      final terminalDelta = _acpTerminalOutputDelta(update);
+      final terminalStatus = _string(
+        update['status'] ?? update['state'] ?? update['exitStatus'],
+      );
+      if (terminalDelta.isNotEmpty) {
+        return <String, dynamic>{
+          'method': 'item/commandExecution/outputDelta',
+          'params': projectedParams(<String, dynamic>{
+            'itemId': _firstString([
+              update['toolCallId'],
+              update['tool_call_id'],
+              update['callId'],
+              update['call_id'],
+              update['terminalId'],
+              update['terminal_id'],
+            ]),
+            'terminalId': update['terminalId'] ?? update['terminal_id'],
+            'terminalSessionId': update['terminalId'] ?? update['terminal_id'],
+            'delta': terminalDelta,
+            'rawUpdate': update,
+          }),
+        };
+      }
+      return <String, dynamic>{
+        'method': 'item/updated',
+        'params': projectedParams(<String, dynamic>{
+          'item': <String, dynamic>{
+            'id': _firstString([
+              update['toolCallId'],
+              update['tool_call_id'],
+              update['callId'],
+              update['call_id'],
+              update['terminalId'],
+              update['terminal_id'],
+            ]),
+            'type': 'commandExecution',
+            if (terminalStatus != null) 'status': terminalStatus,
+            if (update['terminalId'] != null)
+              'terminalSessionId': update['terminalId'],
+            'rawUpdate': update,
+          },
+        }),
       };
     case 'plan':
       final entries = (update['entries'] as List?)
@@ -4542,11 +4783,41 @@ Map<String, dynamic> _projectAcpToolCall(
 }
 
 List<Map<String, dynamic>> _acpStandardToolContent(Object? value) {
-  if (value is! List) return const <Map<String, dynamic>>[];
-  return value
-      .whereType<Map>()
-      .map((item) => item.map((key, nested) => MapEntry('$key', nested)))
-      .toList(growable: false);
+  return _acpContentItems(value);
+}
+
+List<Map<String, dynamic>> _acpContentItems(Object? value) {
+  if (value is List) {
+    return value
+        .whereType<Map>()
+        .map((item) => item.map((key, nested) => MapEntry('$key', nested)))
+        .toList(growable: false);
+  }
+  final item = _asStringMap(value);
+  return item == null
+      ? const <Map<String, dynamic>>[]
+      : <Map<String, dynamic>>[item];
+}
+
+String _acpTerminalOutputDelta(Map<String, dynamic> update) {
+  final encoding = _string(
+    update['encoding'] ?? update['dataEncoding'],
+  )?.toLowerCase();
+  if (encoding == 'base64') {
+    return _decodeBase64Output(update['data'] ?? update['output']) ?? '';
+  }
+  final byteList = _decodeByteListOutput(update['bytes']);
+  if (byteList != null) {
+    return byteList;
+  }
+  return _extractStreamingText(
+        update['output'] ??
+            update['text'] ??
+            update['delta'] ??
+            update['data'] ??
+            update['content'],
+      ) ??
+      '';
 }
 
 /// Converts ACP assistant image/resource blocks into the same image location
@@ -4904,7 +5175,8 @@ Map<String, dynamic> _acpReasoningCardData(Map<String, dynamic>? presentation) {
 String? _acpReasoningSegmentIndex(Map<String, dynamic>? presentation) {
   if (presentation == null || presentation.isEmpty) return null;
   final reasoning = _asStringMap(presentation['reasoning']);
-  final value = reasoning?['segmentIndex'] ??
+  final value =
+      reasoning?['segmentIndex'] ??
       reasoning?['segment_index'] ??
       presentation['reasoningSegmentIndex'] ??
       presentation['reasoning_segment_index'] ??

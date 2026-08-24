@@ -4889,79 +4889,82 @@ diff --git a/lib/main.dart b/lib/main.dart
     );
   });
 
-  test('ACP reasoning segment metadata splits reused message ids around tools', () {
-    reducer.reduce(
-      runtime: runtime,
-      event: {
-        'message': {
-          'method': 'session/update',
-          'params': {
-            'sessionId': 'session-1',
-            'turnId': 'turn-1',
-            'update': {
-              'sessionUpdate': 'agent_thought_chunk',
-              'messageId': 'shared-thought',
-              'content': {'type': 'text', 'text': 'before tool'},
-              '_meta': {
-                'cn.com.omnimind.agent': {
-                  'reasoning': {'segmentIndex': 0},
+  test(
+    'ACP reasoning segment metadata splits reused message ids around tools',
+    () {
+      reducer.reduce(
+        runtime: runtime,
+        event: {
+          'message': {
+            'method': 'session/update',
+            'params': {
+              'sessionId': 'session-1',
+              'turnId': 'turn-1',
+              'update': {
+                'sessionUpdate': 'agent_thought_chunk',
+                'messageId': 'shared-thought',
+                'content': {'type': 'text', 'text': 'before tool'},
+                '_meta': {
+                  'cn.com.omnimind.agent': {
+                    'reasoning': {'segmentIndex': 0},
+                  },
                 },
               },
             },
           },
         },
-      },
-    );
-    reducer.reduce(
-      runtime: runtime,
-      event: {
-        'message': {
-          'method': 'session/update',
-          'params': {
-            'sessionId': 'session-1',
-            'turnId': 'turn-1',
-            'update': {
-              'sessionUpdate': 'tool_call',
-              'toolCallId': 'tool-1',
-              'title': 'read_file',
-              'status': 'in_progress',
+      );
+      reducer.reduce(
+        runtime: runtime,
+        event: {
+          'message': {
+            'method': 'session/update',
+            'params': {
+              'sessionId': 'session-1',
+              'turnId': 'turn-1',
+              'update': {
+                'sessionUpdate': 'tool_call',
+                'toolCallId': 'tool-1',
+                'title': 'read_file',
+                'status': 'in_progress',
+              },
             },
           },
         },
-      },
-    );
-    reducer.reduce(
-      runtime: runtime,
-      event: {
-        'message': {
-          'method': 'session/update',
-          'params': {
-            'sessionId': 'session-1',
-            'turnId': 'turn-1',
-            'update': {
-              'sessionUpdate': 'agent_thought_chunk',
-              'messageId': 'shared-thought',
-              'content': {'type': 'text', 'text': 'after tool'},
-              '_meta': {
-                'cn.com.omnimind.agent': {
-                  'reasoning': {'segmentIndex': 1},
+      );
+      reducer.reduce(
+        runtime: runtime,
+        event: {
+          'message': {
+            'method': 'session/update',
+            'params': {
+              'sessionId': 'session-1',
+              'turnId': 'turn-1',
+              'update': {
+                'sessionUpdate': 'agent_thought_chunk',
+                'messageId': 'shared-thought',
+                'content': {'type': 'text', 'text': 'after tool'},
+                '_meta': {
+                  'cn.com.omnimind.agent': {
+                    'reasoning': {'segmentIndex': 1},
+                  },
                 },
               },
             },
           },
         },
-      },
-    );
+      );
 
-    final cards = runtime.messages
-        .where((message) => message.cardData?['type'] == 'deep_thinking')
-        .toList()
-        .reversed
-        .toList();
-    expect(cards, hasLength(2));
-    expect(cards[0].cardData?['thinkingContent'], 'before tool');
-    expect(cards[1].cardData?['thinkingContent'], 'after tool');
-  });
+      final cards = runtime.messages
+          .where((message) => message.cardData?['type'] == 'deep_thinking')
+          .toList()
+          .reversed
+          .toList();
+      expect(cards, hasLength(2));
+      expect(cards[0].cardData?['thinkingContent'], 'before tool');
+      expect(cards[1].cardData?['thinkingContent'], 'after tool');
+    },
+  );
 
   test('turn/completed finalizes the thinking card after reasoning ends', () {
     reducer.reduce(
@@ -5452,4 +5455,124 @@ diff --git a/lib/main.dart b/lib/main.dart
       expect(cardData['toolTitle'], 'plain_tool');
     },
   );
+
+  test('standard ACP tool content chunks update the existing shared card', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'turnId': 'turn-tool-content-chunk',
+        'params': {
+          'sessionId': 'session-tool-content-chunk',
+          'update': {
+            'sessionUpdate': 'tool_call',
+            'toolCallId': 'tool-content-1',
+            'kind': 'other',
+            'title': '读取结果',
+            'status': 'in_progress',
+          },
+        },
+      },
+    );
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'turnId': 'turn-tool-content-chunk',
+        'params': {
+          'sessionId': 'session-tool-content-chunk',
+          'update': {
+            'sessionUpdate': 'tool_call_content_chunk',
+            'toolCallId': 'tool-content-1',
+            'content': {
+              'type': 'content',
+              'content': {'type': 'text', 'text': '第一段结果'},
+            },
+          },
+        },
+      },
+    );
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'turnId': 'turn-tool-content-chunk',
+        'params': {
+          'sessionId': 'session-tool-content-chunk',
+          'update': {
+            'sessionUpdate': 'vendor_passthrough',
+            'rawUpdate': {
+              'type': 'tool_call_content_chunk',
+              'toolCallId': 'tool-content-1',
+              'content': {
+                'type': 'content',
+                'content': {'type': 'text', 'text': '第二段结果'},
+              },
+            },
+          },
+        },
+      },
+    );
+
+    final card = runtime.messages
+        .firstWhere(
+          (message) => message.cardData?['type'] == 'agent_tool_summary',
+        )
+        .cardData!;
+    final contentItems = card['contentItems'] as List;
+    expect(contentItems, hasLength(2));
+    expect(card['rawResultJson'], contains('第二段结果'));
+  });
+
+  test('ACP terminal output chunks append by tool or terminal identity', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'turnId': 'turn-terminal-chunk',
+        'params': {
+          'sessionId': 'session-terminal-chunk',
+          'update': {
+            'sessionUpdate': 'tool_call',
+            'toolCallId': 'tool-terminal-1',
+            'kind': 'execute',
+            'title': '运行命令',
+            'status': 'in_progress',
+            'content': [
+              {'type': 'terminal', 'terminalId': 'terminal-1'},
+            ],
+          },
+        },
+      },
+    );
+    for (final update in <Map<String, dynamic>>[
+      {
+        'sessionUpdate': 'terminal_output_chunk',
+        'toolCallId': 'tool-terminal-1',
+        'terminalId': 'terminal-1',
+        'data': 'one\\n',
+      },
+      {
+        'sessionUpdate': 'vendor_passthrough',
+        'rawUpdate': {
+          'type': 'terminal_output_chunk',
+          'terminalId': 'terminal-1',
+          'data': 'two\\n',
+        },
+      },
+    ]) {
+      reducer.reduce(
+        runtime: runtime,
+        event: {
+          'method': 'session/update',
+          'turnId': 'turn-terminal-chunk',
+          'params': {'sessionId': 'session-terminal-chunk', 'update': update},
+        },
+      );
+    }
+
+    final card = runtime.messages.single.cardData!;
+    expect(card['terminalOutput'], 'one\\ntwo\\n');
+    expect(card['terminalSessionId'], 'terminal-1');
+  });
 }
