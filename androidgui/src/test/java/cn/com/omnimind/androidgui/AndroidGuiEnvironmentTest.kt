@@ -39,6 +39,38 @@ class AndroidGuiEnvironmentTest {
     }
 
     @Test
+    fun `semantic click accepts an identified clickable node under the coordinate`() {
+        assertEquals(
+            123_728L,
+            semanticClickCandidateArea(
+                clickable = true,
+                enabled = true,
+                visible = true,
+                hasIdentity = true,
+                containsPoint = true,
+                width = 304,
+                height = 407,
+            ),
+        )
+    }
+
+    @Test
+    fun `semantic click leaves unidentified surfaces to the coordinate gesture`() {
+        assertEquals(
+            null,
+            semanticClickCandidateArea(
+                clickable = true,
+                enabled = true,
+                visible = true,
+                hasIdentity = false,
+                containsPoint = true,
+                width = 720,
+                height = 1280,
+            ),
+        )
+    }
+
+    @Test
     fun `screen capture waits for transient accessibility reconnect`() = runBlocking {
         val platform = ReconnectingPlatform()
         val environment = AndroidGuiEnvironment(appContext = null, platform = platform)

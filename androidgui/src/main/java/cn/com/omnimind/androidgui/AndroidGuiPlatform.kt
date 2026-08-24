@@ -124,11 +124,10 @@ internal class AccessibilityAndroidGuiPlatform(
     override suspend fun dispatch(action: Action): AndroidGuiActionResult {
         val service = awaitService()
         return when (action.tool) {
-            OobActionSchema.TOOL_CLICK -> gesture(
+            OobActionSchema.TOOL_CLICK -> click(
                 service = service,
-                x1 = number(action, OobActionSchema.ARG_X),
-                y1 = number(action, OobActionSchema.ARG_Y),
-                durationMs = CLICK_GESTURE_DURATION_MS,
+                x = number(action, OobActionSchema.ARG_X),
+                y = number(action, OobActionSchema.ARG_Y),
             )
 
             OobActionSchema.TOOL_LONG_PRESS -> gesture(
@@ -300,6 +299,33 @@ internal class AccessibilityAndroidGuiPlatform(
         return AndroidGuiActionResult(true, "wait_completed")
     }
 
+    private suspend fun click(
+        service: AssistsService,
+        x: Float,
+        y: Float,
+    ): AndroidGuiActionResult {
+        val semanticResult = withNodes { nodes ->
+            selectSemanticClickNode(nodes, x, y)?.performAction(
+                AccessibilityNodeInfo.ACTION_CLICK,
+            )
+        }
+        if (semanticResult == true) {
+            return AndroidGuiActionResult(
+                success = true,
+                message = "node_click_dispatched",
+                diagnostics = mapOf("click_dispatch" to "accessibility_node"),
+            )
+        }
+        return gesture(
+            service = service,
+            x1 = x,
+            y1 = y,
+            durationMs = CLICK_GESTURE_DURATION_MS,
+        ).copy(
+            diagnostics = mapOf("click_dispatch" to "gesture_fallback"),
+        )
+    }
+
     private suspend fun gesture(
         service: AssistsService,
         x1: Float,
@@ -452,6 +478,32 @@ internal class AccessibilityAndroidGuiPlatform(
         return editable.firstOrNull(AccessibilityNodeInfo::isFocused) ?: editable.firstOrNull()
     }
 
+    private fun selectSemanticClickNode(
+        nodes: List<AccessibilityNodeInfo>,
+        x: Float,
+        y: Float,
+    ): AccessibilityNodeInfo? = nodes
+        .mapIndexedNotNull { index, node ->
+            val bounds = Rect().also(node::getBoundsInScreen)
+            val area = semanticClickCandidateArea(
+                clickable = node.isClickable,
+                enabled = node.isEnabled,
+                visible = node.isVisibleToUser,
+                hasIdentity = !node.viewIdResourceName.isNullOrBlank() ||
+                    !node.text.isNullOrBlank() ||
+                    !node.contentDescription.isNullOrBlank(),
+                containsPoint = bounds.contains(x.toInt(), y.toInt()),
+                width = bounds.width(),
+                height = bounds.height(),
+            ) ?: return@mapIndexedNotNull null
+            SemanticClickNodeCandidate(node = node, area = area, traversalIndex = index)
+        }
+        .minWithOrNull(
+            compareBy<SemanticClickNodeCandidate> { it.area }
+                .thenByDescending { it.traversalIndex },
+        )
+        ?.node
+
     private fun AccessibilityNodeInfo.toInputTarget(): AndroidGuiInputTarget {
         val bounds = Rect().also(::getBoundsInScreen)
         return AndroidGuiInputTarget(
@@ -503,6 +555,26 @@ internal class AccessibilityAndroidGuiPlatform(
         const val PRESS_KEY_RETRY_DELAY_MS = 120L
         val PACKAGE = Regex("package=\\\"([^\\\"]+)\\\"")
     }
+}
+
+private data class SemanticClickNodeCandidate(
+    val node: AccessibilityNodeInfo,
+    val area: Long,
+    val traversalIndex: Int,
+)
+
+internal fun semanticClickCandidateArea(
+    clickable: Boolean,
+    enabled: Boolean,
+    visible: Boolean,
+    hasIdentity: Boolean,
+    containsPoint: Boolean,
+    width: Int,
+    height: Int,
+): Long? {
+    if (!clickable || !enabled || !visible || !hasIdentity || !containsPoint) return null
+    if (width <= 0 || height <= 0) return null
+    return width.toLong() * height.toLong()
 }
 
 internal const val CLICK_GESTURE_DURATION_MS = 100L
