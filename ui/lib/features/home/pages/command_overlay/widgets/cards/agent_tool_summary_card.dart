@@ -16,6 +16,7 @@ import 'package:ui/services/agent_tool_call_parser.dart';
 import 'package:ui/services/agent_message_kinds.dart';
 import 'package:ui/theme/theme_context.dart';
 import 'package:ui/widgets/image_preview_overlay.dart';
+import 'acp_audio_card.dart';
 
 class AgentToolSummaryCard extends StatefulWidget {
   const AgentToolSummaryCard({
@@ -41,6 +42,9 @@ class _AgentToolSummaryCardState extends State<AgentToolSummaryCard> {
   @override
   Widget build(BuildContext context) {
     final cardData = widget.cardData;
+    if (cardData['audioDataUrl'] != null || cardData['audioUrl'] != null) {
+      return AcpAudioCard(cardData: cardData);
+    }
     if (_isCompletedVlmTask(cardData)) {
       return _VlmTaskResultCard(cardData: cardData);
     }

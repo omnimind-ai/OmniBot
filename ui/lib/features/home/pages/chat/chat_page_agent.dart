@@ -29,6 +29,22 @@ Keep the file practical and avoid generic advice. If AGENTS.md already exists, p
 ''';
 
 mixin _ChatPageAgentMixin on _ChatPageStateBase {
+  Map<String, dynamic>? _availableAcpCommandForText(String text) {
+    final trimmed = text.trim();
+    if (!trimmed.startsWith('/')) return null;
+    final name = trimmed.substring(1).split(RegExp(r'\s+')).first.toLowerCase();
+    if (name.isEmpty) return null;
+    final runtime = _runtimeForMode(ChatPageMode.agent);
+    for (final command
+        in runtime?.availableAcpCommands ?? const <Map<String, dynamic>>[]) {
+      final candidate = (command['name'] ?? '').toString().trim();
+      if (candidate.replaceFirst(RegExp(r'^/'), '').toLowerCase() == name) {
+        return command;
+      }
+    }
+    return null;
+  }
+
   bool _usesSharedProviderModel(String? agentId) {
     final normalizedAgentId = agentId?.trim() ?? '';
     if (normalizedAgentId.isEmpty ||
@@ -1203,6 +1219,16 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     if (command.isEmpty) {
       return;
     }
+    if (cardData['acpCommand'] == true) {
+      final value = command.endsWith(' ') ? command : '$command ';
+      _messageController.value = TextEditingValue(
+        text: value,
+        selection: TextSelection.collapsed(offset: value.length),
+      );
+      _requestComposerFocus();
+      _handleSlashCommandInput();
+      return;
+    }
     if (command == '/model') {
       _messageController.value = const TextEditingValue(
         text: '/model ',
@@ -1237,6 +1263,17 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     List<Map<String, dynamic>> attachments = const [],
   }) async {
     final trimmed = messageText.trim();
+    final advertisedCommand = _availableAcpCommandForText(trimmed);
+    if (advertisedCommand != null) {
+      _messageController.clear();
+      _hideSlashCommandPanel();
+      await _startAgentTurnCommand(
+        displayText: trimmed,
+        actualText: trimmed,
+        attachments: attachments,
+      );
+      return true;
+    }
     final intent = resolveAgentSlashSubmitIntent(trimmed);
     switch (intent.kind) {
       case AgentSlashSubmitKind.none:

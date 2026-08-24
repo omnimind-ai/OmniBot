@@ -45,6 +45,36 @@ void main() {
     expect(acpEventTurnId(event), 'turn-nested');
   });
 
+  test('retains scalar and list ACP unknown updates without a turn id', () {
+    for (final rawUpdate in <dynamic>[
+      'provider-progress',
+      <dynamic>['phase-1', 0.5],
+    ]) {
+      reducer.reduce(
+        runtime: runtime,
+        event: {
+          'method': 'session/update',
+          'params': {
+            'sessionId': 'session-extension-shape',
+            'update': {
+              'sessionUpdate': 'vendor_progress',
+              'rawUpdate': rawUpdate,
+            },
+          },
+        },
+      );
+    }
+
+    expect(runtime.acpExtensionUpdates, hasLength(2));
+    expect(
+      runtime.acpExtensionUpdates.map((entry) => entry['rawUpdate']),
+      containsAll(<dynamic>[
+        'provider-progress',
+        <dynamic>['phase-1', 0.5],
+      ]),
+    );
+  });
+
   test('maps agent message deltas into assistant text', () {
     final result = reducer.reduce(
       runtime: runtime,
@@ -176,6 +206,230 @@ void main() {
       (message) => message.cardData?['toolType'] == 'image',
     );
     expect(imageCard.cardData?['imageDataUrl'], 'data:image/jpeg;base64,BBBB');
+  });
+
+  test('projects ACP assistant audio content into the shared audio card', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'params': {
+          'sessionId': 'session-assistant-audio',
+          'turnId': 'turn-assistant-audio',
+          'update': {
+            'sessionUpdate': 'agent_message_chunk',
+            'messageId': 'assistant-audio',
+            'content': {
+              'type': 'audio',
+              'data': 'AAAA',
+              'mimeType': 'audio/mpeg',
+            },
+          },
+        },
+      },
+    );
+
+    final audioCard = runtime.messages.singleWhere(
+      (message) => message.cardData?['toolType'] == 'audio',
+    );
+    expect(audioCard.cardData?['toolType'], 'audio');
+    expect(audioCard.cardData?['audioDataUrl'], 'data:audio/mpeg;base64,AAAA');
+  });
+
+  test('keeps ACP advertised commands in shared runtime state', () {
+    final result = reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'params': {
+          'sessionId': 'session-commands',
+          'update': {
+            'sessionUpdate': 'available_commands_update',
+            'availableCommands': [
+              {'name': 'review', 'description': 'Review the workspace'},
+              {'name': '/review', 'description': 'duplicate'},
+              {'name': 'ship', 'description': 'Ship the change'},
+            ],
+          },
+        },
+      },
+    );
+
+    expect(result.handled, isTrue);
+    expect(runtime.availableAcpCommands, hasLength(2));
+    expect(runtime.availableAcpCommands.last['name'], 'ship');
+  });
+
+  test('keeps dynamic ACP config options in shared runtime state', () {
+    final result = reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'params': {
+          'sessionId': 'session-config',
+          'update': {
+            'sessionUpdate': 'config_option_update',
+            'configOptions': [
+              {
+                'id': 'model',
+                'name': 'Model',
+                'type': 'select',
+                'currentValue': 'model-a',
+                'options': [
+                  {'value': 'model-a', 'name': 'Model A'},
+                ],
+              },
+              {'name': 'invalid-without-id'},
+            ],
+          },
+        },
+      },
+    );
+
+    expect(result.handled, isTrue);
+    expect(runtime.acpConfigOptions, hasLength(1));
+    expect(runtime.acpConfigOptions.single['id'], 'model');
+  });
+
+  test('projects ACP user history only when explicitly replaying', () {
+    final live = reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'params': {
+          'sessionId': 'session-history',
+          'update': {
+            'sessionUpdate': 'user_message_chunk',
+            'messageId': 'user-live',
+            'content': {'type': 'text', 'text': 'must not duplicate'},
+          },
+        },
+      },
+    );
+    expect(live.handled, isTrue);
+    expect(runtime.messages, isEmpty);
+
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'params': {
+          'sessionId': 'session-history',
+          'update': {
+            'sessionUpdate': 'user_message_chunk',
+            'messageId': 'user-replay',
+            'replay': true,
+            'content': {'type': 'text', 'text': 'replayed'},
+          },
+        },
+      },
+    );
+    expect(runtime.messages, hasLength(1));
+    expect(runtime.messages.single.user, 1);
+    expect(runtime.messages.single.text, 'replayed');
+  });
+
+  test('maps ACP elicitation requests into the shared request card', () {
+    final result = reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'jsonrpc': '2.0',
+          'id': 'elicitation-1',
+          'method': 'elicitation/create',
+          'params': {
+            'sessionId': 'session-elicitation',
+            'title': '需要确认',
+            'description': '请提供项目名称',
+          },
+        },
+      },
+    );
+
+    expect(result.handled, isTrue);
+    expect(runtime.messages, hasLength(1));
+    expect(runtime.messages.single.cardData?['type'], 'agent_request');
+    expect(runtime.messages.single.cardData?['requestKind'], 'user_input');
+    expect(runtime.messages.single.cardData?['requestId'], 'elicitation-1');
+  });
+
+  test('preserves unknown ACP extensions at the shared runtime boundary', () {
+    final result = reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'params': {
+          'sessionId': 'session-extension',
+          'update': {
+            'sessionUpdate': 'provider_progress',
+            'rawUpdate': {'text': 'still working', 'progress': 0.5},
+          },
+        },
+      },
+    );
+
+    expect(result.handled, isTrue);
+    expect(
+      runtime.acpExtensionUpdates.single['sessionUpdate'],
+      'provider_progress',
+    );
+    expect(runtime.acpExtensionUpdates.single['rawUpdate']['progress'], 0.5);
+  });
+
+  test('retains ACP extension requests and their response ids', () {
+    final result = reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': '_omnibot/presentation',
+        'id': 'extension-1',
+        'acpExtensionRequest': true,
+        'message': {
+          'jsonrpc': '2.0',
+          'id': 'extension-1',
+          'method': '_omnibot/presentation',
+          'params': {'card': 'usage'},
+        },
+      },
+    );
+
+    expect(result.handled, isTrue);
+    expect(result.requestId, 'extension-1');
+    expect(
+      runtime.acpExtensionUpdates.single['method'],
+      '_omnibot/presentation',
+    );
+    expect(runtime.acpExtensionUpdates.single['request'], isTrue);
+    expect(runtime.acpExtensionUpdates.single['params']['card'], 'usage');
+  });
+
+  test('projects session-scoped ACP titles without a turn id', () {
+    runtime.conversation = ConversationModel(
+      id: 42,
+      title: '旧标题',
+      status: 0,
+      messageCount: 0,
+      createdAt: 1,
+      updatedAt: 1,
+    );
+
+    final result = reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'params': {
+          'sessionId': 'session-title',
+          'update': {
+            'sessionUpdate': 'session_info_update',
+            'title': 'ACP 新标题',
+            'updatedAt': 1234,
+          },
+        },
+      },
+    );
+
+    expect(result.handled, isTrue);
+    expect(result.method, 'thread/name/updated');
+    expect(runtime.conversation?.title, 'ACP 新标题');
   });
 
   test('ACP reasoning chunks preserve Markdown whitespace', () {
@@ -1091,6 +1345,45 @@ void main() {
     expect(card['resultPreviewJson'], contains('image/png'));
   });
 
+  test('projects ACP tool resource links into the shared artifact card', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'turnId': 'turn-tool-resource',
+        'params': {
+          'sessionId': 'session-tool-resource',
+          'update': {
+            'sessionUpdate': 'tool_call_update',
+            'toolCallId': 'tool-resource-1',
+            'kind': 'other',
+            'title': '生成文件',
+            'status': 'completed',
+            'content': [
+              {
+                'type': 'content',
+                'content': {
+                  'type': 'resource_link',
+                  'name': 'result.md',
+                  'uri': 'workspace://result.md',
+                  'mimeType': 'text/markdown',
+                },
+              },
+            ],
+          },
+        },
+      },
+    );
+
+    final artifactCard = runtime.messages.singleWhere(
+      (message) => message.cardData?['type'] == 'artifact_card',
+    );
+    final artifact = artifactCard.cardData?['artifact'] as Map<String, dynamic>;
+    expect(artifact['uri'], 'workspace://result.md');
+    expect(artifact['fileName'], 'result.md');
+    expect(artifact['mimeType'], 'text/markdown');
+  });
+
   test('standard ACP terminal content keeps the shared terminal session', () {
     reducer.reduce(
       runtime: runtime,
@@ -1731,6 +2024,150 @@ void main() {
       (message) => message.cardData?['type'] == 'artifact_card',
     );
     expect(artifact.cardData?['artifact']?['title'], 'result.txt');
+  });
+
+  test('tracks the active ACP tool for the shared stop action', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'method': 'session/update',
+          'turnId': 'turn-active-tool',
+          'params': {
+            'sessionId': 'session-active-tool',
+            'update': {
+              'sessionUpdate': 'tool_call_update',
+              'toolCallId': 'active-tool-1',
+              'kind': 'execute',
+              'title': 'bash',
+              'status': 'in_progress',
+            },
+          },
+        },
+      },
+    );
+
+    expect(runtime.activeToolCardId, isNotNull);
+    final activeCardId = runtime.activeToolCardId!;
+    expect(runtime.messages.single.id, activeCardId);
+
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'method': 'session/update',
+          'turnId': 'turn-active-tool',
+          'params': {
+            'sessionId': 'session-active-tool',
+            'update': {
+              'sessionUpdate': 'tool_call_update',
+              'toolCallId': 'active-tool-1',
+              'kind': 'execute',
+              'title': 'bash',
+              'status': 'completed',
+            },
+          },
+        },
+      },
+    );
+
+    expect(runtime.activeToolCardId, isNull);
+  });
+
+  test('keeps another parallel ACP tool active after one completes', () {
+    Map<String, dynamic> toolUpdate({
+      required String toolCallId,
+      required String status,
+    }) {
+      return {
+        'message': {
+          'method': 'session/update',
+          'turnId': 'turn-parallel-tools',
+          'params': {
+            'sessionId': 'session-parallel-tools',
+            'update': {
+              'sessionUpdate': 'tool_call_update',
+              'toolCallId': toolCallId,
+              'kind': 'execute',
+              'title': toolCallId,
+              'status': status,
+            },
+          },
+        },
+      };
+    }
+
+    reducer.reduce(
+      runtime: runtime,
+      event: toolUpdate(toolCallId: 'parallel-1', status: 'in_progress'),
+    );
+    reducer.reduce(
+      runtime: runtime,
+      event: toolUpdate(toolCallId: 'parallel-2', status: 'in_progress'),
+    );
+    final secondCardId = runtime.activeToolCardId;
+    expect(secondCardId, isNotNull);
+
+    reducer.reduce(
+      runtime: runtime,
+      event: toolUpdate(toolCallId: 'parallel-2', status: 'completed'),
+    );
+
+    expect(runtime.activeToolCardId, isNotNull);
+    expect(runtime.activeToolCardId, isNot(secondCardId));
+    expect(
+      runtime.messages
+          .firstWhere((message) => message.id == runtime.activeToolCardId)
+          .cardData?['status'],
+      'running',
+    );
+  });
+
+  test('projects legacy tool-result details from ACP rawOutput', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'method': 'session/update',
+          'turnId': 'turn-legacy-tool-details',
+          'params': {
+            'sessionId': 'session-legacy-tool-details',
+            'update': {
+              'sessionUpdate': 'tool_call_update',
+              'toolCallId': 'clarify-1',
+              'kind': 'other',
+              'title': 'clarify',
+              'status': 'completed',
+              'rawOutput': {
+                'toolType': 'clarify',
+                'result': {
+                  'question': '还要继续吗？',
+                  'missingFields': ['confirmed'],
+                },
+                'outputTruncated': true,
+                'originalChars': 18000,
+                'headTail': 'head ... tail',
+                'fullOutputArtifact': {'id': 'full-output-1'},
+                'subagentStatusText': '子任务已完成',
+                'subagentEvents': [
+                  {'id': 'subagent-event-1', 'kind': 'subagent_completed'},
+                ],
+              },
+            },
+          },
+        },
+      },
+    );
+
+    final card = runtime.messages.single.cardData!;
+    expect(card['question'], '还要继续吗？');
+    expect(card['missingFields'], ['confirmed']);
+    expect(card['outputTruncated'], isTrue);
+    expect(card['originalChars'], 18000);
+    expect(card['headTail'], 'head ... tail');
+    expect(card['fullOutputArtifact']?['id'], 'full-output-1');
+    expect(card['subagentStatusText'], '子任务已完成');
+    expect(card['subagentEvents'], hasLength(1));
   });
 
   test('keeps plain ACP tool raw output in the shared card summary', () {
@@ -2684,6 +3121,44 @@ diff --git a/lib/main.dart b/lib/main.dart
     expect(cardData['summary'], contains('+1 -1'));
     expect((cardData['diffText'] ?? '').toString(), contains('diff --git'));
   });
+
+  test(
+    'maps standard ACP diff content into a shared file card without a kind',
+    () {
+      reducer.reduce(
+        runtime: runtime,
+        event: {
+          'method': 'session/update',
+          'params': {
+            'sessionId': 'session-standard-diff',
+            'turnId': 'turn-standard-diff',
+            'update': {
+              'sessionUpdate': 'tool_call',
+              'toolCallId': 'call-standard-diff',
+              'title': '更新 main.dart',
+              'status': 'completed',
+              'content': [
+                {
+                  'type': 'diff',
+                  'path': 'lib/main.dart',
+                  'oldText': 'old line\n',
+                  'newText': 'new line\n',
+                },
+              ],
+            },
+          },
+        },
+      );
+
+      final cardData = runtime.messages.single.cardData!;
+      expect(cardData['type'], 'agent_tool_summary');
+      expect(cardData['toolType'], 'file');
+      expect(cardData['showDiff'], isTrue);
+      expect(cardData['filePath'], 'lib/main.dart');
+      expect(cardData['additions'], 1);
+      expect(cardData['deletions'], 1);
+    },
+  );
 
   test(
     'ACP sparse completion updates keep one file card and preserve its diff',
@@ -4412,6 +4887,80 @@ diff --git a/lib/main.dart b/lib/main.dart
       completedThinkingMessages.single.cardData?['stage'],
       ThinkingStage.complete.value,
     );
+  });
+
+  test('ACP reasoning segment metadata splits reused message ids around tools', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'method': 'session/update',
+          'params': {
+            'sessionId': 'session-1',
+            'turnId': 'turn-1',
+            'update': {
+              'sessionUpdate': 'agent_thought_chunk',
+              'messageId': 'shared-thought',
+              'content': {'type': 'text', 'text': 'before tool'},
+              '_meta': {
+                'cn.com.omnimind.agent': {
+                  'reasoning': {'segmentIndex': 0},
+                },
+              },
+            },
+          },
+        },
+      },
+    );
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'method': 'session/update',
+          'params': {
+            'sessionId': 'session-1',
+            'turnId': 'turn-1',
+            'update': {
+              'sessionUpdate': 'tool_call',
+              'toolCallId': 'tool-1',
+              'title': 'read_file',
+              'status': 'in_progress',
+            },
+          },
+        },
+      },
+    );
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'method': 'session/update',
+          'params': {
+            'sessionId': 'session-1',
+            'turnId': 'turn-1',
+            'update': {
+              'sessionUpdate': 'agent_thought_chunk',
+              'messageId': 'shared-thought',
+              'content': {'type': 'text', 'text': 'after tool'},
+              '_meta': {
+                'cn.com.omnimind.agent': {
+                  'reasoning': {'segmentIndex': 1},
+                },
+              },
+            },
+          },
+        },
+      },
+    );
+
+    final cards = runtime.messages
+        .where((message) => message.cardData?['type'] == 'deep_thinking')
+        .toList()
+        .reversed
+        .toList();
+    expect(cards, hasLength(2));
+    expect(cards[0].cardData?['thinkingContent'], 'before tool');
+    expect(cards[1].cardData?['thinkingContent'], 'after tool');
   });
 
   test('turn/completed finalizes the thinking card after reasoning ends', () {

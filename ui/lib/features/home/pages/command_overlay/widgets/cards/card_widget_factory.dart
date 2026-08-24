@@ -9,6 +9,7 @@ import 'deep_thinking_card.dart';
 import 'permission_section_card.dart';
 import 'stage_hint_card.dart';
 import 'openclaw_attachment_card.dart';
+import 'acp_audio_card.dart';
 import 'package:ui/services/agent_acp_card_normalizer.dart';
 
 /// 任务执行前的回调类型
@@ -119,6 +120,8 @@ class CardWidgetFactory {
       case 'artifact_card':
         final artifact = cardData['artifact'] as Map<String, dynamic>? ?? {};
         return ArtifactCard(artifact: artifact);
+      case 'acp_audio':
+        return AcpAudioCard(cardData: cardData);
       default:
         return _UnknownCard(type: type);
     }

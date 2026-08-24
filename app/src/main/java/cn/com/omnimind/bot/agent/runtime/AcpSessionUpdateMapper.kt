@@ -155,20 +155,14 @@ internal fun SessionUpdate.toAcpSessionNotification(
         ).apply { putAcpMeta(_meta) }
     )
 
-    is SessionUpdate.SessionInfoUpdate -> title
-        ?.takeIf { it.isNotBlank() }
-        ?.let {
-            AcpSessionNotification(
-                sessionId = threadId,
-                update = linkedMapOf<String, Any?>(
-                    "sessionUpdate" to "session_info_update",
-                    "title" to it,
-                ).apply {
-                    updatedAt?.let { timestamp -> put("updatedAt", timestamp) }
-                    putAcpMeta(_meta)
-                }
-            )
-        }
+    is SessionUpdate.SessionInfoUpdate -> linkedMapOf<String, Any?>().apply {
+        put("sessionUpdate", "session_info_update")
+        title?.takeIf { it.isNotBlank() }?.let { put("title", it) }
+        updatedAt?.let { put("updatedAt", it) }
+        putAcpMeta(_meta)
+    }.takeIf { it.size > 1 }?.let {
+        AcpSessionNotification(sessionId = threadId, update = it)
+    }
 
     is SessionUpdate.UsageUpdate -> AcpSessionNotification(
         sessionId = threadId,
@@ -190,10 +184,18 @@ internal fun SessionUpdate.toAcpSessionNotification(
         )
     )
 
-    // ACP clients must not invent a second event type for unknown updates.
-    // The official SDK already preserves the raw update at the protocol seam;
-    // unsupported updates are intentionally ignored by this UI projection.
-    is SessionUpdate.UnknownSessionUpdate -> null
+    // Keep an extension inside the official session/update envelope. This is
+    // deliberately not converted to an app-owned event name: the shared UI
+    // can retain/inspect the original discriminator and raw JSON, while a
+    // future ACP-aware renderer can add a projection without changing any
+    // Harness adapter.
+    is SessionUpdate.UnknownSessionUpdate -> AcpSessionNotification(
+        sessionId = threadId,
+        update = linkedMapOf<String, Any?>(
+            "sessionUpdate" to sessionUpdateType,
+            "rawUpdate" to rawJson.toAcpValue(),
+        ).apply { putAcpMeta(_meta) }
+    )
 
     // The client is the author of user messages, so a replayed echo of one adds
     // nothing to the timeline.

@@ -177,6 +177,12 @@ class AgentRuntimeManager private constructor(
         prepareSharedProviderBinding = ::prepareSharedProviderBinding,
         buildHandoffContext = ::buildLocalAcpHandoffContext,
         scheduleToolBridge = xiaowanScheduleToolBridge,
+        copyConversationHistory = { sourceConversationId, targetConversationId ->
+            historyRepository.copyConversationHistory(
+                sourceConversationId = sourceConversationId,
+                targetConversationId = targetConversationId,
+            )
+        },
         onMessage = ::handleServerMessage
     )
     private val activeTurnsByThreadId = ConcurrentHashMap<String, String>()
@@ -479,7 +485,10 @@ class AgentRuntimeManager private constructor(
         ) {
             return listAuthoritativeProviderModels()
         }
-        if (resolveRuntime().kind == AgentRuntimeKind.LOCAL && method in LOCAL_ACP_METHODS) {
+        if (
+            resolveRuntime().kind == AgentRuntimeKind.LOCAL &&
+            (method in LOCAL_ACP_METHODS || isAcpExtensionMethod(method))
+        ) {
             val localArgs = ensureLocalAcpConnected(method, canonicalArgs)
             val response = localAcpRuntime.handleMethod(method, localArgs)
             if (
@@ -507,11 +516,16 @@ class AgentRuntimeManager private constructor(
                 // Loading must resume the existing Codex thread. Starting a
                 // new remote session here silently discarded the conversation
                 // after an app restart or when opening an older chat.
-                "session/load" -> return requestWithResolvedThread(
+                "session/load",
+                "session/resume" -> return requestWithResolvedThread(
                     "thread/resume",
                     canonicalArgs
                 ).withAcpSessionId()
-                "session/list" -> return mapOf("sessions" to emptyList<Any?>())
+                // The remote Codex bridge exposes the historical thread/list
+                // method. Project it back to the shared ACP session/list
+                // shape instead of returning an empty catalog and making
+                // remote sessions disappear from the common session UI.
+                "session/list" -> return listThreads(canonicalArgs).withAcpSessions()
                 "session/prompt" -> return promptRemoteAcpSession(canonicalArgs)
                 "session/cancel" -> return cancelRemoteAcpSession(canonicalArgs)
             }
@@ -523,7 +537,8 @@ class AgentRuntimeManager private constructor(
             // Both local and remote runtimes speak the same ACP session
             // surface. Harness-specific operations do not cross this boundary.
             "session/new" -> startThread(canonicalArgs).withAcpSessionId()
-            "session/load" -> requestWithResolvedThread("thread/resume", canonicalArgs)
+            "session/load",
+            "session/resume" -> requestWithResolvedThread("thread/resume", canonicalArgs)
                 .withAcpSessionId()
             "session/list" -> listThreads(canonicalArgs).withAcpSessions()
             "session/prompt" -> startTurn(canonicalArgs).withAcpSessionId()
@@ -2068,8 +2083,18 @@ class AgentRuntimeManager private constructor(
 
     private suspend fun handleServerMessage(message: Map<String, Any?>) {
         val method = extractRemoteCodexServerMethod(message)
+        val rawExtensionParams = message["params"]
         val explicitParams = extractRemoteCodexServerParams(message)
-        val params = if (explicitParams.isNotEmpty()) {
+        val params = if (method.startsWith("_") &&
+            rawExtensionParams != null &&
+            rawExtensionParams !is Map<*, *>
+        ) {
+            // JSON-RPC params may be an array or scalar for an extension. The
+            // shared manager historically accepts map-shaped params, so keep
+            // a lossless compatibility wrapper while the original payload
+            // remains available in `message` for Flutter diagnostics.
+            mapOf("_rawParams" to rawExtensionParams)
+        } else if (explicitParams.isNotEmpty()) {
             explicitParams
         } else {
             syntheticRemoteCodexServerParams(message, method)
@@ -2185,6 +2210,7 @@ class AgentRuntimeManager private constructor(
                 "conversationId" to localConversationId,
                 "agentId" to eventAgentId,
                 "agentName" to eventAgentName,
+                "replay" to message["replay"],
                 "params" to params,
                 "message" to message
             )
@@ -2223,7 +2249,9 @@ class AgentRuntimeManager private constructor(
                 "agent_thought_chunk",
                 "tool_call",
                 "tool_call_update",
-                "plan"
+                "plan",
+                "plan_update",
+                "plan_removed"
             )
         }
         if (method.startsWith("item/") || method == "rawResponseItem/completed") {
@@ -2713,12 +2741,15 @@ internal const val OPENCODE_CONFIG_PATH = "/root/.config/opencode/opencode.json"
 private val LOCAL_ACP_METHODS = setOf(
     "session/new",
     "session/load",
+    "session/resume",
+    "session/fork",
     "session/list",
     "session/prompt",
     "session/cancel",
     "session/set_mode",
     "session/set_config_option",
     "session/close",
+    "session/delete",
     "session/archive",
     "session/unarchive",
     "session/name/set",
@@ -2730,8 +2761,23 @@ private val LOCAL_ACP_METHODS = setOf(
     "config/set",
     "collaborationMode/list",
     "review/start",
-    "respondToServerRequest"
+    "authenticate",
+    "auth/authenticate",
+    "logout",
+    "auth/logout",
+    "providers/list",
+    "auth/providers/list",
+    "providers/set",
+    "auth/providers/set",
+    "providers/disable",
+    "auth/providers/disable",
+    "respondToServerRequest",
+    "notifyAcpExtension"
 )
+
+/** ACP extension methods live in the implementation-reserved underscore namespace. */
+private fun isAcpExtensionMethod(method: String): Boolean =
+    method.trim().startsWith("_")
 
 private data class RemoteCodexThreadListEntry(
     val threadId: String,

@@ -2651,16 +2651,55 @@ object HttpController {
 
     private fun buildResponsesInputItems(messages: List<ChatCompletionMessage>): List<JsonElement> {
         val items = mutableListOf<JsonElement>()
+        val pendingFunctionCallIds = linkedSetOf<String>()
+        val emittedFunctionCallOutputIds = linkedSetOf<String>()
+        var fallbackFunctionCallIndex = 0
+
+        fun appendMissingFunctionCallOutputs(reason: String) {
+            if (pendingFunctionCallIds.isEmpty()) return
+            pendingFunctionCallIds.toList().forEach { callId ->
+                if (callId in emittedFunctionCallOutputIds) return@forEach
+                items += buildJsonObject {
+                    put("type", "function_call_output")
+                    put("call_id", callId)
+                    put(
+                        "output",
+                        "[OmniBot] Missing tool output for function call $callId. " +
+                            "$reason Do not assume that the tool ran."
+                    )
+                }
+                emittedFunctionCallOutputIds += callId
+            }
+            pendingFunctionCallIds.clear()
+        }
+
         messages.forEach { message ->
             when (message.role) {
                 "tool" -> {
+                    val callId = message.toolCallId?.trim().orEmpty()
+                    if (callId.isEmpty() || callId !in pendingFunctionCallIds) {
+                        // Responses rejects an output without a matching function
+                        // call. This can happen when old history retained a tool
+                        // card but not its assistant tool-call envelope. Dropping
+                        // the orphan at this wire boundary keeps the rest of the
+                        // conversation usable; the card remains in local history.
+                        return@forEach
+                    }
+                    if (callId in emittedFunctionCallOutputIds) {
+                        return@forEach
+                    }
                     items += buildJsonObject {
                         put("type", "function_call_output")
-                        put("call_id", message.toolCallId.orEmpty())
+                        put("call_id", callId)
                         put("output", message.contentText())
                     }
+                    pendingFunctionCallIds -= callId
+                    emittedFunctionCallOutputIds += callId
                 }
                 "assistant" -> {
+                    appendMissingFunctionCallOutputs(
+                        reason = "A later assistant message started before the result was persisted."
+                    )
                     val visibleText = buildList {
                         message.reasoningContent?.trim()?.takeIf { it.isNotEmpty() }?.let { add(it) }
                         message.contentText().trim().takeIf { it.isNotEmpty() }?.let { add(it) }
@@ -2669,15 +2708,22 @@ object HttpController {
                         items += buildResponsesMessageItem("assistant", visibleText)
                     }
                     message.toolCalls.orEmpty().forEach { toolCall ->
+                        val callId = toolCall.id.trim().ifEmpty {
+                            "tool_call_${fallbackFunctionCallIndex++}"
+                        }
                         items += buildJsonObject {
                             put("type", "function_call")
-                            put("call_id", toolCall.id)
+                            put("call_id", callId)
                             put("name", toolCall.function.name)
                             put("arguments", toolCall.function.arguments)
                         }
+                        pendingFunctionCallIds += callId
                     }
                 }
                 else -> {
+                    appendMissingFunctionCallOutputs(
+                        reason = "A later user message started before the result was persisted."
+                    )
                     val text = message.contentText()
                     if (text.isNotBlank()) {
                         items += buildResponsesMessageItem(message.role.ifBlank { "user" }, text)
@@ -2685,6 +2731,9 @@ object HttpController {
                 }
             }
         }
+        appendMissingFunctionCallOutputs(
+            reason = "The saved conversation ended before the result was persisted."
+        )
         return items
     }
 

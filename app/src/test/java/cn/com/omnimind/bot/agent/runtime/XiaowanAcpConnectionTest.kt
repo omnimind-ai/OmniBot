@@ -10,7 +10,7 @@ import org.junit.Test
 class XiaowanAcpConnectionTest {
 
     @Test
-    fun `reasoning rounds preserve starts and reuse one ACP thought message`() = runBlocking {
+    fun `explicit reasoning rounds use separate ACP thought messages`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
         val bridge = XiaowanAcpEventBridge { updates += it }
 
@@ -21,7 +21,7 @@ class XiaowanAcpConnectionTest {
 
         val thoughtUpdates = updates.filterIsInstance<SessionUpdate.AgentThoughtChunk>()
         assertEquals(4, thoughtUpdates.size)
-        assertEquals(1, thoughtUpdates.map { it.messageId }.distinct().size)
+        assertEquals(2, thoughtUpdates.map { it.messageId }.distinct().size)
 
         val contentUpdates = thoughtUpdates.filter {
             (it.content as ContentBlock.Text).text.isNotEmpty()

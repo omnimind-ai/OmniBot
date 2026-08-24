@@ -4,6 +4,9 @@ import cn.com.omnimind.bot.mcp.McpServerState
 import cn.com.omnimind.baselib.llm.ModelProviderProfile
 import cn.com.omnimind.baselib.llm.ProviderModelOption
 import com.agentclientprotocol.model.McpServer
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -12,6 +15,53 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AgentRuntimeProtocolPayloadTest {
+    @Test
+    fun acpExtensionRequestIsParsedWithoutChangingStandardMessages() {
+        val request = parseAcpExtensionLine(
+            "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"_omnibot/presentation\",\"params\":{\"card\":\"usage\"}}"
+        )
+
+        assertTrue(request?.isRequest == true)
+        assertEquals("_omnibot/presentation", request?.method)
+        assertEquals(JsonPrimitive(7), request?.id)
+        assertEquals("usage", request?.params?.toString()?.let {
+            Json.parseToJsonElement(it).jsonObject["card"]?.toString()?.trim('"')
+        })
+        assertNull(
+            parseAcpExtensionLine(
+                "{\"jsonrpc\":\"2.0\",\"method\":\"session/update\",\"params\":{}}"
+            )
+        )
+    }
+
+    @Test
+    fun acpExtensionNotificationAndArrayParamsAreRetained() {
+        val notification = parseAcpExtensionLine(
+            "{\"jsonrpc\":\"2.0\",\"method\":\"_omnibot/progress\",\"params\":[1,2]}"
+        )
+
+        assertFalse(notification?.isRequest == true)
+        assertEquals("_omnibot/progress", notification?.method)
+        assertEquals("[1,2]", notification?.params.toString())
+    }
+
+    @Test
+    fun acpExtensionResponsePreservesJsonRpcIdAndErrorShape() {
+        val response = encodeAcpExtensionResponse(
+            id = JsonPrimitive("request-1"),
+            reply = RawAcpExtensionReply(
+                error = Json.parseToJsonElement(
+                    "{\"code\":-32000,\"message\":\"declined\"}"
+                )
+            )
+        )
+
+        assertEquals(
+            "{\"jsonrpc\":\"2.0\",\"id\":\"request-1\",\"error\":{\"code\":-32000,\"message\":\"declined\"}}",
+            response
+        )
+    }
+
     @Test
     fun deepSeekHarnessModeCompatibilityFillsOnlyMissingDisplayNames() {
         val raw = """
@@ -165,6 +215,27 @@ class AgentRuntimeProtocolPayloadTest {
         // Old fields remain response-only compatibility aliases.
         assertEquals("session-1", response["threadId"])
         assertEquals("prompt-1", response["turnId"])
+    }
+
+    @Test
+    fun remoteThreadListIsProjectedToTheSharedAcpSessionShape() {
+        val response = mapOf<String, Any?>(
+            "threads" to listOf(
+                mapOf(
+                    "id" to "thread-1",
+                    "threadId" to "thread-1",
+                    "title" to "Remote session",
+                )
+            ),
+            "nextCursor" to "cursor-2",
+        ).withAcpSessions()
+
+        val sessions = response["sessions"] as List<*>
+        val session = sessions.single() as Map<*, *>
+        assertEquals("thread-1", session["sessionId"])
+        assertEquals("thread-1", session["threadId"])
+        assertEquals("Remote session", session["title"])
+        assertEquals("cursor-2", response["nextCursor"])
     }
 
     @Test

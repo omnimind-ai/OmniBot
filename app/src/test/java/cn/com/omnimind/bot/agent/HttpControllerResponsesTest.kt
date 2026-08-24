@@ -134,6 +134,58 @@ class HttpControllerResponsesTest {
     }
 
     @Test
+    fun `responses request backfills missing function call output before sending history`() {
+        val method = HttpController::class.java.getDeclaredMethod(
+            "buildOpenAIResponsesRequestBody",
+            String::class.java,
+            String::class.java,
+        )
+        method.isAccessible = true
+        val payload = method.invoke(
+            HttpController,
+            """
+                {
+                  "model": "gpt-4.1",
+                  "messages": [
+                    {"role": "user", "content": "检查项目"},
+                    {
+                      "role": "assistant",
+                      "tool_calls": [
+                        {
+                          "id": "call_ptpAmLkngkIT9h4H4fb1D2mj",
+                          "type": "function",
+                          "function": {"name": "file_list", "arguments": "{}"}
+                        }
+                      ]
+                    },
+                    {"role": "user", "content": "继续"}
+                  ]
+                }
+            """.trimIndent(),
+            "gpt-4.1",
+        ) as String
+
+        val input = json.parseToJsonElement(payload).jsonObject["input"]!!.jsonArray
+        val functionCallIndex = input.indexOfFirst {
+            it.jsonObject["type"]?.jsonPrimitive?.content == "function_call"
+        }
+        val functionOutputIndex = input.indexOfFirst {
+            it.jsonObject["type"]?.jsonPrimitive?.content == "function_call_output"
+        }
+
+        assertTrue(functionCallIndex >= 0)
+        assertTrue(functionOutputIndex > functionCallIndex)
+        assertEquals(
+            "call_ptpAmLkngkIT9h4H4fb1D2mj",
+            input[functionOutputIndex].jsonObject["call_id"]?.jsonPrimitive?.content,
+        )
+        assertTrue(
+            input[functionOutputIndex].jsonObject["output"]?.jsonPrimitive?.content
+                ?.contains("missing", ignoreCase = true) == true
+        )
+    }
+
+    @Test
     fun `responses request normalizes ACP tool names consistently across history catalog and choice`() {
         val method = HttpController::class.java.getDeclaredMethod(
             "buildOpenAIResponsesRequestBody",

@@ -74,6 +74,19 @@ class AgentConversationHistoryRepository(
             return page to (safeOffset + page.size < ordered.size)
         }
 
+        /**
+         * Produces one chronological fork snapshot from canonical and legacy
+         * storage buckets.  The caller supplies buckets in precedence order;
+         * this keeps a migrated `agent` row authoritative over an equivalent
+         * legacy `normal` row without changing either source bucket.
+         */
+        internal fun entriesForFork(entries: List<AgentConversationEntry>): List<AgentConversationEntry> {
+            return entries
+                .filter { it.entryType != ENTRY_TYPE_STREAM_EVENT }
+                .distinctBy { it.entryId }
+                .sortedWith(compareBy<AgentConversationEntry> { it.createdAt }.thenBy { it.id })
+        }
+
     }
 
     private val gson = Gson()
@@ -560,6 +573,49 @@ class AgentConversationHistoryRepository(
 
     suspend fun getConversation(conversationId: Long): Conversation? = withContext(Dispatchers.IO) {
         DatabaseHelper.getConversationById(conversationId)
+    }
+
+    /**
+     * Copies the durable, user-visible ACP history into a newly forked
+     * conversation.  The ACP agent owns the remote session context, while
+     * OmniBot owns the conversation projection; keeping this operation here
+     * makes the fork seam work for every Harness and also reads legacy
+     * Xiaowan buckets without rewriting or deleting them.
+     *
+     * Hidden raw stream events are deliberately not copied.  They are a
+     * transport replay aid, not conversation content, and copying them would
+     * make a fork look like it had received the same notifications twice.
+     */
+    suspend fun copyConversationHistory(
+        sourceConversationId: Long,
+        targetConversationId: Long,
+        sourceConversationMode: String = "agent",
+        targetConversationMode: String = "agent"
+    ): Int = withContext(Dispatchers.IO) {
+        if (sourceConversationId == targetConversationId) return@withContext 0
+        val sourceEntries = entriesForFork(
+            conversationModeCandidates(sourceConversationMode)
+            .flatMap { storageMode ->
+                DatabaseHelper.getAgentConversationEntriesAsc(
+                    conversationId = sourceConversationId,
+                    conversationMode = storageMode
+                )
+            }
+        )
+        if (sourceEntries.isEmpty()) return@withContext 0
+
+        val targetMode = canonicalConversationMode(targetConversationMode)
+        sourceEntries.forEach { entry ->
+            DatabaseHelper.upsertAgentConversationEntry(
+                entry.copy(
+                    id = 0,
+                    conversationId = targetConversationId,
+                    conversationMode = targetMode,
+                )
+            )
+        }
+        refreshConversationMetadata(targetConversationId)
+        sourceEntries.size
     }
 
     private suspend fun upsertMessageEntry(

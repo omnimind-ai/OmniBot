@@ -7,12 +7,15 @@ import cn.com.omnimind.baselib.database.DatabaseHelper
 import cn.com.omnimind.bot.webchat.ConversationDomainService
 import cn.com.omnimind.bot.webchat.FlutterChatSyncBridge
 import cn.com.omnimind.bot.webchat.RealtimeHub
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 internal class AgentSessionBindingRepository(
     context: Context
 ) {
     private val appContext = context.applicationContext
     private val conversationDomainService by lazy { ConversationDomainService(appContext) }
+    private val bindingMutex = Mutex()
 
     suspend fun getBindingByConversationId(conversationId: Long): AgentSessionBinding? {
         return DatabaseHelper.getAgentSessionBindingByConversationId(conversationId)
@@ -29,6 +32,24 @@ internal class AgentSessionBindingRepository(
         title: String? = null,
         archived: Boolean? = null,
         conversationMode: String = AGENT_MODE_STORAGE_VALUE
+    ): Long = bindingMutex.withLock {
+        ensureBindingLocked(
+            threadId = threadId,
+            conversationId = conversationId,
+            cwd = cwd,
+            title = title,
+            archived = archived,
+            conversationMode = conversationMode,
+        )
+    }
+
+    private suspend fun ensureBindingLocked(
+        threadId: String,
+        conversationId: Long?,
+        cwd: String,
+        title: String?,
+        archived: Boolean?,
+        conversationMode: String,
     ): Long {
         val normalizedThreadId = threadId.trim()
         require(normalizedThreadId.isNotEmpty()) { "threadId is required" }
@@ -37,6 +58,17 @@ internal class AgentSessionBindingRepository(
         val existingBinding = DatabaseHelper.getAgentSessionBindingByThreadId(normalizedThreadId)
         if (existingBinding != null) {
             if (conversationId != null && conversationId != existingBinding.conversationId) {
+                val oldConversation = DatabaseHelper.getConversationById(existingBinding.conversationId)
+                check(
+                    canSafelyRebindGeneratedEmptyConversation(
+                        oldConversation,
+                        expectedTitle = defaultConversationTitle(existingBinding.threadId),
+                    )
+                ) {
+                    "ACP session $normalizedThreadId is already bound to conversation " +
+                        "${existingBinding.conversationId}; refusing to move it to " +
+                        "conversation $conversationId."
+                }
                 val reboundConversation = rebindExistingThread(
                     existingBinding = existingBinding,
                     conversationId = conversationId,
@@ -183,6 +215,17 @@ internal class AgentSessionBindingRepository(
         publishConversationEvent("conversation_updated", updated)
     }
 
+    /**
+     * Detach an ACP session without deleting the conversation or its messages.
+     * ACP `session/delete` is an agent-session operation; local history is
+     * owned by OmniBot and must remain recoverable for the user.
+     */
+    suspend fun detachThread(threadId: String): Long? {
+        val binding = getBindingByThreadId(threadId.trim()) ?: return null
+        DatabaseHelper.deleteAgentSessionBindingByThreadId(threadId.trim())
+        return binding.conversationId
+    }
+
     private suspend fun createConversation(
         title: String,
         archived: Boolean,
@@ -273,6 +316,29 @@ internal class AgentSessionBindingRepository(
         }
         DatabaseHelper.deleteConversationById(conversationId)
         publishConversationEvent("conversation_deleted", conversation)
+    }
+
+    /**
+     * A session may only be moved as part of cleaning up an empty placeholder
+     * created by session discovery. Moving a populated conversation would not
+     * delete its rows, but it would make its durable history impossible to
+     * restore through the original ACP session and is therefore a data
+     * ownership bug.
+     */
+    private suspend fun canSafelyRebindGeneratedEmptyConversation(
+        conversation: Conversation?,
+        expectedTitle: String,
+    ): Boolean {
+        if (conversation == null) return true
+        if (conversation.title != expectedTitle) return false
+        if (conversation.messageCount != 0 || !conversation.lastMessage.isNullOrBlank()) {
+            return false
+        }
+        val entryCount = DatabaseHelper.countAgentConversationThreadEntries(
+            conversationId = conversation.id,
+            conversationMode = AGENT_MODE_STORAGE_VALUE,
+        )
+        return entryCount == 0
     }
 
     companion object {

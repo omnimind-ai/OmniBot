@@ -9,6 +9,7 @@ import cn.com.omnimind.bot.BuildConfig
 import cn.com.omnimind.bot.agent.AgentWorkspaceAttachmentSupport
 import cn.com.omnimind.bot.agent.AgentWorkspaceManager
 import cn.com.omnimind.bot.agent.AgentScheduleToolBridge
+import cn.com.omnimind.baselib.database.DatabaseHelper
 import cn.com.omnimind.baselib.llm.ChatCompletionMessage
 import cn.com.omnimind.bot.mcp.McpServerManager
 import cn.com.omnimind.bot.omniflow.OmniVlmPlugin
@@ -17,11 +18,21 @@ import com.agentclientprotocol.agent.AgentInfo
 import com.agentclientprotocol.client.Client
 import com.agentclientprotocol.client.ClientInfo
 import com.agentclientprotocol.client.ClientSession
+import com.agentclientprotocol.client.GlobalElicitationHandler
 import com.agentclientprotocol.common.ClientSessionOperations
 import com.agentclientprotocol.common.Event
 import com.agentclientprotocol.common.SessionCreationParameters
 import com.agentclientprotocol.model.ClientCapabilities
 import com.agentclientprotocol.model.ContentBlock
+import com.agentclientprotocol.model.CreateElicitationRequest
+import com.agentclientprotocol.model.CreateElicitationResponse
+import com.agentclientprotocol.model.CreateTerminalResponse
+import com.agentclientprotocol.model.ElicitationAction
+import com.agentclientprotocol.model.ElicitationCapabilities
+import com.agentclientprotocol.model.ElicitationContentValue
+import com.agentclientprotocol.model.ElicitationFormCapabilities
+import com.agentclientprotocol.model.ElicitationUrlCapabilities
+import com.agentclientprotocol.model.EnvVariable
 import com.agentclientprotocol.model.FileSystemCapability
 import com.agentclientprotocol.model.Implementation
 import com.agentclientprotocol.model.MessageId
@@ -32,6 +43,7 @@ import com.agentclientprotocol.model.PlanVariant
 import com.agentclientprotocol.model.ReadTextFileResponse
 import com.agentclientprotocol.model.RequestPermissionOutcome
 import com.agentclientprotocol.model.RequestPermissionResponse
+import com.agentclientprotocol.model.ReleaseTerminalResponse
 import com.agentclientprotocol.model.SessionConfigId
 import com.agentclientprotocol.model.SessionConfigOption
 import com.agentclientprotocol.model.SessionConfigOptionCategory
@@ -42,6 +54,10 @@ import com.agentclientprotocol.model.SessionModeId
 import com.agentclientprotocol.model.SessionUpdate
 import com.agentclientprotocol.model.ToolCallContent
 import com.agentclientprotocol.model.ToolCallStatus
+import com.agentclientprotocol.model.TerminalExitStatus
+import com.agentclientprotocol.model.TerminalOutputResponse
+import com.agentclientprotocol.model.WaitForTerminalExitResponse
+import com.agentclientprotocol.model.KillTerminalCommandResponse
 import com.agentclientprotocol.model.WriteTextFileResponse
 import com.agentclientprotocol.protocol.Protocol
 import com.agentclientprotocol.rpc.MethodName
@@ -76,6 +92,8 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.jsonObject
@@ -146,6 +164,7 @@ internal class LocalAcpRuntime(
     private val prepareSharedProviderBinding: suspend () -> Unit = {},
     private val buildHandoffContext: suspend (Long, String?) -> String?,
     private val scheduleToolBridge: AgentScheduleToolBridge,
+    private val copyConversationHistory: suspend (Long, Long) -> Int = { _, _ -> 0 },
     private val onMessage: suspend (Map<String, Any?>) -> Unit
 ) {
     private val appContext = context.applicationContext
@@ -192,9 +211,19 @@ internal class LocalAcpRuntime(
      * replay must not enter the live event stream.
      */
     private val replayingThreads = ConcurrentHashMap.newKeySet<String>()
+    private val replaySuppressedThreads = ConcurrentHashMap.newKeySet<String>()
     private val promptJobs = ConcurrentHashMap<String, Job>()
     private val pendingPermissions =
         ConcurrentHashMap<String, PendingPermissionRequest>()
+    private val pendingElicitations =
+        ConcurrentHashMap<String, PendingElicitationRequest>()
+    // ACP leaves implementation extensions intentionally open ended. The
+    // 0.26 JVM SDK has no wildcard Agent->Client handler, so extension
+    // requests are intercepted at the stdio boundary and suspended here
+    // until the shared `respondToServerRequest` surface resolves them.
+    private val pendingExtensionRequests =
+        ConcurrentHashMap<String, CompletableDeferred<RawAcpExtensionReply>>()
+    private val terminalProcesses = ConcurrentHashMap<String, AcpTerminalProcess>()
     private val sessionPermissionBehaviors =
         ConcurrentHashMap<String, AcpPermissionBehavior>()
     private val pendingHandoffConversationIds = ConcurrentHashMap<String, Long>()
@@ -284,6 +313,14 @@ internal class LocalAcpRuntime(
                 ensureSharedProviderBinding = prepareSharedProviderBinding,
                 conversationIdProvider = { threadId ->
                     bindingRepository.getBindingByThreadId(threadId)?.conversationId
+                },
+                isXiaowanSession = { threadId ->
+                    profileStore.agentIdForSession(threadId) ==
+                        AcpAgentProfileStore.XIAOWAN_AGENT_ID ||
+                        bindingRepository.getBindingByThreadId(threadId)
+                            ?.conversationId
+                            ?.let(profileStore::agentIdForConversation) ==
+                        AcpAgentProfileStore.XIAOWAN_AGENT_ID
                 }
             )
         } else {
@@ -303,12 +340,30 @@ internal class LocalAcpRuntime(
                         launchEnvironment["NODE_OPTIONS"],
                         ACP_FILESYSTEM_COMPAT_PATH
                     )
-                )
+                ),
+                onExtensionRequest = { id, method, params ->
+                    awaitAgentExtensionRequest(id, method, params)
+                },
+                onExtensionNotification = { method, params ->
+                    publishAgentExtensionNotification(method, params)
+                }
             )
         }
         val transport = nextConnection.createTransport(scope)
         val nextProtocol = Protocol(scope, transport)
-        val nextClient = Client(nextProtocol)
+        // ACP has two elicitation scopes. Session-scoped requests are routed
+        // through ClientSessionOperations; request-scoped requests do not
+        // belong to a session and therefore use the Client-level handler.
+        // Supplying both keeps an Agent from failing merely because it asks
+        // for confirmation before a session has been associated with it.
+        val nextClient = Client(
+            nextProtocol,
+            object : GlobalElicitationHandler {
+                override suspend fun createElicitation(
+                    request: CreateElicitationRequest
+                ): CreateElicitationResponse = awaitElicitation(request, null)
+            }
+        )
         try {
             Log.i(TAG, "Starting ACP process for ${profile.id}")
             nextConnection.start()
@@ -324,8 +379,12 @@ internal class LocalAcpRuntime(
                             readTextFile = true,
                             writeTextFile = true
                         ),
-                        terminal = false,
-                        planCapabilities = PlanCapabilities()
+                        terminal = true,
+                        planCapabilities = PlanCapabilities(),
+                        elicitation = ElicitationCapabilities(
+                            form = ElicitationFormCapabilities(),
+                            url = ElicitationUrlCapabilities()
+                        )
                     ),
                     implementation = Implementation(
                         name = "omnibot-app",
@@ -494,11 +553,34 @@ internal class LocalAcpRuntime(
         promptJobs.clear()
         pendingPermissions.values.forEach { it.response.complete(null) }
         pendingPermissions.clear()
+        pendingElicitations.values.forEach { pending ->
+            pending.response.complete(
+                CreateElicitationResponse(action = ElicitationAction.Cancel)
+            )
+        }
+        pendingElicitations.clear()
+        pendingExtensionRequests.values.forEach { pending ->
+            pending.complete(
+                RawAcpExtensionReply(
+                    error = buildJsonObject {
+                        put("code", -32800)
+                        put("message", "ACP runtime disconnected")
+                    }
+                )
+            )
+        }
+        pendingExtensionRequests.clear()
+        terminalProcesses.values.forEach { terminal ->
+            runCatching { terminal.process.destroyForcibly() }
+            terminal.readerJob.cancel()
+        }
+        terminalProcesses.clear()
         sessions.clear()
         sessionCwds.clear()
         sessionPermissionBehaviors.clear()
         pendingHandoffConversationIds.clear()
         replayingThreads.clear()
+        replaySuppressedThreads.clear()
         catalogSessionId = null
         activeTurnIds.clear()
         promptRequestTurns.clear()
@@ -567,12 +649,15 @@ internal class LocalAcpRuntime(
             // local ACP agent.
             "session/new" -> newAcpSession(canonicalArgs)
             "session/load" -> loadAcpSession(canonicalArgs)
+            "session/resume" -> resumeAcpSession(canonicalArgs)
+            "session/fork" -> forkAcpSession(canonicalArgs)
             "session/list" -> listAcpSessions(canonicalArgs)
             "session/prompt" -> promptAcpSession(canonicalArgs)
             "session/cancel" -> cancelAcpSession(canonicalArgs)
             "session/set_mode" -> setSessionMode(canonicalArgs)
             "session/set_config_option" -> setSessionConfigOption(canonicalArgs)
             "session/close" -> closeAcpSession(canonicalArgs)
+            "session/delete" -> deleteAcpSession(canonicalArgs)
             // The session surface is canonical. The implementation below
             // still uses the historical thread-named helpers, so normalize
             // their response back to sessionId/promptId at this boundary.
@@ -587,10 +672,29 @@ internal class LocalAcpRuntime(
             "config/set" -> setConfigOption(canonicalArgs)
             "collaborationMode/list" -> listCollaborationModes(canonicalArgs)
             "review/start" -> startReview(canonicalArgs)
+            "authenticate", "auth/authenticate" -> authenticateAcp(canonicalArgs)
+            "logout", "auth/logout" -> logoutAcp(canonicalArgs)
+            "providers/list", "auth/providers/list" -> listAcpProviders(canonicalArgs)
+            "providers/set", "auth/providers/set" -> setAcpProvider(canonicalArgs)
+            "providers/disable", "auth/providers/disable" -> disableAcpProvider(canonicalArgs)
             "respondToServerRequest" -> respondToPermission(args)
-            else -> throw UnsupportedOperationException(
-                "ACP agent does not expose the legacy method '$method'."
+            "notifyAcpExtension" -> sendRawAgentNotification(
+                args.stringValue("method")
+                    ?: throw IllegalArgumentException("method is required"),
+                args["params"]
             )
+            // ACP extension methods are arbitrary JSON-RPC method names. The
+            // protocol reserves the underscore namespace for implementation
+            // extensions; forward those methods unchanged so a Harness can
+            // expose an optional capability without another app-private
+            // transport. Unknown core-looking methods still fail loudly.
+            else -> if (method.startsWith("_")) {
+                sendRawAgentRequestValue(method, canonicalArgs)
+            } else {
+                throw UnsupportedOperationException(
+                    "ACP agent does not expose the legacy method '$method'."
+                )
+            }
         }
     }
 
@@ -662,8 +766,11 @@ internal class LocalAcpRuntime(
                 "sessionRestored" to false
             )
         }
-        return resumeThread(normalized).withAcpSessionId()
+        return resumeThread(normalized, preferResume = false).withAcpSessionId()
     }
+
+    private suspend fun resumeAcpSession(args: Map<String, Any?>): Map<String, Any?> =
+        resumeThread(args, preferResume = true).withAcpSessionId()
 
     private suspend fun listAcpSessions(args: Map<String, Any?>): Map<String, Any?> {
         val response = listThreads(args)
@@ -700,6 +807,7 @@ internal class LocalAcpRuntime(
         } else {
             args
         }
+        cancelPendingPermissionRequests(normalized.stringValue("threadId").orEmpty())
         val runId = normalized.stringValue("runId")?.trim().orEmpty()
         if (runId.isNotEmpty() && OmniVlmPlugin.stop(runId)) {
             return mapOf(
@@ -753,11 +861,118 @@ internal class LocalAcpRuntime(
                 interruptTurn(mapOf("threadId" to sessionId, "turnId" to it))
             }
         }
+        cancelPendingPermissionRequests(sessionId)
         sessions.remove(sessionId)?.close()
         sessionCwds.remove(sessionId)
         sessionPermissionBehaviors.remove(sessionId)
         return emptyMap()
     }
+
+    /**
+     * ACP v1 exposes session/delete in the wire schema even though older JVM
+     * SDKs do not yet have a typed Client method. Send it through the typed
+     * protocol transport and only detach the local binding after the Agent
+     * confirms success. Detaching never removes the Room conversation.
+     */
+    private suspend fun deleteAcpSession(args: Map<String, Any?>): Map<String, Any?> {
+        val sessionId = args.stringValue("sessionId")
+            ?: args.stringValue("threadId")
+            ?: throw IllegalArgumentException("sessionId is required")
+        check(activeTurnIds[sessionId] == null) {
+            "ACP session $sessionId is running; cancel the turn before deleting it."
+        }
+        cancelPendingPermissionRequests(sessionId)
+        // ACP-JVM 0.26 predates the optional wire-level delete request. The
+        // built-in Xiaowan session has no external Agent-side state, so its
+        // safe equivalent is local detachment. External Harnesses get the
+        // official raw request when they implement the optional method.
+        val response = if (activeAgentId() == AcpAgentProfileStore.XIAOWAN_AGENT_ID) {
+            emptyMap()
+        } else {
+            sendRawAgentRequest(
+                method = "session/delete",
+                params = mapOf("sessionId" to sessionId)
+            )
+        }
+        sessions.remove(sessionId)?.close()
+        sessionCwds.remove(sessionId)
+        sessionPermissionBehaviors.remove(sessionId)
+        pendingHandoffConversationIds.remove(sessionId)
+        val conversationId = bindingRepository.detachThread(sessionId)
+        return LinkedHashMap(response).apply {
+            put("sessionId", sessionId)
+            put("conversationId", conversationId)
+            put("historyPreserved", true)
+        }
+    }
+
+    private suspend fun authenticateAcp(args: Map<String, Any?>): Map<String, Any?> {
+        val methodId = args.stringValue("methodId")
+            ?: args.stringValue("method")
+            ?: throw IllegalArgumentException("methodId is required")
+        return sendRawAgentRequest(
+            method = "authenticate",
+            params = linkedMapOf<String, Any?>(
+                "methodId" to methodId,
+                "_meta" to args["_meta"]
+            ).filterValues { it != null }
+        )
+    }
+
+    private suspend fun logoutAcp(args: Map<String, Any?>): Map<String, Any?> =
+        sendRawAgentRequest("logout", args.withoutLocalIds())
+
+    private suspend fun listAcpProviders(args: Map<String, Any?>): Map<String, Any?> =
+        sendRawAgentRequest("providers/list", args.withoutLocalIds())
+
+    private suspend fun setAcpProvider(args: Map<String, Any?>): Map<String, Any?> =
+        sendRawAgentRequest("providers/set", args.withoutLocalIds())
+
+    private suspend fun disableAcpProvider(args: Map<String, Any?>): Map<String, Any?> =
+        sendRawAgentRequest("providers/disable", args.withoutLocalIds())
+
+    private suspend fun sendRawAgentRequest(
+        method: String,
+        params: Map<String, Any?>
+    ): Map<String, Any?> {
+        val response = sendRawAgentRequestValue(method, params)
+        return (response as? Map<*, *>)
+            ?.entries
+            ?.associate { it.key.toString() to it.value }
+            ?: emptyMap()
+    }
+
+    private suspend fun sendRawAgentRequestValue(
+        method: String,
+        params: Map<String, Any?>
+    ): Any? {
+        val response = requireProtocol().sendRequestRaw(
+            MethodName(method),
+            anyToAcpJson(params),
+            null
+        )
+        return jsonToAny(response)
+    }
+
+    private suspend fun sendRawAgentNotification(
+        method: String,
+        params: Any?
+    ): Map<String, Any?> {
+        connection?.sendRawMessage(
+            buildJsonObject {
+                put("jsonrpc", "2.0")
+                put("method", method)
+                put("params", anyToAcpJson(params))
+            }.toString()
+        ) ?: throw IllegalStateException("ACP agent is not connected.")
+        return mapOf("ok" to true, "method" to method)
+    }
+
+    private fun Map<String, Any?>.withoutLocalIds(): Map<String, Any?> =
+        LinkedHashMap(this).apply {
+            remove("threadId")
+            remove("conversationId")
+        }
 
     private suspend fun resolveSessionForMutation(
         args: Map<String, Any?>
@@ -1175,7 +1390,7 @@ internal class LocalAcpRuntime(
             } else {
                 val startedAtNanos = System.nanoTime()
                 requireClient().newSession(
-                    sessionCreationParameters(cwd),
+                    sessionCreationParameters(cwd, args),
                     operationsFactory()
                 ).also {
                     registerSession(it, cwd)
@@ -1211,7 +1426,70 @@ internal class LocalAcpRuntime(
             sessionPayload(session, conversationId)
         }
 
-    private suspend fun resumeThread(args: Map<String, Any?>): Map<String, Any?> =
+    /**
+     * Fork through the official ACP client operation instead of replaying a
+     * prompt into a second session. The fork always receives a fresh local
+     * conversation binding; attaching it to the source conversation would
+     * make two ACP sessions compete for one history stream.
+     */
+    private suspend fun forkAcpSession(args: Map<String, Any?>): Map<String, Any?> {
+        val sourceThreadId = resolveThreadId(args)
+        check(activeTurnIds[sourceThreadId] == null) {
+            "ACP session $sourceThreadId is running; fork it after the turn completes."
+        }
+        val source = sessions[sourceThreadId] ?: run {
+            val restored = resumeThread(args + ("threadId" to sourceThreadId))
+            sessions[restored.stringValue("threadId") ?: sourceThreadId]
+        }
+            ?: throw IllegalStateException("ACP session $sourceThreadId is not loaded.")
+
+        return sessionMutex.withLock {
+            val currentSource = sessions[sourceThreadId] ?: source
+            val sourceBinding = bindingRepository.getBindingByThreadId(
+                currentSource.sessionId.value
+            )
+            check(activeTurnIds[sourceThreadId] == null) {
+                "ACP session $sourceThreadId started a turn while it was being forked."
+            }
+            val cwd = normalizeCwd(
+                args.stringValue("cwd") ?: sessionCwds[sourceThreadId]
+            )
+            val forked = requireClient().forkSession(
+                SessionId(currentSource.sessionId.value),
+                sessionCreationParameters(cwd, args),
+                operationsFactory()
+            )
+            registerSession(forked, cwd)
+            profileStore.bindSession(forked.sessionId.value, activeAgentId())
+            val conversationId = bindingRepository.ensureBinding(
+                threadId = forked.sessionId.value,
+                cwd = cwd,
+                title = "分支对话",
+                conversationMode = args.stringValue("conversationMode")
+                    ?: AgentSessionBindingRepository.AGENT_MODE_STORAGE_VALUE
+            )
+            sourceBinding?.let { binding ->
+                val copied = copyConversationHistory(
+                    binding.conversationId,
+                    conversationId
+                )
+                Log.i(
+                    TAG,
+                    "ACP fork history source=${binding.conversationId} " +
+                        "target=$conversationId entries=$copied"
+                )
+            }
+            profileStore.bindConversation(conversationId, activeAgentId())
+            LinkedHashMap(sessionPayload(forked, conversationId)).apply {
+                put("forkedFromSessionId", currentSource.sessionId.value)
+            }
+        }
+    }
+
+    private suspend fun resumeThread(
+        args: Map<String, Any?>,
+        preferResume: Boolean = true
+    ): Map<String, Any?> =
         sessionMutex.withLock {
             val threadId = resolveThreadId(args)
             val expectedAgentId = profileStore.agentIdForSession(threadId)
@@ -1221,7 +1499,7 @@ internal class LocalAcpRuntime(
                         ?: bindingRepository.getBindingByThreadId(threadId)?.cwd
                 )
                 val fresh = requireClient().newSession(
-                    sessionCreationParameters(cwd),
+                    sessionCreationParameters(cwd, args),
                     operationsFactory()
                 )
                 registerSession(fresh, cwd)
@@ -1260,10 +1538,10 @@ internal class LocalAcpRuntime(
                 args.stringValue("cwd")
                     ?: bindingRepository.getBindingByThreadId(threadId)?.cwd
             )
-            val parameters = sessionCreationParameters(cwd)
+            val parameters = sessionCreationParameters(cwd, args)
             val restored = try {
                 when {
-                    capabilities.sessionCapabilities.resume != null ->
+                    preferResume && capabilities.sessionCapabilities.resume != null ->
                         requireClient().resumeSession(
                             SessionId(threadId),
                             parameters,
@@ -1271,6 +1549,9 @@ internal class LocalAcpRuntime(
                         )
                     capabilities.loadSession -> {
                         replayingThreads.add(threadId)
+                        if (shouldSuppressAcpReplay(threadId)) {
+                            replaySuppressedThreads.add(threadId)
+                        }
                         try {
                             requireClient().loadSession(
                                 SessionId(threadId),
@@ -1279,8 +1560,15 @@ internal class LocalAcpRuntime(
                             )
                         } finally {
                             replayingThreads.remove(threadId)
+                            replaySuppressedThreads.remove(threadId)
                         }
                     }
+                    !preferResume && capabilities.sessionCapabilities.resume != null ->
+                        requireClient().resumeSession(
+                            SessionId(threadId),
+                            parameters,
+                            operationsFactory()
+                        )
                     else -> null
                 }
             } catch (error: Throwable) {
@@ -1353,7 +1641,8 @@ internal class LocalAcpRuntime(
         val capabilities = requireAgentInfo().capabilities
         val entries = if (capabilities.sessionCapabilities.list != null) {
             requireClient().listSessions(
-                cwd = args.stringValue("cwd")
+                cwd = args.stringValue("cwd"),
+                additionalDirectories = args.stringList("additionalDirectories")
             ).take(limit).toList().map { session ->
                 profileStore.bindSession(session.sessionId.value, activeAgentId())
                 bindingRepository.ensureBinding(
@@ -1914,6 +2203,10 @@ internal class LocalAcpRuntime(
         val threadId = resolveThreadId(args)
         val session = sessions[threadId]
             ?: throw IllegalArgumentException("ACP session is not loaded: $threadId")
+        // ACP requires the Client to settle every permission prompt after a
+        // cancellation. Otherwise the Agent can remain suspended in a
+        // permission await even after its prompt collector was cancelled.
+        cancelPendingPermissionRequests(threadId)
         val turnId = activeTurnIds[threadId]
         turnId?.let { markTurnTiming(threadId, it, "cancel_requested") }
 
@@ -1983,6 +2276,22 @@ internal class LocalAcpRuntime(
     private fun respondToPermission(args: Map<String, Any?>): Map<String, Any?> {
         val requestId = args["requestId"]?.toString()
             ?: throw IllegalArgumentException("requestId is required")
+        pendingElicitations.remove(requestId)?.let { pending ->
+            pending.response.complete(elicitationResponse(args))
+            return mapOf("ok" to true)
+        }
+        pendingExtensionRequests.remove(requestId)?.let { pending ->
+            val error = args["error"]?.let(::anyToAcpJson)
+            val result = if (error == null) {
+                args["response"]?.let(::anyToAcpJson)
+                    ?: args["result"]?.let(::anyToAcpJson)
+                    ?: buildJsonObject {}
+            } else {
+                null
+            }
+            pending.complete(RawAcpExtensionReply(result = result, error = error))
+            return mapOf("ok" to true)
+        }
         val pending = pendingPermissions.remove(requestId)
             ?: throw IllegalArgumentException("Unknown ACP permission request: $requestId")
         val response = args.mapValue("response")
@@ -2002,6 +2311,91 @@ internal class LocalAcpRuntime(
         }
         pending.response.complete(selected)
         return mapOf("ok" to true)
+    }
+
+    private fun cancelPendingPermissionRequests(threadId: String) {
+        if (threadId.isBlank()) return
+        pendingPermissions.entries.toList().forEach { (requestId, pending) ->
+            if (pending.sessionId == threadId && pendingPermissions.remove(requestId, pending)) {
+                pending.response.complete(null)
+            }
+        }
+        pendingElicitations.entries.toList().forEach { (requestId, pending) ->
+            if (pending.sessionId == threadId && pendingElicitations.remove(requestId, pending)) {
+                pending.response.complete(
+                    CreateElicitationResponse(action = ElicitationAction.Cancel)
+                )
+            }
+        }
+    }
+
+    private suspend fun awaitAgentExtensionRequest(
+        id: JsonElement,
+        method: String,
+        params: JsonElement?
+    ): RawAcpExtensionReply {
+        val requestId = rawAcpRequestId(id)
+        val response = CompletableDeferred<RawAcpExtensionReply>()
+        pendingExtensionRequests[requestId] = response
+        try {
+            onMessage(
+                linkedMapOf(
+                    "jsonrpc" to "2.0",
+                    "id" to jsonToAny(id),
+                    "method" to method,
+                    "params" to jsonToAny(params ?: JsonNull),
+                    "acpExtensionRequest" to true
+                )
+            )
+            return response.await()
+        } finally {
+            pendingExtensionRequests.remove(requestId, response)
+        }
+    }
+
+    private suspend fun publishAgentExtensionNotification(
+        method: String,
+        params: JsonElement?
+    ) {
+        onMessage(
+            linkedMapOf(
+                "jsonrpc" to "2.0",
+                "method" to method,
+                "params" to jsonToAny(params ?: JsonNull),
+                "acpExtensionNotification" to true
+            )
+        )
+    }
+
+    private fun elicitationResponse(args: Map<String, Any?>): CreateElicitationResponse {
+        val response = args.mapValue("response").orEmpty()
+        val action = (response["action"] ?: response["decision"])?.toString()
+            ?.lowercase()
+        if (action == "decline" || action == "reject" || action == "cancel") {
+            return CreateElicitationResponse(
+                action = if (action == "cancel") {
+                    ElicitationAction.Cancel
+                } else {
+                    ElicitationAction.Decline
+                }
+            )
+        }
+        val rawContent = response.mapValue("content")
+            ?: response.mapValue("answers")
+            ?: emptyMap()
+        val content = rawContent.mapValues { (_, value) ->
+            when (value) {
+                is List<*> -> ElicitationContentValue.StringArrayValue(
+                    value.map { it?.toString().orEmpty() }
+                )
+                is Boolean -> ElicitationContentValue.BooleanValue(value)
+                is Int -> ElicitationContentValue.IntegerValue(value.toLong())
+                is Long -> ElicitationContentValue.IntegerValue(value)
+                is Number -> ElicitationContentValue.NumberValue(value.toDouble())
+                else -> ElicitationContentValue.StringValue(value?.toString().orEmpty())
+            }
+        }
+        return CreateElicitationResponse(ElicitationAction.Accept(content))
     }
 
     private suspend fun ensureSessionForTurn(args: Map<String, Any?>): ClientSession {
@@ -2103,7 +2497,10 @@ internal class LocalAcpRuntime(
         }
     }
 
-    private fun sessionCreationParameters(cwd: String): SessionCreationParameters {
+    private fun sessionCreationParameters(
+        cwd: String,
+        args: Map<String, Any?> = emptyMap()
+    ): SessionCreationParameters {
         val profile = activeProfile ?: profileStore.selected()
         val supportsHttp = requireAgentInfo().capabilities.mcpCapabilities.http
         val mcpState = if (sessionMcpEnabled && supportsHttp) {
@@ -2121,7 +2518,11 @@ internal class LocalAcpRuntime(
                 )
             } else {
                 emptyList()
-            }
+            },
+            additionalDirectories = (args["additionalDirectories"] as? List<*>)
+                .orEmpty()
+                .map { normalizeCwd(it?.toString()) }
+                .distinct()
         )
     }
 
@@ -2251,6 +2652,8 @@ internal class LocalAcpRuntime(
             val androidPath = attachment.stringValue("path")?.let(::File)
             val isImage = attachment["isImage"] == true ||
                 mimeType.startsWith("image/", ignoreCase = true)
+            val isAudio = attachment["isAudio"] == true ||
+                mimeType.startsWith("audio/", ignoreCase = true)
             if (isImage && capabilities.image && androidPath?.isFile == true) {
                 val encoded = Base64.encodeToString(
                     androidPath.readBytes(),
@@ -2260,6 +2663,20 @@ internal class LocalAcpRuntime(
                     data = encoded,
                     mimeType = mimeType,
                     uri = "file://$shellPath"
+                )
+            } else if (isAudio && capabilities.audio && androidPath?.isFile == true) {
+                // ACP has a first-class audio content block. Sending a
+                // ResourceLink here makes audio support depend on whether a
+                // Harness happens to resolve the host's private file URI;
+                // encode it exactly like image input when the Agent advertises
+                // prompt/audio support, so every Harness sees the same block.
+                val encoded = Base64.encodeToString(
+                    androidPath.readBytes(),
+                    Base64.NO_WRAP
+                )
+                blocks += ContentBlock.Audio(
+                    data = encoded,
+                    mimeType = mimeType
                 )
             } else {
                 blocks += ContentBlock.ResourceLink(
@@ -2306,6 +2723,7 @@ internal class LocalAcpRuntime(
             }
             val requestId = UUID.randomUUID().toString()
             val pending = PendingPermissionRequest(
+                sessionId = threadId,
                 options = permissions,
                 response = CompletableDeferred()
             )
@@ -2339,6 +2757,123 @@ internal class LocalAcpRuntime(
                 } ?: RequestPermissionOutcome.Cancelled
             )
         }
+
+        override suspend fun terminalCreate(
+            command: String,
+            args: List<String>,
+            cwd: String?,
+            env: List<EnvVariable>,
+            outputByteLimit: ULong?,
+            _meta: JsonElement?
+        ): CreateTerminalResponse {
+            require(command.isNotBlank()) { "ACP terminal command is required." }
+            val terminalId = UUID.randomUUID().toString()
+            val shellCwd = normalizeCwd(cwd ?: sessionCwds[threadId])
+            val commandLine = buildString {
+                append("cd ")
+                append(shellQuoteAcp(shellCwd))
+                append(" && exec ")
+                append(shellQuoteAcp(command))
+                args.forEach {
+                    append(' ')
+                    append(shellQuoteAcp(it))
+                }
+            }
+            val process = TerminalManager.getInstance(appContext).startLongLivedProcess(
+                command = commandLine,
+                executorKey = "acp-terminal-$threadId-$terminalId",
+                extraEnvironment = env.associate { it.name to it.value },
+                redirectErrorStream = true
+            )
+            val output = StringBuilder()
+            val readerJob = scope.launch(Dispatchers.IO) {
+                process.inputStream.bufferedReader(StandardCharsets.UTF_8).useLines { lines ->
+                    lines.forEach { line ->
+                        synchronized(output) {
+                            output.append(line).append('\n')
+                            if (output.length > MAX_ACP_TERMINAL_BUFFER_CHARS) {
+                                output.delete(
+                                    0,
+                                    output.length - MAX_ACP_TERMINAL_BUFFER_CHARS
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            terminalProcesses[terminalId] = AcpTerminalProcess(
+                process = process,
+                output = output,
+                readerJob = readerJob,
+                outputByteLimit = outputByteLimit?.toLong()?.coerceAtMost(
+                    MAX_ACP_TERMINAL_BUFFER_CHARS.toLong()
+                )
+            )
+            return CreateTerminalResponse(terminalId)
+        }
+
+        override suspend fun terminalOutput(
+            terminalId: String,
+            _meta: JsonElement?
+        ): TerminalOutputResponse {
+            val terminal = terminalProcesses[terminalId]
+                ?: throw IllegalArgumentException("Unknown ACP terminal: $terminalId")
+            val finished = !terminal.process.isAlive
+            if (finished) terminal.readerJob.join()
+            val output = synchronized(terminal.output) { terminal.output.toString() }
+            val limited = tailByBytes(output, terminal.outputByteLimit)
+            return TerminalOutputResponse(
+                output = limited.first,
+                truncated = limited.second,
+                exitStatus = if (finished) {
+                    TerminalExitStatus(exitCode = terminal.process.exitValue().toUInt())
+                } else {
+                    null
+                }
+            )
+        }
+
+        override suspend fun terminalRelease(
+            terminalId: String,
+            _meta: JsonElement?
+        ): ReleaseTerminalResponse {
+            val terminal = terminalProcesses.remove(terminalId)
+                ?: return ReleaseTerminalResponse()
+            if (terminal.process.isAlive) terminal.process.destroy()
+            terminal.readerJob.cancel()
+            return ReleaseTerminalResponse()
+        }
+
+        override suspend fun terminalWaitForExit(
+            terminalId: String,
+            _meta: JsonElement?
+        ): WaitForTerminalExitResponse {
+            val terminal = terminalProcesses[terminalId]
+                ?: throw IllegalArgumentException("Unknown ACP terminal: $terminalId")
+            withContext(Dispatchers.IO) { terminal.process.waitFor() }
+            terminal.readerJob.join()
+            return WaitForTerminalExitResponse(
+                exitCode = terminal.process.exitValue().toUInt()
+            )
+        }
+
+        override suspend fun terminalKill(
+            terminalId: String,
+            _meta: JsonElement?
+        ): KillTerminalCommandResponse {
+            val terminal = terminalProcesses[terminalId]
+                ?: return KillTerminalCommandResponse()
+            if (terminal.process.isAlive) terminal.process.destroyForcibly()
+            return KillTerminalCommandResponse()
+        }
+
+        override suspend fun createElicitation(
+            request: CreateElicitationRequest
+        ): CreateElicitationResponse = awaitElicitation(request, threadId)
+
+        override suspend fun completeElicitation(
+            notification: com.agentclientprotocol.model.CompleteElicitationNotification
+        ) = Unit
 
         override suspend fun notify(
             notification: SessionUpdate,
@@ -2384,6 +2919,51 @@ internal class LocalAcpRuntime(
         }
     }
 
+    /**
+     * Bridges both session-scoped and request-scoped ACP elicitation into the
+     * same host response path. The UI answers through
+     * `respondToServerRequest`, so no Harness-specific dialog protocol is
+     * needed here.
+     */
+    private suspend fun awaitElicitation(
+        request: CreateElicitationRequest,
+        sessionId: String?,
+    ): CreateElicitationResponse {
+        val requestId = UUID.randomUUID().toString()
+        val response = CompletableDeferred<CreateElicitationResponse>()
+        pendingElicitations[requestId] = PendingElicitationRequest(
+            sessionId = sessionId,
+            response = response,
+        )
+        val params = (jsonToAny(
+            Json.encodeToJsonElement(
+                CreateElicitationRequest.serializer(),
+                request
+            )
+        ) as? Map<*, *>)
+            ?.entries
+            ?.associate { it.key.toString() to it.value }
+            .orEmpty()
+            .toMutableMap()
+        if (sessionId != null) params["sessionId"] = sessionId
+        try {
+            onMessage(
+                linkedMapOf(
+                    "jsonrpc" to "2.0",
+                    "id" to requestId,
+                    "method" to "elicitation/create",
+                    "params" to params
+                )
+            )
+            return response.await()
+        } finally {
+            pendingElicitations.remove(
+                requestId,
+                PendingElicitationRequest(sessionId = sessionId, response = response)
+            )
+        }
+    }
+
     private suspend fun handleSessionUpdate(
         threadId: String,
         turnId: String?,
@@ -2393,7 +2973,8 @@ internal class LocalAcpRuntime(
         // restore history from Room instead, so the replay must never reach the
         // live stream — otherwise every replayed message becomes its own
         // pseudo turn in the UI and gets persisted back over the real history.
-        if (threadId in replayingThreads) return
+        if (threadId in replaySuppressedThreads) return
+        val isReplay = threadId in replayingThreads
 
         // Never let a timeline update through without a turn id. Updates that
         // arrive outside an active prompt come via the notify callback with
@@ -2404,6 +2985,7 @@ internal class LocalAcpRuntime(
         // active turn and must not be assigned to the previous turn.
         val resolvedTurnId = turnId?.takeIf { it.isNotBlank() }
             ?: activeTurnIds[threadId]
+            ?: if (isReplay && update.isTurnScoped()) replayTurnId(threadId) else null
         if (resolvedTurnId == null && update.isTurnScoped()) {
             Log.w(TAG, "Dropping turn-scoped ACP update with no resolvable turn: $update")
             return
@@ -2439,6 +3021,7 @@ internal class LocalAcpRuntime(
             update = notification.update,
             timingThreadId = threadId,
             timingTurnId = resolvedTurnId,
+            replay = isReplay,
         )
     }
 
@@ -2452,14 +3035,20 @@ internal class LocalAcpRuntime(
         update: Map<String, Any?>,
         timingThreadId: String? = null,
         timingTurnId: String? = null,
+        replay: Boolean = false,
     ) {
-        onMessage(linkedMapOf(
+        onMessage(linkedMapOf<String, Any?>(
                 "method" to "session/update",
+                // These are host-envelope fields, not ACP params. They let
+                // the shared reducer group a load replay without changing
+                // the official session/update payload.
+                "turnId" to timingTurnId,
+                "replay" to replay.takeIf { it },
                 "params" to mapOf(
                     "sessionId" to sessionId,
                     "update" to update
                 )
-            ))
+            ).filterValues { it != null })
         if (timingThreadId != null && timingTurnId != null) {
             markTurnTiming(timingThreadId, timingTurnId, "event_delivered")
         }
@@ -2487,6 +3076,26 @@ internal class LocalAcpRuntime(
     private fun compactId(value: String): String =
         value.trim().takeLast(8).ifBlank { "none" }
 
+    private suspend fun shouldSuppressAcpReplay(threadId: String): Boolean {
+        val binding = bindingRepository.getBindingByThreadId(threadId) ?: return false
+        val conversation = DatabaseHelper.getConversationById(binding.conversationId)
+        val modes = listOf(
+            conversation?.mode,
+            AgentSessionBindingRepository.AGENT_MODE_STORAGE_VALUE,
+            "normal",
+            "codex",
+            "acp",
+        ).filterNotNull().map(String::trim).filter(String::isNotEmpty).distinct()
+        return modes.any { mode ->
+            DatabaseHelper.countAgentConversationThreadEntries(
+                conversationId = binding.conversationId,
+                conversationMode = mode,
+            ) > 0
+        }
+    }
+
+    private fun replayTurnId(threadId: String): String = "acp-replay-$threadId"
+
     private fun elapsedMillis(startedAtNanos: Long): Long =
         TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAtNanos)
 
@@ -2502,6 +3111,7 @@ internal class LocalAcpRuntime(
         "agentName" to activeAgentName(),
         "active" to activeTurnIds.containsKey(session.sessionId.value),
         "activeTurnId" to activeTurnIds[session.sessionId.value],
+        "additionalDirectories" to session.parameters.additionalDirectories,
         "configOptions" to sessionConfigOptions(session).map(::acpConfigOptionPayload)
     )
 
@@ -2571,8 +3181,21 @@ internal class LocalAcpRuntime(
         ?: throw IllegalStateException("ACP agent is not initialized.")
 
     private data class PendingPermissionRequest(
+        val sessionId: String,
         val options: List<PermissionOption>,
         val response: CompletableDeferred<PermissionOption?>
+    )
+
+    private data class PendingElicitationRequest(
+        val sessionId: String?,
+        val response: CompletableDeferred<CreateElicitationResponse>
+    )
+
+    private data class AcpTerminalProcess(
+        val process: Process,
+        val output: StringBuilder,
+        val readerJob: Job,
+        val outputByteLimit: Long?
     )
 
     companion object {
@@ -2584,6 +3207,7 @@ internal class LocalAcpRuntime(
         private const val CANCEL_JOIN_TIMEOUT_MS = 2_000L
         private const val COMMAND_PROBE_TIMEOUT_MS = 20_000L
         private const val MAX_FILE_LINES = 20_000
+        private const val MAX_ACP_TERMINAL_BUFFER_CHARS = 256_000
 
     }
 }
@@ -2633,14 +3257,80 @@ internal interface AcpRuntimeConnection {
     suspend fun start()
     fun diagnosticSummary(): String
     fun exitDescription(exitCode: Int?): String
+    /** Sends a raw client->agent JSON-RPC notification for an ACP extension. */
+    suspend fun sendRawMessage(line: String) {
+        throw UnsupportedOperationException("Raw ACP notifications are unavailable")
+    }
     suspend fun close()
 }
+
+/**
+ * Raw JSON-RPC extension traffic that the ACP JVM SDK cannot type-dispatch.
+ * Extension method names use the reserved underscore namespace; standard ACP
+ * messages continue through Protocol/StdioTransport unchanged.
+ */
+internal data class RawAcpExtensionMessage(
+    val id: JsonElement?,
+    val method: String,
+    val params: JsonElement?,
+    val isRequest: Boolean
+)
+
+internal data class RawAcpExtensionReply(
+    val result: JsonElement? = null,
+    val error: JsonElement? = null
+)
+
+internal fun parseAcpExtensionLine(line: String): RawAcpExtensionMessage? {
+    val payload = runCatching { Json.parseToJsonElement(line) }
+        .getOrNull()
+        as? JsonObject
+        ?: return null
+    val method = payload["method"]
+        ?.jsonPrimitive
+        ?.contentOrNull
+        ?.trim()
+        ?.takeIf { it.startsWith("_") && it.length > 1 }
+        ?: return null
+    val id = payload["id"]
+    return RawAcpExtensionMessage(
+        id = id,
+        method = method,
+        params = payload["params"],
+        isRequest = id != null
+    )
+}
+
+internal fun rawAcpRequestId(id: JsonElement): String =
+    (id as? JsonPrimitive)?.contentOrNull ?: id.toString()
+
+internal fun encodeAcpExtensionResponse(
+    id: JsonElement,
+    reply: RawAcpExtensionReply
+): String = buildJsonObject {
+    put("jsonrpc", "2.0")
+    put("id", id)
+    if (reply.error != null) {
+        put("error", reply.error)
+    } else {
+        put("result", reply.result ?: buildJsonObject {})
+    }
+}.toString()
 
 private class AcpProcessConnection(
     private val context: Context,
     private val scope: CoroutineScope,
     private val profile: AcpAgentProfile,
-    private val environment: Map<String, String>
+    private val environment: Map<String, String>,
+    private val onExtensionRequest: suspend (
+        id: JsonElement,
+        method: String,
+        params: JsonElement?
+    ) -> RawAcpExtensionReply,
+    private val onExtensionNotification: suspend (
+        method: String,
+        params: JsonElement?
+    ) -> Unit
 ) : AcpRuntimeConnection {
     private val inputChannel = Channel<String>(Channel.UNLIMITED)
     private val writeMutex = Mutex()
@@ -2668,6 +3358,10 @@ private class AcpProcessConnection(
             output = ::writeLine,
             name = "omnibot-acp-${profile.id}"
         )
+    }
+
+    override suspend fun sendRawMessage(line: String) {
+        writeLine(line)
     }
 
     override suspend fun start() {
@@ -2708,9 +3402,42 @@ private class AcpProcessConnection(
         readerJob = scope.launch {
             try {
                 lineFlow(started).collect {
-                    inputChannel.send(
-                        harnessAdapter.normalizeStdioLine(it)
-                    )
+                    val normalized = harnessAdapter.normalizeStdioLine(it)
+                    val extension = parseAcpExtensionLine(normalized)
+                    if (extension == null) {
+                        inputChannel.send(normalized)
+                    } else if (extension.isRequest && extension.id != null) {
+                        // Do not block stdout consumption while the user is
+                        // deciding how to answer an extension request. Other
+                        // ACP notifications must remain ordered and visible.
+                        launch {
+                            val reply = runCatching {
+                                onExtensionRequest(
+                                    extension.id,
+                                    extension.method,
+                                    extension.params
+                                )
+                            }.getOrElse { error ->
+                                RawAcpExtensionReply(
+                                    error = buildJsonObject {
+                                        put("code", -32000)
+                                        put(
+                                            "message",
+                                            error.message ?: "ACP extension request failed"
+                                        )
+                                    }
+                                )
+                            }
+                            writeLine(
+                                encodeAcpExtensionResponse(extension.id, reply)
+                            )
+                        }
+                    } else {
+                        onExtensionNotification(
+                            extension.method,
+                            extension.params
+                        )
+                    }
                 }
             } catch (error: IOException) {
                 handleStreamReadFailure(
@@ -2991,6 +3718,12 @@ private fun capabilitiesPayload(info: AgentInfo?): Map<String, Any?> {
             "logout" to (capabilities?.auth?.logout != null),
             "providers" to (capabilities?.providers != null)
         ),
+        "client" to linkedMapOf(
+            "fs" to linkedMapOf("readTextFile" to true, "writeTextFile" to true),
+            "terminal" to true,
+            "plan" to true,
+            "elicitation" to linkedMapOf("form" to true, "url" to true)
+        ),
         "steering" to steering
     )
 }
@@ -3038,6 +3771,43 @@ internal fun resolveTurnTerminalStatus(
 private fun Map<String, Any?>.mapValue(key: String): Map<String, Any?> {
     val raw = this[key] as? Map<*, *> ?: return emptyMap()
     return raw.entries.associate { (mapKey, value) -> mapKey.toString() to value }
+}
+
+private fun anyToAcpJson(value: Any?): JsonElement = when (value) {
+    null -> JsonNull
+    is JsonElement -> value
+    is Boolean -> JsonPrimitive(value)
+    is Number -> JsonPrimitive(value)
+    is String -> JsonPrimitive(value)
+    is Map<*, *> -> buildJsonObject {
+        value.entries.forEach { (key, item) ->
+            key?.toString()?.let { put(it, anyToAcpJson(item)) }
+        }
+    }
+    is Iterable<*> -> buildJsonArray { value.forEach { add(anyToAcpJson(it)) } }
+    else -> JsonPrimitive(value.toString())
+}
+
+private fun jsonToAny(value: JsonElement): Any? = when (value) {
+    is JsonObject -> value.entries.associate { (key, item) -> key to jsonToAny(item) }
+    is JsonArray -> value.map(::jsonToAny)
+    is JsonPrimitive -> when {
+        value.isString -> value.content
+        value.content == "true" -> true
+        value.content == "false" -> false
+        value.content.toLongOrNull() != null -> value.content.toLong()
+        value.content.toDoubleOrNull() != null -> value.content.toDouble()
+        else -> value.contentOrNull
+    }
+    else -> null
+}
+
+private fun tailByBytes(value: String, limit: Long?): Pair<String, Boolean> {
+    if (limit == null || limit <= 0L) return value to false
+    val bytes = value.toByteArray(StandardCharsets.UTF_8)
+    if (bytes.size <= limit) return value to false
+    val start = bytes.size - limit.toInt().coerceAtMost(bytes.size)
+    return String(bytes.copyOfRange(start, bytes.size), StandardCharsets.UTF_8) to true
 }
 
 private fun Map<String, Any?>.stringValue(key: String): String? =

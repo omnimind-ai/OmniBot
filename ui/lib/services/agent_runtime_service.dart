@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/services.dart';
 import 'package:ui/features/home/pages/command_overlay/utils/error_message_formatter.dart';
+import 'package:ui/services/acp_capabilities.dart';
 
 enum CodexLoginType {
   chatgpt('chatgpt'),
@@ -58,6 +59,10 @@ class AgentRuntimeStatus {
   final String? activeAgentId;
   final String? activeAgentName;
   final Map<String, dynamic> capabilities;
+
+  /// Typed, forward-compatible view of the ACP capabilities advertised by
+  /// the active Harness. The original map remains available for extensions.
+  AcpCapabilities get acpCapabilities => AcpCapabilities.fromMap(capabilities);
 
   bool get canConnect => ready;
 
@@ -867,6 +872,7 @@ class AgentRuntimeService {
     String? effort,
     String? collaborationMode,
     String? conversationMode,
+    List<String> additionalDirectories = const <String>[],
   }) {
     return _invokeMap('session/new', {
       if (conversationId != null) 'conversationId': conversationId,
@@ -877,6 +883,8 @@ class AgentRuntimeService {
         'collaborationMode': collaborationMode.trim(),
       if (conversationMode != null && conversationMode.trim().isNotEmpty)
         'conversationMode': conversationMode.trim(),
+      if (additionalDirectories.isNotEmpty)
+        'additionalDirectories': additionalDirectories,
     });
   }
 
@@ -885,6 +893,7 @@ class AgentRuntimeService {
     int? conversationId,
     String? agentId,
     String? conversationMode,
+    List<String> additionalDirectories = const <String>[],
   }) {
     return _invokeMap('session/load', {
       if (sessionId != null) 'sessionId': sessionId,
@@ -893,6 +902,32 @@ class AgentRuntimeService {
         'agentId': agentId.trim(),
       if (conversationMode != null && conversationMode.trim().isNotEmpty)
         'conversationMode': conversationMode.trim(),
+      if (additionalDirectories.isNotEmpty)
+        'additionalDirectories': additionalDirectories,
+    });
+  }
+
+  /// Resumes an ACP session through the shared runtime. The host keeps this
+  /// distinct from session/load because ACP agents may implement different
+  /// replay/resume semantics; chat callers do not need to know which Harness
+  /// owns the session.
+  static Future<Map<String, dynamic>> resumeSession({
+    String? sessionId,
+    int? conversationId,
+    String? agentId,
+    String? conversationMode,
+    List<String> additionalDirectories = const <String>[],
+  }) {
+    return _invokeMap('session/resume', {
+      if (sessionId != null && sessionId.trim().isNotEmpty)
+        'sessionId': sessionId.trim(),
+      if (conversationId != null) 'conversationId': conversationId,
+      if (agentId != null && agentId.trim().isNotEmpty)
+        'agentId': agentId.trim(),
+      if (conversationMode != null && conversationMode.trim().isNotEmpty)
+        'conversationMode': conversationMode.trim(),
+      if (additionalDirectories.isNotEmpty)
+        'additionalDirectories': additionalDirectories,
     });
   }
 
@@ -917,15 +952,149 @@ class AgentRuntimeService {
   static Future<Map<String, dynamic>> listSessions({
     int limit = 50,
     String? cursor,
+    String? cwd,
+    List<String> additionalDirectories = const <String>[],
   }) {
     return _invokeMap('session/list', {
       'limit': limit,
       if (cursor != null && cursor.trim().isNotEmpty) 'cursor': cursor.trim(),
+      if (cwd != null && cwd.trim().isNotEmpty) 'cwd': cwd.trim(),
+      if (additionalDirectories.isNotEmpty)
+        'additionalDirectories': additionalDirectories,
+    });
+  }
+
+  /// Creates a new ACP session fork and lets the host bind it to a new
+  /// conversation. The chat page does not need to know which Harness owns the
+  /// source session.
+  static Future<Map<String, dynamic>> forkSession({
+    String? sessionId,
+    int? conversationId,
+    String? cwd,
+    String? conversationMode,
+    List<String> additionalDirectories = const <String>[],
+  }) {
+    return _invokeMap('session/fork', {
+      if (sessionId != null && sessionId.trim().isNotEmpty)
+        'sessionId': sessionId.trim(),
+      if (conversationId != null) 'conversationId': conversationId,
+      if (cwd != null && cwd.trim().isNotEmpty) 'cwd': cwd.trim(),
+      if (conversationMode != null && conversationMode.trim().isNotEmpty)
+        'conversationMode': conversationMode.trim(),
+      if (additionalDirectories.isNotEmpty)
+        'additionalDirectories': additionalDirectories,
     });
   }
 
   static Future<Map<String, dynamic>> listLoadedSessions() {
     return _invokeMap('session/list');
+  }
+
+  /// Close releases the live ACP Session without archiving or deleting the
+  /// user's conversation history. Persistence remains owned by the host DB.
+  static Future<Map<String, dynamic>> closeSession({
+    String? sessionId,
+    int? conversationId,
+  }) {
+    return _invokeMap('session/close', {
+      if (sessionId != null && sessionId.trim().isNotEmpty)
+        'sessionId': sessionId.trim(),
+      if (conversationId != null) 'conversationId': conversationId,
+    });
+  }
+
+  /// Deletes the ACP-side session while retaining OmniBot's local
+  /// conversation and messages. The shared runtime returns historyPreserved.
+  static Future<Map<String, dynamic>> deleteSession({
+    String? sessionId,
+    int? conversationId,
+  }) {
+    return _invokeMap('session/delete', {
+      if (sessionId != null && sessionId.trim().isNotEmpty)
+        'sessionId': sessionId.trim(),
+      if (conversationId != null) 'conversationId': conversationId,
+    });
+  }
+
+  static Future<Map<String, dynamic>> setSessionMode({
+    String? sessionId,
+    int? conversationId,
+    required String modeId,
+  }) {
+    return _invokeMap('session/set_mode', {
+      if (sessionId != null && sessionId.trim().isNotEmpty)
+        'sessionId': sessionId.trim(),
+      if (conversationId != null) 'conversationId': conversationId,
+      'modeId': modeId.trim(),
+    });
+  }
+
+  static Future<Map<String, dynamic>> authenticateAgent({
+    required String methodId,
+    Map<String, dynamic>? meta,
+  }) {
+    return _invokeMap('authenticate', {
+      'methodId': methodId.trim(),
+      if (meta != null) '_meta': meta,
+    });
+  }
+
+  static Future<Map<String, dynamic>> logoutAgent({
+    Map<String, dynamic>? meta,
+  }) {
+    return _invokeMap('logout', {if (meta != null) '_meta': meta});
+  }
+
+  static Future<Map<String, dynamic>> listAgentProviders({
+    Map<String, dynamic>? meta,
+  }) {
+    return _invokeMap('providers/list', {if (meta != null) '_meta': meta});
+  }
+
+  static Future<Map<String, dynamic>> setAgentProvider(
+    Map<String, dynamic> params,
+  ) {
+    return _invokeMap('providers/set', params);
+  }
+
+  static Future<Map<String, dynamic>> disableAgentProvider(
+    Map<String, dynamic> params,
+  ) {
+    return _invokeMap('providers/disable', params);
+  }
+
+  /// Calls an ACP implementation extension without introducing a second
+  /// Harness transport. ACP reserves the underscore namespace for extension
+  /// methods; unknown core-looking method names are rejected at the host
+  /// boundary so a typo cannot silently become a legacy RPC.
+  static Future<Map<String, dynamic>> callAcpExtension({
+    required String method,
+    Map<String, dynamic> params = const <String, dynamic>{},
+  }) {
+    return _invokeMap(_validateAcpExtensionMethod(method), params);
+  }
+
+  /// Sends a client-to-agent ACP extension notification. Notifications do
+  /// not produce an Agent response, but using this shared bridge keeps the
+  /// extension on the same transport as every other ACP operation.
+  static Future<Map<String, dynamic>> notifyAcpExtension({
+    required String method,
+    Object? params,
+  }) {
+    return _invokeMap('notifyAcpExtension', {
+      'method': _validateAcpExtensionMethod(method),
+      if (params != null) 'params': params,
+    });
+  }
+
+  /// Preserves non-object extension results such as arrays and scalar values.
+  static Future<dynamic> callAcpExtensionValue({
+    required String method,
+    Object? params,
+  }) {
+    return _invokeValue(_validateAcpExtensionMethod(method), {
+      if (params != null) 'params': params,
+    });
   }
 
   static Future<Map<String, dynamic>> archiveSession({
@@ -1351,6 +1520,26 @@ class AgentRuntimeService {
     final result = await _methodChannel.invokeMethod<dynamic>(method, args);
     return _normalizeMap(result) ?? <String, dynamic>{};
   }
+
+  static Future<dynamic> _invokeValue(
+    String method, [
+    Map<String, dynamic> args = const <String, dynamic>{},
+  ]) async {
+    final result = await _methodChannel.invokeMethod<dynamic>(method, args);
+    return _normalizeValue(result);
+  }
+}
+
+String _validateAcpExtensionMethod(String method) {
+  final normalized = method.trim();
+  if (!normalized.startsWith('_')) {
+    throw ArgumentError.value(
+      method,
+      'method',
+      'ACP extension methods must use the underscore namespace',
+    );
+  }
+  return normalized;
 }
 
 Map<String, dynamic>? _normalizeMap(dynamic value) {

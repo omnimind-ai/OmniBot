@@ -358,6 +358,7 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
         toggleValue: planModeEnabled,
       ),
     ];
+    commands.addAll(_buildAgentAcpCommandCards());
     if (query.isEmpty) {
       return commands;
     }
@@ -366,6 +367,44 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
           final title = (card['toolTitle'] ?? '').toString().toLowerCase();
           return title.startsWith(query);
         })
+        .toList(growable: false);
+  }
+
+  List<Map<String, dynamic>> _buildAgentAcpCommandCards() {
+    final runtime = _runtimeForMode(ChatPageMode.agent);
+    final commands =
+        runtime?.availableAcpCommands ?? const <Map<String, dynamic>>[];
+    final seen = <String>{'/model', '/review', '/init', '/plan'};
+    return commands
+        .map((command) {
+          final name = (command['name'] ?? '').toString().trim();
+          if (name.isEmpty) return null;
+          final slashName = name.startsWith('/') ? name : '/$name';
+          if (!seen.add(slashName.toLowerCase())) return null;
+          final description = (command['description'] ?? '').toString().trim();
+          final card = _buildAgentCommandCard(
+            cardId:
+                'slash-command-acp-${name.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_')}',
+            toolTitle: slashName,
+            displayName: slashName,
+            toolTypeLabel: LegacyTextLocalizer.isEnglish
+                ? 'ACP command'
+                : 'ACP 命令',
+            status: 'running',
+            statusLabel: LegacyTextLocalizer.isEnglish ? 'Available' : '可用',
+            summary: description.isEmpty
+                ? (LegacyTextLocalizer.isEnglish
+                      ? 'Run $slashName through the active ACP session'
+                      : '通过当前 ACP 会话运行 $slashName')
+                : description,
+            progress: LegacyTextLocalizer.isEnglish
+                ? 'Tap to enter the command, then add arguments if needed'
+                : '点击填入命令，可继续输入参数',
+          );
+          card['acpCommand'] = true;
+          return card;
+        })
+        .whereType<Map<String, dynamic>>()
         .toList(growable: false);
   }
 

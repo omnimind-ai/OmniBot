@@ -111,6 +111,11 @@ class ChatConversationRuntimeState {
 
   /// Accumulated reasoning text. Same contract as [currentAiMessages].
   final Map<String, String> currentThinkingMessages = <String, String>{};
+
+  /// User-message chunks are only admitted for an explicit ACP history
+  /// replay. Live prompts are already persisted by the host and must not be
+  /// echoed into the conversation a second time.
+  final Map<String, String> currentAcpUserMessages = <String, String>{};
   final Map<String, _StreamingTextBatchState> _streamingTextBatches =
       <String, _StreamingTextBatchState>{};
   final Map<String, int> agentEntrySequences = <String, int>{};
@@ -136,6 +141,26 @@ class ChatConversationRuntimeState {
   /// correct historical cards without stealing the next run.
   final Map<String, String> acpTurnToRunIds = <String, String>{};
   final Set<String> completedAcpTurnIds = <String>{};
+
+  /// ACP advertises commands at session scope. Keep the last declaration on
+  /// the shared runtime so every Harness gets the same slash-command surface.
+  /// The protocol only advertises a command; execution still goes through the
+  /// ordinary ACP prompt path in ChatPage.
+  List<Map<String, dynamic>> availableAcpCommands = <Map<String, dynamic>>[];
+
+  /// Dynamic ACP session configuration. Keep the full option payload instead
+  /// of reducing it to only model/mode so future Harness-specific options can
+  /// be consumed by a shared adapter without changing the chat page.
+  List<Map<String, dynamic>> acpConfigOptions = <Map<String, dynamic>>[];
+  String? currentAcpModeId;
+  Map<String, dynamic> acpSessionInfo = <String, dynamic>{};
+
+  /// Preserve extension updates that the current UI does not understand yet.
+  /// This is intentionally bounded and session-scoped: an extension must not
+  /// disappear at the Kotlin/Flutter seam, but an arbitrary provider payload
+  /// must not create an unbounded chat history entry either.
+  final List<Map<String, dynamic>> acpExtensionUpdates =
+      <Map<String, dynamic>>[];
   int agentNextEntrySequence = 0;
   bool isAiResponding = false;
   bool isContextCompressing = false;
@@ -867,6 +892,7 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     final result = _agentEventReducer.reduce(runtime: runtime, event: event);
     if (result.handled) {
       _annotateAgentMessages(runtime, event, result);
+      _notifyAcpVoicePlayback(runtime, event, result);
       if (presentation?['compaction'] is Map) {
         final markerIndex = runtime.messages.indexWhere(
           (message) =>
@@ -901,6 +927,131 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
       }
     }
     return result;
+  }
+
+  /// Keeps ACP assistant text on the same shared voice path that the former
+  /// Xiaowan stream handler used. Voice is a presentation side effect, not an
+  /// ACP event, so it belongs at the coordinator boundary rather than in a
+  /// Harness adapter or a second reducer.
+  void _notifyAcpVoicePlayback(
+    ChatConversationRuntimeState runtime,
+    Map<String, dynamic> event,
+    AgentReduceResult result,
+  ) {
+    final method = result.method;
+    if (method != 'item/agentMessage/delta' &&
+        method != 'turn/completed' &&
+        method != 'thread/closed' &&
+        method != 'turn/failed') {
+      return;
+    }
+
+    Map<String, dynamic>? asStringMap(dynamic value) {
+      if (value is Map<String, dynamic>) return value;
+      if (value is Map) {
+        return value.map((key, item) => MapEntry(key.toString(), item));
+      }
+      return null;
+    }
+
+    String? firstString(Iterable<dynamic> values) {
+      for (final value in values) {
+        final text = value?.toString().trim() ?? '';
+        if (text.isNotEmpty) return text;
+      }
+      return null;
+    }
+
+    final message = asStringMap(event['message']) ?? event;
+    final params =
+        asStringMap(event['params']) ??
+        asStringMap(message['params']) ??
+        const <String, dynamic>{};
+    final update = asStringMap(params['update']);
+    final taskId = runtime.resolveRunId(
+      sessionId: firstString([
+        event['sessionId'],
+        event['session_id'],
+        params['sessionId'],
+        params['session_id'],
+        update?['sessionId'],
+      ]),
+      turnId:
+          result.turnId ??
+          firstString([
+            event['turnId'],
+            event['turn_id'],
+            params['turnId'],
+            params['turn_id'],
+            update?['turnId'],
+          ]),
+      fallback: runtime.lastAgentTurnId ?? runtime.currentDispatchTurnId,
+    );
+
+    ChatMessageModel? assistantMessage;
+    if (method == 'item/agentMessage/delta') {
+      final itemId = firstString([
+        params['entryId'],
+        params['itemId'],
+        params['item_id'],
+        update?['entryId'],
+        update?['messageId'],
+      ]);
+      final candidates = runtime.messages.where(
+        (message) =>
+            message.type == 1 &&
+            message.user == 2 &&
+            (taskId == null ||
+                message.streamMeta?['parentTaskId']?.toString() == taskId),
+      );
+      if (itemId != null) {
+        assistantMessage = candidates.cast<ChatMessageModel?>().firstWhere(
+          (message) =>
+              message!.id == itemId ||
+              message.id.contains(itemId) ||
+              message.streamMeta?['entryId']?.toString() == itemId,
+          orElse: () => null,
+        );
+      }
+      assistantMessage ??= candidates.isEmpty ? null : candidates.first;
+      final assistantText = assistantMessage?.text?.trim() ?? '';
+      if (assistantMessage == null || assistantText.isEmpty) {
+        return;
+      }
+      unawaited(
+        VoicePlaybackCoordinator.instance.onAssistantMessageUpdated(
+          messageId: assistantMessage.id,
+          text: assistantText,
+          isFinal: false,
+        ),
+      );
+      return;
+    }
+
+    final officialTurnId = result.turnId?.trim() ?? '';
+    assistantMessage = runtime.messages.cast<ChatMessageModel?>().firstWhere((
+      message,
+    ) {
+      if (message == null || message.type != 1 || message.user != 2) {
+        return false;
+      }
+      final streamTurnId = message.streamMeta?['turnId']?.toString().trim();
+      final parentTaskId = message.streamMeta?['parentTaskId']
+          ?.toString()
+          .trim();
+      return (officialTurnId.isNotEmpty && streamTurnId == officialTurnId) ||
+          (taskId != null && parentTaskId == taskId);
+    }, orElse: () => null);
+    final assistantText = assistantMessage?.text?.trim() ?? '';
+    if (assistantMessage == null || assistantText.isEmpty) {
+      return;
+    }
+    unawaited(
+      VoicePlaybackCoordinator.instance.onAssistantMessageCompleted(
+        messageId: assistantMessage.id,
+        text: assistantText,
+      ),
+    );
   }
 
   void _annotateAgentMessages(
@@ -1086,11 +1237,17 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     runtime.deepThinkingContent = '';
     runtime.isDeepThinking = false;
     runtime.currentThinkingMessages.clear();
+    runtime.currentAcpUserMessages.clear();
     runtime.currentAiMessages.clear();
     runtime.agentReplayDeltaOffsets.clear();
     runtime.pendingAcpPerformanceMetrics.clear();
     runtime.pendingAcpReasoningCardData.clear();
     runtime.pendingAcpAssistantPresentation.clear();
+    runtime.availableAcpCommands = <Map<String, dynamic>>[];
+    runtime.acpConfigOptions = <Map<String, dynamic>>[];
+    runtime.currentAcpModeId = null;
+    runtime.acpSessionInfo = <String, dynamic>{};
+    runtime.acpExtensionUpdates.clear();
     runtime.currentThinkingStage = ThinkingStage.thinking.value;
     runtime.lastAgentTurnId = null;
     runtime.pendingAgentTextTaskId = null;

@@ -38,6 +38,13 @@ import com.agentclientprotocol.model.ModelId
 import com.agentclientprotocol.model.ModelInfo
 import com.agentclientprotocol.model.PromptResponse
 import com.agentclientprotocol.model.PromptCapabilities
+import com.agentclientprotocol.model.SessionAdditionalDirectoriesCapabilities
+import com.agentclientprotocol.model.SessionCapabilities
+import com.agentclientprotocol.model.SessionCloseCapabilities
+import com.agentclientprotocol.model.SessionForkCapabilities
+import com.agentclientprotocol.model.SessionInfo
+import com.agentclientprotocol.model.SessionListCapabilities
+import com.agentclientprotocol.model.SessionResumeCapabilities
 import com.agentclientprotocol.model.SessionId
 import com.agentclientprotocol.model.SessionUpdate
 import com.agentclientprotocol.model.SetSessionModelResponse
@@ -45,6 +52,8 @@ import com.agentclientprotocol.model.StopReason
 import com.agentclientprotocol.model.ToolCallContent
 import com.agentclientprotocol.model.ToolCallId
 import com.agentclientprotocol.model.ToolCallStatus
+import com.agentclientprotocol.model.Usage
+import cn.com.omnimind.bot.agent.AgentOutputKind
 import com.agentclientprotocol.model.ToolKind
 import com.agentclientprotocol.protocol.Protocol
 import com.agentclientprotocol.rpc.JsonRpcMessage
@@ -71,6 +80,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import java.util.UUID
+import java.time.Instant
 import kotlin.coroutines.coroutineContext
 
 /**
@@ -83,6 +93,7 @@ internal class XiaowanAcpConnection(
     private val scheduleToolBridge: AgentScheduleToolBridge,
     private val ensureSharedProviderBinding: suspend () -> Unit = {},
     private val conversationIdProvider: suspend (String) -> Long? = { null },
+    private val isXiaowanSession: suspend (String) -> Boolean = { true },
 ) : AcpRuntimeConnection {
     private lateinit var clientTransport: LoopbackTransport
     private lateinit var serverTransport: LoopbackTransport
@@ -121,6 +132,7 @@ internal class XiaowanAcpConnection(
                 scheduleToolBridge = scheduleToolBridge,
                 ensureSharedProviderBinding = ensureSharedProviderBinding,
                 conversationIdProvider = conversationIdProvider,
+                isXiaowanSession = isXiaowanSession,
             )
         )
         return clientTransport
@@ -154,6 +166,7 @@ private class XiaowanAgentSupport(
     private val scheduleToolBridge: AgentScheduleToolBridge,
     private val ensureSharedProviderBinding: suspend () -> Unit,
     private val conversationIdProvider: suspend (String) -> Long?,
+    private val isXiaowanSession: suspend (String) -> Boolean,
 ) : AgentSupport {
     private companion object {
         private const val TAG = "XiaowanAcpConnection"
@@ -179,9 +192,18 @@ private class XiaowanAgentSupport(
         return AgentInfo(
             protocolVersion = 1,
             capabilities = AgentCapabilities(
+                loadSession = true,
                 promptCapabilities = PromptCapabilities(
+                    audio = true,
                     image = true,
                     embeddedContext = true,
+                ),
+                sessionCapabilities = SessionCapabilities(
+                    list = SessionListCapabilities(),
+                    fork = SessionForkCapabilities(),
+                    resume = SessionResumeCapabilities(),
+                    close = SessionCloseCapabilities(),
+                    additionalDirectories = SessionAdditionalDirectoriesCapabilities(),
                 )
             ),
             authMethods = emptyList(),
@@ -196,19 +218,12 @@ private class XiaowanAgentSupport(
 
     override suspend fun createSession(
         sessionParameters: SessionCreationParameters,
-    ): AgentSession {
-        val startedAtNanos = System.nanoTime()
-        val models = try {
-            loadXiaowanModels()
-        } catch (error: Throwable) {
-            Log.w(
-                TAG,
-                "ACP timing agent=xiaowan stage=session_model_failed " +
-                    "elapsedMs=${elapsedMillis(startedAtNanos)} " +
-                    "reason=${error.javaClass.simpleName}"
-            )
-            throw error
-        }
+    ): AgentSession = createXiaowanSession(
+            sessionId = SessionId(UUID.randomUUID().toString()),
+        )
+
+    private suspend fun createXiaowanSession(sessionId: SessionId): AgentSession {
+        val models = loadXiaowanModels()
         return XiaowanAgentSession(
             context = context,
             scope = scope,
@@ -217,9 +232,52 @@ private class XiaowanAgentSupport(
             availableModels = models.available,
             configuredModelId = models.configuredModelId,
             providerProfile = models.providerProfile,
-            sessionId = SessionId(UUID.randomUUID().toString()),
+            sessionId = sessionId,
         )
     }
+
+    override suspend fun listSessions(
+        cwd: String?,
+        additionalDirectories: List<String>?,
+        _meta: JsonElement?
+    ): Sequence<SessionInfo> {
+        val result = buildList {
+            cn.com.omnimind.baselib.database.DatabaseHelper
+                .getAllAgentSessionBindings()
+                .filter { cwd.isNullOrBlank() || it.cwd == cwd }
+                .forEach { binding ->
+                if (!isXiaowanSession(binding.threadId)) return@forEach
+                val conversation = cn.com.omnimind.baselib.database.DatabaseHelper
+                    .getConversationById(binding.conversationId) ?: return@forEach
+                add(SessionInfo(
+                    sessionId = SessionId(binding.threadId),
+                    cwd = binding.cwd,
+                    title = conversation.title,
+                    // SessionInfo.updatedAt is an RFC 3339 timestamp on the
+                    // ACP wire, not the Room millisecond value used by the
+                    // local conversation table.
+                    updatedAt = Instant.ofEpochMilli(conversation.updatedAt).toString(),
+                    additionalDirectories = additionalDirectories.orEmpty(),
+                ))
+            }
+        }
+        return result.asSequence()
+    }
+
+    override suspend fun loadSession(
+        sessionId: SessionId,
+        sessionParameters: SessionCreationParameters
+    ): AgentSession = createXiaowanSession(sessionId)
+
+    override suspend fun resumeSession(
+        sessionId: SessionId,
+        sessionParameters: SessionCreationParameters
+    ): AgentSession = createXiaowanSession(sessionId)
+
+    override suspend fun forkSession(
+        sessionId: SessionId,
+        sessionParameters: SessionCreationParameters
+    ): AgentSession = createXiaowanSession(SessionId(UUID.randomUUID().toString()))
 
     private suspend fun loadXiaowanModels(): XiaowanModels {
         var existingBinding = SceneModelBindingStore.getBinding("scene.dispatch.model")
@@ -531,6 +589,7 @@ private class XiaowanAgentSession(
             is AgentResult.Error -> throw result.exception
                 ?: IllegalStateException(result.message)
         }
+        val successfulResult = result
         // The executor reports cumulative snapshots through AgentCallback. The
         // bridge already converted those snapshots to ACP chunks; this final
         // call only fills a gap when a provider returned content without any
@@ -540,6 +599,7 @@ private class XiaowanAgentSession(
             Event.PromptResponseEvent(
                 PromptResponse(
                     stopReason = StopReason.END_TURN,
+                    usage = successfulResult.toAcpUsage(),
                     _meta = JsonNull,
                 )
             )
@@ -593,6 +653,37 @@ private class XiaowanAgentSession(
     }
 }
 
+private fun AgentResult.Success.toAcpUsage(): Usage? {
+    val prompt = (latestPromptTokens ?: response.latestPromptTokens)
+        ?.coerceAtLeast(0)
+        ?.toLong()
+    val output = (completionTokens ?: response.completionTokens)
+        ?.coerceAtLeast(0)
+        ?.toLong()
+    val cacheRead = (cachedTokens ?: response.cachedTokens)
+        ?.coerceAtLeast(0)
+        ?.toLong()
+    val cacheWrite = (cacheCreationTokens ?: response.cacheCreationTokens)
+        ?.coerceAtLeast(0)
+        ?.toLong()
+    val total = (totalTokens ?: response.totalTokens)
+        ?.coerceAtLeast(0)
+        ?.toLong()
+        ?: prompt?.plus(output ?: 0)
+    if (prompt == null && output == null && cacheRead == null && cacheWrite == null && total == null) {
+        return null
+    }
+    return Usage(
+        inputTokens = prompt ?: 0,
+        outputTokens = output ?: 0,
+        totalTokens = total ?: 0,
+        thoughtTokens = null,
+        cachedReadTokens = cacheRead,
+        cachedWriteTokens = cacheWrite,
+        _meta = JsonNull,
+    )
+}
+
 /**
  * Maps the shared ACP vocabulary at the Xiaowan adapter boundary. Keeping
  * this pure makes the provider-facing contract testable without constructing
@@ -643,6 +734,25 @@ internal fun buildXiaowanPromptParts(content: List<ContentBlock>): XiaowanPrompt
                     put("sendToModel", true)
                     if (data.isNotEmpty()) put("dataUrl", dataUrl)
                     if (uri.isNotEmpty()) put("url", uri)
+                }
+            }
+            is ContentBlock.Audio -> {
+                val mimeType = block.mimeType.trim().ifEmpty { "audio/*" }
+                val data = block.data.trim()
+                if (data.isEmpty()) return@forEach
+                attachments += buildMap<String, Any?> {
+                    put("name", "audio")
+                    put("fileName", "audio")
+                    put("mimeType", mimeType)
+                    put("isAudio", true)
+                    put("sendToModel", true)
+                    if (data.isNotEmpty()) {
+                        put(
+                            "dataUrl",
+                            if (data.startsWith("data:", ignoreCase = true)) data
+                            else "data:$mimeType;base64,$data"
+                        )
+                    }
                 }
             }
             is ContentBlock.ResourceLink -> {
@@ -724,6 +834,7 @@ internal class XiaowanAcpEventBridge(
     private var thoughtSnapshot = ""
     private var assistantMessageId = MessageId(UUID.randomUUID().toString())
     private var thoughtMessageId = MessageId(UUID.randomUUID().toString())
+    private var reasoningSegmentIndex = 0
     private var reasoningSegmentPending = false
     private val toolIdsByName = mutableMapOf<String, ArrayDeque<String>>()
 
@@ -765,6 +876,7 @@ internal class XiaowanAcpEventBridge(
         callbackMutex.withLock {
             if (thoughtSnapshot.isNotEmpty()) {
                 thoughtMessageId = MessageId(UUID.randomUUID().toString())
+                reasoningSegmentIndex += 1
             }
             thoughtSnapshot = ""
             reasoningSegmentPending = false
@@ -772,7 +884,7 @@ internal class XiaowanAcpEventBridge(
                 SessionUpdate.AgentThoughtChunk(
                     content = ContentBlock.Text(""),
                     messageId = thoughtMessageId,
-                    _meta = reasoningAcpMeta(""),
+                    _meta = reasoningAcpMeta("", reasoningSegmentIndex),
                 )
             )
         }
@@ -784,6 +896,7 @@ internal class XiaowanAcpEventBridge(
                 thoughtMessageId = MessageId(UUID.randomUUID().toString())
                 thoughtSnapshot = ""
                 reasoningSegmentPending = false
+                reasoningSegmentIndex += 1
             }
             val displayText = reasoningDisplayText(thinking)
             emitTextSnapshot(
@@ -797,7 +910,7 @@ internal class XiaowanAcpEventBridge(
                         SessionUpdate.AgentThoughtChunk(
                             content = ContentBlock.Text(delta),
                             messageId = id,
-                            _meta = reasoningAcpMeta(thinking),
+                            _meta = reasoningAcpMeta(thinking, reasoningSegmentIndex),
                         )
                     )
                 }
@@ -1094,17 +1207,49 @@ internal class XiaowanAcpEventBridge(
     }
     override suspend fun onComplete(result: AgentResult) {
         val success = result as? AgentResult.Success ?: return
-        val turnUsage = agentTurnUsageAcpPayload(success) ?: return
         callbackMutex.withLock {
-            emitAssistantStatus(
-                acpPresentationMeta(
-                    "usage" to mapOf(
-                        "latestPromptTokens" to success.latestPromptTokens,
-                        "promptTokenThreshold" to success.promptTokenThreshold,
-                        "turnUsage" to turnUsage,
-                    )
+            // These fields were part of the old completed stream event. Keep
+            // them inside the shared ACP metadata so every Harness can expose
+            // the same completion semantics without reviving that event.
+            val outputKind = success.outputKind
+            val hasUserVisibleOutput = success.hasUserVisibleOutput
+            // The stream bridge preserves exact Markdown whitespace. Do not
+            // trim the final snapshot: indentation, blank lines, and code
+            // fence boundaries are part of the rendered document.
+            val responseText = success.response.content
+            val fallbackText = if (
+                outputKind == AgentOutputKind.NONE.value &&
+                !hasUserVisibleOutput &&
+                responseText.isEmpty() &&
+                assistantSnapshot.isEmpty()
+            ) {
+                "暂时无法生成回复，请重试。"
+            } else {
+                responseText
+            }
+            val meta = acpPresentationMeta(
+                "completion" to mapOf(
+                    "success" to true,
+                    "outputKind" to outputKind,
+                    "hasUserVisibleOutput" to hasUserVisibleOutput,
+                ),
+                "usage" to mapOf(
+                    "latestPromptTokens" to (
+                        success.latestPromptTokens
+                            ?: success.response.latestPromptTokens
+                    ),
+                    "promptTokenThreshold" to (
+                        success.promptTokenThreshold
+                            ?: success.response.promptTokenThreshold
+                    ),
+                    "turnUsage" to agentTurnUsageAcpPayload(success),
                 )
             )
+            if (fallbackText.isNotEmpty()) {
+                emitAssistantSnapshotLocked(fallbackText, meta)
+            } else {
+                emitAssistantStatus(meta)
+            }
         }
     }
     override suspend fun onError(error: String) {
@@ -1213,10 +1358,11 @@ private fun toolResultText(result: ToolExecutionResult): String = when (result) 
     is ToolExecutionResult.ContextResult -> result.summaryText.ifBlank { result.rawResultJson }
 }
 
-private fun reasoningAcpMeta(thinking: String): JsonObject {
+private fun reasoningAcpMeta(thinking: String, segmentIndex: Int = 0): JsonObject {
     val reasoning = linkedMapOf<String, Any?>(
         "stage" to "thinking",
         "content" to thinking,
+        "segmentIndex" to segmentIndex,
     )
     val structured = structuredReasoning(thinking)
     if (structured != null) {
@@ -1237,29 +1383,41 @@ private fun reasoningAcpMeta(thinking: String): JsonObject {
 }
 
 private fun agentTurnUsageAcpPayload(result: AgentResult.Success): Map<String, Any?>? {
-    val promptTokens = result.latestPromptTokens ?: result.response.latestPromptTokens ?: return null
-    val completionTokens = result.completionTokens ?: result.response.completionTokens ?: 0
-    val cachedTokens = (result.cachedTokens ?: result.response.cachedTokens ?: 0)
-        .coerceIn(0, promptTokens)
-    val cacheWriteTokens = (result.cacheCreationTokens ?: result.response.cacheCreationTokens ?: 0)
-        .coerceAtLeast(0)
+    val promptTokens = result.latestPromptTokens ?: result.response.latestPromptTokens
+    val completionTokens = result.completionTokens ?: result.response.completionTokens
+    val cachedTokens = result.cachedTokens ?: result.response.cachedTokens
+    val cacheWriteTokens = result.cacheCreationTokens ?: result.response.cacheCreationTokens
     val totalTokens = result.totalTokens ?: result.response.totalTokens
-        ?: (promptTokens + completionTokens)
+    val promptTokenThreshold = result.promptTokenThreshold
+        ?: result.response.promptTokenThreshold
+    if (
+        promptTokens == null &&
+        completionTokens == null &&
+        cachedTokens == null &&
+        cacheWriteTokens == null &&
+        totalTokens == null &&
+        promptTokenThreshold == null
+    ) {
+        return null
+    }
+    val prompt = promptTokens ?: 0
+    val completion = completionTokens ?: 0
+    val cacheRead = (cachedTokens ?: 0).coerceIn(0, prompt)
+    val cacheWrite = (cacheWriteTokens ?: 0).coerceAtLeast(0)
+    val total = totalTokens ?: (prompt + completion)
     return linkedMapOf(
-        "ctx" to promptTokens,
-        "in" to promptTokens,
-        "out" to completionTokens,
-        "cache" to cachedTokens,
-        "totalInputTokens" to promptTokens,
-        "uncachedInputTokens" to (promptTokens - cachedTokens).coerceAtLeast(0),
-        "cacheReadTokens" to cachedTokens,
-        "cacheWriteTokens" to cacheWriteTokens,
-        "promptTokens" to promptTokens,
-        "completionTokens" to completionTokens,
-        "totalTokens" to totalTokens,
-        "promptTokenThreshold" to (
-            result.promptTokenThreshold ?: result.response.promptTokenThreshold
-            ),
+        "ctx" to prompt,
+        "in" to prompt,
+        "out" to completion,
+        "cache" to cacheRead,
+        "totalInputTokens" to prompt,
+        "uncachedInputTokens" to (prompt - cacheRead).coerceAtLeast(0),
+        "cacheReadTokens" to cacheRead,
+        "cacheWriteTokens" to cacheWrite,
+        "promptTokens" to prompt,
+        "completionTokens" to completion,
+        "totalTokens" to total,
+        "promptTokenThreshold" to promptTokenThreshold,
     )
 }
 
@@ -1427,10 +1585,13 @@ private fun toolResultAcpPayload(result: ToolExecutionResult): JsonObject {
     when (result) {
         is ToolExecutionResult.ChatMessage -> {
             payload["toolType"] = "message"
+            payload["message"] = result.message
             payload["result"] = result.message
         }
         is ToolExecutionResult.Clarify -> {
             payload["toolType"] = "clarify"
+            payload["question"] = result.question
+            payload["missingFields"] = result.missingFields ?: emptyList<String>()
             payload["result"] = mapOf(
                 "question" to result.question,
                 "missingFields" to (result.missingFields ?: emptyList<String>()),
@@ -1451,6 +1612,7 @@ private fun toolResultAcpPayload(result: ToolExecutionResult): JsonObject {
         is ToolExecutionResult.ScheduleResult -> {
             payload["toolType"] = "schedule"
             payload["toolName"] = result.toolName
+            payload["previewJson"] = result.previewJson
             payload["result"] = jsonElementFromJsonText(result.previewJson)
             payload["taskId"] = result.taskId
         }
@@ -1458,18 +1620,24 @@ private fun toolResultAcpPayload(result: ToolExecutionResult): JsonObject {
             payload["toolType"] = "mcp"
             payload["toolName"] = result.toolName
             payload["serverName"] = result.serverName
+            payload["previewJson"] = result.previewJson
+            payload["rawResultJson"] = result.rawResultJson
             payload["result"] = jsonElementFromJsonText(result.previewJson)
             payload["rawResult"] = jsonElementFromJsonText(result.rawResultJson)
         }
         is ToolExecutionResult.MemoryResult -> {
             payload["toolType"] = "memory"
             payload["toolName"] = result.toolName
+            payload["previewJson"] = result.previewJson
+            payload["rawResultJson"] = result.rawResultJson
             payload["result"] = jsonElementFromJsonText(result.previewJson)
             payload["rawResult"] = jsonElementFromJsonText(result.rawResultJson)
         }
         is ToolExecutionResult.TerminalResult -> {
             payload["toolType"] = "terminal"
             payload["toolName"] = result.toolName
+            payload["previewJson"] = result.previewJson
+            payload["rawResultJson"] = result.rawResultJson
             payload["result"] = jsonElementFromJsonText(result.previewJson)
             payload["rawResult"] = jsonElementFromJsonText(result.rawResultJson)
             payload["timedOut"] = result.timedOut
@@ -1480,6 +1648,8 @@ private fun toolResultAcpPayload(result: ToolExecutionResult): JsonObject {
         is ToolExecutionResult.Interrupted -> {
             payload["toolType"] = "terminal"
             payload["toolName"] = result.toolName
+            payload["previewJson"] = result.previewJson
+            payload["rawResultJson"] = result.rawResultJson
             payload["result"] = jsonElementFromJsonText(result.previewJson)
             payload["rawResult"] = jsonElementFromJsonText(result.rawResultJson)
             payload["terminalOutput"] = result.terminalOutput
@@ -1491,6 +1661,8 @@ private fun toolResultAcpPayload(result: ToolExecutionResult): JsonObject {
         is ToolExecutionResult.ContextResult -> {
             payload["toolType"] = "context"
             payload["toolName"] = result.toolName
+            payload["previewJson"] = result.previewJson
+            payload["rawResultJson"] = result.rawResultJson
             payload["result"] = jsonElementFromJsonText(result.previewJson)
             payload["rawResult"] = jsonElementFromJsonText(result.rawResultJson)
             payload["imageDataUrl"] = result.imageDataUrl

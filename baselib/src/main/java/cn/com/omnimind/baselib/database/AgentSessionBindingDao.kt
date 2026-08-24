@@ -24,4 +24,7 @@ interface AgentSessionBindingDao {
 
     @Query("DELETE FROM codex_thread_bindings WHERE conversationId = :conversationId")
     suspend fun deleteByConversationId(conversationId: Long): Int
+
+    @Query("DELETE FROM codex_thread_bindings WHERE threadId = :threadId")
+    suspend fun deleteByThreadId(threadId: String): Int
 }

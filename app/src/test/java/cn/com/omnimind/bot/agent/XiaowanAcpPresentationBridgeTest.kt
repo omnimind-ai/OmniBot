@@ -74,6 +74,12 @@ class XiaowanAcpPresentationBridgeTest {
             "工具结果返回后继续分析",
             (thoughts[1].content as ContentBlock.Text).text,
         )
+        val segments = thoughts.map { thought ->
+            val namespace = (thought._meta as JsonObject)["cn.com.omnimind.agent"] as JsonObject
+            val reasoning = namespace["reasoning"] as JsonObject
+            reasoning["segmentIndex"]?.jsonPrimitive?.content?.toInt()
+        }
+        assertEquals(listOf(0, 1), segments)
     }
 
     @Test
@@ -181,6 +187,49 @@ class XiaowanAcpPresentationBridgeTest {
     }
 
     @Test
+    fun `completion keeps output-only usage when prompt tokens are unavailable`() = runBlocking {
+        val updates = mutableListOf<SessionUpdate>()
+        val bridge = XiaowanAcpEventBridge { updates += it }
+
+        bridge.onComplete(
+            AgentResult.Success(
+                response = AgentFinalResponse(content = "已完成"),
+                executedTools = emptyList(),
+                completionTokens = 20,
+            )
+        )
+
+        val message = updates.filterIsInstance<SessionUpdate.AgentMessageChunk>().single()
+        val namespace = (message._meta as JsonObject)["cn.com.omnimind.agent"] as JsonObject
+        val usage = namespace["usage"] as JsonObject
+        val turnUsage = usage["turnUsage"] as JsonObject
+        assertEquals("0", turnUsage["ctx"]?.jsonPrimitive?.content)
+        assertEquals("20", turnUsage["out"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun `completion projects legacy output state and restores empty output fallback`() = runBlocking {
+        val updates = mutableListOf<SessionUpdate>()
+        val bridge = XiaowanAcpEventBridge { updates += it }
+
+        bridge.onComplete(
+            AgentResult.Success(
+                response = AgentFinalResponse(content = ""),
+                executedTools = emptyList(),
+                outputKind = "none",
+                hasUserVisibleOutput = false,
+            )
+        )
+
+        val message = updates.filterIsInstance<SessionUpdate.AgentMessageChunk>().single()
+        assertEquals("暂时无法生成回复，请重试。", (message.content as ContentBlock.Text).text)
+        val namespace = (message._meta as JsonObject)["cn.com.omnimind.agent"] as JsonObject
+        val completion = namespace["completion"] as JsonObject
+        assertEquals("none", completion["outputKind"]?.jsonPrimitive?.content)
+        assertEquals("false", completion["hasUserVisibleOutput"]?.jsonPrimitive?.content)
+    }
+
+    @Test
     fun `final performance metadata survives deduplication of an identical text snapshot`() =
         runBlocking {
             val updates = mutableListOf<SessionUpdate>()
@@ -263,6 +312,8 @@ class XiaowanAcpPresentationBridgeTest {
         assertEquals("Command completed", rawOutput["summary"]?.jsonPrimitive?.content)
         assertEquals("hello", rawOutput["terminalOutput"]?.jsonPrimitive?.content)
         assertEquals("shell-1", rawOutput["terminalSessionId"]?.jsonPrimitive?.content)
+        assertEquals("{\"exitCode\":0}", rawOutput["previewJson"]?.jsonPrimitive?.content)
+        assertEquals("{\"stdout\":\"hello\"}", rawOutput["rawResultJson"]?.jsonPrimitive?.content)
         assertEquals("0", (rawOutput["result"] as JsonObject)["exitCode"]?.jsonPrimitive?.content)
     }
 

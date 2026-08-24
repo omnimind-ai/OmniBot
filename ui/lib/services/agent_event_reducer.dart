@@ -10,6 +10,7 @@ import 'package:ui/services/agent_identity.dart';
 import 'package:ui/services/agent_message_kinds.dart';
 import 'package:ui/services/agent_runtime_service.dart';
 import 'package:ui/services/agent_tool_call_parser.dart';
+import 'package:ui/services/acp_extension_registry.dart';
 
 class AgentReduceResult {
   const AgentReduceResult({
@@ -44,12 +45,43 @@ class AgentEventReducer {
 
     final params = _eventParams(event: event, message: message, method: method);
 
+    // ACP implementation extensions are valid Agent->Client traffic, not
+    // unknown failures. Keep their original namespace and payload in the
+    // shared runtime so an adapter/card can opt in later without changing
+    // the transport or losing data today. Requests are also retained with
+    // their id so the existing respondToServerRequest bridge can answer them.
+    if (method.startsWith('_')) {
+      _rememberAcpExtensionUpdate(runtime, <String, dynamic>{
+        'method': method,
+        if (event['id'] != null) 'id': event['id'],
+        'params': message.containsKey('params') ? message['params'] : params,
+        if (event['acpExtensionRequest'] == true) 'request': true,
+        if (event['acpExtensionNotification'] == true) 'notification': true,
+      });
+      return AgentReduceResult(
+        handled: true,
+        method: method,
+        threadId: _firstString([
+          event['threadId'],
+          event['sessionId'],
+          params['threadId'],
+          params['sessionId'],
+        ]),
+        turnId: _firstString([event['turnId'], params['turnId']]),
+        requestId: event['id'],
+      );
+    }
+
     // ACP agents speak the official session/update notification. The reducer
     // projects that protocol object into UI state without introducing a
     // second host-owned event protocol.
     if (method == 'session/update') {
       final update = _asStringMap(params['update']);
       final sessionUpdate = _string(update?['sessionUpdate']);
+      if (update != null) {
+        _rememberAcpExtensionMetadata(runtime, update);
+      }
+      final hasRawAcpUpdate = update?.containsKey('rawUpdate') == true;
       final scopedUpdate =
           sessionUpdate != null &&
           sessionUpdate != 'current_mode_update' &&
@@ -57,7 +89,20 @@ class AgentEventReducer {
           // ACP usage is session-level state. It can legitimately arrive
           // after a streamed turn has completed, so it must not be rejected
           // merely because the notification has no turn id.
-          sessionUpdate != 'usage_update';
+          sessionUpdate != 'usage_update' &&
+          // Session metadata is not owned by a prompt turn. Xiaowan used
+          // this information to keep the conversation title in sync, so it
+          // must reach the host even when it arrives between turns.
+          sessionUpdate != 'session_info_update' &&
+          sessionUpdate != 'available_commands_update' &&
+          // User messages can be replayed by session/load without belonging
+          // to a prompt turn. Live echoes are ignored by the projector.
+          sessionUpdate != 'user_message_chunk' &&
+          // UnknownSessionUpdate is forwarded with rawUpdate. Its scope and
+          // shape are provider-defined (it may be a scalar or list, not only
+          // an object), so do not reject it before the shared extension
+          // retention path has a chance to preserve it.
+          !hasRawAcpUpdate;
       final updateTurnId = _firstString([
         event['turnId'],
         event['turn_id'],
@@ -72,6 +117,57 @@ class AgentEventReducer {
       }
       if (sessionUpdate == 'usage_update' && update != null) {
         _applyAcpUsage(runtime, _acpStandardUsage(update));
+        return AgentReduceResult(
+          handled: true,
+          method: method,
+          threadId: _firstString([
+            event['sessionId'],
+            event['session_id'],
+            params['sessionId'],
+            params['session_id'],
+          ]),
+          turnId: updateTurnId,
+        );
+      }
+      if (sessionUpdate == 'available_commands_update' && update != null) {
+        runtime.availableAcpCommands = _acpAvailableCommands(
+          update['availableCommands'],
+        );
+        return AgentReduceResult(
+          handled: true,
+          method: method,
+          threadId: _firstString([
+            event['sessionId'],
+            event['session_id'],
+            params['sessionId'],
+            params['session_id'],
+          ]),
+          turnId: updateTurnId,
+        );
+      }
+      if (sessionUpdate == 'config_option_update' && update != null) {
+        runtime.acpConfigOptions = _acpConfigOptions(update['configOptions']);
+        return AgentReduceResult(
+          handled: true,
+          method: method,
+          threadId: _firstString([
+            event['sessionId'],
+            event['session_id'],
+            params['sessionId'],
+            params['session_id'],
+          ]),
+          turnId: updateTurnId,
+        );
+      }
+      if (sessionUpdate == 'current_mode_update' && update != null) {
+        runtime.currentAcpModeId = _string(update['currentModeId']);
+      }
+      if (sessionUpdate == 'session_info_update' && update != null) {
+        runtime.acpSessionInfo = Map<String, dynamic>.from(update)
+          ..remove('sessionUpdate');
+      }
+      if (hasRawAcpUpdate && update != null) {
+        _rememberAcpExtensionUpdate(runtime, update);
         return AgentReduceResult(
           handled: true,
           method: method,
@@ -223,6 +319,24 @@ class AgentEventReducer {
         threadId: threadId,
         turnId: turnId,
         collaborationMode: _collaborationModeFromThreadSettings(params),
+      );
+    }
+
+    if (method == 'thread/name/updated') {
+      final name = _firstString([params['name'], params['title']])?.trim();
+      final conversation = runtime.conversation;
+      // Do not overwrite a useful local title with an empty or malformed ACP
+      // notification. The coordinator persists this runtime conversation
+      // after a handled event, so this keeps the old title-sync capability on
+      // the same ACP projection path as every other card/state update.
+      if (name != null && name.isNotEmpty && conversation != null) {
+        runtime.conversation = conversation.copyWith(title: name);
+      }
+      return AgentReduceResult(
+        handled: true,
+        method: method,
+        threadId: threadId,
+        turnId: turnId,
       );
     }
 
@@ -454,6 +568,53 @@ class AgentEventReducer {
         threadId: threadId,
         turnId: turnId,
         requestId: params['requestId'] ?? message['id'],
+      );
+    }
+
+    if (method == 'item/userMessage/delta') {
+      if (params['replay'] != true) {
+        return AgentReduceResult(
+          handled: true,
+          method: method,
+          threadId: threadId,
+          turnId: turnId,
+        );
+      }
+      final delta =
+          _extractText(params['delta']) ??
+          _extractText(params['text']) ??
+          _extractText(params['message']) ??
+          '';
+      final entryId =
+          _string(params['entryId']) ??
+          '${itemId ?? parentTaskId}-user-message';
+      if (delta.isNotEmpty) {
+        final text = (runtime.currentAcpUserMessages[entryId] ?? '') + delta;
+        runtime.currentAcpUserMessages[entryId] = text;
+        final messageId = '$entryId-agent-user';
+        final existingIndex = runtime.messages.indexWhere(
+          (message) => message.id == messageId,
+        );
+        final message = ChatMessageModel(
+          id: messageId,
+          type: 1,
+          user: 1,
+          content: <String, dynamic>{'id': messageId, 'text': text},
+          createAt: existingIndex >= 0
+              ? runtime.messages[existingIndex].createAt
+              : DateTime.now(),
+        );
+        if (existingIndex >= 0) {
+          runtime.messages[existingIndex] = message;
+        } else {
+          runtime.messages.add(message);
+        }
+      }
+      return AgentReduceResult(
+        handled: true,
+        method: method,
+        threadId: threadId,
+        turnId: turnId,
       );
     }
 
@@ -779,6 +940,49 @@ class AgentEventReducer {
           parentTaskId: parentTaskId,
           entryId: cardId,
           kind: 'permission_required',
+        ),
+      );
+      return AgentReduceResult(
+        handled: true,
+        method: method,
+        threadId: threadId,
+        turnId: turnId,
+        requestId: requestId,
+      );
+    }
+
+    if (method == 'elicitation/create') {
+      // ACP structured user input is represented by the existing request
+      // Card. The request id stays the JSON-RPC id so the shared response
+      // route can answer the original Agent request without a Harness branch.
+      final requestId = message['id'] ?? params['requestId'];
+      final title =
+          _firstString([
+            params['title'],
+            params['message'],
+            params['question'],
+          ]) ??
+          'Agent needs input';
+      final detail =
+          _firstString([params['description'], params['detail']]) ??
+          (_asStringMap(params['requestedSchema']) == null
+              ? title
+              : _safeJson(params['requestedSchema']));
+      final cardId = '${requestId ?? itemId ?? parentTaskId}-agent-elicitation';
+      _upsertAgentRequestCard(
+        runtime,
+        cardId: cardId,
+        taskId: parentTaskId,
+        requestId: requestId,
+        requestKind: 'user_input',
+        title: title,
+        detail: detail,
+        params: params,
+        streamMeta: _streamMeta(
+          runtime,
+          parentTaskId: parentTaskId,
+          entryId: cardId,
+          kind: 'clarify_required',
         ),
       );
       return AgentReduceResult(
@@ -1356,8 +1560,9 @@ class AgentEventReducer {
     }
     content['agentRetryable'] = recovery['retryable'] == true;
     content['agentContinueable'] = recovery['continueable'] == true;
-    if (recovery['resumeMode'] != null) {
-      content['agentContinueResumeMode'] = recovery['resumeMode'];
+    final resumeMode = recovery['resumeMode'] ?? recovery['continueResumeMode'];
+    if (resumeMode != null) {
+      content['agentContinueResumeMode'] = resumeMode;
     }
     runtime.messages[index] = existing.copyWith(
       content: content,
@@ -1562,8 +1767,43 @@ class AgentEventReducer {
   }) {
     for (var index = 0; index < media.length; index++) {
       final item = media[index];
+      final mediaType = _string(item['mediaType'])?.toLowerCase();
+      final audioDataUrl = _string(item['audioDataUrl']);
+      final audioUrl = _string(item['audioUrl']);
       final imageDataUrl = _string(item['imageDataUrl']);
       final imageUrl = _string(item['imageUrl']);
+      if (mediaType == 'audio' &&
+          (audioDataUrl?.trim().isNotEmpty == true ||
+              audioUrl?.trim().isNotEmpty == true)) {
+        final cardId = '$entryId-agent-audio-$index';
+        _upsertToolCard(
+          runtime,
+          cardId: cardId,
+          taskId: parentTaskId,
+          toolType: 'audio',
+          title: _string(item['title']) ?? '音频',
+          status: 'success',
+          summary: _string(item['title']) ?? '音频',
+          progress: '',
+          raw: <String, dynamic>{
+            'type': 'acp_audio',
+            'toolType': 'audio',
+            'toolName': 'assistant_media',
+            'title': _string(item['title']) ?? '音频',
+            if (audioDataUrl != null) 'audioDataUrl': audioDataUrl,
+            if (audioUrl != null) 'audioUrl': audioUrl,
+            if (item['mimeType'] != null) 'mimeType': item['mimeType'],
+          },
+          streamMeta: _streamMeta(
+            runtime,
+            parentTaskId: parentTaskId,
+            entryId: cardId,
+            kind: 'assistant_media',
+            isFinal: true,
+          ),
+        );
+        continue;
+      }
       final location = imageDataUrl ?? imageUrl;
       if (location == null || location.trim().isEmpty) continue;
       final cardId = '$entryId-agent-image-$index';
@@ -1954,6 +2194,9 @@ class AgentEventReducer {
       if (raw['imageDataUrl'] != null) 'imageDataUrl': raw['imageDataUrl'],
       if (raw['dataUrl'] != null) 'dataUrl': raw['dataUrl'],
       if (raw['imageUrl'] != null) 'imageUrl': raw['imageUrl'],
+      if (raw['audioDataUrl'] != null) 'audioDataUrl': raw['audioDataUrl'],
+      if (raw['audioUrl'] != null) 'audioUrl': raw['audioUrl'],
+      if (raw['mimeType'] != null) 'mimeType': raw['mimeType'],
       if (raw['taskId'] != null) 'sourceTaskId': raw['taskId'],
       if (raw['runId'] != null) 'runId': raw['runId'],
       if (raw['run_id'] != null) 'run_id': raw['run_id'],
@@ -1973,6 +2216,31 @@ class AgentEventReducer {
       'showScheduleAction': effectiveToolType == 'schedule',
       'showAlarmAction': effectiveToolType == 'alarm',
     };
+    // Keep the old card-level detail fields available to every ACP-backed
+    // Harness. They are intentionally copied as data, not interpreted here;
+    // cards that understand truncation, clarification, or SubAgent timelines
+    // can render them while unknown extensions remain harmless.
+    for (final key in const <String>[
+      'message',
+      'question',
+      'missingFields',
+      'missing_fields',
+      'missing',
+      'previewJson',
+      'outputTruncated',
+      'originalChars',
+      'headTail',
+      'fullOutputArtifact',
+      'subagentStatusText',
+      'subagentEvents',
+      'subagentEvent',
+    ]) {
+      if (raw[key] != null) {
+        cardData[key] = raw[key];
+      } else if (existingCardData[key] != null) {
+        cardData[key] = existingCardData[key];
+      }
+    }
     if (effectiveToolType == 'file') {
       cardData.addAll(<String, dynamic>{
         'diffText': diffText,
@@ -2011,6 +2279,15 @@ class AgentEventReducer {
       artifacts: artifacts,
     );
     runtime.lastAgentToolType = effectiveToolType;
+    if (status == 'running' || status == 'pending' || status == 'progress') {
+      runtime.activeToolCardId = cardId;
+    } else if (runtime.activeToolCardId == cardId) {
+      runtime.activeToolCardId = _findRunningToolCardId(
+        runtime,
+        taskId: taskId,
+        excludingCardId: cardId,
+      );
+    }
     if (effectiveToolType == 'terminal' || effectiveToolType == 'browser') {
       runtime.chatIslandDisplayLayer = ChatIslandDisplayLayer.tools;
     }
@@ -2028,6 +2305,35 @@ class AgentEventReducer {
             );
       }
     }
+  }
+
+  String? _findRunningToolCardId(
+    ChatConversationRuntimeState runtime, {
+    required String taskId,
+    required String excludingCardId,
+  }) {
+    // Messages are newest-first. Selecting the newest still-running card
+    // keeps the shared stop action useful when a Harness runs tools in
+    // parallel and one of them completes before the others.
+    for (final message in runtime.messages) {
+      if (message.id == excludingCardId || message.type != 2) continue;
+      final card = message.cardData;
+      if (card == null || card['type'] != 'agent_tool_summary') continue;
+      final cardTaskId = _firstString([
+        card['taskId'],
+        card['runId'],
+        card['parentTaskId'],
+      ]);
+      if (cardTaskId != taskId) continue;
+      final cardStatus = _string(card['status'])?.toLowerCase();
+      if (cardStatus == 'running' ||
+          cardStatus == 'pending' ||
+          cardStatus == 'progress' ||
+          cardStatus == 'in_progress') {
+        return message.id;
+      }
+    }
+    return null;
   }
 
   void _upsertArtifactCards(
@@ -3980,6 +4286,21 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
   final scopedEntryId = turnScopedEntryId(update['entryId']);
   final presentation = _acpPresentationMeta(update);
 
+  // ACP messageId is only a message identity. Some Harnesses keep one
+  // reasoning message open across tool boundaries and expose the actual
+  // visible segment in _meta. Preserve that segment identity at the shared
+  // projection seam so the timeline remains reasoning -> tool -> reasoning
+  // even when the upstream messageId is reused.
+  final reasoningSegmentIndex = _acpReasoningSegmentIndex(presentation);
+  final scopedReasoningMessageId = reasoningSegmentIndex == null ||
+          scopedMessageId == null
+      ? scopedMessageId
+      : '$scopedMessageId-reasoning-$reasoningSegmentIndex';
+  final scopedReasoningEntryId = reasoningSegmentIndex == null ||
+          scopedEntryId == null
+      ? scopedEntryId
+      : '$scopedEntryId-reasoning-$reasoningSegmentIndex';
+
   Map<String, dynamic> projectedParams(Map<String, dynamic> values) {
     return <String, dynamic>{
       ...values,
@@ -4016,10 +4337,29 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
       return <String, dynamic>{
         'method': 'item/reasoning/delta',
         'params': projectedParams(<String, dynamic>{
-          'itemId': scopedMessageId,
-          if (scopedEntryId != null) 'entryId': scopedEntryId,
+          'itemId': scopedReasoningMessageId,
+          if (scopedReasoningEntryId != null)
+            'entryId': scopedReasoningEntryId,
           'delta': _acpReasoningText(update, presentation),
           if (presentation != null) 'acpPresentation': presentation,
+        }),
+      };
+    case 'user_message_chunk':
+      // The host owns live user-message persistence. Only an explicit
+      // session/load replay may project ACP user history into the timeline;
+      // otherwise the normal prompt would be duplicated.
+      final isReplay =
+          update['replay'] == true ||
+          params['replay'] == true ||
+          event['replay'] == true;
+      if (!isReplay) return null;
+      return <String, dynamic>{
+        'method': 'item/userMessage/delta',
+        'params': projectedParams(<String, dynamic>{
+          'itemId': scopedMessageId,
+          if (scopedEntryId != null) 'entryId': scopedEntryId,
+          'delta': _extractStreamingText(update['content']) ?? '',
+          'replay': true,
         }),
       };
     case 'tool_call':
@@ -4169,6 +4509,12 @@ Map<String, dynamic> _projectAcpToolCall(
       update['rawOutput'] is String && structuredOutput == null
       ? (update['rawOutput'] as String).trim()
       : '';
+  final structuredArtifacts = _asMapList(structuredOutput?['artifacts']);
+  final standardArtifacts = _acpAssistantArtifacts(
+    standardContent,
+    includeEmbeddedResources: true,
+  );
+  final artifacts = _mergeAcpArtifacts(structuredArtifacts, standardArtifacts);
   return <String, dynamic>{
     'id': update['toolCallId'],
     'toolCallId': update['toolCallId'],
@@ -4186,6 +4532,7 @@ Map<String, dynamic> _projectAcpToolCall(
       'progress': plainRawOutput,
     },
     ..._acpStructuredToolOutput(structuredOutput),
+    if (artifacts.isNotEmpty) 'artifacts': artifacts,
     if (standardContent.isNotEmpty) 'contentItems': standardContent,
     // Standard content is a concrete capability signal. It takes precedence
     // over generic adapter envelopes such as `toolType: context`.
@@ -4230,22 +4577,29 @@ List<Map<String, dynamic>> _acpAssistantMedia(Object? value) {
     final mimeType = _string(block['mimeType']) ?? _string(block['mime_type']);
     final isImage =
         type == 'image' || mimeType?.toLowerCase().startsWith('image/') == true;
-    if (!isImage) return;
+    final isAudio =
+        type == 'audio' || mimeType?.toLowerCase().startsWith('audio/') == true;
+    if (!isImage && !isAudio) return;
     final data = _string(block['data']) ?? _string(block['blob']);
     final uri = _string(block['uri']) ?? _string(block['url']);
+    final mediaType = isAudio ? 'audio' : 'image';
     final location = data == null || data.isEmpty
         ? uri
         : data.startsWith('data:')
         ? data
-        : 'data:${mimeType ?? 'image/png'};base64,$data';
+        : 'data:${mimeType ?? (isAudio ? 'audio/mpeg' : 'image/png')};base64,$data';
     if (location == null || location.trim().isEmpty) return;
     media.add(<String, dynamic>{
-      if (location.startsWith('data:'))
-        'imageDataUrl': location
-      else
-        'imageUrl': location,
-      'mimeType': mimeType ?? 'image/png',
-      'title': _string(block['title']) ?? _string(block['name']) ?? '图片',
+      'mediaType': mediaType,
+      if (isImage && location.startsWith('data:')) 'imageDataUrl': location,
+      if (isImage && !location.startsWith('data:')) 'imageUrl': location,
+      if (isAudio && location.startsWith('data:')) 'audioDataUrl': location,
+      if (isAudio && !location.startsWith('data:')) 'audioUrl': location,
+      'mimeType': mimeType ?? (isAudio ? 'audio/mpeg' : 'image/png'),
+      'title':
+          _string(block['title']) ??
+          _string(block['name']) ??
+          (isAudio ? '音频' : '图片'),
     });
   }
 
@@ -4253,10 +4607,17 @@ List<Map<String, dynamic>> _acpAssistantMedia(Object? value) {
   return media;
 }
 
-/// Projects non-image ACP resource links into the existing artifact card.
-/// Embedded text resources remain assistant text; only links with a durable
-/// URI need a separate card and preview action.
-List<Map<String, dynamic>> _acpAssistantArtifacts(Object? value) {
+/// Projects non-image ACP resources into the existing artifact card.
+///
+/// This is shared by assistant messages and tool content. It is the bridge
+/// from the official ACP content union back to the old Xiaowan artifact route:
+/// links keep their URI, while embedded resources retain their text/blob when
+/// a host-resolvable URI is present. Image resources remain on the image-card
+/// route handled by [_acpAssistantMedia].
+List<Map<String, dynamic>> _acpAssistantArtifacts(
+  Object? value, {
+  bool includeEmbeddedResources = false,
+}) {
   final artifacts = <Map<String, dynamic>>[];
 
   void visit(Object? candidate) {
@@ -4269,9 +4630,44 @@ List<Map<String, dynamic>> _acpAssistantArtifacts(Object? value) {
     final block = _asStringMap(candidate);
     if (block == null) return;
     final type = _string(block['type'])?.toLowerCase();
+    if (type == 'content') {
+      visit(block['content']);
+      return;
+    }
     if (type == 'resource') {
-      // Embedded resources are handled as assistant text or image content.
-      // They do not necessarily have a host-resolvable URI.
+      if (!includeEmbeddedResources) return;
+      final resource = _asStringMap(block['resource']);
+      if (resource == null) return;
+      final resourceMimeType =
+          _string(resource['mimeType']) ?? _string(resource['mime_type']);
+      if (resourceMimeType?.toLowerCase().startsWith('image/') == true) {
+        return;
+      }
+      final uri = _string(resource['uri'])?.trim();
+      // ArtifactCard resolves previews through the workspace resource
+      // service. A raw ACP blob without a durable URI cannot safely be routed
+      // there yet, so leave it in the preserved ACP content model instead of
+      // creating a card that can never open.
+      if (uri == null || uri.isEmpty) return;
+      final text = _string(resource['text']);
+      final blob = _string(resource['blob']);
+      final title =
+          _string(block['title']) ??
+          _string(block['name']) ??
+          _string(resource['name']) ??
+          uri;
+      artifacts.add(<String, dynamic>{
+        'id': 'resource-${Uri.encodeComponent(uri)}',
+        'title': title,
+        if (_string(block['name']) != null) 'fileName': block['name'],
+        'uri': uri,
+        if (resourceMimeType != null) 'mimeType': resourceMimeType,
+        if (resource['size'] != null) 'size': resource['size'],
+        if (text != null) 'text': text,
+        if (blob != null) 'blob': blob,
+        if (resourceMimeType?.toLowerCase().startsWith('text/') == true)
+          'previewKind': 'text',
+      });
       return;
     }
     if (type != 'resource_link') return;
@@ -4300,22 +4696,70 @@ List<Map<String, dynamic>> _acpAssistantArtifacts(Object? value) {
   return artifacts;
 }
 
+List<Map<String, dynamic>> _mergeAcpArtifacts(
+  List<Map<String, dynamic>> first,
+  List<Map<String, dynamic>> second,
+) {
+  final merged = <Map<String, dynamic>>[...first];
+  for (final candidate in second) {
+    final candidateId = _string(candidate['id']);
+    final candidateUri = _string(candidate['uri']);
+    final duplicate = merged.any((existing) {
+      final existingId = _string(existing['id']);
+      final existingUri = _string(existing['uri']);
+      return (candidateId != null && candidateId == existingId) ||
+          (candidateUri != null && candidateUri == existingUri);
+    });
+    if (!duplicate) merged.add(candidate);
+  }
+  return merged;
+}
+
 /// Derives visual hints from standard ACP tool content once, before all
 /// Harnesses enter the existing shared card router.
 Map<String, dynamic> _acpStandardToolPresentation(
   List<Map<String, dynamic>> contentItems,
 ) {
   String? imageDataUrl;
+  String? audioDataUrl;
+  String? audioUrl;
+  String? audioMimeType;
   String? terminalSessionId;
+  String? diffPath;
+  var hasDiff = false;
   for (final item in contentItems) {
     final itemType = _string(item['type'])?.toLowerCase();
+    if (itemType == 'diff') {
+      hasDiff = true;
+      diffPath ??= _firstString([
+        item['path'],
+        item['filePath'],
+        item['file_path'],
+      ]);
+      continue;
+    }
     if (itemType == 'terminal') {
       terminalSessionId ??= _string(item['terminalId']);
       continue;
     }
     if (itemType != 'content') continue;
     final block = _asStringMap(item['content']);
-    if (_string(block?['type'])?.toLowerCase() != 'image') continue;
+    final blockType = _string(block?['type'])?.toLowerCase();
+    if (blockType == 'audio') {
+      final data = _string(block?['data']);
+      final mimeType = _string(block?['mimeType']) ?? 'audio/mpeg';
+      final uri = _string(block?['uri']) ?? _string(block?['url']);
+      if (data != null && data.isNotEmpty) {
+        audioDataUrl ??= data.startsWith('data:')
+            ? data
+            : 'data:$mimeType;base64,$data';
+      } else {
+        audioUrl ??= uri;
+      }
+      audioMimeType ??= mimeType;
+      continue;
+    }
+    if (blockType != 'image') continue;
     final data = _string(block?['data']);
     final mimeType = _string(block?['mimeType']) ?? 'image/png';
     imageDataUrl ??= data == null || data.isEmpty
@@ -4323,15 +4767,21 @@ Map<String, dynamic> _acpStandardToolPresentation(
         : 'data:$mimeType;base64,$data';
   }
   return <String, dynamic>{
-    if (imageDataUrl != null) 'toolType': 'image',
+    if (hasDiff) 'toolType': 'file',
+    if (diffPath != null) 'filePath': diffPath,
+    if (imageDataUrl != null && !hasDiff) 'toolType': 'image',
     if (imageDataUrl != null) 'imageDataUrl': imageDataUrl,
+    if (audioDataUrl != null || audioUrl != null) 'toolType': 'audio',
+    if (audioDataUrl != null) 'audioDataUrl': audioDataUrl,
+    if (audioUrl != null) 'audioUrl': audioUrl,
+    if (audioMimeType != null) 'mimeType': audioMimeType,
     if (terminalSessionId != null) 'terminalSessionId': terminalSessionId,
   };
 }
 
 Map<String, dynamic>? _acpPresentationMeta(Map<String, dynamic> update) {
-  final meta = _asStringMap(update['_meta']) ?? _asStringMap(update['meta']);
-  return _asStringMap(meta?['cn.com.omnimind.agent']);
+  final projection = AcpExtensionRegistry.shared.project(update);
+  return projection.presentation.isEmpty ? null : projection.presentation;
 }
 
 /// Reads the shared presentation metadata from an ACP session update,
@@ -4374,6 +4824,64 @@ Map<String, dynamic> _acpStandardUsage(Map<String, dynamic> update) {
   };
 }
 
+List<Map<String, dynamic>> _acpAvailableCommands(Object? value) {
+  if (value is! List) return const <Map<String, dynamic>>[];
+  final commands = <Map<String, dynamic>>[];
+  final seen = <String>{};
+  for (final candidate in value) {
+    final item = _asStringMap(candidate);
+    if (item == null) continue;
+    final name = _string(item['name'] ?? item['command'])?.trim();
+    if (name == null || name.isEmpty) continue;
+    final normalized = name.startsWith('/') ? name.substring(1) : name;
+    if (normalized.isEmpty || !seen.add(normalized.toLowerCase())) continue;
+    commands.add(<String, dynamic>{
+      'name': normalized,
+      'description': _string(item['description']) ?? '',
+    });
+  }
+  return commands;
+}
+
+List<Map<String, dynamic>> _acpConfigOptions(Object? value) {
+  if (value is! List) return const <Map<String, dynamic>>[];
+  return value
+      .map(_asStringMap)
+      .whereType<Map<String, dynamic>>()
+      .map((option) => Map<String, dynamic>.from(option))
+      .where((option) {
+        final id = _string(option['id'] ?? option['configId']);
+        return id != null && id.isNotEmpty;
+      })
+      .toList(growable: false);
+}
+
+void _rememberAcpExtensionUpdate(
+  ChatConversationRuntimeState runtime,
+  Map<String, dynamic> update,
+) {
+  runtime.acpExtensionUpdates.add(Map<String, dynamic>.from(update));
+  if (runtime.acpExtensionUpdates.length > 64) {
+    runtime.acpExtensionUpdates.removeAt(0);
+  }
+}
+
+/// Retain extension namespaces even when they do not have a Card projector
+/// yet. This is the compatibility seam used by future Harness adapters: an
+/// extension can be added without changing the transport or the chat page,
+/// and the original namespace remains inspectable for replay/debugging.
+void _rememberAcpExtensionMetadata(
+  ChatConversationRuntimeState runtime,
+  Map<String, dynamic> update,
+) {
+  final projection = AcpExtensionRegistry.shared.project(update);
+  if (projection.extensions.isEmpty) return;
+  _rememberAcpExtensionUpdate(runtime, <String, dynamic>{
+    'sessionUpdate': update['sessionUpdate'],
+    'extensions': projection.extensions,
+  });
+}
+
 Map<String, dynamic> _acpReasoningCardData(Map<String, dynamic>? presentation) {
   final reasoning = _asStringMap(presentation?['reasoning']);
   if (reasoning == null) return const <String, dynamic>{};
@@ -4391,6 +4899,20 @@ Map<String, dynamic> _acpReasoningCardData(Map<String, dynamic>? presentation) {
     if (preparation != null) 'preparation': preparation,
     if (memoryActions.isNotEmpty) 'memoryActions': memoryActions,
   };
+}
+
+String? _acpReasoningSegmentIndex(Map<String, dynamic>? presentation) {
+  if (presentation == null || presentation.isEmpty) return null;
+  final reasoning = _asStringMap(presentation['reasoning']);
+  final value = reasoning?['segmentIndex'] ??
+      reasoning?['segment_index'] ??
+      presentation['reasoningSegmentIndex'] ??
+      presentation['reasoning_segment_index'] ??
+      presentation['segmentIndex'] ??
+      presentation['segment_index'];
+  return value?.toString().trim().isEmpty == true
+      ? null
+      : value?.toString().trim();
 }
 
 Map<String, dynamic> _preservedAcpReasoningCardData(
@@ -4482,7 +5004,7 @@ Map<String, dynamic> _acpStructuredToolOutput(Map<String, dynamic>? output) {
       output['resultPreview'] ??
       output['preview'] ??
       output['previewJson'];
-  return <String, dynamic>{
+  final projected = <String, dynamic>{
     // Keep adapter facts intact. The shared tool parser owns the distinction
     // between a transport envelope (such as ContextResult) and a visual
     // capability, so every Harness follows the same card-routing rule.
@@ -4492,6 +5014,11 @@ Map<String, dynamic> _acpStructuredToolOutput(Map<String, dynamic>? output) {
       'displayName',
       'serverName',
       'summary',
+      'message',
+      'question',
+      'missingFields',
+      'missing_fields',
+      'missing',
       'progress',
       'terminalOutput',
       'terminalSessionId',
@@ -4505,7 +5032,22 @@ Map<String, dynamic> _acpStructuredToolOutput(Map<String, dynamic>? output) {
       'exitCode',
       'error',
       'timedOut',
+      'timed_out',
       'imageDataUrl',
+      'dataUrl',
+      'imageUrl',
+      'audioDataUrl',
+      'audioUrl',
+      'mimeType',
+      'previewJson',
+      'rawResultJson',
+      'outputTruncated',
+      'originalChars',
+      'headTail',
+      'fullOutputArtifact',
+      'subagentStatusText',
+      'subagentEvents',
+      'subagentEvent',
       'taskId',
       'runId',
       'run_id',
@@ -4514,6 +5056,32 @@ Map<String, dynamic> _acpStructuredToolOutput(Map<String, dynamic>? output) {
       if (output[key] != null) key: output[key],
     if (result != null) 'result': result,
   };
+
+  // The old Xiaowan adapter put clarification and permission facts both at
+  // the result envelope and inside `result`. ACP intentionally does not
+  // constrain rawOutput, so make that shape available to the shared card
+  // parser without requiring each Harness to duplicate this flattening.
+  final resultMap = _asStringMap(result);
+  if (resultMap != null) {
+    for (final key in const <String>[
+      'question',
+      'missingFields',
+      'missing_fields',
+      'missing',
+      'message',
+      'subagentStatusText',
+      'subagentEvents',
+      'subagentEvent',
+    ]) {
+      if (projected[key] == null && resultMap[key] != null) {
+        projected[key] = resultMap[key];
+      }
+    }
+  }
+  if (projected['previewJson'] == null && result != null) {
+    projected['previewJson'] = result;
+  }
+  return projected;
 }
 
 Map<String, dynamic>? _permissionCardFromAcpItem(Map<String, dynamic> item) {

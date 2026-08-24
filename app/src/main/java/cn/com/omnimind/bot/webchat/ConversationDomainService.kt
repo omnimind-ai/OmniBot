@@ -355,6 +355,12 @@ class ConversationDomainService(
             ?: return
         historyRepository.deleteConversation(conversationId)
         DatabaseHelper.deleteConversationById(conversationId)
+        // The ACP binding is an execution index, not conversation content.
+        // Remove it after the durable rows are deleted so a failed history
+        // deletion does not strand an otherwise recoverable conversation.
+        // A later session/list or stale session/load can then never resurrect
+        // this deleted thread.
+        DatabaseHelper.deleteAgentSessionBindingByConversationId(conversationId)
         acpAgentProfileStore.unbindConversation(conversationId)
         val payload = conversationToPayload(existing)
         RealtimeHub.publish(

@@ -254,6 +254,17 @@ class AcpSessionUpdateMapperTest {
     }
 
     @Test
+    fun sessionScopedMetadataIsNotDroppedWhenThereIsNoTitle() {
+        val update = SessionUpdate.SessionInfoUpdate(
+            title = null,
+            _meta = JsonObject(mapOf("source" to JsonPrimitive("agent")))
+        ).toAcpSessionNotification("thread-1")
+
+        assertEquals("session_info_update", update?.update?.get("sessionUpdate"))
+        assertEquals(mapOf("source" to "agent"), update?.update?.get("_meta"))
+    }
+
+    @Test
     fun onlyTimelineUpdatesAreTurnScoped() {
         // A turn-scoped update with no resolvable turn is dropped rather than
         // rendered as its own pseudo turn; session-scoped ones still go through
@@ -276,6 +287,26 @@ class AcpSessionUpdateMapperTest {
         assertFalse(
             SessionUpdate.AvailableCommandsUpdate(availableCommands = emptyList())
                 .isTurnScoped()
+        )
+    }
+
+    @Test
+    fun unknownSessionUpdatesKeepTheirOfficialDiscriminatorAndRawJson() {
+        val update = SessionUpdate.UnknownSessionUpdate(
+            sessionUpdateType = "provider_progress",
+            rawJson = JsonObject(
+                mapOf(
+                    "sessionUpdate" to JsonPrimitive("provider_progress"),
+                    "progress" to JsonPrimitive(0.5),
+                )
+            ),
+            _meta = null,
+        ).toAcpSessionNotification("thread-extension")
+
+        assertEquals("provider_progress", update?.update?.get("sessionUpdate"))
+        assertEquals(
+            0.5,
+            (update?.update?.get("rawUpdate") as Map<*, *>) ["progress"],
         )
     }
 }
