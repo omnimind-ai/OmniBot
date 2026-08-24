@@ -753,6 +753,47 @@ void main() {
     expect(runtime.activeToolCardId, isNull);
   });
 
+  test('fences late events from a reset session but allows a new turn to reuse it', () {
+    const conversationId = 2402;
+    final runtime = coordinator.ensureRuntime(
+      conversationId: conversationId,
+      mode: kChatRuntimeModeAgent,
+    );
+
+    expect(
+      runtime.acceptsAcpEvent(
+        sessionId: 'session-retired',
+        turnId: 'turn-old',
+      ),
+      isTrue,
+    );
+    coordinator.clearConversationRuntimeSession(
+      conversationId: conversationId,
+      mode: kChatRuntimeModeAgent,
+    );
+
+    expect(
+      runtime.acceptsAcpEvent(
+        sessionId: 'session-retired',
+        turnId: 'turn-old',
+      ),
+      isFalse,
+    );
+
+    coordinator.beginAcpTurn(
+      taskId: 'run-new',
+      conversationId: conversationId,
+      mode: kChatRuntimeModeAgent,
+    );
+    expect(
+      runtime.acceptsAcpEvent(
+        sessionId: 'session-retired',
+        turnId: 'turn-new',
+      ),
+      isTrue,
+    );
+  });
+
   test('maps ACP tool updates to the tools island', () {
     const conversationId = 2501;
     applyAcp(

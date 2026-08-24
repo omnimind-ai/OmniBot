@@ -41,7 +41,11 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.util.UUID
+import java.util.ArrayDeque
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
+
+private const val MAX_PENDING_AGENT_EVENTS = 1024
 
 /**
  * A durable conversation owns exactly one Harness. A caller may carry a stale
@@ -256,11 +260,17 @@ class AgentRuntimeManager private constructor(
     private var localProbeCache: LocalProbeCache? = null
     @Volatile
     private var eventListener: ((Map<String, Any?>) -> Unit)? = null
+    private val eventDispatchLock = Any()
+    private val pendingEvents = ArrayDeque<Map<String, Any?>>()
+    private val hostEventSequence = AtomicLong(0L)
     private val supplementalEventListeners =
         ConcurrentHashMap<String, (Map<String, Any?>) -> Unit>()
 
     fun setEventListener(listener: ((Map<String, Any?>) -> Unit)?) {
         eventListener = listener
+        if (listener != null) {
+            mainHandler.post(::drainPendingEvents)
+        }
     }
 
     internal fun setSupplementalEventListener(
@@ -346,6 +356,7 @@ class AgentRuntimeManager private constructor(
             if (runtime.kind == AgentRuntimeKind.LOCAL && localAcpRuntime.isConnected) {
                 return status()
             }
+            clearPendingEvents()
             val existing = session
             existing?.disconnect()
             session = null
@@ -411,6 +422,7 @@ class AgentRuntimeManager private constructor(
             invalidateLocalProbeCache()
             session?.disconnect()
             session = null
+            clearPendingEvents()
             localAcpRuntime.disconnect()
             activeRuntime = null
             activeLocalDistributionId = null
@@ -446,6 +458,7 @@ class AgentRuntimeManager private constructor(
                 return@withLock
             }
             invalidateLocalProbeCache()
+            clearPendingEvents()
             localAcpRuntime.disconnect()
             if (activeRuntime == AgentRuntimeKind.LOCAL) {
                 activeRuntime = null
@@ -468,6 +481,11 @@ class AgentRuntimeManager private constructor(
         if (method.startsWith("agent/")) {
             if (method == "agent/select" || method == "agent/refresh") {
                 invalidateLocalProbeCache()
+            }
+            if (method == "agent/select") {
+                // Buffered events belong to the previous Harness. Do not
+                // replay them after an explicit ACP process switch.
+                clearPendingEvents()
             }
             val response = localAcpRuntime.handleMethod(method, canonicalArgs)
             if (method == "agent/select" && localAcpRuntime.isConnected) {
@@ -2345,25 +2363,105 @@ class AgentRuntimeManager private constructor(
     }
 
     private fun emitEvent(event: Map<String, Any?>) {
-        val listener = eventListener
-        val supplementalListeners = supplementalEventListeners.values.toList()
-        if (listener == null && supplementalListeners.isEmpty()) return
+        val delivered = if (event["eventId"]?.toString()?.isNotBlank() == true) {
+            event
+        } else {
+            val sequence = hostEventSequence.incrementAndGet()
+            LinkedHashMap(event).apply {
+                // This is host delivery metadata. The ACP payload under
+                // `params` remains untouched, so an ACP client can consume it
+                // without knowing about the Android event bridge.
+                put("eventId", "host:$sequence")
+                put("sequence", sequence)
+            }
+        }
         mainHandler.post {
+            dispatchEvent(delivered)
+        }
+    }
+
+    private fun dispatchEvent(event: Map<String, Any?>) {
+        val listener: ((Map<String, Any?>) -> Unit)?
+        val supplementalListeners: List<(Map<String, Any?>) -> Unit>
+        synchronized(eventDispatchLock) {
+            listener = eventListener
+            supplementalListeners = supplementalEventListeners.values.toList()
+            if (listener == null) {
+                enqueuePendingEventLocked(event)
+            }
+        }
+        if (listener != null) {
             runCatching {
-                listener?.invoke(event)
+                listener.invoke(event)
             }.onFailure { error ->
                 Log.w("AgentRuntimeManager", "primary event listener failed: ${error.message}")
             }
-            supplementalListeners.forEach { supplemental ->
-                runCatching {
-                    supplemental(event)
-                }.onFailure { error ->
-                    Log.w(
-                        "AgentRuntimeManager",
-                        "supplemental event listener failed: ${error.message}"
-                    )
+        }
+        supplementalListeners.forEach { supplemental ->
+            runCatching {
+                supplemental(event)
+            }.onFailure { error ->
+                Log.w(
+                    "AgentRuntimeManager",
+                    "supplemental event listener failed: ${error.message}"
+                )
+            }
+        }
+    }
+
+    private fun drainPendingEvents() {
+        while (true) {
+            val event = synchronized(eventDispatchLock) {
+                if (eventListener == null || pendingEvents.isEmpty()) {
+                    null
+                } else {
+                    pendingEvents.removeFirst()
+                }
+            } ?: return
+            val listener = eventListener ?: run {
+                synchronized(eventDispatchLock) {
+                    pendingEvents.addFirst(event)
+                }
+                return
+            }
+            runCatching {
+                listener.invoke(event)
+            }.onFailure { error ->
+                Log.w("AgentRuntimeManager", "buffered event delivery failed: ${error.message}")
+            }
+        }
+    }
+
+    private fun enqueuePendingEventLocked(event: Map<String, Any?>) {
+        if (pendingEvents.size >= MAX_PENDING_AGENT_EVENTS) {
+            val iterator = pendingEvents.iterator()
+            var removed = false
+            while (iterator.hasNext()) {
+                if (!isTerminalLifecycleEvent(iterator.next())) {
+                    iterator.remove()
+                    removed = true
+                    break
                 }
             }
+            if (!removed) {
+                pendingEvents.removeFirst()
+            }
+        }
+        pendingEvents.addLast(event)
+    }
+
+    private fun isTerminalLifecycleEvent(event: Map<String, Any?>): Boolean {
+        return event["method"]?.toString() in setOf(
+            "turn/completed",
+            "turn/failed",
+            "thread/closed",
+            "codex/disconnected",
+        )
+    }
+
+    private fun clearPendingEvents() {
+        synchronized(eventDispatchLock) {
+            pendingEvents.clear()
         }
     }
 

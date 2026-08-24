@@ -147,6 +147,13 @@ class ChatConversationRuntimeState {
   /// back to whichever conversation happens to be visible.
   final Set<String> knownAcpSessionIds = <String>{};
 
+  /// Sessions explicitly invalidated by a cancel/reset. Keep their identity
+  /// for routing so a late event can be rejected by the owning runtime instead
+  /// of falling through to the visible conversation. A new turn may reactivate
+  /// the same ACP session after its first official turn id is admitted.
+  final Set<String> retiredAcpSessionIds = <String>{};
+  bool allowRetiredAcpSessionReactivation = false;
+
   /// Official ACP turn -> stable local run. The map is retained after a run
   /// completes so a delayed terminal/update event can still finalize the
   /// correct historical cards without stealing the next run.
@@ -283,6 +290,8 @@ class ChatConversationRuntimeState {
     processedAcpEventIds.clear();
     completedAgentTurnIds.clear();
     knownAcpSessionIds.clear();
+    retiredAcpSessionIds.clear();
+    allowRetiredAcpSessionReactivation = false;
     acpTurnToRunIds.clear();
     completedAcpTurnIds.clear();
     messages.dispose();
@@ -332,11 +341,21 @@ class ChatConversationRuntimeState {
     if (incomingSessionId.isEmpty) {
       return true;
     }
+    final incomingTurnId = turnId?.trim() ?? '';
+    if (retiredAcpSessionIds.contains(incomingSessionId)) {
+      final canReactivate =
+          allowRetiredAcpSessionReactivation &&
+          incomingTurnIdIsNewForRuntime(incomingTurnId);
+      if (!canReactivate) {
+        return false;
+      }
+      retiredAcpSessionIds.remove(incomingSessionId);
+      allowRetiredAcpSessionReactivation = false;
+    }
     knownAcpSessionIds.add(incomingSessionId);
     while (knownAcpSessionIds.length > 32) {
       knownAcpSessionIds.remove(knownAcpSessionIds.first);
     }
-    final incomingTurnId = turnId?.trim() ?? '';
     // A completed turn remains fenced even after its session becomes idle.
     // Without this check, a delayed event from the previous Harness can be
     // the first event seen after a Xiaowan/DSH switch and silently rebind the
@@ -379,6 +398,14 @@ class ChatConversationRuntimeState {
     // event from that session would look like a competing stale session.
     activeAcpSessionId = incomingSessionId;
     return true;
+  }
+
+  bool incomingTurnIdIsNewForRuntime(String turnId) {
+    return turnId.isNotEmpty &&
+        !completedAgentTurnIds.contains(turnId) &&
+        !completedAcpTurnIds.contains(turnId) &&
+        (currentDispatchTurnId?.trim().isNotEmpty == true ||
+            activeRunId?.trim().isNotEmpty == true);
   }
 }
 
@@ -830,6 +857,7 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     runtime.activeRunId = taskId;
     runtime.lastAgentTurnId = taskId;
     runtime.currentThinkingStage = ThinkingStage.thinking.value;
+    runtime.allowRetiredAcpSessionReactivation = true;
     notifyListeners();
   }
 
@@ -1280,6 +1308,16 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     final runtime = runtimeFor(conversationId: conversationId, mode: mode);
     if (runtime == null) return;
     _flushRuntimeStreamingText(runtime);
+    final sessionsToRetire = <String>{
+      ...runtime.knownAcpSessionIds,
+      if (runtime.activeAcpSessionId?.trim().isNotEmpty == true)
+        runtime.activeAcpSessionId!.trim(),
+    };
+    runtime.retiredAcpSessionIds.addAll(sessionsToRetire);
+    while (runtime.retiredAcpSessionIds.length > 64) {
+      runtime.retiredAcpSessionIds.remove(runtime.retiredAcpSessionIds.first);
+    }
+    runtime.allowRetiredAcpSessionReactivation = false;
     runtime.currentDispatchTurnId = null;
     runtime.activeRunId = null;
     runtime.activeAcpTurnId = null;
