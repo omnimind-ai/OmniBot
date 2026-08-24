@@ -7,6 +7,7 @@ import 'package:ui/features/home/pages/agent/agent_mode_setting_page.dart';
 import 'package:ui/l10n/generated/app_localizations.dart';
 import 'package:ui/services/storage_service.dart';
 import 'package:ui/theme/app_theme.dart';
+import 'package:ui/widgets/settings_detail_sheet.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -112,6 +113,67 @@ void main() {
     expect(find.text('当前使用'), findsNothing);
     expect(find.text('Use Agent'), findsNothing);
     expect(find.text('Selected'), findsNothing);
+  });
+
+  testWidgets('shows Agent check results in the shared settings detail card', (
+    tester,
+  ) async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(agentRuntimeChannel, (call) async {
+          switch (call.method) {
+            case 'agent/list':
+              return <String, dynamic>{
+                'selectedAgentId': 'codex-acp',
+                'agents': <Map<String, dynamic>>[
+                  _agent('codex-acp', 'Codex', 'codex-acp', 'online'),
+                ],
+              };
+            case 'agent/test':
+              expect(call.arguments, <String, Object?>{'agentId': 'codex-acp'});
+              return <String, dynamic>{
+                'ok': true,
+                'capabilities': <String, dynamic>{
+                  'prompt': true,
+                  'tools': <String>['read', 'edit'],
+                },
+              };
+          }
+          return null;
+        });
+    tester.view.physicalSize = const Size(1080, 2200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.lightTheme,
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        locale: const Locale('zh'),
+        home: const AgentModeSettingPage(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('agent-check-codex-acp')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    final resultSheet = find.byKey(
+      const ValueKey('agent-check-result-codex-acp'),
+    );
+    expect(resultSheet, findsOneWidget);
+    expect(find.byType(SettingsDetailSheet), findsOneWidget);
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.text('Agent 检测成功'), findsOneWidget);
+    expect(find.textContaining('prompt: true'), findsOneWidget);
+    expect(find.textContaining('read'), findsOneWidget);
+    expect(find.text('完成'), findsNothing);
+    expect(tester.getSize(resultSheet).width, 640);
+
+    await tester.tapAt(const Offset(20, 20));
+    await tester.pumpAndSettle();
+    expect(resultSheet, findsNothing);
   });
 
   testWidgets(

@@ -72,9 +72,6 @@
 -keepclassmembers,allowoptimization class cn.com.omnimind.baselib.llm.SceneModelBindingEntry {
     <fields>;
 }
--keepclassmembers,allowoptimization class cn.com.omnimind.baselib.llm.SceneVoiceConfig {
-    <fields>;
-}
 -keepclassmembers,allowoptimization class cn.com.omnimind.baselib.util.RuntimeLogEntry {
     <fields>;
 }

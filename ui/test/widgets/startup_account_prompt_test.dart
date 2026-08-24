@@ -248,9 +248,13 @@ void main() {
     expect(find.byKey(const ValueKey('startup-account-card')), findsNothing);
   });
 
-  testWidgets('does not prompt during unfinished onboarding', (tester) async {
+  testWidgets('prompts after onboarding completes in the same app launch', (
+    tester,
+  ) async {
     await StorageService.setBool(StorageKeys.welcomeCompleted, false);
     final navigatorKey = GlobalKey<NavigatorState>();
+    final routeChanges = ChangeNotifier();
+    addTearDown(routeChanges.dispose);
     var versionChecks = 0;
     var accountChecks = 0;
     await tester.pumpWidget(
@@ -258,6 +262,7 @@ void main() {
         navigatorKey: navigatorKey,
         home: StartupAccountPrompt(
           navigatorKey: navigatorKey,
+          routeListenable: routeChanges,
           refreshVersionPolicy: () async {
             versionChecks += 1;
           },
@@ -275,6 +280,15 @@ void main() {
     expect(accountChecks, 0);
     expect(find.byKey(const ValueKey('startup-account-card')), findsNothing);
     expect(find.text('onboarding'), findsOneWidget);
+
+    await StorageService.setBool(StorageKeys.welcomeCompleted, true);
+    routeChanges.notifyListeners();
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    expect(versionChecks, 1);
+    expect(accountChecks, 1);
+    expect(find.byKey(const ValueKey('startup-account-card')), findsOneWidget);
   });
 
   testWidgets('does not prompt again after dismissal is stored', (

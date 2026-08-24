@@ -80,7 +80,9 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
       '/home/plugin_market/${Uri.encodeComponent(plugin.id)}',
       extra: plugin,
     );
-    if (changed == true && mounted) await _loadPlugins();
+    // Predictive/system back pops the route without a typed result. Refresh
+    // for that path as well so changes made on the detail page stay visible.
+    if (changed != false && mounted) await _loadPlugins();
   }
 
   Future<void> _openDashboard(OmniPluginItem plugin) async {

@@ -220,10 +220,6 @@ internal object PlatformMediaProtocol {
                 "平台计费配置暂时不可用，请稍后重试"
             "platform_model_service_unavailable" ->
                 "官方模型服务暂时不可用，请稍后重试"
-            "unsupported_tts_voice" ->
-                "所选官方声音不可用，请刷新模型或选择其他声音"
-            "platform_tts_voice_unavailable" ->
-                "官方语音声音配置暂时不可用，请稍后重试"
             else -> null
         }
 

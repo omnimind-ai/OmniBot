@@ -105,13 +105,13 @@ class GoRouterManager {
         transitionDuration: const Duration(milliseconds: 250),
         reverseTransitionDuration: const Duration(milliseconds: 250),
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          // 开关开启时统一为滑动手势转场(对齐 Miuix 的预测性返回风格),
-          // 关闭时回退为应用原有 Fade 转场。
+          // 开关开启时统一为全宽滑动手势转场，关闭时回退为原有 Fade 转场。
           return PredictiveBackGestureWrapper(
             animation: animation,
             secondaryAnimation: secondaryAnimation,
-            transitionBuilder: (context, animation, secondaryAnimation, child) =>
-                FadeTransition(opacity: animation, child: child),
+            transitionBuilder:
+                (context, animation, secondaryAnimation, child) =>
+                    FadeTransition(opacity: animation, child: child),
             child: child,
           );
         },
@@ -197,11 +197,46 @@ class GoRouterManager {
 
     print('initialLocation: $_initialRoute');
 
-    final effectiveInitial = _initialRoute ?? homeRoute;
+    // Determine effective initial location with onboarding guard
+    final welcomeCompleted =
+        StorageService.getBool(
+          StorageKeys.welcomeCompleted,
+          defaultValue: false,
+        ) ??
+        false;
+    final requestedInitial = _initialRoute ?? homeRoute;
+    final effectiveInitial =
+        (!welcomeCompleted &&
+            !requestedInitial.startsWith('/welcome') &&
+            !_isSubEngine)
+        ? '/welcome/choice'
+        : requestedInitial;
 
     return GoRouter(
       navigatorKey: _rootNavigatorKey,
       initialLocation: effectiveInitial,
+      redirect: _isSubEngine
+          ? null
+          : (context, state) {
+              final completed =
+                  StorageService.getBool(
+                    StorageKeys.welcomeCompleted,
+                    defaultValue: false,
+                  ) ??
+                  false;
+              final location = state.matchedLocation;
+              final isWelcomeRoute = location.startsWith('/welcome');
+
+              // Not completed onboarding -> redirect non-welcome routes
+              if (!completed && !isWelcomeRoute) {
+                return '/welcome/choice';
+              }
+              // Already completed -> redirect welcome routes to home
+              if (completed && isWelcomeRoute) {
+                return homeRoute;
+              }
+              return null;
+            },
       observers: [routeObserver, if (kDebugMode) LoggingRouterObserver()],
       routes: [
         GoRoute(

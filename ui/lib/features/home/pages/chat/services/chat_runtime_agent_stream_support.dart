@@ -178,13 +178,6 @@ extension _ChatRuntimeAgentStreamSupport on ChatConversationRuntimeCoordinator {
         reasoningContent: event.thinking,
       );
     }
-    unawaited(
-      VoicePlaybackCoordinator.instance.onAssistantMessageUpdated(
-        messageId: messageId,
-        text: text,
-        isFinal: event.isFinal,
-      ),
-    );
     _notifyRuntimeListeners();
     schedulePersistRuntimeConversation(
       conversationId: binding.conversationId,

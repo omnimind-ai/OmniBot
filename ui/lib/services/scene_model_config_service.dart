@@ -95,88 +95,6 @@ class SceneModelBindingEntry {
   }
 }
 
-class SceneVoiceConfig {
-  static const String ttsModeBuiltin = 'builtin';
-  static const String ttsModeCustomCurl = 'custom_curl';
-
-  final bool autoPlay;
-  final String voiceId;
-  final String stylePreset;
-  final String customStyle;
-  final String ttsMode;
-  final String customCurlCommand;
-  final bool hasCustomCurlCommand;
-
-  const SceneVoiceConfig({
-    this.autoPlay = false,
-    this.voiceId = 'default_zh',
-    this.stylePreset = '默认',
-    this.customStyle = '',
-    this.ttsMode = ttsModeBuiltin,
-    this.customCurlCommand = '',
-    this.hasCustomCurlCommand = false,
-  });
-
-  bool get isCustomCurl => ttsMode == ttsModeCustomCurl;
-
-  factory SceneVoiceConfig.fromMap(Map<dynamic, dynamic>? map) {
-    return SceneVoiceConfig(
-      autoPlay: map?['autoPlay'] == true,
-      voiceId: (map?['voiceId'] ?? 'default_zh').toString(),
-      stylePreset: (map?['stylePreset'] ?? '默认').toString(),
-      customStyle: (map?['customStyle'] ?? '').toString(),
-      ttsMode: (map?['ttsMode'] ?? ttsModeBuiltin).toString(),
-      // Native credentials are write-only. Discard any legacy value even if an
-      // older native build accidentally includes it in the payload.
-      customCurlCommand: '',
-      hasCustomCurlCommand: map?['hasCustomCurlCommand'] == true,
-    );
-  }
-
-  SceneVoiceConfig copyWith({
-    bool? autoPlay,
-    String? voiceId,
-    String? stylePreset,
-    String? customStyle,
-    String? ttsMode,
-    String? customCurlCommand,
-    bool? hasCustomCurlCommand,
-  }) {
-    return SceneVoiceConfig(
-      autoPlay: autoPlay ?? this.autoPlay,
-      voiceId: voiceId ?? this.voiceId,
-      stylePreset: stylePreset ?? this.stylePreset,
-      customStyle: customStyle ?? this.customStyle,
-      ttsMode: ttsMode ?? this.ttsMode,
-      customCurlCommand: customCurlCommand ?? this.customCurlCommand,
-      hasCustomCurlCommand: hasCustomCurlCommand ?? this.hasCustomCurlCommand,
-    );
-  }
-
-  @override
-  bool operator ==(Object other) {
-    return other is SceneVoiceConfig &&
-        other.autoPlay == autoPlay &&
-        other.voiceId == voiceId &&
-        other.stylePreset == stylePreset &&
-        other.customStyle == customStyle &&
-        other.ttsMode == ttsMode &&
-        other.customCurlCommand == customCurlCommand &&
-        other.hasCustomCurlCommand == hasCustomCurlCommand;
-  }
-
-  @override
-  int get hashCode => Object.hash(
-    autoPlay,
-    voiceId,
-    stylePreset,
-    customStyle,
-    ttsMode,
-    customCurlCommand,
-    hasCustomCurlCommand,
-  );
-}
-
 class SceneOperationConfig {
   final bool useOfficialService;
 
@@ -315,37 +233,6 @@ class SceneModelConfigService {
         .map((item) => SceneModelOverrideEntry.fromMap(item as Map?))
         .where((item) => item.sceneId.isNotEmpty && item.model.isNotEmpty)
         .toList();
-  }
-
-  static Future<SceneVoiceConfig> getSceneVoiceConfig() async {
-    try {
-      final result = await AssistsMessageService.assistCore
-          .invokeMethod<Map<dynamic, dynamic>>('getSceneVoiceConfig');
-      return SceneVoiceConfig.fromMap(result);
-    } on PlatformException {
-      return const SceneVoiceConfig();
-    }
-  }
-
-  static Future<SceneVoiceConfig> saveSceneVoiceConfig(
-    SceneVoiceConfig config, {
-    String? replacementCustomCurlCommand,
-    bool clearCustomCurlCommand = false,
-  }) async {
-    final result = await AssistsMessageService.assistCore
-        .invokeMethod<Map<dynamic, dynamic>>('saveSceneVoiceConfig', {
-          'autoPlay': config.autoPlay,
-          'voiceId': config.voiceId,
-          'stylePreset': config.stylePreset,
-          'customStyle': config.customStyle,
-          'ttsMode': config.ttsMode,
-          if (replacementCustomCurlCommand != null)
-            'customCurlCommand': replacementCustomCurlCommand,
-          if (replacementCustomCurlCommand != null)
-            'replaceCustomCurlCommand': true,
-          if (clearCustomCurlCommand) 'clearCustomCurlCommand': true,
-        });
-    return SceneVoiceConfig.fromMap(result);
   }
 
   static Future<SceneOperationConfig> getSceneOperationConfig() async {

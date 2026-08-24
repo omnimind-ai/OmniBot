@@ -254,7 +254,6 @@ class StorageUsageChannel {
         val workspaceAttachmentsBytes = sumUniquePaths(listOf(File(paths.workspaceInternalRoot, "attachments")))
         val workspaceSharedBytes = sumUniquePaths(listOf(File(paths.workspaceInternalRoot, "shared")))
         val workspaceMemoryBytes = sumUniquePaths(listOf(File(paths.workspaceInternalRoot, "memory")))
-        val workspaceVoiceAudioBytes = sumUniquePaths(listOf(File(paths.workspaceInternalRoot, "audio")))
         val workspaceUserFilesBytes = sumWorkspaceUserFiles(paths.workspaceRoot)
 
         val terminalLocalBytes = sumUniquePaths(listOf(paths.terminalLocalRoot))
@@ -367,16 +366,6 @@ class StorageUsageChannel {
                 cleanable = false,
                 riskLevel = "info",
                 order = 9,
-            ),
-            CategoryEntry(
-                id = "workspace_voice_audio",
-                name = "语音合成音频",
-                description = "内置/自定义 TTS 生成的 wav 语音缓存（workspace/.omnibot/audio）",
-                bytes = workspaceVoiceAudioBytes,
-                cleanable = true,
-                riskLevel = "safe",
-                cleanupHint = "会删除已合成的语音文件，下次播放时会重新生成",
-                order = 18,
             ),
             CategoryEntry(
                 id = "workspace_user_files",
@@ -668,7 +657,6 @@ class StorageUsageChannel {
                     StrategyAction("cache"),
                     StrategyAction("workspace_browser"),
                     StrategyAction("workspace_offloads"),
-                    StrategyAction("workspace_voice_audio"),
                     StrategyAction("shared_drafts"),
                     StrategyAction("mcp_inbox"),
                 ),
@@ -683,7 +671,6 @@ class StorageUsageChannel {
                     StrategyAction("cache"),
                     StrategyAction("workspace_browser"),
                     StrategyAction("workspace_offloads"),
-                    StrategyAction("workspace_voice_audio"),
                     StrategyAction("workspace_attachments"),
                     StrategyAction("workspace_shared"),
                     StrategyAction("shared_drafts"),
@@ -725,7 +712,6 @@ class StorageUsageChannel {
             "workspace_offloads" -> clearWorkspaceInternalSubDir(context, "offloads", cutoffMillis)
             "workspace_attachments" -> clearWorkspaceInternalSubDir(context, "attachments", cutoffMillis)
             "workspace_shared" -> clearWorkspaceInternalSubDir(context, "shared", cutoffMillis)
-            "workspace_voice_audio" -> clearWorkspaceInternalSubDir(context, "audio", cutoffMillis)
 
             "shared_drafts" -> {
                 val directory = File(context.filesDir, "shared_open_drafts")
@@ -920,11 +906,6 @@ class StorageUsageChannel {
             "workspace_memory" -> entry.copy(
                 name = "Workspace memory data",
                 description = "Long/short-term memory and index data.",
-            )
-            "workspace_voice_audio" -> entry.copy(
-                name = "Voice audio cache",
-                description = "TTS-generated wav files (workspace/.omnibot/audio).",
-                cleanupHint = "Deletes synthesized voice files; regenerated on next playback.",
             )
             "workspace_user_files" -> entry.copy(
                 name = "Workspace user files",

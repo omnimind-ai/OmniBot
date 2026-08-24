@@ -188,13 +188,13 @@ void main() {
       expect(route.popGestureInProgress, isTrue);
       expect(
         tester
-            .widget<CupertinoPageTransition>(
+            .widget<PredictiveBackPageTransition>(
               find.ancestor(
                 of: find.byType(AgentConfigPage),
-                matching: find.byType(CupertinoPageTransition),
+                matching: find.byType(PredictiveBackPageTransition),
               ),
             )
-            .linearTransition,
+            .isGestureDriven(),
         isTrue,
       );
 

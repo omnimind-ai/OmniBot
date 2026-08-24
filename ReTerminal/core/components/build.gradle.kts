@@ -34,6 +34,7 @@ kotlin {
 }
 
 dependencies {
+    implementation(project(":core:resources"))
     implementation(libs.material)
     implementation(libs.appcompat)
     
@@ -43,5 +44,4 @@ dependencies {
     implementation(libs.ui)
     implementation(libs.ui.graphics)
     implementation(libs.activity.compose)
-    api(libs.androidx.material.icons.core)
 }

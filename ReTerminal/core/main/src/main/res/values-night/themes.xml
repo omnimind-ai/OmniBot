@@ -8,8 +8,6 @@
         <item name="windowNoTitle">true</item>
         <item name="windowActionBar">false</item>
 
-        <item name="fontFamily">@font/outfit_regular</item>
-        <item name="android:fontFamily">@font/outfit_regular</item>
         <item name="android:forceDarkAllowed">false</item>
     </style>
     
@@ -76,8 +74,6 @@
         <item name="windowNoTitle">true</item>
         <item name="windowActionBar">false</item>
 
-        <item name="fontFamily">@font/outfit_regular</item>
-        <item name="android:fontFamily">@font/outfit_regular</item>
         <item name="android:forceDarkAllowed">false</item>
     </style>
     

@@ -16,24 +16,26 @@ package com.rk.components.compose.preferences.base
  * limitations under the License.
  */
 
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.requiredHeight
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
+/**
+ * A section of preference rows, styled after the main OmnibotApp settings
+ * pages: no card container — rows sit directly on the page background,
+ * separated by hairlines, with a small uppercase-style section header.
+ */
 @Composable
 fun PreferenceGroup(
     modifier: Modifier = Modifier,
@@ -48,21 +50,15 @@ fun PreferenceGroup(
 ) {
     Column(modifier = modifier) {
         PreferenceGroupHeading(heading)
-        Surface(
-            modifier = Modifier.padding(horizontal = 16.dp),
-            shape = MaterialTheme.shapes.large,
-            tonalElevation = 1.dp,
-        ) {
-            if (showDividers) {
-                DividerColumn(
-                    startIndent = dividerStartIndent,
-                    endIndent = dividerEndIndent,
-                    content = content,
-                    dividersToSkip = dividersToSkip,
-                )
-            } else {
-                Column { content() }
-            }
+        if (showDividers) {
+            DividerColumn(
+                startIndent = dividerStartIndent,
+                endIndent = dividerEndIndent,
+                content = content,
+                dividersToSkip = dividersToSkip,
+            )
+        } else {
+            Column { content() }
         }
         PreferenceGroupDescription(description = description, showDescription = showDescription)
     }
@@ -71,19 +67,20 @@ fun PreferenceGroup(
 @Composable
 fun PreferenceGroupHeading(heading: String?, modifier: Modifier = Modifier) {
     if (heading != null) {
-        Column(
-            verticalArrangement = Arrangement.Center,
-            modifier = modifier.height(48.dp).padding(horizontal = 32.dp).fillMaxWidth(),
+        Row(
+            modifier = modifier
+                .fillMaxWidth()
+                .padding(start = 4.dp, end = 4.dp, bottom = 10.dp),
         ) {
             Text(
                 text = heading,
-                style = MaterialTheme.typography.titleSmall,
-                color = MaterialTheme.colorScheme.primary,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.SemiBold,
+                letterSpacing = 0.6.sp,
+                color = LocalOmniPaletteExtras.current.textTertiary,
                 modifier = Modifier.semantics { this.heading() },
             )
         }
-    } else {
-        Spacer(modifier = modifier.requiredHeight(8.dp))
     }
 }
 
@@ -95,10 +92,10 @@ fun PreferenceGroupDescription(
 ) {
     description?.let {
         ExpandAndShrink(modifier = modifier, visible = showDescription) {
-            Row(modifier = Modifier.padding(start = 32.dp, end = 32.dp, top = 16.dp)) {
+            Row(modifier = Modifier.padding(start = 4.dp, end = 4.dp, top = 8.dp)) {
                 Text(
                     text = it,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }

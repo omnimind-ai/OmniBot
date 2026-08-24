@@ -9,13 +9,17 @@ const DEFAULT_MODELS_DEV_R2_PREFIX = "metadata/models-dev";
 const MODELS_DEV_PUBLIC_PATH = "/catalog/models-dev/api.json";
 const ADMIN_MODELS_DEV_PATH = "/admin/models-dev";
 const ADMIN_CLOUD_SERVICE_POLICY_PATH = "/admin/cloud-service-policy";
+const COMMUNITY_WECHAT_QR_PUBLIC_PATH = "/community/wechat-qr";
+const ADMIN_COMMUNITY_WECHAT_QR_PATH = "/admin/community/wechat-qr";
 const CLOUD_SERVICE_POLICY_OBJECT_KEY = "metadata/config/cloud-service-policy.json";
+const COMMUNITY_WECHAT_QR_OBJECT_KEY = "metadata/community/wechat-qr";
 const DOWNLOAD_ROUTE_PREFIX = "/downloads/";
 const ADMIN_RELEASE_ROUTE_PREFIX = "/admin/releases/";
 const ADMIN_ANALYTICS_ROUTE_PREFIX = "/admin/analytics/";
 const VLM_RESPONSES_PATH = "/v1/responses";
 const VLM_CHAT_COMPLETIONS_PATH = "/v1/chat/completions";
 const MAX_VLM_REQUEST_BYTES = 8 * 1024 * 1024;
+const MAX_COMMUNITY_QR_BYTES = 5 * 1024 * 1024;
 const ANALYTICS_RETENTION_DAYS = 90;
 const JSON_HEADERS = {
   "content-type": "application/json; charset=utf-8",
@@ -54,11 +58,13 @@ const worker = {
             VLM_RESPONSES_PATH,
             VLM_CHAT_COMPLETIONS_PATH,
             MODELS_DEV_PUBLIC_PATH,
+            COMMUNITY_WECHAT_QR_PUBLIC_PATH,
             "/downloads/:tag/:asset",
             "/admin",
             "/admin/api/session",
             ADMIN_MODELS_DEV_PATH,
             ADMIN_CLOUD_SERVICE_POLICY_PATH,
+            ADMIN_COMMUNITY_WECHAT_QR_PATH,
             "/admin/releases",
             "/admin/releases/:tag",
             "/admin/releases/:tag/assets/:asset",
@@ -85,6 +91,13 @@ const worker = {
         return await handleModelsDevCatalog(request, env);
       }
 
+      if (
+        (request.method === "GET" || request.method === "HEAD") &&
+        pathname === COMMUNITY_WECHAT_QR_PUBLIC_PATH
+      ) {
+        return await handleCommunityWechatQr(request, env);
+      }
+
       if (request.method === "GET" && pathname === "/admin") {
         return adminPage();
       }
@@ -107,6 +120,16 @@ const worker = {
         return request.method === "GET"
           ? await handleGetCloudServicePolicy(env)
           : await handlePutCloudServicePolicy(request, env);
+      }
+
+      if (
+        pathname === ADMIN_COMMUNITY_WECHAT_QR_PATH &&
+        (request.method === "GET" || request.method === "PUT")
+      ) {
+        requireAdmin(request, env);
+        return request.method === "GET"
+          ? await handleGetCommunityWechatQr(request, env)
+          : await handlePutCommunityWechatQr(request, env);
       }
 
       if (request.method === "GET" && pathname.startsWith(ADMIN_ANALYTICS_ROUTE_PREFIX)) {
@@ -181,6 +204,135 @@ function adminPage() {
       "x-frame-options": "DENY",
     },
   });
+}
+
+async function handleCommunityWechatQr(request, env) {
+  const bucket = requireBucket(env);
+  const object = request.method === "HEAD"
+    ? await bucket.head(COMMUNITY_WECHAT_QR_OBJECT_KEY)
+    : await bucket.get(COMMUNITY_WECHAT_QR_OBJECT_KEY);
+  if (!object) {
+    return json({ ok: false, error: "WeChat group QR code has not been uploaded" }, 404);
+  }
+
+  const etag = quoteEtag(object.etag);
+  const headers = communityWechatQrHeaders(object, etag);
+  if (etag && requestEtagMatches(request.headers.get("if-none-match"), etag)) {
+    return new Response(null, { status: 304, headers });
+  }
+  return new Response(request.method === "HEAD" ? null : object.body, {
+    status: 200,
+    headers,
+  });
+}
+
+async function handleGetCommunityWechatQr(request, env) {
+  const object = await requireBucket(env).head(COMMUNITY_WECHAT_QR_OBJECT_KEY);
+  return json({
+    ok: true,
+    image: communityWechatQrStatus(object, new URL(request.url)),
+  });
+}
+
+async function handlePutCommunityWechatQr(request, env) {
+  const declaredSize = normalizeSize(request.headers.get("content-length"));
+  if (declaredSize > MAX_COMMUNITY_QR_BYTES) {
+    throw httpError(413, "QR image must be 5 MB or smaller");
+  }
+
+  const bytes = new Uint8Array(await request.arrayBuffer());
+  if (!bytes.byteLength) {
+    throw httpError(400, "QR image body is required");
+  }
+  if (bytes.byteLength > MAX_COMMUNITY_QR_BYTES) {
+    throw httpError(413, "QR image must be 5 MB or smaller");
+  }
+
+  const contentType = detectCommunityQrContentType(bytes);
+  if (!contentType) {
+    throw httpError(415, "QR image must be a JPEG, PNG, or WebP file");
+  }
+  const requestedContentType = stringValue(request.headers.get("content-type"))
+    .split(";", 1)[0]
+    .trim()
+    .toLowerCase();
+  if (
+    requestedContentType &&
+    requestedContentType !== "application/octet-stream" &&
+    requestedContentType !== contentType
+  ) {
+    throw httpError(415, `Image bytes are ${contentType}, not ${requestedContentType}`);
+  }
+
+  const bucket = requireBucket(env);
+  const uploadedAt = Date.now();
+  const uploaded = await bucket.put(COMMUNITY_WECHAT_QR_OBJECT_KEY, bytes, {
+    httpMetadata: {
+      contentType,
+      cacheControl: "public, no-cache, max-age=0, must-revalidate",
+    },
+    customMetadata: {
+      uploadedAt: String(uploadedAt),
+    },
+  });
+  const object = uploaded || await bucket.head(COMMUNITY_WECHAT_QR_OBJECT_KEY);
+  return json({
+    ok: true,
+    image: communityWechatQrStatus(object, new URL(request.url), {
+      contentType,
+      size: bytes.byteLength,
+      uploadedAt,
+    }),
+  });
+}
+
+function communityWechatQrStatus(object, url, fallback = {}) {
+  if (!object) {
+    return {
+      configured: false,
+      publicUrl: `${url.origin}${COMMUNITY_WECHAT_QR_PUBLIC_PATH}`,
+    };
+  }
+  const metadata = object.customMetadata || {};
+  return {
+    configured: true,
+    publicUrl: `${url.origin}${COMMUNITY_WECHAT_QR_PUBLIC_PATH}`,
+    contentType: stringValue(object.httpMetadata?.contentType) || fallback.contentType || "image/jpeg",
+    size: normalizeSize(object.size) || fallback.size || 0,
+    etag: quoteEtag(object.etag),
+    uploadedAt: normalizeSize(metadata.uploadedAt ?? metadata.uploadedat) || fallback.uploadedAt || 0,
+  };
+}
+
+function communityWechatQrHeaders(object, etag) {
+  const headers = new Headers({
+    "content-type": stringValue(object.httpMetadata?.contentType) || "image/jpeg",
+    "cache-control": "public, no-cache, max-age=0, must-revalidate",
+    "access-control-allow-origin": "*",
+    "access-control-expose-headers": "etag",
+    "cross-origin-resource-policy": "cross-origin",
+    "x-content-type-options": "nosniff",
+  });
+  if (etag) headers.set("etag", etag);
+  return headers;
+}
+
+function detectCommunityQrContentType(bytes) {
+  if (
+    bytes.length >= 3 &&
+    bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff
+  ) return "image/jpeg";
+  if (
+    bytes.length >= 8 &&
+    bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47 &&
+    bytes[4] === 0x0d && bytes[5] === 0x0a && bytes[6] === 0x1a && bytes[7] === 0x0a
+  ) return "image/png";
+  if (
+    bytes.length >= 12 &&
+    bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
+    bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50
+  ) return "image/webp";
+  return "";
 }
 
 async function handleModelsDevCatalog(request, env) {

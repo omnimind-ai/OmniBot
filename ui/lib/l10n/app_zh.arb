@@ -335,12 +335,6 @@
       "error": {}
     }
   },
-  "sceneVoiceSaveFailed": "保存语音配置失败：{error}",
-  "@sceneVoiceSaveFailed": {
-    "placeholders": {
-      "error": {}
-    }
-  },
 
   "modelsNoAvailableModels": "暂无可用模型",
 

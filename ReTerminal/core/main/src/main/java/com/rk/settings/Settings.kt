@@ -3,7 +3,6 @@ package com.rk.settings
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.SharedPreferences
-import android.os.Build
 import androidx.appcompat.app.AppCompatDelegate
 import com.rk.libcommons.application
 import com.rk.terminal.ui.screens.settings.WorkingMode
@@ -20,7 +19,9 @@ object Settings {
     var monet
         get() = Preference.getBoolean(
             key = "monet",
-            default = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+            // Dynamic color is off by default to match the fixed brand
+            // palette of the main OmnibotApp.
+            default = false
         )
         set(value) = Preference.setBoolean(key = "monet",value)
     var ignore_storage_permission

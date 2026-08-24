@@ -1,10 +1,12 @@
 package cn.com.omnimind.bot.omniflow.ui
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.provider.Settings
 import android.view.Gravity
 import android.view.MotionEvent
@@ -37,6 +39,7 @@ internal object ExecutionOverlay {
         onStop: () -> Unit,
     ): Session? = synchronized(this) {
         activeSession?.dismissLocked()
+        activeSession = null
         val appContext = context.applicationContext
         val overlayHandle = AndroidGuiOverlayHost.resolve(appContext)
         val host = ExecutionOverlayHostPolicy.resolve(
@@ -50,6 +53,14 @@ internal object ExecutionOverlay {
         }
         val manager = windowContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
         val session = Session(manager, onComplete, onStop, initialPhase)
+        val feedbackView = ExecutionFeedbackView(windowContext)
+        val feedbackParams = feedbackLayoutParams(host.windowType)
+        runCatching {
+            manager.addView(feedbackView, feedbackParams)
+            session.attachFeedback(feedbackView)
+        }.onFailure { error ->
+            OmniLog.w(TAG, "show GUI feedback failed: ${error.message}")
+        }
         val view = buildView(windowContext, goal, session)
         val params = WindowManager.LayoutParams().apply {
             type = host.windowType
@@ -69,7 +80,25 @@ internal object ExecutionOverlay {
             session
         }.onFailure { error ->
             OmniLog.w(TAG, "show GUI controls failed: ${error.message}")
+            session.dismissLocked()
         }.getOrNull()
+    }
+
+    private fun feedbackLayoutParams(windowType: Int) = WindowManager.LayoutParams(
+        WindowManager.LayoutParams.MATCH_PARENT,
+        WindowManager.LayoutParams.MATCH_PARENT,
+        windowType,
+        executionFeedbackWindowFlags(),
+        PixelFormat.TRANSLUCENT,
+    ).apply {
+        gravity = Gravity.TOP or Gravity.START
+        x = 0
+        y = 0
+        val policy = executionFeedbackWindowPolicy(Build.VERSION.SDK_INT)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            setFitInsetsTypes(requireNotNull(policy.fitInsetsTypes))
+        }
+        layoutInDisplayCutoutMode = policy.layoutInDisplayCutoutMode
     }
 
     private fun buildView(context: Context, goal: String, session: Session): View {
@@ -172,6 +201,7 @@ internal object ExecutionOverlay {
         private val terminalRequested = AtomicBoolean(false)
         private var view: View? = null
         private var params: WindowManager.LayoutParams? = null
+        private var feedbackView: ExecutionFeedbackView? = null
         private var title: TextView? = null
         private var status: TextView? = null
         private var pause: TextView? = null
@@ -186,6 +216,10 @@ internal object ExecutionOverlay {
         internal fun attach(view: View, params: WindowManager.LayoutParams) {
             this.view = view
             this.params = params
+        }
+
+        internal fun attachFeedback(view: ExecutionFeedbackView) {
+            feedbackView = view
         }
 
         internal fun bind(
@@ -221,6 +255,11 @@ internal object ExecutionOverlay {
             }
         }
 
+        internal fun showActionFeedback(feedback: ExecutionActionFeedback) {
+            if (stopped.get() || terminalRequested.get() || paused.value) return
+            feedbackView?.show(feedback)
+        }
+
         suspend fun avoidTarget(relativeY: Double?) {
             val targetY = relativeY ?: return
             val moved = withContext(Dispatchers.Main.immediate) {
@@ -250,8 +289,11 @@ internal object ExecutionOverlay {
         suspend fun hideForScreenshot() {
             val hidden = withContext(Dispatchers.Main.immediate) {
                 if (stopped.get()) return@withContext false
-                val attached = view ?: return@withContext false
-                attached.visibility = View.INVISIBLE
+                val controlsAttached = view
+                val feedbackAttached = feedbackView
+                if (controlsAttached == null && feedbackAttached == null) return@withContext false
+                controlsAttached?.visibility = View.INVISIBLE
+                feedbackAttached?.visibility = View.INVISIBLE
                 true
             }
             if (hidden) delay(32L)
@@ -261,6 +303,7 @@ internal object ExecutionOverlay {
             withContext(Dispatchers.Main.immediate) {
                 if (stopped.get()) return@withContext
                 view?.visibility = View.VISIBLE
+                feedbackView?.visibility = View.VISIBLE
             }
         }
 
@@ -297,6 +340,7 @@ internal object ExecutionOverlay {
             if (!terminalRequested.compareAndSet(false, true)) return
             stopped.set(true)
             paused.value = false
+            setFeedbackRunning(false)
             view?.post {
                 status?.text = "正在停止"
                 pause?.isEnabled = false
@@ -309,6 +353,7 @@ internal object ExecutionOverlay {
         fun requestComplete() {
             if (!terminalRequested.compareAndSet(false, true)) return
             paused.value = false
+            setFeedbackRunning(false)
             view?.post {
                 status?.text = "正在完成"
                 pause?.isEnabled = false
@@ -326,6 +371,7 @@ internal object ExecutionOverlay {
             withContext(Dispatchers.Main) {
                 stopped.set(true)
                 paused.value = false
+                feedbackView?.setRunning(false)
                 title?.text = message.take(64)
                 status?.text = message.take(24)
                 pause?.visibility = View.GONE
@@ -342,10 +388,11 @@ internal object ExecutionOverlay {
         }
 
         internal fun dismissLocked() {
-            val attached = view ?: return
-            runCatching { manager.removeViewImmediate(attached) }
+            view?.let { attached -> runCatching { manager.removeViewImmediate(attached) } }
+            feedbackView?.let { attached -> runCatching { manager.removeViewImmediate(attached) } }
             view = null
             params = null
+            feedbackView = null
         }
 
         private fun renderPaused() {
@@ -353,9 +400,47 @@ internal object ExecutionOverlay {
             statusState.setPaused(isPaused)
             pause?.text = if (isPaused) "继续" else "接管"
             status?.text = statusState.label
+            setFeedbackRunning(!isPaused && !stopped.get() && !terminalRequested.get())
+        }
+
+        private fun setFeedbackRunning(running: Boolean) {
+            val feedback = feedbackView ?: return
+            if (feedback.handler?.looper?.isCurrentThread == true) {
+                feedback.setRunning(running)
+            } else {
+                feedback.post { feedback.setRunning(running) }
+            }
         }
     }
 }
+
+internal fun executionFeedbackWindowFlags(): Int =
+    WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED or
+        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+        WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+        WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+
+internal data class ExecutionFeedbackWindowPolicy(
+    val fitInsetsTypes: Int?,
+    val layoutInDisplayCutoutMode: Int,
+)
+
+@SuppressLint("InlinedApi")
+internal fun executionFeedbackWindowPolicy(sdkInt: Int): ExecutionFeedbackWindowPolicy =
+    if (sdkInt >= Build.VERSION_CODES.R) {
+        ExecutionFeedbackWindowPolicy(
+            fitInsetsTypes = 0,
+            layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS,
+        )
+    } else {
+        ExecutionFeedbackWindowPolicy(
+            fitInsetsTypes = null,
+            layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES,
+        )
+    }
 
 internal fun executionOverlayGravityForTarget(relativeY: Double): Int =
     if (relativeY >= 500.0) {

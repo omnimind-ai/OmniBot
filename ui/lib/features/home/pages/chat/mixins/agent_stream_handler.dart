@@ -12,7 +12,6 @@ import 'package:ui/services/agent_stream_meta.dart';
 import 'package:ui/services/assists_core_service.dart';
 import 'package:ui/services/agent_diff_parser.dart';
 import 'package:ui/services/agent_tool_call_parser.dart';
-import 'package:ui/services/voice_playback_coordinator.dart';
 
 enum ThinkingStage {
   thinking(1),
@@ -311,13 +310,6 @@ mixin AgentStreamHandler<T extends StatefulWidget> on State<T> {
       });
     }
     onAgentTextMessageUpdated(messageId, isFinal: event.isFinal);
-    unawaited(
-      VoicePlaybackCoordinator.instance.onAssistantMessageUpdated(
-        messageId: messageId,
-        text: text,
-        isFinal: event.isFinal,
-      ),
-    );
     _persistAgentConversationSafely();
   }
 
@@ -750,14 +742,6 @@ mixin AgentStreamHandler<T extends StatefulWidget> on State<T> {
       isAiResponding = false;
     });
     _pendingAgentTextTaskId = null;
-    if (preservedText.isNotEmpty) {
-      unawaited(
-        VoicePlaybackCoordinator.instance.onAssistantMessageCompleted(
-          messageId: textId,
-          text: preservedText,
-        ),
-      );
-    }
 
     clearAgentStreamSessionState();
     resetDispatchState();

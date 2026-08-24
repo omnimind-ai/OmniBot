@@ -231,7 +231,7 @@ Special thanks to these open-source projects:
 <table align="center">
   <tr>
     <td align="center">
-      <img src="docs/pic/wechat.jpg" alt="WeChat Group" width="220"/><br/>
+      <img src="https://omni.1775885.xyz/community/wechat-qr" alt="WeChat Group" width="220"/><br/>
     </td>
   </tr>
 </table>

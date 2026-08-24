@@ -1,15 +1,8 @@
 package com.rk.components.compose.preferences.switch
 
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -19,12 +12,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
 import com.rk.components.compose.preferences.base.PreferenceTemplate
 
 /**
  * A Preference that provides a two-state toggleable option.
+ *
+ * Row layout and switch colors follow the main OmnibotApp settings style:
+ * accent track when on, borderStrong track when off, white thumb.
  *
  * @author Aquiles Trindade (trindadedev).
  */
@@ -62,21 +56,10 @@ fun PreferenceSwitch(
                     }
                 }
             ),
-        contentModifier = Modifier.fillMaxHeight().padding(vertical = 16.dp).padding(start = 16.dp),
-        title = { Text(fontWeight = FontWeight.Bold, text = label) },
+        title = { Text(text = label) },
         description = { description?.let { Text(text = it) } },
         endWidget = {
-            if (onClick != null) {
-                Spacer(
-                    modifier =
-                        Modifier.height(32.dp)
-                            .width(1.dp)
-                            .fillMaxHeight()
-                            .background(MaterialTheme.colorScheme.outlineVariant)
-                )
-            }
             Switch(
-                modifier = Modifier.padding(all = 16.dp).height(24.dp),
                 checked = checked,
                 onCheckedChange = onCheckedChange,
                 enabled = enabled,
@@ -84,14 +67,13 @@ fun PreferenceSwitch(
                 colors =
                     SwitchDefaults.colors()
                         .copy(
-                            uncheckedThumbColor = MaterialTheme.colorScheme.background,
-                            uncheckedTrackColor =
-                                MaterialTheme.colorScheme.onBackground.copy(alpha = 0.5f),
+                            checkedThumbColor = Color.White,
+                            uncheckedThumbColor = MaterialTheme.colorScheme.surfaceContainerLow,
+                            uncheckedTrackColor = MaterialTheme.colorScheme.outline,
                             uncheckedBorderColor = Color.Transparent,
                         ),
             )
         },
         enabled = enabled,
-        applyPaddings = false,
     )
 }

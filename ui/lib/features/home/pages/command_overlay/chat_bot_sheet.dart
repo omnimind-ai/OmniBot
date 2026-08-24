@@ -25,7 +25,6 @@ import 'package:ui/features/home/pages/chat/utils/keyboard_inset_motion_tracker.
 import 'package:ui/features/home/pages/chat/widgets/agent_run_group_message.dart';
 import 'package:ui/features/home/pages/chat/widgets/chat_empty_greeting.dart';
 import 'package:ui/services/storage_service.dart';
-import 'package:ui/services/voice_playback_coordinator.dart';
 import 'package:ui/services/screen_dialog_service.dart';
 import 'package:ui/services/conversation_service.dart';
 import 'package:ui/services/conversation_history_service.dart';
@@ -982,15 +981,6 @@ class _ChatBotSheetState extends State<ChatBotSheet>
         prefillTokensPerSecond: prefillTokensPerSecond,
         decodeTokensPerSecond: decodeTokensPerSecond,
       );
-      if (!isError && !isSummarizing && messageText.trim().isNotEmpty) {
-        unawaited(
-          VoicePlaybackCoordinator.instance.onAssistantMessageUpdated(
-            messageId: taskId,
-            text: messageText,
-            isFinal: false,
-          ),
-        );
-      }
     }
   }
 
@@ -1310,14 +1300,6 @@ class _ChatBotSheetState extends State<ChatBotSheet>
         _messages[index] = existing.copyWith(content: existing.content);
         _syncMessageLinkPreviews(taskId);
       });
-    }
-    if (!isErrorMessage && messageText.trim().isNotEmpty) {
-      unawaited(
-        VoicePlaybackCoordinator.instance.onAssistantMessageCompleted(
-          messageId: taskId,
-          text: messageText,
-        ),
-      );
     }
     _currentAiMessages.remove(taskId);
     await _saveConversationToDb();

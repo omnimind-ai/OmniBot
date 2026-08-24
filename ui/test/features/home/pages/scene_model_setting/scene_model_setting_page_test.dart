@@ -4,7 +4,6 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter_switch/flutter_switch.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ui/features/home/pages/agent/remote_codex_setting_page.dart';
 import 'package:ui/features/home/pages/scene_model_setting/scene_model_setting_page.dart';
@@ -12,7 +11,6 @@ import 'package:ui/l10n/generated/app_localizations.dart';
 import 'package:ui/services/model_provider_config_service.dart';
 import 'package:ui/services/models_dev_catalog_service.dart';
 import 'package:ui/services/storage_service.dart';
-import 'package:ui/services/voice_playback_coordinator.dart';
 import 'package:ui/theme/app_theme.dart';
 
 class _SvgTestAssetBundle extends CachingAssetBundle {
@@ -77,7 +75,6 @@ void main() {
     await tester.pump(const Duration(milliseconds: 50));
   }
 
-  late Map<String, dynamic> savedVoiceConfig;
   late Map<String, dynamic> savedOperationConfig;
   late Map<String, dynamic> codexReadConfig;
   late Map<String, dynamic>? savedCodexConfig;
@@ -104,7 +101,6 @@ void main() {
   setUp(() async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     await StorageService.init();
-    await VoicePlaybackCoordinator.instance.debugResetForTest();
     codexWriteCount = 0;
     savedCodexConfig = null;
     codexReadConfig = <String, dynamic>{
@@ -133,12 +129,6 @@ void main() {
     providerFetchError = null;
     lastProviderFetchArguments = null;
     providerFetchArguments = <Map<dynamic, dynamic>>[];
-    savedVoiceConfig = <String, dynamic>{
-      'autoPlay': false,
-      'voiceId': 'default_zh',
-      'stylePreset': '默认',
-      'customStyle': '',
-    };
     savedOperationConfig = <String, dynamic>{'useOfficialService': true};
 
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -151,23 +141,6 @@ void main() {
                   'description': '负责 Android GUI 观察与动作决策',
                   'defaultModel': 'qwen3-vl-plus',
                   'effectiveModel': 'qwen3-vl-plus',
-                  'effectiveProviderProfileId': '',
-                  'effectiveProviderProfileName': '',
-                  'boundProviderProfileId': '',
-                  'boundProviderProfileName': '',
-                  'transport': 'openai_compatible',
-                  'configSource': 'builtin',
-                  'overrideApplied': false,
-                  'overrideModel': '',
-                  'providerConfigured': false,
-                  'bindingExists': false,
-                  'bindingProfileMissing': false,
-                },
-                <String, dynamic>{
-                  'sceneId': 'scene.voice',
-                  'description': '负责 AI 回复文本的语音合成与播放',
-                  'defaultModel': '',
-                  'effectiveModel': '',
                   'effectiveProviderProfileId': '',
                   'effectiveProviderProfileName': '',
                   'boundProviderProfileId': '',
@@ -279,13 +252,6 @@ void main() {
               }
               if (pending != null) return pending.future;
               return providerFetchResponse;
-            case 'getSceneVoiceConfig':
-              return savedVoiceConfig;
-            case 'saveSceneVoiceConfig':
-              savedVoiceConfig = Map<String, dynamic>.from(
-                (call.arguments as Map).cast<String, dynamic>(),
-              );
-              return savedVoiceConfig;
             case 'getSceneOperationConfig':
               return savedOperationConfig;
             case 'saveSceneOperationConfig':
@@ -329,7 +295,6 @@ void main() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(agentRuntimeChannel, null);
     ModelsDevCatalogService.resetForTesting();
-    await VoicePlaybackCoordinator.instance.debugResetForTest();
   });
 
   testWidgets('scene page does not wait for metadata refresh', (tester) async {
@@ -366,7 +331,8 @@ void main() {
 
     expect(find.byType(ListView), findsWidgets);
     expect(find.byType(CircularProgressIndicator), findsNothing);
-    expect(find.text('Voice'), findsOneWidget);
+    expect(find.text('Chat Compactor'), findsOneWidget);
+    expect(find.text('Voice'), findsNothing);
     expect(loadCount, 1);
 
     loader.complete(
@@ -471,7 +437,7 @@ void main() {
     ];
 
     await pumpSceneSettings(tester);
-    expect(providerFetchCount, 3);
+    expect(providerFetchCount, 2);
     await tester.tap(
       find.byKey(
         const Key('scene-model-selector-scene.compactor.context.chat'),
@@ -493,7 +459,7 @@ void main() {
     ];
 
     await pumpSceneSettings(tester);
-    expect(providerFetchCount, 4);
+    expect(providerFetchCount, 3);
 
     await tester.tap(
       find.byKey(
@@ -524,13 +490,10 @@ void main() {
         'embedding': <Map<String, dynamic>>[
           <String, dynamic>{'id': 'official-embedding-model'},
         ],
-        'tts': <Map<String, dynamic>>[
-          <String, dynamic>{'id': 'official-tts-model'},
-        ],
       };
 
       await pumpSceneSettings(tester);
-      expect(providerFetchCount, 4);
+      expect(providerFetchCount, 3);
       expect(
         providerFetchArguments.any(
           (arguments) =>
@@ -558,9 +521,46 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('official-embedding-model'), findsOneWidget);
       expect(find.text('official-text-model'), findsNothing);
-      expect(find.text('official-tts-model'), findsNothing);
     },
   );
+
+  testWidgets('text selector does not wait for a pending embedding catalog', (
+    tester,
+  ) async {
+    includeOfficialProvider = true;
+    providerFetchResponse = <Map<String, dynamic>>[
+      <String, dynamic>{'id': 'byok-model'},
+    ];
+    officialFetchResponsesByCapability = <String, List<Map<String, dynamic>>>{
+      'text': <Map<String, dynamic>>[
+        <String, dynamic>{'id': 'official-text-model'},
+      ],
+    };
+    final embeddingPending = Completer<List<Map<String, dynamic>>>();
+    officialFetchCompletersByCapability['embedding'] = embeddingPending;
+
+    await pumpSceneSettings(tester);
+    expect(providerFetchCount, 3);
+
+    await tester.tap(
+      find.byKey(
+        const Key('scene-model-selector-scene.compactor.context.chat'),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.text('OmniBot 官方 AI'), findsOneWidget);
+    await tester.tap(find.text('OmniBot 官方 AI'));
+    await tester.pumpAndSettle();
+    expect(find.text('official-text-model'), findsOneWidget);
+
+    embeddingPending.complete(<Map<String, dynamic>>[
+      <String, dynamic>{'id': 'official-embedding-model'},
+    ]);
+    await tester.pumpAndSettle();
+  });
 
   testWidgets('first embedding selector tap waits for official models', (
     tester,
@@ -573,15 +573,12 @@ void main() {
       'text': <Map<String, dynamic>>[
         <String, dynamic>{'id': 'official-text-model'},
       ],
-      'tts': <Map<String, dynamic>>[
-        <String, dynamic>{'id': 'official-tts-model'},
-      ],
     };
     final embeddingPending = Completer<List<Map<String, dynamic>>>();
     officialFetchCompletersByCapability['embedding'] = embeddingPending;
 
     await pumpSceneSettings(tester);
-    expect(providerFetchCount, 4);
+    expect(providerFetchCount, 3);
 
     await tester.tap(
       find.byKey(const Key('scene-model-selector-scene.memory.embedding')),
@@ -629,62 +626,6 @@ void main() {
 
     expect(find.text('GUI'), findsOneWidget);
     expect(find.text('VLM'), findsNothing);
-  });
-
-  testWidgets('voice scene expands and saves voice settings', (tester) async {
-    tester.view.physicalSize = const Size(1080, 2000);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-
-    await tester.pumpWidget(buildTestApp(const SceneModelSettingPage()));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 50));
-
-    expect(find.text('Voice'), findsOneWidget);
-    expect(find.text('GUI'), findsOneWidget);
-    expect(find.text('VLM'), findsNothing);
-    expect(find.text('小万官方内置模型'), findsOneWidget);
-    expect(find.text('Compactor'), findsNothing);
-    expect(find.text('Chat Compactor'), findsOneWidget);
-    expect(find.text('未绑定'), findsOneWidget);
-    expect(find.text('AI 响应完成后自动播放'), findsNothing);
-    expect(find.byKey(const Key('voice-scene-expand-button')), findsOneWidget);
-
-    await tester.tap(find.byKey(const Key('voice-scene-expand-button')));
-    await tester.pumpAndSettle();
-
-    expect(find.text('AI 响应完成后自动播放'), findsOneWidget);
-    expect(find.byType(FlutterSwitch), findsNWidgets(2));
-    expect(find.byType(Switch), findsNothing);
-    expect(find.byKey(const Key('voice-scene-voice-id-field')), findsOneWidget);
-    expect(
-      find.byKey(const Key('voice-scene-custom-style-field')),
-      findsOneWidget,
-    );
-    expect(find.text('保存语音设置'), findsNothing);
-    expect(find.textContaining('建议绑定 MiMo'), findsNothing);
-
-    await tester.enterText(
-      find.byKey(const Key('voice-scene-voice-id-field')),
-      'mimo_default',
-    );
-    await tester.pump(const Duration(milliseconds: 500));
-
-    await tester.tap(find.byKey(const Key('voice-style-option-温柔陪伴')));
-    await tester.pumpAndSettle();
-
-    await tester.enterText(
-      find.byKey(const Key('voice-scene-custom-style-field')),
-      '更温柔一点',
-    );
-    await tester.pump(const Duration(milliseconds: 500));
-
-    expect(savedVoiceConfig['voiceId'], 'mimo_default');
-    expect(savedVoiceConfig['stylePreset'], '温柔陪伴');
-    expect(savedVoiceConfig['customStyle'], '更温柔一点');
-
-    expect(codexWriteCount, 0);
   });
 
   testWidgets(

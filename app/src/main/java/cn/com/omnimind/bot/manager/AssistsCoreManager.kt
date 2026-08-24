@@ -39,8 +39,6 @@ import cn.com.omnimind.baselib.llm.SceneModelOverrideEntry
 import cn.com.omnimind.baselib.llm.SceneModelOverrideStore
 import cn.com.omnimind.baselib.llm.SceneOperationConfig
 import cn.com.omnimind.baselib.llm.SceneOperationConfigStore
-import cn.com.omnimind.baselib.llm.SceneVoiceConfig
-import cn.com.omnimind.baselib.llm.SceneVoiceConfigStore
 import cn.com.omnimind.baselib.util.APPPackageUtil
 import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.baselib.util.RuntimeLogStore
@@ -1101,17 +1099,6 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
             "sceneId" to sceneId,
             "providerProfileId" to providerProfileId,
             "modelId" to modelId
-        )
-    }
-
-    private fun SceneVoiceConfig.toMap(): Map<String, Any?> {
-        return mapOf(
-            "autoPlay" to autoPlay,
-            "voiceId" to voiceId,
-            "stylePreset" to stylePreset,
-            "customStyle" to customStyle,
-            "ttsMode" to ttsMode,
-            "customCurlCommand" to customCurlCommand
         )
     }
 
@@ -3085,13 +3072,18 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
         val useProvidedCustomHeaders = call.argument<Boolean>("useProvidedCustomHeaders") == true
         val profileId = call.argument<String>("profileId")?.trim()
         val capability = call.argument<String>("capability")?.trim()
+        val forceRefresh = call.argument<Boolean>("forceRefresh") == true
         val expectedProfileRevision = call.argument<Number>("expectedProfileRevision")?.toLong()
         val expectedProfileBaseUrl = call.argument<String>("expectedProfileBaseUrl")?.trim().orEmpty()
 
         workJob.launch {
             try {
                 if (OmniOfficialProvider.isOfficialProfile(profileId)) {
-                    val models = PlatformAiProvisioner.ensureReadyAndGetModels(capability)
+                    val models = if (forceRefresh) {
+                        PlatformAiProvisioner.refreshAndGetModels(capability)
+                    } else {
+                        PlatformAiProvisioner.ensureReadyAndGetModels(capability)
+                    }
                     withContext(Dispatchers.Main) {
                         result.success(models.map { it.toMap() })
                     }
@@ -3288,53 +3280,6 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
                 OmniLog.e(TAG, "clearSceneModelBinding error: ${e.message}")
                 withContext(Dispatchers.Main) {
                     result.error("CLEAR_SCENE_MODEL_BINDING_ERROR", e.message, null)
-                }
-            }
-        }
-    }
-
-    fun getSceneVoiceConfig(call: MethodCall, result: MethodChannel.Result) {
-        workJob.launch {
-            try {
-                withContext(Dispatchers.Main) {
-                    result.success(SceneVoiceConfigStore.getConfig().toMap())
-                }
-            } catch (e: Exception) {
-                OmniLog.e(TAG, "getSceneVoiceConfig error: ${e.message}")
-                withContext(Dispatchers.Main) {
-                    result.error("GET_SCENE_VOICE_CONFIG_ERROR", e.message, null)
-                }
-            }
-        }
-    }
-
-    fun saveSceneVoiceConfig(call: MethodCall, result: MethodChannel.Result) {
-        val autoPlay = call.argument<Boolean>("autoPlay") == true
-        val voiceId = call.argument<String>("voiceId")?.trim().orEmpty()
-        val stylePreset = call.argument<String>("stylePreset")?.trim().orEmpty()
-        val customStyle = call.argument<String>("customStyle")?.trim().orEmpty()
-        val ttsMode = call.argument<String>("ttsMode")?.trim().orEmpty()
-        val customCurlCommand = call.argument<String>("customCurlCommand")?.trim().orEmpty()
-
-        workJob.launch {
-            try {
-                val saved = SceneVoiceConfigStore.saveConfig(
-                    SceneVoiceConfig(
-                        autoPlay = autoPlay,
-                        voiceId = voiceId,
-                        stylePreset = stylePreset,
-                        customStyle = customStyle,
-                        ttsMode = ttsMode,
-                        customCurlCommand = customCurlCommand
-                    )
-                )
-                withContext(Dispatchers.Main) {
-                    result.success(saved.toMap())
-                }
-            } catch (e: Exception) {
-                OmniLog.e(TAG, "saveSceneVoiceConfig error: ${e.message}")
-                withContext(Dispatchers.Main) {
-                    result.error("SAVE_SCENE_VOICE_CONFIG_ERROR", e.message, null)
                 }
             }
         }

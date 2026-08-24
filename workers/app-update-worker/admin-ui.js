@@ -307,6 +307,13 @@ textarea.text-input { min-height: 130px; resize: vertical; line-height: 1.6; }
 .policy-form { max-width: 760px; }
 .policy-form .config-hint { margin-top: 14px; }
 .policy-actions { display: flex; align-items: center; gap: 10px; margin-top: 16px; }
+.qr-form { max-width: 760px; }
+.qr-preview {
+  display: block; width: 220px; max-height: 340px; object-fit: contain;
+  margin: 14px 0; border: 1px solid var(--border); border-radius: 10px;
+  background: #fff;
+}
+.qr-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
 code { background: var(--accent-soft); border-radius: 5px; padding: 1px 6px; font-size: 12px; }
 </style>
 </head>
@@ -332,6 +339,7 @@ code { background: var(--accent-soft); border-radius: 5px; padding: 1px 6px; fon
       <button id="nav-analytics" class="active">数据统计</button>
       <button id="nav-releases">版本管理</button>
       <button id="nav-cloud-policy">云服务门禁</button>
+      <button id="nav-community-qr">社群二维码</button>
     </nav>
     <div class="topbar-right">
       <span id="worker-host"></span>
@@ -434,6 +442,30 @@ code { background: var(--accent-soft); border-radius: 5px; padding: 1px 6px; fon
         </div>
       </div>
     </section>
+
+    <!-- Community QR code -->
+    <section id="page-community-qr" class="hidden">
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <div class="card-title">微信群二维码</div>
+            <div class="card-caption">README 始终引用同一个公开地址;上传新图片即可原位替换</div>
+          </div>
+        </div>
+        <div class="card-body qr-form">
+          <div id="community-qr-status" class="config-hint">正在读取当前图片…</div>
+          <img id="community-qr-preview" class="qr-preview hidden" alt="当前微信群二维码预览">
+          <label class="field-label" for="community-qr-input">选择新二维码图片</label>
+          <input id="community-qr-input" class="text-input" type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp">
+          <div class="qr-actions">
+            <button id="community-qr-upload" class="btn btn-primary">上传并替换</button>
+            <button id="community-qr-refresh" class="btn">重新读取</button>
+            <button id="community-qr-copy" class="btn">复制公开链接</button>
+            <span class="filter-note">支持 JPEG、PNG、WebP,最大 5 MB</span>
+          </div>
+        </div>
+      </div>
+    </section>
   </main>
 </div>
 
@@ -506,6 +538,7 @@ code { background: var(--accent-soft); border-radius: 5px; padding: 1px 6px; fon
     analyticsConfigured: true,
     releases: [],
     cloudServicePolicy: null,
+    communityQr: null,
     analytics: {},          // metric -> rows
     tableMode: {},          // chart id -> boolean
     editor: null,           // { isNew, original, assets }
@@ -615,6 +648,7 @@ code { background: var(--accent-soft); border-radius: 5px; padding: 1px 6px; fon
     $('analytics-config-hint').classList.toggle('hidden', state.analyticsConfigured);
     loadReleases();
     loadCloudServicePolicy();
+    loadCommunityQr();
     loadAnalytics();
   }
 
@@ -636,17 +670,19 @@ code { background: var(--accent-soft); border-radius: 5px; padding: 1px 6px; fon
 
   // ---------- navigation ----------
   function switchPage(name) {
-    var names = ['analytics', 'releases', 'cloud-policy'];
+    var names = ['analytics', 'releases', 'cloud-policy', 'community-qr'];
     for (var i = 0; i < names.length; i += 1) {
       var active = names[i] === name;
       $('page-' + names[i]).classList.toggle('hidden', !active);
       $('nav-' + names[i]).classList.toggle('active', active);
     }
     if (name === 'cloud-policy') loadCloudServicePolicy();
+    if (name === 'community-qr') loadCommunityQr();
   }
   $('nav-analytics').addEventListener('click', function () { switchPage('analytics'); });
   $('nav-releases').addEventListener('click', function () { switchPage('releases'); });
   $('nav-cloud-policy').addEventListener('click', function () { switchPage('cloud-policy'); });
+  $('nav-community-qr').addEventListener('click', function () { switchPage('community-qr'); });
 
   // ---------- cloud-service policy ----------
   function loadCloudServicePolicy() {
@@ -705,6 +741,67 @@ code { background: var(--accent-soft); border-radius: 5px; padding: 1px 6px; fon
     }).catch(function (error) {
       toast('保存云服务门禁失败:' + error.message, true);
     }).then(function () { $('cloud-policy-save').disabled = false; });
+  });
+
+  // ---------- community QR code ----------
+  function loadCommunityQr() {
+    $('community-qr-refresh').disabled = true;
+    return api('/admin/community/wechat-qr').then(function (payload) {
+      state.communityQr = payload.image || null;
+      renderCommunityQr();
+    }).catch(function (error) {
+      if (error.message !== 'unauthorized') {
+        $('community-qr-status').textContent = '读取失败:' + error.message;
+        toast('读取社群二维码失败:' + error.message, true);
+      }
+    }).then(function () { $('community-qr-refresh').disabled = false; });
+  }
+
+  function renderCommunityQr() {
+    var image = state.communityQr || {};
+    var preview = $('community-qr-preview');
+    if (!image.configured) {
+      $('community-qr-status').textContent = '尚未上传二维码;公开地址将在首次上传后可用';
+      preview.classList.add('hidden');
+      preview.removeAttribute('src');
+      return;
+    }
+    var details = [];
+    if (image.contentType) details.push(image.contentType);
+    if (image.size) details.push(fmtBytes(image.size));
+    if (image.uploadedAt) details.push('更新于 ' + fmtDate(image.uploadedAt));
+    $('community-qr-status').textContent = '当前公开地址: ' + image.publicUrl + (details.length ? ' · ' + details.join(' · ') : '');
+    preview.src = image.publicUrl + '?preview=' + encodeURIComponent(image.etag || String(Date.now()));
+    preview.classList.remove('hidden');
+  }
+
+  $('community-qr-refresh').addEventListener('click', function () { loadCommunityQr(); });
+  $('community-qr-copy').addEventListener('click', function () {
+    var publicUrl = state.communityQr && state.communityQr.publicUrl
+      ? state.communityQr.publicUrl
+      : location.origin + '/community/wechat-qr';
+    navigator.clipboard.writeText(publicUrl).then(function () { toast('二维码公开链接已复制'); });
+  });
+  $('community-qr-upload').addEventListener('click', function () {
+    var file = $('community-qr-input').files[0];
+    if (!file) { toast('请先选择二维码图片', true); return; }
+    if (file.size > 5 * 1024 * 1024) { toast('图片不能超过 5 MB', true); return; }
+    var allowed = ['image/jpeg', 'image/png', 'image/webp'];
+    if (allowed.indexOf(file.type) < 0) { toast('仅支持 JPEG、PNG 或 WebP 图片', true); return; }
+
+    $('community-qr-upload').disabled = true;
+    api('/admin/community/wechat-qr', {
+      method: 'PUT',
+      headers: { 'content-type': file.type },
+      body: file
+    }).then(function (payload) {
+      state.communityQr = payload.image || null;
+      $('community-qr-input').value = '';
+      renderCommunityQr();
+      toast('微信群二维码已替换');
+    }).catch(function (error) {
+      toast('上传二维码失败:' + error.message, true);
+    }).then(function () { $('community-qr-upload').disabled = false; });
   });
 
   // ---------- analytics ----------

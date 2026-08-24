@@ -223,10 +223,9 @@ class _PluginDetailPageState extends State<PluginDetailPage> {
   Widget build(BuildContext context) {
     final palette = context.omniPalette;
     return PopScope(
-      canPop: false,
-      onPopInvokedWithResult: (didPop, result) {
-        if (!didPop) context.pop(_changed);
-      },
+      // The route already uses PredictiveBackGestureWrapper. It must remain
+      // poppable so Android can hand gesture progress to that transition.
+      canPop: true,
       child: Scaffold(
         backgroundColor: context.isDarkTheme
             ? palette.pageBackground

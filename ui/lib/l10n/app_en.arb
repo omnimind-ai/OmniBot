@@ -335,12 +335,6 @@
       "error": {}
     }
   },
-  "sceneVoiceSaveFailed": "Failed to save voice settings: {error}",
-  "@sceneVoiceSaveFailed": {
-    "placeholders": {
-      "error": {}
-    }
-  },
 
   "modelsNoAvailableModels": "No models available",
 

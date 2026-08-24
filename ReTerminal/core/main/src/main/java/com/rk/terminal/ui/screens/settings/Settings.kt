@@ -6,10 +6,8 @@ import android.widget.Toast
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.RadioButton
@@ -18,13 +16,17 @@ import androidx.compose.material3.ripple
 import androidx.compose.runtime.*
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
+import com.rk.components.compose.preferences.base.LocalOmniPaletteExtras
 import com.rk.components.compose.preferences.base.PreferenceGroup
 import com.rk.components.compose.preferences.base.PreferenceLayout
 import com.rk.components.compose.preferences.base.PreferenceTemplate
+import com.rk.resources.drawables
 import com.rk.resources.strings
 import com.rk.settings.AlpinePackageMirror
 import com.rk.settings.Settings
@@ -61,15 +63,10 @@ fun SettingsCard(
                 interactionSource = interactionSource,
                 onClick = onClick
             ),
-        contentModifier = Modifier
-            .fillMaxHeight()
-            .padding(vertical = 16.dp)
-            .padding(start = 16.dp),
         title = title,
         description = description,
         startWidget = startWidget,
         endWidget = endWidget,
-        applyPaddings = false
     )
 
 }
@@ -339,7 +336,12 @@ fun Settings(modifier: Modifier = Modifier,navController: NavController,mainActi
                 sideEffect = {
                    navController.navigate(MainActivityRoutes.Customization.route)
             }, endWidget = {
-                Icon(imageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null,modifier = Modifier.padding(16.dp))
+                Icon(
+                    imageVector = ImageVector.vectorResource(drawables.ic_lucide_chevron_right),
+                    contentDescription = null,
+                    tint = LocalOmniPaletteExtras.current.textTertiary,
+                    modifier = Modifier.size(18.dp)
+                )
             })
         }
 

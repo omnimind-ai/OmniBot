@@ -19,7 +19,6 @@ class OmniOfficialProviderTest {
                     PlatformModel("vision-model"),
                     PlatformModel("image-model"),
                     PlatformModel("embedding-model"),
-                    PlatformModel("tts-model"),
                     PlatformModel("not-declared"),
                 ),
                 defaults = PlatformModelDefaults(
@@ -27,16 +26,12 @@ class OmniOfficialProviderTest {
                     vision = "vision-model",
                     image = "image-model",
                     embedding = "embedding-model",
-                    tts = "tts-model",
-                    ttsVoice = "official-neutral",
                 ),
                 capabilities = PlatformModelCapabilities(
                     text = listOf("text-model"),
                     vision = listOf("vision-model"),
                     image = listOf("image-model"),
                     embedding = listOf("embedding-model"),
-                    tts = listOf("tts-model"),
-                    ttsVoices = listOf("official-neutral", "official-warm"),
                 ),
                 hasOfficialCatalog = true,
             )
@@ -46,12 +41,6 @@ class OmniOfficialProviderTest {
         assertEquals("vision-model", selection.defaultVisionModel?.id)
         assertEquals("image-model", selection.defaultImageModel?.id)
         assertEquals("embedding-model", selection.defaultEmbeddingModel?.id)
-        assertEquals("tts-model", selection.defaultTtsModel?.id)
-        assertEquals("official-neutral", selection.defaultTtsVoiceAlias)
-        assertEquals(
-            listOf("official-neutral", "official-warm"),
-            selection.ttsVoiceAliases,
-        )
         assertTrue(selection.textModels.none { it.id == "not-declared" })
     }
 
@@ -90,71 +79,6 @@ class OmniOfficialProviderTest {
         assertNull(selection.defaultImageModel)
         assertTrue(selection.embeddingModels.isEmpty())
         assertNull(selection.defaultEmbeddingModel)
-        assertEquals(SceneVoiceConfigStore.VOICE_DEFAULT_ZH, selection.defaultTtsVoiceAlias)
-        assertEquals(OmniOfficialProvider.LEGACY_TTS_VOICE_ALIASES, selection.ttsVoiceAliases)
-    }
-
-    @Test
-    fun explicitEmptyVoiceAliasCatalogDoesNotFallBackToLegacyAliases() {
-        val selection = OmniOfficialProvider.selectModels(
-            PlatformModelCatalog(
-                models = listOf(PlatformModel("text-model"), PlatformModel("tts-model")),
-                defaults = PlatformModelDefaults(
-                    text = "text-model",
-                    tts = "tts-model",
-                    ttsVoice = "default_zh",
-                ),
-                capabilities = PlatformModelCapabilities(
-                    text = listOf("text-model"),
-                    tts = listOf("tts-model"),
-                    ttsVoices = emptyList(),
-                ),
-                hasOfficialCatalog = true,
-            )
-        )
-
-        assertTrue(selection.ttsVoiceAliases.isEmpty())
-        assertNull(selection.defaultTtsVoiceAlias)
-    }
-
-    @Test
-    fun defaultOnlyVoiceAliasIsAcceptedAsAStableSingleton() {
-        val selection = OmniOfficialProvider.selectModels(
-            PlatformModelCatalog(
-                models = listOf(PlatformModel("text-model"), PlatformModel("tts-model")),
-                defaults = PlatformModelDefaults(
-                    text = "text-model",
-                    tts = "tts-model",
-                    ttsVoice = "official-neutral",
-                ),
-                capabilities = PlatformModelCapabilities(
-                    text = listOf("text-model"),
-                    tts = listOf("tts-model"),
-                ),
-                hasOfficialCatalog = true,
-            )
-        )
-
-        assertEquals(listOf("official-neutral"), selection.ttsVoiceAliases)
-        assertEquals("official-neutral", selection.defaultTtsVoiceAlias)
-    }
-
-    @Test
-    fun voiceAliasListWithoutDefaultUsesFirstDeclaredAlias() {
-        val selection = OmniOfficialProvider.selectModels(
-            PlatformModelCatalog(
-                models = listOf(PlatformModel("text-model"), PlatformModel("tts-model")),
-                defaults = PlatformModelDefaults(text = "text-model", tts = "tts-model"),
-                capabilities = PlatformModelCapabilities(
-                    text = listOf("text-model"),
-                    tts = listOf("tts-model"),
-                    ttsVoices = listOf("official-warm", "official-neutral"),
-                ),
-                hasOfficialCatalog = true,
-            )
-        )
-
-        assertEquals("official-warm", selection.defaultTtsVoiceAlias)
     }
 
     @Test

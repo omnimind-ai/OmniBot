@@ -13,6 +13,7 @@ import kotlinx.coroutines.withContext
 
 internal class ExecutionControls private constructor(
     private val controls: ExecutionOverlay.Session?,
+    private val guiEnvironment: AndroidGuiEnvironment,
     private val stopRequested: AtomicBoolean,
     private val completionRequested: AtomicBoolean,
     private val dispatchStop: () -> Unit,
@@ -36,7 +37,17 @@ internal class ExecutionControls private constructor(
     }
 
     suspend fun avoidAction(action: Action) {
-        controls?.avoidTarget(action.relativeTargetY())
+        val activeControls = controls ?: return
+        activeControls.avoidTarget(action.relativeTargetY())
+        val display = guiEnvironment.displaySize()
+        val feedback = executionActionFeedback(
+            action = action,
+            displayWidth = display.first,
+            displayHeight = display.second,
+        ) ?: return
+        withContext(Dispatchers.Main.immediate) {
+            activeControls.showActionFeedback(feedback)
+        }
     }
 
     suspend fun restoreDefaultPosition() {
@@ -91,6 +102,7 @@ internal class ExecutionControls private constructor(
             }
             return ExecutionControls(
                 controls,
+                guiEnvironment,
                 stopRequested,
                 completionRequested,
                 dispatchStop,

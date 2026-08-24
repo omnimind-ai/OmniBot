@@ -19,8 +19,8 @@ const CATALOG = JSON.stringify({
 class MemoryR2Object {
   constructor(key, value, options = {}) {
     this.key = key;
-    this.value = value;
-    this.size = new TextEncoder().encode(value).byteLength;
+    this.value = value instanceof Uint8Array ? value : new TextEncoder().encode(value);
+    this.size = this.value.byteLength;
     this.etag = options.etag || `r2-${this.size}`;
     this.uploaded = new Date();
     this.httpMetadata = options.httpMetadata || {};
@@ -32,7 +32,7 @@ class MemoryR2Object {
   }
 
   async text() {
-    return this.value;
+    return new TextDecoder().decode(this.value);
   }
 }
 
@@ -50,10 +50,17 @@ class MemoryR2Bucket {
   }
 
   async put(key, value, options = {}) {
-    const text = typeof value === "string"
-      ? value
-      : new TextDecoder().decode(value);
-    const object = new MemoryR2Object(key, text, options);
+    let bytes;
+    if (typeof value === "string") {
+      bytes = new TextEncoder().encode(value);
+    } else if (value instanceof Uint8Array) {
+      bytes = value;
+    } else if (value instanceof ArrayBuffer) {
+      bytes = new Uint8Array(value);
+    } else {
+      bytes = new Uint8Array(await new Response(value).arrayBuffer());
+    }
+    const object = new MemoryR2Object(key, bytes, options);
     this.objects.set(key, object);
     return object;
   }
@@ -182,6 +189,101 @@ test("admin console exposes cloud-service policy controls", async () => {
   assert.match(html, /\/admin\/cloud-service-policy/);
   const script = html.split("<script>")[1]?.split("</script>")[0] || "";
   assert.doesNotThrow(() => new Function(script));
+});
+
+test("admin console exposes community QR replacement controls", async () => {
+  const response = await worker.fetch(
+    new Request("https://updates.example/admin"),
+    testEnv(new MemoryR2Bucket()),
+  );
+  const html = await response.text();
+
+  assert.equal(response.status, 200);
+  assert.match(html, /id="nav-community-qr"/);
+  assert.match(html, /id="community-qr-input"/);
+  assert.match(html, /id="community-qr-upload"/);
+  assert.match(html, /\/admin\/community\/wechat-qr/);
+  const script = html.split("<script>")[1]?.split("</script>")[0] || "";
+  assert.doesNotThrow(() => new Function(script));
+});
+
+test("authenticated QR upload replaces the image behind one public URL", async () => {
+  const bucket = new MemoryR2Bucket();
+  const env = testEnv(bucket);
+  const adminUrl = "https://updates.example/admin/community/wechat-qr";
+  const publicUrl = "https://updates.example/community/wechat-qr";
+
+  const missing = await worker.fetch(new Request(publicUrl), env);
+  assert.equal(missing.status, 404);
+  const unauthorized = await worker.fetch(new Request(adminUrl), env);
+  assert.equal(unauthorized.status, 401);
+
+  const invalid = await worker.fetch(
+    new Request(adminUrl, {
+      method: "PUT",
+      headers: {
+        authorization: "Bearer test-token",
+        "content-type": "image/png",
+      },
+      body: new Uint8Array([1, 2, 3]),
+    }),
+    env,
+  );
+  assert.equal(invalid.status, 415);
+
+  const png = new Uint8Array([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4,
+  ]);
+  const uploaded = await worker.fetch(
+    new Request(adminUrl, {
+      method: "PUT",
+      headers: {
+        authorization: "Bearer test-token",
+        "content-type": "image/png",
+      },
+      body: png,
+    }),
+    env,
+  );
+  assert.equal(uploaded.status, 200);
+  const uploadedPayload = await uploaded.json();
+  assert.equal(uploadedPayload.image.configured, true);
+  assert.equal(uploadedPayload.image.publicUrl, publicUrl);
+  assert.equal(uploadedPayload.image.contentType, "image/png");
+  assert.equal(uploadedPayload.image.size, png.byteLength);
+
+  const publicImage = await worker.fetch(new Request(publicUrl), env);
+  assert.equal(publicImage.status, 200);
+  assert.equal(publicImage.headers.get("content-type"), "image/png");
+  assert.match(publicImage.headers.get("cache-control"), /no-cache/);
+  assert.deepEqual(new Uint8Array(await publicImage.arrayBuffer()), png);
+  const etag = publicImage.headers.get("etag");
+  assert.ok(etag);
+
+  const notModified = await worker.fetch(
+    new Request(publicUrl, { headers: { "if-none-match": `W/${etag}` } }),
+    env,
+  );
+  assert.equal(notModified.status, 304);
+
+  const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 5, 6, 7]);
+  const replaced = await worker.fetch(
+    new Request(adminUrl, {
+      method: "PUT",
+      headers: {
+        authorization: "Bearer test-token",
+        "content-type": "image/jpeg",
+      },
+      body: jpeg,
+    }),
+    env,
+  );
+  assert.equal(replaced.status, 200);
+  assert.equal((await replaced.json()).image.publicUrl, publicUrl);
+
+  const replacement = await worker.fetch(new Request(publicUrl), env);
+  assert.equal(replacement.headers.get("content-type"), "image/jpeg");
+  assert.deepEqual(new Uint8Array(await replacement.arrayBuffer()), jpeg);
 });
 
 test("admin UI policy is authenticated, stored in R2, and applied to update checks", async () => {

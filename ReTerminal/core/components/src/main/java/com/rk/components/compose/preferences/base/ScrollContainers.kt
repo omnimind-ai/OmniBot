@@ -55,7 +55,7 @@ fun PreferenceColumn(
                 Modifier.fillMaxHeight()
                     .addIf(scrollState != null) { this.verticalScroll(scrollState!!) }
                     .padding(contentPadding)
-                    .padding(top = 8.dp, bottom = 16.dp),
+                    .padding(start = 18.dp, end = 18.dp, top = 10.dp, bottom = 28.dp),
             content = content,
         )
     }

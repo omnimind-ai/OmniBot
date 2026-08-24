@@ -72,7 +72,8 @@ public final class VirtualKeysView extends GridLayout {
   /** Defines the default value for {@link #mButtonTextColor}. */
   public static final int DEFAULT_BUTTON_TEXT_COLOR = 0xFFFFFFFF;
   /** Defines the default value for {@link #mButtonActiveTextColor}. */
-  public static final int DEFAULT_BUTTON_ACTIVE_TEXT_COLOR = 0xFFf44336;
+  // OmnibotApp brand accent (#2C7FEB), replaces the previous Material red.
+  public static final int DEFAULT_BUTTON_ACTIVE_TEXT_COLOR = 0xFF2C7FEB;
   /** Defines the default value for {@link #mButtonBackgroundColor}. */
   public static final int DEFAULT_BUTTON_BACKGROUND_COLOR = 0x00000000;
   /** Defines the default value for {@link #mButtonActiveBackgroundColor}. */

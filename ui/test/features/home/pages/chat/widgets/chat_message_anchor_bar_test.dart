@@ -5,6 +5,8 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ui/features/home/pages/chat/widgets/chat_message_anchor_bar.dart';
 import 'package:ui/models/chat_message_model.dart';
+import 'package:ui/widgets/agent_avatar.dart';
+import 'package:ui/widgets/agent_brand_icon.dart';
 
 void main() {
   setUp(() {
@@ -101,6 +103,85 @@ void main() {
     );
     expect(scrimColor.color, Colors.black.withValues(alpha: 0.64));
     expect(find.text('需要突出显示的消息锚点'), findsOneWidget);
+  });
+
+  testWidgets('ACP anchors use the producing agents own brand avatars', (
+    tester,
+  ) async {
+    final messages = <ChatMessageModel>[
+      ChatMessageModel(
+        id: 'codex-answer',
+        type: 1,
+        user: 2,
+        content: const <String, dynamic>{
+          'text': 'Codex 回答',
+          'id': 'codex-answer',
+          'agentId': 'codex-acp',
+        },
+      ),
+      ChatMessageModel(
+        id: 'claude-answer',
+        type: 1,
+        user: 2,
+        content: const <String, dynamic>{
+          'text': 'Claude 回答',
+          'id': 'claude-answer',
+          'agentId': 'claude-code-acp',
+        },
+      ),
+    ];
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ChatMessageAnchorBar(
+            messages: messages,
+            activeAgentTaskIds: const <String>{},
+            conversationSignature: 'agent:1',
+            bottomInset: 72,
+            visible: true,
+            onJumpToEntry: (_) async => true,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.byIcon(LucideIcons.galleryVerticalEnd));
+    await tester.pumpAndSettle();
+
+    final agentIds = tester
+        .widgetList<AgentBrandIcon>(find.byType(AgentBrandIcon))
+        .map((icon) => icon.agentId)
+        .toSet();
+    expect(agentIds, <String>{'codex-acp', 'claude-code-acp'});
+    expect(find.byType(AgentAvatarCircle), findsNothing);
+  });
+
+  testWidgets('plain assistant anchor keeps the Xiaowan avatar', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ChatMessageAnchorBar(
+            messages: <ChatMessageModel>[
+              ChatMessageModel.assistantMessage('小万回答', id: 'xiaowan'),
+            ],
+            activeAgentTaskIds: const <String>{},
+            conversationSignature: 'normal:1',
+            bottomInset: 72,
+            visible: true,
+            onJumpToEntry: (_) async => true,
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.byIcon(LucideIcons.galleryVerticalEnd));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(AgentAvatarCircle), findsOneWidget);
+    expect(find.byType(AgentBrandIcon), findsNothing);
   });
 
   testWidgets('spotlight extends into status and gesture navigation insets', (

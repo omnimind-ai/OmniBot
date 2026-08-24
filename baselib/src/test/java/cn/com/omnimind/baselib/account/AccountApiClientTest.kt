@@ -36,31 +36,33 @@ class AccountApiClientTest {
                     "base_url":"https://internal.invalid",
                     "key":"must-not-be-mapped"
                   },{
+                    "id":"opus-6",
+                    "owned_by":"custom",
+                    "supported_endpoint_types":["openai"]
+                  },{
                     "id":"image-model",
                     "supported_endpoint_types":["image-generation"]
                   },{
                     "id":"embedding-model",
                     "supported_endpoint_types":["embeddings"]
-                  },{
-                    "id":"voice-model"
                   }],
                   "official_catalog":{
                     "version":"2",
+                    "display_names":{
+                      "opus-6":"opus 6☺️",
+                      "hidden-model":"Must not leak"
+                    },
                     "defaults":{
                       "text":"Qwen3.5-Plus",
                       "image":"image-model",
                       "embedding":"embedding-model",
-                      "vision":"Qwen3.5-Plus",
-                      "tts":"voice-model",
-                      "tts_voice":"default_zh"
+                      "vision":"Qwen3.5-Plus"
                     },
                     "capabilities":{
-                      "text":["Qwen3.5-Plus"],
+                      "text":["Qwen3.5-Plus","opus-6"],
                       "image":["image-model"],
                       "embedding":["embedding-model"],
-                      "vision":["Qwen3.5-Plus"],
-                      "tts":["voice-model"],
-                      "tts_voices":["default_zh","default_en"]
+                      "vision":["Qwen3.5-Plus"]
                     }
                   }
                 }
@@ -77,83 +79,21 @@ class AccountApiClientTest {
         val models = catalog.models
 
         assertEquals(
-            listOf("Qwen3.5-Plus", "image-model", "embedding-model", "voice-model"),
+            listOf("Qwen3.5-Plus", "opus-6", "image-model", "embedding-model"),
             models.map(PlatformModel::id),
         )
         assertEquals(listOf("openai"), models.first().supportedEndpointTypes)
         assertTrue(catalog.hasOfficialCatalog)
         assertEquals("2", catalog.version)
+        assertEquals(mapOf("opus-6" to "opus 6☺️"), catalog.displayNames)
         assertEquals("image-model", catalog.defaults.image)
         assertEquals("embedding-model", catalog.defaults.embedding)
-        assertEquals("voice-model", catalog.defaults.tts)
-        assertEquals("default_zh", catalog.defaults.ttsVoice)
         assertEquals(listOf("Qwen3.5-Plus"), catalog.capabilities.vision)
         assertEquals(listOf("embedding-model"), catalog.capabilities.embedding)
-        assertEquals(listOf("default_zh", "default_en"), catalog.capabilities.ttsVoices)
         val request = calls.requests.single()
         assertEquals("https://model.example.com/v1/models", request.url.toString())
         assertEquals("Bearer account-jwt", request.header("Authorization"))
     }
-
-    @Test
-    fun platformModelCatalogMapsLegacyVoiceToTts() = runBlocking {
-        val client = PlatformModelApiClient(
-            gatewayBaseUrl = "https://model.example.com",
-            callFactory = RecordingCallFactory(
-                StubResponse(
-                    200,
-                    """
-                    {
-                      "success":true,
-                      "data":[{"id":"legacy-voice"}],
-                      "official_catalog":{
-                        "version":"1",
-                        "defaults":{"voice":"legacy-voice"},
-                        "capabilities":{"voice":["legacy-voice"]}
-                      }
-                    }
-                    """.trimIndent(),
-                )
-            ),
-            ioDispatcher = Dispatchers.Unconfined,
-        )
-
-        val catalog = client.getCatalog("account-jwt")
-
-        assertEquals("legacy-voice", catalog.defaults.tts)
-        assertEquals(listOf("legacy-voice"), catalog.capabilities.tts)
-    }
-
-    @Test
-    fun platformModelCatalogDoesNotReviveLegacyVoiceWhenNewCapabilitiesAreExplicitlyEmpty() =
-        runBlocking {
-            val client = PlatformModelApiClient(
-                gatewayBaseUrl = "https://model.example.com",
-                callFactory = RecordingCallFactory(
-                    StubResponse(
-                        200,
-                        """
-                        {
-                          "success":true,
-                          "data":[{"id":"legacy-voice"}],
-                          "official_catalog":{
-                            "defaults":{"voice":"legacy-voice"},
-                            "capabilities":{
-                              "tts":[],
-                              "voice":["legacy-voice"]
-                            }
-                          }
-                        }
-                        """.trimIndent(),
-                    )
-                ),
-                ioDispatcher = Dispatchers.Unconfined,
-            )
-
-            val catalog = client.getCatalog("account-jwt")
-
-            assertTrue(catalog.capabilities.tts.isEmpty())
-        }
 
     @Test
     fun platformModelCatalogReportsUnauthorizedForRepositoryRefresh() = runBlocking {

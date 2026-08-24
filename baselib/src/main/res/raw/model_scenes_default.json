@@ -19,21 +19,6 @@
       "en-US": "Android GUI automation model; execution policy is provided by AndroidGuiPolicy"
     }
   },
-  "scene.voice": {
-    "model": "",
-    "transport": "openai_compatible",
-    "response_parser": "text_content",
-    "prompt": "该场景用于 AI 文本回复的语音合成配置。仅用于模型绑定，不参与普通聊天文本生成。",
-    "prompt_i18n": {
-      "zh-CN": "该场景用于 AI 文本回复的语音合成配置。仅用于模型绑定，不参与普通聊天文本生成。",
-      "en-US": "This scene is used for AI reply text-to-speech configuration only. It is used for model binding and does not participate in normal chat text generation."
-    },
-    "description": "AI 回复语音合成模型",
-    "description_i18n": {
-      "zh-CN": "AI 回复语音合成模型",
-      "en-US": "AI reply speech synthesis model"
-    }
-  },
   "scene.compactor.context.chat": {
     "model": "qwen3.5-plus",
     "transport": "openai_compatible",

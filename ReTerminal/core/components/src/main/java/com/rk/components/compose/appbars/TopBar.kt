@@ -18,18 +18,24 @@ package com.rk.components.compose.appbars
 
 import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.compose.foundation.layout.RowScope
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.LargeTopAppBar
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.TopAppBarScrollBehavior
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.text.style.TextOverflow
 import com.rk.components.compose.icons.ClickableIcon
+import com.rk.resources.drawables
 
+/**
+ * App bar styled after the main OmnibotApp: small centered title
+ * (17sp semi-bold) on the page background, Lucide back chevron.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TopBar(
@@ -42,35 +48,26 @@ fun TopBar(
 ) {
     val backDispatcher = LocalOnBackPressedDispatcherOwner.current?.onBackPressedDispatcher
 
-    if (isExpandedScreen) {
-        TopAppBar(
-            modifier = modifier,
-            title = { Text(text = label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-            actions = actions,
-            navigationIcon = {
-                if (backArrowVisible) {
-                    ClickableIcon(
-                        imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                        onClick = { backDispatcher?.onBackPressed() },
-                    )
-                }
-            },
-            scrollBehavior = scrollBehavior,
-        )
-    } else {
-        LargeTopAppBar(
-            modifier = modifier,
-            title = { Text(text = label) },
-            actions = actions,
-            navigationIcon = {
-                if (backArrowVisible) {
-                    ClickableIcon(
-                        imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
-                        onClick = { backDispatcher?.onBackPressed() },
-                    )
-                }
-            },
-            scrollBehavior = scrollBehavior,
-        )
-    }
+    CenterAlignedTopAppBar(
+        modifier = modifier,
+        title = { Text(text = label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+        actions = actions,
+        navigationIcon = {
+            if (backArrowVisible) {
+                ClickableIcon(
+                    imageVector = ImageVector.vectorResource(drawables.ic_lucide_arrow_left),
+                    onClick = { backDispatcher?.onBackPressed() },
+                    tint = MaterialTheme.colorScheme.onSurface,
+                )
+            }
+        },
+        colors =
+            TopAppBarDefaults.centerAlignedTopAppBarColors(
+                containerColor = MaterialTheme.colorScheme.background,
+                scrolledContainerColor = MaterialTheme.colorScheme.background,
+                titleContentColor = MaterialTheme.colorScheme.onSurface,
+                actionIconContentColor = MaterialTheme.colorScheme.onSurface,
+            ),
+        scrollBehavior = scrollBehavior,
+    )
 }

@@ -1,6 +1,6 @@
 # Omnibot App Update Worker
 
-Cloudflare Worker for public app update checks, a resilient models.dev catalog mirror, authenticated release metadata management, APK delivery through Cloudflare R2, a built-in admin console, and usage statistics via Workers Analytics Engine. Release metadata, model catalog snapshots, and APK files are stored in R2; no KV namespace is required.
+Cloudflare Worker for public app update checks, a resilient models.dev catalog mirror, a replaceable community QR image, authenticated release metadata management, APK delivery through Cloudflare R2, a built-in admin console, and usage statistics via Workers Analytics Engine. Release metadata, model catalog snapshots, the QR image, and APK files are stored in R2; no KV namespace is required.
 
 ## Models.dev catalog mirror
 
@@ -67,6 +67,7 @@ curl --fail-with-body \
 
 - **版本管理** — create/edit releases, write the changelog shown in the app's update card, toggle stable/beta track and draft state, upload APKs straight from the browser (large files use R2 multipart upload automatically, SHA-256 is computed client-side), copy download links, delete releases/assets.
 - **云服务门禁** — set the minimum app version allowed to register, sign in, or use official cloud AI, plus the message shown to blocked users. Saving writes the policy to R2 and takes effect on the next update check; clearing the minimum disables the gate.
+- **社群二维码** — upload or replace the WeChat group QR image served at the permanent public URL. JPEG, PNG, and WebP files up to 5 MB are accepted.
 - **数据统计** — daily update-check/download trends, unique devices, device model / app version / Android version distributions, per-asset download counts. Backed by Workers Analytics Engine.
 
 A changelog curated in the console survives CI republishes: the CI payload carries no `releaseNotes`, and the worker keeps existing notes when an upsert omits them.
@@ -85,6 +86,11 @@ A changelog curated in the console survives CI republishes: the CI payload carri
   - Public, CORS-enabled models.dev `api.json` mirror backed only by R2.
   - Supports `ETag` / `If-None-Match`; returns `503` until the first successful
     sync.
+- `GET|HEAD /community/wechat-qr`
+  - Permanent public image URL used by the repository README files.
+  - Streams the current R2 image with its real content type, `ETag`, and
+    `Cache-Control: no-cache` so GitHub's image proxy revalidates it after an
+    admin replacement.
 - `GET /downloads/:tag/:asset`
   - Public APK download endpoint backed by R2. APK downloads are counted in Analytics Engine.
 - `GET /admin`
@@ -98,6 +104,11 @@ A changelog curated in the console survives CI republishes: the CI payload carri
 - `PUT /admin/cloud-service-policy`
   - Replaces the policy. Body: `{ "minimumVersion": "0.5.7", "message": "..." }`.
     `minimumVersion` is required; send an empty string to disable the gate.
+- `GET /admin/community/wechat-qr`
+  - Returns the current image metadata and permanent public URL.
+- `PUT /admin/community/wechat-qr`
+  - Replaces the current image. The request body is the raw JPEG, PNG, or WebP
+    file and requires `Authorization: Bearer <ADMIN_TOKEN>`.
 - `GET /admin/releases` · `GET /admin/releases/:tag`
   - Requires `Authorization: Bearer <ADMIN_TOKEN>`.
 - `POST /admin/releases`

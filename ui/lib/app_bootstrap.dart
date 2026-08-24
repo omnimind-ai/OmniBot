@@ -164,7 +164,10 @@ class _MyAppState extends ConsumerState<MyApp> {
             child: Stack(
               fit: StackFit.expand,
               children: [
-                StartupAccountPrompt(child: child ?? const SizedBox.shrink()),
+                StartupAccountPrompt(
+                  routeListenable: _router.routeInformationProvider,
+                  child: child ?? const SizedBox.shrink(),
+                ),
                 const EmbeddedTerminalInitToastListener(),
               ],
             ),

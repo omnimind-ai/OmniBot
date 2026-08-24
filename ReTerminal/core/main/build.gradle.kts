@@ -309,7 +309,6 @@ dependencies {
     //api(libs.commons.net)
     api(libs.okhttp)
     api(libs.anrwatchdog)
-    api(libs.androidx.material.icons.core)
     api(libs.androidx.palette)
     api(libs.accompanist.systemuicontroller)
     testImplementation(libs.junit)

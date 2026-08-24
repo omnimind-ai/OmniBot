@@ -300,6 +300,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('重置密码'), findsOneWidget);
+    expect(find.byKey(const ValueKey('reset-password-sheet')), findsOneWidget);
+    expect(find.byType(SettingsDetailSheet), findsOneWidget);
+    expect(find.byType(AlertDialog), findsNothing);
     await tester.enterText(
       find.byKey(const ValueKey('auth-email-field')),
       'learner@example.com',
@@ -513,6 +516,11 @@ void main() {
     expect(find.text('其他登录设备 1'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('revoke-session-other-1')));
     await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('revoke-session-sheet-other-1')),
+      findsOneWidget,
+    );
+    expect(find.byType(AlertDialog), findsNothing);
     await tester.tap(find.byKey(const ValueKey('confirm-revoke-session')));
     await tester.pumpAndSettle();
 
@@ -528,6 +536,11 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('revoke-other-sessions')));
     await tester.pumpAndSettle();
+    expect(
+      find.byKey(const ValueKey('revoke-other-sessions-sheet')),
+      findsOneWidget,
+    );
+    expect(find.byType(AlertDialog), findsNothing);
     await tester.tap(
       find.byKey(const ValueKey('confirm-revoke-other-sessions')),
     );
@@ -640,6 +653,44 @@ void main() {
     await tester.pump(const Duration(seconds: 3));
   });
 
+  testWidgets('shows sign-out confirmation in the shared detail card', (
+    tester,
+  ) async {
+    _setPhoneViewport(tester);
+    var logoutCalls = 0;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          switch (call.method) {
+            case 'getSessionState':
+              return <String, Object?>{'configured': true, 'signedIn': true};
+            case 'getOverview':
+              return _signedInOverview();
+            case 'logout':
+              logoutCalls += 1;
+          }
+          return null;
+        });
+
+    await tester.pumpWidget(_testApp());
+    await tester.pumpAndSettle();
+    await tester.scrollUntilVisible(
+      find.text('退出当前设备'),
+      260,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.tap(find.text('退出当前设备'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('sign-out-sheet')), findsOneWidget);
+    expect(find.byType(SettingsDetailSheet), findsOneWidget);
+    expect(find.byType(AlertDialog), findsNothing);
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('sign-out-sheet')), findsNothing);
+    expect(logoutCalls, 0);
+  });
+
   testWidgets('requires two confirmations before deleting the account', (
     tester,
   ) async {
@@ -665,11 +716,21 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('delete-account-action')));
     await tester.pumpAndSettle();
 
+    expect(
+      find.byKey(const ValueKey('delete-account-warning-sheet')),
+      findsOneWidget,
+    );
+    expect(find.byType(AlertDialog), findsNothing);
     expect(find.text('永久删除账号？'), findsOneWidget);
     expect(find.textContaining('本机聊天和文件不会自动清理'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('continue-delete-account')));
     await tester.pumpAndSettle();
 
+    expect(
+      find.byKey(const ValueKey('delete-account-confirmation-sheet')),
+      findsOneWidget,
+    );
+    expect(find.byType(AlertDialog), findsNothing);
     expect(find.text('最后确认'), findsOneWidget);
     await tester.enterText(
       find.byKey(const ValueKey('delete-account-email-field')),

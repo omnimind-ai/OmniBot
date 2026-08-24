@@ -118,8 +118,8 @@ internal val DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND = """
       rm -rf "${'$'}hardlink_helper"
       return "${'$'}install_status"
     }
-    repair_deepseek_harness_node_pty
     install_deepseek_harness_packages
+    repair_deepseek_harness_node_pty
     $DEEPSEEK_HARNESS_NATIVE_HEALTH_COMMAND
 """.trimIndent()
 

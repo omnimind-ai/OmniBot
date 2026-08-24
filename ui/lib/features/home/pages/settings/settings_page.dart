@@ -144,11 +144,9 @@ class _SettingsPageState extends State<SettingsPage> {
     final info = _mcpInfo;
     if (info == null || info.endpoint.isEmpty) return;
     final l10n = context.l10n;
-    final palette = context.omniPalette;
 
-    showModalBottomSheet<void>(
+    showSettingsDetailSheet<void>(
       context: context,
-      backgroundColor: palette.surfacePrimary,
       builder: (sheetContext) {
         final sheetPalette = sheetContext.omniPalette;
         final labelStyle = TextStyle(

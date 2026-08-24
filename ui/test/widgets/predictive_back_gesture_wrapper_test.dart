@@ -1,8 +1,8 @@
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:ui/services/display_geometry_service.dart';
 import 'package:ui/services/storage_service.dart';
 import 'package:ui/widgets/predictive_back_gesture_wrapper.dart';
 
@@ -75,10 +75,29 @@ Future<void> _updateBackGesture(WidgetTester tester, double progress) {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  const displayGeometryChannel = MethodChannel(
+    'cn.com.omnimind.bot/DisplayGeometry',
+  );
 
   setUp(() async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     await StorageService.init();
+    DisplayGeometryService.resetForTesting();
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(displayGeometryChannel, (call) async {
+          return <String, double>{
+            'topLeft': 42,
+            'topRight': 40,
+            'bottomLeft': 36,
+            'bottomRight': 34,
+          };
+        });
+  });
+
+  tearDown(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(displayGeometryChannel, null);
+    DisplayGeometryService.resetForTesting();
   });
 
   /// 自举应用并 push 出带 wrapper 的二级页面,返回捕获到的路由。
@@ -108,8 +127,10 @@ void main() {
     return route;
   }
 
-  Finder clipFinder() =>
-      find.ancestor(of: find.text('second'), matching: find.byType(ClipRRect));
+  Finder clipFinder() => find.ancestor(
+    of: find.text('second'),
+    matching: find.byType(ClipRSuperellipse),
+  );
 
   testWidgets(
     'gesture drives route controller, slide transition and corner clip; '
@@ -118,26 +139,34 @@ void main() {
       final route = await bootstrap(tester);
       expect(route, isNotNull);
 
-      // 手势开始:消费事件,进入 popGestureInProgress,
-      // 顶层页出现圆角且转场切换为线性(跟手)。
+      // 手势开始后，路由动画由系统进度线性驱动。
       await _startBackGesture(tester, 0.0);
       await tester.pump();
       expect(route!.popGestureInProgress, isTrue);
-      final clip = tester.widget<ClipRRect>(clipFinder());
-      expect(clip.borderRadius, BorderRadius.circular(32.0));
-      expect(clip.clipBehavior, Clip.hardEdge);
-      final slide = tester.widget<CupertinoPageTransition>(
-        find.ancestor(
-          of: find.text('second'),
-          matching: find.byType(CupertinoPageTransition),
-        ),
-      );
-      expect(slide.linearTransition, isTrue);
 
-      // 进度 0.5:控制器被取反驱动为 0.5。
+      // 进度 0.5：页面移动半屏，只裁剪露出的左侧真机圆角。
       await _updateBackGesture(tester, 0.5);
       await tester.pump();
       expect(route.animation!.value, closeTo(0.5, 0.001));
+      final clip = tester.widget<ClipRSuperellipse>(clipFinder());
+      expect(
+        clip.borderRadius,
+        const BorderRadius.only(
+          topLeft: Radius.circular(42),
+          bottomLeft: Radius.circular(36),
+        ),
+      );
+      expect(clip.clipBehavior, Clip.antiAlias);
+
+      final primaryTransform = tester.widget<Transform>(
+        find.ancestor(
+          of: find.text('second'),
+          matching: find.byKey(
+            const ValueKey('predictive_back_primary_transform'),
+          ),
+        ),
+      );
+      expect(primaryTransform.transform.storage[12], closeTo(400, 0.001));
 
       // 取消:页面弹回,路由保留,动画回到 1,圆角消失。
       await _sendBackGesture(tester, 'cancelBackGesture');
@@ -146,10 +175,13 @@ void main() {
       expect(route.popGestureInProgress, isFalse);
       expect(route.animation!.value, closeTo(1.0, 0.001));
       expect(
-        tester.widget<ClipRRect>(clipFinder()).borderRadius,
+        tester.widget<ClipRSuperellipse>(clipFinder()).borderRadius,
         BorderRadius.zero,
       );
-      expect(tester.widget<ClipRRect>(clipFinder()).clipBehavior, Clip.none);
+      expect(
+        tester.widget<ClipRSuperellipse>(clipFinder()).clipBehavior,
+        Clip.none,
+      );
     },
     // wrapper 仅在 Android 消费手势;variant 的 tearDown 会在测试框架
     // 校验 debug 变量之前复位 debugDefaultTargetPlatformOverride。
@@ -160,12 +192,13 @@ void main() {
     'commit settles forward from the drag position without bouncing back',
     (tester) async {
       final route = await bootstrap(tester);
+      final navigator = route!.navigator!;
 
       await _startBackGesture(tester, 0.0);
       await tester.pump();
       await _updateBackGesture(tester, 0.8);
       await tester.pump();
-      expect(route!.animation!.value, closeTo(0.2, 0.001));
+      expect(route.animation!.value, closeTo(0.2, 0.001));
 
       await _sendBackGesture(tester, 'commitBackGesture');
       // 收尾期间控制器只能从松手位置(0.2)向 0 前进,不得向 1.0 回跳
@@ -184,6 +217,12 @@ void main() {
 
       expect(find.text('second'), findsNothing);
       expect(route.isCurrent, isFalse);
+      expect(navigator.userGestureInProgress, isFalse);
+
+      // 返回完成后不能残留 IgnorePointer，底层页面应立即恢复交互。
+      await tester.tap(find.text('push'));
+      await tester.pumpAndSettle();
+      expect(find.text('second'), findsOneWidget);
     },
     variant: TargetPlatformVariant.only(TargetPlatform.android),
   );
@@ -196,7 +235,7 @@ void main() {
 
       await _startBackGesture(tester, 0.0);
       await tester.pump();
-      // 未消费:无手势状态;回退 Fade 转场,wrapper 不挂 ClipRRect。
+      // 未消费：无手势状态；回退 Fade 转场，不挂载新转场的裁剪层。
       expect(route!.popGestureInProgress, isFalse);
       expect(clipFinder(), findsNothing);
       expect(
@@ -213,4 +252,91 @@ void main() {
     },
     variant: TargetPlatformVariant.only(TargetPlatform.android),
   );
+
+  testWidgets(
+    'disposing an active route releases the navigator gesture lock',
+    (tester) async {
+      final route = await bootstrap(tester);
+      final navigator = route!.navigator!;
+
+      await _startBackGesture(tester, 0.0);
+      await tester.pump();
+      expect(navigator.userGestureInProgress, isTrue);
+
+      navigator.removeRoute(route);
+      await tester.pumpAndSettle();
+
+      expect(navigator.userGestureInProgress, isFalse);
+      await tester.tap(find.text('push'));
+      await tester.pumpAndSettle();
+      expect(find.text('second'), findsOneWidget);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.android),
+  );
+
+  test(
+    'leading corners follow layout direction and keep opposite corners square',
+    () {
+      const corners = ScreenCornerRadii(
+        topLeft: 42,
+        topRight: 40,
+        bottomLeft: 36,
+        bottomRight: 34,
+      );
+
+      expect(
+        screenLeadingBorderRadius(corners, TextDirection.ltr),
+        const BorderRadius.only(
+          topLeft: Radius.circular(42),
+          bottomLeft: Radius.circular(36),
+        ),
+      );
+      expect(
+        screenLeadingBorderRadius(corners, TextDirection.rtl),
+        const BorderRadius.only(
+          topRight: Radius.circular(40),
+          bottomRight: Radius.circular(34),
+        ),
+      );
+    },
+  );
+
+  test('page offset is aligned to physical pixels', () {
+    expect(snapToPhysicalPixel(10.2, 2.5), 10.4);
+    expect(snapToPhysicalPixel(10.2, 0), 10.2);
+  });
+
+  testWidgets('covered page uses quarter-width parallax and a light scrim', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MediaQuery(
+        data: const MediaQueryData(devicePixelRatio: 1),
+        child: Directionality(
+          textDirection: TextDirection.ltr,
+          child: SizedBox(
+            width: 800,
+            height: 600,
+            child: PredictiveBackPageTransition(
+              animation: const AlwaysStoppedAnimation(1),
+              secondaryAnimation: const AlwaysStoppedAnimation(0.5),
+              isGestureDriven: () => true,
+              screenCorners: const ScreenCornerRadii.zero(),
+              child: const Text('page'),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final coveredTransform = tester.widget<Transform>(
+      find.byKey(const ValueKey('predictive_back_covered_transform')),
+    );
+    expect(coveredTransform.transform.storage[12], closeTo(-100, 0.001));
+    expect(find.byType(Opacity), findsNothing);
+    final scrim = tester.widget<ColoredBox>(
+      find.byKey(const ValueKey('predictive_back_covered_scrim')),
+    );
+    expect(scrim.color.a, closeTo(0.05, 0.001));
+  });
 }

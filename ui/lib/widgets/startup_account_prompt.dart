@@ -20,12 +20,14 @@ class StartupAccountPrompt extends StatefulWidget {
     super.key,
     required this.child,
     this.navigatorKey,
+    this.routeListenable,
     this.loadSession,
     this.refreshVersionPolicy,
   });
 
   final Widget child;
   final GlobalKey<NavigatorState>? navigatorKey;
+  final Listenable? routeListenable;
   final StartupAccountSessionLoader? loadSession;
   final StartupVersionRefresh? refreshVersionPolicy;
 
@@ -39,24 +41,49 @@ class _StartupAccountPromptState extends State<StartupAccountPrompt> {
   @override
   void initState() {
     super.initState();
+    widget.routeListenable?.addListener(_handleRouteChange);
+    _scheduleAccountCheck();
+  }
+
+  @override
+  void didUpdateWidget(covariant StartupAccountPrompt oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.routeListenable != widget.routeListenable) {
+      oldWidget.routeListenable?.removeListener(_handleRouteChange);
+      widget.routeListenable?.addListener(_handleRouteChange);
+      _scheduleAccountCheck();
+    }
+  }
+
+  @override
+  void dispose() {
+    widget.routeListenable?.removeListener(_handleRouteChange);
+    super.dispose();
+  }
+
+  void _scheduleAccountCheck() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      unawaited(_checkAccount());
+      if (mounted) unawaited(_checkAccount());
     });
+  }
+
+  void _handleRouteChange() {
+    unawaited(_checkAccount());
   }
 
   Future<void> _checkAccount() async {
     if (_checked || GoRouterManager.isSubEngine) return;
-    _checked = true;
     final welcomeCompleted =
         StorageService.getBool(
           StorageKeys.welcomeCompleted,
           defaultValue: false,
         ) ??
         false;
-    // The first-use tutorial already contains its own optional account entry.
-    // Keep this launch-level prompt out of the onboarding flow and wait until a
-    // later normal app launch after the tutorial has been completed.
+    // Keep the launch-level prompt out of the onboarding flow. Do not mark the
+    // check as complete yet: navigation after the final tutorial action notifies
+    // the route listener and checks the account again in the same app launch.
     if (!welcomeCompleted) return;
+    _checked = true;
     final promptDismissed =
         StorageService.getBool(
           StorageKeys.startupAccountPromptDismissed,

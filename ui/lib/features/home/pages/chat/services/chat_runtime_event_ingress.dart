@@ -26,7 +26,7 @@ extension _ChatRuntimeEventIngress on ChatConversationRuntimeCoordinator {
     var hadPartialText = false;
 
     if (isRateLimited) {
-      _flushPureChatReplyBatch(runtime, taskId, emitVoiceUpdate: true);
+      _flushPureChatReplyBatch(runtime, taskId);
       messageText = kRateLimitErrorMessage;
       isError = true;
       isSummarizing = false;
@@ -42,7 +42,7 @@ extension _ChatRuntimeEventIngress on ChatConversationRuntimeCoordinator {
       hadPartialText =
           (runtime.currentAiMessages[taskId]?.isNotEmpty ?? false) ||
           _visiblePureChatReplyText(runtime, taskId).isNotEmpty;
-      _flushPureChatReplyBatch(runtime, taskId, emitVoiceUpdate: true);
+      _flushPureChatReplyBatch(runtime, taskId);
       messageText = kNetworkErrorMessage;
       isError = true;
       isSummarizing = false;
@@ -91,7 +91,6 @@ extension _ChatRuntimeEventIngress on ChatConversationRuntimeCoordinator {
             _flushPureChatReplyBatch(
               runtime,
               taskId,
-              emitVoiceUpdate: true,
               schedulePersistence: true,
             );
             didSchedulePersistence = true;
@@ -212,14 +211,6 @@ extension _ChatRuntimeEventIngress on ChatConversationRuntimeCoordinator {
         turnUsage: turnUsage ?? existing.turnUsage,
       );
       _syncMessageLinkPreviews(runtime, taskId);
-    }
-    if (!isErrorMessage && messageText.trim().isNotEmpty) {
-      unawaited(
-        VoicePlaybackCoordinator.instance.onAssistantMessageCompleted(
-          messageId: taskId,
-          text: messageText,
-        ),
-      );
     }
     runtime.currentAiMessages.remove(taskId);
     _clearStreamingTextBatchesForTask(runtime, taskId);

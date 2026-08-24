@@ -16,9 +16,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -34,7 +31,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.unit.dp
 import androidx.palette.graphics.Palette
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
@@ -43,6 +42,7 @@ import com.rk.components.compose.preferences.base.PreferenceGroup
 import com.rk.components.compose.preferences.base.PreferenceLayout
 import com.rk.components.compose.preferences.base.PreferenceTemplate
 import com.rk.components.compose.preferences.switch.PreferenceSwitch
+import com.rk.resources.drawables
 import com.rk.resources.strings
 import com.rk.libcommons.child
 import com.rk.libcommons.createFileIfNot
@@ -125,7 +125,7 @@ fun Customization(modifier: Modifier = Modifier) {
                         .size(15.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(imageVector = Icons.Outlined.Info, contentDescription = null)
+                    Icon(imageVector = ImageVector.vectorResource(drawables.ic_lucide_info), contentDescription = null)
                 }
                 Text(
                     text = stringResource(strings.font_hint),
@@ -190,7 +190,7 @@ fun Customization(modifier: Modifier = Modifier) {
                                 fontExists = font.exists()
                             }
                         }) {
-                            Icon(imageVector = Icons.Outlined.Delete,contentDescription = "delete")
+                            Icon(imageVector = ImageVector.vectorResource(drawables.ic_lucide_trash_2),contentDescription = "delete")
                         }
                     }
                 }
@@ -285,7 +285,7 @@ fun Customization(modifier: Modifier = Modifier) {
                                 bitmap.value = null
                             }
                         }) {
-                            Icon(imageVector = Icons.Outlined.Delete,contentDescription = "delete")
+                            Icon(imageVector = ImageVector.vectorResource(drawables.ic_lucide_trash_2),contentDescription = "delete")
                         }
                     }
 

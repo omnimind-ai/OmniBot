@@ -3,7 +3,7 @@
 
     <style name="Theme.OmnibotApp.Splash" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowSplashScreenBackground">#151617</item>
-        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_logo</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_logo_dark</item>
         <item name="android:windowSplashScreenIconBackgroundColor">#151617</item>
         <item name="android:windowSplashScreenAnimationDuration">200</item>
         <item name="android:windowBackground">@drawable/splash_background_dark</item>
@@ -11,6 +11,7 @@
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:enforceNavigationBarContrast">false</item>
         <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
         <item name="android:windowDrawsSystemBarBackgrounds">true</item>
     </style>
 

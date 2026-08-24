@@ -1563,6 +1563,9 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
     return ChatMessageAnchorBar(
       messages: messages,
       activeAgentTaskIds: activeTaskIds,
+      conversationAgentId: mode == ChatPageMode.agent
+          ? _activeAcpAgentId
+          : null,
       conversationSignature:
           '${mode.name}:${_modeState(mode).currentConversationId ?? ''}',
       bottomInset: bottomInset,
@@ -1919,19 +1922,26 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
         return ValueListenableBuilder<AppBackgroundVisualProfile>(
           valueListenable: AppBackgroundService.visualProfileNotifier,
           builder: (context, visualProfile, _) {
+            final handlesBackLocally =
+                _isFirstUseTourActive ||
+                _conversationModelSelectorHandle != null ||
+                (isHdPadLandscape &&
+                    !_hdPadRightPaneCollapsed &&
+                    _workspaceBrowserCanGoUp);
             return PopScope(
-              canPop: false,
+              // Predictive back requires the framework to declare whether it can
+              // pop before the gesture starts. At the root, let Android own the
+              // gesture so it can animate the app window back to the launcher.
+              canPop: !handlesBackLocally,
               onPopInvokedWithResult: (didPop, _) {
                 if (didPop) return;
                 if (_isFirstUseTourActive) {
                   _handleFirstUseTourBack();
                   return;
                 }
-                // 模型选择器是 OverlayEntry，不在 Navigator 栈里，普通 pop
-                // 不会关掉它；这里手动关，让系统返回手势先吃掉它再走原本的退出逻辑。
+                // 模型选择器是 OverlayEntry，不在 Navigator 栈里，由页面先关闭。
                 if (_conversationModelSelectorHandle != null) {
                   unawaited(_conversationModelSelectorHandle?.dismiss());
-                  _conversationModelSelectorHandle = null;
                   return;
                 }
                 if (isHdPadLandscape &&
@@ -1949,12 +1959,6 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
                 if (_isWorkspaceSurface && _workspaceBrowserCanGoUp) {
                   return;
                 }
-                unawaited(saveConversationWithSummary());
-                if (GoRouterManager.canPop()) {
-                  GoRouterManager.pop();
-                  return;
-                }
-                unawaited(AppStateService.exitApp());
               },
               child: Scaffold(
                 key: _scaffoldKey,

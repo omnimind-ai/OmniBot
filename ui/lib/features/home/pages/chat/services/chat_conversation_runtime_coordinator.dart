@@ -21,7 +21,6 @@ import 'package:ui/services/agent_tool_call_parser.dart';
 import 'package:ui/services/conversation_history_service.dart';
 import 'package:ui/services/conversation_service.dart';
 import 'package:ui/services/link_preview_service.dart';
-import 'package:ui/services/voice_playback_coordinator.dart';
 import 'package:ui/services/agent_stream_meta.dart';
 import 'package:ui/utils/data_parser.dart';
 import 'package:ui/services/agent_diff_parser.dart';
@@ -259,8 +258,6 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
   void ensureInitialized() {
     if (_initialized) return;
     _initialized = true;
-    unawaited(VoicePlaybackCoordinator.instance.ensureInitialized());
-
     AssistsMessageService.initialize();
     AssistsMessageService.addOnChatTaskMessageCallBack(_handleChatTaskMessage);
     AssistsMessageService.addOnChatTaskMessageEndCallBack(

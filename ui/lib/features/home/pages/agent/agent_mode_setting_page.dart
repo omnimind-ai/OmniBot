@@ -10,6 +10,7 @@ import 'package:ui/utils/ui.dart';
 import 'package:ui/widgets/agent_brand_icon.dart';
 import 'package:ui/widgets/common_app_bar.dart';
 import 'package:ui/widgets/omni_segmented_slider.dart';
+import 'package:ui/widgets/settings_detail_sheet.dart';
 import 'package:ui/widgets/settings_section_title.dart';
 
 enum _AgentFilter { all, available, unavailable }
@@ -134,15 +135,18 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
       await _load();
       if (!mounted) return;
       final ok = result['ok'] == true;
-      await showDialog<void>(
+      final title = ok
+          ? _text('Agent 检测成功', 'Agent check succeeded')
+          : _text('Agent 检测失败', 'Agent check failed');
+      await showSettingsDetailSheet<void>(
         context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: Text(
-            ok
-                ? _text('Agent 检测成功', 'Agent check succeeded')
-                : _text('Agent 检测失败', 'Agent check failed'),
-          ),
-          content: SingleChildScrollView(
+        builder: (sheetContext) => SettingsDetailSheet(
+          key: ValueKey('agent-check-result-${agent.id}'),
+          title: title,
+          body: Semantics(
+            container: true,
+            liveRegion: true,
+            label: title,
             child: SelectableText(
               ok
                   ? _formatCapabilities(result['capabilities'])
@@ -150,12 +154,6 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
                         _text('未知错误', 'Unknown error')),
             ),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(),
-              child: Text(_text('完成', 'Done')),
-            ),
-          ],
         ),
       );
     } catch (error) {
@@ -406,7 +404,11 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
         hintStyle: TextStyle(color: palette.textTertiary, fontSize: 13.5),
         prefixIcon: Padding(
           padding: const EdgeInsets.only(left: 14, right: 8),
-          child: Icon(LucideIcons.search, size: 18, color: palette.textTertiary),
+          child: Icon(
+            LucideIcons.search,
+            size: 18,
+            color: palette.textTertiary,
+          ),
         ),
         prefixIconConstraints: const BoxConstraints(),
         filled: true,
@@ -463,9 +465,7 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
   Widget _buildAgentTile(AcpAgentProfile agent) {
     final palette = context.omniPalette;
     final status = _statusPresentation(agent.status, _english);
-    final statusColor = agent.enabled
-        ? status.color
-        : const Color(0xFF98A2B3);
+    final statusColor = agent.enabled ? status.color : const Color(0xFF98A2B3);
     final hasError =
         (agent.lastCheckError ?? '').isNotEmpty && agent.status != 'online';
     final canTest = agent.enabled && agent.status != 'missing';
@@ -488,9 +488,7 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
       ),
       title: agent.name,
       statusColor: statusColor,
-      statusLabel: !agent.enabled
-          ? _text('已停用', 'Disabled')
-          : status.label,
+      statusLabel: !agent.enabled ? _text('已停用', 'Disabled') : status.label,
       subtitle: agent.description.isNotEmpty
           ? agent.description
           : ([agent.command, ...agent.arguments]).join(' '),
@@ -664,11 +662,7 @@ class _FlatTile extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(4, 13, 2, 13),
           child: Row(
             children: [
-              SizedBox(
-                width: 18,
-                height: 18,
-                child: Center(child: leading),
-              ),
+              SizedBox(width: 18, height: 18, child: Center(child: leading)),
               const SizedBox(width: 10),
               Expanded(
                 child: Column(

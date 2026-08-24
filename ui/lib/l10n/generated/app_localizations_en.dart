@@ -989,11 +989,6 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String sceneVoiceSaveFailed(Object error) {
-    return 'Failed to save voice settings: $error';
-  }
-
-  @override
   String get modelsNoAvailableModels => 'No models available';
 
   @override

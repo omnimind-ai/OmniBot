@@ -29,7 +29,6 @@ import 'services/chat_conversation_runtime_coordinator.dart';
 import 'state/chat_page_mode_state.dart';
 import 'package:ui/constants/openclaw/openclaw_keys.dart';
 import 'package:ui/core/router/go_router_manager.dart';
-import 'package:ui/services/app_state_service.dart';
 import 'package:ui/services/app_update_service.dart';
 import 'package:ui/services/app_background_service.dart';
 import 'package:ui/services/agent_browser_session_service.dart';
@@ -167,6 +166,9 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   /// 用 Overlay 直接挂面板可以彻底跳过这条路径。
   OverlayGlassPopupHandle<ConversationModelSelection>?
   _conversationModelSelectorHandle;
+  final ConversationModelSelectorOpeningGuard
+  _conversationModelSelectorOpeningGuard =
+      ConversationModelSelectorOpeningGuard();
 
   // ===================== State =====================
   bool _isPopupVisible = false;

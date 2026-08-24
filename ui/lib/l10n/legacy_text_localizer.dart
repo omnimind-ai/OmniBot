@@ -355,20 +355,9 @@ class LegacyTextLocalizer {
     '其中 Termux 终端能力为可选项，未开启也不影响基础功能':
         'Termux capability is optional; leaving it off will not affect basic features',
     '未绑定': 'Unbound',
-    '清除绑定': 'Clear binding',
     '恢复默认': 'Restore default',
-    '点击右侧按钮后，可按 Provider 搜索、折叠并选择模型；Voice 的音色与自动播放可通过调节按钮展开。':
-        'After tapping the button on the right, you can search, collapse, and select models by Provider; voice tone and auto-play can be adjusted below.',
-    'AI 响应完成后自动播放': 'Auto-play after AI response',
-    '音色': 'Voice',
-    '例如：default_zh / mimo_default / default_en':
-        'e.g. default_zh / mimo_default / default_en',
-    '风格': 'Style',
-    '自定义补充': 'Custom note',
-    '唱歌模式下不支持附加风格': 'Additional style is not supported in singing mode',
-    '例如：更温柔、节奏慢一点、偏播客感': 'e.g. softer, slower, podcast-like',
-    '收起语音设置': 'Collapse voice settings',
-    '展开语音设置': 'Expand voice settings',
+    '点击右侧按钮后，可按 Provider 搜索、折叠并选择模型。':
+        'After tapping the button on the right, you can search, collapse, and select models by Provider.',
     '使用内置模型服务': 'Use Built-in Model Service',
     '内置模型服务': 'Built-in Model Service',
     '内置模型服务已启用': 'Built-in model service enabled',
@@ -476,8 +465,7 @@ class LegacyTextLocalizer {
     '选择方式': 'Choose Method',
     '特性': 'Features',
     '初次使用教程': 'First-use Tutorial',
-    '重新查看应用首次启动时的引导页面':
-        'Replay the first-launch onboarding page',
+    '重新查看应用首次启动时的引导页面': 'Replay the first-launch onboarding page',
   };
 
   static final List<(RegExp, _TextRewriter)>
@@ -533,10 +521,6 @@ class LegacyTextLocalizer {
     (
       RegExp(r'^(.+) 已恢复默认模型$'),
       (match) => '${match.group(1)!} restored to default model',
-    ),
-    (
-      RegExp(r'^保存 Voice 配置失败：(.+)$'),
-      (match) => 'Failed to save Voice config: ${match.group(1)!}',
     ),
     (RegExp(r'^已切换到 (.+)$'), (match) => 'Switched to ${match.group(1)!}'),
     (

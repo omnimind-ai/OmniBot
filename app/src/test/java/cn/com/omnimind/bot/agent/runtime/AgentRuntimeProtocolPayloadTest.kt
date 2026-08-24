@@ -61,6 +61,18 @@ class AgentRuntimeProtocolPayloadTest {
         assertTrue(DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("cmd_copy = rm -rf"))
         assertTrue(DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("omnibot-node-gyp-copy"))
         assertTrue(DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("exec /bin/ln"))
+        val installScriptLines = DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND
+            .lineSequence()
+            .map(String::trim)
+            .toList()
+        val packageInstallIndex = installScriptLines.indexOf(
+            "install_deepseek_harness_packages"
+        )
+        val nativeRepairIndex = installScriptLines.indexOf(
+            "repair_deepseek_harness_node_pty"
+        )
+        assertTrue(packageInstallIndex >= 0)
+        assertTrue(nativeRepairIndex > packageInstallIndex)
     }
 
     @Test

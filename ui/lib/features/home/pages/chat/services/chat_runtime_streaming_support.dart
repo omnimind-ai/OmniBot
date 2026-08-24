@@ -50,7 +50,6 @@ extension _ChatRuntimeStreamingSupport on ChatConversationRuntimeCoordinator {
 
   void _flushRuntimeStreamingText(
     ChatConversationRuntimeState runtime, {
-    bool emitVoiceUpdates = false,
     bool schedulePersistence = false,
   }) {
     final taskIds = runtime._streamingTextBatches.values
@@ -61,7 +60,6 @@ extension _ChatRuntimeStreamingSupport on ChatConversationRuntimeCoordinator {
       _flushStreamingTextForTask(
         runtime,
         taskId,
-        emitVoiceUpdates: emitVoiceUpdates,
         schedulePersistence: schedulePersistence,
       );
     }
@@ -70,7 +68,6 @@ extension _ChatRuntimeStreamingSupport on ChatConversationRuntimeCoordinator {
   void _flushStreamingTextForTask(
     ChatConversationRuntimeState runtime,
     String taskId, {
-    bool emitVoiceUpdates = false,
     bool schedulePersistence = false,
   }) {
     _flushThinkingBatch(
@@ -88,13 +85,11 @@ extension _ChatRuntimeStreamingSupport on ChatConversationRuntimeCoordinator {
     _flushPureChatReplyBatch(
       runtime,
       taskId,
-      emitVoiceUpdate: emitVoiceUpdates,
       schedulePersistence: schedulePersistence,
     );
     _flushAgentReplyBatch(
       runtime,
       taskId,
-      emitVoiceEvent: emitVoiceUpdates,
       schedulePersistence: schedulePersistence,
     );
   }
@@ -222,7 +217,6 @@ extension _ChatRuntimeStreamingSupport on ChatConversationRuntimeCoordinator {
     List<Map<String, dynamic>> attachments = const <Map<String, dynamic>>[],
     double? prefillTokensPerSecond,
     double? decodeTokensPerSecond,
-    bool emitVoiceUpdate = false,
     bool schedulePersistence = false,
   }) {
     final hasExistingMessage = runtime.messages.any(
@@ -259,18 +253,6 @@ extension _ChatRuntimeStreamingSupport on ChatConversationRuntimeCoordinator {
       decodeTokensPerSecond: decodeTokensPerSecond,
       reasoningContent: reasoningContent,
     );
-    if (emitVoiceUpdate &&
-        !isError &&
-        !isSummarizing &&
-        text.trim().isNotEmpty) {
-      unawaited(
-        VoicePlaybackCoordinator.instance.onAssistantMessageUpdated(
-          messageId: taskId,
-          text: text,
-          isFinal: false,
-        ),
-      );
-    }
     if (schedulePersistence) {
       schedulePersistRuntimeConversation(
         conversationId: runtime.conversationId,
@@ -284,7 +266,6 @@ extension _ChatRuntimeStreamingSupport on ChatConversationRuntimeCoordinator {
     ChatConversationRuntimeState runtime,
     String taskId, {
     bool isFinal = false,
-    bool emitVoiceUpdate = false,
     bool schedulePersistence = false,
   }) {
     final batch = _streamingTextBatchFor(
@@ -304,7 +285,6 @@ extension _ChatRuntimeStreamingSupport on ChatConversationRuntimeCoordinator {
       isError: false,
       renderMarkdown: true,
       isStreamingMarkdown: !isFinal,
-      emitVoiceUpdate: emitVoiceUpdate,
       schedulePersistence: schedulePersistence,
     );
   }
@@ -400,7 +380,6 @@ extension _ChatRuntimeStreamingSupport on ChatConversationRuntimeCoordinator {
     ChatConversationRuntimeState runtime,
     String taskId, {
     bool isFinal = false,
-    bool emitVoiceEvent = false,
     bool schedulePersistence = false,
     double? prefillTokensPerSecond,
     double? decodeTokensPerSecond,
@@ -446,17 +425,6 @@ extension _ChatRuntimeStreamingSupport on ChatConversationRuntimeCoordinator {
     if (batch != null && (hasPendingFlush || isFinal)) {
       batch.markFlushed();
     }
-    if (emitVoiceEvent &&
-        text.trim().isNotEmpty &&
-        (hasPendingFlush || isFinal)) {
-      unawaited(
-        VoicePlaybackCoordinator.instance.onAssistantMessageUpdated(
-          messageId: messageId,
-          text: text,
-          isFinal: isFinal,
-        ),
-      );
-    }
     if (schedulePersistence) {
       schedulePersistRuntimeConversation(
         conversationId: runtime.conversationId,
@@ -470,7 +438,7 @@ extension _ChatRuntimeStreamingSupport on ChatConversationRuntimeCoordinator {
         _StreamingTextStreamKind.agentReply,
       );
     }
-    return shouldWrite || (emitVoiceEvent && text.trim().isNotEmpty && isFinal);
+    return shouldWrite;
   }
 
   bool _flushThinkingBatch(

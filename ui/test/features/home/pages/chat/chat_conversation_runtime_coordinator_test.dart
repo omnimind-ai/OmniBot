@@ -8,7 +8,6 @@ import 'package:ui/features/home/pages/chat/utils/agent_run_timeline.dart';
 import 'package:ui/models/chat_message_model.dart';
 import 'package:ui/models/conversation_model.dart';
 import 'package:ui/services/ai_chat_service.dart';
-import 'package:ui/services/voice_playback_coordinator.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -16,12 +15,8 @@ void main() {
   const channelName = 'cn.com.omnimind.bot/AssistCoreEvent';
   const codec = StandardMethodCodec();
   const methodChannel = MethodChannel(channelName);
-  const voiceChannel = MethodChannel('cn.com.omnimind.bot/VoicePlayback');
   final coordinator = ChatConversationRuntimeCoordinator.instance;
   final recordedMethodCalls = <MethodCall>[];
-  final recordedVoiceCalls = <MethodCall>[];
-  late List<Map<String, dynamic>> sceneBindings;
-  late Map<String, dynamic> sceneVoiceConfig;
   var agentStreamSeq = 0;
   final agentThinkingRounds = <String, int>{};
   final agentTextRounds = <String, int>{};
@@ -314,9 +309,7 @@ void main() {
 
   setUp(() async {
     coordinator.resetForTest();
-    await VoicePlaybackCoordinator.instance.debugResetForTest();
     recordedMethodCalls.clear();
-    recordedVoiceCalls.clear();
     agentStreamSeq = 0;
     agentThinkingRounds.clear();
     agentTextRounds.clear();
@@ -327,39 +320,18 @@ void main() {
     agentToolSequences.clear();
     agentEntryOrderSeqs.clear();
     agentEntrySeq = 0;
-    sceneBindings = <Map<String, dynamic>>[];
-    sceneVoiceConfig = <String, dynamic>{
-      'autoPlay': false,
-      'voiceId': 'default_zh',
-      'stylePreset': '默认',
-      'customStyle': '',
-    };
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(methodChannel, (call) async {
           recordedMethodCalls.add(call);
-          switch (call.method) {
-            case 'getSceneModelBindings':
-              return sceneBindings;
-            case 'getSceneVoiceConfig':
-              return sceneVoiceConfig;
-          }
           return 'SUCCESS';
-        });
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(voiceChannel, (call) async {
-          recordedVoiceCalls.add(call);
-          return true;
         });
     coordinator.ensureInitialized();
   });
 
   tearDown(() async {
     coordinator.resetForTest();
-    await VoicePlaybackCoordinator.instance.debugResetForTest();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(methodChannel, null);
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(voiceChannel, null);
   });
 
   test('routes agent chat updates to the bound conversation only', () async {
@@ -1090,58 +1062,6 @@ void main() {
     expect(runtime.messages.first.text, 'hello from pure chat');
     expect(runtime.messages.first.content?['prefillTokensPerSecond'], 36.6);
     expect(runtime.messages.first.content?['decodeTokensPerSecond'], 12.4);
-  });
-
-  test('streams sealed assistant segments into voice playback', () async {
-    const conversationId = 2212;
-    const taskId = 'chat-task-voice-stream';
-
-    sceneBindings = <Map<String, dynamic>>[
-      <String, dynamic>{
-        'sceneId': 'scene.voice',
-        'providerProfileId': 'provider-1',
-        'modelId': 'mimo-v2-tts',
-      },
-    ];
-    sceneVoiceConfig = <String, dynamic>{
-      'autoPlay': true,
-      'voiceId': 'default_zh',
-      'stylePreset': '默认',
-      'customStyle': '',
-    };
-    await VoicePlaybackCoordinator.instance.debugResetForTest();
-    coordinator.ensureInitialized();
-
-    coordinator.ensureRuntime(
-      conversationId: conversationId,
-      mode: kChatRuntimeModeNormal,
-    );
-    coordinator.registerTask(
-      taskId: taskId,
-      conversationId: conversationId,
-      mode: kChatRuntimeModeNormal,
-    );
-
-    await emitPlatformEvent('onChatMessage', <String, dynamic>{
-      'taskID': taskId,
-      'content': '{"choices":[{"delta":{"content":"第一句。第二句"}}]}',
-      'type': null,
-    });
-    await Future<void>.delayed(Duration.zero);
-
-    expect(recordedVoiceCalls, hasLength(1));
-    expect(recordedVoiceCalls.first.method, 'speakText');
-    expect(recordedVoiceCalls.first.arguments['text'], '第一句。');
-    expect(recordedVoiceCalls.first.arguments['enqueue'], false);
-
-    await emitPlatformEvent('onChatMessageEnd', <String, dynamic>{
-      'taskID': taskId,
-    });
-    await Future<void>.delayed(Duration.zero);
-
-    expect(recordedVoiceCalls, hasLength(2));
-    expect(recordedVoiceCalls.last.arguments['text'], '第二句');
-    expect(recordedVoiceCalls.last.arguments['enqueue'], true);
   });
 
   test('primes pure-chat thinking card immediately before streaming', () {

@@ -13,6 +13,7 @@ import 'package:ui/services/agent_avatar_service.dart';
 import 'package:ui/theme/app_theme.dart';
 import 'package:ui/theme/theme_context.dart';
 import 'package:ui/widgets/agent_avatar.dart';
+import 'package:ui/widgets/agent_brand_icon.dart';
 
 import '../chat_page_models.dart';
 import '../utils/agent_run_timeline.dart';
@@ -23,11 +24,15 @@ class ChatMessageAnchor {
     required this.entryKey,
     required this.isUser,
     required this.preview,
+    this.agentId,
   });
 
   /// 对应 [AgentRunTimelineEntry.key]，用于消息列表跳转。
   final String entryKey;
   final bool isUser;
+
+  /// ACP Agent identity for this turn. Null keeps the built-in Xiaowan avatar.
+  final String? agentId;
 
   /// 锚点头像下方展示的消息首行文字。
   final String preview;
@@ -38,6 +43,7 @@ class ChatMessageAnchor {
 List<ChatMessageAnchor> buildChatMessageAnchors(
   List<ChatMessageModel> messages, {
   Set<String> activeTaskIds = const <String>{},
+  String? conversationAgentId,
 }) {
   if (messages.isEmpty) {
     return const <ChatMessageAnchor>[];
@@ -45,6 +51,7 @@ List<ChatMessageAnchor> buildChatMessageAnchors(
   final entries = buildAgentRunTimelineEntries(
     List<ChatMessageModel>.from(messages),
     activeTaskIds: activeTaskIds,
+    conversationAgentId: conversationAgentId,
   );
   final anchors = <ChatMessageAnchor>[];
   for (final entry in entries) {
@@ -62,6 +69,12 @@ List<ChatMessageAnchor> buildChatMessageAnchors(
           entryKey: entry.key,
           isUser: message.user == 1,
           preview: preview,
+          agentId: message.user == 2
+              ? _resolvedAnchorAgentId(
+                  turnMessages: <ChatMessageModel>[message],
+                  conversationAgentId: conversationAgentId,
+                )
+              : null,
         ),
       );
       continue;
@@ -83,11 +96,27 @@ List<ChatMessageAnchor> buildChatMessageAnchors(
       preview = LegacyTextLocalizer.isEnglish ? 'Working…' : '思考中…';
     }
     anchors.add(
-      ChatMessageAnchor(entryKey: entry.key, isUser: false, preview: preview),
+      ChatMessageAnchor(
+        entryKey: entry.key,
+        isUser: false,
+        preview: preview,
+        agentId: group.agentId == kGenericAgentId ? null : group.agentId,
+      ),
     );
   }
   // entries 为新→旧，锚点按时间正序（旧→新）返回。
   return anchors.reversed.toList(growable: false);
+}
+
+String? _resolvedAnchorAgentId({
+  required Iterable<ChatMessageModel> turnMessages,
+  String? conversationAgentId,
+}) {
+  final agentId = resolveAgentRunAgentId(
+    turnMessages: turnMessages,
+    conversationAgentId: conversationAgentId,
+  );
+  return agentId == kGenericAgentId ? null : agentId;
 }
 
 String _firstPreviewLine(String? text) {
@@ -236,11 +265,16 @@ class ChatMessageAnchorBar extends StatefulWidget {
     required this.bottomInset,
     required this.visible,
     required this.onJumpToEntry,
+    this.conversationAgentId,
     this.onExpandedChanged,
   });
 
   final List<ChatMessageModel> messages;
   final Set<String> activeAgentTaskIds;
+
+  /// ACP Agent bound to this conversation. Individual message identities win;
+  /// this fills older ACP history that predates per-message Agent metadata.
+  final String? conversationAgentId;
 
   /// 会话/模式标识，变化时立即收起面板。
   final String conversationSignature;
@@ -293,6 +327,7 @@ class _ChatMessageAnchorBarState extends State<ChatMessageAnchorBar>
   int _anchorsCacheRevision = -1;
   int _anchorsCacheLength = -1;
   Set<String>? _anchorsCacheTaskIds;
+  String? _anchorsCacheConversationAgentId;
 
   @override
   void initState() {
@@ -381,18 +416,21 @@ class _ChatMessageAnchorBarState extends State<ChatMessageAnchorBar>
     if (identical(_anchorsCacheSource, source) &&
         _anchorsCacheRevision == revision &&
         _anchorsCacheLength == source.length &&
-        setEquals(_anchorsCacheTaskIds, widget.activeAgentTaskIds)) {
+        setEquals(_anchorsCacheTaskIds, widget.activeAgentTaskIds) &&
+        _anchorsCacheConversationAgentId == widget.conversationAgentId) {
       return _anchorsCache;
     }
     final anchors = buildChatMessageAnchors(
       source,
       activeTaskIds: widget.activeAgentTaskIds,
+      conversationAgentId: widget.conversationAgentId,
     );
     _anchorsCache = anchors;
     _anchorsCacheSource = source;
     _anchorsCacheRevision = revision;
     _anchorsCacheLength = source.length;
     _anchorsCacheTaskIds = Set<String>.from(widget.activeAgentTaskIds);
+    _anchorsCacheConversationAgentId = widget.conversationAgentId;
     return anchors;
   }
 
@@ -902,6 +940,28 @@ class _ChatMessageAnchorBarState extends State<ChatMessageAnchorBar>
           ],
         ),
         child: Icon(LucideIcons.user, size: 15, color: palette.textSecondary),
+      );
+    }
+    final agentId = anchor.agentId;
+    if (agentId != null) {
+      final palette = context.omniPalette;
+      return Container(
+        width: _kAnchorAvatarSize,
+        height: _kAnchorAvatarSize,
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: context.isDarkTheme
+              ? palette.surfaceSecondary.withValues(alpha: 0.66)
+              : palette.surfaceElevated.withValues(alpha: 0.92),
+          shape: BoxShape.circle,
+          border: Border.all(
+            color: palette.borderSubtle.withValues(
+              alpha: context.isDarkTheme ? 0.48 : 0.72,
+            ),
+            width: 0.5,
+          ),
+        ),
+        child: AgentBrandIcon(agentId: agentId, size: 16),
       );
     }
     return ValueListenableBuilder<AgentAvatarState>(
