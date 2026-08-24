@@ -509,7 +509,10 @@ private class XiaowanAgentSession(
         require(text.isNotEmpty() || promptParts.attachments.isNotEmpty()) {
             "Xiaowan ACP prompt is empty"
         }
-        val streamBridge = XiaowanAcpEventBridge { update ->
+        val conversationId = conversationIdProvider(sessionId.value)
+        val streamBridge = XiaowanAcpEventBridge(
+            canContinue = conversationId != null,
+        ) { update ->
             // AgentCallback can arrive from provider/tool worker coroutines.
             // `flow { emit(...) }` is not thread-safe and drops the whole turn
             // with Flow invariant violations when two stream callbacks race.
@@ -517,7 +520,6 @@ private class XiaowanAgentSession(
             // session/update event.
             send(Event.SessionUpdateEvent(update))
         }
-        val conversationId = conversationIdProvider(sessionId.value)
         Log.i(
             TAG,
             "prompt session=${sessionId.value} conversationId=${conversationId ?: "unbound"} " +
@@ -822,6 +824,7 @@ internal fun xiaowanTerminalEnvironmentFromMeta(
 }
 
 internal class XiaowanAcpEventBridge(
+    private val canContinue: Boolean = false,
     private val emitUpdate: suspend (SessionUpdate) -> Unit,
 ) : AgentCallback {
     private val callbackMutex = Mutex()
@@ -890,19 +893,26 @@ internal class XiaowanAcpEventBridge(
 
     override suspend fun onThinkingStart() {
         callbackMutex.withLock {
-            if (thoughtSnapshot.isNotEmpty()) {
+            val startsAfterTool = reasoningSegmentPending
+            if (thoughtSnapshot.isNotEmpty() && !startsAfterTool) {
                 thoughtMessageId = MessageId(UUID.randomUUID().toString())
                 reasoningSegmentIndex += 1
             }
             thoughtSnapshot = ""
-            reasoningSegmentPending = false
-            emitUpdate(
-                SessionUpdate.AgentThoughtChunk(
-                    content = ContentBlock.Text(""),
-                    messageId = thoughtMessageId,
-                    _meta = reasoningAcpMeta("", reasoningSegmentIndex, generationId),
+            // A tool may be followed by a tool-only model round. Keep the
+            // segment boundary armed, but wait for the first real reasoning
+            // chunk before allocating a new message id; otherwise the shared
+            // reducer creates an empty thinking card between two tools.
+            reasoningSegmentPending = startsAfterTool
+            if (!startsAfterTool) {
+                emitUpdate(
+                    SessionUpdate.AgentThoughtChunk(
+                        content = ContentBlock.Text(""),
+                        messageId = thoughtMessageId,
+                        _meta = reasoningAcpMeta("", reasoningSegmentIndex, generationId),
+                    )
                 )
-            )
+            }
         }
     }
 
@@ -1316,16 +1326,31 @@ internal class XiaowanAcpEventBridge(
     }
     override suspend fun onError(error: String, retryable: Boolean) {
         callbackMutex.withLock {
-            emitAssistantNotice(
-                text = error,
-                meta = acpPresentationMeta(
-                    "recovery" to mapOf(
-                        "error" to error,
-                        "retryable" to retryable,
-                        "continueable" to false,
-                    )
-                ),
+            // Preserve the old Xiaowan behavior on the ACP path: a failed
+            // turn with visible partial output remains one assistant entry
+            // and exposes the Continue action through shared recovery
+            // metadata. Do not create a second error bubble or throw away the
+            // partial Markdown stream.
+            val hasPartialOutput = assistantSnapshot.isNotBlank()
+            val continueable = canContinue && hasPartialOutput
+            val recoveryMeta = acpPresentationMeta(
+                "recovery" to mapOf(
+                    "error" to error,
+                    "retryable" to retryable,
+                    "continueable" to continueable,
+                    "continueResumeMode" to if (continueable) "approximate" else null,
+                    "willRetry" to false,
+                    "persistAsError" to !hasPartialOutput,
+                    "retryCount" to if (retryable) 3 else 0,
+                    "maxRetries" to 3,
+                    "errorText" to error,
+                )
             )
+            if (hasPartialOutput) {
+                emitAssistantStatus(recoveryMeta)
+            } else {
+                emitAssistantNotice(error, recoveryMeta)
+            }
         }
     }
     override suspend fun onPermissionRequired(missing: List<String>) {
@@ -1443,6 +1468,13 @@ private fun reasoningAcpMeta(
         copy("taskTitle")
         copy("memory_actions", "memoryActions")
         copy("memoryActions")
+        // These fields were emitted by older Xiaowan providers after the
+        // structured thinking body. Keep them in the ACP reasoning metadata
+        // so the shared reducer can preserve the old summary/stage behavior
+        // and other ACP clients can consume the same information.
+        copy("summary")
+        copy("stage")
+        copy("phase")
     }
     return acpPresentationMeta("reasoning" to reasoning)
 }

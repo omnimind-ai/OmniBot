@@ -1080,6 +1080,91 @@ void main() {
     expect(cardData['memoryActions'], ['保留旧卡片字段']);
   });
 
+  test('projects plain ACP reasoning metadata from another namespace', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'turnId': 'turn-generic-reasoning',
+        'params': {
+          'sessionId': 'session-generic-reasoning',
+          'update': {
+            'sessionUpdate': 'agent_thought_chunk',
+            'messageId': 'thought-generic',
+            'content': {'type': 'text', 'text': ''},
+            '_meta': {
+              'com.example.acp': {
+                'thinking': {
+                  'text': '来自 ACP Harness 的推理摘要',
+                  'stage': 'planning',
+                  'summary': '已完成计划整理',
+                },
+              },
+            },
+          },
+        },
+      },
+    );
+
+    final cardData = runtime.messages.single.cardData!;
+    expect(cardData['thinkingContent'], '来自 ACP Harness 的推理摘要');
+    expect(cardData['stage'], 1);
+    expect(cardData['reasoningSummary'], '已完成计划整理');
+  });
+
+  test('routes ACP metadata media and artifacts through shared cards', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'turnId': 'turn-presentation-resources',
+        'params': {
+          'sessionId': 'session-presentation-resources',
+          'update': {
+            'sessionUpdate': 'agent_message_chunk',
+            'messageId': 'message-presentation-resources',
+            'content': {'type': 'text', 'text': ''},
+            '_meta': {
+              'com.example.acp': {
+                'media': [
+                  {
+                    'imageDataUrl': 'data:image/png;base64,ACP',
+                    'title': 'ACP image',
+                  },
+                ],
+                'artifacts': [
+                  {
+                    'uri': 'workspace://acp-result.md',
+                    'title': 'ACP result',
+                    'mimeType': 'text/markdown',
+                  },
+                ],
+              },
+            },
+          },
+        },
+      },
+    );
+
+    expect(
+      runtime.messages.any(
+        (message) =>
+            message.cardData?['toolType'] == 'image' &&
+            message.cardData?['imageDataUrl'] == 'data:image/png;base64,ACP',
+      ),
+      isTrue,
+    );
+    expect(
+      runtime.messages.any(
+        (message) =>
+            message.cardData?['type'] == 'artifact_card' &&
+            message.cardData?['artifact']?['uri'] ==
+                'workspace://acp-result.md',
+      ),
+      isTrue,
+    );
+  });
+
   test('does not render an empty ACP thought start as a blank card', () {
     reducer.reduce(
       runtime: runtime,
@@ -1524,6 +1609,41 @@ void main() {
     expect(message.content?['agentErrorText'], '网络连接中断');
     expect(message.content?['agentRetryable'], isTrue);
     expect(message.content?['agentContinueable'], isFalse);
+  });
+
+  test('keeps partial ACP output non-error when recovery is continuable', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'turnId': 'turn-partial-recovery',
+        'params': {
+          'sessionId': 'session-partial-recovery',
+          'update': {
+            'sessionUpdate': 'agent_message_chunk',
+            'messageId': 'message-partial-recovery',
+            'content': {'type': 'text', 'text': '半截答案'},
+            '_meta': {
+              'cn.com.omnimind.agent': {
+                'recovery': {
+                  'error': '连接中断',
+                  'retryable': true,
+                  'continueable': true,
+                  'continueResumeMode': 'approximate',
+                  'persistAsError': false,
+                },
+              },
+            },
+          },
+        },
+      },
+    );
+
+    final message = runtime.messages.single;
+    expect(message.text, '半截答案');
+    expect(message.isError, isFalse);
+    expect(message.content?['agentContinueable'], isTrue);
+    expect(message.content?['agentContinueResumeMode'], 'approximate');
   });
 
   test(

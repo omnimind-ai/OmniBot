@@ -83,6 +83,33 @@ class XiaowanAcpPresentationBridgeTest {
     }
 
     @Test
+    fun `tool boundary does not create an empty thought card before later reasoning`() = runBlocking {
+        val updates = mutableListOf<SessionUpdate>()
+        val bridge = XiaowanAcpEventBridge { updates += it }
+
+        bridge.onThinkingStart()
+        bridge.onThinkingUpdate("工具前的思考")
+        bridge.onToolCallStart("call-1", "terminal", JsonObject(emptyMap()))
+        // AgentOrchestrator starts another model round after the tool. The
+        // next round may produce another tool without producing reasoning.
+        bridge.onThinkingStart()
+        bridge.onThinkingUpdate("工具后的思考")
+
+        val thoughts = updates.filterIsInstance<SessionUpdate.AgentThoughtChunk>()
+        assertEquals(1, thoughts.count { (it.content as ContentBlock.Text).text.isEmpty() })
+        assertEquals(
+            listOf("工具前的思考", "工具后的思考"),
+            thoughts
+                .map { (it.content as ContentBlock.Text).text }
+                .filter(String::isNotEmpty),
+        )
+        val nonEmptyIds = thoughts
+            .filter { (it.content as ContentBlock.Text).text.isNotEmpty() }
+            .map { it.messageId }
+        assertEquals(2, nonEmptyIds.distinct().size)
+    }
+
+    @Test
     fun `retry state is carried by the ACP assistant update`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
         val bridge = XiaowanAcpEventBridge { updates += it }
@@ -260,6 +287,29 @@ class XiaowanAcpPresentationBridgeTest {
     }
 
     @Test
+    fun `partial error keeps recovery on the existing ACP assistant message`() = runBlocking {
+        val updates = mutableListOf<SessionUpdate>()
+        val bridge = XiaowanAcpEventBridge(canContinue = true) { updates += it }
+
+        bridge.onChatMessage("半截答案", isFinal = false)
+        bridge.onError("连接中断", retryable = true)
+
+        val messages = updates.filterIsInstance<SessionUpdate.AgentMessageChunk>()
+        assertEquals(2, messages.size)
+        assertEquals(messages[0].messageId, messages[1].messageId)
+        assertEquals("", (messages[1].content as ContentBlock.Text).text)
+        val namespace = (messages[1]._meta as JsonObject)["cn.com.omnimind.agent"] as JsonObject
+        val recovery = namespace["recovery"] as JsonObject
+        assertEquals("true", recovery["retryable"]?.jsonPrimitive?.content)
+        assertEquals("true", recovery["continueable"]?.jsonPrimitive?.content)
+        assertEquals("false", recovery["persistAsError"]?.jsonPrimitive?.content)
+        assertEquals(
+            "approximate",
+            recovery["continueResumeMode"]?.jsonPrimitive?.content,
+        )
+    }
+
+    @Test
     fun `clarification keeps its missing fields in ACP metadata`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
         val bridge = XiaowanAcpEventBridge { updates += it }
@@ -405,6 +455,23 @@ class XiaowanAcpPresentationBridgeTest {
         val thought = updates.filterIsInstance<SessionUpdate.AgentThoughtChunk>().single()
         val text = (thought.content as ContentBlock.Text).text
         assertEquals("检查统一卡片\n\n- 保留工具结果\n\n确认 ACP 流", text)
+    }
+
+    @Test
+    fun `legacy thinking fields stay inside the official ACP thought chunk`() = runBlocking {
+        val updates = mutableListOf<SessionUpdate>()
+        val bridge = XiaowanAcpEventBridge { updates += it }
+
+        bridge.onThinkingUpdate(
+            """{"task_description":"恢复旧能力","summary":"已完成分析","stage":"planning","phase":"prepare"}"""
+        )
+
+        val thought = updates.filterIsInstance<SessionUpdate.AgentThoughtChunk>().single()
+        val namespace = (thought._meta as JsonObject)["cn.com.omnimind.agent"] as JsonObject
+        val reasoning = namespace["reasoning"] as JsonObject
+        assertEquals("已完成分析", reasoning["summary"]?.jsonPrimitive?.content)
+        assertEquals("planning", reasoning["stage"]?.jsonPrimitive?.content)
+        assertEquals("prepare", reasoning["phase"]?.jsonPrimitive?.content)
     }
 
     @Test

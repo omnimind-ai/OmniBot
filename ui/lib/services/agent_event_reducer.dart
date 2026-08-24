@@ -37,12 +37,8 @@ class AgentEventReducer {
     required ChatConversationRuntimeState runtime,
     required Map<String, dynamic> event,
   }) {
-    final hostEventId = _firstString([
-      event['eventId'],
-      event['hostEventId'],
-    ]);
-    if (hostEventId != null &&
-        !runtime.processedAcpEventIds.add(hostEventId)) {
+    final hostEventId = _firstString([event['eventId'], event['hostEventId']]);
+    if (hostEventId != null && !runtime.processedAcpEventIds.add(hostEventId)) {
       return AgentReduceResult(
         handled: true,
         method: _resolveAgentEventMethod(event: event, message: event),
@@ -1641,9 +1637,12 @@ class AgentEventReducer {
     if (resumeMode != null) {
       content['agentContinueResumeMode'] = resumeMode;
     }
+    final persistAsError = recovery['persistAsError'];
     runtime.messages[index] = existing.copyWith(
       content: content,
-      isError: error != null && error.isNotEmpty,
+      isError: persistAsError is bool
+          ? persistAsError
+          : error != null && error.isNotEmpty,
     );
   }
 
@@ -4531,6 +4530,8 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
 
   switch (sessionUpdate) {
     case 'agent_message_chunk':
+      final presentationMedia = _acpPresentationMedia(presentation);
+      final presentationArtifacts = _acpPresentationArtifacts(presentation);
       return <String, dynamic>{
         'method': 'item/agentMessage/delta',
         'params': projectedParams(<String, dynamic>{
@@ -4545,10 +4546,22 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
           // otherwise valid Markdown is glued into malformed headings and
           // code fences.
           'delta': _extractStreamingText(update['content']) ?? '',
-          if (_acpAssistantMedia(update['content']).isNotEmpty)
-            'acpAssistantMedia': _acpAssistantMedia(update['content']),
-          if (_acpAssistantArtifacts(update['content']).isNotEmpty)
-            'acpAssistantArtifacts': _acpAssistantArtifacts(update['content']),
+          if (_mergeAcpMedia(
+            _acpAssistantMedia(update['content']),
+            presentationMedia,
+          ).isNotEmpty)
+            'acpAssistantMedia': _mergeAcpMedia(
+              _acpAssistantMedia(update['content']),
+              presentationMedia,
+            ),
+          if (_mergeAcpArtifacts(
+            _acpAssistantArtifacts(update['content']),
+            presentationArtifacts,
+          ).isNotEmpty)
+            'acpAssistantArtifacts': _mergeAcpArtifacts(
+              _acpAssistantArtifacts(update['content']),
+              presentationArtifacts,
+            ),
           if (presentation != null) 'acpPresentation': presentation,
         }),
       };
@@ -4825,6 +4838,9 @@ Map<String, dynamic> _projectAcpToolCall(
 }) {
   final permissionCard = _acpPermissionCard(update['rawOutput']);
   final standardContent = _acpStandardToolContent(update['content']);
+  final presentation = _acpPresentationMeta(update);
+  final presentationMedia = _acpPresentationMedia(presentation);
+  final presentationArtifacts = _acpPresentationArtifacts(presentation);
   final structuredOutput = _asStringMap(
     update['rawOutput'] is String
         ? _decodeAcpJsonValue(update['rawOutput'] as String)
@@ -4840,6 +4856,8 @@ Map<String, dynamic> _projectAcpToolCall(
     includeEmbeddedResources: true,
   );
   final artifacts = _mergeAcpArtifacts(structuredArtifacts, standardArtifacts);
+  final allArtifacts = _mergeAcpArtifacts(artifacts, presentationArtifacts);
+  final firstPresentationMedia = presentationMedia.firstOrNull;
   return <String, dynamic>{
     'id': update['toolCallId'],
     'toolCallId': update['toolCallId'],
@@ -4857,8 +4875,19 @@ Map<String, dynamic> _projectAcpToolCall(
       'progress': plainRawOutput,
     },
     ..._acpStructuredToolOutput(structuredOutput),
-    if (artifacts.isNotEmpty) 'artifacts': artifacts,
+    if (allArtifacts.isNotEmpty) 'artifacts': allArtifacts,
     if (standardContent.isNotEmpty) 'contentItems': standardContent,
+    if (presentationMedia.isNotEmpty) 'media': presentationMedia,
+    if (firstPresentationMedia?['imageDataUrl'] != null)
+      'imageDataUrl': firstPresentationMedia!['imageDataUrl'],
+    if (firstPresentationMedia?['imageUrl'] != null)
+      'imageUrl': firstPresentationMedia!['imageUrl'],
+    if (firstPresentationMedia?['audioDataUrl'] != null)
+      'audioDataUrl': firstPresentationMedia!['audioDataUrl'],
+    if (firstPresentationMedia?['audioUrl'] != null)
+      'audioUrl': firstPresentationMedia!['audioUrl'],
+    if (firstPresentationMedia?['mimeType'] != null)
+      'mimeType': firstPresentationMedia!['mimeType'],
     // Standard content is a concrete capability signal. It takes precedence
     // over generic adapter envelopes such as `toolType: context`.
     ..._acpStandardToolPresentation(standardContent),
@@ -4929,11 +4958,48 @@ List<Map<String, dynamic>> _acpAssistantMedia(Object? value) {
       visit(block['resource']);
       return;
     }
+    // ACP extensions often put the already-normalized media location in
+    // `_meta` rather than repeating an official ContentBlock. Accept both
+    // forms so adapters can expose generated media without a private card
+    // event or a second renderer.
+    final normalizedMediaType = _string(block['mediaType'])?.toLowerCase();
+    final normalizedImage =
+        _string(block['imageDataUrl']) ?? _string(block['imageUrl']);
+    final normalizedAudio =
+        _string(block['audioDataUrl']) ?? _string(block['audioUrl']);
+    if (normalizedImage != null && normalizedImage.trim().isNotEmpty) {
+      media.add(<String, dynamic>{
+        'mediaType': 'image',
+        if (normalizedImage.startsWith('data:'))
+          'imageDataUrl': normalizedImage
+        else
+          'imageUrl': normalizedImage,
+        'mimeType': _string(block['mimeType']) ?? 'image/png',
+        'title': _string(block['title']) ?? _string(block['name']) ?? '图片',
+      });
+      return;
+    }
+    if (normalizedAudio != null && normalizedAudio.trim().isNotEmpty) {
+      media.add(<String, dynamic>{
+        'mediaType': 'audio',
+        if (normalizedAudio.startsWith('data:'))
+          'audioDataUrl': normalizedAudio
+        else
+          'audioUrl': normalizedAudio,
+        'mimeType': _string(block['mimeType']) ?? 'audio/mpeg',
+        'title': _string(block['title']) ?? _string(block['name']) ?? '音频',
+      });
+      return;
+    }
     final mimeType = _string(block['mimeType']) ?? _string(block['mime_type']);
     final isImage =
-        type == 'image' || mimeType?.toLowerCase().startsWith('image/') == true;
+        type == 'image' ||
+        normalizedMediaType == 'image' ||
+        mimeType?.toLowerCase().startsWith('image/') == true;
     final isAudio =
-        type == 'audio' || mimeType?.toLowerCase().startsWith('audio/') == true;
+        type == 'audio' ||
+        normalizedMediaType == 'audio' ||
+        mimeType?.toLowerCase().startsWith('audio/') == true;
     if (!isImage && !isAudio) return;
     final data = _string(block['data']) ?? _string(block['blob']);
     final uri = _string(block['uri']) ?? _string(block['url']);
@@ -5025,8 +5091,16 @@ List<Map<String, dynamic>> _acpAssistantArtifacts(
       });
       return;
     }
-    if (type != 'resource_link') return;
     final uri = _string(block['uri'])?.trim();
+    // `_meta` presentations commonly use a compact `{uri, title, mimeType}`
+    // artifact object instead of an ACP `resource_link` content block. It is
+    // still the same durable resource and should use the existing artifact
+    // card route.
+    if (type == null || type == 'artifact' || type == 'file') {
+      if (uri == null || uri.isEmpty) return;
+    } else if (type != 'resource_link') {
+      return;
+    }
     if (uri == null || uri.isEmpty) return;
     final mimeType = _string(block['mimeType']) ?? _string(block['mime_type']);
     if (mimeType?.toLowerCase().startsWith('image/') == true) return;
@@ -5049,6 +5123,55 @@ List<Map<String, dynamic>> _acpAssistantArtifacts(
 
   visit(value);
   return artifacts;
+}
+
+List<Map<String, dynamic>> _acpPresentationMedia(
+  Map<String, dynamic>? presentation,
+) {
+  if (presentation == null) return const <Map<String, dynamic>>[];
+  return _acpAssistantMedia(
+    presentation['media'] ?? presentation['images'] ?? presentation['audio'],
+  );
+}
+
+List<Map<String, dynamic>> _acpPresentationArtifacts(
+  Map<String, dynamic>? presentation,
+) {
+  if (presentation == null) return const <Map<String, dynamic>>[];
+  return _acpAssistantArtifacts(
+    presentation['artifacts'] ??
+        presentation['artifact'] ??
+        presentation['resources'],
+  );
+}
+
+List<Map<String, dynamic>> _mergeAcpMedia(
+  List<Map<String, dynamic>> first,
+  List<Map<String, dynamic>> second,
+) {
+  final merged = <Map<String, dynamic>>[...first];
+  for (final candidate in second) {
+    final candidateLocation = _firstString([
+      candidate['imageDataUrl'],
+      candidate['imageUrl'],
+      candidate['audioDataUrl'],
+      candidate['audioUrl'],
+    ]);
+    final duplicate =
+        candidateLocation != null &&
+        merged.any(
+          (existing) =>
+              _firstString([
+                existing['imageDataUrl'],
+                existing['imageUrl'],
+                existing['audioDataUrl'],
+                existing['audioUrl'],
+              ]) ==
+              candidateLocation,
+        );
+    if (!duplicate) merged.add(candidate);
+  }
+  return merged;
 }
 
 List<Map<String, dynamic>> _mergeAcpArtifacts(
@@ -5241,6 +5364,9 @@ Map<String, dynamic> _acpReasoningCardData(Map<String, dynamic>? presentation) {
   final reasoning = _asStringMap(presentation?['reasoning']);
   if (reasoning == null) return const <String, dynamic>{};
   final taskTitle = _string(reasoning['taskTitle'] ?? reasoning['task_title']);
+  final reasoningSummary = _extractText(
+    reasoning['summary'] ?? reasoning['reasoningSummary'],
+  )?.trim();
   final preparation = _string(reasoning['preparation']);
   final subTasks = _acpStringList(
     reasoning['subTasks'] ?? reasoning['sub_tasks'],
@@ -5248,11 +5374,31 @@ Map<String, dynamic> _acpReasoningCardData(Map<String, dynamic>? presentation) {
   final memoryActions = _acpStringList(
     reasoning['memoryActions'] ?? reasoning['memory_actions'],
   );
+  final stage = _acpThinkingStage(reasoning['stage'] ?? reasoning['phase']);
   return <String, dynamic>{
     if (taskTitle != null) 'taskTitle': taskTitle,
     if (subTasks.isNotEmpty) 'subTasks': subTasks,
     if (preparation != null) 'preparation': preparation,
     if (memoryActions.isNotEmpty) 'memoryActions': memoryActions,
+    if (reasoningSummary != null && reasoningSummary.isNotEmpty)
+      'reasoningSummary': reasoningSummary,
+    if (stage != null) 'stage': stage,
+  };
+}
+
+int? _acpThinkingStage(Object? value) {
+  if (value is num) {
+    final stage = value.toInt();
+    return stage >= 1 && stage <= 5 ? stage : null;
+  }
+  final normalized = value?.toString().trim().toLowerCase();
+  return switch (normalized) {
+    'thinking' || 'analysis' || 'analyzing' || 'planning' => 1,
+    'tool' || 'tool_call' || 'tool-call' || 'calling_tool' => 2,
+    'executing' || 'execution' || 'running' => 3,
+    'complete' || 'completed' || 'done' || 'finished' => 4,
+    'cancelled' || 'canceled' || 'aborted' => 5,
+    _ => null,
   };
 }
 
@@ -5310,6 +5456,12 @@ String _acpReasoningText(
   if (reasoning == null) {
     return fallback;
   }
+  final metadataText = _extractText(
+    reasoning['text'] ??
+        reasoning['content'] ??
+        reasoning['message'] ??
+        reasoning['summary'],
+  )?.trim();
   final taskDescription = _extractText(
     reasoning['taskDescription'] ?? reasoning['task_description'],
   )?.trim();
@@ -5345,7 +5497,9 @@ String _acpReasoningText(
   if (memoryItems.isNotEmpty) {
     lines.add('记忆：${memoryItems.join('、')}');
   }
-  return lines.isEmpty ? fallback : lines.join('\n\n');
+  return lines.isEmpty
+      ? (metadataText?.isNotEmpty == true ? metadataText! : fallback)
+      : lines.join('\n\n');
 }
 
 /// ACP reserves [rawOutput] for adapter-specific tool results. Preserve the
