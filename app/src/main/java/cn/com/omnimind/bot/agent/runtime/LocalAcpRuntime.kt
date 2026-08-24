@@ -2055,7 +2055,19 @@ internal class LocalAcpRuntime(
             ?.takeIf { it.isNotEmpty() }
         val reasoningEffort = args.stringValue("effort")
             ?: args.stringValue("reasoningEffort")
-        if (conversationMode == null && reasoningEffort == null) return null
+        val terminalEnvironment = (args["terminalEnvironment"] as? Map<*, *>)
+            ?.entries
+            ?.mapNotNull { (rawKey, rawValue) ->
+                val key = rawKey?.toString()?.trim().orEmpty()
+                if (key.isEmpty() || rawValue == null) null else key to rawValue.toString()
+            }
+            ?.toMap()
+            .orEmpty()
+        if (
+            conversationMode == null &&
+            reasoningEffort == null &&
+            terminalEnvironment.isEmpty()
+        ) return null
         // This metadata is local ACP session metadata. External ACP agents may
         // ignore it; the built-in Xiaowan adapter uses it to apply the same
         // chat_only policy and run setting without introducing a second
@@ -2063,6 +2075,11 @@ internal class LocalAcpRuntime(
         return buildJsonObject {
             conversationMode?.let { put("conversationMode", it) }
             reasoningEffort?.let { put("reasoningEffort", it) }
+            if (terminalEnvironment.isNotEmpty()) {
+                put("terminalEnvironment", buildJsonObject {
+                    terminalEnvironment.forEach { (key, value) -> put(key, value) }
+                })
+            }
         }
     }
 

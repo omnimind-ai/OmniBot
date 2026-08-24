@@ -384,7 +384,7 @@ ArgSpec(
             kind = Kind.ACTION,
             uiLabel = LocalizedText(zhCn = "按系统键", enUs = "Press key"),
             description = LocalizedText(zhCn = "按一个系统导航键；Enter 可选定目标输入框。", enUs = "Press one system navigation key; Enter may target a specific input field."),
-            promptGuide = LocalizedText(zhCn = "- press_key(key, target_description?, x?, y?): 按系统导航键；key 只能是 back、home 或 enter。", enUs = "- press_key(key, target_description?, x?, y?): Press a system navigation key; key must be back, home, or enter."),
+            promptGuide = LocalizedText(zhCn = "- press_key(key, target_description?, x?, y?): 按系统键或文本编辑键；key 可以是 back、home、enter、select_all 或 copy。", enUs = "- press_key(key, target_description?, x?, y?): Press a system or text-editing key; key may be back, home, enter, select_all, or copy."),
             argsTemplate = emptyMap(),
             args = listOf(
 ArgSpec(
@@ -392,7 +392,7 @@ ArgSpec(
                     type = Type.STRING,
                     required = true,
                     description = LocalizedText(zhCn = "系统键名称。", enUs = "System key name."),
-                    enumValues = listOf("back", "home", "enter"),
+                    enumValues = listOf("back", "home", "enter", "select_all", "copy"),
                 ),
 ArgSpec(
                     name = "target_description",

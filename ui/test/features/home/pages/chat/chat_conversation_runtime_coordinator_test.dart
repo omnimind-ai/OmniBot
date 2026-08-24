@@ -725,6 +725,12 @@ void main() {
     );
     runtime.currentDispatchTurnId = 'turn-clear';
     runtime.lastAgentTurnId = 'turn-clear';
+    runtime.activeRunId = 'run-clear';
+    runtime.currentAiMessages['message-clear'] = 'stale text';
+    runtime.agentReplayDeltaOffsets['message-clear'] = 4;
+    runtime.pendingAcpAssistantPresentation['pending-clear'] = {
+      'recovery': {'error': 'stale'},
+    };
     runtime.isAiResponding = true;
     runtime.isDeepThinking = true;
     runtime.activeThinkingCardId = 'thought';
@@ -737,6 +743,10 @@ void main() {
 
     expect(runtime.currentDispatchTurnId, isNull);
     expect(runtime.lastAgentTurnId, isNull);
+    expect(runtime.activeRunId, isNull);
+    expect(runtime.currentAiMessages, isEmpty);
+    expect(runtime.agentReplayDeltaOffsets, isEmpty);
+    expect(runtime.pendingAcpAssistantPresentation, isEmpty);
     expect(runtime.isAiResponding, isFalse);
     expect(runtime.isDeepThinking, isFalse);
     expect(runtime.activeThinkingCardId, isNull);

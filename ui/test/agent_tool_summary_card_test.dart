@@ -9,6 +9,7 @@ import 'package:ui/features/home/pages/command_overlay/widgets/cards/agent_tool_
 import 'package:ui/features/home/pages/command_overlay/widgets/cards/terminal_output_utils.dart';
 import 'package:ui/l10n/legacy_text_localizer.dart';
 import 'package:ui/services/app_background_service.dart';
+import 'package:ui/widgets/image_preview_overlay.dart';
 
 void main() {
   setUp(() {
@@ -255,6 +256,103 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(sheet, findsNothing);
+  });
+
+  testWidgets('ACP tool actions remain available in the shared detail sheet', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AgentToolSummaryCard(
+            cardData: const {
+              'cardId': 'tool-actions-card',
+              'status': 'success',
+              'toolName': 'terminal_session_start',
+              'toolTitle': '终端会话已启动',
+              'toolType': 'terminal',
+              'workspaceId': 'conversation_42',
+              'actions': [
+                {
+                  'type': 'workspace',
+                  'label': '打开项目目录',
+                  'target': 'omnibot://workspace/project',
+                  'payload': {'workspaceId': 'conversation_42'},
+                },
+              ],
+            },
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('终端会话已启动'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(kAgentToolDetailSheetKey), findsOneWidget);
+    expect(find.text('打开项目目录'), findsOneWidget);
+    expect(find.byKey(const ValueKey('agent-tool-action-0')), findsOneWidget);
+  });
+
+  testWidgets('schedule tools keep their legacy follow-up action', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AgentToolSummaryCard(
+            cardData: const {
+              'cardId': 'schedule-action-card',
+              'status': 'success',
+              'toolName': 'schedule_create',
+              'toolTitle': '定时任务已创建',
+              'toolType': 'schedule',
+            },
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('定时任务已创建'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('查看定时任务'), findsOneWidget);
+  });
+
+  testWidgets('ACP image tool opens the shared full-screen preview', (
+    tester,
+  ) async {
+    const imageDataUrl =
+        'data:image/png;base64,'
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk'
+        'YAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AgentToolSummaryCard(
+            cardData: const {
+              'cardId': 'image-tool-card',
+              'status': 'success',
+              'toolName': 'image_generation',
+              'toolTitle': '生成图片',
+              'toolType': 'image',
+              'imageDataUrl': imageDataUrl,
+            },
+          ),
+        ),
+      ),
+    );
+
+    final thumbnail = find.byKey(
+      const ValueKey('agent-tool-image-preview-image-tool-card-0'),
+    );
+    expect(thumbnail, findsOneWidget);
+
+    await tester.tap(thumbnail);
+    await tester.pumpAndSettle();
+
+    expect(find.byType(OmnibotInteractiveImageView), findsOneWidget);
   });
 
   testWidgets('codex tool card uses inline tool row style', (tester) async {

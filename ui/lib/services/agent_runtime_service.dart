@@ -975,6 +975,7 @@ class AgentRuntimeService {
     String? effort,
     String? collaborationMode,
     String? conversationMode,
+    Map<String, String>? terminalEnvironment,
   }) {
     return _invokeMap('session/prompt', {
       if (sessionId != null) 'sessionId': sessionId,
@@ -995,6 +996,8 @@ class AgentRuntimeService {
         'collaborationMode': collaborationMode.trim(),
       if (conversationMode != null && conversationMode.trim().isNotEmpty)
         'conversationMode': conversationMode.trim(),
+      if (terminalEnvironment != null && terminalEnvironment.isNotEmpty)
+        'terminalEnvironment': terminalEnvironment,
       'text': text,
       if (attachments.isNotEmpty) 'attachments': attachments,
     });

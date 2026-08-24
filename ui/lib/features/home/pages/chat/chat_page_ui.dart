@@ -970,17 +970,12 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
           : _requestAuthorizeForExecution,
       onUserMessageLongPressStart: switch (mode) {
         ChatPageMode.normal => _handleUserMessageLongPressStart,
-        ChatPageMode.agent =>
-          (message, details) => _handleUserMessageLongPressStart(
-            message,
-            details,
-            allowConversationActions: false,
-          ),
+        ChatPageMode.agent => _handleUserMessageLongPressStart,
         ChatPageMode.openclaw => null,
       },
-      onLatestUserMessageEditTap: mode == ChatPageMode.normal
-          ? _startEditingLatestUserMessage
-          : null,
+      onLatestUserMessageEditTap: mode == ChatPageMode.openclaw
+          ? null
+          : _startEditingLatestUserMessage,
       onLoadMore: loadMoreMessages,
       hasMore: hasMoreMessages,
       visualProfile: visualProfile,
@@ -1377,17 +1372,17 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
                               _showConversationModelMentionChip
                           ? _activeConversationModelOverrideSelection?.modelId
                           : null,
-                      contextUsageRatio: _activeMode == ChatPageMode.normal
-                          ? _currentConversation?.contextUsageRatio
-                          : null,
+                      contextUsageRatio: _activeMode == ChatPageMode.openclaw
+                          ? null
+                          : _currentConversation?.contextUsageRatio,
                       contextUsageTooltipMessage:
-                          _activeMode == ChatPageMode.normal
-                          ? _buildContextUsageTooltipMessage()
-                          : null,
+                          _activeMode == ChatPageMode.openclaw
+                          ? null
+                          : _buildContextUsageTooltipMessage(),
                       onLongPressContextUsageRing:
-                          _activeMode == ChatPageMode.normal
-                          ? _handleContextUsageRingLongPress
-                          : null,
+                          _activeMode == ChatPageMode.openclaw
+                          ? null
+                          : _handleContextUsageRingLongPress,
                       modelPickerSettings: ChatModelPickerSettings(
                         modelId: _activeDispatchSceneSelection?.modelId ?? '',
                         hasSelectableModels: _hasSelectableProviderModels,
@@ -2127,6 +2122,7 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
       return;
     }
 
+    final conversationMode = _activeMode;
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -2137,7 +2133,7 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
         currentUsageTokens: conversation.latestPromptTokens,
         onThresholdSaved: (nextThreshold) async {
           final trackedConversation = _modeState(
-            ChatPageMode.normal,
+            conversationMode,
           ).currentConversation;
           final activeConversation = _currentConversation;
           final ConversationModel latestConversation;
@@ -2175,20 +2171,19 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
             promptTokenThreshold: nextThreshold,
           );
           setState(() {
-            if ((_modeState(ChatPageMode.normal).currentConversation?.id ??
-                    0) ==
+            if ((_modeState(conversationMode).currentConversation?.id ?? 0) ==
                 conversation.id) {
-              _modeState(ChatPageMode.normal).currentConversation =
+              _modeState(conversationMode).currentConversation =
                   updatedConversation;
             }
             if ((_currentConversation?.id ?? 0) == conversation.id) {
               _currentConversation = updatedConversation;
             }
           });
-          if ((_modeState(ChatPageMode.normal).currentConversationId ?? 0) ==
+          if ((_modeState(conversationMode).currentConversationId ?? 0) ==
               conversation.id) {
             _syncRuntimeSnapshotForMode(
-              ChatPageMode.normal,
+              conversationMode,
               conversation: updatedConversation,
             );
           }

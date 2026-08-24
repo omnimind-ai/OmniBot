@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
 import 'dart:math' as math;
@@ -6,6 +7,8 @@ import 'dart:ui';
 import 'package:flutter/foundation.dart';
 import 'package:ui/features/home/pages/chat/utils/agent_run_timeline.dart';
 import 'package:ui/models/chat_message_model.dart';
+import 'package:ui/models/conversation_model.dart';
+import 'package:ui/models/conversation_thread_target.dart';
 import 'package:ui/services/agent_message_kinds.dart';
 
 enum ThinkingStage {
@@ -67,6 +70,87 @@ class ConversationModelSelectorOpeningGuard {
   void finish() {
     _opening = false;
   }
+}
+
+/// Keeps user submits behind an in-progress Harness lifecycle transition.
+///
+/// A submit may arrive while the native ACP adapter is selected but before
+/// the new conversation target has been installed. Waiting here prevents the
+/// prompt from being registered against the previous conversation runtime.
+class HarnessSwitchSendBarrier {
+  Completer<void>? _pending;
+  Future<void> _serializedTail = Future<void>.value();
+  int _generation = 0;
+
+  bool get isActive => _pending != null;
+
+  int begin() {
+    _generation += 1;
+    _pending ??= Completer<void>();
+    return _generation;
+  }
+
+  bool isCurrent(int generation) => generation == _generation;
+
+  /// Serializes native Harness selection while keeping only the latest tap.
+  ///
+  /// Native ACP process selection is not cancellable. If a second tap arrives
+  /// while the first selection is running, it waits for the first mutation to
+  /// finish and then applies the latest selection. Stale queued work exits
+  /// without touching the runtime.
+  Future<T?> runIfCurrent<T>(
+    int generation,
+    Future<T> Function() operation,
+  ) async {
+    final predecessor = _serializedTail;
+    final release = Completer<void>();
+    _serializedTail = release.future;
+    try {
+      await predecessor;
+      if (!isCurrent(generation)) {
+        return null;
+      }
+      return await operation();
+    } finally {
+      if (!release.isCompleted) {
+        release.complete();
+      }
+    }
+  }
+
+  Future<void> waitUntilIdle() async {
+    final pending = _pending;
+    if (pending != null) {
+      await pending.future;
+    }
+  }
+
+  void finish(int generation) {
+    if (!isCurrent(generation)) {
+      return;
+    }
+    final pending = _pending;
+    _pending = null;
+    if (pending != null && !pending.isCompleted) {
+      pending.complete();
+    }
+  }
+}
+
+ConversationThreadTarget buildHarnessSwitchTarget({
+  required String agentId,
+  required String agentRuntime,
+  required String requestKey,
+}) {
+  return ConversationThreadTarget.newConversation(
+    // `normal` remains readable as a legacy storage alias, but every live
+    // Harness uses the single Agent runtime so ACP events and cards cannot be
+    // projected into a hidden page-mode runtime during a switch.
+    mode: ConversationMode.agent,
+    requestKey: requestKey,
+    agentId: agentId,
+    agentRuntime: agentRuntime,
+  );
 }
 
 bool shouldReloadConversationMessagesChanged({
@@ -959,12 +1043,12 @@ class BrowserUserscriptSummary {
 
   factory BrowserUserscriptSummary.fromMap(Map<dynamic, dynamic> raw) {
     return BrowserUserscriptSummary(
-      installedScripts: _browserMapList(raw['installedScripts'])
-          .map(BrowserUserscriptItem.fromMap)
-          .toList(growable: false),
-      currentPageMenuCommands: _browserMapList(raw['currentPageMenuCommands'])
-          .map(BrowserUserscriptMenuCommand.fromMap)
-          .toList(growable: false),
+      installedScripts: _browserMapList(
+        raw['installedScripts'],
+      ).map(BrowserUserscriptItem.fromMap).toList(growable: false),
+      currentPageMenuCommands: _browserMapList(
+        raw['currentPageMenuCommands'],
+      ).map(BrowserUserscriptMenuCommand.fromMap).toList(growable: false),
       pendingInstall: raw['pendingInstall'] == null
           ? null
           : BrowserUserscriptInstallPreview.fromMap(
@@ -975,8 +1059,9 @@ class BrowserUserscriptSummary {
 
   Map<String, dynamic> toMap() => <String, dynamic>{
     'installedScripts': installedScripts.map((item) => item.toMap()).toList(),
-    'currentPageMenuCommands':
-        currentPageMenuCommands.map((item) => item.toMap()).toList(),
+    'currentPageMenuCommands': currentPageMenuCommands
+        .map((item) => item.toMap())
+        .toList(),
     'pendingInstall': pendingInstall?.toMap(),
   };
 }
@@ -1162,21 +1247,21 @@ class ChatBrowserSessionSnapshot {
       recommendedNextAction: normalized['recommendedNextAction']?.toString(),
       throttleDelayMs: _browserInt(normalized['throttleDelayMs']),
       activeDownloadCount: _browserInt(normalized['activeDownloadCount']) ?? 0,
-      tabs: _browserMapList(normalized['tabs'])
-          .map(AgentBrowserTab.fromMap)
-          .toList(growable: false),
-      bookmarks: _browserMapList(normalized['bookmarks'])
-          .map(AgentBrowserHistoryEntry.fromMap)
-          .toList(growable: false),
-      history: _browserMapList(normalized['history'])
-          .map(AgentBrowserHistoryEntry.fromMap)
-          .toList(growable: false),
-      sessionHistory: _browserMapList(normalized['sessionHistory'])
-          .map(AgentBrowserHistoryEntry.fromMap)
-          .toList(growable: false),
-      downloads: _browserMapList(normalized['downloads'])
-          .map(BrowserDownloadItem.fromMap)
-          .toList(growable: false),
+      tabs: _browserMapList(
+        normalized['tabs'],
+      ).map(AgentBrowserTab.fromMap).toList(growable: false),
+      bookmarks: _browserMapList(
+        normalized['bookmarks'],
+      ).map(AgentBrowserHistoryEntry.fromMap).toList(growable: false),
+      history: _browserMapList(
+        normalized['history'],
+      ).map(AgentBrowserHistoryEntry.fromMap).toList(growable: false),
+      sessionHistory: _browserMapList(
+        normalized['sessionHistory'],
+      ).map(AgentBrowserHistoryEntry.fromMap).toList(growable: false),
+      downloads: _browserMapList(
+        normalized['downloads'],
+      ).map(BrowserDownloadItem.fromMap).toList(growable: false),
       downloadSummary: BrowserDownloadSummary.fromMap(
         _browserMap(normalized['downloadSummary']),
       ),
@@ -1237,9 +1322,11 @@ class ChatBrowserSessionSnapshot {
       if (decoded is! Map) {
         return null;
       }
-      final payload = decoded.map(
-        (key, value) => MapEntry(key.toString(), value),
-      );
+      final root = decoded.map((key, value) => MapEntry(key.toString(), value));
+      final payload = _findBrowserToolPayload(root);
+      if (payload == null) {
+        return null;
+      }
       return ChatBrowserSessionSnapshot.fromBrowserToolPayload(
         payload: payload,
         workspaceId: workspaceId,
@@ -1248,6 +1335,58 @@ class ChatBrowserSessionSnapshot {
       return null;
     }
   }
+}
+
+Map<String, dynamic>? _findBrowserToolPayload(
+  Map<String, dynamic> root, {
+  int depth = 0,
+}) {
+  if (depth > 4) {
+    return null;
+  }
+  const browserFields = <String>{
+    'activeTabId',
+    'tabId',
+    'currentUrl',
+    'finalUrl',
+    'url',
+    'pageTitle',
+    'riskChallengeDetected',
+  };
+  if (root.keys.any(browserFields.contains)) {
+    return root;
+  }
+  for (final key in const <String>[
+    'result',
+    'rawResult',
+    'rawOutput',
+    'output',
+    'data',
+    'payload',
+  ]) {
+    final value = root[key];
+    Map<String, dynamic>? child;
+    if (value is Map) {
+      child = value.map((key, value) => MapEntry(key.toString(), value));
+    } else if (value is String && value.trimLeft().startsWith('{')) {
+      try {
+        final decoded = jsonDecode(value);
+        if (decoded is Map) {
+          child = decoded.map((key, value) => MapEntry(key.toString(), value));
+        }
+      } catch (_) {
+        // The next candidate can still contain the structured browser result.
+      }
+    }
+    if (child == null) {
+      continue;
+    }
+    final resolved = _findBrowserToolPayload(child, depth: depth + 1);
+    if (resolved != null) {
+      return resolved;
+    }
+  }
+  return null;
 }
 
 String chatConversationWorkspaceId(int? conversationId) {
@@ -1327,10 +1466,7 @@ double resolveChatComposerKeyboardSpacer({
   final normalizedClearance = keyboardClearance.isFinite
       ? math.max(0.0, keyboardClearance)
       : 0.0;
-  final closingClearance = math.min(
-    normalizedClearance,
-    normalizedBottomInset,
-  );
+  final closingClearance = math.min(normalizedClearance, normalizedBottomInset);
   return normalizedBottomInset + closingClearance;
 }
 

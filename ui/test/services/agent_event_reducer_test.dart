@@ -119,6 +119,65 @@ void main() {
     expect(runtime.messages.single.text, 'POSIX Shell and Markdown');
   });
 
+  test('projects ACP assistant image content into the shared image card', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'params': {
+          'sessionId': 'session-assistant-image',
+          'turnId': 'turn-assistant-image',
+          'update': {
+            'sessionUpdate': 'agent_message_chunk',
+            'messageId': 'assistant-image',
+            'content': {
+              'type': 'image',
+              'data': 'AAAA',
+              'mimeType': 'image/png',
+            },
+          },
+        },
+      },
+    );
+
+    final imageCard = runtime.messages.singleWhere(
+      (message) => message.cardData?['toolType'] == 'image',
+    );
+    expect(imageCard.cardData?['type'], 'agent_tool_summary');
+    expect(imageCard.cardData?['imageDataUrl'], 'data:image/png;base64,AAAA');
+    expect(imageCard.cardData?['toolName'], 'assistant_media');
+  });
+
+  test('projects ACP assistant image resources into the shared image card', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'params': {
+          'sessionId': 'session-assistant-resource',
+          'turnId': 'turn-assistant-resource',
+          'update': {
+            'sessionUpdate': 'agent_message_chunk',
+            'messageId': 'assistant-resource',
+            'content': {
+              'type': 'resource',
+              'resource': {
+                'uri': 'workspace://result.png',
+                'mimeType': 'image/jpeg',
+                'blob': 'BBBB',
+              },
+            },
+          },
+        },
+      },
+    );
+
+    final imageCard = runtime.messages.singleWhere(
+      (message) => message.cardData?['toolType'] == 'image',
+    );
+    expect(imageCard.cardData?['imageDataUrl'], 'data:image/jpeg;base64,BBBB');
+  });
+
   test('ACP reasoning chunks preserve Markdown whitespace', () {
     const chunks = <String>['分析步骤', '\n\n', '- 第一项', '\n- 第二项'];
 
@@ -745,7 +804,7 @@ void main() {
     expect(cardData['memoryActions'], ['保留旧卡片字段']);
   });
 
-  test('projects an empty ACP thought start into a loading thinking card', () {
+  test('does not render an empty ACP thought start as a blank card', () {
     reducer.reduce(
       runtime: runtime,
       event: {
@@ -767,10 +826,103 @@ void main() {
       },
     );
 
-    final card = runtime.messages.single;
-    expect(card.cardData?['type'], 'deep_thinking');
-    expect(card.cardData?['thinkingContent'], '');
-    expect(card.cardData?['isLoading'], isTrue);
+    expect(runtime.messages, isEmpty);
+  });
+
+  test('retains reasoning metadata from an empty ACP start', () {
+    const base = <String, dynamic>{
+      'method': 'session/update',
+      'turnId': 'turn-reasoning-metadata',
+      'params': {
+        'sessionId': 'session-reasoning-metadata',
+        'update': {
+          'sessionUpdate': 'agent_thought_chunk',
+          'messageId': 'thought-metadata',
+          'content': {'type': 'text', 'text': ''},
+          '_meta': {
+            'cn.com.omnimind.agent': {
+              'reasoning': {
+                'taskTitle': '检查工作区',
+                'subTasks': ['读取状态'],
+              },
+            },
+          },
+        },
+      },
+    };
+    reducer.reduce(runtime: runtime, event: base);
+    expect(runtime.messages.single.cardData?['taskTitle'], '检查工作区');
+    expect(runtime.messages.single.cardData?['subTasks'], ['读取状态']);
+
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        ...base,
+        'params': {
+          ...(base['params'] as Map<String, dynamic>),
+          'update': {
+            ...((base['params'] as Map<String, dynamic>)['update']
+                as Map<String, dynamic>),
+            'content': {'type': 'text', 'text': '开始检查'},
+            '_meta': null,
+          },
+        },
+      },
+    );
+
+    final card = runtime.messages.single.cardData!;
+    expect(card['thinkingContent'], contains('开始检查'));
+    expect(card['taskTitle'], '检查工作区');
+    expect(card['subTasks'], ['读取状态']);
+  });
+
+  test('keeps ACP turn usage that arrives before the assistant text', () {
+    const base = <String, dynamic>{
+      'method': 'session/update',
+      'turnId': 'turn-usage-before-text',
+      'params': {
+        'sessionId': 'session-usage-before-text',
+        'update': {
+          'sessionUpdate': 'agent_message_chunk',
+          'messageId': 'message-usage-before-text',
+          'content': {'type': 'text', 'text': ''},
+          '_meta': {
+            'cn.com.omnimind.agent': {
+              'usage': {
+                'turnUsage': {'ctx': 128, 'in': 100, 'out': 28, 'cache': 12},
+              },
+            },
+          },
+        },
+      },
+    };
+
+    reducer.reduce(runtime: runtime, event: base);
+    expect(runtime.messages, isEmpty);
+
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        ...base,
+        'params': {
+          ...(base['params'] as Map<String, dynamic>),
+          'update': {
+            ...((base['params'] as Map<String, dynamic>)['update']
+                as Map<String, dynamic>),
+            'content': {'type': 'text', 'text': '正文'},
+            '_meta': null,
+          },
+        },
+      },
+    );
+
+    expect(runtime.messages.single.text, '正文');
+    expect(runtime.messages.single.turnUsage, {
+      'ctx': 128,
+      'in': 100,
+      'out': 28,
+      'cache': 12,
+    });
   });
 
   test(
@@ -993,10 +1145,7 @@ void main() {
     };
     reducer.reduce(runtime: runtime, event: base);
 
-    final retryMessage = runtime.messages.single;
-    expect(retryMessage.content?['agentRetrying'], isTrue);
-    expect(retryMessage.content?['agentRetryCount'], 1);
-    expect(retryMessage.content?['agentMaxRetries'], 3);
+    expect(runtime.messages, isEmpty);
 
     reducer.reduce(
       runtime: runtime,
@@ -1015,7 +1164,18 @@ void main() {
 
     final message = runtime.messages.single;
     expect(message.text, '恢复后的统一正文');
-    expect(message.content?['agentRetrying'], isNull);
+    expect(message.content?['agentRetrying'], isTrue);
+    expect(message.content?['agentRetryCount'], 1);
+    expect(message.content?['agentMaxRetries'], 3);
+
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'turn/completed',
+        'params': {'turnId': 'turn-retry'},
+      },
+    );
+    expect(runtime.messages.single.content?['agentRetrying'], isNull);
   });
 
   test('projects ACP recovery state into the existing error presentation', () {
@@ -1050,6 +1210,56 @@ void main() {
     expect(message.content?['agentRetryable'], isTrue);
     expect(message.content?['agentContinueable'], isFalse);
   });
+
+  test(
+    'buffers ACP recovery and clarification until assistant text exists',
+    () {
+      const metadataOnly = <String, dynamic>{
+        'method': 'item/agentMessage/delta',
+        'params': {
+          'turnId': 'turn-pending-presentation',
+          'entryId': 'message-pending-presentation',
+          'delta': '',
+          'acpPresentation': {
+            'recovery': {
+              'error': '需要重新连接',
+              'retryable': true,
+              'continueable': false,
+            },
+            'clarification': {
+              'question': '是否继续？',
+              'missingFields': ['arguments.confirmed'],
+            },
+          },
+        },
+      };
+
+      reducer.reduce(runtime: runtime, event: metadataOnly);
+      expect(runtime.messages, isEmpty);
+
+      reducer.reduce(
+        runtime: runtime,
+        event: {
+          ...metadataOnly,
+          'params': {
+            ...(metadataOnly['params'] as Map<String, dynamic>),
+            'delta': '恢复后的正文',
+            'acpPresentation': null,
+          },
+        },
+      );
+
+      final message = runtime.messages.single;
+      expect(message.text, '恢复后的正文');
+      expect(message.isError, isTrue);
+      expect(message.content?['agentErrorText'], '需要重新连接');
+      expect(message.content?['agentClarificationRequired'], isTrue);
+      expect(message.content?['agentClarificationQuestion'], '是否继续？');
+      expect(message.content?['agentClarificationMissingFields'], [
+        'arguments.confirmed',
+      ]);
+    },
+  );
 
   test(
     'preserves ACP clarification fields on the existing assistant reply',
@@ -1445,6 +1655,33 @@ void main() {
     },
   );
 
+  test('treats ACP success and timeout tool statuses as terminal cards', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'method': 'session/update',
+          'turnId': 'turn-terminal-statuses',
+          'params': {
+            'sessionId': 'session-terminal-statuses',
+            'update': {
+              'sessionUpdate': 'tool_call_update',
+              'toolCallId': 'tool-terminal-statuses',
+              'kind': 'execute',
+              'title': '执行命令',
+              'status': 'success',
+              'rawOutput': {'terminalOutput': 'done'},
+            },
+          },
+        },
+      },
+    );
+
+    expect(runtime.messages, hasLength(1));
+    expect(runtime.messages.single.cardData?['status'], 'success');
+    expect(runtime.messages.single.streamMeta?['isFinal'], isTrue);
+  });
+
   test('projects structured ACP tool output into the shared terminal card', () {
     reducer.reduce(
       runtime: runtime,
@@ -1494,6 +1731,31 @@ void main() {
       (message) => message.cardData?['type'] == 'artifact_card',
     );
     expect(artifact.cardData?['artifact']?['title'], 'result.txt');
+  });
+
+  test('keeps plain ACP tool raw output in the shared card summary', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'params': {
+          'sessionId': 'session-plain-tool-output',
+          'turnId': 'turn-plain-tool-output',
+          'update': {
+            'sessionUpdate': 'tool_call_update',
+            'toolCallId': 'plain-output-1',
+            'kind': 'other',
+            'title': '读取结果',
+            'status': 'completed',
+            'rawOutput': 'plain ACP result',
+          },
+        },
+      },
+    );
+
+    final card = runtime.messages.single.cardData!;
+    expect(card['summary'], 'plain ACP result');
+    expect(card['progress'], 'plain ACP result');
   });
 
   test(
@@ -1611,6 +1873,87 @@ void main() {
     },
   );
 
+  test('completed ACP browser tool restores the live browser snapshot', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'method': 'session/update',
+          'turnId': 'turn-browser-snapshot',
+          'params': {
+            'sessionId': 'session-browser-snapshot',
+            'update': {
+              'sessionUpdate': 'tool_call_update',
+              'toolCallId': 'browser-snapshot-1',
+              'kind': 'other',
+              'title': 'webfetch',
+              'status': 'completed',
+              'rawOutput': {
+                'toolType': 'context',
+                'toolName': 'webfetch',
+                'success': true,
+                'workspaceId': 'conversation_42',
+                'result': {
+                  'currentUrl': 'https://example.com/result',
+                  'pageTitle': 'Example result',
+                  'activeTabId': 9,
+                },
+              },
+            },
+          },
+        },
+      },
+    );
+
+    expect(runtime.browserSessionSnapshot, isNotNull);
+    expect(
+      runtime.browserSessionSnapshot!.currentUrl,
+      'https://example.com/result',
+    );
+    expect(runtime.browserSessionSnapshot!.workspaceId, 'conversation_42');
+  });
+
+  test('ACP schedule and alarm tools preserve their follow-up triggers', () {
+    for (final tool in const <({String id, String name, String flag})>[
+      (
+        id: 'schedule-trigger',
+        name: 'schedule_create',
+        flag: 'showScheduleAction',
+      ),
+      (id: 'alarm-trigger', name: 'alarm_create', flag: 'showAlarmAction'),
+    ]) {
+      reducer.reduce(
+        runtime: runtime,
+        event: {
+          'message': {
+            'method': 'session/update',
+            'turnId': 'turn-${tool.id}',
+            'params': {
+              'sessionId': 'session-follow-up-triggers',
+              'update': {
+                'sessionUpdate': 'tool_call_update',
+                'toolCallId': tool.id,
+                'kind': 'other',
+                'title': tool.name,
+                'status': 'completed',
+                'rawOutput': {
+                  'toolName': tool.name,
+                  'success': true,
+                  'result': const <String, dynamic>{},
+                },
+              },
+            },
+          },
+        },
+      );
+
+      final cardData = runtime.messages
+          .firstWhere((message) => message.cardData?['toolCallId'] == tool.id)
+          .cardData!;
+      expect(cardData[tool.flag], isTrue, reason: tool.name);
+    }
+  });
+
   test(
     'preserves an ACP terminal timeout as the existing timeout card state',
     () {
@@ -1706,6 +2049,52 @@ void main() {
       );
     },
   );
+
+  test('deduplicates ACP permission request and permission result cards', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'id': 'permission-request-1',
+          'method': 'session/request_permission',
+          'params': {
+            'turnId': 'turn-permission-dedupe',
+            'sessionId': 'session-permission-dedupe',
+            'toolCallId': 'tool-permission-dedupe',
+            'title': '执行命令',
+            'description': '需要确认后执行',
+          },
+        },
+      },
+    );
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'method': 'session/update',
+          'turnId': 'turn-permission-dedupe',
+          'params': {
+            'sessionId': 'session-permission-dedupe',
+            'update': {
+              'sessionUpdate': 'tool_call_update',
+              'toolCallId': 'tool-permission-dedupe',
+              'kind': 'execute',
+              'title': '执行命令',
+              'status': 'failed',
+              'rawOutput': {
+                'type': 'permission_section',
+                'requiredPermissionIds': ['accessibility'],
+                'missing': ['无障碍权限'],
+              },
+            },
+          },
+        },
+      },
+    );
+
+    expect(runtime.messages, hasLength(1));
+    expect(runtime.messages.single.cardData?['type'], 'permission_section');
+  });
 
   test('deduplicates repeated committed ACP assistant blocks', () {
     final event = <String, dynamic>{
@@ -2200,6 +2589,64 @@ void main() {
     expect(
       runtime.messages.map((message) => message.cardData?['toolTitle']),
       containsAll(<String>['Search: first query', 'Search: second query']),
+    );
+  });
+
+  test('projects ACP assistant text resources into the shared reply', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'params': {
+          'sessionId': 'session-assistant-text-resource',
+          'turnId': 'turn-assistant-text-resource',
+          'update': {
+            'sessionUpdate': 'agent_message_chunk',
+            'messageId': 'assistant-text-resource',
+            'content': {
+              'type': 'resource',
+              'resource': {
+                'uri': 'workspace://notes.txt',
+                'mimeType': 'text/plain',
+                'text': '资源中的正文',
+              },
+            },
+          },
+        },
+      },
+    );
+
+    expect(runtime.messages.single.text, '资源中的正文');
+  });
+
+  test('projects ACP assistant resource links into artifact cards', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'params': {
+          'sessionId': 'session-assistant-link',
+          'turnId': 'turn-assistant-link',
+          'update': {
+            'sessionUpdate': 'agent_message_chunk',
+            'messageId': 'assistant-link',
+            'content': {
+              'type': 'resource_link',
+              'name': 'result.json',
+              'uri': 'omnibot://workspace/result.json',
+              'mimeType': 'application/json',
+            },
+          },
+        },
+      },
+    );
+
+    final artifact = runtime.messages.singleWhere(
+      (message) => message.cardData?['type'] == 'artifact_card',
+    );
+    expect(
+      (artifact.cardData?['artifact'] as Map)['uri'],
+      'omnibot://workspace/result.json',
     );
   });
 
@@ -3374,8 +3821,9 @@ diff --git a/lib/main.dart b/lib/main.dart
       },
     );
 
-    final startedCard = runtime.messages.single;
-    final startedStartTime = startedCard.cardData!['startTime'];
+    // A lifecycle-only reasoning start must not create a blank card. The
+    // first real delta creates the card and starts its timer.
+    expect(runtime.messages, isEmpty);
 
     reducer.reduce(
       runtime: runtime,
@@ -3392,7 +3840,8 @@ diff --git a/lib/main.dart b/lib/main.dart
     );
 
     expect(runtime.messages.single.id, 'reason-1-agent-thinking');
-    expect(runtime.messages.single.cardData!['startTime'], startedStartTime);
+    final startedStartTime = runtime.messages.single.cardData!['startTime'];
+    expect(startedStartTime, isA<int>());
     expect(runtime.messages.single.cardData!['thinkingContent'], 'thinking');
 
     // item/completed for reasoning no longer flips the card to complete — the

@@ -500,6 +500,7 @@ private class XiaowanAgentSession(
                 ?.jsonPrimitive
                 ?.content
         )
+        val terminalEnvironment = xiaowanTerminalEnvironmentFromMeta(meta)
         val result = executor.processUserMessage(
             userMessage = text,
             conversationHistory = emptyList(),
@@ -509,7 +510,7 @@ private class XiaowanAgentSession(
             conversationMode = conversationMode,
             modelOverride = selectedModelOverride(),
             reasoningEffort = reasoningEffort,
-            terminalEnvironment = emptyMap(),
+            terminalEnvironment = terminalEnvironment,
             callback = streamBridge,
             runControl = NoOpAgentRunControl,
             historyMessagesOverride = messages.toList().takeIf { conversationId == null },
@@ -704,6 +705,17 @@ internal fun acpSnapshotDelta(previous: String, next: String): String? {
     return next
 }
 
+internal fun xiaowanTerminalEnvironmentFromMeta(
+    meta: JsonElement?,
+): Map<String, String> {
+    return ((meta as? JsonObject)?.get("terminalEnvironment") as? JsonObject)
+        ?.mapNotNull { (key, value) ->
+            value.jsonPrimitive.contentOrNull?.let { key to it }
+        }
+        ?.toMap()
+        .orEmpty()
+}
+
 internal class XiaowanAcpEventBridge(
     private val emitUpdate: suspend (SessionUpdate) -> Unit,
 ) : AgentCallback {
@@ -712,6 +724,7 @@ internal class XiaowanAcpEventBridge(
     private var thoughtSnapshot = ""
     private var assistantMessageId = MessageId(UUID.randomUUID().toString())
     private var thoughtMessageId = MessageId(UUID.randomUUID().toString())
+    private var reasoningSegmentPending = false
     private val toolIdsByName = mutableMapOf<String, ArrayDeque<String>>()
 
     suspend fun emitAssistantSnapshot(snapshot: String) {
@@ -750,12 +763,11 @@ internal class XiaowanAcpEventBridge(
 
     override suspend fun onThinkingStart() {
         callbackMutex.withLock {
+            if (thoughtSnapshot.isNotEmpty()) {
+                thoughtMessageId = MessageId(UUID.randomUUID().toString())
+            }
             thoughtSnapshot = ""
-            // The bridge is scoped to one ACP prompt. A prompt may contain
-            // several provider/tool rounds, but they are one user-visible
-            // reasoning card. Keep the message id stable across those rounds
-            // so the shared ACP reducer appends to the same card instead of
-            // rendering another "思考完成" section for every round.
+            reasoningSegmentPending = false
             emitUpdate(
                 SessionUpdate.AgentThoughtChunk(
                     content = ContentBlock.Text(""),
@@ -768,6 +780,11 @@ internal class XiaowanAcpEventBridge(
 
     override suspend fun onThinkingUpdate(thinking: String) {
         callbackMutex.withLock {
+            if (reasoningSegmentPending) {
+                thoughtMessageId = MessageId(UUID.randomUUID().toString())
+                thoughtSnapshot = ""
+                reasoningSegmentPending = false
+            }
             val displayText = reasoningDisplayText(thinking)
             emitTextSnapshot(
                 snapshot = displayText,
@@ -812,6 +829,11 @@ internal class XiaowanAcpEventBridge(
         toolName: String,
         arguments: kotlinx.serialization.json.JsonObject,
     ) {
+        // ACP keeps the event order, so the next reasoning update belongs to
+        // a new visible segment after this tool call. Delay allocating the
+        // new message id until that reasoning actually arrives; otherwise a
+        // tool-only round would leave an empty thought card in the timeline.
+        reasoningSegmentPending = true
         toolIdsByName.getOrPut(toolName) { ArrayDeque() }.addLast(toolCallId)
         emitUpdate(
             SessionUpdate.ToolCall(
@@ -1246,7 +1268,8 @@ private fun structuredReasoning(thinking: String): JsonObject? = runCatching {
 }.getOrNull()
 
 private fun reasoningDisplayText(thinking: String): String {
-    val structured = structuredReasoning(thinking) ?: return thinking
+    val structured = structuredReasoning(thinking)
+        ?: return partialStructuredReasoningDisplayText(thinking) ?: thinking
     val lines = mutableListOf<String>()
     val taskDescription = (
         structured["task_description"]?.presentationText()
@@ -1266,6 +1289,108 @@ private fun reasoningDisplayText(thinking: String): String {
         ?.takeIf { it.isNotBlank() }
         ?.let(lines::add)
     return lines.takeIf { it.isNotEmpty() }?.joinToString("\n\n") ?: thinking
+}
+
+/**
+ * Keeps Xiaowan's cumulative structured-reasoning snapshots readable before
+ * the provider has closed the JSON object. The old Flutter stream parser did
+ * this incrementally; doing it at the ACP adapter boundary preserves that
+ * experience without teaching the shared reducer a Xiaowan-only payload.
+ */
+private fun partialStructuredReasoningDisplayText(thinking: String): String? {
+    val clean = thinking
+        .replaceFirst(Regex("^\\s*```(?:json)?\\s*", RegexOption.IGNORE_CASE), "")
+        .replace(Regex("\\s*```\\s*$"), "")
+        .trimStart()
+    if (!clean.startsWith("{")) return null
+
+    val lines = mutableListOf<String>()
+    firstPartialJsonStringField(clean, "task_description", "taskDescription")
+        ?.takeIf(String::isNotEmpty)
+        ?.let(lines::add)
+    partialJsonStringArray(clean, "sub_tasks", "subTasks")
+        .takeIf(List<String>::isNotEmpty)
+        ?.joinToString("\n") { "- $it" }
+        ?.let(lines::add)
+    firstPartialJsonStringField(clean, "preparation")
+        ?.takeIf(String::isNotEmpty)
+        ?.let(lines::add)
+    return lines.joinToString("\n\n")
+}
+
+private fun firstPartialJsonStringField(source: String, vararg fieldNames: String): String? {
+    for (fieldName in fieldNames) {
+        val fieldIndex = source.indexOf("\"$fieldName\"")
+        if (fieldIndex < 0) continue
+        val colonIndex = source.indexOf(':', fieldIndex + fieldName.length + 2)
+        if (colonIndex < 0) continue
+        var valueStart = colonIndex + 1
+        while (valueStart < source.length && source[valueStart].isWhitespace()) valueStart++
+        if (valueStart >= source.length || source[valueStart] != '"') continue
+        return readPartialJsonString(source, valueStart).first
+    }
+    return null
+}
+
+private fun partialJsonStringArray(source: String, vararg fieldNames: String): List<String> {
+    val fieldIndex = fieldNames
+        .asSequence()
+        .map { source.indexOf("\"$it\"") }
+        .firstOrNull { it >= 0 }
+        ?: return emptyList()
+    val arrayStart = source.indexOf('[', fieldIndex)
+    if (arrayStart < 0) return emptyList()
+    val items = mutableListOf<String>()
+    var cursor = arrayStart + 1
+    while (cursor < source.length) {
+        while (cursor < source.length &&
+            (source[cursor].isWhitespace() || source[cursor] == ',')
+        ) cursor++
+        if (cursor >= source.length || source[cursor] == ']') break
+        if (source[cursor] != '"') {
+            cursor++
+            continue
+        }
+        val (value, nextCursor, closed) = readPartialJsonString(source, cursor)
+        if (value.isNotEmpty()) items += value
+        cursor = nextCursor
+        if (!closed) break
+    }
+    return items
+}
+
+/** Returns decoded text, next cursor, and whether the closing quote arrived. */
+private fun readPartialJsonString(source: String, openingQuote: Int): Triple<String, Int, Boolean> {
+    val value = StringBuilder()
+    var cursor = openingQuote + 1
+    while (cursor < source.length) {
+        val char = source[cursor]
+        if (char == '"') {
+            return Triple(value.toString(), cursor + 1, true)
+        }
+        if (char != '\\') {
+            value.append(char)
+            cursor++
+            continue
+        }
+        if (cursor + 1 >= source.length) {
+            return Triple(value.toString(), source.length, false)
+        }
+        val escaped = source[cursor + 1]
+        value.append(
+            when (escaped) {
+                'n' -> '\n'
+                'r' -> '\r'
+                't' -> '\t'
+                '"' -> '"'
+                '\\' -> '\\'
+                '/' -> '/'
+                else -> escaped
+            }
+        )
+        cursor += 2
+    }
+    return Triple(value.toString(), source.length, false)
 }
 
 private fun JsonElement.presentationText(): String? = when (this) {

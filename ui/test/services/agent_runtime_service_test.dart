@@ -14,7 +14,10 @@ void main() {
   });
 
   test('accepts the local ACP cancellation acknowledgement', () {
-    expect(isAgentCancellationSuccessful(<String, dynamic>{'ok': true}), isTrue);
+    expect(
+      isAgentCancellationSuccessful(<String, dynamic>{'ok': true}),
+      isTrue,
+    );
     expect(
       isAgentCancellationSuccessful(<String, dynamic>{'cancelled': true}),
       isTrue,
@@ -23,29 +26,35 @@ void main() {
       isAgentCancellationSuccessful(<String, dynamic>{'status': 'cancelled'}),
       isTrue,
     );
-    expect(isAgentCancellationSuccessful(<String, dynamic>{'ok': false}), isFalse);
-  });
-
-  test('cancelPrompt forwards the OmniFlow run id when stopping a GUI task', () async {
-    MethodCall? capturedCall;
-    messenger.setMockMethodCallHandler(channel, (call) async {
-      capturedCall = call;
-      return <String, dynamic>{'ok': true, 'cancelled': true};
-    });
-
-    await AgentRuntimeService.cancelPrompt(
-      sessionId: 'session-1',
-      promptId: 'turn-1',
-      runId: 'gui-run-1',
+    expect(
+      isAgentCancellationSuccessful(<String, dynamic>{'ok': false}),
+      isFalse,
     );
-
-    expect(capturedCall?.method, 'session/cancel');
-    expect(capturedCall?.arguments, <String, dynamic>{
-      'sessionId': 'session-1',
-      'promptId': 'turn-1',
-      'runId': 'gui-run-1',
-    });
   });
+
+  test(
+    'cancelPrompt forwards the OmniFlow run id when stopping a GUI task',
+    () async {
+      MethodCall? capturedCall;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        capturedCall = call;
+        return <String, dynamic>{'ok': true, 'cancelled': true};
+      });
+
+      await AgentRuntimeService.cancelPrompt(
+        sessionId: 'session-1',
+        promptId: 'turn-1',
+        runId: 'gui-run-1',
+      );
+
+      expect(capturedCall?.method, 'session/cancel');
+      expect(capturedCall?.arguments, <String, dynamic>{
+        'sessionId': 'session-1',
+        'promptId': 'turn-1',
+        'runId': 'gui-run-1',
+      });
+    },
+  );
 
   test('promptSession forwards ACP permission payload', () async {
     MethodCall? capturedCall;
@@ -73,6 +82,9 @@ void main() {
       model: 'gpt-5-codex',
       effort: 'high',
       collaborationMode: 'plan',
+      terminalEnvironment: const <String, String>{
+        'API_ENDPOINT': 'https://example.test',
+      },
     );
 
     expect(capturedCall?.method, 'session/prompt');
@@ -99,6 +111,9 @@ void main() {
     expect(args['model'], 'gpt-5-codex');
     expect(args['effort'], 'high');
     expect(args['collaborationMode'], 'plan');
+    expect(args['terminalEnvironment'], const <String, String>{
+      'API_ENDPOINT': 'https://example.test',
+    });
   });
 
   test('startReview forwards codex review payload', () async {

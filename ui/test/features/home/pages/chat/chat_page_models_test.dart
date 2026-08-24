@@ -4,8 +4,105 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ui/features/home/pages/chat/chat_page_models.dart';
 import 'package:ui/features/home/pages/chat/services/chat_conversation_runtime_coordinator.dart';
 import 'package:ui/models/chat_message_model.dart';
+import 'package:ui/models/conversation_model.dart';
 
 void main() {
+  test('every Harness switch creates an Agent conversation target', () {
+    for (final agentId in <String>[
+      'xiaowan-acp',
+      'codex-acp',
+      'claude-acp',
+      'dsh-acp',
+    ]) {
+      final target = buildHarnessSwitchTarget(
+        agentId: agentId,
+        agentRuntime: 'local',
+        requestKey: 'request-$agentId',
+      );
+
+      expect(target.mode, ConversationMode.agent, reason: agentId);
+      expect(target.agentId, agentId);
+      expect(target.isNewConversation, isTrue);
+    }
+  });
+
+  test(
+    'Harness switch send barrier releases queued submits once idle',
+    () async {
+      final barrier = HarnessSwitchSendBarrier();
+      final generation = barrier.begin();
+      var resumed = 0;
+
+      final first = barrier.waitUntilIdle().then((_) => resumed += 1);
+      final second = barrier.waitUntilIdle().then((_) => resumed += 1);
+      await Future<void>.delayed(Duration.zero);
+      expect(resumed, 0);
+      expect(barrier.isActive, isTrue);
+
+      barrier.finish(generation);
+      await Future.wait<void>(<Future<void>>[first, second]);
+      expect(resumed, 2);
+      expect(barrier.isActive, isFalse);
+    },
+  );
+
+  test(
+    'stale Harness switch completion cannot release queued submits',
+    () async {
+      final barrier = HarnessSwitchSendBarrier();
+      final firstGeneration = barrier.begin();
+      final secondGeneration = barrier.begin();
+      var resumed = false;
+
+      final waiting = barrier.waitUntilIdle().then((_) => resumed = true);
+      barrier.finish(firstGeneration);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(resumed, isFalse);
+      expect(barrier.isActive, isTrue);
+      expect(barrier.isCurrent(secondGeneration), isTrue);
+
+      barrier.finish(secondGeneration);
+      await waiting;
+      expect(resumed, isTrue);
+      expect(barrier.isActive, isFalse);
+    },
+  );
+
+  test(
+    'Harness switch queue reconciles a non-cancellable selection to the latest tap',
+    () async {
+      final barrier = HarnessSwitchSendBarrier();
+      final firstGeneration = barrier.begin();
+      final firstStarted = Completer<void>();
+      final releaseFirst = Completer<void>();
+      final applied = <String>[];
+
+      final first = barrier.runIfCurrent(firstGeneration, () async {
+        firstStarted.complete();
+        await releaseFirst.future;
+        applied.add('first');
+      });
+      await firstStarted.future;
+
+      final skippedGeneration = barrier.begin();
+      final skipped = barrier.runIfCurrent(skippedGeneration, () async {
+        applied.add('skipped');
+      });
+      final latestGeneration = barrier.begin();
+      final latest = barrier.runIfCurrent(latestGeneration, () async {
+        applied.add('latest');
+      });
+
+      releaseFirst.complete();
+      await Future.wait([first, skipped, latest]);
+
+      expect(applied, ['first', 'latest']);
+      barrier.finish(latestGeneration);
+      expect(barrier.isActive, isFalse);
+    },
+  );
+
   test('model selector ignores repeated opens during a slow refresh', () async {
     final guard = ConversationModelSelectorOpeningGuard();
     final release = Completer<void>();

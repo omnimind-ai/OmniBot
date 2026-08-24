@@ -116,6 +116,19 @@ class ChatConversationRuntimeState {
   final Map<String, int> agentEntrySequences = <String, int>{};
   final Map<String, int> agentEntryStartTimes = <String, int>{};
   final Map<String, int> agentReplayDeltaOffsets = <String, int>{};
+
+  /// ACP performance metadata may arrive before the assistant message that
+  /// owns it. Keep it at the runtime boundary until that message is created.
+  final Map<String, Map<String, dynamic>> pendingAcpPerformanceMetrics =
+      <String, Map<String, dynamic>>{};
+  final Map<String, Map<String, dynamic>> pendingAcpReasoningCardData =
+      <String, Map<String, dynamic>>{};
+
+  /// ACP presentation metadata may arrive in an empty assistant chunk before
+  /// the text entry it describes. Keep recovery/clarification facts at the
+  /// runtime boundary instead of dropping them when no message exists yet.
+  final Map<String, Map<String, dynamic>> pendingAcpAssistantPresentation =
+      <String, Map<String, dynamic>>{};
   final Set<String> completedAgentTurnIds = <String>{};
 
   /// Official ACP turn -> stable local run. The map is retained after a run
@@ -228,6 +241,9 @@ class ChatConversationRuntimeState {
     agentEntrySequences.clear();
     agentEntryStartTimes.clear();
     agentReplayDeltaOffsets.clear();
+    pendingAcpPerformanceMetrics.clear();
+    pendingAcpReasoningCardData.clear();
+    pendingAcpAssistantPresentation.clear();
     completedAgentTurnIds.clear();
     acpTurnToRunIds.clear();
     completedAcpTurnIds.clear();
@@ -1060,6 +1076,7 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     if (runtime == null) return;
     _flushRuntimeStreamingText(runtime);
     runtime.currentDispatchTurnId = null;
+    runtime.activeRunId = null;
     runtime.activeAcpTurnId = null;
     runtime.activeAcpSessionId = null;
     runtime.isAiResponding = false;
@@ -1069,6 +1086,11 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     runtime.deepThinkingContent = '';
     runtime.isDeepThinking = false;
     runtime.currentThinkingMessages.clear();
+    runtime.currentAiMessages.clear();
+    runtime.agentReplayDeltaOffsets.clear();
+    runtime.pendingAcpPerformanceMetrics.clear();
+    runtime.pendingAcpReasoningCardData.clear();
+    runtime.pendingAcpAssistantPresentation.clear();
     runtime.currentThinkingStage = ThinkingStage.thinking.value;
     runtime.lastAgentTurnId = null;
     runtime.pendingAgentTextTaskId = null;

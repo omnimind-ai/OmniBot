@@ -238,6 +238,21 @@ extension _HomeDrawerActions on HomeDrawerState {
     );
   }
 
+  Future<void> _copyConversation(ConversationModel conversation) async {
+    if (_busyConversationKeys.contains(conversation.threadKey)) {
+      return;
+    }
+    final copied = await ConversationHistoryService.copyConversation(
+      conversation.id,
+      mode: conversation.mode,
+    );
+    if (!mounted) return;
+    showToast(
+      copied ? context.trLegacy('已复制对话') : context.trLegacy('复制失败'),
+      type: copied ? ToastType.success : ToastType.error,
+    );
+  }
+
   Future<void> _archiveConversation(ConversationModel conversation) async {
     if (_busyConversationKeys.contains(conversation.threadKey)) {
       return;
@@ -417,6 +432,19 @@ extension _HomeDrawerActions on HomeDrawerState {
             ),
           ),
         ),
+      ConversationSlideAction(
+        onPressed: () => _copyConversation(conversation),
+        backgroundColor: context.isDarkTheme
+            ? context.omniPalette.surfaceElevated
+            : AppColors.text.withValues(alpha: 0.62),
+        child: const Center(
+          child: Icon(
+            Icons.content_copy_rounded,
+            size: HomeDrawerState._conversationActionIconSize,
+            color: Colors.white,
+          ),
+        ),
+      ),
       ConversationSlideAction(
         onPressed: () => conversation.isArchived
             ? _unarchiveConversation(conversation)

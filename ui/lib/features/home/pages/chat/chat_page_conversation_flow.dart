@@ -453,8 +453,16 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
     String? text,
     bool waitForBootstrap = true,
   }) async {
-    // Set this before the first await. Two UI submit paths can otherwise both
-    // pass the isAiResponding check while bootstrap/model loading is pending.
+    // A Harness switch changes both the native ACP adapter and the visible
+    // conversation runtime. Let a user submit queue behind that atomic
+    // transition instead of registering it against the old target.
+    if (waitForBootstrap) {
+      await _harnessSwitchSendBarrier.waitUntilIdle();
+      if (!mounted) return;
+    }
+    // Acquire the per-target submit lock immediately after the transition
+    // barrier. Two queued UI submit paths wake in the same microtask turn, so
+    // only the first may continue into bootstrap/model loading.
     // The target request id changes whenever the page moves to another
     // conversation, allowing independent ACP sessions to send concurrently.
     final sendTargetId = _conversationTargetRequestId;
@@ -855,6 +863,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
         model: selection?.modelId,
         effort: _activeConversationReasoningEffort,
         conversationMode: activeConversationModeValue.storageValue,
+        terminalEnvironment: _buildAgentTerminalEnvironmentPayload(),
       );
       _normalAcpSessionId =
           _asAgentString(response['sessionId']) ??
@@ -965,6 +974,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
         model: _activeDispatchSceneSelection?.modelId,
         effort: _activeConversationReasoningEffort,
         conversationMode: activeConversationModeValue.storageValue,
+        terminalEnvironment: _buildAgentTerminalEnvironmentPayload(),
       );
       _normalAcpSessionId =
           _asAgentString(response['sessionId']) ??

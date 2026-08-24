@@ -259,87 +259,81 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
   @override
   Future<void> _handleAcpAgentModeShortcutTap(String agentId) async {
     final normalized = agentId.trim();
-    if (normalized.isEmpty || _isAcpAgentSwitching) {
+    if (normalized.isEmpty) {
       return;
     }
-    // Agent selection may take several seconds while the ACP process starts.
-    // A user-initiated switch owns the next lifecycle request:
-    // invalidate the bootstrap/old navigation request immediately, then use
-    // this same id when applying the new target. Previously we only captured
-    // the old id. Any still-running bootstrap could therefore make the switch
-    // look stale after the ACP process had already started, leaving the page
-    // on the old mode while the runtime had moved to the new Agent.
-    final switchTargetRequestId = _beginConversationTargetRequest();
     final selectsRemote = normalized == _kRemoteCodexModeAgentId;
-    if (!selectsRemote &&
-        _usesSharedProviderModel(normalized) &&
-        !await _ensureSharedProviderModelReadyForSwitch()) {
-      return;
-    }
-    // A conversation binding is not proof that the native ACP runtime is selected. On
-    // restart the binding can still point at Xiaowan while the persisted ACP
-    // profile is Codex (or another Agent). Always reconcile that mismatch
-    // instead of treating the shortcut tap as a no-op.
-    final runtimeActiveAgentId =
-        _agentRuntimeStatus.activeAgentId?.trim() ?? '';
-    final sameVisibleAgent =
-        _activeMode == ChatPageMode.agent && normalized == _activeAcpAgentId;
-    final sameRuntimeAgent = selectsRemote
-        ? _agentRuntimeStatus.connected &&
-              (_agentRuntimeStatus.runtime == 'remote' ||
-                  _agentRuntimeStatus.remoteEnabled)
-        : _agentRuntimeStatus.connected && runtimeActiveAgentId == normalized;
-    if (sameVisibleAgent && sameRuntimeAgent) {
-      return;
-    }
-    final previousTarget = _threadTargetForMode;
-    final target = normalized == _kXiaowanAcpAgentId
-        ? ConversationThreadTarget.newConversation(
-            mode: ConversationMode.normal,
-            requestKey: DateTime.now().microsecondsSinceEpoch.toString(),
-            agentId: normalized,
-            agentRuntime: 'local',
-          )
-        : _newAgentThreadTarget(
-            agentId: normalized,
-            agentRuntime: selectsRemote ? 'remote' : 'local',
-            // A Harness switch starts a fresh conversation. The previous
-            // conversation remains in history and is never handed off to the
-            // new Harness.
-          );
+    final observedTargetRequestId = _conversationTargetRequestId;
+    final switchGeneration = _harnessSwitchSendBarrier.begin();
     setState(() {
       _optimisticAcpAgentId = normalized;
       _isAcpAgentSwitching = true;
     });
-    var selected = false;
     try {
-      selected = selectsRemote
-          ? await _selectRemoteCodexRuntime()
-          : await _selectAgent(normalized);
-      // Select/connect the adapter before creating the new conversation. This
-      // prevents the first prompt from being routed to the previous agent
-      // while the ACP process is still switching.
-      if (selected &&
-          _isConversationTargetRequestCurrent(switchTargetRequestId)) {
-        await _applyConversationThreadTarget(
-          target,
-          requestId: switchTargetRequestId,
-        );
+      if (!selectsRemote &&
+          _usesSharedProviderModel(normalized) &&
+          !await _ensureSharedProviderModelReadyForSwitch()) {
+        return;
       }
+      if (!mounted ||
+          !_harnessSwitchSendBarrier.isCurrent(switchGeneration) ||
+          observedTargetRequestId != _conversationTargetRequestId) {
+        return;
+      }
+
+      // A conversation binding is not proof that the native ACP runtime is
+      // selected. On restart the binding can still point at Xiaowan while the
+      // persisted ACP profile is another Harness.
+      final runtimeActiveAgentId =
+          _agentRuntimeStatus.activeAgentId?.trim() ?? '';
+      final sameVisibleAgent =
+          _activeMode == ChatPageMode.agent && normalized == _activeAcpAgentId;
+      final sameRuntimeAgent = selectsRemote
+          ? _agentRuntimeStatus.connected &&
+                (_agentRuntimeStatus.runtime == 'remote' ||
+                    _agentRuntimeStatus.remoteEnabled)
+          : _agentRuntimeStatus.connected && runtimeActiveAgentId == normalized;
+      if (sameVisibleAgent && sameRuntimeAgent) {
+        return;
+      }
+
+      await _harnessSwitchSendBarrier.runIfCurrent(switchGeneration, () async {
+        final previousTarget = _threadTargetForMode;
+        final target = buildHarnessSwitchTarget(
+          agentId: normalized,
+          agentRuntime: selectsRemote ? 'remote' : 'local',
+          requestKey: DateTime.now().microsecondsSinceEpoch.toString(),
+        );
+        // Only a real switch invalidates bootstrap/navigation work. A no-op
+        // tap or failed Provider preflight must not strand the page.
+        final switchTargetRequestId = _beginConversationTargetRequest();
+        final selected = selectsRemote
+            ? await _selectRemoteCodexRuntime()
+            : await _selectAgent(normalized);
+        // A newer tap may have arrived while the native selection was in
+        // flight. Never let this older result install a visible target; the
+        // serialized latest request will reconcile the native runtime next.
+        if (!_harnessSwitchSendBarrier.isCurrent(switchGeneration) ||
+            !_isConversationTargetRequestCurrent(switchTargetRequestId)) {
+          return;
+        }
+        if (selected) {
+          await _applyConversationThreadTarget(
+            target,
+            requestId: switchTargetRequestId,
+          );
+        } else {
+          await _applyConversationThreadTarget(previousTarget);
+        }
+      });
     } finally {
-      if (mounted) {
+      if (mounted && _harnessSwitchSendBarrier.isCurrent(switchGeneration)) {
         setState(() {
           _optimisticAcpAgentId = null;
           _isAcpAgentSwitching = false;
         });
       }
-    }
-    if (!selected) {
-      if (mounted &&
-          _isConversationTargetRequestCurrent(switchTargetRequestId)) {
-        await _applyConversationThreadTarget(previousTarget);
-      }
-      return;
+      _harnessSwitchSendBarrier.finish(switchGeneration);
     }
   }
 
@@ -1780,6 +1774,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         // canonical ACP prompt so built-in agents read the same durable
         // history bucket that this page writes.
         conversationMode: ConversationMode.agent.storageValue,
+        terminalEnvironment: _buildAgentTerminalEnvironmentPayload(),
       );
       final resolvedThreadId = _asAgentString(response['threadId']);
       if (resolvedThreadId != null && remoteCodex) {

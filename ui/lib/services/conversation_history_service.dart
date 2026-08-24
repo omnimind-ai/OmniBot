@@ -7,6 +7,7 @@ import 'package:ui/models/chat_message_model.dart';
 import 'package:ui/models/conversation_model.dart';
 import 'package:ui/models/conversation_thread_target.dart';
 import 'package:ui/services/agent_message_kinds.dart';
+import 'package:ui/services/assists_core_service.dart';
 import 'package:ui/services/omnibot_resource_service.dart';
 
 /// 对话历史持久化服务
@@ -211,6 +212,41 @@ class ConversationHistoryService {
       'messages': messages.map((message) => message.toJson()).toList(),
     });
     return OmnibotResourceService.shareText(payload);
+  }
+
+  /// Copies the user-visible dialogue in chronological order.
+  ///
+  /// Thinking/tool/system cards intentionally stay out of the clipboard
+  /// representation. They remain available in the exported JSON snapshot,
+  /// while Copy conversation produces the readable transcript users expect.
+  static Future<bool> copyConversation(
+    int conversationId, {
+    ConversationMode mode = ConversationMode.agent,
+  }) async {
+    final messages = await getConversationMessages(conversationId, mode: mode);
+    final text = buildConversationClipboardText(messages);
+    if (text.isEmpty) {
+      return false;
+    }
+    return AssistsMessageService.copyToClipboard(text);
+  }
+
+  static String buildConversationClipboardText(
+    List<ChatMessageModel> messages,
+  ) {
+    final sections = <String>[];
+    for (final message in messages.reversed) {
+      if (message.type != 1) {
+        continue;
+      }
+      final text = (message.text ?? '').trim();
+      if (text.isEmpty) {
+        continue;
+      }
+      final role = message.user == 1 ? '用户' : '助手';
+      sections.add('$role：\n$text');
+    }
+    return sections.join('\n\n');
   }
 
   static String _legacyConversationMessagesKey(int conversationId) {

@@ -294,30 +294,36 @@ class AgentEventReducer {
           parentTaskId;
       _touchActiveTurn(runtime, parentTaskId);
       if (itemType == 'reasoning') {
-        final thinkingEntryId = _thinkingCardIdForTask(
-          runtime,
-          parentTaskId: parentTaskId,
-          requestedCardId: '$startedItemId-agent-thinking',
-        );
         final text =
             _extractText(item['text']) ??
             _extractText(item['summary']) ??
             _extractText(item['content']) ??
             '';
-        _upsertThinkingCard(
-          runtime,
-          taskId: parentTaskId,
-          cardId: thinkingEntryId,
-          thinkingContent: text,
-          isLoading: true,
-          stage: ThinkingStage.thinking.value,
-          streamMeta: _streamMeta(
+        // item/started is only a lifecycle hint. Many ACP agents announce
+        // reasoning before its first delta; rendering that hint created a
+        // blank card in the conversation. The first non-empty reasoning
+        // update creates the card with the same stable item identity.
+        if (text.isNotEmpty) {
+          final thinkingEntryId = _thinkingCardIdForTask(
             runtime,
             parentTaskId: parentTaskId,
-            entryId: thinkingEntryId,
-            kind: 'thinking_snapshot',
-          ),
-        );
+            requestedCardId: '$startedItemId-agent-thinking',
+          );
+          _upsertThinkingCard(
+            runtime,
+            taskId: parentTaskId,
+            cardId: thinkingEntryId,
+            thinkingContent: text,
+            isLoading: true,
+            stage: ThinkingStage.thinking.value,
+            streamMeta: _streamMeta(
+              runtime,
+              parentTaskId: parentTaskId,
+              entryId: thinkingEntryId,
+              kind: 'thinking_snapshot',
+            ),
+          );
+        }
       } else if (itemType == 'agentMessage') {
         final text = _extractText(item['text']) ?? '';
         if (text.isNotEmpty) {
@@ -412,6 +418,7 @@ class AgentEventReducer {
           title: _approvalTitle(itemType, item),
           detail: _approvalDetail(item),
           params: item,
+          toolCallId: startedItemId,
           streamMeta: _streamMeta(
             runtime,
             parentTaskId: parentTaskId,
@@ -432,6 +439,7 @@ class AgentEventReducer {
           detail: question.detail,
           questionId: question.id,
           params: item,
+          toolCallId: startedItemId,
           streamMeta: _streamMeta(
             runtime,
             parentTaskId: parentTaskId,
@@ -474,6 +482,18 @@ class AgentEventReducer {
         entryId: entryId,
         presentation: _asStringMap(params['acpPresentation']),
       );
+      _upsertAcpAssistantMedia(
+        runtime,
+        parentTaskId: parentTaskId,
+        entryId: entryId,
+        media: _asMapList(params['acpAssistantMedia']),
+      );
+      _upsertAcpAssistantArtifacts(
+        runtime,
+        parentTaskId: parentTaskId,
+        entryId: entryId,
+        artifacts: _asMapList(params['acpAssistantArtifacts']),
+      );
       return AgentReduceResult(
         handled: true,
         method: method,
@@ -493,7 +513,15 @@ class AgentEventReducer {
           _extractText(params['summary']) ??
           _extractText(params['part']) ??
           '';
+      final reasoningCardData = _acpReasoningCardData(presentation);
+      final reasoningDataKey = _pendingAcpReasoningDataKey(
+        parentTaskId: parentTaskId,
+        entryId: entryId,
+      );
       if (text.isNotEmpty) {
+        final pendingReasoningCardData =
+            runtime.pendingAcpReasoningCardData.remove(reasoningDataKey) ??
+            const <String, dynamic>{};
         _applyAcpPresentation(
           runtime,
           parentTaskId: parentTaskId,
@@ -505,28 +533,24 @@ class AgentEventReducer {
           parentTaskId: parentTaskId,
           cardId: entryId,
           delta: text,
-          reasoningCardData: _acpReasoningCardData(presentation),
+          reasoningCardData: <String, dynamic>{
+            ...pendingReasoningCardData,
+            ...reasoningCardData,
+          },
         );
       } else {
+        if (reasoningCardData.isNotEmpty) {
+          runtime.pendingAcpReasoningCardData[reasoningDataKey] = {
+            ...?runtime.pendingAcpReasoningCardData[reasoningDataKey],
+            ...reasoningCardData,
+          };
+        }
         _applyAcpPresentation(
           runtime,
           parentTaskId: parentTaskId,
           entryId: entryId,
           presentation: presentation,
         );
-        // An empty ACP thought chunk is still meaningful: adapters use it to
-        // announce that reasoning has started before the first text arrives.
-        // Reuse the existing deep-thinking card and only project its loading
-        // state; no new presentation protocol or card type is introduced.
-        if (_asStringMap(presentation?['reasoning']) != null) {
-          _appendThinking(
-            runtime,
-            parentTaskId: parentTaskId,
-            cardId: entryId,
-            delta: '',
-            reasoningCardData: _acpReasoningCardData(presentation),
-          );
-        }
       }
       return AgentReduceResult(
         handled: true,
@@ -743,6 +767,13 @@ class AgentEventReducer {
         title: _approvalTitle(method, params),
         detail: _approvalDetail(params),
         params: params,
+        toolCallId: _firstString([
+          params['toolCallId'],
+          params['tool_call_id'],
+          params['itemId'],
+          params['item_id'],
+          itemId,
+        ]),
         streamMeta: _streamMeta(
           runtime,
           parentTaskId: parentTaskId,
@@ -773,6 +804,13 @@ class AgentEventReducer {
         detail: question.detail,
         questionId: question.id,
         params: params,
+        toolCallId: _firstString([
+          params['toolCallId'],
+          params['tool_call_id'],
+          params['itemId'],
+          params['item_id'],
+          itemId,
+        ]),
         streamMeta: _streamMeta(
           runtime,
           parentTaskId: parentTaskId,
@@ -1019,28 +1057,63 @@ class AgentEventReducer {
     final usage = _asStringMap(presentation['usage']);
     if (usage != null) {
       _applyAcpUsage(runtime, usage);
-      _applyAcpPerformanceMetrics(runtime, entryId: entryId, usage: usage);
+      _applyAcpPerformanceMetrics(
+        runtime,
+        parentTaskId: parentTaskId,
+        entryId: entryId,
+        usage: usage,
+      );
     }
     final retry = _asStringMap(presentation['retry']);
     if (retry != null) {
       _touchActiveTurn(runtime, parentTaskId);
-      _upsertAcpRetryPresentation(runtime, entryId: entryId, retry: retry);
+      if (_hasAgentMessage(runtime, entryId)) {
+        _upsertAcpRetryPresentation(runtime, entryId: entryId, retry: retry);
+      } else {
+        _bufferAcpAssistantPresentation(
+          runtime,
+          parentTaskId: parentTaskId,
+          entryId: entryId,
+          key: 'retry',
+          value: retry,
+        );
+      }
     }
     final recovery = _asStringMap(presentation['recovery']);
     if (recovery != null) {
-      _upsertAcpRecoveryPresentation(
-        runtime,
-        entryId: entryId,
-        recovery: recovery,
-      );
+      if (_hasAgentMessage(runtime, entryId)) {
+        _upsertAcpRecoveryPresentation(
+          runtime,
+          entryId: entryId,
+          recovery: recovery,
+        );
+      } else {
+        _bufferAcpAssistantPresentation(
+          runtime,
+          parentTaskId: parentTaskId,
+          entryId: entryId,
+          key: 'recovery',
+          value: recovery,
+        );
+      }
     }
     final clarification = _asStringMap(presentation['clarification']);
     if (clarification != null) {
-      _applyAcpClarificationPresentation(
-        runtime,
-        entryId: entryId,
-        clarification: clarification,
-      );
+      if (_hasAgentMessage(runtime, entryId)) {
+        _applyAcpClarificationPresentation(
+          runtime,
+          entryId: entryId,
+          clarification: clarification,
+        );
+      } else {
+        _bufferAcpAssistantPresentation(
+          runtime,
+          parentTaskId: parentTaskId,
+          entryId: entryId,
+          key: 'clarification',
+          value: clarification,
+        );
+      }
     }
     final compaction = _asStringMap(presentation['compaction']);
     if (compaction != null) {
@@ -1075,6 +1148,7 @@ class AgentEventReducer {
 
   void _applyAcpPerformanceMetrics(
     ChatConversationRuntimeState runtime, {
+    required String parentTaskId,
     required String entryId,
     required Map<String, dynamic> usage,
   }) {
@@ -1088,8 +1162,120 @@ class AgentEventReducer {
       (message) => message.id == entryId,
     );
     if (index == -1) {
+      final key = _pendingAcpPerformanceKey(
+        parentTaskId: parentTaskId,
+        entryId: entryId,
+      );
+      runtime.pendingAcpPerformanceMetrics[key] = <String, dynamic>{
+        ...?runtime.pendingAcpPerformanceMetrics[key],
+        if (prefill != null) 'prefillTokensPerSecond': prefill,
+        if (decode != null) 'decodeTokensPerSecond': decode,
+        if (turnUsage != null) 'turnUsage': turnUsage,
+      };
       return;
     }
+    _writeAcpPerformanceMetrics(
+      runtime,
+      index: index,
+      prefill: prefill,
+      decode: decode,
+      turnUsage: turnUsage,
+    );
+  }
+
+  void _flushPendingAcpPerformanceMetrics(
+    ChatConversationRuntimeState runtime, {
+    required String parentTaskId,
+    required String entryId,
+  }) {
+    final key = _pendingAcpPerformanceKey(
+      parentTaskId: parentTaskId,
+      entryId: entryId,
+    );
+    final pending = runtime.pendingAcpPerformanceMetrics.remove(key);
+    if (pending == null) return;
+    final index = runtime.messages.indexWhere(
+      (message) => message.id == entryId,
+    );
+    if (index == -1) {
+      runtime.pendingAcpPerformanceMetrics[key] = pending;
+      return;
+    }
+    _writeAcpPerformanceMetrics(
+      runtime,
+      index: index,
+      prefill: _asDouble(pending['prefillTokensPerSecond']),
+      decode: _asDouble(pending['decodeTokensPerSecond']),
+      turnUsage: _asStringMap(pending['turnUsage']),
+    );
+  }
+
+  String _pendingAcpPerformanceKey({
+    required String parentTaskId,
+    required String entryId,
+  }) => '$parentTaskId\u0000$entryId';
+
+  String _pendingAcpReasoningDataKey({
+    required String parentTaskId,
+    required String entryId,
+  }) => '$parentTaskId\u0000$entryId';
+
+  bool _hasAgentMessage(ChatConversationRuntimeState runtime, String entryId) {
+    return runtime.messages.any(
+      (message) =>
+          message.id == entryId && message.type == 1 && message.user == 2,
+    );
+  }
+
+  void _bufferAcpAssistantPresentation(
+    ChatConversationRuntimeState runtime, {
+    required String parentTaskId,
+    required String entryId,
+    required String key,
+    required Map<String, dynamic> value,
+  }) {
+    final pendingKey = _pendingAcpAssistantPresentationKey(
+      parentTaskId: parentTaskId,
+      entryId: entryId,
+    );
+    final pending =
+        runtime.pendingAcpAssistantPresentation[pendingKey] ??
+        <String, dynamic>{};
+    pending[key] = value;
+    runtime.pendingAcpAssistantPresentation[pendingKey] = pending;
+  }
+
+  void _flushPendingAcpAssistantPresentation(
+    ChatConversationRuntimeState runtime, {
+    required String parentTaskId,
+    required String entryId,
+  }) {
+    final pendingKey = _pendingAcpAssistantPresentationKey(
+      parentTaskId: parentTaskId,
+      entryId: entryId,
+    );
+    final pending = runtime.pendingAcpAssistantPresentation.remove(pendingKey);
+    if (pending == null || pending.isEmpty) return;
+    _applyAcpPresentation(
+      runtime,
+      parentTaskId: parentTaskId,
+      entryId: entryId,
+      presentation: pending,
+    );
+  }
+
+  String _pendingAcpAssistantPresentationKey({
+    required String parentTaskId,
+    required String entryId,
+  }) => '$parentTaskId\u0000$entryId';
+
+  void _writeAcpPerformanceMetrics(
+    ChatConversationRuntimeState runtime, {
+    required int index,
+    required double? prefill,
+    required double? decode,
+    required Map<String, dynamic>? turnUsage,
+  }) {
     final existing = runtime.messages[index];
     final content = Map<String, dynamic>.from(existing.content ?? const {});
     if (prefill != null) content['prefillTokensPerSecond'] = prefill;
@@ -1110,8 +1296,9 @@ class AgentEventReducer {
     final index = runtime.messages.indexWhere(
       (message) => message.id == entryId,
     );
-    final existing = index == -1 ? null : runtime.messages[index];
-    final content = Map<String, dynamic>.from(existing?.content ?? const {});
+    if (index == -1) return;
+    final existing = runtime.messages[index];
+    final content = Map<String, dynamic>.from(existing.content ?? const {});
     content.addAll(<String, dynamic>{
       'text': (content['text'] ?? '').toString(),
       'id': entryId,
@@ -1143,15 +1330,11 @@ class AgentEventReducer {
         _startTimeForEntry(runtime, entryId, existingMessage: existing),
       ),
     );
-    if (index == -1) {
-      runtime.messages.insert(0, message);
-    } else {
-      runtime.messages[index] = existing!.copyWith(
-        content: content,
-        isError: false,
-        streamMeta: message.streamMeta,
-      );
-    }
+    runtime.messages[index] = existing.copyWith(
+      content: content,
+      isError: false,
+      streamMeta: message.streamMeta,
+    );
   }
 
   void _upsertAcpRecoveryPresentation(
@@ -1351,13 +1534,80 @@ class AgentEventReducer {
           ),
         ),
       );
-      return;
+    } else {
+      runtime.messages[index] = runtime.messages[index].copyWith(
+        content: content,
+        isLoading: false,
+        isError: false,
+        streamMeta: streamMeta,
+      );
     }
-    runtime.messages[index] = runtime.messages[index].copyWith(
-      content: content,
-      isLoading: false,
-      isError: false,
-      streamMeta: streamMeta,
+    _flushPendingAcpPerformanceMetrics(
+      runtime,
+      parentTaskId: parentTaskId,
+      entryId: messageId,
+    );
+    _flushPendingAcpAssistantPresentation(
+      runtime,
+      parentTaskId: parentTaskId,
+      entryId: messageId,
+    );
+  }
+
+  void _upsertAcpAssistantMedia(
+    ChatConversationRuntimeState runtime, {
+    required String parentTaskId,
+    required String entryId,
+    required List<Map<String, dynamic>> media,
+  }) {
+    for (var index = 0; index < media.length; index++) {
+      final item = media[index];
+      final imageDataUrl = _string(item['imageDataUrl']);
+      final imageUrl = _string(item['imageUrl']);
+      final location = imageDataUrl ?? imageUrl;
+      if (location == null || location.trim().isEmpty) continue;
+      final cardId = '$entryId-agent-image-$index';
+      _upsertToolCard(
+        runtime,
+        cardId: cardId,
+        taskId: parentTaskId,
+        toolType: 'image',
+        title: _string(item['title']) ?? '图片',
+        status: 'success',
+        summary: _string(item['title']) ?? '图片',
+        progress: '',
+        raw: <String, dynamic>{
+          'type': 'image',
+          'toolType': 'image',
+          'toolName': 'assistant_media',
+          'title': _string(item['title']) ?? '图片',
+          if (imageDataUrl != null) 'imageDataUrl': imageDataUrl,
+          if (imageUrl != null) 'imageUrl': imageUrl,
+          if (item['mimeType'] != null) 'mimeType': item['mimeType'],
+        },
+        streamMeta: _streamMeta(
+          runtime,
+          parentTaskId: parentTaskId,
+          entryId: cardId,
+          kind: 'assistant_media',
+          isFinal: true,
+        ),
+      );
+    }
+  }
+
+  void _upsertAcpAssistantArtifacts(
+    ChatConversationRuntimeState runtime, {
+    required String parentTaskId,
+    required String entryId,
+    required List<Map<String, dynamic>> artifacts,
+  }) {
+    if (artifacts.isEmpty) return;
+    _upsertArtifactCards(
+      runtime,
+      taskId: parentTaskId,
+      parentCardId: entryId,
+      artifacts: artifacts,
     );
   }
 
@@ -1553,6 +1803,12 @@ class AgentEventReducer {
       // settings page unexpectedly.
       'autoOpenAuthorization': true,
       'permissionSource': 'acp_tool_result',
+      if (existing?.cardData?['requestId'] != null)
+        'requestId': existing!.cardData!['requestId'],
+      if (existing?.cardData?['toolCallId'] != null)
+        'toolCallId': existing!.cardData!['toolCallId'],
+      if (existing?.cardData?['sessionId'] != null)
+        'sessionId': existing!.cardData!['sessionId'],
     };
     final message = ChatMessageModel.cardMessage(
       cardData,
@@ -1696,6 +1952,8 @@ class AgentEventReducer {
       if (raw['workspaceId'] != null) 'workspaceId': raw['workspaceId'],
       if (raw['planId'] != null) 'planId': raw['planId'],
       if (raw['imageDataUrl'] != null) 'imageDataUrl': raw['imageDataUrl'],
+      if (raw['dataUrl'] != null) 'dataUrl': raw['dataUrl'],
+      if (raw['imageUrl'] != null) 'imageUrl': raw['imageUrl'],
       if (raw['taskId'] != null) 'sourceTaskId': raw['taskId'],
       if (raw['runId'] != null) 'runId': raw['runId'],
       if (raw['run_id'] != null) 'run_id': raw['run_id'],
@@ -1712,6 +1970,8 @@ class AgentEventReducer {
           (effectiveTerminalOutput.isNotEmpty && diffText.isEmpty) ||
           effectiveToolType == 'terminal',
       'showRawResult': true,
+      'showScheduleAction': effectiveToolType == 'schedule',
+      'showAlarmAction': effectiveToolType == 'alarm',
     };
     if (effectiveToolType == 'file') {
       cardData.addAll(<String, dynamic>{
@@ -1753,6 +2013,20 @@ class AgentEventReducer {
     runtime.lastAgentToolType = effectiveToolType;
     if (effectiveToolType == 'terminal' || effectiveToolType == 'browser') {
       runtime.chatIslandDisplayLayer = ChatIslandDisplayLayer.tools;
+    }
+    if (effectiveToolType == 'browser' && toolInfo.status == 'success') {
+      final workspaceId = (cardData['workspaceId'] ?? '').toString().trim();
+      if (workspaceId.isNotEmpty) {
+        runtime.browserSessionSnapshot =
+            ChatBrowserSessionSnapshot.tryParseBrowserToolJson(
+              rawJson: cardData['rawResultJson'].toString(),
+              workspaceId: workspaceId,
+            ) ??
+            ChatBrowserSessionSnapshot.tryParseBrowserToolJson(
+              rawJson: cardData['resultPreviewJson'].toString(),
+              workspaceId: workspaceId,
+            );
+      }
     }
   }
 
@@ -1823,6 +2097,7 @@ class AgentEventReducer {
     required String detail,
     required Map<String, dynamic> params,
     required Map<String, dynamic> streamMeta,
+    String? toolCallId,
     String? questionId,
   }) {
     _touchActiveTurn(runtime, taskId);
@@ -1842,6 +2117,10 @@ class AgentEventReducer {
         nextRequestId.isNotEmpty &&
         existingRequestId == nextRequestId;
     final existingCardData = existing?.cardData ?? const <String, dynamic>{};
+    final requestSessionId = _firstString([
+      params['sessionId'],
+      params['session_id'],
+    ]);
     final status = _resolveRequestStatus(
       requestKind: requestKind,
       params: params,
@@ -1854,6 +2133,9 @@ class AgentEventReducer {
       'taskId': taskId,
       'runId': taskId,
       'requestId': requestId,
+      if (requestSessionId != null) 'sessionId': requestSessionId,
+      if (toolCallId != null && toolCallId.trim().isNotEmpty)
+        'toolCallId': toolCallId.trim(),
       'requestKind': requestKind,
       'title': title,
       'detail': detail,
@@ -2471,6 +2753,7 @@ class AgentEventReducer {
     // clear the shared runtime flags or text cache owned by N+1.
     if (!isCurrentTurn && runtime.currentDispatchTurnId != null) {
       _markAssistantMessagesFinalForTask(runtime, taskId);
+      _clearAcpRetryPresentationForTask(runtime, taskId);
       _finalizeThinkingCardsForTask(runtime, taskId);
       _markToolCardsCompleteForTask(runtime, taskId);
       runtime.currentThinkingMessages.remove(taskId);
@@ -2518,6 +2801,7 @@ class AgentEventReducer {
     runtime.activeThinkingCardId = null;
     runtime.currentThinkingStage = ThinkingStage.complete.value;
     _markAssistantMessagesFinalForTask(runtime, ownerTaskId);
+    _clearAcpRetryPresentationForTask(runtime, ownerTaskId);
     if (!isManualCancel) {
       _finalizeThinkingCardsForTask(runtime, ownerTaskId);
     }
@@ -2537,6 +2821,36 @@ class AgentEventReducer {
         runtime.completedAgentTurnIds.remove(
           runtime.completedAgentTurnIds.first,
         );
+      }
+    }
+  }
+
+  void _clearAcpRetryPresentationForTask(
+    ChatConversationRuntimeState runtime,
+    String taskId,
+  ) {
+    for (var index = 0; index < runtime.messages.length; index++) {
+      final message = runtime.messages[index];
+      if (message.type != 1 ||
+          message.user != 2 ||
+          (message.streamMeta?['parentTaskId'] ?? '').toString() != taskId) {
+        continue;
+      }
+      final content = Map<String, dynamic>.from(message.content ?? const {});
+      var changed = false;
+      for (final key in const <String>[
+        'agentRetrying',
+        'agentRetryStatusText',
+        'agentRetryCount',
+        'agentMaxRetries',
+        'agentRetryDelayMs',
+        'agentRetryReason',
+        'agentRetryable',
+      ]) {
+        changed = content.remove(key) != null || changed;
+      }
+      if (changed) {
+        runtime.messages[index] = message.copyWith(content: content);
       }
     }
   }
@@ -3108,7 +3422,9 @@ class AgentEventReducer {
     // later turn.
     for (final message in runtime.messages) {
       final cardData = message.cardData;
-      if (cardData?['type'] != 'agent_tool_summary' ||
+      if (cardData == null ||
+          (cardData['type'] != 'agent_tool_summary' &&
+              cardData['type'] != kAgentRequestCardType) ||
           !_cardBelongsToTask(cardData!, normalizedTaskId)) {
         continue;
       }
@@ -3116,6 +3432,7 @@ class AgentEventReducer {
       final cardSessionId = _string(cardData['sessionId'])?.trim() ?? '';
       if (cardToolCallId == normalizedCallId &&
           (normalizedSessionId.isEmpty ||
+              cardSessionId.isEmpty ||
               cardSessionId == normalizedSessionId)) {
         return message.id;
       }
@@ -3688,6 +4005,10 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
           // otherwise valid Markdown is glued into malformed headings and
           // code fences.
           'delta': _extractStreamingText(update['content']) ?? '',
+          if (_acpAssistantMedia(update['content']).isNotEmpty)
+            'acpAssistantMedia': _acpAssistantMedia(update['content']),
+          if (_acpAssistantArtifacts(update['content']).isNotEmpty)
+            'acpAssistantArtifacts': _acpAssistantArtifacts(update['content']),
           if (presentation != null) 'acpPresentation': presentation,
         }),
       };
@@ -3720,8 +4041,7 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
       );
       final status = _string(item['status'])?.toLowerCase();
       return <String, dynamic>{
-        'method':
-            status == 'completed' || status == 'failed' || status == 'cancelled'
+        'method': _isTerminalAcpToolStatus(status)
             ? 'item/completed'
             : 'item/updated',
         'params': projectedParams(<String, dynamic>{'item': item}),
@@ -3806,6 +4126,26 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
   }
 }
 
+bool _isTerminalAcpToolStatus(String? status) {
+  switch (status?.trim().toLowerCase()) {
+    case 'completed':
+    case 'complete':
+    case 'success':
+    case 'succeeded':
+    case 'failed':
+    case 'error':
+    case 'cancelled':
+    case 'canceled':
+    case 'interrupted':
+    case 'aborted':
+    case 'timeout':
+    case 'timed_out':
+      return true;
+    default:
+      return false;
+  }
+}
+
 bool _isTerminalAgentEventMethod(String method) {
   return method == 'turn/completed' ||
       method == 'turn/failed' ||
@@ -3825,6 +4165,10 @@ Map<String, dynamic> _projectAcpToolCall(
         ? _decodeAcpJsonValue(update['rawOutput'] as String)
         : update['rawOutput'],
   );
+  final plainRawOutput =
+      update['rawOutput'] is String && structuredOutput == null
+      ? (update['rawOutput'] as String).trim()
+      : '';
   return <String, dynamic>{
     'id': update['toolCallId'],
     'toolCallId': update['toolCallId'],
@@ -3837,6 +4181,10 @@ Map<String, dynamic> _projectAcpToolCall(
     'locations': update['locations'],
     'rawInput': update['rawInput'],
     'rawOutput': update['rawOutput'],
+    if (plainRawOutput.isNotEmpty) ...<String, dynamic>{
+      'summary': plainRawOutput,
+      'progress': plainRawOutput,
+    },
     ..._acpStructuredToolOutput(structuredOutput),
     if (standardContent.isNotEmpty) 'contentItems': standardContent,
     // Standard content is a concrete capability signal. It takes precedence
@@ -3852,6 +4200,104 @@ List<Map<String, dynamic>> _acpStandardToolContent(Object? value) {
       .whereType<Map>()
       .map((item) => item.map((key, nested) => MapEntry('$key', nested)))
       .toList(growable: false);
+}
+
+/// Converts ACP assistant image/resource blocks into the same image location
+/// shape used by the existing shared tool card. The reducer then routes these
+/// through the normal `agent_tool_summary` image card instead of introducing a
+/// second assistant-media widget.
+List<Map<String, dynamic>> _acpAssistantMedia(Object? value) {
+  final media = <Map<String, dynamic>>[];
+
+  void visit(Object? candidate) {
+    if (candidate is List) {
+      for (final item in candidate) {
+        visit(item);
+      }
+      return;
+    }
+    final block = _asStringMap(candidate);
+    if (block == null) return;
+    final type = _string(block['type'])?.toLowerCase();
+    if (type == 'content') {
+      visit(block['content']);
+      return;
+    }
+    if (type == 'resource') {
+      visit(block['resource']);
+      return;
+    }
+    final mimeType = _string(block['mimeType']) ?? _string(block['mime_type']);
+    final isImage =
+        type == 'image' || mimeType?.toLowerCase().startsWith('image/') == true;
+    if (!isImage) return;
+    final data = _string(block['data']) ?? _string(block['blob']);
+    final uri = _string(block['uri']) ?? _string(block['url']);
+    final location = data == null || data.isEmpty
+        ? uri
+        : data.startsWith('data:')
+        ? data
+        : 'data:${mimeType ?? 'image/png'};base64,$data';
+    if (location == null || location.trim().isEmpty) return;
+    media.add(<String, dynamic>{
+      if (location.startsWith('data:'))
+        'imageDataUrl': location
+      else
+        'imageUrl': location,
+      'mimeType': mimeType ?? 'image/png',
+      'title': _string(block['title']) ?? _string(block['name']) ?? '图片',
+    });
+  }
+
+  visit(value);
+  return media;
+}
+
+/// Projects non-image ACP resource links into the existing artifact card.
+/// Embedded text resources remain assistant text; only links with a durable
+/// URI need a separate card and preview action.
+List<Map<String, dynamic>> _acpAssistantArtifacts(Object? value) {
+  final artifacts = <Map<String, dynamic>>[];
+
+  void visit(Object? candidate) {
+    if (candidate is List) {
+      for (final item in candidate) {
+        visit(item);
+      }
+      return;
+    }
+    final block = _asStringMap(candidate);
+    if (block == null) return;
+    final type = _string(block['type'])?.toLowerCase();
+    if (type == 'resource') {
+      // Embedded resources are handled as assistant text or image content.
+      // They do not necessarily have a host-resolvable URI.
+      return;
+    }
+    if (type != 'resource_link') return;
+    final uri = _string(block['uri'])?.trim();
+    if (uri == null || uri.isEmpty) return;
+    final mimeType = _string(block['mimeType']) ?? _string(block['mime_type']);
+    if (mimeType?.toLowerCase().startsWith('image/') == true) return;
+    final title =
+        _string(block['title']) ??
+        _string(block['name']) ??
+        _string(block['description']) ??
+        uri;
+    artifacts.add(<String, dynamic>{
+      'id': 'resource-${Uri.encodeComponent(uri)}',
+      'title': title,
+      if (_string(block['name']) != null) 'fileName': block['name'],
+      'uri': uri,
+      if (mimeType != null) 'mimeType': mimeType,
+      if (block['size'] != null) 'size': block['size'],
+      if (mimeType?.toLowerCase().startsWith('text/') == true)
+        'previewKind': 'text',
+    });
+  }
+
+  visit(value);
+  return artifacts;
 }
 
 /// Derives visual hints from standard ACP tool content once, before all
@@ -4452,6 +4898,7 @@ String? _extractStreamingText(dynamic value) {
       map['message'],
       map['value'],
       map['delta'],
+      map['resource'],
     ]) {
       final text = _extractStreamingText(candidate);
       if (text != null && text.isNotEmpty) {

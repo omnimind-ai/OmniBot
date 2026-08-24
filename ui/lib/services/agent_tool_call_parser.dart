@@ -642,11 +642,20 @@ String _inferToolType({
   if (_containsAny(name, const ['image', 'screenshot', 'view_image'])) {
     return 'image';
   }
-  if (_containsAny(name, const ['task', 'subagent', 'agent'])) {
-    return 'subagent';
-  }
   if (_containsAny(name, const ['memory'])) {
     return 'memory';
+  }
+  if (_containsAny(name, const ['alarm', 'reminder'])) {
+    return 'alarm';
+  }
+  if (_containsAny(name, const ['schedule', 'scheduled', 'timer'])) {
+    return 'schedule';
+  }
+  if (_containsAny(name, const ['calendar', 'calendar_event'])) {
+    return 'calendar';
+  }
+  if (_containsAny(name, const ['subagent', 'sub_agent', 'delegate_agent'])) {
+    return 'subagent';
   }
   if (canonicalItemType == 'mcpToolCall') {
     return 'mcp';

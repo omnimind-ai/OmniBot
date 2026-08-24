@@ -251,9 +251,46 @@ internal class AccessibilityAndroidGuiPlatform(
             "back" -> service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
             "home" -> service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
             "enter" -> pressEnter(action)
+            "select_all" -> performFocusedTextAction(selectAll = true)
+            "copy" -> performFocusedTextAction(selectAll = false)
             else -> return AndroidGuiActionResult(false, "press_key_invalid:$key")
         }
         return AndroidGuiActionResult(success, if (success) "press_key_dispatched" else "press_key_failed")
+    }
+
+    private suspend fun performFocusedTextAction(selectAll: Boolean): Boolean {
+        var success = false
+        repeat(PRESS_KEY_ATTEMPTS) { attempt ->
+            success = withNodes { nodes ->
+                val node = selectInputNode(
+                    nodes = nodes,
+                    x = null,
+                    y = null,
+                    lookup = InputNodeLookup.INPUT_ACTION,
+                ) ?: return@withNodes false
+                if (selectAll) {
+                    val arguments = Bundle().apply {
+                        putInt(
+                            AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT,
+                            0,
+                        )
+                        putInt(
+                            AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT,
+                            node.text?.length ?: 0,
+                        )
+                    }
+                    node.performAction(
+                        AccessibilityNodeInfo.ACTION_SET_SELECTION,
+                        arguments,
+                    )
+                } else {
+                    node.performAction(AccessibilityNodeInfo.ACTION_COPY)
+                }
+            }
+            if (success || attempt == PRESS_KEY_ATTEMPTS - 1) return success
+            delay(PRESS_KEY_RETRY_DELAY_MS)
+        }
+        return success
     }
 
     private suspend fun pressEnter(action: Action): Boolean {

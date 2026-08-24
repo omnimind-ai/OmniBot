@@ -10,6 +10,33 @@ import 'package:ui/models/conversation_model.dart';
 import 'package:ui/services/conversation_history_service.dart';
 
 void main() {
+  test('builds readable chronological text when copying a conversation', () {
+    final text = ConversationHistoryService.buildConversationClipboardText([
+      ChatMessageModel(
+        id: 'assistant-1',
+        type: 1,
+        user: 2,
+        content: const {'text': '已经处理完成。'},
+      ),
+      ChatMessageModel(
+        id: 'tool-1',
+        type: 2,
+        user: 3,
+        content: const {
+          'cardData': {'type': 'agent_tool_summary'},
+        },
+      ),
+      ChatMessageModel(
+        id: 'user-1',
+        type: 1,
+        user: 1,
+        content: const {'text': '帮我检查一下。'},
+      ),
+    ]);
+
+    expect(text, '用户：\n帮我检查一下。\n\n助手：\n已经处理完成。');
+  });
+
   TestWidgetsFlutterBinding.ensureInitialized();
 
   const channel = MethodChannel('cn.com.omnimind.bot/AssistCoreEvent');
@@ -147,32 +174,35 @@ void main() {
     },
   );
 
-  test('legacy normal target restores as Agent while retaining its mode key', () async {
-    const normalTarget = ConversationThreadTarget.existing(
-      conversationId: 31,
-      mode: ConversationMode.normal,
-    );
-
-    await ConversationHistoryService.saveCurrentConversationTarget(
-      normalTarget,
-      mode: ConversationMode.normal,
-    );
-
-    final restored =
-        await ConversationHistoryService.getCurrentConversationTarget(
-          mode: ConversationMode.normal,
-        );
-
-    expect(restored?.conversationId, 31);
-    expect(restored?.mode, ConversationMode.agent);
-    expect(
-      ConversationHistoryService.conversationMessagesKey(
-        31,
+  test(
+    'legacy normal target restores as Agent while retaining its mode key',
+    () async {
+      const normalTarget = ConversationThreadTarget.existing(
+        conversationId: 31,
         mode: ConversationMode.normal,
-      ),
-      'conversation_messages_normal_31',
-    );
-  });
+      );
+
+      await ConversationHistoryService.saveCurrentConversationTarget(
+        normalTarget,
+        mode: ConversationMode.normal,
+      );
+
+      final restored =
+          await ConversationHistoryService.getCurrentConversationTarget(
+            mode: ConversationMode.normal,
+          );
+
+      expect(restored?.conversationId, 31);
+      expect(restored?.mode, ConversationMode.agent);
+      expect(
+        ConversationHistoryService.conversationMessagesKey(
+          31,
+          mode: ConversationMode.normal,
+        ),
+        'conversation_messages_normal_31',
+      );
+    },
+  );
 
   test('missing non-normal targets never fall back to normal', () async {
     await ConversationHistoryService.saveCurrentConversationTarget(

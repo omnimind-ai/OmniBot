@@ -199,6 +199,8 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   // in flight until its ACP turn completes, but that must not block sending
   // from another conversation that the user opens in the meantime.
   final Set<int> _sendMessageInFlightTargetIds = <int>{};
+  final HarnessSwitchSendBarrier _harnessSwitchSendBarrier =
+      HarnessSwitchSendBarrier();
   final Set<String> _consumedInitialMessageRequests = <String>{};
 
   // OpenClaw 配置与开关
@@ -820,7 +822,7 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   }
 
   String get _expectedBrowserWorkspaceId => chatConversationWorkspaceId(
-    _modeState(ChatPageMode.normal).currentConversationId,
+    _modeState(_activeConversationMode).currentConversationId,
   );
 
   List<ChatMessageModel> get _messages => resolveVisibleChatMessages(

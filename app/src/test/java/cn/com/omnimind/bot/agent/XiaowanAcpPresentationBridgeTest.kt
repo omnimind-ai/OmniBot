@@ -8,12 +8,37 @@ import com.agentclientprotocol.model.SessionUpdate
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.double
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
 class XiaowanAcpPresentationBridgeTest {
+
+    @Test
+    fun `ACP prompt metadata restores terminal environment for Xiaowan tools`() {
+        val environment = xiaowanTerminalEnvironmentFromMeta(
+            JsonObject(
+                mapOf(
+                    "terminalEnvironment" to JsonObject(
+                        mapOf(
+                            "API_ENDPOINT" to JsonPrimitive("https://example.test"),
+                            "EMPTY_VALUE" to JsonPrimitive(""),
+                        )
+                    )
+                )
+            )
+        )
+
+        assertEquals(
+            mapOf(
+                "API_ENDPOINT" to "https://example.test",
+                "EMPTY_VALUE" to "",
+            ),
+            environment,
+        )
+    }
 
     @Test
     fun `thinking start emits an empty ACP thought chunk for the existing card`() = runBlocking {
@@ -27,6 +52,28 @@ class XiaowanAcpPresentationBridgeTest {
         val namespace = (thought._meta as JsonObject)["cn.com.omnimind.agent"] as JsonObject
         val reasoning = namespace["reasoning"] as JsonObject
         assertEquals("thinking", reasoning["stage"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun `reasoning after a tool starts a new ACP thought segment`() = runBlocking {
+        val updates = mutableListOf<SessionUpdate>()
+        val bridge = XiaowanAcpEventBridge { updates += it }
+
+        bridge.onThinkingStart()
+        bridge.onThinkingUpdate("先分析")
+        bridge.onToolCallStart("call-1", "terminal", JsonObject(emptyMap()))
+        bridge.onThinkingUpdate("工具结果返回后继续分析")
+
+        val thoughts = updates
+            .filterIsInstance<SessionUpdate.AgentThoughtChunk>()
+            .filter { (it.content as ContentBlock.Text).text.isNotEmpty() }
+        assertEquals(2, thoughts.size)
+        assertEquals(2, thoughts.map { it.messageId }.distinct().size)
+        assertEquals("先分析", (thoughts[0].content as ContentBlock.Text).text)
+        assertEquals(
+            "工具结果返回后继续分析",
+            (thoughts[1].content as ContentBlock.Text).text,
+        )
     }
 
     @Test
@@ -169,6 +216,26 @@ class XiaowanAcpPresentationBridgeTest {
         val thought = updates.filterIsInstance<SessionUpdate.AgentThoughtChunk>().single()
         val text = (thought.content as ContentBlock.Text).text
         assertEquals("检查统一卡片\n\n- 保留工具结果\n\n确认 ACP 流", text)
+    }
+
+    @Test
+    fun `partial structured thinking streams readable deltas without raw json`() = runBlocking {
+        val updates = mutableListOf<SessionUpdate>()
+        val bridge = XiaowanAcpEventBridge { updates += it }
+
+        bridge.onThinkingUpdate("""{"task_description":"检查统一""")
+        bridge.onThinkingUpdate(
+            """{"task_description":"检查统一卡片","sub_tasks":["保留工具"""
+        )
+        bridge.onThinkingUpdate(
+            """{"task_description":"检查统一卡片","sub_tasks":["保留工具结果"],"preparation":"确认 ACP 流"}"""
+        )
+
+        val thoughts = updates.filterIsInstance<SessionUpdate.AgentThoughtChunk>()
+        val combined = thoughts.joinToString("") { (it.content as ContentBlock.Text).text }
+        assertEquals("检查统一卡片\n\n- 保留工具结果\n\n确认 ACP 流", combined)
+        assertEquals(false, combined.contains('{'))
+        assertEquals(1, thoughts.map { it.messageId }.distinct().size)
     }
 
     @Test

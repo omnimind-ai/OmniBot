@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -14,6 +15,7 @@ import 'package:ui/services/agent_diff_parser.dart';
 import 'package:ui/services/agent_tool_call_parser.dart';
 import 'package:ui/services/agent_message_kinds.dart';
 import 'package:ui/theme/theme_context.dart';
+import 'package:ui/widgets/image_preview_overlay.dart';
 
 class AgentToolSummaryCard extends StatefulWidget {
   const AgentToolSummaryCard({
@@ -46,9 +48,12 @@ class _AgentToolSummaryCardState extends State<AgentToolSummaryCard> {
       cardData,
       useAgentToolPresentation: widget.useAgentToolPresentation,
     )) {
-      return _InlineToolCallCard(
+      return _AgentToolCardWithImagePreview(
         cardData: cardData,
-        visualProfile: widget.visualProfile,
+        child: _InlineToolCallCard(
+          cardData: cardData,
+          visualProfile: widget.visualProfile,
+        ),
       );
     }
 
@@ -117,34 +122,37 @@ class _AgentToolSummaryCardState extends State<AgentToolSummaryCard> {
       statusTagTextColor: statusTagTextColor,
     );
 
-    return Tooltip(
-      message: tooltipLines.join('\n'),
-      child: Align(
-        alignment: Alignment.centerLeft,
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxWidth: MediaQuery.of(context).size.width * 0.78,
-            minHeight: 34,
-          ),
-          child: Container(
-            margin: const EdgeInsets.only(top: 6, bottom: 2),
-            child: isSubagent
-                ? Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      capsule,
-                      for (final group in subagentGroups)
-                        _SubagentStatusBlock(
-                          group: group,
-                          shimmer:
-                              status == 'running' && !group.isTerminalStatus,
-                          expanded: _expandedSubagentKeys.contains(group.key),
-                          onTap: () => _toggleSubagentGroup(group.key),
-                        ),
-                    ],
-                  )
-                : capsule,
+    return _AgentToolCardWithImagePreview(
+      cardData: cardData,
+      child: Tooltip(
+        message: tooltipLines.join('\n'),
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: MediaQuery.of(context).size.width * 0.78,
+              minHeight: 34,
+            ),
+            child: Container(
+              margin: const EdgeInsets.only(top: 6, bottom: 2),
+              child: isSubagent
+                  ? Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        capsule,
+                        for (final group in subagentGroups)
+                          _SubagentStatusBlock(
+                            group: group,
+                            shimmer:
+                                status == 'running' && !group.isTerminalStatus,
+                            expanded: _expandedSubagentKeys.contains(group.key),
+                            onTap: () => _toggleSubagentGroup(group.key),
+                          ),
+                      ],
+                    )
+                  : capsule,
+            ),
           ),
         ),
       ),
@@ -238,6 +246,162 @@ class _AgentToolSummaryCardState extends State<AgentToolSummaryCard> {
       ),
     );
   }
+}
+
+class _AgentToolCardWithImagePreview extends StatelessWidget {
+  const _AgentToolCardWithImagePreview({
+    required this.cardData,
+    required this.child,
+  });
+
+  final Map<String, dynamic> cardData;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final images = _resolveAgentToolPreviewImages(cardData);
+    if (images.isEmpty) {
+      return child;
+    }
+    final cardId = (cardData['cardId'] ?? cardData['toolCallId'] ?? 'tool')
+        .toString();
+    final heroTags = List<String>.generate(
+      images.length,
+      (index) => 'agent_tool_image_${cardId}_$index',
+    );
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        child,
+        const SizedBox(height: 6),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (var index = 0; index < images.length; index++)
+              GestureDetector(
+                key: ValueKey('agent-tool-image-preview-$cardId-$index'),
+                onTap: () => ImagePreviewOverlay.showAll(
+                  context,
+                  sources: images.map((image) => image.source).toList(),
+                  initialIndex: index,
+                  heroTags: heroTags,
+                ),
+                child: Hero(
+                  tag: heroTags[index],
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: SizedBox(
+                      width: math
+                          .min(220, MediaQuery.sizeOf(context).width * 0.62)
+                          .toDouble(),
+                      height: 136,
+                      child: images[index].thumbnail,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _AgentToolPreviewImage {
+  const _AgentToolPreviewImage({required this.source, required this.thumbnail});
+
+  final ImagePreviewSource source;
+  final Widget thumbnail;
+}
+
+List<_AgentToolPreviewImage> _resolveAgentToolPreviewImages(
+  Map<String, dynamic> cardData,
+) {
+  final candidates = <dynamic>[
+    cardData['imageDataUrl'],
+    cardData['dataUrl'],
+    cardData['imageUrl'],
+    if (cardData['artifacts'] is List) ...(cardData['artifacts'] as List),
+  ];
+  final images = <_AgentToolPreviewImage>[];
+  final seen = <String>{};
+
+  void addCandidate(dynamic candidate) {
+    if (candidate is Map) {
+      final normalized = candidate.map(
+        (key, value) => MapEntry(key.toString(), value),
+      );
+      for (final key in const <String>[
+        'imageDataUrl',
+        'dataUrl',
+        'imageUrl',
+        'url',
+        'path',
+      ]) {
+        addCandidate(normalized[key]);
+      }
+      return;
+    }
+    final value = (candidate ?? '').toString().trim();
+    if (value.isEmpty || !seen.add(value)) {
+      return;
+    }
+    if (value.startsWith('data:image/')) {
+      final comma = value.indexOf(',');
+      if (comma < 0 || comma == value.length - 1) {
+        return;
+      }
+      try {
+        final bytes = base64Decode(value.substring(comma + 1));
+        images.add(
+          _AgentToolPreviewImage(
+            source: MemoryImageSource(bytes),
+            thumbnail: Image.memory(
+              bytes,
+              fit: BoxFit.cover,
+              gaplessPlayback: true,
+              errorBuilder: (_, _, _) => const ColoredBox(
+                color: Color(0xFFE9EEF5),
+                child: Icon(Icons.broken_image_outlined),
+              ),
+            ),
+          ),
+        );
+      } catch (_) {
+        return;
+      }
+      return;
+    }
+    if (value.startsWith('http://') || value.startsWith('https://')) {
+      images.add(
+        _AgentToolPreviewImage(
+          source: NetworkImageSource(value),
+          thumbnail: Image.network(value, fit: BoxFit.cover),
+        ),
+      );
+      return;
+    }
+    final lower = value.toLowerCase();
+    if (lower.endsWith('.png') ||
+        lower.endsWith('.jpg') ||
+        lower.endsWith('.jpeg') ||
+        lower.endsWith('.webp') ||
+        lower.endsWith('.gif')) {
+      images.add(
+        _AgentToolPreviewImage(
+          source: FileImageSource(value),
+          thumbnail: Image.file(File(value), fit: BoxFit.cover),
+        ),
+      );
+    }
+  }
+
+  for (final candidate in candidates) {
+    addCandidate(candidate);
+  }
+  return images;
 }
 
 bool _isCompletedVlmTask(Map<String, dynamic> cardData) {

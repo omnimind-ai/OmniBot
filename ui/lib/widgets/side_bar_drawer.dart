@@ -341,6 +341,16 @@ class _SidebarDrawerState extends State<SidebarDrawer> {
               ),
             ),
             PopupMenuItem(
+              value: 'copy',
+              child: Row(
+                children: [
+                  Icon(Icons.content_copy, size: 18, color: Colors.grey[600]),
+                  SizedBox(width: 8),
+                  Text(isEnglish ? 'Copy conversation' : '复制对话'),
+                ],
+              ),
+            ),
+            PopupMenuItem(
               value: 'export',
               child: Row(
                 children: [
@@ -364,6 +374,8 @@ class _SidebarDrawerState extends State<SidebarDrawer> {
         ).then((value) {
           if (value == 'rename') {
             _renameConversation(conversation);
+          } else if (value == 'copy') {
+            _copyConversation(conversation);
           } else if (value == 'export') {
             _exportConversation(conversation);
           } else if (value == 'delete') {
@@ -449,6 +461,24 @@ class _SidebarDrawerState extends State<SidebarDrawer> {
           exported
               ? (isEnglish ? 'Conversation exported' : '对话已导出')
               : (isEnglish ? 'Export failed' : '导出失败'),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _copyConversation(ConversationModel conversation) async {
+    final copied = await ConversationHistoryService.copyConversation(
+      conversation.id,
+      mode: conversation.mode,
+    );
+    if (!mounted) return;
+    final isEnglish = Localizations.localeOf(context).languageCode == 'en';
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          copied
+              ? (isEnglish ? 'Conversation copied' : '已复制对话')
+              : (isEnglish ? 'Copy failed' : '复制失败'),
         ),
       ),
     );
