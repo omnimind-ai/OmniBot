@@ -1452,6 +1452,148 @@ void main() {
     expect(card['resultPreviewJson'], contains('image/png'));
   });
 
+  test('official ACP read kind uses the shared workspace tool route', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'turnId': 'turn-read-kind',
+        'params': {
+          'sessionId': 'session-read-kind',
+          'update': {
+            'sessionUpdate': 'tool_call',
+            'toolCallId': 'read-1',
+            'kind': 'read',
+            'title': '读取文件',
+            'status': 'in_progress',
+            'rawInput': {'path': '/workspace/README.md'},
+          },
+        },
+      },
+    );
+
+    final card = runtime.messages.single.cardData!;
+    expect(card['toolType'], 'workspace');
+    expect(card['toolCallId'], 'read-1');
+  });
+
+  test('official ACP ToolKind values share the same card route mapping', () {
+    const cases = <(String, String)>[
+      ('read', 'workspace'),
+      ('edit', 'file'),
+      ('delete', 'file'),
+      ('move', 'file'),
+      ('search', 'search'),
+      ('execute', 'terminal'),
+      ('fetch', 'browser'),
+      ('think', 'plan'),
+    ];
+
+    for (final (kind, expectedToolType) in cases) {
+      final callId = 'kind-$kind';
+      reducer.reduce(
+        runtime: runtime,
+        event: {
+          'method': 'session/update',
+          'turnId': 'turn-official-kinds',
+          'params': {
+            'sessionId': 'session-official-kinds',
+            'update': {
+              'sessionUpdate': 'tool_call',
+              'toolCallId': callId,
+              'kind': kind,
+              'title': 'ACP $kind',
+              'status': 'in_progress',
+            },
+          },
+        },
+      );
+    }
+
+    for (final (kind, expectedToolType) in cases) {
+      final card = runtime.messages.singleWhere(
+        (message) => message.cardData?['toolCallId'] == 'kind-$kind',
+      );
+      expect(card.cardData?['toolType'], expectedToolType);
+    }
+  });
+
+  test('sparse ACP tool updates keep the initial official kind and title', () {
+    const base = <String, dynamic>{
+      'method': 'session/update',
+      'turnId': 'turn-sparse-tool-update',
+      'params': {
+        'sessionId': 'session-sparse-tool-update',
+        'update': {
+          'sessionUpdate': 'tool_call',
+          'toolCallId': 'sparse-read',
+          'kind': 'read',
+          'title': '读取 README',
+          'status': 'in_progress',
+          'rawInput': {'path': '/workspace/README.md'},
+        },
+      },
+    };
+    reducer.reduce(runtime: runtime, event: base);
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'turnId': 'turn-sparse-tool-update',
+        'params': {
+          'sessionId': 'session-sparse-tool-update',
+          'update': {
+            'sessionUpdate': 'tool_call_update',
+            'toolCallId': 'sparse-read',
+            'status': 'completed',
+          },
+        },
+      },
+    );
+
+    final card = runtime.messages.single.cardData!;
+    expect(card['toolType'], 'workspace');
+    expect(card['toolTitle'], '读取 README');
+    expect(card['status'], 'success');
+  });
+
+  test('official ACP tool media content uses the shared media card route', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'turnId': 'turn-tool-media-content',
+        'params': {
+          'sessionId': 'session-tool-media-content',
+          'update': {
+            'sessionUpdate': 'tool_call',
+            'toolCallId': 'media-1',
+            'kind': 'other',
+            'title': '生成预览',
+            'status': 'completed',
+            'content': [
+              {
+                'type': 'content',
+                'content': {
+                  'type': 'resource',
+                  'resource': {
+                    'uri': 'workspace://preview.png',
+                    'blob': 'CCCC',
+                    'mimeType': 'image/png',
+                  },
+                },
+              },
+            ],
+          },
+        },
+      },
+    );
+
+    final card = runtime.messages.single.cardData!;
+    expect(card['toolType'], 'image');
+    expect(card['imageDataUrl'], 'data:image/png;base64,CCCC');
+  });
+
   test('projects ACP tool resource links into the shared artifact card', () {
     reducer.reduce(
       runtime: runtime,

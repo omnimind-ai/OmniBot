@@ -992,7 +992,7 @@ internal class XiaowanAcpEventBridge(
             SessionUpdate.ToolCall(
                 toolCallId = ToolCallId(toolCallId),
                 title = toolName,
-                kind = ToolKind.OTHER,
+                kind = xiaowanToolKind(toolName),
                 status = ToolCallStatus.IN_PROGRESS,
                 content = listOf(
                     ToolCallContent.Content(ContentBlock.Text(arguments.toString()))
@@ -1057,7 +1057,7 @@ internal class XiaowanAcpEventBridge(
             SessionUpdate.ToolCallUpdate(
                 toolCallId = ToolCallId(toolCallId),
                 title = toolName,
-                kind = ToolKind.OTHER,
+                kind = xiaowanToolKind(toolName),
                 status = ToolCallStatus.IN_PROGRESS,
                 content = listOf(
                     ToolCallContent.Content(ContentBlock.Text(progress))
@@ -1125,7 +1125,7 @@ internal class XiaowanAcpEventBridge(
             SessionUpdate.ToolCallUpdate(
                 toolCallId = ToolCallId(resolvedToolCallId),
                 title = toolName,
-                kind = ToolKind.OTHER,
+                kind = xiaowanToolKind(toolName),
                 status = if (toolResultSucceeded(result)) {
                     ToolCallStatus.COMPLETED
                 } else {
@@ -1663,6 +1663,36 @@ private fun acpPresentationMeta(vararg values: Pair<String, Any?>): JsonObject =
             "cn.com.omnimind.agent" to values.toMap()
         )
     )
+
+/**
+ * Projects Xiaowan's legacy tool names into the official ACP ToolKind.
+ *
+ * The frontend only needs the standard capability kind; it should not have to
+ * recognize Xiaowan-specific names to choose a card route. Harnesses that
+ * already emit ACP kinds use the same projection on the Flutter side.
+ */
+private fun xiaowanToolKind(toolName: String): ToolKind {
+    val normalized = toolName.trim().lowercase()
+    return when {
+        normalized.containsAny("delete", "remove", "unlink") -> ToolKind.DELETE
+        normalized.containsAny("move", "rename") -> ToolKind.MOVE
+        normalized.containsAny("edit", "write", "patch", "update_file", "apply_patch") -> ToolKind.EDIT
+        normalized.containsAny("search", "grep", "rg", "find", "query") -> ToolKind.SEARCH
+        normalized.containsAny("read", "view", "open_file", "list_files", "glob", "cat") -> ToolKind.READ
+        normalized.containsAny("browser", "web", "fetch", "url") -> ToolKind.FETCH
+        normalized.containsAny("plan", "todo", "think") -> ToolKind.THINK
+        normalized.containsAny("terminal", "shell", "exec", "command", "bash", "zsh") -> ToolKind.EXECUTE
+        else -> ToolKind.OTHER
+    }
+}
+
+private fun String.containsAny(vararg values: String): Boolean = values.any { value ->
+    if (value.length <= 3) {
+        Regex("(^|[^a-z0-9])${Regex.escape(value)}([^a-z0-9]|$)").containsMatchIn(this)
+    } else {
+        contains(value)
+    }
+}
 
 /**
  * Preserves the common tool-result vocabulary inside ACP [rawOutput].

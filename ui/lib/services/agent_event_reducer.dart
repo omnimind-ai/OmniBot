@@ -3858,7 +3858,13 @@ class AgentEventReducer {
       // A reconnect may replay an older running update after the completed
       // update. A tool lifecycle is monotonic in the UI: terminal cards keep
       // their terminal state while still accepting any newly supplied facts.
+      final preservesSpecificType =
+          entry.key == 'type' &&
+          entry.value == 'tool' &&
+          existingMap['type'] != null &&
+          existingMap['type'] != 'tool';
       if (entry.value != null &&
+          !preservesSpecificType &&
           (!keepsTerminalState ||
               (entry.key != 'status' && entry.key != 'state'))) {
         merged[entry.key] = entry.value;
@@ -4841,6 +4847,15 @@ Map<String, dynamic> _projectAcpToolCall(
   final presentation = _acpPresentationMeta(update);
   final presentationMedia = _acpPresentationMedia(presentation);
   final presentationArtifacts = _acpPresentationArtifacts(presentation);
+  final standardMedia = _acpAssistantMedia(standardContent);
+  final allMedia = _mergeAcpMedia(standardMedia, presentationMedia);
+  final standardPresentation = _acpStandardToolPresentation(standardContent);
+  final kind = _string(update['kind']);
+  final officialToolType = _acpOfficialToolType(kind);
+  // Keep a generic item type on sparse updates so the shared reducer still
+  // recognizes the lifecycle event as a tool. _mergeAgentToolUpdate protects
+  // a more specific type from being replaced by this fallback.
+  final projectedType = _acpToolUiType(kind);
   final structuredOutput = _asStringMap(
     update['rawOutput'] is String
         ? _decodeAcpJsonValue(update['rawOutput'] as String)
@@ -4857,14 +4872,16 @@ Map<String, dynamic> _projectAcpToolCall(
   );
   final artifacts = _mergeAcpArtifacts(structuredArtifacts, standardArtifacts);
   final allArtifacts = _mergeAcpArtifacts(artifacts, presentationArtifacts);
-  final firstPresentationMedia = presentationMedia.firstOrNull;
+  final firstMedia = allMedia.firstOrNull;
+  final standardToolType = _string(standardPresentation['toolType']);
   return <String, dynamic>{
     'id': update['toolCallId'],
     'toolCallId': update['toolCallId'],
     if (sessionId != null) 'sessionId': sessionId,
     if (turnId != null) 'turnId': turnId,
-    'type': _acpToolUiType(_string(update['kind'])),
+    if (projectedType != null) 'type': projectedType,
     'title': update['title'],
+    if (update['title'] != null) 'toolTitle': update['title'],
     'status': update['status'],
     'content': update['content'],
     'locations': update['locations'],
@@ -4877,20 +4894,21 @@ Map<String, dynamic> _projectAcpToolCall(
     ..._acpStructuredToolOutput(structuredOutput),
     if (allArtifacts.isNotEmpty) 'artifacts': allArtifacts,
     if (standardContent.isNotEmpty) 'contentItems': standardContent,
-    if (presentationMedia.isNotEmpty) 'media': presentationMedia,
-    if (firstPresentationMedia?['imageDataUrl'] != null)
-      'imageDataUrl': firstPresentationMedia!['imageDataUrl'],
-    if (firstPresentationMedia?['imageUrl'] != null)
-      'imageUrl': firstPresentationMedia!['imageUrl'],
-    if (firstPresentationMedia?['audioDataUrl'] != null)
-      'audioDataUrl': firstPresentationMedia!['audioDataUrl'],
-    if (firstPresentationMedia?['audioUrl'] != null)
-      'audioUrl': firstPresentationMedia!['audioUrl'],
-    if (firstPresentationMedia?['mimeType'] != null)
-      'mimeType': firstPresentationMedia!['mimeType'],
+    if (allMedia.isNotEmpty) 'media': allMedia,
+    if (firstMedia?['imageDataUrl'] != null)
+      'imageDataUrl': firstMedia!['imageDataUrl'],
+    if (firstMedia?['imageUrl'] != null) 'imageUrl': firstMedia!['imageUrl'],
+    if (firstMedia?['audioDataUrl'] != null)
+      'audioDataUrl': firstMedia!['audioDataUrl'],
+    if (firstMedia?['audioUrl'] != null) 'audioUrl': firstMedia!['audioUrl'],
+    if (firstMedia?['mimeType'] != null) 'mimeType': firstMedia!['mimeType'],
     // Standard content is a concrete capability signal. It takes precedence
-    // over generic adapter envelopes such as `toolType: context`.
-    ..._acpStandardToolPresentation(standardContent),
+    // over generic adapter envelopes such as `toolType: context`. An
+    // official ToolKind is the fallback when the content has no more specific
+    // visual capability (for example, a read call with no content yet).
+    ...standardPresentation,
+    if (standardToolType == null && officialToolType != null)
+      'toolType': officialToolType,
     if (permissionCard != null) 'permissionCard': permissionCard,
   };
 }
@@ -5205,6 +5223,16 @@ Map<String, dynamic> _acpStandardToolPresentation(
   String? terminalSessionId;
   String? diffPath;
   var hasDiff = false;
+  for (final media in _acpAssistantMedia(contentItems)) {
+    final mediaType = _string(media['mediaType'])?.toLowerCase();
+    if (mediaType == 'image') {
+      imageDataUrl ??= _firstString([media['imageDataUrl'], media['imageUrl']]);
+    } else if (mediaType == 'audio') {
+      audioDataUrl ??= _string(media['audioDataUrl']);
+      audioUrl ??= _string(media['audioUrl']);
+      audioMimeType ??= _string(media['mimeType']);
+    }
+  }
   for (final item in contentItems) {
     final itemType = _string(item['type'])?.toLowerCase();
     if (itemType == 'diff') {
@@ -5633,6 +5661,21 @@ String _acpToolUiType(String? kind) {
     default:
       return 'tool';
   }
+}
+
+/// Official ACP ToolKind is the portable capability signal shared by all
+/// Harnesses. Keep the old card routes behind this projection rather than
+/// asking each adapter to invent its own `toolType` metadata.
+String? _acpOfficialToolType(String? kind) {
+  return switch (kind?.trim().toLowerCase()) {
+    'read' => 'workspace',
+    'edit' || 'delete' || 'move' => 'file',
+    'search' => 'search',
+    'execute' => 'terminal',
+    'fetch' => 'browser',
+    'think' => 'plan',
+    _ => null,
+  };
 }
 
 bool _isReasoningMethod(String method) {

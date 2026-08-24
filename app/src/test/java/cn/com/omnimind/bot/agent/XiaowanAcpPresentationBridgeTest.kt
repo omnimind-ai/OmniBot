@@ -5,6 +5,7 @@ import cn.com.omnimind.bot.agent.AgentFinalResponse
 import cn.com.omnimind.bot.agent.AgentResult
 import com.agentclientprotocol.model.ContentBlock
 import com.agentclientprotocol.model.SessionUpdate
+import com.agentclientprotocol.model.ToolKind
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -269,6 +270,25 @@ class XiaowanAcpPresentationBridgeTest {
         val completed = updates.filterIsInstance<SessionUpdate.ToolCallUpdate>()
             .filter { it.status == com.agentclientprotocol.model.ToolCallStatus.COMPLETED }
         assertEquals(0, completed.size)
+    }
+
+    @Test
+    fun `Xiaowan tool names are projected to official ACP kinds`() = runBlocking {
+        val updates = mutableListOf<SessionUpdate>()
+        val bridge = XiaowanAcpEventBridge { updates += it }
+
+        bridge.onToolCallStart("read-1", "file_read", JsonObject(emptyMap()))
+        bridge.onToolCallStart("edit-1", "apply_patch", JsonObject(emptyMap()))
+        bridge.onToolCallStart("exec-1", "terminal_exec", JsonObject(emptyMap()))
+        bridge.onToolCallStart("search-1", "workspace_search", JsonObject(emptyMap()))
+
+        val kinds = updates.filterIsInstance<SessionUpdate.ToolCall>().associate {
+            it.toolCallId.value to it.kind
+        }
+        assertEquals(ToolKind.READ, kinds["read-1"])
+        assertEquals(ToolKind.EDIT, kinds["edit-1"])
+        assertEquals(ToolKind.EXECUTE, kinds["exec-1"])
+        assertEquals(ToolKind.SEARCH, kinds["search-1"])
     }
 
     @Test
