@@ -119,6 +119,57 @@ class AgentConfigAdaptersTest {
     }
 
     @Test
+    fun providerMappingUsesHarnessCapabilityInsteadOfAdapterObjectIdentity() {
+        val decoratedCodex = object : AcpHarnessAdapter by AcpHarnessAdapters.codex {}
+        val mapping = AgentConfigAdapterRegistry.map(
+            AgentProviderMappingInput(
+                agentId = AcpAgentProfileStore.CODEX_AGENT_ID,
+                provider = AgentProviderCredentials(
+                    baseUrl = " https://example.com/v1/chat/completions ",
+                    apiKey = " secret ",
+                    wireApi = "RESPONSES",
+                ),
+                model = " model-x ",
+                harnessAdapter = decoratedCodex,
+            ),
+        )
+
+        assertEquals("https://example.com/v1", mapping.environment["OPENAI_BASE_URL"])
+        assertEquals("secret", mapping.environment["OPENAI_API_KEY"])
+        assertEquals("model-x", mapping.codexModel)
+        assertEquals(OpenAiWireApi.RESPONSES, mapping.codexWireApi)
+    }
+
+    @Test
+    fun providerCredentialsNormalizeTransportFieldsAtTheAdapterBoundary() {
+        val normalized = AgentProviderCredentials(
+            baseUrl = " https://example.com/v1 ",
+            apiKey = " secret ",
+            wireApi = "chat-completions",
+            customHeaders = mapOf(" X-Trace " to " request-id ", " " to "discarded"),
+            protocolType = " OpenAI_COMPATIBLE ",
+        ).normalized()
+
+        assertEquals("https://example.com/v1", normalized.baseUrl)
+        assertEquals("secret", normalized.apiKey)
+        assertEquals(OpenAiWireApi.CHAT_COMPLETIONS, normalized.wireApi)
+        assertEquals(mapOf("X-Trace" to "request-id"), normalized.customHeaders)
+        assertEquals("openai_compatible", normalized.protocolType)
+    }
+
+    @Test
+    fun providerCredentialsRejectWhitespaceInsideBaseUrl() {
+        val failure = runCatching {
+            AgentProviderCredentials(
+                baseUrl = "https://example.com/model gateway",
+                apiKey = "secret",
+            ).normalized()
+        }.exceptionOrNull()
+
+        assertTrue(failure is IllegalArgumentException)
+    }
+
+    @Test
     fun missingProviderDoesNotInventCredentials() {
         val mapping = AgentConfigAdapterRegistry.map(
             AgentProviderMappingInput(
@@ -305,6 +356,14 @@ class AgentConfigAdaptersTest {
     fun codexBaseUrlNormalizesOnlyTheOfficialV1Suffix() {
         assertEquals("https://example.com/v1", normalizeCodexBaseUrl("https://example.com"))
         assertEquals("https://example.com/v1", normalizeCodexBaseUrl("https://example.com/v1/"))
+        assertEquals(
+            "https://example.com/v1",
+            normalizeCodexBaseUrl("https://example.com/v1/chat/completions"),
+        )
+        assertEquals(
+            "https://example.com/v1",
+            normalizeCodexBaseUrl("https://example.com/v1/responses"),
+        )
         assertEquals(
             "https://example.com/compatible-mode/v1",
             normalizeCodexBaseUrl("https://example.com/compatible-mode/v1"),

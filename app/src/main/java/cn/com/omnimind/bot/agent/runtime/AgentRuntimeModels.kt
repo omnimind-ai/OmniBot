@@ -1,5 +1,10 @@
 package cn.com.omnimind.bot.agent
 
+import cn.com.omnimind.baselib.llm.DeepSeekProvider
+import cn.com.omnimind.baselib.llm.ModelProviderConfigStore
+import cn.com.omnimind.baselib.llm.ModelProviderProfile
+import cn.com.omnimind.baselib.llm.OpenAiWireApi
+import cn.com.omnimind.baselib.llm.ProviderCustomHeaderUtils
 import java.io.File
 
 data class AgentWorkspaceDescriptor(
@@ -23,7 +28,64 @@ data class AgentModelOverride(
     val protocolType: String = "openai_compatible",
     val wireApi: String = "chat_completions",
     val contextLimit: Int? = null
-)
+) {
+    companion object {
+        /**
+         * Creates the only supported Agent-side projection of a shared
+         * Provider profile. Callers must not copy Provider fields manually:
+         * the resulting override is consumed by HttpController for chat,
+         * Responses, Anthropic, vision, and compaction requests alike.
+         */
+        fun fromProviderProfile(
+            profile: ModelProviderProfile,
+            modelId: String,
+            contextLimit: Int? = null,
+        ): AgentModelOverride? {
+            val normalizedModel = modelId.trim().takeIf { it.isNotEmpty() } ?: return null
+            if (!profile.isConfigured()) return null
+            return AgentModelOverride(
+                providerProfileId = profile.id.trim(),
+                providerProfileName = profile.name.trim().takeIf { it.isNotEmpty() },
+                modelId = normalizedModel,
+                apiBase = profile.baseUrl,
+                apiKey = profile.apiKey,
+                customHeaders = profile.customHeaders,
+                protocolType = profile.protocolType,
+                wireApi = profile.wireApi,
+                contextLimit = contextLimit?.takeIf { it > 0 },
+            ).normalizedOrNull()
+        }
+    }
+}
+
+/**
+ * Normalizes an Agent override at the boundary before it is handed to the
+ * HTTP route resolver. This keeps legacy callers safe while preserving the
+ * Provider store's direct-request URL marker and endpoint semantics.
+ */
+fun AgentModelOverride.normalizedOrNull(): AgentModelOverride? {
+    val normalizedBase = ModelProviderConfigStore.normalizeBaseUrl(apiBase) ?: return null
+    val normalizedProviderId = providerProfileId.trim()
+    if (normalizedProviderId.isEmpty()) return null
+    val normalizedModel = modelId.trim()
+    if (normalizedModel.isEmpty()) return null
+    return copy(
+        providerProfileId = normalizedProviderId,
+        providerProfileName = providerProfileName?.trim()?.takeIf { it.isNotEmpty() },
+        modelId = normalizedModel,
+        apiBase = normalizedBase,
+        apiKey = apiKey.trim(),
+        customHeaders = ProviderCustomHeaderUtils
+            .sanitizeCustomHeaders(customHeaders)
+            .mapValues { (_, value) -> value.trim() },
+        protocolType = DeepSeekProvider.normalizeProtocolType(protocolType),
+        wireApi = OpenAiWireApi.normalize(wireApi),
+        contextLimit = contextLimit?.takeIf { it > 0 },
+    )
+}
+
+fun AgentModelOverride.normalized(): AgentModelOverride = normalizedOrNull()
+    ?: throw IllegalArgumentException("Agent Provider configuration is invalid.")
 
 data class ArtifactAction(
     val type: String,

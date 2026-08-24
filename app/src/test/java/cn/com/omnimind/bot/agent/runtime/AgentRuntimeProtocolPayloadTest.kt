@@ -457,12 +457,16 @@ class AgentRuntimeProtocolPayloadTest {
             buildSharedAgentProviderEnvironment("claude-code-acp", credentials)["ANTHROPIC_AUTH_TOKEN"]
         )
         assertEquals(
-            provider.baseUrl,
+            "https://api.deepseek.com/v1",
             buildSharedAgentProviderEnvironment("opencode-acp", credentials)["OPENAI_BASE_URL"]
         )
         assertEquals(
             provider.apiKey,
             buildSharedAgentProviderEnvironment("codex-acp", credentials)["OPENAI_API_KEY"]
+        )
+        assertEquals(
+            "https://api.deepseek.com/v1",
+            buildSharedAgentProviderEnvironment("codex-acp", credentials)["OPENAI_BASE_URL"]
         )
     }
 

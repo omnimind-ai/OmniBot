@@ -134,7 +134,18 @@ class ChatConversationRuntimeState {
   /// runtime boundary instead of dropping them when no message exists yet.
   final Map<String, Map<String, dynamic>> pendingAcpAssistantPresentation =
       <String, Map<String, dynamic>>{};
+  /// Host-generated ACP notification ids already reduced by this runtime.
+  /// A reconnecting bridge may deliver the same official session/update more
+  /// than once; dedupe only the explicit host id, never message text.
+  final Set<String> processedAcpEventIds = <String>{};
   final Set<String> completedAgentTurnIds = <String>{};
+
+  /// Session ids observed by this runtime. ACP session-scoped notifications
+  /// can arrive after a turn has become idle and therefore after
+  /// [activeAcpSessionId] has been cleared. Retaining the bounded identity
+  /// lets the host route a background conversation's event without falling
+  /// back to whichever conversation happens to be visible.
+  final Set<String> knownAcpSessionIds = <String>{};
 
   /// Official ACP turn -> stable local run. The map is retained after a run
   /// completes so a delayed terminal/update event can still finalize the
@@ -269,7 +280,9 @@ class ChatConversationRuntimeState {
     pendingAcpPerformanceMetrics.clear();
     pendingAcpReasoningCardData.clear();
     pendingAcpAssistantPresentation.clear();
+    processedAcpEventIds.clear();
     completedAgentTurnIds.clear();
+    knownAcpSessionIds.clear();
     acpTurnToRunIds.clear();
     completedAcpTurnIds.clear();
     messages.dispose();
@@ -318,6 +331,10 @@ class ChatConversationRuntimeState {
     final incomingSessionId = sessionId?.trim() ?? '';
     if (incomingSessionId.isEmpty) {
       return true;
+    }
+    knownAcpSessionIds.add(incomingSessionId);
+    while (knownAcpSessionIds.length > 32) {
+      knownAcpSessionIds.remove(knownAcpSessionIds.first);
     }
     final incomingTurnId = turnId?.trim() ?? '';
     // A completed turn remains fenced even after its session becomes idle.
@@ -417,6 +434,11 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
   final Map<String, _TaskBinding> _taskBindings = <String, _TaskBinding>{};
   final Map<String, _PendingPersistenceRequest> _pendingPersistence =
       <String, _PendingPersistenceRequest>{};
+  // Conversation snapshots are produced by several independent triggers:
+  // streamed ACP updates, turn completion, app backgrounding, and page
+  // disposal. Keep one ordered tail per runtime so an older snapshot can
+  // never finish after a newer one and move durable history backwards.
+  final Map<String, Future<void>> _persistenceTails = <String, Future<void>>{};
   final Set<String> _ephemeralRuntimeKeys = <String>{};
 
   bool _initialized = false;
@@ -469,6 +491,38 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
           runtime.lastAgentTurnId == normalizedTurnId ||
           runtime.activeAcpTurnId == normalizedTurnId) {
         return mode;
+      }
+    }
+    return null;
+  }
+
+  /// Finds the conversation that owns a session/turn when an ACP event does
+  /// not include the optional host conversation id. This is important for
+  /// background Sub Agent runs: the visible page must not become the implicit
+  /// owner of an event from another conversation.
+  int? conversationIdForAcpEvent({String? sessionId, String? turnId}) {
+    final normalizedSessionId = sessionId?.trim() ?? '';
+    final normalizedTurnId = turnId?.trim() ?? '';
+    if (normalizedSessionId.isEmpty && normalizedTurnId.isEmpty) {
+      return null;
+    }
+    for (final runtime in _runtimes.values) {
+      if (normalizedSessionId.isNotEmpty &&
+          (runtime.activeAcpSessionId == normalizedSessionId ||
+              runtime.knownAcpSessionIds.contains(normalizedSessionId))) {
+        return runtime.conversationId;
+      }
+      if (normalizedTurnId.isEmpty) continue;
+      if (runtime.activeAcpTurnId == normalizedTurnId ||
+          runtime.currentDispatchTurnId == normalizedTurnId ||
+          runtime.lastAgentTurnId == normalizedTurnId ||
+          runtime.completedAgentTurnIds.contains(normalizedTurnId) ||
+          runtime.completedAcpTurnIds.contains(normalizedTurnId) ||
+          runtime.acpTurnToRunIds.keys.any((key) {
+            return key == normalizedTurnId ||
+                key.endsWith(':$normalizedTurnId');
+          })) {
+        return runtime.conversationId;
       }
     }
     return null;
@@ -1243,6 +1297,7 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     runtime.pendingAcpPerformanceMetrics.clear();
     runtime.pendingAcpReasoningCardData.clear();
     runtime.pendingAcpAssistantPresentation.clear();
+    runtime.processedAcpEventIds.clear();
     runtime.availableAcpCommands = <Map<String, dynamic>>[];
     runtime.acpConfigOptions = <Map<String, dynamic>>[];
     runtime.currentAcpModeId = null;
@@ -1297,29 +1352,64 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
   }) {
     final runtime = runtimeFor(conversationId: conversationId, mode: mode);
     if (runtime == null) return;
-    final cardId = runtime.activeToolCardId;
-    if (cardId == null) return;
+    final activeCard = runtime.activeToolCardId == null
+        ? null
+        : runtime.messages.cast<ChatMessageModel?>().firstWhere(
+            (message) => message?.id == runtime.activeToolCardId,
+            orElse: () => null,
+          );
+    final taskId =
+        (runtime.activeRunId ??
+                runtime.currentDispatchTurnId ??
+                activeCard?.cardData?['taskId'] ??
+                activeCard?.cardData?['taskID'])
+            ?.toString()
+            .trim() ??
+        '';
+    if (taskId.isEmpty) return;
 
-    final index = runtime.messages.indexWhere((msg) => msg.id == cardId);
-    if (index == -1) {
-      runtime.activeToolCardId = null;
-      notifyListeners();
-      return;
+    var changed = false;
+    for (var index = 0; index < runtime.messages.length; index++) {
+      final message = runtime.messages[index];
+      final cardData = message.cardData;
+      if (cardData == null ||
+          (cardData['type'] != 'agent_tool_summary' &&
+              cardData['type'] != kAgentRequestCardType)) {
+        continue;
+      }
+      final cardTaskId = (cardData['taskId'] ?? cardData['taskID'] ?? '')
+          .toString()
+          .trim();
+      if (cardTaskId != taskId) continue;
+      final currentStatus = (cardData['status'] ?? '').toString().toLowerCase();
+      final isActive = cardData['type'] == 'agent_tool_summary'
+          ? const <String>{
+              'running',
+              'pending',
+              'progress',
+              'in_progress',
+            }.contains(currentStatus)
+          : const <String>{
+              'pending',
+              'running',
+              'waiting',
+            }.contains(currentStatus);
+      if (!isActive) continue;
+      final nextCardData = Map<String, dynamic>.from(cardData)
+        ..['status'] = 'interrupted'
+        ..['success'] = false;
+      if (summary != null && summary.trim().isNotEmpty) {
+        nextCardData['summary'] = summary.trim();
+      }
+      runtime.messages[index] = message.copyWith(
+        content: {'cardData': nextCardData, 'id': message.id},
+      );
+      changed = true;
     }
-
-    final existingCardData = Map<String, dynamic>.from(
-      runtime.messages[index].cardData ?? const {},
-    );
-    existingCardData['status'] = 'interrupted';
-    existingCardData['success'] = false;
-    if (summary != null && summary.trim().isNotEmpty) {
-      existingCardData['summary'] = summary.trim();
-    }
-    runtime.messages[index] = runtime.messages[index].copyWith(
-      content: {'cardData': existingCardData, 'id': cardId},
-    );
     runtime.activeToolCardId = null;
-    notifyListeners();
+    if (changed) {
+      notifyListeners();
+    }
   }
 
   Future<void> persistRuntimeConversation({
@@ -1333,6 +1423,44 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     if (isEphemeralRuntime(conversationId: conversationId, mode: mode)) {
       return;
     }
+    final key = _runtimeKey(conversationId: conversationId, mode: mode);
+    final previous = _persistenceTails[key] ?? Future<void>.value();
+    final operation = previous
+        .catchError((Object _) {})
+        .then(
+          (_) => _persistRuntimeConversationNow(
+            conversationId: conversationId,
+            mode: mode,
+            generateSummary: generateSummary,
+            markComplete: markComplete,
+            persistMessages: persistMessages,
+          ),
+        );
+    _persistenceTails[key] = operation;
+    unawaited(
+      operation.then<void>(
+        (_) => _removePersistenceTail(key, operation),
+        onError: (Object error, StackTrace stack) {
+          _removePersistenceTail(key, operation);
+        },
+      ),
+    );
+    await operation;
+  }
+
+  void _removePersistenceTail(String key, Future<void> operation) {
+    if (identical(_persistenceTails[key], operation)) {
+      _persistenceTails.remove(key);
+    }
+  }
+
+  Future<void> _persistRuntimeConversationNow({
+    required int conversationId,
+    required String mode,
+    bool generateSummary = false,
+    bool markComplete = false,
+    bool persistMessages = false,
+  }) async {
     final runtime = runtimeFor(conversationId: conversationId, mode: mode);
     if (runtime == null) return;
     _flushRuntimeStreamingText(runtime);
@@ -1408,7 +1536,15 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
         mode: conversationMode,
       );
     }
-    runtime.conversation = updatedConversation;
+    // A page switch may dispose this runtime while the durable write is
+    // awaiting the database. Do not mutate a replaced runtime when the old
+    // operation returns; the ordered write still preserves the user's data.
+    if (identical(
+      runtimeFor(conversationId: conversationId, mode: mode),
+      runtime,
+    )) {
+      runtime.conversation = updatedConversation;
+    }
     if (markComplete) {
       await ConversationService.completeConversation(
         conversationId,
@@ -1492,6 +1628,13 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
         markComplete: request.markComplete,
         persistMessages: request.persistMessages,
       );
+    }
+    // A timer is not the only source of persistence. ACP deltas and lifecycle
+    // callbacks may already have queued a database write; disposal/background
+    // flush must wait for that tail as well.
+    final inFlight = _persistenceTails.values.toList(growable: false);
+    if (inFlight.isNotEmpty) {
+      await Future.wait(inFlight);
     }
   }
 

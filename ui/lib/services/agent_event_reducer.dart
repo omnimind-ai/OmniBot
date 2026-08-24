@@ -37,6 +37,19 @@ class AgentEventReducer {
     required ChatConversationRuntimeState runtime,
     required Map<String, dynamic> event,
   }) {
+    final hostEventId = _firstString([
+      event['eventId'],
+      event['hostEventId'],
+    ]);
+    if (hostEventId != null &&
+        !runtime.processedAcpEventIds.add(hostEventId)) {
+      return AgentReduceResult(
+        handled: true,
+        method: _resolveAgentEventMethod(event: event, message: event),
+        threadId: acpEventSessionId(event),
+        turnId: acpEventTurnId(event),
+      );
+    }
     final message = _asStringMap(event['message']) ?? event;
     final method = _resolveAgentEventMethod(event: event, message: message);
     if (method.isEmpty) {
@@ -87,24 +100,32 @@ class AgentEventReducer {
       final scopedUpdate =
           sessionUpdate != null &&
           (sessionUpdate != 'current_mode_update' &&
-              sessionUpdate != 'config_option_update' &&
-              // ACP usage is session-level state. It can legitimately arrive
-              // after a streamed turn has completed, so it must not be rejected
-              // merely because the notification has no turn id.
-              sessionUpdate != 'usage_update' &&
-              // Session metadata is not owned by a prompt turn. Xiaowan used
-              // this information to keep the conversation title in sync, so it
-              // must reach the host even when it arrives between turns.
-              sessionUpdate != 'session_info_update' &&
-              sessionUpdate != 'available_commands_update' &&
-              // User messages can be replayed by session/load without belonging
-              // to a prompt turn. Live echoes are ignored by the projector.
-              sessionUpdate != 'user_message_chunk' &&
-              // UnknownSessionUpdate is forwarded with rawUpdate. Its scope and
-              // shape are provider-defined (it may be a scalar or list, not only
-              // an object), so do not reject it before the shared extension
-              // retention path has a chance to preserve it.
-              !hasRawAcpUpdate ||
+                  sessionUpdate != 'config_option_update' &&
+                  // ACP usage is session-level state. It can legitimately arrive
+                  // after a streamed turn has completed, so it must not be rejected
+                  // merely because the notification has no turn id.
+                  sessionUpdate != 'usage_update' &&
+                  // Session metadata is not owned by a prompt turn. Xiaowan used
+                  // this information to keep the conversation title in sync, so it
+                  // must reach the host even when it arrives between turns.
+                  sessionUpdate != 'session_info_update' &&
+                  sessionUpdate != 'available_commands_update' &&
+                  // ACP v2 state changes are session-scoped lifecycle signals.
+                  // Running/idle notifications intentionally do not carry a
+                  // turn id, so they must be handled without guessing an owner
+                  // from a message or item id.
+                  sessionUpdate != 'state_change' &&
+                  // Keep the older draft spelling readable as well. Some ACP
+                  // agents shipped the draft name before state_change stabilized.
+                  sessionUpdate != 'state_update' &&
+                  // User messages can be replayed by session/load without belonging
+                  // to a prompt turn. Live echoes are ignored by the projector.
+                  sessionUpdate != 'user_message_chunk' &&
+                  // UnknownSessionUpdate is forwarded with rawUpdate. Its scope and
+                  // shape are provider-defined (it may be a scalar or list, not only
+                  // an object), so do not reject it before the shared extension
+                  // retention path has a chance to preserve it.
+                  !hasRawAcpUpdate ||
               renderableRawAcpUpdate);
       final updateTurnId = _firstString([
         event['turnId'],
@@ -168,6 +189,14 @@ class AgentEventReducer {
       if (sessionUpdate == 'session_info_update' && update != null) {
         runtime.acpSessionInfo = Map<String, dynamic>.from(update)
           ..remove('sessionUpdate');
+      }
+      if ((sessionUpdate == 'state_change' ||
+              sessionUpdate == 'state_update') &&
+          update != null) {
+        final usage = _asStringMap(update['usage']);
+        if (usage != null) {
+          _applyAcpUsage(runtime, _acpStandardUsage(usage));
+        }
       }
       if (hasRawAcpUpdate && update != null && !renderableRawAcpUpdate) {
         _rememberAcpExtensionUpdate(runtime, update);
@@ -708,7 +737,11 @@ class AgentEventReducer {
           _extractText(params['summary']) ??
           _extractText(params['part']) ??
           '';
-      final reasoningCardData = _acpReasoningCardData(presentation);
+      final segmentIndex = _acpReasoningSegmentIndex(presentation);
+      final reasoningCardData = <String, dynamic>{
+        ..._acpReasoningCardData(presentation),
+        if (segmentIndex != null) 'reasoningSegmentIndex': segmentIndex,
+      };
       final reasoningDataKey = _pendingAcpReasoningDataKey(
         parentTaskId: parentTaskId,
         entryId: entryId,
@@ -723,6 +756,16 @@ class AgentEventReducer {
           entryId: entryId,
           presentation: presentation,
         );
+        // A retry is a new provider generation inside the same logical turn.
+        // ACP message ids are allowed to change at that boundary, but the
+        // active-card fallback must not merge the new generation back into
+        // the failed card. Segment metadata is optional for external ACP
+        // agents; only use it when the adapter explicitly supplied it.
+        if (segmentIndex != null &&
+            runtime.activeThinkingCardId != null &&
+            _activeThinkingSegmentIndex(runtime) != segmentIndex) {
+          _finalizeActiveThinkingCardForTask(runtime, parentTaskId);
+        }
         _appendThinking(
           runtime,
           parentTaskId: parentTaskId,
@@ -3680,6 +3723,16 @@ class AgentEventReducer {
     }
   }
 
+  String? _activeThinkingSegmentIndex(ChatConversationRuntimeState runtime) {
+    final activeCardId = runtime.activeThinkingCardId;
+    if (activeCardId == null) return null;
+    final index = runtime.messages.indexWhere(
+      (message) => message.id == activeCardId,
+    );
+    if (index == -1) return null;
+    return _string(runtime.messages[index].cardData?['reasoningSegmentIndex']);
+  }
+
   String _thinkingCardIdForTask(
     ChatConversationRuntimeState runtime, {
     required String parentTaskId,
@@ -4698,6 +4751,37 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
       return <String, dynamic>{
         'method': 'thread/name/updated',
         'params': projectedParams(<String, dynamic>{'name': update['title']}),
+      };
+    case 'state_change':
+    case 'state_update':
+      final state = _normalizeStatus(
+        _string(update['state'] ?? update['status']) ?? 'idle',
+      );
+      final stopReason = _normalizeStatus(
+        _string(update['stopReason'] ?? update['stop_reason']) ?? '',
+      );
+      final status = switch (state) {
+        'running' || 'active' || 'busy' => 'running',
+        'requiresaction' => 'requires_action',
+        'idle' || 'complete' || 'completed' => switch (stopReason) {
+          'cancelled' ||
+          'canceled' ||
+          'interrupted' ||
+          'aborted' => 'cancelled',
+          'error' || 'failed' || 'failure' => 'failed',
+          _ => 'idle',
+        },
+        _ => state,
+      };
+      return <String, dynamic>{
+        'method': 'thread/status/changed',
+        'params': projectedParams(<String, dynamic>{
+          'status': status,
+          'state': state,
+          if (stopReason.isNotEmpty) 'stopReason': stopReason,
+          if (update['usage'] != null) 'usage': update['usage'],
+          if (update['error'] != null) 'error': update['error'],
+        }),
       };
     default:
       // Usage, commands, and future ACP update kinds do not affect the chat
@@ -5852,6 +5936,7 @@ bool _statusIsActive(String? status) {
   return status == 'running' ||
       status == 'active' ||
       status == 'busy' ||
+      status == 'requiresaction' ||
       status == 'inprogress' ||
       status == 'inflight' ||
       status == 'executing';

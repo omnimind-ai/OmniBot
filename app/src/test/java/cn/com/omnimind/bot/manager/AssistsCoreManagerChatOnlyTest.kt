@@ -29,6 +29,37 @@ class AssistsCoreManagerChatOnlyTest {
         org.junit.Assert.assertNotNull(result)
         assertEquals("Provider One", result?.providerProfileName)
         assertEquals(1000000, result?.contextLimit)
+        assertEquals("https://api.anthropic.com", result?.apiBase)
+        assertEquals("anthropic", result?.protocolType)
+    }
+
+    @Test
+    fun `resolveDirectAgentModelOverride normalizes the shared provider projection`() {
+        val result = resolveDirectAgentModelOverride(
+            raw = mapOf(
+                "providerProfileId" to " provider-1 ",
+                "modelId" to " model-x ",
+            )
+        ) {
+            ModelProviderProfile(
+                id = it,
+                name = " Provider One ",
+                baseUrl = "https://example.com/v1/chat/completions",
+                apiKey = " secret ",
+                customHeaders = mapOf(" X-Request-Id " to " request-1 ", "Host" to "ignored"),
+                protocolType = "OPENAI_COMPATIBLE",
+                wireApi = "RESPONSES",
+            )
+        }
+
+        assertEquals("provider-1", result?.providerProfileId)
+        assertEquals("Provider One", result?.providerProfileName)
+        assertEquals("model-x", result?.modelId)
+        assertEquals("https://example.com", result?.apiBase)
+        assertEquals("secret", result?.apiKey)
+        assertEquals(mapOf("X-Request-Id" to "request-1"), result?.customHeaders)
+        assertEquals("openai_compatible", result?.protocolType)
+        assertEquals("responses", result?.wireApi)
     }
 
     @Test

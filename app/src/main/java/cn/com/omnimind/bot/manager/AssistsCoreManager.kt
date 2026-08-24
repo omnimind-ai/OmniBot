@@ -135,16 +135,10 @@ internal fun resolveDirectAgentModelOverride(
         is Number -> rawContextLimit.toInt()
         else -> rawContextLimit?.toString()?.trim()?.toIntOrNull()
     }?.takeIf { it > 0 }
-    return AgentModelOverride(
-        providerProfileId = providerProfile.id,
-        providerProfileName = providerProfile.name,
+    return AgentModelOverride.fromProviderProfile(
+        profile = providerProfile,
         modelId = modelId,
-        apiBase = providerProfile.baseUrl,
-        apiKey = providerProfile.apiKey,
-        customHeaders = providerProfile.customHeaders,
-        protocolType = providerProfile.protocolType.ifEmpty { "openai_compatible" },
-        wireApi = providerProfile.wireApi,
-        contextLimit = contextLimit
+        contextLimit = contextLimit,
     )
 }
 

@@ -23,6 +23,32 @@ internal data class AgentProviderCredentials(
     val supportsNamespaceTools: Boolean = false,
 )
 
+/**
+ * Provider settings are shared by every Harness. Normalize them once at the
+ * adapter boundary so environment variables, config files, and ACP launch
+ * payloads cannot disagree about whitespace or wire API spelling.
+ */
+internal fun AgentProviderCredentials.normalized(): AgentProviderCredentials {
+    val normalizedBaseUrl = baseUrl.trim()
+    require(normalizedBaseUrl.isNotEmpty()) { "Provider base URL is empty." }
+    require(!normalizedBaseUrl.any(Char::isWhitespace)) {
+        "Provider base URL contains whitespace."
+    }
+    val normalizedHeaders = customHeaders
+        .mapNotNull { (key, value) ->
+            val normalizedKey = key.trim()
+            if (normalizedKey.isEmpty()) null else normalizedKey to value.trim()
+        }
+        .toMap()
+    return copy(
+        baseUrl = normalizedBaseUrl,
+        apiKey = apiKey.trim(),
+        wireApi = OpenAiWireApi.normalize(wireApi),
+        customHeaders = normalizedHeaders,
+        protocolType = protocolType.trim().lowercase().ifEmpty { "openai_compatible" },
+    )
+}
+
 internal data class AgentProviderMappingInput(
     val agentId: String,
     val provider: AgentProviderCredentials?,
@@ -71,8 +97,9 @@ internal object AgentConfigAdapterRegistry {
     )
 
     fun map(input: AgentProviderMappingInput): AgentProviderMapping {
-        return adapters.firstOrNull { it.supports(input) }
-            ?.map(input)
+        val normalizedInput = input.normalized()
+        return adapters.firstOrNull { it.supports(normalizedInput) }
+            ?.map(normalizedInput)
             ?: AgentProviderMapping()
     }
 
@@ -81,29 +108,37 @@ internal object AgentConfigAdapterRegistry {
         mapping: AgentProviderMapping,
         providerModels: List<ProviderModelOption>,
         existingConfig: String,
-    ): List<AgentConfigWrite> = adapters.firstOrNull { it.supports(input) }
+    ): List<AgentConfigWrite> {
+        val normalizedInput = input.normalized()
+        return adapters.firstOrNull { it.supports(normalizedInput) }
         ?.launchConfigWrites(
-            input = input,
+            input = normalizedInput,
             mapping = mapping,
             providerModels = providerModels,
             existingConfig = existingConfig,
         )
         .orEmpty()
+    }
 
     private fun AgentConfigAdapter.supports(input: AgentProviderMappingInput): Boolean {
-        return when (this) {
-            DeepSeekHarnessConfigAdapter ->
-                input.harnessAdapter === AcpHarnessAdapters.deepSeekHarness
-            CodexConfigAdapter ->
-                input.harnessAdapter === AcpHarnessAdapters.codex
-            ClaudeCodeConfigAdapter ->
-                input.harnessAdapter === AcpHarnessAdapters.claudeCode
-            OpenCodeConfigAdapter ->
-                input.harnessAdapter === AcpHarnessAdapters.openCode
-            else -> false
+        return when (input.harnessAdapter.providerConfigKind) {
+            AcpHarnessProviderConfigKind.DEEPSEEK_HARNESS ->
+                this === DeepSeekHarnessConfigAdapter
+            AcpHarnessProviderConfigKind.CODEX ->
+                this === CodexConfigAdapter
+            AcpHarnessProviderConfigKind.CLAUDE_CODE ->
+                this === ClaudeCodeConfigAdapter
+            AcpHarnessProviderConfigKind.OPEN_CODE ->
+                this === OpenCodeConfigAdapter
+            AcpHarnessProviderConfigKind.STANDARD -> false
         }
     }
 }
+
+private fun AgentProviderMappingInput.normalized(): AgentProviderMappingInput = copy(
+    provider = provider?.normalized(),
+    model = model?.trim()?.takeIf { it.isNotEmpty() },
+)
 
 private object DeepSeekHarnessConfigAdapter : AgentConfigAdapter {
     override fun map(input: AgentProviderMappingInput): AgentProviderMapping {
@@ -127,7 +162,7 @@ private object CodexConfigAdapter : AgentConfigAdapter {
         } else {
             mapOf(
                 "CODEX_HOME" to AgentRuntimeDefaults.CODEX_HOME,
-                "OPENAI_BASE_URL" to provider.baseUrl,
+                "OPENAI_BASE_URL" to normalizeCodexBaseUrl(provider.baseUrl),
                 "OPENAI_API_KEY" to provider.apiKey
             )
         }
@@ -204,7 +239,7 @@ private object OpenCodeConfigAdapter : AgentConfigAdapter {
         val model = input.model?.trim()?.takeIf { it.isNotEmpty() }
         return AgentProviderMapping(
             environment = mapOf(
-                "OPENAI_BASE_URL" to provider.baseUrl,
+                "OPENAI_BASE_URL" to normalizeOpenCodeBaseUrl(provider.baseUrl),
                 "OPENAI_API_KEY" to provider.apiKey
             ),
             openCodeModel = model?.let { "$OPEN_CODE_PROVIDER_ID/$it" },
@@ -241,12 +276,13 @@ internal fun syncAgentProviderCredentials(
     sharedProvider: AgentProviderCredentials?,
     sharedModel: String? = null
 ): DeepSeekHarnessConfig {
+    val normalizedProvider = sharedProvider?.normalized()
     return config.copy(
-        baseUrl = sharedProvider?.baseUrl ?: config.baseUrl,
-        apiKey = sharedProvider?.apiKey ?: config.apiKey,
+        baseUrl = normalizedProvider?.baseUrl ?: config.baseUrl,
+        apiKey = normalizedProvider?.apiKey ?: config.apiKey,
         model = when {
             sharedModel != null -> sharedModel.trim()
-            sharedProvider != null -> ""
+            normalizedProvider != null -> ""
             else -> config.model
         }
     )
@@ -485,14 +521,17 @@ internal fun buildSharedAgentProviderEnvironment(
 }
 
 internal fun normalizeCodexBaseUrl(baseUrl: String): String {
-    val normalized = baseUrl.trim().trimEnd('/')
-    if (normalized.isEmpty()) return normalized
-    if (normalized.contains('#') ||
-        normalized.endsWith("/v1") ||
-        normalized.endsWith("/compatible-mode/v1") ||
-        normalized.endsWith("/responses") ||
-        normalized.endsWith("/v1/responses")
-    ) {
+    var normalized = baseUrl.trim().trimEnd('/')
+    listOf(
+        "/v1/chat/completions",
+        "/chat/completions",
+        "/v1/responses",
+        "/responses",
+    ).firstOrNull { normalized.endsWith(it, ignoreCase = true) }?.let {
+        normalized = normalized.dropLast(it.length).trimEnd('/')
+    }
+    if (normalized.isEmpty() || normalized.contains('#')) return normalized
+    if (normalized.endsWith("/v1") || normalized.endsWith("/compatible-mode/v1")) {
         return normalized
     }
     return "$normalized/v1"

@@ -107,6 +107,7 @@ import java.nio.charset.StandardCharsets
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.coroutineContext
 
 /**
@@ -175,6 +176,13 @@ internal class LocalAcpRuntime(
     // Agent switching must be able to cancel that attempt before waiting for
     // the mutex; otherwise a stalled DSH npm/proot process blocks Xiaowan.
     private val pendingConnectJobs = ConcurrentHashMap.newKeySet<Job>()
+    /**
+     * Host-side sequence for ACP notification delivery. ACP leaves transport
+     * ordering outside SessionUpdate; the shared UI still needs an idempotent
+     * key when a bridge retries delivery. It is scoped to the ACP session and
+     * does not depend on the selected Harness.
+     */
+    private val sessionEventSequences = ConcurrentHashMap<String, AtomicLong>()
     private val sessionMutex = Mutex()
     // Keep request-id lookup and active-turn reservation in one critical
     // section. A transport retry can arrive before the first start call has
@@ -3037,8 +3045,17 @@ internal class LocalAcpRuntime(
         timingTurnId: String? = null,
         replay: Boolean = false,
     ) {
+        val sequence = sessionEventSequences
+            .computeIfAbsent(sessionId) { AtomicLong(0L) }
+            .incrementAndGet()
+        val eventId = "$sessionId:$sequence"
         onMessage(linkedMapOf<String, Any?>(
                 "method" to "session/update",
+                // Host-envelope identity. The ACP update under params stays
+                // official and consumable by any ACP client; these fields make
+                // delivery to the shared UI idempotent.
+                "eventId" to eventId,
+                "sequence" to sequence,
                 // These are host-envelope fields, not ACP params. They let
                 // the shared reducer group a load replay without changing
                 // the official session/update payload.

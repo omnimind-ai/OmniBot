@@ -64,7 +64,7 @@ class AgentStreamReasoningLeakException(
 
 class HttpAgentLlmClient(
     private val scope: CoroutineScope,
-    private val modelOverride: AgentModelOverride? = null,
+    modelOverride: AgentModelOverride? = null,
     private val streamRequestOp: suspend (
         model: String,
         requestBodyJson: String,
@@ -138,6 +138,7 @@ class HttpAgentLlmClient(
         explicitNulls = false
     }
 ) : AgentLlmClient {
+    private val modelOverride: AgentModelOverride? = modelOverride?.normalized()
     private val tag = "HttpAgentLlmClient"
 
     private companion object {

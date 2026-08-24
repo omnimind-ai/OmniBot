@@ -26,8 +26,23 @@ internal enum class AcpHarnessMcpTransport {
     ENVIRONMENT,
 }
 
+/**
+ * Selects the official Harness configuration surface without relying on the
+ * identity of an adapter singleton. Decorated adapters and future adapters
+ * can therefore keep the same Provider mapping contract.
+ */
+internal enum class AcpHarnessProviderConfigKind {
+    STANDARD,
+    CODEX,
+    CLAUDE_CODE,
+    OPEN_CODE,
+    DEEPSEEK_HARNESS,
+}
+
 internal interface AcpHarnessAdapter {
     val mcpTransport: AcpHarnessMcpTransport
+    val providerConfigKind: AcpHarnessProviderConfigKind
+        get() = AcpHarnessProviderConfigKind.STANDARD
     val launchConfigPath: String?
         get() = null
     val launchConfigExecutorKey: String?
@@ -80,6 +95,7 @@ internal object AcpHarnessAdapters {
     // Harness adapter, not to a vendor branch in the shared runtime.
     val codex: AcpHarnessAdapter = object : AcpHarnessAdapter {
         override val mcpTransport = AcpHarnessMcpTransport.SESSION_DECLARATION
+        override val providerConfigKind = AcpHarnessProviderConfigKind.CODEX
 
         override fun supportsSessionMcp(provider: AgentProviderCredentials?): Boolean {
             // Codex currently groups MCP tools into the Responses-only
@@ -95,14 +111,17 @@ internal object AcpHarnessAdapters {
 
     val claudeCode: AcpHarnessAdapter = object : AcpHarnessAdapter {
         override val mcpTransport = AcpHarnessMcpTransport.SESSION_DECLARATION
+        override val providerConfigKind = AcpHarnessProviderConfigKind.CLAUDE_CODE
     }
 
     val openCode: AcpHarnessAdapter = object : AcpHarnessAdapter {
         override val mcpTransport = AcpHarnessMcpTransport.SESSION_DECLARATION
+        override val providerConfigKind = AcpHarnessProviderConfigKind.OPEN_CODE
     }
 
     val deepSeekHarness: AcpHarnessAdapter = object : AcpHarnessAdapter {
         override val mcpTransport = AcpHarnessMcpTransport.ENVIRONMENT
+        override val providerConfigKind = AcpHarnessProviderConfigKind.DEEPSEEK_HARNESS
         override val launchConfigPath = DEEPSEEK_HARNESS_CONFIG_PATH
         override val launchConfigExecutorKey = "harness-launch-config-read"
 

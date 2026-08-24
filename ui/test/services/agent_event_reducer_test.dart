@@ -45,6 +45,28 @@ void main() {
     expect(acpEventTurnId(event), 'turn-nested');
   });
 
+  test('ignores a duplicated host ACP notification by explicit event id', () {
+    final event = <String, dynamic>{
+      'eventId': 'session-dedupe:1',
+      'method': 'session/update',
+      'turnId': 'turn-dedupe',
+      'params': {
+        'sessionId': 'session-dedupe',
+        'update': {
+          'sessionUpdate': 'agent_message_chunk',
+          'messageId': 'message-dedupe',
+          'content': {'type': 'text', 'text': '只显示一次'},
+        },
+      },
+    };
+
+    reducer.reduce(runtime: runtime, event: event);
+    reducer.reduce(runtime: runtime, event: Map<String, dynamic>.from(event));
+
+    expect(runtime.messages, hasLength(1));
+    expect(runtime.messages.single.text, '只显示一次');
+  });
+
   test('retains scalar and list ACP unknown updates without a turn id', () {
     for (final rawUpdate in <dynamic>[
       'provider-progress',
@@ -1683,6 +1705,55 @@ void main() {
     expect(thinkingMessages.single.cardData?['thinkingContent'], '第一轮思考第二轮思考');
   });
 
+  test(
+    'starts a new ACP reasoning card when an explicit retry segment arrives',
+    () {
+      Map<String, dynamic> event({
+        required String itemId,
+        required String text,
+        required int segmentIndex,
+      }) {
+        return <String, dynamic>{
+          'method': 'item/reasoning/delta',
+          'params': {
+            'turnId': 'turn-retry-segment',
+            'itemId': itemId,
+            'delta': text,
+            'acpPresentation': {
+              'reasoning': {'segmentIndex': segmentIndex},
+            },
+          },
+        };
+      }
+
+      reducer.reduce(
+        runtime: runtime,
+        event: event(itemId: 'reason-failed', text: '失败请求的思考', segmentIndex: 0),
+      );
+      reducer.reduce(
+        runtime: runtime,
+        event: event(itemId: 'reason-retry', text: '成功重试的思考', segmentIndex: 1),
+      );
+
+      final thinkingCards = runtime.messages
+          .where((message) => message.cardData?['type'] == 'deep_thinking')
+          .toList(growable: false);
+      expect(thinkingCards, hasLength(2));
+      expect(
+        thinkingCards.map((message) => message.cardData?['thinkingContent']),
+        containsAll(<String>['失败请求的思考', '成功重试的思考']),
+      );
+      expect(
+        thinkingCards
+            .firstWhere(
+              (message) => message.cardData?['thinkingContent'] == '失败请求的思考',
+            )
+            .cardData?['isLoading'],
+        isFalse,
+      );
+    },
+  );
+
   test('keeps reasoning segments interleaved around ACP tool calls', () {
     reducer.reduce(
       runtime: runtime,
@@ -1858,6 +1929,122 @@ void main() {
     expect(result.handled, isTrue);
     expect(runtime.messages.single.text, '来自标准 ACP');
     expect(runtime.messages.single.user, 2);
+  });
+
+  test('keeps the ACP v2 session lifecycle visible without a turn id', () {
+    final running = reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'params': {
+          'sessionId': 'session-lifecycle',
+          'update': {'sessionUpdate': 'state_change', 'state': 'running'},
+        },
+      },
+    );
+
+    expect(running.handled, isTrue);
+    expect(runtime.isAiResponding, isTrue);
+
+    final idle = reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'params': {
+          'sessionId': 'session-lifecycle',
+          'update': {
+            'sessionUpdate': 'state_change',
+            'state': 'idle',
+            'stop_reason': 'end_turn',
+          },
+        },
+      },
+    );
+
+    expect(idle.handled, isTrue);
+    expect(runtime.isAiResponding, isFalse);
+  });
+
+  test('accepts the pre-release ACP state_update spelling', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'params': {
+          'sessionId': 'session-lifecycle-draft',
+          'update': {'sessionUpdate': 'state_update', 'state': 'running'},
+        },
+      },
+    );
+
+    expect(runtime.isAiResponding, isTrue);
+  });
+
+  test('routes a session-only event to its background conversation', () {
+    final coordinator = ChatConversationRuntimeCoordinator.instance;
+    final first = coordinator.ensureRuntime(
+      conversationId: 8101,
+      mode: kChatRuntimeModeAgent,
+    );
+    final second = coordinator.ensureRuntime(
+      conversationId: 8102,
+      mode: kChatRuntimeModeAgent,
+    );
+    first.acceptsAcpEvent(sessionId: 'session-background-1');
+    second.acceptsAcpEvent(sessionId: 'session-background-2');
+
+    expect(
+      coordinator.conversationIdForAcpEvent(sessionId: 'session-background-2'),
+      8102,
+    );
+
+    coordinator.discardConversationRuntime(
+      conversationId: 8101,
+      mode: kChatRuntimeModeAgent,
+    );
+    coordinator.discardConversationRuntime(
+      conversationId: 8102,
+      mode: kChatRuntimeModeAgent,
+    );
+  });
+
+  test('interrupts every running tool in a parallel tool batch', () {
+    final coordinator = ChatConversationRuntimeCoordinator.instance;
+    final parallelRuntime = coordinator.ensureRuntime(
+      conversationId: 8103,
+      mode: kChatRuntimeModeAgent,
+    )..activeRunId = 'run-parallel-tools';
+    parallelRuntime.messages.addAll([
+      ChatMessageModel.cardMessage({
+        'type': 'agent_tool_summary',
+        'taskId': 'run-parallel-tools',
+        'status': 'running',
+      }, id: 'parallel-tool-1'),
+      ChatMessageModel.cardMessage({
+        'type': 'agent_tool_summary',
+        'taskId': 'run-parallel-tools',
+        'status': 'progress',
+      }, id: 'parallel-tool-2'),
+    ]);
+    parallelRuntime.activeToolCardId = 'parallel-tool-2';
+
+    coordinator.interruptActiveToolCard(
+      conversationId: 8103,
+      mode: kChatRuntimeModeAgent,
+      summary: '已取消',
+    );
+
+    expect(
+      parallelRuntime.messages
+          .map((message) => message.cardData?['status'])
+          .toList(),
+      ['interrupted', 'interrupted'],
+    );
+    expect(parallelRuntime.activeToolCardId, isNull);
+    coordinator.discardConversationRuntime(
+      conversationId: 8103,
+      mode: kChatRuntimeModeAgent,
+    );
   });
 
   test('uses sessionId and toolCallId as the canonical tool identity', () {

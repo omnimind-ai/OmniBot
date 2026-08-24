@@ -14,6 +14,7 @@ import cn.com.omnimind.baselib.llm.SceneModelBindingStore
 import cn.com.omnimind.bot.BuildConfig
 import cn.com.omnimind.bot.agent.AgentCallback
 import cn.com.omnimind.bot.agent.AgentConversationModePolicy
+import cn.com.omnimind.bot.agent.AgentModelOverride
 import cn.com.omnimind.bot.agent.AgentResult
 import cn.com.omnimind.bot.agent.AgentRuntimeContextRepository
 import cn.com.omnimind.bot.agent.AgentScheduleToolBridge
@@ -640,15 +641,9 @@ private class XiaowanAgentSession(
         val modelId = selectedModelId.trim()
         if (modelId.isEmpty()) return null
         if (!providerProfile.isConfigured()) return null
-        return cn.com.omnimind.bot.agent.AgentModelOverride(
-            providerProfileId = providerProfile.id,
-            providerProfileName = providerProfile.name,
+        return AgentModelOverride.fromProviderProfile(
+            profile = providerProfile,
             modelId = modelId,
-            apiBase = providerProfile.baseUrl,
-            apiKey = providerProfile.apiKey,
-            customHeaders = providerProfile.customHeaders,
-            protocolType = providerProfile.protocolType,
-            wireApi = providerProfile.wireApi,
         )
     }
 }
@@ -836,6 +831,7 @@ internal class XiaowanAcpEventBridge(
     private var thoughtMessageId = MessageId(UUID.randomUUID().toString())
     private var reasoningSegmentIndex = 0
     private var reasoningSegmentPending = false
+    private var generationId = UUID.randomUUID().toString()
     private val toolIdsByName = mutableMapOf<String, ArrayDeque<String>>()
 
     suspend fun emitAssistantSnapshot(snapshot: String) {
@@ -848,6 +844,26 @@ internal class XiaowanAcpEventBridge(
         snapshot: String,
         meta: JsonElement = JsonNull,
     ) {
+        val snapshotReset = assistantSnapshot.isNotEmpty() &&
+            !snapshot.startsWith(assistantSnapshot) &&
+            !assistantSnapshot.startsWith(snapshot)
+        if (snapshotReset) {
+            // A transparent provider retry can reset the cumulative assistant
+            // snapshot without first delivering AgentCallback.onRetrying.
+            // Close the visible failed attempt and give the next generation a
+            // fresh ACP message identity, otherwise the reducer would either
+            // append two answers or treat the failed prefix as final output.
+            emitAssistantStatus(
+                acpPresentationMeta(
+                    "retry" to mapOf(
+                        "message" to "连接中断，正在重试…",
+                        "reason" to "provider_stream_reset",
+                    )
+                )
+            )
+            assistantSnapshot = ""
+            assistantMessageId = MessageId(UUID.randomUUID().toString())
+        }
         val emittedText = emitTextSnapshot(
             snapshot = snapshot,
             previous = assistantSnapshot,
@@ -884,7 +900,7 @@ internal class XiaowanAcpEventBridge(
                 SessionUpdate.AgentThoughtChunk(
                     content = ContentBlock.Text(""),
                     messageId = thoughtMessageId,
-                    _meta = reasoningAcpMeta("", reasoningSegmentIndex),
+                    _meta = reasoningAcpMeta("", reasoningSegmentIndex, generationId),
                 )
             )
         }
@@ -892,13 +908,27 @@ internal class XiaowanAcpEventBridge(
 
     override suspend fun onThinkingUpdate(thinking: String) {
         callbackMutex.withLock {
+            val displayText = reasoningDisplayText(thinking)
             if (reasoningSegmentPending) {
                 thoughtMessageId = MessageId(UUID.randomUUID().toString())
                 thoughtSnapshot = ""
                 reasoningSegmentPending = false
                 reasoningSegmentIndex += 1
+            } else if (
+                thoughtSnapshot.isNotEmpty() &&
+                !displayText.startsWith(thoughtSnapshot) &&
+                !thoughtSnapshot.startsWith(displayText)
+            ) {
+                // HttpAgentLlmClient may retry a transient stream internally
+                // before AgentOrchestrator sees the failure. The new stream
+                // can therefore reset the cumulative snapshot without an
+                // onRetrying callback. Treat that reset as a new visible ACP
+                // reasoning segment instead of appending another generation
+                // to the old card.
+                thoughtMessageId = MessageId(UUID.randomUUID().toString())
+                thoughtSnapshot = ""
+                reasoningSegmentIndex += 1
             }
-            val displayText = reasoningDisplayText(thinking)
             emitTextSnapshot(
                 snapshot = displayText,
                 previous = thoughtSnapshot,
@@ -910,7 +940,7 @@ internal class XiaowanAcpEventBridge(
                         SessionUpdate.AgentThoughtChunk(
                             content = ContentBlock.Text(delta),
                             messageId = id,
-                            _meta = reasoningAcpMeta(thinking, reasoningSegmentIndex),
+                            _meta = reasoningAcpMeta(thinking, reasoningSegmentIndex, generationId),
                         )
                     )
                 }
@@ -971,15 +1001,22 @@ internal class XiaowanAcpEventBridge(
         extras: Map<String, Any?>,
     ) {
         callbackMutex.withLock {
-            emitToolProgress(
-                toolIdsByName[toolName]?.lastOrNull()
-                    ?: UUID.randomUUID().toString().also {
-                        toolIdsByName.getOrPut(toolName) { ArrayDeque() }.addLast(it)
-                },
-                toolName,
-                progress,
-                extras,
-            )
+            val ids = toolIdsByName[toolName].orEmpty().toList()
+            if (ids.isEmpty()) {
+                val generatedId = UUID.randomUUID().toString()
+                toolIdsByName.getOrPut(toolName) { ArrayDeque() }.addLast(generatedId)
+                emitToolProgress(generatedId, toolName, progress, extras)
+            } else {
+                // The legacy callback does not carry toolCallId. When the
+                // same tool runs in parallel, selecting the last id can put
+                // one call's progress on another call's card. Broadcast the
+                // ambiguous progress to every matching ACP call instead of
+                // corrupting one specific card. New callers must use the
+                // overload that includes toolCallId.
+                ids.forEach { id ->
+                    emitToolProgress(id, toolName, progress, extras)
+                }
+            }
         }
     }
 
@@ -1028,6 +1065,13 @@ internal class XiaowanAcpEventBridge(
         result: ToolExecutionResult,
     ) {
         callbackMutex.withLock {
+            if (toolIdsByName[toolName].orEmpty().size > 1) {
+                // A legacy callback without toolCallId is ambiguous when
+                // identical tools run in parallel. Completing the last card
+                // would silently corrupt the ACP timeline; the ACP-aware
+                // overload must be used for this case.
+                return@withLock
+            }
             emitToolComplete(removeToolCallId(toolName, null), toolName, result)
         }
     }
@@ -1139,17 +1183,32 @@ internal class XiaowanAcpEventBridge(
         retryReason: String?,
     ) {
         callbackMutex.withLock {
-            emitAssistantStatus(
-                acpPresentationMeta(
-                    "retry" to mapOf(
-                        "count" to retryCount,
-                        "maxRetries" to maxRetries,
-                        "delayMs" to retryDelayMs,
-                        "message" to message,
-                        "reason" to retryReason,
-                    )
+            // A retry restarts the provider generation inside the same Agent
+            // round. Do not let the next cumulative reasoning snapshot reopen
+            // the failed attempt's visible card; the shared ACP reducer uses
+            // this boundary to render retry -> reasoning as a new segment.
+            if (thoughtSnapshot.isNotEmpty()) {
+                reasoningSegmentPending = true
+            }
+            generationId = UUID.randomUUID().toString()
+            val retryMeta = acpPresentationMeta(
+                "retry" to mapOf(
+                    "count" to retryCount,
+                    "maxRetries" to maxRetries,
+                    "delayMs" to retryDelayMs,
+                    "message" to message,
+                    "reason" to retryReason,
+                    "generationId" to generationId,
                 )
             )
+            emitAssistantStatus(retryMeta)
+            if (assistantSnapshot.isNotEmpty()) {
+                // The retry metadata belongs to the failed assistant attempt.
+                // Future chunks must use a fresh message id so partial output
+                // cannot be silently extended by the retry generation.
+                assistantSnapshot = ""
+                assistantMessageId = MessageId(UUID.randomUUID().toString())
+            }
         }
     }
 
@@ -1358,12 +1417,18 @@ private fun toolResultText(result: ToolExecutionResult): String = when (result) 
     is ToolExecutionResult.ContextResult -> result.summaryText.ifBlank { result.rawResultJson }
 }
 
-private fun reasoningAcpMeta(thinking: String, segmentIndex: Int = 0): JsonObject {
+private fun reasoningAcpMeta(
+    thinking: String,
+    segmentIndex: Int = 0,
+    generationId: String? = null,
+): JsonObject {
     val reasoning = linkedMapOf<String, Any?>(
         "stage" to "thinking",
         "content" to thinking,
         "segmentIndex" to segmentIndex,
-    )
+    ).apply {
+        generationId?.let { put("generationId", it) }
+    }
     val structured = structuredReasoning(thinking)
     if (structured != null) {
         fun copy(source: String, target: String = source) {

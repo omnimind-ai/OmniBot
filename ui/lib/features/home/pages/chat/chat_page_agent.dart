@@ -1570,6 +1570,14 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     final remoteCodex = _isRemoteCodexConfigured();
     final eventThreadId = _remoteCodexEventThreadId(event);
     final explicitConversationId = _asAgentInt(event['conversationId']);
+    final eventSessionId = acpEventSessionId(event);
+    final eventTurnId = acpEventTurnId(event);
+    final identityConversationId = explicitConversationId == null
+        ? _runtimeCoordinator.conversationIdForAcpEvent(
+            sessionId: eventSessionId,
+            turnId: eventTurnId,
+          )
+        : null;
     final mappedRemoteConversationId = remoteCodex && eventThreadId != null
         ? _remoteCodexRuntimeId(eventThreadId)
         : null;
@@ -1585,6 +1593,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         (shouldPromoteRemoteEvent
             ? _activateRemoteCodexRuntimeForThread(eventThreadId)
             : mappedRemoteConversationId) ??
+        identityConversationId ??
         _modeState(ChatPageMode.agent).currentConversationId;
     if (conversationId == null) {
       debugPrint(
@@ -1602,8 +1611,6 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     final agentConversationId = _modeState(
       ChatPageMode.agent,
     ).currentConversationId;
-    final eventSessionId = acpEventSessionId(event);
-    final eventTurnId = acpEventTurnId(event);
     final ownerMode = _runtimeCoordinator.modeForAcpEvent(
       conversationId: conversationId,
       sessionId: eventSessionId,

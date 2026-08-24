@@ -1648,7 +1648,7 @@ class AgentRuntimeManager private constructor(
                     customHeaders = profile.customHeaders,
                     protocolType = profile.protocolType,
                     supportsNamespaceTools = OmniOfficialProvider.isOfficialProfile(profile.id),
-                )
+                ).normalized()
             }
 
     private fun currentAgentBoundModel(): String? = runCatching {

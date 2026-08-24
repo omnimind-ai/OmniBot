@@ -172,6 +172,54 @@ class AgentLlmStreamAccumulatorTest {
     }
 
     @Test
+    fun `does not append the same provider reasoning aliases twice`() {
+        val accumulator = AgentLlmStreamAccumulator(json = json)
+
+        accumulator.consume(
+            """{"choices":[{"delta":{"reasoning_content":"先分析","reasoning":"先分析","thinking":"先分析"}}]}"""
+        )
+        accumulator.consume(
+            """{"choices":[{"delta":{"content":"完成"},"finish_reason":"stop"}]}"""
+        )
+
+        assertEquals("先分析", accumulator.buildTurn().reasoning)
+    }
+
+    @Test
+    fun `treats cumulative provider reasoning snapshots as one stream`() {
+        val accumulator = AgentLlmStreamAccumulator(json = json)
+
+        accumulator.consume(
+            """{"choices":[{"delta":{"reasoning_content":"先分析"}}]}"""
+        )
+        accumulator.consume(
+            """{"choices":[{"delta":{"reasoning_content":"先分析，再调用工具"}}]}"""
+        )
+        accumulator.consume(
+            """{"choices":[{"delta":{"content":"完成"},"finish_reason":"stop"}]}"""
+        )
+
+        assertEquals("先分析，再调用工具", accumulator.buildTurn().reasoning)
+    }
+
+    @Test
+    fun `keeps top level reasoning when choices also contain visible content`() {
+        val accumulator = AgentLlmStreamAccumulator(json = json)
+
+        accumulator.consume(
+            """{"choices":[{"delta":{"content":"答案"}}],"reasoning":"先分析"}"""
+        )
+        accumulator.consume(
+            """{"choices":[{"delta":{},"finish_reason":"stop"}]}"""
+        )
+
+        val turn = accumulator.buildTurn()
+
+        assertEquals("答案", turn.message.contentText())
+        assertEquals("先分析", turn.reasoning)
+    }
+
+    @Test
     fun `surfaces top level provider error instead of empty assistant turn`() {
         val accumulator = AgentLlmStreamAccumulator(json = json)
 

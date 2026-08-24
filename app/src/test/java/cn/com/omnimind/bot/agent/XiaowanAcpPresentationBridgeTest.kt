@@ -105,6 +105,146 @@ class XiaowanAcpPresentationBridgeTest {
     }
 
     @Test
+    fun `retry starts a new reasoning segment instead of reusing the failed one`() = runBlocking {
+        val updates = mutableListOf<SessionUpdate>()
+        val bridge = XiaowanAcpEventBridge { updates += it }
+
+        bridge.onThinkingStart()
+        bridge.onThinkingUpdate("失败请求的思考")
+        bridge.onRetrying(
+            retryCount = 1,
+            maxRetries = 2,
+            retryDelayMs = 0,
+            message = "正在重试",
+            retryReason = "timeout",
+        )
+        bridge.onThinkingUpdate("成功重试的思考")
+
+        val thoughts = updates
+            .filterIsInstance<SessionUpdate.AgentThoughtChunk>()
+            .filter { (it.content as ContentBlock.Text).text.isNotEmpty() }
+        assertEquals(2, thoughts.size)
+        assertEquals(2, thoughts.map { it.messageId }.distinct().size)
+        val segments = thoughts.map { thought ->
+            val namespace = (thought._meta as JsonObject)["cn.com.omnimind.agent"] as JsonObject
+            (namespace["reasoning"] as JsonObject)["segmentIndex"]?.jsonPrimitive?.content?.toInt()
+        }
+        assertEquals(listOf(0, 1), segments)
+    }
+
+    @Test
+    fun `retry assigns a new generation id to the next reasoning segment`() = runBlocking {
+        val updates = mutableListOf<SessionUpdate>()
+        val bridge = XiaowanAcpEventBridge { updates += it }
+
+        bridge.onThinkingStart()
+        bridge.onThinkingUpdate("第一代思考")
+        bridge.onRetrying(
+            retryCount = 1,
+            maxRetries = 2,
+            retryDelayMs = 0,
+            message = "正在重试",
+            retryReason = "timeout",
+        )
+        bridge.onThinkingUpdate("第二代思考")
+
+        val thoughts = updates.filterIsInstance<SessionUpdate.AgentThoughtChunk>()
+            .filter { (it.content as ContentBlock.Text).text.isNotEmpty() }
+        val generationIds = thoughts.map { thought ->
+            val namespace = (thought._meta as JsonObject)["cn.com.omnimind.agent"] as JsonObject
+            ((namespace["reasoning"] as JsonObject)["generationId"] ?: error("missing generation"))
+                .jsonPrimitive.content
+        }
+        assertEquals(2, generationIds.distinct().size)
+    }
+
+    @Test
+    fun `provider snapshot reset starts a new reasoning segment`() = runBlocking {
+        val updates = mutableListOf<SessionUpdate>()
+        val bridge = XiaowanAcpEventBridge { updates += it }
+
+        bridge.onThinkingStart()
+        bridge.onThinkingUpdate("第一次请求的思考")
+        // This is what an internal HTTP retry looks like to the callback: the
+        // retry is transparent, so there is no separate onRetrying event.
+        bridge.onThinkingUpdate("重试请求的思考")
+
+        val thoughts = updates
+            .filterIsInstance<SessionUpdate.AgentThoughtChunk>()
+            .filter { (it.content as ContentBlock.Text).text.isNotEmpty() }
+        assertEquals(2, thoughts.size)
+        assertEquals(2, thoughts.map { it.messageId }.distinct().size)
+        val segments = thoughts.map { thought ->
+            val namespace = (thought._meta as JsonObject)["cn.com.omnimind.agent"] as JsonObject
+            (namespace["reasoning"] as JsonObject)["segmentIndex"]?.jsonPrimitive?.content
+        }
+        assertEquals(listOf("0", "1"), segments)
+    }
+
+    @Test
+    fun `retry separates partial assistant output from the next generation`() = runBlocking {
+        val updates = mutableListOf<SessionUpdate>()
+        val bridge = XiaowanAcpEventBridge { updates += it }
+
+        bridge.onChatMessage("失败请求的半截答案", isFinal = false)
+        bridge.onRetrying(
+            retryCount = 1,
+            maxRetries = 2,
+            retryDelayMs = 0,
+            message = "正在重试",
+            retryReason = "timeout",
+        )
+        bridge.onChatMessage("重试后的完整答案", isFinal = true)
+
+        val messages = updates.filterIsInstance<SessionUpdate.AgentMessageChunk>()
+        assertEquals(3, messages.size)
+        assertEquals(2, messages.map { it.messageId }.distinct().size)
+        assertEquals(
+            "失败请求的半截答案",
+            (messages[0].content as ContentBlock.Text).text,
+        )
+        assertEquals(
+            "重试后的完整答案",
+            (messages[2].content as ContentBlock.Text).text,
+        )
+        val retryNamespace = (messages[1]._meta as JsonObject)["cn.com.omnimind.agent"] as JsonObject
+        assertEquals("正在重试", (retryNamespace["retry"] as JsonObject)["message"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun `legacy progress without tool id cannot cross-wire parallel same-name tools`() = runBlocking {
+        val updates = mutableListOf<SessionUpdate>()
+        val bridge = XiaowanAcpEventBridge { updates += it }
+
+        bridge.onToolCallStart("call-1", "file_read", JsonObject(emptyMap()))
+        bridge.onToolCallStart("call-2", "file_read", JsonObject(emptyMap()))
+        bridge.onToolCallProgress("file_read", "读取中", emptyMap())
+
+        val progressIds = updates
+            .filterIsInstance<SessionUpdate.ToolCallUpdate>()
+            .filter { it.status == com.agentclientprotocol.model.ToolCallStatus.IN_PROGRESS }
+            .map { it.toolCallId.value }
+        assertEquals(listOf("call-1", "call-2"), progressIds)
+    }
+
+    @Test
+    fun `legacy completion without tool id does not complete an ambiguous call`() = runBlocking {
+        val updates = mutableListOf<SessionUpdate>()
+        val bridge = XiaowanAcpEventBridge { updates += it }
+
+        bridge.onToolCallStart("call-1", "file_read", JsonObject(emptyMap()))
+        bridge.onToolCallStart("call-2", "file_read", JsonObject(emptyMap()))
+        bridge.onToolCallComplete(
+            "file_read",
+            ToolExecutionResult.ChatMessage("不应猜测归属"),
+        )
+
+        val completed = updates.filterIsInstance<SessionUpdate.ToolCallUpdate>()
+            .filter { it.status == com.agentclientprotocol.model.ToolCallStatus.COMPLETED }
+        assertEquals(0, completed.size)
+    }
+
+    @Test
     fun `error recovery state is carried by the ACP assistant update`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
         val bridge = XiaowanAcpEventBridge { updates += it }
