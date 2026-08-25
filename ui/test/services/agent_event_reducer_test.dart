@@ -2644,6 +2644,57 @@ void main() {
     expect(card['progress'], 'plain ACP result');
   });
 
+  test('projects nested ACP tool results through the shared card fields', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'params': {
+          'sessionId': 'session-nested-tool-result',
+          'turnId': 'turn-nested-tool-result',
+          'update': {
+            'sessionUpdate': 'tool_call_update',
+            'toolCallId': 'nested-tool-result-1',
+            'kind': 'other',
+            'title': '运行任务',
+            'status': 'completed',
+            'rawOutput': {
+              'toolType': 'context',
+              'result': {
+                'toolType': 'terminal',
+                'terminalOutput': 'nested output',
+                'terminalSessionId': 'shell-nested',
+                'artifacts': [
+                  {
+                    'id': 'nested-artifact',
+                    'title': 'result.txt',
+                    'uri': 'workspace://result.txt',
+                  },
+                ],
+              },
+            },
+          },
+        },
+      },
+    );
+
+    final card = runtime.messages
+        .firstWhere(
+          (message) => message.cardData?['type'] == 'agent_tool_summary',
+        )
+        .cardData!;
+    expect(card['toolType'], 'terminal');
+    expect(card['terminalOutput'], 'nested output');
+    expect(card['terminalSessionId'], 'shell-nested');
+    expect(card['artifacts'], hasLength(1));
+    expect(
+      runtime.messages.any(
+        (message) => message.cardData?['type'] == 'artifact_card',
+      ),
+      isTrue,
+    );
+  });
+
   test(
     'routes generic ACP context results by their concrete tool capability',
     () {

@@ -5599,8 +5599,53 @@ Map<String, dynamic> _acpStructuredToolOutput(Map<String, dynamic>? output) {
   // the result envelope and inside `result`. ACP intentionally does not
   // constrain rawOutput, so make that shape available to the shared card
   // parser without requiring each Harness to duplicate this flattening.
-  final resultMap = _asStringMap(result);
+  final resultMap =
+      _asStringMap(result) ??
+      (result is String ? _asStringMap(_decodeAcpJsonValue(result)) : null);
   if (resultMap != null) {
+    // ACP deliberately leaves rawOutput application-defined. Several ACP
+    // clients wrap their concrete result in `result` (for example a
+    // ContextResult containing a terminal result), while Xiaowan historically
+    // placed the same fields at the envelope level. Promote the nested facts
+    // once here so every Harness reaches the existing card routes equally.
+    final nestedToolType = _string(resultMap['toolType']);
+    if ((projected['toolType'] == null ||
+            projected['toolType'].toString().trim().toLowerCase() ==
+                'context') &&
+        nestedToolType != null &&
+        nestedToolType.trim().isNotEmpty &&
+        nestedToolType.trim().toLowerCase() != 'context') {
+      projected['toolType'] = nestedToolType;
+    }
+    for (final key in const <String>[
+      'terminalOutput',
+      'terminalSessionId',
+      'terminalStreamState',
+      'imageDataUrl',
+      'dataUrl',
+      'imageUrl',
+      'audioDataUrl',
+      'audioUrl',
+      'mimeType',
+      'artifacts',
+      'actions',
+      'workspaceId',
+      'success',
+      'exitCode',
+      'error',
+      'timedOut',
+      'timed_out',
+      'outputTruncated',
+      'originalChars',
+      'headTail',
+      'fullOutputArtifact',
+      'previewJson',
+      'rawResultJson',
+    ]) {
+      if (projected[key] == null && resultMap[key] != null) {
+        projected[key] = resultMap[key];
+      }
+    }
     for (final key in const <String>[
       'question',
       'missingFields',
