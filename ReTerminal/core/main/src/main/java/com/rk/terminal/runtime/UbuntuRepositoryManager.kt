@@ -7,6 +7,7 @@ import com.rk.settings.UbuntuPackageMirror
 import java.io.File
 
 object UbuntuRepositoryManager {
+    // 无 pending 字段：消费方（设置页 Toast）只看 applied，「保存待应用」语义由文案承担（评审死代码清理）
     data class ApplyResult(
         val applied: Boolean,
         val sourcesFile: File?
@@ -17,6 +18,8 @@ object UbuntuRepositoryManager {
     private const val DEFAULT_CODENAME = "noble"
     private const val OFFICIAL_BASE_URL = "http://ports.ubuntu.com/ubuntu-ports"
     private const val TSINGHUA_BASE_URL = "http://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports"
+    private const val OFFICIAL_PYPI_BASE_URL = "https://pypi.org/simple"
+    private const val TSINGHUA_PYPI_BASE_URL = "https://pypi.tuna.tsinghua.edu.cn/simple"
 
     fun selectedBaseUrl(): String {
         return baseUrlFor(Settings.ubuntu_package_mirror)
@@ -29,6 +32,22 @@ object UbuntuRepositoryManager {
         }
     }
 
+    /** pip 源跟随 apt 镜像：弱网直连 PyPI 会读超时（真机 12.3kB/s 教训），选清华则 pip 也走 tuna */
+    fun pypiBaseUrlFor(source: Int): String {
+        return when (source) {
+            UbuntuPackageMirror.TSINGHUA -> TSINGHUA_PYPI_BASE_URL
+            else -> OFFICIAL_PYPI_BASE_URL
+        }
+    }
+
+    /** /etc/pip.conf 内容：无论镜像都拉长 read timeout + 多重试，弱网兜底 */
+    internal fun buildPipConfContent(source: Int): String = buildString {
+        appendLine("[global]")
+        appendLine("index-url = ${pypiBaseUrlFor(source)}")
+        appendLine("timeout = 120")
+        appendLine("retries = 10")
+    }
+
     fun buildSelectedRepositorySetupCommand(): String {
         return buildRepositorySetupCommand(Settings.ubuntu_package_mirror)
     }
@@ -36,6 +55,8 @@ object UbuntuRepositoryManager {
     fun buildRepositorySetupCommand(source: Int): String {
         val mainBaseUrl = shellSingleQuote(baseUrlFor(source))
         val securityBaseUrl = shellSingleQuote(OFFICIAL_BASE_URL)
+        // pip.conf 多行内容整体单引号字面量传入，printf 原样落盘
+        val pipConf = shellSingleQuote(buildPipConfContent(source))
         return """
             ( set -e;
               . /etc/os-release;
@@ -43,7 +64,8 @@ object UbuntuRepositoryManager {
               main_base=$mainBaseUrl;
               security_base=$securityBaseUrl;
               mkdir -p /etc/apt/sources.list.d;
-              printf 'Types: deb\nURIs: %s\nSuites: %s %s-updates %s-backports\nComponents: main universe restricted multiverse\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n\nTypes: deb\nURIs: %s\nSuites: %s-security\nComponents: main universe restricted multiverse\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n' "${'$'}main_base" "${'$'}codename" "${'$'}codename" "${'$'}codename" "${'$'}security_base" "${'$'}codename" > /etc/apt/sources.list.d/ubuntu.sources
+              printf 'Types: deb\nURIs: %s\nSuites: %s %s-updates %s-backports\nComponents: main universe restricted multiverse\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n\nTypes: deb\nURIs: %s\nSuites: %s-security\nComponents: main universe restricted multiverse\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n' "${'$'}main_base" "${'$'}codename" "${'$'}codename" "${'$'}codename" "${'$'}security_base" "${'$'}codename" > /etc/apt/sources.list.d/ubuntu.sources;
+              printf '%s' $pipConf > /etc/pip.conf
             )
         """.trimIndent()
     }
@@ -66,6 +88,8 @@ object UbuntuRepositoryManager {
                 codename = detectInstalledCodename(rootfs)
             )
         )
+        // pip 源同步：设置页切镜像后，已装 rootfs 里的 pip 也跟随（/etc/pip.conf 全局生效）
+        rootfs.child("etc").child("pip.conf").writeText(buildPipConfContent(source))
         return ApplyResult(applied = true, sourcesFile = sourcesFile)
     }
 

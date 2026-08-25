@@ -8,6 +8,7 @@ import androidx.annotation.VisibleForTesting
 import com.rk.libcommons.localBinDir
 import com.rk.libcommons.localDir
 import com.rk.libcommons.localLibDir
+import com.rk.libcommons.RuntimeAbi
 import com.rk.terminal.BuildConfig
 import com.rk.terminal.ui.screens.terminal.stat
 import com.rk.terminal.ui.screens.terminal.vmstat
@@ -27,6 +28,7 @@ import okhttp3.Call
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -90,6 +92,14 @@ object EmbeddedRuntimeInstaller {
     private const val OFFICIAL_UBUNTU_EXPANDED_SIZE = 106_649_600L
     private const val OFFICIAL_UBUNTU_URL =
         "https://cdimage.ubuntu.com/ubuntu-base/releases/24.04.4/release/ubuntu-base-24.04.4-base-arm64.tar.gz"
+    // x86_64（模拟器/VM）同版本官方 base；校验值实测自 cdimage.ubuntu.com
+    private const val OFFICIAL_UBUNTU_X86_64_FILE_NAME = "ubuntu-base-24.04.4-base-amd64.tar.gz"
+    private const val OFFICIAL_UBUNTU_X86_64_COMPRESSED_SIZE = 29_989_394L
+    private const val OFFICIAL_UBUNTU_X86_64_EXPANDED_SIZE = 80_000_000L
+    private const val OFFICIAL_UBUNTU_X86_64_SHA256 =
+        "c1e67ef7b17a6300e136118bd1dc04725009cb376c1aad10abcf8cd453628d58"
+    private const val OFFICIAL_UBUNTU_X86_64_URL =
+        "https://cdimage.ubuntu.com/ubuntu-base/releases/24.04.4/release/ubuntu-base-24.04.4-base-amd64.tar.gz"
 
     private val installMutex = Mutex()
     private val commonAssets = listOf(
@@ -151,7 +161,7 @@ object EmbeddedRuntimeInstaller {
             emit(onProgress, "installing", distribution, "正在安装 Alpine 离线运行资源")
             copyAssetIfChanged(
                 context,
-                listOf("alpine.tar.gz", "alpine.tar"),
+                RuntimeAbi.alpineAssetFileNames(RuntimeAbi.currentAbi()),
                 archive,
                 executable = false
             )
@@ -169,14 +179,16 @@ object EmbeddedRuntimeInstaller {
         }
 
         val manifestOverride = BuildConfig.TERMINAL_RUNTIME_MANIFEST_URL.trim()
+        val deviceAbi = RuntimeAbi.currentAbi()
         val entry = if (manifestOverride.isBlank()) {
             emit(onProgress, "manifest", distribution, "正在准备 Ubuntu 官方下载")
-            officialUbuntuRuntime()
+            officialUbuntuRuntime(deviceAbi)
         } else {
             emit(onProgress, "manifest", distribution, "正在获取 Ubuntu 下载信息")
             fetchManifestEntry(
                 requireHttpsUrl(manifestOverride, "终端运行时清单"),
-                distribution.id
+                distribution.id,
+                deviceAbi
             )
         }
         ensureDiskSpace(context, entry, File(context.filesDir, "${archive.name}.part"))
@@ -184,16 +196,30 @@ object EmbeddedRuntimeInstaller {
     }
 
     @VisibleForTesting
-    internal fun officialUbuntuRuntime(): RuntimeManifestEntry = RuntimeManifestEntry(
-        id = TerminalDistribution.ubuntu.id,
-        version = OFFICIAL_UBUNTU_VERSION,
-        abi = "arm64-v8a",
-        fileName = OFFICIAL_UBUNTU_FILE_NAME,
-        compressedSize = OFFICIAL_UBUNTU_COMPRESSED_SIZE,
-        expandedSize = OFFICIAL_UBUNTU_EXPANDED_SIZE,
-        sha256 = LEGACY_UBUNTU_SHA256,
-        downloadUrl = requireHttpsUrl(OFFICIAL_UBUNTU_URL, "Ubuntu 官方下载地址")
-    )
+    internal fun officialUbuntuRuntime(abi: String = RuntimeAbi.currentAbi()): RuntimeManifestEntry =
+        if (RuntimeAbi.normalize(abi) == RuntimeAbi.X86_64) {
+            RuntimeManifestEntry(
+                id = TerminalDistribution.ubuntu.id,
+                version = OFFICIAL_UBUNTU_VERSION,
+                abi = RuntimeAbi.X86_64,
+                fileName = OFFICIAL_UBUNTU_X86_64_FILE_NAME,
+                compressedSize = OFFICIAL_UBUNTU_X86_64_COMPRESSED_SIZE,
+                expandedSize = OFFICIAL_UBUNTU_X86_64_EXPANDED_SIZE,
+                sha256 = OFFICIAL_UBUNTU_X86_64_SHA256,
+                downloadUrl = requireHttpsUrl(OFFICIAL_UBUNTU_X86_64_URL, "Ubuntu 官方下载地址")
+            )
+        } else {
+            RuntimeManifestEntry(
+                id = TerminalDistribution.ubuntu.id,
+                version = OFFICIAL_UBUNTU_VERSION,
+                abi = RuntimeAbi.ARM64,
+                fileName = OFFICIAL_UBUNTU_FILE_NAME,
+                compressedSize = OFFICIAL_UBUNTU_COMPRESSED_SIZE,
+                expandedSize = OFFICIAL_UBUNTU_EXPANDED_SIZE,
+                sha256 = LEGACY_UBUNTU_SHA256,
+                downloadUrl = requireHttpsUrl(OFFICIAL_UBUNTU_URL, "Ubuntu 官方下载地址")
+            )
+        }
 
     private fun installCommonAssets(context: Context): MutableMap<String, File> {
         val installed = mutableMapOf<String, File>()
@@ -266,7 +292,8 @@ object EmbeddedRuntimeInstaller {
 
     private suspend fun fetchManifestEntry(
         manifestUrl: HttpUrl,
-        distributionId: String
+        distributionId: String,
+        abi: String = RuntimeAbi.currentAbi()
     ): RuntimeManifestEntry {
         val request = Request.Builder()
             .url(manifestUrl)
@@ -278,7 +305,7 @@ object EmbeddedRuntimeInstaller {
             if (!response.isSuccessful) throw IOException("获取终端运行时清单失败（HTTP ${response.code}）。")
             val body = response.body ?: throw IOException("终端运行时清单为空。")
             val bytes = readBoundedManifest(body.byteStream(), body.contentLength())
-            parseManifest(String(bytes, Charsets.UTF_8), distributionId)
+            parseManifest(String(bytes, Charsets.UTF_8), distributionId, abi)
         }
     }
 
@@ -307,28 +334,42 @@ object EmbeddedRuntimeInstaller {
     }
 
     @VisibleForTesting
-    internal fun parseManifest(rawJson: String, distributionId: String): RuntimeManifestEntry {
+    internal fun parseManifest(
+        rawJson: String,
+        distributionId: String,
+        abi: String = RuntimeAbi.currentAbi()
+    ): RuntimeManifestEntry {
+        val runtimeAbi = RuntimeAbi.normalize(abi)
         val payload = JSONObject(rawJson)
         if (payload.optInt("schemaVersion", -1) != 1) throw IOException("不支持的终端运行时清单版本。")
         val runtimes = payload.optJSONArray("runtimes") ?: throw IOException("终端运行时清单缺少 runtimes。")
-        var match: JSONObject? = null
+        return buildValidatedEntry(findRuntimeEntry(runtimes, distributionId, runtimeAbi), runtimeAbi)
+    }
+
+    private fun findRuntimeEntry(
+        runtimes: JSONArray,
+        distributionId: String,
+        runtimeAbi: String
+    ): JSONObject {
         for (index in 0 until runtimes.length()) {
             val item = runtimes.optJSONObject(index) ?: continue
-            if (item.optString("id") == distributionId && item.optString("abi") == "arm64-v8a") {
-                match = item
-                break
+            if (item.optString("id") == distributionId && item.optString("abi") == runtimeAbi) {
+                return item
             }
         }
-        val item = match ?: throw IOException("清单中没有适用于 arm64-v8a 的 $distributionId 运行时。")
+        throw IOException("清单中没有适用于 $runtimeAbi 的 $distributionId 运行时。")
+    }
+
+    private fun buildValidatedEntry(item: JSONObject, runtimeAbi: String): RuntimeManifestEntry {
         val id = item.optString("id").trim()
         val version = item.optString("version").trim()
-        val abi = item.optString("abi").trim()
+        val abiValue = item.optString("abi").trim()
         val fileName = item.optString("fileName").trim()
         val compressedSize = item.optLong("compressedSize", -1L)
         val expandedSize = item.optLong("expandedSize", -1L)
         val digest = item.optString("sha256").trim().lowercase()
         val downloadUrl = requireHttpsUrl(item.optString("downloadUrl"), "终端运行时下载地址")
-        if (id != TerminalDistribution.ubuntu.id || abi != "arm64-v8a") throw IOException("终端运行时标识无效。")
+        if (id != TerminalDistribution.ubuntu.id || abiValue != runtimeAbi) throw IOException("终端运行时标识无效。")
         if (version.isBlank() || !fileName.matches(Regex("^[A-Za-z0-9._-]+\\.tar\\.gz$"))) {
             throw IOException("终端运行时文件信息无效。")
         }
@@ -336,7 +377,7 @@ object EmbeddedRuntimeInstaller {
             throw IOException("终端运行时大小信息无效。")
         }
         if (!digest.matches(Regex("^[a-f0-9]{64}$"))) throw IOException("终端运行时 SHA-256 无效。")
-        return RuntimeManifestEntry(id, version, abi, fileName, compressedSize, expandedSize, digest, downloadUrl)
+        return RuntimeManifestEntry(id, version, abiValue, fileName, compressedSize, expandedSize, digest, downloadUrl)
     }
 
     private suspend fun downloadVerifiedArchive(

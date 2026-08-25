@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.appcompat.app.AppCompatDelegate
 import com.rk.libcommons.application
+import com.rk.libcommons.ContainerBackends
 import com.rk.terminal.ui.screens.settings.WorkingMode
 import com.rk.terminal.ui.screens.settings.InputMode
 
@@ -80,6 +81,17 @@ object Settings {
             default = UbuntuPackageMirror.TSINGHUA
         )
         set(value) = Preference.setInt(key = "ubuntu_package_mirror", value)
+
+    var container_backend
+        get() = Preference.getInt(key = "container_backend", default = ContainerBackends.PROOT)
+        set(value) = Preference.setInt(key = "container_backend", value)
+
+    // Agent 链路（terminal_session_* / ACP）独立后端开关：
+    // 终端 UI 开 chroot 不应让 AI agent 静默获得真 root（开发者审查 P1 提权边界），
+    // 必须在此单独开启且经 RootProbe 重检后才允许 Agent 走 chroot。
+    var agent_container_backend
+        get() = Preference.getInt(key = "agent_container_backend", default = ContainerBackends.PROOT)
+        set(value) = Preference.setInt(key = "agent_container_backend", value)
 
     var custom_background_name
         get() = Preference.getString(key = "custom_bg_name", default = "No Image Selected")

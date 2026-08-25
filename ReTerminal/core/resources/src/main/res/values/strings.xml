@@ -10,6 +10,17 @@
     <string name="customizations">Customizations</string>
     <string name="seccomp">SECCOMP</string>
     <string name="seccomp_desc">fix operation not permitted error</string>
+    <string name="seccomp_on_hint">SECCOMP is on. Some syscalls will be filtered; turn it off if the terminal misbehaves.</string>
+    <string name="seccomp_off_hint">SECCOMP is off. Turn it back on if you see Operation not permitted.</string>
+    <string name="container_backend_proot">proot (default)</string>
+    <string name="container_backend_proot_desc">No root required, best compatibility</string>
+    <string name="container_backend_chroot">chroot (experimental)</string>
+    <string name="container_backend_chroot_desc">Requires root (KernelSU), native performance</string>
+    <string name="container_backend_root_denied">Root permission not granted, staying on proot</string>
+    <string name="container_backend_agent">Agent container backend</string>
+    <string name="container_backend_agent_desc">Backend for AI agent terminal tools. Kept separate from the UI backend so the agent cannot silently gain root</string>
+    <string name="container_backend_agent_chroot">chroot (root) for agent</string>
+    <string name="container_backend_agent_chroot_desc">Grants the AI agent real root inside the container. Only enable if you trust the agent with root access</string>
     <string name="all_file_access">All file access</string>
     <string name="all_file_access_desc">enable access to /sdcard and /storage</string>
     <string name="text_size">Text Size</string>
@@ -81,6 +92,6 @@
     <string name="ubuntu_package_mirror_tsinghua">Tsinghua mirror</string>
     <string name="ubuntu_package_mirror_tsinghua_desc">mirrors.tuna.tsinghua.edu.cn/ubuntu-ports (default; security updates stay official)</string>
     <string name="ubuntu_package_mirror_applied">Ubuntu package mirror updated.</string>
-    <string name="ubuntu_package_mirror_pending">Mirror saved. It will be applied after Ubuntu initializes.</string>
+    <string name="ubuntu_package_mirror_pending">Ubuntu is not initialized yet. The mirror is saved and will be written to sources.list after setup.</string>
     <string name="ubuntu_package_mirror_failed">Failed to update mirror: %1$s</string>
 </resources>

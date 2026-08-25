@@ -20,11 +20,12 @@ object EnvironmentSetupLogic {
         }
     private val DEEPSEEK_HARNESS_CHECK_COMMAND =
         "PATH=\"/root/.npm-global/bin:${'$'}PATH\"; export PATH; " +
+            "command -v dsh >/dev/null 2>&1 && " +
             "command -v dsh-acp-demo >/dev/null 2>&1 && " +
             DEEPSEEK_HARNESS_PACKAGE_FILES + " && " +
             DEEPSEEK_HARNESS_NATIVE_HEALTH_COMMAND
     private const val DEEPSEEK_HARNESS_VERSION_COMMAND =
-        "node -p \"require('/root/.npm-global/lib/node_modules/@deepseek-ai/dsh-acp-demo/package.json').version\""
+        "node -p \"require('/root/.npm-global/lib/node_modules/@deepseek-ai/dsh/package.json').version\""
 
     val packageDefinitions: List<PackageDefinition> = listOf(
         PackageDefinition("nodejs", "node --version", "dev"),
@@ -34,7 +35,7 @@ object EnvironmentSetupLogic {
         PackageDefinition("uv", "uv --version", "dev"),
         PackageDefinition("pip", "pip3 --version", "dev"),
         PackageDefinition("codex", "codex --version", "ai"),
-        PackageDefinition("claude_code", "claude --version", "ai"),
+        PackageDefinition("claude_code", "claude-agent-acp --version", "ai"),
         PackageDefinition("opencode", "opencode --version", "ai"),
         PackageDefinition("deepseek_harness", DEEPSEEK_HARNESS_CHECK_COMMAND, "ai"),
         PackageDefinition("ssh_client", "ssh -V 2>&1", "ssh"),
@@ -184,8 +185,8 @@ object EnvironmentSetupLogic {
             commands += "ln -sf /root/.npm-global/bin/codex /usr/local/bin/codex || true"
         }
         if ("claude_code" in requested) {
-            commands += "npm install -g --no-audit --no-fund @anthropic-ai/claude-code@latest"
-            commands += "ln -sf /root/.npm-global/bin/claude /usr/local/bin/claude || true"
+            commands += "npm install -g --no-audit --no-fund @agentclientprotocol/claude-agent-acp@latest"
+            commands += "ln -sf /root/.npm-global/bin/claude-agent-acp /usr/local/bin/claude-agent-acp || true"
         }
         if ("opencode" in requested) {
             commands += "npm install -g --no-audit --no-fund opencode-ai@latest"
@@ -193,6 +194,7 @@ object EnvironmentSetupLogic {
         }
         if ("deepseek_harness" in requested) {
             commands += DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND
+            commands += "ln -sf /root/.npm-global/bin/dsh /usr/local/bin/dsh || true"
             commands += "ln -sf /root/.npm-global/bin/dsh-acp-demo /usr/local/bin/dsh-acp-demo || true"
         }
         if ("openssh_server" in requested) {
@@ -307,8 +309,8 @@ object EnvironmentSetupLogic {
                 )
                 "claude_code" -> buildProbeSnippet(
                     packageId = packageId,
-                    commandCheck = "PATH=\"/root/.npm-global/bin:${'$'}PATH\"; export PATH; command -v claude >/dev/null 2>&1 && claude --version >/dev/null 2>&1",
-                    versionCommand = "claude --version"
+                    commandCheck = "PATH=\"/root/.npm-global/bin:${'$'}PATH\"; export PATH; command -v claude-agent-acp >/dev/null 2>&1 && claude-agent-acp --version >/dev/null 2>&1",
+                    versionCommand = "claude-agent-acp --version"
                 )
                 "opencode" -> buildProbeSnippet(
                     packageId = packageId,
@@ -372,7 +374,7 @@ object EnvironmentSetupLogic {
             "pip" -> "command -v pip3 && pip3 --version"
             "uv" -> "command -v uv && uv --version"
             "codex" -> "PATH=\"/root/.npm-global/bin:${'$'}PATH\"; export PATH; command -v codex && codex --version"
-            "claude_code" -> "PATH=\"/root/.npm-global/bin:${'$'}PATH\"; export PATH; command -v claude && claude --version"
+            "claude_code" -> "PATH=\"/root/.npm-global/bin:${'$'}PATH\"; export PATH; command -v claude-agent-acp && claude-agent-acp --version"
             "opencode" -> "PATH=\"/root/.npm-global/bin:${'$'}PATH\"; export PATH; command -v opencode && opencode --version"
             "deepseek_harness" -> DEEPSEEK_HARNESS_CHECK_COMMAND
             "ripgrep" -> "command -v rg"
@@ -459,8 +461,8 @@ object EnvironmentSetupLogic {
         }
         if ("claude_code" in requested) {
             add(
-                "Claude Code CLI",
-                "PATH=\"/root/.npm-global/bin:${'$'}PATH\"; export PATH; claude --version >/dev/null 2>&1"
+                "Claude ACP adapter",
+                "PATH=\"/root/.npm-global/bin:${'$'}PATH\"; export PATH; claude-agent-acp --version >/dev/null 2>&1"
             )
         }
         if ("opencode" in requested) {

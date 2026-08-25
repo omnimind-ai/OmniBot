@@ -1,5 +1,11 @@
 set -e  # Exit immediately on Failure
 
+# 容器内新建文件默认 group 可写：配合宿主侧 workspace 的 setgid（group=app uid），
+# 让 chroot 容器内 root 写出的文件天然 App 可写，避免 owner=root 时 App 落 other 无写权限
+# （Agent 用 terminal 写 workspace 文件后 Flutter 编辑器保存报 Permission denied 的根因）。
+# 容器内 root 写 /root、/etc 等非 workspace 位置时 group 位多 rw 无实际风险（App 进不去这些目录）。
+umask 002
+
 export PATH=/root/.npm-global/bin:/root/.local/bin:/bin:/sbin:/usr/bin:/usr/sbin:/usr/share/bin:/usr/share/sbin:/usr/local/bin:/usr/local/sbin:/system/bin:/system/xbin
 export HOME=/root
 HEADLESS_MODE="${OMNIBOT_HEADLESS:-0}"
