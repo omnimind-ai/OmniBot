@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.ServiceConnection
 import android.os.Build
 import android.os.IBinder
+import com.rk.terminal.runtime.RootProbe
 import com.rk.terminal.service.SessionService
 import com.rk.terminal.ui.screens.settings.WorkingMode
 import com.rk.settings.Settings
@@ -45,39 +46,54 @@ object ReTerminalSessionBridge {
         sessionTitle: String? = null,
         extraEnv: Map<String, String> = emptyMap(),
         workingMode: Int = Settings.terminal_distribution
-    ): SessionAccessResult = withContext(Dispatchers.Main.immediate) {
-        val sessionBinder = awaitBinder(context)
-        val requestedSessionId = sessionId?.trim()?.takeIf { it.isNotEmpty() }
-        requestedSessionId?.let { existingId ->
-            sessionBinder.getSession(existingId)?.let { existing ->
-                val existingWorkingMode = sessionBinder.getService().sessionList[existingId]
-                if (existingWorkingMode != workingMode) {
+    ): SessionAccessResult {
+        // Agent 无头会话用独立开关 + 每次启动经 RootProbe 重检实际 uid/能力，
+        // 授权撤销则回退 proot 并改写持久化设置（开发者审查 P1#1 / P2#6）
+        val agentBackend = RootProbe.resolveAgentBackend()
+        return withContext(Dispatchers.Main.immediate) {
+            val sessionBinder = awaitBinder(context)
+            val requestedSessionId = sessionId?.trim()?.takeIf { it.isNotEmpty() }
+            requestedSessionId?.let { existingId ->
+                sessionBinder.getSession(existingId)?.let { existing ->
+                    val existingWorkingMode = sessionBinder.getService().sessionList[existingId]
+                    if (existingWorkingMode != workingMode) {
+                        sessionBinder.terminateSession(existingId)
+                        return@let
+                    }
+                    // 后端切换后旧会话必须重建：否则 Agent 复用切换前的 proot 会话（真机复现）
+                    if (SessionService.backendChanged(
+                            sessionBinder.backendOfSession(existingId),
+                            agentBackend
+                        )
+                    ) {
+                        sessionBinder.terminateSession(existingId)
+                        return@let
+                    }
+                    if (existing.isRunning || awaitSessionRunning(existing)) {
+                        return@withContext SessionAccessResult(
+                            sessionId = requestedSessionId,
+                            session = existing,
+                            created = false
+                        )
+                    }
                     sessionBinder.terminateSession(existingId)
-                    return@let
                 }
-                if (existing.isRunning || awaitSessionRunning(existing)) {
-                    return@withContext SessionAccessResult(
-                        sessionId = requestedSessionId,
-                        session = existing,
-                        created = false
-                    )
-                }
-                sessionBinder.terminateSession(existingId)
             }
+            val access = sessionBinder.createHeadlessSession(
+                requestedId = requestedSessionId,
+                context = context.applicationContext,
+                workingMode = workingMode,
+                sessionTitle = sessionTitle,
+                extraEnv = extraEnv,
+                agentBackend = agentBackend
+            )
+            awaitSessionRunning(access.session)
+            SessionAccessResult(
+                sessionId = access.sessionId,
+                session = access.session,
+                created = access.created
+            )
         }
-        val access = sessionBinder.createHeadlessSession(
-            requestedId = requestedSessionId,
-            context = context.applicationContext,
-            workingMode = workingMode,
-            sessionTitle = sessionTitle,
-            extraEnv = extraEnv
-        )
-        awaitSessionRunning(access.session)
-        SessionAccessResult(
-            sessionId = access.sessionId,
-            session = access.session,
-            created = access.created
-        )
     }
 
     suspend fun getSession(

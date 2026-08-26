@@ -10,6 +10,17 @@
     <string name="customizations">自定义</string>
     <string name="seccomp">SECCOMP</string>
     <string name="seccomp_desc">修复"操作不被允许"错误</string>
+    <string name="seccomp_on_hint">已开启 SECCOMP。部分系统调用会被拦截；若终端异常可关掉。</string>
+    <string name="seccomp_off_hint">已关闭 SECCOMP。若出现「操作不被允许」可再打开。</string>
+    <string name="container_backend_proot">proot（默认）</string>
+    <string name="container_backend_proot_desc">无需 Root，兼容性最好</string>
+    <string name="container_backend_chroot">chroot（实验）</string>
+    <string name="container_backend_chroot_desc">需要 Root（KernelSU），原生性能</string>
+    <string name="container_backend_root_denied">未获取 Root 权限，已保持 proot</string>
+    <string name="container_backend_agent">Agent 容器后端</string>
+    <string name="container_backend_agent_desc">AI agent 终端工具的后端。与终端 UI 的后端分开，避免 agent 静默获得 root</string>
+    <string name="container_backend_agent_chroot">agent 使用 chroot（root）</string>
+    <string name="container_backend_agent_chroot_desc">让 AI agent 在容器内获得真实 root。仅在你信任 agent 拥有 root 权限时开启</string>
     <string name="all_file_access">完整文件访问</string>
     <string name="all_file_access_desc">启用对 /sdcard 和 /storage 的访问</string>
     <string name="text_size">文字大小</string>
@@ -81,6 +92,6 @@
     <string name="ubuntu_package_mirror_tsinghua">清华镜像源</string>
     <string name="ubuntu_package_mirror_tsinghua_desc">mirrors.tuna.tsinghua.edu.cn/ubuntu-ports（默认；安全更新保留官方源）</string>
     <string name="ubuntu_package_mirror_applied">Ubuntu 软件源已更新。</string>
-    <string name="ubuntu_package_mirror_pending">已保存软件源设置，Ubuntu 初始化后会自动应用。</string>
+    <string name="ubuntu_package_mirror_pending">Ubuntu 尚未初始化，源设置已保存；初始化完成后才会写入 sources.list。</string>
     <string name="ubuntu_package_mirror_failed">软件源更新失败：%1$s</string>
 </resources>

@@ -1,12 +1,12 @@
 package cn.com.omnimind.bot.terminal
 
 import android.content.Context
-import android.os.Build
 import cn.com.omnimind.bot.agent.AgentWorkspaceManager
 import cn.com.omnimind.bot.termux.TermuxCommandBuilder
 import cn.com.omnimind.bot.termux.TermuxLiveUpdate
 import com.ai.assistance.operit.terminal.TerminalManager
 import com.ai.assistance.operit.terminal.provider.type.HiddenExecResult
+import com.rk.libcommons.RuntimeAbi
 import com.rk.terminal.runtime.AlpineRepositoryManager
 import com.rk.terminal.runtime.TerminalDistribution
 import com.rk.terminal.runtime.UbuntuRepositoryManager
@@ -225,7 +225,8 @@ object EmbeddedTerminalRuntime {
     }
 
     fun isSupportedDevice(): Boolean {
-        return Build.SUPPORTED_ABIS.any { it == "arm64-v8a" }
+        // 放行判断复用 RuntimeAbi 同一套 ABI 映射：下载链路与放行链路不得漂移（评审 Duplicated Code）
+        return RuntimeAbi.currentDeviceSupported()
     }
 
     suspend fun warmup(
@@ -271,7 +272,7 @@ object EmbeddedTerminalRuntime {
                 runtimeReady = false,
                 basePackagesReady = false,
                 missingCommands = emptyList(),
-                message = "当前设备 ABI 不受支持，内嵌终端环境仅支持 arm64-v8a。",
+                message = "当前设备 ABI 不受支持，内嵌终端环境仅支持 arm64-v8a / x86_64。",
                 nodeReady = false,
                 nodeVersion = null,
                 nodeMinMajor = NODE_MIN_MAJOR,
@@ -364,14 +365,14 @@ object EmbeddedTerminalRuntime {
                 onProgress,
                 EnvironmentProgress(
                     kind = EnvironmentProgress.Kind.ERROR,
-                    message = "当前设备 ABI 不受支持，内嵌终端环境仅支持 arm64-v8a。"
+                    message = "当前设备 ABI 不受支持，内嵌终端环境仅支持 arm64-v8a / x86_64。"
                 )
             )
             return EnvironmentStatus(
                 success = false,
                 initialized = false,
                 basePackagesReady = false,
-                message = "当前设备 ABI 不受支持，内嵌终端环境仅支持 arm64-v8a。"
+                message = "当前设备 ABI 不受支持，内嵌终端环境仅支持 arm64-v8a / x86_64。"
             )
         }
 
@@ -760,8 +761,9 @@ object EmbeddedTerminalRuntime {
         } catch (error: Throwable) {
             if (sessionAccess.created) {
                 sessionHandles.remove(actualSessionId)
+                // 走统一 stopSession：chroot 模式下连同 root 侧进程组一起回收（开发者审查 P1#2）
                 runCatching {
-                    ReTerminalSessionBridge.stopSession(context, actualSessionId)
+                    stopSession(context, actualSessionId)
                 }
             }
             throw error
@@ -887,6 +889,11 @@ object EmbeddedTerminalRuntime {
 
     suspend fun stopSession(context: Context, sessionId: String): Boolean {
         sessionHandles.remove(sessionId)
+        // chroot 模式下 terminateSession 只杀外层 su 客户端：
+        // root 侧进程组必须按 sessionId 显式整组回收（开发者审查 P1#2）
+        withContext(Dispatchers.IO) {
+            runCatching { TerminalManager.getInstance(context).killChrootProcessGroup(sessionId) }
+        }
         return runCatching {
             ReTerminalSessionBridge.stopSession(context, sessionId)
         }.getOrDefault(false)

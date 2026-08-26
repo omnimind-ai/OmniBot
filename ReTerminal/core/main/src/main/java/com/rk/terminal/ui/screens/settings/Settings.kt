@@ -41,6 +41,8 @@ import com.rk.terminal.runtime.UbuntuRepositoryManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.rk.libcommons.ContainerBackends
+import com.rk.terminal.runtime.RootProbe
 
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -346,6 +348,101 @@ fun Settings(modifier: Modifier = Modifier,navController: NavController,mainActi
         }
 
         PreferenceGroup {
+            // 容器后端切换：chroot 需要 root，切过去之前先探测 su 授权
+            var selectedBackend by remember { mutableIntStateOf(Settings.container_backend) }
+
+            fun selectBackend(backend: Int) {
+                if (backend == ContainerBackends.CHROOT) {
+                    scope.launch {
+                        if (RootProbe.isSuAvailable()) {
+                            Settings.container_backend = ContainerBackends.CHROOT
+                            selectedBackend = ContainerBackends.CHROOT
+                        } else {
+                            Toast.makeText(
+                                context,
+                                strings.container_backend_root_denied,
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    }
+                } else {
+                    Settings.container_backend = ContainerBackends.PROOT
+                    selectedBackend = ContainerBackends.PROOT
+                }
+            }
+
+            SettingsCard(
+                title = { Text(stringResource(strings.container_backend_proot)) },
+                description = { Text(stringResource(strings.container_backend_proot_desc)) },
+                startWidget = {
+                    RadioButton(
+                        modifier = Modifier.padding(start = 8.dp),
+                        selected = selectedBackend == ContainerBackends.PROOT,
+                        onClick = { selectBackend(ContainerBackends.PROOT) })
+                },
+                onClick = { selectBackend(ContainerBackends.PROOT) })
+
+            SettingsCard(
+                title = { Text(stringResource(strings.container_backend_chroot)) },
+                description = { Text(stringResource(strings.container_backend_chroot_desc)) },
+                startWidget = {
+                    RadioButton(
+                        modifier = Modifier.padding(start = 8.dp),
+                        selected = selectedBackend == ContainerBackends.CHROOT,
+                        onClick = { selectBackend(ContainerBackends.CHROOT) })
+                },
+                onClick = { selectBackend(ContainerBackends.CHROOT) })
+        }
+
+        PreferenceGroup {
+            // Agent 容器后端：独立于终端 UI 的开关。终端 UI 开 chroot 不应让 AI agent
+            // 静默获得真 root（开发者审查 P1 提权边界），必须在此单独开启并探测授权
+            var selectedAgentBackend by remember { mutableIntStateOf(Settings.agent_container_backend) }
+
+            fun selectAgentBackend(backend: Int) {
+                if (backend == ContainerBackends.CHROOT) {
+                    scope.launch {
+                        if (RootProbe.isSuAvailable()) {
+                            Settings.agent_container_backend = ContainerBackends.CHROOT
+                            selectedAgentBackend = ContainerBackends.CHROOT
+                        } else {
+                            Toast.makeText(
+                                context,
+                                strings.container_backend_root_denied,
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    }
+                } else {
+                    Settings.agent_container_backend = ContainerBackends.PROOT
+                    selectedAgentBackend = ContainerBackends.PROOT
+                }
+            }
+
+            SettingsCard(
+                title = { Text(stringResource(strings.container_backend_agent)) },
+                description = { Text(stringResource(strings.container_backend_agent_desc)) },
+                startWidget = {
+                    RadioButton(
+                        modifier = Modifier.padding(start = 8.dp),
+                        selected = selectedAgentBackend == ContainerBackends.PROOT,
+                        onClick = { selectAgentBackend(ContainerBackends.PROOT) })
+                },
+                onClick = { selectAgentBackend(ContainerBackends.PROOT) })
+
+            SettingsCard(
+                title = { Text(stringResource(strings.container_backend_agent_chroot)) },
+                description = { Text(stringResource(strings.container_backend_agent_chroot_desc)) },
+                startWidget = {
+                    RadioButton(
+                        modifier = Modifier.padding(start = 8.dp),
+                        selected = selectedAgentBackend == ContainerBackends.CHROOT,
+                        onClick = { selectAgentBackend(ContainerBackends.CHROOT) })
+                },
+                onClick = { selectAgentBackend(ContainerBackends.CHROOT) })
+        }
+
+        PreferenceGroup {
             SettingsToggle(
                 label = stringResource(strings.seccomp),
                 description = stringResource(strings.seccomp_desc),
@@ -353,6 +450,8 @@ fun Settings(modifier: Modifier = Modifier,navController: NavController,mainActi
                 default = Settings.seccomp,
                 sideEffect = {
                     Settings.seccomp = it
+                    val hint = if (it) strings.seccomp_on_hint else strings.seccomp_off_hint
+                    Toast.makeText(context, hint, Toast.LENGTH_LONG).show()
                 })
 
             SettingsToggle(

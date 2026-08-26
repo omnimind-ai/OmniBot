@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import androidx.annotation.RequiresApi
+import androidx.annotation.VisibleForTesting
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -33,6 +34,27 @@ class SessionService : Service() {
         private const val DEFAULT_CELL_WIDTH = 10
         private const val DEFAULT_CELL_HEIGHT = 20
         private const val AGENT_SESSION_ID_PREFIX = "session_"
+
+        /**
+         * 无头（Agent）会话基础环境：OMNIBOT_HEADLESS=1 让 root 段走 setsid + 写 pid 文件分支，
+         * OMNIBOT_EXECUTOR_KEY=sessionId 使 pid 文件按会话隔离——停止会话时 killpg 据此定位
+         * 进程组，不再共享 chroot-default.pid（开发者审查 P1#2）。
+         */
+        @VisibleForTesting
+        internal fun headlessBaseEnv(sessionId: String): LinkedHashMap<String, String> = linkedMapOf(
+            "OMNIBOT_HEADLESS" to "1",
+            "OMNIBOT_EXECUTOR_KEY" to sessionId,
+            "HOME" to "/root",
+            "PAGER" to "cat",
+            "GIT_PAGER" to "cat"
+        )
+
+        /**
+         * 会话后端是否已与当前 Agent 后端不一致：切换后端后旧会话必须终止重建，
+         * 否则 Agent 会复用切换前创建的 proot 会话（真机复现）；无记录按不一致处理。
+         * public：app 模块的 ReTerminalSessionBridge 也要用。
+         */
+        fun backendChanged(existing: Int?, current: Int): Boolean = existing != current
     }
 
     data class HeadlessSessionAccess(
@@ -42,6 +64,8 @@ class SessionService : Service() {
     )
 
     private val sessions = hashMapOf<String, TerminalSession>()
+    // 会话创建时的容器后端：Agent 切换后端后据此终止旧会话重建（见 backendChanged）
+    private val sessionBackends = hashMapOf<String, Int>()
     val sessionList = mutableStateMapOf<String,Int>()
     var currentSession = mutableStateOf(Pair("main",com.rk.settings.Settings.working_Mode))
 
@@ -54,6 +78,7 @@ class SessionService : Service() {
                 it.finishIfRunning()
             }
             sessions.clear()
+            sessionBackends.clear()
             sessionList.clear()
             currentSession.value = Pair("main", com.rk.settings.Settings.working_Mode)
             updateNotification()
@@ -80,6 +105,7 @@ class SessionService : Service() {
                 launchCommand = launchCommand
             ).also {
                 sessions[id] = it
+                sessionBackends[id] = com.rk.settings.Settings.container_backend
                 sessionList[id] = workingMode
                 currentSession.value = Pair(id, workingMode)
                 updateNotification()
@@ -91,7 +117,8 @@ class SessionService : Service() {
             context: android.content.Context,
             workingMode: Int,
             sessionTitle: String? = null,
-            extraEnv: Map<String, String> = emptyMap()
+            extraEnv: Map<String, String> = emptyMap(),
+            agentBackend: Int? = null
         ): HeadlessSessionAccess {
             val sessionId = resolveSessionId(requestedId)
             val existing = sessions[sessionId]
@@ -108,12 +135,7 @@ class SessionService : Service() {
                 )
             }
 
-            val mergedEnv = linkedMapOf(
-                "OMNIBOT_HEADLESS" to "1",
-                "HOME" to "/root",
-                "PAGER" to "cat",
-                "GIT_PAGER" to "cat"
-            ).apply {
+            val mergedEnv = headlessBaseEnv(sessionId).apply {
                 putAll(extraEnv)
             }
 
@@ -123,7 +145,10 @@ class SessionService : Service() {
                 session_id = sessionId,
                 workingMode = workingMode,
                 extraEnv = mergedEnv,
-                launchCommand = null
+                launchCommand = null,
+                // Agent 无头会话只认 agent 开关（默认读独立设置；桥接层会传入经 RootProbe
+                // 重检后的值），不认终端 UI 性能开关（开发者审查 P1#1）
+                backendOverride = agentBackend ?: com.rk.settings.Settings.agent_container_backend
             ).also { created ->
                 created.mSessionName = sessionTitle?.trim().takeUnless { it.isNullOrEmpty() }
                     ?: "Agent Session"
@@ -137,6 +162,7 @@ class SessionService : Service() {
                     )
                 }
                 sessions[sessionId] = created
+                sessionBackends[sessionId] = agentBackend ?: com.rk.settings.Settings.agent_container_backend
                 sessionList[sessionId] = workingMode
                 currentSession.value = Pair(sessionId, workingMode)
                 updateNotification()
@@ -152,6 +178,11 @@ class SessionService : Service() {
         fun getSession(id: String): TerminalSession? {
             return sessions[id]
         }
+
+        /** 会话创建时的容器后端；无记录返回 null（历史会话） */
+        fun backendOfSession(id: String): Int? {
+            return sessionBackends[id]
+        }
         fun terminateSession(id: String) {
             runCatching {
                 //crash is here
@@ -162,6 +193,7 @@ class SessionService : Service() {
                 }
 
                 sessions.remove(id)
+                sessionBackends.remove(id)
                 sessionList.remove(id)
                 if (sessions.isEmpty()) {
                     currentSession.value = Pair("main", com.rk.settings.Settings.working_Mode)

@@ -106,10 +106,10 @@ if [ ! -f "$ROOTFS_READY_MARKER" ]; then
         echo "Missing $TERMINAL_DISTRIBUTION rootfs archive: $ROOTFS_ARCHIVE" >&2
         exit 1
     fi
-    if ! run_child tar -xf "$ROOTFS_ARCHIVE" -C "$ROOTFS_DIR"; then
-        echo "Failed to extract $TERMINAL_DISTRIBUTION rootfs." >&2
-        exit 1
-    fi
+    # toybox tar 对绝对路径符号链接和 hard link 都会拒绝并返回非 0，
+    # 但这些错误对 ubuntu/alpine rootfs 实际运行无关键影响（perl 缺失别名、alternatives 缺等）；
+    # 用 || true 吞掉非 0 退出码，改由下面的 rootfs_has_minimum_layout / rootfs_has_legacy_layout 判定完整性
+    run_child tar -xf "$ROOTFS_ARCHIVE" -C "$ROOTFS_DIR" 2>/dev/null || true
     if ! rootfs_has_legacy_layout; then
         clear_incomplete_rootfs
         echo "Extracted $TERMINAL_DISTRIBUTION rootfs is incomplete." >&2
@@ -172,8 +172,8 @@ for system_mnt in /apex /odm /product /system /system_ext /vendor \
 done
 unset system_mnt
 
-ARGS="$ARGS -b /sdcard"
-ARGS="$ARGS -b /storage"
+[ -e /sdcard ] && ARGS="$ARGS -b /sdcard"
+[ -e /storage ] && ARGS="$ARGS -b /storage"
 ARGS="$ARGS -b /dev"
 ARGS="$ARGS -b /data"
 ARGS="$ARGS -b /dev/urandom:/dev/random"
@@ -220,7 +220,15 @@ ARGS="$ARGS -b $ROOTFS_DIR/tmp:/dev/shm"
 
 ARGS="$ARGS -r $ROOTFS_DIR"
 ARGS="$ARGS -0"
-ARGS="$ARGS --link2symlink"
+# PRoot's hardlink-to-symlink emulation is useful for the interactive shell,
+# but it breaks atomic writers used by official ACP runtimes.  Those writers
+# create a temporary file and then link/rename it into place; under this mode
+# the final path can point at a temporary name that no longer exists.  Keep
+# the historical default for ordinary terminal sessions and let ACP launchers
+# opt out explicitly.
+if [ "${OMNIBOT_DISABLE_PROOT_LINK2SYMLINK:-0}" != "1" ]; then
+  ARGS="$ARGS --link2symlink"
+fi
 ARGS="$ARGS --sysvipc"
 ARGS="$ARGS -L"
 

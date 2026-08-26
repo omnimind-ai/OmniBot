@@ -29,6 +29,9 @@ val libtallocDebChecksum = "ac81ad623d74c209718b9f3acb2dd702cc8a88c431e820d21222
 val alpineMiniRootfsUrl =
     "https://dl-cdn.alpinelinux.org/alpine/v3.21/releases/aarch64/alpine-minirootfs-3.21.0-aarch64.tar.gz"
 val alpineMiniRootfsChecksum = "f31202c4070c4ef7de9e157e1bd01cb4da3a2150035d74ea5372c5e86f1efac1"
+val alpineMiniRootfsX86_64Url =
+    "https://mirrors.aliyun.com/alpine/v3.21/releases/x86_64/alpine-minirootfs-3.21.0-x86_64.tar.gz"
+val alpineMiniRootfsX86_64Checksum = "55ea3e5a7c2c35e6268c5dcbb8e45a9cd5b0e372e7b4e798499a526834f7ed90"
 val terminalRuntimeManifestUrl = providers.gradleProperty("OMNIBOT_TERMINAL_RUNTIME_MANIFEST_URL")
     .orElse(providers.environmentVariable("OMNIBOT_TERMINAL_RUNTIME_MANIFEST_URL"))
     .getOrElse("")
@@ -196,6 +199,9 @@ fun unpackDebData(debFile: File, targetDir: File) {
     targetDir.deleteRecursively()
     targetDir.mkdirs()
     exec {
+        // Windows bsdtar 解 deb 时 doc/copyright 等个别非关键 entry 会报 Invalid argument
+        // 导致退出码非 0；关键文件齐备性由下游 copyRuntimeFile 的 check 兜底，故容忍退出码
+        isIgnoreExitValue = true
         commandLine("tar", "-xJf", dataArchive.absolutePath, "-C", targetDir.absolutePath)
     }
 }
@@ -220,6 +226,8 @@ val prepareEmbeddedTerminalRuntime by tasks.registering {
     inputs.property("libtallocDebChecksum", libtallocDebChecksum)
     inputs.property("alpineMiniRootfsUrl", alpineMiniRootfsUrl)
     inputs.property("alpineMiniRootfsChecksum", alpineMiniRootfsChecksum)
+    inputs.property("alpineMiniRootfsX86_64Url", alpineMiniRootfsX86_64Url)
+    inputs.property("alpineMiniRootfsX86_64Checksum", alpineMiniRootfsX86_64Checksum)
     outputs.dir(outputDir)
     outputs.dir(jniOutputDir)
     doLast {
@@ -278,6 +286,12 @@ val prepareEmbeddedTerminalRuntime by tasks.registering {
             remoteUrl = alpineMiniRootfsUrl,
             expectedChecksum = alpineMiniRootfsChecksum
         )
+        // x86_64 模拟器/VM 的 alpine rootfs（与 arm64 并列打包，运行时按设备 ABI 选用）
+        downloadRuntimeFile(
+            localPath = root.resolve("alpine-x86_64.tar.gz").absolutePath,
+            remoteUrl = alpineMiniRootfsX86_64Url,
+            expectedChecksum = alpineMiniRootfsX86_64Checksum
+        )
     }
 }
 
@@ -318,4 +332,6 @@ dependencies {
 
     api(project(":core:resources"))
     api(project(":core:components"))
+
+    testImplementation(libs.junit)
 }

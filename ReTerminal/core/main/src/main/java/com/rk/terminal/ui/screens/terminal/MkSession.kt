@@ -3,6 +3,7 @@ package com.rk.terminal.ui.screens.terminal
 import android.content.Context
 import android.os.Environment
 import android.util.Log
+import com.rk.libcommons.ContainerBackends
 import com.rk.libcommons.OmnibotTerminalEnvironment
 import com.rk.libcommons.ShellArgv
 import com.rk.libcommons.ShellAssetWriter
@@ -18,6 +19,7 @@ import com.rk.settings.Settings
 import com.rk.terminal.App
 import com.rk.terminal.App.Companion.getTempDir
 import com.rk.terminal.BuildConfig
+import com.rk.terminal.runtime.ChrootRootfsOwnerRepair
 import com.rk.terminal.runtime.AlpineRepositoryManager
 import com.rk.terminal.runtime.TerminalDistribution
 import com.rk.terminal.runtime.UbuntuRepositoryManager
@@ -35,7 +37,8 @@ object MkSession {
         session_id: String,
         workingMode: Int,
         extraEnv: Map<String, String> = emptyMap(),
-        launchCommand: TerminalCommand? = null
+        launchCommand: TerminalCommand? = null,
+        backendOverride: Int? = null
     ): TerminalSession {
         with(context) {
             val hostWorkspaceDir = File(applicationInfo.dataDir, "workspace").also { directory ->
@@ -58,8 +61,29 @@ object MkSession {
             val distribution = TerminalDistribution.fromWorkingMode(workingMode)
             val workingDir = launchCommand?.workingDir ?: terminalHomeDir(workingMode).path
 
-            val initFile: File = localBinDir().child("init-host")
-            ShellAssetWriter.writeExecutableShellAsset(this, "init-host.sh", initFile)
+            // 按调用方指定的容器后端选择启动脚本；chroot 还需额外落盘 root 段脚本。
+            // backendOverride 为空时跟随终端 UI 开关（交互会话）；Agent 无头会话必须显式传
+            // agent 开关值，避免被终端性能开关静默提权（开发者审查 P1#1）
+            val backend = ContainerBackends.forSession(backendOverride, Settings.container_backend)
+            val initFile: File = localBinDir().child(ContainerBackends.initHostFileName(backend))
+            ShellAssetWriter.writeExecutableShellAsset(this, ContainerBackends.initHostAsset(backend), initFile)
+            if (ContainerBackends.isChroot(backend)) {
+                ShellAssetWriter.writeExecutableShellAsset(
+                    this,
+                    ContainerBackends.INIT_HOST_CHROOT_ROOT_ASSET,
+                    localBinDir().child(ContainerBackends.INIT_HOST_CHROOT_ROOT_FILE)
+                )
+                // 同时落盘 proot 版启动脚本：chroot 脚本在 su 不可用时会自动回退 proot
+                ShellAssetWriter.writeExecutableShellAsset(
+                    this,
+                    ContainerBackends.INIT_HOST_ASSET,
+                    localBinDir().child(ContainerBackends.initHostFileName(ContainerBackends.PROOT))
+                )
+                // 交互会话宿主侧 cwd 指向 rootfs/root（terminalHomeDir），App 进程要 chdir 进它。
+                // chroot 容器内 root 用户写过的 /root 属主漂移成 root:700，App 无权限进入，
+                // termux.c chdir 失败（非致命但产生噪音 + cwd 错乱）。这里经 su 修回 app 属主
+                ChrootRootfsOwnerRepair.ensureAccessible()
+            }
 
 
             localBinDir().child("init").apply {

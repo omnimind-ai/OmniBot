@@ -1,5 +1,6 @@
 package com.rk.terminal.runtime
 
+import com.rk.libcommons.RuntimeAbi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
@@ -98,6 +99,23 @@ class EmbeddedRuntimeInstallerTest {
         assertEquals("https", entry.downloadUrl.scheme)
     }
 
+    @Test
+    fun usesPinnedOfficialX86_64UbuntuRuntime() {
+        val entry = EmbeddedRuntimeInstaller.officialUbuntuRuntime(abi = "x86_64")
+
+        assertEquals("ubuntu", entry.id)
+        assertEquals("24.04.4", entry.version)
+        assertEquals("x86_64", entry.abi)
+        assertEquals("ubuntu-base-24.04.4-base-amd64.tar.gz", entry.fileName)
+        assertEquals(29_989_394L, entry.compressedSize)
+        assertEquals(
+            "c1e67ef7b17a6300e136118bd1dc04725009cb376c1aad10abcf8cd453628d58",
+            entry.sha256
+        )
+        assertEquals("cdimage.ubuntu.com", entry.downloadUrl.host)
+        assertEquals("https", entry.downloadUrl.scheme)
+    }
+
     private fun manifest(
         id: String = "ubuntu",
         abi: String = "arm64-v8a",
@@ -128,6 +146,24 @@ class EmbeddedRuntimeInstallerTest {
         assertEquals("ubuntu", entry.id)
         assertEquals("24.04.4", entry.version)
         assertEquals("arm64-v8a", entry.abi)
+        assertEquals(2_000_000, entry.compressedSize)
+        assertEquals("https", entry.downloadUrl.scheme)
+    }
+
+    @Test
+    fun parsesPinnedX86_64Runtime() {
+        val entry = EmbeddedRuntimeInstaller.parseManifest(
+            manifest(
+                abi = "x86_64",
+                url = "https://updates.example/terminal-runtimes/downloads/ubuntu/24.04.4/ubuntu-x86_64.tar.gz"
+            ),
+            "ubuntu",
+            abi = "x86_64"
+        )
+
+        assertEquals("ubuntu", entry.id)
+        assertEquals("24.04.4", entry.version)
+        assertEquals("x86_64", entry.abi)
         assertEquals(2_000_000, entry.compressedSize)
         assertEquals("https", entry.downloadUrl.scheme)
     }

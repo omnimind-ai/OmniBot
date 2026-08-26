@@ -11,6 +11,7 @@ import com.ai.assistance.operit.terminal.data.TerminalSessionData
 import com.ai.assistance.operit.terminal.data.TerminalState
 import com.ai.assistance.operit.terminal.provider.type.HiddenExecResult
 import com.ai.assistance.operit.terminal.provider.type.TerminalType
+import com.rk.libcommons.ContainerBackends
 import com.rk.libcommons.OmnibotTerminalEnvironment
 import com.rk.libcommons.ShellArgv
 import com.rk.libcommons.ShellAssetWriter
@@ -21,6 +22,7 @@ import com.rk.terminal.App
 import com.rk.terminal.runtime.EmbeddedRuntimeInstaller
 import com.rk.terminal.runtime.EmbeddedRuntimeInstaller.RuntimeInstallProgress
 import com.rk.terminal.runtime.AlpineRepositoryManager
+import com.rk.terminal.runtime.RootProbe
 import com.rk.terminal.runtime.TerminalDistribution
 import com.rk.terminal.runtime.UbuntuRepositoryManager
 import com.termux.terminal.TerminalEmulator
@@ -49,6 +51,8 @@ import java.io.File
 import java.io.IOException
 import java.io.InterruptedIOException
 import java.nio.charset.StandardCharsets
+import java.util.Collections
+import java.util.IdentityHashMap
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
@@ -76,6 +80,11 @@ class TerminalManager private constructor(
     private val _commandExecutionEvents = MutableSharedFlow<CommandExecutionEvent>(extraBufferCapacity = 64)
     private val _directoryChangeEvents = MutableSharedFlow<SessionDirectoryEvent>(extraBufferCapacity = 32)
     private var preferredTerminalTypeOverride: TerminalType? = null
+
+    // hidden exec 外层进程 → executorKey：手动停止（bindStopAction 只拿到 Process）时
+    // 据此找回 executorKey 做 chroot 进程组回收；进程结束即注销，身份比较用 IdentityHashMap
+    private val hiddenExecKeysByProcess =
+        Collections.synchronizedMap(IdentityHashMap<Process, String>())
 
     val terminalState: StateFlow<TerminalState> = _terminalState.asStateFlow()
     val commandExecutionEvents: SharedFlow<CommandExecutionEvent> = _commandExecutionEvents.asSharedFlow()
@@ -261,8 +270,9 @@ class TerminalManager private constructor(
         }
 
         return withContext(Dispatchers.IO) {
+            val uniqueKey = uniqueExecutorKey(executorKey, System.nanoTime())
             val process = runCatching {
-                buildHiddenExecProcess(executorKey, command, distribution).start()
+                buildHiddenExecProcess(uniqueKey, command, distribution).start()
             }.getOrElse { error ->
                 return@withContext HiddenExecResult(
                     output = "",
@@ -271,62 +281,74 @@ class TerminalManager private constructor(
                     error = error.message ?: "Failed to start terminal environment shell."
                 )
             }
-            onProcessStarted?.invoke(process)
+            // 先注册再回调：onProcessStarted 内可能立即处理手动停止，
+            // destroyHiddenExecCompletely 依赖这里的 executorKey 注册
+            hiddenExecKeysByProcess[process] = uniqueKey
+            try {
+                onProcessStarted?.invoke(process)
 
-            withCancellableHiddenExecProcess(process) {
-                coroutineScope {
-                    val outputChannel = Channel<String>(Channel.UNLIMITED)
-                    val outputBuffer = StringBuilder()
-                    val reader = launch {
-                        try {
-                            process.inputStream.bufferedReader().useLines { lines ->
-                                lines.forEach { line ->
-                                    val chunk = "$line\n"
-                                    outputBuffer.append(chunk)
-                                    outputChannel.trySend(chunk)
+                withCancellableHiddenExecProcess(
+                    process,
+                    onCancellationKill = { killChrootProcessGroup(uniqueKey) }
+                ) {
+                    coroutineScope {
+                        val outputChannel = Channel<String>(Channel.UNLIMITED)
+                        val outputBuffer = StringBuilder()
+                        val reader = launch {
+                            try {
+                                process.inputStream.bufferedReader().useLines { lines ->
+                                    lines.forEach { line ->
+                                        val chunk = "$line\n"
+                                        outputBuffer.append(chunk)
+                                        outputChannel.trySend(chunk)
+                                    }
                                 }
+                            } catch (error: Throwable) {
+                                if (error is CancellationException) {
+                                    throw error
+                                }
+                                if (!isExpectedHiddenExecReaderTermination(error)) {
+                                    Log.w(TAG, "Hidden exec reader terminated unexpectedly", error)
+                                }
+                            } finally {
+                                outputChannel.close()
                             }
-                        } catch (error: Throwable) {
-                            if (error is CancellationException) {
-                                throw error
-                            }
-                            if (!isExpectedHiddenExecReaderTermination(error)) {
-                                Log.w(TAG, "Hidden exec reader terminated unexpectedly", error)
-                            }
-                        } finally {
-                            outputChannel.close()
                         }
-                    }
 
-                    val forwarder = launch {
-                        for (chunk in outputChannel) {
-                            onOutputChunk(chunk)
+                        val forwarder = launch {
+                            for (chunk in outputChannel) {
+                                onOutputChunk(chunk)
+                            }
                         }
-                    }
 
-                    val finished = process.waitFor(timeoutMs, TimeUnit.MILLISECONDS)
-                    if (!finished) {
-                        terminateHiddenExecProcess(process)
+                        val finished = process.waitFor(timeoutMs, TimeUnit.MILLISECONDS)
+                        if (!finished) {
+                            // 先整组回收 root 侧进程（chroot 模式），再走统一终止逻辑（开发者审查 P1；融合上游 terminateHiddenExecProcess）
+                            killChrootProcessGroup(uniqueKey)
+                            terminateHiddenExecProcess(process)
+                            reader.join()
+                            forwarder.join()
+                            return@coroutineScope HiddenExecResult(
+                                output = outputBuffer.toString(),
+                                exitCode = -1,
+                                state = HiddenExecResult.State.TIMEOUT,
+                                error = "Command timed out after ${timeoutMs}ms",
+                                rawOutputPreview = outputBuffer.toString().takeLast(4000)
+                            )
+                        }
+
                         reader.join()
                         forwarder.join()
-                        return@coroutineScope HiddenExecResult(
+                        HiddenExecResult(
                             output = outputBuffer.toString(),
-                            exitCode = -1,
-                            state = HiddenExecResult.State.TIMEOUT,
-                            error = "Command timed out after ${timeoutMs}ms",
+                            exitCode = process.exitValue(),
+                            state = HiddenExecResult.State.OK,
                             rawOutputPreview = outputBuffer.toString().takeLast(4000)
                         )
                     }
-
-                    reader.join()
-                    forwarder.join()
-                    HiddenExecResult(
-                        output = outputBuffer.toString(),
-                        exitCode = process.exitValue(),
-                        state = HiddenExecResult.State.OK,
-                        rawOutputPreview = outputBuffer.toString().takeLast(4000)
-                    )
                 }
+            } finally {
+                hiddenExecKeysByProcess.remove(process)
             }
         }
     }
@@ -343,7 +365,10 @@ class TerminalManager private constructor(
                 executorKey = executorKey,
                 command = command,
                 redirectErrorStream = redirectErrorStream,
-                extraEnvironment = extraEnvironment
+                // 长驻进程（ACP）无交互 tty 需求：强制 headless 让 root 段 setsid + 写 pid 文件，
+                // 否则 killChrootProcessGroup 读不到 pgid 空转，close 后 root 进程残留（开发者审查 P1#2）。
+                // 放最后覆盖：即使调用方误传 OMNIBOT_HEADLESS 也不许关掉监督
+                extraEnvironment = extraEnvironment + mapOf("OMNIBOT_HEADLESS" to "1")
             ).start()
         }
     }
@@ -408,6 +433,9 @@ class TerminalManager private constructor(
         buildEnvironmentMap(sessionId = executorKey, distribution = distribution).forEach { (key, value) ->
             env[key] = value
         }
+        // 会话标识透传 root 段：进程组回收时据此定位 pid 文件（开发者审查 P1）。
+        // 做文件名安全化，避免 executorKey 含 '/' 等破坏 launcher 内的 pid 文件路径
+        env["OMNIBOT_EXECUTOR_KEY"] = executorKey.replace(Regex("[^A-Za-z0-9_.-]"), "_")
         extraEnvironment.forEach { (key, value) ->
             if (key.isNotBlank()) {
                 env[key] = value
@@ -464,12 +492,69 @@ class TerminalManager private constructor(
     }
 
     private fun ensureShellScripts(): File {
-        val initHost = localBinDir().resolve("init-host")
-        ShellAssetWriter.writeExecutableShellAsset(context, "init-host.sh", initHost)
+        // Agent 链路读独立开关：终端 UI 开 chroot 不自动放行 Agent 提权（开发者审查 P1#1）。
+        // 且每次启动经 RootProbe 重检实际 uid/能力，授权撤销则回退 proot 并改写持久化设置（P2#6）
+        val backend = RootProbe.resolveAgentBackendBlocking()
+        val initHost = localBinDir().resolve(ContainerBackends.initHostFileName(backend))
+        ShellAssetWriter.writeExecutableShellAsset(context, ContainerBackends.initHostAsset(backend), initHost)
+        if (ContainerBackends.isChroot(backend)) {
+            ShellAssetWriter.writeExecutableShellAsset(
+                context,
+                ContainerBackends.INIT_HOST_CHROOT_ROOT_ASSET,
+                localBinDir().resolve(ContainerBackends.INIT_HOST_CHROOT_ROOT_FILE)
+            )
+            // 同时落盘 proot 版启动脚本：chroot 脚本在 su 不可用时会自动回退 proot
+            ShellAssetWriter.writeExecutableShellAsset(
+                context,
+                ContainerBackends.INIT_HOST_ASSET,
+                localBinDir().resolve(ContainerBackends.initHostFileName(ContainerBackends.PROOT))
+            )
+        }
 
         val init = localBinDir().resolve("init")
         ShellAssetWriter.writeExecutableShellAsset(context, "init.sh", init)
         return initHost
+    }
+
+    /**
+     * 手动停止入口（terminal_execute 的 bindStopAction 只拿得到外层 Process）：
+     * 先按注册表找回 executorKey 整组回收 root 侧子孙，再强杀外层进程。
+     * proot 模式下 killChrootProcessGroup 首行即返回，零开销。
+     */
+    fun destroyHiddenExecCompletely(process: Process) {
+        val executorKey = hiddenExecKeysByProcess[process]
+        if (executorKey != null) {
+            killChrootProcessGroup(executorKey)
+        } else {
+            Log.d(TAG, "destroyHiddenExecCompletely: no executorKey registered for process")
+        }
+        runCatching { process.destroyForcibly() }
+    }
+
+    /**
+     * 进程组回收：chroot 模式下 root 段 setsid 并把 pgid 写入 pid 文件，
+     * 停止/超时/关闭时经 su 显式整组 kill，避免 root 命令子进程在工具报告停止后残留
+     * （开发者审查 P1：destroyForcibly 只杀外层 sh/su 客户端，daemon 侧 root 命令会成孤儿）。
+     */
+    fun killChrootProcessGroup(executorKey: String) {
+        if (Settings.agent_container_backend != ContainerBackends.CHROOT) return
+        val safeKey = ChrootProcessReaper.sanitizeExecutorKey(executorKey)
+        val pidFile = File(context.filesDir.parentFile, "local/run/chroot-$safeKey.pid")
+        val pgid = ChrootProcessReaper.readPgidFromFile(pidFile)
+        if (pgid == null) {
+            Log.w(TAG, "chroot pid file missing or unread: ${pidFile.absolutePath}")
+            return
+        }
+        val finished = runCatching {
+            ProcessBuilder("su", "-c", "kill -KILL -- -$pgid")
+                .start()
+                .waitFor(3, TimeUnit.SECONDS)
+        }.onFailure { error ->
+            Log.w(TAG, "killpg -$pgid failed", error)
+        }.getOrDefault(false)
+        if (!finished) {
+            Log.w(TAG, "killpg -$pgid timed out; outer destroyForcibly will still run")
+        }
     }
 
     private fun handleSessionChanged(handle: ManagedSession) {
@@ -613,12 +698,16 @@ class TerminalManager private constructor(
 
 internal suspend fun <T> withCancellableHiddenExecProcess(
     process: Process,
+    onCancellationKill: () -> Unit = {},
     block: suspend () -> T
 ): T = coroutineScope {
     val cancellationWatcher = launch(start = CoroutineStart.UNDISPATCHED) {
         try {
             awaitCancellation()
         } finally {
+            // 协程取消（手动停止/作用域关闭）也要先整组回收 root 侧子孙：
+            // 只 destroy 外层 sh/su 客户端会让 chroot 内命令成孤儿（开发者审查 P1）
+            onCancellationKill()
             terminateHiddenExecProcess(process)
         }
     }
@@ -646,6 +735,12 @@ internal fun terminateHiddenExecProcess(process: Process) {
 }
 
 private const val HIDDEN_EXEC_TERMINATION_GRACE_MS = 500L
+
+/**
+ * 每次启动追加非零后缀：并发同命令共享同一 executor key 会互相清空 pid 文件
+ * （真机 14:56 抓到两路 embedded-462664006 并发），导致停止时 killpg 失联、root 进程残留。
+ */
+internal fun uniqueExecutorKey(base: String, nonce: Long): String = "$base-$nonce"
 
 internal fun isExpectedHiddenExecReaderTermination(error: Throwable): Boolean {
     var current: Throwable? = error
