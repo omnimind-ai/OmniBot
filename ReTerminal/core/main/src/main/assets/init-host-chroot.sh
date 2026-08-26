@@ -4,6 +4,8 @@
 # 为什么 argv 走 launcher 文件：su -c 只接受单个 shell 字符串，
 # 直接拼接 "$@" 会被二次解析破坏（Agent 命令含空格引号），
 # 因此把完整 argv 以正确 quoting 写进临时 launcher 再交给 su 执行。
+# 重构要点（2026-08-25）：rootfs 解包/属主修正全部移到 root 段（su 进程内），
+# App 进程不再直接操作 rootfs → 属主天然 root，无 chown 补丁，无卡死。
 
 TERMINAL_DISTRIBUTION=${OMNIBOT_TERMINAL_DISTRIBUTION:-alpine}
 case "$TERMINAL_DISTRIBUTION" in
@@ -12,40 +14,15 @@ case "$TERMINAL_DISTRIBUTION" in
 esac
 
 ROOTFS_DIR=$PREFIX/local/$TERMINAL_DISTRIBUTION
-ROOTFS_ARCHIVE=$PREFIX/files/$TERMINAL_DISTRIBUTION.tar.gz
 
-[ ! -f "$ROOTFS_ARCHIVE" ] && ROOTFS_ARCHIVE=$PREFIX/files/$TERMINAL_DISTRIBUTION.tar
-
-# rootfs 顶层目录必须允许 App(uid=app_uid) 进入：本脚本以 App 进程运行，需要
-# ls/mkdir $ROOTFS_DIR/{workspace,mnt,mt,tmp}。rootfs 归 root 后顶层是 700，App 进不去
-# 会 Permission denied。这里在访问 rootfs 前先经 su 把顶层 chmod 755（只开放进入权，
-# 内部文件仍 root 属主，apt/dpkg 需要）。su 不可用则忽略，后续 root 段会处理。
-su -c "chmod 755 '$ROOTFS_DIR' '$ROOTFS_DIR/mnt' '$ROOTFS_DIR/workspace' '$ROOTFS_DIR/tmp'" 2>/dev/null || true
-
-mkdir -p "$ROOTFS_DIR"
-
-# rootfs 已解包则跳过（root/tmp 是解包后固有目录，与 init-host.sh 判定一致）
-if [ -z "$(ls -A "$ROOTFS_DIR" | grep -vE '^(root|tmp)$')" ]; then
-    # toybox tar 对绝对路径符号链接和 hard link 都会拒绝并返回非 0，
-    # 但这些错误对 ubuntu/alpine rootfs 实际运行无关键影响（perl 缺失别名、alternatives 缺等）；
-    # 用 || true 吞掉非 0 退出码，改由 rootfs_has_minimum_layout / rootfs_has_legacy_layout 判定完整性
-    tar -xf "$ROOTFS_ARCHIVE" -C "$ROOTFS_DIR" 2>/dev/null || true
-fi
+# rootfs 解包由 root 段完成（su 进程内，属主 root）。host 段不碰 rootfs，
+# 只把 ROOTFS_DIR 导出给 root 段用。App 进程无需进入 rootfs。
 
 FIPS_COMPAT_FILE="$PREFIX/local/sysctl_crypto_fips_enabled"
 [ ! -f "$FIPS_COMPAT_FILE" ] && {
     mkdir -p "$PREFIX/local"
     printf '0\n' > "$FIPS_COMPAT_FILE"
 }
-
-if [ -n "$OMNIBOT_HOST_WORKSPACE" ]; then
-    mkdir -p "$OMNIBOT_HOST_WORKSPACE"
-    mkdir -p "$ROOTFS_DIR/workspace"
-fi
-
-if [ -n "$OMNIBOT_MT_STORAGE_HOST" ] && [ -d "$OMNIBOT_MT_STORAGE_HOST" ]; then
-    mkdir -p "$ROOTFS_DIR/mnt/mt" "$ROOTFS_DIR/mt"
-fi
 
 mkdir -p "$PREFIX/local/bin" "$PREFIX/local/lib"
 
@@ -56,14 +33,6 @@ if [ ! -f "$ROOT_SCRIPT" ]; then
     exit 1
 fi
 chmod 755 "$ROOT_SCRIPT" 2>/dev/null
-
-if [ ! -d "$ROOTFS_DIR/tmp" ]; then
-    mkdir -p "$ROOTFS_DIR/tmp"
-fi
-# apk_data_file 可能拒 sticky bit；失败只告警，tmp 仍可用
-if ! chmod 1777 "$ROOTFS_DIR/tmp" 2>/dev/null; then
-    echo "init-host-chroot: warning: cannot chmod 1777 $ROOTFS_DIR/tmp" >&2
-fi
 
 # su 可用性运行时探测：授权被撤销/KernelSU 限制时自动回退 proot（每次启动都检查，
 # 不依赖设置页切换时刻的状态——开发者审查要求「每次启动重新检查、失败则回退」）
@@ -94,7 +63,7 @@ shell_quote() {
     printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
 }
 
-# 历史 launcher 按年龄回收：崩溃残留不会被 trap 清到；只删 mtime 超过 2 天的，
+# 历史 launcher 按年龄回收：崩溃残留会被 trap 清到；只删 mtime 超过 2 天的，
 # 并发会话刚创建的文件 mtime 是新的、不受影响（开发者审查 P2#5：禁止 glob 全删）
 find "$PREFIX/local/bin" -maxdepth 1 -name '.chroot-launcher.*' -mtime +1 -delete 2>/dev/null || true
 
