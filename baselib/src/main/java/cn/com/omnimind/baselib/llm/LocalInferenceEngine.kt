@@ -1,7 +1,6 @@
 package cn.com.omnimind.baselib.llm
 
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.withContext
@@ -52,12 +51,10 @@ object LocalInferenceEngine {
     ): Flow<Event> = channelFlow {
         if (!isLoaded()) {
             trySend(Event.Error("Offline model is not loaded."))
-            close()
             return@channelFlow
         }
         if (messages.isEmpty()) {
             trySend(Event.Error("At least one chat message is required."))
-            close()
             return@channelFlow
         }
 
@@ -84,8 +81,6 @@ object LocalInferenceEngine {
                 trySend(if (LocalInferenceEngineNative.nativeIsLoaded()) Event.Complete else Event.Cancelled)
             }
         }
-
-        awaitClose { }
     }
 
     fun shutdown() {
