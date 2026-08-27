@@ -31,6 +31,7 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
   bool _refreshing = false;
   String? _error;
   String? _busyAgentId;
+  int _catalogRequestId = 0;
   late Set<String> _preparingAgentIds;
   StreamSubscription<Set<String>>? _preparationSubscription;
   String _sharedModelLabel = '';
@@ -54,6 +55,9 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
           setState(() => _preparingAgentIds = agentIds);
           if (completed) unawaited(_load());
         });
+    // The native agent/list endpoint returns cached health. Keep route entry
+    // immediate; users can request the full terminal/proot probe with the
+    // refresh action without blocking this page.
     unawaited(_load());
     unawaited(_loadSharedModel());
     unawaited(_loadRemoteBridge());
@@ -103,6 +107,7 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
   }
 
   Future<void> _load({bool refresh = false}) async {
+    final requestId = ++_catalogRequestId;
     if (refresh) {
       setState(() => _refreshing = true);
     }
@@ -110,7 +115,7 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
       final catalog = refresh
           ? await AgentRuntimeService.refreshAgents()
           : await AgentRuntimeService.listAgents();
-      if (!mounted) return;
+      if (!mounted || requestId != _catalogRequestId) return;
       setState(() {
         _catalog = catalog;
         _loading = false;
@@ -118,7 +123,7 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
         _error = null;
       });
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted || requestId != _catalogRequestId) return;
       setState(() {
         _loading = false;
         _refreshing = false;
@@ -180,8 +185,7 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
         // profile. `dsh` is only the discovery command; the Android ACP
         // launcher is `dsh-acp-android`.
         command: 'dsh-acp-android',
-        description:
-            'DeepSeek Harness official ACP profile',
+        description: 'DeepSeek Harness official ACP profile',
         arguments: <String>['--profile', 'acp'],
         builtIn: true,
         source: 'official',
@@ -666,6 +670,7 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
         : _text('重新检测', 'Check again');
     final installEntry = agent.managedAdapter && agent.status != 'online';
     final action = needsManagedPreparation ? _prepare : _test;
+    final capabilitySubtitle = _capabilitySubtitle(agent);
     return _FlatTile(
       tileKey: Key('agent-config-${agent.id}'),
       leading: AgentBrandIcon(
@@ -680,10 +685,13 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
           : !agent.enabled
           ? _text('已停用', 'Disabled')
           : status.label,
-      subtitle: agent.description.isNotEmpty
-          ? agent.description
-          : ([agent.command, ...agent.arguments]).join(' '),
-      subtitleMonospace: agent.description.isEmpty,
+      subtitle:
+          capabilitySubtitle ??
+          (agent.description.isNotEmpty
+              ? agent.description
+              : ([agent.command, ...agent.arguments]).join(' ')),
+      subtitleMonospace:
+          capabilitySubtitle == null && agent.description.isEmpty,
       errorText: hasError && !preparing ? agent.lastCheckError : null,
       actionLabel: canTest ? testLabel : null,
       actionKey: Key('agent-check-${agent.id}'),
@@ -699,6 +707,29 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
           ? () => _prepare(agent)
           : () => _openAgentConfig(agent),
     );
+  }
+
+  /// Surface the common plugin workflow without exposing a raw capability
+  /// dump. The source remains the generic ACP profile capabilities map; this
+  /// page does not branch the runtime by vendor.
+  String? _capabilitySubtitle(AcpAgentProfile agent) {
+    final plugin = agent.capabilities['plugin'];
+    if (plugin is! Map || plugin['supported'] != true) return null;
+    final authoring = plugin['authoring'] == true;
+    final install = plugin['installViaHarness'] == true;
+    if (!authoring && !install) return null;
+    if (_english) {
+      return authoring && install
+          ? 'Plugins: create and install through the Harness'
+          : authoring
+          ? 'Plugins: create through the Harness'
+          : 'Plugins: install through the Harness';
+    }
+    return authoring && install
+        ? '插件：可创建，并由 Harness 安装'
+        : authoring
+        ? '插件：可通过 Harness 创建'
+        : '插件：可通过 Harness 安装';
   }
 }
 

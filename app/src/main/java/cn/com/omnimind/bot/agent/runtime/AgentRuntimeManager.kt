@@ -323,7 +323,9 @@ class AgentRuntimeManager private constructor(
             null
         }
         val connected = if (runtime.kind == AgentRuntimeKind.LOCAL) {
-            localAcpRuntime.isConnected
+            localAcpRuntime.isConnected &&
+                activeRuntime == AgentRuntimeKind.LOCAL &&
+                activeLocalDistributionId == localDistributionId
         } else {
             isActiveSessionFor(runtime.kind, localDistributionId)
         }
@@ -389,7 +391,18 @@ class AgentRuntimeManager private constructor(
                 return status()
             }
             if (runtime.kind == AgentRuntimeKind.LOCAL && localAcpRuntime.isConnected) {
-                return status()
+                if (activeLocalDistributionId == localDistributionId) {
+                    return status()
+                }
+                // The terminal distribution is part of the ACP process
+                // boundary. A distribution switch must not reuse a process
+                // or its probe/environment cache from the old rootfs.
+                localAcpRuntime.disconnect()
+                activeRuntime = null
+                activeLocalDistributionId = null
+                clearActiveTurns()
+                pendingTurnThreads.clear()
+                promptRequestTurns.clear()
             }
             clearPendingEvents()
             val existing = session
@@ -498,6 +511,10 @@ class AgentRuntimeManager private constructor(
                 return@withLock
             }
             invalidateLocalProbeCache()
+            // Provider credentials and the dispatch model are launch inputs.
+            // Do not let a later reconnect reuse an environment assembled
+            // from the previous Provider binding.
+            acpLaunchEnvironmentCache.clear()
             clearPendingEvents()
             localAcpRuntime.disconnect()
             if (activeRuntime == AgentRuntimeKind.LOCAL) {
@@ -519,8 +536,30 @@ class AgentRuntimeManager private constructor(
             return writeAgentConfig(canonicalArgs)
         }
         if (method.startsWith("agent/")) {
-            if (method == "agent/select" || method == "agent/refresh") {
+            val previousSelectedAgentId = if (method == "agent/select") {
+                acpAgentProfileStore.selected().id
+            } else {
+                null
+            }
+            if (method == "agent/select" ||
+                method == "agent/refresh" ||
+                method == "agent/save" ||
+                method == "agent/delete" ||
+                method == "agent/prepare"
+            ) {
                 invalidateLocalProbeCache()
+            }
+            if (method == "agent/save" || method == "agent/delete") {
+                // Profile command/arguments/environment edits (and delete /
+                // recreate with the same custom id) invalidate the launch
+                // fast path even while the runtime is disconnected.
+                acpLaunchEnvironmentCache.clear()
+            }
+            if (method == "agent/select" || method == "agent/delete") {
+                // Conversation ownership lookups are transport-scoped. A
+                // different Harness must not inherit the previous process's
+                // thread cache (opaque ACP ids may be reused by vendors).
+                threadConversationIds.clear()
             }
             if (method == "agent/select") {
                 // Buffered events belong to the previous Harness. Do not
@@ -528,6 +567,18 @@ class AgentRuntimeManager private constructor(
                 clearPendingEvents()
             }
             val response = localAcpRuntime.handleMethod(method, canonicalArgs)
+            if (
+                method == "agent/select" &&
+                canonicalArgs.stringValue("agentId")?.trim() != previousSelectedAgentId
+            ) {
+                // LocalAcpRuntime tears down the old transport during a real
+                // switch. Release the manager-level turn/ownership caches at
+                // the same boundary so a cancelled old turn cannot block or
+                // label the new Harness.
+                clearActiveTurns()
+                pendingTurnThreads.clear()
+                promptRequestTurns.clear()
+            }
             if (method == "agent/select" && localAcpRuntime.isConnected) {
                 activeRuntime = AgentRuntimeKind.LOCAL
                 activeLocalDistributionId = TerminalDistribution.selected().id
@@ -2855,6 +2906,7 @@ class AgentRuntimeManager private constructor(
 
     private fun localProbeFingerprint(profile: AcpAgentProfile): String =
         listOf(
+            TerminalDistribution.selected().id,
             profile.id,
             profile.command,
             profile.enabled,

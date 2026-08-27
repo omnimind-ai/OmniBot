@@ -25,6 +25,10 @@ class AcpCapabilities {
     this.clientElicitationUrl = false,
     this.mcpHttp = false,
     this.mcpSse = false,
+    this.pluginSupported = false,
+    this.pluginAuthoring = false,
+    this.pluginInstallViaHarness = false,
+    this.pluginHostInstallApi = false,
     this.steering = false,
     this.raw = const <String, dynamic>{},
   });
@@ -49,6 +53,10 @@ class AcpCapabilities {
   final bool clientElicitationUrl;
   final bool mcpHttp;
   final bool mcpSse;
+  final bool pluginSupported;
+  final bool pluginAuthoring;
+  final bool pluginInstallViaHarness;
+  final bool pluginHostInstallApi;
   final bool steering;
   final Map<String, dynamic> raw;
 
@@ -58,6 +66,7 @@ class AcpCapabilities {
     final session = _asStringMap(source['session']);
     final auth = _asStringMap(source['auth']);
     final mcp = _asStringMap(source['mcp']);
+    final plugin = _asStringMap(source['plugin']);
     final client = _asStringMap(source['client']);
     final clientFs = _asStringMap(client?['fs']);
     final clientElicitation = _asStringMap(client?['elicitation']);
@@ -86,6 +95,10 @@ class AcpCapabilities {
       clientElicitationUrl: _bool(clientElicitation?['url']),
       mcpHttp: _bool(mcp?['http']),
       mcpSse: _bool(mcp?['sse']),
+      pluginSupported: _bool(plugin?['supported']),
+      pluginAuthoring: _bool(plugin?['authoring']),
+      pluginInstallViaHarness: _bool(plugin?['installViaHarness']),
+      pluginHostInstallApi: _bool(plugin?['hostInstallApi']),
       steering: _bool(source['steering']),
       raw: Map<String, dynamic>.from(source),
     );
@@ -140,6 +153,16 @@ class AcpCapabilities {
       case 'elicitation/url':
       case 'client/elicitation/url':
         return clientElicitationUrl;
+      case 'plugin':
+      case 'plugins':
+      case 'plugin/supported':
+        return pluginSupported;
+      case 'plugin/authoring':
+      case 'plugin/create':
+        return pluginAuthoring;
+      case 'plugin/install':
+      case 'plugin/installviaharness':
+        return pluginInstallViaHarness;
       default:
         return _bool(raw[capability]) || _bool(raw[_camelCase(capability)]);
     }

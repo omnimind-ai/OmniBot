@@ -708,7 +708,10 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     } catch (error) {
       debugPrint('Load ACP agent catalog failed: $error');
     } finally {
-      if (mounted) {
+      // A forced catalog refresh can overlap a previous request when the
+      // user switches Harness quickly. The older request must not clear the
+      // loading state owned by the newer request.
+      if (mounted && requestEpoch == _agentCatalogEpoch) {
         setState(() {
           _isAgentCatalogLoading = false;
         });
@@ -2694,5 +2697,4 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       }
     });
   }
-
 }

@@ -36,10 +36,42 @@ internal data class AcpAgentProfile(
             "lastCheckError" to health.error,
             "lastCheckLatencyMs" to health.latencyMs,
             "lastCheckAt" to health.checkedAt,
-            "capabilities" to health.capabilities,
+            // Keep the read-only health result useful before a live ACP
+            // handshake. Negotiated values always win; declared values are
+            // only the official Harness composition contract and are shown
+            // under the same generic capabilities map for all profiles.
+            "capabilities" to mergeCapabilities(
+                declared = runtime?.declaredCapabilities.orEmpty(),
+                negotiated = health.capabilities,
+            ),
             "discoveryCommand" to runtime?.discoveryCommand,
             "managedAdapter" to (runtime?.managedAdapterPackage != null)
         )
+    }
+
+    private fun mergeCapabilities(
+        declared: Map<String, Any?>,
+        negotiated: Map<String, Any?>,
+    ): Map<String, Any?> {
+        if (declared.isEmpty()) return negotiated
+        if (negotiated.isEmpty()) return declared
+        val merged = LinkedHashMap<String, Any?>(declared)
+        negotiated.forEach { (key, value) ->
+            val declaredValue = merged[key]
+            if (declaredValue is Map<*, *> && value is Map<*, *>) {
+                val nested = LinkedHashMap<String, Any?>()
+                declaredValue.forEach { (nestedKey, nestedValue) ->
+                    nested[nestedKey.toString()] = nestedValue
+                }
+                value.forEach { (nestedKey, nestedValue) ->
+                    nested[nestedKey.toString()] = nestedValue
+                }
+                merged[key] = nested
+            } else {
+                merged[key] = value
+            }
+        }
+        return merged
     }
 }
 
@@ -74,6 +106,36 @@ internal data class AcpOfficialRuntime(
     val managedInstallScriptPath: String? = null,
     val managedInstallCommand: String? = null,
     val preparationRevision: String? = null,
+    /**
+     * Capabilities known from the official Harness composition, before an
+     * ACP initialize handshake has happened. These are intentionally kept
+     * separate from the negotiated ACP capabilities returned by initialize.
+     * A health probe must remain read-only, but the UI still needs to explain
+     * what an installed Harness can do.
+     */
+    val declaredCapabilities: Map<String, Any?> = emptyMap(),
+)
+
+private val DEEPSEEK_HARNESS_DECLARED_CAPABILITIES: Map<String, Any?> = mapOf(
+    "plugin" to mapOf(
+        "supported" to true,
+        "authoring" to true,
+        "installViaHarness" to true,
+        "hostInstallApi" to false,
+        "source" to "DeepSeek Harness Cordis profile",
+    ),
+    "tools" to mapOf(
+        "fileRead" to true,
+        "fileWrite" to true,
+        "shell" to true,
+        "plan" to true,
+        "subagents" to true,
+        "skills" to true,
+    ),
+    "mcp" to mapOf(
+        "sessionServers" to true,
+        "source" to "Harness-owned MCP composition",
+    ),
 )
 
 internal const val DEEPSEEK_HARNESS_NPM_CHANNEL = "next"
@@ -723,6 +785,7 @@ internal class AcpAgentProfileStore(context: Context) {
                 managedInstallScriptPath = DEEPSEEK_HARNESS_INSTALL_SCRIPT_PATH,
                 managedInstallCommand = DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND,
                 preparationRevision = DEEPSEEK_HARNESS_PREPARATION_REVISION,
+                declaredCapabilities = DEEPSEEK_HARNESS_DECLARED_CAPABILITIES,
                 usesSharedProvider = true,
             ),
             XIAOWAN_AGENT_ID to AcpOfficialRuntime(

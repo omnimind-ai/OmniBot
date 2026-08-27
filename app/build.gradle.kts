@@ -169,10 +169,10 @@ android {
         applicationId = "cn.com.omnimind.bot"
         minSdk = 29
         targetSdk = 35
-        // 0.6.0 is already released on origin/main; keep the next release
-        // monotonic for Android update checks.
-        versionCode = 7
-        versionName = "0.6.1"
+        // Beta release. Keep the Android version code monotonic so the APK
+        // can be installed as an update over the previously tested build.
+        versionCode = 8
+        versionName = "0.6.0.1"
         buildConfigField("String", "IMAGE_BASE_URL", buildConfigString(omnibotImageBaseUrl))
         buildConfigField("String", "IMAGE_MODEL", buildConfigString(omnibotImageModel))
         buildConfigField("String", "IMAGE_API_KEY", buildConfigString(omnibotImageApiKey))

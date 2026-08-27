@@ -184,6 +184,10 @@ internal class LocalAcpRuntime(
 ) {
     private val appContext = context.applicationContext
     private val connectMutex = Mutex()
+    // Availability probes share one terminal/proot environment. Serializing
+    // them prevents overlapping refreshes from racing to persist a stale
+    // result after a newer probe has completed.
+    private val agentAvailabilityMutex = Mutex()
     @Volatile
     private var sessionMcpEnabled = true
     // A connect attempt includes adapter preparation and ACP initialization.
@@ -634,6 +638,12 @@ internal class LocalAcpRuntime(
         terminalProcesses.clear()
         sessions.clear()
         sessionCwds.clear()
+        // These maps are scoped to one ACP transport. A Harness is allowed
+        // to reuse opaque session/turn ids after restart, so retaining them
+        // would drop valid updates or treat a new turn as already finished.
+        sessionEventSequences.clear()
+        finishedTurns.clear()
+        lastAssistantMessageIds.clear()
         sessionPermissionBehaviors.clear()
         pendingHandoffConversationIds.clear()
         replayingThreads.clear()
@@ -709,7 +719,12 @@ internal class LocalAcpRuntime(
     suspend fun handleMethod(method: String, args: Map<String, Any?>): Any? {
         val canonicalArgs = AcpSessionCompatibility.canonicalize(method, args)
         return when (method) {
-            "agent/list" -> agentsPayload()
+            // Listing is a read-only, latency-sensitive UI operation. Do not
+            // start the terminal/proot health probe while opening Agent mode;
+            // the page loads cached health immediately and triggers the
+            // explicit refresh probe in the background. The refresh endpoint
+            // remains the opt-in path for a fresh availability check.
+            "agent/list" -> agentsPayload(refreshAvailability = false)
             "agent/refresh" -> agentsPayload(refreshAvailability = true)
             "agent/select" -> selectAgent(args.stringValue("agentId").orEmpty())
             "agent/save" -> saveAgent(args)
@@ -1217,7 +1232,16 @@ internal class LocalAcpRuntime(
                 ),
                 "status" to health.status,
                 "error" to error,
-                "capabilities" to emptyMap<String, Any?>(),
+                // A managed Harness check is deliberately read-only and does
+                // not start an ACP process. Return its declared composition
+                // capabilities nevertheless; otherwise the UI displays an
+                // empty result and makes a healthy DSH installation look as
+                // if it has no plugins/tools. A later initialize handshake
+                // replaces these with negotiated ACP values.
+                "capabilities" to profile.toPayload(
+                    selected = profile.id == profileStore.selected().id,
+                    health = health
+                )["capabilities"],
             )
         }
 
@@ -1301,7 +1325,10 @@ internal class LocalAcpRuntime(
                         health = health,
                     ),
                     "status" to health.status,
-                    "capabilities" to emptyMap<String, Any?>(),
+                    "capabilities" to profile.toPayload(
+                        selected = profile.id == wasSelected.id,
+                        health = health,
+                    )["capabilities"],
                 )
             }.getOrElse { error ->
                 val health = failedAgentHealth(error)
@@ -1347,6 +1374,12 @@ internal class LocalAcpRuntime(
     }
 
     private suspend fun refreshAgentAvailability() {
+        agentAvailabilityMutex.withLock {
+            refreshAgentAvailabilityLocked()
+        }
+    }
+
+    private suspend fun refreshAgentAvailabilityLocked() {
         val profiles = profileStore.list()
         if (profiles.isEmpty()) return
         val externalProfiles = profiles.filterNot {
