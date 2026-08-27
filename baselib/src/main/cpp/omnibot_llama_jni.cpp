@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstdint>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -12,6 +13,9 @@
 
 namespace {
 constexpr const char * TAG = "OmniBotLlama";
+constexpr jint RESULT_ERROR = 0;
+constexpr jint RESULT_COMPLETE = 1;
+constexpr jint RESULT_CANCELLED = 2;
 
 std::mutex g_mutex;
 llama_model * g_model = nullptr;
@@ -149,6 +153,7 @@ Java_cn_com_omnimind_baselib_llm_LocalInferenceEngineNative_nativeLoadModel(JNIE
 extern "C" JNIEXPORT void JNICALL
 Java_cn_com_omnimind_baselib_llm_LocalInferenceEngineNative_nativeUnloadModel(JNIEnv *, jclass) {
     std::lock_guard<std::mutex> lock(g_mutex);
+    g_cancelled.store(true);
     freeRuntimeLocked();
 }
 
@@ -176,21 +181,21 @@ Java_cn_com_omnimind_baselib_llm_LocalInferenceEngineNative_nativeCancel(JNIEnv 
     g_cancelled.store(true);
 }
 
-extern "C" JNIEXPORT jboolean JNICALL
+extern "C" JNIEXPORT jint JNICALL
 Java_cn_com_omnimind_baselib_llm_LocalInferenceEngineNative_nativeGenerate(
     JNIEnv * env, jclass, jobject callback, jobjectArray jRoles, jobjectArray jContents,
     jint maxTokens, jfloat temperature, jfloat topP) {
-    if (callback == nullptr) return JNI_FALSE;
+    if (callback == nullptr) return RESULT_ERROR;
     std::lock_guard<std::mutex> lock(g_mutex);
     if (g_model == nullptr || g_context == nullptr || g_sampler == nullptr) {
         notifyError(env, callback, "Offline model is not loaded.");
-        return JNI_FALSE;
+        return RESULT_ERROR;
     }
 
     const jsize count = env->GetArrayLength(jRoles);
     if (count <= 0 || env->GetArrayLength(jContents) != count) {
         notifyError(env, callback, "Invalid chat message list.");
-        return JNI_FALSE;
+        return RESULT_ERROR;
     }
 
     std::vector<std::string> roles;
@@ -204,7 +209,7 @@ Java_cn_com_omnimind_baselib_llm_LocalInferenceEngineNative_nativeGenerate(
             if (jRole) env->DeleteLocalRef(jRole);
             if (jContent) env->DeleteLocalRef(jContent);
             notifyError(env, callback, "Invalid chat message.");
-            return JNI_FALSE;
+            return RESULT_ERROR;
         }
         const char * role = env->GetStringUTFChars(jRole, nullptr);
         const char * content = env->GetStringUTFChars(jContent, nullptr);
@@ -219,27 +224,27 @@ Java_cn_com_omnimind_baselib_llm_LocalInferenceEngineNative_nativeGenerate(
     std::string prompt;
     if (!applyChatTemplate(g_model, roles, contents, prompt)) {
         notifyError(env, callback, "The selected GGUF model uses an unsupported chat template.");
-        return JNI_FALSE;
+        return RESULT_ERROR;
     }
 
     const llama_vocab * vocab = llama_model_get_vocab(g_model);
     const int nPrompt = -llama_tokenize(vocab, prompt.c_str(), prompt.size(), nullptr, 0, true, true);
     if (nPrompt <= 0) {
         notifyError(env, callback, "Failed to tokenize the offline prompt.");
-        return JNI_FALSE;
+        return RESULT_ERROR;
     }
 
     const uint32_t contextSize = llama_n_ctx(g_context);
     const int maxNewTokens = std::max(1, std::min<int>(maxTokens > 0 ? maxTokens : 512, static_cast<int>(contextSize)));
     if (static_cast<uint32_t>(nPrompt + maxNewTokens) >= contextSize) {
         notifyError(env, callback, "The conversation is too large for the selected model context window.");
-        return JNI_FALSE;
+        return RESULT_ERROR;
     }
 
     std::vector<llama_token> promptTokens(static_cast<size_t>(nPrompt));
     if (llama_tokenize(vocab, prompt.c_str(), prompt.size(), promptTokens.data(), promptTokens.size(), true, true) < 0) {
         notifyError(env, callback, "Failed to tokenize the offline prompt.");
-        return JNI_FALSE;
+        return RESULT_ERROR;
     }
 
     llama_memory_clear(llama_get_memory(g_context), true);
@@ -255,37 +260,38 @@ Java_cn_com_omnimind_baselib_llm_LocalInferenceEngineNative_nativeGenerate(
     llama_batch batch = llama_batch_get_one(promptTokens.data(), promptTokens.size());
     if (llama_decode(g_context, batch) != 0) {
         notifyError(env, callback, "Offline model failed during prompt evaluation.");
-        return JNI_FALSE;
+        return RESULT_ERROR;
     }
 
     for (int generated = 0; generated < maxNewTokens; ++generated) {
-        if (g_cancelled.load()) return JNI_TRUE;
+        if (g_cancelled.load()) return RESULT_CANCELLED;
         const llama_token token = llama_sampler_sample(g_sampler, g_context, -1);
         if (llama_vocab_is_eog(vocab, token)) break;
         char piece[512];
         const int pieceLength = llama_token_to_piece(vocab, token, piece, sizeof(piece), 0, true);
         if (pieceLength < 0) {
             notifyError(env, callback, "Failed to decode an offline token.");
-            return JNI_FALSE;
+            return RESULT_ERROR;
         }
         notifyToken(env, callback, std::string(piece, static_cast<size_t>(pieceLength)));
         if (env->ExceptionCheck()) {
             env->ExceptionClear();
-            return JNI_FALSE;
+            return RESULT_ERROR;
         }
         llama_sampler_accept(g_sampler, token);
         llama_batch nextBatch = llama_batch_get_one(const_cast<llama_token *>(&token), 1);
         if (llama_decode(g_context, nextBatch) != 0) {
             notifyError(env, callback, "Offline model failed during generation.");
-            return JNI_FALSE;
+            return RESULT_ERROR;
         }
     }
-    return JNI_TRUE;
+    return RESULT_COMPLETE;
 }
 
 extern "C" JNIEXPORT void JNICALL
 Java_cn_com_omnimind_baselib_llm_LocalInferenceEngineNative_nativeShutdown(JNIEnv *, jclass) {
     std::lock_guard<std::mutex> lock(g_mutex);
+    g_cancelled.store(true);
     freeRuntimeLocked();
     if (g_backend_initialized) {
         llama_backend_free();
