@@ -149,11 +149,50 @@ class AgentToolIdentity {
 /// identity rules or a valid reasoning update can be reduced into a runtime
 /// that is not currently visible.
 String? acpEventSessionId(Map<String, dynamic> event) {
-  return _acpEnvelopeIdentity(event, const <String>['sessionId', 'session_id']);
+  return _acpEnvelopeIdentity(event, const <String>[
+    'sessionId',
+    'session_id',
+    // `threadId` was the compatibility name used by app-server and the
+    // pre-ACP Harness bridge. Accept it only at this boundary; all projected
+    // state remains keyed by the canonical ACP session identity.
+    'threadId',
+    'thread_id',
+  ]);
 }
 
 String? acpEventTurnId(Map<String, dynamic> event) {
-  return _acpEnvelopeIdentity(event, const <String>['turnId', 'turn_id']);
+  return _acpEnvelopeIdentity(event, const <String>[
+    'turnId',
+    'turn_id',
+    // Legacy AgentStreamEvent called the ACP turn a task.  This is a read
+    // compatibility alias, never a second runtime identity.
+    'taskId',
+    'task_id',
+    'runId',
+    'run_id',
+  ]);
+}
+
+String? acpEventMessageId(Map<String, dynamic> event) {
+  return _acpEnvelopeIdentity(event, const <String>[
+    'messageId',
+    'message_id',
+    'entryId',
+    'entry_id',
+    'itemId',
+    'item_id',
+  ]);
+}
+
+String? acpEventItemId(Map<String, dynamic> event) {
+  return _acpEnvelopeIdentity(event, const <String>[
+    'itemId',
+    'item_id',
+    'toolCallId',
+    'tool_call_id',
+    'callId',
+    'call_id',
+  ]);
 }
 
 String? _acpEnvelopeIdentity(

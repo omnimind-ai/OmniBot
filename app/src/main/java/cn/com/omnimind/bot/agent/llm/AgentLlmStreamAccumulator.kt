@@ -20,6 +20,10 @@ import cn.com.omnimind.baselib.llm.decodeChatCompletionUsage
 import java.util.SortedMap
 import java.util.TreeMap
 
+internal class AgentIncompleteToolCallException(
+    val toolCallIndex: Int
+) : IllegalStateException("tool_call[$toolCallIndex] missing function.name")
+
 class AgentLlmStreamAccumulator(
     private val json: Json,
     private val includeReasoningInAssistantMessage: Boolean = false,
@@ -271,10 +275,11 @@ class AgentLlmStreamAccumulator(
         }
         flushInlineTextBuffer(final = true)
         reconcileMisindexedToolCallArguments()
+        discardDanglingToolCallPlaceholders()
         val toolCalls = toolCallBuilders.entries.map { (index, builder) ->
             val name = builder.name?.trim().orEmpty()
             if (name.isBlank()) {
-                throw IllegalStateException("tool_call[$index] missing function.name")
+                throw AgentIncompleteToolCallException(index)
             }
             AssistantToolCall(
                 id = builder.id?.takeIf { it.isNotBlank() } ?: "tool_call_$index",
@@ -355,6 +360,20 @@ class AgentLlmStreamAccumulator(
         val block = replay["block"] as? JsonObject ?: return false
         anthropicContentBlocks[index] = block
         return true
+    }
+
+    private fun discardDanglingToolCallPlaceholders() {
+        if (toolCallBuilders.values.none { !it.name.isNullOrBlank() }) return
+
+        val danglingIndices = toolCallBuilders.entries
+            .filter { (_, builder) ->
+                builder.name.isNullOrBlank() && builder.arguments.isEmpty()
+            }
+            .map { it.key }
+        danglingIndices.forEach { index ->
+            toolCallBuilders.remove(index)
+            OmniLog.w(TAG, "discarded dangling tool call placeholder at index=$index")
+        }
     }
 
     private fun reconcileMisindexedToolCallArguments() {

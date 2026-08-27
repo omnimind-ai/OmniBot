@@ -1,10 +1,15 @@
 package cn.com.omnimind.bot.agent.runtime
 
+import cn.com.omnimind.baselib.llm.ProviderModelOption
+import cn.com.omnimind.baselib.llm.SceneModelBindingEntry
 import cn.com.omnimind.bot.agent.ToolExecutionResult
 import cn.com.omnimind.bot.agent.AgentFinalResponse
 import cn.com.omnimind.bot.agent.AgentResult
+import com.agentclientprotocol.model.MessageId
+import com.agentclientprotocol.model.PromptResponse
 import com.agentclientprotocol.model.ContentBlock
 import com.agentclientprotocol.model.SessionUpdate
+import com.agentclientprotocol.model.StopReason
 import com.agentclientprotocol.model.ToolKind
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonArray
@@ -13,9 +18,63 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.double
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class XiaowanAcpPresentationBridgeTest {
+
+    @Test
+    fun `provider finish reasons map to ACP stop reasons`() {
+        assertEquals(StopReason.END_TURN, acpStopReasonForFinishReason("stop"))
+        assertEquals(StopReason.MAX_TOKENS, acpStopReasonForFinishReason("length"))
+        assertEquals(StopReason.CANCELLED, acpStopReasonForFinishReason("cancelled"))
+        assertEquals(StopReason.REFUSAL, acpStopReasonForFinishReason("content_filter"))
+        assertEquals(StopReason.MAX_TURN_REQUESTS, acpStopReasonForFinishReason("turn_limit"))
+    }
+
+    @Test
+    fun `ordinary clarification is emitted as text without clarification metadata`() = runBlocking {
+        val updates = mutableListOf<SessionUpdate>()
+        val bridge = XiaowanAcpEventBridge { updates += it }
+
+        bridge.onClarifyRequired("需要确认目标文件", listOf("path"))
+
+        val message = updates.filterIsInstance<SessionUpdate.AgentMessageChunk>().single()
+        assertEquals("需要确认目标文件", (message.content as ContentBlock.Text).text)
+        assertTrue(message._meta is kotlinx.serialization.json.JsonNull)
+    }
+
+    @Test
+    fun `declared runtime tool type is used for ACP kind`() = runBlocking {
+        val updates = mutableListOf<SessionUpdate>()
+        val bridge = XiaowanAcpEventBridge { updates += it }
+
+        bridge.onToolCallStart(
+            "call-custom",
+            "vendor_action_with_no_standard_name",
+            JsonObject(emptyMap()),
+            "terminal",
+        )
+
+        val tool = updates.filterIsInstance<SessionUpdate.ToolCall>().single()
+        assertEquals(ToolKind.EXECUTE, tool.kind)
+    }
+
+    @Test
+    fun `xiaowan exposes the bound model plus provider catalog`() {
+        val models = requireNotNull(
+            buildXiaowanModelsFromBinding(
+                SceneModelBindingEntry("scene", "provider", "selected"),
+                listOf(
+                    ProviderModelOption(id = "selected", displayName = "Selected"),
+                    ProviderModelOption(id = "other", displayName = "Other"),
+                ),
+            )
+        )
+
+        assertEquals("selected,other", models.available.joinToString(",") { it.modelId.value })
+        assertEquals("selected", models.configuredModelId)
+    }
 
     @Test
     fun `ACP prompt metadata restores terminal environment for Xiaowan tools`() {
@@ -330,7 +389,7 @@ class XiaowanAcpPresentationBridgeTest {
     }
 
     @Test
-    fun `clarification keeps its missing fields in ACP metadata`() = runBlocking {
+    fun `ordinary clarification stays plain assistant text`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
         val bridge = XiaowanAcpEventBridge { updates += it }
 
@@ -338,13 +397,7 @@ class XiaowanAcpPresentationBridgeTest {
 
         val message = updates.filterIsInstance<SessionUpdate.AgentMessageChunk>().single()
         assertEquals("是否继续执行？", (message.content as ContentBlock.Text).text)
-        val namespace = (message._meta as JsonObject)["cn.com.omnimind.agent"] as JsonObject
-        val clarification = namespace["clarification"] as JsonObject
-        assertEquals("是否继续执行？", clarification["question"]?.jsonPrimitive?.content)
-        assertEquals(
-            "arguments.confirmed",
-            (clarification["missingFields"] as JsonArray).single().jsonPrimitive.content,
-        )
+        assertEquals(kotlinx.serialization.json.JsonNull, message._meta)
     }
 
     @Test
@@ -394,6 +447,41 @@ class XiaowanAcpPresentationBridgeTest {
         assertEquals(100, turnUsage["in"]?.jsonPrimitive?.content?.toInt())
         assertEquals(20, turnUsage["out"]?.jsonPrimitive?.content?.toInt())
         assertEquals(10, turnUsage["cache"]?.jsonPrimitive?.content?.toInt())
+    }
+
+    @Test
+    fun `ACP prompt response does not count cached input twice`() {
+        val success = AgentResult.Success(
+            response = AgentFinalResponse(content = "已完成"),
+            executedTools = emptyList(),
+            latestPromptTokens = 2_057,
+            completionTokens = 5,
+            cachedTokens = 2_048,
+            cacheCreationTokens = 3,
+        )
+
+        val usage = requireNotNull(success.toAcpUsage())
+        assertEquals(6L, usage.inputTokens)
+        assertEquals(2_048L, usage.cachedReadTokens)
+        assertEquals(3L, usage.cachedWriteTokens)
+
+        val turnUsage = PromptResponse(
+            stopReason = StopReason.END_TURN,
+            usage = usage,
+        ).toAcpTurnUsageUpdate(messageId = MessageId("msg_usage"))
+            ?.get("_meta")
+            ?.let { it as Map<*, *> }
+            ?.get("cn.com.omnimind.agent")
+            ?.let { it as Map<*, *> }
+            ?.get("usage")
+            ?.let { it as Map<*, *> }
+            ?.get("turnUsage")
+            ?.let { it as Map<*, *> }
+
+        assertEquals(2_057L, turnUsage?.get("ctx"))
+        assertEquals(2_057L, turnUsage?.get("in"))
+        assertEquals(2_048L, turnUsage?.get("cache"))
+        assertEquals(6L, turnUsage?.get("uncachedInputTokens"))
     }
 
     @Test

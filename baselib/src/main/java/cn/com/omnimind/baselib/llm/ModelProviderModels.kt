@@ -88,6 +88,22 @@ data class SceneModelBindingEntry(
     val modelId: String
 )
 
+/** Persisted voice-scene settings shared by native playback and Flutter UI. */
+data class SceneVoiceConfig(
+    @field:SerializedName(value = "autoPlay", alternate = ["a"])
+    val autoPlay: Boolean = false,
+    @field:SerializedName(value = "voiceId", alternate = ["b"])
+    val voiceId: String = "default_zh",
+    @field:SerializedName(value = "stylePreset", alternate = ["c"])
+    val stylePreset: String = "默认",
+    @field:SerializedName(value = "customStyle", alternate = ["d"])
+    val customStyle: String = "",
+    @field:SerializedName(value = "ttsMode", alternate = ["e"])
+    val ttsMode: String = "builtin",
+    @field:SerializedName(value = "customCurlCommand", alternate = ["f"])
+    val customCurlCommand: String = "",
+)
+
 data class SceneOperationConfig(
     val useOfficialService: Boolean = false
 )

@@ -282,6 +282,11 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   bool _isAgentCatalogLoading = false;
   bool _isAgentRuntimeStatusLoading = false;
   bool _isAcpAgentSwitching = false;
+  // Monotonic epoch for status snapshots. A status request started before a
+  // Harness switch may complete afterwards; without an epoch it can paint
+  // the previous runtime over the newly selected one in the AppBar.
+  int _agentRuntimeStatusEpoch = 0;
+  int _agentCatalogEpoch = 0;
   String? _optimisticAcpAgentId;
   final Map<int, String> _agentIdByConversationId = <int, String>{};
   int? _activeRemoteCodexRuntimeId;
@@ -467,6 +472,7 @@ abstract class _ChatPageStateBase extends State<ChatPage>
 
   List<ChatAcpAgentModeOption> get _chatAcpAgentModeOptions {
     final profiles = _agentCatalog?.agents ?? const <AcpAgentProfile>[];
+    final optimisticAgentId = _optimisticAcpAgentId?.trim() ?? '';
     final hasXiaowan = profiles.any((profile) => profile.id == 'xiaowan-acp');
     final orderedProfiles = profiles.toList(growable: false)
       ..sort((left, right) {
@@ -500,8 +506,15 @@ abstract class _ChatPageStateBase extends State<ChatPage>
           // before they can enter the top-right runtime switcher.
           installed:
               profile.installed == true ||
-              (profile.builtIn && !profile.managedAdapter),
-          status: profile.builtIn && !profile.managedAdapter
+              (profile.builtIn && !profile.managedAdapter) ||
+              // During a switch the selected target must remain visible in
+              // the live selector even before the native catalog publishes
+              // its final installed/online snapshot. A failed switch clears
+              // the optimistic id and restores the previous target.
+              (_isAcpAgentSwitching && profile.id == optimisticAgentId),
+          status: _isAcpAgentSwitching && profile.id == optimisticAgentId
+              ? 'connecting'
+              : profile.builtIn && !profile.managedAdapter
               ? 'online'
               : profile.status,
         ),
@@ -516,12 +529,34 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     return options;
   }
 
-  /// The app-bar identity is presentation-only. Keep the conversation's
-  /// stored Harness binding intact, but do not render a brand avatar for a
-  /// Harness that is no longer installed or ready to run.
+  /// The app-bar identity is presentation-only and has one source of truth:
+  /// the Harness that is being switched to, or the Harness currently
+  /// connected by the ACP runtime. A conversation binding describes history;
+  /// it must not make the top-right control oscillate between an old session
+  /// owner and the live process during asynchronous restore/switch work.
   String? get _appBarActiveAcpAgentId {
-    final activeId = _activeAcpAgentId?.trim() ?? '';
+    final optimisticId = _optimisticAcpAgentId?.trim() ?? '';
+    if (_isAcpAgentSwitching && optimisticId.isNotEmpty) {
+      return optimisticId;
+    }
+
+    final runtimeId =
+        _activeMode == ChatPageMode.agent && _agentRuntimeStatus.connected
+        ? (_agentRuntimeStatus.runtime == 'remote' ||
+                  _agentRuntimeStatus.remoteEnabled
+              ? _kRemoteCodexModeAgentId
+              : (_agentRuntimeStatus.activeAgentId?.trim() ?? ''))
+        : '';
+    final activeId = runtimeId.isNotEmpty
+        ? runtimeId
+        : (_activeAcpAgentId?.trim() ?? '');
     if (activeId.isEmpty) return null;
+
+    // A connected runtime is authoritative even while the catalog request is
+    // still in flight. The brand icon can render from the stable agent id,
+    // and the next catalog refresh will fill in the menu metadata.
+    if (runtimeId.isNotEmpty) return runtimeId;
+
     final isVisible = _chatAcpAgentModeOptions.any(
       (agent) => agent.id == activeId && agent.isAvailable,
     );
@@ -860,6 +895,31 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     }
     _modeState(_activeMode).isAiResponding = value;
   }
+
+  /// ACP user-input requests use the normal chat composer.  The request card
+  /// can still expose structured options, but it must not create a second
+  /// text field inside the conversation timeline.
+  Map<String, dynamic>? get _pendingAgentUserInputCard {
+    if (_activeMode != ChatPageMode.agent) {
+      return null;
+    }
+    for (final message in _messages.reversed) {
+      final card = message.cardData;
+      if (card == null || !isAgentRequestCardType(card['type'])) {
+        continue;
+      }
+      if (card['requestKind']?.toString() != 'user_input' ||
+          card['status']?.toString() != 'pending' ||
+          card['requestId'] == null) {
+        continue;
+      }
+      return card;
+    }
+    return null;
+  }
+
+  bool get _hasPendingAgentUserInputRequest =>
+      _pendingAgentUserInputCard != null;
 
   bool get _isContextCompressing =>
       _activeRuntime?.isContextCompressing ??
@@ -2002,7 +2062,10 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     String userMessageId, {
     String? promptText,
     List<Map<String, dynamic>>? attachmentsOverride,
+    String? requestIdOverride,
   });
+
+  String _buildManualRetryRequestId(String taskId);
 
   Future<List<Map<String, dynamic>>> _latestUserAttachments();
 

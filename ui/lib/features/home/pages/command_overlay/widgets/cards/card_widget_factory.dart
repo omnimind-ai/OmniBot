@@ -40,7 +40,10 @@ class CardWidgetFactory {
     cardData = AgentAcpCardNormalizer.normalize(cardData);
     final type = cardData['type'] as String? ?? 'unknown';
     if (isAgentRequestCardType(type)) {
-      return AgentRequestCard(cardData: cardData);
+      // ACP requests are transport state, not large nested forms.  The chat
+      // timeline projects them into a normal Agent bubble; this lightweight
+      // fallback is only used by legacy/raw card surfaces.
+      return AgentRequestNotice(cardData: cardData);
     }
 
     switch (type) {

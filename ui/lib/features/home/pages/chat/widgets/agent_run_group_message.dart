@@ -203,6 +203,11 @@ class _AgentRunGroupMessageState extends State<AgentRunGroupMessage>
               segment.messages,
               firstThinkingMessageId,
             )
+          else if (isAgentPlanMessage(segment.message))
+            // ACP plans are mutable state snapshots. Do not put them behind
+            // the completed-run fold; the same card id is refreshed for each
+            // plan_update and remains visible as the current plan.
+            _buildPersistentPlanSection(segment.message)
           else if (segment.message.id != primaryVisibleMessageId)
             _buildAnimatedHistoricalTextSection(segment.message)
           else
@@ -245,6 +250,16 @@ class _AgentRunGroupMessageState extends State<AgentRunGroupMessage>
         key: ValueKey('agent-run-history-${widget.group.taskId}-${message.id}'),
         child: _buildVisibleMessageBubble(message, forceTextFinal: true),
       ),
+    );
+  }
+
+  Widget _buildPersistentPlanSection(ChatMessageModel message) {
+    return Padding(
+      key: ValueKey(
+        'agent-plan-persistent-${widget.group.taskId}-${message.id}',
+      ),
+      padding: const EdgeInsets.only(top: 2, bottom: 6),
+      child: _buildVisibleMessageBubble(message, forceTextFinal: true),
     );
   }
 

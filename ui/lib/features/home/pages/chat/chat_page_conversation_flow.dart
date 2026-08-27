@@ -932,6 +932,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
     String userMessageId, {
     String? promptText,
     List<Map<String, dynamic>>? attachmentsOverride,
+    String? requestIdOverride,
   }) async {
     try {
       _currentDispatchTurnId = aiMessageId;
@@ -961,7 +962,11 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       final response = await AgentRuntimeService.promptSession(
         conversationId: conversationId,
         sessionId: reusableSessionId,
-        requestId: _buildPromptRequestId(aiMessageId),
+        // A normal transport retry keeps the request id so ACP can safely
+        // deduplicate an in-flight request. Manual retry/continue actions
+        // must provide a fresh id; otherwise LocalAcpRuntime's idempotency
+        // table returns the already-failed turn and no new execution starts.
+        requestId: requestIdOverride ?? _buildPromptRequestId(aiMessageId),
         // The visible conversation target is authoritative. Runtime status
         // can briefly describe the previous process during an ACP switch;
         // using it here can send the first turn to the old Harness.
@@ -1007,9 +1012,16 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
 
   String _buildPromptRequestId(String taskId) {
     // The assistant placeholder id is the identity of this user submission.
-    // Keep it stable so a transport retry can return the same ACP turn rather
-    // than executing the prompt and its tools a second time.
+    // Keep it stable for the original request so transport retries can return
+    // the same ACP turn rather than executing the prompt and its tools twice.
     return taskId;
+  }
+
+  String _buildManualRetryRequestId(String taskId) {
+    // Manual retry/continue is a new provider generation. It intentionally
+    // cannot reuse the original request id because ACP request idempotency
+    // would otherwise replay the old failed turn without running anything.
+    return '$taskId-manual-${DateTime.now().microsecondsSinceEpoch}';
   }
 
   @override

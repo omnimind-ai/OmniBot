@@ -446,6 +446,10 @@ object McpServerManager {
                 path = "/mcp",
                 enableDnsRebindingProtection = false,
             ) {
+                // This endpoint is the narrow ACP bridge: it intentionally
+                // publishes only AndroidDeviceMcpServer tools.  OmniBot's
+                // general Agent catalog remains internal to the app, while a
+                // Harness discovers its own built-in tools from its protocol.
                 AndroidDeviceMcpServer.create(appContext, serverScope)
             }
             routing {

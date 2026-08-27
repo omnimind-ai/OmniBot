@@ -176,9 +176,13 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
       AcpAgentProfile(
         id: 'deepseek-harness-acp',
         name: 'DeepSeek Harness',
-        command: 'dsh-acp',
+        // Keep the fallback catalog identical to the native official
+        // profile. `dsh` is only the discovery command; the Android ACP
+        // launcher is `dsh-acp-android`.
+        command: 'dsh-acp-android',
         description:
-            'DeepSeek Harness coding agent through its official ACP server',
+            'DeepSeek Harness official ACP profile',
+        arguments: <String>['--profile', 'acp'],
         builtIn: true,
         source: 'official',
         status: 'unchecked',

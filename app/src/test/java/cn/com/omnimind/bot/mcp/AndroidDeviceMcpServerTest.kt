@@ -8,7 +8,7 @@ import kotlinx.coroutines.runBlocking
 
 class AndroidDeviceMcpServerTest {
     @Test
-    fun `public MCP surface exposes device and OmniBot native tools`() {
+    fun `public MCP surface exposes Android device tools only`() {
         assertTrue(
             AndroidDeviceMcpServer.publicToolNames.containsAll(
                 setOf(
@@ -28,7 +28,7 @@ class AndroidDeviceMcpServerTest {
                 ),
             ),
         )
-        assertTrue(AndroidDeviceMcpServer.publicToolNames.containsAll(setOf(
+        assertFalse(AndroidDeviceMcpServer.publicToolNames.any { it in setOf(
             "context_time_now",
             "browser_use",
             "file_read",
@@ -52,8 +52,10 @@ class AndroidDeviceMcpServerTest {
             "memory_rollup_day",
             "memory_load",
             "subagent_dispatch",
-        )))
+        ) })
         assertFalse(AndroidDeviceMcpServer.publicToolNames.any { it.startsWith("device_") })
+        assertTrue(AndroidDeviceMcpServer.MCP_INSTRUCTIONS.contains("Android device"))
+        assertFalse(AndroidDeviceMcpServer.MCP_INSTRUCTIONS.contains("browser/internet"))
     }
 
     @Test

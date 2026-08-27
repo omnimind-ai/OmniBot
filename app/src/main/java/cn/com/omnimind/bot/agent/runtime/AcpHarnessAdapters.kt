@@ -120,7 +120,12 @@ internal object AcpHarnessAdapters {
     }
 
     val deepSeekHarness: AcpHarnessAdapter = object : AcpHarnessAdapter {
-        override val mcpTransport = AcpHarnessMcpTransport.ENVIRONMENT
+        // DSH ACP 0.4.x documents per-session `mcpServers` (stdio and
+        // streamable HTTP). Keep the declaration on the official ACP
+        // session/new request so DSH owns discovery and tool namespacing;
+        // environment injection is only a legacy fallback for adapters that
+        // genuinely lack the typed session surface.
+        override val mcpTransport = AcpHarnessMcpTransport.SESSION_DECLARATION
         override val providerConfigKind = AcpHarnessProviderConfigKind.DEEPSEEK_HARNESS
         override val launchConfigPath = DEEPSEEK_HARNESS_CONFIG_PATH
         override val launchConfigExecutorKey = "harness-launch-config-read"
@@ -183,7 +188,7 @@ internal object AcpHarnessAdapters {
             normalizeAcpModeNames(line)
 
         override fun mcpEnvironment(state: McpServerState): Map<String, String> =
-            buildEnvironmentMcpBinding(state)
+            emptyMap()
     }
 
     fun forProfile(profile: AcpAgentProfile): AcpHarnessAdapter =
@@ -236,6 +241,8 @@ private fun normalizeAcpModeJson(
 internal const val DEEPSEEK_HARNESS_CONFIG_HOME = "/root/.dsh/omnibot-acp"
 internal const val DEEPSEEK_HARNESS_CONFIG_PATH =
     "$DEEPSEEK_HARNESS_CONFIG_HOME/config.json"
+internal const val DEEPSEEK_HARNESS_SETTINGS_PATH =
+    "$DEEPSEEK_HARNESS_CONFIG_HOME/settings.yaml"
 internal const val DEEPSEEK_HARNESS_CONFIG_DISPLAY_PATH =
     "~/.dsh/omnibot-acp/config.json"
 internal const val ACP_FILESYSTEM_COMPAT_PATH =
@@ -265,6 +272,11 @@ internal val ACP_FILESYSTEM_COMPAT_SCRIPT = """
 """.trimIndent() + "\n"
 private const val DEEPSEEK_PUBLIC_BASE_URL = "https://api.deepseek.com"
 private const val DEEPSEEK_HARNESS_DEFAULT_MODEL = ""
+// DSH otherwise forwards an omitted provider default as max_tokens=0 through
+// some OpenAI-compatible gateways. Keep the official adapter request within
+// the common 1..131072 range while allowing a user-provided DSH_MAX_TOKENS to
+// override it through the profile environment.
+private const val DEEPSEEK_HARNESS_DEFAULT_MAX_TOKENS = "8192"
 // Keep ordinary prompts responsive. Users can still select `max` explicitly
 // through the official ACP config surface for complex tasks.
 private const val DEEPSEEK_HARNESS_DEFAULT_REASONING_EFFORT = "high"
@@ -288,6 +300,7 @@ internal data class DeepSeekHarnessConfig(
         "DEEPSEEK_BASE_URL" to baseUrl,
         "DEEPSEEK_API_KEY" to apiKey,
         "DSH_MODEL" to model,
+        "DSH_MAX_TOKENS" to DEEPSEEK_HARNESS_DEFAULT_MAX_TOKENS,
         "DSH_REASONING_EFFORT" to reasoningEffort,
         "DSH_PI_AI_REASONING_EFFORT" to reasoningEffort,
         "DSH_THINKING" to if (reasoningEffort == "off") "disabled" else "enabled",

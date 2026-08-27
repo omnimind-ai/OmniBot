@@ -41,19 +41,6 @@ class _ScheduledConversationGroup {
   final int taskCount;
 }
 
-class _AgentProjectConversationGroup {
-  const _AgentProjectConversationGroup({
-    required this.projectKey,
-    required this.label,
-    required this.results,
-  });
-
-  /// 折叠状态持久化用的稳定标识（工作目录路径，无项目时为固定占位）。
-  final String projectKey;
-  final String label;
-  final List<_ConversationSearchResult> results;
-}
-
 class _ConversationSearchIndex {
   const _ConversationSearchIndex({
     required this.signature,

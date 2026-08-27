@@ -80,6 +80,59 @@ class AgentRuntimeErrorSupportTest {
     }
 
     @Test
+    fun `incomplete provider tool calls get an actionable boundary error`() {
+        val error = IllegalStateException(
+            "stream parsing failed",
+            AgentIncompleteToolCallException(toolCallIndex = 1)
+        )
+
+        val message = AgentRuntimeErrorSupport.userFacingMessage(error).orEmpty()
+
+        assertEquals(
+            AgentRuntimeErrorSupport.PROVIDER_TOOL_CALL_INCOMPLETE,
+            AgentRuntimeErrorSupport.failureKind(error)
+        )
+        assertTrue(message.contains("工具调用"))
+        assertTrue(message.contains("Provider"))
+        assertTrue(!message.contains("missing function.name"))
+    }
+
+    @Test
+    fun `harness preparation does not turn another switch into a wait`() {
+        val error = IllegalStateException(
+            "Harness preparation is already running for deepseek-harness-acp. " +
+                "Wait for that installation to finish before starting another unprepared Harness."
+        )
+
+        assertEquals(
+            AgentRuntimeErrorSupport.HARNESS_PREPARATION_IN_PROGRESS,
+            AgentRuntimeErrorSupport.failureKind(error)
+        )
+        assertTrue(
+            AgentRuntimeErrorSupport.userFacingMessage(error)
+                .orEmpty()
+                .contains("不会等待")
+        )
+    }
+
+    @Test
+    fun `missing official harness profile points to preparation instead of raw stderr`() {
+        val error = IllegalStateException(
+            "dsh: profile \"acp\" does not exist; create it with 'dsh plugin --profile acp add <package>'"
+        )
+
+        assertEquals(
+            AgentRuntimeErrorSupport.HARNESS_PROFILE_MISSING,
+            AgentRuntimeErrorSupport.failureKind(error)
+        )
+        assertTrue(
+            AgentRuntimeErrorSupport.userFacingMessage(error)
+                .orEmpty()
+                .contains("官方 ACP profile")
+        )
+    }
+
+    @Test
     fun `diagnostic messages redact credentials and stay bounded`() {
         val error = IllegalStateException(
             "request failed Bearer abc.def token=secret-value " + "x".repeat(500)

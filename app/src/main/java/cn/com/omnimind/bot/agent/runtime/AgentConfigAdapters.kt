@@ -152,6 +152,34 @@ private object DeepSeekHarnessConfigAdapter : AgentConfigAdapter {
             deepSeekConfig = config
         )
     }
+
+    override fun launchConfigWrites(
+        input: AgentProviderMappingInput,
+        mapping: AgentProviderMapping,
+        providerModels: List<ProviderModelOption>,
+        existingConfig: String,
+    ): List<AgentConfigWrite> {
+        val model = input.model?.trim()?.takeIf { it.isNotEmpty() } ?: return emptyList()
+        // DSH's official DeepSeek adapter defaults to 256K output tokens. Many
+        // OpenAI-compatible gateways (including the active GLM route) cap the
+        // request at 131072, so publish a normal user-settings override through
+        // DSH's documented hot-reload surface instead of patching vendor code.
+        return listOf(
+            AgentConfigWrite(
+                path = DEEPSEEK_HARNESS_SETTINGS_PATH,
+                content = buildDeepSeekHarnessSettingsYaml(model),
+                executorKey = "deepseek-agent-settings-write",
+            )
+        )
+    }
+}
+
+private fun buildDeepSeekHarnessSettingsYaml(model: String): String = buildString {
+    appendLine("llm-deepseek:")
+    appendLine("  maxTokens: 8192")
+    appendLine("  models:")
+    appendLine("    - id: '${model.replace("'", "''")}'")
+    appendLine("      maxTokens: 8192")
 }
 
 private object CodexConfigAdapter : AgentConfigAdapter {

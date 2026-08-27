@@ -127,7 +127,7 @@ internal object ModernMcpProtocol {
                     }
                     put(
                         "instructions",
-                        "Use the official OmniBot MCP server to access OmniBot-native browser/internet, files, skills, memory, terminal, calendar, reminders, schedules, music, Android GUI, and Functions.",
+                        AndroidDeviceMcpServer.MCP_INSTRUCTIONS,
                     )
                     putJsonObject("_meta") {
                         put(META_SERVER_INFO, serverInfo)

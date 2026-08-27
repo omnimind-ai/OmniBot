@@ -169,8 +169,10 @@ android {
         applicationId = "cn.com.omnimind.bot"
         minSdk = 29
         targetSdk = 35
-        versionCode = 6
-        versionName = "0.6.0"
+        // 0.6.0 is already released on origin/main; keep the next release
+        // monotonic for Android update checks.
+        versionCode = 7
+        versionName = "0.6.1"
         buildConfigField("String", "IMAGE_BASE_URL", buildConfigString(omnibotImageBaseUrl))
         buildConfigField("String", "IMAGE_MODEL", buildConfigString(omnibotImageModel))
         buildConfigField("String", "IMAGE_API_KEY", buildConfigString(omnibotImageApiKey))
@@ -189,7 +191,7 @@ android {
             preferPackagedOmniFlowRuntime.toString(),
         )
         ndk {
-            abiFilters.addAll(listOf("arm64-v8a"))
+            abiFilters.addAll(listOf("arm64-v8a", "x86_64"))
         }
 
     }
@@ -264,7 +266,10 @@ android {
         }
         debug {
             signingConfig = signingConfigs.getByName("debug")
-            applicationIdSuffix = ".debug"
+            // There is one installable debug app for device validation.  A
+            // suffix here creates a second launcher entry beside the normal
+            // package, which makes users switch between two identical APKs.
+            applicationIdSuffix = ""
             isMinifyEnabled = false
             buildConfigField("boolean", "ENABLE_LLMTHU_BOOTSTRAP", "true")
             buildConfigField(

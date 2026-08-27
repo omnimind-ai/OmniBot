@@ -31,6 +31,21 @@ class AgentLlmStreamAccumulatorTest {
     }
 
     @Test
+    fun `ignores identity only tool call placeholder after valid streamed call`() {
+        val accumulator = AgentLlmStreamAccumulator(json = json)
+
+        accumulator.consume(
+            """{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_time","arguments":"{}"}},{"index":1,"id":"call_placeholder","type":"function","function":{"arguments":""}}]},"finish_reason":"tool_calls"}]}"""
+        )
+
+        val toolCalls = requireNotNull(accumulator.buildTurn().message.toolCalls)
+
+        assertEquals(1, toolCalls.size)
+        assertEquals("call_1", toolCalls.single().id)
+        assertEquals("get_time", toolCalls.single().function.name)
+    }
+
+    @Test
     fun `rejects tool call with identity or arguments but no function name`() {
         val accumulator = AgentLlmStreamAccumulator(json = json)
 
@@ -42,6 +57,33 @@ class AgentLlmStreamAccumulatorTest {
 
         requireNotNull(error)
         assertEquals("tool_call[0] missing function.name", error.message)
+    }
+
+    @Test
+    fun `does not discard a nameless tool call that contains arguments`() {
+        val accumulator = AgentLlmStreamAccumulator(json = json)
+
+        accumulator.consume(
+            """{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_time","arguments":"{}"}},{"index":1,"id":"call_bad","type":"function","function":{"arguments":"{\"timezone\":\"UTC\"}"}}]},"finish_reason":"tool_calls"}]}"""
+        )
+
+        val error = runCatching { accumulator.buildTurn() }.exceptionOrNull()
+
+        requireNotNull(error)
+        assertEquals("tool_call[1] missing function.name", error.message)
+    }
+
+    @Test
+    fun `keeps all valid calls while dropping a trailing identity placeholder`() {
+        val accumulator = AgentLlmStreamAccumulator(json = json)
+
+        accumulator.consume(
+            """{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_time","arguments":"{}"}},{"index":1,"id":"call_2","type":"function","function":{"name":"get_weather","arguments":"{}"}},{"index":2,"id":"call_placeholder","type":"function","function":{"arguments":""}}]},"finish_reason":"tool_calls"}]}"""
+        )
+
+        val toolCalls = requireNotNull(accumulator.buildTurn().message.toolCalls)
+
+        assertEquals(listOf("get_time", "get_weather"), toolCalls.map { it.function.name })
     }
 
     @Test

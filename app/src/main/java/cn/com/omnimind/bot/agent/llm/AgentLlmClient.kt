@@ -286,6 +286,70 @@ class HttpAgentLlmClient(
                     return responsesNamePlan?.restoreTurn(turn) ?: turn
                 } catch (error: AgentStreamRequestException) {
                     lastFailure = error
+                    if (isBadRequest(error) && isThinkingDisableRejected(error)) {
+                        val thinkingCompatible = withThinkingEnabled(variant.request)
+                        if (thinkingCompatible != variant.request) {
+                            OmniLog.w(tag, "provider rejected disabled thinking; retrying with low effort")
+                            val fallbackPlan = if (OpenAiWireApi.isResponses(routeInfo.wireApi)) {
+                                OpenAiResponsesFunctionNameCodec.planFor(thinkingCompatible)
+                            } else {
+                                null
+                            }
+                            val fallbackWireRequest =
+                                fallbackPlan?.encodeRequest(thinkingCompatible) ?: thinkingCompatible
+                            val turn = streamTurnWithPlatformAuthRetry(
+                                model = candidateModel,
+                                requestJson = json.encodeToString(fallbackWireRequest),
+                                explicitModel = effectiveExplicitModel,
+                                platformRoute = AiRequestTransportPolicy.isPlatformRoute(routeInfo.routeTag),
+                                onReasoningUpdate = onReasoningUpdate,
+                                onContentUpdate = onContentUpdate,
+                            )
+                            return fallbackPlan?.restoreTurn(turn) ?: turn
+                        }
+                    }
+                    if (isBadRequest(error) && isTextOnlyContentRejected(error)) {
+                        val textOnly = withoutUnsupportedImageBlocks(variant.request)
+                        if (textOnly != variant.request) {
+                            OmniLog.w(tag, "provider rejected image content; retrying text-only request")
+                            val fallbackPlan = if (OpenAiWireApi.isResponses(routeInfo.wireApi)) {
+                                OpenAiResponsesFunctionNameCodec.planFor(textOnly)
+                            } else {
+                                null
+                            }
+                            val fallbackWireRequest = fallbackPlan?.encodeRequest(textOnly) ?: textOnly
+                            try {
+                                val turn = streamTurnWithPlatformAuthRetry(
+                                    model = candidateModel,
+                                    requestJson = json.encodeToString(fallbackWireRequest),
+                                    explicitModel = effectiveExplicitModel,
+                                    platformRoute = AiRequestTransportPolicy.isPlatformRoute(routeInfo.routeTag),
+                                    onReasoningUpdate = onReasoningUpdate,
+                                    onContentUpdate = onContentUpdate,
+                                )
+                                return fallbackPlan?.restoreTurn(turn) ?: turn
+                            } catch (fallbackError: AgentStreamRequestException) {
+                                if (!isBadRequest(fallbackError) || !isThinkingDisableRejected(fallbackError)) {
+                                    throw fallbackError
+                                }
+                                val thinkingCompatible = withThinkingEnabled(textOnly)
+                                val thinkingPlan = if (OpenAiWireApi.isResponses(routeInfo.wireApi)) {
+                                    OpenAiResponsesFunctionNameCodec.planFor(thinkingCompatible)
+                                } else null
+                                val thinkingWireRequest = thinkingPlan?.encodeRequest(thinkingCompatible) ?: thinkingCompatible
+                                OmniLog.w(tag, "provider rejected disabled thinking after media fallback; retrying with low effort")
+                                val turn = streamTurnWithPlatformAuthRetry(
+                                    model = candidateModel,
+                                    requestJson = json.encodeToString(thinkingWireRequest),
+                                    explicitModel = effectiveExplicitModel,
+                                    platformRoute = AiRequestTransportPolicy.isPlatformRoute(routeInfo.routeTag),
+                                    onReasoningUpdate = onReasoningUpdate,
+                                    onContentUpdate = onContentUpdate,
+                                )
+                                return thinkingPlan?.restoreTurn(turn) ?: turn
+                            }
+                        }
+                    }
                     val canRetryVariant =
                         error.statusCode == 400 && variantIndex < variants.lastIndex
                     if (canRetryVariant) {
@@ -350,6 +414,7 @@ class HttpAgentLlmClient(
         onContentUpdate: (suspend (String) -> Unit)?
     ): ChatCompletionTurn {
         val retryCount = maxTransientStreamRetries.coerceAtLeast(0)
+        var retriedIncompleteToolCall = false
         repeat(retryCount + 1) { attempt ->
             try {
                 return try {
@@ -385,6 +450,14 @@ class HttpAgentLlmClient(
                         "delayMs=$delayMs reason=${error.reason}",
                 )
                 if (delayMs > 0L) delay(delayMs)
+            } catch (error: AgentIncompleteToolCallException) {
+                if (retriedIncompleteToolCall || attempt >= retryCount) throw error
+                retriedIncompleteToolCall = true
+                OmniLog.w(
+                    tag,
+                    "incomplete streamed tool call index=${error.toolCallIndex}; " +
+                        "retrying the same model turn once",
+                )
             }
         }
         error("unreachable transient stream retry state")
@@ -754,21 +827,13 @@ class HttpAgentLlmClient(
         request: ChatCompletionRequest,
         routeInfo: HttpController.ChatCompletionRouteInfo
     ): List<StreamRequestVariant> {
-        val normalizedRequest = normalizeMultimodalMessageContent(request, routeInfo)
+        val normalizedRequest = request
         val requiresNativeToolCalls = normalizedRequest.tools.isNotEmpty() &&
             normalizedRequest.parallelToolCalls == false &&
             (normalizedRequest.toolChoice as? JsonPrimitive)
                 ?.contentOrNull
                 ?.equals("required", ignoreCase = true) == true
-        // Paratera's GLM VLM route needs the conservative request shape used
-        // by the direct GUI action loop. Ordinary Agent turns should still ask
-        // for standard OpenAI-compatible streaming usage; a 400 response will
-        // fall through to the existing no_stream_options variant below.
-        val compatibleRequest = if (isParateraGlm(routeInfo) && requiresNativeToolCalls) {
-            normalizedRequest.copy(streamOptions = null)
-        } else {
-            normalizedRequest
-        }
+        val compatibleRequest = normalizedRequest
         val variants = mutableListOf<StreamRequestVariant>()
         val seenRequests = LinkedHashSet<ChatCompletionRequest>()
         // Dedup by structural equality of the request itself instead of by its
@@ -845,38 +910,61 @@ class HttpAgentLlmClient(
         return variants
     }
 
-    private fun normalizeMultimodalMessageContent(
-        request: ChatCompletionRequest,
-        routeInfo: HttpController.ChatCompletionRouteInfo
-    ): ChatCompletionRequest {
-        if (!isParateraGlm(routeInfo) || request.messages.none { it.content is JsonArray }) {
-            return request
-        }
-        val messages = request.messages.map { message ->
-            val content = message.content as? JsonPrimitive ?: return@map message
-            if (!content.isString) return@map message
-            message.copy(
-                content = JsonArray(
-                    listOf(
-                        JsonObject(
-                            mapOf(
-                                "type" to JsonPrimitive("text"),
-                                "text" to JsonPrimitive(content.content),
-                            )
-                        )
-                    )
-                )
-            )
-        }
-        return request.copy(messages = messages)
+    private fun isTextOnlyContentRejected(error: AgentStreamRequestException): Boolean {
+        val text = (error.reason + " " + error.responseBody.orEmpty()).lowercase()
+        return text.contains("type") && text.contains("text") &&
+            (text.contains("only") || text.contains("范围") || text.contains("['text']"))
     }
 
-    private fun isParateraGlm(routeInfo: HttpController.ChatCompletionRouteInfo): Boolean {
-        val model = routeInfo.resolvedModel.trim().lowercase()
-        val host = runCatching { URI(routeInfo.apiBase.orEmpty()).host.orEmpty() }
-            .getOrDefault("")
-            .lowercase()
-        return model == "glm-5.1" && host == "llmapi.paratera.com"
+    private fun isBadRequest(error: AgentStreamRequestException): Boolean {
+        if (error.statusCode == 400) return true
+        val text = (error.reason + " " + error.responseBody.orEmpty()).lowercase()
+        return text.contains("status_code=400") || text.contains("status code: 400") ||
+            text.contains("bad request")
+    }
+
+    private fun isThinkingDisableRejected(error: AgentStreamRequestException): Boolean {
+        val text = (error.reason + " " + error.responseBody.orEmpty()).lowercase()
+        return (text.contains("思考") || text.contains("thinking") || text.contains("reasoning")) &&
+            (text.contains("不支持关闭") || text.contains("不支持禁用") ||
+                text.contains("always thinks") || text.contains("cannot disable") ||
+                text.contains("must use low") || text.contains("请使用 low"))
+    }
+
+    private fun withThinkingEnabled(request: ChatCompletionRequest): ChatCompletionRequest {
+        if (request.enableThinking != false && request.thinking == null &&
+            !request.reasoningEffort.equals("none", ignoreCase = true)) {
+            return request
+        }
+        return request.copy(
+            enableThinking = null,
+            thinking = null,
+            reasoningEffort = "low",
+        )
+    }
+
+    private fun withoutUnsupportedImageBlocks(request: ChatCompletionRequest): ChatCompletionRequest {
+        var changed = false
+        val messages = request.messages.map { message ->
+            val blocks = message.content as? JsonArray ?: return@map message
+            val kept = blocks.filterNot { item ->
+                val block = item as? JsonObject ?: return@filterNot false
+                val type = block["type"]?.jsonPrimitive?.contentOrNull?.lowercase()
+                val image = type in setOf("image_url", "input_image", "image") ||
+                    block.containsKey("image_url") || block.containsKey("input_image")
+                if (image) changed = true
+                image
+            }
+            if (kept.isEmpty()) {
+                message.copy(content = JsonArray(listOf(JsonObject(mapOf(
+                    "type" to JsonPrimitive("text"),
+                    "text" to JsonPrimitive("请依据当前界面继续。"),
+                )))))
+            } else if (kept.size != blocks.size) {
+                message.copy(content = JsonArray(kept))
+            } else message
+        }
+        return if (changed) request.copy(messages = messages) else request
     }
 
     private fun shouldRetryNextVariantAfterReasoningLeak(

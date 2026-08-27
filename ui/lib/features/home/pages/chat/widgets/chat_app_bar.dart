@@ -658,10 +658,14 @@ class _ChatAppBarModeShortcutButtonState
                   agentId: agent.id,
                   tooltip: agent.name,
                   selected: agent.id == widget.activeAcpAgentId,
+                  // Keep every installed Harness tappable while another
+                  // Harness is handshaking. The native ACP selector cancels
+                  // the superseded connect attempt; disabling rows here made
+                  // an unrelated slow Harness (notably DeepSeek) freeze the
+                  // whole switcher.
                   enabled:
-                      !isAgentLoading &&
-                      (widget.onAcpAgentTap != null ||
-                          widget.onAgentTap != null),
+                      widget.onAcpAgentTap != null ||
+                      widget.onAgentTap != null,
                   iconSize: _chatAppBarModeMenuAgentIconSize(agent.id),
                 ),
               _ChatAppBarModeShortcutMenuItemData(
@@ -730,17 +734,10 @@ class _ChatAppBarModeShortcutButtonState
   }
 
   Widget _buildClosedIcon(Color color) {
-    if (widget.isAgentLoading) {
-      return SizedBox(
-        width: 18,
-        height: 18,
-        child: CircularProgressIndicator(
-          strokeWidth: 2,
-          valueColor: AlwaysStoppedAnimation<Color>(color),
-        ),
-      );
-    }
     final activeAgentId = widget.activeAcpAgentId?.trim() ?? '';
+    // The selector is an identity control, not a progress indicator. Always
+    // keep a stable brand/fallback icon visible; DeepSeek's longer native ACP
+    // startup must never turn every Harness tap into a global spinner.
     if (!widget.isPureChatSelected && activeAgentId.isNotEmpty) {
       return AgentBrandIcon(
         key: ValueKey('chat-app-bar-active-agent-icon-$activeAgentId'),

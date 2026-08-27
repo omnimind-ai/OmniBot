@@ -3,6 +3,7 @@ part of 'chat_page.dart';
 const String _kAgentModelPreferenceKey = 'model';
 const String _kAgentReasoningEffortPreferenceKey = 'reasoning_effort';
 const String _kAgentCollaborationModePreferenceKey = 'collaboration_mode';
+const String _kAgentPermissionModePreferenceKey = 'permission_mode';
 const String _kAgentPreferenceStoragePrefix = 'chat_agent_command_preference';
 const String _kLegacyAgentPreferenceStoragePrefix =
     'chat_codex_command_preference';
@@ -169,12 +170,25 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
   @override
   Future<void> _refreshAgentRuntimeStatus() async {
     if (!mounted || _isAgentRuntimeStatusLoading) return;
+    final requestEpoch = _agentRuntimeStatusEpoch;
     setState(() {
       _isAgentRuntimeStatusLoading = true;
     });
     try {
       final status = await AgentRuntimeService.status();
       if (!mounted) return;
+      if (requestEpoch != _agentRuntimeStatusEpoch) {
+        // A Harness switch invalidates an older status request. Do not let
+        // that request leave the AppBar's loading flag latched forever: the
+        // switch has its own loading state and will keep the spinner visible
+        // until its commit completes.
+        if (_isAgentRuntimeStatusLoading) {
+          setState(() {
+            _isAgentRuntimeStatusLoading = false;
+          });
+        }
+        return;
+      }
       setState(() {
         _agentRuntimeStatus = status;
         _isAgentRuntimeStatusLoading = false;
@@ -185,6 +199,14 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       }
     } catch (_) {
       if (!mounted) return;
+      if (requestEpoch != _agentRuntimeStatusEpoch) {
+        if (_isAgentRuntimeStatusLoading) {
+          setState(() {
+            _isAgentRuntimeStatusLoading = false;
+          });
+        }
+        return;
+      }
       setState(() {
         _agentRuntimeStatus = AgentRuntimeStatus.disconnected;
         _isAgentRuntimeStatusLoading = false;
@@ -281,6 +303,11 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     final selectsRemote = normalized == _kRemoteCodexModeAgentId;
     final observedTargetRequestId = _conversationTargetRequestId;
     final switchGeneration = _harnessSwitchSendBarrier.begin();
+    // Invalidate every status/catalog refresh already in flight. Only the
+    // ACP response produced by this switch may become the next global
+    // runtime snapshot.
+    _agentRuntimeStatusEpoch++;
+    _agentCatalogEpoch++;
     setState(() {
       _optimisticAcpAgentId = normalized;
       _isAcpAgentSwitching = true;
@@ -343,6 +370,11 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         }
       });
     } finally {
+      // Also invalidate refreshes started during the switch. They can carry
+      // a pre-handshake/disconnected snapshot and must not overwrite the
+      // committed result after the loading state is cleared.
+      _agentRuntimeStatusEpoch++;
+      _agentCatalogEpoch++;
       if (mounted && _harnessSwitchSendBarrier.isCurrent(switchGeneration)) {
         setState(() {
           _optimisticAcpAgentId = null;
@@ -359,6 +391,14 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
   /// model causes a needless process teardown followed by a rollback to the
   /// previous Agent, which looks like a broken mode switch to the user.
   Future<bool> _ensureSharedProviderModelReadyForSwitch() async {
+    // A connected ACP runtime already passed this exact Provider/model
+    // validation during its last launch. Re-reading three settings channels
+    // on every selector tap only adds latency (and can briefly block the
+    // popup while another Harness is starting). The native ACP boundary still
+    // validates the binding when it prepares a genuinely new process.
+    if (_agentRuntimeStatus.ready && _agentRuntimeStatus.connected) {
+      return true;
+    }
     try {
       final results = await Future.wait<dynamic>([
         SceneModelConfigService.getSceneCatalog(),
@@ -565,11 +605,23 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       _kAgentCollaborationModePreferenceKey,
       conversationId: conversationId,
     );
+    final permissionMode = _parseAgentPermissionMode(
+      _readAgentPreference(
+        _kAgentPermissionModePreferenceKey,
+        conversationId: conversationId,
+      ),
+    );
     if (!mounted) return;
     setState(() {
       _activeAgentModelId = null;
       _activeAgentReasoningEffort = _normalizeAgentReasoningEffort(effort);
       _activeAgentCollaborationMode = collaborationMode;
+      // Permission is an app-owned ACP policy. A Harness may report its own
+      // default mode (usually `agent`/on-request), but that must not silently
+      // replace the app's canonical default or a per-conversation choice.
+      // New conversations start in Full access, matching the selector's
+      // initial value; an explicit stored choice remains authoritative.
+      _agentPermissionMode = permissionMode ?? AgentPermissionMode.fullAccess;
     });
     if (effort == null || _agentModelOptions.isEmpty) {
       unawaited(_loadAgentModelOptionsWhenReady());
@@ -643,12 +695,13 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       return;
     }
     if (!mounted) return;
+    final requestEpoch = _agentCatalogEpoch;
     setState(() {
       _isAgentCatalogLoading = true;
     });
     try {
       final catalog = await AgentRuntimeService.listAgents();
-      if (!mounted) return;
+      if (!mounted || requestEpoch != _agentCatalogEpoch) return;
       setState(() {
         _agentCatalog = catalog;
       });
@@ -750,6 +803,12 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         effectiveModel,
       );
       final serverEffort = configSettings.reasoningEffort ?? modelDefaultEffort;
+      final storedPermissionMode = _parseAgentPermissionMode(
+        _readAgentPreference(
+          _kAgentPermissionModePreferenceKey,
+          conversationId: _modeState(ChatPageMode.agent).currentConversationId,
+        ),
+      );
       final effortOptions = _mergeAgentReasoningEffortOptions(
         current: serverEffort,
         options: extractAcpReasoningEffortIds(response),
@@ -768,8 +827,12 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         _agentModelConfigSupported = modelConfigSupported;
         _agentModelOptions = modelOptions;
         _activeAgentModelId = modelConfigSupported ? effectiveModel : null;
-        if (configSettings.permissionMode != null) {
-          _agentPermissionMode = configSettings.permissionMode!;
+        // A user-selected local preference is authoritative for the next
+        // turn. Some Harnesses expose a read-only/stale mode in config/read;
+        // allowing it to overwrite the selection makes the picker appear
+        // broken immediately after it is changed.
+        if (storedPermissionMode != null) {
+          _agentPermissionMode = storedPermissionMode;
         }
         final selectedEffort = _normalizeAgentReasoningEffort(
           _activeAgentReasoningEffort,
@@ -937,9 +1000,11 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     final wasRemote =
         _agentRuntimeStatus.runtime == 'remote' ||
         _agentRuntimeStatus.remoteEnabled;
+    CodexRemoteBridgeConfig? previousRemoteConfig;
     try {
       if (wasRemote) {
         final remote = await AgentRuntimeService.readRemoteBridgeConfig();
+        previousRemoteConfig = remote;
         await AgentRuntimeService.writeRemoteBridgeConfig(
           remoteEnabled: false,
           remoteBridgeUrl: remote.remoteBridgeUrl,
@@ -948,7 +1013,12 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         );
       }
       final catalog = await AgentRuntimeService.selectAgent(normalized);
-      var status = await AgentRuntimeService.status();
+      // Native agent/select initializes the ACP process before returning and
+      // includes that live status in the same response. Reuse it so a normal
+      // switch does not pay an extra status probe/connect IPC round-trip.
+      // Keep compatibility with an older native build during hot reload or
+      // an in-place APK update that has not restarted the Flutter engine.
+      var status = catalog.runtimeStatus ?? await AgentRuntimeService.status();
       if (status.ready && !status.connected) {
         status = await AgentRuntimeService.connect();
       }
@@ -969,6 +1039,19 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       unawaited(_loadAgentModelOptions(force: true));
       return true;
     } catch (error) {
+      final remote = previousRemoteConfig;
+      if (wasRemote && remote != null && remote.remoteEnabled) {
+        try {
+          await AgentRuntimeService.writeRemoteBridgeConfig(
+            remoteEnabled: true,
+            remoteBridgeUrl: remote.remoteBridgeUrl,
+            remoteBridgeToken: remote.remoteBridgeToken,
+            remoteCwd: remote.remoteCwd,
+          );
+        } catch (restoreError) {
+          debugPrint('Failed to restore remote Agent config: $restoreError');
+        }
+      }
       if (!mounted) return false;
       showToast(
         LegacyTextLocalizer.isEnglish
@@ -1087,23 +1170,26 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       AgentPermissionMode.autoReview => 'agent',
       AgentPermissionMode.fullAccess => 'agent-full-access',
     };
-    try {
-      await _setAgentConfigOption(configId: 'mode', value: value);
-    } catch (error) {
-      if (mounted) {
-        showToast(
-          LegacyTextLocalizer.isEnglish
-              ? 'Failed to change Agent permissions: $error'
-              : '修改 Agent 权限模式失败：$error',
-          type: ToastType.error,
-        );
-      }
-      return;
-    }
     if (!mounted) return;
     setState(() {
       _agentPermissionMode = mode;
     });
+    // The canonical prompt carries approvalPolicy/sandboxPolicy on every
+    // turn, so the local selection remains effective even when a Harness
+    // does not expose a mutable ACP `mode` config option. Persist it before
+    // attempting the optional in-session mutation so a new session also
+    // starts with the selected mode.
+    await _writeAgentPreference(
+      _kAgentPermissionModePreferenceKey,
+      _agentPermissionModePreferenceValue(mode),
+    );
+    try {
+      await _setAgentConfigOption(configId: 'mode', value: value);
+    } catch (error) {
+      // A running turn or a Harness without `mode` is not a failed user
+      // selection: the next canonical `session/prompt` applies the policy.
+      debugPrint('ACP permission mode will apply on the next turn: $error');
+    }
   }
 
   Future<void> _setAgentConfigOption({
@@ -1130,6 +1216,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     }
     await AgentRuntimeService.setSessionConfigOption(
       sessionId: threadId,
+      conversationId: conversationId,
       agentId: agentId,
       configId: configId,
       value: value,
@@ -1506,12 +1593,47 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     if (effort != null && effort.isNotEmpty) {
       await _writeAgentPreference(_kAgentReasoningEffortPreferenceKey, effort);
     }
+    await _writeAgentPreference(
+      _kAgentPermissionModePreferenceKey,
+      _agentPermissionModePreferenceValue(_agentPermissionMode),
+    );
     final collaborationMode = _activeAgentCollaborationMode?.trim();
     if (collaborationMode != null && collaborationMode.isNotEmpty) {
       await _writeAgentPreference(
         _kAgentCollaborationModePreferenceKey,
         collaborationMode,
       );
+    }
+  }
+
+  String _agentPermissionModePreferenceValue(AgentPermissionMode mode) {
+    return switch (mode) {
+      AgentPermissionMode.readOnly => 'read-only',
+      AgentPermissionMode.defaultMode => 'workspace-write',
+      AgentPermissionMode.autoReview => 'auto-review',
+      AgentPermissionMode.fullAccess => 'full-access',
+    };
+  }
+
+  AgentPermissionMode? _parseAgentPermissionMode(String? raw) {
+    switch (raw?.trim().toLowerCase().replaceAll('_', '-')) {
+      case 'read-only':
+      case 'readonly':
+        return AgentPermissionMode.readOnly;
+      case 'workspace-write':
+      case 'workspacewrite':
+      case 'agent':
+      case 'default':
+        return AgentPermissionMode.defaultMode;
+      case 'auto-review':
+      case 'autoreview':
+        return AgentPermissionMode.autoReview;
+      case 'full-access':
+      case 'fullaccess':
+      case 'agent-full-access':
+        return AgentPermissionMode.fullAccess;
+      default:
+        return null;
     }
   }
 
@@ -1572,6 +1694,43 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     final explicitConversationId = _asAgentInt(event['conversationId']);
     final eventSessionId = acpEventSessionId(event);
     final eventTurnId = acpEventTurnId(event);
+    final eventParams = _asAgentMap(event['params']);
+    final hasStandaloneProcessIdentity = <dynamic>[
+      event['processId'],
+      event['process_id'],
+      event['processHandle'],
+      event['process_handle'],
+      eventParams?['processId'],
+      eventParams?['process_id'],
+      eventParams?['processHandle'],
+      eventParams?['process_handle'],
+    ].any((value) => value?.toString().trim().isNotEmpty == true);
+    String? standaloneProcessId;
+    for (final value in <dynamic>[
+      event['processId'],
+      event['process_id'],
+      event['processHandle'],
+      event['process_handle'],
+      eventParams?['processId'],
+      eventParams?['process_id'],
+      eventParams?['processHandle'],
+      eventParams?['process_handle'],
+    ]) {
+      final normalized = value?.toString().trim() ?? '';
+      if (normalized.isNotEmpty) {
+        standaloneProcessId = normalized;
+        break;
+      }
+    }
+    final standaloneProcessOwner = standaloneProcessId == null
+        ? null
+        : _runtimeCoordinator.conversationIdForStandaloneProcess(
+            standaloneProcessId!,
+          );
+    final hasProtocolIdentity =
+        eventSessionId != null || eventTurnId != null || eventThreadId != null;
+    final canUseVisibleFallback =
+        diagnosticMethod == 'error' || hasStandaloneProcessIdentity;
     final identityConversationId = explicitConversationId == null
         ? _runtimeCoordinator.conversationIdForAcpEvent(
             sessionId: eventSessionId,
@@ -1594,11 +1753,15 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
             ? _activateRemoteCodexRuntimeForThread(eventThreadId)
             : mappedRemoteConversationId) ??
         identityConversationId ??
-        _modeState(ChatPageMode.agent).currentConversationId;
+        standaloneProcessOwner ??
+        (!hasProtocolIdentity && canUseVisibleFallback
+            ? _modeState(ChatPageMode.agent).currentConversationId
+            : null);
     if (conversationId == null) {
       debugPrint(
-        '[Agent] dropping $diagnosticMethod — no conversationId '
-        '(remoteCodex=$remoteCodex, eventThreadId=$eventThreadId)',
+        '[Agent] dropping $diagnosticMethod — no safe ACP owner '
+        '(remoteCodex=$remoteCodex, eventSessionId=$eventSessionId, '
+        'eventTurnId=$eventTurnId, eventThreadId=$eventThreadId)',
       );
       return;
     }
@@ -1640,6 +1803,9 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
           ? _modeState(eventMode).currentConversation
           : null,
     );
+    if (result.compatibilityWarning != null && isVisibleConversation) {
+      showToast(result.compatibilityWarning!, type: ToastType.warning);
+    }
     final threadId = _asAgentString(event['threadId']) ?? result.threadId;
     final turnId = eventTurnId ?? result.turnId;
     if (eventMode == ChatPageMode.agent &&
@@ -1884,6 +2050,19 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     }
   }
 
+  Future<String?> _resolveAgentRequestModel(
+    AgentRuntimeStatus status, {
+    String? overrideModel,
+  }) async {
+    final sourceKey = agentModelSourceKey(status);
+    return selectAgentRequestModel(
+      status: status,
+      overrideModel: overrideModel,
+      activeModel: _activeAgentModelId,
+      activeModelSourceMatches: _loadedAgentModelSourceKey == sourceKey,
+    );
+  }
+
   void _startRemoteCodexSessionSync(String threadId) {
     final normalizedThreadId = threadId.trim();
     if (normalizedThreadId.isEmpty) {
@@ -1903,7 +2082,6 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     unawaited(_syncRemoteCodexSessionSnapshot());
   }
 
-  @override
   void _stopRemoteCodexSessionSync() {
     _remoteCodexSessionSyncTimer?.cancel();
     _remoteCodexSessionSyncTimer = null;
@@ -2472,15 +2650,31 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
   }
 
   Future<AgentRuntimeStatus> _refreshConnectedAgentRuntimeStatus() async {
+    final requestEpoch = _agentRuntimeStatusEpoch;
     var status = await AgentRuntimeService.status();
     if (!status.connected) {
       status = await AgentRuntimeService.connect();
+    }
+    if (requestEpoch != _agentRuntimeStatusEpoch) {
+      return _agentRuntimeStatus;
     }
     _applyRefreshedAgentRuntimeStatus(status);
     return status;
   }
 
   void _applyRefreshedAgentRuntimeStatus(AgentRuntimeStatus status) {
+    if (_isAcpAgentSwitching) {
+      final expectedAgentId = _optimisticAcpAgentId?.trim() ?? '';
+      final observedAgentId = status.activeAgentId?.trim() ?? '';
+      if (expectedAgentId.isNotEmpty &&
+          observedAgentId.isNotEmpty &&
+          observedAgentId != expectedAgentId) {
+        // A late status response from the previous Harness is not allowed to
+        // change the right-top identity while the requested switch is still
+        // in flight.
+        return;
+      }
+    }
     final sourceChanged =
         agentModelSourceKey(_agentRuntimeStatus) != agentModelSourceKey(status);
     if (!mounted) return;
@@ -2501,16 +2695,4 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     });
   }
 
-  Future<String?> _resolveAgentRequestModel(
-    AgentRuntimeStatus status, {
-    String? overrideModel,
-  }) async {
-    final sourceKey = agentModelSourceKey(status);
-    return selectAgentRequestModel(
-      status: status,
-      overrideModel: overrideModel,
-      activeModel: _activeAgentModelId,
-      activeModelSourceMatches: _loadedAgentModelSourceKey == sourceKey,
-    );
-  }
 }

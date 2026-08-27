@@ -15,14 +15,22 @@ internal object AcpSessionCompatibility {
         }
         val result = LinkedHashMap(args)
         if (result.stringValue("sessionId").isNullOrBlank()) {
-            result.stringValue("threadId")?.takeIf { it.isNotBlank() }?.let {
-                result["sessionId"] = it
-            }
+            sequenceOf("threadId", "thread_id", "session_id")
+                .asSequence()
+                .mapNotNull { result.stringValue(it) }
+                .firstOrNull()
+                ?.let {
+                    result["sessionId"] = it
+                }
         }
         if (result.stringValue("promptId").isNullOrBlank()) {
-            result.stringValue("turnId")?.takeIf { it.isNotBlank() }?.let {
-                result["promptId"] = it
-            }
+            sequenceOf("turnId", "turn_id", "taskId", "task_id", "runId", "run_id")
+                .asSequence()
+                .mapNotNull { result.stringValue(it) }
+                .firstOrNull()
+                ?.let {
+                    result["promptId"] = it
+                }
         }
         return result
     }

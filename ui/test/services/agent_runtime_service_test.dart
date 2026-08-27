@@ -32,6 +32,29 @@ void main() {
     );
   });
 
+  test('parses the live status bundled with an agent switch response', () {
+    final catalog = AcpAgentCatalog.fromMap(<String, dynamic>{
+      'selectedAgentId': 'claude-code',
+      'connected': true,
+      'ready': true,
+      'runtime': 'local',
+      'activeAgentId': 'claude-code',
+      'activeAgentName': 'Claude Code',
+      'agents': <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 'claude-code',
+          'name': 'Claude Code',
+          'command': 'claude-code-acp',
+          'enabled': true,
+        },
+      ],
+    });
+
+    expect(catalog.runtimeStatus?.connected, isTrue);
+    expect(catalog.runtimeStatus?.ready, isTrue);
+    expect(catalog.runtimeStatus?.activeAgentId, 'claude-code');
+  });
+
   test(
     'cancelPrompt forwards the OmniFlow run id when stopping a GUI task',
     () async {
@@ -430,6 +453,43 @@ void main() {
     });
   });
 
+  test('elicitation responses preserve ACP content types', () async {
+    MethodCall? capturedCall;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      capturedCall = call;
+      return <String, dynamic>{'ok': true};
+    });
+
+    await AgentRuntimeService.respondToElicitation(
+      requestId: 'elicitation-1',
+      content: <String, dynamic>{'name': 'demo', 'count': 3, 'enabled': false},
+    );
+
+    expect(capturedCall?.method, 'respondToServerRequest');
+    expect(capturedCall?.arguments, {
+      'requestId': 'elicitation-1',
+      'response': {
+        'action': 'accept',
+        'content': {'name': 'demo', 'count': 3, 'enabled': false},
+      },
+    });
+  });
+
+  test('elicitation cancellation uses the ACP cancel action', () async {
+    MethodCall? capturedCall;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      capturedCall = call;
+      return <String, dynamic>{'ok': true};
+    });
+
+    await AgentRuntimeService.cancelElicitation(requestId: 'elicitation-1');
+
+    expect(capturedCall?.arguments, {
+      'requestId': 'elicitation-1',
+      'response': {'action': 'cancel'},
+    });
+  });
+
   test('readSession requests history by default', () async {
     MethodCall? capturedCall;
     messenger.setMockMethodCallHandler(channel, (call) async {
@@ -686,6 +746,36 @@ void main() {
     expect(message, contains('Responses Provider'));
     expect(message, contains('MCP'));
     expect(message, isNot(contains('{"error"')));
+  });
+
+  test('incomplete tool calls are mapped to an actionable user error', () {
+    final message = formatAgentRuntimeErrorForUser(
+      PlatformException(
+        code: 'AGENT_RUNTIME_CALL_FAILED',
+        message: 'tool_call[1] missing function.name',
+        details: <String, dynamic>{
+          'failureKind': 'provider_tool_call_incomplete',
+        },
+      ),
+    );
+
+    expect(message, contains('不完整的工具调用'));
+    expect(message, isNot(contains('missing function.name')));
+  });
+
+  test('Harness preparation contention is actionable and non-blocking', () {
+    final message = formatAgentRuntimeErrorForUser(
+      PlatformException(
+        code: 'AGENT_RUNTIME_CALL_FAILED',
+        message: 'Harness preparation is already running',
+        details: <String, dynamic>{
+          'failureKind': 'harness_preparation_in_progress',
+        },
+      ),
+    );
+
+    expect(message, contains('当前切换不会等待'));
+    expect(message, isNot(contains('Harness preparation is already running')));
   });
 
   test('local Agent requests do not read a separate Codex API model', () {

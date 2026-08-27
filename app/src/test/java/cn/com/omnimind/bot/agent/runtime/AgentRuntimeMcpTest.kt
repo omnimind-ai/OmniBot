@@ -5,7 +5,10 @@ import cn.com.omnimind.baselib.llm.ModelProviderProfile
 import cn.com.omnimind.baselib.llm.ProviderModelOption
 import cn.com.omnimind.baselib.llm.SceneModelBindingEntry
 import cn.com.omnimind.bot.mcp.McpServerState
+import cn.com.omnimind.bot.mcp.RemoteMcpServerConfig
 import com.agentclientprotocol.model.McpServer
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -38,22 +41,52 @@ class AgentRuntimeMcpTest {
     }
 
     @Test
-    fun environmentBoundHarnessUsesAdapterEnvironmentInsteadOfSessionDeclaration() {
-        assertTrue(
-            buildLocalAgentAcpMcpServers(
-                harnessAdapter = AcpHarnessAdapters.deepSeekHarness,
-                supportsHttp = true,
-                state = runningState,
-            ).isEmpty(),
+    fun deepSeekHarnessUsesOfficialSessionMcpDeclaration() {
+        val servers = buildLocalAgentAcpMcpServers(
+            harnessAdapter = AcpHarnessAdapters.deepSeekHarness,
+            supportsHttp = true,
+            state = runningState,
+        )
+        assertEquals(1, servers.size)
+        assertEquals("omnibot", (servers.single() as McpServer.Http).name)
+        assertTrue(AcpHarnessAdapters.deepSeekHarness.mcpEnvironment(runningState).isEmpty())
+    }
+
+    @Test
+    fun configuredRemoteMcpServersAreForwardedWithoutReplacingOmnibotSurface() {
+        val servers = buildConfiguredRemoteAcpMcpServers(
+            configured = listOf(
+                RemoteMcpServerConfig(
+                    id = "filesystem",
+                    name = "Filesystem",
+                    endpointUrl = "https://mcp.example.test/mcp",
+                    bearerToken = "remote-token",
+                ),
+                RemoteMcpServerConfig(
+                    id = "legacy-sse",
+                    name = "Legacy SSE",
+                    endpointUrl = "https://mcp.example.test/sse",
+                ),
+            ),
         )
 
+        assertEquals(1, servers.size)
+        val first = servers.first() as McpServer.Http
+        assertEquals("Filesystem", first.name)
+        assertEquals("https://mcp.example.test/mcp", first.url)
+        assertEquals("Bearer remote-token", first.headers.single().value)
+    }
+
+    @Test
+    fun deepSeekCordisAndNativeTerminalCapabilitiesAreNegotiated() {
         assertEquals(
-            mapOf(
-                "OMNIBOT_MCP_URL" to "http://127.0.0.1:18765/mcp",
-                "OMNIBOT_MCP_TOKEN" to "test-token",
-            ),
-            AcpHarnessAdapters.deepSeekHarness.mcpEnvironment(runningState),
+            "0",
+            ACP_CLIENT_CAPABILITY_META["dsh"]!!
+                .jsonObject["cordis"]!!
+                .jsonObject["protocol"]!!
+                .jsonPrimitive.content,
         )
+        assertEquals("true", ACP_CLIENT_CAPABILITY_META["terminal_output"]!!.toString())
     }
 
     @Test

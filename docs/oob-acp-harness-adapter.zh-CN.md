@@ -62,7 +62,7 @@ val adapter = AcpHarnessAdapters.forProfile(profile)
 | Codex | 官方 `config.toml`、`auth.json`、model catalog；Responses wire API | session、Provider 绑定、事件、取消和统一 MCP | 需要自己的官方配置面，但不需要自己的会话/插件机制 |
 | Claude Code | 官方 `settings.json`；`ANTHROPIC_*` 环境变量和模型映射 | ACP 生命周期、Provider、事件、MCP 声明 | 需要自己的配置面；原始 JSON 内容走统一 raw-config 兼容 |
 | OpenCode | 官方 `opencode.json` provider/model 配置；`OPENAI_*` 环境变量 | ACP 生命周期、Provider、事件、MCP 声明 | 需要自己的配置面；只同步共享 Provider/model |
-| DeepSeek Harness | 官方 DSH 配置 JSON；环境变量 MCP；stdio mode name 归一化；官方 npm/原生依赖安装 | ACP session、Provider/model 来源、事件 reducer、OmniFlow 插件系统 | 需要 adapter-owned 配置和启动环境；这些差异不能泄漏到 Manager 主路 |
+| DeepSeek Harness | 官方 DSH 配置 JSON；官方 `session/new.mcpServers`（stdio/streamable HTTP）；stdio mode name 归一化；官方 profile 插件安装 | ACP session、Provider/model 来源、事件 reducer、OmniFlow 插件系统 | 需要 adapter-owned 配置和启动环境；这些差异不能泄漏到 Manager 主路 |
 
 这里的“需要重写”只表示把同一份共享 Provider 意图翻译成该 Harness 官方接受的配置，不表示重新实现 Agent、会话、工具或插件系统。
 
@@ -74,7 +74,7 @@ DeepSeek Harness 的差异是事实上的官方运行时差异，不应被删除
 - `AcpOfficialRuntime`：官方包、健康检查、原生构建要求、安装脚本和终端包 metadata。
 - `AgentConfigAdapters`：共享 Provider 到官方 Harness 配置的纯映射兼容。
 
-`AgentRuntimeManager` 只询问 adapter 的能力，不判断 DSH ID。这样未来增加另一个“环境变量 MCP + 自定义配置 + mode 归一化”的 Harness 时，只需增加 profile/adapter，不应修改 session 或聊天主路。
+`AgentRuntimeManager` 只询问 adapter 的能力，不判断 DSH ID。这样未来增加另一个“自定义配置 + mode 归一化”的 Harness 时，只需增加 profile/adapter，不应修改 session 或聊天主路。
 
 ## 评审检查清单
 

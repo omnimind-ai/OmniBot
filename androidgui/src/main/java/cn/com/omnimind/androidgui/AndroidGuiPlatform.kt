@@ -86,24 +86,23 @@ internal class AccessibilityAndroidGuiPlatform(
     override suspend fun observe(captureScreenshot: Boolean): AndroidGuiPlatformState = coroutineScope {
         val service = awaitService()
         val display = displaySize()
-        val (roots, windowId) = withContext(Dispatchers.Main.immediate) {
+        val roots = withContext(Dispatchers.Main.immediate) {
             val activeRoot = service.rootInActiveWindow
             val seenWindowIds = mutableSetOf<Int>()
-            val allRoots = buildList {
+            buildList {
                 fun addRoot(root: AccessibilityNodeInfo?) {
                     if (root != null && seenWindowIds.add(root.windowId)) add(root)
                 }
                 addRoot(activeRoot)
                 service.windows.forEach { window -> addRoot(window.root) }
             }
-            allRoots to activeRoot?.windowId
         }
         // Tablet/foldable Settings may expose visible panes as separate
         // accessibility windows.  The active root contains only one pane;
         // serialize every visible window into the single observation graph.
         val xmlDeferred = async(Dispatchers.Default) { AndroidGuiXml.serialize(roots) }
         val screenshotDeferred = if (captureScreenshot) {
-            async { captureScreenshot(service, windowId) }
+            async { captureScreenshot(service) }
         } else {
             null
         }
@@ -376,7 +375,6 @@ internal class AccessibilityAndroidGuiPlatform(
 
     private suspend fun captureScreenshot(
         service: AssistsService,
-        accessibilityWindowId: Int?,
     ): ByteArray? =
         suspendCancellableCoroutine { continuation ->
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
@@ -402,23 +400,11 @@ internal class AccessibilityAndroidGuiPlatform(
                     if (continuation.isActive) continuation.resume(null)
                 }
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                if (accessibilityWindowId == null) {
-                    continuation.resume(null)
-                    return@suspendCancellableCoroutine
-                }
-                service.takeScreenshotOfWindow(
-                    accessibilityWindowId,
-                    service.mainExecutor,
-                    callback,
-                )
-            } else {
-                service.takeScreenshot(
-                    Display.DEFAULT_DISPLAY,
-                    service.mainExecutor,
-                    callback,
-                )
-            }
+            service.takeScreenshot(
+                Display.DEFAULT_DISPLAY,
+                service.mainExecutor,
+                callback,
+            )
         }
 
     private suspend fun <T> withNodes(block: (List<AccessibilityNodeInfo>) -> T): T {

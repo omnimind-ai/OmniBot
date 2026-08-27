@@ -30,6 +30,13 @@ class XiaowanProviderCacheTest {
         )
     }
 
+    @Test
+    fun `keyless local provider remains a usable ACP binding`() {
+        val profile = providerProfile(revision = 1L, apiKey = "")
+
+        assertTrue(hasUsableSharedProviderBinding(binding, profile))
+    }
+
     private fun providerProfile(revision: Long, apiKey: String) = ModelProviderProfile(
         id = "provider-1",
         name = "Provider",

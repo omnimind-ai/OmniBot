@@ -923,8 +923,21 @@ class AgentOrchestrator(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            callback.onError("Agent execution failed: ${e.message}")
-            return AgentResult.Error("Agent execution failed", e)
+            // Keep the same retry policy for failures that escape the
+            // streaming-specific branches.  In particular, transient tool
+            // router/transport exceptions must expose the manual Retry action
+            // instead of becoming an unrecoverable generic error.  The
+            // classifier still rejects provider limits and malformed tool
+            // calls, so a retry cannot blindly repeat a side-effecting tool.
+            val decision = classifyRetryableTurnFailure(e)
+            val message = decision.reason.ifBlank {
+                t(
+                    "Agent 执行失败，请重试。",
+                    "Agent execution failed. Please retry."
+                )
+            }
+            callback.onError(message, decision.retryable)
+            return AgentResult.Error(message, e)
         } finally {
             runCatching { toolRouter.dispose() }
         }
@@ -1058,7 +1071,8 @@ class AgentOrchestrator(
         callback.onToolCallStart(
             toolCall.id,
             toolCall.function.name,
-            parsedArgs
+            parsedArgs,
+            descriptor.toolType,
         )
         return try {
             coroutineScope {
@@ -1481,6 +1495,12 @@ class AgentOrchestrator(
         }
 
         val message = error.message?.trim().orEmpty()
+        AgentRuntimeErrorSupport.userFacingMessage(error)?.let { userFacingMessage ->
+            return RetryDecision(
+                retryable = false,
+                reason = userFacingMessage
+            )
+        }
         if (looksLikeTransientTransportFailure(message)) {
             return RetryDecision(
                 retryable = true,

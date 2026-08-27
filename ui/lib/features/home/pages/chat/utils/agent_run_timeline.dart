@@ -1,6 +1,7 @@
+import 'dart:convert';
+
 import 'package:ui/models/chat_message_model.dart';
 import 'package:ui/services/agent_message_kinds.dart';
-import 'package:ui/features/home/pages/chat/utils/chat_message_identity.dart';
 
 class AgentRunTimelineEntry {
   const AgentRunTimelineEntry.message(this.message) : group = null;
@@ -139,7 +140,9 @@ class AgentRunTimelineGroup {
             (segment) => segment.isProcess
                 ? AgentRunTimelineSegment.process(refresh(segment.messages))
                 : AgentRunTimelineSegment.visible(
-                    latestById[segment.message.id] ?? segment.message,
+                    _projectAgentRequestMessage(
+                      latestById[segment.message.id] ?? segment.message,
+                    ),
                   ),
           )
           .toList(growable: false),
@@ -156,7 +159,13 @@ List<AgentRunTimelineEntry> buildAgentRunTimelineEntries(
     return const <AgentRunTimelineEntry>[];
   }
 
-  messages = canonicalizeChatMessagesById(messages);
+  // ACP requests are transport interactions, not large forms. Keep the
+  // original card in runtime state so the host can answer it, but project it
+  // to the shared compact request card for the timeline. User Input still
+  // uses the one bottom composer; no nested field is created here.
+  final renderMessages = messages
+      .map(_projectAgentRequestMessage)
+      .toList(growable: false);
 
   final normalizedActiveTaskIds = activeTaskIds
       .map((item) => item.trim())
@@ -165,7 +174,7 @@ List<AgentRunTimelineEntry> buildAgentRunTimelineEntries(
   final emittedTaskIds = <String>{};
   final entries = <AgentRunTimelineEntry>[];
 
-  for (final message in messages) {
+  for (final message in renderMessages) {
     // Artifact metadata is already carried by the corresponding tool card and
     // powers the activity strip above the composer. Rendering the reducer's
     // standalone compatibility card as well puts a large duplicate file card
@@ -186,7 +195,7 @@ List<AgentRunTimelineEntry> buildAgentRunTimelineEntries(
     }
 
     final group = _buildTimelineGroup(
-      messages,
+      renderMessages,
       taskId: taskId,
       isActive: normalizedActiveTaskIds.contains(taskId),
       conversationAgentId: conversationAgentId,
@@ -223,7 +232,7 @@ List<AgentRunTimelineEntry> buildAgentRunTimelineEntries(
               turnMessages: const <ChatMessageModel>[],
               conversationAgentId: conversationAgentId,
             ),
-            startedAt: _pendingRunStartedAt(messages, pendingTaskId),
+            startedAt: _pendingRunStartedAt(renderMessages, pendingTaskId),
             segmentsOldestFirst: const <AgentRunTimelineSegment>[],
           ),
         ),
@@ -232,6 +241,167 @@ List<AgentRunTimelineEntry> buildAgentRunTimelineEntries(
   }
 
   return _stabilizeLegacyTurnEntriesNewestFirst(entries);
+}
+
+ChatMessageModel _projectAgentRequestMessage(ChatMessageModel message) {
+  if (!isAgentRequestMessage(message)) {
+    return message;
+  }
+  final card = message.cardData ?? const <String, dynamic>{};
+  final kind = (card['requestKind'] ?? '').toString().trim();
+  final rawParams = _decodeRequestParams(card['rawParamsJson']);
+  final schema = _requestSchema(rawParams);
+  final firstField = _firstSchemaField(schema);
+  final storedTitle = (card['title'] ?? '').toString().trim();
+  final title = _looksGenericInputTitle(storedTitle) && firstField != null
+      ? _stringValue(firstField['title']) ?? storedTitle
+      : storedTitle;
+  final storedDetail = (card['detail'] ?? '').toString().trim();
+  final detail = _requestDisplayDetail(
+    storedDetail: storedDetail,
+    schemaField: firstField,
+    title: title,
+  );
+  final text = detail.isEmpty || detail == title
+      ? title
+      : (title.isEmpty ? detail : '$title\n$detail');
+  final streamMeta = <String, dynamic>{...?message.streamMeta};
+  final taskId = (card['runId'] ?? card['taskId'] ?? card['taskID'])
+      ?.toString()
+      .trim();
+  if ((streamMeta['runId']?.toString().trim() ?? '').isEmpty &&
+      taskId != null &&
+      taskId.isNotEmpty) {
+    streamMeta['runId'] = taskId;
+  }
+  final displayTitle = title.isEmpty
+      ? (kind == 'approval' ? 'Permission requested' : 'Agent question')
+      : title;
+  final displayDetail = detail.isEmpty && text != displayTitle ? text : detail;
+  final projectedCard = <String, dynamic>{
+    ...card,
+    'type': kAgentRequestCardType,
+    'simplePresentation': true,
+    'title': displayTitle,
+    'detail': displayDetail,
+  };
+  final content = <String, dynamic>{
+    'cardData': projectedCard,
+    'id': message.contentId ?? message.id,
+    if (card['agentId'] != null) 'agentId': card['agentId'],
+    if (card['agentName'] != null) 'agentName': card['agentName'],
+  };
+  return message.copyWith(
+    type: 2,
+    user: 3,
+    content: content,
+    streamMeta: streamMeta.isEmpty ? message.streamMeta : streamMeta,
+  );
+}
+
+Map<String, dynamic>? _decodeRequestParams(dynamic raw) {
+  if (raw is Map) {
+    return Map<String, dynamic>.from(raw.cast<String, dynamic>());
+  }
+  final text = raw?.toString().trim() ?? '';
+  if (text.isEmpty) return null;
+  try {
+    final decoded = jsonDecode(text);
+    if (decoded is Map) {
+      return Map<String, dynamic>.from(decoded.cast<String, dynamic>());
+    }
+  } catch (_) {
+    // A malformed producer payload should still render its title, never the
+    // raw exception or a second form.
+  }
+  return null;
+}
+
+Map<String, dynamic>? _requestSchema(Map<String, dynamic>? params) {
+  if (params == null) return null;
+  for (final key in const <String>[
+    'requestedSchema',
+    'requested_schema',
+    'schema',
+    'inputSchema',
+    'input_schema',
+  ]) {
+    final value = _decodeRequestParams(params[key]);
+    if (value != null) return value;
+  }
+  for (final key in const <String>['request', 'elicitation', 'params']) {
+    final nested = _decodeRequestParams(params[key]);
+    final schema = _requestSchema(nested);
+    if (schema != null) return schema;
+  }
+  return params['properties'] is Map ? params : null;
+}
+
+Map<String, dynamic>? _firstSchemaField(Map<String, dynamic>? schema) {
+  final properties = schema?['properties'];
+  if (properties is! Map || properties.isEmpty) return null;
+  final value = properties.values.first;
+  return value is Map
+      ? Map<String, dynamic>.from(value.cast<String, dynamic>())
+      : null;
+}
+
+String? _stringValue(dynamic value) {
+  final text = value?.toString().trim() ?? '';
+  return text.isEmpty ? null : text;
+}
+
+bool _looksGenericInputTitle(String value) {
+  final normalized = value.toLowerCase();
+  return value.isEmpty ||
+      (normalized.contains('agent') &&
+          (normalized.contains('input') || normalized.contains('question'))) ||
+      (value.contains('需要') && value.contains('输入'));
+}
+
+String _requestDisplayDetail({
+  required String storedDetail,
+  required Map<String, dynamic>? schemaField,
+  required String title,
+}) {
+  final description = _stringValue(schemaField?['description']);
+  final choices = _schemaChoices(schemaField);
+  final looksLikeJson =
+      storedDetail.startsWith('{') ||
+      storedDetail.startsWith('[') ||
+      storedDetail.length > 600;
+  if (looksLikeJson && description != null && description != title) {
+    return _appendSchemaChoices(description, choices);
+  }
+  if (looksLikeJson && description == null) {
+    return _appendSchemaChoices('', choices);
+  }
+  return _appendSchemaChoices(
+    storedDetail == title ? '' : storedDetail,
+    choices,
+  );
+}
+
+List<String> _schemaChoices(Map<String, dynamic>? field) {
+  final values = field?['oneOf'] ?? field?['enum'];
+  if (values is! List) return const <String>[];
+  return values
+      .map((value) {
+        if (value is Map) {
+          return _stringValue(
+            value['title'] ?? value['label'] ?? value['const'],
+          );
+        }
+        return _stringValue(value);
+      })
+      .whereType<String>()
+      .toList(growable: false);
+}
+
+String _appendSchemaChoices(String detail, List<String> choices) {
+  if (choices.isEmpty) return detail;
+  final optionLine = '可选：${choices.join('、')}';
+  return detail.isEmpty ? optionLine : '$detail\n$optionLine';
 }
 
 /// Keeps the top-level timeline newest-first even if an asynchronously restored
@@ -594,7 +764,11 @@ List<AgentRunTimelineSegment> _buildSegments(
 
 bool _isProcessMessage(ChatMessageModel message) {
   final type = _cardType(message);
-  return type == 'deep_thinking' || type == 'agent_tool_summary';
+  // A plan is a live ACP snapshot, not disposable tool activity. Keeping it
+  // visible outside the fold lets later plan_update events replace the same
+  // card in place and leaves the final plan readable after the run closes.
+  return type == 'deep_thinking' ||
+      (type == 'agent_tool_summary' && !isAgentPlanMessage(message));
 }
 
 /// The one rule for "which agent produced this turn".

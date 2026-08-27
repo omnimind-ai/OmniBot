@@ -709,7 +709,10 @@ void main() {
         find.descendant(of: agentRow, matching: find.byType(GestureDetector)),
       );
 
-      expect(agentGesture().onTap, isNull);
+      // Harness rows stay actionable while the catalog is refreshing.  The
+      // selector cancels superseded handshakes, so a slow Agent must not
+      // freeze the whole switcher.
+      expect(agentGesture().onTap, isNotNull);
 
       isAgentLoading.value = false;
       await tester.pumpAndSettle();

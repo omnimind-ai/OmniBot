@@ -3,7 +3,6 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:ui/features/home/pages/chat/chat_page_models.dart';
-import 'package:ui/features/home/pages/chat/utils/chat_message_identity.dart';
 import 'package:ui/features/home/pages/authorize/authorize_page_args.dart';
 import 'package:ui/features/home/pages/chat/utils/stream_text_merge.dart';
 import 'package:ui/features/home/pages/command_overlay/constants/messages.dart';
@@ -20,6 +19,7 @@ import 'package:ui/services/agent_tool_call_parser.dart';
 import 'package:ui/services/conversation_history_service.dart';
 import 'package:ui/services/conversation_service.dart';
 import 'package:ui/services/link_preview_service.dart';
+import 'package:ui/services/voice_playback_coordinator.dart';
 import 'package:ui/services/agent_stream_meta.dart';
 import 'package:ui/utils/data_parser.dart';
 import 'package:ui/services/agent_diff_parser.dart';
@@ -109,6 +109,11 @@ class ChatConversationRuntimeState {
   /// phantom "task" that rendered its own agent avatar and processing row.
   final Map<String, String> currentAiMessages = <String, String>{};
 
+  /// Legacy command/process notifications may omit ACP turnId. Keep their
+  /// explicit process identity bound to the run that first observed it so a
+  /// delayed stdout/stderr chunk cannot create a card in the next turn.
+  final Map<String, String> standaloneProcessRunIds = <String, String>{};
+
   /// Accumulated reasoning text. Same contract as [currentAiMessages].
   final Map<String, String> currentThinkingMessages = <String, String>{};
 
@@ -134,11 +139,22 @@ class ChatConversationRuntimeState {
   /// runtime boundary instead of dropping them when no message exists yet.
   final Map<String, Map<String, dynamic>> pendingAcpAssistantPresentation =
       <String, Map<String, dynamic>>{};
+
   /// Host-generated ACP notification ids already reduced by this runtime.
   /// A reconnecting bridge may deliver the same official session/update more
   /// than once; dedupe only the explicit host id, never message text.
   final Set<String> processedAcpEventIds = <String>{};
   final Set<String> completedAgentTurnIds = <String>{};
+  static const int _maxProcessedAcpEventIds = 512;
+  static const int _maxAcpTurnHistory = 256;
+
+  /// Events that reached the ACP projection without enough identity to be
+  /// safely attached to a turn.  Keep a bounded, metadata-only trail instead
+  /// of guessing the current run (which can merge a late Harness event into a
+  /// newer Xiaowan turn).  The payload deliberately excludes text/tool args.
+  final List<Map<String, dynamic>> acpCompatibilityDiagnostics =
+      <Map<String, dynamic>>[];
+  bool acpCompatibilityWarningShown = false;
 
   /// Session ids observed by this runtime. ACP session-scoped notifications
   /// can arrive after a turn has become idle and therefore after
@@ -159,6 +175,11 @@ class ChatConversationRuntimeState {
   /// correct historical cards without stealing the next run.
   final Map<String, String> acpTurnToRunIds = <String, String>{};
   final Set<String> completedAcpTurnIds = <String>{};
+
+  /// Monotonically advances whenever a new prompt/session lifecycle starts.
+  /// Async persistence captures this value and must not apply terminal state
+  /// from an older snapshot after a newer prompt has already started.
+  int persistenceGeneration = 0;
 
   /// ACP advertises commands at session scope. Keep the last declaration on
   /// the shared runtime so every Harness gets the same slash-command surface.
@@ -284,11 +305,14 @@ class ChatConversationRuntimeState {
     agentEntrySequences.clear();
     agentEntryStartTimes.clear();
     agentReplayDeltaOffsets.clear();
+    standaloneProcessRunIds.clear();
     pendingAcpPerformanceMetrics.clear();
     pendingAcpReasoningCardData.clear();
     pendingAcpAssistantPresentation.clear();
     processedAcpEventIds.clear();
     completedAgentTurnIds.clear();
+    acpCompatibilityDiagnostics.clear();
+    acpCompatibilityWarningShown = false;
     knownAcpSessionIds.clear();
     retiredAcpSessionIds.clear();
     allowRetiredAcpSessionReactivation = false;
@@ -308,15 +332,96 @@ class ChatConversationRuntimeState {
     }
     final active = activeRunId?.trim() ?? '';
     if (active.isNotEmpty) {
-      if (key.isNotEmpty) acpTurnToRunIds[key] = active;
+      if (key.isNotEmpty) _rememberAcpTurnRun(key, active);
       final turnOnlyKey = acpTurnKey(turnId: turnId);
-      if (turnOnlyKey.isNotEmpty) acpTurnToRunIds[turnOnlyKey] = active;
+      if (turnOnlyKey.isNotEmpty) _rememberAcpTurnRun(turnOnlyKey, active);
       return active;
     }
     final normalizedFallback = fallback?.trim() ?? '';
     if (normalizedFallback.isEmpty) return null;
     activeRunId = normalizedFallback;
-    if (key.isNotEmpty) acpTurnToRunIds[key] = normalizedFallback;
+    if (key.isNotEmpty) _rememberAcpTurnRun(key, normalizedFallback);
+    return normalizedFallback;
+  }
+
+  bool rememberProcessedAcpEventId(String eventId) {
+    final normalized = eventId.trim();
+    if (normalized.isEmpty) return true;
+    final added = processedAcpEventIds.add(normalized);
+    while (processedAcpEventIds.length > _maxProcessedAcpEventIds) {
+      processedAcpEventIds.remove(processedAcpEventIds.first);
+    }
+    return added;
+  }
+
+  void rememberCompletedAcpTurn(String turnId) {
+    final normalized = turnId.trim();
+    if (normalized.isEmpty) return;
+    completedAcpTurnIds.add(normalized);
+    while (completedAcpTurnIds.length > _maxAcpTurnHistory) {
+      completedAcpTurnIds.remove(completedAcpTurnIds.first);
+    }
+  }
+
+  void _rememberAcpTurnRun(String key, String runId) {
+    acpTurnToRunIds[key] = runId;
+    while (acpTurnToRunIds.length > _maxAcpTurnHistory * 2) {
+      acpTurnToRunIds.remove(acpTurnToRunIds.keys.first);
+    }
+  }
+
+  bool rememberAcpCompatibilityDiagnostic({
+    required String reason,
+    required String method,
+    String? sessionId,
+    String? turnId,
+    String? itemId,
+    String? messageId,
+    bool legacy = false,
+  }) {
+    final entry = <String, dynamic>{
+      'reason': reason,
+      'method': method,
+      if (sessionId?.trim().isNotEmpty == true) 'sessionId': sessionId!.trim(),
+      if (turnId?.trim().isNotEmpty == true) 'turnId': turnId!.trim(),
+      if (itemId?.trim().isNotEmpty == true) 'itemId': itemId!.trim(),
+      if (messageId?.trim().isNotEmpty == true) 'messageId': messageId!.trim(),
+      if (legacy) 'legacy': true,
+      'at': DateTime.now().millisecondsSinceEpoch,
+    };
+    final shouldWarnUser =
+        reason == 'turn_id_missing' && !acpCompatibilityWarningShown;
+    acpCompatibilityWarningShown =
+        acpCompatibilityWarningShown || shouldWarnUser;
+    acpCompatibilityDiagnostics.add(entry);
+    while (acpCompatibilityDiagnostics.length > 64) {
+      acpCompatibilityDiagnostics.removeAt(0);
+    }
+    debugPrint(
+      '[ACP compatibility] quarantined $method: $reason'
+      '${sessionId == null ? '' : ' session=$sessionId'}'
+      '${turnId == null ? '' : ' turn=$turnId'}'
+      '${itemId == null ? '' : ' item=$itemId'}'
+      '${messageId == null ? '' : ' message=$messageId'}'
+      '${legacy ? ' legacy=true' : ''}',
+    );
+    return shouldWarnUser;
+  }
+
+  String standaloneProcessOwner(String processId, String fallbackRunId) {
+    final normalizedProcessId = processId.trim();
+    final normalizedFallback = fallbackRunId.trim();
+    if (normalizedProcessId.isEmpty || normalizedFallback.isEmpty) {
+      return normalizedFallback;
+    }
+    final existing = standaloneProcessRunIds[normalizedProcessId];
+    if (existing != null && existing.isNotEmpty) {
+      return existing;
+    }
+    standaloneProcessRunIds[normalizedProcessId] = normalizedFallback;
+    while (standaloneProcessRunIds.length > 128) {
+      standaloneProcessRunIds.remove(standaloneProcessRunIds.keys.first);
+    }
     return normalizedFallback;
   }
 
@@ -477,6 +582,8 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
   void ensureInitialized() {
     if (_initialized) return;
     _initialized = true;
+    unawaited(VoicePlaybackCoordinator.instance.ensureInitialized());
+
     AssistsMessageService.initialize();
     AssistsMessageService.addOnExternalUserMessageAppendedCallback(
       _handleExternalUserMessageAppended,
@@ -516,6 +623,21 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
           runtime.lastAgentTurnId == normalizedTurnId ||
           runtime.activeAcpTurnId == normalizedTurnId) {
         return mode;
+      }
+    }
+    return null;
+  }
+
+  /// Returns the conversation that first claimed a legacy process identity.
+  /// Process-only events have no ACP session/turn boundary; callers can use a
+  /// known owner when available and apply their explicit compatibility policy
+  /// for an unknown first event.
+  int? conversationIdForStandaloneProcess(String processId) {
+    final normalized = processId.trim();
+    if (normalized.isEmpty) return null;
+    for (final entry in _runtimes.entries) {
+      if (entry.value.standaloneProcessRunIds.containsKey(normalized)) {
+        return entry.value.conversationId;
       }
     }
     return null;
@@ -576,9 +698,7 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     }
     if (runtime.messages.isEmpty && initialMessages != null) {
       runtime.messages.addAll(
-        canonicalizeChatMessagesById(
-          _dedupeEquivalentAgentUserMessages(initialMessages),
-        ),
+        _dedupeEquivalentAgentUserMessages(initialMessages),
       );
     }
     if (conversation != null) {
@@ -643,12 +763,9 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     bool preserveLiveStreamingState = false,
   }) {
     final normalizedMessages = _normalizeIdleThinkingCards(
-      canonicalizeChatMessagesById(
-        _dedupeEquivalentAgentUserMessages(messages),
-      ),
+      _dedupeEquivalentAgentUserMessages(messages),
       isAiResponding: isAiResponding,
       preserveLiveStreamingState: preserveLiveStreamingState,
-    );
     );
     final runtime = ensureRuntime(
       conversationId: conversationId,
@@ -855,6 +972,7 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
       mode: mode,
     );
 
+    runtime.persistenceGeneration += 1;
     runtime.isAiResponding = true;
     runtime.currentDispatchTurnId = taskId;
     runtime.activeRunId = taskId;
@@ -897,7 +1015,7 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
       _rememberCompletedTurn(runtime, taskId);
       if (officialTurnId != null && officialTurnId.isNotEmpty) {
         _rememberCompletedTurn(runtime, officialTurnId);
-        runtime.completedAcpTurnIds.add(officialTurnId);
+        runtime.rememberCompletedAcpTurn(officialTurnId);
       }
       _flushStreamingTextForTask(runtime, taskId);
       _clearStreamingTextBatchesForTask(runtime, taskId);
@@ -1310,6 +1428,7 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
   }) {
     final runtime = runtimeFor(conversationId: conversationId, mode: mode);
     if (runtime == null) return;
+    runtime.persistenceGeneration += 1;
     _flushRuntimeStreamingText(runtime);
     final sessionsToRetire = <String>{
       ...runtime.knownAcpSessionIds,
@@ -1334,11 +1453,13 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     runtime.currentThinkingMessages.clear();
     runtime.currentAcpUserMessages.clear();
     runtime.currentAiMessages.clear();
+    runtime.standaloneProcessRunIds.clear();
     runtime.agentReplayDeltaOffsets.clear();
     runtime.pendingAcpPerformanceMetrics.clear();
     runtime.pendingAcpReasoningCardData.clear();
     runtime.pendingAcpAssistantPresentation.clear();
     runtime.processedAcpEventIds.clear();
+    runtime.acpCompatibilityWarningShown = false;
     runtime.availableAcpCommands = <Map<String, dynamic>>[];
     runtime.acpConfigOptions = <Map<String, dynamic>>[];
     runtime.currentAcpModeId = null;
@@ -1504,6 +1625,7 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
   }) async {
     final runtime = runtimeFor(conversationId: conversationId, mode: mode);
     if (runtime == null) return;
+    final persistenceGeneration = runtime.persistenceGeneration;
     _flushRuntimeStreamingText(runtime);
     if (runtime.messages.isEmpty) return;
 
@@ -1580,13 +1702,16 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     // A page switch may dispose this runtime while the durable write is
     // awaiting the database. Do not mutate a replaced runtime when the old
     // operation returns; the ordered write still preserves the user's data.
-    if (identical(
-      runtimeFor(conversationId: conversationId, mode: mode),
-      runtime,
-    )) {
+    final isCurrentRuntime =
+        identical(
+          runtimeFor(conversationId: conversationId, mode: mode),
+          runtime,
+        ) &&
+        runtime.persistenceGeneration == persistenceGeneration;
+    if (isCurrentRuntime) {
       runtime.conversation = updatedConversation;
     }
-    if (markComplete) {
+    if (markComplete && isCurrentRuntime) {
       await ConversationService.completeConversation(
         conversationId,
         mode: conversationMode,

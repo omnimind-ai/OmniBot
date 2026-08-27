@@ -10,6 +10,9 @@ internal object AgentRuntimeErrorSupport {
     const val PROVIDER_NOT_BOUND = "provider_not_bound"
     const val PROVIDER_UNAVAILABLE = "provider_unavailable"
     const val PROVIDER_MODEL_UNAVAILABLE = "provider_model_unavailable"
+    const val PROVIDER_TOOL_CALL_INCOMPLETE = "provider_tool_call_incomplete"
+    const val HARNESS_PREPARATION_IN_PROGRESS = "harness_preparation_in_progress"
+    const val HARNESS_PROFILE_MISSING = "harness_profile_missing"
 
     private const val CERTIFICATE_ERROR_MESSAGE =
         "Provider 的 HTTPS 证书校验失败。请先在系统设置中开启自动日期和时间并确认当前时间正确；" +
@@ -25,6 +28,15 @@ internal object AgentRuntimeErrorSupport {
                 "统一 Agent Provider 不可用或凭据不完整。请检查 Provider 配置后重试。"
             isProviderModelUnavailable(error) ->
                 "统一 Agent 模型当前不可用。请刷新 Provider 模型列表并重新选择模型。"
+            isIncompleteToolCall(error) ->
+                "Provider 返回了不完整的工具调用。应用已自动重试一次，但响应仍缺少工具名称；" +
+                    "请重试本轮。若持续出现，请检查 Provider 是否完整转发 tool_calls/function.name。"
+            isHarnessPreparationInProgress(error) ->
+                "另一个 Harness 正在安装或准备中。当前切换不会等待它；请稍后重试，" +
+                    "或者先切换到已经安装完成的 Harness。"
+            isHarnessProfileMissing(error) ->
+                "当前 Harness 的官方 ACP profile 尚未安装。请在 Agent 设置中点击“安装/准备 Harness”，" +
+                    "完成后再重试；应用不会用私有脚本替代 Harness 自己的插件工作流。"
             else -> null
         }
     }
@@ -35,6 +47,9 @@ internal object AgentRuntimeErrorSupport {
             isProviderNotBound(error) -> PROVIDER_NOT_BOUND
             isProviderModelUnavailable(error) -> PROVIDER_MODEL_UNAVAILABLE
             isProviderUnavailable(error) -> PROVIDER_UNAVAILABLE
+            isIncompleteToolCall(error) -> PROVIDER_TOOL_CALL_INCOMPLETE
+            isHarnessPreparationInProgress(error) -> HARNESS_PREPARATION_IN_PROGRESS
+            isHarnessProfileMissing(error) -> HARNESS_PROFILE_MISSING
             else -> null
         }
     }
@@ -86,6 +101,26 @@ internal object AgentRuntimeErrorSupport {
     private fun errorMessages(error: Throwable): Sequence<String> =
         generateSequence(error) { it.cause }
             .map { it.message.orEmpty().lowercase() }
+
+    private fun isIncompleteToolCall(error: Throwable): Boolean =
+        generateSequence(error) { it.cause }.any { candidate ->
+            candidate is AgentIncompleteToolCallException ||
+                Regex("tool_call\\[\\d+] missing function\\.name", RegexOption.IGNORE_CASE)
+                    .containsMatchIn(candidate.message.orEmpty())
+        }
+
+    private fun isHarnessPreparationInProgress(error: Throwable): Boolean =
+        errorMessages(error).any {
+            it.contains("harness preparation is already running") ||
+                it.contains("harness preparation in progress")
+        }
+
+    private fun isHarnessProfileMissing(error: Throwable): Boolean =
+        errorMessages(error).any {
+            it.contains("profile \"acp\" does not exist") ||
+                it.contains("profile 'acp' does not exist") ||
+                it.contains("create it with 'dsh plugin --profile acp add")
+        }
 
     private fun isCertificateValidationFailure(error: Throwable): Boolean {
         return generateSequence(error) { it.cause }.any { candidate ->

@@ -3,6 +3,8 @@
 package cn.com.omnimind.bot.agent.runtime
 
 import cn.com.omnimind.bot.mcp.McpServerState
+import cn.com.omnimind.bot.mcp.RemoteMcpConfigStore
+import cn.com.omnimind.bot.mcp.RemoteMcpServerConfig
 import com.agentclientprotocol.model.HttpHeader
 import com.agentclientprotocol.model.McpServer
 
@@ -40,6 +42,54 @@ internal fun buildLocalAgentAcpMcpServers(
             )
         )
     )
+}
+
+/**
+ * Projects the user's enabled remote MCP servers onto the official ACP
+ * session declaration.  These servers belong to the configured Harness
+ * session; they are not reimplemented by OmniBot and their tool names are
+ * therefore left untouched for the Harness to namespace.
+ *
+ * ACP 0.26 only has a typed HTTP server in the JVM SDK.  Streamable HTTP is
+ * supported by the official adapters; legacy `/sse` entries remain available
+ * to OmniBot's native MCP client but are deliberately not sent as an invalid
+ * ACP HTTP declaration.
+ */
+internal fun buildConfiguredRemoteAcpMcpServers(
+    configured: List<RemoteMcpServerConfig> = RemoteMcpConfigStore.listEnabledServers(),
+): List<McpServer> {
+    val usedNames = linkedSetOf<String>()
+    return configured.mapNotNull { server ->
+        val endpoint = server.endpointUrl.trim()
+        if (!endpoint.startsWith("http://", ignoreCase = true) &&
+            !endpoint.startsWith("https://", ignoreCase = true)
+        ) {
+            return@mapNotNull null
+        }
+        if (endpoint.substringBefore('?').trimEnd('/').endsWith("/sse", ignoreCase = true)) {
+            return@mapNotNull null
+        }
+        val baseName = server.name.trim().ifBlank {
+            "remote-${server.id.take(8)}"
+        }
+        var name = baseName
+        var suffix = 2
+        while (!usedNames.add(name)) {
+            name = "$baseName-$suffix"
+            suffix += 1
+        }
+        val headers = server.bearerToken.trim()
+            .takeIf(String::isNotEmpty)
+            ?.let {
+                listOf(HttpHeader(name = "Authorization", value = "Bearer $it"))
+            }
+            .orEmpty()
+        McpServer.Http(
+            name = name,
+            url = endpoint,
+            headers = headers,
+        )
+    }
 }
 
 internal fun buildEnvironmentMcpBinding(

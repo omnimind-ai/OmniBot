@@ -197,6 +197,20 @@ interface AgentCallback {
     ) {
         onToolCallStart(toolName, arguments)
     }
+
+    /**
+     * ACP-aware tool metadata supplied by the runtime tool registry.  The
+     * default keeps older callbacks source-compatible while adapters that
+     * expose ACP can avoid guessing a tool kind from its display name.
+     */
+    suspend fun onToolCallStart(
+        toolCallId: String,
+        toolName: String,
+        arguments: JsonObject,
+        toolType: String?,
+    ) {
+        onToolCallStart(toolCallId, toolName, arguments)
+    }
     
     /**
      * 工具调用进度更新

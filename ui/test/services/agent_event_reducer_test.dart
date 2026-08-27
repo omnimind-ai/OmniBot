@@ -67,6 +67,165 @@ void main() {
     expect(runtime.messages.single.text, '只显示一次');
   });
 
+  test('imports the removed AgentStreamEvent shape through ACP identity', () {
+    final first = reducer.reduce(
+      runtime: runtime,
+      event: {
+        'kind': 'text_snapshot',
+        'taskId': 'legacy-task-1',
+        'entryId': 'legacy-message-1',
+        'seq': 1,
+        'text': '旧 Harness 的回答',
+      },
+    );
+
+    expect(first.handled, isTrue);
+    expect(runtime.messages.single.text, '旧 Harness 的回答');
+    expect(runtime.messages.single.turnId, 'legacy-task-1');
+
+    reducer.reduce(
+      runtime: runtime,
+      event: {'kind': 'completed', 'taskId': 'legacy-task-1', 'seq': 2},
+    );
+
+    expect(runtime.isAiResponding, isFalse);
+    expect(runtime.acpCompatibilityDiagnostics, isEmpty);
+  });
+
+  test('imports legacy tool lifecycle into the shared ACP tool card', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'kind': 'tool_started',
+        'taskId': 'legacy-tool-turn',
+        'entryId': 'legacy-tool-1',
+        'seq': 1,
+        'toolName': 'terminal_execute',
+        'toolType': 'terminal',
+        'status': 'running',
+      },
+    );
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'kind': 'tool_completed',
+        'taskId': 'legacy-tool-turn',
+        'entryId': 'legacy-tool-1',
+        'seq': 2,
+        'toolName': 'terminal_execute',
+        'toolType': 'terminal',
+        'status': 'success',
+        'summary': '命令完成',
+      },
+    );
+
+    final cards = runtime.messages.where(
+      (message) => message.cardData?['type'] == 'agent_tool_summary',
+    );
+    expect(cards, hasLength(1));
+    expect(cards.single.cardData?['status'], 'success');
+    expect(cards.single.cardData?['taskId'], 'legacy-tool-turn');
+  });
+
+  test('quarantines a turn event without identity instead of merging it', () {
+    runtime
+      ..isAiResponding = true
+      ..currentDispatchTurnId = 'xiaowan-turn-1'
+      ..activeAcpTurnId = 'xiaowan-turn-1';
+
+    final result = reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'item/agentMessage/delta',
+        'params': {'delta': 'late output without turn id'},
+      },
+    );
+
+    expect(result.handled, isTrue);
+    expect(result.compatibilityWarning, contains('缺少 turnId'));
+    expect(runtime.messages, isEmpty);
+    expect(runtime.acpCompatibilityDiagnostics, hasLength(1));
+    expect(
+      runtime.acpCompatibilityDiagnostics.single['reason'],
+      'turn_id_missing',
+    );
+    expect(runtime.currentDispatchTurnId, 'xiaowan-turn-1');
+
+    final repeated = reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'item/agentMessage/delta',
+        'params': {'delta': 'another late output without turn id'},
+      },
+    );
+    expect(repeated.compatibilityWarning, isNull);
+    expect(runtime.acpCompatibilityDiagnostics, hasLength(2));
+  });
+
+  test('missing ACP messageId still stays scoped to its official turn', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'params': {
+          'sessionId': 'session-no-message-id',
+          'turnId': 'turn-no-message-id',
+          'update': {
+            'sessionUpdate': 'agent_message_chunk',
+            'content': {'type': 'text', 'text': '第一段'},
+          },
+        },
+      },
+    );
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'params': {
+          'sessionId': 'session-no-message-id',
+          'turnId': 'turn-no-message-id',
+          'update': {
+            'sessionUpdate': 'agent_message_chunk',
+            'content': {'type': 'text', 'text': '第二段'},
+          },
+        },
+      },
+    );
+
+    expect(runtime.messages, hasLength(1));
+    expect(runtime.messages.single.text, '第一段第二段');
+    expect(runtime.acpCompatibilityDiagnostics, isEmpty);
+  });
+
+  test(
+    'missing messageId uses item identity to keep same-turn messages separate',
+    () {
+      for (final itemId in <String>['item-a', 'item-b']) {
+        reducer.reduce(
+          runtime: runtime,
+          event: {
+            'method': 'session/update',
+            'params': {
+              'sessionId': 'session-same-turn',
+              'turnId': 'turn-same-turn',
+              'update': {
+                'sessionUpdate': 'agent_message_chunk',
+                'itemId': itemId,
+                'content': {'type': 'text', 'text': itemId},
+              },
+            },
+          },
+        );
+      }
+
+      expect(runtime.messages, hasLength(2));
+      expect(
+        runtime.messages.map((message) => message.text),
+        containsAll(<String>['item-a', 'item-b']),
+      );
+    },
+  );
+
   test('retains scalar and list ACP unknown updates without a turn id', () {
     for (final rawUpdate in <dynamic>[
       'provider-progress',
@@ -111,6 +270,31 @@ void main() {
     expect(result.handled, isTrue);
     expect(runtime.messages.single.text, 'hello');
     expect(runtime.messages.single.user, 2);
+  });
+
+  test('remote disconnect finalizes an active ACP turn', () {
+    runtime
+      ..isAiResponding = true
+      ..currentDispatchTurnId = 'remote-turn-1'
+      ..activeRunId = 'remote-turn-1';
+
+    final result = reducer.reduce(
+      runtime: runtime,
+      event: {
+        'eventId': 'remote-disconnect:1',
+        'method': 'codex/disconnected',
+        'params': {'exitCode': 7},
+      },
+    );
+
+    expect(result.handled, isTrue);
+    expect(runtime.isAiResponding, isFalse);
+    expect(
+      runtime.messages.any(
+        (message) => message.cardData?['title'] == 'turn/failed',
+      ),
+      isTrue,
+    );
   });
 
   test('ACP assistant chunks preserve Markdown whitespace byte for byte', () {
@@ -373,6 +557,75 @@ void main() {
     expect(runtime.messages.single.cardData?['type'], 'agent_request');
     expect(runtime.messages.single.cardData?['requestKind'], 'user_input');
     expect(runtime.messages.single.cardData?['requestId'], 'elicitation-1');
+  });
+
+  test('uses the ACP elicitation schema instead of a generic input title', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'id': 'elicitation-schema-1',
+          'method': 'elicitation/create',
+          'params': {
+            'message': 'The agent needs your input.',
+            'requestedSchema': {
+              'type': 'object',
+              'properties': {
+                'question_0': {
+                  'type': 'string',
+                  'title': '插件名称',
+                  'description': '请输入要安装的插件',
+                  'oneOf': [
+                    {'const': 'android', 'title': 'Android 插件'},
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
+    );
+
+    final card = runtime.messages.single.cardData!;
+    expect(card['title'], '插件名称');
+    expect(card['detail'], contains('请输入要安装的插件'));
+    expect(card['detail'], contains('Android 插件'));
+    expect(card['detail'], isNot(contains('requestedSchema')));
+  });
+
+  test('uses the schema question for legacy ACP user-input envelopes', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'id': 'user-input-schema-1',
+          'method': 'item/tool/requestUserInput',
+          'params': {
+            'questions': [
+              {
+                'id': 'details',
+                'label': 'The agent needs your input.',
+                'description': 'The agent needs your input.',
+              },
+            ],
+            'requested_schema': jsonEncode({
+              'type': 'object',
+              'properties': {
+                'details': {
+                  'type': 'string',
+                  'title': '插件详情',
+                  'description': '请提供插件名称和用途',
+                },
+              },
+            }),
+          },
+        },
+      },
+    );
+
+    final card = runtime.messages.single.cardData!;
+    expect(card['title'], '插件详情');
+    expect(card['detail'], '请提供插件名称和用途');
   });
 
   test('preserves unknown ACP extensions at the shared runtime boundary', () {
@@ -666,6 +919,83 @@ void main() {
       expect(card['stage'], ThinkingStage.complete.value);
     },
   );
+
+  test('id-less terminal closes the only pre-ACP local turn safely', () {
+    runtime
+      ..isAiResponding = true
+      ..currentDispatchTurnId = 'local-request'
+      ..lastAgentTurnId = 'local-request';
+
+    reducer.reduce(
+      runtime: runtime,
+      event: const {'method': 'turn/completed', 'params': <String, dynamic>{}},
+    );
+
+    expect(runtime.isAiResponding, isFalse);
+    expect(runtime.currentDispatchTurnId, isNull);
+    expect(runtime.acpCompatibilityDiagnostics, isEmpty);
+  });
+
+  test('id-less terminal never closes an already admitted official turn', () {
+    runtime
+      ..isAiResponding = true
+      ..currentDispatchTurnId = 'local-request'
+      ..lastAgentTurnId = 'local-request'
+      ..activeAcpTurnId = 'official-turn-1';
+
+    reducer.reduce(
+      runtime: runtime,
+      event: const {'method': 'turn/completed', 'params': <String, dynamic>{}},
+    );
+
+    expect(runtime.isAiResponding, isTrue);
+    expect(runtime.activeAcpTurnId, 'official-turn-1');
+    expect(runtime.acpCompatibilityDiagnostics, hasLength(1));
+  });
+
+  test(
+    'id-less turn plan updates are quarantined instead of using the active run',
+    () {
+      runtime
+        ..isAiResponding = true
+        ..currentDispatchTurnId = 'new-turn'
+        ..activeAcpTurnId = 'new-turn';
+
+      reducer.reduce(
+        runtime: runtime,
+        event: const {
+          'method': 'turn/plan/updated',
+          'params': {'plan': '- [pending] stale plan'},
+        },
+      );
+
+      expect(runtime.messages, isEmpty);
+      expect(runtime.acpCompatibilityDiagnostics, hasLength(1));
+      expect(
+        runtime.acpCompatibilityDiagnostics.single['method'],
+        'turn/plan/updated',
+      );
+    },
+  );
+
+  test('id-less raw response completion is quarantined', () {
+    final result = reducer.reduce(
+      runtime: runtime,
+      event: const {
+        'method': 'rawResponseItem/completed',
+        'params': {
+          'item': {'type': 'function_call', 'name': 'read_file'},
+        },
+      },
+    );
+
+    expect(result.handled, isTrue);
+    expect(runtime.messages, isEmpty);
+    expect(
+      runtime.acpCompatibilityDiagnostics.single['reason'],
+      'turn_id_missing',
+    );
+  });
 
   test('many message ids in one turn stay a single active turn', () {
     // ACP mints a new `agent_message_chunk.messageId` for each assistant
@@ -1400,6 +1730,30 @@ void main() {
     expect(runtime.messages.single.cardData?['toolType'], 'plan');
     expect(runtime.messages.single.cardData?['planId'], 'plan-1');
     expect(runtime.messages.single.cardData?['summary'], contains('inspect'));
+    final planCardId = runtime.messages.single.id;
+
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'turnId': 'turn-plan-v2',
+        'params': {
+          'sessionId': 'session-plan-v2',
+          'update': {
+            'sessionUpdate': 'plan_update',
+            'plan': {
+              'type': 'markdown',
+              'id': 'plan-1',
+              'content': '# Plan\n\n1. inspect\n2. implement',
+            },
+          },
+        },
+      },
+    );
+
+    expect(runtime.messages, hasLength(1));
+    expect(runtime.messages.single.id, planCardId);
+    expect(runtime.messages.single.cardData?['summary'], contains('implement'));
 
     reducer.reduce(
       runtime: runtime,
@@ -2619,6 +2973,100 @@ void main() {
     expect(card['subagentEvents'], hasLength(1));
   });
 
+  test(
+    'keeps ACP subagent progress carried in rawInput and merges children',
+    () {
+      Map<String, dynamic> update({
+        required String status,
+        required Map<String, dynamic> rawInput,
+        Map<String, dynamic>? rawOutput,
+      }) {
+        return {
+          'message': {
+            'method': 'session/update',
+            'turnId': 'turn-subagent-progress',
+            'params': {
+              'sessionId': 'session-subagent-progress',
+              'update': {
+                'sessionUpdate': 'tool_call_update',
+                'toolCallId': 'subagent-dispatch-1',
+                'kind': 'other',
+                'title': 'subagent_dispatch',
+                'status': status,
+                'rawInput': rawInput,
+                if (rawOutput != null) 'rawOutput': rawOutput,
+              },
+            },
+          },
+        };
+      }
+
+      reducer.reduce(
+        runtime: runtime,
+        event: update(
+          status: 'in_progress',
+          rawInput: {
+            'subagentStatusText': '正在执行子任务 1',
+            'subagentEvents': [
+              {
+                'id': 'subagent-event-1',
+                'kind': 'subagent_started',
+                'summary': '子任务 1：读取配置',
+                'status': 'running',
+                'taskIndex': 0,
+                'subagentId': 'child-1',
+                'seq': 1,
+              },
+            ],
+          },
+        ),
+      );
+      reducer.reduce(
+        runtime: runtime,
+        event: update(
+          status: 'in_progress',
+          rawInput: {
+            'subagentStatusText': '正在执行子任务 2',
+            'subagentEvents': [
+              {
+                'id': 'subagent-event-2',
+                'kind': 'subagent_started',
+                'summary': '子任务 2：检查依赖',
+                'status': 'running',
+                'taskIndex': 1,
+                'subagentId': 'child-2',
+                'seq': 2,
+              },
+            ],
+          },
+        ),
+      );
+      reducer.reduce(
+        runtime: runtime,
+        event: update(
+          status: 'completed',
+          rawInput: const {},
+          rawOutput: {
+            'toolType': 'context',
+            'toolName': 'subagent_dispatch',
+            'success': true,
+            'result': {'results': []},
+          },
+        ),
+      );
+
+      final card = runtime.messages.single.cardData!;
+      expect(card['toolType'], 'subagent');
+      expect(card['status'], 'success');
+      expect(card['subagentStatusText'], '正在执行子任务 2');
+      expect(card['subagentEvents'], hasLength(2));
+      expect(
+        (card['subagentEvents'] as List).map((event) => event['taskIndex']),
+        containsAll(<int>[0, 1]),
+      );
+    },
+  );
+
   test('keeps plain ACP tool raw output in the shared card summary', () {
     reducer.reduce(
       runtime: runtime,
@@ -3235,6 +3683,42 @@ void main() {
     expect(cardData['toolName'], 'agent.commandExec');
     expect(cardData['terminalOutput'], 'hello\n');
     expect(cardData['status'], 'running');
+  });
+
+  test('late standalone process output stays with its original run', () {
+    runtime
+      ..isAiResponding = true
+      ..currentDispatchTurnId = 'turn-1'
+      ..activeRunId = 'turn-1';
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'method': 'process/outputDelta',
+          'params': {'processHandle': 'process-1', 'delta': 'first\n'},
+        },
+      },
+    );
+
+    runtime
+      ..currentDispatchTurnId = 'turn-2'
+      ..activeRunId = 'turn-2';
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'method': 'process/outputDelta',
+          'params': {'processHandle': 'process-1', 'delta': 'late\n'},
+        },
+      },
+    );
+
+    expect(runtime.messages, hasLength(1));
+    expect(runtime.messages.single.cardData?['taskId'], 'turn-1');
+    expect(
+      runtime.messages.single.cardData?['terminalOutput'],
+      'first\nlate\n',
+    );
   });
 
   test('maps process exit snapshots into completed terminal card', () {
@@ -5027,6 +5511,38 @@ diff --git a/lib/main.dart b/lib/main.dart
     expect(cardData['requestId'], 7);
   });
 
+  test('renders standard ACP permission payload as human-readable content', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'id': 'permission-1',
+          'method': 'session/request_permission',
+          'params': {
+            'sessionId': 'session-internal-1',
+            'toolCall': {
+              'toolCallId': 'tool-call-internal-1',
+              'title': 'Run project tests',
+              'kind': 'execute',
+              'rawInput': {'command': 'pnpm test'},
+            },
+            'options': [
+              {'optionId': 'allow_once', 'name': 'Allow once'},
+              {'optionId': 'reject_once', 'name': 'Reject'},
+            ],
+          },
+        },
+      },
+    );
+
+    final cardData = runtime.messages.single.cardData!;
+    expect(cardData['title'], 'Run project tests');
+    expect(cardData['detail'], 'Command: pnpm test');
+    expect(cardData['detail'], isNot(contains('session-internal-1')));
+    expect(cardData['detail'], isNot(contains('tool-call-internal-1')));
+    expect(cardData['detail'], isNot(contains('toolCall')));
+  });
+
   test('maps request user input into codex request card', () {
     reducer.reduce(
       runtime: runtime,
@@ -5050,6 +5566,60 @@ diff --git a/lib/main.dart b/lib/main.dart
     expect(cardData['rawParamsJson'], contains('Choose one'));
     expect(cardData['status'], 'pending');
     expect(cardData['conversationId'], 42);
+  });
+
+  test('preserves request id when ACP places it inside params', () {
+    final result = reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'item/tool/requestUserInput',
+        'params': {
+          'requestId': 'params-request-1',
+          'questions': [
+            {'id': 'choice', 'question': 'Choose one'},
+          ],
+        },
+      },
+    );
+
+    expect(result.requestId, 'params-request-1');
+    expect(runtime.messages.single.cardData?['requestId'], 'params-request-1');
+  });
+
+  test('preserves request id when ACP places it inside the request item', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'item/started',
+        'params': {
+          'item': {
+            'id': 'approval-item-1',
+            'type': 'requestApproval',
+            'requestId': 'item-request-1',
+            'reason': 'Need confirmation',
+          },
+        },
+      },
+    );
+
+    expect(runtime.messages.single.cardData?['requestId'], 'item-request-1');
+  });
+
+  test('marks an ACP request without request id as non-interactive', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'item/tool/requestUserInput',
+        'params': {
+          'questions': [
+            {'id': 'choice', 'question': 'Choose one'},
+          ],
+        },
+      },
+    );
+
+    expect(runtime.messages.single.cardData?['requestId'], isNull);
+    expect(runtime.messages.single.cardData?['interactionUnavailable'], isTrue);
   });
 
   test('reads collaboration mode from thread settings update', () {

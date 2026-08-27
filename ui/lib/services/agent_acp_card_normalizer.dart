@@ -17,7 +17,10 @@ class AgentAcpCardNormalizer {
       return _normalizeThinking(card);
     }
 
-    if (_isPlanType(type)) {
+    if (_isPlanType(type) ||
+        (type == 'agent_tool_summary' &&
+            (_string(card['toolType']).trim().toLowerCase() == 'plan' ||
+                _string(card['toolName']).trim().toLowerCase() == 'plan'))) {
       return _normalizePlan(card);
     }
 
@@ -58,11 +61,36 @@ class AgentAcpCardNormalizer {
 
   static Map<String, dynamic> _normalizePlan(Map<String, dynamic> source) {
     final card = Map<String, dynamic>.from(source);
-    final entries = _planEntries(card['entries'] ?? card['plan']);
-    final text = _string(card['summary'] ?? card['progress'] ?? card['text'])
-        .trim();
-    final planText = text.isNotEmpty ? text : _formatPlan(entries);
-    final terminal = entries.isNotEmpty &&
+    final text = _string(
+      card['summary'] ?? card['progress'] ?? card['text'],
+    ).trim();
+    final structuredEntries = _planEntries(
+      card['planEntries'] ?? card['entries'],
+    );
+    final nestedPlanEntries = card['plan'] is Map
+        ? _planEntries((card['plan'] as Map)['entries'])
+        : const <Map<String, dynamic>>[];
+    final planValue = structuredEntries.isNotEmpty
+        ? card['entries']
+        : nestedPlanEntries.isNotEmpty
+        ? (card['plan'] as Map)['entries']
+        : card['plan'];
+    var entries = structuredEntries.isNotEmpty
+        ? structuredEntries
+        : nestedPlanEntries;
+    final planText = text.isNotEmpty ? text : _planText(planValue);
+    // ACP v2 permits a markdown plan payload instead of a structured entries
+    // array. Parse only explicit task-list rows so prose headings are not
+    // mistaken for tasks, while still giving the mutable card concrete rows
+    // to update/render.
+    if (entries.isEmpty && planText.isNotEmpty) {
+      entries = _parsePlanMarkdown(planText);
+    }
+    final effectivePlanText = planText.isNotEmpty
+        ? planText
+        : _formatPlan(entries);
+    final terminal =
+        entries.isNotEmpty &&
         entries.every((entry) => _isTerminalPlanStatus(entry['status']));
     card['type'] = 'agent_tool_summary';
     card['uiStyle'] ??= 'agent_tool';
@@ -70,8 +98,8 @@ class AgentAcpCardNormalizer {
     card['toolName'] ??= 'plan';
     card['toolTitle'] ??= '任务计划';
     card['displayName'] ??= '任务计划';
-    card['summary'] = planText;
-    card['progress'] = planText;
+    card['summary'] = effectivePlanText;
+    card['progress'] = effectivePlanText;
     card['status'] ??= terminal ? 'success' : 'running';
     card['planEntries'] = entries;
     card['rawInput'] ??= <String, dynamic>{'entries': entries};
@@ -99,16 +127,26 @@ class AgentAcpCardNormalizer {
   static _LegacyThinkingValues _legacyThinkingValues(
     Map<String, dynamic> source,
   ) {
-    final nested = _decodeMap(source['deep_thinking'] ?? source['deepThinking']);
-    final raw = nested == null ? source : <String, dynamic>{...source, ...nested};
+    final nested = _decodeMap(
+      source['deep_thinking'] ?? source['deepThinking'],
+    );
+    final raw = nested == null
+        ? source
+        : <String, dynamic>{...source, ...nested};
     final contentMap = _decodeMap(raw['thinkingContent'] ?? raw['content']);
-    final values = contentMap == null ? raw : <String, dynamic>{...raw, ...contentMap};
+    final values = contentMap == null
+        ? raw
+        : <String, dynamic>{...raw, ...contentMap};
     return _LegacyThinkingValues(
-      taskDescription: _string(values['task_description'] ?? values['taskDescription']),
+      taskDescription: _string(
+        values['task_description'] ?? values['taskDescription'],
+      ),
       subTasks: _stringList(values['sub_tasks'] ?? values['subTasks']),
       preparation: _string(values['preparation']),
       taskTitle: _string(values['task_title'] ?? values['taskTitle']),
-      memoryActions: _stringList(values['memory_actions'] ?? values['memoryActions']),
+      memoryActions: _stringList(
+        values['memory_actions'] ?? values['memoryActions'],
+      ),
     );
   }
 
@@ -116,11 +154,13 @@ class AgentAcpCardNormalizer {
     final parts = <String>[];
     if (values.taskDescription.isNotEmpty) parts.add(values.taskDescription);
     if (values.subTasks.isNotEmpty) {
-      parts.add(values.subTasks
-          .asMap()
-          .entries
-          .map((entry) => '任务${entry.key + 1}: ${entry.value}')
-          .join('\n'));
+      parts.add(
+        values.subTasks
+            .asMap()
+            .entries
+            .map((entry) => '任务${entry.key + 1}: ${entry.value}')
+            .join('\n'),
+      );
     }
     if (values.preparation.isNotEmpty) parts.add(values.preparation);
     if (values.memoryActions.isNotEmpty) {
@@ -148,6 +188,40 @@ class AgentAcpCardNormalizer {
           .toList(growable: false);
     }
     return const <Map<String, dynamic>>[];
+  }
+
+  static List<Map<String, dynamic>> _parsePlanMarkdown(String text) {
+    final entries = <Map<String, dynamic>>[];
+    final row = RegExp(r'^[-*+]\s+\[([^\]]*)\]\s+(.+)$');
+    final numbered = RegExp(r'^\d+[.)]\s+(?:\[([^\]]*)\]\s+)?(.+)$');
+    for (final rawLine in text.split('\n')) {
+      final line = rawLine.trim();
+      if (line.isEmpty || line.startsWith('#')) continue;
+      final match = row.firstMatch(line) ?? numbered.firstMatch(line);
+      if (match == null) continue;
+      final marker = match.group(1)?.trim().toLowerCase() ?? '';
+      final content = (match.group(2) ?? '').trim();
+      if (content.isEmpty) continue;
+      final status = switch (marker) {
+        'x' || '✓' || 'done' || 'completed' || 'complete' => 'completed',
+        '~' ||
+        '-' ||
+        'in_progress' ||
+        'in-progress' ||
+        'running' => 'in_progress',
+        _ => 'pending',
+      };
+      entries.add(<String, dynamic>{'content': content, 'status': status});
+    }
+    return entries;
+  }
+
+  static String _planText(Object? value) {
+    if (value is String) return value.trim();
+    if (value is Map) {
+      return _string(value['content'] ?? value['text'] ?? value['markdown']);
+    }
+    return '';
   }
 
   static bool _isTerminalPlanStatus(Object? value) {
@@ -215,9 +289,15 @@ class AgentAcpCardNormalizer {
   static String _contentText(Object? value) {
     if (value is String) return value.trim();
     if (value is Map) {
-      return _string(value['text'] ?? value['summary'] ?? value['content']).trim();
+      return _string(
+        value['text'] ?? value['summary'] ?? value['content'],
+      ).trim();
     }
-    if (value is List) return value.map(_contentText).where((text) => text.isNotEmpty).join('\n');
+    if (value is List)
+      return value
+          .map(_contentText)
+          .where((text) => text.isNotEmpty)
+          .join('\n');
     return '';
   }
 
@@ -236,7 +316,10 @@ class AgentAcpCardNormalizer {
 
   static List<String> _stringList(Object? value) {
     if (value is List) {
-      return value.map(_string).where((item) => item.isNotEmpty).toList(growable: false);
+      return value
+          .map(_string)
+          .where((item) => item.isNotEmpty)
+          .toList(growable: false);
     }
     final text = _string(value);
     return text.isEmpty ? const <String>[] : <String>[text];

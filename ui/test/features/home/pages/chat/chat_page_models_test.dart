@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ui/features/home/pages/chat/chat_page_models.dart';
-import 'package:ui/features/home/pages/chat/mixins/agent_stream_handler.dart';
 import 'package:ui/features/home/pages/chat/services/chat_conversation_runtime_coordinator.dart';
 import 'package:ui/models/chat_message_model.dart';
 
@@ -60,8 +59,8 @@ void main() {
         // Simulate reducer push-driven streaming state populated by
         // _touchActiveTurn + _appendAssistantText + _appendThinking.
         runtime.isAiResponding = true;
-        runtime.currentDispatchTaskId = 'turn-1';
-        runtime.lastAgentTaskId = 'turn-1';
+        runtime.currentDispatchTurnId = 'turn-1';
+        runtime.lastAgentTurnId = 'turn-1';
         runtime.currentAiMessages['msg-1-codex-agent'] = 'streaming text';
         runtime.currentThinkingMessages['turn-1'] = 'thinking text';
         runtime.currentThinkingStage = ThinkingStage.thinking.value;
@@ -73,17 +72,17 @@ void main() {
           mode: mode,
           messages: const <ChatMessageModel>[],
           isAiResponding: false,
-          currentDispatchTaskId: null,
+          currentDispatchTurnId: null,
           currentThinkingStage: ThinkingStage.complete.value,
           preserveLiveStreamingState: true,
         );
 
         // None of the push-driven fields may have been clobbered: the
-        // chat list reads runtime.activeAgentTaskIds and must still see
+        // chat list reads runtime.activeAgentTurnIds and must still see
         // the active turn so the agent run group remains EXPANDED.
         expect(runtime.isAiResponding, isTrue);
-        expect(runtime.currentDispatchTaskId, 'turn-1');
-        expect(runtime.lastAgentTaskId, 'turn-1');
+        expect(runtime.currentDispatchTurnId, 'turn-1');
+        expect(runtime.lastAgentTurnId, 'turn-1');
         expect(
           runtime.currentAiMessages['msg-1-codex-agent'],
           'streaming text',
@@ -91,7 +90,7 @@ void main() {
         expect(runtime.currentThinkingMessages['turn-1'], 'thinking text');
         expect(runtime.currentThinkingStage, ThinkingStage.thinking.value);
         expect(runtime.isDeepThinking, isTrue);
-        expect(runtime.activeAgentTaskIds, contains('turn-1'));
+        expect(runtime.activeAgentTurnIds, contains('turn-1'));
       },
     );
 
@@ -108,7 +107,7 @@ void main() {
         mode: mode,
       )!;
       runtime.isAiResponding = true;
-      runtime.currentDispatchTaskId = 'stale-turn';
+      runtime.currentDispatchTurnId = 'stale-turn';
       runtime.currentAiMessages['old'] = 'old text';
 
       coordinator.replaceConversationSnapshot(
@@ -116,13 +115,13 @@ void main() {
         mode: mode,
         messages: const <ChatMessageModel>[],
         isAiResponding: false,
-        currentDispatchTaskId: null,
+        currentDispatchTurnId: null,
       );
 
       expect(runtime.isAiResponding, isFalse);
-      expect(runtime.currentDispatchTaskId, isNull);
+      expect(runtime.currentDispatchTurnId, isNull);
       expect(runtime.currentAiMessages, isEmpty);
-      expect(runtime.activeAgentTaskIds, isEmpty);
+      expect(runtime.activeAgentTurnIds, isEmpty);
     });
 
     test(
@@ -208,7 +207,7 @@ void main() {
           reason: 'messages_replaced',
           hasInFlightTask: true,
         ),
-        isTrue,
+        isFalse,
       );
       expect(
         shouldReloadConversationMessagesChanged(

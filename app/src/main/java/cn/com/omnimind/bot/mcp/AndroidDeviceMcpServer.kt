@@ -1,25 +1,9 @@
 package cn.com.omnimind.bot.mcp
 
 import android.content.Context
-import cn.com.omnimind.baselib.llm.AssistantToolCall
-import cn.com.omnimind.baselib.llm.AssistantToolCallFunction
-import cn.com.omnimind.bot.agent.AgentCallback
-import cn.com.omnimind.bot.agent.AgentEventAdapter
 import cn.com.omnimind.bot.agent.AgentRuntimeContextRepository
 import cn.com.omnimind.bot.agent.AgentAlarmCreateRequest
 import cn.com.omnimind.bot.agent.AgentAlarmToolService
-import cn.com.omnimind.bot.agent.AgentToolCatalog
-import cn.com.omnimind.bot.agent.AgentToolDefinitions
-import cn.com.omnimind.bot.agent.AgentToolExecutor
-import cn.com.omnimind.bot.agent.AgentToolRegistry
-import cn.com.omnimind.bot.agent.AgentToolRouter
-import cn.com.omnimind.bot.agent.AgentWorkspaceManager
-import cn.com.omnimind.bot.agent.DefaultAgentExecutionEnvironment
-import cn.com.omnimind.bot.agent.NoOpAgentRunControl
-import cn.com.omnimind.bot.agent.SubagentDispatcher
-import cn.com.omnimind.bot.agent.ToolExecutionResult
-import cn.com.omnimind.bot.agent.WorkspaceMemoryService
-import cn.com.omnimind.bot.agent.workspace.memory.LongTermMemoryIndex
 import cn.com.omnimind.bot.agent.WorkspaceScheduledTaskScheduler
 import cn.com.omnimind.bot.agent.HttpAgentLlmClient
 import cn.com.omnimind.bot.omniflow.OmniFlow
@@ -39,7 +23,6 @@ import io.modelcontextprotocol.kotlin.sdk.types.TextContent
 import io.modelcontextprotocol.kotlin.sdk.types.ToolSchema
 import io.modelcontextprotocol.kotlin.sdk.types.toJson
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -49,9 +32,6 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.longOrNull
-import java.util.UUID
-import java.util.concurrent.atomic.AtomicReference
-import com.rk.terminal.runtime.TerminalDistribution
 
 internal object AndroidDeviceMcpServer {
     internal data class DeviceTool(
@@ -212,34 +192,28 @@ internal object AndroidDeviceMcpServer {
     )
 
     /**
-     * These are the native Agent capabilities, not Provider or Harness tools.
-     * Keep the schemas sourced from AgentToolDefinitions and the execution
-     * routed through AgentToolRouter so ACP/MCP and the in-app Agent cannot
-     * drift into two different implementations.
+     * The ACP/MCP declaration is intentionally a device-capability boundary.
+     * Harnesses already provide their own general-purpose tools (read/write,
+     * shell, plan, subagents, etc.); advertising OmniBot's native Agent
+     * catalog here makes the model choose the wrong implementation and can
+     * result in duplicate or recursive tool calls.  Keep those capabilities
+     * available to the in-app Agent runtime, but do not inject them into a
+     * Harness session.
      */
-    private val nativeAgentToolNames: Set<String> = buildSet {
-        val definitions = AgentToolDefinitions.staticTools(includeVlmTool = false) +
-            AgentToolDefinitions.memoryTools() +
-            AgentToolDefinitions.subagentTools()
-        definitions.forEach { definition ->
-            ((definition["function"] as? JsonObject)?.get("name") as? JsonPrimitive)
-                ?.contentOrNull
-                ?.takeIf { it.isNotBlank() }
-                ?.let(::add)
-        }
-    }
+    internal val publicToolNames: Set<String> = omniFlowTools.map { it.name }.toSet()
 
-    internal val publicToolNames: Set<String> = linkedSetOf<String>().apply {
-        addAll(omniFlowTools.map { it.name })
-        addAll(nativeAgentToolNames)
-    }
+    internal const val MCP_INSTRUCTIONS: String =
+        "Use the OmniBot Android device MCP tools for GUI automation, installed apps, " +
+            "device file transfer, scheduled tasks, reminders, and OmniFlow Functions."
 
     internal fun modernToolDescriptors(
         context: Context,
         scope: CoroutineScope,
     ): List<DeviceTool> {
-        val nativeRuntime = NativeAgentMcpRuntime(context, scope)
-        return allTools(nativeRuntime)
+        // Only Android/device tools are part of the public ACP surface.  The
+        // Harness owns its built-in/general tools and must discover those from
+        // its own protocol instead of receiving OmniBot's native catalog.
+        return omniFlowTools
     }
 
     internal suspend fun modernCallTool(
@@ -249,46 +223,29 @@ internal object AndroidDeviceMcpServer {
         arguments: Map<String, JsonElement>,
     ): CallToolResult {
         val modelClient = HttpAgentLlmClient(scope).asOmniFlowModelClient()
-        val nativeRuntime = NativeAgentMcpRuntime(context, scope)
-        val tool = allTools(nativeRuntime).firstOrNull { it.name == name }
+        val tool = omniFlowTools.firstOrNull { it.name == name }
             ?: return errorResult(IllegalArgumentException("Unknown MCP tool: $name"))
         return runCatching {
             if (tool.requiresOmniFlowPlugin) {
                 ensureOmniFlowReady(context)
             }
-            if (tool in omniFlowTools) {
-                callOmniFlowTool(
-                    context = context,
-                    tool = tool,
-                    arguments = arguments.toKotlinMap(),
-                    modelClient = modelClient,
-                )
-            } else {
-                nativeRuntime.execute(name = name, arguments = arguments)
-            }
+            callOmniFlowTool(
+                context = context,
+                tool = tool,
+                arguments = arguments.toKotlinMap(),
+                modelClient = modelClient,
+            )
         }.fold(
-            onSuccess = { result ->
-                if (result is ToolExecutionResult) nativeSuccessResult(result)
-                else successResult(result as Map<String, Any?>)
-            },
+            onSuccess = ::successResult,
             onFailure = ::errorResult,
         )
     }
-
-    private fun allTools(nativeRuntime: NativeAgentMcpRuntime): List<DeviceTool> =
-        buildList {
-            addAll(omniFlowTools)
-            nativeRuntime.tools.forEach { tool ->
-                if (none { it.name == tool.name }) add(tool)
-            }
-        }
 
     fun create(
         context: Context,
         scope: CoroutineScope,
     ): Server {
         val modelClient = HttpAgentLlmClient(scope).asOmniFlowModelClient()
-        val nativeRuntime = NativeAgentMcpRuntime(context, scope)
         return Server(
             serverInfo = Implementation(
                 // Keep the MCP server identity identical across ACP adapters,
@@ -302,7 +259,7 @@ internal object AndroidDeviceMcpServer {
                     tools = ServerCapabilities.Tools(listChanged = false),
                 ),
             ),
-            instructions = "Use the official OmniBot MCP server to access OmniBot-native browser/internet, files, skills, memory, terminal, calendar, reminders, schedules, music, Android GUI, and Functions.",
+            instructions = MCP_INSTRUCTIONS,
         ).apply {
             omniFlowTools.forEach { tool ->
                 addTool(
@@ -329,184 +286,7 @@ internal object AndroidDeviceMcpServer {
                     )
                 }
             }
-            nativeRuntime.tools.forEach { tool ->
-                if (tool.name in omniFlowTools.map { it.name }) return@forEach
-                addTool(
-                    name = tool.name,
-                    description = tool.description,
-                    inputSchema = ToolSchema(
-                        properties = JsonObject(tool.properties),
-                        required = tool.required.takeIf(List<String>::isNotEmpty),
-                    ),
-                ) { request ->
-                    runCatching {
-                        nativeRuntime.execute(
-                            name = tool.name,
-                            arguments = request.params.arguments.orEmpty(),
-                        )
-                    }.fold(
-                        onSuccess = ::nativeSuccessResult,
-                        onFailure = ::errorResult,
-                    )
-                }
-            }
         }
-    }
-
-    private fun nativeSuccessResult(result: ToolExecutionResult): CallToolResult {
-        val (success, text) = when (result) {
-            is ToolExecutionResult.Error -> false to result.message
-            is ToolExecutionResult.PermissionRequired -> false to "需要权限：${result.missing.joinToString("、")}"
-            is ToolExecutionResult.Clarify -> false to result.question
-            is ToolExecutionResult.ChatMessage -> true to result.message
-            is ToolExecutionResult.ScheduleResult -> result.success to result.previewJson
-            is ToolExecutionResult.McpResult -> result.success to result.rawResultJson
-            is ToolExecutionResult.MemoryResult -> result.success to result.rawResultJson
-            is ToolExecutionResult.TerminalResult -> result.success to result.rawResultJson
-            is ToolExecutionResult.Interrupted -> false to result.rawResultJson
-            is ToolExecutionResult.ContextResult -> result.success to result.rawResultJson
-        }
-        return CallToolResult(
-            content = listOf(TextContent(text)),
-            isError = !success,
-        )
-    }
-
-    /**
-     * Adapter around the existing native Agent runtime. It deliberately owns
-     * no Provider model catalog or Harness identity; it only executes
-     * OmniBot capabilities. Any subagent call still resolves its model through
-     * the normal scene binding used by the native Agent runtime.
-     */
-    private class NativeAgentMcpRuntime(
-        context: Context,
-        scope: CoroutineScope,
-    ) {
-        private val appContext = context.applicationContext
-        private val workspaceManager = AgentWorkspaceManager(appContext)
-        private val terminalDistribution = TerminalDistribution.selected()
-        private val catalog = AgentToolRegistry(
-            context = appContext,
-            conversationMode = cn.com.omnimind.bot.agent.AgentConversationModePolicy.AGENT_MODE,
-            terminalDistribution = terminalDistribution,
-            includeVlmTool = false,
-        )
-        private val routerRef = AtomicReference<AgentToolExecutor?>()
-        private val catalogRef = AtomicReference<AgentToolCatalog?>(catalog)
-        private val json = Json {
-            ignoreUnknownKeys = true
-            isLenient = true
-            encodeDefaults = true
-        }
-        private val subagentDispatcher = SubagentDispatcher(
-            llmClient = HttpAgentLlmClient(scope),
-            toolExecutorProvider = {
-                routerRef.get() ?: error("native MCP router is not ready")
-            },
-            parentCatalogProvider = {
-                catalogRef.get() ?: error("native MCP catalog is not ready")
-            },
-            eventAdapter = AgentEventAdapter(json),
-            model = "scene.dispatch.model",
-        )
-        private val scheduleBridge = object : cn.com.omnimind.bot.agent.AgentScheduleToolBridge {
-            private val scheduler = WorkspaceScheduledTaskScheduler(appContext)
-
-            override suspend fun createTask(arguments: Map<String, Any?>): Map<String, Any?> =
-                scheduler.upsertTask(arguments)
-
-            override suspend fun listTasks(): List<Map<String, Any?>> = scheduler.listTasks()
-
-            override suspend fun updateTask(arguments: Map<String, Any?>): Map<String, Any?> =
-                scheduler.updateTask(arguments)
-
-            override suspend fun deleteTask(arguments: Map<String, Any?>): Map<String, Any?> = mapOf(
-                "deleted" to scheduler.deleteTask(
-                    arguments["taskId"]?.toString()
-                        ?: arguments["id"]?.toString().orEmpty(),
-                ),
-            )
-        }
-        private val router = AgentToolRouter(
-            context = appContext,
-            scope = scope,
-            scheduleToolBridge = scheduleBridge,
-            workspaceManager = workspaceManager,
-            subagentDispatcher = subagentDispatcher,
-            terminalDistribution = terminalDistribution,
-            includeVlmTool = false,
-        ).also { routerRef.set(it) }
-        private val runId = "mcp-${UUID.randomUUID()}"
-        private val workspace = workspaceManager.buildWorkspaceDescriptor(
-            conversationId = null,
-            agentRunId = runId,
-        )
-        private val environment = DefaultAgentExecutionEnvironment(
-            agentRunId = runId,
-            userMessage = "MCP capability call",
-            runtimeContextRepository = AgentRuntimeContextRepository(appContext),
-            workspaceDescriptor = workspace,
-            resolvedSkills = emptyList(),
-            workspaceManager = workspaceManager,
-            workspaceMemoryService = WorkspaceMemoryService(appContext, workspaceManager),
-            conversationMode = cn.com.omnimind.bot.agent.AgentConversationModePolicy.AGENT_MODE,
-            terminalEnvironment = emptyMap(),
-            runControl = NoOpAgentRunControl,
-            longTermMemoryIndex = LongTermMemoryIndex(workspaceManager),
-        )
-
-        internal val tools: List<DeviceTool> = catalog.toolsForModel.map { tool ->
-            val parameters = tool.function.parameters
-            val properties = (parameters["properties"] as? JsonObject)
-                .orEmpty()
-                .mapNotNull { (name, schema) ->
-                    (schema as? JsonObject)?.let { name to it }
-                }
-                .toMap()
-            val required = (parameters["required"] as? JsonArray)
-                ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull }
-                .orEmpty()
-            DeviceTool(
-                name = tool.function.name,
-                operation = tool.function.name,
-                description = tool.function.description,
-                properties = properties,
-                required = required,
-            )
-        }
-
-        suspend fun execute(name: String, arguments: Map<String, JsonElement>): ToolExecutionResult {
-            val args = JsonObject(arguments)
-            val toolCall = AssistantToolCall(
-                id = "mcp-${UUID.randomUUID()}",
-                function = AssistantToolCallFunction(
-                    name = name,
-                    arguments = args.toString(),
-                ),
-            )
-            val handle = environment.runControl.beginToolExecution(name, toolCall.id)
-            return router.execute(
-                toolCall = toolCall,
-                args = args,
-                runtimeDescriptor = catalog.runtimeDescriptor(name),
-                env = environment,
-                callback = NoOpAgentCallback,
-                toolHandle = handle,
-            )
-        }
-    }
-
-    private object NoOpAgentCallback : AgentCallback {
-        override suspend fun onThinkingStart() = Unit
-        override suspend fun onThinkingUpdate(thinking: String) = Unit
-        override suspend fun onToolCallStart(toolName: String, arguments: JsonObject) = Unit
-        override suspend fun onToolCallProgress(toolName: String, progress: String, extras: Map<String, Any?>) = Unit
-        override suspend fun onToolCallComplete(toolName: String, result: ToolExecutionResult) = Unit
-        override suspend fun onChatMessage(message: String) = Unit
-        override suspend fun onClarifyRequired(question: String, missingFields: List<String>?) = Unit
-        override suspend fun onComplete(result: cn.com.omnimind.bot.agent.AgentResult) = Unit
-        override suspend fun onError(error: String) = Unit
-        override suspend fun onPermissionRequired(missing: List<String>) = Unit
     }
 
     private suspend fun ensureOmniFlowReady(context: Context) {

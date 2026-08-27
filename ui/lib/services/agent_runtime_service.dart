@@ -138,6 +138,10 @@ String formatAgentRuntimeErrorForUser(Object? error) {
       return '统一 Agent 模型当前不可用，请刷新模型列表后重新选择。';
     case 'provider_tls_certificate_failure':
       return 'Provider HTTPS 证书校验失败，请检查设备时间和证书链。';
+    case 'provider_tool_call_incomplete':
+      return 'Provider 返回了不完整的工具调用，缺少工具名称。已自动重试；请重试本轮，或检查 Provider 是否完整转发 tool_calls/function.name。';
+    case 'harness_preparation_in_progress':
+      return '另一个 Harness 正在安装或准备中，当前切换不会等待。请稍后重试，或先切换到已安装完成的 Harness。';
   }
 
   final normalizedRaw = rawMessage?.toLowerCase() ?? '';
@@ -145,6 +149,14 @@ String formatAgentRuntimeErrorForUser(Object? error) {
       normalizedRaw.contains('tools')) {
     return '当前 Responses Provider 不支持 Codex 的 MCP 工具格式。请重试；'
         '如仍失败，请改用支持 namespace tools 的 Provider。';
+  }
+  if (normalizedRaw.contains('missing function.name') ||
+      normalizedRaw.contains('missing function name')) {
+    return 'Provider 返回了不完整的工具调用，缺少工具名称。请重试本轮，或检查 Provider 是否完整转发 tool_calls/function.name。';
+  }
+  if (normalizedRaw.contains('harness preparation is already running') ||
+      normalizedRaw.contains('harness preparation in progress')) {
+    return '另一个 Harness 正在安装或准备中，当前切换不会等待。请稍后重试，或先切换到已安装完成的 Harness。';
   }
 
   return formatErrorMessageForUser(rawMessage, fallback: 'Agent 执行失败，请重试。');
@@ -441,10 +453,19 @@ class AcpAgentProfile {
 }
 
 class AcpAgentCatalog {
-  const AcpAgentCatalog({required this.selectedAgentId, required this.agents});
+  const AcpAgentCatalog({
+    required this.selectedAgentId,
+    required this.agents,
+    this.runtimeStatus,
+  });
 
   final String selectedAgentId;
   final List<AcpAgentProfile> agents;
+
+  /// A switch response may carry the status snapshot captured immediately
+  /// after ACP initialization. Keeping it with the catalog avoids a second
+  /// status/connect IPC round-trip on the hot path.
+  final AgentRuntimeStatus? runtimeStatus;
 
   AcpAgentProfile? get selectedAgent {
     for (final agent in agents) {
@@ -472,6 +493,10 @@ class AcpAgentCatalog {
           _stringOrNull(source['selectedAgentId']) ??
           (agents.isEmpty ? '' : agents.first.id),
       agents: agents,
+      runtimeStatus:
+          source.containsKey('connected') || source.containsKey('ready')
+          ? AgentRuntimeStatus.fromMap(source)
+          : null,
     );
   }
 }
@@ -1480,6 +1505,28 @@ class AgentRuntimeService {
           questionId: {'answers': answers},
         },
       },
+    });
+  }
+
+  /// Answers a standard ACP `elicitation/create` request.  Unlike the
+  /// legacy requestUserInput shape, ACP form values live directly under
+  /// `response.content` and must retain their primitive JSON types.
+  static Future<Map<String, dynamic>> respondToElicitation({
+    required Object requestId,
+    required Map<String, dynamic> content,
+  }) {
+    return _invokeMap('respondToServerRequest', {
+      'requestId': requestId,
+      'response': {'action': 'accept', 'content': content},
+    });
+  }
+
+  static Future<Map<String, dynamic>> cancelElicitation({
+    required Object requestId,
+  }) {
+    return _invokeMap('respondToServerRequest', {
+      'requestId': requestId,
+      'response': {'action': 'cancel'},
     });
   }
 

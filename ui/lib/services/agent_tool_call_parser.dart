@@ -592,6 +592,12 @@ String _inferToolType({
   final fullName = (toolName ?? '').trim().toLowerCase();
   final shortName = _shortToolName(fullName).toLowerCase();
   final name = '$fullName $shortName';
+  // Subagent dispatch is a distinct collaboration capability. Resolve it
+  // before generic read/file/name heuristics so labels such as
+  // `subagent_dispatch` can never be rendered as a file or workspace tool.
+  if (_containsAny(name, const ['subagent', 'sub_agent', 'delegate_agent'])) {
+    return 'subagent';
+  }
   final commandToolType = _inferToolTypeFromCommand(arguments);
   if (commandToolType != null && _looksLikeCommandToolName(name)) {
     return commandToolType;
@@ -653,9 +659,6 @@ String _inferToolType({
   }
   if (_containsAny(name, const ['calendar', 'calendar_event'])) {
     return 'calendar';
-  }
-  if (_containsAny(name, const ['subagent', 'sub_agent', 'delegate_agent'])) {
-    return 'subagent';
   }
   if (canonicalItemType == 'mcpToolCall') {
     return 'mcp';

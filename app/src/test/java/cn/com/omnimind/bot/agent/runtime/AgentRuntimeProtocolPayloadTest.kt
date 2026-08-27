@@ -169,6 +169,28 @@ class AgentRuntimeProtocolPayloadTest {
     }
 
     @Test
+    fun legacyTaskAndRunIdsAreAcceptedOnlyAsTurnCompatibilityAliases() {
+        assertEquals(
+            "legacy-task-1",
+            extractTurnId(
+                mapOf(
+                    "method" to "item/agentMessage/delta",
+                    "params" to mapOf("taskId" to "legacy-task-1"),
+                )
+            )
+        )
+        assertEquals(
+            "legacy-run-1",
+            extractTurnId(
+                mapOf(
+                    "method" to "item/agentMessage/delta",
+                    "params" to mapOf("run_id" to "legacy-run-1"),
+                )
+            )
+        )
+    }
+
+    @Test
     fun acpSessionCompatibilityCanonicalizesOldIdsOnlyAtTheBoundary() {
         val canonical = AcpSessionCompatibility.canonicalize(
             "session/prompt",
@@ -179,6 +201,13 @@ class AgentRuntimeProtocolPayloadTest {
         assertEquals("old-prompt", canonical["promptId"])
         assertEquals("old-session", canonical["threadId"])
         assertEquals("old-prompt", canonical["turnId"])
+
+        val taskAlias = AcpSessionCompatibility.canonicalize(
+            "session/prompt",
+            mapOf("session_id" to "old-session-2", "task_id" to "old-task-2")
+        )
+        assertEquals("old-session-2", taskAlias["sessionId"])
+        assertEquals("old-task-2", taskAlias["promptId"])
 
         val canonicalWins = AcpSessionCompatibility.canonicalize(
             "session/cancel",
@@ -239,6 +268,14 @@ class AgentRuntimeProtocolPayloadTest {
     }
 
     @Test
+    fun remoteSessionFallbackOnlyAcceptsCapabilityErrors() {
+        assertTrue(isUnsupportedRemoteAcpMethod(IllegalStateException("Method not found: session/load")))
+        assertTrue(isUnsupportedRemoteAcpMethod(IllegalStateException("ACP method is not implemented")))
+        assertFalse(isUnsupportedRemoteAcpMethod(IllegalStateException("invalid session id")))
+        assertFalse(isUnsupportedRemoteAcpMethod(IllegalStateException("connection refused")))
+    }
+
+    @Test
     fun managedAcpCatalogIncludesSupportedAgentsWithoutGemini() {
         assertEquals(
             listOf("小万", "Codex", "Claude Code", "OpenCode", "DeepSeek Harness"),
@@ -279,8 +316,8 @@ class AgentRuntimeProtocolPayloadTest {
         val deepSeek = AcpAgentProfileStore.OFFICIAL_AGENTS.first {
             it.id == AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID
         }
-        assertEquals("dsh-acp", deepSeek.command)
-        assertTrue(deepSeek.arguments.isEmpty())
+        assertEquals("dsh-acp-android", deepSeek.command)
+        assertEquals(listOf("--profile", "acp"), deepSeek.arguments)
         val deepSeekRuntime = AcpAgentProfileStore.officialRuntime(deepSeek)
         assertEquals("dsh", deepSeekRuntime?.discoveryCommand)
         assertTrue(
@@ -297,20 +334,22 @@ class AgentRuntimeProtocolPayloadTest {
         assertTrue(deepSeekRuntime?.managedAdapterPackages.orEmpty().contains("@deepseek-ai/dsh@next"))
         assertTrue(deepSeekRuntime?.requiresNativeBuildTools == true)
         assertTrue(
-            deepSeekRuntime?.managedAdapterHealthCommand.orEmpty().contains("node-pty")
+            deepSeekRuntime?.managedAdapterHealthCommand.orEmpty()
+                .contains("command -v dsh")
+        )
+        assertTrue(
+            deepSeekRuntime?.managedAdapterHealthCommand.orEmpty()
+                .contains("command -v dsh-acp-android")
         )
         assertTrue(MANAGED_NATIVE_BUILD_PREREQUISITES_COMMAND.contains("omnibot_apk_add 'build-base' 'python3'"))
         assertTrue(MANAGED_NATIVE_BUILD_PREREQUISITES_COMMAND.contains("apk fix --no-cache"))
         assertTrue(MANAGED_NATIVE_BUILD_PREREQUISITES_COMMAND.contains("apk fix --no-cache --upgrade"))
         assertTrue(MANAGED_NATIVE_BUILD_PREREQUISITES_COMMAND.contains("build-essential python3"))
-        assertTrue(DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("repair_deepseek_harness_node_pty"))
-        assertTrue(DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("node-gyp configure"))
-        assertTrue(DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("cmd_copy = rm -rf"))
-        assertTrue(DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("omnibot-node-gyp-copy"))
-        assertTrue(DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("exec /bin/ln"))
+        assertTrue(DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("dsh plugin --profile acp add"))
+        assertTrue(DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("profiles/acp/package.json"))
+        assertTrue(DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("pnpm@$DEEPSEEK_HARNESS_PNPM_VERSION"))
         assertTrue(
-            DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.lastIndexOf("install_deepseek_harness_packages") <
-                DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.lastIndexOf("repair_deepseek_harness_node_pty")
+            DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("DSH_HOME=\"/root/.dsh/omnibot-acp\"")
         )
     }
 
@@ -538,8 +577,7 @@ class AgentRuntimeProtocolPayloadTest {
             )
         )
         assertNull(dshWithStandardAdapter.deepSeekConfig)
-        assertTrue(
-            AgentConfigAdapterRegistry.launchConfigWrites(
+        val dshWrites = AgentConfigAdapterRegistry.launchConfigWrites(
                 input = AgentProviderMappingInput(
                     agentId = AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID,
                     provider = credentials,
@@ -556,8 +594,10 @@ class AgentRuntimeProtocolPayloadTest {
                 ),
                 providerModels = providerModels,
                 existingConfig = "",
-            ).isEmpty()
-        )
+            )
+        assertEquals(1, dshWrites.size)
+        assertEquals("/root/.dsh/omnibot-acp/settings.yaml", dshWrites.single().path)
+        assertTrue(dshWrites.single().content.contains("id: 'glm-5.1'"))
     }
 
     @Test
@@ -633,9 +673,11 @@ class AgentRuntimeProtocolPayloadTest {
     }
 
     @Test
-    fun environmentBoundHarnessMcpConnectionIsSuppliedOnlyThroughAdapterEnvironment() {
-        val environment = AcpHarnessAdapters.deepSeekHarness.mcpEnvironment(
-            McpServerState(
+    fun deepSeekHarnessMcpConnectionUsesOfficialSessionDeclaration() {
+        val servers = buildLocalAgentAcpMcpServers(
+            harnessAdapter = AcpHarnessAdapters.deepSeekHarness,
+            supportsHttp = true,
+            state = McpServerState(
                 enabled = true,
                 running = true,
                 host = null,
@@ -643,9 +685,14 @@ class AgentRuntimeProtocolPayloadTest {
                 token = "local-secret"
             )
         )
-
-        assertEquals("http://127.0.0.1:9001/mcp", environment["OMNIBOT_MCP_URL"])
-        assertEquals("local-secret", environment["OMNIBOT_MCP_TOKEN"])
+        val server = servers.single() as McpServer.Http
+        assertEquals("http://127.0.0.1:9001/mcp", server.url)
+        assertEquals("Bearer local-secret", server.headers.single().value)
+        assertTrue(
+            AcpHarnessAdapters.deepSeekHarness.mcpEnvironment(
+                McpServerState(false, false, null, 0, "")
+            ).isEmpty()
+        )
     }
 
     @Test
@@ -1144,6 +1191,38 @@ class AgentRuntimeProtocolPayloadTest {
             resolveSharedAgentModel(
                 boundProviderProfileId = "debug-llmthu-glm",
                 boundModel = "GLM-5.1"
+            )
+        )
+    }
+
+    @Test
+    fun acpPermissionModeResolvesHarnessAliases() {
+        val advertised = listOf("default", "bypassPermissions", "plan")
+        assertEquals(
+            "bypassPermissions",
+            resolveAcpSessionModeId(advertised, "agent-full-access")
+        )
+        assertEquals("default", resolveAcpSessionModeId(advertised, "agent"))
+        assertEquals("plan", resolveAcpSessionModeId(advertised, "read-only"))
+        assertTrue(isAcpFullAccessMode("danger-full-access"))
+        assertTrue(isAcpFullAccessMode("bypassPermissions"))
+        assertFalse(isAcpFullAccessMode("workspace-write"))
+    }
+
+    @Test
+    fun acpPermissionDefaultsToUnrestrictedUntilExplicitlyRequested() {
+        assertEquals(
+            AcpPermissionBehavior.ALLOW_WITHOUT_PROMPT,
+            resolveAcpPermissionBehavior(emptyMap())
+        )
+        assertEquals(
+            AcpPermissionBehavior.ASK_USER,
+            resolveAcpPermissionBehavior(mapOf("approvalPolicy" to "on-request"))
+        )
+        assertEquals(
+            AcpPermissionBehavior.ASK_USER,
+            resolveAcpPermissionBehavior(
+                mapOf("sandboxPolicy" to mapOf("type" to "readOnly"))
             )
         )
     }

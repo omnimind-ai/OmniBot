@@ -1212,6 +1212,7 @@ object HttpController {
         obj.put("model", request.model)
         obj.put("max_tokens", request.maxTokens ?: request.maxCompletionTokens ?: 4096)
         request.temperature?.let { obj.put("temperature", it) }
+        request.topP?.let { obj.put("top_p", it) }
 
         // Extract system messages → top-level system
         val systemMessages = request.messages.filter { it.role == "system" }
@@ -1271,10 +1272,19 @@ object HttpController {
                     }
                 }
                 "tool" -> {
+                    val toolCallId = msg.toolCallId?.trim().orEmpty()
+                    if (toolCallId.isEmpty()) {
+                        // Old local history can contain a tool card without
+                        // the assistant envelope that introduced its id.
+                        // Anthropic rejects an empty tool_use_id; omit only
+                        // this orphan result and keep the rest of the turn.
+                        OmniLog.w(TAG, "dropping orphan Anthropic tool result without tool_use_id")
+                        continue
+                    }
                     // merge consecutive tool results into a single user message
                     val toolResultBlock = JSONObject()
                     toolResultBlock.put("type", "tool_result")
-                    toolResultBlock.put("tool_use_id", msg.toolCallId ?: "")
+                    toolResultBlock.put("tool_use_id", toolCallId)
                     toolResultBlock.put(
                         "content",
                         msg.content?.let {
@@ -1331,6 +1341,9 @@ object HttpController {
                 tools.put(toolObj)
             }
             obj.put("tools", tools)
+
+            buildAnthropicToolChoice(request.toolChoice, request.parallelToolCalls)
+                ?.let { obj.put("tool_choice", JSONObject(it.toString())) }
         }
 
         if (request.stream) {
@@ -1339,6 +1352,70 @@ object HttpController {
 
         val requestJson = obj.toString() ?: "{}"
         return applyAnthropicAutomaticCacheControl(requestJson)
+    }
+
+    /**
+     * Projects the shared OpenAI-style tool selection into Anthropic's
+     * Messages API shape. Keeping this at the wire boundary is important:
+     * otherwise an ACP turn that requires one tool silently becomes Anthropic's
+     * default `auto` policy, and `parallelToolCalls = false` is lost as well.
+     */
+    private fun buildAnthropicToolChoice(
+        rawChoice: JsonElement?,
+        parallelToolCalls: Boolean?
+    ): KxJsonObject? {
+        val choice = when (rawChoice) {
+            null -> if (parallelToolCalls == false) {
+                buildJsonObject { put("type", "auto") }
+            } else {
+                null
+            }
+            is JsonPrimitive -> when (rawChoice.contentOrNull?.trim()?.lowercase()) {
+                "auto" -> buildJsonObject { put("type", "auto") }
+                "required", "any" -> buildJsonObject { put("type", "any") }
+                "none" -> buildJsonObject { put("type", "none") }
+                else -> null
+            }
+            is KxJsonObject -> {
+                val rawType = (rawChoice["type"] as? JsonPrimitive)
+                    ?.contentOrNull
+                    ?.trim()
+                    ?.lowercase()
+                val functionName = ((rawChoice["function"] as? KxJsonObject)
+                    ?.get("name") as? JsonPrimitive)
+                    ?.contentOrNull
+                    ?.trim()
+                    ?.takeIf { it.isNotEmpty() }
+                    ?: (rawChoice["name"] as? JsonPrimitive)
+                        ?.contentOrNull
+                        ?.trim()
+                        ?.takeIf { it.isNotEmpty() }
+                when {
+                    rawType == "auto" || rawType == "any" || rawType == "none" ->
+                        buildJsonObject { put("type", rawType) }
+                    rawType == "tool" && functionName != null ->
+                        buildJsonObject {
+                            put("type", "tool")
+                            put("name", functionName)
+                        }
+                    functionName != null ->
+                        buildJsonObject {
+                            put("type", "tool")
+                            put("name", functionName)
+                        }
+                    else -> null
+                }
+            }
+            else -> null
+        } ?: return null
+
+        if (
+            parallelToolCalls == false &&
+            (choice["type"] as? JsonPrimitive)?.contentOrNull != "none"
+        ) {
+            return KxJsonObject(choice + ("disable_parallel_tool_use" to JsonPrimitive(true)))
+        }
+        return choice
     }
 
     private fun applyAnthropicAutomaticCacheControl(requestJson: String): String {
@@ -2076,6 +2153,12 @@ object HttpController {
         return object : EventSourceListener() {
             // per-stream state
             private val contentBlocks = sortedMapOf<Int, AnthropicStreamBlockBuilder>()
+            // Track client-side tool blocks separately. Anthropic server-side blocks
+            // (for example web search) may also emit input_json_delta, but those
+            // blocks do not have a function name and must not be projected as
+            // OpenAI function calls (otherwise the downstream parser reports
+            // `missing function.name`).
+            private val toolUseBlocks = mutableSetOf<Int>()
             private val emittedContentBlockIndexes = mutableSetOf<Int>()
             private val usage = AnthropicUsageAccumulator()
 
@@ -2147,6 +2230,7 @@ object HttpController {
                         contentBlocks[index] = AnthropicStreamBlockBuilder(block)
                         when (stringField(block, "type")) {
                             "tool_use" -> {
+                                toolUseBlocks += index
                                 val toolId = stringField(block, "id").ifEmpty { "tool_$index" }
                                 val toolName = stringField(block, "name")
                                 val initialInput = block["input"]
@@ -2226,6 +2310,18 @@ object HttpController {
                                 outer.onEvent(eventSource, id, type, chunk)
                             }
                             "input_json_delta" -> {
+                                // Anthropic also uses input_json_delta for server-side tools
+                                // such as web search. Only client tool_use blocks were
+                                // registered above and may be projected as OpenAI tool_calls.
+                                // Projecting an untracked server block creates an orphaned
+                                // tool call with arguments but no function.name.
+                                if (!toolUseBlocks.contains(index)) {
+                                    OmniLog.w(
+                                        TAG,
+                                        "ignored input_json_delta for non-client tool block index=$index"
+                                    )
+                                    return
+                                }
                                 val partialJson = stringField(delta, "partial_json")
                                 contentBlocks[index]?.appendInputJson(partialJson)
                                 val chunk = buildOpenAIChunk(

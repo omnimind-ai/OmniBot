@@ -49,7 +49,8 @@ internal data class AcpAgentHealth(
     val error: String? = null,
     val latencyMs: Long? = null,
     val checkedAt: Long? = null,
-    val capabilities: Map<String, Any?> = emptyMap()
+    val capabilities: Map<String, Any?> = emptyMap(),
+    val preparationRevision: String? = null,
 ) {
     companion object {
         const val STATUS_ONLINE = "online"
@@ -72,17 +73,20 @@ internal data class AcpOfficialRuntime(
     val terminalPackageId: String? = null,
     val managedInstallScriptPath: String? = null,
     val managedInstallCommand: String? = null,
+    val preparationRevision: String? = null,
 )
 
 internal const val DEEPSEEK_HARNESS_NPM_CHANNEL = "next"
+internal const val DEEPSEEK_HARNESS_PNPM_VERSION = "11.22.0"
+internal const val DEEPSEEK_HARNESS_PREPARATION_REVISION =
+    "deepseek-dsh-pnpm-copy-v6"
 private const val DEEPSEEK_HARNESS_NPM_PRIMARY_REGISTRY =
     "https://registry.npmmirror.com"
 private const val DEEPSEEK_HARNESS_NPM_FALLBACK_REGISTRY =
     "https://registry.npmjs.org"
 internal val DEEPSEEK_HARNESS_NPM_PACKAGE_NAMES = listOf(
-    // Install the official Harness product and the existing ACP adapter. The
-    // adapter composes DSH in-process and projects assistant/chunk into ACP
-    // text and thought chunks; the app does not maintain another agent loop.
+    // The adapter is installed into DSH's official `acp` profile. DSH owns
+    // the profile plugin graph, tools, commands, skills, and MCP composition.
     "@deepseek-ai/dsh",
     "@openma/deepseek-harness-acp",
 )
@@ -93,130 +97,206 @@ internal val DEEPSEEK_HARNESS_NPM_PACKAGE_SPECS = listOf(
 internal const val DEEPSEEK_HARNESS_INSTALL_SCRIPT_PATH =
     "/root/.dsh/omnibot-acp/install-dsh-runtime.sh"
 internal const val DEEPSEEK_HARNESS_NATIVE_HEALTH_COMMAND =
-    "node -e 'const fs = require(\"node:fs\"); " +
-        "const { createRequire } = require(\"node:module\"); " +
-        "const adapterPackageJson = \"/root/.npm-global/lib/node_modules/" +
-        "@openma/deepseek-harness-acp/package.json\"; " +
-        "const dshPackageJson = \"/root/.npm-global/lib/node_modules/" +
-        "@deepseek-ai/dsh/package.json\"; " +
-        "const adapter = JSON.parse(fs.readFileSync(adapterPackageJson)); " +
-        "const dsh = JSON.parse(fs.readFileSync(dshPackageJson)); " +
-        "if (adapter.name !== \"@openma/deepseek-harness-acp\" || " +
-        "dsh.name !== \"@deepseek-ai/dsh\" || " +
-        "!fs.existsSync(\"/root/.npm-global/lib/node_modules/@openma/" +
-        "deepseek-harness-acp/node_modules/@deepseek-ai/dsh-credentials\")) " +
-        "process.exit(1); " +
-        "createRequire(\"/root/.npm-global/lib/node_modules/@deepseek-ai/dsh/" +
-        "node_modules/@deepseek-ai/dsh-subprocess-local/package.json\")(\"node-pty\");'"
-internal val DEEPSEEK_HARNESS_ACP_DEPENDENCY_MOUNT_COMMAND = """
-    set -eu
-    source_root=/root/.npm-global/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai
-    target_root=/root/.npm-global/lib/node_modules/@openma/deepseek-harness-acp/node_modules/@deepseek-ai
-    mkdir -p "${'$'}target_root"
-    [ -e "${'$'}target_root/dsh" ] || ln -s /root/.npm-global/lib/node_modules/@deepseek-ai/dsh "${'$'}target_root/dsh"
-    for source in "${'$'}source_root"/*; do
-      [ -d "${'$'}source" ] || continue
-      package_name="${'$'}(basename "${'$'}source")"
-      target="${'$'}target_root/${'$'}package_name"
-      [ -e "${'$'}target" ] || ln -s "${'$'}source" "${'$'}target"
-    done
-""".trimIndent()
+        "DSH_HOME=/root/.dsh/omnibot-acp " +
+        "PATH=/root/.npm-global/bin:${'$'}PATH " +
+        "command -v dsh >/dev/null 2>&1 && " +
+        "command -v dsh-acp-android >/dev/null 2>&1 && " +
+        "command -v pnpm >/dev/null 2>&1 && " +
+        "test -f /root/.dsh/omnibot-acp/profiles/acp/package.json && " +
+        "test -f /root/.dsh/omnibot-acp/profiles/acp/node_modules/@openma/deepseek-harness-acp/package.json && " +
+        "test -f /root/.npm-global/lib/node_modules/@deepseek-ai/dsh/node_modules/node-pty/lib/utils.js && " +
+        // PRoot's link2symlink emulation can leave package files pointing at
+        // pnpm's extensionless content-addressed store. A direct adapter
+        // import may still pass while DSH's loader rejects that target during
+        // initialize, so fail health before the user attempts a prompt.
+        "if find /root/.dsh/omnibot-acp/profiles/acp/node_modules " +
+        "/root/.dsh/omnibot-acp/profiles/node_modules " +
+        "/root/.npm-global/lib/node_modules/@deepseek-ai/dsh/node_modules " +
+        "/root/.npm-global/lib/node_modules/@openma " +
+        "-type l -print 2>/dev/null | while IFS= read -r link; do " +
+        "target=\$(readlink \"\$link\"); case \"\$target\" in " +
+        "*/.local/share/pnpm/store/*|*/workspace/*|/workspace/*) exit 1;; esac; done; then :; else exit 1; fi && " +
+        // Do not invoke `dsh --help`/`--dump-config` from a health probe:
+        // both bootstrap the vendor ACP process under Android proot and can
+        // fail merely because the hidden probe has no /proc/self/fd handles.
+        // The profile graph and adapter package are the non-invasive health
+        // boundary; the real dsh ACP launch is validated by initialize.
+        "cd /root/.dsh/omnibot-acp/profiles/acp && " +
+        "node --input-type=module -e \"import fs from 'node:fs'; JSON.parse(fs.readFileSync('package.json')); await import('@openma/deepseek-harness-acp/plugin'); await import('@openma/deepseek-harness-acp/stdio');\" >/dev/null 2>&1"
 internal val DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND = """
-    cleanup_deepseek_harness_npm_staging() {
-      # npm uses hidden sibling directories while publishing scoped packages.
-      # A cancelled/failed Android install can leave one behind; npm then
-      # fails its next rename with ENOTEMPTY before it can repair the package.
-      for staging_dir in /root/.npm-global/lib/node_modules/@deepseek-ai/.dsh-*; do
-        [ -e "${'$'}staging_dir" ] || continue
-        # A recursive delete through Android's proot can block the foreground
-        # ACP switch for minutes. Rename within the same filesystem first,
-        # then reclaim the explicit temporary directory asynchronously.
-        stale_dir="/tmp/omnibot-dsh-stale-${'$'}{staging_dir##*/}-${'$'}${'$'}"
-        if mv "${'$'}staging_dir" "${'$'}stale_dir" 2>/dev/null; then
-          (rm -rf "${'$'}stale_dir" >/dev/null 2>&1 || true) &
-        else
-          rm -rf "${'$'}staging_dir"
-        fi
-      done
-    }
-    find_deepseek_harness_node_pty_dir() {
-      for candidate in \
-        /root/.npm-global/lib/node_modules/@deepseek-ai/dsh/node_modules/node-pty \
-        /root/.npm-global/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-subprocess-local/node_modules/node-pty; do
-        if [ -f "${'$'}candidate/package.json" ]; then
-          printf '%s\n' "${'$'}candidate"
+    set -eu
+    export PATH="/root/.npm-global/bin:${'$'}PATH"
+    export DSH_HOME="/root/.dsh/omnibot-acp"
+    # Android proot turns pnpm hard-links into symlinks to extensionless store
+    # blobs. Node then refuses the official ACP loader entries (for example
+    # `.0002`) before the Harness can answer initialize. Keep the vendor DSH
+    # workflow, but request copied, hoisted dependencies at install time.
+    export npm_config_node_linker=hoisted
+    export npm_config_package_import_method=copy
+    DSH_PACKAGE_ROOT="/root/.npm-global/lib/node_modules/@deepseek-ai/dsh"
+    mkdir -p "${'$'}DSH_HOME"
+    npm config set prefix /root/.npm-global
+    # Repair an already-installed Android pnpm tree before checking package
+    # completeness. Otherwise `require.resolve()` follows the broken .0001
+    # link chain, declares the whole DSH package incomplete, and starts a
+    # needless network reinstall on every Harness switch.
+    materialize_pnpm_link() {
+      link="${'$'}1"
+      target="${'$'}(readlink "${'$'}link" 2>/dev/null || true)"
+      case "${'$'}target" in
+        */.local/share/pnpm/store/*)
+          target_name="${'$'}{target##*/}"
+          target_dir="${'$'}{target%/*}"
+          store_bucket="${'$'}{target_dir##*/}"
+          store_prefix="/root/.local/share/pnpm/store/v11/files/${'$'}{store_bucket}/${'$'}target_name"
+          # The suffix is not always `.0002`; Android's link2symlink layer
+          # allocates `.0001`, `.0002`, `.0007`, etc. Pick the first regular
+          # content file and never follow another `.l2s` symlink.
+          for store_file in "${'$'}store_prefix".*; do
+            if [ -f "${'$'}store_file" ] && [ ! -L "${'$'}store_file" ]; then
+              cp -f "${'$'}store_file" "${'$'}link.materialized" 2>/dev/null || return 1
+              rm -f "${'$'}link"
+              mv -f "${'$'}link.materialized" "${'$'}link" 2>/dev/null || return 1
+              break
+            fi
+          done
+          ;;
+        */workspace/*|/workspace/*)
+          # Local plugins added with `dsh plugin ... add /workspace/<pkg>` are
+          # represented by pnpm as links back to the mounted workspace. The
+          # Cordis loader imports from the real plugin path, so Node walks out
+          # of the profile tree and cannot see peer dependencies such as
+          # @deepseek-ai/dsh-tools. Materialize the link inside the profile
+          # tree while keeping the vendor DSH workflow intact.
+          workspace_rel="${'$'}{target#*workspace/}"
+          workspace_source="/workspace/${'$'}workspace_rel"
+          if [ -e "${'$'}workspace_source" ]; then
+            if [ -d "${'$'}workspace_source" ]; then
+              cp -R "${'$'}workspace_source" "${'$'}link.materialized" 2>/dev/null || return 1
+            else
+              cp -f "${'$'}workspace_source" "${'$'}link.materialized" 2>/dev/null || return 1
+            fi
+            rm -f "${'$'}link"
+            mv -f "${'$'}link.materialized" "${'$'}link" 2>/dev/null || return 1
+          fi
+          ;;
+        *)
           return 0
-        fi
-      done
-      return 1
+          ;;
+      esac
     }
-    repair_deepseek_harness_node_pty() {
-      node_pty_dir="${'$'}(find_deepseek_harness_node_pty_dir || true)"
-      [ -n "${'$'}node_pty_dir" ] || return 0
-      if [ -f "${'$'}node_pty_dir/package.json" ] &&
-         ! $DEEPSEEK_HARNESS_NATIVE_HEALTH_COMMAND >/dev/null 2>&1; then
-        (
-          cd "${'$'}node_pty_dir"
-          node-gyp configure
-          sed -i 's|^cmd_copy = .*|cmd_copy = rm -rf "${'$'}@" \&\& cp -af "${'$'}<" "${'$'}@"|' build/Makefile
-          node-gyp build
-        )
-      fi
+    materialize_pnpm_tree() {
+      node_root="${'$'}1"
+      [ -d "${'$'}node_root" ] || return 0
+      find "${'$'}node_root" -type l 2>/dev/null |
+        while IFS= read -r link; do
+          materialize_pnpm_link "${'$'}link" || exit 1
+        done
     }
-    install_deepseek_harness_packages() {
-      # Once published, keep the package directory stable: Android's proot
-      # can leave a populated scoped directory that npm cannot rename over.
-      # The health check below still verifies the official DSH + ACP graph;
-      # a missing package is the only case that needs a fresh npm install.
-      if [ -f /root/.npm-global/lib/node_modules/@deepseek-ai/dsh/package.json ] &&
-         [ -f /root/.npm-global/lib/node_modules/@openma/deepseek-harness-acp/package.json ]; then
-        return 0
+    materialize_pnpm_tree "${'$'}DSH_PACKAGE_ROOT/node_modules"
+    materialize_pnpm_tree "/root/.npm-global/lib/node_modules/@openma"
+    materialize_pnpm_tree "${'$'}DSH_HOME/profiles/node_modules"
+    materialize_pnpm_tree "${'$'}DSH_HOME/profiles/acp/node_modules"
+    if ! command -v pnpm >/dev/null 2>&1; then
+      npm install -g --no-audit --no-fund pnpm@$DEEPSEEK_HARNESS_PNPM_VERSION
+    fi
+    # A previous Android npm run may leave a seemingly installed package with
+    # an incomplete dependency tree. Do not use a deep `require.resolve()` here:
+    # pnpm's Android link emulation makes that check follow the broken store
+    # chain before our profile health/materialization pass can repair it.
+    # The authoritative import check runs at the end of this script.
+    if [ ! -f "${'$'}DSH_PACKAGE_ROOT/package.json" ] || \
+        [ ! -f "${'$'}DSH_PACKAGE_ROOT/lib/bin.js" ] || \
+        { [ ! -f "${'$'}DSH_PACKAGE_ROOT/node_modules/node-pty/prebuilds/linux-arm64/pty.node" ] && \
+          [ ! -f "${'$'}DSH_PACKAGE_ROOT/node_modules/node-pty/build/Release/pty.node" ]; } || \
+        [ ! -d "${'$'}DSH_PACKAGE_ROOT/node_modules" ]; then
+      npm cache clean --force >/dev/null 2>&1 || true
+      rm -rf "${'$'}DSH_PACKAGE_ROOT" \
+        /root/.npm-global/lib/node_modules/@deepseek-ai/.dsh-* 2>/dev/null || true
+      npm install -g --no-audit --no-fund --prefer-offline \
+        --fetch-retries=5 --fetch-retry-factor=2 \
+        --fetch-retry-mintimeout=1000 --fetch-retry-maxtimeout=15000 \
+        --fetch-timeout=120000 --loglevel=notice \
+        --registry="${'$'}{OMNIBOT_NPM_REGISTRY:-$DEEPSEEK_HARNESS_NPM_PRIMARY_REGISTRY}" \
+        @deepseek-ai/dsh@$DEEPSEEK_HARNESS_NPM_CHANNEL
+    fi
+    # Some Android npm builds install the package but skip creating its bin
+    # shim. Recreate the vendor-declared executable from the installed package
+    # before invoking the official DSH plugin workflow; this is still the
+    # upstream CLI entrypoint, not a private ACP replacement.
+    if [ ! -x /root/.npm-global/bin/dsh ] && \
+        [ -f /root/.npm-global/lib/node_modules/@deepseek-ai/dsh/lib/bin.js ]; then
+      ln -sf /root/.npm-global/lib/node_modules/@deepseek-ai/dsh/lib/bin.js \
+        /root/.npm-global/bin/dsh
+    fi
+    test -x /root/.npm-global/bin/dsh
+    # DSH's HMR plugin requires a Node internal flag. NODE_OPTIONS rejects
+    # this flag, so publish a tiny launcher that passes it as a CLI argument
+    # while still executing the vendor's official lib/bin.js entrypoint.
+    printf '%s\n' '#!/bin/sh' \
+      'exec node --expose-internals /root/.npm-global/lib/node_modules/@deepseek-ai/dsh/lib/bin.js "${'$'}{@}"' \
+      > /root/.npm-global/bin/dsh-acp-android
+    chmod 755 /root/.npm-global/bin/dsh-acp-android
+    test -x /root/.npm-global/bin/dsh-acp-android
+    # The official node-pty package ships a glibc linux-arm64 prebuild. Try
+    # Alpine's glibc compatibility layer first; if it is still not loadable,
+    # preserve that vendor binary and rebuild the dependency from its upstream
+    # sources inside the target runtime. This keeps DSH's official CLI/plugin
+    # workflow while adapting only the platform-native PTY dependency.
+    apk add --no-cache gcompat >/dev/null 2>&1 || true
+    if ! node -e "require('${'$'}DSH_PACKAGE_ROOT/node_modules/node-pty')" >/dev/null 2>&1; then
+      PTY_ROOT="${'$'}DSH_PACKAGE_ROOT/node_modules/node-pty"
+      PTY_VENDOR="${'$'}PTY_ROOT/prebuilds/linux-arm64/pty.node"
+      PTY_VENDOR_COPY="${'$'}DSH_HOME/node-pty-linux-arm64.vendor.node"
+      if [ -f "${'$'}PTY_VENDOR" ]; then
+        cp -f "${'$'}PTY_VENDOR" "${'$'}PTY_VENDOR_COPY"
       fi
-      cleanup_deepseek_harness_npm_staging
-      hardlink_helper='/tmp/omnibot-node-gyp-copy'
-      rm -rf "${'$'}hardlink_helper"
-      mkdir -p "${'$'}hardlink_helper"
-      printf '%s\n' \
-        '#!/bin/sh' \
-        'if [ "${'$'}1" = "-f" ]; then' \
-        '  shift' \
-        '  src="${'$'}1"' \
-        '  dst="${'$'}2"' \
-        '  exec cp -af "${'$'}src" "${'$'}dst"' \
-        'fi' \
-        'exec /bin/ln "${'$'}@"' > "${'$'}hardlink_helper/ln"
-      chmod 755 "${'$'}hardlink_helper/ln"
-      install_deepseek_harness_from_registry() {
-        registry="${'$'}1"
-        PATH="${'$'}hardlink_helper:${'$'}PATH" npm install -g --prefix /root/.npm-global \
-          --include=peer --no-audit --no-fund --prefer-offline \
-          --fetch-retries=5 --fetch-retry-factor=2 \
-          --fetch-retry-mintimeout=1000 --fetch-retry-maxtimeout=15000 \
-          --fetch-timeout=120000 --loglevel=notice \
-          --registry="${'$'}registry" ${DEEPSEEK_HARNESS_NPM_PACKAGE_SPECS.joinToString(" ")}
-      }
-      npm_registry="${'$'}{OMNIBOT_NPM_REGISTRY:-$DEEPSEEK_HARNESS_NPM_PRIMARY_REGISTRY}"
-      if install_deepseek_harness_from_registry "${'$'}npm_registry"; then
-        install_status=0
-      elif [ "${'$'}npm_registry" != "$DEEPSEEK_HARNESS_NPM_FALLBACK_REGISTRY" ]; then
-        echo "Primary npm registry failed; retrying with $DEEPSEEK_HARNESS_NPM_FALLBACK_REGISTRY" >&2
-        cleanup_deepseek_harness_npm_staging
-        if install_deepseek_harness_from_registry "$DEEPSEEK_HARNESS_NPM_FALLBACK_REGISTRY"; then
-          install_status=0
-        else
-          install_status=${'$'}?
-        fi
-      else
-        install_status=${'$'}?
+      apk add --no-cache build-base python3 linux-headers util-linux-dev >/dev/null
+      npm_config_build_from_source=true npm_config_nodedir= npm rebuild --prefix "${'$'}DSH_PACKAGE_ROOT/node_modules/node-pty" --build-from-source
+      # node-gyp may leave an absolute Android data-path symlink. Proot sees
+      # the Alpine root instead, so materialize the compiled addon as a regular
+      # file before the runtime loads it.
+      PTY_BUILD="${'$'}DSH_PACKAGE_ROOT/node_modules/node-pty/build/Release/pty.node"
+      if [ -L "${'$'}PTY_BUILD" ]; then
+        cp -Lf "${'$'}PTY_BUILD" "${'$'}PTY_BUILD.materialized"
+        mv -f "${'$'}PTY_BUILD.materialized" "${'$'}PTY_BUILD"
       fi
-      rm -rf "${'$'}hardlink_helper"
-      return "${'$'}install_status"
-    }
-    install_deepseek_harness_packages
-    $DEEPSEEK_HARNESS_ACP_DEPENDENCY_MOUNT_COMMAND
-    # npm may replace node-pty during the install above, so the native repair
-    # must run after package publication as well as on later health checks.
-    repair_deepseek_harness_node_pty
+      if [ ! -f "${'$'}PTY_BUILD" ] && [ -f "${'$'}PTY_VENDOR_COPY" ]; then
+        mkdir -p "${'$'}PTY_ROOT/prebuilds/linux-arm64"
+        cp -f "${'$'}PTY_VENDOR_COPY" "${'$'}PTY_ROOT/prebuilds/linux-arm64/pty.node"
+      fi
+    fi
+    node -e "require('${'$'}DSH_PACKAGE_ROOT/node_modules/node-pty')" >/dev/null 2>&1
+    # Follow the vendor workflow: DSH creates/updates the ACP profile and
+    # owns its plugin dependency graph, patch layers, tools, and commands.
+    export npm_config_registry="${'$'}{OMNIBOT_NPM_REGISTRY:-$DEEPSEEK_HARNESS_NPM_PRIMARY_REGISTRY}"
+    if ! dsh plugin --profile acp add @openma/deepseek-harness-acp@latest; then
+      export npm_config_registry="$DEEPSEEK_HARNESS_NPM_FALLBACK_REGISTRY"
+      npm install -g --no-audit --no-fund --prefer-offline \
+        --fetch-retries=5 --fetch-retry-factor=2 \
+        --fetch-retry-mintimeout=1000 --fetch-retry-maxtimeout=15000 \
+        --fetch-timeout=120000 --loglevel=notice \
+        --registry="$DEEPSEEK_HARNESS_NPM_FALLBACK_REGISTRY" \
+        @deepseek-ai/dsh@$DEEPSEEK_HARNESS_NPM_CHANNEL
+      dsh plugin --profile acp add @openma/deepseek-harness-acp@latest
+    fi
+    # Android proot's link2symlink layer can turn pnpm's hard links inside the
+    # official profile into a two-hop absolute link chain:
+    # module.js -> .../.l2s.<hash>0001 -> .../.l2s.<hash>0001.0002
+    # Resolve the final pnpm store file explicitly; cp -L is unreliable here
+    # because the first hop points outside the mounted proot root.
+    for node_root in \
+      "${'$'}DSH_HOME/profiles/acp/node_modules" \
+      "${'$'}DSH_HOME/profiles/node_modules" \
+      "${'$'}DSH_PACKAGE_ROOT/node_modules" \
+      "/root/.npm-global/lib/node_modules/@openma"; do
+      [ -d "${'$'}node_root" ] || continue
+      find "${'$'}node_root" -type l 2>/dev/null |
+        while IFS= read -r link; do
+          materialize_pnpm_link "${'$'}link" || exit 1
+        done
+    done
+    test -f "${'$'}DSH_HOME/profiles/acp/package.json"
     $DEEPSEEK_HARNESS_NATIVE_HEALTH_COMMAND
 """.trimIndent()
 
@@ -241,9 +321,12 @@ internal class AcpAgentProfileStore(context: Context) {
         val storedById = stored.associateBy { it.id }
         val official = OFFICIAL_AGENTS.map { definition ->
             val override = storedById[definition.id] ?: return@map definition
+            val migratedOfficialCommand =
+                definition.id == DEEPSEEK_HARNESS_AGENT_ID &&
+                    override.command == "dsh-acp"
             definition.copy(
-                command = override.command,
-                arguments = override.arguments,
+                command = if (migratedOfficialCommand) definition.command else override.command,
+                arguments = if (migratedOfficialCommand) definition.arguments else override.arguments,
                 environment = override.environment,
                 enabled = override.enabled
             )
@@ -277,6 +360,26 @@ internal class AcpAgentProfileStore(context: Context) {
         return sessionBindings()[sessionId.trim()]
             ?.takeIf(String::isNotBlank)
             ?.takeUnless { it in RETIRED_AGENT_IDS }
+    }
+
+    /**
+     * Remove the durable owner of an ACP session after `session/delete`.
+     *
+     * Session ownership is separate from the Room conversation binding: the
+     * conversation is intentionally preserved by the host, while a deleted
+     * ACP session must not be resurrected as belonging to the old Harness on
+     * the next load/switch.
+     */
+    @Synchronized
+    fun unbindSession(sessionId: String) {
+        val normalizedSessionId = sessionId.trim()
+        if (normalizedSessionId.isEmpty()) return
+        val bindings = sessionBindings().toMutableMap()
+        if (bindings.remove(normalizedSessionId) != null) {
+            preferences.edit()
+                .putString(KEY_SESSION_BINDINGS, gson.toJson(bindings))
+                .apply()
+        }
     }
 
     @Synchronized
@@ -559,8 +662,9 @@ internal class AcpAgentProfileStore(context: Context) {
             AcpAgentProfile(
                 id = DEEPSEEK_HARNESS_AGENT_ID,
                 name = "DeepSeek Harness",
-                description = "DeepSeek Harness through the existing streaming ACP adapter",
-                command = "dsh-acp",
+                description = "DeepSeek Harness official ACP profile",
+                command = "dsh-acp-android",
+                arguments = listOf("--profile", "acp"),
                 builtIn = true
             )
         )
@@ -594,6 +698,15 @@ internal class AcpAgentProfileStore(context: Context) {
                 discoveryCommand = "opencode",
                 managedAdapterPackage = "opencode-ai@latest",
                 terminalPackageId = "opencode",
+                managedInstallCommand =
+                    "npm install -g --no-audit --no-fund opencode-ai@latest && " +
+                        "if [ ! -x /root/.npm-global/lib/node_modules/opencode-linux-arm64-musl/bin/opencode ]; then " +
+                        "rm -rf /root/.npm-global/lib/node_modules/opencode-linux-arm64-musl && " +
+                        "npm install -g --force --no-audit --no-fund --prefer-online " +
+                        "opencode-linux-arm64-musl@latest; fi && " +
+                        "ln -sf /root/.npm-global/lib/node_modules/opencode-linux-arm64-musl/bin/opencode " +
+                        "/root/.npm-global/bin/opencode && " +
+                        "test -x /root/.npm-global/bin/opencode",
                 harnessAdapter = AcpHarnessAdapters.openCode,
                 usesSharedProvider = true,
             ),
@@ -609,6 +722,7 @@ internal class AcpAgentProfileStore(context: Context) {
                 terminalPackageId = "deepseek_harness",
                 managedInstallScriptPath = DEEPSEEK_HARNESS_INSTALL_SCRIPT_PATH,
                 managedInstallCommand = DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND,
+                preparationRevision = DEEPSEEK_HARNESS_PREPARATION_REVISION,
                 usesSharedProvider = true,
             ),
             XIAOWAN_AGENT_ID to AcpOfficialRuntime(

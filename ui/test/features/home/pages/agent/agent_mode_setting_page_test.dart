@@ -42,7 +42,7 @@ void main() {
               _agent(
                 'deepseek-harness-acp',
                 'DeepSeek Harness',
-                'dsh-acp',
+                'dsh',
                 'unchecked',
                 managedAdapter: true,
                 lastCheckError: 'Harness 未初始化，请点击“安装官方 Harness”准备运行组件。',
@@ -253,7 +253,7 @@ void main() {
                     _agent(
                       'deepseek-harness-acp',
                       'DeepSeek Harness',
-                      'dsh-acp',
+                      'dsh',
                       'missing',
                       managedAdapter: true,
                     ),

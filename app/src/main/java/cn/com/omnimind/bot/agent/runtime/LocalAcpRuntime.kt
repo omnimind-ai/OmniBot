@@ -68,6 +68,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
@@ -108,6 +110,7 @@ import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.coroutineContext
 
 /**
@@ -117,15 +120,26 @@ import kotlin.coroutines.coroutineContext
  */
 private class AcpTurnTiming {
     private val startedAtNanos = System.nanoTime()
+    @Volatile
+    private var lastActivityAtNanos = startedAtNanos
     private val stages = linkedMapOf<String, Long>()
 
     @Synchronized
     fun mark(stage: String): Long? {
+        lastActivityAtNanos = System.nanoTime()
         if (stages.containsKey(stage)) return null
         val elapsed = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedAtNanos)
         stages[stage] = elapsed
         return elapsed
     }
+
+    fun touch() {
+        lastActivityAtNanos = System.nanoTime()
+    }
+
+    fun idleMillis(): Long = TimeUnit.NANOSECONDS.toMillis(
+        System.nanoTime() - lastActivityAtNanos
+    )
 }
 
 /**
@@ -230,7 +244,7 @@ internal class LocalAcpRuntime(
     // requests are intercepted at the stdio boundary and suspended here
     // until the shared `respondToServerRequest` surface resolves them.
     private val pendingExtensionRequests =
-        ConcurrentHashMap<String, CompletableDeferred<RawAcpExtensionReply>>()
+        ConcurrentHashMap<String, PendingExtensionRequest>()
     private val terminalProcesses = ConcurrentHashMap<String, AcpTerminalProcess>()
     private val sessionPermissionBehaviors =
         ConcurrentHashMap<String, AcpPermissionBehavior>()
@@ -250,6 +264,15 @@ internal class LocalAcpRuntime(
 
     @Volatile
     private var activeProfile: AcpAgentProfile? = null
+
+    /**
+     * Environment inherited by ACP-created terminals. Harness tools such as
+     * `dsh plugin`, Claude's shell-backed functions, and MCP helper commands
+     * must run with the same managed PATH/home/provider settings as the ACP
+     * process itself; request-local env values may then override it.
+     */
+    @Volatile
+    private var activeLaunchEnvironment: Map<String, String> = emptyMap()
 
     @Volatile
     private var catalogSessionId: String? = null
@@ -333,6 +356,7 @@ internal class LocalAcpRuntime(
             )
         } else {
             val launchEnvironment = baseEnvironment + profile.environment
+            activeLaunchEnvironment = launchEnvironment
             AcpProcessConnection(
                 context = appContext,
                 scope = scope,
@@ -392,7 +416,13 @@ internal class LocalAcpRuntime(
                         elicitation = ElicitationCapabilities(
                             form = ElicitationFormCapabilities(),
                             url = ElicitationUrlCapabilities()
-                        )
+                        ),
+                        // DeepSeek Harness gates its Cordis/plugin plane on
+                        // this negotiated metadata. These are optional ACP
+                        // hints and are ignored by Harnesses that do not use
+                        // them; terminal_output also enables native tool
+                        // output through the standard terminal callbacks.
+                        _meta = ACP_CLIENT_CAPABILITY_META
                     ),
                     implementation = Implementation(
                         name = "omnibot-app",
@@ -418,7 +448,10 @@ internal class LocalAcpRuntime(
                     status = AcpAgentHealth.STATUS_ONLINE,
                     installed = true,
                     checkedAt = System.currentTimeMillis(),
-                    capabilities = capabilitiesPayload(initialized)
+                    capabilities = capabilitiesPayload(initialized),
+                    preparationRevision = AcpAgentProfileStore
+                            .officialRuntime(profile)
+                            ?.preparationRevision
                 )
             )
         } catch (error: Throwable) {
@@ -557,7 +590,23 @@ internal class LocalAcpRuntime(
         activeTurnIds.entries.toList().forEach { (threadId, turnId) ->
             finishTurn(threadId, turnId, status = "cancelled")
         }
-        promptJobs.values.toList().forEach { it.cancelAndJoin() }
+        // Cancel all turns together and apply one total deadline. Waiting for
+        // each prompt serially made a switch cost N * 2s when several turns
+        // were still registered (and a vendor adapter could ignore every
+        // cancellation). The process close below remains the hard stop.
+        val inFlightPromptJobs = promptJobs.values.toList()
+        inFlightPromptJobs.forEach(Job::cancel)
+        val settled = withTimeoutOrNull(CANCEL_JOIN_TIMEOUT_MS) {
+            inFlightPromptJobs.forEach { it.join() }
+            true
+        } == true
+        if (!settled && inFlightPromptJobs.isNotEmpty()) {
+            // A vendor ACP adapter may be blocked in a non-cancellable stdio
+            // read. Do not hold the switch mutex forever; the process close
+            // below is the hard stop and the next Harness will reconnect
+            // cleanly.
+            Log.w(TAG, "Timed out cancelling ACP prompts before switch")
+        }
         promptJobs.clear()
         pendingPermissions.values.forEach { it.response.complete(null) }
         pendingPermissions.clear()
@@ -568,7 +617,7 @@ internal class LocalAcpRuntime(
         }
         pendingElicitations.clear()
         pendingExtensionRequests.values.forEach { pending ->
-            pending.complete(
+            pending.response.complete(
                 RawAcpExtensionReply(
                     error = buildJsonObject {
                         put("code", -32800)
@@ -597,6 +646,7 @@ internal class LocalAcpRuntime(
         client = null
         agentInfo = null
         activeProfile = null
+        activeLaunchEnvironment = emptyMap()
         val oldConnection = connection
         connection = null
         if (oldConnection != null) {
@@ -610,6 +660,14 @@ internal class LocalAcpRuntime(
     fun statusPayload(): Map<String, Any?> {
         val selected = activeProfile ?: profileStore.selected()
         return linkedMapOf(
+            // Include the live transport state when this payload is returned
+            // as part of agent/select.  The Flutter shortcut can then render
+            // the selected Harness immediately without issuing a second
+            // status/connect round-trip after the process has already been
+            // initialized here.
+            "connected" to isConnected,
+            "ready" to isConnected,
+            "runtime" to "local",
             "protocol" to "acp",
             "protocolVersion" to agentInfo?.protocolVersion,
             "activeAgentId" to selected.id,
@@ -625,12 +683,15 @@ internal class LocalAcpRuntime(
         )
     }
 
-    private suspend fun agentsPayload(refreshAvailability: Boolean = true): Map<String, Any?> {
+    private suspend fun agentsPayload(
+        refreshAvailability: Boolean = true,
+        includeRuntimeStatus: Boolean = false,
+    ): Map<String, Any?> {
         if (refreshAvailability) {
             refreshAgentAvailability()
         }
         val selectedId = profileStore.selected().id
-        return linkedMapOf(
+        return linkedMapOf<String, Any?>(
             "selectedAgentId" to selectedId,
             "agents" to profileStore.list().map {
                 it.toPayload(
@@ -638,7 +699,11 @@ internal class LocalAcpRuntime(
                     health = profileStore.health(it.id)
                 )
             }
-        )
+        ).apply {
+            if (includeRuntimeStatus) {
+                putAll(statusPayload())
+            }
+        }
     }
 
     suspend fun handleMethod(method: String, args: Map<String, Any?>): Any? {
@@ -827,20 +892,41 @@ internal class LocalAcpRuntime(
                 "turnId" to normalized.stringValue("turnId"),
             ).filterValues { it != null }
         }
+        val threadId = normalized.stringValue("threadId")
+            ?: throw IllegalArgumentException("sessionId is required")
+        if (activeTurnIds[threadId] == null) {
+            // ACP cancellation is safe to repeat after a prompt response or
+            // a previous cancel. Do not turn an idle stop button into an
+            // "active turn id is missing" error.
+            return mapOf(
+                "ok" to true,
+                "cancelled" to false,
+                "sessionId" to threadId,
+                "threadId" to threadId,
+            )
+        }
         return interruptTurn(normalized).withAcpSessionId()
     }
 
     /** Official ACP mode mutation; the old config/set entry remains below for compatibility. */
     private suspend fun setSessionMode(args: Map<String, Any?>): Map<String, Any?> {
         val session = resolveSessionForMutation(args)
-        val modeId = args.stringValue("modeId")
+        val requestedModeId = args.stringValue("modeId")
             ?: args.stringValue("mode")
             ?: throw IllegalArgumentException("modeId is required")
-        require(session.availableModes.any { it.id.value == modeId }) {
-            "Invalid ACP session mode '$modeId'."
-        }
+        val modeId = resolveAcpSessionModeId(
+            session.availableModes.map { it.id.value },
+            requestedModeId
+        ) ?: throw IllegalArgumentException(
+            "Invalid ACP session mode '$requestedModeId'."
+        )
         session.setMode(SessionModeId(modeId))
         val sessionId = session.sessionId.value
+        sessionPermissionBehaviors[sessionId] = if (isAcpFullAccessMode(modeId)) {
+            AcpPermissionBehavior.ALLOW_WITHOUT_PROMPT
+        } else {
+            AcpPermissionBehavior.ASK_USER
+        }
         emitAcpNotification(
             sessionId = sessionId,
             update = mapOf(
@@ -873,7 +959,13 @@ internal class LocalAcpRuntime(
         sessions.remove(sessionId)?.close()
         sessionCwds.remove(sessionId)
         sessionPermissionBehaviors.remove(sessionId)
-        return emptyMap()
+        return mapOf(
+            "ok" to true,
+            "closed" to true,
+            "sessionId" to sessionId,
+            "threadId" to sessionId,
+            "historyPreserved" to true,
+        )
     }
 
     /**
@@ -906,6 +998,7 @@ internal class LocalAcpRuntime(
         sessionCwds.remove(sessionId)
         sessionPermissionBehaviors.remove(sessionId)
         pendingHandoffConversationIds.remove(sessionId)
+        profileStore.unbindSession(sessionId)
         val conversationId = bindingRepository.detachThread(sessionId)
         return LinkedHashMap(response).apply {
             put("sessionId", sessionId)
@@ -1018,6 +1111,17 @@ internal class LocalAcpRuntime(
         cancelPendingConnectAttempts()
         val previous = profileStore.selected()
         val selected = profileStore.select(id)
+        // Selecting the already-active Harness is a UI refresh, not a
+        // provider switch. Reusing the live ACP transport keeps repeated
+        // taps on the top-right selector effectively free and, more
+        // importantly, preserves an in-flight session instead of restarting
+        // its process.
+        if (activeProfile?.id == selected.id && isConnected) {
+            return agentsPayload(
+                refreshAvailability = false,
+                includeRuntimeStatus = true,
+            )
+        }
         // A provider switch is a process boundary.  Do not rely on the
         // in-memory `isConnected` flag here: after an app restart or a
         // partially failed handshake the old ACP process may still be alive
@@ -1037,7 +1141,10 @@ internal class LocalAcpRuntime(
         // gets the same official installation path.
         return try {
             connect(profile = selected)
-            agentsPayload(refreshAvailability = false)
+            agentsPayload(
+                refreshAvailability = false,
+                includeRuntimeStatus = true,
+            )
         } catch (error: Throwable) {
             if (previous.id != selected.id) {
                 profileStore.select(previous.id)
@@ -1181,10 +1288,10 @@ internal class LocalAcpRuntime(
             return runCatching {
                 prepareLaunchEnvironment(profile)
                 requireLaunchCommand(profile)
-                val health = AcpAgentHealth(
-                    status = AcpAgentHealth.STATUS_UNCHECKED,
-                    installed = true,
-                    checkedAt = System.currentTimeMillis(),
+                val health = managedAgentPreparationHealth(
+                    preparationRevision = AcpAgentProfileStore
+                        .officialRuntime(profile)
+                        ?.preparationRevision,
                 )
                 profileStore.saveHealth(profile.id, health)
                 linkedMapOf(
@@ -1837,16 +1944,58 @@ internal class LocalAcpRuntime(
                 "configOptions" to options
             )
         }
+        if (option == null && configId == "mode" && session.modesSupported) {
+            val requestedMode = rawValue.toString()
+            val modeId = resolveAcpSessionModeId(
+                session.availableModes.map { it.id.value },
+                requestedMode
+            ) ?: throw IllegalArgumentException(
+                "Invalid value '$requestedMode' for ACP mode selection."
+            )
+            session.setMode(SessionModeId(modeId))
+            sessionPermissionBehaviors[threadId] = if (
+                isAcpFullAccessMode(modeId)
+            ) {
+                AcpPermissionBehavior.ALLOW_WITHOUT_PROMPT
+            } else {
+                AcpPermissionBehavior.ASK_USER
+            }
+            val options = sessionConfigOptions(session).map(::acpConfigOptionPayload)
+            emitAcpNotification(
+                sessionId = threadId,
+                update = mapOf(
+                    "sessionUpdate" to "current_mode_update",
+                    "currentModeId" to modeId,
+                    "configOptions" to options
+                )
+            )
+            return linkedMapOf(
+                "ok" to true,
+                "threadId" to threadId,
+                "configId" to configId,
+                "value" to modeId,
+                "configOptions" to options
+            )
+        }
         option ?: throw IllegalArgumentException(
             "ACP session does not expose config option '$configId'."
         )
 
         val appliedValue: Any? = when (option) {
             is SessionConfigOption.Select -> {
-                val value = rawValue.toString()
-                require(option.flatOptions().any { it.value.value == value }) {
-                    "Invalid value '$value' for ACP config option '$configId'."
-                }
+                val requestedValue = rawValue.toString()
+                val value = if (configId == "mode") {
+                    resolveAcpSessionModeId(
+                        option.flatOptions().map { it.value.value },
+                        requestedValue
+                    )
+                } else {
+                    requestedValue.takeIf {
+                        option.flatOptions().any { it.value.value == requestedValue }
+                    }
+                } ?: throw IllegalArgumentException(
+                    "Invalid value '$requestedValue' for ACP config option '$configId'."
+                )
                 if (option.currentValue.value != value) {
                     session.setConfigOption(
                         option.id,
@@ -1874,7 +2023,7 @@ internal class LocalAcpRuntime(
 
         if (configId == "mode" && appliedValue is String) {
             sessionPermissionBehaviors[threadId] = if (
-                appliedValue == "agent-full-access"
+                isAcpFullAccessMode(appliedValue)
             ) {
                 AcpPermissionBehavior.ALLOW_WITHOUT_PROMPT
             } else {
@@ -1966,8 +2115,16 @@ internal class LocalAcpRuntime(
         try {
             if (sessionConfigOptions(session).isEmpty()) {
                 applyRunConfig(session, args)
-            } else {
+            } else if (hasAcpPermissionPolicy(args)) {
                 sessionPermissionBehaviors[threadId] = resolveAcpPermissionBehavior(args)
+            } else {
+                // A mode selected through session/set_mode or config/set is
+                // session-scoped. Do not erase it when a client sends a
+                // minimal prompt without repeating policy fields.
+                sessionPermissionBehaviors.putIfAbsent(
+                    threadId,
+                    AcpPermissionBehavior.ALLOW_WITHOUT_PROMPT
+                )
             }
         } catch (error: Throwable) {
             activeTurnIds.remove(threadId, turnId)
@@ -1995,6 +2152,7 @@ internal class LocalAcpRuntime(
                 activeTurnIds.remove(threadId, turnId)
                 requestKey?.let(promptRequestTurns::remove)
             }
+        val timedOut = AtomicBoolean(false)
         val job = scope.launch(start = CoroutineStart.LAZY) {
             var stopReason: String? = null
             var cancelled = false
@@ -2039,7 +2197,11 @@ internal class LocalAcpRuntime(
                 failure = error
             } finally {
                 coroutineContext[Job]?.let { promptJobs.remove(threadId, it) }
-                val status = resolveTurnTerminalStatus(stopReason, cancelled, failure)
+                val status = if (timedOut.get()) {
+                    "timeout"
+                } else {
+                    resolveTurnTerminalStatus(stopReason, cancelled, failure)
+                }
                 finishTurn(
                     threadId = threadId,
                     turnId = turnId,
@@ -2057,6 +2219,25 @@ internal class LocalAcpRuntime(
             }
         }
         promptJobs[threadId] = job
+        // A few ACP adapters stream updates but never deliver the terminal
+        // prompt response. Keep the UI and turn reservation recoverable by
+        // timing out only after a period with no ACP activity. This is an
+        // inactivity watchdog, so long-running turns that keep streaming are
+        // not interrupted merely because they exceed a wall-clock duration.
+        val watchdog = scope.launch {
+            while (isActive && activeTurnIds[threadId] == turnId) {
+                delay(STALL_CHECK_INTERVAL_MS)
+                val timing = turnTimings[turnId] ?: break
+                if (timing.idleMillis() < STALL_DEADLINE_MS) continue
+                if (!timedOut.compareAndSet(false, true)) break
+                val message = "ACP turn stalled for ${STALL_DEADLINE_MS / 1000}s without updates"
+                Log.e(TAG, "$message session=$threadId turn=$turnId")
+                finishTurn(threadId, turnId, status = "timeout", error = message)
+                job.cancel(CancellationException(message))
+                break
+            }
+        }
+        job.invokeOnCompletion { watchdog.cancel() }
         // A process exit is not guaranteed to close an in-flight ACP prompt
         // flow.  StdioTransport may remain suspended on the input channel even
         // after the child has gone away, so observing the connection only while
@@ -2297,14 +2478,21 @@ internal class LocalAcpRuntime(
             } else {
                 null
             }
-            pending.complete(RawAcpExtensionReply(result = result, error = error))
+            pending.response.complete(RawAcpExtensionReply(result = result, error = error))
             return mapOf("ok" to true)
         }
         val pending = pendingPermissions.remove(requestId)
             ?: throw IllegalArgumentException("Unknown ACP permission request: $requestId")
         val response = args.mapValue("response")
+        val explicitOptionId = response.stringValue("optionId")
+            ?: response.stringValue("selectedOptionId")
         val accepted = response.stringValue("decision")?.lowercase() == "accept"
-        val selected = pending.options.firstOrNull { option ->
+        // ACP clients may return the selected option id directly. Honor it
+        // before applying the compatibility decision mapping so ALLOW_ALWAYS
+        // and REJECT_ALWAYS are not accidentally downgraded to *_ONCE.
+        val selected = explicitOptionId?.let { optionId ->
+            pending.options.firstOrNull { it.optionId.value == optionId }
+        } ?: pending.options.firstOrNull { option ->
             if (accepted) {
                 option.kind == PermissionOptionKind.ALLOW_ONCE
             } else {
@@ -2335,6 +2523,20 @@ internal class LocalAcpRuntime(
                 )
             }
         }
+        pendingExtensionRequests.entries.toList().forEach { (requestId, pending) ->
+            if (pending.sessionId == threadId &&
+                pendingExtensionRequests.remove(requestId, pending)
+            ) {
+                pending.response.complete(
+                    RawAcpExtensionReply(
+                        error = buildJsonObject {
+                            put("code", -32800)
+                            put("message", "ACP request cancelled")
+                        }
+                    )
+                )
+            }
+        }
     }
 
     private suspend fun awaitAgentExtensionRequest(
@@ -2344,7 +2546,12 @@ internal class LocalAcpRuntime(
     ): RawAcpExtensionReply {
         val requestId = rawAcpRequestId(id)
         val response = CompletableDeferred<RawAcpExtensionReply>()
-        pendingExtensionRequests[requestId] = response
+        val sessionId = (params as? JsonObject)
+            ?.get("sessionId")
+            ?.jsonPrimitive
+            ?.contentOrNull
+        val pending = PendingExtensionRequest(sessionId = sessionId, response = response)
+        pendingExtensionRequests[requestId] = pending
         try {
             onMessage(
                 linkedMapOf(
@@ -2357,7 +2564,7 @@ internal class LocalAcpRuntime(
             )
             return response.await()
         } finally {
-            pendingExtensionRequests.remove(requestId, response)
+            pendingExtensionRequests.remove(requestId, pending)
         }
     }
 
@@ -2511,26 +2718,41 @@ internal class LocalAcpRuntime(
     ): SessionCreationParameters {
         val profile = activeProfile ?: profileStore.selected()
         val supportsHttp = requireAgentInfo().capabilities.mcpCapabilities.http
+        val requestedAdditionalDirectories = (args["additionalDirectories"] as? List<*>)
+            .orEmpty()
+            .mapNotNull { it?.toString()?.trim()?.takeIf(String::isNotEmpty) }
+            .distinct()
+        val supportsAdditionalDirectories = requireAgentInfo()
+            .capabilities.sessionCapabilities.additionalDirectories != null
+        if (requestedAdditionalDirectories.isNotEmpty() && !supportsAdditionalDirectories) {
+            throw IllegalArgumentException(
+                "${profile.name} ACP does not support additionalDirectories; " +
+                    "use a path under ${AgentWorkspaceManager.SHELL_ROOT_PATH}."
+            )
+        }
         val mcpState = if (sessionMcpEnabled && supportsHttp) {
             McpServerManager.ensureRunning(appContext)
         } else {
             McpServerManager.currentState()
         }
+        val declaredServers = if (sessionMcpEnabled && supportsHttp) {
+            buildLocalAgentAcpMcpServers(
+                harnessAdapter = AcpHarnessAdapters.forProfile(profile),
+                supportsHttp = supportsHttp,
+                state = mcpState
+            ) + buildConfiguredRemoteAcpMcpServers()
+        } else {
+            emptyList()
+        }
         return SessionCreationParameters(
             cwd = cwd,
-            mcpServers = if (sessionMcpEnabled) {
-                buildLocalAgentAcpMcpServers(
-                    harnessAdapter = AcpHarnessAdapters.forProfile(profile),
-                    supportsHttp = supportsHttp,
-                    state = mcpState
-                )
-            } else {
-                emptyList()
-            },
-            additionalDirectories = (args["additionalDirectories"] as? List<*>)
-                .orEmpty()
-                .map { normalizeCwd(it?.toString()) }
-                .distinct()
+            // Keep both surfaces: the OmniBot MCP server supplies device
+            // capabilities, while configured remote servers supply the
+            // user's existing MCP tools.  A Harness's own built-in tools are
+            // still owned by that Harness and arrive as its standard ACP
+            // tool_call updates; they must never be replaced by this list.
+            mcpServers = declaredServers,
+            additionalDirectories = requestedAdditionalDirectories.map(::normalizeCwd)
         )
     }
 
@@ -2538,8 +2760,15 @@ internal class LocalAcpRuntime(
         session: ClientSession,
         args: Map<String, Any?>
     ) {
-        sessionPermissionBehaviors[session.sessionId.value] =
-            resolveAcpPermissionBehavior(args)
+        if (hasAcpPermissionPolicy(args)) {
+            sessionPermissionBehaviors[session.sessionId.value] =
+                resolveAcpPermissionBehavior(args)
+        } else {
+            sessionPermissionBehaviors.putIfAbsent(
+                session.sessionId.value,
+                AcpPermissionBehavior.ALLOW_WITHOUT_PROMPT
+            )
+        }
         val requested = linkedMapOf<String, Any?>(
             "model" to args.stringValue("model"),
             "reasoning_effort" to (
@@ -2568,10 +2797,18 @@ internal class LocalAcpRuntime(
             }
             when (option) {
                 is SessionConfigOption.Select -> {
-                    val stringValue = value.toString()
-                    if (option.flatOptions().any { it.value.value == stringValue } &&
-                        option.currentValue.value != stringValue
-                    ) {
+                    val requestedValue = value.toString()
+                    val stringValue = if (requestedId == "mode") {
+                        resolveAcpSessionModeId(
+                            option.flatOptions().map { it.value.value },
+                            requestedValue
+                        )
+                    } else {
+                        requestedValue.takeIf {
+                            option.flatOptions().any { it.value.value == requestedValue }
+                        }
+                    }
+                    if (stringValue != null && option.currentValue.value != stringValue) {
                         session.setConfigOption(
                             option.id,
                             SessionConfigOptionValue.StringValue(stringValue)
@@ -2596,11 +2833,12 @@ internal class LocalAcpRuntime(
                             session.setModel(model.modelId)
                         }
                     } else if (requestedId == "mode" && session.modesSupported) {
-                        val mode = session.availableModes.firstOrNull {
-                            it.id.value == value.toString()
-                        }
-                        if (mode != null) {
-                            session.setMode(SessionModeId(mode.id.value))
+                        val modeId = resolveAcpSessionModeId(
+                            session.availableModes.map { it.id.value },
+                            value.toString()
+                        )
+                        if (modeId != null) {
+                            session.setMode(SessionModeId(modeId))
                         }
                     }
                 }
@@ -2645,9 +2883,6 @@ internal class LocalAcpRuntime(
             rawAttachments = rawAttachments
         )
         attachments.forEach { attachment ->
-            if (attachment["sendToModel"] == false) {
-                return@forEach
-            }
             val name = attachment.stringValue("name")
                 ?: attachment.stringValue("fileName")
                 ?: "attachment"
@@ -2790,7 +3025,8 @@ internal class LocalAcpRuntime(
             val process = TerminalManager.getInstance(appContext).startLongLivedProcess(
                 command = commandLine,
                 executorKey = "acp-terminal-$threadId-$terminalId",
-                extraEnvironment = env.associate { it.name to it.value },
+                extraEnvironment = activeLaunchEnvironment +
+                    env.associate { it.name to it.value },
                 redirectErrorStream = true
             )
             val output = StringBuilder()
@@ -2991,8 +3227,17 @@ internal class LocalAcpRuntime(
         // The SDK closes the prompt's update channel before it emits the
         // prompt response. A notification received after that point has no
         // active turn and must not be assigned to the previous turn.
+        // Only OpenCode has a documented compatibility exception for
+        // turn-scoped notifications that omit turnId. Every other profile,
+        // including Xiaowan and custom/legacy Harnesses, must carry the
+        // canonical turn identity or the update is quarantined below.
+        val implicitTurnId = if (activeAgentId() == OPENCODE_AGENT_ID) {
+            activeTurnIds[threadId]
+        } else {
+            null
+        }
         val resolvedTurnId = turnId?.takeIf { it.isNotBlank() }
-            ?: activeTurnIds[threadId]
+            ?: implicitTurnId
             ?: if (isReplay && update.isTurnScoped()) replayTurnId(threadId) else null
         if (resolvedTurnId == null && update.isTurnScoped()) {
             Log.w(TAG, "Dropping turn-scoped ACP update with no resolvable turn: $update")
@@ -3000,6 +3245,7 @@ internal class LocalAcpRuntime(
         }
 
         resolvedTurnId?.let { resolvedId ->
+            turnTimings[resolvedId]?.touch()
             markTurnTiming(threadId, resolvedId, "first_update")
             when (update) {
                 is SessionUpdate.AgentThoughtChunk ->
@@ -3208,6 +3454,11 @@ internal class LocalAcpRuntime(
         val response: CompletableDeferred<CreateElicitationResponse>
     )
 
+    private data class PendingExtensionRequest(
+        val sessionId: String?,
+        val response: CompletableDeferred<RawAcpExtensionReply>
+    )
+
     private data class AcpTerminalProcess(
         val process: Process,
         val output: StringBuilder,
@@ -3222,6 +3473,8 @@ internal class LocalAcpRuntime(
         private const val CONNECT_CANCEL_TIMEOUT_MS = 2_000L
         private const val CANCEL_REQUEST_TIMEOUT_MS = 2_000L
         private const val CANCEL_JOIN_TIMEOUT_MS = 2_000L
+        private const val STALL_CHECK_INTERVAL_MS = 5_000L
+        private const val STALL_DEADLINE_MS = 120_000L
         private const val COMMAND_PROBE_TIMEOUT_MS = 20_000L
         private const val MAX_FILE_LINES = 20_000
         private const val MAX_ACP_TERMINAL_BUFFER_CHARS = 256_000
@@ -3255,16 +3508,89 @@ internal fun resolveAcpPermissionBehavior(
         ?.lowercase()
         ?.replace("-", "")
         ?.replace("_", "")
+    val permissionMode = args.stringValue("permissionMode")
+        ?.lowercase()
+        ?.replace("-", "")
+        ?.replace("_", "")
     val sandboxType = args.mapValue("sandboxPolicy")
         .stringValue("type")
         ?.lowercase()
         ?.replace("-", "")
         ?.replace("_", "")
-    return if (approvalPolicy == "never" || sandboxType == "dangerfullaccess") {
+    return if (
+        approvalPolicy == "never" ||
+        sandboxType == "dangerfullaccess" ||
+        permissionMode in setOf(
+            "fullaccess",
+            "agentfullaccess",
+            "dangerfullaccess",
+            "bypass",
+            "bypasspermissions",
+            "unrestricted"
+        ) ||
+        // No policy means the app's canonical default: unrestricted local
+        // execution. The approval gate is opt-in via on-request/readonly.
+        (approvalPolicy == null && sandboxType == null && permissionMode == null)
+    ) {
         AcpPermissionBehavior.ALLOW_WITHOUT_PROMPT
     } else {
         AcpPermissionBehavior.ASK_USER
     }
+}
+
+private fun hasAcpPermissionPolicy(args: Map<String, Any?>): Boolean {
+    return args.containsKey("approvalPolicy") ||
+        args.containsKey("sandboxPolicy") ||
+        args.containsKey("permissionMode")
+}
+
+/**
+ * Harnesses use different ACP mode identifiers for the same user-facing
+ * permission policy. Resolve our canonical IDs against the identifiers a
+ * session actually advertises, while still preferring an exact match.
+ */
+internal fun resolveAcpSessionModeId(
+    availableModeIds: Collection<String>,
+    requestedModeId: String
+): String? {
+    val requested = normalizeAcpModeId(requestedModeId)
+    availableModeIds.firstOrNull { normalizeAcpModeId(it) == requested }?.let { return it }
+    val aliases = when (requested) {
+        "agentfullaccess", "dangerfullaccess", "fullaccess", "bypass", "bypasspermissions" ->
+            setOf(
+                "agentfullaccess",
+                "dangerfullaccess",
+                "fullaccess",
+                "bypass",
+                "bypasspermissions",
+                "bypasspermission",
+                "unrestricted"
+            )
+        "readonly", "plan" -> setOf("readonly", "plan", "read")
+        "agent", "default", "workspacewrite", "acceptedits", "autoapprove" ->
+            setOf("agent", "default", "workspacewrite", "acceptedits", "autoapprove")
+        else -> emptySet()
+    }
+    return availableModeIds.firstOrNull { normalizeAcpModeId(it) in aliases }
+}
+
+internal fun isAcpFullAccessMode(modeId: String): Boolean {
+    return normalizeAcpModeId(modeId) in setOf(
+        "agentfullaccess",
+        "dangerfullaccess",
+        "fullaccess",
+        "bypass",
+        "bypasspermissions",
+        "bypasspermission",
+        "unrestricted"
+    )
+}
+
+private fun normalizeAcpModeId(value: String): String {
+    return value.trim().lowercase()
+        .replace("-", "")
+        .replace("_", "")
+        .replace(" ", "")
 }
 
 internal interface AcpRuntimeConnection {
@@ -3745,6 +4071,17 @@ private fun capabilitiesPayload(info: AgentInfo?): Map<String, Any?> {
     )
 }
 
+/** Optional ACP client metadata understood by DeepSeek Harness 0.4.x. */
+internal val ACP_CLIENT_CAPABILITY_META: JsonObject = buildJsonObject {
+    put("terminal_output", true)
+    put("subagent-transcript", true)
+    put("dsh", buildJsonObject {
+        put("cordis", buildJsonObject {
+            put("protocol", 0)
+        })
+    })
+}
+
 private const val MANAGED_NPM_PATH_PREFIX =
     "PATH=\"/root/.npm-global/bin:\$PATH\"; export PATH;"
 
@@ -3884,9 +4221,27 @@ internal fun managedAgentHealthFromProbe(
             installed = true,
             error = null,
             checkedAt = checkedAt,
+            preparationRevision = previous.preparationRevision,
         )
     }
 }
+
+/**
+ * Preparation has already completed the adapter install, launch-command
+ * check, and vendor health check.  Persist that result as reusable readiness;
+ * the ACP process itself is still disconnected until the user switches to
+ * this Harness and performs the normal initialize handshake. `online` here
+ * means the adapter is launch-ready, not that a process is currently alive.
+ */
+internal fun managedAgentPreparationHealth(
+    checkedAt: Long = System.currentTimeMillis(),
+    preparationRevision: String? = null,
+): AcpAgentHealth = AcpAgentHealth(
+    status = AcpAgentHealth.STATUS_ONLINE,
+    installed = true,
+    checkedAt = checkedAt,
+    preparationRevision = preparationRevision,
+)
 
 private fun shellQuoteAcp(value: String): String =
     "'" + value.replace("'", "'\"'\"'") + "'"

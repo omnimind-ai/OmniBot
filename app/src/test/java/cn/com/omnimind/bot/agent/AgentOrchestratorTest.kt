@@ -1337,6 +1337,29 @@ class AgentOrchestratorTest {
     }
 
     @Test
+    fun `does not expose an incomplete tool call parser error to the user`() = runBlocking {
+        val llmClient = FakeLlmClient(
+            turns = emptyList(),
+            failures = listOf(AgentIncompleteToolCallException(toolCallIndex = 1))
+        )
+        val callback = RecordingCallback()
+
+        val result = createOrchestrator(llmClient, FakeToolExecutor()).run(
+            AgentOrchestrator.Input(
+                callback = callback,
+                initialMessages = initialMessages("hello"),
+                executionEnv = FakeExecutionEnvironment("hello")
+            )
+        )
+
+        assertTrue(result is AgentResult.Error)
+        assertEquals(1, llmClient.requests.size)
+        assertTrue(callback.retryingEvents.isEmpty())
+        assertTrue(callback.errors.single().contains("Provider"))
+        assertFalse(callback.errors.single().contains("missing function.name"))
+    }
+
+    @Test
     fun `detects provider context overflow without confusing throttling`() {
         assertTrue(
             isContextOverflowTurnFailure(
