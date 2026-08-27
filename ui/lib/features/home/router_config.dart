@@ -21,6 +21,7 @@ import 'pages/settings/workspace_memory_setting_page.dart';
 import 'pages/settings/background_setting_page.dart';
 import 'pages/settings/experience_misc_setting_page.dart';
 import 'pages/settings/home_setting_page.dart';
+import 'pages/settings/local_models_settings_page.dart';
 import 'pages/settings/open_with_omnibot_setting_page.dart';
 import 'pages/settings/storage_usage_page.dart';
 import 'pages/omnibot_workspace/omnibot_artifact_preview_page.dart';
@@ -38,7 +39,7 @@ import 'pages/scene_model_setting/scene_model_setting_page.dart';
 import 'pages/model_provider_setting/model_provider_setting_page.dart';
 import 'package:ui/features/welcome/pages/onboarding/onboarding_choice_page.dart';
 
-/// Home模块路由配置
+/// Home module route configuration.
 const String kNativeRouteFlag = '__from_native__';
 
 ConversationMode _parseConversationMode(String? rawValue) {
@@ -46,8 +47,7 @@ ConversationMode _parseConversationMode(String? rawValue) {
 }
 
 ConversationThreadTarget? _parseChatThreadTarget(GoRouterState state) {
-  final queryConversationId =
-      state.uri.queryParameters['conversationId']?.trim() ?? '';
+  final queryConversationId = state.uri.queryParameters['conversationId']?.trim() ?? '';
   final queryMode = _parseConversationMode(state.uri.queryParameters['mode']);
   final queryRequestKey = state.uri.queryParameters['requestKey']?.trim();
   final queryAgentId = state.uri.queryParameters['agentId']?.trim();
@@ -73,38 +73,22 @@ ConversationThreadTarget? _parseChatThreadTarget(GoRouterState state) {
   }
 
   final extra = state.extra;
-  if (extra is ConversationThreadTarget) {
-    return extra;
-  }
+  if (extra is ConversationThreadTarget) return extra;
 
   final argsFromExtra = extra as List<String>? ?? const <String>[];
-  if (argsFromExtra.isEmpty) {
-    return null;
-  }
+  if (argsFromExtra.isEmpty) return null;
 
   final first = argsFromExtra.first.trim();
-  final requestKey = argsFromExtra
-      .skip(1)
-      .map((item) => item.trim())
-      .firstWhere(
-        (item) =>
-            item.isNotEmpty &&
+  final requestKey = argsFromExtra.skip(1).map((item) => item.trim()).firstWhere(
+        (item) => item.isNotEmpty &&
             item != kNativeRouteFlag &&
             !item.startsWith('mode=') &&
-            ConversationMode.values.every(
-              (mode) => mode.storageValue != item.toLowerCase(),
-            ),
+            ConversationMode.values.every((mode) => mode.storageValue != item.toLowerCase()),
         orElse: () => '',
       );
-  final modeRaw = argsFromExtra
-      .skip(1)
-      .map((item) => item.trim())
-      .firstWhere(
-        (item) =>
-            item.startsWith('mode=') ||
-            ConversationMode.values.any(
-              (mode) => mode.storageValue == item.toLowerCase(),
-            ),
+  final modeRaw = argsFromExtra.skip(1).map((item) => item.trim()).firstWhere(
+        (item) => item.startsWith('mode=') ||
+            ConversationMode.values.any((mode) => mode.storageValue == item.toLowerCase()),
         orElse: () => '',
       );
   final mode = modeRaw.startsWith('mode=')
@@ -121,9 +105,7 @@ ConversationThreadTarget? _parseChatThreadTarget(GoRouterState state) {
   }
 
   final conversationId = int.tryParse(first);
-  if (conversationId == null) {
-    return null;
-  }
+  if (conversationId == null) return null;
   return ConversationThreadTarget.existing(
     conversationId: conversationId,
     mode: mode,
@@ -133,52 +115,38 @@ ConversationThreadTarget? _parseChatThreadTarget(GoRouterState state) {
 }
 
 List<GoRoute> homeRoutes = [
-  // 兼容旧首页路由，统一落到聊天页
   GoRoute(
     path: '/home/home',
     name: 'home/home',
-    builder: (context, state) {
-      return ChatPage(threadTarget: _parseChatThreadTarget(state));
-    },
+    builder: (context, state) => ChatPage(threadTarget: _parseChatThreadTarget(state)),
   ),
   GoRoute(
     path: '/home/blank_page',
     name: 'home/blank_page',
     builder: (context, state) => const SizedBox.shrink(),
   ),
-
-  // 聊天页
   GoRoute(
     path: '/home/chat',
     name: 'home/chat',
-    builder: (context, state) {
-      return ChatPage(threadTarget: _parseChatThreadTarget(state));
-    },
+    builder: (context, state) => ChatPage(threadTarget: _parseChatThreadTarget(state)),
   ),
-
-  // 聊天归档页（保留旧路径兼容）
   GoRoute(
     path: '/home/chat_history',
     name: 'home/chat_history',
     builder: (context, state) => const ChatHistoryPage(archivedOnly: true),
   ),
-
   GoRoute(
     path: '/home/agent_sessions',
     name: 'home/agent_sessions',
     pageBuilder: (context, state) => GoRouterManager.buildActivitySlidePage(
-      key: state.pageKey,
-      name: 'home/agent_sessions',
-      child: const AgentSessionsPage(),
+      key: state.pageKey, name: 'home/agent_sessions', child: const AgentSessionsPage(),
     ),
   ),
   GoRoute(
     path: '/home/agent_mode_setting',
     name: 'home/agent_mode_setting',
     pageBuilder: (context, state) => GoRouterManager.buildActivitySlidePage(
-      key: state.pageKey,
-      name: 'home/agent_mode_setting',
-      child: const AgentModeSettingPage(),
+      key: state.pageKey, name: 'home/agent_mode_setting', child: const AgentModeSettingPage(),
     ),
   ),
   GoRoute(
@@ -187,18 +155,14 @@ List<GoRoute> homeRoutes = [
     pageBuilder: (context, state) => GoRouterManager.buildActivitySlidePage(
       key: state.pageKey,
       name: 'home/agent_config',
-      child: AgentConfigPage(
-        agentId: state.pathParameters['agentId']?.trim() ?? '',
-      ),
+      child: AgentConfigPage(agentId: state.pathParameters['agentId']?.trim() ?? ''),
     ),
   ),
   GoRoute(
     path: '/home/remote_codex_setting',
     name: 'home/remote_codex_setting',
     pageBuilder: (context, state) => GoRouterManager.buildActivitySlidePage(
-      key: state.pageKey,
-      name: 'home/remote_codex_setting',
-      child: const RemoteCodexSettingPage(),
+      key: state.pageKey, name: 'home/remote_codex_setting', child: const RemoteCodexSettingPage(),
     ),
   ),
   GoRoute(
@@ -206,17 +170,11 @@ List<GoRoute> homeRoutes = [
     name: 'home/archived_conversations',
     builder: (context, state) => const ChatHistoryPage(archivedOnly: true),
   ),
-
-  // 输入框悬浮窗
   GoRoute(
     path: '/home/command_overlay',
     name: 'home/command_overlay',
-    builder: (context, state) {
-      final scene = state.uri.queryParameters['scene'];
-      return CommandOverlay(scene: scene);
-    },
+    builder: (context, state) => CommandOverlay(scene: state.uri.queryParameters['scene']),
   ),
-
   GoRoute(
     path: '/home/omnibot_artifact_preview',
     name: 'home/omnibot_artifact_preview',
@@ -225,7 +183,7 @@ List<GoRoute> homeRoutes = [
       return OmnibotArtifactPreviewPage(
         path: (extra['path'] ?? '').toString(),
         uri: extra['uri']?.toString(),
-        title: (extra['title'] ?? '文件预览').toString(),
+        title: (extra['title'] ?? 'File preview').toString(),
         previewKind: (extra['previewKind'] ?? 'file').toString(),
         mimeType: (extra['mimeType'] ?? 'application/octet-stream').toString(),
         shellPath: extra['shellPath']?.toString(),
@@ -235,7 +193,6 @@ List<GoRoute> homeRoutes = [
       );
     },
   ),
-
   GoRoute(
     path: '/home/omnibot_workspace',
     name: 'home/omnibot_workspace',
@@ -248,16 +205,11 @@ List<GoRoute> homeRoutes = [
       );
     },
   ),
-
-  // 授权页
   GoRoute(
     path: '/home/authorize',
     name: 'home/authorize',
-    builder: (context, state) =>
-        AuthorizePage(args: state.extra as AuthorizePageArgs?),
+    builder: (context, state) => AuthorizePage(args: state.extra as AuthorizePageArgs?),
   ),
-
-  // 编辑资料页
   GoRoute(
     path: '/home/edit_profile',
     name: 'home/edit_profile',
@@ -269,8 +221,6 @@ List<GoRoute> homeRoutes = [
       );
     },
   ),
-
-  // Webview通用页面
   GoRoute(
     path: '/webview/webview_page',
     name: 'webview/webview_page',
@@ -287,25 +237,25 @@ List<GoRoute> homeRoutes = [
       );
     },
   ),
-
-  // 设置页
   GoRoute(
     path: '/home/settings',
     name: 'home/settings',
     pageBuilder: (context, state) => GoRouterManager.buildActivitySlidePage(
-      key: state.pageKey,
-      name: 'home/settings',
-      child: const SettingsPage(),
+      key: state.pageKey, name: 'home/settings', child: const SettingsPage(),
     ),
   ),
-
+  GoRoute(
+    path: '/home/local_models',
+    name: 'home/local_models',
+    pageBuilder: (context, state) => GoRouterManager.buildActivitySlidePage(
+      key: state.pageKey, name: 'home/local_models', child: const LocalModelsSettingsPage(),
+    ),
+  ),
   GoRoute(
     path: '/home/permission_guide',
     name: 'home/permission_guide',
-    builder: (context, state) =>
-        PermissionGuidePage(initialBrand: state.uri.queryParameters['brand']),
+    builder: (context, state) => PermissionGuidePage(initialBrand: state.uri.queryParameters['brand']),
   ),
-
   GoRoute(
     path: '/home/permission_guide/detail',
     name: 'home/permission_guide/detail',
@@ -314,48 +264,34 @@ List<GoRoute> homeRoutes = [
       initialBrand: state.uri.queryParameters['brand'],
     ),
   ),
-
-  // 闹钟设置页
   GoRoute(
     path: '/home/alarm_setting',
     name: 'home/alarm_setting',
     pageBuilder: (context, state) => GoRouterManager.buildActivitySlidePage(
-      key: state.pageKey,
-      name: 'home/alarm_setting',
-      child: const AlarmSettingPage(),
+      key: state.pageKey, name: 'home/alarm_setting', child: const AlarmSettingPage(),
     ),
   ),
-
   GoRoute(
     path: '/home/mcp_tools',
     name: 'home/mcp_tools',
     pageBuilder: (context, state) => GoRouterManager.buildActivitySlidePage(
-      key: state.pageKey,
-      name: 'home/mcp_tools',
-      child: const RemoteMcpServersPage(),
+      key: state.pageKey, name: 'home/mcp_tools', child: const RemoteMcpServersPage(),
     ),
   ),
-
   GoRoute(
     path: '/home/skill_store',
     name: 'home/skill_store',
     pageBuilder: (context, state) => GoRouterManager.buildActivitySlidePage(
-      key: state.pageKey,
-      name: 'home/skill_store',
-      child: const SkillStorePage(),
+      key: state.pageKey, name: 'home/skill_store', child: const SkillStorePage(),
     ),
   ),
-
   GoRoute(
     path: '/home/plugin_market',
     name: 'home/plugin_market',
     pageBuilder: (context, state) => GoRouterManager.buildActivitySlidePage(
-      key: state.pageKey,
-      name: 'home/plugin_market',
-      child: const PluginMarketPage(),
+      key: state.pageKey, name: 'home/plugin_market', child: const PluginMarketPage(),
     ),
   ),
-
   GoRoute(
     path: '/home/plugin_market/:pluginId',
     name: 'home/plugin_detail',
@@ -364,131 +300,80 @@ List<GoRoute> homeRoutes = [
       name: 'home/plugin_detail',
       child: PluginDetailPage(
         pluginId: state.pathParameters['pluginId']?.trim() ?? '',
-        initialPlugin: state.extra is OmniPluginItem
-            ? state.extra! as OmniPluginItem
-            : null,
+        initialPlugin: state.extra is OmniPluginItem ? state.extra! as OmniPluginItem : null,
       ),
     ),
   ),
-
   GoRoute(
     path: '/home/plugin_dashboard',
     name: 'home/plugin_dashboard',
     pageBuilder: (context, state) => GoRouterManager.buildActivitySlidePage(
       key: state.pageKey,
       name: 'home/plugin_dashboard',
-      child: PluginDashboardPage(
-        pluginId: state.uri.queryParameters['pluginId']?.trim() ?? '',
-      ),
+      child: PluginDashboardPage(pluginId: state.uri.queryParameters['pluginId']?.trim() ?? ''),
     ),
   ),
-
   GoRoute(
     path: '/home/workspace_memory_setting',
     name: 'home/workspace_memory_setting',
     pageBuilder: (context, state) => GoRouterManager.buildActivitySlidePage(
-      key: state.pageKey,
-      name: 'home/workspace_memory_setting',
-      child: const WorkspaceMemorySettingPage(),
+      key: state.pageKey, name: 'home/workspace_memory_setting', child: const WorkspaceMemorySettingPage(),
     ),
   ),
-
   GoRoute(
     path: '/home/background_setting',
     name: 'home/background_setting',
     pageBuilder: (context, state) => GoRouterManager.buildActivitySlidePage(
-      key: state.pageKey,
-      name: 'home/background_setting',
-      child: const BackgroundSettingPage(),
+      key: state.pageKey, name: 'home/background_setting', child: const BackgroundSettingPage(),
     ),
   ),
-
   GoRoute(
     path: '/home/experience_misc_setting',
     name: 'home/experience_misc_setting',
     pageBuilder: (context, state) => GoRouterManager.buildActivitySlidePage(
-      key: state.pageKey,
-      name: 'home/experience_misc_setting',
-      child: const ExperienceMiscSettingPage(),
+      key: state.pageKey, name: 'home/experience_misc_setting', child: const ExperienceMiscSettingPage(),
     ),
   ),
-
   GoRoute(
     path: '/home/first_use_tutorial/setup',
     name: 'home/first_use_tutorial/setup',
     pageBuilder: (context, state) => GoRouterManager.buildActivitySlidePage(
-      key: state.pageKey,
-      name: 'home/first_use_tutorial/setup',
-      child: const OnboardingChoicePage(allowExit: true),
+      key: state.pageKey, name: 'home/first_use_tutorial/setup', child: const OnboardingChoicePage(allowExit: true),
     ),
   ),
-
   GoRoute(
     path: '/home/home_setting',
     name: 'home/home_setting',
     pageBuilder: (context, state) => GoRouterManager.buildActivitySlidePage(
-      key: state.pageKey,
-      name: 'home/home_setting',
-      child: const HomeSettingPage(),
+      key: state.pageKey, name: 'home/home_setting', child: const HomeSettingPage(),
     ),
   ),
-
   GoRoute(
     path: '/home/open_with_omnibot_setting',
     name: 'home/open_with_omnibot_setting',
     pageBuilder: (context, state) => GoRouterManager.buildActivitySlidePage(
-      key: state.pageKey,
-      name: 'home/open_with_omnibot_setting',
-      child: const OpenWithOmnibotSettingPage(),
+      key: state.pageKey, name: 'home/open_with_omnibot_setting', child: const OpenWithOmnibotSettingPage(),
     ),
   ),
-
   GoRoute(
     path: '/home/storage_usage',
     name: 'home/storage_usage',
     pageBuilder: (context, state) => GoRouterManager.buildActivitySlidePage(
-      key: state.pageKey,
-      name: 'home/storage_usage',
-      child: const StorageUsagePage(),
+      key: state.pageKey, name: 'home/storage_usage', child: const StorageUsagePage(),
     ),
   ),
-
-  // 模型提供商配置页
   GoRoute(
     path: '/home/model_provider_setting',
     name: 'home/model_provider_setting',
     pageBuilder: (context, state) => GoRouterManager.buildActivitySlidePage(
-      key: state.pageKey,
-      name: 'home/model_provider_setting',
-      child: const ModelProviderSettingPage(),
+      key: state.pageKey, name: 'home/model_provider_setting', child: const ModelProviderSettingPage(),
     ),
   ),
   GoRoute(
     path: '/home/scene_model_setting',
     name: 'home/scene_model_setting',
     pageBuilder: (context, state) => GoRouterManager.buildActivitySlidePage(
-      key: state.pageKey,
-      name: 'home/scene_model_setting',
-      child: const SceneModelSettingPage(),
+      key: state.pageKey, name: 'home/scene_model_setting', child: const SceneModelSettingPage(),
     ),
-  ),
-
-  GoRoute(
-    path: '/home/termux_setting',
-    name: 'home/termux_setting',
-    pageBuilder: (context, state) => GoRouterManager.buildActivitySlidePage(
-      key: state.pageKey,
-      name: 'home/termux_setting',
-      child: TermuxSettingPage(
-        focusPackageId: state.uri.queryParameters['focus'],
-      ),
-    ),
-  ),
-
-  // 应用权限授权页
-  GoRoute(
-    path: '/home/authorize_setting',
-    name: 'home/authorize_setting',
-    builder: (context, state) => const AuthorizeSettingPage(),
   ),
 ];
