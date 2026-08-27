@@ -1,0 +1,37 @@
+name: Local Model Quality
+
+on:
+  push:
+    branches:
+      - feat/offline-local-models
+  pull_request:
+    branches:
+      - feat/offline-local-models
+
+permissions:
+  contents: read
+
+jobs:
+  localization-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Audit CJK source text
+        run: bash scripts/check_cjk.sh
+
+  kotlin-local-model-static-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Validate native bridge and catalog files exist
+        run: |
+          test -f baselib/src/main/cpp/CMakeLists.txt
+          test -f baselib/src/main/cpp/omnibot_llama_jni.cpp
+          test -f baselib/src/main/java/cn/com/omnimind/baselib/llm/LocalInferenceEngine.kt
+          test -f baselib/src/main/java/cn/com/omnimind/baselib/llm/LocalModelCatalog.kt
+          grep -q '192067b72d1b7a3653b3f0c59190303b18596637' baselib/src/main/cpp/CMakeLists.txt
+          grep -q 'sha256' baselib/src/main/java/cn/com/omnimind/baselib/llm/LocalModelCatalog.kt
