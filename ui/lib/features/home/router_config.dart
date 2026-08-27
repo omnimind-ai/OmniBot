@@ -52,22 +52,11 @@ ConversationThreadTarget? _parseChatThreadTarget(GoRouterState state) {
   final queryAgentId = state.uri.queryParameters['agentId']?.trim();
   if (queryConversationId.isNotEmpty) {
     if (queryConversationId == 'new' || queryConversationId == '__new__') {
-      return ConversationThreadTarget.newConversation(
-        mode: queryMode,
-        agentId: queryAgentId?.isEmpty == true ? null : queryAgentId,
-        fromNativeRoute: true,
-        requestKey: queryRequestKey?.isEmpty == true ? null : queryRequestKey,
-      );
+      return ConversationThreadTarget.newConversation(mode: queryMode, agentId: queryAgentId?.isEmpty == true ? null : queryAgentId, fromNativeRoute: true, requestKey: queryRequestKey?.isEmpty == true ? null : queryRequestKey);
     }
     final conversationId = int.tryParse(queryConversationId);
     if (conversationId != null) {
-      return ConversationThreadTarget.existing(
-        conversationId: conversationId,
-        mode: queryMode,
-        agentId: queryAgentId?.isEmpty == true ? null : queryAgentId,
-        fromNativeRoute: true,
-        requestKey: queryRequestKey?.isEmpty == true ? null : queryRequestKey,
-      );
+      return ConversationThreadTarget.existing(conversationId: conversationId, mode: queryMode, agentId: queryAgentId?.isEmpty == true ? null : queryAgentId, fromNativeRoute: true, requestKey: queryRequestKey?.isEmpty == true ? null : queryRequestKey);
     }
   }
   final extra = state.extra;
@@ -76,34 +65,21 @@ ConversationThreadTarget? _parseChatThreadTarget(GoRouterState state) {
   if (argsFromExtra.isEmpty) return null;
   final first = argsFromExtra.first.trim();
   final requestKey = argsFromExtra.skip(1).map((item) => item.trim()).firstWhere(
-        (item) => item.isNotEmpty && item != kNativeRouteFlag && !item.startsWith('mode=') &&
-            ConversationMode.values.every((mode) => mode.storageValue != item.toLowerCase()),
+        (item) => item.isNotEmpty && item != kNativeRouteFlag && !item.startsWith('mode=') && ConversationMode.values.every((mode) => mode.storageValue != item.toLowerCase()),
         orElse: () => '',
       );
   final modeRaw = argsFromExtra.skip(1).map((item) => item.trim()).firstWhere(
-        (item) => item.startsWith('mode=') ||
-            ConversationMode.values.any((mode) => mode.storageValue == item.toLowerCase()),
+        (item) => item.startsWith('mode=') || ConversationMode.values.any((mode) => mode.storageValue == item.toLowerCase()),
         orElse: () => '',
       );
-  final mode = modeRaw.startsWith('mode=')
-      ? _parseConversationMode(modeRaw.substring(5))
-      : _parseConversationMode(modeRaw);
+  final mode = modeRaw.startsWith('mode=') ? _parseConversationMode(modeRaw.substring(5)) : _parseConversationMode(modeRaw);
   final fromNativeRoute = argsFromExtra.contains(kNativeRouteFlag);
   if (first == 'new' || first == '__new__') {
-    return ConversationThreadTarget.newConversation(
-      mode: mode,
-      fromNativeRoute: fromNativeRoute,
-      requestKey: requestKey.isEmpty ? null : requestKey,
-    );
+    return ConversationThreadTarget.newConversation(mode: mode, fromNativeRoute: fromNativeRoute, requestKey: requestKey.isEmpty ? null : requestKey);
   }
   final conversationId = int.tryParse(first);
   if (conversationId == null) return null;
-  return ConversationThreadTarget.existing(
-    conversationId: conversationId,
-    mode: mode,
-    fromNativeRoute: fromNativeRoute,
-    requestKey: requestKey.isEmpty ? null : requestKey,
-  );
+  return ConversationThreadTarget.existing(conversationId: conversationId, mode: mode, fromNativeRoute: fromNativeRoute, requestKey: requestKey.isEmpty ? null : requestKey);
 }
 
 List<GoRoute> homeRoutes = [
