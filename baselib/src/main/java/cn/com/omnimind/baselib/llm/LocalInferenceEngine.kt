@@ -2,6 +2,7 @@ package cn.com.omnimind.baselib.llm
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.awaitClose
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicBoolean
@@ -21,6 +22,7 @@ object LocalInferenceEngine {
     }
 
     private val loaded = AtomicBoolean(false)
+    private val generating = AtomicBoolean(false)
 
     suspend fun loadModel(modelPath: String, contextSize: Int = 4096): Boolean =
         withContext(Dispatchers.Default) {
@@ -31,6 +33,7 @@ object LocalInferenceEngine {
         }
 
     suspend fun unloadModel() = withContext(Dispatchers.Default) {
+        cancel()
         LocalInferenceEngineNative.nativeUnloadModel()
         loaded.set(false)
     }
@@ -40,7 +43,9 @@ object LocalInferenceEngine {
     fun modelInfo(): String = LocalInferenceEngineNative.nativeModelInfo()
 
     fun cancel() {
-        LocalInferenceEngineNative.nativeCancel()
+        if (generating.get()) {
+            LocalInferenceEngineNative.nativeCancel()
+        }
     }
 
     fun generate(
@@ -51,10 +56,17 @@ object LocalInferenceEngine {
     ): Flow<Event> = channelFlow {
         if (!isLoaded()) {
             trySend(Event.Error("Offline model is not loaded."))
+            close()
             return@channelFlow
         }
         if (messages.isEmpty()) {
             trySend(Event.Error("At least one chat message is required."))
+            close()
+            return@channelFlow
+        }
+        if (!generating.compareAndSet(false, true)) {
+            trySend(Event.Error("Another local inference request is already running."))
+            close()
             return@channelFlow
         }
 
@@ -68,26 +80,38 @@ object LocalInferenceEngine {
             }
         }
 
-        withContext(Dispatchers.Default) {
-            when (
-                LocalInferenceEngineNative.nativeGenerate(
-                    callback = callback,
-                    roles = messages.map { it.role }.toTypedArray(),
-                    contents = messages.map { it.content }.toTypedArray(),
-                    maxTokens = maxTokens.coerceIn(1, 8192),
-                    temperature = temperature.coerceIn(0.05f, 2.0f),
-                    topP = topP.coerceIn(0.05f, 1.0f),
-                )
-            ) {
-                1 -> trySend(Event.Complete)
-                2 -> trySend(Event.Cancelled)
-                else -> Unit
+        try {
+            withContext(Dispatchers.Default) {
+                when (
+                    LocalInferenceEngineNative.nativeGenerate(
+                        callback = callback,
+                        roles = messages.map { it.role }.toTypedArray(),
+                        contents = messages.map { it.content }.toTypedArray(),
+                        maxTokens = maxTokens.coerceIn(1, 8192),
+                        temperature = temperature.coerceIn(0.05f, 2.0f),
+                        topP = topP.coerceIn(0.05f, 1.0f),
+                    )
+                ) {
+                    1 -> trySend(Event.Complete)
+                    2 -> trySend(Event.Cancelled)
+                    else -> Unit
+                }
+            }
+        } finally {
+            generating.set(false)
+        }
+
+        awaitClose {
+            if (generating.get()) {
+                LocalInferenceEngineNative.nativeCancel()
             }
         }
     }
 
     fun shutdown() {
+        cancel()
         LocalInferenceEngineNative.nativeShutdown()
         loaded.set(false)
+        generating.set(false)
     }
 }
