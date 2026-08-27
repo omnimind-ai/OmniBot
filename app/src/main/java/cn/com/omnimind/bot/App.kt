@@ -56,6 +56,7 @@ class App : BaseApplication() {
                 OmniLog.d("AppStartup", "Creating main engine from FlutterEngineGroup")
 
                 cachedMainEngine = getFlutterEngineGroup().createAndRunDefaultEngine(instance)
+                LocalModelsFlutterBridge.attach(cachedMainEngine!!)
 
                 OmniLog.d(
                     "AppStartup",
