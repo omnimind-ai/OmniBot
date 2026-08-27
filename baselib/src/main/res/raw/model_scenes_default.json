@@ -20,6 +20,17 @@
       "en-US": "Android GUI automation model; execution policy is provided by AndroidGuiPolicy"
     }
   },
+  "scene.voice": {
+    "model": "",
+    "transport": "openai_compatible",
+    "response_parser": "text_content",
+    "prompt": null,
+    "description": "助手回复语音合成模型；由 ACP 语音播放场景提供",
+    "description_i18n": {
+      "zh-CN": "助手回复语音合成模型；由 ACP 语音播放场景提供",
+      "en-US": "Voice synthesis model for assistant replies, provided by the ACP voice scene"
+    }
+  },
   "scene.compactor.context.chat": {
     "model": "qwen3.5-plus",
     "transport": "openai_compatible",

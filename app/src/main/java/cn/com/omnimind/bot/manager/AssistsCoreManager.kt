@@ -37,6 +37,8 @@ import cn.com.omnimind.baselib.llm.SceneModelOverrideEntry
 import cn.com.omnimind.baselib.llm.SceneModelOverrideStore
 import cn.com.omnimind.baselib.llm.SceneOperationConfig
 import cn.com.omnimind.baselib.llm.SceneOperationConfigStore
+import cn.com.omnimind.baselib.llm.SceneVoiceConfig
+import cn.com.omnimind.baselib.llm.SceneVoiceConfigStore
 import cn.com.omnimind.baselib.util.APPPackageUtil
 import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.baselib.util.RuntimeLogStore
@@ -441,6 +443,18 @@ class AssistsCoreManager(private val context: Context) {
 
     private fun SceneOperationConfig.toMap(): Map<String, Any?> {
         return mapOf("useOfficialService" to useOfficialService)
+    }
+
+    private fun SceneVoiceConfig.toMap(): Map<String, Any?> {
+        return mapOf(
+            "autoPlay" to autoPlay,
+            "voiceId" to voiceId,
+            "stylePreset" to stylePreset,
+            "customStyle" to customStyle,
+            "ttsMode" to ttsMode,
+            // Never expose the command itself over the Flutter bridge.
+            "hasCustomCurlCommand" to customCurlCommand.isNotBlank(),
+        )
     }
 
     fun setChannel(_channel: MethodChannel) {
@@ -1860,6 +1874,50 @@ class AssistsCoreManager(private val context: Context) {
                 OmniLog.e(TAG, "saveSceneOperationConfig error: ${e.message}")
                 withContext(Dispatchers.Main) {
                     result.error("SAVE_SCENE_OPERATION_CONFIG_ERROR", e.message, null)
+                }
+            }
+        }
+    }
+
+    fun getSceneVoiceConfig(call: MethodCall, result: MethodChannel.Result) {
+        workJob.launch {
+            try {
+                withContext(Dispatchers.Main) {
+                    result.success(SceneVoiceConfigStore.getConfig().toMap())
+                }
+            } catch (e: Exception) {
+                OmniLog.e(TAG, "getSceneVoiceConfig error: ${e.message}")
+                withContext(Dispatchers.Main) {
+                    result.error("GET_SCENE_VOICE_CONFIG_ERROR", e.message, null)
+                }
+            }
+        }
+    }
+
+    fun saveSceneVoiceConfig(call: MethodCall, result: MethodChannel.Result) {
+        val current = SceneVoiceConfigStore.getConfig()
+        val config = SceneVoiceConfig(
+            autoPlay = call.argument<Boolean>("autoPlay") ?: current.autoPlay,
+            voiceId = call.argument<String>("voiceId") ?: current.voiceId,
+            stylePreset = call.argument<String>("stylePreset") ?: current.stylePreset,
+            customStyle = call.argument<String>("customStyle") ?: current.customStyle,
+            ttsMode = call.argument<String>("ttsMode") ?: current.ttsMode,
+            customCurlCommand = call.argument<String>("customCurlCommand") ?: current.customCurlCommand,
+        )
+        val replaceCommand = call.argument<Boolean>("replaceCustomCurlCommand") == true
+        val clearCommand = call.argument<Boolean>("clearCustomCurlCommand") == true
+        workJob.launch {
+            try {
+                val saved = SceneVoiceConfigStore.saveConfig(
+                    config = config,
+                    replaceCustomCurlCommand = replaceCommand,
+                    clearCustomCurlCommand = clearCommand,
+                )
+                withContext(Dispatchers.Main) { result.success(saved.toMap()) }
+            } catch (e: Exception) {
+                OmniLog.e(TAG, "saveSceneVoiceConfig error: ${e.message}")
+                withContext(Dispatchers.Main) {
+                    result.error("SAVE_SCENE_VOICE_CONFIG_ERROR", e.message, null)
                 }
             }
         }

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:ui/services/model_provider_config_service.dart';
 import 'package:ui/services/scene_model_config_service.dart';
+import 'package:ui/services/voice_playback_coordinator.dart';
 import 'package:ui/theme/app_colors.dart';
 import 'package:ui/theme/theme_context.dart';
 import 'package:ui/utils/popup_menu_anchor_position.dart';
@@ -41,6 +42,7 @@ class SceneModelSettingPage extends StatefulWidget {
 class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
   static const List<String> _sceneOrder = [
     'scene.dispatch.model',
+    'scene.voice',
     'scene.compactor.context.chat',
     'scene.memory.embedding',
     'scene.memory.rollup',
@@ -48,6 +50,7 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
 
   static const Map<String, String> _sceneDisplayNameMap = {
     'scene.dispatch.model': 'Agent',
+    'scene.voice': '语音合成',
     'scene.vlm.operation.primary': 'GUI',
     'scene.compactor.context.chat': 'Chat Compactor',
     'scene.memory.embedding': 'Memory Embed',
@@ -56,6 +59,7 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
 
   static const Map<String, String> _sceneTooltipMap = {
     'scene.dispatch.model': '负责任务理解与分流决策',
+    'scene.voice': '负责助手回复的语音合成与播放',
     'scene.vlm.operation.primary': '负责 Android GUI 观察与动作决策',
     'scene.compactor.context.chat': '负责聊天历史压缩总结',
     'scene.memory.embedding': '负责 workspace 记忆向量检索的嵌入模型',
@@ -73,6 +77,7 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
   List<SceneCatalogItem> _catalog = const [];
   List<SceneModelBindingEntry> _bindings = const [];
   List<ModelProviderProfileSummary> _profiles = const [];
+  SceneVoiceConfig _voiceConfig = const SceneVoiceConfig();
   Map<String, List<ProviderModelOption>> _providerModelsByProfileId = {};
   Map<String, Map<String, List<ProviderModelOption>>>
   _officialProviderModelsByCapability = {};
@@ -197,12 +202,14 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
         SceneModelConfigService.getSceneCatalog(),
         SceneModelConfigService.getSceneModelBindings(),
         ModelProviderConfigService.listProfiles(),
+        SceneModelConfigService.getSceneVoiceConfig(),
       ]);
       if (!mounted) return;
 
       final catalog = results[0] as List<SceneCatalogItem>;
       final bindings = results[1] as List<SceneModelBindingEntry>;
       final profilesPayload = results[2] as ModelProviderProfilesPayload;
+      final voiceConfig = results[3] as SceneVoiceConfig;
       final providerModelsByProfileId = <String, List<ProviderModelOption>>{};
       for (final profile in profilesPayload.profiles) {
         providerModelsByProfileId[profile.id] = _isOfficialProfile(profile)
@@ -223,6 +230,7 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
         _catalog = catalog;
         _bindings = bindings;
         _profiles = profilesPayload.profiles;
+        _voiceConfig = voiceConfig;
         _providerModelsByProfileId = enriched;
         _officialProviderModelsByCapability = {};
       });
@@ -237,6 +245,22 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
     } finally {
       if (showLoading && mounted) {
         setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  Future<void> _saveVoiceConfig(SceneVoiceConfig config) async {
+    try {
+      final saved = await SceneModelConfigService.saveSceneVoiceConfig(config);
+      if (!mounted) return;
+      setState(() => _voiceConfig = saved);
+      await VoicePlaybackCoordinator.instance.refreshConfiguration();
+      if (mounted) {
+        showToast(context.trLegacy('语音设置已保存'), type: ToastType.success);
+      }
+    } catch (error) {
+      if (mounted) {
+        showToast(context.trLegacy('语音设置保存失败：$error'), type: ToastType.error);
       }
     }
   }
@@ -548,6 +572,9 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
           bindings: bindings,
         );
       });
+      if (sceneId == VoicePlaybackCoordinator.sceneVoiceId) {
+        await VoicePlaybackCoordinator.instance.refreshConfiguration();
+      }
       showToast(
         context.l10n.sceneModelBoundToast(_sceneDisplayName(sceneId), modelId),
         type: ToastType.success,
@@ -586,6 +613,9 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
       setState(() {
         _bindings = bindings;
       });
+      if (sceneId == VoicePlaybackCoordinator.sceneVoiceId) {
+        await VoicePlaybackCoordinator.instance.refreshConfiguration();
+      }
       showToast(
         context.l10n.sceneModelDefaultRestored(_sceneDisplayName(sceneId)),
         type: ToastType.success,
@@ -823,6 +853,96 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
     return _buildDefaultSceneRow(scene);
   }
 
+  Widget _buildVoiceCard() {
+    final secondary = _secondaryTextColor;
+    final coordinator = VoicePlaybackCoordinator.instance;
+    return AnimatedBuilder(
+      animation: coordinator,
+      builder: (context, _) {
+        final bound = coordinator.isVoiceSceneBound;
+        final statusColor = bound ? Colors.green.shade600 : _tertiaryTextColor;
+        final status = bound ? '已连接' : '未连接模型';
+        return _buildCard(
+          child: Container(
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+            decoration: BoxDecoration(
+              color: _cardColor,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      Icons.volume_up_outlined,
+                      size: 18,
+                      color: _primaryTextColor,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      context.trLegacy('语音回复'),
+                      style: TextStyle(
+                        color: _primaryTextColor,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 7,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: statusColor.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        status,
+                        style: TextStyle(color: statusColor, fontSize: 11),
+                      ),
+                    ),
+                    const Spacer(),
+                    Switch.adaptive(
+                      key: const Key('scene-voice-autoplay-switch'),
+                      value: _voiceConfig.autoPlay,
+                      onChanged: bound
+                          ? (value) => _saveVoiceConfig(
+                              _voiceConfig.copyWith(autoPlay: value),
+                            )
+                          : null,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  bound
+                      ? context.trLegacy('开启后，助手回复会在当前消息旁显示播放按钮，并可自动朗读。')
+                      : context.trLegacy(
+                          '请先在上方“语音合成”中绑定 Provider 和模型，绑定后即可播放。',
+                        ),
+                  style: TextStyle(
+                    color: secondary,
+                    fontSize: 12,
+                    height: 1.45,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  context.trLegacy(
+                    '声音：${_voiceConfig.voiceId}  ·  风格：${_voiceConfig.stylePreset}',
+                  ),
+                  style: TextStyle(color: secondary, fontSize: 12),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -891,6 +1011,12 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
                       ],
                     ),
                   ),
+                  const SizedBox(height: 16),
+                  SettingsSectionTitle(
+                    label: context.trLegacy('语音能力'),
+                    subtitle: context.trLegacy('统一由 ACP 语音场景提供播放和自动朗读。'),
+                  ),
+                  _buildVoiceCard(),
                 ],
               ),
       ),
