@@ -1,6 +1,7 @@
 package cn.com.omnimind.bot.ui.channel
 
 import android.content.Context
+import cn.com.omnimind.bot.LocalModelsFlutterBridge
 import io.flutter.embedding.engine.FlutterEngine
 
 /**
@@ -56,6 +57,7 @@ class ChannelManager {
         pluginPlatformChannel.setChannel(flutterEngine)
         omniLinkPluginChannel.setChannel(flutterEngine)
         accountChannel.setChannel(flutterEngine)
+        LocalModelsFlutterBridge.attach(flutterEngine)
     }
 
     fun onCreate(context: Context) {
