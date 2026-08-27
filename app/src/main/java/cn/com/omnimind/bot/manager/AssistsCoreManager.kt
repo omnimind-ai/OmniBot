@@ -1895,19 +1895,19 @@ class AssistsCoreManager(private val context: Context) {
     }
 
     fun saveSceneVoiceConfig(call: MethodCall, result: MethodChannel.Result) {
-        val current = SceneVoiceConfigStore.getConfig()
-        val config = SceneVoiceConfig(
-            autoPlay = call.argument<Boolean>("autoPlay") ?: current.autoPlay,
-            voiceId = call.argument<String>("voiceId") ?: current.voiceId,
-            stylePreset = call.argument<String>("stylePreset") ?: current.stylePreset,
-            customStyle = call.argument<String>("customStyle") ?: current.customStyle,
-            ttsMode = call.argument<String>("ttsMode") ?: current.ttsMode,
-            customCurlCommand = call.argument<String>("customCurlCommand") ?: current.customCurlCommand,
-        )
         val replaceCommand = call.argument<Boolean>("replaceCustomCurlCommand") == true
         val clearCommand = call.argument<Boolean>("clearCustomCurlCommand") == true
         workJob.launch {
             try {
+                val current = SceneVoiceConfigStore.getConfig()
+                val config = SceneVoiceConfig(
+                    autoPlay = call.argument<Boolean>("autoPlay") ?: current.autoPlay,
+                    voiceId = call.argument<String>("voiceId") ?: current.voiceId,
+                    stylePreset = call.argument<String>("stylePreset") ?: current.stylePreset,
+                    customStyle = call.argument<String>("customStyle") ?: current.customStyle,
+                    ttsMode = call.argument<String>("ttsMode") ?: current.ttsMode,
+                    customCurlCommand = call.argument<String>("customCurlCommand") ?: current.customCurlCommand,
+                )
                 val saved = SceneVoiceConfigStore.saveConfig(
                     config = config,
                     replaceCustomCurlCommand = replaceCommand,
