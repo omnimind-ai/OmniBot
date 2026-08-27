@@ -12,7 +12,7 @@ pluginManagement {
     }
 }
 dependencyResolutionManagement {
-    // PREFER_PROJECT 避免 Flutter 等插件在 build.gradle 里添加仓库时刷屏警告
+    // Prefer project repositories to avoid warnings when Flutter and other plugins add repositories.
     repositoriesMode.set(RepositoriesMode.PREFER_PROJECT)
     val storageUrl: String = System.getenv("FLUTTER_STORAGE_BASE_URL") ?: "https://storage.googleapis.com"
 
