@@ -14,7 +14,7 @@ Your On-Device AI Assistant
   <br>
   <a href="https://trendshift.io/repositories/26966" target="_blank"><img src="https://trendshift.io/api/badge/repositories/26966" alt="omnimind-ai%2FOpenOmniBot | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
   <br>
-  <a href="https://omnimind.com.cn"><img src="https://img.shields.io/badge/About_us-万象智维-purple.svg?color=%234b0c77" alt="OmniMind"></a>
+  <a href="https://omnimind.com.cn"><img src="https://img.shields.io/badge/About_us-OmniMind-purple.svg?color=%234b0c77" alt="OmniMind"></a>
   <a href="https://linux.do"><img src="https://img.shields.io/badge/Linux_Do-Community-yellow.svg?color=%23ac3712" alt="Linux Do Community"></a>
   <a href="#community">
     <img src="https://img.shields.io/badge/WeChat-Group-lightgreen" alt="WeChat Group"/>
@@ -31,9 +31,7 @@ Your On-Device AI Assistant
 |
 <a href="https://github.com/omnimind-ai/OpenOmniBot/issues"><b>Issues</b></a>
 |
-<a href="README.md"><b>English</b></a> 
-|
-<a href="README.zh-CN.md"><b>简体中文</b></a>
+<a href="README.md"><b>English</b></a>
 |
 </p>
 
@@ -47,11 +45,42 @@ OpenOmniBot is an on-device AI agent built with native Android Kotlin and Flutte
 - **System-level actions**: Supports scheduled tasks, alarms, calendar creation/query/update, and audio playback control.
 - **Memory system**: Short-term and long-term memory with embedding support.
 - **Productivity tools**: Read and write files, browse the workspace, use the browser, and access the terminal.
+- **Offline AI**: Download supported GGUF models, verify their checksums, run them locally through the Android native inference engine, and use Automatic, Online, or Offline inference modes.
+
+<h2 id="offline-ai">Offline AI</h2>
+
+OmniBot can run supported GGUF language models directly on the Android device after the model has been downloaded. Models are stored in app-private persistent storage and are never bundled into the APK.
+
+### Model lifecycle
+
+1. Open **Settings > Offline AI**.
+2. Choose a model from the verified catalog.
+3. Review the model size, RAM recommendation, capabilities, license, and source.
+4. Tap **Download** and wait for checksum verification.
+5. Select **Use Model** after installation.
+6. Choose **Offline** mode for guaranteed local inference.
+
+Downloads use HTTPS, stream directly to disk, support resumable transfers where the server provides byte ranges, and verify SHA-256 before a model becomes active.
+
+### Inference modes
+
+- **Online** — preserves the existing remote-provider behavior.
+- **Automatic** — prefers the configured online provider and can fall back to an installed local model when remote inference is unavailable.
+- **Offline** — uses the installed local model only. It does not silently fall back to OpenAI, Gemini, OpenRouter, or another remote LLM provider.
+
+Network-dependent tools remain unavailable while Offline mode is active and report their connectivity requirement explicitly.
+
+### Device requirements
+
+Local inference is resource-intensive. OmniBot checks available storage and memory before downloading or loading a model. Smaller quantized models are recommended for devices with limited RAM. Large models may be rejected when the device cannot load them safely.
+
+Local model support is currently focused on GGUF chat models. Vision and embedding capabilities are advertised only when both the selected model and runtime support them.
+
+For implementation details and troubleshooting, see [`docs/OFFLINE_AI.md`](docs/OFFLINE_AI.md).
 
 <p align="center">
   <img src="docs/tutorial/example.png" alt="Example" />
 </p>
-
 
 <details>
 <summary id="quick-start"><strong>Quick Start</strong></summary>
@@ -194,11 +223,7 @@ Flutter Web is not part of this workflow.
 
 ### Build and install
 
-Release APK builds use `OMNIBOT_UPDATE_WORKER_URL` as the default GUI VLM proxy
-and receive the Gelab route from the update Worker. The upstream Gelab key stays
-in the Worker. Debug APK builds use the OpenAI-compatible LLM API configured by
-`LLMTHU_API_BASE`, `LLMTHU_API_KEY`, and `LLMTHU_MODEL` for normal LLM requests,
-context compaction, and `scene.vlm.operation.primary`.
+Release APK builds use `OMNIBOT_UPDATE_WORKER_URL` as the default GUI VLM proxy and receive the Gelab route from the update Worker. The upstream Gelab key stays in the Worker. Debug APK builds use the OpenAI-compatible LLM API configured by `LLMTHU_API_BASE`, `LLMTHU_API_KEY`, and `LLMTHU_MODEL` for normal LLM requests, context compaction, and `scene.vlm.operation.primary`.
 
 ```bash
 cd ..
@@ -221,7 +246,7 @@ OpenOmniBot/
 
 <h2 id="community">Community</h2>
 
-Thanks to the community （ including linux.do ）developers supporting OpenOmniBot.
+Thanks to the community, including linux.do, and the developers supporting OpenOmniBot.
 
 Special thanks to these open-source projects:
 
@@ -235,4 +260,5 @@ Special thanks to these open-source projects:
     </td>
   </tr>
 </table>
+
 Join Discord: https://discord.gg/WnBvBXgykD
