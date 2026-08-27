@@ -4080,9 +4080,25 @@ class AssistsCoreManager(private val context: Context) : OnMessagePushListener {
             conversationId = conversationId,
             call = call
         )
-        val modelOverride = resolveAgentModelOverride(
+        var modelOverride = resolveAgentModelOverride(
             call.argument<Map<String, Any?>>("modelOverride")
         )
+        val subagentModelId = call.argument<String>("subagentModelId")?.trim()?.ifEmpty { null }
+        if (modelOverride == null && subagentModelId != null) {
+            val editingProfile = cn.com.omnimind.baselib.llm.ModelProviderConfigStore.getEditingProfile()
+            if (editingProfile != null && editingProfile.isConfigured()) {
+                modelOverride = cn.com.omnimind.bot.agent.runtime.AgentModelOverride(
+                    providerProfileId = editingProfile.id,
+                    providerProfileName = editingProfile.name,
+                    modelId = subagentModelId,
+                    apiBase = editingProfile.baseUrl,
+                    apiKey = editingProfile.apiKey,
+                    customHeaders = editingProfile.customHeaders,
+                    protocolType = editingProfile.protocolType.ifEmpty { "openai_compatible" },
+                    wireApi = editingProfile.wireApi
+                )
+            }
+        }
         val reasoningEffort = resolveAgentReasoningEffort(
             normalizeReasoningEffort(
                 call.argument<String>("reasoningEffort")

@@ -55,6 +55,7 @@ class WorkspaceScheduledTaskScheduler(
         val parentConversationId: String? = null,
         val parentConversationMode: String? = null,
         val subagentPrompt: String? = null,
+        val subagentModelId: String? = null,
         val notificationEnabled: Boolean = true
     )
 
@@ -238,7 +239,8 @@ class WorkspaceScheduledTaskScheduler(
             "conversationMode" to SUBAGENT_MODE,
             "scheduledTaskId" to task.taskId,
             "scheduledTaskTitle" to task.title,
-            "scheduleNotificationEnabled" to task.notificationEnabled
+            "scheduleNotificationEnabled" to task.notificationEnabled,
+            "subagentModelId" to task.subagentModelId
         )
         AssistsCoreManager(appContext).createAgentTask(
             MethodCall("createAgentTask", args),
@@ -314,6 +316,8 @@ class WorkspaceScheduledTaskScheduler(
                 ?: existing?.parentConversationMode
         val subagentPrompt = rawTask["subagentPrompt"]?.toString()?.trim()?.ifEmpty { null }
             ?: existing?.subagentPrompt
+        val subagentModelId = rawTask["subagentModelId"]?.toString()?.trim()?.ifEmpty { null }
+            ?: existing?.subagentModelId
         val notificationEnabled = (rawTask["notificationEnabled"] as? Boolean)
             ?: existing?.notificationEnabled
             ?: true
@@ -332,6 +336,7 @@ class WorkspaceScheduledTaskScheduler(
             parentConversationId = parentConversationId,
             parentConversationMode = parentConversationMode,
             subagentPrompt = subagentPrompt,
+            subagentModelId = subagentModelId,
             notificationEnabled = notificationEnabled
         )
     }

@@ -130,14 +130,16 @@ class SubagentToolHandler(
                         profileId = (element["profileId"]?.jsonPrimitive?.contentOrNull
                             ?.trim()?.ifEmpty { null }) ?: defaultProfileId,
                         instruction = fallback,
-                        budgetRounds = element["budgetRounds"]?.jsonPrimitive?.intOrNull
+                        budgetRounds = element["budgetRounds"]?.jsonPrimitive?.intOrNull,
+                        modelId = element["modelId"]?.jsonPrimitive?.contentOrNull?.trim()?.ifEmpty { null }
                     )
                 }
                 SubagentDispatcher.SubagentTaskSpec(
                     profileId = (element["profileId"]?.jsonPrimitive?.contentOrNull
                         ?.trim()?.ifEmpty { null }) ?: defaultProfileId,
                     instruction = instruction,
-                    budgetRounds = element["budgetRounds"]?.jsonPrimitive?.intOrNull
+                    budgetRounds = element["budgetRounds"]?.jsonPrimitive?.intOrNull,
+                    modelId = element["modelId"]?.jsonPrimitive?.contentOrNull?.trim()?.ifEmpty { null }
                 )
             }
             else -> null

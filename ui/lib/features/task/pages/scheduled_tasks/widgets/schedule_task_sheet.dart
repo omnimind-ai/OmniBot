@@ -3,6 +3,7 @@ import 'package:flutter/cupertino.dart';
 import 'package:ui/models/scheduled_task.dart';
 import 'package:ui/theme/theme_context.dart';
 import 'package:ui/l10n/legacy_text_localizer.dart';
+import 'package:ui/services/model_provider_config_service.dart';
 
 /// 定时任务配置底部弹窗
 class ScheduleTaskSheet extends StatefulWidget {
@@ -44,6 +45,10 @@ class _ScheduleTaskSheetState extends State<ScheduleTaskSheet> {
   /// PageController for tab switching
   late PageController _pageController;
 
+  String? _selectedModelId;
+  List<ProviderModelOption> _availableModels = [];
+  bool _isLoadingModels = true;
+
   @override
   void initState() {
     super.initState();
@@ -51,6 +56,7 @@ class _ScheduleTaskSheetState extends State<ScheduleTaskSheet> {
     final task = widget.existingTask;
     _selectedTabIndex = task.type == ScheduledTaskType.fixedTime ? 0 : 1;
     _repeatDaily = task.repeatDaily;
+    _selectedModelId = task.subagentModelId;
 
     if (task.type == ScheduledTaskType.fixedTime && task.fixedTime != null) {
       final parts = task.fixedTime!.split(':');
@@ -65,6 +71,30 @@ class _ScheduleTaskSheetState extends State<ScheduleTaskSheet> {
     }
 
     _pageController = PageController(initialPage: _selectedTabIndex);
+    _loadModels();
+  }
+
+  Future<void> _loadModels() async {
+    try {
+      final groups = await ModelProviderConfigService.loadChatModelGroups();
+      final models = groups.expand((g) => g.models).toList();
+      if (mounted) {
+        setState(() {
+          _availableModels = models;
+          // default to first model if current isn't in list and list isn't empty
+          if (_selectedModelId == null || !models.any((m) => m.id == _selectedModelId)) {
+            _selectedModelId = models.isNotEmpty ? models.first.id : null;
+          }
+          _isLoadingModels = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoadingModels = false;
+        });
+      }
+    }
   }
 
   @override
@@ -158,6 +188,13 @@ class _ScheduleTaskSheetState extends State<ScheduleTaskSheet> {
             _buildTabSelector(),
 
             const SizedBox(height: 16),
+            
+            // 模型选择器 (仅针对 SubAgent)
+            if (widget.existingTask.targetKind == 'subagent')
+              _buildModelSelector(),
+
+            if (widget.existingTask.targetKind == 'subagent')
+              const SizedBox(height: 16),
 
             // 内容区域
             SizedBox(
@@ -227,6 +264,69 @@ class _ScheduleTaskSheetState extends State<ScheduleTaskSheet> {
             ),
 
             const SizedBox(height: 16),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 构建模型选择器
+  Widget _buildModelSelector() {
+    if (_isLoadingModels) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 16),
+        child: SizedBox(height: 48, child: Center(child: CupertinoActivityIndicator())),
+      );
+    }
+    if (_availableModels.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    final palette = context.omniPalette;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Container(
+        height: 48,
+        decoration: BoxDecoration(
+          color: palette.surfaceSecondary,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: Row(
+          children: [
+            Icon(Icons.smart_toy_outlined, size: 20, color: palette.textSecondary),
+            const SizedBox(width: 8),
+            Text(
+              LegacyTextLocalizer.isEnglish ? 'Model' : '模型',
+              style: TextStyle(color: palette.textPrimary, fontSize: 14),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<String>(
+                  value: _availableModels.any((m) => m.id == _selectedModelId)
+                      ? _selectedModelId
+                      : (_availableModels.isNotEmpty ? _availableModels.first.id : null),
+                  isExpanded: true,
+                  icon: Icon(Icons.arrow_drop_down, color: palette.textSecondary),
+                  dropdownColor: palette.surfacePrimary,
+                  items: _availableModels.map((model) {
+                    return DropdownMenuItem<String>(
+                      value: model.id,
+                      child: Text(
+                        model.displayName,
+                        style: TextStyle(color: palette.textPrimary, fontSize: 14),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    );
+                  }).toList(),
+                  onChanged: (String? newValue) {
+                    setState(() {
+                      _selectedModelId = newValue;
+                    });
+                  },
+                ),
+              ),
+            ),
           ],
         ),
       ),
@@ -483,6 +583,7 @@ class _ScheduleTaskSheetState extends State<ScheduleTaskSheet> {
       parentConversationId: widget.existingTask.parentConversationId,
       parentConversationMode: widget.existingTask.parentConversationMode,
       subagentPrompt: widget.existingTask.subagentPrompt,
+      subagentModelId: _selectedModelId,
       notificationEnabled: widget.existingTask.notificationEnabled,
       type: _selectedTabIndex == 0
           ? ScheduledTaskType.fixedTime
