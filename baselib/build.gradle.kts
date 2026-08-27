@@ -4,7 +4,7 @@ plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.serialization)
-    id("kotlin-kapt") // 添加kapt插件以支持注解处理
+    id("kotlin-kapt")
 }
 
 android {
@@ -16,6 +16,12 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         consumerProguardFiles("consumer-rules.pro")
+
+        externalNativeBuild {
+            cmake {
+                cppFlags += listOf("-std=c++17", "-fno-exceptions", "-fno-rtti")
+            }
+        }
     }
 
     buildTypes {
@@ -27,6 +33,20 @@ android {
             )
         }
     }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
+
+    packaging {
+        jniLibs {
+            useLegacyPackaging = false
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
@@ -43,7 +63,6 @@ kotlin {
 }
 
 dependencies {
-
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
@@ -55,22 +74,16 @@ dependencies {
     api(libs.mmkv)
     api(libs.gson)
     api(libs.glide)
-    kapt(libs.compiler) // Glide 注解处理器需用 kapt
-//    api(libs.search)
-//    api(libs.location)
+    kapt(libs.compiler)
     api(libs.logging.interceptor)
-    // 修改Room相关依赖的引入方式
     implementation(libs.androidx.room.ktx)
     implementation(libs.androidx.paging.common) {
         exclude(group = "com.intellij", module = "annotations")
     }
     implementation(libs.androidx.room.paging)
     implementation(libs.androidx.compose.material.core)
-
-    // 将Room编译器移到kapt作用域
     kapt(libs.androidx.room.compiler)
     kapt(libs.kotlin.metadata.jvm)
-
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.shizuku.api)
 
