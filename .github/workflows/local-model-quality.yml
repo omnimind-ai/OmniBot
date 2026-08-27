@@ -7,10 +7,14 @@ on:
       - feat/offline-local-models
   pull_request:
     branches:
-      - feat/offline-local-models
+      - main
 
 permissions:
   contents: read
+
+concurrency:
+  group: local-model-quality-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   JAVA_VERSION: '17'
@@ -24,6 +28,7 @@ jobs:
   localization-audit:
     name: CJK localization audit
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - name: Audit repository source text
@@ -32,6 +37,7 @@ jobs:
   flutter-quality:
     name: Flutter analyze and tests
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
@@ -52,6 +58,7 @@ jobs:
   webchat-quality:
     name: WebChat typecheck and build
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -76,6 +83,7 @@ jobs:
   android-local-model-quality:
     name: Android + llama.cpp build and tests
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
@@ -147,6 +155,7 @@ jobs:
       - webchat-quality
       - android-local-model-quality
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Fail if any quality job failed
         run: |
