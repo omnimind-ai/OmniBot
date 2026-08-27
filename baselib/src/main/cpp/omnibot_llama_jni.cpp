@@ -3,10 +3,10 @@
 #include <jni.h>
 #include <android/log.h>
 
+#include <algorithm>
 #include <atomic>
 #include <mutex>
 #include <string>
-#include <thread>
 #include <vector>
 #include <unistd.h>
 
@@ -50,12 +50,6 @@ void notifyToken(JNIEnv * env, jobject callback, const std::string & token) {
     env->DeleteLocalRef(callbackClass);
 }
 
-int threadCount() {
-    const long cpus = sysconf(_SC_NPROCESSORS_ONLN);
-    if (cpus <= 1) return 1;
-    return static_cast<int>(std::min<long>(cpus - 1, 8));
-}
-
 void freeRuntimeLocked() {
     if (g_sampler != nullptr) {
         llama_sampler_free(g_sampler);
@@ -87,7 +81,6 @@ bool applyChatTemplate(
 
     const char * tmpl = llama_model_chat_template(model, nullptr);
     if (tmpl == nullptr || tmpl[0] == '\0') {
-        // Conservative fallback for instruct models without chat_template metadata.
         output.clear();
         for (size_t i = 0; i < messages.size(); ++i) {
             output += messages[i].role;
@@ -99,15 +92,11 @@ bool applyChatTemplate(
         return true;
     }
 
-    int32_t required = llama_chat_apply_template(
-        tmpl, messages.data(), messages.size(), true, nullptr, 0);
+    int32_t required = llama_chat_apply_template(tmpl, messages.data(), messages.size(), true, nullptr, 0);
     if (required < 0) return false;
-
     std::vector<char> buffer(static_cast<size_t>(required) + 1);
-    int32_t written = llama_chat_apply_template(
-        tmpl, messages.data(), messages.size(), true, buffer.data(), static_cast<int32_t>(buffer.size()));
+    int32_t written = llama_chat_apply_template(tmpl, messages.data(), messages.size(), true, buffer.data(), static_cast<int32_t>(buffer.size()));
     if (written < 0) return false;
-
     output.assign(buffer.data(), static_cast<size_t>(written));
     return true;
 }
@@ -115,11 +104,9 @@ bool applyChatTemplate(
 } // namespace
 
 extern "C" JNIEXPORT jboolean JNICALL
-Java_cn_com_omnimind_baselib_llm_LocalInferenceEngineNative_nativeLoadModel(
-    JNIEnv * env, jclass, jstring jModelPath, jint contextSize) {
+Java_cn_com_omnimind_baselib_llm_LocalInferenceEngineNative_nativeLoadModel(JNIEnv * env, jclass, jstring jModelPath, jint contextSize) {
     const char * modelPath = env->GetStringUTFChars(jModelPath, nullptr);
     if (modelPath == nullptr) return JNI_FALSE;
-
     std::lock_guard<std::mutex> lock(g_mutex);
     freeRuntimeLocked();
 
@@ -129,12 +116,9 @@ Java_cn_com_omnimind_baselib_llm_LocalInferenceEngineNative_nativeLoadModel(
     }
 
     llama_model_params modelParams = llama_model_default_params();
-    // CPU-first is deliberate: no experimental Android accelerator is enabled here.
     modelParams.n_gpu_layers = 0;
-
     g_model = llama_model_load_from_file(modelPath, modelParams);
     env->ReleaseStringUTFChars(jModelPath, modelPath);
-
     if (g_model == nullptr) {
         logError("Unable to load GGUF model");
         return JNI_FALSE;
@@ -163,56 +147,40 @@ Java_cn_com_omnimind_baselib_llm_LocalInferenceEngineNative_nativeLoadModel(
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_cn_com_omnimind_baselib_llm_LocalInferenceEngineNative_nativeUnloadModel(
-    JNIEnv *, jclass) {
+Java_cn_com_omnimind_baselib_llm_LocalInferenceEngineNative_nativeUnloadModel(JNIEnv *, jclass) {
     std::lock_guard<std::mutex> lock(g_mutex);
     freeRuntimeLocked();
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
-Java_cn_com_omnimind_baselib_llm_LocalInferenceEngineNative_nativeIsLoaded(
-    JNIEnv *, jclass) {
+Java_cn_com_omnimind_baselib_llm_LocalInferenceEngineNative_nativeIsLoaded(JNIEnv *, jclass) {
     std::lock_guard<std::mutex> lock(g_mutex);
     return (g_model != nullptr && g_context != nullptr && g_sampler != nullptr) ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT jstring JNICALL
-Java_cn_com_omnimind_baselib_llm_LocalInferenceEngineNative_nativeModelInfo(
-    JNIEnv * env, jclass) {
+Java_cn_com_omnimind_baselib_llm_LocalInferenceEngineNative_nativeModelInfo(JNIEnv * env, jclass) {
     std::lock_guard<std::mutex> lock(g_mutex);
     if (g_model == nullptr) return env->NewStringUTF("{}");
-
     char description[256] = {};
     llama_model_desc(g_model, description, sizeof(description));
-    const uint64_t size = llama_model_size(g_model);
-    const uint64_t params = llama_model_n_params(g_model);
-    const int32_t context = llama_model_n_ctx_train(g_model);
-
     std::string json = "{\"description\":\"" + std::string(description) +
-        "\",\"sizeBytes\":" + std::to_string(size) +
-        ",\"parameterCount\":" + std::to_string(params) +
-        ",\"contextLength\":" + std::to_string(context) + "}";
+        "\",\"sizeBytes\":" + std::to_string(llama_model_size(g_model)) +
+        ",\"parameterCount\":" + std::to_string(llama_model_n_params(g_model)) +
+        ",\"contextLength\":" + std::to_string(llama_model_n_ctx_train(g_model)) + "}";
     return env->NewStringUTF(json.c_str());
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_cn_com_omnimind_baselib_llm_LocalInferenceEngineNative_nativeCancel(
-    JNIEnv *, jclass) {
+Java_cn_com_omnimind_baselib_llm_LocalInferenceEngineNative_nativeCancel(JNIEnv *, jclass) {
     g_cancelled.store(true);
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
 Java_cn_com_omnimind_baselib_llm_LocalInferenceEngineNative_nativeGenerate(
-    JNIEnv * env,
-    jclass,
-    jobject callback,
-    jobjectArray jRoles,
-    jobjectArray jContents,
-    jint maxTokens,
-    jfloat temperature,
-    jfloat topP) {
+    JNIEnv * env, jclass, jobject callback, jobjectArray jRoles, jobjectArray jContents,
+    jint maxTokens, jfloat temperature, jfloat topP) {
     if (callback == nullptr) return JNI_FALSE;
-
     std::lock_guard<std::mutex> lock(g_mutex);
     if (g_model == nullptr || g_context == nullptr || g_sampler == nullptr) {
         notifyError(env, callback, "Offline model is not loaded.");
@@ -229,7 +197,6 @@ Java_cn_com_omnimind_baselib_llm_LocalInferenceEngineNative_nativeGenerate(
     std::vector<std::string> contents;
     roles.reserve(count);
     contents.reserve(count);
-
     for (jsize i = 0; i < count; ++i) {
         jstring jRole = static_cast<jstring>(env->GetObjectArrayElement(jRoles, i));
         jstring jContent = static_cast<jstring>(env->GetObjectArrayElement(jContents, i));
@@ -277,8 +244,6 @@ Java_cn_com_omnimind_baselib_llm_LocalInferenceEngineNative_nativeGenerate(
 
     llama_memory_clear(llama_get_memory(g_context), true);
     g_cancelled.store(false);
-
-    // Recreate the sampler for every request so generation parameters are request-scoped.
     llama_sampler_free(g_sampler);
     g_sampler = llama_sampler_chain_init(llama_sampler_chain_default_params());
     const float safeTemperature = temperature > 0.0f ? temperature : 0.7f;
@@ -295,10 +260,8 @@ Java_cn_com_omnimind_baselib_llm_LocalInferenceEngineNative_nativeGenerate(
 
     for (int generated = 0; generated < maxNewTokens; ++generated) {
         if (g_cancelled.load()) return JNI_TRUE;
-
         const llama_token token = llama_sampler_sample(g_sampler, g_context, -1);
         if (llama_vocab_is_eog(vocab, token)) break;
-
         char piece[512];
         const int pieceLength = llama_token_to_piece(vocab, token, piece, sizeof(piece), 0, true);
         if (pieceLength < 0) {
@@ -310,20 +273,18 @@ Java_cn_com_omnimind_baselib_llm_LocalInferenceEngineNative_nativeGenerate(
             env->ExceptionClear();
             return JNI_FALSE;
         }
-
-        batch = llama_batch_get_one(const_cast<llama_token *>(&token), 1);
-        if (llama_decode(g_context, batch) != 0) {
+        llama_sampler_accept(g_sampler, token);
+        llama_batch nextBatch = llama_batch_get_one(const_cast<llama_token *>(&token), 1);
+        if (llama_decode(g_context, nextBatch) != 0) {
             notifyError(env, callback, "Offline model failed during generation.");
             return JNI_FALSE;
         }
     }
-
     return JNI_TRUE;
 }
 
 extern "C" JNIEXPORT void JNICALL
-Java_cn_com_omnimind_baselib_llm_LocalInferenceEngineNative_nativeShutdown(
-    JNIEnv *, jclass) {
+Java_cn_com_omnimind_baselib_llm_LocalInferenceEngineNative_nativeShutdown(JNIEnv *, jclass) {
     std::lock_guard<std::mutex> lock(g_mutex);
     freeRuntimeLocked();
     if (g_backend_initialized) {
