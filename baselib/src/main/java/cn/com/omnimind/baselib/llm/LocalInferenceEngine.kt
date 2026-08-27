@@ -69,16 +69,19 @@ object LocalInferenceEngine {
         }
 
         withContext(Dispatchers.Default) {
-            val ok = LocalInferenceEngineNative.nativeGenerate(
-                callback = callback,
-                roles = messages.map { it.role }.toTypedArray(),
-                contents = messages.map { it.content }.toTypedArray(),
-                maxTokens = maxTokens.coerceIn(1, 8192),
-                temperature = temperature.coerceIn(0.05f, 2.0f),
-                topP = topP.coerceIn(0.05f, 1.0f),
-            )
-            if (ok) {
-                trySend(if (LocalInferenceEngineNative.nativeIsLoaded()) Event.Complete else Event.Cancelled)
+            when (
+                LocalInferenceEngineNative.nativeGenerate(
+                    callback = callback,
+                    roles = messages.map { it.role }.toTypedArray(),
+                    contents = messages.map { it.content }.toTypedArray(),
+                    maxTokens = maxTokens.coerceIn(1, 8192),
+                    temperature = temperature.coerceIn(0.05f, 2.0f),
+                    topP = topP.coerceIn(0.05f, 1.0f),
+                )
+            ) {
+                1 -> trySend(Event.Complete)
+                2 -> trySend(Event.Cancelled)
+                else -> Unit
             }
         }
     }
