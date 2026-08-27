@@ -154,9 +154,8 @@ class LocalModelDownloader(
     }
 
     fun cancelDownload(destinationPath: String) {
-        // Explicit cancellation is destructive; pause/coroutine cancellation preserves .part.
+        // Explicit cancellation removes only the incomplete download. An installed model is preserved.
         File("$destinationPath.part").delete()
-        File(destinationPath).delete()
     }
 
     private fun isApprovedCatalogUrl(modelId: String, url: String): Boolean {
