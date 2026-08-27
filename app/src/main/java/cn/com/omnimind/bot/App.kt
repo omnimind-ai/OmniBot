@@ -4,6 +4,7 @@ import BaseApplication
 import cn.com.omnimind.baselib.account.OmniAccount
 import cn.com.omnimind.baselib.database.DatabaseHelper
 import cn.com.omnimind.baselib.i18n.AppLocaleManager
+import cn.com.omnimind.baselib.llm.LocalModelManager
 import cn.com.omnimind.baselib.llm.ModelProviderConfigStore
 import cn.com.omnimind.baselib.llm.PlatformAiProvisioner
 import cn.com.omnimind.baselib.util.AppSecretStore
@@ -55,6 +56,7 @@ class App : BaseApplication() {
                 OmniLog.d("AppStartup", "Creating main engine from FlutterEngineGroup")
 
                 cachedMainEngine = getFlutterEngineGroup().createAndRunDefaultEngine(instance)
+                LocalModelsFlutterBridge.attach(cachedMainEngine!!)
 
                 OmniLog.d(
                     "AppStartup",
@@ -63,7 +65,6 @@ class App : BaseApplication() {
             }
             return cachedMainEngine!!
         }
-
     }
 
     @OptIn(DelicateCoroutinesApi::class)
@@ -82,6 +83,7 @@ class App : BaseApplication() {
         Res.application = this
 
         MMKV.initialize(this)
+        LocalModelManager.initialize(this)
         CredentialEndpointSecurity.configureDebugLoopback(BuildConfig.DEBUG)
         AppSecretStore.initialize(this)
         ModelProviderConfigStore.initialize(this)
@@ -120,9 +122,6 @@ class App : BaseApplication() {
             workspaceManager.ensureRuntimeDirectories()
             SkillIndexService(this, workspaceManager).seedBuiltinSkillsIfNeeded()
         }
-        // Seed built-in skills before restoring enabled runtime-bundle plugins.
-        // Both paths materialize files under the same skills directory; starting
-        // plugin recovery first can race the seeder and leave the plugin disabled.
         initializeOfficialPlugins()
         runCatching {
             WorkspaceMemoryRollupScheduler(this).ensureScheduledIfEnabled()

@@ -21,6 +21,7 @@ import 'pages/settings/workspace_memory_setting_page.dart';
 import 'pages/settings/background_setting_page.dart';
 import 'pages/settings/experience_misc_setting_page.dart';
 import 'pages/settings/home_setting_page.dart';
+import 'pages/settings/local_models_settings_page.dart';
 import 'pages/settings/open_with_omnibot_setting_page.dart';
 import 'pages/settings/storage_usage_page.dart';
 import 'pages/omnibot_workspace/omnibot_artifact_preview_page.dart';
@@ -38,7 +39,7 @@ import 'pages/scene_model_setting/scene_model_setting_page.dart';
 import 'pages/model_provider_setting/model_provider_setting_page.dart';
 import 'package:ui/features/welcome/pages/onboarding/onboarding_choice_page.dart';
 
-/// Home模块路由配置
+/// Home module route configuration
 const String kNativeRouteFlag = '__from_native__';
 
 ConversationMode _parseConversationMode(String? rawValue) {
@@ -133,7 +134,7 @@ ConversationThreadTarget? _parseChatThreadTarget(GoRouterState state) {
 }
 
 List<GoRoute> homeRoutes = [
-  // 兼容旧首页路由，统一落到聊天页
+  // Backward-compatible home route; it resolves to the chat page.
   GoRoute(
     path: '/home/home',
     name: 'home/home',
@@ -147,7 +148,7 @@ List<GoRoute> homeRoutes = [
     builder: (context, state) => const SizedBox.shrink(),
   ),
 
-  // 聊天页
+  // Chat page
   GoRoute(
     path: '/home/chat',
     name: 'home/chat',
@@ -156,7 +157,7 @@ List<GoRoute> homeRoutes = [
     },
   ),
 
-  // 聊天归档页（保留旧路径兼容）
+  // Archived conversations
   GoRoute(
     path: '/home/chat_history',
     name: 'home/chat_history',
@@ -207,7 +208,7 @@ List<GoRoute> homeRoutes = [
     builder: (context, state) => const ChatHistoryPage(archivedOnly: true),
   ),
 
-  // 输入框悬浮窗
+  // Command input overlay
   GoRoute(
     path: '/home/command_overlay',
     name: 'home/command_overlay',
@@ -225,7 +226,7 @@ List<GoRoute> homeRoutes = [
       return OmnibotArtifactPreviewPage(
         path: (extra['path'] ?? '').toString(),
         uri: extra['uri']?.toString(),
-        title: (extra['title'] ?? '文件预览').toString(),
+        title: (extra['title'] ?? 'File preview').toString(),
         previewKind: (extra['previewKind'] ?? 'file').toString(),
         mimeType: (extra['mimeType'] ?? 'application/octet-stream').toString(),
         shellPath: extra['shellPath']?.toString(),
@@ -249,7 +250,7 @@ List<GoRoute> homeRoutes = [
     },
   ),
 
-  // 授权页
+  // Authorization page
   GoRoute(
     path: '/home/authorize',
     name: 'home/authorize',
@@ -257,7 +258,7 @@ List<GoRoute> homeRoutes = [
         AuthorizePage(args: state.extra as AuthorizePageArgs?),
   ),
 
-  // 编辑资料页
+  // Profile editing page
   GoRoute(
     path: '/home/edit_profile',
     name: 'home/edit_profile',
@@ -270,7 +271,7 @@ List<GoRoute> homeRoutes = [
     },
   ),
 
-  // Webview通用页面
+  // Generic WebView page
   GoRoute(
     path: '/webview/webview_page',
     name: 'webview/webview_page',
@@ -288,7 +289,7 @@ List<GoRoute> homeRoutes = [
     },
   ),
 
-  // 设置页
+  // Settings page
   GoRoute(
     path: '/home/settings',
     name: 'home/settings',
@@ -296,6 +297,17 @@ List<GoRoute> homeRoutes = [
       key: state.pageKey,
       name: 'home/settings',
       child: const SettingsPage(),
+    ),
+  ),
+
+  // Offline AI / local GGUF model manager
+  GoRoute(
+    path: '/home/local_models',
+    name: 'home/local_models',
+    pageBuilder: (context, state) => GoRouterManager.buildActivitySlidePage(
+      key: state.pageKey,
+      name: 'home/local_models',
+      child: const LocalModelsSettingsPage(),
     ),
   ),
 
@@ -315,7 +327,7 @@ List<GoRoute> homeRoutes = [
     ),
   ),
 
-  // 闹钟设置页
+  // Alarm settings page
   GoRoute(
     path: '/home/alarm_setting',
     name: 'home/alarm_setting',
@@ -453,7 +465,7 @@ List<GoRoute> homeRoutes = [
     ),
   ),
 
-  // 模型提供商配置页
+  // Model provider configuration page
   GoRoute(
     path: '/home/model_provider_setting',
     name: 'home/model_provider_setting',
@@ -485,7 +497,7 @@ List<GoRoute> homeRoutes = [
     ),
   ),
 
-  // 应用权限授权页
+  // Application permission authorization page
   GoRoute(
     path: '/home/authorize_setting',
     name: 'home/authorize_setting',

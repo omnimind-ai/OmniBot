@@ -11,7 +11,6 @@ data class OfficialProviderDefinition(
     val officialBaseUrlMatcher: (String?) -> Boolean
 ) {
     fun officialProfile(): ModelProviderProfile = officialProfileFactory()
-
     fun matchesBaseUrl(value: String?): Boolean = officialBaseUrlMatcher(value)
 }
 
@@ -66,11 +65,20 @@ object OfficialProviderRegistry {
             wireApi = OpenAiWireApi.CHAT_COMPLETIONS,
             officialProfileFactory = BailianProvider::officialProfile,
             officialBaseUrlMatcher = BailianProvider::isOfficialBaseUrl
+        ),
+        OfficialProviderDefinition(
+            key = LocalModelProvider.SOURCE_TYPE,
+            profileId = LocalModelProvider.OFFICIAL_PROFILE_ID,
+            displayName = LocalModelProvider.OFFICIAL_PROFILE_NAME,
+            baseUrl = "local://inference",
+            protocolType = "local_inference",
+            wireApi = "local_completion",
+            officialProfileFactory = LocalModelProvider::createLocalProfile,
+            officialBaseUrlMatcher = { value -> value?.trim()?.startsWith("local://") == true }
         )
     )
 
     fun definitions(): List<OfficialProviderDefinition> = providers
-
     fun officialProfiles(): List<ModelProviderProfile> = providers.map { it.officialProfile() }
 
     fun findByKey(value: String?): OfficialProviderDefinition? {
@@ -83,9 +91,8 @@ object OfficialProviderRegistry {
         return providers.firstOrNull { it.profileId == normalized }
     }
 
-    fun findByBaseUrl(value: String?): OfficialProviderDefinition? {
-        return providers.firstOrNull { it.matchesBaseUrl(value) }
-    }
+    fun findByBaseUrl(value: String?): OfficialProviderDefinition? =
+        providers.firstOrNull { it.matchesBaseUrl(value) }
 
     fun normalizeSourceType(
         sourceType: String?,

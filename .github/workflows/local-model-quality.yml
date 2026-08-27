@@ -1,0 +1,169 @@
+name: Local Model Quality
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feat/offline-local-models
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: local-model-quality-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  JAVA_VERSION: '17'
+  NODE_VERSION: '22'
+  PNPM_VERSION: '10.28.0'
+  FLUTTER_VERSION: '3.38.7'
+  NDK_VERSION: '28.2.13676358'
+  ALLOWED_THIRD_PARTY_WRAPPER_SHA: 'ee3739525a995bcb5601621a6e2daec1f183bbefc375743acc235cec33547e04'
+
+jobs:
+  localization-audit:
+    name: CJK localization audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Audit repository source text
+        run: python3 scripts/check_cjk_source.py
+
+  flutter-quality:
+    name: Flutter analyze and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+      - name: Install Flutter dependencies
+        working-directory: ui
+        run: flutter pub get --enforce-lockfile
+      - name: Analyze
+        working-directory: ui
+        run: flutter analyze --no-fatal-warnings --no-fatal-infos
+      - name: Run Flutter tests
+        working-directory: ui
+        run: flutter test
+
+  webchat-quality:
+    name: WebChat typecheck and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: webchat/pnpm-lock.yaml
+      - name: Install dependencies
+        working-directory: webchat
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck
+        working-directory: webchat
+        run: pnpm run typecheck
+      - name: Build
+        working-directory: webchat
+        run: pnpm run build
+
+  android-local-model-quality:
+    name: Android + llama.cpp build and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - uses: gradle/actions/wrapper-validation@v4
+        with:
+          allow-checksums: ${{ env.ALLOWED_THIRD_PARTY_WRAPPER_SHA }}
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          validate-wrappers: false
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Cache Android NDK
+        id: cache-android-ndk
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.ANDROID_SDK_ROOT }}/ndk/${{ env.NDK_VERSION }}
+            ${{ env.ANDROID_SDK_ROOT }}/licenses
+          key: ${{ runner.os }}-android-ndk-${{ env.NDK_VERSION }}
+
+      - name: Install Android NDK
+        if: steps.cache-android-ndk.outputs.cache-hit != 'true'
+        run: |
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager "ndk;${{ env.NDK_VERSION }}"
+
+      - name: Export Android NDK environment
+        run: |
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/${{ env.NDK_VERSION }}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/${{ env.NDK_VERSION }}" >> "$GITHUB_ENV"
+
+      - name: Validate native local-model sources
+        run: |
+          test -f baselib/src/main/cpp/CMakeLists.txt
+          test -f baselib/src/main/cpp/omnibot_llama_jni.cpp
+          test -f baselib/src/main/java/cn/com/omnimind/baselib/llm/LocalInferenceEngine.kt
+          test -f baselib/src/main/java/cn/com/omnimind/baselib/llm/LocalModelCatalog.kt
+          grep -q '192067b72d1b7a3653b3f0c59190303b18596637' baselib/src/main/cpp/CMakeLists.txt
+          grep -q 'sha256' baselib/src/main/java/cn/com/omnimind/baselib/llm/LocalModelCatalog.kt
+
+      - name: Run local-model unit tests
+        run: ./gradlew --no-daemon --stacktrace :baselib:test
+
+      - name: Build Android debug with native local inference
+        run: >-
+          ./gradlew --no-daemon --stacktrace --build-cache
+          :app:assembleDevelopStandardDebug
+          -Ptarget=lib/main_standard.dart
+
+      - name: Run Android lint
+        run: ./gradlew --no-daemon --stacktrace :app:lintDevelopStandardDebug
+
+  offline-quality-summary:
+    name: Offline quality gate
+    if: ${{ always() }}
+    needs:
+      - localization-audit
+      - flutter-quality
+      - webchat-quality
+      - android-local-model-quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Fail if any quality job failed
+        run: |
+          echo "localization=${{ needs.localization-audit.result }}"
+          echo "flutter=${{ needs.flutter-quality.result }}"
+          echo "webchat=${{ needs.webchat-quality.result }}"
+          echo "android=${{ needs.android-local-model-quality.result }}"
+          test "${{ needs.localization-audit.result }}" = "success"
+          test "${{ needs.flutter-quality.result }}" = "success"
+          test "${{ needs.webchat-quality.result }}" = "success"
+          test "${{ needs.android-local-model-quality.result }}" = "success"
