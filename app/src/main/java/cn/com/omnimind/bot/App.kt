@@ -158,6 +158,7 @@ class App : BaseApplication() {
                     throwable = throwable,
                 )
             } catch (_: Throwable) {
+                // Preserve the original crash path even if crash-log persistence fails.
             } finally {
                 if (defaultHandler != null) {
                     defaultHandler.uncaughtException(thread, throwable)
@@ -174,8 +175,34 @@ class App : BaseApplication() {
             runCatching {
                 OmniPluginHost.get(this@App).list()
             }.onFailure { error ->
-                OmniLog.w("PluginHost", "Failed to initialize official plugins", error)
+                OmniLog.w(
+                    "AppStartup",
+                    "Official plugin initialization failed: ${error.message}",
+                )
             }
         }
+    }
+
+    fun initSDKsAfterPrivacyConsent() {
+        OmniLog.d("AppStartup", "initSDKsAfterPrivacyConsent start")
+        AppUpdateManager.schedulePeriodicChecks(this)
+        CoroutineScope(Dispatchers.IO).launch {
+            runCatching {
+                AppUpdateManager.checkNow(this@App, force = true)
+            }.onFailure {
+                OmniLog.w("AppStartup", "Cloud-service version policy check failed: ${it.message}")
+            }
+            if (
+                OmniAccount.isConfigured() &&
+                OmniAccount.repository().isSignedIn() &&
+                OmniAccount.currentCloudServiceAccess().allowed
+            ) {
+                runCatching {
+                    val settings = OmniAccount.repository().getAiSettings()
+                    PlatformAiProvisioner.synchronize(settings)
+                }
+            }
+        }
+        OmniLog.d("AppStartup", "initSDKsAfterPrivacyConsent completed")
     }
 }
