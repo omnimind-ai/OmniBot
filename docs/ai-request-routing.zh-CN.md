@@ -56,4 +56,4 @@ OMNIBOT_AI_GATEWAY_URL=https://model-api.omnimind.com.cn
 
 ## 当前范围
 
-主聊天文本、图片理解、图片生成和语音播放均按所选 Provider/场景绑定路由。选择官方渠道时只使用品牌网关和账号 Token，并按官方模型目录声明的文本、视觉、图片、TTS 能力工作；选择 BYOK 时保留设备端 Provider、Key、自定义 Header、协议、wire API 与场景绑定。两类凭据不会混用，登录、同步目录或退出账号也不会覆盖本地 BYOK 配置。
+主聊天文本、图片理解和图片生成均按所选 Provider/场景绑定路由。选择官方渠道时只使用品牌网关和账号 Token，并按官方模型目录声明的文本、视觉和图片能力工作；选择 BYOK 时保留设备端 Provider、Key、自定义 Header、协议、wire API 与场景绑定。两类凭据不会混用，登录、同步目录或退出账号也不会覆盖本地 BYOK 配置。

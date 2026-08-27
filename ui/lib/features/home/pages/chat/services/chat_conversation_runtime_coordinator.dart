@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:ui/features/home/pages/chat/chat_page_models.dart';
+import 'package:ui/features/home/pages/chat/utils/chat_message_identity.dart';
 import 'package:ui/features/home/pages/authorize/authorize_page_args.dart';
 import 'package:ui/features/home/pages/chat/utils/stream_text_merge.dart';
 import 'package:ui/features/home/pages/command_overlay/constants/messages.dart';
@@ -19,7 +20,6 @@ import 'package:ui/services/agent_tool_call_parser.dart';
 import 'package:ui/services/conversation_history_service.dart';
 import 'package:ui/services/conversation_service.dart';
 import 'package:ui/services/link_preview_service.dart';
-import 'package:ui/services/voice_playback_coordinator.dart';
 import 'package:ui/services/agent_stream_meta.dart';
 import 'package:ui/utils/data_parser.dart';
 import 'package:ui/services/agent_diff_parser.dart';
@@ -477,8 +477,6 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
   void ensureInitialized() {
     if (_initialized) return;
     _initialized = true;
-    unawaited(VoicePlaybackCoordinator.instance.ensureInitialized());
-
     AssistsMessageService.initialize();
     AssistsMessageService.addOnExternalUserMessageAppendedCallback(
       _handleExternalUserMessageAppended,
@@ -578,7 +576,9 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     }
     if (runtime.messages.isEmpty && initialMessages != null) {
       runtime.messages.addAll(
-        _dedupeEquivalentAgentUserMessages(initialMessages),
+        canonicalizeChatMessagesById(
+          _dedupeEquivalentAgentUserMessages(initialMessages),
+        ),
       );
     }
     if (conversation != null) {
@@ -643,9 +643,12 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     bool preserveLiveStreamingState = false,
   }) {
     final normalizedMessages = _normalizeIdleThinkingCards(
-      _dedupeEquivalentAgentUserMessages(messages),
+      canonicalizeChatMessagesById(
+        _dedupeEquivalentAgentUserMessages(messages),
+      ),
       isAiResponding: isAiResponding,
       preserveLiveStreamingState: preserveLiveStreamingState,
+    );
     );
     final runtime = ensureRuntime(
       conversationId: conversationId,

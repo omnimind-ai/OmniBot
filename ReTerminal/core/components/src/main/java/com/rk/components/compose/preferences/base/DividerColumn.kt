@@ -16,7 +16,6 @@ package com.rk.components.compose.preferences.base
  * limitations under the License.
  */
 
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -36,7 +35,7 @@ import kotlin.math.roundToInt
 @Composable
 fun DividerColumn(
     modifier: Modifier = Modifier,
-    color: Color = MaterialTheme.colorScheme.outlineVariant,
+    color: Color = LocalOmniPaletteExtras.current.rowDivider,
     thickness: Dp = 1.dp,
     startIndent: Dp = 0.dp,
     endIndent: Dp = 0.dp,
@@ -46,8 +45,8 @@ fun DividerColumn(
     val state = remember { DividersState() }
     val density = LocalDensity.current
     val thicknessPx = with(density) { thickness.toPx() }
-    val startIndentPx = with(density) { (startIndent + 16.dp).toPx() }
-    val endIndentPx = with(density) { (endIndent + 16.dp).toPx() }
+    val startIndentPx = with(density) { (startIndent + 4.dp).toPx() }
+    val endIndentPx = with(density) { (endIndent + 4.dp).toPx() }
     Layout(
         modifier = modifier.drawDividers(state, color, thicknessPx, startIndentPx, endIndentPx),
         content = content,

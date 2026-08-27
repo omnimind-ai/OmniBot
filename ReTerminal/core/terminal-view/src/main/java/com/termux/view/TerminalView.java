@@ -1010,7 +1010,8 @@ public final class TerminalView extends View {
     @Override
     protected void onDraw(Canvas canvas) {
         if (mEmulator == null) {
-            canvas.drawColor(0XFF000000);
+            // Match the OmnibotApp dark theme surface (#151617).
+            canvas.drawColor(0XFF151617);
         } else {
             // render the terminal view and highlight any selected text
             int[] sel = mDefaultSelectors;

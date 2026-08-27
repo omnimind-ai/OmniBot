@@ -38,9 +38,7 @@ fun PreferenceScaffold(
     bottomBar: @Composable () -> Unit = { BottomSpacer() },
     content: @Composable (PaddingValues) -> Unit,
 ) {
-    val scrollBehavior =
-        if (isExpandedScreen) TopAppBarDefaults.pinnedScrollBehavior()
-        else TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
+    val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
     Scaffold(
         modifier = modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
         topBar = {

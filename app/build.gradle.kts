@@ -169,8 +169,8 @@ android {
         applicationId = "cn.com.omnimind.bot"
         minSdk = 29
         targetSdk = 35
-        versionCode = 2
-        versionName = "0.5.8.17"
+        versionCode = 6
+        versionName = "0.6.0"
         buildConfigField("String", "IMAGE_BASE_URL", buildConfigString(omnibotImageBaseUrl))
         buildConfigField("String", "IMAGE_MODEL", buildConfigString(omnibotImageModel))
         buildConfigField("String", "IMAGE_API_KEY", buildConfigString(omnibotImageApiKey))
@@ -189,7 +189,7 @@ android {
             preferPackagedOmniFlowRuntime.toString(),
         )
         ndk {
-            abiFilters.addAll(listOf("arm64-v8a", "x86_64"))
+            abiFilters.addAll(listOf("arm64-v8a"))
         }
 
     }
@@ -286,16 +286,6 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-        }
-        // Device validation needs to update the normal package installed on a
-        // phone. Keep the debug signing/configuration, but do not append
-        // .debug; otherwise adb installs a second app and the launcher keeps
-        // opening the stale production package.
-        create("deviceDebug") {
-            initWith(getByName("debug"))
-            signingConfig = signingConfigs.getByName("debug")
-            applicationIdSuffix = ""
-            matchingFallbacks += listOf("debug")
         }
     }
 

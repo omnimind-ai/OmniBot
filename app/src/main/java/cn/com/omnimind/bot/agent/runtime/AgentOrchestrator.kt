@@ -2,7 +2,9 @@ package cn.com.omnimind.bot.agent
 
 import cn.com.omnimind.baselib.i18n.AppLocaleManager
 import cn.com.omnimind.baselib.llm.AssistantToolCall
+import cn.com.omnimind.baselib.llm.AnthropicMessageProtocolState
 import cn.com.omnimind.baselib.llm.ChatCompletionMessage
+import cn.com.omnimind.baselib.llm.ChatCompletionProtocolState
 import cn.com.omnimind.baselib.llm.ChatCompletionRequest
 import cn.com.omnimind.baselib.llm.ChatCompletionStreamOptions
 import cn.com.omnimind.baselib.llm.ChatCompletionTool
@@ -434,7 +436,8 @@ class AgentOrchestrator(
                     ),
                     toolCalls = toolCalls.ifEmpty { null },
                     reasoningContent = turn.message.reasoningContent
-                        ?.takeIf { it.isNotBlank() }
+                        ?.takeIf { it.isNotBlank() },
+                    protocolState = turn.message.protocolState
                 )
                 memory.add(assistantMessageForMemory)
                 latestPromptTokens?.let { promptTokens ->
@@ -1176,7 +1179,12 @@ class AgentOrchestrator(
         val toolResultMessage = ChatCompletionMessage(
             role = "tool",
             toolCallId = toolCall.id,
-            content = content
+            content = content,
+            protocolState = ChatCompletionProtocolState(
+                anthropic = AnthropicMessageProtocolState(
+                    toolResultIsError = !isSuccessfulToolResult(result)
+                )
+            )
         )
         memory.add(toolResultMessage)
         callback.onToolReplayReady(

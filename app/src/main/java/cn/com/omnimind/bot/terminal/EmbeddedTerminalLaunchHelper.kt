@@ -1,8 +1,12 @@
 package cn.com.omnimind.bot.terminal
 
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.util.Log
+import cn.com.omnimind.bot.R
+import cn.com.omnimind.bot.util.PredictiveBackGate
 import com.ai.assistance.operit.terminal.setup.EnvironmentSetupLogic
 import com.ai.assistance.operit.terminal.utils.SourceManager
 import com.rk.libcommons.OMNIBOT_SETUP_SESSION_ID
@@ -32,6 +36,15 @@ object EmbeddedTerminalLaunchHelper {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
         )
+        // Page-style open transition (full-width slide in, 25% parallax on the
+        // covered page). On API 34+ the terminal activity registers its own
+        // overrideActivityTransition instead, which also supports predictive back.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
+            context is Activity &&
+            PredictiveBackGate.isPredictiveBackEnabled(context)
+        ) {
+            context.overridePendingTransition(R.anim.activity_in, R.anim.activity_slide_out)
+        }
     }
 
     fun preparePendingCommand(

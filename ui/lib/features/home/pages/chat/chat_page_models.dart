@@ -6,6 +6,7 @@ import 'dart:ui';
 
 import 'package:flutter/foundation.dart';
 import 'package:ui/features/home/pages/chat/utils/agent_run_timeline.dart';
+import 'package:ui/features/home/pages/chat/utils/chat_message_identity.dart';
 import 'package:ui/models/chat_message_model.dart';
 import 'package:ui/models/conversation_model.dart';
 import 'package:ui/models/conversation_thread_target.dart';
@@ -272,7 +273,7 @@ class ObservableChatMessageList extends ChangeNotifier
   }
 
   void replaceAllMessages(Iterable<ChatMessageModel> messages) {
-    final nextMessages = List<ChatMessageModel>.from(messages);
+    final nextMessages = canonicalizeChatMessagesById(messages);
     final affectsPageChrome =
         _batchAffectsPageChrome(_messages) ||
         _batchAffectsPageChrome(nextMessages);
@@ -382,16 +383,7 @@ class ObservableChatMessageList extends ChangeNotifier
 
   @override
   void addAll(Iterable<ChatMessageModel> iterable) {
-    final nextMessages = List<ChatMessageModel>.from(iterable);
-    if (nextMessages.isEmpty) {
-      return;
-    }
-    _messages.addAll(nextMessages);
-    _messageNotifiers.addAll(nextMessages.map(ChatMessageListItemNotifier.new));
-    _recordStructureMutation(
-      affectsPageChrome: _batchAffectsPageChrome(nextMessages),
-    );
-    notifyListeners();
+    insertAll(length, iterable);
   }
 
   @override
@@ -411,6 +403,13 @@ class ObservableChatMessageList extends ChangeNotifier
 
   @override
   void insert(int index, ChatMessageModel element) {
+    final existingIndex = _messages.indexWhere(
+      (message) => message.id == element.id && element.id.trim().isNotEmpty,
+    );
+    if (existingIndex >= 0) {
+      this[existingIndex] = element;
+      return;
+    }
     _messages.insert(index, element);
     _messageNotifiers.insert(index, ChatMessageListItemNotifier(element));
     _recordStructureMutation(
@@ -421,18 +420,44 @@ class ObservableChatMessageList extends ChangeNotifier
 
   @override
   void insertAll(int index, Iterable<ChatMessageModel> iterable) {
-    final nextMessages = List<ChatMessageModel>.from(iterable);
+    final nextMessages = canonicalizeChatMessagesById(iterable);
     if (nextMessages.isEmpty) {
       return;
     }
-    _messages.insertAll(index, nextMessages);
-    _messageNotifiers.insertAll(
-      index,
-      nextMessages.map(ChatMessageListItemNotifier.new),
-    );
-    _recordStructureMutation(
-      affectsPageChrome: _batchAffectsPageChrome(nextMessages),
-    );
+    var insertionIndex = index;
+    var structureChanged = false;
+    var affectsPageChrome = false;
+    for (final message in nextMessages) {
+      final existingIndex = _messages.indexWhere(
+        (current) => current.id == message.id && message.id.trim().isNotEmpty,
+      );
+      if (existingIndex >= 0) {
+        final previous = _messages[existingIndex];
+        _messages[existingIndex] = message;
+        _messageNotifiers[existingIndex].update(message);
+        structureChanged =
+            structureChanged || _timelineStructureChanged(previous, message);
+        affectsPageChrome =
+            affectsPageChrome ||
+            _messageAffectsPageChrome(previous) ||
+            _messageAffectsPageChrome(message);
+        continue;
+      }
+      _messages.insert(insertionIndex, message);
+      _messageNotifiers.insert(
+        insertionIndex,
+        ChatMessageListItemNotifier(message),
+      );
+      insertionIndex += 1;
+      structureChanged = true;
+      affectsPageChrome =
+          affectsPageChrome || _messageAffectsPageChrome(message);
+    }
+    if (structureChanged) {
+      _recordStructureMutation(affectsPageChrome: affectsPageChrome);
+    } else {
+      _recordContentMutation(affectsPageChrome: affectsPageChrome);
+    }
     notifyListeners();
   }
 

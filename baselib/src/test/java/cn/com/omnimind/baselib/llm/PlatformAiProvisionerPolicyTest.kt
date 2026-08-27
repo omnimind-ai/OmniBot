@@ -48,7 +48,6 @@ class PlatformAiProvisionerPolicyTest {
             ready = true,
             models = listOf(ProviderModelOption("text-model")),
             embeddingModels = listOf(ProviderModelOption("embedding-model")),
-            ttsModels = listOf(ProviderModelOption("tts-model")),
         )
 
         assertEquals(listOf("text-model"), status.modelsForCapability("text").map { it.id })
@@ -56,7 +55,6 @@ class PlatformAiProvisionerPolicyTest {
             listOf("embedding-model"),
             status.modelsForCapability("embedding").map { it.id },
         )
-        assertEquals(listOf("tts-model"), status.modelsForCapability("tts").map { it.id })
         assertTrue(status.modelsForCapability("unsupported").isEmpty())
     }
 

@@ -2,107 +2,11 @@ import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ui/features/home/pages/chat/chat_page_models.dart';
+import 'package:ui/features/home/pages/chat/mixins/agent_stream_handler.dart';
 import 'package:ui/features/home/pages/chat/services/chat_conversation_runtime_coordinator.dart';
 import 'package:ui/models/chat_message_model.dart';
-import 'package:ui/models/conversation_model.dart';
 
 void main() {
-  test('every Harness switch creates an Agent conversation target', () {
-    for (final agentId in <String>[
-      'xiaowan-acp',
-      'codex-acp',
-      'claude-acp',
-      'dsh-acp',
-    ]) {
-      final target = buildHarnessSwitchTarget(
-        agentId: agentId,
-        agentRuntime: 'local',
-        requestKey: 'request-$agentId',
-      );
-
-      expect(target.mode, ConversationMode.agent, reason: agentId);
-      expect(target.agentId, agentId);
-      expect(target.isNewConversation, isTrue);
-    }
-  });
-
-  test(
-    'Harness switch send barrier releases queued submits once idle',
-    () async {
-      final barrier = HarnessSwitchSendBarrier();
-      final generation = barrier.begin();
-      var resumed = 0;
-
-      final first = barrier.waitUntilIdle().then((_) => resumed += 1);
-      final second = barrier.waitUntilIdle().then((_) => resumed += 1);
-      await Future<void>.delayed(Duration.zero);
-      expect(resumed, 0);
-      expect(barrier.isActive, isTrue);
-
-      barrier.finish(generation);
-      await Future.wait<void>(<Future<void>>[first, second]);
-      expect(resumed, 2);
-      expect(barrier.isActive, isFalse);
-    },
-  );
-
-  test(
-    'stale Harness switch completion cannot release queued submits',
-    () async {
-      final barrier = HarnessSwitchSendBarrier();
-      final firstGeneration = barrier.begin();
-      final secondGeneration = barrier.begin();
-      var resumed = false;
-
-      final waiting = barrier.waitUntilIdle().then((_) => resumed = true);
-      barrier.finish(firstGeneration);
-      await Future<void>.delayed(Duration.zero);
-
-      expect(resumed, isFalse);
-      expect(barrier.isActive, isTrue);
-      expect(barrier.isCurrent(secondGeneration), isTrue);
-
-      barrier.finish(secondGeneration);
-      await waiting;
-      expect(resumed, isTrue);
-      expect(barrier.isActive, isFalse);
-    },
-  );
-
-  test(
-    'Harness switch queue reconciles a non-cancellable selection to the latest tap',
-    () async {
-      final barrier = HarnessSwitchSendBarrier();
-      final firstGeneration = barrier.begin();
-      final firstStarted = Completer<void>();
-      final releaseFirst = Completer<void>();
-      final applied = <String>[];
-
-      final first = barrier.runIfCurrent(firstGeneration, () async {
-        firstStarted.complete();
-        await releaseFirst.future;
-        applied.add('first');
-      });
-      await firstStarted.future;
-
-      final skippedGeneration = barrier.begin();
-      final skipped = barrier.runIfCurrent(skippedGeneration, () async {
-        applied.add('skipped');
-      });
-      final latestGeneration = barrier.begin();
-      final latest = barrier.runIfCurrent(latestGeneration, () async {
-        applied.add('latest');
-      });
-
-      releaseFirst.complete();
-      await Future.wait([first, skipped, latest]);
-
-      expect(applied, ['first', 'latest']);
-      barrier.finish(latestGeneration);
-      expect(barrier.isActive, isFalse);
-    },
-  );
-
   test('model selector ignores repeated opens during a slow refresh', () async {
     final guard = ConversationModelSelectorOpeningGuard();
     final release = Completer<void>();
@@ -156,8 +60,8 @@ void main() {
         // Simulate reducer push-driven streaming state populated by
         // _touchActiveTurn + _appendAssistantText + _appendThinking.
         runtime.isAiResponding = true;
-        runtime.currentDispatchTurnId = 'turn-1';
-        runtime.lastAgentTurnId = 'turn-1';
+        runtime.currentDispatchTaskId = 'turn-1';
+        runtime.lastAgentTaskId = 'turn-1';
         runtime.currentAiMessages['msg-1-codex-agent'] = 'streaming text';
         runtime.currentThinkingMessages['turn-1'] = 'thinking text';
         runtime.currentThinkingStage = ThinkingStage.thinking.value;
@@ -169,17 +73,17 @@ void main() {
           mode: mode,
           messages: const <ChatMessageModel>[],
           isAiResponding: false,
-          currentDispatchTurnId: null,
+          currentDispatchTaskId: null,
           currentThinkingStage: ThinkingStage.complete.value,
           preserveLiveStreamingState: true,
         );
 
         // None of the push-driven fields may have been clobbered: the
-        // chat list reads runtime.activeAgentTurnIds and must still see
+        // chat list reads runtime.activeAgentTaskIds and must still see
         // the active turn so the agent run group remains EXPANDED.
         expect(runtime.isAiResponding, isTrue);
-        expect(runtime.currentDispatchTurnId, 'turn-1');
-        expect(runtime.lastAgentTurnId, 'turn-1');
+        expect(runtime.currentDispatchTaskId, 'turn-1');
+        expect(runtime.lastAgentTaskId, 'turn-1');
         expect(
           runtime.currentAiMessages['msg-1-codex-agent'],
           'streaming text',
@@ -187,7 +91,7 @@ void main() {
         expect(runtime.currentThinkingMessages['turn-1'], 'thinking text');
         expect(runtime.currentThinkingStage, ThinkingStage.thinking.value);
         expect(runtime.isDeepThinking, isTrue);
-        expect(runtime.activeAgentTurnIds, contains('turn-1'));
+        expect(runtime.activeAgentTaskIds, contains('turn-1'));
       },
     );
 
@@ -204,7 +108,7 @@ void main() {
         mode: mode,
       )!;
       runtime.isAiResponding = true;
-      runtime.currentDispatchTurnId = 'stale-turn';
+      runtime.currentDispatchTaskId = 'stale-turn';
       runtime.currentAiMessages['old'] = 'old text';
 
       coordinator.replaceConversationSnapshot(
@@ -212,13 +116,13 @@ void main() {
         mode: mode,
         messages: const <ChatMessageModel>[],
         isAiResponding: false,
-        currentDispatchTurnId: null,
+        currentDispatchTaskId: null,
       );
 
       expect(runtime.isAiResponding, isFalse);
-      expect(runtime.currentDispatchTurnId, isNull);
+      expect(runtime.currentDispatchTaskId, isNull);
       expect(runtime.currentAiMessages, isEmpty);
-      expect(runtime.activeAgentTurnIds, isEmpty);
+      expect(runtime.activeAgentTaskIds, isEmpty);
     });
 
     test(
@@ -247,6 +151,30 @@ void main() {
         expect(structuralNotifications, 0);
       },
     );
+
+    test('snapshot keeps one latest row for each message id', () {
+      const conversationId = 0xD56;
+      const mode = kChatRuntimeModeAgent;
+      coordinator.replaceConversationSnapshot(
+        conversationId: conversationId,
+        mode: mode,
+        messages: <ChatMessageModel>[
+          ChatMessageModel.assistantMessage('old', id: 'same-id'),
+          ChatMessageModel.assistantMessage('other', id: 'other-id'),
+          ChatMessageModel.assistantMessage('latest', id: 'same-id'),
+        ],
+      );
+
+      final messages = coordinator
+          .runtimeFor(conversationId: conversationId, mode: mode)!
+          .messages;
+      expect(messages, hasLength(2));
+      expect(messages.map((message) => message.id), <String>[
+        'same-id',
+        'other-id',
+      ]);
+      expect(messages.first.text, 'latest');
+    });
   });
 
   group('shouldReloadConversationMessagesChanged', () {
@@ -270,14 +198,14 @@ void main() {
     test('still reloads external and non-stream changes', () {
       expect(
         shouldReloadConversationMessagesChanged(
-          reason: 'messages_replaced',
+          reason: 'external_user_message',
           hasInFlightTask: true,
         ),
-        isFalse,
+        isTrue,
       );
       expect(
         shouldReloadConversationMessagesChanged(
-          reason: 'external_user_message',
+          reason: 'messages_replaced',
           hasInFlightTask: true,
         ),
         isTrue,
@@ -473,9 +401,8 @@ void main() {
     });
 
     test('operator []= records content-kind mutation', () {
-      final original = ChatMessageModel.assistantMessage('hi', id: 'm-1');
-      list.insert(0, original);
-      list[0] = original.copyWith(
+      list.insert(0, ChatMessageModel.assistantMessage('hi', id: 'm-1'));
+      list[0] = list[0].copyWith(
         content: <String, dynamic>{'text': 'hi there', 'id': 'm-1'},
       );
       expect(list.lastMutationKind, ChatMessageListMutationKind.content);
@@ -493,6 +420,17 @@ void main() {
       list[0] = ChatMessageModel.assistantMessage('hi there', id: 'm-1');
       expect(perItemNotifyCount, 1);
       expect(lastObserved?.text, 'hi there');
+    });
+
+    test('inserting an existing id updates its row without adding a slot', () {
+      list.insert(0, ChatMessageModel.assistantMessage('old', id: 'm-1'));
+      final notifier = list.listenableAt(0);
+
+      list.insert(1, ChatMessageModel.assistantMessage('latest', id: 'm-1'));
+
+      expect(list, hasLength(1));
+      expect(list.single.text, 'latest');
+      expect(list.listenableAt(0), same(notifier));
     });
   });
 }

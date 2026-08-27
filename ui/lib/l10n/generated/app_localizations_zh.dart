@@ -940,11 +940,6 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
-  String sceneVoiceSaveFailed(Object error) {
-    return '保存语音配置失败：$error';
-  }
-
-  @override
   String get modelsNoAvailableModels => '暂无可用模型';
 
   @override

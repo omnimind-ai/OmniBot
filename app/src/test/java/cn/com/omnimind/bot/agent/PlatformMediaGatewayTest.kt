@@ -72,7 +72,7 @@ class PlatformMediaGatewayTest {
 
         val response = executor.execute { credentials ->
             Request.Builder()
-                .url(PlatformMediaProtocol.endpoint(credentials, "/v1/audio/speech"))
+                .url(PlatformMediaProtocol.endpoint(credentials, "/v1/images/generations"))
                 .build()
         }
 
@@ -83,7 +83,7 @@ class PlatformMediaGatewayTest {
 
     @Test
     fun mapsRefreshFailureToSafeAuthenticationError() = runBlocking {
-        val request = Request.Builder().url("https://gateway.example.com/v1/audio/speech").build()
+        val request = Request.Builder().url("https://gateway.example.com/v1/images/generations").build()
         val executor = PlatformMediaGatewayExecutor(
             executeRequest = { response(request, 401, "{}") },
             accessProvider = {
@@ -129,8 +129,6 @@ class PlatformMediaGatewayTest {
             "platform_pricing_unavailable" to "计费配置暂时不可用",
             "platform_model_pricing_unavailable" to "计费配置暂时不可用",
             "platform_model_service_unavailable" to "官方模型服务暂时不可用",
-            "unsupported_tts_voice" to "所选官方声音不可用",
-            "platform_tts_voice_unavailable" to "声音配置暂时不可用",
         )
 
         expectedFragments.forEach { (code, expectedFragment) ->
@@ -188,7 +186,7 @@ class PlatformMediaGatewayTest {
 
     @Test
     fun rejectsBodiesLargerThanDeclaredLimit() {
-        val request = Request.Builder().url("https://gateway.example.com/v1/audio/speech").build()
+        val request = Request.Builder().url("https://gateway.example.com/v1/images/generations").build()
         val response = response(request, 200, "12345")
 
         val error = runCatching {

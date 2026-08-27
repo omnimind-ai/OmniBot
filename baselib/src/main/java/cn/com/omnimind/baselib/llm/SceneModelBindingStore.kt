@@ -15,7 +15,6 @@ object SceneModelBindingStore {
     private val allowedScenes = setOf(
         "scene.dispatch.model",
         "scene.vlm.operation.primary",
-        "scene.voice",
         "scene.compactor.context.chat",
         "scene.memory.embedding",
         "scene.memory.rollup"

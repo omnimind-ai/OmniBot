@@ -122,33 +122,6 @@ class PersistedJsonCompatibilityTest {
     }
 
     @Test
-    fun voiceConfig_readsReleaseObfuscatedFields() {
-        val config = SceneVoiceConfigStore.parse(
-            """
-                {
-                  "a": true,
-                  "b": "default_en",
-                  "c": "专业播报",
-                  "d": "  节奏慢一点  ",
-                  "e": "custom_curl",
-                  "f": "  curl https://tts.example.com -d '{{text}}'  "
-                }
-            """.trimIndent()
-        )
-
-        requireNotNull(config)
-        assertTrue(config.autoPlay)
-        assertEquals(SceneVoiceConfigStore.VOICE_DEFAULT_EN, config.voiceId)
-        assertEquals(SceneVoiceConfigStore.STYLE_PROFESSIONAL_BROADCAST, config.stylePreset)
-        assertEquals("节奏慢一点", config.customStyle)
-        assertEquals(SceneVoiceConfigStore.TTS_MODE_CUSTOM_CURL, config.ttsMode)
-        assertEquals(
-            "curl https://tts.example.com -d '{{text}}'",
-            config.customCurlCommand
-        )
-    }
-
-    @Test
     fun aiRequestLogs_readReleaseObfuscatedFields() {
         val type = object : TypeToken<List<AiRequestLogEntry>>() {}.type
         val entries: List<AiRequestLogEntry> = gson.fromJson(

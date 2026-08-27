@@ -126,10 +126,6 @@ class PlatformModelApiClient(
         @SerializedName("image") val image: String? = null,
         @SerializedName("image_generation") val imageGeneration: String? = null,
         @SerializedName("embedding") val embedding: String? = null,
-        @SerializedName("tts") val tts: String? = null,
-        @SerializedName("text_to_speech") val textToSpeech: String? = null,
-        @SerializedName("voice") val legacyVoice: String? = null,
-        @SerializedName("tts_voice") val ttsVoice: String? = null,
     )
 
     private data class CatalogCapabilitiesResponse(
@@ -139,10 +135,6 @@ class PlatformModelApiClient(
         @SerializedName("image") val image: List<String>? = null,
         @SerializedName("image_generation") val imageGeneration: List<String>? = null,
         @SerializedName("embedding") val embedding: List<String>? = null,
-        @SerializedName("tts") val tts: List<String>? = null,
-        @SerializedName("text_to_speech") val textToSpeech: List<String>? = null,
-        @SerializedName("voice") val legacyVoice: List<String>? = null,
-        @SerializedName("tts_voices") val ttsVoices: List<String>? = null,
     )
 
     private fun OfficialCatalogResponse?.toDomain(
@@ -151,8 +143,6 @@ class PlatformModelApiClient(
         if (this == null) {
             return PlatformModelCatalog(models = models)
         }
-        val legacyVoiceDefault = defaults?.legacyVoice.normalizedId()
-        val legacyVoiceModels = capabilities?.legacyVoice.normalizedIds()
         val availableModelIds = models.mapTo(mutableSetOf(), PlatformModel::id)
         val safeDisplayNames = displayNames.orEmpty().mapNotNull { (rawId, rawName) ->
             val modelId = rawId.trim()
@@ -171,16 +161,12 @@ class PlatformModelApiClient(
                 vision = firstId(defaults?.vision, defaults?.visionChat),
                 image = firstId(defaults?.image, defaults?.imageGeneration),
                 embedding = defaults?.embedding.normalizedId(),
-                tts = firstId(defaults?.tts, defaults?.textToSpeech, legacyVoiceDefault),
-                ttsVoice = defaults?.ttsVoice.normalizedId(),
             ),
             capabilities = PlatformModelCapabilities(
                 text = capabilities?.text.normalizedIds(),
                 vision = firstIds(capabilities?.vision, capabilities?.visionChat),
                 image = firstIds(capabilities?.image, capabilities?.imageGeneration),
                 embedding = capabilities?.embedding.normalizedIds(),
-                tts = firstIds(capabilities?.tts, capabilities?.textToSpeech, legacyVoiceModels),
-                ttsVoices = capabilities?.ttsVoices?.normalizedIds(),
             ),
             displayNames = safeDisplayNames,
             hasOfficialCatalog = true,

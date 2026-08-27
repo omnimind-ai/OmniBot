@@ -10,14 +10,10 @@ data class OfficialModelSelection(
     val visionModels: List<PlatformModel> = emptyList(),
     val imageModels: List<PlatformModel> = emptyList(),
     val embeddingModels: List<PlatformModel> = emptyList(),
-    val ttsModels: List<PlatformModel> = emptyList(),
     val defaultTextModel: PlatformModel? = null,
     val defaultVisionModel: PlatformModel? = null,
     val defaultImageModel: PlatformModel? = null,
     val defaultEmbeddingModel: PlatformModel? = null,
-    val defaultTtsModel: PlatformModel? = null,
-    val ttsVoiceAliases: List<String> = emptyList(),
-    val defaultTtsVoiceAlias: String? = null,
 )
 
 object OmniOfficialProvider {
@@ -25,12 +21,6 @@ object OmniOfficialProvider {
     const val PROFILE_ID = "omnibot-official-ai"
     const val PROFILE_NAME = "OmniBot 官方 AI"
     const val DEFAULT_TEXT_MODEL_ID = "Qwen3.5-Plus"
-    val LEGACY_TTS_VOICE_ALIASES: List<String> = listOf(
-        SceneVoiceConfigStore.VOICE_DEFAULT_ZH,
-        SceneVoiceConfigStore.VOICE_DEFAULT_EN,
-        SceneVoiceConfigStore.VOICE_MIMO_DEFAULT,
-    )
-
     fun isOfficialProfile(profileId: String?): Boolean =
         profileId?.trim() == PROFILE_ID
 
@@ -94,11 +84,6 @@ object OmniOfficialProvider {
         } else {
             emptyList()
         }
-        val ttsModels = if (catalog.hasOfficialCatalog) {
-            declared(catalog.capabilities.tts)
-        } else {
-            emptyList()
-        }
         fun declaredDefault(id: String?, models: List<PlatformModel>): PlatformModel? {
             val normalized = id?.trim().orEmpty()
             return models.firstOrNull { it.id == normalized }
@@ -108,32 +93,11 @@ object OmniOfficialProvider {
         val defaultText = textModels.firstOrNull { it.id == remembered }
             ?: declaredDefault(catalog.defaults.text, textModels)
             ?: textModels.firstOrNull { it.id == DEFAULT_TEXT_MODEL_ID }
-        val publishedVoiceAliases = catalog.capabilities.ttsVoices
-        val publishedDefaultVoice = catalog.defaults.ttsVoice
-            ?.trim()
-            ?.takeIf(String::isNotEmpty)
-        val ttsVoiceAliases = when {
-            publishedVoiceAliases != null -> publishedVoiceAliases
-                .map(String::trim)
-                .filter(String::isNotEmpty)
-                .distinct()
-            publishedDefaultVoice != null -> listOf(publishedDefaultVoice)
-            else -> LEGACY_TTS_VOICE_ALIASES
-        }
-        val defaultTtsVoiceAlias = when {
-            publishedVoiceAliases != null -> publishedDefaultVoice
-                ?.takeIf(ttsVoiceAliases::contains)
-                ?: ttsVoiceAliases.firstOrNull()
-            publishedDefaultVoice != null -> publishedDefaultVoice
-            else -> SceneVoiceConfigStore.VOICE_DEFAULT_ZH
-        }
-
         return OfficialModelSelection(
             textModels = textModels,
             visionModels = visionModels,
             imageModels = imageModels,
             embeddingModels = embeddingModels,
-            ttsModels = ttsModels,
             defaultTextModel = defaultText,
             defaultVisionModel = declaredDefault(catalog.defaults.vision, visionModels),
             defaultImageModel = declaredDefault(catalog.defaults.image, imageModels),
@@ -141,9 +105,6 @@ object OmniOfficialProvider {
                 catalog.defaults.embedding,
                 embeddingModels,
             ),
-            defaultTtsModel = declaredDefault(catalog.defaults.tts, ttsModels),
-            ttsVoiceAliases = ttsVoiceAliases,
-            defaultTtsVoiceAlias = defaultTtsVoiceAlias,
         )
     }
 

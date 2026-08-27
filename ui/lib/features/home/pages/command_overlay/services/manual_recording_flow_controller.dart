@@ -31,7 +31,8 @@ class ManualRecordingFlowController {
 
   static bool isCommand(String messageText) {
     final normalized = messageText.trim().toLowerCase();
-    return normalized == '手动录制' ||
+    return normalized == '/record' ||
+        normalized == '手动录制' ||
         normalized == '开始手动录制' ||
         normalized == '人工录制' ||
         normalized == '录制轨迹' ||

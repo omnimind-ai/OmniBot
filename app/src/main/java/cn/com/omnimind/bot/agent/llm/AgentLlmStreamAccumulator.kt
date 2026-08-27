@@ -13,6 +13,9 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import cn.com.omnimind.baselib.util.OmniLog
+import cn.com.omnimind.baselib.llm.AnthropicMessageProtocolState
+import cn.com.omnimind.baselib.llm.ChatCompletionProtocolMetadata
+import cn.com.omnimind.baselib.llm.ChatCompletionProtocolState
 import cn.com.omnimind.baselib.llm.decodeChatCompletionUsage
 import java.util.SortedMap
 import java.util.TreeMap
@@ -21,7 +24,9 @@ class AgentLlmStreamAccumulator(
     private val json: Json,
     private val includeReasoningInAssistantMessage: Boolean = false,
     private val bufferLeadingTextUntilInlineThinkTag: Boolean = false,
-    private val guardLeadingReasoningLeak: Boolean = false
+    private val guardLeadingReasoningLeak: Boolean = false,
+    private val captureAnthropicContentBlocks: Boolean = false,
+    private val anthropicSourceModel: String? = null
 ) {
     companion object {
         private const val TAG = "AgentLlmStreamAccumulator"
@@ -46,6 +51,7 @@ class AgentLlmStreamAccumulator(
     private val reasoningBuffer = StringBuilder()
     private val inlineTextBuffer = StringBuilder()
     private val toolCallBuilders: SortedMap<Int, MutableToolCallBuilder> = TreeMap()
+    private val anthropicContentBlocks: SortedMap<Int, JsonObject> = TreeMap()
     private var providerError: StreamProviderError? = null
     private var finishReason: String? = null
     private var usage: ChatCompletionUsage? = null
@@ -111,7 +117,7 @@ class AgentLlmStreamAccumulator(
         usage = decodeUsage(root["usage"]) ?: usage
         decodeTokensPerSecond = decodeTimings(root["timings"]) ?: decodeTokensPerSecond
 
-        var chunkHasPayload = false
+        var chunkHasPayload = consumeAnthropicContentBlock(root)
         val choices = root["choices"] as? JsonArray
         choices?.forEach { choiceElement ->
             val choice = choiceElement as? JsonObject ?: return@forEach
@@ -244,7 +250,8 @@ class AgentLlmStreamAccumulator(
     fun hasAssistantPayload(): Boolean {
         return contentBuffer.isNotEmpty() ||
             reasoningBuffer.isNotEmpty() ||
-            toolCallBuilders.isNotEmpty()
+            toolCallBuilders.isNotEmpty() ||
+            anthropicContentBlocks.isNotEmpty()
     }
 
     fun canFinalizeOnClosed(): Boolean {
@@ -306,7 +313,19 @@ class AgentLlmStreamAccumulator(
                             toolCalls.isNotEmpty() ||
                             finishReasonIndicatesToolCall(finishReason)
                         )
-                }
+                },
+                protocolState = anthropicContentBlocks
+                    .takeIf { captureAnthropicContentBlocks && it.isNotEmpty() }
+                    ?.let { blocks ->
+                        ChatCompletionProtocolState(
+                            anthropic = AnthropicMessageProtocolState(
+                                sourceModel = anthropicSourceModel
+                                    ?.trim()
+                                    ?.takeIf { it.isNotEmpty() },
+                                contentBlocks = JsonArray(blocks.values.toList())
+                            )
+                        )
+                    }
             ),
             reasoning = reasoning,
             finishReason = finishReason,
@@ -325,6 +344,17 @@ class AgentLlmStreamAccumulator(
         )
 
         return turn
+    }
+
+    private fun consumeAnthropicContentBlock(root: JsonObject): Boolean {
+        if (!captureAnthropicContentBlocks) return false
+        val replay = root[ChatCompletionProtocolMetadata.ANTHROPIC_STREAM_BLOCK_FIELD]
+            as? JsonObject
+            ?: return false
+        val index = replay["index"]?.jsonPrimitive?.intOrNull ?: return false
+        val block = replay["block"] as? JsonObject ?: return false
+        anthropicContentBlocks[index] = block
+        return true
     }
 
     private fun reconcileMisindexedToolCallArguments() {

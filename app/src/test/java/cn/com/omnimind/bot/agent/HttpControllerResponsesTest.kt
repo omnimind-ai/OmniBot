@@ -13,6 +13,7 @@ import okhttp3.Request
 import okhttp3.sse.EventSource
 import okhttp3.sse.EventSourceListener
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -44,6 +45,43 @@ class HttpControllerResponsesTest {
             "omnibot:v1:0123456789abcdef0123:conversation:42",
             root["prompt_cache_key"]?.jsonPrimitive?.content
         )
+    }
+
+    @Test
+    fun `chat completions wire body excludes provider private state`() {
+        val method = HttpController::class.java.getDeclaredMethod(
+            "stripAnthropicOnlyFieldsForOpenAiCompatible",
+            String::class.java
+        )
+        method.isAccessible = true
+        val payload = method.invoke(
+            HttpController,
+            """
+                {
+                  "model": "gpt-4.1",
+                  "messages": [
+                    {"role":"user","content":"inspect"},
+                    {
+                      "role":"assistant",
+                      "content":"running",
+                      "tool_calls":[{"id":"call_1","type":"function","function":{"name":"shell","arguments":"{}"}}],
+                      "_omnibot_protocol_state":{"anthropic":{"source_model":"claude","content_blocks":[{"type":"thinking","thinking":"private","signature":"opaque"}]}}
+                    },
+                    {
+                      "role":"tool",
+                      "tool_call_id":"call_1",
+                      "content":"done",
+                      "_omnibot_protocol_state":{"anthropic":{"tool_result_is_error":false}}
+                    }
+                  ]
+                }
+            """.trimIndent()
+        ) as String
+
+        assertFalse(payload.contains("_omnibot_protocol_state"))
+        val messages = json.parseToJsonElement(payload).jsonObject["messages"]!!.jsonArray
+        assertEquals("call_1", messages[2].jsonObject["tool_call_id"]?.jsonPrimitive?.content)
+        assertEquals("running", messages[1].jsonObject["content"]?.jsonPrimitive?.content)
     }
 
     @Test
@@ -79,6 +117,14 @@ class HttpControllerResponsesTest {
                     {
                       "role": "assistant",
                       "content": "It is sunny.",
+                      "_omnibot_protocol_state": {
+                        "anthropic": {
+                          "source_model": "claude",
+                          "content_blocks": [
+                            {"type":"thinking","thinking":"private","signature":"opaque"}
+                          ]
+                        }
+                      },
                       "tool_calls": [
                         {
                           "id": "call_1",
@@ -95,6 +141,7 @@ class HttpControllerResponsesTest {
         ) as String
 
         val root = json.parseToJsonElement(payload).jsonObject
+        assertFalse(payload.contains("_omnibot_protocol_state"))
         assertEquals("gpt-4.1-mini", root["model"]?.jsonPrimitive?.content)
         assertEquals(
             "omnibot:v1:test:conversation:42",

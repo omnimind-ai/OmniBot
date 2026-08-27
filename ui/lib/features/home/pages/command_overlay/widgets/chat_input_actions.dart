@@ -1,33 +1,6 @@
 part of 'chat_input_area.dart';
 
 extension _ChatInputActionSupport on _ChatInputAreaStateBase {
-  Widget _buildManualRecordingButton({required double iconSize}) {
-    final palette = context.omniPalette;
-    final color = context.isDarkTheme
-        ? palette.accentPrimary
-        : const Color(0xFF6D5BD0);
-    return IconButton(
-      key: const ValueKey('chat-input-manual-recording-button'),
-      padding: EdgeInsets.zero,
-      iconSize: iconSize,
-      tooltip: Localizations.localeOf(context).languageCode == 'en'
-          ? 'Manual recording'
-          : '手动录制',
-      icon: Container(
-        width: 24,
-        height: 24,
-        decoration: BoxDecoration(
-          color: color.withValues(alpha: 0.12),
-          shape: BoxShape.circle,
-        ),
-        child: Icon(Icons.gesture_rounded, size: iconSize, color: color),
-      ),
-      onPressed: widget.isProcessing
-          ? null
-          : () => unawaited(Future<void>.sync(widget.onManualRecordingTap!)),
-    );
-  }
-
   Widget _buildTerminalButton({required double iconSize}) {
     return IconButton(
       padding: EdgeInsets.zero,

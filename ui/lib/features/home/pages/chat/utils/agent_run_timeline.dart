@@ -1,5 +1,6 @@
 import 'package:ui/models/chat_message_model.dart';
 import 'package:ui/services/agent_message_kinds.dart';
+import 'package:ui/features/home/pages/chat/utils/chat_message_identity.dart';
 
 class AgentRunTimelineEntry {
   const AgentRunTimelineEntry.message(this.message) : group = null;
@@ -154,6 +155,8 @@ List<AgentRunTimelineEntry> buildAgentRunTimelineEntries(
   if (messages.isEmpty) {
     return const <AgentRunTimelineEntry>[];
   }
+
+  messages = canonicalizeChatMessagesById(messages);
 
   final normalizedActiveTaskIds = activeTaskIds
       .map((item) => item.trim())

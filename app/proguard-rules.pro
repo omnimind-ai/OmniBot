@@ -9,6 +9,13 @@
 -keepattributes RuntimeVisibleAnnotations,RuntimeInvisibleAnnotations,AnnotationDefault
 -keepattributes Signature,InnerClasses,EnclosingMethod
 
+# FlutterEngineConnectionRegistry keys plugins by their concrete runtime class.
+# Keep each FlutterPlugin implementation as a distinct class so R8 cannot merge
+# unrelated plugins and make later registrations look like duplicates.
+-keep,allowobfuscation,allowshrinking class * implements io.flutter.embedding.engine.plugins.FlutterPlugin {
+    <init>(...);
+}
+
 # OkHttpManager resolves this value by its binary class and field names.
 -keep class cn.com.omnimind.bot.BuildConfig {
     public static final java.lang.String BASE_URL;
@@ -70,9 +77,6 @@
     <fields>;
 }
 -keepclassmembers,allowoptimization class cn.com.omnimind.baselib.llm.SceneModelBindingEntry {
-    <fields>;
-}
--keepclassmembers,allowoptimization class cn.com.omnimind.baselib.llm.SceneVoiceConfig {
     <fields>;
 }
 -keepclassmembers,allowoptimization class cn.com.omnimind.baselib.util.RuntimeLogEntry {

@@ -4,27 +4,41 @@ import android.app.Activity
 import android.os.Build
 import androidx.annotation.ChecksSdkIntAtLeast
 import androidx.appcompat.app.AppCompatDelegate
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
+import com.rk.components.compose.preferences.base.LocalOmniPaletteExtras
+import com.rk.components.compose.preferences.base.OmniPaletteExtras
 import com.rk.libcommons.isDarkMode
 import com.rk.settings.Settings
 
 /*
- * More Themes
+ * Shape tokens aligned with the OmnibotApp conventions:
+ * inputs 10dp, cards 16dp, dialogs 20dp, bottom sheets 24dp.
  */
+private val AppShapes =
+    Shapes(
+        extraSmall = RoundedCornerShape(8.dp),
+        small = RoundedCornerShape(10.dp),
+        medium = RoundedCornerShape(16.dp),
+        large = RoundedCornerShape(20.dp),
+        extraLarge = RoundedCornerShape(24.dp),
+    )
 
 /*
- * Light blue color scheme definition.
+ * Light color scheme definition.
  */
 private val LightColorScheme =
     lightColorScheme(
@@ -57,10 +71,17 @@ private val LightColorScheme =
         surfaceTint = md_theme_light_surfaceTint,
         outlineVariant = md_theme_light_outlineVariant,
         scrim = md_theme_light_scrim,
+        surfaceBright = md_theme_light_surfaceBright,
+        surfaceDim = md_theme_light_surfaceDim,
+        surfaceContainer = md_theme_light_surfaceContainer,
+        surfaceContainerHigh = md_theme_light_surfaceContainerHigh,
+        surfaceContainerHighest = md_theme_light_surfaceContainerHighest,
+        surfaceContainerLow = md_theme_light_surfaceContainerLow,
+        surfaceContainerLowest = md_theme_light_surfaceContainerLowest,
     )
 
 /*
- * Dark blue color scheme definition.
+ * Dark color scheme definition.
  */
 private val DarkColorScheme =
     darkColorScheme(
@@ -93,6 +114,13 @@ private val DarkColorScheme =
         surfaceTint = md_theme_dark_surfaceTint,
         outlineVariant = md_theme_dark_outlineVariant,
         scrim = md_theme_dark_scrim,
+        surfaceBright = md_theme_dark_surfaceBright,
+        surfaceDim = md_theme_dark_surfaceDim,
+        surfaceContainer = md_theme_dark_surfaceContainer,
+        surfaceContainerHigh = md_theme_dark_surfaceContainerHigh,
+        surfaceContainerHighest = md_theme_dark_surfaceContainerHighest,
+        surfaceContainerLow = md_theme_dark_surfaceContainerLow,
+        surfaceContainerLowest = md_theme_dark_surfaceContainerLowest,
     )
 
 
@@ -137,7 +165,18 @@ fun KarbonTheme(
         }
     }
 
-    MaterialTheme(colorScheme = colorScheme, typography = Typography, content = content)
+    val extras =
+        if (darkTheme) {
+            OmniPaletteExtras(
+                textTertiary = Color(0xFF9A9488),
+                rowDivider = Color(0x80373A3C),
+            )
+        } else {
+            OmniPaletteExtras()
+        }
+    CompositionLocalProvider(LocalOmniPaletteExtras provides extras) {
+        MaterialTheme(colorScheme = colorScheme, typography = Typography, shapes = AppShapes, content = content)
+    }
 }
 
 @ChecksSdkIntAtLeast(api = Build.VERSION_CODES.S)

@@ -1814,12 +1814,6 @@ abstract class AppLocalizations {
   /// **'清除 {scene} 配置失败：{error}'**
   String sceneModelClearFailed(Object scene, Object error);
 
-  /// No description provided for @sceneVoiceSaveFailed.
-  ///
-  /// In zh, this message translates to:
-  /// **'保存语音配置失败：{error}'**
-  String sceneVoiceSaveFailed(Object error);
-
   /// No description provided for @modelsNoAvailableModels.
   ///
   /// In zh, this message translates to:

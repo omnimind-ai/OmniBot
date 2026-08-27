@@ -6,6 +6,7 @@ import 'package:ui/features/home/pages/command_overlay/services/manual_recording
 
 void main() {
   test('recognizes manual recording commands before agent dispatch', () {
+    expect(ManualRecordingFlowController.isCommand('/record'), isTrue);
     expect(ManualRecordingFlowController.isCommand('手动录制'), isTrue);
     expect(
       ManualRecordingFlowController.isCommand(' manual recording '),
@@ -28,6 +29,19 @@ void main() {
 
     expect(manualRoute, greaterThanOrEqualTo(0));
     expect(modelCheck, greaterThan(manualRoute));
+  });
+
+  test('manual recording is exposed through the command panel', () {
+    final commandPanelSource = File(
+      'lib/features/home/pages/chat/chat_page_ui.dart',
+    ).readAsStringSync();
+    final composerSource = File(
+      'lib/features/home/pages/command_overlay/widgets/chat_input_area_composer.dart',
+    ).readAsStringSync();
+
+    expect(commandPanelSource, contains("'cardId': 'slash-command-record'"));
+    expect(commandPanelSource, contains("case '/record':"));
+    expect(composerSource, isNot(contains('_buildManualRecordingButton')));
   });
 
   testWidgets('keeps recording completion inline when conversion fails', (

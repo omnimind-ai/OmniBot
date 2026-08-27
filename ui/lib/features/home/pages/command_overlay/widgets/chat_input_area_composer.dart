@@ -207,14 +207,6 @@ mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
         _buildModelPickerButton(compact: false),
         const SizedBox(width: 4),
       ],
-      if (widget.onManualRecordingTap != null) ...[
-        SizedBox(
-          width: 28,
-          height: 28,
-          child: _buildManualRecordingButton(iconSize: 20),
-        ),
-        const SizedBox(width: 4),
-      ],
       if (_shouldShowAgentPermissionSelector) ...[
         SizedBox(
           width: 28,
@@ -572,14 +564,6 @@ mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
         ],
         if (_shouldShowModelPicker) ...[
           _buildModelPickerButton(compact: true),
-          const SizedBox(width: 2),
-        ],
-        if (widget.onManualRecordingTap != null) ...[
-          SizedBox(
-            width: 24,
-            height: 24,
-            child: _buildManualRecordingButton(iconSize: 18),
-          ),
           const SizedBox(width: 2),
         ],
         if (_shouldShowAgentPermissionSelector) ...[

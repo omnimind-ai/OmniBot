@@ -12,7 +12,6 @@ class ChannelManager {
     private var assistsCoreChannel: AssistsCoreChannel = AssistsCoreChannel()
     private var httpChannel: HttpChannel = HttpChannel()
     private var cacheChannel: CacheChannel = CacheChannel()
-    private var voicePlaybackChannel: VoicePlaybackChannel = VoicePlaybackChannel()
     private var deviceInfoChannel: DeviceInfoChannel = DeviceInfoChannel()
     private var displayGeometryChannel: DisplayGeometryChannel = DisplayGeometryChannel()
     private var appStateChannel: AppStateChannel = AppStateChannel()
@@ -46,7 +45,6 @@ class ChannelManager {
         assistsCoreChannel.setChannel( flutterEngine)
         httpChannel.setChannel(flutterEngine)
         cacheChannel.setChannel(flutterEngine);
-        voicePlaybackChannel.setChannel(flutterEngine)
         deviceInfoChannel.setChannel(flutterEngine)
         displayGeometryChannel.setChannel(flutterEngine)
         appStateChannel.setChannel(flutterEngine)
@@ -70,7 +68,6 @@ class ChannelManager {
     fun onCreate(context: Context) {
         specialPermissionChannel.onCreate(context)
         assistsCoreChannel.onCreate(context)
-        voicePlaybackChannel.onCreate(context)
         deviceInfoChannel.onCreate(context)
         displayGeometryChannel.onCreate(context)
         appStateChannel.onCreate(context)
@@ -90,7 +87,6 @@ class ChannelManager {
     fun clearChannel() {
         specialPermissionChannel.clear()
         assistsCoreChannel.clear()
-        voicePlaybackChannel.clear()
         deviceInfoChannel.clear()
         displayGeometryChannel.clear()
         appStateChannel.clear()

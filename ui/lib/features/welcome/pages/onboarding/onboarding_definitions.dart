@@ -233,14 +233,6 @@ const List<SceneDefinition> sceneDefinitions = <SceneDefinition>[
         'Understands tasks, plans work, and calls tools. Prefer your strongest tool-capable model.',
   ),
   SceneDefinition(
-    id: 'scene.voice',
-    icon: LucideIcons.mic2,
-    title: 'Voice',
-    descriptionZh: '整理适合朗读的回复文本，建议选择响应快、中文自然的模型。',
-    descriptionEn:
-        'Prepares responses for speech. Prefer a fast model with natural language output.',
-  ),
-  SceneDefinition(
     id: 'scene.compactor.context.chat',
     icon: LucideIcons.messagesSquare,
     title: 'Chat Compactor',

@@ -30,12 +30,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material.icons.outlined.Delete
-import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.BasicAlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -66,6 +60,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -79,8 +74,10 @@ import androidx.core.view.WindowCompat
 import androidx.core.widget.doOnTextChanged
 import androidx.navigation.NavController
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.res.vectorResource
 import com.rk.components.compose.preferences.base.PreferenceGroup
 import com.rk.libcommons.application
+import com.rk.resources.drawables
 import com.rk.resources.strings
 import com.rk.libcommons.child
 import com.rk.libcommons.dpToPx
@@ -145,8 +142,12 @@ inline fun getComposeColor():androidx.compose.ui.graphics.Color{
 
 private fun applyTerminalPalette(targetView: TerminalView) {
     val foregroundColor = getViewColor()
+    // Terminal surface follows the app palette: light surface (#F4F7FB) when
+    // darkText (light theme / light wallpaper), dark surface (#151617) otherwise.
+    val backgroundColor = if (darkText.value) 0xFFF4F7FB.toInt() else 0xFF151617.toInt()
     targetView.mEmulator?.mColors?.mCurrentColors?.apply {
         set(256, foregroundColor)
+        set(257, backgroundColor)
         set(258, foregroundColor)
     }
 }
@@ -320,7 +321,7 @@ fun TerminalScreen(
                                     keyboardController?.hide()
                                 }) {
                                     Icon(
-                                        imageVector = Icons.Outlined.Settings,
+                                        imageVector = ImageVector.vectorResource(drawables.ic_lucide_settings),
                                         contentDescription = null
                                     )
                                 }
@@ -329,7 +330,7 @@ fun TerminalScreen(
                                     showAddDialog = true
                                 }) {
                                     Icon(
-                                        imageVector = Icons.Default.Add,
+                                        imageVector = ImageVector.vectorResource(drawables.ic_lucide_plus),
                                         contentDescription = null
                                     )
                                 }
@@ -377,7 +378,7 @@ fun TerminalScreen(
                                                 ) {
                                                     
                                                     Icon(
-                                                        imageVector = Icons.Outlined.Delete,
+                                                        imageVector = ImageVector.vectorResource(drawables.ic_lucide_trash_2),
                                                         contentDescription = null,
                                                         modifier = Modifier.size(20.dp)
                                                     )
@@ -427,19 +428,19 @@ fun TerminalScreen(
                                         IconButton(onClick = {
                                             mainActivityActivity.onBackPressedDispatcher.onBackPressed()
                                         }) {
-                                            Icon(Icons.AutoMirrored.Filled.ArrowBack, null, tint = color)
+                                            Icon(ImageVector.vectorResource(drawables.ic_lucide_arrow_left), null, tint = color)
                                         }
                                     },
                                     actions = {
                                         IconButton(onClick = {
                                             scope.launch { drawerState.open() }
                                         }) {
-                                            Icon(Icons.Default.Menu, null, tint = color)
+                                            Icon(ImageVector.vectorResource(drawables.ic_lucide_menu), null, tint = color)
                                         }
                                         IconButton(onClick = {
                                             showAddDialog = true
                                         }) {
-                                            Icon(Icons.Default.Add,null, tint = color)
+                                            Icon(ImageVector.vectorResource(drawables.ic_lucide_plus),null, tint = color)
                                         }
                                     }
                                 )

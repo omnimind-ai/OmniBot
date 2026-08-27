@@ -33,8 +33,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.rk.components.compose.utils.addIf
 
 /** A template used to create most preference-related components in the Preference UI. */
@@ -46,8 +48,8 @@ fun PreferenceTemplate(
     contentModifier: Modifier = Modifier,
     enabled: Boolean = true,
     applyPaddings: Boolean = true,
-    horizontalPadding: Dp = 16.dp,
-    verticalPadding: Dp = 16.dp,
+    horizontalPadding: Dp = 4.dp,
+    verticalPadding: Dp = 14.dp,
     verticalAlignment: Alignment.Vertical = Alignment.CenterVertically,
     description: @Composable () -> Unit = {},
     startWidget: (@Composable () -> Unit)? = null,
@@ -68,7 +70,7 @@ fun PreferenceTemplate(
             startWidget?.let {
                 startWidget()
                 if (applyPaddings) {
-                    Spacer(modifier = Modifier.requiredWidth(16.dp))
+                    Spacer(modifier = Modifier.requiredWidth(10.dp))
                 }
             }
             Row(
@@ -77,14 +79,22 @@ fun PreferenceTemplate(
             ) {
                 Column(Modifier.weight(1f)) {
                     CompositionLocalProvider(
-                        LocalContentColor provides MaterialTheme.colorScheme.onBackground,
-                        LocalTextStyle provides MaterialTheme.typography.bodyLarge,
+                        LocalContentColor provides MaterialTheme.colorScheme.onSurface,
+                        LocalTextStyle provides
+                            MaterialTheme.typography.bodyMedium.copy(
+                                fontWeight = FontWeight.Medium,
+                                lineHeight = 21.sp,
+                            ),
                     ) {
                         title()
                     }
                     CompositionLocalProvider(
                         LocalContentColor provides MaterialTheme.colorScheme.onSurfaceVariant,
-                        LocalTextStyle provides MaterialTheme.typography.bodyMedium,
+                        LocalTextStyle provides
+                            MaterialTheme.typography.labelSmall.copy(
+                                fontWeight = FontWeight.Normal,
+                                lineHeight = 17.sp,
+                            ),
                     ) {
                         description()
                     }
@@ -92,7 +102,7 @@ fun PreferenceTemplate(
             }
             endWidget?.let {
                 if (applyPaddings) {
-                    Spacer(modifier = Modifier.requiredWidth(16.dp))
+                    Spacer(modifier = Modifier.requiredWidth(12.dp))
                 }
                 endWidget()
             }

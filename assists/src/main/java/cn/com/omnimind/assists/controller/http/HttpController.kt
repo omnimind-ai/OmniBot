@@ -9,6 +9,7 @@ import cn.com.omnimind.baselib.llm.AssistantToolCallFunction
 import cn.com.omnimind.baselib.llm.AiRequestLogEntry
 import cn.com.omnimind.baselib.llm.AiRequestLogStore
 import cn.com.omnimind.baselib.llm.ChatCompletionMessage
+import cn.com.omnimind.baselib.llm.ChatCompletionProtocolMetadata
 import cn.com.omnimind.baselib.llm.ChatCompletionRequest
 import cn.com.omnimind.baselib.llm.ChatCompletionStreamOptions
 import cn.com.omnimind.baselib.llm.DeepSeekProvider
@@ -772,16 +773,19 @@ object HttpController {
         }
     }
 
-    private fun buildAnthropicAssistantContent(message: ChatCompletionMessage): Any? {
-        val content = JSONArray()
-        message.reasoningContent?.trim()?.takeIf { it.isNotEmpty() }?.let { reasoning ->
-            val reasoningBlock = JSONObject()
-            reasoningBlock.put("type", "text")
-            reasoningBlock.put("text", reasoning)
-            content.put(
-                reasoningBlock
-            )
+    private fun buildAnthropicAssistantContent(
+        message: ChatCompletionMessage,
+        targetModel: String
+    ): Any? {
+        val replayBlocks = resolveAnthropicReplayContentBlocks(message, targetModel)
+        if (replayBlocks != null) {
+            return JSONArray(replayBlocks.toString())
         }
+
+        val content = JSONArray()
+        // Internal reasoning text is not an Anthropic content block. Replaying
+        // it as visible text changes the transcript and cannot replace the
+        // signed thinking block required by the Messages API.
         appendAnthropicContentBlocks(content, message.content)
         message.toolCalls.orEmpty().forEach { toolCall ->
             val inputJson = runCatching { JSONObject(toolCall.function.arguments) }.getOrElse { JSONObject() }
@@ -799,7 +803,6 @@ object HttpController {
         }
         if (
             content.length() == 1 &&
-            message.reasoningContent.isNullOrBlank() &&
             message.toolCalls.isNullOrEmpty()
         ) {
             val single = content.optJSONObject(0)
@@ -808,6 +811,23 @@ object HttpController {
             }
         }
         return content
+    }
+
+    private fun resolveAnthropicReplayContentBlocks(
+        message: ChatCompletionMessage,
+        targetModel: String
+    ): KxJsonArray? {
+        val anthropicState = message.protocolState?.anthropic ?: return null
+        val sourceModel = anthropicState.sourceModel?.trim().orEmpty()
+        return anthropicState.contentBlocks?.takeIf { blocks ->
+            blocks.isNotEmpty() && (
+                sourceModel.isEmpty() || sourceModel.equals(targetModel.trim(), ignoreCase = true)
+            )
+        }
+    }
+
+    private fun anthropicToolResultIsError(message: ChatCompletionMessage): Boolean? {
+        return message.protocolState?.anthropic?.toolResultIsError
     }
 
     private fun buildAnthropicTextBlock(text: String): JSONObject {
@@ -1245,7 +1265,7 @@ object HttpController {
         for (msg in nonSystemMessages) {
             when (msg.role) {
                 "assistant" -> {
-                    val content = buildAnthropicAssistantContent(msg)
+                    val content = buildAnthropicAssistantContent(msg, request.model)
                     if (content != null) {
                         messages.put(buildAnthropicMessage("assistant", content))
                     }
@@ -1261,6 +1281,9 @@ object HttpController {
                             if (it is kotlinx.serialization.json.JsonPrimitive) it.content else it.toString()
                         } ?: ""
                     )
+                    anthropicToolResultIsError(msg)?.let { isError ->
+                        toolResultBlock.put("is_error", isError)
+                    }
                     // Try to merge with previous user message if it's a tool_result batch
                     val lastMsg = if (messages.length() > 0) messages.optJSONObject(messages.length() - 1) else null
                     if (lastMsg != null && lastMsg.optString("role") == "user" &&
@@ -1990,11 +2013,70 @@ object HttpController {
         }
     }
 
+    private class AnthropicStreamBlockBuilder(
+        private val initialBlock: KxJsonObject
+    ) {
+        private val blockType = (initialBlock["type"] as? JsonPrimitive)
+            ?.contentOrNull
+            .orEmpty()
+        private val text = StringBuilder(
+            (initialBlock["text"] as? JsonPrimitive)?.contentOrNull.orEmpty()
+        )
+        private val thinking = StringBuilder(
+            (initialBlock["thinking"] as? JsonPrimitive)?.contentOrNull.orEmpty()
+        )
+        private val signature = StringBuilder(
+            (initialBlock["signature"] as? JsonPrimitive)?.contentOrNull.orEmpty()
+        )
+        private val inputJson = StringBuilder()
+
+        fun appendText(value: String) {
+            text.append(value)
+        }
+
+        fun appendThinking(value: String) {
+            thinking.append(value)
+        }
+
+        fun appendSignature(value: String) {
+            signature.append(value)
+        }
+
+        fun appendInputJson(value: String) {
+            inputJson.append(value)
+        }
+
+        fun build(): KxJsonObject {
+            val fields = initialBlock.toMutableMap()
+            when (blockType) {
+                "text" -> fields["text"] = JsonPrimitive(text.toString())
+                "thinking" -> {
+                    fields["thinking"] = JsonPrimitive(thinking.toString())
+                    if (signature.isNotEmpty()) {
+                        fields["signature"] = JsonPrimitive(signature.toString())
+                    }
+                }
+                "tool_use" -> {
+                    val parsedInput = inputJson
+                        .takeIf { it.isNotEmpty() }
+                        ?.toString()
+                        ?.let { raw ->
+                            runCatching { completionJson.parseToJsonElement(raw) }.getOrNull()
+                        }
+                    if (parsedInput != null) {
+                        fields["input"] = parsedInput
+                    }
+                }
+            }
+            return KxJsonObject(fields)
+        }
+    }
+
     fun wrapAnthropicListener(outer: EventSourceListener): EventSourceListener {
         return object : EventSourceListener() {
             // per-stream state
-            private val toolUseBlocks = mutableMapOf<Int, KxJsonObject>() // index → {id, name}
-            private val toolArgBuffers = mutableMapOf<Int, StringBuilder>() // index → partial json
+            private val contentBlocks = sortedMapOf<Int, AnthropicStreamBlockBuilder>()
+            private val emittedContentBlockIndexes = mutableSetOf<Int>()
             private val usage = AnthropicUsageAccumulator()
 
             override fun onOpen(eventSource: EventSource, response: okhttp3.Response) {
@@ -2062,15 +2144,15 @@ object HttpController {
                     "content_block_start" -> {
                         val index = intField(json, "index") ?: 0
                         val block = objectField(json, "content_block") ?: return
+                        contentBlocks[index] = AnthropicStreamBlockBuilder(block)
                         when (stringField(block, "type")) {
                             "tool_use" -> {
                                 val toolId = stringField(block, "id").ifEmpty { "tool_$index" }
                                 val toolName = stringField(block, "name")
-                                toolUseBlocks[index] = buildJsonObject {
-                                    put("id", JsonPrimitive(toolId))
-                                    put("name", JsonPrimitive(toolName))
-                                }
-                                toolArgBuffers[index] = StringBuilder()
+                                val initialInput = block["input"]
+                                    ?.takeUnless { it is KxJsonObject && it.isEmpty() }
+                                    ?.toString()
+                                    .orEmpty()
                                 // emit tool_call header chunk
                                 val chunk = buildOpenAIChunk(
                                     deltaJson = buildJsonObject {
@@ -2086,7 +2168,7 @@ object HttpController {
                                                             "function",
                                                             buildJsonObject {
                                                                 put("name", JsonPrimitive(toolName))
-                                                                put("arguments", JsonPrimitive(""))
+                                                                put("arguments", JsonPrimitive(initialInput))
                                                             }
                                                         )
                                                     }
@@ -2110,6 +2192,22 @@ object HttpController {
                                     outer.onEvent(eventSource, id, type, chunk)
                                 }
                             }
+                            "thinking" -> {
+                                val thinking = stringField(block, "thinking")
+                                if (thinking.isNotEmpty()) {
+                                    outer.onEvent(
+                                        eventSource,
+                                        id,
+                                        type,
+                                        buildOpenAIChunk(
+                                            deltaJson = buildJsonObject {
+                                                put("reasoning_content", JsonPrimitive(thinking))
+                                            },
+                                            finishReason = null
+                                        )
+                                    )
+                                }
+                            }
                         }
                     }
                     "content_block_delta" -> {
@@ -2118,6 +2216,7 @@ object HttpController {
                         when (stringField(delta, "type")) {
                             "text_delta" -> {
                                 val text = stringField(delta, "text")
+                                contentBlocks[index]?.appendText(text)
                                 val chunk = buildOpenAIChunk(
                                     deltaJson = buildJsonObject {
                                         put("content", JsonPrimitive(text))
@@ -2128,7 +2227,7 @@ object HttpController {
                             }
                             "input_json_delta" -> {
                                 val partialJson = stringField(delta, "partial_json")
-                                toolArgBuffers[index]?.append(partialJson)
+                                contentBlocks[index]?.appendInputJson(partialJson)
                                 val chunk = buildOpenAIChunk(
                                     deltaJson = buildJsonObject {
                                         put(
@@ -2154,6 +2253,7 @@ object HttpController {
                             }
                             "thinking_delta" -> {
                                 val thinking = stringField(delta, "thinking")
+                                contentBlocks[index]?.appendThinking(thinking)
                                 if (thinking.isNotEmpty()) {
                                     val chunk = buildOpenAIChunk(
                                         deltaJson = buildJsonObject {
@@ -2164,7 +2264,16 @@ object HttpController {
                                     outer.onEvent(eventSource, id, type, chunk)
                                 }
                             }
+                            "signature_delta" -> {
+                                contentBlocks[index]?.appendSignature(
+                                    stringField(delta, "signature")
+                                )
+                            }
                         }
+                    }
+                    "content_block_stop" -> {
+                        val index = intField(json, "index") ?: 0
+                        emitAnthropicContentBlock(eventSource, id, type, index)
                     }
                     "message_delta" -> {
                         usage.merge(objectField(json, "usage"))
@@ -2183,6 +2292,9 @@ object HttpController {
                         }
                     }
                     "message_stop" -> {
+                        contentBlocks.keys.forEach { index ->
+                            emitAnthropicContentBlock(eventSource, id, type, index)
+                        }
                         outer.onEvent(eventSource, id, type, "[DONE]")
                     }
                     "error" -> {
@@ -2217,6 +2329,30 @@ object HttpController {
                 response: okhttp3.Response?
             ) {
                 outer.onFailure(eventSource, t, response)
+            }
+
+            private fun emitAnthropicContentBlock(
+                eventSource: EventSource,
+                id: String?,
+                type: String?,
+                index: Int
+            ) {
+                val block = contentBlocks[index]?.build() ?: return
+                if (!emittedContentBlockIndexes.add(index)) return
+                outer.onEvent(
+                    eventSource,
+                    id,
+                    type,
+                    buildJsonObject {
+                        put(
+                            ChatCompletionProtocolMetadata.ANTHROPIC_STREAM_BLOCK_FIELD,
+                            buildJsonObject {
+                                put("index", index)
+                                put("block", block)
+                            }
+                        )
+                    }.toString()
+                )
             }
 
             private fun buildOpenAIChunk(
@@ -2872,7 +3008,10 @@ object HttpController {
         return when (payload) {
             is KxJsonObject -> KxJsonObject(
                 payload
-                    .filterKeys { it != "cache_control" }
+                    .filterKeys {
+                        it != "cache_control" &&
+                            it != ChatCompletionProtocolMetadata.STATE_FIELD
+                    }
                     .mapValues { (_, value) -> stripAnthropicOnlyFields(value) }
             )
             is KxJsonArray -> KxJsonArray(payload.map(::stripAnthropicOnlyFields))

@@ -55,7 +55,6 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
     if (isOpen) {
       _dismissChatInputFocus();
       _composerLiftIntentTracker.reset();
-      _embeddedDrawerKey.currentState?.reloadConversations();
       _drawerKey.currentState?.reloadConversations();
     } else {
       _isHomeDrawerSearchFocused = false;
@@ -153,7 +152,7 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
       double nextHeight = 0;
       if (visible) {
         final context = _openClawPanelKey.currentContext;
-        final renderBox = findActiveRenderObject(context) as RenderBox?;
+        final renderBox = context?.findRenderObject() as RenderBox?;
         if (renderBox != null && renderBox.hasSize) {
           nextHeight = renderBox.size.height;
         }
@@ -194,7 +193,24 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
       return <Map<String, dynamic>>[_buildReasoningEffortCommandCard()];
     }
 
-    final commands = <Map<String, dynamic>>[];
+    final commands = <Map<String, dynamic>>[
+      <String, dynamic>{
+        'cardId': 'slash-command-record',
+        'toolName': '/record',
+        'toolTitle': '/record',
+        'displayName': '/record',
+        'toolType': 'command',
+        'toolTypeLabel': LegacyTextLocalizer.isEnglish ? 'Recording' : '录制',
+        'status': 'running',
+        'statusLabel': LegacyTextLocalizer.isEnglish ? 'Action' : '操作',
+        'summary': LegacyTextLocalizer.isEnglish
+            ? 'Manually record a reusable operation flow'
+            : '手动录制可复用的操作流程',
+        'progress': LegacyTextLocalizer.isEnglish
+            ? 'Start recording from the floating control'
+            : '通过悬浮控件开始录制',
+      },
+    ];
     if (_supportsManualContextCompaction) {
       commands.add(<String, dynamic>{
         'cardId': 'slash-command-compact',
@@ -358,7 +374,6 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
         toggleValue: planModeEnabled,
       ),
     ];
-    commands.addAll(_buildAgentAcpCommandCards());
     if (query.isEmpty) {
       return commands;
     }
@@ -367,44 +382,6 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
           final title = (card['toolTitle'] ?? '').toString().toLowerCase();
           return title.startsWith(query);
         })
-        .toList(growable: false);
-  }
-
-  List<Map<String, dynamic>> _buildAgentAcpCommandCards() {
-    final runtime = _runtimeForMode(ChatPageMode.agent);
-    final commands =
-        runtime?.availableAcpCommands ?? const <Map<String, dynamic>>[];
-    final seen = <String>{'/model', '/review', '/init', '/plan'};
-    return commands
-        .map((command) {
-          final name = (command['name'] ?? '').toString().trim();
-          if (name.isEmpty) return null;
-          final slashName = name.startsWith('/') ? name : '/$name';
-          if (!seen.add(slashName.toLowerCase())) return null;
-          final description = (command['description'] ?? '').toString().trim();
-          final card = _buildAgentCommandCard(
-            cardId:
-                'slash-command-acp-${name.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_')}',
-            toolTitle: slashName,
-            displayName: slashName,
-            toolTypeLabel: LegacyTextLocalizer.isEnglish
-                ? 'ACP command'
-                : 'ACP 命令',
-            status: 'running',
-            statusLabel: LegacyTextLocalizer.isEnglish ? 'Available' : '可用',
-            summary: description.isEmpty
-                ? (LegacyTextLocalizer.isEnglish
-                      ? 'Run $slashName through the active ACP session'
-                      : '通过当前 ACP 会话运行 $slashName')
-                : description,
-            progress: LegacyTextLocalizer.isEnglish
-                ? 'Tap to enter the command, then add arguments if needed'
-                : '点击填入命令，可继续输入参数',
-          );
-          card['acpCommand'] = true;
-          return card;
-        })
-        .whereType<Map<String, dynamic>>()
         .toList(growable: false);
   }
 
@@ -519,6 +496,11 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
         .toString()
         .trim();
     switch (command) {
+      case '/record':
+        _messageController.clear();
+        _hideSlashCommandPanel();
+        unawaited(_startManualRecordingCommand('/record'));
+        break;
       case '/compact':
         unawaited(_executeManualContextCompactionCommand());
         break;
@@ -649,8 +631,8 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
       return fallbackGeometry;
     }
     final inputContext = _chatInputAreaKey.currentContext;
-    final inputBox = findActiveRenderObject(inputContext);
-    final stackBox = findActiveRenderObject(layoutContext);
+    final inputBox = inputContext?.findRenderObject();
+    final stackBox = layoutContext.findRenderObject();
     if (inputBox is! RenderBox ||
         stackBox is! RenderBox ||
         !inputBox.hasSize ||
@@ -679,8 +661,8 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
       return null;
     }
     final inputContext = _chatInputAreaKey.currentContext;
-    final inputBox = findActiveRenderObject(inputContext);
-    final stackBox = findActiveRenderObject(layoutContext);
+    final inputBox = inputContext?.findRenderObject();
+    final stackBox = layoutContext.findRenderObject();
     if (inputBox is! RenderBox ||
         stackBox is! RenderBox ||
         !inputBox.hasSize ||
@@ -906,40 +888,21 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
       fallbackMessages: _modeState(mode).messages,
       preserveFallbackDuringHandoff: _modeState(mode).isAiResponding,
     );
-    final chatOnly =
-        _conversationModeForPageMode(mode) == ConversationMode.chatOnly;
-    // Chat-only disables tool execution, not reasoning. Keep reasoning cards
-    // in the ordinary conversation surface so ACP providers do not appear to
-    // have lost all thought output; only tool/request cards are execution UI.
-    final visibleMessages = chatOnly
-        ? resolvedMessages
-              .where((message) {
-                final cardType = message.cardData?['type']?.toString();
-                return cardType != 'agent_tool_summary' &&
-                    cardType != 'agent_request';
-              })
-              .toList(growable: false)
-        : resolvedMessages;
-    // `runtime.activeAgentTurnIds` is the single source of truth for which
+    // `runtime.activeAgentTaskIds` is the single source of truth for which
     // turns are in flight. Only fall back to the page-level dispatch id when
     // there is no runtime yet to own it.
-    final activeAgentTurnIds = <String>{...?runtime?.activeAgentTurnIds};
-    if (mode == ChatPageMode.agent && activeAgentTurnIds.isEmpty) {
-      // The runtime can already exist while a handoff/snapshot briefly has
-      // not copied its active-turn ids yet. The page-level dispatch state is
-      // still authoritative for this short window; use it to render the
-      // single processing header, but never manufacture a thinking card.
-      final isAwaitingAgent =
-          runtime?.isAiResponding == true || _modeState(mode).isAiResponding;
+    final activeAgentTaskIds = <String>{...?runtime?.activeAgentTaskIds};
+    if (runtime == null && mode == ChatPageMode.agent) {
+      final isAwaitingAgent = _modeState(mode).isAiResponding;
       final pendingDispatchTaskId =
-          _modeState(mode).currentDispatchTurnId?.trim() ?? '';
+          _modeState(mode).currentDispatchTaskId?.trim() ?? '';
       if (isAwaitingAgent && pendingDispatchTaskId.isNotEmpty) {
-        activeAgentTurnIds.add(pendingDispatchTaskId);
+        activeAgentTaskIds.add(pendingDispatchTaskId);
       }
     }
     final toolActivitySnapshot = resolveAgentToolActivitySnapshot(
-      List<ChatMessageModel>.from(visibleMessages),
-      activeTaskIds: activeAgentTurnIds,
+      List<ChatMessageModel>.from(resolvedMessages),
+      activeTaskIds: activeAgentTaskIds,
       preferredCompletedTaskId: _latestExpandedAgentRunTaskIdForMode(mode),
     );
     final showToolActivityStrip = _shouldShowToolActivityStripForMode(
@@ -959,19 +922,11 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
         mode == _activeMode &&
         _emptyGreetingKeyboardLiftTracker.resolveForBuild(bottomInset);
     final homeGreetingSettings = HomeGreetingSettingsService.notifier.value;
-    final activeAcpAgentId = _activeAcpAgentId;
-    // Normal chat is ACP-backed at the transport/session layer, but it keeps
-    // the Xiaowan conversation layout for compatibility with the previous
-    // release: no run header, fold wrapper, or Agent tool capsules. The ACP
-    // All chat modes now use the same ACP run presentation. The selected
-    // Harness changes the provider identity and capabilities, not the event
-    // or card layout. Pure chat is simply an ACP run with no tool cards.
-    final useAcpPresentation = true;
     return ChatMessageList(
-      messages: visibleMessages,
-      activeAgentTurnIds: activeAgentTurnIds,
-      useAcpPresentation: useAcpPresentation,
-      activeAcpAgentId: activeAcpAgentId,
+      messages: resolvedMessages,
+      activeAgentTaskIds: activeAgentTaskIds,
+      useAcpPresentation: mode == ChatPageMode.agent,
+      activeAcpAgentId: mode == ChatPageMode.agent ? _activeAcpAgentId : null,
       onRetryAgentMessage: _retryFailedAgentTurn,
       onContinueAgentMessage: _continueFailedAgentTurn,
       expandedAgentRunTaskIds: _expandedAgentRunTaskIdsForMode(mode),
@@ -984,9 +939,6 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
       emptyGreetingPinnedQuickPromptIds:
           homeGreetingSettings.pinnedQuickPromptIds,
       onQuickPromptSelected: _applyHomeQuickPrompt,
-      emptyGreetingAgentName: mode == ChatPageMode.agent
-          ? _activeAcpAgentDisplayName
-          : null,
       emptyGreetingAgentWorkspaceName: mode == ChatPageMode.agent
           ? _remoteCodexWorkspaceNameForGreeting()
           : null,
@@ -1004,17 +956,22 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
       },
       onBeforeTaskExecute: handleBeforeTaskExecute,
       onCancelTask: _onCancelTaskFromCard,
-      onRequestAuthorize: mode == ChatPageMode.openclaw
-          ? null
-          : _requestAuthorizeForExecution,
+      onRequestAuthorize: mode == ChatPageMode.normal
+          ? _requestAuthorizeForExecution
+          : null,
       onUserMessageLongPressStart: switch (mode) {
         ChatPageMode.normal => _handleUserMessageLongPressStart,
-        ChatPageMode.agent => _handleUserMessageLongPressStart,
+        ChatPageMode.agent =>
+          (message, details) => _handleUserMessageLongPressStart(
+            message,
+            details,
+            allowConversationActions: false,
+          ),
         ChatPageMode.openclaw => null,
       },
-      onLatestUserMessageEditTap: mode == ChatPageMode.openclaw
-          ? null
-          : _startEditingLatestUserMessage,
+      onLatestUserMessageEditTap: mode == ChatPageMode.normal
+          ? _startEditingLatestUserMessage
+          : null,
       onLoadMore: loadMoreMessages,
       hasMore: hasMoreMessages,
       visualProfile: visualProfile,
@@ -1217,7 +1174,7 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
   }) {
     final toolActivitySnapshot = resolveAgentToolActivitySnapshot(
       List<ChatMessageModel>.from(_messages),
-      activeTaskIds: _activeRuntime?.activeAgentTurnIds ?? const <String>{},
+      activeTaskIds: _activeRuntime?.activeAgentTaskIds ?? const <String>{},
       preferredCompletedTaskId: _latestExpandedAgentRunTaskIdForMode(
         _activeMode,
       ),
@@ -1305,10 +1262,7 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
               isPetOpening: _isPetOverlayOpening,
               isPetShowing: _isPetOverlayShowing,
               onOmniAiTap: () {
-                // Xiaowan and the built-in Xiaowan ACP profile are one
-                // visible Agent. Keep the old shortcut callback only as the
-                // UI compatibility boundary and route it through ACP.
-                unawaited(_handleAcpAgentModeShortcutTap(_kXiaowanAcpAgentId));
+                unawaited(_handleAgentModeShortcutTap());
               },
               onPureChatToggleTap: () {
                 unawaited(_handlePureChatModeShortcutTap());
@@ -1344,7 +1298,7 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
               isOmniAiSelected:
                   _activeMode == ChatPageMode.normal && !_isPureChatSelected,
               acpAgentModes: _chatAcpAgentModeOptions,
-              activeAcpAgentId: _appBarActiveAcpAgentId,
+              activeAcpAgentId: _activeAcpAgentId,
               showAppUpdateIndicator: showAppUpdateIndicator,
               appUpdateTooltip: appUpdateTooltip,
               onAppUpdateTap: showAppUpdateIndicator
@@ -1395,8 +1349,6 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
                       onCancelTask: _onCancelTask,
                       onPopupVisibilityChanged: _onPopupVisibilityChanged,
                       onTerminalTap: _handleTerminalToolTap,
-                      onManualRecordingTap: () =>
-                          _startManualRecordingCommand('手动录制'),
                       useLargeComposerStyle: true,
                       useAttachmentPickerForPlus: true,
                       onPickAttachment: _pickAttachments,
@@ -1411,30 +1363,68 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
                               _showConversationModelMentionChip
                           ? _activeConversationModelOverrideSelection?.modelId
                           : null,
-                      contextUsageRatio: _activeMode == ChatPageMode.openclaw
-                          ? null
-                          : _currentConversation?.contextUsageRatio,
+                      contextUsageRatio: _activeMode == ChatPageMode.normal
+                          ? _currentConversation?.contextUsageRatio
+                          : null,
                       contextUsageTooltipMessage:
-                          _activeMode == ChatPageMode.openclaw
-                          ? null
-                          : _buildContextUsageTooltipMessage(),
+                          _activeMode == ChatPageMode.normal
+                          ? _buildContextUsageTooltipMessage()
+                          : null,
                       onLongPressContextUsageRing:
-                          _activeMode == ChatPageMode.openclaw
-                          ? null
-                          : _handleContextUsageRingLongPress,
-                      modelPickerSettings: ChatModelPickerSettings(
-                        modelId: _activeDispatchSceneSelection?.modelId ?? '',
-                        hasSelectableModels: _hasSelectableProviderModels,
-                        anchorKey: _firstUseTourModelAnchorKey,
-                        onPointerDown: () {
-                          _suppressNextOutsideTapKeyboardHide = true;
-                        },
-                        onOpen: (anchorContext) =>
-                            _openConversationModelSelector(anchorContext),
-                      ),
-                      agentRunSettings: null,
-                      onAgentRunSettingsOpened: null,
-                      onAgentRunSettingsChanged: null,
+                          _activeMode == ChatPageMode.normal
+                          ? _handleContextUsageRingLongPress
+                          : null,
+                      modelPickerSettings: _activeMode == ChatPageMode.normal
+                          ? ChatModelPickerSettings(
+                              modelId: _activeNormalChatModelId ?? '',
+                              hasSelectableModels:
+                                  _hasSelectableNormalChatModels,
+                              anchorKey: _firstUseTourModelAnchorKey,
+                              onPointerDown: () {
+                                _suppressNextOutsideTapKeyboardHide = true;
+                              },
+                              onOpen: (anchorContext) =>
+                                  _openConversationModelSelector(anchorContext),
+                            )
+                          : null,
+                      agentRunSettings: _activeMode == ChatPageMode.agent
+                          ? AgentRunSettings(
+                              agentName:
+                                  _agentRuntimeStatus.activeAgentName ??
+                                  _agentCatalog?.selectedAgent?.name ??
+                                  '',
+                              modelId: _activeAgentModelId ?? '',
+                              reasoningEffort:
+                                  _activeAgentReasoningEffort ?? '',
+                              modelOptions: _agentModelOptions,
+                              reasoningEffortOptions:
+                                  _agentReasoningEffortOptions,
+                              isLoadingModels: _isAgentModelListLoading,
+                              modelListError: _agentModelListError,
+                            )
+                          : null,
+                      onAgentRunSettingsOpened:
+                          _activeMode == ChatPageMode.agent
+                          ? _loadAgentModelOptionsWhenReady
+                          : null,
+                      onAgentRunSettingsChanged:
+                          _activeMode == ChatPageMode.agent
+                          ? ({String? modelId, String? reasoningEffort}) {
+                              if (modelId != null) {
+                                unawaited(
+                                  _selectAgentModel(
+                                    modelId,
+                                    clearComposer: false,
+                                  ),
+                                );
+                              }
+                              if (reasoningEffort != null) {
+                                unawaited(
+                                  _selectAgentReasoningEffort(reasoningEffort),
+                                );
+                              }
+                            }
+                          : null,
                       agentPermissionMode: _activeMode == ChatPageMode.agent
                           ? _agentPermissionMode
                           : null,
@@ -1450,7 +1440,11 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
                           : AgentPermissionMode.values,
                       onAgentPermissionModeChanged:
                           _activeMode == ChatPageMode.agent
-                          ? _selectAgentPermissionMode
+                          ? (mode) {
+                              setState(() {
+                                _agentPermissionMode = mode;
+                              });
+                            }
                           : null,
                       onInputHeightChanged: _handleInputAreaHeightChanged,
                       onClearSelectedModelOverride:
@@ -1569,7 +1563,7 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
       fallbackMessages: _modeState(mode).messages,
       preserveFallbackDuringHandoff: _modeState(mode).isAiResponding,
     );
-    final activeTaskIds = runtime?.activeAgentTurnIds ?? const <String>{};
+    final activeTaskIds = runtime?.activeAgentTaskIds ?? const <String>{};
     // composerReservedInset 已含 composer 顶部上方 12px 的安全间距，
     // 回收 6px 让按钮更贴近输入框右上角。
     final bottomInset = math.max(
@@ -1587,7 +1581,10 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
         !_isPopupVisible;
     return ChatMessageAnchorBar(
       messages: messages,
-      activeAgentTurnIds: activeTaskIds,
+      activeAgentTaskIds: activeTaskIds,
+      conversationAgentId: mode == ChatPageMode.agent
+          ? _activeAcpAgentId
+          : null,
       conversationSignature:
           '${mode.name}:${_modeState(mode).currentConversationId ?? ''}',
       bottomInset: bottomInset,
@@ -1716,12 +1713,12 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
                             translucent: backgroundActive,
                             visualProfile: visualProfile,
                             child: HomeDrawer(
-                              key: _embeddedDrawerKey,
+                              key: _drawerKey,
                               embedded: true,
                               closeOnNavigate: false,
                               onSearchFocusChanged:
                                   _handleHomeDrawerSearchFocusChanged,
-                              searchFieldKey: _embeddedDrawerSearchFieldKey,
+                              searchFieldKey: _drawerSearchFieldKey,
                               newConversationMode: _conversationModeForPageMode(
                                 _activeMode,
                               ),
@@ -2161,7 +2158,6 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
       return;
     }
 
-    final conversationMode = _activeMode;
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -2172,7 +2168,7 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
         currentUsageTokens: conversation.latestPromptTokens,
         onThresholdSaved: (nextThreshold) async {
           final trackedConversation = _modeState(
-            conversationMode,
+            ChatPageMode.normal,
           ).currentConversation;
           final activeConversation = _currentConversation;
           final ConversationModel latestConversation;
@@ -2210,19 +2206,20 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
             promptTokenThreshold: nextThreshold,
           );
           setState(() {
-            if ((_modeState(conversationMode).currentConversation?.id ?? 0) ==
+            if ((_modeState(ChatPageMode.normal).currentConversation?.id ??
+                    0) ==
                 conversation.id) {
-              _modeState(conversationMode).currentConversation =
+              _modeState(ChatPageMode.normal).currentConversation =
                   updatedConversation;
             }
             if ((_currentConversation?.id ?? 0) == conversation.id) {
               _currentConversation = updatedConversation;
             }
           });
-          if ((_modeState(conversationMode).currentConversationId ?? 0) ==
+          if ((_modeState(ChatPageMode.normal).currentConversationId ?? 0) ==
               conversation.id) {
             _syncRuntimeSnapshotForMode(
-              conversationMode,
+              ChatPageMode.normal,
               conversation: updatedConversation,
             );
           }
@@ -2557,15 +2554,7 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
       });
     }
 
-    final userMessage = _agentPromptForFailedTurn(message);
-    final success = await _tryAgentFlow(
-      taskId,
-      '',
-      promptText: userMessage?.text,
-      attachmentsOverride: userMessage == null
-          ? const []
-          : _extractRetryAttachments(userMessage),
-    );
+    final success = await AssistsMessageService.retryAgentTask(taskId: taskId);
     _pendingManualAgentRetryTaskIds.remove(taskId);
     if (!mounted) {
       return;
@@ -2651,16 +2640,8 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
       });
     }
 
-    final userMessage = _agentPromptForFailedTurn(message);
-    final success = await _tryAgentFlow(
-      taskId,
-      '',
-      promptText: userMessage == null
-          ? null
-          : '请继续完成上一个任务。保留已有上下文，只处理尚未完成的部分。\n\n${userMessage.text ?? ''}',
-      attachmentsOverride: userMessage == null
-          ? const []
-          : _extractRetryAttachments(userMessage),
+    final success = await AssistsMessageService.continueAgentTask(
+      taskId: taskId,
     );
     _pendingManualAgentContinueTaskIds.remove(taskId);
     if (!mounted) {
@@ -2703,16 +2684,6 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
         .whereType<Map>()
         .map((item) => item.map((k, v) => MapEntry(k.toString(), v)))
         .toList();
-  }
-
-  ChatMessageModel? _agentPromptForFailedTurn(ChatMessageModel message) {
-    final messageIndex = _messages.indexWhere((item) => item.id == message.id);
-    if (messageIndex < 0) return null;
-    for (var index = messageIndex - 1; index >= 0; index--) {
-      final candidate = _messages[index];
-      if (candidate.user == 1) return candidate;
-    }
-    return null;
   }
 
   String? _resolveRetryableAgentTaskId(ChatMessageModel message) {

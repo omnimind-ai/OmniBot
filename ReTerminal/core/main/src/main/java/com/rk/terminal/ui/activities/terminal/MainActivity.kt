@@ -143,10 +143,40 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         requestPermission()
 
+        // Cross-activity transitions matching the main app's page style
+        // (full-width slide in, 25% parallax on the covered page).
+        // On API 34+ these participate in the predictive back gesture.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
+            PredictiveBackGate.isPredictiveBackEnabled(this)
+        ) {
+            overrideActivityTransition(
+                OVERRIDE_TRANSITION_OPEN,
+                com.rk.terminal.R.anim.slide_in_right,
+                com.rk.terminal.R.anim.slide_out_left,
+            )
+            overrideActivityTransition(
+                OVERRIDE_TRANSITION_CLOSE,
+                com.rk.terminal.R.anim.slide_in_left,
+                com.rk.terminal.R.anim.slide_out_right,
+            )
+        }
+
         if (intent.hasExtra("awake_intent")){
             moveTaskToBack(true)
         }
 
+    }
+
+    override fun finish() {
+        super.finish()
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
+            PredictiveBackGate.isPredictiveBackEnabled(this)
+        ) {
+            overridePendingTransition(
+                com.rk.terminal.R.anim.slide_in_left,
+                com.rk.terminal.R.anim.slide_out_right,
+            )
+        }
     }
 
     var wasKeyboardOpen = false
