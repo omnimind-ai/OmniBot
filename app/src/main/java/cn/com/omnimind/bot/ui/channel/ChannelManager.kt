@@ -4,10 +4,9 @@ import android.content.Context
 import io.flutter.embedding.engine.FlutterEngine
 
 /**
- * 用来管理flutter通道
+ * Manages Flutter platform channels.
  */
 class ChannelManager {
-
     private var specialPermissionChannel: SpecialPermissionChannel = SpecialPermissionChannel()
     private var assistsCoreChannel: AssistsCoreChannel = AssistsCoreChannel()
     private var httpChannel: HttpChannel = HttpChannel()
@@ -20,9 +19,7 @@ class ChannelManager {
     private var hideFromRecentsChannel: HideFromRecentsChannel = HideFromRecentsChannel()
     private var appUpdateChannel: AppUpdateChannel = AppUpdateChannel()
     private var screenDialogChannel: ScreenDialogChannel = ScreenDialogChannel()
-
     private var uiRouterChannel: UIRouterChannel = UIRouterChannel()
-
     private var mcpServerChannel: McpServerChannel = McpServerChannel()
     private var remoteMcpConfigChannel: RemoteMcpConfigChannel = RemoteMcpConfigChannel()
     private var overlayChannel: OverlayChannel = OverlayChannel()
@@ -32,19 +29,16 @@ class ChannelManager {
     private var pluginPlatformChannel: PluginPlatformChannel = PluginPlatformChannel()
     private var omniLinkPluginChannel: OmniLinkPluginChannel = OmniLinkPluginChannel()
     private var accountChannel: AccountChannel = AccountChannel()
-    fun getUIRouterChannel(): UIRouterChannel {
-        return uiRouterChannel
-    }
-    fun getAssistsCoreChannel(): AssistsCoreChannel {
-        return assistsCoreChannel
-    }
+    private var localModelChannel: LocalModelChannel = LocalModelChannel()
 
-    fun configureFlutterEngine(flutterEngine: FlutterEngine
-    ) {
+    fun getUIRouterChannel(): UIRouterChannel = uiRouterChannel
+    fun getAssistsCoreChannel(): AssistsCoreChannel = assistsCoreChannel
+
+    fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         specialPermissionChannel.setChannel(flutterEngine)
-        assistsCoreChannel.setChannel( flutterEngine)
+        assistsCoreChannel.setChannel(flutterEngine)
         httpChannel.setChannel(flutterEngine)
-        cacheChannel.setChannel(flutterEngine);
+        cacheChannel.setChannel(flutterEngine)
         deviceInfoChannel.setChannel(flutterEngine)
         displayGeometryChannel.setChannel(flutterEngine)
         appStateChannel.setChannel(flutterEngine)
@@ -63,6 +57,7 @@ class ChannelManager {
         pluginPlatformChannel.setChannel(flutterEngine)
         omniLinkPluginChannel.setChannel(flutterEngine)
         accountChannel.setChannel(flutterEngine)
+        localModelChannel.setChannel(flutterEngine)
     }
 
     fun onCreate(context: Context) {
@@ -82,6 +77,7 @@ class ChannelManager {
         agentRuntimeChannel.onCreate(context)
         pluginPlatformChannel.onCreate(context)
         omniLinkPluginChannel.onCreate(context)
+        localModelChannel.onCreate(context)
     }
 
     fun clearChannel() {
@@ -107,7 +103,6 @@ class ChannelManager {
         pluginPlatformChannel.clear()
         omniLinkPluginChannel.clear()
         accountChannel.clear()
+        localModelChannel.clear()
     }
-
-
 }
