@@ -2,11 +2,11 @@ package cn.com.omnimind.bot.ui.channel
 
 import android.content.Context
 import cn.com.omnimind.baselib.llm.LocalInferenceEngine
+import cn.com.omnimind.baselib.llm.LocalInferenceMode
 import cn.com.omnimind.baselib.llm.LocalModelCatalog
 import cn.com.omnimind.baselib.llm.LocalModelDownloader
 import cn.com.omnimind.baselib.llm.LocalModelManager
 import cn.com.omnimind.baselib.llm.LocalModelDownloadTask
-import com.tencent.mmkv.MMKV
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -17,14 +17,9 @@ import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 
-/**
- * Flutter bridge for the curated offline GGUF model system.
- */
+/** Flutter bridge for the curated offline GGUF model system. */
 class LocalModelChannel {
-    companion object {
-        private const val CHANNEL = "omnibot/local_models"
-        private const val MODE_KEY = "local_model_mode_v1"
-    }
+    companion object { private const val CHANNEL = "omnibot/local_models" }
 
     private var context: Context? = null
     private var methodChannel: MethodChannel? = null
@@ -64,16 +59,8 @@ class LocalModelChannel {
             "downloads" -> result.success(LocalModelManager.getDownloadTasks().map { it.toMap() })
             "storage" -> result.success(LocalModelManager.getStorageStats())
             "selected" -> result.success(LocalModelManager.getSelectedModelId())
-            "mode" -> result.success(currentMode())
-            "setMode" -> {
-                val mode = call.argument<String>("mode")?.lowercase()
-                if (mode !in setOf("automatic", "online", "offline")) {
-                    result.error("INVALID_MODE", "Mode must be automatic, online, or offline", null)
-                } else {
-                    MMKV.defaultMMKV()?.encode(MODE_KEY, mode)
-                    result.success(mode)
-                }
-            }
+            "mode" -> result.success(LocalInferenceMode.get().name.lowercase())
+            "setMode" -> setMode(call, result)
             "download" -> startDownload(call, result)
             "pause" -> pauseDownload(call, result)
             "cancel" -> cancelDownload(call, result)
@@ -82,115 +69,86 @@ class LocalModelChannel {
             "load" -> loadModel(call, result)
             "unload" -> unloadModel(result)
             "generate" -> generate(call, result)
-            "cancelGeneration" -> {
-                LocalInferenceEngine.cancel()
-                result.success(true)
-            }
+            "cancelGeneration" -> { LocalInferenceEngine.cancel(); result.success(true) }
             "isLoaded" -> result.success(LocalInferenceEngine.isLoaded())
             "modelInfo" -> result.success(LocalInferenceEngine.modelInfo())
             else -> result.notImplemented()
         }
     }
 
+    private fun setMode(call: MethodCall, result: MethodChannel.Result) {
+        when (call.argument<String>("mode")?.lowercase()) {
+            "automatic" -> LocalInferenceMode.set(LocalInferenceMode.AUTOMATIC)
+            "online" -> LocalInferenceMode.set(LocalInferenceMode.ONLINE)
+            "offline" -> LocalInferenceMode.set(LocalInferenceMode.OFFLINE)
+            else -> {
+                result.error("INVALID_MODE", "Mode must be automatic, online, or offline", null)
+                return
+            }
+        }
+        result.success(LocalInferenceMode.get().name.lowercase())
+    }
+
     private fun startDownload(call: MethodCall, result: MethodChannel.Result) {
         val modelId = call.argument<String>("modelId")?.trim().orEmpty()
         val entry = LocalModelCatalog.find(modelId)
-        if (entry == null) {
-            result.error("UNKNOWN_MODEL", "Model is not in the approved catalog", null)
-            return
-        }
-        if (jobs[modelId]?.isActive == true) {
-            result.success(true)
-            return
-        }
+        if (entry == null) { result.error("UNKNOWN_MODEL", "Model is not in the approved catalog", null); return }
+        if (jobs[modelId]?.isActive == true) { result.success(true); return }
 
         val destination = LocalModelManager.getModelPath(modelId)
-        if (destination.parentFile?.usableSpace ?: 0L < entry.sizeBytes) {
-            result.error("INSUFFICIENT_STORAGE", "Not enough storage for this model", null)
-            return
+        if ((destination.parentFile?.usableSpace ?: 0L) < entry.sizeBytes) {
+            result.error("INSUFFICIENT_STORAGE", "Not enough storage for this model", null); return
         }
-
-        LocalModelManager.updateDownloadTask(
-            LocalModelDownloadTask(
-                modelId = entry.id,
-                displayName = entry.name,
-                sourceUrl = entry.downloadUrl,
-                destinationPath = destination.absolutePath,
-                state = "pending",
-                totalBytes = entry.sizeBytes,
-            )
-        )
+        LocalModelManager.updateDownloadTask(LocalModelDownloadTask(
+            modelId = entry.id, displayName = entry.name, sourceUrl = entry.downloadUrl,
+            destinationPath = destination.absolutePath, state = "pending", totalBytes = entry.sizeBytes,
+        ))
 
         jobs[modelId] = scope.launch {
             val success = downloader.downloadCatalogModel(entry, destination.absolutePath)
             if (success) {
                 runCatching { LocalModelManager.registerCatalogModel(entry) }
                     .onSuccess {
-                        LocalModelManager.updateDownloadTask(
-                            LocalModelDownloadTask(
-                                modelId = entry.id,
-                                displayName = entry.name,
-                                sourceUrl = entry.downloadUrl,
-                                destinationPath = destination.absolutePath,
-                                state = "completed",
-                                downloadedBytes = entry.sizeBytes,
-                                totalBytes = entry.sizeBytes,
-                                progressPercent = 100,
-                                completedAt = System.currentTimeMillis(),
-                            )
-                        )
+                        LocalModelManager.updateDownloadTask(LocalModelDownloadTask(
+                            modelId = entry.id, displayName = entry.name, sourceUrl = entry.downloadUrl,
+                            destinationPath = destination.absolutePath, state = "completed",
+                            downloadedBytes = entry.sizeBytes, totalBytes = entry.sizeBytes,
+                            progressPercent = 100, completedAt = System.currentTimeMillis(),
+                        ))
                     }
                     .onFailure {
-                        LocalModelManager.updateDownloadTask(
-                            LocalModelDownloadTask(
-                                modelId = entry.id,
-                                displayName = entry.name,
-                                sourceUrl = entry.downloadUrl,
-                                destinationPath = destination.absolutePath,
-                                state = "failed",
-                                errorMessage = it.message,
-                            )
-                        )
+                        LocalModelManager.updateDownloadTask(LocalModelDownloadTask(
+                            modelId = entry.id, displayName = entry.name, sourceUrl = entry.downloadUrl,
+                            destinationPath = destination.absolutePath, state = "failed", errorMessage = it.message,
+                        ))
                     }
             } else if (kotlin.coroutines.coroutineContext[Job]?.isCancelled == true) {
-                LocalModelManager.updateDownloadTask(
-                    LocalModelDownloadTask(
-                        modelId = entry.id,
-                        displayName = entry.name,
-                        sourceUrl = entry.downloadUrl,
-                        destinationPath = destination.absolutePath,
-                        state = "paused",
-                        downloadedBytes = destination.resolveSibling(destination.name + ".part").length(),
-                        totalBytes = entry.sizeBytes,
-                    )
-                )
+                LocalModelManager.updateDownloadTask(LocalModelDownloadTask(
+                    modelId = entry.id, displayName = entry.name, sourceUrl = entry.downloadUrl,
+                    destinationPath = destination.absolutePath, state = "paused",
+                    downloadedBytes = destination.resolveSibling(destination.name + ".part").length(),
+                    totalBytes = entry.sizeBytes,
+                ))
             } else {
-                LocalModelManager.updateDownloadTask(
-                    LocalModelDownloadTask(
-                        modelId = entry.id,
-                        displayName = entry.name,
-                        sourceUrl = entry.downloadUrl,
-                        destinationPath = destination.absolutePath,
-                        state = "failed",
-                        errorMessage = "Download failed or checksum verification failed",
-                    )
-                )
+                LocalModelManager.updateDownloadTask(LocalModelDownloadTask(
+                    modelId = entry.id, displayName = entry.name, sourceUrl = entry.downloadUrl,
+                    destinationPath = destination.absolutePath, state = "failed",
+                    errorMessage = "Download failed or checksum verification failed",
+                ))
             }
         }
         result.success(true)
     }
 
     private fun pauseDownload(call: MethodCall, result: MethodChannel.Result) {
-        val modelId = call.argument<String>("modelId")?.trim().orEmpty()
-        jobs.remove(modelId)?.cancel()
+        jobs.remove(call.argument<String>("modelId")?.trim().orEmpty())?.cancel()
         result.success(true)
     }
 
     private fun cancelDownload(call: MethodCall, result: MethodChannel.Result) {
         val modelId = call.argument<String>("modelId")?.trim().orEmpty()
         jobs.remove(modelId)?.cancel()
-        val entry = LocalModelCatalog.find(modelId)
-        if (entry != null) downloader.cancelDownload(LocalModelManager.getModelPath(modelId).absolutePath)
+        if (LocalModelCatalog.find(modelId) != null) downloader.cancelDownload(LocalModelManager.getModelPath(modelId).absolutePath)
         LocalModelManager.removeDownloadTask(modelId)
         result.success(true)
     }
@@ -204,8 +162,7 @@ class LocalModelChannel {
     private fun selectModel(call: MethodCall, result: MethodChannel.Result) {
         val modelId = call.argument<String>("modelId")?.trim().orEmpty()
         if (LocalModelManager.getLocalModel(modelId) == null) {
-            result.error("MODEL_NOT_INSTALLED", "Model is not installed", null)
-            return
+            result.error("MODEL_NOT_INSTALLED", "Model is not installed", null); return
         }
         LocalModelManager.setSelectedModelId(modelId)
         result.success(modelId)
@@ -214,38 +171,22 @@ class LocalModelChannel {
     private fun loadModel(call: MethodCall, result: MethodChannel.Result) {
         val modelId = call.argument<String>("modelId")?.trim().orEmpty()
         val entry = LocalModelCatalog.find(modelId)
-        if (entry == null || !LocalModelManager.canLoadModel(modelId)) {
-            result.error(
-                "MODEL_NOT_COMPATIBLE",
-                "The model is missing, invalid, or this device has insufficient available memory.",
-                null,
-            )
-            return
+        val model = LocalModelManager.getLocalModel(modelId)
+        if (entry == null || model == null || !LocalModelManager.canLoadModel(modelId)) {
+            result.error("MODEL_NOT_COMPATIBLE", "The model is missing, invalid, or this device has insufficient available memory.", null); return
         }
-        scope.launch {
-            val loaded = LocalInferenceEngine.loadModel(LocalModelManager.getLocalModel(modelId)!!.modelPath, entry.contextLength)
-            result.success(loaded)
-        }
+        scope.launch { result.success(LocalInferenceEngine.loadModel(model.modelPath, entry.contextLength)) }
     }
 
     private fun unloadModel(result: MethodChannel.Result) {
-        scope.launch {
-            LocalInferenceEngine.unloadModel()
-            result.success(true)
-        }
+        scope.launch { LocalInferenceEngine.unloadModel(); result.success(true) }
     }
 
     private fun generate(call: MethodCall, result: MethodChannel.Result) {
         val rawMessages = call.argument<List<Map<String, Any?>>>("messages").orEmpty()
-        val messages = rawMessages.map {
-            LocalInferenceEngine.Message(
-                role = it["role"]?.toString() ?: "user",
-                content = it["content"]?.toString() ?: "",
-            )
-        }
+        val messages = rawMessages.map { LocalInferenceEngine.Message(it["role"]?.toString() ?: "user", it["content"]?.toString() ?: "") }
         scope.launch {
-            val output = StringBuilder()
-            var error: String? = null
+            val output = StringBuilder(); var error: String? = null
             LocalInferenceEngine.generate(
                 messages = messages,
                 maxTokens = call.argument<Int>("maxTokens") ?: 512,
@@ -258,55 +199,29 @@ class LocalModelChannel {
                     else -> Unit
                 }
             }
-            if (error != null) result.error("INFERENCE_ERROR", error, null)
-            else result.success(output.toString())
+            if (error != null) result.error("INFERENCE_ERROR", error, null) else result.success(output.toString())
         }
     }
 
-    private fun currentMode(): String =
-        MMKV.defaultMMKV()?.decodeString(MODE_KEY, "automatic") ?: "automatic"
-
     private fun LocalModelCatalogEntry.toMap(): Map<String, Any> = mapOf(
-        "id" to id,
-        "name" to name,
-        "description" to description,
-        "format" to format,
-        "quantization" to quantization,
-        "sizeBytes" to sizeBytes,
-        "contextLength" to contextLength,
-        "capabilities" to capabilities,
-        "downloadUrl" to downloadUrl,
-        "sha256" to sha256,
-        "license" to license,
-        "sourceUrl" to sourceUrl,
-        "minRamBytes" to minRamBytes,
-        "recommendedRamBytes" to recommendedRamBytes,
-        "parameterCount" to parameterCount,
+        "id" to id, "name" to name, "description" to description, "format" to format,
+        "quantization" to quantization, "sizeBytes" to sizeBytes, "contextLength" to contextLength,
+        "capabilities" to capabilities, "downloadUrl" to downloadUrl, "sha256" to sha256,
+        "license" to license, "sourceUrl" to sourceUrl, "minRamBytes" to minRamBytes,
+        "recommendedRamBytes" to recommendedRamBytes, "parameterCount" to parameterCount,
     )
 
     private fun cn.com.omnimind.baselib.llm.LocalModel.toMap(): Map<String, Any?> = mapOf(
-        "id" to id,
-        "displayName" to displayName,
-        "modelPath" to modelPath,
-        "fileSize" to fileSize,
-        "format" to format,
-        "quantization" to quantization,
-        "contextWindow" to contextWindow,
-        "downloadedAt" to downloadedAt,
-        "checksumSha256" to checksumSha256,
-        "isValid" to isValid,
+        "id" to id, "displayName" to displayName, "modelPath" to modelPath, "fileSize" to fileSize,
+        "format" to format, "quantization" to quantization, "contextWindow" to contextWindow,
+        "downloadedAt" to downloadedAt, "checksumSha256" to checksumSha256, "isValid" to isValid,
     )
 
     private fun LocalModelDownloadTask.toMap(): Map<String, Any?> = mapOf(
-        "modelId" to modelId,
-        "displayName" to displayName,
-        "state" to state,
-        "downloadedBytes" to downloadedBytes,
-        "totalBytes" to totalBytes,
-        "progressPercent" to progressPercent,
-        "startedAt" to startedAt,
-        "completedAt" to completedAt,
-        "errorMessage" to errorMessage,
+        "modelId" to modelId, "displayName" to displayName, "state" to state,
+        "downloadedBytes" to downloadedBytes, "totalBytes" to totalBytes,
+        "progressPercent" to progressPercent, "startedAt" to startedAt,
+        "completedAt" to completedAt, "errorMessage" to errorMessage,
     )
 
     fun clear() {
