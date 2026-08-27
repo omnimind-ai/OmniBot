@@ -3,114 +3,84 @@ package cn.com.omnimind.baselib.llm
 import com.google.gson.annotations.SerializedName
 import java.io.File
 
-/**
- * Represents a locally downloaded model available for offline inference.
- * Supports GGUF format via llama.cpp and other quantized formats.
- */
 data class LocalModel(
     val id: String,
     val displayName: String,
-    val modelPath: String,  // File path or URI to the model file
-    val fileSize: Long,     // Size in bytes
-    val format: String,     // "gguf", "safetensors", "pytorch", etc.
-    val quantization: String? = null,  // "Q4_K_M", "Q5_K_M", "FP16", etc.
-    val contextWindow: Int? = null,    // Maximum context length
+    val modelPath: String,
+    val fileSize: Long,
+    val format: String,
+    val quantization: String? = null,
+    val contextWindow: Int? = null,
     val downloadedAt: Long = System.currentTimeMillis(),
-    val checksumSha256: String? = null,  // For integrity verification
+    val checksumSha256: String? = null,
     val isValid: Boolean = true,
-    val errorMessage: String? = null
+    val errorMessage: String? = null,
 )
 
-/**
- * Represents the download state of a local model.
- */
 data class LocalModelDownloadTask(
     val modelId: String,
     val displayName: String,
     val sourceUrl: String,
     val destinationPath: String,
     @SerializedName("state")
-    val state: String,  // "pending", "downloading", "completed", "failed", "paused"
+    val state: String,
     val downloadedBytes: Long = 0L,
     val totalBytes: Long = 0L,
     val progressPercent: Int = 0,
     val startedAt: Long = System.currentTimeMillis(),
     val completedAt: Long? = null,
     val errorMessage: String? = null,
-    val retryCount: Int = 0
+    val retryCount: Int = 0,
 )
 
-/**
- * Local model provider for on-device inference.
- * Manages GGUF models and other quantized formats via llama.cpp.
- */
+/** Provider metadata for the built-in on-device GGUF runtime. */
 object LocalModelProvider {
     const val SOURCE_TYPE = "local"
     const val OFFICIAL_PROFILE_ID = "local-models"
     const val OFFICIAL_PROFILE_NAME = "Local Models"
-    
-    // Supported model formats and their capabilities
+
     object SupportedFormats {
         const val GGUF = "gguf"
-        const val SAFETENSORS = "safetensors"
-        const val PYTORCH = "pytorch"
     }
-    
-    // Common quantization levels
+
     object QuantizationLevels {
-        const val Q4_K_M = "Q4_K_M"   // 4-bit, recommended for 7B models
-        const val Q5_K_M = "Q5_K_M"   // 5-bit, recommended for 13B models
-        const val Q6_K = "Q6_K"       // 6-bit
-        const val FP16 = "FP16"       // Full precision
+        const val Q4_K_M = "Q4_K_M"
+        const val Q5_K_M = "Q5_K_M"
+        const val Q6_K = "Q6_K"
+        const val Q8_0 = "Q8_0"
+        const val FP16 = "FP16"
     }
-    
-    /**
-     * Creates a local model provider profile that will be used for
-     * all local inference requests.
-     */
+
     fun createLocalProfile(): ModelProviderProfile {
         return ModelProviderProfile(
             id = OFFICIAL_PROFILE_ID,
             name = OFFICIAL_PROFILE_NAME,
-            baseUrl = "local://inference",  // Special protocol for local inference
+            baseUrl = "local://inference",
             sourceType = SOURCE_TYPE,
-            readOnly = true,  // User cannot modify local provider settings
+            readOnly = true,
             ready = true,
-            statusText = "Local models ready",
+            statusText = "On-device GGUF inference",
             protocolType = "local_inference",
-            wireApi = "local_completion"
+            wireApi = "local_completion",
         )
     }
-    
-    /**
-     * Validates whether a model file is in a supported format.
-     */
-    fun isValidModelFormat(filePath: String): Boolean {
-        val extension = filePath.substringAfterLast(".").lowercase()
-        return extension in setOf("gguf", "safetensors", "pt", "pth", "bin")
+
+    fun isValidModelFormat(filePath: String): Boolean =
+        filePath.substringAfterLast('.', "").equals(GGUF_EXTENSION, ignoreCase = true)
+
+    fun validateModelFile(filePath: String): Boolean = try {
+        val file = File(filePath)
+        file.exists() && file.isFile && file.canRead() && isValidModelFormat(filePath)
+    } catch (_: Exception) {
+        false
     }
-    
-    /**
-     * Validates whether a model file exists and is readable.
-     */
-    fun validateModelFile(filePath: String): Boolean {
-        return try {
-            val file = File(filePath)
-            file.exists() && file.isFile && file.canRead()
-        } catch (_: Exception) {
-            false
-        }
+
+    fun recommendedQuantization(modelSize: String): String = when (modelSize.lowercase()) {
+        "7b", "7b-chat" -> QuantizationLevels.Q4_K_M
+        "13b", "13b-chat" -> QuantizationLevels.Q5_K_M
+        "70b", "70b-chat" -> QuantizationLevels.Q6_K
+        else -> QuantizationLevels.Q4_K_M
     }
-    
-    /**
-     * Determines supported quantization for a given model size.
-     */
-    fun recommendedQuantization(modelSize: String): String {
-        return when (modelSize.lowercase()) {
-            "7b", "7b-chat" -> QuantizationLevels.Q4_K_M
-            "13b", "13b-chat" -> QuantizationLevels.Q5_K_M
-            "70b", "70b-chat" -> QuantizationLevels.Q6_K
-            else -> QuantizationLevels.Q5_K_M  // Default
-        }
-    }
+
+    private const val GGUF_EXTENSION = "gguf"
 }
