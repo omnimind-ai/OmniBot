@@ -29,7 +29,6 @@ class ChannelManager {
     private var pluginPlatformChannel: PluginPlatformChannel = PluginPlatformChannel()
     private var omniLinkPluginChannel: OmniLinkPluginChannel = OmniLinkPluginChannel()
     private var accountChannel: AccountChannel = AccountChannel()
-    private var localModelChannel: LocalModelChannel = LocalModelChannel()
 
     fun getUIRouterChannel(): UIRouterChannel = uiRouterChannel
     fun getAssistsCoreChannel(): AssistsCoreChannel = assistsCoreChannel
@@ -57,7 +56,6 @@ class ChannelManager {
         pluginPlatformChannel.setChannel(flutterEngine)
         omniLinkPluginChannel.setChannel(flutterEngine)
         accountChannel.setChannel(flutterEngine)
-        localModelChannel.setChannel(flutterEngine)
     }
 
     fun onCreate(context: Context) {
@@ -77,7 +75,6 @@ class ChannelManager {
         agentRuntimeChannel.onCreate(context)
         pluginPlatformChannel.onCreate(context)
         omniLinkPluginChannel.onCreate(context)
-        localModelChannel.onCreate(context)
     }
 
     fun clearChannel() {
@@ -103,6 +100,5 @@ class ChannelManager {
         pluginPlatformChannel.clear()
         omniLinkPluginChannel.clear()
         accountChannel.clear()
-        localModelChannel.clear()
     }
 }
