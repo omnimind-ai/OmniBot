@@ -4,6 +4,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.awaitClose
 import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -80,8 +81,8 @@ object LocalInferenceEngine {
             }
         }
 
-        try {
-            withContext(Dispatchers.Default) {
+        val generationJob = launch(Dispatchers.Default) {
+            try {
                 when (
                     LocalInferenceEngineNative.nativeGenerate(
                         callback = callback,
@@ -96,15 +97,17 @@ object LocalInferenceEngine {
                     2 -> trySend(Event.Cancelled)
                     else -> Unit
                 }
+            } finally {
+                generating.set(false)
+                close()
             }
-        } finally {
-            generating.set(false)
         }
 
         awaitClose {
             if (generating.get()) {
                 LocalInferenceEngineNative.nativeCancel()
             }
+            generationJob.cancel()
         }
     }
 
