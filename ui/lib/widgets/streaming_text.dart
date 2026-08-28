@@ -263,12 +263,27 @@ class _StreamingTextState extends State<StreamingText> {
   // markdownRenderedLength 为 null 时（flush 完成/流结束）走全量 markdown 渲染，不做动画。
   // markdownRenderedLength 为 0 时（首批 chunk 未 flush）全文走尾部透出，确保首字起流式。
   Widget _buildMarkdownContent() {
+    final renderText = normalizeOmnibotMarkdown(widget.fullText);
+    // A malformed provider snapshot can change length and line structure when
+    // repaired.  Do not apply raw-text markdown offsets to the repaired text:
+    // render one coherent snapshot so headings/tables never leak their source
+    // markers or get split at an invalid UTF-16 offset.
+    if (renderText != widget.fullText) {
+      _notifyDisplayedTextChanged(renderText.length);
+      return _wrapSelectable(
+        OmnibotMarkdownBody(
+          data: renderText,
+          baseStyle: widget.style,
+          inlineResourcePlainStyle: true,
+          onResourceOpen: widget.onResourceOpen,
+          trailingInline: widget.trailing,
+        ),
+      );
+    }
     final mdLen = widget.markdownRenderedLength;
-    final containsTable = omnibotMarkdownContainsTableCandidate(
-      widget.fullText,
-    );
+    final containsTable = omnibotMarkdownContainsTableCandidate(renderText);
     final streamingTableBlock = !widget.isFinal && containsTable
-        ? omnibotMarkdownTrailingTableBlock(widget.fullText)
+        ? omnibotMarkdownTrailingTableBlock(renderText)
         : null;
     if (streamingTableBlock != null) {
       return _buildMarkdownWithStreamingTableBlock(streamingTableBlock);
@@ -278,7 +293,8 @@ class _StreamingTextState extends State<StreamingText> {
     // and made the whole paragraph reflow vertically. Simple bold prose takes
     // the stable RichText path above; other Markdown renders as one coherent
     // snapshot instead of mixing block and inline layout systems.
-    if (containsTable &&
+    if (!widget.isFinal &&
+        containsTable &&
         mdLen != null &&
         mdLen >= 0 &&
         mdLen < widget.fullText.length) {
@@ -286,8 +302,8 @@ class _StreamingTextState extends State<StreamingText> {
     }
     _notifyDisplayedTextChanged(widget.fullText.length);
     final visibleText = containsTable
-        ? omnibotMarkdownWithoutTrailingTableCandidate(widget.fullText)
-        : widget.fullText;
+        ? omnibotMarkdownWithoutTrailingTableCandidate(renderText)
+        : renderText;
     return _wrapSelectable(
       OmnibotMarkdownBody(
         data: visibleText,
@@ -563,6 +579,7 @@ class _StreamingTextState extends State<StreamingText> {
 /// on the Markdown renderer while ordinary prose stays in one Text layout.
 bool omnibotTextRequiresStructuredMarkdown(String source) {
   if (source.isEmpty) return false;
+  source = normalizeOmnibotMarkdown(source);
   if (source.contains('omnibot://') ||
       source.contains('```') ||
       source.contains('~~~') ||
@@ -595,6 +612,7 @@ bool omnibotTextCanUseStableBoldStreaming(
   String source, {
   bool allowUnclosed = true,
 }) {
+  source = normalizeOmnibotMarkdown(source);
   final hasBold = source.contains('**') || source.contains('__');
   if (!hasBold || source.contains('***') || source.contains('___')) {
     return false;

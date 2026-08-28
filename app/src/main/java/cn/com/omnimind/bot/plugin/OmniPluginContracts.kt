@@ -24,6 +24,8 @@ data class OmniPluginDescriptor(
     val downloadSizeBytes: Long = 0,
     val capabilities: List<String> = emptyList(),
     val required: Boolean = false,
+    /** Install the runtime on first startup, without enabling its tools. */
+    val installByDefault: Boolean = false,
     val settingsSchema: JsonObject = JsonObject(emptyMap()),
     val presentation: JsonObject = JsonObject(emptyMap())
 )

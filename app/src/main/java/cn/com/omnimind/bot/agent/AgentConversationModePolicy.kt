@@ -5,8 +5,66 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
 object AgentConversationModePolicy {
+    /** Canonical durable mode for the shared Agent/ACP conversation surface. */
+    const val AGENT_MODE = "agent"
     const val NORMAL_MODE = "normal"
     const val SUBAGENT_MODE = "subagent"
+    const val CHAT_ONLY_MODE = "chat_only"
+
+    internal data class HarnessResolution(
+        val agentId: String,
+        val requestedAgentId: String?,
+        val conflictWithAgentId: String? = null,
+    ) {
+        val hasConflict: Boolean
+            get() = conflictWithAgentId != null
+    }
+
+    internal fun resolveHarness(
+        conversationMode: String?,
+        requestedAgentId: String?,
+        conversationAgentId: String?,
+        sessionAgentId: String?,
+        selectedAgentId: String?,
+        xiaowanAgentId: String,
+    ): HarnessResolution {
+        val normalizedRequested = requestedAgentId.normalizedAgentId()
+        val normalizedConversation = conversationAgentId.normalizedAgentId()
+        val normalizedSession = sessionAgentId.normalizedAgentId()
+        val normalizedSelected = selectedAgentId.normalizedAgentId()
+        val normalizedXiaowan = xiaowanAgentId.normalizedAgentId()
+            ?: xiaowanAgentId
+
+        if (isNormalMode(conversationMode) || isChatOnlyMode(conversationMode)) {
+            return HarnessResolution(
+                agentId = normalizedXiaowan,
+                requestedAgentId = normalizedRequested,
+                conflictWithAgentId = normalizedRequested
+                    ?.takeUnless { it == normalizedXiaowan },
+            )
+        }
+
+        val persistedOwner = normalizedConversation ?: normalizedSession
+        val resolvedAgent = persistedOwner ?: normalizedRequested
+            ?: normalizedSelected ?: normalizedXiaowan
+        return HarnessResolution(
+            agentId = resolvedAgent,
+            requestedAgentId = normalizedRequested,
+            conflictWithAgentId = if (
+                persistedOwner != null &&
+                normalizedRequested != null &&
+                persistedOwner != normalizedRequested
+            ) {
+                persistedOwner
+            } else {
+                null
+            },
+        )
+    }
+
+    fun isNormalMode(conversationMode: String?): Boolean {
+        return conversationMode?.trim()?.equals(NORMAL_MODE, ignoreCase = true) == true
+    }
 
     private val subagentRestrictedToolNames = setOf(
         "schedule_task_create",
@@ -31,10 +89,17 @@ object AgentConversationModePolicy {
         return conversationMode?.trim()?.equals(SUBAGENT_MODE, ignoreCase = true) == true
     }
 
+    fun isChatOnlyMode(conversationMode: String?): Boolean {
+        return conversationMode?.trim()?.equals(CHAT_ONLY_MODE, ignoreCase = true) == true
+    }
+
     fun isToolRestrictedInConversationMode(
         toolName: String,
         conversationMode: String?
     ): Boolean {
+        if (isChatOnlyMode(conversationMode)) {
+            return true
+        }
         if (!isSubagentMode(conversationMode)) {
             return false
         }
@@ -42,7 +107,12 @@ object AgentConversationModePolicy {
     }
 
     fun restrictedToolNamesForConversationMode(conversationMode: String?): Set<String> {
-        return if (isSubagentMode(conversationMode)) {
+        return if (isChatOnlyMode(conversationMode)) {
+            // chat_only is handled as a deny-all policy by the definition
+            // filter below; this set remains useful to callers that ask
+            // whether an individual known tool is restricted.
+            emptySet()
+        } else if (isSubagentMode(conversationMode)) {
             subagentRestrictedToolNames
         } else {
             emptySet()
@@ -53,6 +123,9 @@ object AgentConversationModePolicy {
         definitions: List<JsonObject>,
         conversationMode: String?
     ): List<JsonObject> {
+        if (isChatOnlyMode(conversationMode)) {
+            return emptyList()
+        }
         val restricted = restrictedToolNamesForConversationMode(conversationMode)
         if (restricted.isEmpty()) {
             return definitions
@@ -67,4 +140,8 @@ object AgentConversationModePolicy {
             restricted.contains(toolName)
         }
     }
+}
+
+private fun String?.normalizedAgentId(): String? {
+    return this?.trim()?.takeIf { it.isNotEmpty() }
 }

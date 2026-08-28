@@ -8,31 +8,45 @@ object SceneModelCatalogResolver {
         val bindings = SceneModelBindingStore.getBindingMap()
         return ModelSceneRegistry.listRuntimeProfiles()
             .map { profile ->
-                val binding = bindings[profile.sceneId]
-                val boundProfile = binding?.providerProfileId?.let(profilesById::get)
-                val bindingApplied = binding != null && boundProfile?.isConfigured() == true
-                val bindingProfileMissing = binding != null && boundProfile == null
+                val directBinding = bindings[profile.sceneId]
+                val effectiveBinding = directBinding ?: inheritedBinding(profile, bindings)
+                val boundProfile = effectiveBinding?.providerProfileId?.let(profilesById::get)
+                val bindingApplied = effectiveBinding != null && boundProfile?.isConfigured() == true
+                val bindingProfileMissing = directBinding != null && boundProfile == null
                 SceneCatalogItem(
                     sceneId = profile.sceneId,
                     description = profile.description,
                     defaultModel = profile.model,
-                    effectiveModel = if (bindingApplied) binding.modelId else profile.model,
-                    effectiveProviderProfileId = if (bindingApplied) boundProfile?.id else null,
-                    effectiveProviderProfileName = if (bindingApplied) boundProfile?.name else null,
-                    boundProviderProfileId = binding?.providerProfileId,
-                    boundProviderProfileName = boundProfile?.name,
+                    effectiveModel = if (bindingApplied) effectiveBinding.modelId else profile.model,
+                    effectiveProviderProfileId = if (bindingApplied) boundProfile.id else null,
+                    effectiveProviderProfileName = if (bindingApplied) boundProfile.name else null,
+                    boundProviderProfileId = directBinding?.providerProfileId,
+                    boundProviderProfileName = directBinding?.providerProfileId?.let(profilesById::get)?.name,
                     transport = if (bindingApplied) {
                         ModelSceneRegistry.SceneTransport.OPENAI_COMPATIBLE.wireValue
                     } else {
                         profile.transport.wireValue
                     },
                     configSource = profile.configSource.wireValue,
-                    overrideApplied = bindingApplied,
-                    overrideModel = binding?.modelId,
+                    overrideApplied = directBinding != null && bindingApplied,
+                    overrideModel = directBinding?.modelId,
                     providerConfigured = boundProfile?.isConfigured() == true,
-                    bindingExists = binding != null,
+                    bindingExists = directBinding != null,
                     bindingProfileMissing = bindingProfileMissing
                 )
             }
+    }
+
+    private fun inheritedBinding(
+        profile: ModelSceneRegistry.SceneRuntimeProfile,
+        bindings: Map<String, SceneModelBindingEntry>
+    ): SceneModelBindingEntry? {
+        val visited = mutableSetOf<String>()
+        var parentId = profile.inheritsModelFrom
+        while (parentId != null && visited.add(parentId)) {
+            bindings[parentId]?.let { return it }
+            parentId = ModelSceneRegistry.getRuntimeProfile(parentId)?.inheritsModelFrom
+        }
+        return null
     }
 }

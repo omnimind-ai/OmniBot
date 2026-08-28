@@ -203,6 +203,11 @@ class _AgentRunGroupMessageState extends State<AgentRunGroupMessage>
               segment.messages,
               firstThinkingMessageId,
             )
+          else if (isAgentPlanMessage(segment.message))
+            // ACP plans are mutable state snapshots. Do not put them behind
+            // the completed-run fold; the same card id is refreshed for each
+            // plan_update and remains visible as the current plan.
+            _buildPersistentPlanSection(segment.message)
           else if (segment.message.id != primaryVisibleMessageId)
             _buildAnimatedHistoricalTextSection(segment.message)
           else
@@ -245,6 +250,16 @@ class _AgentRunGroupMessageState extends State<AgentRunGroupMessage>
         key: ValueKey('agent-run-history-${widget.group.taskId}-${message.id}'),
         child: _buildVisibleMessageBubble(message, forceTextFinal: true),
       ),
+    );
+  }
+
+  Widget _buildPersistentPlanSection(ChatMessageModel message) {
+    return Padding(
+      key: ValueKey(
+        'agent-plan-persistent-${widget.group.taskId}-${message.id}',
+      ),
+      padding: const EdgeInsets.only(top: 2, bottom: 6),
+      child: _buildVisibleMessageBubble(message, forceTextFinal: true),
     );
   }
 
@@ -382,7 +397,8 @@ class _AgentRunGroupMessageState extends State<AgentRunGroupMessage>
       // transition. Running the thinking card's 170 ms height/opacity collapse
       // at the same time multiplies both animations and looks like a flash.
       // A manually re-opened finished run still initializes each completed
-      // thinking card in its normal collapsed state.
+      // thinking card in its compact collapsed state. Users can expand only
+      // the reasoning segment they want to inspect.
       thinkingAutoCollapseOnComplete: widget.group.isRunning || widget.expanded,
       useAgentToolPresentation: widget.useAcpPresentation,
       showThinkingAvatarOverride: hideAvatar ? false : null,
@@ -700,6 +716,7 @@ class _LegacyAgentRunSummaryHeader extends StatelessWidget {
 String _agentRunElapsedLabel(AgentRunTimelineGroup group) {
   int? earliestMs;
   int? latestMs;
+  int? earliestContentMs;
   void visit(Iterable<ChatMessageModel> messages) {
     for (final message in messages) {
       final ms = message.createAt.millisecondsSinceEpoch;
@@ -712,11 +729,23 @@ String _agentRunElapsedLabel(AgentRunTimelineGroup group) {
       if (latestMs == null || ms > latestMs!) {
         latestMs = ms;
       }
+      // A persisted tool card can carry an old createdAt when a provider
+      // reuses its call id on a later turn. Text and reasoning entries are
+      // turn-owned anchors; prefer them as the start boundary so one stale
+      // tool timestamp cannot inflate the visible Xiaowan duration.
+      if (_cardTypeForElapsed(message) != 'agent_tool_summary' &&
+          (earliestContentMs == null || ms < earliestContentMs!)) {
+        earliestContentMs = ms;
+      }
     }
   }
 
   visit(group.allMessagesOldestFirst);
   if (earliestMs == null || latestMs == null || latestMs! <= earliestMs!) {
+    return '';
+  }
+  earliestMs = earliestContentMs ?? earliestMs;
+  if (latestMs! <= earliestMs!) {
     return '';
   }
   final elapsedSec = ((latestMs! - earliestMs!) / 1000).round();
@@ -740,4 +769,8 @@ String _agentRunElapsedLabel(AgentRunTimelineGroup group) {
     return '${hours}h';
   }
   return '${hours}h ${remainingMinutes}m';
+}
+
+String _cardTypeForElapsed(ChatMessageModel message) {
+  return (message.cardData?['type'] ?? '').toString().trim();
 }

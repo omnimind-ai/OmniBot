@@ -131,7 +131,7 @@ class _AgentSessionsPageState extends State<AgentSessionsPage> {
       }
       String? cursor;
       for (var page = 0; page < 8; page++) {
-        final payload = await AgentRuntimeService.listThreads(
+        final payload = await AgentRuntimeService.listSessions(
           limit: 100,
           cursor: cursor,
         );
@@ -185,7 +185,7 @@ class _AgentSessionsPageState extends State<AgentSessionsPage> {
 
   Future<Map<String, dynamic>?> _listLoadedThreadsIfSupported() async {
     try {
-      return await AgentRuntimeService.listLoadedThreads();
+      return await AgentRuntimeService.listLoadedSessions();
     } catch (error) {
       debugPrint('Codex loaded thread list unavailable: $error');
       return null;
@@ -213,8 +213,9 @@ class _AgentSessionsPageState extends State<AgentSessionsPage> {
         );
         return;
       }
-      final response = await AgentRuntimeService.resumeThread(
-        threadId: session.threadId,
+      final response = await AgentRuntimeService.loadSession(
+        sessionId: session.threadId,
+        conversationMode: ConversationMode.agent.storageValue,
       );
       final conversationId = _intValue(response['conversationId']);
       if (conversationId == null) {
@@ -261,7 +262,7 @@ class _AgentSessionsPageState extends State<AgentSessionsPage> {
         status = await AgentRuntimeService.connect();
       }
       final cwd = _workspacePathForStatus(status);
-      final response = await AgentRuntimeService.startThread(
+      final response = await AgentRuntimeService.newSession(
         cwd: cwd.isEmpty ? null : cwd,
       );
       final threadId = _threadIdFromResponse(response);
@@ -603,8 +604,8 @@ class _AgentSessionsPageState extends State<AgentSessionsPage> {
       return;
     }
     try {
-      await AgentRuntimeService.setThreadName(
-        threadId: session.threadId,
+      await AgentRuntimeService.setSessionName(
+        sessionId: session.threadId,
         name: nextName,
       );
       if (!mounted) return;
@@ -637,9 +638,9 @@ class _AgentSessionsPageState extends State<AgentSessionsPage> {
   }) async {
     try {
       if (archived) {
-        await AgentRuntimeService.archiveThread(threadId: session.threadId);
+        await AgentRuntimeService.archiveSession(sessionId: session.threadId);
       } else {
-        await AgentRuntimeService.unarchiveThread(threadId: session.threadId);
+        await AgentRuntimeService.unarchiveSession(sessionId: session.threadId);
       }
       if (!mounted) return;
       setState(() {

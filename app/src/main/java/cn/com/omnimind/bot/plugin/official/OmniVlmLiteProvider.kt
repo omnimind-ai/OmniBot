@@ -2,8 +2,8 @@ package cn.com.omnimind.bot.plugin.official
 
 import android.content.Context
 import cn.com.omnimind.bot.BuildConfig
-import cn.com.omnimind.bot.mcp.McpServerManager
 import cn.com.omnimind.bot.omniflow.OmniFlowAppPlatform
+import cn.com.omnimind.bot.omniflow.OmniFlow
 import cn.com.omnimind.bot.omniflow.OmniFlowPluginRuntime
 import cn.com.omnimind.bot.omniflow.OmniFlowRuntimeProvider
 import cn.com.omnimind.bot.plugin.OmniPlugin
@@ -33,7 +33,15 @@ class OmniVlmLiteProvider(
         OmniFlowPluginRuntime.install(platform, runtimeProvider)
         when (mode) {
             RuntimeBundlePrepareMode.INSTALL -> runtimeProvider.install(appContext, platform)
-            RuntimeBundlePrepareMode.UPDATE -> runtimeProvider.update(appContext, platform)
+            RuntimeBundlePrepareMode.UPDATE -> {
+                // The component directory is replaced atomically, but the
+                // resident Python bridge is a long-lived process.  Stop it
+                // before switching the runtime files so an update cannot
+                // continue executing modules/checkpoints from the previous
+                // OmniFlow/OmniTransfer bundle.
+                OmniFlow.shutdown()
+                runtimeProvider.update(appContext, platform)
+            }
         }
     }
 
@@ -57,7 +65,11 @@ class OmniVlmLiteProvider(
 
             override suspend fun onEnable() {
                 OmniFlowPluginRuntime.enable(appContext)
-                McpServerManager.setEnabled(appContext, true)
+                // MCP is started lazily by the official ACP adapter or by the
+                // local-service settings page.  Starting a Ktor socket while
+                // the application is restoring plugins can race a previous
+                // process and take down the whole Android process on bind
+                // failure.
             }
 
             override suspend fun onDisable() {

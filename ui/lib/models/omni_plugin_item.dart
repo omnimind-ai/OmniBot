@@ -37,13 +37,6 @@ class OmniPluginItem {
 
   bool get hidden => presentation['visibility'] == 'hidden';
 
-  Map<String, dynamic> get dashboardAction {
-    final value = presentation['dashboard'];
-    return value is Map
-        ? Map<String, dynamic>.from(value)
-        : const <String, dynamic>{};
-  }
-
   factory OmniPluginItem.fromMap(Map<dynamic, dynamic> raw) {
     return OmniPluginItem(
       id: (raw['id'] ?? '').toString(),

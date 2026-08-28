@@ -18,6 +18,22 @@
             </intent-filter>
         </receiver>
         <receiver
+            android:name=".debug.DebugOmniFlowObserveReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="cn.com.omnimind.bot.debug.OBSERVE_OMNIFLOW" />
+            </intent-filter>
+        </receiver>
+        <receiver
+            android:name=".debug.DebugOmniFlowControlReceiver"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="cn.com.omnimind.bot.debug.CONTROL_OMNIFLOW" />
+            </intent-filter>
+        </receiver>
+        <receiver
             android:name=".debug.DebugVlmTaskReceiver"
             android:enabled="true"
             android:exported="true">

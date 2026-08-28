@@ -25,4 +25,25 @@ void main() {
       findsNothing,
     );
   });
+
+  testWidgets('uses the active Harness name in the empty greeting', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        locale: Locale('zh'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: MediaQuery(
+            data: MediaQueryData(disableAnimations: true),
+            child: ChatEmptyGreeting(agentName: 'OpenCode'),
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('你好👋，我是OpenCode'), findsOneWidget);
+    expect(find.textContaining('我是小万'), findsNothing);
+  });
 }

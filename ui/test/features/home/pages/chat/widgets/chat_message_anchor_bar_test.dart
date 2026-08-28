@@ -22,7 +22,7 @@ void main() {
             messages: <ChatMessageModel>[
               ChatMessageModel.userMessage('需要突出显示的消息锚点', id: 'user-1'),
             ],
-            activeAgentTaskIds: const <String>{},
+            activeAgentTurnIds: const <String>{},
             conversationSignature: 'normal:1',
             bottomInset: 72,
             visible: true,
@@ -136,7 +136,7 @@ void main() {
         home: Scaffold(
           body: ChatMessageAnchorBar(
             messages: messages,
-            activeAgentTaskIds: const <String>{},
+            activeAgentTurnIds: const <String>{},
             conversationSignature: 'agent:1',
             bottomInset: 72,
             visible: true,
@@ -167,7 +167,7 @@ void main() {
             messages: <ChatMessageModel>[
               ChatMessageModel.assistantMessage('小万回答', id: 'xiaowan'),
             ],
-            activeAgentTaskIds: const <String>{},
+            activeAgentTurnIds: const <String>{},
             conversationSignature: 'normal:1',
             bottomInset: 72,
             visible: true,

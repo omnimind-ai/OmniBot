@@ -8,26 +8,20 @@ import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class OmniFlowPythonClientTest {
     @Test
-    fun `cold initialization has a dedicated startup timeout`() {
-        assertEquals(120_000L, OmniFlowPythonClient.INITIALIZE_TIMEOUT_MS)
-    }
-
-    @Test
-    fun `tool timeout follows tool call arguments`() {
-        assertEquals(
-            210_000L,
+    fun `tool calls have no default wall clock timeout`() {
+        assertNull(
             OmniFlowPythonClient.defaultTimeoutMs(
                 "tools/call",
                 mapOf("name" to "update_function"),
             ),
         )
-        assertEquals(
-            10 * 60_000L,
+        assertNull(
             OmniFlowPythonClient.defaultTimeoutMs(
                 "tools/call",
                 mapOf("name" to "run_gui"),
@@ -52,6 +46,7 @@ class OmniFlowPythonClientTest {
         assertTrue(command.contains("export OMNITRANSFER_ROOT="))
         assertTrue(command.contains("export OMNITRANSFER_MATCHER_CHECKPOINT="))
         assertTrue(command.contains("-m omniflow.bridge"))
+        assertFalse(command.contains("--catalog"))
         assertFalse(command.contains("/workspace/.venv"))
     }
 

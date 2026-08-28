@@ -52,7 +52,9 @@ class BotStatus extends StatelessWidget {
               ? const AgentAvatarButton(size: 30, showBorder: false)
               : null,
           text: LegacyTextLocalizer.localize('思考完成'),
-          timeDesc: LegacyTextLocalizer.localize('用时'),
+          timeDesc: costTime == null
+              ? null
+              : LegacyTextLocalizer.localize('用时'),
           costTime: costTime,
           shimmerText: false,
         );

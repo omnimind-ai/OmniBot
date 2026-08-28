@@ -38,7 +38,7 @@ class ChatPageModeState {
   bool isCheckingExecutableTask = false;
   String deepThinkingContent = '';
   bool isDeepThinking = false;
-  String? currentDispatchTaskId;
+  String? currentDispatchTurnId;
   int currentThinkingStage = 1;
   int? currentConversationId;
   ConversationModel? currentConversation;
@@ -58,7 +58,7 @@ class ChatPageModeState {
     currentAiMessages.clear();
     deepThinkingContent = '';
     isDeepThinking = false;
-    currentDispatchTaskId = null;
+    currentDispatchTurnId = null;
     currentThinkingStage = 1;
     currentConversationId = null;
     currentConversation = null;

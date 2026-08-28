@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/services.dart';
+import 'package:ui/features/home/pages/command_overlay/utils/error_message_formatter.dart';
+import 'package:ui/services/acp_capabilities.dart';
 
 enum CodexLoginType {
   chatgpt('chatgpt'),
@@ -58,6 +60,10 @@ class AgentRuntimeStatus {
   final String? activeAgentName;
   final Map<String, dynamic> capabilities;
 
+  /// Typed, forward-compatible view of the ACP capabilities advertised by
+  /// the active Harness. The original map remains available for extensions.
+  AcpCapabilities get acpCapabilities => AcpCapabilities.fromMap(capabilities);
+
   bool get canConnect => ready;
 
   factory AgentRuntimeStatus.fromMap(Map<dynamic, dynamic>? map) {
@@ -98,6 +104,62 @@ String agentModelSourceKey(AgentRuntimeStatus status) {
     return 'remote';
   }
   return 'local-${status.activeAgentId ?? 'agent'}';
+}
+
+bool isAgentCancellationSuccessful(Map<String, dynamic> response) {
+  return response['ok'] == true ||
+      response['cancelled'] == true ||
+      response['status'] == 'cancelled';
+}
+
+/// Converts an ACP boundary error into short, actionable UI text. Native
+/// errors carry a stable `failureKind` in PlatformException.details; use that
+/// instead of exposing adapter stack traces or waiting for a raw error string
+/// to render in the chat.
+String formatAgentRuntimeErrorForUser(Object? error) {
+  String? failureKind;
+  String? rawMessage;
+  if (error is PlatformException) {
+    rawMessage = error.message;
+    final details = error.details;
+    if (details is Map) {
+      failureKind = details['failureKind']?.toString().trim();
+    }
+  } else if (error != null) {
+    rawMessage = error.toString();
+  }
+
+  switch (failureKind) {
+    case 'provider_not_bound':
+      return '尚未绑定统一 Agent Provider / 模型，请在 Agent 设置中选择后重试。';
+    case 'provider_unavailable':
+      return '统一 Agent Provider 不可用或凭据不完整，请检查 Provider 配置。';
+    case 'provider_model_unavailable':
+      return '统一 Agent 模型当前不可用，请刷新模型列表后重新选择。';
+    case 'provider_tls_certificate_failure':
+      return 'Provider HTTPS 证书校验失败，请检查设备时间和证书链。';
+    case 'provider_tool_call_incomplete':
+      return 'Provider 返回了不完整的工具调用，缺少工具名称。已自动重试；请重试本轮，或检查 Provider 是否完整转发 tool_calls/function.name。';
+    case 'harness_preparation_in_progress':
+      return '另一个 Harness 正在安装或准备中，当前切换不会等待。请稍后重试，或先切换到已安装完成的 Harness。';
+  }
+
+  final normalizedRaw = rawMessage?.toLowerCase() ?? '';
+  if (normalizedRaw.contains('unknown variant namespace') &&
+      normalizedRaw.contains('tools')) {
+    return '当前 Responses Provider 不支持 Codex 的 MCP 工具格式。请重试；'
+        '如仍失败，请改用支持 namespace tools 的 Provider。';
+  }
+  if (normalizedRaw.contains('missing function.name') ||
+      normalizedRaw.contains('missing function name')) {
+    return 'Provider 返回了不完整的工具调用，缺少工具名称。请重试本轮，或检查 Provider 是否完整转发 tool_calls/function.name。';
+  }
+  if (normalizedRaw.contains('harness preparation is already running') ||
+      normalizedRaw.contains('harness preparation in progress')) {
+    return '另一个 Harness 正在安装或准备中，当前切换不会等待。请稍后重试，或先切换到已安装完成的 Harness。';
+  }
+
+  return formatErrorMessageForUser(rawMessage, fallback: 'Agent 执行失败，请重试。');
 }
 
 /// Extracts only model choices from an ACP model/config response.
@@ -391,10 +453,19 @@ class AcpAgentProfile {
 }
 
 class AcpAgentCatalog {
-  const AcpAgentCatalog({required this.selectedAgentId, required this.agents});
+  const AcpAgentCatalog({
+    required this.selectedAgentId,
+    required this.agents,
+    this.runtimeStatus,
+  });
 
   final String selectedAgentId;
   final List<AcpAgentProfile> agents;
+
+  /// A switch response may carry the status snapshot captured immediately
+  /// after ACP initialization. Keeping it with the catalog avoids a second
+  /// status/connect IPC round-trip on the hot path.
+  final AgentRuntimeStatus? runtimeStatus;
 
   AcpAgentProfile? get selectedAgent {
     for (final agent in agents) {
@@ -406,32 +477,105 @@ class AcpAgentCatalog {
   factory AcpAgentCatalog.fromMap(Map<dynamic, dynamic>? map) {
     final source = map ?? const <dynamic, dynamic>{};
     final rawAgents = source['agents'];
-    final agents = rawAgents is List
-        ? rawAgents
-              .whereType<Map>()
-              .map(AcpAgentProfile.fromMap)
-              .where((agent) => agent.id.isNotEmpty)
-              .toList(growable: false)
-        : const <AcpAgentProfile>[];
+    final agents = <AcpAgentProfile>[];
+    final seenIdentities = <String>{};
+    if (rawAgents is List) {
+      for (final rawAgent in rawAgents.whereType<Map>()) {
+        final agent = AcpAgentProfile.fromMap(rawAgent);
+        if (agent.id.isEmpty) continue;
+        if (seenIdentities.add(_agentCatalogIdentity(agent))) {
+          agents.add(agent);
+        }
+      }
+    }
     return AcpAgentCatalog(
       selectedAgentId:
           _stringOrNull(source['selectedAgentId']) ??
           (agents.isEmpty ? '' : agents.first.id),
       agents: agents,
+      runtimeStatus:
+          source.containsKey('connected') || source.containsKey('ready')
+          ? AgentRuntimeStatus.fromMap(source)
+          : null,
     );
   }
+}
+
+String _agentCatalogIdentity(AcpAgentProfile agent) {
+  final normalizedName = agent.name.trim().toLowerCase().replaceAll(
+    RegExp(r'[\s_-]+'),
+    '',
+  );
+  if (agent.id == 'xiaowan-acp' ||
+      agent.command.toLowerCase() == 'omnibot-xiaowan-acp' ||
+      normalizedName == '小万bot' ||
+      normalizedName == 'xiaowanbot') {
+    return 'xiaowan-acp';
+  }
+  return 'id:${agent.id}';
 }
 
 String? selectAgentRequestModel({
   required AgentRuntimeStatus status,
   required String? overrideModel,
   required String? activeModel,
-  required String? scopedModel,
   required bool activeModelSourceMatches,
 }) {
   return _stringOrNull(
-    overrideModel ?? (activeModelSourceMatches ? activeModel : scopedModel),
+    overrideModel ?? (activeModelSourceMatches ? activeModel : null),
   );
+}
+
+/// Resolves the shared Agent Provider/model without throwing away a persisted
+/// binding when the scene catalog is temporarily empty or stale.
+///
+/// The catalog's effective fields are the preferred projection. The bound
+/// fields are the durable source of truth and are intentionally a fallback so
+/// switching Harnesses does not require the model catalog request to win a
+/// race with the ACP runtime startup.
+Map<String, String>? resolveSharedAgentProviderSelection({
+  required String? effectiveProviderProfileId,
+  required String? effectiveModel,
+  required String? boundProviderProfileId,
+  required String? boundModel,
+}) {
+  String? normalized(String? value) {
+    final result = value?.trim() ?? '';
+    return result.isEmpty ? null : result;
+  }
+
+  final effectiveProvider = normalized(effectiveProviderProfileId);
+  final effectiveModelId = normalized(effectiveModel);
+  if (effectiveProvider != null && effectiveModelId != null) {
+    return <String, String>{
+      'providerProfileId': effectiveProvider,
+      'modelId': effectiveModelId,
+    };
+  }
+
+  final boundProvider = normalized(boundProviderProfileId);
+  final boundModelId = normalized(boundModel);
+  if (boundProvider != null && boundModelId != null) {
+    return <String, String>{
+      'providerProfileId': boundProvider,
+      'modelId': boundModelId,
+    };
+  }
+  return null;
+}
+
+/// A Provider/model pair is launchable only while its Provider still exists
+/// in the latest configured profile snapshot. A non-empty cached selection is
+/// not sufficient because settings changes can delete or clear that profile.
+bool isSharedAgentProviderSelectionReady({
+  required Map<String, String>? selection,
+  required Set<String> configuredProviderIds,
+}) {
+  final providerId = selection?['providerProfileId']?.trim() ?? '';
+  final modelId = selection?['modelId']?.trim() ?? '';
+  return providerId.isNotEmpty &&
+      modelId.isNotEmpty &&
+      configuredProviderIds.contains(providerId);
 }
 
 bool isCurrentAgentModelLoad({
@@ -615,12 +759,26 @@ class AgentRuntimeService {
 
   static final StreamController<Map<String, dynamic>> _eventController =
       StreamController<Map<String, dynamic>>.broadcast();
+  static final Map<String, Future<Map<String, dynamic>>>
+  _agentPreparationTasks = <String, Future<Map<String, dynamic>>>{};
+  static final StreamController<Set<String>> _agentPreparationController =
+      StreamController<Set<String>>.broadcast();
   static StreamSubscription<dynamic>? _nativeEventSubscription;
 
   static Stream<Map<String, dynamic>> get events {
     _ensureEventSubscription();
     return _eventController.stream;
   }
+
+  /// Harness preparation can spend minutes downloading npm/native packages.
+  /// Keep the operation owned by the service instead of a settings page so it
+  /// continues when that page is popped and a rebuilt page can recover the
+  /// in-flight state without starting the same installation again.
+  static Set<String> get preparingAgentIds =>
+      Set<String>.unmodifiable(_agentPreparationTasks.keys);
+
+  static Stream<Set<String>> get agentPreparationChanges =>
+      _agentPreparationController.stream;
 
   static Future<AgentRuntimeStatus> status() async {
     final result = await _invokeMap('status');
@@ -670,6 +828,42 @@ class AgentRuntimeService {
     return _invokeMap('agent/test', {'agentId': agentId.trim()});
   }
 
+  static Future<Map<String, dynamic>> prepareAgent(String agentId) {
+    return _invokeMap('agent/prepare', {'agentId': agentId.trim()});
+  }
+
+  static Future<Map<String, dynamic>> prepareAgentInBackground(String agentId) {
+    final normalizedId = agentId.trim();
+    final existing = _agentPreparationTasks[normalizedId];
+    if (existing != null) return existing;
+
+    final task = prepareAgent(normalizedId);
+    _agentPreparationTasks[normalizedId] = task;
+    _emitAgentPreparationState();
+    unawaited(
+      task.then<void>(
+        (_) => _finishAgentPreparation(normalizedId, task),
+        onError: (Object _, StackTrace __) {
+          _finishAgentPreparation(normalizedId, task);
+        },
+      ),
+    );
+    return task;
+  }
+
+  static void _finishAgentPreparation(
+    String agentId,
+    Future<Map<String, dynamic>> task,
+  ) {
+    if (!identical(_agentPreparationTasks[agentId], task)) return;
+    _agentPreparationTasks.remove(agentId);
+    _emitAgentPreparationState();
+  }
+
+  static void _emitAgentPreparationState() {
+    _agentPreparationController.add(preparingAgentIds);
+  }
+
   static Future<Map<String, dynamic>> readAgentConfig(String agentId) {
     return _invokeMap('agent/config/read', {'agentId': agentId.trim()});
   }
@@ -694,94 +888,277 @@ class AgentRuntimeService {
     });
   }
 
-  static Future<Map<String, dynamic>> startThread({
+  // Canonical ACP application API. New code must use session/prompt names;
+  // the methods below keep the previous Dart surface working for old builds.
+  static Future<Map<String, dynamic>> newSession({
     int? conversationId,
     String? cwd,
     String? model,
     String? effort,
     String? collaborationMode,
+    String? conversationMode,
+    List<String> additionalDirectories = const <String>[],
   }) {
-    return _invokeMap('thread/start', {
+    return _invokeMap('session/new', {
       if (conversationId != null) 'conversationId': conversationId,
       if (cwd != null && cwd.trim().isNotEmpty) 'cwd': cwd.trim(),
       if (model != null && model.trim().isNotEmpty) 'model': model.trim(),
       if (effort != null && effort.trim().isNotEmpty) 'effort': effort.trim(),
       if (collaborationMode != null && collaborationMode.trim().isNotEmpty)
         'collaborationMode': collaborationMode.trim(),
+      if (conversationMode != null && conversationMode.trim().isNotEmpty)
+        'conversationMode': conversationMode.trim(),
+      if (additionalDirectories.isNotEmpty)
+        'additionalDirectories': additionalDirectories,
     });
   }
 
-  static Future<Map<String, dynamic>> resumeThread({
-    String? threadId,
+  static Future<Map<String, dynamic>> loadSession({
+    String? sessionId,
     int? conversationId,
+    String? agentId,
+    String? conversationMode,
+    List<String> additionalDirectories = const <String>[],
   }) {
-    return _invokeMap('thread/resume', {
-      if (threadId != null) 'threadId': threadId,
+    return _invokeMap('session/load', {
+      if (sessionId != null) 'sessionId': sessionId,
       if (conversationId != null) 'conversationId': conversationId,
+      if (agentId != null && agentId.trim().isNotEmpty)
+        'agentId': agentId.trim(),
+      if (conversationMode != null && conversationMode.trim().isNotEmpty)
+        'conversationMode': conversationMode.trim(),
+      if (additionalDirectories.isNotEmpty)
+        'additionalDirectories': additionalDirectories,
     });
   }
 
-  static Future<Map<String, dynamic>> readThread({
-    String? threadId,
+  /// Resumes an ACP session through the shared runtime. The host keeps this
+  /// distinct from session/load because ACP agents may implement different
+  /// replay/resume semantics; chat callers do not need to know which Harness
+  /// owns the session.
+  static Future<Map<String, dynamic>> resumeSession({
+    String? sessionId,
     int? conversationId,
-    bool includeTurns = true,
+    String? agentId,
+    String? conversationMode,
+    List<String> additionalDirectories = const <String>[],
   }) {
-    return _invokeMap('thread/read', {
-      if (threadId != null) 'threadId': threadId,
+    return _invokeMap('session/resume', {
+      if (sessionId != null && sessionId.trim().isNotEmpty)
+        'sessionId': sessionId.trim(),
       if (conversationId != null) 'conversationId': conversationId,
-      'includeTurns': includeTurns,
+      if (agentId != null && agentId.trim().isNotEmpty)
+        'agentId': agentId.trim(),
+      if (conversationMode != null && conversationMode.trim().isNotEmpty)
+        'conversationMode': conversationMode.trim(),
+      if (additionalDirectories.isNotEmpty)
+        'additionalDirectories': additionalDirectories,
     });
   }
 
-  static Future<Map<String, dynamic>> listThreads({
+  static Future<Map<String, dynamic>> readSession({
+    String? sessionId,
+    int? conversationId,
+    String? agentId,
+    bool includeHistory = true,
+    String? conversationMode,
+  }) {
+    return _invokeMap('session/load', {
+      if (sessionId != null) 'sessionId': sessionId,
+      if (conversationId != null) 'conversationId': conversationId,
+      if (agentId != null && agentId.trim().isNotEmpty)
+        'agentId': agentId.trim(),
+      'includeHistory': includeHistory,
+      if (conversationMode != null && conversationMode.trim().isNotEmpty)
+        'conversationMode': conversationMode.trim(),
+    });
+  }
+
+  static Future<Map<String, dynamic>> listSessions({
     int limit = 50,
     String? cursor,
+    String? cwd,
+    List<String> additionalDirectories = const <String>[],
   }) {
-    return _invokeMap('thread/list', {
+    return _invokeMap('session/list', {
       'limit': limit,
       if (cursor != null && cursor.trim().isNotEmpty) 'cursor': cursor.trim(),
+      if (cwd != null && cwd.trim().isNotEmpty) 'cwd': cwd.trim(),
+      if (additionalDirectories.isNotEmpty)
+        'additionalDirectories': additionalDirectories,
     });
   }
 
-  static Future<Map<String, dynamic>> listLoadedThreads() {
-    return _invokeMap('thread/loaded/list');
+  /// Creates a new ACP session fork and lets the host bind it to a new
+  /// conversation. The chat page does not need to know which Harness owns the
+  /// source session.
+  static Future<Map<String, dynamic>> forkSession({
+    String? sessionId,
+    int? conversationId,
+    String? cwd,
+    String? conversationMode,
+    List<String> additionalDirectories = const <String>[],
+  }) {
+    return _invokeMap('session/fork', {
+      if (sessionId != null && sessionId.trim().isNotEmpty)
+        'sessionId': sessionId.trim(),
+      if (conversationId != null) 'conversationId': conversationId,
+      if (cwd != null && cwd.trim().isNotEmpty) 'cwd': cwd.trim(),
+      if (conversationMode != null && conversationMode.trim().isNotEmpty)
+        'conversationMode': conversationMode.trim(),
+      if (additionalDirectories.isNotEmpty)
+        'additionalDirectories': additionalDirectories,
+    });
   }
 
-  static Future<Map<String, dynamic>> archiveThread({
-    String? threadId,
+  static Future<Map<String, dynamic>> listLoadedSessions() {
+    return _invokeMap('session/list');
+  }
+
+  /// Close releases the live ACP Session without archiving or deleting the
+  /// user's conversation history. Persistence remains owned by the host DB.
+  static Future<Map<String, dynamic>> closeSession({
+    String? sessionId,
     int? conversationId,
   }) {
-    return _invokeMap('thread/archive', {
-      if (threadId != null) 'threadId': threadId,
+    return _invokeMap('session/close', {
+      if (sessionId != null && sessionId.trim().isNotEmpty)
+        'sessionId': sessionId.trim(),
       if (conversationId != null) 'conversationId': conversationId,
     });
   }
 
-  static Future<Map<String, dynamic>> unarchiveThread({
-    String? threadId,
+  /// Deletes the ACP-side session while retaining OmniBot's local
+  /// conversation and messages. The shared runtime returns historyPreserved.
+  static Future<Map<String, dynamic>> deleteSession({
+    String? sessionId,
     int? conversationId,
   }) {
-    return _invokeMap('thread/unarchive', {
-      if (threadId != null) 'threadId': threadId,
+    return _invokeMap('session/delete', {
+      if (sessionId != null && sessionId.trim().isNotEmpty)
+        'sessionId': sessionId.trim(),
       if (conversationId != null) 'conversationId': conversationId,
     });
   }
 
-  static Future<Map<String, dynamic>> setThreadName({
-    String? threadId,
+  static Future<Map<String, dynamic>> setSessionMode({
+    String? sessionId,
+    int? conversationId,
+    required String modeId,
+  }) {
+    return _invokeMap('session/set_mode', {
+      if (sessionId != null && sessionId.trim().isNotEmpty)
+        'sessionId': sessionId.trim(),
+      if (conversationId != null) 'conversationId': conversationId,
+      'modeId': modeId.trim(),
+    });
+  }
+
+  static Future<Map<String, dynamic>> authenticateAgent({
+    required String methodId,
+    Map<String, dynamic>? meta,
+  }) {
+    return _invokeMap('authenticate', {
+      'methodId': methodId.trim(),
+      if (meta != null) '_meta': meta,
+    });
+  }
+
+  static Future<Map<String, dynamic>> logoutAgent({
+    Map<String, dynamic>? meta,
+  }) {
+    return _invokeMap('logout', {if (meta != null) '_meta': meta});
+  }
+
+  static Future<Map<String, dynamic>> listAgentProviders({
+    Map<String, dynamic>? meta,
+  }) {
+    return _invokeMap('providers/list', {if (meta != null) '_meta': meta});
+  }
+
+  static Future<Map<String, dynamic>> setAgentProvider(
+    Map<String, dynamic> params,
+  ) {
+    return _invokeMap('providers/set', params);
+  }
+
+  static Future<Map<String, dynamic>> disableAgentProvider(
+    Map<String, dynamic> params,
+  ) {
+    return _invokeMap('providers/disable', params);
+  }
+
+  /// Calls an ACP implementation extension without introducing a second
+  /// Harness transport. ACP reserves the underscore namespace for extension
+  /// methods; unknown core-looking method names are rejected at the host
+  /// boundary so a typo cannot silently become a legacy RPC.
+  static Future<Map<String, dynamic>> callAcpExtension({
+    required String method,
+    Map<String, dynamic> params = const <String, dynamic>{},
+  }) {
+    return _invokeMap(_validateAcpExtensionMethod(method), params);
+  }
+
+  /// Sends a client-to-agent ACP extension notification. Notifications do
+  /// not produce an Agent response, but using this shared bridge keeps the
+  /// extension on the same transport as every other ACP operation.
+  static Future<Map<String, dynamic>> notifyAcpExtension({
+    required String method,
+    Object? params,
+  }) {
+    return _invokeMap('notifyAcpExtension', {
+      'method': _validateAcpExtensionMethod(method),
+      if (params != null) 'params': params,
+    });
+  }
+
+  /// Preserves non-object extension results such as arrays and scalar values.
+  static Future<dynamic> callAcpExtensionValue({
+    required String method,
+    Object? params,
+  }) {
+    return _invokeValue(_validateAcpExtensionMethod(method), {
+      if (params != null) 'params': params,
+    });
+  }
+
+  static Future<Map<String, dynamic>> archiveSession({
+    String? sessionId,
+    int? conversationId,
+  }) {
+    return _invokeMap('session/archive', {
+      if (sessionId != null) 'sessionId': sessionId,
+      if (conversationId != null) 'conversationId': conversationId,
+    });
+  }
+
+  static Future<Map<String, dynamic>> unarchiveSession({
+    String? sessionId,
+    int? conversationId,
+  }) {
+    return _invokeMap('session/unarchive', {
+      if (sessionId != null) 'sessionId': sessionId,
+      if (conversationId != null) 'conversationId': conversationId,
+    });
+  }
+
+  static Future<Map<String, dynamic>> setSessionName({
+    String? sessionId,
     int? conversationId,
     required String name,
   }) {
-    return _invokeMap('thread/name/set', {
-      if (threadId != null) 'threadId': threadId,
+    return _invokeMap('session/name/set', {
+      if (sessionId != null) 'sessionId': sessionId,
       if (conversationId != null) 'conversationId': conversationId,
       'name': name,
     });
   }
 
-  static Future<Map<String, dynamic>> startTurn({
-    String? threadId,
+  static Future<Map<String, dynamic>> promptSession({
+    String? sessionId,
     int? conversationId,
+    String? requestId,
+    String? agentId,
     required String text,
     List<Map<String, dynamic>> attachments = const [],
     String? cwd,
@@ -791,10 +1168,16 @@ class AgentRuntimeService {
     String? model,
     String? effort,
     String? collaborationMode,
+    String? conversationMode,
+    Map<String, String>? terminalEnvironment,
   }) {
-    return _invokeMap('turn/start', {
-      if (threadId != null) 'threadId': threadId,
+    return _invokeMap('session/prompt', {
+      if (sessionId != null) 'sessionId': sessionId,
       if (conversationId != null) 'conversationId': conversationId,
+      if (requestId != null && requestId.trim().isNotEmpty)
+        'requestId': requestId.trim(),
+      if (agentId != null && agentId.trim().isNotEmpty)
+        'agentId': agentId.trim(),
       if (cwd != null && cwd.trim().isNotEmpty) 'cwd': cwd.trim(),
       if (approvalPolicy != null && approvalPolicy.trim().isNotEmpty)
         'approvalPolicy': approvalPolicy.trim(),
@@ -805,11 +1188,59 @@ class AgentRuntimeService {
       if (effort != null && effort.trim().isNotEmpty) 'effort': effort.trim(),
       if (collaborationMode != null && collaborationMode.trim().isNotEmpty)
         'collaborationMode': collaborationMode.trim(),
+      if (conversationMode != null && conversationMode.trim().isNotEmpty)
+        'conversationMode': conversationMode.trim(),
+      if (terminalEnvironment != null && terminalEnvironment.isNotEmpty)
+        'terminalEnvironment': terminalEnvironment,
       'text': text,
       if (attachments.isNotEmpty) 'attachments': attachments,
     });
   }
 
+  static Future<Map<String, dynamic>> cancelPrompt({
+    String? sessionId,
+    int? conversationId,
+    String? promptId,
+    String? runId,
+  }) {
+    return _invokeMap('session/cancel', {
+      if (sessionId != null) 'sessionId': sessionId,
+      if (conversationId != null) 'conversationId': conversationId,
+      if (promptId != null) 'promptId': promptId,
+      if (runId != null && runId.trim().isNotEmpty) 'runId': runId.trim(),
+    });
+  }
+
+  static Future<Map<String, dynamic>> reviewSession({
+    String? sessionId,
+    int? conversationId,
+    String? cwd,
+    Map<String, dynamic>? target,
+    String? approvalPolicy,
+    String? approvalsReviewer,
+    Map<String, dynamic>? sandboxPolicy,
+    String? model,
+    String? effort,
+    String? collaborationMode,
+  }) {
+    return _invokeMap('review/start', {
+      if (sessionId != null) 'sessionId': sessionId,
+      if (conversationId != null) 'conversationId': conversationId,
+      if (cwd != null && cwd.trim().isNotEmpty) 'cwd': cwd.trim(),
+      'target': target ?? <String, dynamic>{'type': 'uncommittedChanges'},
+      if (approvalPolicy != null && approvalPolicy.trim().isNotEmpty)
+        'approvalPolicy': approvalPolicy.trim(),
+      if (approvalsReviewer != null && approvalsReviewer.trim().isNotEmpty)
+        'approvalsReviewer': approvalsReviewer.trim(),
+      if (sandboxPolicy != null) 'sandboxPolicy': sandboxPolicy,
+      if (model != null && model.trim().isNotEmpty) 'model': model.trim(),
+      if (effort != null && effort.trim().isNotEmpty) 'effort': effort.trim(),
+      if (collaborationMode != null && collaborationMode.trim().isNotEmpty)
+        'collaborationMode': collaborationMode.trim(),
+    });
+  }
+
+  @Deprecated('Use reviewSession')
   static Future<Map<String, dynamic>> startReview({
     String? threadId,
     int? conversationId,
@@ -853,6 +1284,40 @@ class AgentRuntimeService {
 
   static Future<Map<String, dynamic>> readConfig() {
     return _invokeMap('config/read');
+  }
+
+  static Future<Map<String, dynamic>> setSessionConfigOption({
+    String? sessionId,
+    int? conversationId,
+    String? agentId,
+    required String configId,
+    required dynamic value,
+  }) {
+    return _invokeMap('session/set_config_option', {
+      if (sessionId != null && sessionId.trim().isNotEmpty)
+        'sessionId': sessionId.trim(),
+      if (conversationId != null) 'conversationId': conversationId,
+      if (agentId != null && agentId.trim().isNotEmpty)
+        'agentId': agentId.trim(),
+      'configId': configId.trim(),
+      'value': value,
+    });
+  }
+
+  @Deprecated('Use setSessionConfigOption')
+  static Future<Map<String, dynamic>> setConfigOption({
+    String? threadId,
+    int? conversationId,
+    required String configId,
+    required dynamic value,
+  }) {
+    return _invokeMap('session/set_config_option', {
+      if (threadId != null && threadId.trim().isNotEmpty)
+        'threadId': threadId.trim(),
+      if (conversationId != null) 'conversationId': conversationId,
+      'configId': configId.trim(),
+      'value': value,
+    });
   }
 
   static Future<CodexRemoteBridgeConfig> readRemoteBridgeConfig() async {
@@ -994,7 +1459,7 @@ class AgentRuntimeService {
     int? conversationId,
     String? turnId,
   }) {
-    return _invokeMap('turn/interrupt', {
+    return _invokeMap('session/cancel', {
       if (threadId != null) 'threadId': threadId,
       if (conversationId != null) 'conversationId': conversationId,
       if (turnId != null) 'turnId': turnId,
@@ -1043,6 +1508,28 @@ class AgentRuntimeService {
     });
   }
 
+  /// Answers a standard ACP `elicitation/create` request.  Unlike the
+  /// legacy requestUserInput shape, ACP form values live directly under
+  /// `response.content` and must retain their primitive JSON types.
+  static Future<Map<String, dynamic>> respondToElicitation({
+    required Object requestId,
+    required Map<String, dynamic> content,
+  }) {
+    return _invokeMap('respondToServerRequest', {
+      'requestId': requestId,
+      'response': {'action': 'accept', 'content': content},
+    });
+  }
+
+  static Future<Map<String, dynamic>> cancelElicitation({
+    required Object requestId,
+  }) {
+    return _invokeMap('respondToServerRequest', {
+      'requestId': requestId,
+      'response': {'action': 'cancel'},
+    });
+  }
+
   static Future<Map<String, dynamic>> ignoreUserInput({
     required Object requestId,
   }) {
@@ -1080,6 +1567,26 @@ class AgentRuntimeService {
     final result = await _methodChannel.invokeMethod<dynamic>(method, args);
     return _normalizeMap(result) ?? <String, dynamic>{};
   }
+
+  static Future<dynamic> _invokeValue(
+    String method, [
+    Map<String, dynamic> args = const <String, dynamic>{},
+  ]) async {
+    final result = await _methodChannel.invokeMethod<dynamic>(method, args);
+    return _normalizeValue(result);
+  }
+}
+
+String _validateAcpExtensionMethod(String method) {
+  final normalized = method.trim();
+  if (!normalized.startsWith('_')) {
+    throw ArgumentError.value(
+      method,
+      'method',
+      'ACP extension methods must use the underscore namespace',
+    );
+  }
+  return normalized;
 }
 
 Map<String, dynamic>? _normalizeMap(dynamic value) {

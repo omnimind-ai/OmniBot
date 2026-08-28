@@ -649,6 +649,115 @@ void main() {
     },
   );
 
+  test(
+    'chat groups fall back to the same Provider model cache on fetch failure',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      await StorageService.init();
+      await ModelProviderConfigService.saveCachedFetchedModels(
+        profileId: 'provider-1',
+        apiBase: 'https://provider.example/v1',
+        profileRevision: 6,
+        models: const [
+          ProviderModelOption(
+            id: 'provider-model-a',
+            displayName: 'provider-model-a',
+          ),
+          ProviderModelOption(
+            id: 'provider-model-b',
+            displayName: 'provider-model-b',
+          ),
+        ],
+      );
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(assistCoreChannel, (call) async {
+        switch (call.method) {
+          case 'listModelProviderProfiles':
+            return <String, dynamic>{
+              'profiles': <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'id': 'provider-1',
+                  'name': 'Provider',
+                  'baseUrl': 'https://provider.example/v1',
+                  'configured': true,
+                  'revision': 7,
+                },
+              ],
+              'editingProfileId': 'provider-1',
+            };
+          case 'fetchProviderModels':
+            throw PlatformException(code: 'FETCH_PROVIDER_MODELS_ERROR');
+          default:
+            throw PlatformException(code: 'unexpected_method');
+        }
+      });
+      addTearDown(
+        () => messenger.setMockMethodCallHandler(assistCoreChannel, null),
+      );
+
+      final groups = await ModelProviderConfigService.loadChatModelGroups();
+
+      expect(groups.single.models.map((model) => model.id), <String>[
+        'provider-model-a',
+        'provider-model-b',
+      ]);
+    },
+  );
+
+  test(
+    'chat groups can load cached models without waiting for provider refresh',
+    () async {
+      SharedPreferences.setMockInitialValues({});
+      await StorageService.init();
+      await ModelProviderConfigService.saveCachedFetchedModels(
+        profileId: 'provider-1',
+        apiBase: 'https://provider.example/v1',
+        profileRevision: 7,
+        models: const [
+          ProviderModelOption(id: 'cached-model', displayName: 'cached-model'),
+        ],
+      );
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      var fetchCount = 0;
+      messenger.setMockMethodCallHandler(assistCoreChannel, (call) async {
+        switch (call.method) {
+          case 'listModelProviderProfiles':
+            return <String, dynamic>{
+              'profiles': <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'id': 'provider-1',
+                  'name': 'Provider',
+                  'baseUrl': 'https://provider.example/v1',
+                  'configured': true,
+                  'revision': 7,
+                },
+              ],
+              'editingProfileId': 'provider-1',
+            };
+          case 'fetchProviderModels':
+            fetchCount += 1;
+            throw StateError('network refresh must not block cached startup');
+          default:
+            throw PlatformException(code: 'unexpected_method');
+        }
+      });
+      addTearDown(
+        () => messenger.setMockMethodCallHandler(assistCoreChannel, null),
+      );
+
+      final groups = await ModelProviderConfigService.loadChatModelGroups(
+        refresh: false,
+      );
+
+      expect(groups.single.models.map((model) => model.id), <String>[
+        'cached-model',
+      ]);
+      expect(fetchCount, 0);
+    },
+  );
+
   test('provider model cache is bound to the profile revision', () async {
     SharedPreferences.setMockInitialValues({});
     await StorageService.init();

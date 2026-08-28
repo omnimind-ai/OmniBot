@@ -45,6 +45,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.io.IOException
 import java.io.InterruptedIOException
@@ -107,6 +108,19 @@ class TerminalManager private constructor(
         distribution: TerminalDistribution.Spec = TerminalDistribution.selected(),
         onProgress: suspend (RuntimeInstallProgress) -> Unit = {}
     ): Boolean {
+        // Hidden ACP probes run during Agent switching. Once the selected
+        // runtime is already installed, do not queue behind the full runtime
+        // installer (which may be preparing OmniFlow or another terminal
+        // session concurrently).
+        if (EmbeddedRuntimeInstaller.isCurrentDistributionReady(context)) {
+            return runCatching {
+                ensureShellScripts()
+                true
+            }.getOrElse {
+                Log.e(TAG, "Failed to prepare shell scripts", it)
+                false
+            }
+        }
         val status = EmbeddedRuntimeInstaller.ensureRuntimeInstalled(
             context = context,
             distribution = distribution,
@@ -251,12 +265,17 @@ class TerminalManager private constructor(
         onProcessStarted: ((Process) -> Unit)? = null,
         onOutputChunk: suspend (String) -> Unit = {}
     ): HiddenExecResult {
-        if (!initializeEnvironment(distribution = distribution)) {
+        val environmentReady = withTimeoutOrNull(
+            HIDDEN_EXEC_ENVIRONMENT_TIMEOUT_MS
+        ) {
+            initializeEnvironment(distribution = distribution)
+        } ?: false
+        if (!environmentReady) {
             return HiddenExecResult(
                 output = "",
                 exitCode = -1,
                 state = HiddenExecResult.State.SHELL_NOT_READY,
-                error = "Terminal environment is not ready."
+                error = "Terminal environment is not ready or initialization timed out."
             )
         }
 
@@ -304,11 +323,35 @@ class TerminalManager private constructor(
                         }
                     }
 
+                    suspend fun finishReaders() {
+                        // The shell wrapper can exit while npm/proot keeps an
+                        // inherited stdout pipe open.  An unbounded join here
+                        // used to turn a timed-out hidden command into a
+                        // permanently suspended ACP switch.
+                        val drained = withTimeoutOrNull(
+                            HIDDEN_EXEC_READER_DRAIN_TIMEOUT_MS
+                        ) {
+                            reader.join()
+                            true
+                        } ?: false
+                        if (!drained) {
+                            runCatching { process.inputStream.close() }
+                            runCatching { process.errorStream.close() }
+                            reader.cancel()
+                            withTimeoutOrNull(HIDDEN_EXEC_READER_DRAIN_TIMEOUT_MS) {
+                                reader.join()
+                            }
+                        }
+                        forwarder.cancel()
+                        withTimeoutOrNull(HIDDEN_EXEC_READER_DRAIN_TIMEOUT_MS) {
+                            forwarder.join()
+                        }
+                    }
+
                     val finished = process.waitFor(timeoutMs, TimeUnit.MILLISECONDS)
                     if (!finished) {
                         terminateHiddenExecProcess(process)
-                        reader.join()
-                        forwarder.join()
+                        finishReaders()
                         return@coroutineScope HiddenExecResult(
                             output = outputBuffer.toString(),
                             exitCode = -1,
@@ -318,8 +361,7 @@ class TerminalManager private constructor(
                         )
                     }
 
-                    reader.join()
-                    forwarder.join()
+                    finishReaders()
                     HiddenExecResult(
                         output = outputBuffer.toString(),
                         exitCode = process.exitValue(),
@@ -646,6 +688,8 @@ internal fun terminateHiddenExecProcess(process: Process) {
 }
 
 private const val HIDDEN_EXEC_TERMINATION_GRACE_MS = 500L
+private const val HIDDEN_EXEC_READER_DRAIN_TIMEOUT_MS = 250L
+private const val HIDDEN_EXEC_ENVIRONMENT_TIMEOUT_MS = 10_000L
 
 internal fun isExpectedHiddenExecReaderTermination(error: Throwable): Boolean {
     var current: Throwable? = error

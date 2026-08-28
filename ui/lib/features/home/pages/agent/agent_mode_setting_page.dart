@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:ui/core/router/go_router_manager.dart';
 import 'package:ui/services/agent_runtime_service.dart';
+import 'package:ui/services/scene_model_config_service.dart';
 import 'package:ui/services/storage_service.dart';
 import 'package:ui/theme/theme_context.dart';
 import 'package:ui/utils/ui.dart';
@@ -30,6 +31,10 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
   bool _refreshing = false;
   String? _error;
   String? _busyAgentId;
+  int _catalogRequestId = 0;
+  late Set<String> _preparingAgentIds;
+  StreamSubscription<Set<String>>? _preparationSubscription;
+  String _sharedModelLabel = '';
   // 远程 PC Bridge 状态：先用缓存同步渲染，后台再刷新，避免一帧加载闪烁。
   bool _remoteBridgeEnabled =
       StorageService.getBool(StorageService.kRemoteBridgeEnabledKey) ?? false;
@@ -42,11 +47,67 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
   @override
   void initState() {
     super.initState();
+    _preparingAgentIds = AgentRuntimeService.preparingAgentIds;
+    _preparationSubscription = AgentRuntimeService.agentPreparationChanges
+        .listen((agentIds) {
+          if (!mounted) return;
+          final completed = _preparingAgentIds.difference(agentIds).isNotEmpty;
+          setState(() => _preparingAgentIds = agentIds);
+          if (completed) unawaited(_load());
+        });
+    // The native agent/list endpoint returns cached health. Keep route entry
+    // immediate; users can request the full terminal/proot probe with the
+    // refresh action without blocking this page.
     unawaited(_load());
+    unawaited(_loadSharedModel());
     unawaited(_loadRemoteBridge());
   }
 
+  @override
+  void dispose() {
+    unawaited(_preparationSubscription?.cancel());
+    super.dispose();
+  }
+
+  Future<void> _loadSharedModel() async {
+    try {
+      final catalog = await SceneModelConfigService.getSceneCatalog();
+      final agentScene = catalog.firstWhere(
+        (item) => item.sceneId == 'scene.dispatch.model',
+        orElse: () => const SceneCatalogItem(
+          sceneId: '',
+          description: '',
+          defaultModel: '',
+          effectiveModel: '',
+          effectiveProviderProfileId: '',
+          effectiveProviderProfileName: '',
+          boundProviderProfileId: '',
+          boundProviderProfileName: '',
+          transport: '',
+          configSource: '',
+          overrideApplied: false,
+          overrideModel: '',
+          providerConfigured: false,
+          bindingExists: false,
+          bindingProfileMissing: false,
+        ),
+      );
+      final provider = agentScene.effectiveProviderProfileName.trim();
+      final model = agentScene.effectiveModel.trim();
+      if (!mounted) return;
+      setState(() {
+        _sharedModelLabel = [
+          provider,
+          model,
+        ].where((value) => value.isNotEmpty).join(' / ');
+      });
+    } catch (_) {
+      // The Agent catalog remains usable when scene binding is unavailable.
+    }
+  }
+
   Future<void> _load({bool refresh = false}) async {
+    final requestId = ++_catalogRequestId;
     if (refresh) {
       setState(() => _refreshing = true);
     }
@@ -54,7 +115,7 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
       final catalog = refresh
           ? await AgentRuntimeService.refreshAgents()
           : await AgentRuntimeService.listAgents();
-      if (!mounted) return;
+      if (!mounted || requestId != _catalogRequestId) return;
       setState(() {
         _catalog = catalog;
         _loading = false;
@@ -62,13 +123,77 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
         _error = null;
       });
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted || requestId != _catalogRequestId) return;
       setState(() {
         _loading = false;
         _refreshing = false;
+        // Keep the built-in catalog visible when the native health probe is
+        // temporarily unavailable.  A probe error must not turn the whole
+        // Agent page into a blank/error-only screen.
+        _catalog = _catalog ?? _fallbackCatalog();
         _error = error.toString();
       });
     }
+  }
+
+  AcpAgentCatalog _fallbackCatalog() {
+    const agents = <AcpAgentProfile>[
+      AcpAgentProfile(
+        id: 'xiaowan-acp',
+        name: '小万',
+        command: 'omnibot-xiaowan-acp',
+        description: '小万内置能力通过官方 ACP Agent 接口提供',
+        builtIn: true,
+        source: 'official',
+        status: 'unchecked',
+      ),
+      AcpAgentProfile(
+        id: 'codex-acp',
+        name: 'Codex',
+        command: 'codex-acp',
+        description: 'OpenAI Codex through its managed ACP adapter',
+        builtIn: true,
+        source: 'official',
+        status: 'unchecked',
+        managedAdapter: true,
+      ),
+      AcpAgentProfile(
+        id: 'claude-code-acp',
+        name: 'Claude Code',
+        command: 'claude-agent-acp',
+        description: 'Claude Code through the ACP adapter',
+        builtIn: true,
+        source: 'official',
+        status: 'unchecked',
+        managedAdapter: true,
+      ),
+      AcpAgentProfile(
+        id: 'opencode-acp',
+        name: 'OpenCode',
+        command: 'opencode',
+        description: 'OpenCode ACP server',
+        arguments: <String>['acp'],
+        builtIn: true,
+        source: 'official',
+        status: 'unchecked',
+        managedAdapter: true,
+      ),
+      AcpAgentProfile(
+        id: 'deepseek-harness-acp',
+        name: 'DeepSeek Harness',
+        // Keep the fallback catalog identical to the native official
+        // profile. `dsh` is only the discovery command; the Android ACP
+        // launcher is `dsh-acp-android`.
+        command: 'dsh-acp-android',
+        description: 'DeepSeek Harness official ACP profile',
+        arguments: <String>['--profile', 'acp'],
+        builtIn: true,
+        source: 'official',
+        status: 'unchecked',
+        managedAdapter: true,
+      ),
+    ];
+    return AcpAgentCatalog(selectedAgentId: 'xiaowan-acp', agents: agents);
   }
 
   Future<void> _loadRemoteBridge() async {
@@ -119,25 +244,48 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
   }
 
   Future<void> _test(AcpAgentProfile agent) async {
-    if (_busyAgentId != null || !agent.enabled) return;
-    if (agent.managedAdapter && agent.status == 'unchecked') {
-      showToast(
-        _text(
-          '首次检测会自动准备 ACP 适配器；也可在终端环境页统一安装，下载可能需要一些时间。',
-          'The first check prepares the ACP adapter. You can also install it from Terminal Environment; the download may take a moment.',
-        ),
-      );
+    if (_busyAgentId == agent.id ||
+        _preparingAgentIds.contains(agent.id) ||
+        !agent.enabled) {
+      return;
     }
-    setState(() => _busyAgentId = agent.id);
+    await _runAgentAction(agent, prepare: false);
+  }
+
+  void _prepare(AcpAgentProfile agent) {
+    if (_preparingAgentIds.contains(agent.id) || !agent.enabled) return;
+    unawaited(_runAgentAction(agent, prepare: true));
+  }
+
+  Future<void> _runAgentAction(
+    AcpAgentProfile agent, {
+    required bool prepare,
+  }) async {
+    if (!prepare) setState(() => _busyAgentId = agent.id);
     try {
-      final result = await AgentRuntimeService.testAgent(agent.id);
+      final result = prepare
+          ? await AgentRuntimeService.prepareAgentInBackground(agent.id)
+          : await AgentRuntimeService.testAgent(agent.id);
       if (!mounted) return;
       await _load();
       if (!mounted) return;
       final ok = result['ok'] == true;
-      final title = ok
-          ? _text('Agent 检测成功', 'Agent check succeeded')
-          : _text('Agent 检测失败', 'Agent check failed');
+      final installed =
+          result['agent'] is Map &&
+          (result['agent'] as Map)['installed'] == true;
+      final providerConfigurationPending = prepare && !ok && installed;
+      final title = prepare
+          ? (ok
+                ? _text('Harness 安装成功', 'Harness installation succeeded')
+                : providerConfigurationPending
+                ? _text(
+                    'Harness 已准备，等待 Dispatch Model 配置',
+                    'Harness is ready; Dispatch Model configuration is pending',
+                  )
+                : _text('Harness 安装失败', 'Harness installation failed'))
+          : (ok
+                ? _text('Agent 检测成功', 'Agent check succeeded')
+                : _text('Agent 检测失败', 'Agent check failed'));
       await showSettingsDetailSheet<void>(
         context: context,
         builder: (sheetContext) => SettingsDetailSheet(
@@ -160,7 +308,7 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
       if (!mounted) return;
       showToast(error.toString(), type: ToastType.error);
     } finally {
-      if (mounted) setState(() => _busyAgentId = null);
+      if (!prepare && mounted) setState(() => _busyAgentId = null);
     }
   }
 
@@ -244,7 +392,7 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
           ),
           IconButton(
             tooltip: _text('添加自定义 ACP Agent', 'Add custom ACP Agent'),
-            onPressed: _busyAgentId == null ? _addCustomAgent : null,
+            onPressed: _addCustomAgent,
             icon: const Icon(LucideIcons.plus),
           ),
         ],
@@ -280,10 +428,12 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
                   SettingsSectionTitle(
                     label: _text('托管 Agent', 'Managed Agents'),
                     subtitle: _text(
-                      '预置 Agent 始终显示；状态来自命令检测与 ACP initialize。API、账号和默认模型由各 Agent 自身配置。',
-                      'Built-in Agents always remain visible. Status comes from command detection and ACP initialize. Each Agent owns its API, account, and default model configuration.',
+                      '预置 Agent 始终显示；状态来自命令检测与 ACP initialize。所有 Agent 默认复用这里的统一 Provider 和模型，适配器只负责映射到官方配置。',
+                      'Built-in Agents always remain visible. Status comes from command detection and ACP initialize. All Agents reuse the shared Provider and model by default; adapters only map them to each official configuration surface.',
                     ),
                   ),
+                  _buildSharedModelSummary(card),
+                  const SizedBox(height: 12),
                   _buildSearchField(card),
                   const SizedBox(height: 12),
                   OmniSegmentedSlider<_AgentFilter>(
@@ -359,7 +509,7 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
                       ],
                     ),
                   ],
-                  // 远程 PC Bridge：全局共享配置入口（仅配置远程 Codex app-server 连接）。
+                  // 远程 PC Bridge：全局共享配置入口（仅配置远程 ACP 连接）。
                   const SizedBox(height: 24),
                   _buildSectionLabel(_text('远程运行', 'Remote runtime')),
                   _FlatTile(
@@ -377,12 +527,12 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
                         : _text('未启用', 'Not enabled'),
                     subtitle: _remoteBridgeEnabled
                         ? _text(
-                            'Agent 聊天使用远程 Codex app-server',
-                            'Agent chat runs on the remote Codex app-server',
+                            'Agent 聊天使用远程 ACP',
+                            'Agent chat runs on the remote ACP runtime',
                           )
                         : _text(
-                            '配置远程 Codex app-server 连接',
-                            'Configure a remote Codex app-server connection',
+                            '配置远程 ACP 连接',
+                            'Configure a remote ACP connection',
                           ),
                     onTap: () {
                       GoRouterManager.push('/home/remote_codex_setting');
@@ -390,6 +540,38 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
                   ),
                 ],
               ),
+      ),
+    );
+  }
+
+  Widget _buildSharedModelSummary(Color card) {
+    final palette = context.omniPalette;
+    final label = _sharedModelLabel.isEmpty
+        ? _text('尚未配置统一模型', 'No shared model configured')
+        : _sharedModelLabel;
+    return Container(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+      decoration: BoxDecoration(
+        color: card,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Row(
+        children: [
+          Icon(LucideIcons.bot, size: 18, color: palette.accentPrimary),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              '${_text('统一 Provider / 模型：', 'Shared Provider / model: ')}$label',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                color: palette.textSecondary,
+                fontSize: 13,
+                height: 1.4,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -468,17 +650,27 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
     final statusColor = agent.enabled ? status.color : const Color(0xFF98A2B3);
     final hasError =
         (agent.lastCheckError ?? '').isNotEmpty && agent.status != 'online';
-    final canTest = agent.enabled && agent.status != 'missing';
-    final busy = agent.id == _busyAgentId;
+    final canTest =
+        agent.enabled && (agent.status != 'missing' || agent.managedAdapter);
+    final preparing = _preparingAgentIds.contains(agent.id);
+    final busy = agent.id == _busyAgentId || preparing;
     final needsManagedPreparation =
         agent.managedAdapter &&
-        agent.status == 'unchecked' &&
-        agent.lastCheckError?.contains('will be prepared') == true;
-    final testLabel = needsManagedPreparation
+        (agent.status == 'unchecked' || agent.status == 'missing') &&
+        (agent.lastCheckError?.contains('will be prepared') == true ||
+            agent.lastCheckError?.contains('未初始化') == true ||
+            agent.status == 'missing');
+    final isDeepSeekHarness = agent.id == 'deepseek-harness-acp';
+    final testLabel = needsManagedPreparation && isDeepSeekHarness
+        ? _text('安装官方 Harness', 'Install official Harness')
+        : needsManagedPreparation
         ? _text('准备并初始化', 'Prepare & initialize')
         : agent.status == 'unchecked'
         ? _text('检测', 'Check')
         : _text('重新检测', 'Check again');
+    final installEntry = agent.managedAdapter && agent.status != 'online';
+    final action = needsManagedPreparation ? _prepare : _test;
+    final capabilitySubtitle = _capabilitySubtitle(agent);
     return _FlatTile(
       tileKey: Key('agent-config-${agent.id}'),
       leading: AgentBrandIcon(
@@ -487,21 +679,57 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
         fallbackColor: palette.accentPrimary,
       ),
       title: agent.name,
-      statusColor: statusColor,
-      statusLabel: !agent.enabled ? _text('已停用', 'Disabled') : status.label,
-      subtitle: agent.description.isNotEmpty
-          ? agent.description
-          : ([agent.command, ...agent.arguments]).join(' '),
-      subtitleMonospace: agent.description.isEmpty,
-      errorText: hasError ? agent.lastCheckError : null,
+      statusColor: preparing ? const Color(0xFFE3A52B) : statusColor,
+      statusLabel: preparing
+          ? _text('后台安装中', 'Installing in background')
+          : !agent.enabled
+          ? _text('已停用', 'Disabled')
+          : status.label,
+      subtitle:
+          capabilitySubtitle ??
+          (agent.description.isNotEmpty
+              ? agent.description
+              : ([agent.command, ...agent.arguments]).join(' ')),
+      subtitleMonospace:
+          capabilitySubtitle == null && agent.description.isEmpty,
+      errorText: hasError && !preparing ? agent.lastCheckError : null,
       actionLabel: canTest ? testLabel : null,
       actionKey: Key('agent-check-${agent.id}'),
-      onAction: canTest ? () => _test(agent) : null,
-      navigationLabel: _text('配置', 'Configure'),
+      onAction: canTest ? () => action(agent) : null,
+      navigationLabel: installEntry
+          ? _text('安装', 'Install')
+          : _text('配置', 'Configure'),
       navigationKey: Key('agent-navigation-${agent.id}'),
       busy: busy,
-      onTap: () => _openAgentConfig(agent),
+      onTap: preparing
+          ? () {}
+          : installEntry
+          ? () => _prepare(agent)
+          : () => _openAgentConfig(agent),
     );
+  }
+
+  /// Surface the common plugin workflow without exposing a raw capability
+  /// dump. The source remains the generic ACP profile capabilities map; this
+  /// page does not branch the runtime by vendor.
+  String? _capabilitySubtitle(AcpAgentProfile agent) {
+    final plugin = agent.capabilities['plugin'];
+    if (plugin is! Map || plugin['supported'] != true) return null;
+    final authoring = plugin['authoring'] == true;
+    final install = plugin['installViaHarness'] == true;
+    if (!authoring && !install) return null;
+    if (_english) {
+      return authoring && install
+          ? 'Plugins: create and install through the Harness'
+          : authoring
+          ? 'Plugins: create through the Harness'
+          : 'Plugins: install through the Harness';
+    }
+    return authoring && install
+        ? '插件：可创建，并由 Harness 安装'
+        : authoring
+        ? '插件：可通过 Harness 创建'
+        : '插件：可通过 Harness 安装';
   }
 }
 
@@ -526,7 +754,20 @@ class _AddCustomAgentDialogState extends State<_AddCustomAgentDialog> {
   void _save() {
     final name = _name.trim();
     final command = _command.trim();
-    if (name.isEmpty || command.isEmpty) return;
+    if (name.isEmpty) {
+      showToast(
+        _text('名称不能为空', 'Agent name is required'),
+        type: ToastType.warning,
+      );
+      return;
+    }
+    if (command.isEmpty) {
+      showToast(
+        _text('启动命令不能为空', 'Agent command is required'),
+        type: ToastType.warning,
+      );
+      return;
+    }
     Navigator.of(context).pop(
       AcpAgentProfile(
         id: '',

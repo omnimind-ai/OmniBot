@@ -333,6 +333,23 @@ object DatabaseHelper {
         }
     }
 
+    private val MIGRATION_17_18 = object : Migration(17, 18) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            // Older builds could delete a Conversation without deleting its
+            // ACP binding. Bindings are only an execution index; remove
+            // orphan rows during upgrade while leaving all conversation and
+            // message tables untouched.
+            database.execSQL(
+                """
+                DELETE FROM codex_thread_bindings
+                WHERE conversationId NOT IN (
+                    SELECT id FROM conversations
+                )
+                """.trimIndent()
+            )
+        }
+    }
+
     internal val ALL_MIGRATIONS = arrayOf(
         MIGRATION_1_2,
         MIGRATION_2_3,
@@ -349,7 +366,8 @@ object DatabaseHelper {
         MIGRATION_13_14,
         MIGRATION_14_15,
         MIGRATION_15_16,
-        MIGRATION_16_17
+        MIGRATION_16_17,
+        MIGRATION_17_18
     )
 
     fun init(context: Context) {
@@ -612,6 +630,14 @@ object DatabaseHelper {
         return getDatabase().agentConversationEntryDao().countConversationEntries(conversationId)
     }
 
+    suspend fun getAgentConversationIdsWithStreamEvents(): List<Long> {
+        return getDatabase().agentConversationEntryDao().getConversationIdsWithStreamEvents()
+    }
+
+    suspend fun deleteAgentConversationStreamEvents(): Int {
+        return getDatabase().agentConversationEntryDao().deleteStreamEvents()
+    }
+
     suspend fun getAgentConversationEntriesDescPaged(
         conversationId: Long,
         conversationMode: String,
@@ -684,6 +710,10 @@ object DatabaseHelper {
 
     suspend fun deleteAgentSessionBindingByConversationId(conversationId: Long): Int {
         return getDatabase().agentSessionBindingDao().deleteByConversationId(conversationId)
+    }
+
+    suspend fun deleteAgentSessionBindingByThreadId(threadId: String): Int {
+        return getDatabase().agentSessionBindingDao().deleteByThreadId(threadId)
     }
 
 }

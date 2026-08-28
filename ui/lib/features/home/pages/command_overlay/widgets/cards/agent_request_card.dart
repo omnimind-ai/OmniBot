@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -17,28 +16,287 @@ class AgentRequestCard extends StatefulWidget {
   State<AgentRequestCard> createState() => _AgentRequestCardState();
 }
 
-class _AgentRequestCardState extends State<AgentRequestCard>
-    with WidgetsBindingObserver {
-  final TextEditingController _answerController = TextEditingController();
-  final FocusNode _answerFocusNode = FocusNode(
-    debugLabel: 'agent_request_answer',
-  );
-  final GlobalKey _answerInputKey = GlobalKey(
-    debugLabel: 'agent_request_answer_input',
-  );
-  Timer? _ensureAnswerInputTimer;
-  Timer? _lateEnsureAnswerInputTimer;
+/// Compact fallback for request messages that arrive outside the Agent
+/// timeline (for example, an old restored snapshot).  It deliberately has no
+/// nested TextField and no large card surface.  User-input requests are
+/// answered by the single composer; explicit permission requests, which are
+/// uncommon when the default full-access mode is active, retain only tiny
+/// inline actions so the ACP turn cannot deadlock.
+class AgentRequestNotice extends StatefulWidget {
+  const AgentRequestNotice({super.key, required this.cardData});
+
+  final Map<String, dynamic> cardData;
+
+  @override
+  State<AgentRequestNotice> createState() => _AgentRequestNoticeState();
+}
+
+class _AgentRequestNoticeState extends State<AgentRequestNotice> {
+  bool _submitting = false;
+  String? _status;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = context.omniPalette;
+    final kind = (widget.cardData['requestKind'] ?? '').toString().trim();
+    final presentation = _compactRequestPresentation(widget.cardData);
+    final title = presentation.title.isEmpty
+        ? (kind == 'approval' ? 'Permission requested' : 'Agent question')
+        : presentation.title;
+    final detail = presentation.detail;
+    final requestId = widget.cardData['requestId'];
+    final cardStatus = widget.cardData['status']
+        ?.toString()
+        .trim()
+        .toLowerCase();
+    final pending =
+        _status == null &&
+        !const <String>{
+          'submitted',
+          'accepted',
+          'declined',
+          'ignored',
+          'cancelled',
+          'failed',
+        }.contains(cardStatus);
+    final unavailable =
+        requestId == null || requestId.toString().trim().isEmpty;
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: 8, bottom: 4),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+      decoration: BoxDecoration(
+        color: context.isDarkTheme
+            ? palette.surfaceSecondary
+            : palette.surfacePrimary,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: palette.borderSubtle),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            kind == 'approval'
+                ? Icons.shield_outlined
+                : Icons.help_outline_rounded,
+            size: 17,
+            color: palette.accentPrimary,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title.isEmpty ? 'Agent request' : title,
+                  style: TextStyle(
+                    color: palette.textPrimary,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                if (detail.isNotEmpty && detail != title) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    detail,
+                    style: TextStyle(
+                      color: palette.textSecondary,
+                      fontSize: 12,
+                      height: 1.3,
+                    ),
+                  ),
+                ],
+                if (kind == 'user_input' && pending) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    '请直接在下方输入回复',
+                    style: TextStyle(
+                      color: palette.textSecondary,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+                if (kind == 'approval' && pending && !unavailable) ...[
+                  const SizedBox(height: 4),
+                  Wrap(
+                    spacing: 4,
+                    children: [
+                      TextButton(
+                        onPressed: _submitting ? null : () => _respond(true),
+                        style: TextButton.styleFrom(
+                          minimumSize: const Size(0, 30),
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        child: const Text('允许'),
+                      ),
+                      TextButton(
+                        onPressed: _submitting ? null : () => _respond(false),
+                        style: TextButton.styleFrom(
+                          minimumSize: const Size(0, 30),
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        child: const Text('拒绝'),
+                      ),
+                    ],
+                  ),
+                ],
+                if (_status != null || unavailable) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    unavailable
+                        ? '请求缺少 requestId，已跳过交互'
+                        : (_status == 'accepted' ? '已允许' : '已拒绝'),
+                    style: TextStyle(
+                      color: palette.textSecondary,
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _respond(bool accepted) async {
+    final requestId = widget.cardData['requestId'];
+    if (requestId == null || _submitting) return;
+    setState(() => _submitting = true);
+    try {
+      await AgentRuntimeService.respondToApproval(
+        requestId: requestId,
+        accepted: accepted,
+      );
+      if (!mounted) return;
+      setState(() {
+        _status = accepted ? 'accepted' : 'declined';
+        _submitting = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _submitting = false);
+    }
+  }
+}
+
+({String title, String detail}) _compactRequestPresentation(
+  Map<String, dynamic> card,
+) {
+  final storedTitle = (card['title'] ?? '').toString().trim();
+  var title = storedTitle;
+  var detail = (card['detail'] ?? '').toString().trim();
+  final raw = _decodeRawParams(card['rawParamsJson']);
+  final schema = _compactRequestSchema(raw);
+  final properties = _asStringMap(schema?['properties']);
+  if (properties != null && properties.isNotEmpty) {
+    final first = properties.entries.first;
+    final field = _asStringMap(first.value) ?? const <String, dynamic>{};
+    final fieldTitle = _firstText([field['title'], field['label'], first.key]);
+    final fieldDetail = _firstText([
+      field['description'],
+      field['placeholder'],
+    ]);
+    if (_isGenericCompactTitle(title) && fieldTitle != null) {
+      title = fieldTitle;
+    }
+    if ((_isGenericCompactDetail(detail, title) || detail.isEmpty) &&
+        fieldDetail != null) {
+      detail = fieldDetail;
+    }
+    final choices = _compactSchemaChoices(field);
+    if (choices.isNotEmpty && !detail.contains('可选：')) {
+      detail = detail.isEmpty
+          ? '可选：${choices.join('、')}'
+          : '$detail\n可选：${choices.join('、')}';
+    }
+  }
+  return (title: title, detail: detail);
+}
+
+Map<String, dynamic>? _compactRequestSchema(Map<String, dynamic>? params) {
+  if (params == null) return null;
+  for (final key in const <String>[
+    'requestedSchema',
+    'requested_schema',
+    'schema',
+    'inputSchema',
+    'input_schema',
+  ]) {
+    final value = params[key];
+    final map =
+        _asStringMap(value) ??
+        (value is String ? _asStringMap(_decodeJsonObject(value)) : null);
+    if (map != null) return map;
+  }
+  for (final key in const <String>['request', 'elicitation', 'params']) {
+    final nested =
+        _asStringMap(params[key]) ??
+        (params[key] is String
+            ? _asStringMap(_decodeJsonObject(params[key] as String))
+            : null);
+    final schema = _compactRequestSchema(nested);
+    if (schema != null) return schema;
+  }
+  return params['properties'] is Map ? params : null;
+}
+
+dynamic _decodeJsonObject(String value) {
+  try {
+    return jsonDecode(value);
+  } catch (_) {
+    return null;
+  }
+}
+
+bool _isGenericCompactTitle(String value) {
+  final normalized = value.trim().toLowerCase();
+  return normalized.isEmpty ||
+      (normalized.contains('agent') &&
+          (normalized.contains('input') || normalized.contains('question'))) ||
+      (value.contains('需要') && value.contains('输入'));
+}
+
+bool _isGenericCompactDetail(String detail, String title) {
+  final normalized = detail.trim().toLowerCase();
+  return normalized.isEmpty ||
+      normalized == title.trim().toLowerCase() ||
+      (normalized.contains('agent') && normalized.contains('input')) ||
+      normalized.startsWith('{') ||
+      normalized.startsWith('[') ||
+      normalized.contains('requestedschema');
+}
+
+List<String> _compactSchemaChoices(Map<String, dynamic> field) {
+  final values = field['oneOf'] ?? field['enum'];
+  if (values is! List) return const <String>[];
+  return values
+      .map((value) {
+        final map = _asStringMap(value);
+        return _firstText([map?['title'], map?['label'], map?['const'], value]);
+      })
+      .whereType<String>()
+      .toList(growable: false);
+}
+
+class _AgentRequestCardState extends State<AgentRequestCard> {
   bool _isSubmitting = false;
   String? _localStatus;
   List<String> _localAnswers = const <String>[];
   String? _selectedOptionValue;
+  final Map<String, TextEditingController> _formControllers =
+      <String, TextEditingController>{};
+  final Map<String, dynamic> _formValues = <String, dynamic>{};
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
-    _answerFocusNode.addListener(_handleAnswerFocusChanged);
     _syncDefaultSelection();
+    _syncFormState();
     _hydratePersistedResponse();
   }
 
@@ -50,27 +308,17 @@ class _AgentRequestCardState extends State<AgentRequestCard>
       _localStatus = null;
       _localAnswers = const <String>[];
       _selectedOptionValue = null;
-      _answerController.clear();
+      _disposeFormControllers();
       _syncDefaultSelection();
+      _syncFormState();
       _hydratePersistedResponse();
     }
   }
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    _ensureAnswerInputTimer?.cancel();
-    _lateEnsureAnswerInputTimer?.cancel();
-    _answerFocusNode
-      ..removeListener(_handleAnswerFocusChanged)
-      ..dispose();
-    _answerController.dispose();
+    _disposeFormControllers();
     super.dispose();
-  }
-
-  @override
-  void didChangeMetrics() {
-    _scheduleEnsureAnswerInputVisible();
   }
 
   @override
@@ -92,48 +340,75 @@ class _AgentRequestCardState extends State<AgentRequestCard>
     final status = cardStatus == 'pending'
         ? (_isTerminalRequestStatus(_localStatus) ? _localStatus! : 'pending')
         : (_localStatus ?? cardStatus);
-    final isPending = status == 'pending' && !_isSubmitting;
+    final interactionUnavailable =
+        widget.cardData['interactionUnavailable'] == true;
+    final isPending =
+        status == 'pending' && !_isSubmitting && !interactionUnavailable;
     final options = _resolveRequestOptions(widget.cardData);
     final hasOptions = options.isNotEmpty;
+    final formFields = _resolveElicitationFields(widget.cardData);
+    final hasStructuredForm = formFields.isNotEmpty;
+    final isStructuredElicitation =
+        widget.cardData['structuredElicitation'] == true;
     final answers = _localAnswers.isNotEmpty
         ? _localAnswers
         : _stringList(widget.cardData['submittedAnswers']);
     final canSubmit =
         isPending &&
-        (!hasOptions ||
-            _selectedOptionValue != null ||
-            _answerController.text.trim().isNotEmpty);
+        (isStructuredElicitation
+            ? _isFormValid(formFields)
+            : hasOptions && _selectedOptionValue != null);
 
     return Container(
       key: const ValueKey('agent-request-card-surface'),
       width: double.infinity,
       margin: const EdgeInsets.only(top: 8, bottom: 4),
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
+      padding: const EdgeInsets.fromLTRB(14, 13, 14, 12),
       decoration: BoxDecoration(
         color: context.isDarkTheme
             ? palette.surfaceSecondary
-            : const Color(0xFFFDFDFE),
+            : palette.surfacePrimary,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: context.isDarkTheme
-              ? palette.borderSubtle
-              : const Color(0xFFE0E3E7),
-        ),
+        border: Border.all(color: palette.borderSubtle),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            title,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w800,
-              color: palette.textPrimary,
-              height: 1.2,
-            ),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 30,
+                height: 30,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: palette.accentPrimary.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  kind == 'approval'
+                      ? Icons.shield_outlined
+                      : Icons.help_outline_rounded,
+                  size: 17,
+                  color: palette.accentPrimary,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  title,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
+                    color: palette.textPrimary,
+                    height: 1.2,
+                  ),
+                ),
+              ),
+            ],
           ),
           if (detail.trim().isNotEmpty) ...[
             const SizedBox(height: 8),
@@ -148,9 +423,25 @@ class _AgentRequestCardState extends State<AgentRequestCard>
               ),
             ),
           ],
+          if (interactionUnavailable) ...[
+            const SizedBox(height: 8),
+            Text(
+              'This request cannot be answered because ACP omitted its request id.',
+              style: TextStyle(
+                fontSize: 12,
+                color: palette.textSecondary,
+                height: 1.35,
+              ),
+            ),
+          ],
           const SizedBox(height: 14),
           if (kind == 'user_input' && status == 'pending') ...[
-            if (hasOptions) ...[
+            if (hasStructuredForm) ...[
+              for (final field in formFields) ...[
+                _buildElicitationField(field),
+                const SizedBox(height: 8),
+              ],
+            ] else if (hasOptions) ...[
               for (var index = 0; index < options.length; index++) ...[
                 _RequestOptionTile(
                   index: index + 1,
@@ -160,52 +451,11 @@ class _AgentRequestCardState extends State<AgentRequestCard>
                   onTap: () {
                     setState(() {
                       _selectedOptionValue = options[index].value;
-                      _answerController.clear();
                     });
                   },
                 ),
                 const SizedBox(height: 4),
               ],
-              _CustomAnswerInput(
-                inputKey: _answerInputKey,
-                controller: _answerController,
-                focusNode: _answerFocusNode,
-                agentName: agentName.isEmpty ? 'Agent' : agentName,
-                enabled: isPending,
-                onTap: () {
-                  setState(() {
-                    _selectedOptionValue = null;
-                  });
-                  _scheduleEnsureAnswerInputVisible();
-                },
-                onChanged: (value) {
-                  setState(() {
-                    if (value.trim().isNotEmpty) {
-                      _selectedOptionValue = null;
-                    }
-                  });
-                },
-              ),
-              const SizedBox(height: 12),
-            ] else ...[
-              TextField(
-                controller: _answerController,
-                minLines: 1,
-                maxLines: 3,
-                style: TextStyle(fontSize: 12, color: palette.textPrimary),
-                decoration: InputDecoration(
-                  isDense: true,
-                  hintText: 'Answer',
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 8,
-                  ),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 8),
             ],
           ],
           _RequestFooter(
@@ -240,6 +490,9 @@ class _AgentRequestCardState extends State<AgentRequestCard>
     final requestId = widget.cardData['requestId'];
     if (requestId == null) return;
     await _submit(() {
+      if (widget.cardData['structuredElicitation'] == true) {
+        return AgentRuntimeService.cancelElicitation(requestId: requestId);
+      }
       return AgentRuntimeService.ignoreUserInput(requestId: requestId);
     }, 'ignored');
   }
@@ -248,10 +501,20 @@ class _AgentRequestCardState extends State<AgentRequestCard>
     final requestId = widget.cardData['requestId'];
     final questionId = (widget.cardData['questionId'] ?? 'answer').toString();
     if (requestId == null) return;
-    final customAnswer = _answerController.text.trim();
-    final answer = customAnswer.isNotEmpty
-        ? customAnswer
-        : (_selectedOptionValue ?? '').trim();
+    final formFields = _resolveElicitationFields(widget.cardData);
+    if (widget.cardData['structuredElicitation'] == true) {
+      final content = _elicitationContent(formFields);
+      await _submit(
+        () => AgentRuntimeService.respondToElicitation(
+          requestId: requestId,
+          content: content,
+        ),
+        'submitted',
+        answers: content.values.map((value) => value.toString()).toList(),
+      );
+      return;
+    }
+    final answer = (_selectedOptionValue ?? '').trim();
     if (answer.isEmpty) return;
     await _submit(
       () {
@@ -291,48 +554,6 @@ class _AgentRequestCardState extends State<AgentRequestCard>
         _isSubmitting = false;
       });
     }
-  }
-
-  void _handleAnswerFocusChanged() {
-    if (!mounted) {
-      return;
-    }
-    setState(() {});
-    _scheduleEnsureAnswerInputVisible();
-  }
-
-  void _scheduleEnsureAnswerInputVisible() {
-    if (!_answerFocusNode.hasFocus) {
-      return;
-    }
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _ensureAnswerInputVisible();
-    });
-    _ensureAnswerInputTimer?.cancel();
-    _lateEnsureAnswerInputTimer?.cancel();
-    _ensureAnswerInputTimer = Timer(const Duration(milliseconds: 260), () {
-      _ensureAnswerInputVisible();
-    });
-    _lateEnsureAnswerInputTimer = Timer(const Duration(milliseconds: 560), () {
-      _ensureAnswerInputVisible();
-    });
-  }
-
-  void _ensureAnswerInputVisible() {
-    if (!mounted || !_answerFocusNode.hasFocus) {
-      return;
-    }
-    final inputContext = _answerInputKey.currentContext;
-    if (inputContext == null) {
-      return;
-    }
-    Scrollable.ensureVisible(
-      inputContext,
-      duration: const Duration(milliseconds: 260),
-      curve: Curves.easeOutCubic,
-      alignment: 0.72,
-      alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
-    );
   }
 
   void _hydratePersistedResponse() {
@@ -380,10 +601,142 @@ class _AgentRequestCardState extends State<AgentRequestCard>
     if (options.isEmpty || _selectedOptionValue != null) {
       return;
     }
-    if (_answerController.text.trim().isNotEmpty) {
-      return;
-    }
     _selectedOptionValue = options.first.value;
+  }
+
+  void _syncFormState() {
+    final fields = _resolveElicitationFields(widget.cardData);
+    for (final field in fields) {
+      final defaultValue = field.type == 'boolean' && field.defaultValue == null
+          ? false
+          : field.defaultValue;
+      _formValues.putIfAbsent(field.name, () => defaultValue);
+      if (field.options.isEmpty && field.type != 'boolean') {
+        final controller = _formControllers.putIfAbsent(
+          field.name,
+          () => TextEditingController(
+            text: defaultValue == null ? '' : defaultValue.toString(),
+          ),
+        );
+        if (controller.text.isEmpty && defaultValue != null) {
+          controller.text = defaultValue.toString();
+        }
+      }
+    }
+  }
+
+  void _disposeFormControllers() {
+    for (final controller in _formControllers.values) {
+      controller.dispose();
+    }
+    _formControllers.clear();
+    _formValues.clear();
+  }
+
+  bool _isFormValid(List<_ElicitationField> fields) {
+    for (final field in fields) {
+      if (!field.required) continue;
+      final value = _formValue(field);
+      if (value == null || (value is String && value.trim().isEmpty)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  dynamic _formValue(_ElicitationField field) {
+    if (field.type == 'boolean' || field.options.isNotEmpty) {
+      return _formValues[field.name];
+    }
+    return _formControllers[field.name]?.text ?? _formValues[field.name];
+  }
+
+  Map<String, dynamic> _elicitationContent(List<_ElicitationField> fields) {
+    final content = <String, dynamic>{};
+    for (final field in fields) {
+      final raw = _formValue(field);
+      if (raw == null || (raw is String && raw.trim().isEmpty)) continue;
+      final value = raw is String ? raw.trim() : raw;
+      content[field.name] = switch (field.type) {
+        'integer' => int.tryParse(value.toString()) ?? value,
+        'number' => double.tryParse(value.toString()) ?? value,
+        'boolean' => value is bool ? value : value.toString() == 'true',
+        'array' =>
+          value is List
+              ? value
+              : value
+                    .toString()
+                    .split(',')
+                    .map((item) => item.trim())
+                    .where((item) => item.isNotEmpty)
+                    .toList(growable: false),
+        _ => value,
+      };
+    }
+    return content;
+  }
+
+  Widget _buildElicitationField(_ElicitationField field) {
+    final label = field.required ? '${field.label} *' : field.label;
+    if (field.type == 'boolean') {
+      final selected = _formValues[field.name] == true;
+      return CheckboxListTile(
+        dense: true,
+        contentPadding: EdgeInsets.zero,
+        title: Text(label, style: const TextStyle(fontSize: 13)),
+        subtitle: field.description.isEmpty ? null : Text(field.description),
+        value: selected,
+        onChanged: _isSubmitting
+            ? null
+            : (value) => setState(() {
+                _formValues[field.name] = value == true;
+              }),
+      );
+    }
+    if (field.options.isNotEmpty) {
+      final selected = _formValues[field.name]?.toString();
+      return DropdownButtonFormField<String>(
+        value: field.options.contains(selected) ? selected : null,
+        decoration: InputDecoration(
+          labelText: label,
+          helperText: field.description.isEmpty ? null : field.description,
+          border: const OutlineInputBorder(),
+          isDense: true,
+        ),
+        items: field.options
+            .map(
+              (option) =>
+                  DropdownMenuItem<String>(value: option, child: Text(option)),
+            )
+            .toList(growable: false),
+        onChanged: _isSubmitting
+            ? null
+            : (value) => setState(() {
+                _formValues[field.name] = value;
+              }),
+      );
+    }
+    final controller = _formControllers[field.name]!;
+    return TextField(
+      controller: controller,
+      enabled: !_isSubmitting,
+      minLines: field.type == 'array' ? 2 : 1,
+      maxLines: field.type == 'array' ? 4 : 1,
+      keyboardType: switch (field.type) {
+        'integer' => TextInputType.number,
+        'number' => const TextInputType.numberWithOptions(decimal: true),
+        _ when field.format == 'email' => TextInputType.emailAddress,
+        _ when field.format == 'uri' => TextInputType.url,
+        _ => TextInputType.text,
+      },
+      decoration: InputDecoration(
+        labelText: label,
+        hintText: field.description.isEmpty ? null : field.description,
+        border: const OutlineInputBorder(),
+        isDense: true,
+      ),
+      onChanged: (_) => setState(() {}),
+    );
   }
 
   Future<void> _persistResponseStatus(
@@ -530,69 +883,6 @@ class _RequestOptionTile extends StatelessWidget {
   }
 }
 
-class _CustomAnswerInput extends StatelessWidget {
-  const _CustomAnswerInput({
-    required this.inputKey,
-    required this.controller,
-    required this.focusNode,
-    required this.agentName,
-    required this.enabled,
-    required this.onTap,
-    required this.onChanged,
-  });
-
-  final Key inputKey;
-  final TextEditingController controller;
-  final FocusNode focusNode;
-  final String agentName;
-  final bool enabled;
-  final VoidCallback onTap;
-  final ValueChanged<String> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final isEnglish =
-        Localizations.maybeLocaleOf(context)?.languageCode == 'en';
-    final hint = isEnglish
-        ? 'No, tell $agentName how to adjust'
-        : '否，请告知 $agentName 如何调整';
-    final view = View.of(context);
-    final viewKeyboardInset = view.viewInsets.bottom / view.devicePixelRatio;
-    final mediaQueryKeyboardInset =
-        MediaQuery.maybeOf(context)?.viewInsets.bottom ?? 0.0;
-    final keyboardInset = viewKeyboardInset > mediaQueryKeyboardInset
-        ? viewKeyboardInset
-        : mediaQueryKeyboardInset;
-
-    return KeyedSubtree(
-      key: inputKey,
-      child: SizedBox(
-        key: const ValueKey('agent-request-custom-answer-input'),
-        width: double.infinity,
-        child: TextField(
-          controller: controller,
-          focusNode: focusNode,
-          enabled: enabled,
-          minLines: 1,
-          maxLines: 1,
-          keyboardType: TextInputType.text,
-          textInputAction: TextInputAction.done,
-          scrollPhysics: const ClampingScrollPhysics(),
-          scrollPadding: EdgeInsets.only(top: 24, bottom: keyboardInset + 96),
-          onTap: onTap,
-          onChanged: onChanged,
-          textCapitalization: TextCapitalization.sentences,
-          style: context.omniInputTextStyle,
-          decoration: InputDecoration(
-            labelText: hint,
-            hintText: isEnglish ? 'Describe the adjustment' : '请输入调整说明',
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 class _RequestFooter extends StatelessWidget {
   const _RequestFooter({
     required this.kind,
@@ -652,12 +942,39 @@ class _RequestFooter extends StatelessWidget {
         children: [
           TextButton(
             onPressed: isPending ? onDecline : null,
-            child: Text(isEnglish ? 'Decline' : '拒绝'),
+            style: TextButton.styleFrom(
+              minimumSize: const Size(0, 36),
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              foregroundColor: palette.textSecondary,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(18),
+              ),
+            ),
+            child: Text(
+              isEnglish ? 'Decline' : '拒绝',
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+            ),
           ),
-          const SizedBox(width: 6),
+          const SizedBox(width: 8),
           FilledButton(
             onPressed: isPending ? onAccept : null,
-            child: Text(isEnglish ? 'Accept' : '接受'),
+            style: FilledButton.styleFrom(
+              minimumSize: const Size(0, 36),
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              backgroundColor: palette.accentPrimary,
+              disabledBackgroundColor: context.isDarkTheme
+                  ? palette.surfaceElevated
+                  : const Color(0xFFE2E5E9),
+              foregroundColor: Colors.white,
+              disabledForegroundColor: palette.textTertiary,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(18),
+              ),
+            ),
+            child: Text(
+              isEnglish ? 'Accept' : '接受',
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
+            ),
           ),
         ],
       );
@@ -808,6 +1125,73 @@ _RequestOption? _requestOptionFromValue(dynamic value) {
     value: optionValue,
     description: description,
   );
+}
+
+class _ElicitationField {
+  const _ElicitationField({
+    required this.name,
+    required this.label,
+    required this.type,
+    required this.format,
+    required this.description,
+    required this.required,
+    required this.options,
+    required this.defaultValue,
+  });
+
+  final String name;
+  final String label;
+  final String type;
+  final String format;
+  final String description;
+  final bool required;
+  final List<String> options;
+  final dynamic defaultValue;
+}
+
+List<_ElicitationField> _resolveElicitationFields(
+  Map<String, dynamic> cardData,
+) {
+  if (cardData['structuredElicitation'] != true) {
+    return const <_ElicitationField>[];
+  }
+  final raw = _decodeRawParams(cardData['rawParamsJson']);
+  final schema = _asStringMap(
+    raw['requestedSchema'] ?? raw['requested_schema'],
+  );
+  final properties = _asStringMap(schema?['properties']);
+  if (properties == null || properties.isEmpty) {
+    return const <_ElicitationField>[];
+  }
+  final requiredValues = schema?['required'];
+  final requiredNames = requiredValues is List
+      ? requiredValues.map((value) => value.toString()).toSet()
+      : const <String>{};
+  final fields = <_ElicitationField>[];
+  for (final entry in properties.entries) {
+    final property = _asStringMap(entry.value) ?? const <String, dynamic>{};
+    final type = (property['type'] ?? 'string').toString().toLowerCase();
+    final enumValues = property['enum'];
+    final options = enumValues is List
+        ? enumValues
+              .map((value) => value?.toString().trim() ?? '')
+              .where((value) => value.isNotEmpty)
+              .toList(growable: false)
+        : const <String>[];
+    fields.add(
+      _ElicitationField(
+        name: entry.key,
+        label: (property['title'] ?? entry.key).toString(),
+        type: type,
+        format: (property['format'] ?? '').toString().toLowerCase(),
+        description: (property['description'] ?? '').toString(),
+        required: requiredNames.contains(entry.key),
+        options: options,
+        defaultValue: property['default'],
+      ),
+    );
+  }
+  return fields;
 }
 
 String _requestStorageKey(Map<String, dynamic> cardData) {

@@ -6,16 +6,10 @@ const String _kExpandedConversationSectionsStorageKey =
     'home_drawer_expanded_sections_v1';
 const String _kPinnedConversationSectionKey = '__home_drawer_pinned__';
 const String _kScheduledConversationSectionKey = '__home_drawer_scheduled__';
-const String _kAgentConversationSectionKey = '__home_drawer_agent__';
-const String _kOmniAiConversationSectionKey = '__home_drawer_omni_ai__';
 const String _kChatOnlyConversationSectionKey = '__home_drawer_chat_only__';
 const String _kOmniAiDateSectionNamespace = 'omni_ai';
 const String _kChatOnlyDateSectionNamespace = 'chat_only';
-const String _kAgentSectionIconAssetPath = 'assets/home/chat/agent.svg';
-const String _kOmniAiSectionIconAssetPath = 'assets/home/avatar.svg';
 const String _kChatOnlySectionIconAssetPath = 'assets/home/chat/pure_chat.svg';
-const String _kAgentProjectIconAssetPath =
-    'assets/home/workspace_folder_icon.svg';
 const double _kConversationSectionHeaderLeadingSlotWidth = 20;
 const double _kPromotedConversationItemTitleInset = 20;
 const double _kScheduledConversationLeadingInset = 12;
@@ -186,17 +180,16 @@ extension _HomeDrawerConversationList on HomeDrawerState {
   Widget _buildConversationTimelineBody(
     List<_ConversationSearchResult> results,
   ) {
-    final agentResults = <_ConversationSearchResult>[];
     final chatOnlyResults = <_ConversationSearchResult>[];
     final omniAiResults = <_ConversationSearchResult>[];
     for (final result in results) {
       final mode = result.conversation.mode;
-      if (mode == ConversationMode.agent) {
-        agentResults.add(result);
-      } else if (mode == ConversationMode.chatOnly) {
+      if (mode == ConversationMode.chatOnly) {
         chatOnlyResults.add(result);
       } else {
-        // normal / subagent / openclaw 统一归入小万（OmniAi）区块。
+        // Agent、Xiaowan、SubAgent 和 OpenClaw 共用一个会话入口。
+        // Agent 的具体 Harness 通过每条会话旁的身份标签区分，不再引入
+        // Agent -> Workspace -> Conversation 的额外层级。
         omniAiResults.add(result);
       }
     }
@@ -217,15 +210,12 @@ extension _HomeDrawerConversationList on HomeDrawerState {
     if (pinnedResults.isNotEmpty) {
       addSection(_buildPinnedConversationSection(pinnedResults));
     }
-    if (agentResults.isNotEmpty) {
-      addSection(_buildAgentConversationSection(agentResults));
-    }
     if (omniAiResults.isNotEmpty) {
+      // OmniAI/Xiaowan is the default chat history.  It does not need a
+      // second navigation header above the date groups; showing one here
+      // duplicates the Xiaowan entry already visible in the chat shell.
       addSection(
-        _buildModeTimelineConversationSection(
-          sectionKey: _kOmniAiConversationSectionKey,
-          label: context.l10n.homeDrawerOmniAiSection,
-          iconAssetPath: _kOmniAiSectionIconAssetPath,
+        _buildModeTimelineConversationEntries(
           dateSectionNamespace: _kOmniAiDateSectionNamespace,
           results: omniAiResults,
         ),
@@ -546,9 +536,6 @@ extension _HomeDrawerConversationList on HomeDrawerState {
   String _scheduledParentConversationSectionKey(ConversationModel parent) =>
       '__home_drawer_scheduled_${parent.threadKey}';
 
-  String _agentProjectConversationSectionKey(String projectKey) =>
-      '__home_drawer_agent_project_$projectKey';
-
   void _restoreExpandedConversationSections() {
     _expandedConversationSections
       ..clear()
@@ -629,26 +616,6 @@ extension _HomeDrawerConversationList on HomeDrawerState {
     );
   }
 
-  Widget _buildAgentConversationSection(
-    List<_ConversationSearchResult> results,
-  ) {
-    final groups = _agentProjectConversationGroups(results);
-    return _buildPromotedConversationSection(
-      sectionKey: _kAgentConversationSectionKey,
-      label: context.l10n.homeDrawerAgentSection,
-      itemCount: results.length,
-      iconAssetPath: _kAgentSectionIconAssetPath,
-      childrenLeadingInset: 0,
-      children: [
-        for (int groupIndex = 0; groupIndex < groups.length; groupIndex++)
-          _buildAgentProjectConversationGroup(
-            groups[groupIndex],
-            showDivider: groupIndex != groups.length - 1,
-          ),
-      ],
-    );
-  }
-
   Widget _buildModeTimelineConversationSection({
     required String sectionKey,
     required String label,
@@ -665,6 +632,24 @@ extension _HomeDrawerConversationList on HomeDrawerState {
       children: _buildConversationDateSectionChildren(
         results,
         namespace: dateSectionNamespace,
+      ),
+    );
+  }
+
+  Widget _buildModeTimelineConversationEntries({
+    required String dateSectionNamespace,
+    required List<_ConversationSearchResult> results,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(left: _kModeSectionTimelineLeadingInset),
+      child: Column(
+        children: [
+          const SizedBox(height: 2),
+          ..._buildConversationDateSectionChildren(
+            results,
+            namespace: dateSectionNamespace,
+          ),
+        ],
       ),
     );
   }
@@ -757,129 +742,6 @@ extension _HomeDrawerConversationList on HomeDrawerState {
         _buildCollapsibleSectionBody(expanded: expanded, child: children),
         if (showDivider) const SizedBox(height: 6),
       ],
-    );
-  }
-
-  List<_AgentProjectConversationGroup> _agentProjectConversationGroups(
-    List<_ConversationSearchResult> results,
-  ) {
-    // 会话列表已按 updatedAt 降序排列，项目按首次出现顺序即为最近活跃顺序。
-    final groupsByKey = <String, _AgentProjectConversationGroup>{};
-    for (final result in results) {
-      final conversation = result.conversation;
-      final projectName = conversation.agentProjectName;
-      // 去掉尾部斜杠，让 /root/blog 与 /root/blog/ 归入同一项目。
-      final normalizedCwd = (conversation.agentCwd ?? '').trim().replaceAll(
-        RegExp(r'/+$'),
-        '',
-      );
-      final projectKey = projectName == null
-          ? '__no_project__'
-          : (normalizedCwd.isEmpty ? '/' : normalizedCwd);
-      final group = groupsByKey.putIfAbsent(
-        projectKey,
-        () => _AgentProjectConversationGroup(
-          projectKey: projectKey,
-          label: projectName ?? context.l10n.homeDrawerAgentNoProject,
-          results: <_ConversationSearchResult>[],
-        ),
-      );
-      group.results.add(result);
-    }
-    return groupsByKey.values.toList(growable: false);
-  }
-
-  Widget _buildAgentProjectConversationGroup(
-    _AgentProjectConversationGroup group, {
-    required bool showDivider,
-  }) {
-    final sectionKey = _agentProjectConversationSectionKey(group.projectKey);
-    final expanded = _isConversationSectionExpanded(sectionKey);
-    final children = Column(
-      children: [
-        for (int itemIndex = 0; itemIndex < group.results.length; itemIndex++)
-          Padding(
-            padding: const EdgeInsets.only(
-              left: _kScheduledChildConversationItemInset,
-            ),
-            child: _buildSwipeConversationItem(
-              group.results[itemIndex],
-              showDivider: itemIndex != group.results.length - 1,
-              trailingLabel: _conversationRelativeTimeLabel(
-                group.results[itemIndex].conversation,
-              ),
-            ),
-          ),
-      ],
-    );
-
-    return Column(
-      children: [
-        _buildAgentProjectConversationRow(
-          group,
-          onToggle: () => _toggleConversationSection(sectionKey),
-        ),
-        _buildCollapsibleSectionBody(expanded: expanded, child: children),
-        if (showDivider) const SizedBox(height: 6),
-      ],
-    );
-  }
-
-  Widget _buildAgentProjectConversationRow(
-    _AgentProjectConversationGroup group, {
-    required VoidCallback onToggle,
-  }) {
-    final palette = context.omniPalette;
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onToggle,
-        borderRadius: BorderRadius.circular(8),
-        splashColor: palette.accentPrimary.withValues(alpha: 0.08),
-        highlightColor: Colors.transparent,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(4, 8, 2, 8),
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              SvgPicture.asset(
-                _kAgentProjectIconAssetPath,
-                width: 14,
-                height: 14,
-                colorFilter: ColorFilter.mode(
-                  palette.textTertiary,
-                  BlendMode.srcIn,
-                ),
-              ),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  group.label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    color: _drawerTextColor,
-                    height: 1.35,
-                    fontFamily: 'PingFang SC',
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                '${group.results.length}',
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w500,
-                  color: palette.textTertiary,
-                  fontFamily: 'PingFang SC',
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
     );
   }
 
@@ -1177,6 +1039,7 @@ extension _HomeDrawerConversationList on HomeDrawerState {
     final conversation = result.conversation;
     final isBusy = _busyConversationKeys.contains(conversation.threadKey);
     final title = _resolveConversationTitle(conversation);
+    final agentLabel = _conversationAgentLabel(conversation);
     final showArchivedBadge = _isSearchActive && conversation.isArchived;
     final isEditing = _editingThreadKey == conversation.threadKey;
 
@@ -1226,6 +1089,18 @@ extension _HomeDrawerConversationList on HomeDrawerState {
                           const SizedBox(width: 10),
                           _buildArchivedBadge(),
                         ],
+                        if (agentLabel != null && !isEditing) ...[
+                          const SizedBox(width: 10),
+                          Text(
+                            agentLabel,
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w500,
+                              color: context.omniPalette.textTertiary,
+                              fontFamily: 'PingFang SC',
+                            ),
+                          ),
+                        ],
                         if (trailingLabel != null && !isEditing) ...[
                           const SizedBox(width: 10),
                           Text(
@@ -1267,6 +1142,43 @@ extension _HomeDrawerConversationList on HomeDrawerState {
     );
   }
 
+  String? _conversationAgentLabel(ConversationModel conversation) {
+    if (conversation.mode != ConversationMode.agent) {
+      return null;
+    }
+    final agentId = conversation.agentId?.trim().toLowerCase() ?? '';
+    if (agentId.isEmpty || agentId == 'xiaowan-acp') {
+      return null;
+    }
+    return switch (agentId) {
+      'codex-acp' || 'codex-remote' => 'Codex',
+      'claude-code-acp' => 'Claude Code',
+      'opencode-acp' => 'OpenCode',
+      'deepseek-harness-acp' => 'DeepSeek',
+      _ => _humanizeAgentId(agentId),
+    };
+  }
+
+  String _humanizeAgentId(String agentId) {
+    final normalized = agentId
+        .replaceFirst(RegExp(r'-harness-acp$'), '')
+        .replaceFirst(RegExp(r'-acp$'), '')
+        .replaceFirst(RegExp(r'-remote$'), '')
+        .replaceAll(RegExp(r'[-_]+'), ' ')
+        .trim();
+    if (normalized.isEmpty) {
+      return 'Agent';
+    }
+    return normalized
+        .split(RegExp(r'\s+'))
+        .map(
+          (word) => word.isEmpty
+              ? word
+              : '${word[0].toUpperCase()}${word.substring(1)}',
+        )
+        .join(' ');
+  }
+
   Widget _buildEditableConversationTitle({
     required String title,
     required bool isEditing,
@@ -1297,7 +1209,7 @@ extension _HomeDrawerConversationList on HomeDrawerState {
           focusedErrorBorder: InputBorder.none,
         ),
         onTapOutside: (_) => _commitTitleEdit(),
-        onSubmitted: (_) => _commitTitleEdit(),
+        onSubmitted: _commitTitleEdit,
       );
     }
 

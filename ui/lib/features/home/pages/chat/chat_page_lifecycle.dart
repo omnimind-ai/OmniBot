@@ -12,7 +12,16 @@ ConversationThreadTarget _newThreadTargetForConversationMode(
 ConversationThreadTarget _newAgentThreadTarget({
   String? agentId,
   String? agentRuntime,
+  int? conversationId,
 }) {
+  if (conversationId != null) {
+    return ConversationThreadTarget.existing(
+      conversationId: conversationId,
+      mode: ConversationMode.agent,
+      agentId: agentId,
+      agentRuntime: agentRuntime,
+    );
+  }
   return ConversationThreadTarget.newConversation(
     mode: ConversationMode.agent,
     requestKey: DateTime.now().microsecondsSinceEpoch.toString(),
@@ -66,7 +75,9 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
 
     _inputFocusNode.addListener(_onFocusChange);
     _messageController.addListener(_handleSlashCommandInput);
-    unawaited(_bootstrapConversationThread());
+    final bootstrapFuture = _bootstrapConversationThread();
+    _conversationBootstrapFuture = bootstrapFuture;
+    unawaited(bootstrapFuture);
   }
 
   @override
@@ -76,6 +87,7 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     if (mediaQuery != null) {
       final isHdPadLandscape = _isHdPadLandscapeForMediaQuery(mediaQuery);
       if (_wasHdPadLandscape == true && !isHdPadLandscape) {
+        _embeddedDrawerKey.currentState?.unfocusSearch();
         _drawerKey.currentState?.unfocusSearch();
       }
       _wasHdPadLandscape = isHdPadLandscape;
@@ -146,7 +158,7 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     if (normalizedPreferredMode == null &&
         StorageService.getChatStartupBehavior() ==
             ChatStartupBehavior.newConversation) {
-      return _newThreadTargetForConversationMode(ConversationMode.normal);
+      return _newThreadTargetForConversationMode(ConversationMode.agent);
     }
 
     if (normalizedPreferredMode == null) {
@@ -158,7 +170,7 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
       }
     }
 
-    final resolvedMode = normalizedPreferredMode ?? ConversationMode.normal;
+    final resolvedMode = normalizedPreferredMode ?? ConversationMode.agent;
     final savedTarget =
         await ConversationHistoryService.getCurrentConversationTarget(
           mode: resolvedMode,
@@ -252,6 +264,9 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
       _isBrowserOverlayVisible = false;
       _isSurfacePageScrolling = false;
     });
+    // A new Harness target without a conversationId is a new conversation.
+    // The previous conversation remains persisted in history and is not
+    // implicitly inherited by the new Harness.
     _resetLocalConversationState(targetMode);
     _restoreLocalAgentThreadIdFromTarget(effectiveTarget);
     if (_shouldSyncExistingLocalAgentTarget(effectiveTarget)) {
@@ -293,7 +308,11 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     }
     final requestKey = target.requestKey ?? message;
     if (!_consumedInitialMessageRequests.add(requestKey)) return;
-    await _sendMessage(text: message);
+    // This method is invoked by _applyConversationThreadTarget while the
+    // bootstrap Future is still running. The conversation has already been
+    // initialized above, so waiting for that same Future inside _sendMessage
+    // would deadlock the initial prompt (notably OmniFlow enhancement).
+    await _sendMessage(text: message, waitForBootstrap: false);
   }
 
   void _restoreLocalAgentThreadIdFromTarget(ConversationThreadTarget target) {
@@ -324,15 +343,23 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
       return;
     }
     try {
-      final response = await AgentRuntimeService.readThread(
-        conversationId: conversationId,
-        includeTurns: false,
-      );
       AgentRuntimeStatus? status;
       try {
         status = await AgentRuntimeService.status();
       } catch (_) {
         status = null;
+      }
+      final requestedAgentId = target.agentId?.trim() ?? '';
+      final response = await AgentRuntimeService.readSession(
+        conversationId: conversationId,
+        agentId: requestedAgentId.isEmpty ? null : requestedAgentId,
+        includeHistory: false,
+        conversationMode: target.mode.storageValue,
+      );
+      try {
+        status = await AgentRuntimeService.status();
+      } catch (_) {
+        // Keep the status snapshot from before session restoration.
       }
       if (!mounted || !_isConversationTargetRequestCurrent(requestId)) {
         return;
@@ -763,6 +790,15 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
   Future<void> _handleExternalConversationListChanged() async {
     final lifecycleToken = captureConversationLifecycleToken();
     final conversationId = _currentConversationId;
+    final runtime = _runtimeForMode(_activeMode);
+    final hasLiveTurn =
+        _modeState(_activeMode).isAiResponding ||
+        runtime?.hasInFlightTask == true;
+    // Conversation creation/update notifications are metadata-only from the
+    // chat page's perspective while a turn is running. Loading the database
+    // snapshot here can race the optimistic user-message persistence and
+    // replace the visible live timeline with an older, empty one.
+    if (hasLiveTurn) return;
     await checkConversationExists(lifecycleToken: lifecycleToken);
     if (!mounted ||
         !isConversationLifecycleTokenCurrent(lifecycleToken) ||
@@ -770,7 +806,13 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
         conversationId != _currentConversationId) {
       return;
     }
-    final runtime = _runtimeForMode(_activeMode);
+    // The task may have started while checkConversationExists was awaiting
+    // the native conversation list. Re-check before installing any snapshot;
+    // otherwise that late list event can still win the race.
+    if (_modeState(_activeMode).isAiResponding ||
+        _runtimeForMode(_activeMode)?.hasInFlightTask == true) {
+      return;
+    }
     await loadConversation(
       conversationId,
       // A list-change event updates conversation metadata. If this page
@@ -808,6 +850,9 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
       return;
     }
     final runtime = _runtimeForMode(_activeMode);
+    final hasLiveTurn =
+        _modeState(_activeMode).isAiResponding ||
+        runtime?.hasInFlightTask == true;
     // IM 等外部入口写入用户消息时，原生侧用 reason=external_user_message 通知前端：
     // 这条消息只在 DB 里、还没进入 runtime.messages，必须强制从 DB 重载，
     // 否则 agent 流事件先到时 hasInFlightTask=true 会让 in-memory 分支吞掉它。
@@ -819,7 +864,7 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     // 文本/思考时序跳动。
     if (!shouldReloadConversationMessagesChanged(
       reason: reason,
-      hasInFlightTask: runtime?.hasInFlightTask == true,
+      hasInFlightTask: hasLiveTurn,
       hasRuntimeMessages: runtime?.messages.isNotEmpty == true,
       suppressLocalSnapshotEcho:
           runtime?.shouldSuppressLocalMessageSnapshotEcho == true,
@@ -828,8 +873,7 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     }
     await loadConversation(
       conversationId,
-      preferInMemory:
-          !isExternalUserMessage && runtime?.hasInFlightTask == true,
+      preferInMemory: !isExternalUserMessage && hasLiveTurn,
       lifecycleToken: lifecycleToken,
     );
     if (!mounted ||
@@ -865,7 +909,7 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
 
   @override
   double _popupMenuBottomOffset() {
-    final renderObject = _inputAreaKey.currentContext?.findRenderObject();
+    final renderObject = findActiveRenderObject(_inputAreaKey.currentContext);
     if (renderObject is! RenderBox || !renderObject.hasSize) {
       return 72;
     }
@@ -910,6 +954,13 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
         if (!mounted) return;
         _jumpToCurrentModePage(animate: animate);
       });
+      return;
+    }
+    // PageController.page/position and animateToPage require exactly one
+    // attached PageView.  During a layout branch swap the old PageView can
+    // still be attached for one frame; wait for the next lifecycle event
+    // instead of throwing from the chat build.
+    if (_modePageController.positions.length != 1) {
       return;
     }
     final currentPage = _modePageController.page?.round();
@@ -1014,7 +1065,7 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     final staged = _activeStagedSharedOpenDraft();
     if (staged != null && staged.hasContent) {
       return ConversationThreadTarget.newConversation(
-        mode: ConversationMode.normal,
+        mode: ConversationMode.agent,
         fromNativeRoute: true,
         requestKey: staged.requestKey,
       );
@@ -1028,7 +1079,7 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     _stagedSharedOpenDraftExpiresAt =
         DateTime.now().millisecondsSinceEpoch + 5000;
     return ConversationThreadTarget.newConversation(
-      mode: ConversationMode.normal,
+      mode: ConversationMode.agent,
       fromNativeRoute: true,
       requestKey: payload.requestKey,
     );
@@ -1041,9 +1092,12 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     if (payload == null ||
         !payload.hasContent ||
         !target.isNewConversation ||
-        target.mode != ConversationMode.normal) {
+        (target.mode != ConversationMode.agent &&
+            target.mode != ConversationMode.normal)) {
       return;
     }
+
+    final targetPageMode = _pageModeForConversationMode(target.mode);
 
     final attachments = payload.attachments
         .map(
@@ -1064,13 +1118,13 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
       return;
     }
     setState(() {
-      _modeState(ChatPageMode.normal).draftMessage = payload.text ?? '';
-      _modeState(ChatPageMode.normal).pendingAttachments
+      _modeState(targetPageMode).draftMessage = payload.text ?? '';
+      _modeState(targetPageMode).pendingAttachments
         ..clear()
         ..addAll(attachments);
     });
-    if (_activeConversationMode == ChatPageMode.normal) {
-      _applyDraftForConversationMode(ChatPageMode.normal);
+    if (_activeConversationMode == targetPageMode) {
+      _applyDraftForConversationMode(targetPageMode);
     }
     await SharedOpenDraftService.clearPendingDraft();
   }

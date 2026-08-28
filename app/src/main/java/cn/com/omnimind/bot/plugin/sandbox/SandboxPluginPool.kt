@@ -73,31 +73,12 @@ class SandboxPluginPool(
                     require(directory == pluginDirectory(manifest.id)) {
                         "Sandbox plugin directory does not match id: ${manifest.id}"
                     }
+                    ensureRuntimeCurrent(directory)
                     SandboxPluginProvider(this, directory, manifest)
                 }.getOrNull()
             }
             .sortedBy { it.descriptor.name.lowercase() }
             .toList()
-    }
-
-    fun dashboard(pluginId: String): Map<String, Any?> {
-        val directory = requirePluginDirectory(pluginId)
-        val manifest = readManifest(directory)
-        val frontend = manifest.frontend
-            ?: throw IllegalArgumentException("Plugin $pluginId does not provide a dashboard")
-        ensureRuntimeCurrent(directory)
-        val entry = safeChild(directory, frontend.entry)
-        require(entry.isFile) { "Sandbox dashboard entry is missing: ${frontend.entry}" }
-        val icon = safeChild(directory, frontend.icon)
-        require(icon.isFile) { "Sandbox app icon is missing: ${frontend.icon}" }
-        return mapOf(
-            "pluginId" to manifest.id,
-            "title" to manifest.name,
-            "entryPath" to entry.absolutePath,
-            "iconPath" to icon.absolutePath,
-            "rootPath" to directory.absolutePath,
-            "permissions" to manifest.permissions,
-        )
     }
 
     fun requirePermission(pluginId: String, permission: String) {
@@ -551,8 +532,14 @@ class SandboxPluginPool(
         val sources = files.filter { it.extension.lowercase() in setOf("html", "htm", "js", "mjs") }
         sources.forEach { source ->
             val text = source.readText()
+            if ("omni.app" in text) {
+                throw IllegalArgumentException(
+                    "${source.relativeTo(rootDirectory).path}: external App bridge is removed; " +
+                        "use an MCP/plugin tool instead",
+                )
+            }
             if (
-                ("omni.ai" in text || "omni.xiaowan" in text || "omni.app" in text) &&
+                ("omni.ai" in text || "omni.xiaowan" in text) &&
                 SandboxProjectPermission.XIAOWAN !in permissions &&
                 SandboxProjectPermission.AI !in permissions
             ) {
@@ -807,17 +794,6 @@ class SandboxPluginPool(
                     put("zh", manifest.description)
                     put("en", manifest.description)
                 })
-                manifest.frontend?.let {
-                    put("dashboard", buildJsonObject {
-                        put("route", "/home/plugin_dashboard?pluginId=${manifest.id}")
-                        put("navigation", "push")
-                        put("icon", "dashboard")
-                        put("label", buildJsonObject {
-                            put("zh", "打开 Dashboard")
-                            put("en", "Open Dashboard")
-                        })
-                    })
-                }
             },
         )
 
@@ -963,7 +939,6 @@ class SandboxPluginPool(
             (() => {
               Object.defineProperty(window, '__omniRuntimeVersion', { value: $RUNTIME_VERSION });
               const pending = new Map();
-              const appEventListeners = new Set();
               let sequence = 0;
               const call = (method, params) => new Promise((resolve, reject) => {
                 const id = `${'$'}{Date.now()}-${'$'}{++sequence}`;
@@ -976,12 +951,6 @@ class SandboxPluginPool(
                 pending.delete(response.id);
                 if (response.ok) request.resolve(response.result);
                 else request.reject(new Error(response.error || 'Sandbox bridge failed'));
-              };
-              window.__omniAppEvent = (event) => {
-                appEventListeners.forEach((listener) => {
-                  try { listener(event); }
-                  catch (error) { setTimeout(() => { throw error; }, 0); }
-                });
               };
               window.omni = Object.freeze({
                 tools: Object.freeze({
@@ -1015,22 +984,6 @@ class SandboxPluginPool(
                   invoke: (options) => call('ai.generate', typeof options === 'string'
                     ? { prompt: options }
                     : options),
-                }),
-                app: Object.freeze({
-                  send: (options) => call('app.send', typeof options === 'string'
-                    ? { text: options }
-                    : (options || {})),
-                  onEvent: (listener) => {
-                    if (typeof listener !== 'function') {
-                      throw new TypeError('app.onEvent requires a function');
-                    }
-                    appEventListeners.add(listener);
-                    return () => appEventListeners.delete(listener);
-                  },
-                  cancel: (runId) => call('app.cancel', typeof runId === 'string'
-                    ? { runId }
-                    : (runId || {})),
-                  getState: () => call('app.getState', {}),
                 }),
               });
             })();

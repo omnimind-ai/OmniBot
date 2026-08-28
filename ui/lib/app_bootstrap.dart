@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -13,8 +15,8 @@ import 'package:ui/services/storage_service.dart';
 import 'package:ui/theme/app_theme_controller.dart';
 import 'package:ui/theme/app_theme_mode.dart';
 import 'package:ui/theme/app_theme.dart';
-import 'package:ui/widgets/embedded_terminal_init_overlay.dart';
 import 'package:ui/widgets/startup_account_prompt.dart';
+import 'package:ui/widgets/omnibot_error_widget.dart';
 
 import 'core/router/go_router_manager.dart';
 import 'services/event_bus.dart';
@@ -42,19 +44,35 @@ Future<void> bootstrapMain(List<String> args) async {
     GoRouterManager.setInitialRoute(initialRoute);
   }
   WidgetsFlutterBinding.ensureInitialized();
-  WidgetsBinding.instance.deferFirstFrame();
-  SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  installOmnibotErrorWidget();
+  try {
+    await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+  } catch (error, stackTrace) {
+    debugPrint('[FlutterStartup] system UI mode setup failed: $error');
+    debugPrint('$stackTrace');
+  }
 
   final container = ProviderContainer();
-  await StorageService.init();
-  await AppBackgroundService.load();
-  await ScheduledTaskSchedulerService.initialize();
-  await OmnibotResourceService.ensureWorkspacePathsLoaded();
-  SystemChrome.setSystemUIOverlayStyle(
-    AppTheme.overlayStyleForBrightness(
-      _resolveStartupBrightness(StorageService.getThemeMode()),
-    ),
-  );
+  // Keep the first frame fail-open. A transient platform/plugin failure during
+  // startup must not leave the Flutter engine alive behind a permanently
+  // blank window. Services that depend on storage or a native channel can
+  // retry from their own pages after the shell is visible.
+  try {
+    await StorageService.init();
+  } catch (error, stackTrace) {
+    debugPrint('[FlutterStartup] StorageService.init failed: $error');
+    debugPrint('$stackTrace');
+  }
+  try {
+    SystemChrome.setSystemUIOverlayStyle(
+      AppTheme.overlayStyleForBrightness(
+        _resolveStartupBrightness(StorageService.getThemeMode()),
+      ),
+    );
+  } catch (error, stackTrace) {
+    debugPrint('[FlutterStartup] system UI style setup failed: $error');
+    debugPrint('$stackTrace');
+  }
 
   runApp(
     UncontrolledProviderScope(
@@ -62,7 +80,40 @@ Future<void> bootstrapMain(List<String> args) async {
       child: MyApp(args: args),
     ),
   );
-  WidgetsBinding.instance.allowFirstFrame();
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    unawaited(_initializeDeferredStartupServices());
+  });
+}
+
+Future<void> _initializeDeferredStartupServices() async {
+  await Future.wait(<Future<void>>[
+    _runDeferredStartupStep(
+      'AppBackgroundService.load',
+      AppBackgroundService.load,
+    ),
+    _runDeferredStartupStep(
+      'ScheduledTaskSchedulerService.initialize',
+      ScheduledTaskSchedulerService.initialize,
+    ),
+    _runDeferredStartupStep(
+      'OmnibotResourceService.ensureWorkspacePathsLoaded',
+      () async {
+        await OmnibotResourceService.ensureWorkspacePathsLoaded();
+      },
+    ),
+  ]);
+}
+
+Future<void> _runDeferredStartupStep(
+  String name,
+  Future<void> Function() operation,
+) async {
+  try {
+    await operation();
+  } catch (error, stackTrace) {
+    debugPrint('[FlutterStartup] $name failed: $error');
+    debugPrint('$stackTrace');
+  }
 }
 
 Brightness _resolveStartupBrightness(AppThemeMode mode) {
@@ -168,7 +219,6 @@ class _MyAppState extends ConsumerState<MyApp> {
                   routeListenable: _router.routeInformationProvider,
                   child: child ?? const SizedBox.shrink(),
                 ),
-                const EmbeddedTerminalInitToastListener(),
               ],
             ),
           ),

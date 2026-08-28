@@ -37,6 +37,17 @@ class OmniFlowToolChannelManualRecordingTest {
     }
 
     @Test
+    fun functionRegistrationFreezesTheRunLogAlongsideTheFunctionDraft() {
+        val source = projectSource(
+            "app/src/main/java/cn/com/omnimind/bot/omniflow/OmniFlowFunctionRegistration.kt",
+        )
+
+        assertTrue(source.contains("val sourceRunLog = InternalRunLogStore.timelinePayload("))
+        assertTrue(source.contains("\"run_log\" to sourceRunLog"))
+        assertTrue(!source.contains("\"functions\" to listOf(function)"))
+    }
+
+    @Test
     fun manualTextInputDoesNotRequireAPreviouslyFocusedField() {
         val source = projectSource(
             "uikit/src/main/java/cn/com/omnimind/uikit/loader/ManualRecordingControlOverlay.kt",

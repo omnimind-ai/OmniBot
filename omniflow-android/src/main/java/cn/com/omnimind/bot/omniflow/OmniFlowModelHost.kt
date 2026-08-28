@@ -8,7 +8,6 @@ import cn.com.omnimind.baselib.llm.ChatCompletionTool
 import cn.com.omnimind.baselib.llm.ChatCompletionTurn
 import cn.com.omnimind.baselib.llm.contentText
 import cn.com.omnimind.baselib.util.ImageCompressor
-import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -109,9 +108,9 @@ class OmniFlowModelHost(
             payload = payload,
             model = modelOverride ?: firstText(payload["model"], "scene.dispatch.model"),
         )
-        val turn = withTimeout(180_000L) {
-            modelClient.streamTurn(request)
-        }
+        // The provider/ACP stream owns its lifetime.  Do not synthesize a
+        // failure merely because a model is slow before its next chunk.
+        val turn = modelClient.streamTurn(request)
         val content = submitJsonArguments(turn)
         return mapOf("content" to content)
     }
@@ -274,9 +273,9 @@ class OmniFlowModelHost(
                 payload = payload,
                 model = modelOverride ?: firstText(payload["model"], "scene.dispatch.model"),
             )
-            val content = withTimeout(180_000L) {
-                OmniFlowPythonRuntime.completeJson(request)
-            }
+            // JSON completion is still cancelled by the owning coroutine or
+            // process shutdown, but has no host-imposed wall-clock deadline.
+            val content = OmniFlowPythonRuntime.completeJson(request)
             check(content.isNotBlank()) { "model_completion_empty" }
             return mapOf("content" to content)
         }

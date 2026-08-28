@@ -7,12 +7,15 @@ import cn.com.omnimind.baselib.database.DatabaseHelper
 import cn.com.omnimind.bot.webchat.ConversationDomainService
 import cn.com.omnimind.bot.webchat.FlutterChatSyncBridge
 import cn.com.omnimind.bot.webchat.RealtimeHub
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 internal class AgentSessionBindingRepository(
     context: Context
 ) {
     private val appContext = context.applicationContext
     private val conversationDomainService by lazy { ConversationDomainService(appContext) }
+    private val bindingMutex = Mutex()
 
     suspend fun getBindingByConversationId(conversationId: Long): AgentSessionBinding? {
         return DatabaseHelper.getAgentSessionBindingByConversationId(conversationId)
@@ -27,7 +30,26 @@ internal class AgentSessionBindingRepository(
         conversationId: Long? = null,
         cwd: String = AgentRuntimeDefaults.DEFAULT_WORKSPACE_CWD,
         title: String? = null,
-        archived: Boolean? = null
+        archived: Boolean? = null,
+        conversationMode: String = AGENT_MODE_STORAGE_VALUE
+    ): Long = bindingMutex.withLock {
+        ensureBindingLocked(
+            threadId = threadId,
+            conversationId = conversationId,
+            cwd = cwd,
+            title = title,
+            archived = archived,
+            conversationMode = conversationMode,
+        )
+    }
+
+    private suspend fun ensureBindingLocked(
+        threadId: String,
+        conversationId: Long?,
+        cwd: String,
+        title: String?,
+        archived: Boolean?,
+        conversationMode: String,
     ): Long {
         val normalizedThreadId = threadId.trim()
         require(normalizedThreadId.isNotEmpty()) { "threadId is required" }
@@ -36,12 +58,24 @@ internal class AgentSessionBindingRepository(
         val existingBinding = DatabaseHelper.getAgentSessionBindingByThreadId(normalizedThreadId)
         if (existingBinding != null) {
             if (conversationId != null && conversationId != existingBinding.conversationId) {
+                val oldConversation = DatabaseHelper.getConversationById(existingBinding.conversationId)
+                check(
+                    canSafelyRebindGeneratedEmptyConversation(
+                        oldConversation,
+                        expectedTitle = defaultConversationTitle(existingBinding.threadId),
+                    )
+                ) {
+                    "ACP session $normalizedThreadId is already bound to conversation " +
+                        "${existingBinding.conversationId}; refusing to move it to " +
+                        "conversation $conversationId."
+                }
                 val reboundConversation = rebindExistingThread(
                     existingBinding = existingBinding,
                     conversationId = conversationId,
                     cwd = cwd,
                     title = title,
                     archived = archived,
+                    conversationMode = conversationMode,
                     updatedAt = now
                 )
                 if (reboundConversation != null) {
@@ -59,6 +93,7 @@ internal class AgentSessionBindingRepository(
                     conversation = it,
                     title = titleForUpdate,
                     archived = archived,
+                    conversationMode = conversationMode,
                     updatedAt = now
                 )
             }
@@ -79,7 +114,7 @@ internal class AgentSessionBindingRepository(
             ?.let { DatabaseHelper.getConversationById(it) }
             ?.let {
                 val updated = it.copy(
-                    mode = AGENT_MODE_STORAGE_VALUE,
+                    mode = normalizeConversationMode(conversationMode),
                     updatedAt = now
                 )
                 if (updated != it) {
@@ -92,6 +127,7 @@ internal class AgentSessionBindingRepository(
                 title = title?.trim().takeUnless { it.isNullOrEmpty() }
                     ?: defaultConversationTitle(normalizedThreadId),
                 archived = archived == true,
+                mode = normalizeConversationMode(conversationMode),
                 now = now
             )
 
@@ -112,12 +148,13 @@ internal class AgentSessionBindingRepository(
         cwd: String,
         title: String?,
         archived: Boolean?,
+        conversationMode: String,
         updatedAt: Long
     ): Long? {
         val targetConversation = DatabaseHelper.getConversationById(conversationId) ?: return null
         val normalizedTitle = title?.trim().orEmpty()
         val updatedTarget = targetConversation.copy(
-            mode = AGENT_MODE_STORAGE_VALUE,
+            mode = normalizeConversationMode(conversationMode),
             title = if (targetConversation.title.isBlank() && normalizedTitle.isNotEmpty()) {
                 normalizedTitle
             } else {
@@ -178,15 +215,27 @@ internal class AgentSessionBindingRepository(
         publishConversationEvent("conversation_updated", updated)
     }
 
+    /**
+     * Detach an ACP session without deleting the conversation or its messages.
+     * ACP `session/delete` is an agent-session operation; local history is
+     * owned by OmniBot and must remain recoverable for the user.
+     */
+    suspend fun detachThread(threadId: String): Long? {
+        val binding = getBindingByThreadId(threadId.trim()) ?: return null
+        DatabaseHelper.deleteAgentSessionBindingByThreadId(threadId.trim())
+        return binding.conversationId
+    }
+
     private suspend fun createConversation(
         title: String,
         archived: Boolean,
+        mode: String,
         now: Long
     ): Conversation {
         val conversation = Conversation(
             id = 0,
             title = title.ifBlank { "Agent" },
-            mode = AGENT_MODE_STORAGE_VALUE,
+            mode = mode,
             isArchived = archived,
             status = 0,
             createdAt = now,
@@ -204,11 +253,12 @@ internal class AgentSessionBindingRepository(
         conversation: Conversation,
         title: String?,
         archived: Boolean?,
+        conversationMode: String,
         updatedAt: Long
     ): Conversation {
         val normalizedTitle = title?.trim().orEmpty()
         return conversation.copy(
-            mode = AGENT_MODE_STORAGE_VALUE,
+            mode = normalizeConversationMode(conversationMode),
             title = normalizedTitle.ifEmpty { conversation.title },
             isArchived = archived ?: conversation.isArchived,
             updatedAt = updatedAt
@@ -236,6 +286,13 @@ internal class AgentSessionBindingRepository(
         return "Agent $suffix"
     }
 
+    private fun normalizeConversationMode(value: String): String {
+        return when (value.trim().lowercase()) {
+            "", "normal", "codex", "acp", "coding" -> AGENT_MODE_STORAGE_VALUE
+            else -> value.trim().lowercase()
+        }
+    }
+
     private suspend fun cleanupGeneratedEmptyConversation(
         conversationId: Long,
         expectedTitle: String
@@ -261,8 +318,33 @@ internal class AgentSessionBindingRepository(
         publishConversationEvent("conversation_deleted", conversation)
     }
 
+    /**
+     * A session may only be moved as part of cleaning up an empty placeholder
+     * created by session discovery. Moving a populated conversation would not
+     * delete its rows, but it would make its durable history impossible to
+     * restore through the original ACP session and is therefore a data
+     * ownership bug.
+     */
+    private suspend fun canSafelyRebindGeneratedEmptyConversation(
+        conversation: Conversation?,
+        expectedTitle: String,
+    ): Boolean {
+        if (conversation == null) return true
+        if (conversation.title != expectedTitle) return false
+        if (conversation.messageCount != 0 || !conversation.lastMessage.isNullOrBlank()) {
+            return false
+        }
+        val entryCount = DatabaseHelper.countAgentConversationThreadEntries(
+            conversationId = conversation.id,
+            conversationMode = AGENT_MODE_STORAGE_VALUE,
+        )
+        return entryCount == 0
+    }
+
     companion object {
-        const val AGENT_MODE_STORAGE_VALUE = "codex"
+        // `codex` remains a read-compatible legacy alias, but new bindings
+        // must use the canonical Agent conversation mode.
+        const val AGENT_MODE_STORAGE_VALUE = "agent"
     }
 }
 
@@ -270,4 +352,20 @@ internal object AgentRuntimeDefaults {
     const val CODEX_HOME = "/root/.codex"
     const val DEFAULT_WORKSPACE_CWD = "/workspace"
     const val FALLBACK_CWD = "/root"
+}
+
+/**
+ * A session id is reusable only when it is still bound to the conversation
+ * addressed by the request. A session-only ACP request remains valid because
+ * the session binding itself is the source of the conversation identity.
+ */
+internal fun explicitThreadMatchesConversation(
+    explicitThreadId: String?,
+    requestedConversationId: Long?,
+    boundConversationId: Long?
+): Boolean {
+    if (explicitThreadId.isNullOrBlank() || requestedConversationId == null) {
+        return true
+    }
+    return boundConversationId == requestedConversationId
 }

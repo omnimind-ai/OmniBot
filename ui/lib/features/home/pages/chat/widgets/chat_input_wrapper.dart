@@ -11,7 +11,6 @@ class ChatInputWrapper extends StatelessWidget {
   final VoidCallback onCancelTask;
   final void Function(bool) onPopupVisibilityChanged;
   final FutureOr<void> Function()? onTerminalTap;
-  final FutureOr<void> Function()? onManualRecordingTap;
   final bool? openClawEnabled;
   final ValueChanged<bool>? onToggleOpenClaw;
   final VoidCallback? onLongPressOpenClaw;
@@ -37,7 +36,8 @@ class ChatInputWrapper extends StatelessWidget {
   final FutureOr<void> Function()? onAgentRunSettingsOpened;
   final AgentPermissionMode? agentPermissionMode;
   final List<AgentPermissionMode> agentPermissionModes;
-  final ValueChanged<AgentPermissionMode>? onAgentPermissionModeChanged;
+  final FutureOr<void> Function(AgentPermissionMode)?
+  onAgentPermissionModeChanged;
   final bool useIndependentSendButton;
   final bool translucent;
 
@@ -52,7 +52,6 @@ class ChatInputWrapper extends StatelessWidget {
     required this.onCancelTask,
     required this.onPopupVisibilityChanged,
     this.onTerminalTap,
-    this.onManualRecordingTap,
     this.openClawEnabled,
     this.onToggleOpenClaw,
     this.onLongPressOpenClaw,
@@ -102,7 +101,6 @@ class ChatInputWrapper extends StatelessWidget {
             onCancelTask: onCancelTask,
             onPopupVisibilityChanged: onPopupVisibilityChanged,
             onTerminalTap: onTerminalTap,
-            onManualRecordingTap: onManualRecordingTap,
             openClawEnabled: openClawEnabled,
             onToggleOpenClaw: onToggleOpenClaw,
             onLongPressOpenClaw: onLongPressOpenClaw,

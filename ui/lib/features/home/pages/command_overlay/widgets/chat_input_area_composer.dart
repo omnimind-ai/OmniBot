@@ -125,16 +125,24 @@ mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
 
   /// 构建输入框内容区域（按钮、文本框等）
   Widget _buildInputContent() {
-    return ValueListenableBuilder<ChatComposerState>(
-      valueListenable: _composerStateMachine,
-      builder: (context, composerState, _) {
-        final openClawButton = _buildOpenClawButton();
-        return Row(
-          children: [
-            Expanded(child: _buildTextField()),
-            const SizedBox(width: 9),
-            _buildAnimatedButtonRow(openClawButton: openClawButton),
-          ],
+    return AnimatedBuilder(
+      // Draft restoration and platform IME updates can change the controller
+      // without producing the expected composer-state transition. The
+      // controller is the source of truth for whether send is available.
+      animation: widget.controller,
+      builder: (context, _) {
+        return ValueListenableBuilder<ChatComposerState>(
+          valueListenable: _composerStateMachine,
+          builder: (context, composerState, _) {
+            final openClawButton = _buildOpenClawButton();
+            return Row(
+              children: [
+                Expanded(child: _buildTextField()),
+                const SizedBox(width: 9),
+                _buildAnimatedButtonRow(openClawButton: openClawButton),
+              ],
+            );
+          },
         );
       },
     );
@@ -197,14 +205,6 @@ mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
       ],
       if (_shouldShowModelPicker) ...[
         _buildModelPickerButton(compact: false),
-        const SizedBox(width: 4),
-      ],
-      if (widget.onManualRecordingTap != null) ...[
-        SizedBox(
-          width: 28,
-          height: 28,
-          child: _buildManualRecordingButton(iconSize: 20),
-        ),
         const SizedBox(width: 4),
       ],
       if (_shouldShowAgentPermissionSelector) ...[
@@ -367,6 +367,7 @@ mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
       isProcessing: widget.isProcessing,
       hasAttachments: widget.attachments.isNotEmpty,
       hasExternalPayload: widget.hasExternalSendPayload,
+      hasTextOverride: widget.controller.text.trim().isNotEmpty,
     );
     final canTap = action != ChatComposerPrimaryAction.disabled;
     final icon = action == ChatComposerPrimaryAction.cancel
@@ -563,14 +564,6 @@ mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
         ],
         if (_shouldShowModelPicker) ...[
           _buildModelPickerButton(compact: true),
-          const SizedBox(width: 2),
-        ],
-        if (widget.onManualRecordingTap != null) ...[
-          SizedBox(
-            width: 24,
-            height: 24,
-            child: _buildManualRecordingButton(iconSize: 18),
-          ),
           const SizedBox(width: 2),
         ],
         if (_shouldShowAgentPermissionSelector) ...[

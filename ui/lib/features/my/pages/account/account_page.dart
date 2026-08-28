@@ -881,10 +881,32 @@ class _AccountPageState extends State<AccountPage> {
         return _text('邮箱或密码不正确', 'Incorrect email or password');
       case 'email_already_registered':
         return _text('这个邮箱已经注册', 'This email is already registered');
+      case 'invalid_email':
+        return _text('邮箱格式不正确', 'Enter a valid email address');
+      case 'invalid_password':
+        return _text(
+          '密码格式不正确，请使用 8 到 16 个字符',
+          'Use an 8 to 16 character password',
+        );
+      case 'invalid_request':
+        return _text(
+          '请求参数不正确，请检查后重试',
+          'The request is invalid. Check the fields and try again',
+        );
       case 'invalid_verification_code':
         return _text('验证码无效或已经过期', 'The code is invalid or expired');
+      case 'invalid_verification_request':
+        return _text('验证码请求已失效，请重新发送', 'Request a new verification code');
       case 'rate_limited':
         return _text('操作太频繁，请稍后再试', 'Too many attempts. Try again later.');
+      case 'too_many_requests':
+        return _text('操作太频繁，请稍后再试', 'Too many attempts. Try again later.');
+      case 'verification_unavailable':
+        return _text('验证码服务暂时不可用，请稍后重试', 'Verification service is temporarily unavailable.');
+      case 'account_service_unavailable':
+        return _text('账号服务暂时不可用，请稍后重试', 'Account service is temporarily unavailable.');
+      case 'ACCOUNT_FEATURE_UNAVAILABLE':
+        return _text('当前账号服务版本不支持注册，请稍后重试', 'This account service does not support registration yet.');
       case 'current_password_invalid':
         return _text('当前密码不正确', 'The current password is incorrect');
       case 'password_reuse':

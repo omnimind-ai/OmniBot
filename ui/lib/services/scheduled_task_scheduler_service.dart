@@ -4,6 +4,7 @@ import 'package:ui/models/scheduled_task.dart';
 import 'package:ui/models/conversation_model.dart';
 import 'package:ui/services/scheduled_task_storage_service.dart';
 import 'package:ui/services/assists_core_service.dart';
+import 'package:ui/services/agent_runtime_service.dart';
 import 'package:ui/services/conversation_service.dart';
 
 /// 定时任务调度服务
@@ -229,15 +230,23 @@ class ScheduledTaskSchedulerService {
       if (normalizedConversationId == null) {
         throw Exception('SubAgent conversation create failed');
       }
-      await AssistsMessageService.createAgentTask(
-        taskId:
-            'subagent_schedule_${DateTime.now().millisecondsSinceEpoch}_${task.id}',
-        userMessage: prompt,
+      final session = await AgentRuntimeService.newSession(
         conversationId: normalizedConversationId,
         conversationMode: ConversationMode.subagent.storageValue,
-        scheduledTaskId: task.id,
-        scheduledTaskTitle: task.title,
-        scheduleNotificationEnabled: task.notificationEnabled,
+      );
+      final sessionId = (session['sessionId'] ?? session['threadId'])
+          ?.toString()
+          .trim();
+      if (sessionId == null || sessionId.isEmpty) {
+        throw Exception('ACP scheduled session creation failed');
+      }
+      await AgentRuntimeService.promptSession(
+        sessionId: sessionId,
+        conversationId: normalizedConversationId,
+        requestId:
+            'scheduled-${task.id}-${DateTime.now().microsecondsSinceEpoch}',
+        text: prompt,
+        conversationMode: ConversationMode.subagent.storageValue,
       );
 
       // 如果是重复任务，重新调度

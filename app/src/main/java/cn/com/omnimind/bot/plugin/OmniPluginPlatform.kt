@@ -247,7 +247,19 @@ class OmniPluginPlatform(
             .map { it.pluginId }
             .filter { it in defaultEnabledPluginIds && it !in storedPluginIds }
             .toSet()
+        val defaultInstalledPluginIds = providerMap.values.asSequence()
+            .filter { it.descriptor.installByDefault }
+            .mapTo(linkedSetOf()) { it.descriptor.id }
         val reconciled = restored.associateByTo(linkedMapOf()) { it.pluginId }
+        defaultInstalledPluginIds.forEach { pluginId ->
+            if (pluginId !in reconciled) {
+                reconciled[pluginId] = OmniPluginStoredState(
+                    pluginId = pluginId,
+                    enabled = false,
+                    installPending = true,
+                )
+            }
+        }
         requiredPluginIds.forEach { pluginId ->
             val current = reconciled[pluginId]
             reconciled[pluginId] = current?.copy(enabled = true)
@@ -260,7 +272,7 @@ class OmniPluginPlatform(
         reconciled.values.forEach { state -> storedStates[state.pluginId] = state }
         initialized = true
 
-        reconciled.values.filter { it.enabled }.forEach { state ->
+        reconciled.values.filter { it.enabled || it.installPending }.forEach { state ->
             val provider = providerMap[state.pluginId]
             if (provider == null) {
                 storedStates[state.pluginId] = state.copy(enabled = false)
@@ -273,7 +285,9 @@ class OmniPluginPlatform(
                 if (requiresInstall) {
                     provider.install()
                 }
-                activePlugins[state.pluginId] = activate(provider)
+                if (state.enabled) {
+                    activePlugins[state.pluginId] = activate(provider)
+                }
                 if (requiresInstall) {
                     storedStates[state.pluginId] = state.copy(installPending = false)
                 }
@@ -292,7 +306,7 @@ class OmniPluginPlatform(
                 errors[state.pluginId] = error.message ?: error.javaClass.simpleName
                 if (requiresInstall) {
                     storedStates[state.pluginId] = state.copy(
-                        enabled = true,
+                        enabled = state.enabled || state.pluginId in requiredPluginIds,
                         installPending = true,
                     )
                 } else {

@@ -220,7 +220,15 @@ ARGS="$ARGS -b $ROOTFS_DIR/tmp:/dev/shm"
 
 ARGS="$ARGS -r $ROOTFS_DIR"
 ARGS="$ARGS -0"
-ARGS="$ARGS --link2symlink"
+# PRoot's hardlink-to-symlink emulation is useful for the interactive shell,
+# but it breaks atomic writers used by official ACP runtimes.  Those writers
+# create a temporary file and then link/rename it into place; under this mode
+# the final path can point at a temporary name that no longer exists.  Keep
+# the historical default for ordinary terminal sessions and let ACP launchers
+# opt out explicitly.
+if [ "${OMNIBOT_DISABLE_PROOT_LINK2SYMLINK:-0}" != "1" ]; then
+  ARGS="$ARGS --link2symlink"
+fi
 ARGS="$ARGS --sysvipc"
 ARGS="$ARGS -L"
 

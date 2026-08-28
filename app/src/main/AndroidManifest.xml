@@ -115,15 +115,6 @@
             android:windowSoftInputMode="adjustResize" />
 
         <activity
-            android:name=".activity.PluginAppActivity"
-            android:documentLaunchMode="intoExisting"
-            android:exported="true"
-            android:launchMode="standard"
-            android:taskAffinity="cn.com.omnimind.bot.vibe"
-            android:theme="@style/Theme.OmnibotApp"
-            android:windowSoftInputMode="adjustResize" />
-
-        <activity
             android:name=".activity.QuickLogEntryActivity"
             android:exported="true"
             android:excludeFromRecents="true"
@@ -211,6 +202,11 @@
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
+        <service
+            android:name="cn.com.omnimind.bot.task.runtime.TaskRuntimeService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
         <activity
             android:name="cn.com.omnimind.bot.agent.BrowserFileChooserRequestActivity"
             android:exported="false"

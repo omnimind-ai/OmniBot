@@ -38,9 +38,9 @@ extension _ChatInputAgentControls on _ChatInputAreaStateBase {
         child: Listener(
           behavior: HitTestBehavior.opaque,
           onPointerDown: (_) => settings.onPointerDown?.call(),
-          child: Tooltip(
-            message: modelId.isEmpty
-                ? (english ? 'Select model' : '选择模型')
+      child: Tooltip(
+        message: modelId.isEmpty
+                ? (english ? 'Select Provider / model' : '选择 Provider / 模型')
                 : modelId,
             waitDuration: const Duration(milliseconds: 400),
             child: InkWell(
@@ -355,7 +355,7 @@ extension _ChatInputAgentControls on _ChatInputAreaStateBase {
       try {
         final mode = await handle.future;
         if (mode == null) return;
-        widget.onAgentPermissionModeChanged?.call(mode);
+        await widget.onAgentPermissionModeChanged?.call(mode);
       } finally {
         if (_agentPermissionMenuHandle == handle) {
           _agentPermissionMenuHandle = null;

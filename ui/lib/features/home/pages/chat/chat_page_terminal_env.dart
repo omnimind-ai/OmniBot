@@ -40,7 +40,7 @@ mixin _ChatPageTerminalEnvMixin on _ChatPageStateBase {
   Future<void> _openTerminalEnvironmentEditor(
     BuildContext anchorContext,
   ) async {
-    if (_activeMode != ChatPageMode.normal) {
+    if (_activeMode == ChatPageMode.openclaw) {
       return;
     }
     if (_showSlashCommandPanel ||
@@ -53,8 +53,8 @@ mixin _ChatPageTerminalEnvMixin on _ChatPageStateBase {
       });
     }
     _inputFocusNode.unfocus();
-    final overlay =
-        Overlay.of(context).context.findRenderObject() as RenderBox?;
+    final overlayState = Overlay.maybeOf(context);
+    final overlay = findActiveRenderObject(overlayState?.context) as RenderBox?;
     final anchorRect = glassPopupAnchorFromContext(anchorContext);
     if (overlay == null || anchorRect == null) {
       return;

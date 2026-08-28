@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "com.omnimind.omni-vlm-lite",
-  "version": "2.1.7",
+  "version": "2.1.8",
   "name": "OmniFlow",
   "kind": "runtime_component",
   "interfaceVersion": 1,

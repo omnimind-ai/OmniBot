@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:ui/features/home/pages/authorize/accessibility_permission_prompt.dart';
 import 'package:ui/features/task/pages/execution_history/widgets/function_detail_sheet.dart';
 import 'package:ui/features/task/run_log/run_log_metrics.dart';
 import 'package:ui/features/task/run_log/omniflow_tool_client.dart';
@@ -27,12 +28,33 @@ class OmniFlowExecutionCenterPage extends StatefulWidget {
       _OmniFlowExecutionCenterPageState();
 }
 
+String _omniFlowErrorText(Object error) {
+  if (error is StateError) return error.message.toString();
+  return error.toString();
+}
+
 @visibleForTesting
 String buildFunctionEnhancementPrompt(Map<String, dynamic> function) {
   final functionId = _string(function['function_id']);
-  return '请增强下面的 OmniFlow 复用指令。先用 get_function 读取完整内容，分析参数化、稳定性和可复用性，再通过 OmniFlow 工具保存更新；不要执行该指令。\n\n'
+  final sourceRunId = _string(function['source_run_id']);
+  // source_run_id is UI provenance used to select the local RunLog; it is
+  // intentionally not part of omniflow.function.v2 and must not be sent in
+  // the `functions` artifact passed to the official writer.
+  final functionArtifact = <String, dynamic>{...function}
+    ..remove('source_run_id');
+  // The enhancement prompt belongs to the official OmniFlow runtime. The
+  // chat layer only forwards the local source identity and the current draft;
+  // duplicating the staged authoring prompt here made the Agent search for a
+  // RunLog and created a second, conflicting enhancement mechanism.
+  return '请调用本机 OmniFlow 官方 save_function 完成 Function enhance。'
+      '参数必须是 run_id=$sourceRunId、functions=[下面的完整 Function]、enhance=true；'
+      '不要执行 Function，不要调用 list_run_logs/get_run_log/get_function，'
+      '不要把 Function 或 RunLog 写到远端，也不要自行改写增强规则。'
+      '由 OmniFlow 内置的官方增强流程生成并写回本地 Store；若 source_run_id 为空，'
+      '直接返回明确错误。\n\n'
       'function_id: $functionId\n'
-      '当前信息：${jsonEncode(function)}';
+      'source_run_id: $sourceRunId\n'
+      'function: ${jsonEncode(functionArtifact)}';
 }
 
 class _OmniFlowExecutionCenterPageState
@@ -271,7 +293,26 @@ class _OmniFlowExecutionCenterPageState
 
   Future<void> _enhanceFunction(Map<String, dynamic> function) async {
     final functionId = _string(function['function_id']);
-    if (functionId.isEmpty) return;
+    final sourceRunId = _string(function['source_run_id']);
+    if (functionId.isEmpty || sourceRunId.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _text(
+                context,
+                '该 Function 缺少本地 source_run_id，无法增强',
+                'This Function has no local source_run_id and cannot be enhanced',
+              ),
+            ),
+          ),
+        );
+      }
+      return;
+    }
+    // Enhancement is an Agent operation. Keep the official save_function
+    // contract in the prompt and let the normal ACP session execute it, so
+    // the user sees the same reasoning/tool activity as any other request.
     await WidgetsBinding.instance.endOfFrame;
     if (!mounted) return;
     final requestKey = DateTime.now().microsecondsSinceEpoch.toString();
@@ -288,6 +329,8 @@ class _OmniFlowExecutionCenterPageState
   Future<void> _replay(Map<String, dynamic> function) async {
     final functionId = _string(function['function_id']);
     if (functionId.isEmpty) return;
+    final accessibilityReady = await showAccessibilityPermissionPrompt(context);
+    if (!accessibilityReady || !mounted) return;
     final arguments = await _collectArguments(function);
     if (arguments == null || !mounted) return;
     await _runAction(
@@ -487,7 +530,7 @@ class _OmniFlowExecutionCenterPageState
       if (!mounted) return;
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text(error.toString())));
+      ).showSnackBar(SnackBar(content: Text(_omniFlowErrorText(error))));
     }
   }
 
@@ -815,16 +858,23 @@ class _RunLogsTab extends StatelessWidget {
           }
           final runLog = runLogs[index];
           final linkedFunction = _linkedFunction(runLog, functions);
+          final linkedFunctionWithSource = linkedFunction == null
+              ? null
+              : <String, dynamic>{
+                  ...linkedFunction,
+                  if (_string(linkedFunction['source_run_id']).isEmpty)
+                    'source_run_id': _string(runLog['run_id']),
+                };
           return _RunLogListItem(
             runLog: runLog,
             onOpen: () =>
                 context.push('/task/run_log/${_string(runLog['run_id'])}'),
             onConvert: () => onConvert(runLog),
-            linkedFunction: linkedFunction,
+            linkedFunction: linkedFunctionWithSource,
             registering: registeringRunIds.contains(_string(runLog['run_id'])),
-            onOpenFunction: linkedFunction == null
+            onOpenFunction: linkedFunctionWithSource == null
                 ? null
-                : () => onOpenFunction(linkedFunction),
+                : () => onOpenFunction(linkedFunctionWithSource),
           );
         },
       ),

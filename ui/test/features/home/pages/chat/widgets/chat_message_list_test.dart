@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ui/features/home/pages/command_overlay/widgets/cards/deep_thinking_card.dart';
 import 'package:ui/features/home/pages/chat/chat_page_models.dart';
+import 'package:ui/features/home/pages/chat/widgets/chat_empty_greeting.dart';
 import 'package:ui/features/home/pages/chat/widgets/chat_widgets.dart';
 import 'package:ui/l10n/generated/app_localizations.dart';
 import 'package:ui/models/chat_message_model.dart';
@@ -27,12 +28,16 @@ void main() {
 
     await tester.pump();
 
-    final animatedPadding = tester.widget<AnimatedPadding>(
-      find.byType(AnimatedPadding),
+    final reservedPadding = tester.widget<Padding>(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is Padding &&
+            widget.padding == const EdgeInsets.only(bottom: 128),
+      ),
     );
 
-    expect(animatedPadding.padding, const EdgeInsets.only(bottom: 128));
-    expect(find.text('有什么可以帮助你的？'), findsOneWidget);
+    expect(reservedPadding.padding, const EdgeInsets.only(bottom: 128));
+    expect(find.byType(ChatEmptyGreeting), findsOneWidget);
   });
 
   testWidgets(
@@ -473,7 +478,7 @@ void main() {
             child: ChatMessageList(
               messages: messages,
               scrollController: controller,
-              activeAgentTaskIds: const {'agent-task'},
+              activeAgentTurnIds: const {'agent-task'},
               onBeforeTaskExecute: () async {},
             ),
           ),
@@ -550,7 +555,7 @@ void main() {
           child: ChatMessageList(
             messages: messages,
             scrollController: controller,
-            activeAgentTaskIds: const <String>{'body-task'},
+            activeAgentTurnIds: const <String>{'body-task'},
             onBeforeTaskExecute: () async {},
           ),
         ),
@@ -813,9 +818,57 @@ void main() {
 
     expect(find.text('运行 git status'), findsOneWidget);
     expect(find.text('详细思考过程'), findsNothing);
+    expect(find.byType(DeepThinkingCard), findsOneWidget);
     expect(find.byType(AgentAvatarCircle), findsOneWidget);
     expect(find.byType(AgentAvatarButton), findsNothing);
   });
+
+  testWidgets(
+    'stale Xiaowan tool timestamp does not inflate the processed duration',
+    (tester) async {
+      final controller = ScrollController();
+      final runStartedAt = DateTime(2026, 8, 22, 14, 29, 24, 493);
+      final messages = _buildCompletedAgentRunMessages()
+          .map((message) {
+            if (message.id == 'task-1-tool') {
+              return message.copyWith(
+                // Reproduces a provider reusing a raw call id from an older
+                // turn. The card still belongs to this task, but its stored
+                // createdAt predates the turn by more than two minutes.
+                createAt: runStartedAt.subtract(const Duration(minutes: 2)),
+              );
+            }
+            if (message.id == 'task-1-thinking') {
+              return message.copyWith(createAt: runStartedAt);
+            }
+            if (message.id == 'task-1-text') {
+              return message.copyWith(
+                createAt: runStartedAt.add(const Duration(seconds: 4)),
+              );
+            }
+            return message;
+          })
+          .toList(growable: false);
+
+      await tester.pumpWidget(
+        _buildLocalizedApp(
+          child: SizedBox(
+            width: 400,
+            height: 520,
+            child: ChatMessageList(
+              messages: messages,
+              scrollController: controller,
+              onBeforeTaskExecute: () async {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('已处理  4s'), findsOneWidget);
+      expect(find.textContaining('2m'), findsNothing);
+    },
+  );
 
   testWidgets('collapsed Xiaowan run shows only its final prose segment', (
     tester,
@@ -947,7 +1000,7 @@ void main() {
           child: ChatMessageList(
             messages: messages,
             scrollController: controller,
-            activeAgentTaskIds: const <String>{'task-fold'},
+            activeAgentTurnIds: const <String>{'task-fold'},
             onBeforeTaskExecute: () async {},
           ),
         ),
@@ -1010,6 +1063,68 @@ void main() {
     expect(find.textContaining('快照消息'), findsWidgets);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'streaming agent timeline survives group shape changes without element errors',
+    (tester) async {
+      final controller = ScrollController();
+      var messages = <ChatMessageModel>[
+        ChatMessageModel.userMessage('用户问题', id: 'task-1-user'),
+      ];
+      var activeTaskIds = <String>{'task-1'};
+      late StateSetter setState;
+
+      await tester.pumpWidget(
+        _buildLocalizedApp(
+          child: StatefulBuilder(
+            builder: (context, stateSetter) {
+              setState = stateSetter;
+              return SizedBox(
+                width: 400,
+                height: 520,
+                child: ChatMessageList(
+                  messages: messages,
+                  activeAgentTurnIds: activeTaskIds,
+                  useAcpPresentation: true,
+                  scrollController: controller,
+                  onBeforeTaskExecute: () async {},
+                ),
+              );
+            },
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final phases = <({List<ChatMessageModel> messages, Set<String> active})>[
+        (messages: _buildActiveAgentRunMessages(), active: <String>{'task-1'}),
+        (
+          messages: _buildCompletedAcpAgentRunMessages(),
+          active: <String>{'task-1'},
+        ),
+        (messages: _buildCompletedAcpAgentRunMessages(), active: <String>{}),
+        (
+          messages: _buildCompletedAgentRunMessagesWithToolGroup(),
+          active: <String>{},
+        ),
+        (
+          messages: _buildCompletedInterleavedXiaowanRunMessages(),
+          active: <String>{'task-fold'},
+        ),
+      ];
+
+      for (final phase in phases) {
+        setState(() {
+          messages = phase.messages;
+          activeTaskIds = phase.active;
+        });
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 80));
+        await tester.pump(const Duration(milliseconds: 320));
+        expect(tester.takeException(), isNull);
+      }
+    },
+  );
 
   testWidgets('ACP Agent run shows its own brand avatar and processed label', (
     tester,
@@ -1076,6 +1191,51 @@ void main() {
     );
   });
 
+  testWidgets('refreshes the ACP avatar when the selected Agent changes', (
+    tester,
+  ) async {
+    final controller = ScrollController();
+    final messages = ObservableChatMessageList()
+      ..replaceAllMessages(_buildCompletedLegacyAcpTextRunMessages());
+    var activeAgentId = 'deepseek-harness-acp';
+    late StateSetter setState;
+
+    await tester.pumpWidget(
+      _buildLocalizedApp(
+        child: StatefulBuilder(
+          builder: (context, stateSetter) {
+            setState = stateSetter;
+            return SizedBox(
+              width: 400,
+              height: 520,
+              child: ChatMessageList(
+                messages: messages,
+                useAcpPresentation: true,
+                activeAcpAgentId: activeAgentId,
+                scrollController: controller,
+                onBeforeTaskExecute: () async {},
+              ),
+            );
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    setState(() {
+      activeAgentId = 'xiaowan-acp';
+    });
+    await tester.pumpAndSettle();
+
+    final brandIcon = tester.widget<AgentBrandIcon>(
+      find.descendant(
+        of: find.byKey(const ValueKey('agent-run-acp-avatar-task-1')),
+        matching: find.byType(AgentBrandIcon),
+      ),
+    );
+    expect(brandIcon.agentId, 'xiaowan-acp');
+  });
+
   testWidgets(
     'ACP run shows its avatar and processing timer before the first response',
     (tester) async {
@@ -1096,7 +1256,7 @@ void main() {
                   id: userMessageId,
                 ).copyWith(createAt: startedAt),
               ],
-              activeAgentTaskIds: <String>{taskId},
+              activeAgentTurnIds: <String>{taskId},
               useAcpPresentation: true,
               activeAcpAgentId: 'codex-acp',
               scrollController: controller,
@@ -1176,7 +1336,7 @@ void main() {
                 height: 520,
                 child: ChatMessageList(
                   messages: messages,
-                  activeAgentTaskIds: activeTaskIds,
+                  activeAgentTurnIds: activeTaskIds,
                   useAcpPresentation: true,
                   scrollController: controller,
                   onBeforeTaskExecute: () async {},
@@ -1404,7 +1564,7 @@ void main() {
     expect(find.text('读取 README.md'), findsOneWidget);
   });
 
-  testWidgets('reopening run collapses thinking details by default again', (
+  testWidgets('reopening run keeps thinking folded until requested', (
     tester,
   ) async {
     final controller = ScrollController();
@@ -1431,6 +1591,7 @@ void main() {
     await tester.tap(summaryToggle);
     await tester.pumpAndSettle();
 
+    expect(find.text('详细思考过程'), findsNothing);
     final thinkingToggle = find.descendant(
       of: find.byType(DeepThinkingCard),
       matching: find.byType(InkWell),
@@ -1644,7 +1805,7 @@ void main() {
                 height: 520,
                 child: ChatMessageList(
                   messages: messages,
-                  activeAgentTaskIds: activeTaskIds,
+                  activeAgentTurnIds: activeTaskIds,
                   scrollController: controller,
                   onBeforeTaskExecute: () async {},
                 ),
@@ -1655,6 +1816,7 @@ void main() {
       );
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 32));
+      await tester.pump(const Duration(milliseconds: 200));
 
       expect(
         find.byKey(const ValueKey('agent-run-summary-task-1')),
@@ -1669,7 +1831,7 @@ void main() {
       );
       expect(find.text('详细思考过程'), findsOneWidget);
       expect(find.text('运行 git status'), findsOneWidget);
-      expect(find.text('最终回答'), findsOneWidget);
+      expect(find.text('最终回答', skipOffstage: false), findsOneWidget);
 
       // Finishing one thinking/content stage collapses that thinking card, but
       // must not fold the whole run while the task is still active.
@@ -1685,7 +1847,7 @@ void main() {
       expect(find.byType(DeepThinkingCard), findsOneWidget);
       expect(find.text('详细思考过程'), findsNothing);
       expect(find.text('运行 git status'), findsOneWidget);
-      expect(find.text('最终回答'), findsOneWidget);
+      expect(find.text('最终回答', skipOffstage: false), findsOneWidget);
 
       setState(() {
         activeTaskIds = <String>{};
@@ -1700,7 +1862,7 @@ void main() {
       expect(find.byType(DeepThinkingCard), findsNothing);
       expect(find.text('详细思考过程'), findsNothing);
       expect(find.text('运行 git status'), findsNothing);
-      expect(find.text('最终回答'), findsOneWidget);
+      expect(find.text('最终回答', skipOffstage: false), findsOneWidget);
     },
   );
 
@@ -1724,7 +1886,7 @@ void main() {
                 height: 520,
                 child: ChatMessageList(
                   messages: messages,
-                  activeAgentTaskIds: activeTaskIds,
+                  activeAgentTurnIds: activeTaskIds,
                   useAcpPresentation: true,
                   activeAcpAgentId: 'deepseek-harness',
                   scrollController: controller,
@@ -1818,15 +1980,30 @@ void main() {
 
       expect(find.byType(DeepThinkingCard), findsNWidgets(2));
       expect(find.text('读取 README.md'), findsOneWidget);
-      expect(find.text('我先检查工作区。'), findsOneWidget);
+      expect(find.text('先定位需要读取的文件。'), findsNothing);
+      expect(find.text('根据工具结果继续检查。'), findsNothing);
+
+      final firstThinkingHeader = find.descendant(
+        of: find.byKey(const ValueKey('deep_thinking_dsh-thinking-step-1')),
+        matching: find.byType(InkWell),
+      );
+      await tester.tap(firstThinkingHeader);
+      await tester.pumpAndSettle();
+
+      expect(find.text('先定位需要读取的文件。'), findsOneWidget);
+      expect(find.text('根据工具结果继续检查。'), findsNothing);
       expect(
-        tester.getTopLeft(find.text('我先检查工作区。')).dy,
+        tester.getTopLeft(find.text('先定位需要读取的文件。')).dy,
         lessThan(tester.getTopLeft(find.text('读取 README.md')).dy),
       );
       expect(
         tester.getTopLeft(find.text('读取 README.md')).dy,
         lessThan(tester.getTopLeft(find.text('检查完成，这是最终回答。')).dy),
       );
+
+      await tester.tap(firstThinkingHeader);
+      await tester.pumpAndSettle();
+      expect(find.text('先定位需要读取的文件。'), findsNothing);
     },
   );
 

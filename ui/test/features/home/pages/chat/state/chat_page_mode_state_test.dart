@@ -40,7 +40,7 @@ void main() {
       ..isCheckingExecutableTask = true
       ..deepThinkingContent = 'thinking'
       ..isDeepThinking = true
-      ..currentDispatchTaskId = 'task'
+      ..currentDispatchTurnId = 'task'
       ..currentThinkingStage = 2
       ..currentConversationId = 42
       ..currentConversation = ConversationModel(
@@ -74,7 +74,7 @@ void main() {
     expect(state.isCheckingExecutableTask, isFalse);
     expect(state.deepThinkingContent, isEmpty);
     expect(state.isDeepThinking, isFalse);
-    expect(state.currentDispatchTaskId, isNull);
+    expect(state.currentDispatchTurnId, isNull);
     expect(state.currentThinkingStage, 1);
     expect(state.currentConversationId, isNull);
     expect(state.currentConversation, isNull);

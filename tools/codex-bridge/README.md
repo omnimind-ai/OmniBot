@@ -1,6 +1,6 @@
 # Omnibot Codex Bridge
 
-Self-host this small bridge on a Windows, macOS, or Linux PC that already has the OpenAI Codex CLI installed and logged in. Omnibot connects to the bridge over WebSocket. On macOS/Linux, the bridge first tries to proxy the active Codex desktop app-server socket, then falls back to starting `codex app-server` locally on the PC.
+Self-host this small bridge on a Windows, macOS, or Linux PC that has the official `codex-acp` adapter available. Omnibot connects to the bridge over WebSocket; the bridge forwards ACP JSON-RPC over stdio without exposing harness-specific methods.
 
 The bridge also exposes authenticated HTTP helpers used by Omnibot:
 
@@ -12,7 +12,7 @@ The bridge also exposes authenticated HTTP helpers used by Omnibot:
 - `POST /fs/delete`: delete a remote file or directory.
 - `POST /fs/move`: rename or move a remote file or directory.
 
-Codex sessions are read through the proxied `codex app-server` protocol, so the app uses the same session list flow for local and remote Codex.
+The remote Agent speaks ACP directly: `initialize`, `session/new`, `session/prompt`, `session/update`, and `session/cancel`.
 
 ## Run
 
@@ -79,10 +79,8 @@ For unattended scripts or service managers, pass `--no-interactive` or set `OMNI
 - `--host <host>`: listen host, default `0.0.0.0`
 - `--port <port>`: listen port, default `17321`
 - `--public-host <host>`: advertised host/IP used in the QR code
-- `--codex-bin <path>`: Codex executable, default `codex`
+- `--acp-bin <path>`: ACP agent executable, default `codex-acp`
 - `--codex-home <path>`: optional `CODEX_HOME` override
-- `--app-server <auto|desktop|stdio>`: app-server transport, default `auto`
-- `--app-server-socket <path>`: desktop Codex app-server Unix socket override
 - `--config <path>`: bridge config path for the remembered manual token
 - `--forget-token`: clear the remembered manual token before setup
 - `--interactive`: force terminal setup prompts
@@ -95,14 +93,12 @@ For unattended scripts or service managers, pass `--no-interactive` or set `OMNI
 - `OMNIBOT_BRIDGE_PORT`: listen port, default `17321`
 - `OMNIBOT_BRIDGE_TOKEN`: optional bearer token; set to `auto` to generate one
 - `OMNIBOT_BRIDGE_CWD`: default project directory
-- `OMNIBOT_BRIDGE_APP_SERVER`: `auto`, `desktop`, or `stdio`
+- `CODEX_ACP_BIN`: ACP agent executable override
 - `OMNIBOT_BRIDGE_INTERACTIVE`: set to `0`/`false` to disable prompts, or `1`/`true` to force prompts
 - `OMNIBOT_BRIDGE_CONFIG`: bridge config path, default `~/.omnibot/codex-bridge.json`
 - `OMNIBOT_BRIDGE_MAX_READ_BYTES`: max file preview payload, default 12 MiB
 - `OMNIBOT_BRIDGE_MAX_UPLOAD_BYTES`: max decoded attachment upload size, default 24 MiB
-- `CODEX_BIN`: Codex executable, default `codex`
 - `CODEX_HOME`: optional Codex config directory override
-- `CODEX_APP_SERVER_SOCKET`: desktop Codex app-server Unix socket override
 
 ## Troubleshooting
 
@@ -112,16 +108,10 @@ If Omnibot can reach the bridge but reports that remote Codex is unavailable, op
 curl -H "Authorization: Bearer <token>" http://<pc-lan-ip>:17321/health
 ```
 
-`ready: false` usually means the PC cannot run `codex --version` and no desktop app-server socket was found. Install/login the OpenAI Codex CLI on the PC, make sure `codex` is on `PATH`, or start the bridge with an explicit executable:
+`ready: false` usually means the PC cannot run `codex-acp --version`. Install the official adapter and make sure `codex-acp` is on `PATH`, or start the bridge with an explicit executable:
 
 ```bash
-npx @thuocean/codex-bridge --cwd "/Users/you/code/project" --token auto --codex-bin /absolute/path/to/codex
-```
-
-If you specifically want to attach to the Codex desktop app process and fail when that socket is not available, start with:
-
-```bash
-npx @thuocean/codex-bridge --cwd "/Users/you/code/project" --token auto --app-server desktop
+npx @thuocean/codex-bridge --cwd "/Users/you/code/project" --token auto --acp-bin /absolute/path/to/codex-acp
 ```
 
 On Windows, npm usually installs command shims as `.cmd` files. If the health check still says `ready: false`, run this in PowerShell:
@@ -134,5 +124,5 @@ codex --version
 Then pass the `.cmd` path printed by `where.exe`:
 
 ```powershell
-npx @thuocean/codex-bridge --cwd "C:\Users\you\code\project" --token auto --codex-bin "C:\Users\you\AppData\Roaming\npm\codex.cmd"
+npx @thuocean/codex-bridge --cwd "C:\Users\you\code\project" --token auto --acp-bin "C:\Users\you\AppData\Roaming\npm\codex-acp.cmd"
 ```

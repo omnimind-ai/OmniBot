@@ -88,6 +88,34 @@ class ChatMessageModel {
     content?['agentName'] ?? cardData?['agentName'] ?? streamMeta?['agentName'],
   );
 
+  /// Canonical projected ACP identity. The legacy card/stream field names are
+  /// read only as fallbacks so old conversations remain renderable.
+  String? get runId => _normalizeOptionalString(
+    streamMeta?['runId'] ??
+        streamMeta?['parentTaskId'] ??
+        cardData?['runId'] ??
+        cardData?['taskID'] ??
+        cardData?['taskId'],
+  );
+
+  String? get sessionId => _normalizeOptionalString(
+    streamMeta?['sessionId'] ?? cardData?['sessionId'],
+  );
+
+  String? get turnId =>
+      _normalizeOptionalString(streamMeta?['turnId'] ?? cardData?['turnId']);
+
+  String? get itemId =>
+      _normalizeOptionalString(streamMeta?['itemId'] ?? cardData?['itemId']);
+
+  String? get toolCallId => _normalizeOptionalString(
+    streamMeta?['toolCallId'] ?? cardData?['toolCallId'],
+  );
+
+  String? get cardId => _normalizeOptionalString(
+    streamMeta?['cardId'] ?? cardData?['cardId'] ?? contentId,
+  );
+
   /// 获取数据库ID（用于本地存储和渲染key）
   int? get dbId => _asNullableInt(content?['dbId']);
 

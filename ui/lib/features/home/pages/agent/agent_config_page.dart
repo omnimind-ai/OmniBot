@@ -4,6 +4,8 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:ui/services/agent_runtime_service.dart';
+import 'package:ui/services/model_provider_config_service.dart';
+import 'package:ui/services/scene_model_config_service.dart';
 import 'package:ui/theme/theme_context.dart';
 import 'package:ui/utils/ui.dart';
 import 'package:ui/widgets/common_app_bar.dart';
@@ -37,6 +39,12 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
   bool _enabled = true;
   bool _changed = false;
   String _reasoningEffort = 'max';
+  String _permissionMode = 'workspace-write';
+  bool _sharedModelLoading = true;
+  bool _sharedModelSaving = false;
+  List<ModelProviderProfileSummary> _providerProfiles = const [];
+  Map<String, List<ProviderModelOption>> _providerModels = {};
+  SceneModelBindingEntry? _sharedModelBinding;
   String? _error;
 
   bool get _english =>
@@ -95,6 +103,9 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
         _loading = false;
         _error = null;
       });
+      if (agent.builtIn) {
+        unawaited(_loadSharedModelSelection());
+      }
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -129,6 +140,205 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
       'high' => 'high',
       _ => 'max',
     };
+    _permissionMode = switch (payload['permissionMode']?.toString()) {
+      'read-only' => 'read-only',
+      'danger-full-access' => 'danger-full-access',
+      _ => 'workspace-write',
+    };
+  }
+
+  Future<void> _loadSharedModelSelection() async {
+    try {
+      final profilesPayload = await ModelProviderConfigService.listProfiles();
+      final bindings = await SceneModelConfigService.getSceneModelBindings();
+      final models = <String, List<ProviderModelOption>>{};
+      for (final profile in profilesPayload.profiles) {
+        var options = <ProviderModelOption>[];
+        if (profile.configured) {
+          try {
+            options = await ModelProviderConfigService.fetchModels(
+              profileId: profile.id,
+              providerName: profile.name,
+              capability: 'text',
+            );
+          } catch (_) {
+            // Agent selection only accepts models verified by this Provider.
+          }
+        }
+        models[profile.id] = options;
+      }
+      final persistedBinding = bindings
+          .where((item) => item.sceneId == 'scene.dispatch.model')
+          .firstOrNull;
+      final persistedModels = persistedBinding == null
+          ? const <ProviderModelOption>[]
+          : models[persistedBinding.providerProfileId] ??
+                const <ProviderModelOption>[];
+      final binding =
+          persistedBinding != null &&
+              (persistedModels.isEmpty ||
+                  persistedModels.any(
+                    (item) =>
+                        item.id.trim().toLowerCase() ==
+                        persistedBinding.modelId.trim().toLowerCase(),
+                  ))
+          ? persistedBinding
+          : null;
+      if (!mounted) return;
+      setState(() {
+        _providerProfiles = profilesPayload.profiles;
+        _providerModels = models;
+        _sharedModelBinding = binding;
+        _sharedModelLoading = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _sharedModelLoading = false;
+      });
+      debugPrint('Load shared Agent Provider selection failed: $error');
+    }
+  }
+
+  Future<void> _selectSharedModel() async {
+    if (_sharedModelSaving || _sharedModelLoading) return;
+    final selection = await showModalBottomSheet<_SharedModelSelection>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        final expanded = <String>{
+          if (_sharedModelBinding != null)
+            _sharedModelBinding!.providerProfileId,
+        };
+        if (expanded.isEmpty && _providerProfiles.isNotEmpty) {
+          expanded.add(_providerProfiles.first.id);
+        }
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            return SafeArea(
+              child: SizedBox(
+                height: MediaQuery.sizeOf(context).height * 0.7,
+                child: ListView(
+                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
+                  children: [
+                    ListTile(
+                      title: Text(
+                        _text(
+                          '选择 Agent Provider / 模型',
+                          'Select Agent Provider / model',
+                        ),
+                      ),
+                      subtitle: Text(
+                        _text(
+                          '所有 ACP 默认继承这里的选择。',
+                          'All ACP Agents inherit this selection by default.',
+                        ),
+                      ),
+                    ),
+                    for (final profile in _providerProfiles)
+                      ExpansionTile(
+                        initiallyExpanded: expanded.contains(profile.id),
+                        onExpansionChanged: (value) {
+                          setSheetState(() {
+                            if (value) {
+                              expanded.add(profile.id);
+                            } else {
+                              expanded.remove(profile.id);
+                            }
+                          });
+                        },
+                        title: Text(profile.name),
+                        subtitle: Text(
+                          profile.configured
+                              ? _text(
+                                  '选择该 Provider 的模型',
+                                  'Choose a model from this Provider',
+                                )
+                              : _text('未配置', 'Not configured'),
+                        ),
+                        children: [
+                          for (final model
+                              in (_providerModels[profile.id] ?? const []))
+                            ListTile(
+                              title: Text(model.id),
+                              trailing:
+                                  _sharedModelBinding?.providerProfileId ==
+                                          profile.id &&
+                                      _sharedModelBinding?.modelId == model.id
+                                  ? const Icon(LucideIcons.check)
+                                  : null,
+                              onTap: () => Navigator.of(sheetContext).pop(
+                                _SharedModelSelection(
+                                  providerProfileId: profile.id,
+                                  modelId: model.id,
+                                ),
+                              ),
+                            ),
+                          if ((_providerModels[profile.id] ?? const []).isEmpty)
+                            ListTile(
+                              title: Text(
+                                _text(
+                                  '没有可用模型，请先检查 Provider 配置。',
+                                  'No models available. Check this Provider first.',
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    if (_providerProfiles.isEmpty)
+                      ListTile(
+                        title: Text(
+                          _text('没有可用 Provider。', 'No Provider is available.'),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+    if (selection == null) return;
+    await _saveSharedModel(selection);
+  }
+
+  Future<void> _saveSharedModel(_SharedModelSelection selection) async {
+    setState(() {
+      _sharedModelSaving = true;
+      _error = null;
+    });
+    try {
+      final bindings = await SceneModelConfigService.saveSceneModelBinding(
+        sceneId: 'scene.dispatch.model',
+        providerProfileId: selection.providerProfileId,
+        modelId: selection.modelId,
+      );
+      if (!mounted) return;
+      setState(() {
+        _sharedModelBinding = bindings
+            .where((item) => item.sceneId == 'scene.dispatch.model')
+            .firstOrNull;
+        _sharedModelSaving = false;
+        _changed = true;
+      });
+      try {
+        await AgentRuntimeService.disconnect();
+      } catch (_) {
+        // The next ACP request still prepares the selected shared mapping.
+      }
+      showToast(
+        _text('Agent Provider / 模型已更新。', 'Agent Provider / model updated.'),
+        type: ToastType.success,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _sharedModelSaving = false;
+        _error = error.toString();
+      });
+      showToast(error.toString(), type: ToastType.error);
+    }
   }
 
   void _setText(TextEditingController controller, String value) {
@@ -147,25 +357,6 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
     try {
       switch (_kind) {
         case 'codex':
-          final baseUrl = _baseUrlController.text.trim();
-          final model = _modelController.text.trim();
-          final apiKey = _apiKeyController.text.trim();
-          if (baseUrl.isEmpty || model.isEmpty || apiKey.isEmpty) {
-            throw ArgumentError(
-              _text(
-                'Base URL、模型 ID 和 API Key 均不能为空。',
-                'Base URL, model ID, and API Key are required.',
-              ),
-            );
-          }
-          final payload = await AgentRuntimeService.writeAgentConfig(
-            _agent!.id,
-            baseUrl: baseUrl,
-            model: model,
-            apiKey: apiKey,
-          );
-          if (!mounted) return;
-          _syncPayload(payload);
           break;
         case 'json':
           final content = _contentController.text;
@@ -191,23 +382,10 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
           _syncPayload(payload);
           break;
         case 'deepseek-harness':
-          final baseUrl = _baseUrlController.text.trim();
-          final model = _modelController.text.trim();
-          final apiKey = _apiKeyController.text.trim();
-          if (baseUrl.isEmpty || model.isEmpty || apiKey.isEmpty) {
-            throw ArgumentError(
-              _text(
-                'Base URL、模型 ID 和 API Key 均不能为空。',
-                'Base URL, model ID, and API Key are required.',
-              ),
-            );
-          }
           final payload = await AgentRuntimeService.writeAgentConfig(
             _agent!.id,
-            baseUrl: baseUrl,
-            model: model,
-            apiKey: apiKey,
             reasoningEffort: _reasoningEffort,
+            permissionMode: _permissionMode,
           );
           if (!mounted) return;
           _syncPayload(payload);
@@ -374,7 +552,7 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
                         ),
                       ),
                     ],
-                    if (_kind.isNotEmpty) ...[
+                    if (_kind.isNotEmpty && _kind != 'codex') ...[
                       const SizedBox(height: 18),
                       FilledButton.icon(
                         key: const Key('agent-config-save'),
@@ -415,8 +593,8 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
   String get _pageSubtitle {
     return switch (_kind) {
       'codex' => _text(
-        '保存后会写入 $_configPath 和 $_authPath；下一次启动 Codex ACP 时生效。',
-        'Saving writes $_configPath and $_authPath. Changes apply the next time Codex ACP starts.',
+        '默认直接复用统一 Provider；这里仅查看或覆盖官方 Codex 文件，保存后下一次启动 ACP 时生效。',
+        'The shared Provider is used by default. This page only views or overrides the official Codex files; changes apply on the next ACP start.',
       ),
       'json' => _text(
         '直接编辑 $_configPath。这里显示的就是配置文件当前内容。',
@@ -427,12 +605,12 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
         'Edit $_configPath directly. OpenCode supports JSON and JSONC.',
       ),
       'deepseek-harness' => _text(
-        '配置保存到 $_configPath；首次检测会安装 npm next 通道的最新 dsh ACP 运行组件，也可在终端环境页统一安装。',
-        'Saved to $_configPath. The first check installs the latest dsh ACP runtime from npm next; it is also available in Terminal Environment.',
+        '默认直接复用统一 Provider 和模型；这里仅保留官方 DSH 配置入口。安装官方 Harness 后，检测只检查当前运行状态。',
+        'The shared Provider and model are used by default. This page only keeps the official DSH configuration entry. After installation, Check only verifies the current runtime state.',
       ),
       'profile' => _text(
-        'API 和模型由该 Agent 自身配置；这里仅管理 ACP 启动命令、参数与环境。',
-        'The Agent owns its API and model configuration. This page only manages ACP launch settings.',
+        '自定义 Agent 只管理 ACP 启动命令、参数与环境；Provider 和模型仍由统一 Agent 配置提供。',
+        'Custom Agents only manage the ACP launch command, arguments, and environment; the shared Agent Provider supplies credentials and model.',
       ),
       _ => '',
     };
@@ -451,41 +629,14 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
   Widget _buildCodexEditor() {
     return Column(
       children: [
-        TextField(
-          key: const Key('codex-agent-base-url'),
-          controller: _baseUrlController,
-          keyboardType: TextInputType.url,
-          decoration: const InputDecoration(
-            labelText: 'Base URL',
-            hintText: 'https://api.example.com/v1',
+        _buildSharedProviderModelSelector(),
+        const SizedBox(height: 12),
+        Text(
+          _text(
+            'Base URL 和 API Key 自动来自 Provider 配置。官方配置文件：$_configPath；认证文件：$_authPath',
+            'Base URL and API key come from the selected Provider. Official config: $_configPath; auth: $_authPath',
           ),
-        ),
-        const SizedBox(height: 14),
-        TextField(
-          key: const Key('codex-agent-model'),
-          controller: _modelController,
-          decoration: InputDecoration(
-            labelText: _text('模型 ID', 'Model ID'),
-            hintText: 'gpt-5.5',
-          ),
-        ),
-        const SizedBox(height: 14),
-        TextField(
-          key: const Key('codex-agent-api-key'),
-          controller: _apiKeyController,
-          obscureText: _obscureApiKey,
-          enableSuggestions: false,
-          autocorrect: false,
-          decoration: InputDecoration(
-            labelText: 'API Key',
-            suffixIcon: IconButton(
-              tooltip: _obscureApiKey
-                  ? _text('显示 API Key', 'Show API Key')
-                  : _text('隐藏 API Key', 'Hide API Key'),
-              onPressed: () => setState(() => _obscureApiKey = !_obscureApiKey),
-              icon: Icon(_obscureApiKey ? LucideIcons.eye : LucideIcons.eyeOff),
-            ),
-          ),
+          style: Theme.of(context).textTheme.bodySmall,
         ),
       ],
     );
@@ -494,40 +645,13 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
   Widget _buildDeepSeekHarnessEditor() {
     return Column(
       children: [
-        TextField(
-          key: const Key('deepseek-harness-base-url'),
-          controller: _baseUrlController,
-          keyboardType: TextInputType.url,
-          decoration: const InputDecoration(
-            labelText: 'Base URL',
-            hintText: 'https://api.deepseek.com',
-          ),
-        ),
+        _buildSharedProviderModelSelector(),
         const SizedBox(height: 14),
-        TextField(
-          key: const Key('deepseek-harness-model'),
-          controller: _modelController,
-          decoration: InputDecoration(
-            labelText: _text('模型 ID', 'Model ID'),
-            hintText: 'deepseek-v4-pro',
-          ),
-        ),
-        const SizedBox(height: 14),
-        TextField(
-          key: const Key('deepseek-harness-api-key'),
-          controller: _apiKeyController,
-          obscureText: _obscureApiKey,
-          enableSuggestions: false,
-          autocorrect: false,
-          decoration: InputDecoration(
-            labelText: 'DeepSeek API Key',
-            suffixIcon: IconButton(
-              tooltip: _obscureApiKey
-                  ? _text('显示 API Key', 'Show API Key')
-                  : _text('隐藏 API Key', 'Hide API Key'),
-              onPressed: () => setState(() => _obscureApiKey = !_obscureApiKey),
-              icon: Icon(_obscureApiKey ? LucideIcons.eye : LucideIcons.eyeOff),
-            ),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: Text(
+            _text('官方配置文件：$_configPath', 'Official config: $_configPath'),
+            style: Theme.of(context).textTheme.bodySmall,
           ),
         ),
         const SizedBox(height: 14),
@@ -546,23 +670,109 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
             if (value != null) setState(() => _reasoningEffort = value);
           },
         ),
+        const SizedBox(height: 14),
+        DropdownButtonFormField<String>(
+          key: ValueKey('deepseek-harness-permission-$_permissionMode'),
+          initialValue: _permissionMode,
+          decoration: InputDecoration(
+            labelText: _text('权限模式', 'Permission mode'),
+          ),
+          items: [
+            DropdownMenuItem(
+              value: 'read-only',
+              child: Text(_text('只读', 'Read-only')),
+            ),
+            DropdownMenuItem(
+              value: 'workspace-write',
+              child: Text(_text('工作区可写', 'Workspace write')),
+            ),
+            DropdownMenuItem(
+              value: 'danger-full-access',
+              child: Text(_text('完全访问', 'Full access')),
+            ),
+          ],
+          onChanged: (value) {
+            if (value != null) setState(() => _permissionMode = value);
+          },
+        ),
       ],
     );
   }
 
-  Widget _buildRawFileEditor() {
-    return TextField(
-      key: const Key('agent-raw-config-content'),
-      controller: _contentController,
-      minLines: 16,
-      maxLines: 28,
-      keyboardType: TextInputType.multiline,
-      style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-      decoration: InputDecoration(
-        labelText: _configPath,
-        alignLabelWithHint: true,
-        hintText: '{\n}\n',
+  Widget _buildSharedProviderModelSelector() {
+    final binding = _sharedModelBinding;
+    final profile = binding == null
+        ? null
+        : _providerProfiles
+              .where((item) => item.id == binding.providerProfileId)
+              .firstOrNull;
+    final label = binding == null
+        ? _text('请选择 Provider / 模型', 'Select Provider / model')
+        : '${profile?.name ?? binding.providerProfileId} / ${binding.modelId}';
+    return InkWell(
+      key: const Key('agent-shared-provider-model-selector'),
+      onTap: _sharedModelSaving || _sharedModelLoading
+          ? null
+          : _selectSharedModel,
+      borderRadius: BorderRadius.circular(10),
+      child: InputDecorator(
+        decoration: InputDecoration(
+          labelText: _text(
+            '统一 Agent Provider / 模型',
+            'Shared Agent Provider / model',
+          ),
+          suffixIcon: _sharedModelSaving
+              ? const Padding(
+                  padding: EdgeInsets.all(12),
+                  child: SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                )
+              : const Icon(LucideIcons.chevronDown),
+        ),
+        child: Text(
+          _sharedModelLoading
+              ? _text('正在加载 Provider…', 'Loading Providers…')
+              : label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
       ),
+    );
+  }
+
+  Widget _buildRawFileEditor() {
+    return Column(
+      children: [
+        _buildSharedProviderModelSelector(),
+        const SizedBox(height: 14),
+        TextField(
+          key: const Key('agent-raw-config-content'),
+          controller: _contentController,
+          minLines: 16,
+          maxLines: 28,
+          keyboardType: TextInputType.multiline,
+          style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+          decoration: InputDecoration(
+            labelText: _text('高级配置：$_configPath', 'Advanced: $_configPath'),
+            alignLabelWithHint: true,
+            hintText: '{\n}\n',
+          ),
+        ),
+        const SizedBox(height: 8),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: Text(
+            _text(
+              '仅在需要 Adapter 专属参数时编辑。Provider 凭据不在这里填写。',
+              'Edit this only for Adapter-specific options. Provider credentials are not entered here.',
+            ),
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ),
+      ],
     );
   }
 
@@ -603,6 +813,16 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
       ],
     );
   }
+}
+
+class _SharedModelSelection {
+  const _SharedModelSelection({
+    required this.providerProfileId,
+    required this.modelId,
+  });
+
+  final String providerProfileId;
+  final String modelId;
 }
 
 class _ErrorState extends StatelessWidget {

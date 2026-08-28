@@ -4,13 +4,14 @@
     {
       "id": "com.omnimind.omni-vlm-lite",
       "name": "OmniFlow",
-      "version": "2.1.7",
+      "version": "2.1.8",
       "interfaceVersion": 1,
       "description": "Android GUI automation powered by the OmniFlow VLM runtime.",
       "publisher": "OmniMind",
       "kind": "runtime_bundle",
-      "downloadSizeBytes": 941767,
+      "downloadSizeBytes": 2935511,
       "required": true,
+      "installByDefault": true,
       "capabilities": [
         "Manual recording",
         "Canonical RunLog",
@@ -24,15 +25,17 @@
       "adapter": "omniflow_android_gui",
       "runtimeSkill": {
         "id": "omniflow-gui-runtime",
-        "packagedArchivePath": "runtime-components/omniflow-gui-runtime-2.1.7.zip",
-        "componentArchiveUrl": "https://github.com/omnimind-ai/OmniBotSkills/releases/download/omniflow-gui-runtime-v2.1.7/omniflow-gui-runtime-2.1.7.zip",
-        "componentArchiveSha256": "3e7751335141dadc644b5ec9f83fcbddb562dcc926a0edb0873c70b29baeae87",
-        "installTimeoutSeconds": 900
+        "packagedArchivePath": "runtime-components/omniflow-gui-runtime-2.1.8.zip",
+        "componentArchiveUrl": "https://github.com/omnimind-ai/OmniBotSkills/releases/download/omniflow-gui-runtime-v2.1.8/omniflow-gui-runtime-2.1.8.zip",
+        "componentArchiveSha256": "12439b1ad47e665002d8824be3f0125ee17f9f575be2d656f8e0c87c7a24836f",
+        "packagedArchiveSha256": "12439b1ad47e665002d8824be3f0125ee17f9f575be2d656f8e0c87c7a24836f",
+        "installTimeoutSeconds": 900,
+        "prebuiltRuntimeSha256": "12439b1ad47e665002d8824be3f0125ee17f9f575be2d656f8e0c87c7a24836f"
       },
       "presentation": {
         "description": {
-          "zh": "OmniFlow 是随应用自动安装并启动的 GUI/VLM 系统组件；可录制流程并在相似任务中复用。",
-          "en": "OmniFlow is a GUI/VLM system component installed and started automatically with the app for recording and reusing similar flows."
+          "zh": "OmniFlow 运行时和 GUI/VLM 操作模块默认启用；首次使用手机操作前，请确认无障碍服务和 Agent Provider 已配置。",
+          "en": "The OmniFlow runtime and GUI/VLM operation module are enabled by default; configure accessibility and an Agent Provider before the first phone task."
         },
         "readiness": "vlm_provider",
         "usage": [
@@ -54,8 +57,8 @@
               "en": "Ready out of the box"
             },
             "description": {
-              "zh": "首次启动会自动安装并启用，后续启动自动恢复；用户无需在插件市场手动操作。",
-              "en": "It installs and enables itself on first launch and restores automatically later, with no manual marketplace setup."
+              "zh": "运行时和操作工具默认启用；需要手机操作时，确认无障碍服务和 Agent Provider 已就绪即可。",
+              "en": "The runtime and operation tools are enabled by default; confirm accessibility and an Agent Provider are ready before phone tasks."
             }
           },
           {

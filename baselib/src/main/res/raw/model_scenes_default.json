@@ -1,6 +1,6 @@
 {
   "scene.dispatch.model": {
-    "model": "qwen3.5-plus",
+    "model": "",
     "prompt": null,
     "description": "可执行任务三段式分流（decision/app-scope/task-match）默认模型（Flutter 侧）",
     "description_i18n": {
@@ -9,7 +9,8 @@
     }
   },
   "scene.vlm.operation.primary": {
-    "model": "qwen3-vl-plus",
+    "model": "",
+    "inherits_model_from": "scene.dispatch.model",
     "transport": "openai_compatible",
     "response_parser": "text_content",
     "prompt": null,
@@ -17,6 +18,17 @@
     "description_i18n": {
       "zh-CN": "Android GUI 自动化模型；执行策略由 AndroidGuiPolicy 提供",
       "en-US": "Android GUI automation model; execution policy is provided by AndroidGuiPolicy"
+    }
+  },
+  "scene.voice": {
+    "model": "",
+    "transport": "openai_compatible",
+    "response_parser": "text_content",
+    "prompt": null,
+    "description": "助手回复语音合成模型；由 ACP 语音播放场景提供",
+    "description_i18n": {
+      "zh-CN": "助手回复语音合成模型；由 ACP 语音播放场景提供",
+      "en-US": "Voice synthesis model for assistant replies, provided by the ACP voice scene"
     }
   },
   "scene.compactor.context.chat": {

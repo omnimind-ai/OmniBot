@@ -37,7 +37,7 @@ class OmniVlmPluginTest {
 
         assertEquals(false, arguments.containsKey("step_skill_guidance"))
         assertEquals("order me a coffee", arguments["goal"])
-        assertEquals(30, arguments["max_steps"])
+        assertEquals(20, arguments["max_steps"])
     }
 
     @Test

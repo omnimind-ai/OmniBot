@@ -41,7 +41,9 @@ interface AgentConversationEntryDao {
         SELECT
             $SAFE_ENTRY_PROJECTION
         FROM agent_conversation_entries
-        WHERE conversationId = :conversationId AND conversationMode = :conversationMode
+        WHERE conversationId = :conversationId
+          AND conversationMode = :conversationMode
+          AND entryType != 'stream_event'
         ORDER BY createdAt ASC, id ASC
         """
     )
@@ -57,7 +59,9 @@ interface AgentConversationEntryDao {
         SELECT
             $SAFE_ENTRY_PROJECTION
         FROM agent_conversation_entries
-        WHERE conversationId = :conversationId AND conversationMode = :conversationMode
+        WHERE conversationId = :conversationId
+          AND conversationMode = :conversationMode
+          AND entryType != 'stream_event'
         ORDER BY createdAt DESC, id DESC
         """
     )
@@ -73,7 +77,9 @@ interface AgentConversationEntryDao {
         SELECT
             $SAFE_ENTRY_PROJECTION
         FROM agent_conversation_entries
-        WHERE conversationId = :conversationId AND conversationMode = :conversationMode
+        WHERE conversationId = :conversationId
+          AND conversationMode = :conversationMode
+          AND entryType != 'stream_event'
         ORDER BY createdAt DESC, id DESC
         LIMIT :limit OFFSET :offset
         """
@@ -95,6 +101,7 @@ interface AgentConversationEntryDao {
         WHERE conversationId = :conversationId
           AND conversationMode = :conversationMode
           AND entryId = :entryId
+          AND entryType != 'stream_event'
         LIMIT 1
         """
     )
@@ -109,7 +116,9 @@ interface AgentConversationEntryDao {
     @Query(
         """
         SELECT * FROM agent_conversation_entries
-        WHERE conversationId = :conversationId AND conversationMode = :conversationMode
+        WHERE conversationId = :conversationId
+          AND conversationMode = :conversationMode
+          AND entryType != 'stream_event'
         ORDER BY createdAt ASC, id ASC
         """
     )
@@ -121,7 +130,9 @@ interface AgentConversationEntryDao {
     @Query(
         """
         SELECT * FROM agent_conversation_entries
-        WHERE conversationId = :conversationId AND conversationMode = :conversationMode
+        WHERE conversationId = :conversationId
+          AND conversationMode = :conversationMode
+          AND entryType != 'stream_event'
         ORDER BY createdAt DESC, id DESC
         """
     )
@@ -134,6 +145,7 @@ interface AgentConversationEntryDao {
         """
         SELECT * FROM agent_conversation_entries
         WHERE conversationId = :conversationId
+          AND entryType != 'stream_event'
         ORDER BY createdAt DESC, id DESC
         """
     )
@@ -143,6 +155,7 @@ interface AgentConversationEntryDao {
         """
         SELECT * FROM agent_conversation_entries
         WHERE conversationId = :conversationId
+          AND entryType != 'stream_event'
         ORDER BY createdAt ASC, id ASC
         """
     )
@@ -165,6 +178,7 @@ interface AgentConversationEntryDao {
             updatedAt
         FROM agent_conversation_entries
         WHERE conversationId = :conversationId
+          AND entryType != 'stream_event'
         ORDER BY createdAt DESC, id DESC
         LIMIT 1
         """
@@ -175,6 +189,7 @@ interface AgentConversationEntryDao {
         """
         SELECT * FROM agent_conversation_entries
         WHERE conversationId = :conversationId
+          AND entryType != 'stream_event'
         ORDER BY createdAt DESC, id DESC
         LIMIT 1
         """
@@ -185,6 +200,7 @@ interface AgentConversationEntryDao {
         """
         SELECT * FROM agent_conversation_entries
         WHERE conversationId = :conversationId
+          AND entryType != 'stream_event'
         ORDER BY createdAt ASC, id ASC
         LIMIT 1
         """
@@ -208,6 +224,7 @@ interface AgentConversationEntryDao {
             updatedAt
         FROM agent_conversation_entries
         WHERE conversationId = :conversationId
+          AND entryType != 'stream_event'
         ORDER BY createdAt ASC, id ASC
         LIMIT 1
         """
@@ -218,6 +235,7 @@ interface AgentConversationEntryDao {
         """
         SELECT * FROM agent_conversation_entries
         WHERE conversationId = :conversationId
+          AND entryType != 'stream_event'
         ORDER BY updatedAt DESC, id DESC
         LIMIT 1
         """
@@ -241,6 +259,7 @@ interface AgentConversationEntryDao {
             updatedAt
         FROM agent_conversation_entries
         WHERE conversationId = :conversationId
+          AND entryType != 'stream_event'
         ORDER BY updatedAt DESC, id DESC
         LIMIT 1
         """
@@ -251,9 +270,26 @@ interface AgentConversationEntryDao {
         """
         SELECT COUNT(*) FROM agent_conversation_entries
         WHERE conversationId = :conversationId
+          AND entryType != 'stream_event'
         """
     )
     suspend fun countConversationEntries(conversationId: Long): Int
+
+    @Query(
+        """
+        SELECT DISTINCT conversationId FROM agent_conversation_entries
+        WHERE entryType = 'stream_event'
+        """
+    )
+    suspend fun getConversationIdsWithStreamEvents(): List<Long>
+
+    @Query(
+        """
+        DELETE FROM agent_conversation_entries
+        WHERE entryType = 'stream_event'
+        """
+    )
+    suspend fun deleteStreamEvents(): Int
 
     @Query(
         """
@@ -261,6 +297,7 @@ interface AgentConversationEntryDao {
         WHERE conversationId = :conversationId
           AND conversationMode = :conversationMode
           AND entryId = :entryId
+          AND entryType != 'stream_event'
         LIMIT 1
         """
     )
@@ -273,7 +310,9 @@ interface AgentConversationEntryDao {
     @Query(
         """
         SELECT * FROM agent_conversation_entries
-        WHERE conversationId = :conversationId AND conversationMode = :conversationMode
+        WHERE conversationId = :conversationId
+          AND conversationMode = :conversationMode
+          AND entryType != 'stream_event'
         ORDER BY createdAt DESC, id DESC
         LIMIT :limit OFFSET :offset
         """
@@ -288,7 +327,9 @@ interface AgentConversationEntryDao {
     @Query(
         """
         SELECT COUNT(*) FROM agent_conversation_entries
-        WHERE conversationId = :conversationId AND conversationMode = :conversationMode
+        WHERE conversationId = :conversationId
+          AND conversationMode = :conversationMode
+          AND entryType != 'stream_event'
         """
     )
     suspend fun countThreadEntries(

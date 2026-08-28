@@ -12,6 +12,32 @@ import cn.com.omnimind.bot.agent.runtime.AcpAgentProfileStore
 
 private const val WEB_CONVERSATION_TITLE_LIMIT = 20
 
+/**
+ * Resolves the immutable Harness owner of one durable conversation.
+ *
+ * The conversation binding is authoritative. A session binding can recover
+ * older ACP conversations that predate it, while the original storage mode is
+ * the final migration signal. A canonical Agent row without either binding
+ * must resolve deterministically to the default Harness; otherwise whichever
+ * Harness happens to be selected in the UI can steal the conversation.
+ */
+internal fun resolveConversationHarnessOwner(
+    storedMode: String?,
+    sessionAgentId: String?,
+    conversationAgentId: String?,
+): String? {
+    val conversationOwner = conversationAgentId?.trim()?.takeIf { it.isNotEmpty() }
+    if (conversationOwner != null) return conversationOwner
+    val sessionOwner = sessionAgentId?.trim()?.takeIf { it.isNotEmpty() }
+    if (sessionOwner != null) return sessionOwner
+    return when (storedMode?.trim()?.lowercase()) {
+        "", "agent", "normal", "acp", "coding" ->
+            AcpAgentProfileStore.DEFAULT_AGENT_ID
+        "codex" -> AcpAgentProfileStore.CODEX_AGENT_ID
+        else -> null
+    }
+}
+
 internal fun deriveWebConversationTitle(firstUserMessage: String?): String? {
     val normalized = AgentTextSanitizer.sanitizeUtf16(firstUserMessage.orEmpty()).trim()
     if (normalized.isEmpty()) return null
@@ -37,7 +63,16 @@ class ConversationDomainService(
     }
 
     private companion object {
-        const val AGENT_MODE_STORAGE_VALUE = "codex"
+        const val AGENT_MODE_STORAGE_VALUE = "agent"
+        // `normal` is the pre-ACP Xiaowan storage value. It is still an Agent
+        // conversation for binding/session restoration purposes.
+        val AGENT_MODE_STORAGE_ALIASES = setOf(
+            "agent",
+            "normal",
+            "codex",
+            "acp",
+            "coding"
+        )
     }
 
     fun listWebAgentProfiles(): List<Map<String, Any?>> {
@@ -62,7 +97,7 @@ class ConversationDomainService(
             else -> DatabaseHelper.getUnarchivedConversations()
         }
         val agentConversationIds = conversations
-            .filter { it.mode == AGENT_MODE_STORAGE_VALUE }
+            .filter { isAgentMode(it.mode) }
             .map { it.id }
         val agentBindings = DatabaseHelper.getAgentSessionBindingsByConversationIds(
             agentConversationIds
@@ -71,11 +106,15 @@ class ConversationDomainService(
             agentBindings.associateBy { binding -> binding.conversationId }
         return conversations.map { conversation ->
             val agentBinding = agentBindingByConversationId[conversation.id]
-            val agentId = if (conversation.mode == AGENT_MODE_STORAGE_VALUE) {
-                agentBinding?.let { binding ->
-                    acpAgentProfileStore.agentIdForSession(binding.threadId)
-                        ?: AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID
-                } ?: acpAgentProfileStore.agentIdForConversation(conversation.id)
+            val agentId = if (isAgentMode(conversation.mode)) {
+                resolveConversationHarnessOwner(
+                    storedMode = conversation.mode,
+                    sessionAgentId = agentBinding?.let { binding ->
+                        acpAgentProfileStore.agentIdForSession(binding.threadId)
+                    },
+                    conversationAgentId = acpAgentProfileStore
+                        .agentIdForConversation(conversation.id),
+                )
             } else {
                 null
             }
@@ -100,16 +139,20 @@ class ConversationDomainService(
 
     suspend fun getConversationPayload(conversationId: Long): Map<String, Any?>? {
         val conversation = DatabaseHelper.getConversationById(conversationId) ?: return null
-        val agentBinding = if (conversation.mode == AGENT_MODE_STORAGE_VALUE) {
+        val agentBinding = if (isAgentMode(conversation.mode)) {
             DatabaseHelper.getAgentSessionBindingByConversationId(conversation.id)
         } else {
             null
         }
-        val agentId = if (conversation.mode == AGENT_MODE_STORAGE_VALUE) {
-            agentBinding?.let { binding ->
-                acpAgentProfileStore.agentIdForSession(binding.threadId)
-                    ?: AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID
-            } ?: acpAgentProfileStore.agentIdForConversation(conversation.id)
+        val agentId = if (isAgentMode(conversation.mode)) {
+            resolveConversationHarnessOwner(
+                storedMode = conversation.mode,
+                sessionAgentId = agentBinding?.let { binding ->
+                    acpAgentProfileStore.agentIdForSession(binding.threadId)
+                },
+                conversationAgentId = acpAgentProfileStore
+                    .agentIdForConversation(conversation.id),
+            )
         } else {
             null
         }
@@ -312,6 +355,12 @@ class ConversationDomainService(
             ?: return
         historyRepository.deleteConversation(conversationId)
         DatabaseHelper.deleteConversationById(conversationId)
+        // The ACP binding is an execution index, not conversation content.
+        // Remove it after the durable rows are deleted so a failed history
+        // deletion does not strand an otherwise recoverable conversation.
+        // A later session/list or stale session/load can then never resurrect
+        // this deleted thread.
+        DatabaseHelper.deleteAgentSessionBindingByConversationId(conversationId)
         acpAgentProfileStore.unbindConversation(conversationId)
         val payload = conversationToPayload(existing)
         RealtimeHub.publish(
@@ -470,22 +519,29 @@ class ConversationDomainService(
         agentCwd: String? = null,
         agentId: String? = null
     ): Map<String, Any?> {
+        val normalizedMode = normalizeConversationMode(conversation.mode)
         val resolvedAgentId = agentId
-            ?: if (conversation.mode == AGENT_MODE_STORAGE_VALUE) {
-                acpAgentProfileStore.agentIdForConversation(conversation.id)
+            ?: if (normalizedMode == AGENT_MODE_STORAGE_VALUE) {
+                resolveConversationHarnessOwner(
+                    storedMode = conversation.mode,
+                    sessionAgentId = null,
+                    conversationAgentId = acpAgentProfileStore
+                        .agentIdForConversation(conversation.id),
+                )
             } else {
                 null
             }
         return linkedMapOf(
             "id" to conversation.id,
             "title" to conversation.title,
-            "mode" to conversation.mode,
+            "mode" to normalizedMode,
             "agentCwd" to agentCwd?.trim()?.takeIf { it.isNotEmpty() },
             "agentId" to resolvedAgentId?.trim()?.takeIf { it.isNotEmpty() },
             "isArchived" to conversation.isArchived,
             "isPinned" to conversation.isPinned,
             "parentConversationId" to conversation.parentConversationId,
-            "parentConversationMode" to conversation.parentConversationMode,
+            "parentConversationMode" to conversation.parentConversationMode
+                ?.let(::normalizeConversationMode),
             "scheduledTaskId" to conversation.scheduledTaskId,
             "summary" to conversation.summary,
             "contextSummary" to conversation.contextSummary,
@@ -504,7 +560,18 @@ class ConversationDomainService(
 
     fun normalizeConversationMode(rawMode: String?): String {
         val normalized = rawMode?.trim()?.lowercase().orEmpty()
-        return if (normalized.isEmpty()) "normal" else normalized
+        return when (normalized) {
+            // Xiaowan used to be stored as `normal`. It is now the built-in
+            // ACP Agent. Pure chat has its explicit `chat_only` mode.
+            "", "normal" -> AGENT_MODE_STORAGE_VALUE
+            "agent", "codex", "acp", "coding" -> AGENT_MODE_STORAGE_VALUE
+            "chat", "chatonly", "chat-only" -> "chat_only"
+            else -> normalized
+        }
+    }
+
+    private fun isAgentMode(mode: String?): Boolean {
+        return mode?.trim()?.lowercase() in AGENT_MODE_STORAGE_ALIASES
     }
 
     private fun validateRequestedAgentId(
@@ -513,8 +580,13 @@ class ConversationDomainService(
     ): String? {
         val normalizedAgentId = requestedAgentId?.trim()?.takeIf { it.isNotEmpty() }
             ?: return null
-        require(conversationMode == AGENT_MODE_STORAGE_VALUE) {
+        require(isAgentMode(conversationMode)) {
             "agentId is only supported for Agent conversations."
+        }
+        if (normalizeConversationMode(conversationMode) == "normal") {
+            require(normalizedAgentId == AcpAgentProfileStore.XIAOWAN_AGENT_ID) {
+                "Xiaowan conversations cannot switch Harness; create a new conversation."
+            }
         }
         val profile = acpAgentProfileStore.list().firstOrNull { it.id == normalizedAgentId }
             ?: throw IllegalArgumentException("Unknown ACP agent: $normalizedAgentId")

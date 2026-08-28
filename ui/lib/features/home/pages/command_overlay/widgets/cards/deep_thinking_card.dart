@@ -141,7 +141,6 @@ class _DeepThinkingCardState extends State<DeepThinkingCard>
             oldWidget.isLoading != widget.isLoading ||
             oldWidget.isCollapsible != widget.isCollapsible ||
             oldWidget.autoCollapseOnComplete != widget.autoCollapseOnComplete);
-
     if (becameCompleted) {
       _stopTimer();
     }
@@ -469,6 +468,12 @@ class _DeepThinkingCardState extends State<DeepThinkingCard>
         ? palette.textSecondary
         : resolvedTextColor.withValues(alpha: 0.68);
     final bool canCollapse = widget.isCollapsible && widget.stage == 4;
+    // The elapsed value is a completed-thinking measurement, not a live
+    // progress counter. Showing it while the model is still emitting thought
+    // chunks produced misleading labels such as “思考完成（用时 1 秒）” for a
+    // turn whose reasoning had not ended yet.
+    final completedThinking =
+        widget.stage == 4 && !widget.isLoading && widget.endTime != null;
 
     // 根据阶段显示不同的文案
     String hintText;
@@ -506,8 +511,14 @@ class _DeepThinkingCardState extends State<DeepThinkingCard>
                           ? BotStatusType.completed
                           : BotStatusType.hint,
                       hintText: hintText,
-                      costTime: _formatTime(_elapsedSeconds),
+                      costTime: completedThinking
+                          ? _formatTime(_elapsedSeconds)
+                          : null,
                       showAvatar: widget.showStatusAvatar,
+                      // Keep the existing animation contract for early
+                      // stages; stage 4 is the hand-off boundary and must not
+                      // create an endless test/runtime animation while its
+                      // terminal state is still being committed.
                       shimmerText: widget.stage != 4 && widget.stage != 5,
                       textStyle: TextStyle(
                         color: secondaryTextColor,
@@ -543,7 +554,7 @@ class _DeepThinkingCardState extends State<DeepThinkingCard>
                 ? BotStatusType.completed
                 : BotStatusType.hint,
             hintText: hintText,
-            costTime: _formatTime(_elapsedSeconds),
+            costTime: completedThinking ? _formatTime(_elapsedSeconds) : null,
             showAvatar: widget.showStatusAvatar,
             shimmerText: widget.stage != 4 && widget.stage != 5,
             textStyle: TextStyle(

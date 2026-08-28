@@ -28,7 +28,7 @@ class ConversationThreadTarget {
   final String? initialMessage;
 
   const ConversationThreadTarget.newConversation({
-    this.mode = ConversationMode.normal,
+    this.mode = ConversationMode.agent,
     this.fromNativeRoute = false,
     this.requestKey,
     this.agentRuntime,
@@ -41,7 +41,7 @@ class ConversationThreadTarget {
 
   const ConversationThreadTarget.existing({
     required this.conversationId,
-    this.mode = ConversationMode.normal,
+    this.mode = ConversationMode.agent,
     this.fromNativeRoute = false,
     this.requestKey,
     this.agentId,
@@ -78,7 +78,7 @@ class ConversationThreadTarget {
     final idPart = agentSessionId?.trim().isNotEmpty == true
         ? 'agent-session:${agentSessionId!.trim()}'
         : conversationId?.toString() ?? 'none';
-    return '${mode.storageValue}:$type:$idPart';
+    return '${mode.canonicalStorageValue}:$type:$idPart';
   }
 
   ConversationThreadTarget copyWith({

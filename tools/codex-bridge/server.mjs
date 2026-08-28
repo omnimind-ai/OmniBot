@@ -14,7 +14,6 @@ import { WebSocketServer } from 'ws';
 
 const require = createRequire(import.meta.url);
 const qrcode = require('qrcode-terminal');
-const WebSocketClient = require('ws');
 const bridgePackage = require('./package.json');
 const isWindows = process.platform === 'win32';
 const bridgeStartedAt = Date.now();
@@ -35,12 +34,8 @@ Options:
   --host <host>           Listen host. Defaults to 0.0.0.0.
   --port <port>           Listen port. Defaults to 17321.
   --public-host <host>    Host/IP printed in the QR code.
-  --codex-bin <path>      Codex executable. Defaults to codex.
+  --acp-bin <path>        ACP agent executable. Defaults to codex-acp.
   --codex-home <path>     Optional CODEX_HOME override.
-  --app-server <auto|desktop|stdio>
-                          Codex app-server transport. Defaults to auto.
-  --app-server-socket <path>
-                          Desktop Codex app-server Unix socket override.
   --config <path>         Bridge config path for remembered manual token.
   --forget-token          Clear the remembered manual token before setup.
   --interactive           Force terminal setup prompts.
@@ -49,9 +44,8 @@ Options:
 
 Environment variables with the same meaning are also supported:
   OMNIBOT_BRIDGE_CWD, OMNIBOT_BRIDGE_TOKEN, OMNIBOT_BRIDGE_HOST,
-  OMNIBOT_BRIDGE_PORT, OMNIBOT_BRIDGE_PUBLIC_HOST, CODEX_BIN, CODEX_HOME,
-  OMNIBOT_BRIDGE_APP_SERVER, OMNIBOT_BRIDGE_INTERACTIVE,
-  OMNIBOT_BRIDGE_CONFIG, CODEX_APP_SERVER_SOCKET`);
+  OMNIBOT_BRIDGE_PORT, OMNIBOT_BRIDGE_PUBLIC_HOST, CODEX_ACP_BIN, CODEX_HOME,
+  OMNIBOT_BRIDGE_INTERACTIVE, OMNIBOT_BRIDGE_CONFIG`);
 }
 
 function readOptionValue(args, index, option) {
@@ -97,10 +91,8 @@ function parseCliArgs(args) {
       '--host': 'host',
       '--port': 'port',
       '--public-host': 'publicHost',
-      '--codex-bin': 'codexBin',
+      '--acp-bin': 'codexBin',
       '--codex-home': 'codexHome',
-      '--app-server': 'appServer',
-      '--app-server-socket': 'appServerSocket',
       '--config': 'configPath',
     };
     const matchedOption = Object.keys(optionMap).find(
@@ -832,7 +824,7 @@ const token = resolveToken(
     : cliOptions.token,
   cliOptions.rememberedToken
 );
-const codexBin = cliOptions.codexBin || process.env.CODEX_BIN || 'codex';
+const codexBin = cliOptions.codexBin || process.env.CODEX_ACP_BIN || 'codex-acp';
 const bridgeCwd = path.resolve(
   expandHomePath(
     cliOptions.cwd || process.env.OMNIBOT_BRIDGE_CWD || process.cwd()
@@ -840,15 +832,6 @@ const bridgeCwd = path.resolve(
 );
 const codexHome = expandHomePath(
   cliOptions.codexHome || process.env.CODEX_HOME || ''
-);
-const appServerTransport = normalizeAppServerTransport(
-  cliOptions.appServer || process.env.OMNIBOT_BRIDGE_APP_SERVER || 'auto'
-);
-const appServerSocketOverride = expandHomePath(
-  cliOptions.appServerSocket ||
-    process.env.CODEX_APP_SERVER_SOCKET ||
-    process.env.CODEX_APP_SERVER_CONTROL_SOCKET ||
-    ''
 );
 const homeDir = os.homedir();
 const maxReadBytes = Number.parseInt(
@@ -899,18 +882,6 @@ function bridgeEnv() {
   return env;
 }
 
-function normalizeAppServerTransport(value) {
-  const normalized = String(value || '').trim().toLowerCase();
-  if (!normalized || normalized === 'auto') return 'auto';
-  if (normalized === 'desktop' || normalized === 'socket' || normalized === 'unix') {
-    return 'desktop';
-  }
-  if (normalized === 'stdio' || normalized === 'spawn' || normalized === 'cli') {
-    return 'stdio';
-  }
-  throw new Error(`Invalid --app-server value: ${value}`);
-}
-
 function stripOuterQuotes(value) {
   const normalized = String(value || '').trim();
   if (
@@ -930,56 +901,6 @@ async function fileExists(filePath) {
   } catch {
     return false;
   }
-}
-
-function resolveCodexControlSocketPath() {
-  if (appServerSocketOverride) {
-    return path.isAbsolute(appServerSocketOverride)
-      ? appServerSocketOverride
-      : path.resolve(bridgeCwd, appServerSocketOverride);
-  }
-  const base = codexHome || path.join(homeDir, '.codex');
-  return path.join(base, 'app-server-control', 'app-server-control.sock');
-}
-
-async function socketExists(socketPath) {
-  if (isWindows) return false;
-  try {
-    const stat = await fs.stat(socketPath);
-    return stat.isSocket();
-  } catch {
-    return false;
-  }
-}
-
-function connectDesktopAppServer(socketPath) {
-  return new Promise((resolve, reject) => {
-    const socket = new WebSocketClient('ws://localhost/', {
-      socketPath,
-      handshakeTimeout: 5000,
-      perMessageDeflate: false,
-    });
-    let settled = false;
-    const rejectOnce = (error) => {
-      if (settled) return;
-      settled = true;
-      reject(error);
-    };
-    socket.once('open', () => {
-      settled = true;
-      resolve(socket);
-    });
-    socket.once('error', rejectOnce);
-    socket.once('close', (code, reasonBuffer) => {
-      rejectOnce(
-        new Error(
-          `desktop Codex app-server socket closed before ready (${code}${
-            reasonBuffer?.length ? ` ${reasonBuffer.toString()}` : ''
-          })`
-        )
-      );
-    });
-  });
 }
 
 async function resolveCodexCommand() {
@@ -1427,10 +1348,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     const version = await readCodexVersion();
-    const desktopSocketPath = resolveCodexControlSocketPath();
-    const desktopSocketAvailable = await socketExists(desktopSocketPath);
-    const transportReady =
-      version.ok || (appServerTransport !== 'stdio' && desktopSocketAvailable);
+    const transportReady = version.ok;
     sendJson(res, 200, {
       ok: transportReady,
       ready: transportReady,
@@ -1438,10 +1356,8 @@ const server = http.createServer(async (req, res) => {
       codexVersion: version.version || null,
       codexBin,
       resolvedCodexBin: version.resolvedCodexBin || codexBin,
-      appServerTransport,
+      acpTransport: 'stdio',
       transportReady,
-      desktopAppServerSocket: desktopSocketPath,
-      desktopAppServerAvailable: desktopSocketAvailable,
       cwd: bridgeCwd,
       authRequired: Boolean(token),
       activeConnections,
@@ -1580,8 +1496,6 @@ server.on('upgrade', (req, socket, head) => {
 
 wss.on('connection', async (ws, req) => {
   let codex = null;
-  let desktopAppServer = null;
-  let activeTransport = null;
   let initialized = false;
   let connectionCounted = true;
   activeConnections += 1;
@@ -1593,15 +1507,6 @@ wss.on('connection', async (ws, req) => {
   }
 
   function closeCodex() {
-    if (desktopAppServer) {
-      const socket = desktopAppServer;
-      desktopAppServer = null;
-      try {
-        socket.close(1000, 'client closed');
-      } catch {
-        // Ignore close races.
-      }
-    }
     if (codex && !codex.killed) {
       if (isWindows && codex.pid) {
         const killer = spawn('taskkill', ['/pid', String(codex.pid), '/T', '/F'], {
@@ -1614,54 +1519,16 @@ wss.on('connection', async (ws, req) => {
       }
     }
     codex = null;
-    activeTransport = null;
-  }
-
-  async function startDesktopTransport(cwd, resolvedCodexBin) {
-    const socketPath = resolveCodexControlSocketPath();
-    if (!(await socketExists(socketPath))) {
-      throw new Error(`desktop Codex app-server socket not found: ${socketPath}`);
-    }
-    const socket = await connectDesktopAppServer(socketPath);
-    desktopAppServer = socket;
-    activeTransport = 'desktop';
-    socket.on('message', (data) => {
-      const line = Buffer.isBuffer(data) ? data.toString('utf8') : data.toString();
-      if (line.trim()) send('stdout', { line });
-    });
-    socket.on('error', (error) => {
-      send('stderr', { line: error.message || 'desktop Codex app-server socket error' });
-    });
-    socket.on('close', (code, reasonBuffer) => {
-      if (desktopAppServer === socket) {
-        desktopAppServer = null;
-        activeTransport = null;
-        send('exit', {
-          exitCode: null,
-          code,
-          reason: reasonBuffer?.toString() || '',
-        });
-        ws.close(1011, 'codex app-server socket closed');
-      }
-    });
-    send('hello', {
-      ok: true,
-      cwd,
-      codexBin: resolvedCodexBin,
-      transport: 'desktop',
-      appServerSocket: socketPath,
-    });
   }
 
   async function startStdioTransport(cwd, resolvedCodexBin) {
-    codex = spawn(resolvedCodexBin, ['app-server'], {
+    codex = spawn(resolvedCodexBin, [], {
       cwd,
       env: bridgeEnv(),
       shell: isWindows,
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     });
-    activeTransport = 'stdio';
     codex.stdout.setEncoding('utf8');
     codex.stderr.setEncoding('utf8');
     let stdoutBuffer = '';
@@ -1685,13 +1552,11 @@ wss.on('connection', async (ws, req) => {
       if (stdoutBuffer.trim()) send('stdout', { line: stdoutBuffer });
       if (stderrBuffer.trim()) send('stderr', { line: stderrBuffer });
       codex = null;
-      activeTransport = null;
       send('exit', { exitCode: code });
       ws.close(1011, 'codex exited');
     });
     codex.on('error', (error) => {
       codex = null;
-      activeTransport = null;
       send('error', { message: error.message });
       ws.close(1011, 'codex failed');
     });
@@ -1699,7 +1564,7 @@ wss.on('connection', async (ws, req) => {
       ok: true,
       cwd,
       codexBin: resolvedCodexBin,
-      transport: 'stdio',
+      transport: 'acp-stdio',
     });
   }
 
@@ -1726,41 +1591,13 @@ wss.on('connection', async (ws, req) => {
       initialized = true;
       const cwd = String(message.cwd || bridgeCwd).trim() || bridgeCwd;
       const resolvedCodexBin = await resolveCodexCommand();
-      if (appServerTransport !== 'stdio') {
-        try {
-          await startDesktopTransport(cwd, resolvedCodexBin);
-          return;
-        } catch (error) {
-          if (appServerTransport === 'desktop') {
-            send('hello', {
-              ok: false,
-              message: error.message || 'desktop Codex app-server is unavailable',
-            });
-            ws.close(1011, 'desktop app-server unavailable');
-            return;
-          }
-          send('stderr', {
-            line:
-              `${error.message || 'desktop Codex app-server unavailable'}; ` +
-              'falling back to codex app-server stdio.',
-          });
-        }
-      }
       await startStdioTransport(cwd, resolvedCodexBin);
       return;
     }
 
     if (message.type === 'stdin') {
-      if (activeTransport === 'desktop') {
-        if (!desktopAppServer || desktopAppServer.readyState !== WebSocketClient.OPEN) {
-          send('error', { message: 'desktop Codex app-server is not connected' });
-          return;
-        }
-        desktopAppServer.send(String(message.line || ''));
-        return;
-      }
       if (!codex || !codex.stdin.writable) {
-        send('error', { message: 'codex app-server is not running' });
+        send('error', { message: 'ACP agent is not running' });
         return;
       }
       codex.stdin.write(`${String(message.line || '')}\n`);
@@ -1804,23 +1641,13 @@ logField('Directory browser', `http://${host}:${port}/fs/list`, color.prompt);
 logField('File browser API', `http://${host}:${port}/fs/read`, color.prompt);
 logField('Attachment upload API', `http://${host}:${port}/fs/upload`, color.prompt);
 logField('Working directory', bridgeCwd, color.white);
-const startupSocketPath = resolveCodexControlSocketPath();
-const startupSocketAvailable = await socketExists(startupSocketPath);
-logField(
-  'Codex transport',
-  `${appServerTransport}` +
-    (startupSocketAvailable ? ` (desktop socket: ${startupSocketPath})` : ''),
-  color.accent
-);
+logField('Agent transport', 'ACP stdio', color.accent);
 const startupCodexVersion = await readCodexVersion();
 if (startupCodexVersion.ok) {
-  logField('Codex CLI', startupCodexVersion.version, color.green);
-} else if (appServerTransport !== 'stdio' && startupSocketAvailable) {
-  console.log(color.warn(`Codex CLI check failed: ${startupCodexVersion.error}`));
-  console.log(color.prompt('Desktop Codex app-server socket is available; bridge will proxy that session.'));
+  logField('ACP agent', startupCodexVersion.version, color.green);
 } else {
-  console.log(color.warn(`Codex CLI check failed: ${startupCodexVersion.error}`));
-  console.log(color.dim('Install/login Codex CLI or pass --codex-bin /absolute/path/to/codex.'));
+  console.log(color.warn(`ACP agent check failed: ${startupCodexVersion.error}`));
+  console.log(color.dim('Install @agentclientprotocol/codex-acp or pass --acp-bin /absolute/path/to/codex-acp.'));
 }
 if (token) {
   logField('Token auth', 'enabled', color.warn);

@@ -86,11 +86,23 @@ internal class AccessibilityAndroidGuiPlatform(
     override suspend fun observe(captureScreenshot: Boolean): AndroidGuiPlatformState = coroutineScope {
         val service = awaitService()
         val display = displaySize()
-        val root = withContext(Dispatchers.Main.immediate) { service.rootInActiveWindow }
-        val windowId = root?.windowId
-        val xmlDeferred = async(Dispatchers.Default) { AndroidGuiXml.serialize(root) }
+        val roots = withContext(Dispatchers.Main.immediate) {
+            val activeRoot = service.rootInActiveWindow
+            val seenWindowIds = mutableSetOf<Int>()
+            buildList {
+                fun addRoot(root: AccessibilityNodeInfo?) {
+                    if (root != null && seenWindowIds.add(root.windowId)) add(root)
+                }
+                addRoot(activeRoot)
+                service.windows.forEach { window -> addRoot(window.root) }
+            }
+        }
+        // Tablet/foldable Settings may expose visible panes as separate
+        // accessibility windows.  The active root contains only one pane;
+        // serialize every visible window into the single observation graph.
+        val xmlDeferred = async(Dispatchers.Default) { AndroidGuiXml.serialize(roots) }
         val screenshotDeferred = if (captureScreenshot) {
-            async { captureScreenshot(service, windowId) }
+            async { captureScreenshot(service) }
         } else {
             null
         }
@@ -115,7 +127,7 @@ internal class AccessibilityAndroidGuiPlatform(
                 service = service,
                 x1 = number(action, OobActionSchema.ARG_X),
                 y1 = number(action, OobActionSchema.ARG_Y),
-                durationMs = 1L,
+                durationMs = CLICK_GESTURE_DURATION_MS,
             )
 
             OobActionSchema.TOOL_LONG_PRESS -> gesture(
@@ -238,9 +250,46 @@ internal class AccessibilityAndroidGuiPlatform(
             "back" -> service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
             "home" -> service.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
             "enter" -> pressEnter(action)
+            "select_all" -> performFocusedTextAction(selectAll = true)
+            "copy" -> performFocusedTextAction(selectAll = false)
             else -> return AndroidGuiActionResult(false, "press_key_invalid:$key")
         }
         return AndroidGuiActionResult(success, if (success) "press_key_dispatched" else "press_key_failed")
+    }
+
+    private suspend fun performFocusedTextAction(selectAll: Boolean): Boolean {
+        var success = false
+        repeat(PRESS_KEY_ATTEMPTS) { attempt ->
+            success = withNodes { nodes ->
+                val node = selectInputNode(
+                    nodes = nodes,
+                    x = null,
+                    y = null,
+                    lookup = InputNodeLookup.INPUT_ACTION,
+                ) ?: return@withNodes false
+                if (selectAll) {
+                    val arguments = Bundle().apply {
+                        putInt(
+                            AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT,
+                            0,
+                        )
+                        putInt(
+                            AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT,
+                            node.text?.length ?: 0,
+                        )
+                    }
+                    node.performAction(
+                        AccessibilityNodeInfo.ACTION_SET_SELECTION,
+                        arguments,
+                    )
+                } else {
+                    node.performAction(AccessibilityNodeInfo.ACTION_COPY)
+                }
+            }
+            if (success || attempt == PRESS_KEY_ATTEMPTS - 1) return success
+            delay(PRESS_KEY_RETRY_DELAY_MS)
+        }
+        return success
     }
 
     private suspend fun pressEnter(action: Action): Boolean {
@@ -326,7 +375,6 @@ internal class AccessibilityAndroidGuiPlatform(
 
     private suspend fun captureScreenshot(
         service: AssistsService,
-        accessibilityWindowId: Int?,
     ): ByteArray? =
         suspendCancellableCoroutine { continuation ->
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
@@ -352,23 +400,11 @@ internal class AccessibilityAndroidGuiPlatform(
                     if (continuation.isActive) continuation.resume(null)
                 }
             }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-                if (accessibilityWindowId == null) {
-                    continuation.resume(null)
-                    return@suspendCancellableCoroutine
-                }
-                service.takeScreenshotOfWindow(
-                    accessibilityWindowId,
-                    service.mainExecutor,
-                    callback,
-                )
-            } else {
-                service.takeScreenshot(
-                    Display.DEFAULT_DISPLAY,
-                    service.mainExecutor,
-                    callback,
-                )
-            }
+            service.takeScreenshot(
+                Display.DEFAULT_DISPLAY,
+                service.mainExecutor,
+                callback,
+            )
         }
 
     private suspend fun <T> withNodes(block: (List<AccessibilityNodeInfo>) -> T): T {
@@ -491,6 +527,8 @@ internal class AccessibilityAndroidGuiPlatform(
         val PACKAGE = Regex("package=\\\"([^\\\"]+)\\\"")
     }
 }
+
+internal const val CLICK_GESTURE_DURATION_MS = 100L
 
 internal enum class InputNodeLookup(
     val allowFallbackAfterCoordinateMiss: Boolean,

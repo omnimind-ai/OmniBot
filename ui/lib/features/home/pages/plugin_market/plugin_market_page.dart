@@ -85,17 +85,6 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
     if (changed != false && mounted) await _loadPlugins();
   }
 
-  Future<void> _openDashboard(OmniPluginItem plugin) async {
-    final action = plugin.dashboardAction;
-    final route = action['route']?.toString().trim() ?? '';
-    if (route.isEmpty) return;
-    if (action['navigation'] == 'go') {
-      context.go(route);
-      return;
-    }
-    await context.push<void>(route);
-  }
-
   @override
   Widget build(BuildContext context) {
     final palette = context.omniPalette;
@@ -266,26 +255,11 @@ class _PluginMarketPageState extends State<PluginMarketPage> {
                     ),
                   ),
                   const SizedBox(height: 8),
-                  if (plugin.installed &&
-                      plugin.enabled &&
-                      plugin.dashboardAction.isNotEmpty)
-                    IconButton(
-                      key: ValueKey('plugin-dashboard-${plugin.id}'),
-                      onPressed: () => _openDashboard(plugin),
-                      visualDensity: VisualDensity.compact,
-                      tooltip: _text('进入 Dashboard', 'Open Dashboard'),
-                      icon: Icon(
-                        Icons.dashboard_outlined,
-                        size: 20,
-                        color: palette.accentPrimary,
-                      ),
-                    )
-                  else
-                    Icon(
-                      Icons.chevron_right_rounded,
-                      size: 20,
-                      color: palette.textTertiary,
-                    ),
+                  Icon(
+                    Icons.chevron_right_rounded,
+                    size: 20,
+                    color: palette.textTertiary,
+                  ),
                 ],
               ),
             ],

@@ -406,27 +406,35 @@ class ModelProviderConfigService {
     try {
       final result = await AssistsMessageService.assistCore
           .invokeMethod<Map<dynamic, dynamic>>('listModelProviderProfiles');
-      return ModelProviderProfilesPayload.fromMap(result);
+      final payload = ModelProviderProfilesPayload.fromMap(result);
+      // A clean install can legitimately have no editable profile yet.  Keep
+      // the configuration page usable so the user can register the first
+      // Provider instead of rendering an empty page and losing the save path.
+      if (payload.profiles.isNotEmpty) return payload;
+      return _emptyEditableProfilePayload();
     } on PlatformException {
-      final fallback = await getConfig();
-      final profile = ModelProviderProfileSummary(
-        id: fallback.id.isNotEmpty ? fallback.id : 'profile-1',
-        name: fallback.name.isNotEmpty ? fallback.name : 'Provider 1',
-        baseUrl: fallback.baseUrl,
-        apiKey: fallback.apiKey,
-        customHeaders: fallback.customHeaders,
-        sourceType: fallback.providerType,
-        readOnly: fallback.readOnly,
-        ready: fallback.ready,
-        statusText: fallback.statusText,
-        configured: fallback.configured,
-        wireApi: fallback.wireApi,
-      );
-      return ModelProviderProfilesPayload(
-        profiles: [profile],
-        editingProfileId: profile.id,
-      );
+      return _emptyEditableProfilePayload();
     }
+  }
+
+  static ModelProviderProfilesPayload _emptyEditableProfilePayload() {
+    const profile = ModelProviderProfileSummary(
+      id: 'profile-1',
+      name: 'Provider 1',
+      baseUrl: '',
+      apiKey: '',
+      customHeaders: <String, String>{},
+      sourceType: 'custom',
+      readOnly: false,
+      ready: false,
+      statusText: '',
+      configured: false,
+      wireApi: 'chat_completions',
+    );
+    return const ModelProviderProfilesPayload(
+      profiles: <ModelProviderProfileSummary>[profile],
+      editingProfileId: 'profile-1',
+    );
   }
 
   static Future<ModelProviderProfileSummary> saveProfile({
@@ -928,36 +936,86 @@ class ModelProviderConfigService {
     return groups;
   }
 
-  static Future<List<ProviderModelGroup>> loadChatModelGroups() async {
-    final payload = await listProfiles();
-    final groups = <ProviderModelGroup>[];
-    for (final profile in payload.profiles) {
-      List<ProviderModelOption> models;
-      // The official runtime catalog is capability-scoped and is not managed
-      // by the BYOK visibility list. Refresh its full text catalog here so the
-      // chat selector does not degrade to only the scene-bound fallback model.
-      if (profile.sourceType == 'omnibot_official' && profile.configured) {
-        try {
-          models = await fetchModels(
-            profileId: profile.id,
-            providerName: profile.name,
-            capability: 'text',
-          );
-        } catch (_) {
-          models = await getChatModelOptionsForProfile(
-            profile.id,
-            profile: profile,
-          );
-        }
-      } else {
-        models = await getChatModelOptionsForProfile(
-          profile.id,
-          profile: profile,
-        );
-      }
-      groups.add(ProviderModelGroup(profile: profile, models: models));
+  static Future<List<ProviderModelOption>> _loadChatModelOptionsForProfile(
+    ModelProviderProfileSummary profile, {
+    required bool refresh,
+  }) async {
+    if (!profile.configured) {
+      return const <ProviderModelOption>[];
     }
-    return groups;
+
+    final cached = await getCachedFetchedModels(
+      profileId: profile.id,
+      apiBase: profile.baseUrl,
+      profileRevision: profile.revision,
+    );
+    final cachedForDisplay = cached.isNotEmpty
+        ? cached
+        : await getCachedFetchedModels(
+            profileId: profile.id,
+            apiBase: profile.baseUrl,
+          );
+    final manualIds = profile.sourceType == 'omnibot_official'
+        ? const <String>[]
+        : await getManualModelIds(profileId: profile.id);
+    final hiddenModelIds = await getHiddenChatModelIds(profileId: profile.id);
+
+    List<ProviderModelOption> visibleModels(
+      List<ProviderModelOption> remoteModels,
+    ) {
+      return filterChatModelOptions(
+        models: mergeModelOptions(
+          remoteModels: remoteModels,
+          manualModelIds: manualIds,
+        ),
+        hiddenModelIds: hiddenModelIds,
+      );
+    }
+
+    if (!refresh) {
+      return visibleModels(cachedForDisplay);
+    }
+
+    try {
+      final fetched = await fetchModels(
+        profileId: profile.id,
+        providerName: profile.name,
+        capability: 'text',
+      );
+      return visibleModels(<ProviderModelOption>[...fetched, ...cached]);
+    } catch (_) {
+      // Keep the Provider catalog available when a transient/auth failure
+      // prevents a fresh /models request. These cached models came from this
+      // same Provider profile and endpoint; never use ACP harness models. A
+      // revision mismatch is still usable for this failure-only fallback:
+      // the endpoint identity is checked, while the next successful refresh
+      // replaces the stale revision.
+      final fallbackCached = cached.isNotEmpty
+          ? cached
+          : await getCachedFetchedModels(
+              profileId: profile.id,
+              apiBase: profile.baseUrl,
+            );
+      return visibleModels(fallbackCached);
+    }
+  }
+
+  static Future<List<ProviderModelGroup>> loadChatModelGroups({
+    bool refresh = true,
+  }) async {
+    final payload = await listProfiles();
+    // Provider model discovery is independent per profile. Keep the default
+    // refresh behavior for explicit refreshes, but do not serialize unrelated
+    // /models requests behind the slowest Provider.
+    return Future.wait(
+      payload.profiles.map((profile) async {
+        final models = await _loadChatModelOptionsForProfile(
+          profile,
+          refresh: refresh,
+        );
+        return ProviderModelGroup(profile: profile, models: models);
+      }),
+    );
   }
 
   /// Forces the small platform-owned text catalog independently of whichever

@@ -120,12 +120,12 @@ class EnvironmentSetupLogicTest {
         assertTrue(commands.count { it == "npm config set prefix /root/.npm-global" } == 1)
         assertTrue(
             commands.contains(
-                "npm install -g --no-audit --no-fund @anthropic-ai/claude-code@latest"
+                "npm install -g --no-audit --no-fund @agentclientprotocol/claude-agent-acp@latest"
             )
         )
         assertTrue(
             commands.contains(
-                "ln -sf /root/.npm-global/bin/claude /usr/local/bin/claude || true"
+                "ln -sf /root/.npm-global/bin/claude-agent-acp /usr/local/bin/claude-agent-acp || true"
             )
         )
         assertTrue(
@@ -133,11 +133,13 @@ class EnvironmentSetupLogicTest {
                 "npm install -g --no-audit --no-fund opencode-ai@latest"
             )
         )
+        assertTrue(commands.any { it.contains("opencode-linux-arm64-musl@latest") })
         assertTrue(
             commands.contains(
                 "ln -sf /root/.npm-global/bin/opencode /usr/local/bin/opencode || true"
             )
         )
+        assertTrue(commands.any { it.contains("test -x /root/.npm-global/bin/opencode") })
     }
 
     @Test
@@ -147,8 +149,8 @@ class EnvironmentSetupLogicTest {
         )
 
         assertTrue(command.contains("/root/.npm-global/bin"))
-        assertTrue(command.contains("command -v claude"))
-        assertTrue(command.contains("claude --version"))
+        assertTrue(command.contains("command -v claude-agent-acp"))
+        assertTrue(!command.contains("claude-agent-acp --version"))
         assertTrue(command.contains("command -v opencode"))
         assertTrue(command.contains("opencode --version"))
     }
@@ -165,17 +167,50 @@ class EnvironmentSetupLogicTest {
         assertTrue(apkAdd.contains("npm"))
         assertTrue(apkAdd.contains("build-base"))
         assertTrue(apkAdd.contains("python3"))
-        val npmInstall = commands.first { it.contains("install_deepseek_harness_packages") }
-        assertTrue(npmInstall.contains("@deepseek-ai/dsh-acp-demo@next"))
-        assertTrue(npmInstall.contains("@deepseek-ai/dsh-llm-deepseek@next"))
+        assertTrue(apkAdd.contains("linux-headers"))
+        assertTrue(apkAdd.contains("util-linux-dev"))
+        val npmInstall = commands.first { it.contains("dsh plugin --profile acp add") }
+        assertTrue(npmInstall.contains("@deepseek-ai/dsh@next"))
+        assertTrue(npmInstall.contains("@openma/deepseek-harness-acp@latest"))
+        assertTrue(npmInstall.contains("DSH_PACKAGE_ROOT/package.json"))
+        assertTrue(npmInstall.contains("materialize_pnpm_link"))
+        assertTrue(npmInstall.contains("target_name=\"${'$'}{target##*/}\""))
+        assertTrue(npmInstall.contains("store_prefix=\"/root/.local/share/pnpm/store/v11/files/"))
+        assertTrue(npmInstall.contains("[ ! -L \"${'$'}store_file\" ]"))
+        assertTrue(npmInstall.contains("*/workspace/*|/workspace/*"))
+        assertTrue(npmInstall.contains("workspace_source=\"/workspace/"))
+        assertTrue(npmInstall.contains("npm cache clean --force"))
+        assertTrue(npmInstall.contains("@deepseek-ai/.dsh-*"))
+        assertTrue(npmInstall.contains("if ! command -v pnpm"))
+        assertTrue(!npmInstall.contains("@deepseek-ai/dsh-llm-deepseek@next"))
         assertTrue(!npmInstall.contains("0.1.0-rc.6"))
-        assertTrue(npmInstall.contains("omnibot-node-gyp-copy"))
-        assertTrue(npmInstall.contains("exec /bin/ln"))
+        assertTrue(npmInstall.contains("DSH_HOME=\"/root/.dsh/omnibot-acp\""))
+        assertTrue(npmInstall.contains("registry.npmmirror.com"))
+        assertTrue(npmInstall.contains("registry.npmjs.org"))
+        assertTrue(npmInstall.contains("fetch-retries=5"))
+        assertTrue(npmInstall.contains("fetch-timeout=120000"))
+        assertTrue(
+            npmInstall.contains("/root/.npm-global/lib/node_modules/@deepseek-ai/dsh/lib/bin.js")
+        )
+        assertTrue(npmInstall.contains("test -x /root/.npm-global/bin/dsh"))
+        assertTrue(npmInstall.contains("dsh-acp-android"))
+        assertTrue(npmInstall.contains("--expose-internals"))
+        assertTrue(npmInstall.contains("node-pty"))
+        assertTrue(npmInstall.contains("npm_config_build_from_source=true"))
+        assertTrue(npmInstall.contains("npm rebuild --prefix"))
+        assertTrue(npmInstall.contains("find \"${'$'}node_root\" -type l"))
+        assertTrue(npmInstall.contains("${'$'}DSH_HOME/profiles/acp/node_modules"))
+        assertTrue(npmInstall.contains("${'$'}DSH_HOME/profiles/node_modules"))
+        assertTrue(npmInstall.contains("rm -f \"${'$'}link\""))
+        assertTrue(npmInstall.contains("npm_config_node_linker=hoisted"))
+        assertTrue(npmInstall.contains("npm_config_package_import_method=copy"))
+        assertTrue(npmInstall.contains("${'$'}DSH_PACKAGE_ROOT/node_modules"))
         assertTrue(
             commands.contains(
-                "ln -sf /root/.npm-global/bin/dsh-acp-demo /usr/local/bin/dsh-acp-demo || true"
+                "ln -sf /root/.npm-global/bin/dsh /usr/local/bin/dsh || true"
             )
         )
+        assertTrue(commands.none { it.contains("dsh-acp\n") })
     }
 
     @Test
@@ -184,12 +219,18 @@ class EnvironmentSetupLogicTest {
             listOf("deepseek_harness")
         )
 
-        assertTrue(command.contains("command -v dsh-acp-demo"))
-        assertTrue(command.contains("@deepseek-ai/dsh-acp-demo/package.json"))
-        assertTrue(command.contains("@deepseek-ai/dsh-user-approval/package.json"))
-        assertTrue(command.contains("node-pty"))
-        assertTrue(command.contains("createRequire"))
-        assertTrue(command.contains("node -p"))
+        assertTrue(command.contains("command -v dsh"))
+        assertTrue(command.contains("command -v dsh-acp-android"))
+        assertTrue(command.contains("/root/.dsh/omnibot-acp/profiles/acp/package.json"))
+        assertTrue(command.contains("@openma/deepseek-harness-acp/package.json"))
+        assertTrue(command.contains("node-pty/lib/utils.js"))
+        assertTrue(command.contains(".local/share/pnpm/store"))
+        assertTrue(command.contains("/root/.npm-global/lib/node_modules/@openma"))
+        assertTrue(command.contains("readlink"))
+        assertTrue(command.contains("import fs from 'node:fs'; JSON.parse(fs.readFileSync"))
+        assertTrue(command.contains("await import('@openma/deepseek-harness-acp/plugin')"))
+        assertTrue(command.contains("await import('@openma/deepseek-harness-acp/stdio')"))
+        assertTrue(command.contains("cd /root/.dsh/omnibot-acp/profiles/acp"))
     }
 
     @Test

@@ -13,6 +13,7 @@ import okhttp3.Request
 import okhttp3.sse.EventSource
 import okhttp3.sse.EventSourceListener
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -44,6 +45,43 @@ class HttpControllerResponsesTest {
             "omnibot:v1:0123456789abcdef0123:conversation:42",
             root["prompt_cache_key"]?.jsonPrimitive?.content
         )
+    }
+
+    @Test
+    fun `chat completions wire body excludes provider private state`() {
+        val method = HttpController::class.java.getDeclaredMethod(
+            "stripAnthropicOnlyFieldsForOpenAiCompatible",
+            String::class.java
+        )
+        method.isAccessible = true
+        val payload = method.invoke(
+            HttpController,
+            """
+                {
+                  "model": "gpt-4.1",
+                  "messages": [
+                    {"role":"user","content":"inspect"},
+                    {
+                      "role":"assistant",
+                      "content":"running",
+                      "tool_calls":[{"id":"call_1","type":"function","function":{"name":"shell","arguments":"{}"}}],
+                      "_omnibot_protocol_state":{"anthropic":{"source_model":"claude","content_blocks":[{"type":"thinking","thinking":"private","signature":"opaque"}]}}
+                    },
+                    {
+                      "role":"tool",
+                      "tool_call_id":"call_1",
+                      "content":"done",
+                      "_omnibot_protocol_state":{"anthropic":{"tool_result_is_error":false}}
+                    }
+                  ]
+                }
+            """.trimIndent()
+        ) as String
+
+        assertFalse(payload.contains("_omnibot_protocol_state"))
+        val messages = json.parseToJsonElement(payload).jsonObject["messages"]!!.jsonArray
+        assertEquals("call_1", messages[2].jsonObject["tool_call_id"]?.jsonPrimitive?.content)
+        assertEquals("running", messages[1].jsonObject["content"]?.jsonPrimitive?.content)
     }
 
     @Test
@@ -79,6 +117,14 @@ class HttpControllerResponsesTest {
                     {
                       "role": "assistant",
                       "content": "It is sunny.",
+                      "_omnibot_protocol_state": {
+                        "anthropic": {
+                          "source_model": "claude",
+                          "content_blocks": [
+                            {"type":"thinking","thinking":"private","signature":"opaque"}
+                          ]
+                        }
+                      },
                       "tool_calls": [
                         {
                           "id": "call_1",
@@ -95,6 +141,7 @@ class HttpControllerResponsesTest {
         ) as String
 
         val root = json.parseToJsonElement(payload).jsonObject
+        assertFalse(payload.contains("_omnibot_protocol_state"))
         assertEquals("gpt-4.1-mini", root["model"]?.jsonPrimitive?.content)
         assertEquals(
             "omnibot:v1:test:conversation:42",
@@ -131,6 +178,118 @@ class HttpControllerResponsesTest {
         val tools = root["tools"]!!.jsonArray
         assertEquals("function", tools[0].jsonObject["type"]?.jsonPrimitive?.content)
         assertEquals("get_weather", tools[0].jsonObject["name"]?.jsonPrimitive?.content)
+    }
+
+    @Test
+    fun `responses request backfills missing function call output before sending history`() {
+        val method = HttpController::class.java.getDeclaredMethod(
+            "buildOpenAIResponsesRequestBody",
+            String::class.java,
+            String::class.java,
+        )
+        method.isAccessible = true
+        val payload = method.invoke(
+            HttpController,
+            """
+                {
+                  "model": "gpt-4.1",
+                  "messages": [
+                    {"role": "user", "content": "检查项目"},
+                    {
+                      "role": "assistant",
+                      "tool_calls": [
+                        {
+                          "id": "call_ptpAmLkngkIT9h4H4fb1D2mj",
+                          "type": "function",
+                          "function": {"name": "file_list", "arguments": "{}"}
+                        }
+                      ]
+                    },
+                    {"role": "user", "content": "继续"}
+                  ]
+                }
+            """.trimIndent(),
+            "gpt-4.1",
+        ) as String
+
+        val input = json.parseToJsonElement(payload).jsonObject["input"]!!.jsonArray
+        val functionCallIndex = input.indexOfFirst {
+            it.jsonObject["type"]?.jsonPrimitive?.content == "function_call"
+        }
+        val functionOutputIndex = input.indexOfFirst {
+            it.jsonObject["type"]?.jsonPrimitive?.content == "function_call_output"
+        }
+
+        assertTrue(functionCallIndex >= 0)
+        assertTrue(functionOutputIndex > functionCallIndex)
+        assertEquals(
+            "call_ptpAmLkngkIT9h4H4fb1D2mj",
+            input[functionOutputIndex].jsonObject["call_id"]?.jsonPrimitive?.content,
+        )
+        assertTrue(
+            input[functionOutputIndex].jsonObject["output"]?.jsonPrimitive?.content
+                ?.contains("missing", ignoreCase = true) == true
+        )
+    }
+
+    @Test
+    fun `responses request normalizes ACP tool names consistently across history catalog and choice`() {
+        val method = HttpController::class.java.getDeclaredMethod(
+            "buildOpenAIResponsesRequestBody",
+            String::class.java,
+            String::class.java,
+        )
+        method.isAccessible = true
+        val payload = method.invoke(
+            HttpController,
+            """
+                {
+                  "model": "gpt-5.6-sol",
+                  "tool_choice": {
+                    "type": "function",
+                    "function": {"name": "agent.status"}
+                  },
+                  "tools": [
+                    {
+                      "type": "function",
+                      "function": {
+                        "name": "agent.status",
+                        "description": "Read agent status",
+                        "parameters": {"type":"object","properties":{}}
+                      }
+                    }
+                  ],
+                  "messages": [
+                    {"role": "user", "content": "first"},
+                    {"role": "assistant", "content": "second"},
+                    {"role": "user", "content": "third"},
+                    {
+                      "role": "assistant",
+                      "content": "fourth",
+                      "tool_calls": [
+                        {
+                          "id": "call_legacy",
+                          "type": "function",
+                          "function": {"name": "agent.status", "arguments": "{}"}
+                        }
+                      ]
+                    }
+                  ]
+                }
+            """.trimIndent(),
+            "gpt-5.6-sol",
+        ) as String
+
+        val root = json.parseToJsonElement(payload).jsonObject
+        val historyName = root["input"]!!.jsonArray[4]
+            .jsonObject["name"]!!.jsonPrimitive.content
+        val catalogName = root["tools"]!!.jsonArray[0]
+            .jsonObject["name"]!!.jsonPrimitive.content
+        val choiceName = root["tool_choice"]!!.jsonObject["name"]!!.jsonPrimitive.content
+
+        assertTrue(historyName.matches(Regex("^[a-zA-Z0-9_-]+$")))
+        assertEquals(historyName, catalogName)
+        assertEquals(historyName, choiceName)
     }
 
     @Test

@@ -31,8 +31,8 @@ class OnboardingProviderPage extends StatelessWidget {
       title: onbTr(context, '模型配置（可选）', 'Model setup (optional)'),
       description: onbTr(
         context,
-        '小万官方内置 VLM 默认关闭。GUI 任务使用当前已配置的模型；如果尚未配置，可以登录或在这里填写 API。',
-        'The built-in Omnibot VLM is disabled by default. GUI tasks use the currently configured model; sign in or configure an API here if needed.',
+        '小万官方内置 VLM 默认启用。GUI 任务使用当前已配置的模型；如果尚未配置，可以登录或在这里填写 API。',
+        'The built-in Omnibot VLM is enabled by default. GUI tasks use the currently configured model; sign in or configure an API here if needed.',
       ),
       scrollController: scrollController,
       children: [

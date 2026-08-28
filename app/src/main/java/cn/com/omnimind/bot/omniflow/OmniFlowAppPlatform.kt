@@ -6,6 +6,7 @@ import cn.com.omnimind.assists.controller.http.HttpController
 import cn.com.omnimind.assists.controller.http.SceneChatCompletionResponse
 import cn.com.omnimind.baselib.llm.ChatCompletionRequest
 import cn.com.omnimind.bot.terminal.EmbeddedTerminalRuntime
+import cn.com.omnimind.bot.terminal.EmbeddedTerminalSetupManager
 import cn.com.omnimind.bot.plugin.runtime.RuntimeSkillBundleManager
 import com.ai.assistance.operit.terminal.TerminalManager
 import com.rk.terminal.runtime.TerminalDistribution
@@ -47,8 +48,23 @@ internal class OmniFlowAppPlatform(
         val distribution = TerminalDistribution.selected()
         val environmentVersion = "$expectedVersion+system-numpy-v3+${distribution.id}"
         if (prefs.getString(READY_VERSION_KEY, null) == environmentVersion) {
-            log("python_ready_cached version=$environmentVersion")
-            return
+            val cachedProbe = TerminalManager.getInstance(appContext).executeHiddenCommand(
+                command = "python3 -c 'import sys,numpy; raise SystemExit(0 if (\"%d.%d\" % sys.version_info[:2]) == \"$expectedVersion\" else 1)'",
+                executorKey = "omniflow-python-cache-probe",
+                timeoutMs = 10_000L,
+            )
+            if (cachedProbe.isOk && cachedProbe.exitCode == 0) {
+                log("python_ready_cached version=$environmentVersion")
+                return
+            }
+            log("python_cache_stale version=$environmentVersion")
+        }
+        val pythonBootstrap = EmbeddedTerminalSetupManager(appContext).installPackages(
+            selectedPackageIds = listOf("python"),
+        )
+        require(pythonBootstrap.success) {
+            pythonBootstrap.message.ifBlank { pythonBootstrap.output }
+                .ifBlank { "omniflow_python_install_failed" }
         }
         val startedAt = System.currentTimeMillis()
         log("python_probe_start version=$expectedVersion")
@@ -68,9 +84,11 @@ internal class OmniFlowAppPlatform(
             },
         )
         require(result.isOk && result.exitCode == 0) {
-            result.error.takeIf(String::isNotBlank)
-                ?: result.output.takeLast(800).trim()
-                    .ifBlank { "omniflow_python_runtime_not_preinstalled" }
+            buildOmniFlowPythonFailureMessage(
+                error = result.error,
+                output = result.output,
+                rawOutputPreview = result.rawOutputPreview,
+            )
         }
         prefs.edit().putString(READY_VERSION_KEY, environmentVersion).apply()
         log(
@@ -137,6 +155,21 @@ internal class OmniFlowAppPlatform(
 
 }
 
+internal fun buildOmniFlowPythonFailureMessage(
+    error: String,
+    output: String,
+    rawOutputPreview: String,
+): String {
+    val details = sequenceOf(error, output, rawOutputPreview)
+        .map(EmbeddedTerminalRuntime::sanitizeTerminalNoise)
+        .map(String::trim)
+        .filter(String::isNotBlank)
+        .distinct()
+        .joinToString("\n")
+        .takeLast(1200)
+    return details.ifBlank { "omniflow_python_runtime_not_preinstalled" }
+}
+
 internal fun buildOmniFlowPythonPrepareCommand(
     expectedVersion: String,
     distributionId: String = "alpine",
@@ -148,9 +181,21 @@ internal fun buildOmniFlowPythonPrepareCommand(
         "unsupported_terminal_distribution"
     }
     val repairCommand = if (distributionId == "ubuntu") {
-        "DEBIAN_FRONTEND=noninteractive apt-get install -y --reinstall --no-install-recommends python3-numpy"
+        """
+            if ! DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3-numpy; then
+              echo 'OMNIFLOW_PYTHON_STAGE=repair_index_refresh package=python-numpy'
+              apt-get update
+              DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends python3-numpy
+            fi
+        """.trimIndent()
     } else {
-        "apk --wait 300 fix --no-cache py3-numpy"
+        """
+            if ! apk --no-check-certificate add --no-cache py3-numpy; then
+              echo 'OMNIFLOW_PYTHON_STAGE=repair_index_refresh package=python-numpy'
+              apk --no-check-certificate update
+              apk --no-check-certificate add --no-cache py3-numpy
+            fi
+        """.trimIndent()
     }
     return """
         set -e

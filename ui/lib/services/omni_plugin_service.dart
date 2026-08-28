@@ -1,39 +1,6 @@
 import 'package:flutter/services.dart';
 import 'package:ui/models/omni_plugin_item.dart';
 
-class SandboxPluginDashboard {
-  const SandboxPluginDashboard({
-    required this.pluginId,
-    required this.title,
-    required this.entryPath,
-    required this.rootPath,
-    required this.permissions,
-  });
-
-  final String pluginId;
-  final String title;
-  final String entryPath;
-  final String rootPath;
-  final Set<String> permissions;
-
-  bool get canUseXiaowan =>
-      permissions.contains('xiaowan') || permissions.contains('ai');
-
-  factory SandboxPluginDashboard.fromMap(Map<dynamic, dynamic> raw) {
-    return SandboxPluginDashboard(
-      pluginId: (raw['pluginId'] ?? '').toString(),
-      title: (raw['title'] ?? '').toString(),
-      entryPath: (raw['entryPath'] ?? '').toString(),
-      rootPath: (raw['rootPath'] ?? '').toString(),
-      permissions:
-          (raw['permissions'] as List<dynamic>?)
-              ?.map((permission) => permission.toString())
-              .toSet() ??
-          const <String>{},
-    );
-  }
-}
-
 class OmniVlmReadiness {
   const OmniVlmReadiness({
     this.debugBuild = false,
@@ -104,17 +71,6 @@ class OmniPluginService {
     return OmniVlmReadiness.fromMap(raw);
   }
 
-  static Future<SandboxPluginDashboard> getDashboard(String pluginId) async {
-    final raw = await _channel.invokeMapMethod<dynamic, dynamic>(
-      'getDashboard',
-      <String, Object?>{'pluginId': pluginId},
-    );
-    if (raw == null) {
-      throw StateError('Plugin platform returned no dashboard for $pluginId');
-    }
-    return SandboxPluginDashboard.fromMap(raw);
-  }
-
   static Future<Map<String, dynamic>> invokeSandbox(
     String pluginId,
     String method,
@@ -127,14 +83,6 @@ class OmniPluginService {
         'method': method,
         'params': params,
       },
-    );
-    return Map<String, dynamic>.from(raw ?? const <dynamic, dynamic>{});
-  }
-
-  static Future<Map<String, dynamic>> pinToHome(String pluginId) async {
-    final raw = await _channel.invokeMapMethod<dynamic, dynamic>(
-      'pinToHome',
-      <String, Object?>{'pluginId': pluginId},
     );
     return Map<String, dynamic>.from(raw ?? const <dynamic, dynamic>{});
   }

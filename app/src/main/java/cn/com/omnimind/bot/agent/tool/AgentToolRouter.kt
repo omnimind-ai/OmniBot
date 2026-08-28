@@ -1,21 +1,10 @@
 package cn.com.omnimind.bot.agent
 
 import android.content.Context
-import cn.com.omnimind.bot.agent.tool.handlers.BrowserToolHandler
-import cn.com.omnimind.bot.agent.tool.handlers.ContextToolHandler
-import cn.com.omnimind.bot.agent.tool.handlers.FileToolHandler
-import cn.com.omnimind.bot.agent.tool.handlers.ImageGenerationToolHandler
-import cn.com.omnimind.bot.agent.tool.handlers.McpToolHandler
-import cn.com.omnimind.bot.agent.tool.handlers.MemoryLoadToolHandler
-import cn.com.omnimind.bot.agent.tool.handlers.MemoryToolHandler
-import cn.com.omnimind.bot.agent.tool.handlers.PrivilegedToolHandler
+import cn.com.omnimind.bot.agent.tool.AgentCapabilityModule
+import cn.com.omnimind.bot.agent.tool.BuiltInAgentCapabilityModule
 import cn.com.omnimind.bot.agent.tool.handlers.SharedHelper
-import cn.com.omnimind.bot.agent.tool.handlers.SkillsToolHandler
-import cn.com.omnimind.bot.agent.tool.handlers.SubagentToolHandler
-import cn.com.omnimind.bot.agent.tool.handlers.SystemToolHandler
-import cn.com.omnimind.bot.agent.tool.handlers.TerminalToolHandler
 import cn.com.omnimind.bot.agent.tool.handlers.ToolHandler
-import cn.com.omnimind.bot.agent.tool.handlers.VlmToolHandler
 import com.rk.terminal.runtime.TerminalDistribution
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.serialization.json.Json
@@ -28,8 +17,12 @@ class AgentToolRouter(
     private val scheduleToolBridge: AgentScheduleToolBridge,
     private val workspaceManager: AgentWorkspaceManager,
     private val subagentDispatcher: SubagentDispatcher,
+    private val toolCatalog: AgentToolCatalog? = null,
     terminalDistribution: TerminalDistribution.Spec = TerminalDistribution.alpine,
-    pluginHandlers: List<ToolHandler> = emptyList()
+    capabilityModules: List<AgentCapabilityModule> = emptyList(),
+    // The handler is a gated entry point: it returns manual-enable guidance
+    // while the operation module is disabled and executes only when enabled.
+    includeVlmTool: Boolean = true,
 ) : AgentToolExecutor {
 
     private val json = Json {
@@ -41,26 +34,18 @@ class AgentToolRouter(
 
     private val helper = SharedHelper(context, json, terminalDistribution)
 
-    private val terminalHandler = TerminalToolHandler(helper, workspaceManager, scope)
-    private val privilegedHandler = PrivilegedToolHandler(helper, workspaceManager, terminalHandler)
-
-    private val orderedHandlers: List<ToolHandler> = listOf(
-        ContextToolHandler(helper),
-        VlmToolHandler(context),
-        privilegedHandler,
-        terminalHandler,
-        BrowserToolHandler(helper, workspaceManager),
-        ImageGenerationToolHandler(helper, workspaceManager),
-        FileToolHandler(helper, workspaceManager),
-        SkillsToolHandler(helper, workspaceManager),
-        SystemToolHandler(helper, scheduleToolBridge, workspaceManager),
-        MemoryToolHandler(helper),
-        MemoryLoadToolHandler(helper),
-        SubagentToolHandler(helper, subagentDispatcher)
+    private val builtInCapabilities = BuiltInAgentCapabilityModule(
+        context = context,
+        scope = scope,
+        scheduleToolBridge = scheduleToolBridge,
+        workspaceManager = workspaceManager,
+        subagentDispatcher = subagentDispatcher,
+        helper = helper,
+        includeVlmTool = includeVlmTool,
     )
 
-    private val mcpFallback = McpToolHandler(helper)
-    private val allHandlers = orderedHandlers + pluginHandlers
+    private val allHandlers: List<ToolHandler> =
+        builtInCapabilities.handlers + capabilityModules.flatMap { it.handlers }
     private val disposed = AtomicBoolean(false)
 
     private val handlerMap: Map<String, ToolHandler> = buildMap {
@@ -82,11 +67,21 @@ class AgentToolRouter(
     ): ToolExecutionResult {
         helper.ensureRunActive()
         val toolName = toolCall.function.name
+        if (AgentConversationModePolicy.isChatOnlyMode(env.conversationMode)) {
+            return ToolExecutionResult.Error(
+                toolName,
+                "Tool execution is disabled in chat-only ACP sessions."
+            )
+        }
+        val toolCallback = callback.scopedToToolCall(toolCall.id, toolName)
         val handler = handlerMap[toolName]
         return if (handler != null) {
-            handler.execute(toolCall, args, runtimeDescriptor, env, callback, toolHandle)
+            handler.execute(toolCall, args, runtimeDescriptor, env, toolCallback, toolHandle)
         } else {
-            mcpFallback.execute(toolCall, args, runtimeDescriptor, env, callback, toolHandle)
+            ToolExecutionResult.Error(
+                toolName,
+                "Unknown capability: $toolName. All installed capabilities are already available in this turn."
+            )
         }
     }
 
@@ -95,5 +90,23 @@ class AgentToolRouter(
         for (handler in allHandlers) {
             runCatching { handler.dispose() }
         }
+    }
+}
+
+private fun AgentCallback.scopedToToolCall(
+    toolCallId: String,
+    scopeToolName: String,
+): AgentCallback = object : AgentCallback by this {
+    override suspend fun onToolCallProgress(
+        toolName: String,
+        progress: String,
+        extras: Map<String, Any?>,
+    ) {
+        this@scopedToToolCall.onToolCallProgress(
+            toolCallId,
+            scopeToolName.ifBlank { toolName },
+            progress,
+            extras,
+        )
     }
 }

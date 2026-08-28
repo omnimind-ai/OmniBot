@@ -1542,7 +1542,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get alpineDeepSeekHarness =>
-      'DeepSeek Harness (dsh) ACP runtime, installed from the latest npm next channel';
+      'DeepSeek Harness (dsh) official ACP runtime';
 
   @override
   String get alpineSshClient => 'SSH Client';

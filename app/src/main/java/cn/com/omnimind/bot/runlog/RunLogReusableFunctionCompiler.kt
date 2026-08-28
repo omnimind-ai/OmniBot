@@ -22,12 +22,20 @@ object RunLogReusableFunctionCompiler {
             if (result["success"] != true || tool !in OobActionSchema.replayableToolNames) {
                 return@mapNotNull null
             }
+            // The official OmniFlow save_function pipeline compares the
+            // submitted Function action with the public RunLog projection.
+            // Grounding-only fields (target_description, node ids, etc.) are
+            // deliberately omitted from that projection, so they must not be
+            // copied into a persisted Function either.
+            val persistedArgs = stringMap(action["args"]).filterKeys { key ->
+                key in OobActionSchema.persistedArgs(tool).map { it.name }
+            }
             linkedMapOf<String, Any?>(
                 "step_index" to 0,
                 "source_state_id" to step["before_state_id"],
                 "action" to linkedMapOf(
                     "tool" to tool,
-                    "args" to stringMap(action["args"]),
+                    "args" to persistedArgs,
                 ),
             )
         }.mapIndexed { index, step -> step + ("step_index" to index) }

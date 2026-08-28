@@ -31,6 +31,21 @@ class AgentLlmStreamAccumulatorTest {
     }
 
     @Test
+    fun `ignores identity only tool call placeholder after valid streamed call`() {
+        val accumulator = AgentLlmStreamAccumulator(json = json)
+
+        accumulator.consume(
+            """{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_time","arguments":"{}"}},{"index":1,"id":"call_placeholder","type":"function","function":{"arguments":""}}]},"finish_reason":"tool_calls"}]}"""
+        )
+
+        val toolCalls = requireNotNull(accumulator.buildTurn().message.toolCalls)
+
+        assertEquals(1, toolCalls.size)
+        assertEquals("call_1", toolCalls.single().id)
+        assertEquals("get_time", toolCalls.single().function.name)
+    }
+
+    @Test
     fun `rejects tool call with identity or arguments but no function name`() {
         val accumulator = AgentLlmStreamAccumulator(json = json)
 
@@ -42,6 +57,33 @@ class AgentLlmStreamAccumulatorTest {
 
         requireNotNull(error)
         assertEquals("tool_call[0] missing function.name", error.message)
+    }
+
+    @Test
+    fun `does not discard a nameless tool call that contains arguments`() {
+        val accumulator = AgentLlmStreamAccumulator(json = json)
+
+        accumulator.consume(
+            """{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_time","arguments":"{}"}},{"index":1,"id":"call_bad","type":"function","function":{"arguments":"{\"timezone\":\"UTC\"}"}}]},"finish_reason":"tool_calls"}]}"""
+        )
+
+        val error = runCatching { accumulator.buildTurn() }.exceptionOrNull()
+
+        requireNotNull(error)
+        assertEquals("tool_call[1] missing function.name", error.message)
+    }
+
+    @Test
+    fun `keeps all valid calls while dropping a trailing identity placeholder`() {
+        val accumulator = AgentLlmStreamAccumulator(json = json)
+
+        accumulator.consume(
+            """{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"get_time","arguments":"{}"}},{"index":1,"id":"call_2","type":"function","function":{"name":"get_weather","arguments":"{}"}},{"index":2,"id":"call_placeholder","type":"function","function":{"arguments":""}}]},"finish_reason":"tool_calls"}]}"""
+        )
+
+        val toolCalls = requireNotNull(accumulator.buildTurn().message.toolCalls)
+
+        assertEquals(listOf("get_time", "get_weather"), toolCalls.map { it.function.name })
     }
 
     @Test
@@ -129,6 +171,18 @@ class AgentLlmStreamAccumulatorTest {
     }
 
     @Test
+    fun `finalizes content when provider closes without a terminal marker`() {
+        val accumulator = AgentLlmStreamAccumulator(json = json)
+
+        accumulator.consume(
+            """{"choices":[{"delta":{"content":"网关已返回完整答案"}}]}"""
+        )
+
+        assertTrue(accumulator.canFinalizeOnClosed())
+        assertEquals("网关已返回完整答案", accumulator.buildTurn().message.contentText())
+    }
+
+    @Test
     fun `can retain reasoning content on assistant message for deepseek tool rounds`() {
         val accumulator = AgentLlmStreamAccumulator(
             json = json,
@@ -157,6 +211,54 @@ class AgentLlmStreamAccumulatorTest {
 
         assertEquals("继续调用工具前要回传思考", turn.reasoning)
         assertEquals("继续调用工具前要回传思考", turn.message.reasoningContent)
+    }
+
+    @Test
+    fun `does not append the same provider reasoning aliases twice`() {
+        val accumulator = AgentLlmStreamAccumulator(json = json)
+
+        accumulator.consume(
+            """{"choices":[{"delta":{"reasoning_content":"先分析","reasoning":"先分析","thinking":"先分析"}}]}"""
+        )
+        accumulator.consume(
+            """{"choices":[{"delta":{"content":"完成"},"finish_reason":"stop"}]}"""
+        )
+
+        assertEquals("先分析", accumulator.buildTurn().reasoning)
+    }
+
+    @Test
+    fun `treats cumulative provider reasoning snapshots as one stream`() {
+        val accumulator = AgentLlmStreamAccumulator(json = json)
+
+        accumulator.consume(
+            """{"choices":[{"delta":{"reasoning_content":"先分析"}}]}"""
+        )
+        accumulator.consume(
+            """{"choices":[{"delta":{"reasoning_content":"先分析，再调用工具"}}]}"""
+        )
+        accumulator.consume(
+            """{"choices":[{"delta":{"content":"完成"},"finish_reason":"stop"}]}"""
+        )
+
+        assertEquals("先分析，再调用工具", accumulator.buildTurn().reasoning)
+    }
+
+    @Test
+    fun `keeps top level reasoning when choices also contain visible content`() {
+        val accumulator = AgentLlmStreamAccumulator(json = json)
+
+        accumulator.consume(
+            """{"choices":[{"delta":{"content":"答案"}}],"reasoning":"先分析"}"""
+        )
+        accumulator.consume(
+            """{"choices":[{"delta":{},"finish_reason":"stop"}]}"""
+        )
+
+        val turn = accumulator.buildTurn()
+
+        assertEquals("答案", turn.message.contentText())
+        assertEquals("先分析", turn.reasoning)
     }
 
     @Test

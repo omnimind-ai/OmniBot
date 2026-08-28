@@ -108,87 +108,6 @@ void main() {
     expect(tapped, isTrue);
   });
 
-  testWidgets('manual recording icon invokes callback', (tester) async {
-    var tapped = false;
-    await tester.pumpWidget(
-      _buildTestApp(
-        contextUsageRatio: null,
-        useLargeComposerStyle: true,
-        onManualRecordingTap: () {
-          tapped = true;
-        },
-      ),
-    );
-    await tester.pump();
-
-    final button = find.byKey(
-      const ValueKey('chat-input-manual-recording-button'),
-    );
-    expect(button, findsOneWidget);
-    await tester.tap(button);
-    await tester.pump();
-
-    expect(tapped, isTrue);
-  });
-
-  testWidgets('opens vlm-core RunLog recording menu', (tester) async {
-    final inputKey = GlobalKey<ChatInputAreaState>();
-    final controller = TextEditingController();
-    final focusNode = FocusNode();
-    addTearDown(controller.dispose);
-    addTearDown(focusNode.dispose);
-    var popupVisible = false;
-    await tester.pumpWidget(
-      DefaultAssetBundle(
-        bundle: _TestAssetBundle(),
-        child: MaterialApp(
-          home: StatefulBuilder(
-            builder: (context, setState) {
-              return Scaffold(
-                body: Column(
-                  children: [
-                    ChatInputArea(
-                      key: inputKey,
-                      controller: controller,
-                      focusNode: focusNode,
-                      isProcessing: false,
-                      onSendMessage: () {},
-                      onCancelTask: () {},
-                      onPopupVisibilityChanged: (visible) {
-                        setState(() => popupVisible = visible);
-                      },
-                    ),
-                    if (popupVisible)
-                      inputKey.currentState?.buildPopupMenu() ??
-                          const SizedBox.shrink(),
-                  ],
-                ),
-              );
-            },
-          ),
-        ),
-      ),
-    );
-    await tester.pump();
-
-    expect(
-      find.byKey(const ValueKey('chat-input-trajectory-button')),
-      findsOneWidget,
-    );
-    await tester.tap(
-      find.byKey(const ValueKey('chat-input-trajectory-button')),
-    );
-    await tester.pump();
-
-    expect(
-      find.byKey(const ValueKey('chat-input-trajectory-popup')),
-      findsOneWidget,
-    );
-    expect(find.text('RunLog'), findsOneWidget);
-    expect(find.text('Previous'), findsOneWidget);
-    expect(find.text('Record'), findsOneWidget);
-  });
-
   testWidgets('agent permission selector opens menu and selects mode', (
     tester,
   ) async {
@@ -961,6 +880,81 @@ void main() {
     expect(sendCount, 1);
   });
 
+  testWidgets('large composer enables send after text input', (tester) async {
+    var sendCount = 0;
+    final controller = TextEditingController();
+    final focusNode = FocusNode();
+    addTearDown(controller.dispose);
+    addTearDown(focusNode.dispose);
+
+    await tester.pumpWidget(
+      DefaultAssetBundle(
+        bundle: _TestAssetBundle(),
+        child: MaterialApp(
+          home: Scaffold(
+            body: ChatInputArea(
+              controller: controller,
+              focusNode: focusNode,
+              isProcessing: false,
+              onSendMessage: () => sendCount += 1,
+              onCancelTask: () {},
+              useLargeComposerStyle: true,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    await tester.enterText(find.byType(TextField), 'test command');
+    await tester.pump();
+
+    final sendButton = find.byKey(
+      const ValueKey('chat-input-send-or-stop-button'),
+    );
+    expect(tester.widget<IconButton>(sendButton).onPressed, isNotNull);
+
+    await tester.tap(sendButton);
+    await tester.pump();
+    expect(sendCount, 1);
+  });
+
+  testWidgets('large composer enables send after external draft restore', (
+    tester,
+  ) async {
+    final controller = TextEditingController();
+    final focusNode = FocusNode();
+    addTearDown(controller.dispose);
+    addTearDown(focusNode.dispose);
+
+    await tester.pumpWidget(
+      DefaultAssetBundle(
+        bundle: _TestAssetBundle(),
+        child: MaterialApp(
+          home: Scaffold(
+            body: ChatInputArea(
+              controller: controller,
+              focusNode: focusNode,
+              isProcessing: false,
+              onSendMessage: () {},
+              onCancelTask: () {},
+              useLargeComposerStyle: true,
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    controller.value = const TextEditingValue(text: 'restored draft');
+    await tester.pump();
+
+    final sendButton = find.byKey(
+      const ValueKey('chat-input-send-or-stop-button'),
+    );
+    expect(tester.widget<IconButton>(sendButton).onPressed, isNotNull);
+  });
+
   testWidgets(
     'user message editing keeps only cancel and send composer actions',
     (tester) async {
@@ -1173,7 +1167,6 @@ Widget _buildTestApp({
   FocusNode? focusNode,
   bool hasExternalSendPayload = false,
   VoidCallback? onSendMessage,
-  FutureOr<void> Function()? onManualRecordingTap,
 }) {
   return DefaultAssetBundle(
     bundle: _TestAssetBundle(),
@@ -1184,7 +1177,6 @@ Widget _buildTestApp({
           focusNode: focusNode ?? FocusNode(),
           isProcessing: false,
           onSendMessage: onSendMessage ?? () {},
-          onManualRecordingTap: onManualRecordingTap,
           onCancelTask: () {},
           useLargeComposerStyle: useLargeComposerStyle,
           hasExternalSendPayload: hasExternalSendPayload,

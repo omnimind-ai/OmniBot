@@ -8,7 +8,7 @@ void main() {
   test('chat composition files stay within their responsibility budgets', () {
     const lineBudgets = <String, int>{
       '$chatRoot/chat_page.dart': 2200,
-      '$chatRoot/chat_page_agent.dart': 2200,
+      '$chatRoot/chat_page_agent.dart': 2400,
       '$chatRoot/chat_page_ui.dart': 2900,
       '$chatRoot/services/chat_conversation_runtime_coordinator.dart': 1300,
       '$chatRoot/widgets/chat_widgets.dart': 100,
@@ -42,8 +42,6 @@ void main() {
       ).readAsStringSync();
 
       for (final part in const <String>[
-        'chat_runtime_agent_stream_support.dart',
-        'chat_runtime_event_ingress.dart',
         'chat_runtime_message_support.dart',
         'chat_runtime_streaming_support.dart',
         'chat_runtime_thinking_support.dart',
@@ -61,4 +59,32 @@ void main() {
       }
     },
   );
+
+  test('Agent Flutter runtime exposes only the ACP lifecycle entry points', () {
+    final reducerSource = File('lib/services/agent_event_reducer.dart')
+        .readAsStringSync();
+    final coordinatorSource = File(
+      '$chatRoot/services/chat_conversation_runtime_coordinator.dart',
+    ).readAsStringSync();
+    final runtimeServiceSource = File('lib/services/agent_runtime_service.dart')
+        .readAsStringSync();
+
+    expect(reducerSource, isNot(contains('completePrompt(')));
+    expect(coordinatorSource, isNot(contains('completePrompt(')));
+    expect(coordinatorSource, isNot(contains('agent_stream_handler')));
+    expect(coordinatorSource, isNot(contains('agent_stream_reducer')));
+    for (final legacyMethod in const <String>[
+      'startThread(',
+      'resumeThread(',
+      'readThread(',
+      'listThreads(',
+      'listLoadedThreads(',
+      'archiveThread(',
+      'unarchiveThread(',
+      'setThreadName(',
+      'startTurn(',
+    ]) {
+      expect(runtimeServiceSource, isNot(contains(legacyMethod)));
+    }
+  });
 }

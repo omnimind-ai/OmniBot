@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.SystemClock
+import cn.com.omnimind.androidgui.AndroidGuiDisplayOffException
 import cn.com.omnimind.androidgui.AndroidGuiEnvironment
 import cn.com.omnimind.baselib.runlog.Action
 import cn.com.omnimind.baselib.runlog.InternalRunLogStore
@@ -63,7 +64,9 @@ object OmniFlow {
     )
 
     private val executionMutex = Mutex()
+    private val controlMutex = Mutex()
     private val executions = ExecutionRegistry()
+    private var controlDispatcher: OmniFlowDeviceDispatcher? = null
 
     fun configure(
         platform: OmniFlowPlatform,
@@ -81,7 +84,36 @@ object OmniFlow {
 
     suspend fun shutdown() {
         executions.stop()
+        controlMutex.withLock { controlDispatcher = null }
         OmniFlowPythonRuntime.shutdown()
+    }
+
+    suspend fun observe(
+        context: Context,
+        captureScreenshot: Boolean = false,
+        waitToStabilize: Boolean = false,
+    ): Map<String, Any?> = control(
+        context = context,
+        method = "observe",
+        payload = mapOf(
+            "screenshot" to captureScreenshot,
+            "wait_to_stabilize" to waitToStabilize,
+        ),
+    )
+
+    suspend fun control(
+        context: Context,
+        method: String,
+        payload: Map<String, Any?> = emptyMap(),
+    ): Map<String, Any?> = controlMutex.withLock {
+        if (method == "reset") {
+            controlDispatcher = null
+            return@withLock mapOf("reset" to true)
+        }
+        val dispatcher = controlDispatcher ?: OmniFlowDeviceDispatcher.create(context).also {
+            controlDispatcher = it
+        }
+        dispatcher.callDevice(method = method, payload = payload)
     }
 
     private suspend fun executeInteractiveTool(
@@ -280,8 +312,6 @@ object OmniFlow {
     private val NON_INTERACTIVE_TOOL_NAMES = setOf(
         "list_functions",
         "get_function",
-        "create_function",
-        "update_function",
         "delete_function",
         "clear_functions",
         "list_run_logs",
@@ -290,6 +320,10 @@ object OmniFlow {
         "save_function",
     )
 }
+
+internal class GuiDisplayOffCancellationException : CancellationException(
+    "android_gui_display_off",
+)
 
 class OmniFlowDeviceDispatcher internal constructor(
     context: Context,
@@ -334,6 +368,8 @@ class OmniFlowDeviceDispatcher internal constructor(
     var currentStateId: String? = null
         private set
 
+    private var currentState: State? = null
+
     private var previousActionTool: String? = null
 
     suspend fun call(
@@ -372,6 +408,9 @@ class OmniFlowDeviceDispatcher internal constructor(
             applyPostRunActions(result)
         } catch (error: ManualCompletionRequested) {
             throw error
+        } catch (error: AndroidGuiDisplayOffException) {
+            finishRun(cancelledFailure(activeRun.cancelledDoneReason, error))
+            throw GuiDisplayOffCancellationException()
         } catch (error: CancellationException) {
             finishRun(cancelledFailure(activeRun.cancelledDoneReason, error))
             throw error
@@ -415,15 +454,20 @@ class OmniFlowDeviceDispatcher internal constructor(
     private suspend fun observe(payload: Map<String, Any?>): Map<String, Any?> {
         beforeOperation()
         val captureScreenshot = payload["screenshot"] != false
+        val waitToStabilize = payload["wait_to_stabilize"] == true
         val suppressOverlay = shouldSuppressOverlayForScreenshot(
             captureScreenshot = captureScreenshot,
             screenshotExcludesOverlays = environment.screenshotExcludesOverlays(),
         )
         if (suppressOverlay) beforeScreenshot()
         return try {
-            environment.observe(captureScreenshot = captureScreenshot)
-                .also { currentStateId = it.stateId }
-                .asHostMap(includeImage = captureScreenshot)
+            environment.observeWithDiagnostics(
+                captureScreenshot = captureScreenshot,
+                waitToStabilize = waitToStabilize,
+            ).also {
+                currentStateId = it.state.stateId
+                currentState = it.state
+            }.state.asHostMap(includeImage = captureScreenshot)
         } finally {
             if (suppressOverlay) afterScreenshot()
         }
@@ -433,7 +477,12 @@ class OmniFlowDeviceDispatcher internal constructor(
         beforeOperation()
         onPhase(ExecutionPhase.AUTOMATIC)
         val action = Action.fromMap(mapValue(payload["action"]))
-        val sourceState = State.fromMap(mapValue(payload["state"]))
+        val suppliedState = mapValue(payload["state"])
+        val sourceState = if (suppliedState.isNotEmpty()) {
+            State.fromMap(suppliedState)
+        } else {
+            currentState ?: error("host_action_state_required")
+        }
         require(sourceState.stateId == currentStateId) { "host_action_state_stale" }
         if (blocksPaymentConfirmation(sourceState, action)) {
             return mapOf(
@@ -466,7 +515,10 @@ class OmniFlowDeviceDispatcher internal constructor(
                     ),
                 )
             }
-            val result = environment.act(action)
+            val result = environment.act(
+                action = action,
+                awaitStabilization = payload["await_stabilization"] != false,
+            )
             if (result.success) previousActionTool = action.tool
             linkedMapOf<String, Any?>(
                 "success" to result.success,

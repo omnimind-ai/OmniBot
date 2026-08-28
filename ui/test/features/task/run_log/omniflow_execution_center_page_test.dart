@@ -11,6 +11,9 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const pluginChannel = MethodChannel('cn.com.omnimind.bot/PluginPlatform');
   const assistChannel = MethodChannel('cn.com.omnimind.bot/AssistCoreEvent');
+  const specialPermissionChannel = MethodChannel(
+    'cn.com.omnimind.bot/SpecialPermissionEvent',
+  );
   final toolCalls = <Map<Object?, Object?>>[];
   Map<String, Object?>? Function(String name, Map<Object?, Object?> call)?
   toolResponseOverride;
@@ -56,6 +59,7 @@ void main() {
               'functions': <Object?>[
                 <String, Object?>{
                   'function_id': 'function.demo',
+                  'source_run_id': 'run-1',
                   'name': '演示指令',
                   'description': '复用已成功执行的轨迹',
                   'input_schema': <String, Object?>{
@@ -152,6 +156,11 @@ void main() {
             _ => <String, Object?>{'success': true},
           };
         });
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(specialPermissionChannel, (call) async {
+          if (call.method == 'isAndroidGuiAccessibilityReady') return true;
+          return null;
+        });
   });
 
   tearDown(() {
@@ -159,6 +168,8 @@ void main() {
         .setMockMethodCallHandler(pluginChannel, null);
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(assistChannel, null);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(specialPermissionChannel, null);
   });
 
   testWidgets('loads only the active tab with a small first page', (
@@ -300,7 +311,9 @@ void main() {
     );
   });
 
-  testWidgets('opens Function details from the Functions list', (tester) async {
+  testWidgets('opens Function enhancement in a new Agent conversation', (
+    tester,
+  ) async {
     tester.view.physicalSize = const Size(360, 800);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
@@ -351,9 +364,17 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('agent conversation'), findsOneWidget);
     expect(openedTarget?.mode, ConversationMode.agent);
+    expect(openedTarget?.isNewConversation, isTrue);
+    expect(openedTarget?.requestKey, isNotEmpty);
     expect(
       openedTarget?.initialMessage,
-      contains('function_id: function.demo'),
+      allOf(
+        contains('function_id: function.demo'),
+        contains('source_run_id: run-1'),
+        contains('get_function'),
+        contains('save_function'),
+        contains('enhance=true'),
+      ),
     );
     expect(toolCalls.any((call) => call['name'] == 'update_function'), isFalse);
   });
@@ -361,13 +382,20 @@ void main() {
   test('builds a complete Function enhancement Agent request', () {
     final prompt = buildFunctionEnhancementPrompt({
       'function_id': 'function.demo',
+      'source_run_id': 'run-1',
       'name': '演示指令',
       'steps': <Object?>[],
     });
 
     expect(prompt, contains('get_function'));
+    expect(prompt, contains('save_function'));
+    expect(prompt, contains('enhance=true'));
+    expect(prompt, contains('source_run_id='));
+    expect(prompt, contains('由 OmniFlow 内置的官方增强流程'));
+    expect(prompt, contains('不要调用 list_run_logs/get_run_log/get_function'));
+    expect(prompt, isNot(contains('"source_run_id":"run-1"')));
     expect(prompt, contains('function_id: function.demo'));
-    expect(prompt, contains('不要执行该指令'));
+    expect(prompt, contains('不要执行它'));
   });
 
   testWidgets('opens the requested Function directly', (tester) async {
@@ -449,6 +477,37 @@ void main() {
       find.byKey(const ValueKey('function-detail-enhance')),
       findsOneWidget,
     );
+  });
+
+  testWidgets('shows the runtime error without a Dart Bad state prefix', (
+    tester,
+  ) async {
+    toolResponseOverride = (name, call) {
+      if (name != 'function.demo') return null;
+      return <String, Object?>{
+        'success': false,
+        'error_code': 'FUNCTION_CALL_FAILED',
+        'error_message': 'android_gui_accessibility_not_ready',
+      };
+    };
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        locale: Locale('zh'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: OmniFlowExecutionCenterPage(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('执行'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextFormField), 'replay failure');
+    await tester.tap(find.text('开始执行'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('android_gui_accessibility_not_ready'), findsOneWidget);
+    expect(find.textContaining('Bad state:'), findsNothing);
   });
 
   testWidgets('shows the Function linked to a RunLog and opens it', (
@@ -541,7 +600,10 @@ void main() {
       );
       expect(find.text('刚注册的指令'), findsWidgets);
       expect(find.text('复用指令'), findsWidgets);
-      expect(toolCalls.where((call) => call['name'] == 'get_function'), isEmpty);
+      expect(
+        toolCalls.where((call) => call['name'] == 'get_function'),
+        isEmpty,
+      );
       expect(find.textContaining('StateError: 注册失败'), findsNothing);
     },
   );

@@ -631,7 +631,32 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
       if (!mounted) return;
       final profiles = _byokProfiles(payload.profiles);
       if (profiles.isEmpty) {
-        throw StateError('No editable BYOK provider profile is available');
+        // The native store may contain only the read-only official profile on
+        // a clean install.  Keep the editor alive with a real draft so the
+        // first Provider can be registered from this page.
+        const draft = ModelProviderProfileSummary(
+          id: 'profile-1',
+          name: 'Provider 1',
+          baseUrl: '',
+          apiKey: '',
+          customHeaders: <String, String>{},
+          sourceType: BuiltinOfficialProviderCatalog.customKey,
+          readOnly: false,
+          ready: false,
+          statusText: '',
+          configured: false,
+          wireApi: 'chat_completions',
+        );
+        _applyProfile(
+          profiles: const <ModelProviderProfileSummary>[draft],
+          editingProfileId: draft.id,
+          manualModelIds: const <String>[],
+          hiddenChatModelIds: const <String>[],
+          manualModels: const <ProviderModelOption>[],
+          remoteModels: const <ProviderModelOption>[],
+          syncControllers: true,
+        );
+        return;
       }
 
       final editingProfile = profiles.firstWhere(
@@ -750,7 +775,21 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
       }
     }
     if (!enrichMetadata) {
-      return cached;
+      if (cached.isNotEmpty) {
+        return cached;
+      }
+      // A newly created Provider has no cache yet. Populate it once while
+      // opening the page so the model section does not appear empty until
+      // the user discovers the manual refresh button.
+      try {
+        return await ModelProviderConfigService.fetchModels(
+          profileId: profile.id,
+          providerName: profile.name,
+          capability: 'text',
+        );
+      } catch (_) {
+        return cached;
+      }
     }
     return _enrichModelsForProfile(profile, cached);
   }

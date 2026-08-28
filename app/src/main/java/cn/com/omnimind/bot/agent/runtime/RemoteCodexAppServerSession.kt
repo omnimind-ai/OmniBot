@@ -40,12 +40,8 @@ internal class RemoteCodexAppServerSession(
         startedConnection.start(
             onStdoutLine = ::handleStdoutLine,
             onStderrLine = { line ->
-                onServerMessage(
-                    mapOf(
-                        "method" to "codex/stderr",
-                        "params" to mapOf("message" to line)
-                    )
-                )
+                // The bridge stderr is diagnostic output, not an Agent event.
+                // Keep it out of the ACP session stream.
             },
             onExit = { exitCode ->
                 handleConnectionExit(startedConnection, exitCode)
@@ -64,14 +60,14 @@ internal class RemoteCodexAppServerSession(
             onServerMessage(
                 mapOf(
                     "method" to "codex/connected",
-                    "params" to mapOf("workspaceId" to DEFAULT_WORKSPACE_ID)
+                    "params" to mapOf("clientVersion" to clientVersion),
                 )
             )
         } catch (error: Throwable) {
             disconnect()
             if (error is TimeoutCancellationException) {
                 throw IllegalStateException(
-                    "Codex app-server did not respond to initialize.",
+                    "Remote ACP agent did not respond to initialize.",
                     error
                 )
             }
@@ -85,7 +81,7 @@ internal class RemoteCodexAppServerSession(
         timeoutMs: Long = REQUEST_TIMEOUT_MS
     ): Map<String, Any?> {
         val currentConnection = connection
-        check(currentConnection?.isRunning == true) { "Codex app-server is not connected." }
+        check(currentConnection?.isRunning == true) { "Remote ACP agent is not connected." }
         val id = nextId.getAndIncrement()
         val deferred = CompletableDeferred<Map<String, Any?>>()
         pending[id] = deferred
@@ -126,7 +122,7 @@ internal class RemoteCodexAppServerSession(
         val currentConnection = connection
         connection = null
         pending.forEach { (_, deferred) ->
-            deferred.completeExceptionally(IllegalStateException("Codex app-server disconnected."))
+            deferred.completeExceptionally(IllegalStateException("Remote ACP agent disconnected."))
         }
         pending.clear()
         currentConnection?.close()
@@ -142,14 +138,14 @@ internal class RemoteCodexAppServerSession(
         connection = null
         pending.forEach { (_, deferred) ->
             deferred.completeExceptionally(
-                IllegalStateException("Codex app-server exited.")
+                IllegalStateException("Remote ACP agent exited.")
             )
         }
         pending.clear()
         onServerMessage(
             mapOf(
                 "method" to "codex/disconnected",
-                "params" to mapOf("exitCode" to exitCode)
+                "params" to mapOf("exitCode" to exitCode),
             )
         )
     }
@@ -184,7 +180,7 @@ internal class RemoteCodexAppServerSession(
     private suspend fun writeJsonLine(message: Map<String, Any?>) {
         val line = gson.toJson(toJsonElement(message)) + "\n"
         val currentConnection = connection
-            ?: throw IllegalStateException("Codex app-server stdin is closed.")
+            ?: throw IllegalStateException("Remote ACP agent stdin is closed.")
         writeMutex.withLock {
             currentConnection.writeLine(line)
         }
@@ -196,13 +192,21 @@ internal class RemoteCodexAppServerSession(
 
     private fun buildInitializeParams(clientVersion: String): Map<String, Any?> {
         return mapOf(
+            "protocolVersion" to 1,
             "clientInfo" to mapOf(
                 "name" to "omnibot_android",
                 "title" to "Omnibot",
                 "version" to clientVersion
             ),
-            "capabilities" to mapOf(
-                "experimentalApi" to true
+            "clientCapabilities" to mapOf(
+                "experimentalApi" to true,
+                "fs" to mapOf(
+                    "readTextFile" to true,
+                    "writeTextFile" to true
+                ),
+                "terminal" to mapOf(
+                    "create" to true
+                )
             )
         )
     }

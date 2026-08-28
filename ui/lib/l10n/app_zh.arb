@@ -503,7 +503,7 @@
   "alpineCodex": "OpenAI Codex CLI（供 ACP Agent 使用）",
   "alpineClaudeCode": "Anthropic Claude Code CLI（供 ACP Agent 使用）",
   "alpineOpenCode": "OpenCode CLI（内置 ACP 支持）",
-  "alpineDeepSeekHarness": "DeepSeek Harness（dsh）ACP 运行组件，安装时跟随 npm next 最新发布线",
+  "alpineDeepSeekHarness": "DeepSeek Harness（dsh）官方 ACP 运行组件",
   "alpineSshClient": "SSH 客户端",
   "alpineSshpass": "SSH 密码辅助工具",
   "alpineOpenSshServer": "OpenSSH 服务器",

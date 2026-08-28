@@ -1,5 +1,12 @@
 package cn.com.omnimind.bot.agent.runtime
 
+import cn.com.omnimind.bot.mcp.McpServerState
+import cn.com.omnimind.baselib.llm.ModelProviderProfile
+import cn.com.omnimind.baselib.llm.ProviderModelOption
+import com.agentclientprotocol.model.McpServer
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -9,70 +16,382 @@ import org.junit.Test
 
 class AgentRuntimeProtocolPayloadTest {
     @Test
+    fun acpExtensionRequestIsParsedWithoutChangingStandardMessages() {
+        val request = parseAcpExtensionLine(
+            "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"_omnibot/presentation\",\"params\":{\"card\":\"usage\"}}"
+        )
+
+        assertTrue(request?.isRequest == true)
+        assertEquals("_omnibot/presentation", request?.method)
+        assertEquals(JsonPrimitive(7), request?.id)
+        assertEquals("usage", request?.params?.toString()?.let {
+            Json.parseToJsonElement(it).jsonObject["card"]?.toString()?.trim('"')
+        })
+        assertNull(
+            parseAcpExtensionLine(
+                "{\"jsonrpc\":\"2.0\",\"method\":\"session/update\",\"params\":{}}"
+            )
+        )
+    }
+
+    @Test
+    fun acpExtensionNotificationAndArrayParamsAreRetained() {
+        val notification = parseAcpExtensionLine(
+            "{\"jsonrpc\":\"2.0\",\"method\":\"_omnibot/progress\",\"params\":[1,2]}"
+        )
+
+        assertFalse(notification?.isRequest == true)
+        assertEquals("_omnibot/progress", notification?.method)
+        assertEquals("[1,2]", notification?.params.toString())
+    }
+
+    @Test
+    fun acpExtensionResponsePreservesJsonRpcIdAndErrorShape() {
+        val response = encodeAcpExtensionResponse(
+            id = JsonPrimitive("request-1"),
+            reply = RawAcpExtensionReply(
+                error = Json.parseToJsonElement(
+                    "{\"code\":-32000,\"message\":\"declined\"}"
+                )
+            )
+        )
+
+        assertEquals(
+            "{\"jsonrpc\":\"2.0\",\"id\":\"request-1\",\"error\":{\"code\":-32000,\"message\":\"declined\"}}",
+            response
+        )
+    }
+
+    @Test
+    fun deepSeekHarnessModeCompatibilityFillsOnlyMissingDisplayNames() {
+        val raw = """
+            {"jsonrpc":"2.0","id":7,"result":{"sessionId":"s-1","modes":{
+              "currentModeId":"workspace-write",
+              "availableModes":[
+                {"id":"workspace-write","description":"Write in workspace"},
+                {"id":"read-only","name":"Read only","description":"Read files"}
+              ]
+            }}}
+        """.trimIndent()
+
+        val normalized = normalizeDeepSeekHarnessAcpModeNames(raw, enabled = true)
+
+        assertTrue(normalized.contains("\"id\":\"workspace-write\",\"description\":\"Write in workspace\",\"name\":\"workspace-write\""))
+        assertTrue(normalized.contains("\"id\":\"read-only\",\"name\":\"Read only\""))
+    }
+
+    @Test
+    fun deepSeekHarnessConfigCompatibilityFillsMissingSelectNames() {
+        val raw = """
+            {"jsonrpc":"2.0","id":8,"result":{"configOptions":[
+              {"id":"permission_mode","type":"select","options":[
+                {"value":"workspace-write","description":"Write in workspace"},
+                {"value":"read-only","label":"Read only"}
+              ]}
+            ]}}
+        """.trimIndent()
+
+        val normalized = normalizeDeepSeekHarnessAcpModeNames(raw, enabled = true)
+
+        assertTrue(normalized.contains("\"value\":\"workspace-write\",\"description\":\"Write in workspace\",\"name\":\"workspace-write\""))
+        assertTrue(normalized.contains("\"value\":\"read-only\",\"label\":\"Read only\",\"name\":\"Read only\""))
+    }
+
+    @Test
+    fun deepSeekHarnessModeCompatibilityIsDisabledForOtherAgents() {
+        val raw = "{\"result\":{\"availableModes\":[{\"id\":\"workspace-write\"}]}}"
+
+        assertEquals(raw, normalizeDeepSeekHarnessAcpModeNames(raw, enabled = false))
+    }
+
+    @Test
+    fun deepSeekHarnessConfigSupportsPartialPermissionUpdates() {
+        val current = DeepSeekHarnessConfig(
+            baseUrl = "https://provider.example/v1",
+            model = "provider-model",
+            apiKey = "secret",
+            reasoningEffort = "high",
+            permissionMode = "workspace-write"
+        )
+
+        val updated = deepSeekHarnessConfigFromArgs(
+            args = mapOf("permissionMode" to "read-only"),
+            current = current,
+            sharedProvider = AgentProviderCredentials(current.baseUrl, current.apiKey),
+            sharedModel = current.model
+        )
+
+        assertEquals(current.baseUrl, updated.baseUrl)
+        assertEquals(current.model, updated.model)
+        assertEquals(current.apiKey, updated.apiKey)
+        assertEquals(current.reasoningEffort, updated.reasoningEffort)
+        assertEquals("read-only", updated.permissionMode)
+    }
+
+    @Test
+    fun sharedAgentModelUsesTheProviderBoundToTheAgentScene() {
+        assertEquals(
+            "provider-model",
+            resolveSharedAgentModel(
+                boundProviderProfileId = "provider-1",
+                boundModel = " provider-model "
+            )
+        )
+        assertEquals(
+            "provider-model",
+            resolveSharedAgentModel(
+                boundProviderProfileId = "provider-1",
+                boundModel = "provider-model"
+            )
+        )
+        assertNull(
+            resolveSharedAgentModel(
+                boundProviderProfileId = null,
+                boundModel = null
+            )
+        )
+    }
+
+    @Test
+    fun officialAcpSessionUpdateUsesCanonicalSessionIdForLocalBinding() {
+        val notification = mapOf(
+            "method" to "session/update",
+            "params" to mapOf(
+                "sessionId" to "acp-session-1",
+                "update" to mapOf(
+                    "sessionUpdate" to "agent_message_chunk",
+                    "content" to mapOf("type" to "text", "text" to "ok"),
+                ),
+            ),
+        )
+
+        assertEquals("acp-session-1", extractThreadId(notification))
+    }
+
+    @Test
+    fun legacyTaskAndRunIdsAreAcceptedOnlyAsTurnCompatibilityAliases() {
+        assertEquals(
+            "legacy-task-1",
+            extractTurnId(
+                mapOf(
+                    "method" to "item/agentMessage/delta",
+                    "params" to mapOf("taskId" to "legacy-task-1"),
+                )
+            )
+        )
+        assertEquals(
+            "legacy-run-1",
+            extractTurnId(
+                mapOf(
+                    "method" to "item/agentMessage/delta",
+                    "params" to mapOf("run_id" to "legacy-run-1"),
+                )
+            )
+        )
+    }
+
+    @Test
+    fun acpSessionCompatibilityCanonicalizesOldIdsOnlyAtTheBoundary() {
+        val canonical = AcpSessionCompatibility.canonicalize(
+            "session/prompt",
+            mapOf("threadId" to "old-session", "turnId" to "old-prompt")
+        )
+
+        assertEquals("old-session", canonical["sessionId"])
+        assertEquals("old-prompt", canonical["promptId"])
+        assertEquals("old-session", canonical["threadId"])
+        assertEquals("old-prompt", canonical["turnId"])
+
+        val taskAlias = AcpSessionCompatibility.canonicalize(
+            "session/prompt",
+            mapOf("session_id" to "old-session-2", "task_id" to "old-task-2")
+        )
+        assertEquals("old-session-2", taskAlias["sessionId"])
+        assertEquals("old-task-2", taskAlias["promptId"])
+
+        val canonicalWins = AcpSessionCompatibility.canonicalize(
+            "session/cancel",
+            mapOf(
+                "sessionId" to "new-session",
+                "threadId" to "old-session",
+                "promptId" to "new-prompt",
+                "turnId" to "old-prompt"
+            )
+        )
+        assertEquals("new-session", canonicalWins["sessionId"])
+        assertEquals("new-prompt", canonicalWins["promptId"])
+    }
+
+    @Test
+    fun acpSessionCompatibilityAddsLegacyIdsOnlyToResponses() {
+        val response = AcpSessionCompatibility.withLegacyIds(
+            mapOf("sessionId" to "session-1", "promptId" to "prompt-1")
+        )
+
+        assertEquals("session-1", response["threadId"])
+        assertEquals("prompt-1", response["turnId"])
+    }
+
+    @Test
+    fun canonicalSessionResponseKeepsSessionIdsWhenLegacyImplementationUsesThreadIds() {
+        val response = mapOf<String, Any?>(
+            "threadId" to "session-1",
+            "turnId" to "prompt-1"
+        ).withAcpSessionId()
+
+        assertEquals("session-1", response["sessionId"])
+        assertEquals("prompt-1", response["promptId"])
+        // Old fields remain response-only compatibility aliases.
+        assertEquals("session-1", response["threadId"])
+        assertEquals("prompt-1", response["turnId"])
+    }
+
+    @Test
+    fun remoteThreadListIsProjectedToTheSharedAcpSessionShape() {
+        val response = mapOf<String, Any?>(
+            "threads" to listOf(
+                mapOf(
+                    "id" to "thread-1",
+                    "threadId" to "thread-1",
+                    "title" to "Remote session",
+                )
+            ),
+            "nextCursor" to "cursor-2",
+        ).withAcpSessions()
+
+        val sessions = response["sessions"] as List<*>
+        val session = sessions.single() as Map<*, *>
+        assertEquals("thread-1", session["sessionId"])
+        assertEquals("thread-1", session["threadId"])
+        assertEquals("Remote session", session["title"])
+        assertEquals("cursor-2", response["nextCursor"])
+    }
+
+    @Test
+    fun remoteSessionFallbackOnlyAcceptsCapabilityErrors() {
+        assertTrue(isUnsupportedRemoteAcpMethod(IllegalStateException("Method not found: session/load")))
+        assertTrue(isUnsupportedRemoteAcpMethod(IllegalStateException("ACP method is not implemented")))
+        assertFalse(isUnsupportedRemoteAcpMethod(IllegalStateException("invalid session id")))
+        assertFalse(isUnsupportedRemoteAcpMethod(IllegalStateException("connection refused")))
+    }
+
+    @Test
     fun managedAcpCatalogIncludesSupportedAgentsWithoutGemini() {
         assertEquals(
-            listOf("Codex", "Claude Code", "OpenCode", "DeepSeek Harness"),
+            listOf("小万", "Codex", "Claude Code", "OpenCode", "DeepSeek Harness"),
             AcpAgentProfileStore.OFFICIAL_AGENTS.map { it.name }
         )
         assertTrue(AcpAgentProfileStore.OFFICIAL_AGENTS.all { it.builtIn })
-        val codex = AcpAgentProfileStore.OFFICIAL_AGENTS.first()
+        assertEquals(
+            AcpAgentProfileStore.OFFICIAL_AGENTS.size,
+            AcpAgentProfileStore.OFFICIAL_AGENTS.map { it.id }.toSet().size
+        )
+        val codex = AcpAgentProfileStore.OFFICIAL_AGENTS.first {
+            it.id == AcpAgentProfileStore.CODEX_AGENT_ID
+        }
         assertEquals(
             "codex",
             AcpAgentProfileStore.officialRuntime(codex)?.discoveryCommand
         )
         assertEquals(
-            "@agentclientprotocol/codex-acp@1.1.7",
+            "@openai/codex@latest",
             AcpAgentProfileStore.officialRuntime(codex)?.managedAdapterPackage
         )
+        assertEquals(
+            listOf(
+                "@openai/codex@latest",
+                "@agentclientprotocol/codex-acp@1.1.7"
+            ),
+            AcpAgentProfileStore.officialRuntime(codex)?.managedAdapterPackages
+        )
+        val xiaowan = AcpAgentProfileStore.OFFICIAL_AGENTS.first {
+            it.id == AcpAgentProfileStore.XIAOWAN_AGENT_ID
+        }
+        assertEquals("omnibot-xiaowan-acp", xiaowan.command)
+        assertEquals(
+            "omnibot-xiaowan-acp",
+            AcpAgentProfileStore.officialRuntime(xiaowan)?.discoveryCommand
+        )
+        assertNull(AcpAgentProfileStore.officialRuntime(xiaowan)?.managedAdapterPackage)
         val deepSeek = AcpAgentProfileStore.OFFICIAL_AGENTS.first {
             it.id == AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID
         }
-        assertEquals("dsh-acp-demo", deepSeek.command)
-        assertEquals(
-            listOf("--config", "/root/.dsh/omnibot-acp/cordis.yml"),
-            deepSeek.arguments
-        )
+        assertEquals("dsh-acp-android", deepSeek.command)
+        assertEquals(listOf("--profile", "acp"), deepSeek.arguments)
         val deepSeekRuntime = AcpAgentProfileStore.officialRuntime(deepSeek)
-        assertEquals("node", deepSeekRuntime?.discoveryCommand)
+        assertEquals("dsh", deepSeekRuntime?.discoveryCommand)
         assertTrue(
             deepSeekRuntime?.managedAdapterPackages.orEmpty().contains(
-                "@deepseek-ai/dsh-acp-demo@next"
+                "@openma/deepseek-harness-acp@latest"
             )
         )
         assertTrue(
             deepSeekRuntime?.managedAdapterPackages.orEmpty().contains(
-                "@deepseek-ai/dsh-llm-deepseek@next"
+                "@deepseek-ai/dsh@next"
             )
         )
-        assertTrue(
-            deepSeekRuntime?.managedAdapterPackages.orEmpty()
-                .all { it.endsWith("@next") }
-        )
+        assertEquals(2, deepSeekRuntime?.managedAdapterPackages?.size)
+        assertTrue(deepSeekRuntime?.managedAdapterPackages.orEmpty().contains("@deepseek-ai/dsh@next"))
         assertTrue(deepSeekRuntime?.requiresNativeBuildTools == true)
         assertTrue(
-            deepSeekRuntime?.managedAdapterHealthCommand.orEmpty().contains("node-pty")
+            deepSeekRuntime?.managedAdapterHealthCommand.orEmpty()
+                .contains("command -v dsh")
+        )
+        assertTrue(
+            deepSeekRuntime?.managedAdapterHealthCommand.orEmpty()
+                .contains("command -v dsh-acp-android")
         )
         assertTrue(MANAGED_NATIVE_BUILD_PREREQUISITES_COMMAND.contains("omnibot_apk_add 'build-base' 'python3'"))
         assertTrue(MANAGED_NATIVE_BUILD_PREREQUISITES_COMMAND.contains("apk fix --no-cache"))
         assertTrue(MANAGED_NATIVE_BUILD_PREREQUISITES_COMMAND.contains("apk fix --no-cache --upgrade"))
         assertTrue(MANAGED_NATIVE_BUILD_PREREQUISITES_COMMAND.contains("build-essential python3"))
-        assertTrue(DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("repair_deepseek_harness_node_pty"))
-        assertTrue(DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("node-gyp configure"))
-        assertTrue(DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("cmd_copy = rm -rf"))
-        assertTrue(DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("omnibot-node-gyp-copy"))
-        assertTrue(DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("exec /bin/ln"))
-        val installScriptLines = DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND
-            .lineSequence()
-            .map(String::trim)
-            .toList()
-        val packageInstallIndex = installScriptLines.indexOf(
-            "install_deepseek_harness_packages"
+        assertTrue(DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("dsh plugin --profile acp add"))
+        assertTrue(DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("profiles/acp/package.json"))
+        assertTrue(DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("pnpm@$DEEPSEEK_HARNESS_PNPM_VERSION"))
+        assertTrue(
+            DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("DSH_HOME=\"/root/.dsh/omnibot-acp\"")
         )
-        val nativeRepairIndex = installScriptLines.indexOf(
-            "repair_deepseek_harness_node_pty"
+    }
+
+    @Test
+    fun legacyXiaowanBotProfileIsRecognizedAsAnAlias() {
+        assertTrue(
+            AcpAgentProfileStore.isLegacyXiaowanAlias(
+                AcpAgentProfile(
+                    id = "legacy-xiaowan-bot",
+                    name = "小万 Bot",
+                    command = "legacy-xiaowan"
+                )
+            )
         )
-        assertTrue(packageInstallIndex >= 0)
-        assertTrue(nativeRepairIndex > packageInstallIndex)
+        assertTrue(
+            AcpAgentProfileStore.isLegacyXiaowanAlias(
+                AcpAgentProfile(
+                    id = "legacy-xiaowan-command",
+                    name = "旧入口",
+                    command = "omnibot-xiaowan-acp"
+                )
+            )
+        )
+        assertFalse(
+            AcpAgentProfileStore.isLegacyXiaowanAlias(
+                AcpAgentProfile(
+                    id = AcpAgentProfileStore.XIAOWAN_AGENT_ID,
+                    name = "小万",
+                    command = "omnibot-xiaowan-acp",
+                    builtIn = true
+                )
+            )
+        )
+    }
+
+    @Test
+    fun cumulativeAgentSnapshotsBecomeSingleAppendOnlyAcpChunks() {
+        assertEquals("你", acpSnapshotDelta("", "你"))
+        assertEquals("好", acpSnapshotDelta("你", "你好"))
+        assertEquals("吗", acpSnapshotDelta("你好", "你好吗"))
+        assertNull(acpSnapshotDelta("你好吗", "你好吗"))
+        assertEquals("重新开始", acpSnapshotDelta("旧内容", "重新开始"))
     }
 
     @Test
@@ -93,63 +412,287 @@ class AgentRuntimeProtocolPayloadTest {
         assertEquals("https://gateway.example/v1", restored.toEnvironment()["DEEPSEEK_BASE_URL"])
         assertEquals("deepseek-custom", restored.toEnvironment()["DSH_MODEL"])
         assertEquals("high", restored.toEnvironment()["DSH_REASONING_EFFORT"])
+        assertEquals("high", restored.toEnvironment()["DSH_PI_AI_REASONING_EFFORT"])
+        assertEquals(
+            "max",
+            DeepSeekHarnessConfig(reasoningEffort = "max").toEnvironment()["DSH_REASONING_EFFORT"]
+        )
+        assertEquals(
+            "max",
+            DeepSeekHarnessConfig(reasoningEffort = "max").toEnvironment()["DSH_PI_AI_REASONING_EFFORT"]
+        )
+        assertEquals(
+            "enabled",
+            DeepSeekHarnessConfig(reasoningEffort = "max").toEnvironment()["DSH_THINKING"]
+        )
+        assertEquals(
+            "disabled",
+            DeepSeekHarnessConfig(reasoningEffort = "off").toEnvironment()["DSH_THINKING"]
+        )
         assertEquals("read-only", restored.toEnvironment()["DSH_PERMISSION_MODE"])
+        assertEquals("/root/.dsh/omnibot-acp-clean", restored.toEnvironment()["DSH_ACP_HOME"])
+        assertEquals(
+            "/root/.dsh/omnibot-acp-clean/sessions",
+            restored.toEnvironment()["DSH_SESSION_ROOT"]
+        )
+        assertEquals("/root/.dsh/omnibot-acp", restored.toEnvironment()["DSH_HOME"])
+        assertEquals("deepseek-official", restored.toEnvironment()["DSH_PROVIDER"])
         assertEquals("1", restored.toEnvironment()["NODE_NO_WARNINGS"])
+    }
+
+    @Test
+    fun deepSeekHarnessDefaultReasoningEffortKeepsSimpleTurnsResponsive() {
+        val environment = DeepSeekHarnessConfig(
+            baseUrl = "https://gateway.example/v1",
+            model = "deepseek-custom",
+            apiKey = "sk-test"
+        ).toEnvironment()
+
+        assertEquals("high", environment["DSH_REASONING_EFFORT"])
+        assertEquals("high", environment["DSH_PI_AI_REASONING_EFFORT"])
+        assertEquals("enabled", environment["DSH_THINKING"])
     }
 
     @Test
     fun deepSeekHarnessProviderConfigEditPreservesComposerPermissionDefault() {
         val restored = deepSeekHarnessConfigFromArgs(
             args = mapOf(
-                "baseUrl" to "https://gateway.example/v1",
-                "model" to "deepseek-custom",
-                "apiKey" to "sk-updated",
                 "reasoningEffort" to "high"
             ),
-            current = DeepSeekHarnessConfig(permissionMode = "read-only")
+            current = DeepSeekHarnessConfig(permissionMode = "read-only"),
+            sharedProvider = AgentProviderCredentials(
+                baseUrl = "https://gateway.example/v1",
+                apiKey = "sk-updated"
+            ),
+            sharedModel = "deepseek-custom"
         )
 
         assertEquals("read-only", restored.permissionMode)
     }
 
     @Test
-    fun deepSeekHarnessCordisCompositionOwnsTheMissingAcpCapabilities() {
-        val config = buildDeepSeekHarnessCordisConfig()
+    fun sharedAgentProviderIsTheDefaultCredentialSourceForAllAcpModes() {
+        val provider = ModelProviderProfile(
+            id = "deepseek-provider",
+            name = "DeepSeek",
+            baseUrl = "https://api.deepseek.com",
+            apiKey = "sk-shared"
+        )
+        val credentials = AgentProviderCredentials(provider.baseUrl, provider.apiKey)
+        val dsh = syncAgentProviderCredentials(
+            DeepSeekHarnessConfig(
+                baseUrl = "https://old.example",
+                apiKey = "sk-old"
+            ),
+            credentials,
+            sharedModel = "glm-5.1"
+        )
 
-        assertTrue(config.contains("name: '@deepseek-ai/dsh-llm-deepseek'"))
-        assertTrue(config.contains("name: '$DEEPSEEK_HARNESS_OMNIBOT_ACP_PLUGIN_PATH'"))
-        assertFalse(config.contains("name: '@deepseek-ai/dsh-acp-demo'"))
-        assertTrue(config.contains("workspaceRoot: /workspace"))
-        assertTrue(config.contains("persistenceCompression: none"))
-        assertTrue(config.contains("process.env.DSH_MODEL"))
-        assertTrue(config.contains("process.env.DSH_REASONING_EFFORT"))
-        assertTrue(config.contains("process.env.DSH_PERMISSION_MODE"))
-        assertTrue(config.contains("policy: ask"))
+        assertEquals(provider.baseUrl, dsh.baseUrl)
+        assertEquals(provider.apiKey, dsh.apiKey)
+        assertEquals("glm-5.1", dsh.model)
+        assertEquals(
+            provider.apiKey,
+            buildSharedAgentProviderEnvironment("claude-code-acp", credentials)["ANTHROPIC_AUTH_TOKEN"]
+        )
+        assertEquals(
+            "https://api.deepseek.com/v1",
+            buildSharedAgentProviderEnvironment("opencode-acp", credentials)["OPENAI_BASE_URL"]
+        )
+        assertEquals(
+            provider.apiKey,
+            buildSharedAgentProviderEnvironment("codex-acp", credentials)["OPENAI_API_KEY"]
+        )
+        assertEquals(
+            "https://api.deepseek.com/v1",
+            buildSharedAgentProviderEnvironment("codex-acp", credentials)["OPENAI_BASE_URL"]
+        )
     }
 
     @Test
-    fun deepSeekHarnessInteractiveBridgePublishesUiAndConfigEvents() {
-        val workingDirectory = File(requireNotNull(System.getProperty("user.dir")))
-        val source = listOf(
-            workingDirectory.resolve(
-                "app/src/main/assets/deepseek_harness/omnibot-acp-demo.mjs"
-            ),
-            workingDirectory.resolve(
-                "src/main/assets/deepseek_harness/omnibot-acp-demo.mjs"
-            )
-        ).firstOrNull(File::isFile)?.readText()
-            ?: error("DeepSeek Harness interactive ACP asset is missing.")
+    fun officialAgentConfigAdaptersRemapOneProviderWithoutPrivateProtocolFields() {
+        val credentials = AgentProviderCredentials(
+            baseUrl = "https://gateway.example/v1",
+            apiKey = "sk-shared"
+        )
 
-        assertTrue(source.contains("sessionUpdate: 'agent_thought_chunk'"))
-        assertTrue(source.contains("messageId: thoughtMessageId("))
-        assertTrue(source.contains("sessionUpdate: 'tool_call'"))
-        assertTrue(source.contains("sessionUpdate: 'tool_call_update'"))
-        assertTrue(source.contains("messageId: event.data.message.id"))
-        assertTrue(source.contains("category: 'model'"))
-        assertTrue(source.contains("category: 'thought_level'"))
-        assertTrue(source.contains("category: 'mode'"))
-        assertTrue(source.contains("installModelSelection(agentCtx, selection)"))
-        assertTrue(source.contains("setSandboxMode(record.agent.session, mode)"))
+        val dsh = AgentConfigAdapterRegistry.map(
+            AgentProviderMappingInput(
+                agentId = AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID,
+                provider = credentials,
+                model = "glm-5.1",
+                harnessAdapter = AcpHarnessAdapters.deepSeekHarness,
+                deepSeekConfig = DeepSeekHarnessConfig(reasoningEffort = "max")
+            )
+        )
+        assertEquals("glm-5.1", dsh.deepSeekConfig?.model)
+        assertEquals("max", dsh.environment["DSH_REASONING_EFFORT"])
+
+        val codex = AgentConfigAdapterRegistry.map(
+            AgentProviderMappingInput(
+                agentId = AcpAgentProfileStore.CODEX_AGENT_ID,
+                provider = credentials,
+                model = "glm-5.1",
+                harnessAdapter = AcpHarnessAdapters.codex,
+            )
+        )
+        assertEquals("glm-5.1", codex.codexModel)
+        assertEquals(
+            "https://gateway.example/v1",
+            codex.environment["OPENAI_BASE_URL"]
+        )
+    }
+
+    @Test
+    fun launchConfigWritesAreSelectedByHarnessAdapterNotDshName() {
+        val credentials = AgentProviderCredentials(
+            baseUrl = "https://gateway.example/v1",
+            apiKey = "sk-shared",
+        )
+        val providerModels = listOf(ProviderModelOption(id = "glm-5.1"))
+
+        val openCodeInput = AgentProviderMappingInput(
+            agentId = "opencode-acp",
+            provider = credentials,
+            model = "glm-5.1",
+            harnessAdapter = AcpHarnessAdapters.openCode,
+        )
+        val openCodeMapping = AgentConfigAdapterRegistry.map(openCodeInput)
+        val openCodeWrites = AgentConfigAdapterRegistry.launchConfigWrites(
+            input = openCodeInput,
+            mapping = openCodeMapping,
+            providerModels = providerModels,
+            existingConfig = "{\"mcp\":{\"existing\":{}}}",
+        )
+        assertEquals(1, openCodeWrites.size)
+        assertEquals(OPENCODE_CONFIG_PATH, openCodeWrites.single().path)
+        assertTrue(openCodeWrites.single().content.contains("\"existing\""))
+
+        val dshWithStandardAdapter = AgentConfigAdapterRegistry.map(
+            AgentProviderMappingInput(
+                agentId = AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID,
+                provider = credentials,
+                model = "glm-5.1",
+                harnessAdapter = AcpHarnessAdapters.standard,
+            )
+        )
+        assertNull(dshWithStandardAdapter.deepSeekConfig)
+        val dshWrites = AgentConfigAdapterRegistry.launchConfigWrites(
+                input = AgentProviderMappingInput(
+                    agentId = AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID,
+                    provider = credentials,
+                    model = "glm-5.1",
+                    harnessAdapter = AcpHarnessAdapters.deepSeekHarness,
+                ),
+                mapping = AgentConfigAdapterRegistry.map(
+                    AgentProviderMappingInput(
+                        agentId = AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID,
+                        provider = credentials,
+                        model = "glm-5.1",
+                        harnessAdapter = AcpHarnessAdapters.deepSeekHarness,
+                    )
+                ),
+                providerModels = providerModels,
+                existingConfig = "",
+            )
+        assertEquals(1, dshWrites.size)
+        assertEquals("/root/.dsh/omnibot-acp/settings.yaml", dshWrites.single().path)
+        assertTrue(dshWrites.single().content.contains("id: 'glm-5.1'"))
+    }
+
+    @Test
+    fun managedAgentInstallationUsesTheExistingOfficialTerminalSetupIds() {
+        assertEquals(
+            "deepseek_harness",
+            managedAgentTerminalPackageId(
+                AcpAgentProfileStore.OFFICIAL_AGENTS.first {
+                    it.id == AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID
+                }
+            )
+        )
+        assertEquals(
+            "codex",
+            managedAgentTerminalPackageId(AcpAgentProfileStore.OFFICIAL_AGENTS.first {
+                it.id == AcpAgentProfileStore.CODEX_AGENT_ID
+            })
+        )
+        assertEquals(
+            "claude_code",
+            managedAgentTerminalPackageId(AcpAgentProfileStore.OFFICIAL_AGENTS.first {
+                it.id == "claude-code-acp"
+            })
+        )
+        assertEquals(
+            "opencode",
+            managedAgentTerminalPackageId(AcpAgentProfileStore.OFFICIAL_AGENTS.first {
+                it.id == "opencode-acp"
+            })
+        )
+        assertNull(
+            managedAgentTerminalPackageId(AcpAgentProfileStore.OFFICIAL_AGENTS.first {
+                it.id == AcpAgentProfileStore.XIAOWAN_AGENT_ID
+            })
+        )
+    }
+
+    @Test
+    fun localAgentMcpUsesTheSelectedHarnessCapability() {
+        val state = McpServerState(
+            enabled = true,
+            running = true,
+            host = "192.168.1.8",
+            port = 8899,
+            token = "secret-token"
+        )
+
+        val codexServers = buildLocalAgentAcpMcpServers(
+            harnessAdapter = AcpHarnessAdapters.standard,
+            supportsHttp = true,
+            state = state
+        )
+        val server = codexServers.single() as McpServer.Http
+        assertEquals("omnibot", server.name)
+        assertEquals("http://127.0.0.1:8899/mcp", server.url)
+        assertEquals("Authorization", server.headers.single().name)
+        assertEquals("Bearer secret-token", server.headers.single().value)
+
+        assertTrue(
+            buildLocalAgentAcpMcpServers(
+                harnessAdapter = AcpHarnessAdapters.deepSeekHarness,
+                supportsHttp = false,
+                state = state
+            ).isEmpty()
+        )
+        assertTrue(
+            buildLocalAgentAcpMcpServers(
+                harnessAdapter = AcpHarnessAdapters.standard,
+                supportsHttp = false,
+                state = state
+            ).isEmpty()
+        )
+    }
+
+    @Test
+    fun deepSeekHarnessMcpConnectionUsesOfficialSessionDeclaration() {
+        val servers = buildLocalAgentAcpMcpServers(
+            harnessAdapter = AcpHarnessAdapters.deepSeekHarness,
+            supportsHttp = true,
+            state = McpServerState(
+                enabled = true,
+                running = true,
+                host = null,
+                port = 9001,
+                token = "local-secret"
+            )
+        )
+        val server = servers.single() as McpServer.Http
+        assertEquals("http://127.0.0.1:9001/mcp", server.url)
+        assertEquals("Bearer local-secret", server.headers.single().value)
+        assertTrue(
+            AcpHarnessAdapters.deepSeekHarness.mcpEnvironment(
+                McpServerState(false, false, null, 0, "")
+            ).isEmpty()
+        )
     }
 
     @Test
@@ -160,14 +703,16 @@ class AgentRuntimeProtocolPayloadTest {
             )
         )
         assertTrue(isRecoverableAgentThreadError("unknown session: old-session"))
+        assertTrue(isRecoverableAgentThreadError("session metadata not found"))
+        assertTrue(isRecoverableAgentThreadError("session file missing"))
         assertFalse(isRecoverableAgentThreadError("provider authentication failed"))
     }
 
     @Test
     fun managedNpmPackageSpecsResolveTheirInstalledPackageNames() {
         assertEquals(
-            "@deepseek-ai/dsh-acp-demo",
-            npmPackageName("@deepseek-ai/dsh-acp-demo@next")
+            "@openma/deepseek-harness-acp",
+            npmPackageName("@openma/deepseek-harness-acp@latest")
         )
         assertEquals("plain-package", npmPackageName("plain-package@1.2.3"))
         assertEquals("@scope/package", npmPackageName("@scope/package"))
@@ -196,6 +741,29 @@ class AgentRuntimeProtocolPayloadTest {
                 processAlive = true
             )
         )
+    }
+
+    @Test
+    fun officialAcpLaunchDisablesOnlyTheProotLinkCompatibilityMode() {
+        val script = File(
+            "../ReTerminal/core/main/src/main/assets/init-host.sh"
+        ).takeIf { it.exists() } ?: File(
+            "ReTerminal/core/main/src/main/assets/init-host.sh"
+        )
+        val source = script.readText()
+
+        assertTrue(source.contains("OMNIBOT_DISABLE_PROOT_LINK2SYMLINK"))
+        assertTrue(source.contains("ARGS=\"\$ARGS --link2symlink\""))
+        assertTrue(source.contains("!= \"1\""))
+    }
+
+    @Test
+    fun officialAcpFilesystemCompatibilityUsesCopyOnlyForDeniedHardLinks() {
+        assertTrue(ACP_FILESYSTEM_COMPAT_SCRIPT.contains("promises.link"))
+        assertTrue(ACP_FILESYSTEM_COMPAT_SCRIPT.contains("COPYFILE_EXCL"))
+        assertTrue(ACP_FILESYSTEM_COMPAT_SCRIPT.contains("EACCES"))
+        assertTrue(ACP_FILESYSTEM_COMPAT_SCRIPT.contains("EPERM"))
+        assertFalse(ACP_FILESYSTEM_COMPAT_SCRIPT.contains("rename"))
     }
 
 
@@ -600,5 +1168,62 @@ class AgentRuntimeProtocolPayloadTest {
         assertTrue(config.contains("requires_openai_auth = true"))
         assertFalse(config.contains("env_key"))
         assertTrue(auth.contains("\"OPENAI_API_KEY\": \"sk-test\""))
+    }
+
+    @Test
+    fun sharedAgentModelUsesTheBoundProviderRegardlessOfEditingProfile() {
+        assertEquals(
+            "GLM-5.1",
+            resolveSharedAgentModel(
+                boundProviderProfileId = "debug-llmthu-glm",
+                boundModel = "GLM-5.1"
+            )
+        )
+        assertEquals(
+            "glm-5",
+            resolveSharedAgentModel(
+                boundProviderProfileId = "debug-llmthu-glm",
+                boundModel = "glm-5"
+            )
+        )
+        assertEquals(
+            "GLM-5.1",
+            resolveSharedAgentModel(
+                boundProviderProfileId = "debug-llmthu-glm",
+                boundModel = "GLM-5.1"
+            )
+        )
+    }
+
+    @Test
+    fun acpPermissionModeResolvesHarnessAliases() {
+        val advertised = listOf("default", "bypassPermissions", "plan")
+        assertEquals(
+            "bypassPermissions",
+            resolveAcpSessionModeId(advertised, "agent-full-access")
+        )
+        assertEquals("default", resolveAcpSessionModeId(advertised, "agent"))
+        assertEquals("plan", resolveAcpSessionModeId(advertised, "read-only"))
+        assertTrue(isAcpFullAccessMode("danger-full-access"))
+        assertTrue(isAcpFullAccessMode("bypassPermissions"))
+        assertFalse(isAcpFullAccessMode("workspace-write"))
+    }
+
+    @Test
+    fun acpPermissionDefaultsToUnrestrictedUntilExplicitlyRequested() {
+        assertEquals(
+            AcpPermissionBehavior.ALLOW_WITHOUT_PROMPT,
+            resolveAcpPermissionBehavior(emptyMap())
+        )
+        assertEquals(
+            AcpPermissionBehavior.ASK_USER,
+            resolveAcpPermissionBehavior(mapOf("approvalPolicy" to "on-request"))
+        )
+        assertEquals(
+            AcpPermissionBehavior.ASK_USER,
+            resolveAcpPermissionBehavior(
+                mapOf("sandboxPolicy" to mapOf("type" to "readOnly"))
+            )
+        )
     }
 }

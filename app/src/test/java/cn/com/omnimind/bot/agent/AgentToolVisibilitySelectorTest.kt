@@ -6,12 +6,17 @@ import org.junit.Test
 
 class AgentToolVisibilitySelectorTest {
     @Test
-    fun `returns every conversation-approved tool regardless of message intent`() {
+    fun `keeps every native tool visible before discovery`() {
         val candidates = listOf(
-            tool("context_apps_query"),
+            tool("read"),
+            tool("write"),
+            tool("edit"),
+            tool("bash"),
+            tool("glob"),
+            tool("grep"),
+            tool("webfetch"),
             tool("vlm_task"),
-            tool("terminal_execute"),
-            tool("file_write"),
+            tool("context_time_now"),
             tool("project_check"),
             tool("project_publish"),
             tool("fitness_record", dynamic = true, owner = "local.project.fitness"),
@@ -23,12 +28,12 @@ class AgentToolVisibilitySelectorTest {
             candidates = candidates,
         )
 
-        assertEquals(candidates.mapTo(linkedSetOf()) { it.name }, selected)
+        assertEquals(candidates.map { it.name }.toSet(), selected)
     }
 
     @Test
-    fun `does not cap or rank a large dynamic tool set`() {
-        val candidates = listOf(tool("context_apps_query")) +
+    fun `exposes dynamic tools in the complete catalog`() {
+        val candidates = listOf(tool("read")) +
             (1..80).map { index ->
                 tool(
                     name = "dynamic_tool_$index",
@@ -42,12 +47,12 @@ class AgentToolVisibilitySelectorTest {
             candidates = candidates,
         )
 
-        assertEquals(candidates.size, selected.size)
-        candidates.forEach { candidate -> assertTrue(candidate.name in selected) }
+        assertEquals(candidates.map { it.name }.toSet(), selected)
+        assertTrue("dynamic_tool_1" in selected)
     }
 
     @Test
-    fun `game project request keeps every writing and publishing tool`() {
+    fun `native project tools are eagerly exposed`() {
         val requiredTools = listOf(
             "file_write",
             "terminal_execute",

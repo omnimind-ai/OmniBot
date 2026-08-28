@@ -18,9 +18,13 @@ data class PlatformAiProvisioningStatus(
     val defaultVisionModelId: String? = null,
     val defaultImageModelId: String? = null,
     val defaultEmbeddingModelId: String? = null,
+    val defaultTtsModelId: String? = null,
     val visionModels: List<ProviderModelOption> = emptyList(),
     val imageModels: List<ProviderModelOption> = emptyList(),
     val embeddingModels: List<ProviderModelOption> = emptyList(),
+    val ttsModels: List<ProviderModelOption> = emptyList(),
+    val ttsVoiceAliases: List<String> = emptyList(),
+    val defaultTtsVoiceAlias: String? = null,
 )
 
 object PlatformModelCapability {
@@ -28,6 +32,7 @@ object PlatformModelCapability {
     const val VISION = "vision"
     const val IMAGE = "image"
     const val EMBEDDING = "embedding"
+    const val TTS = "tts"
 }
 
 internal fun PlatformAiProvisioningStatus.modelsForCapability(
@@ -38,6 +43,7 @@ internal fun PlatformAiProvisioningStatus.modelsForCapability(
         PlatformModelCapability.VISION -> visionModels
         PlatformModelCapability.IMAGE -> imageModels
         PlatformModelCapability.EMBEDDING -> embeddingModels
+        PlatformModelCapability.TTS -> ttsModels
         else -> emptyList()
     }
 
@@ -201,9 +207,13 @@ object PlatformAiProvisioner {
                     defaultVisionModelId = selection.defaultVisionModel?.id,
                     defaultImageModelId = selection.defaultImageModel?.id,
                     defaultEmbeddingModelId = selection.defaultEmbeddingModel?.id,
+                    defaultTtsModelId = selection.defaultTtsModel?.id,
                     visionModels = selection.visionModels.toOptions(catalog.displayNames),
                     imageModels = selection.imageModels.toOptions(catalog.displayNames),
                     embeddingModels = selection.embeddingModels.toOptions(catalog.displayNames),
+                    ttsModels = selection.ttsModels.toOptions(catalog.displayNames),
+                    ttsVoiceAliases = selection.ttsVoiceAliases,
+                    defaultTtsVoiceAlias = selection.defaultTtsVoiceAlias,
                 )
             } catch (error: CancellationException) {
                 throw error

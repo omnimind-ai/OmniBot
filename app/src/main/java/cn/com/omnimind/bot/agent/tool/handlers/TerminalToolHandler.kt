@@ -38,7 +38,7 @@ class TerminalToolHandler(
     private val scope: kotlinx.coroutines.CoroutineScope
 ) : ToolHandler {
     override val toolNames: Set<String> = setOf(
-        "terminal_execute", "terminal_session_start", "terminal_session_exec",
+        "terminal_execute", "bash", "terminal_session_start", "terminal_session_exec",
         "terminal_session_read", "terminal_session_stop"
     )
 
@@ -97,7 +97,7 @@ class TerminalToolHandler(
         toolHandle: AgentToolExecutionHandle
     ): ToolExecutionResult {
         return when (toolCall.function.name) {
-            "terminal_execute" -> executeTerminalTool(args, env.workspaceDescriptor, env.terminalEnvironment, callback, toolHandle)
+            "terminal_execute", "bash" -> executeTerminalTool(args, env.workspaceDescriptor, env.terminalEnvironment, callback, toolHandle)
             "terminal_session_start" -> executeTerminalSessionStart(args, env.workspaceDescriptor, env.terminalEnvironment, callback)
             "terminal_session_exec" -> executeTerminalSessionExec(args, env.workspaceDescriptor, env.terminalEnvironment, callback, toolHandle)
             "terminal_session_read" -> executeTerminalSessionRead(args, env.workspaceDescriptor, callback)

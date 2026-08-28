@@ -2,13 +2,16 @@ package cn.com.omnimind.bot.agent
 
 import cn.com.omnimind.baselib.i18n.AppLocaleManager
 import cn.com.omnimind.baselib.llm.AssistantToolCall
+import cn.com.omnimind.baselib.llm.AnthropicMessageProtocolState
 import cn.com.omnimind.baselib.llm.ChatCompletionMessage
+import cn.com.omnimind.baselib.llm.ChatCompletionProtocolState
 import cn.com.omnimind.baselib.llm.ChatCompletionRequest
 import cn.com.omnimind.baselib.llm.ChatCompletionStreamOptions
 import cn.com.omnimind.baselib.llm.ChatCompletionTool
 import cn.com.omnimind.baselib.llm.contentText
 import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.agent.tool.AgentToolConcurrencyPolicy
+import cn.com.omnimind.bot.agent.tool.handlers.ToolSearchHandler
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.CancellationException
@@ -238,8 +241,16 @@ class AgentOrchestrator(
         val memory: AgentChatMemory = MutableListChatMemory(input.initialMessages)
         val primaryUserGoal = resolvePrimaryUserGoal(input)
         val completionPolicies = resolveSkillCompletionPolicies(input.executionEnv.resolvedSkills)
-        val availableToolNames = toolRegistry.toolsForModel
-            .mapTo(linkedSetOf()) { it.function.name }
+        // Keep this as an explicit loop instead of the inline `mapTo` call.
+        // This code runs inside the ACP request coroutine and can be resumed
+        // while a counterpart sends $/cancelRequest.  The generated inline
+        // collection bridge is needlessly fragile on Android/R8 in that
+        // cancellation path; the mutable set is also clearer about the
+        // de-duplication contract used by tool-choice recovery.
+        val availableToolNames = linkedSetOf<String>()
+        for (tool in toolRegistry.toolsForModel) {
+            availableToolNames += tool.function.name
+        }
         val completionProgress = mutableMapOf<String, Int>()
         val completionRecoveryRounds = mutableMapOf<String, Int>()
         val executedTools = mutableListOf<ToolExecutionResult>()
@@ -292,7 +303,19 @@ class AgentOrchestrator(
                     messages = requestMessages,
                     tools = toolRegistry.toolsForModel
                 )
-                val disableThinking = input.executionEnv.reasoningEffort == "no"
+                // ACP/Xiaowan uses the shared vocabulary where `none` is the
+                // normal no-thinking value.  Treat all no-thinking aliases as
+                // an explicit wire-level disable; checking only `no` leaves
+                // GLM-style providers free to enable their default reasoning
+                // path, which can delay the first token for a simple greeting.
+                val normalizedReasoningEffort =
+                    input.executionEnv.reasoningEffort?.trim()?.lowercase()
+                val disableThinking = normalizedReasoningEffort in setOf(
+                    "no",
+                    "none",
+                    "off",
+                    "disabled",
+                )
                 val turn = try {
                     streamTurnWithRetry(
                         callback = callback,
@@ -304,6 +327,11 @@ class AgentOrchestrator(
                             streamOptions = ChatCompletionStreamOptions(includeUsage = true),
                             enableThinking = if (disableThinking) false else null,
                             reasoningEffort = if (disableThinking) null else input.executionEnv.reasoningEffort,
+                            thinking = if (disableThinking) {
+                                cn.com.omnimind.baselib.llm.ChatCompletionThinking(type = "disabled")
+                            } else {
+                                null
+                            },
                             promptCacheKey = input.promptCacheKey,
                             tools = toolRegistry.toolsForModel,
                             toolChoice = toolChoiceForRound,
@@ -408,7 +436,8 @@ class AgentOrchestrator(
                     ),
                     toolCalls = toolCalls.ifEmpty { null },
                     reasoningContent = turn.message.reasoningContent
-                        ?.takeIf { it.isNotBlank() }
+                        ?.takeIf { it.isNotBlank() },
+                    protocolState = turn.message.protocolState
                 )
                 memory.add(assistantMessageForMemory)
                 latestPromptTokens?.let { promptTokens ->
@@ -588,6 +617,44 @@ class AgentOrchestrator(
                 // (matching pre-refactor semantics: write the error tool message,
                 // skip remaining calls, and advance to the next LLM round).
                 parsePhase@ for (toolCall in toolCalls) {
+                    if (
+                        toolRegistry.usesProgressiveDiscovery &&
+                        toolRegistry.toolsForModel.none { it.function.name == toolCall.function.name }
+                    ) {
+                        val result = ToolExecutionResult.Error(
+                            toolCall.function.name,
+                            t(
+                                "工具 ${toolCall.function.name} 尚未加载，请先调用 tools_search 查找并加载它。",
+                                "Tool ${toolCall.function.name} is not loaded yet. Call tools_search first to discover it."
+                            )
+                        )
+                        val descriptor = toolRegistry.runtimeDescriptor(toolCall.function.name)
+                        descriptorMap[toolCall.id] = descriptor
+                        executedTools.add(result)
+                        callback.onToolCallComplete(
+                            toolCall.id,
+                            toolCall.function.name,
+                            result
+                        )
+                        appendToolResultMessage(
+                            memory = memory,
+                            env = input.executionEnv,
+                            callback = callback,
+                            assistantMessage = assistantMessageForMemory,
+                            toolCall = toolCall,
+                            descriptor = descriptor,
+                            result = result
+                        )
+                        writtenToolCallIds += toolCall.id
+                        hasUserFacingOutput =
+                            hasUserFacingOutput || eventAdapter.hasUserVisibleOutput(result)
+                        advanceToNextRound = true
+                        pendingToolCallBackfillReason = t(
+                            "工具尚未加载，当前 assistant 消息中的剩余 tool_call 未执行。",
+                            "The tool was not loaded, so the remaining tool calls in this assistant message were not executed."
+                        )
+                        break@parsePhase
+                    }
                     val descriptor = toolRegistry.runtimeDescriptor(toolCall.function.name)
                     descriptorMap[toolCall.id] = descriptor
                     val parsedArgs: JsonObject = try {
@@ -749,6 +816,7 @@ class AgentOrchestrator(
                             val desc = descriptorMap.getValue(call.id)
                             val args = parsedArgsMap.getValue(call.id)
                             executedTools.add(result)
+                            activateDiscoveredTools(call.function.name, result)
                             recordSkillCompletionToolAttempt(
                                 policies = completionPolicies,
                                 completionProgress = completionProgress,
@@ -855,8 +923,21 @@ class AgentOrchestrator(
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            callback.onError("Agent execution failed: ${e.message}")
-            return AgentResult.Error("Agent execution failed", e)
+            // Keep the same retry policy for failures that escape the
+            // streaming-specific branches.  In particular, transient tool
+            // router/transport exceptions must expose the manual Retry action
+            // instead of becoming an unrecoverable generic error.  The
+            // classifier still rejects provider limits and malformed tool
+            // calls, so a retry cannot blindly repeat a side-effecting tool.
+            val decision = classifyRetryableTurnFailure(e)
+            val message = decision.reason.ifBlank {
+                t(
+                    "Agent 执行失败，请重试。",
+                    "Agent execution failed. Please retry."
+                )
+            }
+            callback.onError(message, decision.retryable)
+            return AgentResult.Error(message, e)
         } finally {
             runCatching { toolRouter.dispose() }
         }
@@ -990,7 +1071,8 @@ class AgentOrchestrator(
         callback.onToolCallStart(
             toolCall.id,
             toolCall.function.name,
-            parsedArgs
+            parsedArgs,
+            descriptor.toolType,
         )
         return try {
             coroutineScope {
@@ -1018,6 +1100,29 @@ class AgentOrchestrator(
             }
         } finally {
             toolHandle.complete()
+        }
+    }
+
+    private fun activateDiscoveredTools(
+        toolName: String,
+        result: ToolExecutionResult,
+    ) {
+        if (toolName != ToolSearchHandler.NAME) return
+        val rawResult = (result as? ToolExecutionResult.ContextResult)?.rawResultJson
+            ?: return
+        val names = runCatching {
+            val payload = json.parseToJsonElement(rawResult) as? JsonObject
+            val tools = payload?.get("tools") as? JsonArray
+            tools.orEmpty().mapNotNull { item ->
+                (item as? JsonObject)?.get("name")?.jsonPrimitive?.contentOrNull
+            }.toSet()
+        }.getOrDefault(emptySet())
+        if (names.isNotEmpty()) {
+            toolRegistry.exposeToolNames(names)
+            logInfo(
+                tag,
+                "tool_discovery activated=${names.size} visible=${toolRegistry.toolsForModel.size}"
+            )
         }
     }
 
@@ -1088,7 +1193,12 @@ class AgentOrchestrator(
         val toolResultMessage = ChatCompletionMessage(
             role = "tool",
             toolCallId = toolCall.id,
-            content = content
+            content = content,
+            protocolState = ChatCompletionProtocolState(
+                anthropic = AnthropicMessageProtocolState(
+                    toolResultIsError = !isSuccessfulToolResult(result)
+                )
+            )
         )
         memory.add(toolResultMessage)
         callback.onToolReplayReady(
@@ -1338,6 +1448,16 @@ class AgentOrchestrator(
     }
 
     private fun classifyRetryableTurnFailure(error: Throwable): RetryDecision {
+        // The LLM client already owns the stream-idle deadline. Retrying this
+        // exact request from the orchestrator only multiplies a dead-provider
+        // wait (45s x 3 previously) and leaves ACP/UI stuck on "thinking".
+        // Surface the failure so the user can retry explicitly.
+        if (error.message.orEmpty().contains("chat completion stream idle timeout")) {
+            return RetryDecision(
+                retryable = false,
+                reason = error.message.orEmpty()
+            )
+        }
         if (error is AgentStreamRequestException) {
             val statusCode = error.statusCode
             val providerFailureText = buildString {
@@ -1375,6 +1495,12 @@ class AgentOrchestrator(
         }
 
         val message = error.message?.trim().orEmpty()
+        AgentRuntimeErrorSupport.userFacingMessage(error)?.let { userFacingMessage ->
+            return RetryDecision(
+                retryable = false,
+                reason = userFacingMessage
+            )
+        }
         if (looksLikeTransientTransportFailure(message)) {
             return RetryDecision(
                 retryable = true,

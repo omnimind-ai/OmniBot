@@ -160,9 +160,8 @@ mixin _ChatPageBrowserMixin on _ChatPageStateBase {
     if (_activeSurfaceMode != ChatSurfaceMode.normal) {
       return;
     }
-    final snapshot = _runtimeForMode(
-      ChatPageMode.normal,
-    )?.browserSessionSnapshot;
+    final browserMode = _activeConversationMode;
+    final snapshot = _runtimeForMode(browserMode)?.browserSessionSnapshot;
     if (snapshot == null ||
         !snapshot.matchesWorkspace(_expectedBrowserWorkspaceId)) {
       return;
@@ -180,12 +179,15 @@ mixin _ChatPageBrowserMixin on _ChatPageStateBase {
   Future<void> _refreshLiveBrowserSessionSnapshot({
     bool syncRuntime = false,
   }) async {
+    final browserMode = _activeConversationMode;
+    final expectedWorkspaceId = chatConversationWorkspaceId(
+      _modeState(browserMode).currentConversationId,
+    );
     final snapshot = await AgentBrowserSessionService.getSnapshot();
     if (!mounted) {
       return;
     }
-    final resolved =
-        snapshot?.matchesWorkspace(_expectedBrowserWorkspaceId) == true
+    final resolved = snapshot?.matchesWorkspace(expectedWorkspaceId) == true
         ? snapshot
         : null;
     final previousSignature = _browserSnapshotSignature(
@@ -194,12 +196,19 @@ mixin _ChatPageBrowserMixin on _ChatPageStateBase {
     final nextSignature = _browserSnapshotSignature(resolved);
 
     if (syncRuntime) {
-      final runtime = _runtimeForMode(ChatPageMode.normal);
+      final runtime = _runtimeForMode(browserMode);
       if (runtime != null) {
         runtime.browserSessionSnapshot = resolved;
       } else {
-        _modeState(ChatPageMode.normal).browserSessionSnapshot = resolved;
+        _modeState(browserMode).browserSessionSnapshot = resolved;
       }
+    }
+
+    // The platform snapshot request is asynchronous. A Harness/conversation
+    // switch may complete while it is in flight; keep the old runtime updated
+    // but never paint that old browser session over the newly visible chat.
+    if (browserMode != _activeConversationMode) {
+      return;
     }
 
     final shouldHideOverlay = resolved == null || !resolved.available;
@@ -221,16 +230,25 @@ mixin _ChatPageBrowserMixin on _ChatPageStateBase {
   @override
   void _handleBrowserSessionSnapshotChanged(Map<String, dynamic> raw) {
     final snapshot = ChatBrowserSessionSnapshot.fromMap(raw);
+    final browserMode = _browserModeForWorkspace(snapshot.workspaceId);
+    if (browserMode == null) {
+      return;
+    }
+    final expectedWorkspaceId = chatConversationWorkspaceId(
+      _modeState(browserMode).currentConversationId,
+    );
     final resolved =
-        snapshot.matchesWorkspace(_expectedBrowserWorkspaceId) &&
-            snapshot.available
+        snapshot.matchesWorkspace(expectedWorkspaceId) && snapshot.available
         ? snapshot
         : null;
-    final runtime = _runtimeForMode(ChatPageMode.normal);
+    final runtime = _runtimeForMode(browserMode);
     if (runtime != null) {
       runtime.browserSessionSnapshot = resolved;
     } else {
-      _modeState(ChatPageMode.normal).browserSessionSnapshot = resolved;
+      _modeState(browserMode).browserSessionSnapshot = resolved;
+    }
+    if (browserMode != _activeConversationMode) {
+      return;
     }
     if (!mounted) {
       _liveBrowserSessionSnapshot = resolved;
@@ -258,9 +276,9 @@ mixin _ChatPageBrowserMixin on _ChatPageStateBase {
     ChatPageMode mode,
     ChatIslandDisplayLayer layer,
   ) {
-    final resolvedLayer = mode == ChatPageMode.normal
-        ? layer
-        : ChatIslandDisplayLayer.mode;
+    final resolvedLayer = mode == ChatPageMode.openclaw
+        ? ChatIslandDisplayLayer.mode
+        : layer;
     _modeState(mode).chatIslandDisplayLayer = resolvedLayer;
     final runtime = _runtimeForMode(mode);
     if (runtime != null) {
@@ -274,7 +292,7 @@ mixin _ChatPageBrowserMixin on _ChatPageStateBase {
       return;
     }
     setState(() {
-      _setChatIslandDisplayLayerForMode(ChatPageMode.normal, layer);
+      _setChatIslandDisplayLayerForMode(_activeConversationMode, layer);
       if (layer != ChatIslandDisplayLayer.tools) {
         _isBrowserOverlayVisible = false;
       }
@@ -286,9 +304,10 @@ mixin _ChatPageBrowserMixin on _ChatPageStateBase {
     if (_activeSurfaceMode != ChatSurfaceMode.normal) {
       return;
     }
+    final browserMode = _activeConversationMode;
     setState(() {
       _setChatIslandDisplayLayerForMode(
-        ChatPageMode.normal,
+        browserMode,
         ChatIslandDisplayLayer.tools,
       );
     });
@@ -307,11 +326,15 @@ mixin _ChatPageBrowserMixin on _ChatPageStateBase {
     if (_activeSurfaceMode != ChatSurfaceMode.normal) {
       return;
     }
+    final browserMode = _activeConversationMode;
     if (!Platform.isAndroid) {
       showToast('当前平台暂不支持浏览器工具视图', type: ToastType.warning);
       return;
     }
     await _refreshLiveBrowserSessionSnapshot(syncRuntime: true);
+    if (!mounted || browserMode != _activeConversationMode) {
+      return;
+    }
     final snapshot = _resolvedBrowserSessionSnapshot;
     if (snapshot == null || !snapshot.available) {
       showToast('当前会话还没有可用的浏览器会话', type: ToastType.warning);
@@ -322,7 +345,7 @@ mixin _ChatPageBrowserMixin on _ChatPageStateBase {
     }
     setState(() {
       _setChatIslandDisplayLayerForMode(
-        ChatPageMode.normal,
+        browserMode,
         ChatIslandDisplayLayer.tools,
       );
       _isBrowserOverlayVisible = true;
@@ -519,17 +542,27 @@ mixin _ChatPageBrowserMixin on _ChatPageStateBase {
                   if (!mounted) {
                     return;
                   }
+                  final browserMode = next == null
+                      ? _activeConversationMode
+                      : _browserModeForWorkspace(next.workspaceId);
+                  if (browserMode == null) {
+                    return;
+                  }
+                  final expectedWorkspaceId = chatConversationWorkspaceId(
+                    _modeState(browserMode).currentConversationId,
+                  );
                   final resolved =
-                      next?.matchesWorkspace(_expectedBrowserWorkspaceId) ==
-                          true
+                      next?.matchesWorkspace(expectedWorkspaceId) == true
                       ? next
                       : null;
-                  final runtime = _runtimeForMode(ChatPageMode.normal);
+                  final runtime = _runtimeForMode(browserMode);
                   if (runtime != null) {
                     runtime.browserSessionSnapshot = resolved;
                   } else {
-                    _modeState(ChatPageMode.normal).browserSessionSnapshot =
-                        resolved;
+                    _modeState(browserMode).browserSessionSnapshot = resolved;
+                  }
+                  if (browserMode != _activeConversationMode) {
+                    return;
                   }
                   setState(() {
                     _liveBrowserSessionSnapshot = resolved;
@@ -551,5 +584,18 @@ mixin _ChatPageBrowserMixin on _ChatPageStateBase {
         ),
       ),
     );
+  }
+
+  ChatPageMode? _browserModeForWorkspace(String workspaceId) {
+    for (final mode in const <ChatPageMode>[
+      ChatPageMode.normal,
+      ChatPageMode.agent,
+    ]) {
+      if (workspaceId ==
+          chatConversationWorkspaceId(_modeState(mode).currentConversationId)) {
+        return mode;
+      }
+    }
+    return null;
   }
 }

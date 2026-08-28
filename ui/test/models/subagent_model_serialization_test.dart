@@ -27,6 +27,26 @@ void main() {
     );
   });
 
+  test('ConversationMode reads legacy Agent mode aliases', () {
+    expect(ConversationMode.agent.storageValue, 'agent');
+    expect(ConversationMode.fromStorageValue('agent'), ConversationMode.agent);
+    expect(ConversationMode.fromStorageValue('codex'), ConversationMode.agent);
+    expect(ConversationMode.fromStorageValue('acp'), ConversationMode.agent);
+  });
+
+  test('missing or unknown conversation mode defaults to agent', () {
+    expect(ConversationMode.fromStorageValue(null), ConversationMode.agent);
+    expect(ConversationMode.fromStorageValue(''), ConversationMode.agent);
+    expect(
+      ConversationMode.fromStorageValue('future_mode'),
+      ConversationMode.agent,
+    );
+    expect(
+      ConversationMode.fromStorageValue('normal'),
+      ConversationMode.agent,
+    );
+  });
+
   test('ScheduledTask keeps subagent fields through json', () {
     final now = DateTime.now().millisecondsSinceEpoch;
     final task = ScheduledTask(

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -14,6 +15,8 @@ import 'package:ui/services/agent_diff_parser.dart';
 import 'package:ui/services/agent_tool_call_parser.dart';
 import 'package:ui/services/agent_message_kinds.dart';
 import 'package:ui/theme/theme_context.dart';
+import 'package:ui/widgets/image_preview_overlay.dart';
+import 'acp_audio_card.dart';
 
 class AgentToolSummaryCard extends StatefulWidget {
   const AgentToolSummaryCard({
@@ -39,23 +42,22 @@ class _AgentToolSummaryCardState extends State<AgentToolSummaryCard> {
   @override
   Widget build(BuildContext context) {
     final cardData = widget.cardData;
+    if (cardData['audioDataUrl'] != null || cardData['audioUrl'] != null) {
+      return AcpAudioCard(cardData: cardData);
+    }
     if (_isCompletedVlmTask(cardData)) {
       return _VlmTaskResultCard(cardData: cardData);
-    }
-    final dashboardRoute = _publishedDashboardRoute(cardData);
-    if (dashboardRoute != null) {
-      return _PublishedProjectCard(
-        cardData: cardData,
-        dashboardRoute: dashboardRoute,
-      );
     }
     if (_usesInlineToolStyle(
       cardData,
       useAgentToolPresentation: widget.useAgentToolPresentation,
     )) {
-      return _InlineToolCallCard(
+      return _AgentToolCardWithImagePreview(
         cardData: cardData,
-        visualProfile: widget.visualProfile,
+        child: _InlineToolCallCard(
+          cardData: cardData,
+          visualProfile: widget.visualProfile,
+        ),
       );
     }
 
@@ -65,6 +67,7 @@ class _AgentToolSummaryCardState extends State<AgentToolSummaryCard> {
     final preview = resolveAgentToolPreview(cardData);
     final typeLabel = resolveAgentToolTypeLabel(cardData);
     final isSubagent = _isSubagentTool(cardData);
+    final isPlan = (cardData['toolType'] ?? '').toString().trim() == 'plan';
     final subagentEvents = isSubagent
         ? _resolveSubagentTimelineEvents(cardData)
         : const <_SubagentTimelineEvent>[];
@@ -75,19 +78,22 @@ class _AgentToolSummaryCardState extends State<AgentToolSummaryCard> {
     final palette = context.omniPalette;
     final cardBackgroundColor = context.isDarkTheme
         ? Color.alphaBlend(
-            statusColor.withValues(alpha: status == 'running' ? 0.11 : 0.09),
-            palette.surfaceSecondary,
+            statusColor.withValues(alpha: status == 'running' ? 0.07 : 0.045),
+            palette.surfacePrimary,
           )
-        : statusColor.withValues(alpha: 0.08);
-    final cardBorder = context.isDarkTheme
-        ? null
-        : Border.all(color: Colors.transparent);
+        : Color.alphaBlend(
+            statusColor.withValues(alpha: status == 'running' ? 0.055 : 0.035),
+            palette.surfacePrimary,
+          );
+    // Keep the capsule presentation, but give it one calm surface and a
+    // restrained semantic border so the type/status pills remain cohesive.
+    final cardBorder = Border.all(
+      color: statusColor.withValues(alpha: context.isDarkTheme ? 0.22 : 0.16),
+      width: 1,
+    );
     final statusTagBackgroundColor = context.isDarkTheme
-        ? Color.alphaBlend(
-            statusColor.withValues(alpha: 0.14),
-            palette.surfaceElevated,
-          )
-        : Colors.white.withValues(alpha: 0.78);
+        ? statusColor.withValues(alpha: 0.13)
+        : statusColor.withValues(alpha: 0.09);
     final statusTagTextColor = context.isDarkTheme
         ? Color.lerp(palette.textSecondary, statusColor, 0.38)!
         : statusColor;
@@ -96,8 +102,8 @@ class _AgentToolSummaryCardState extends State<AgentToolSummaryCard> {
         : widget.visualProfile.primaryTextColor;
     final titleStyle = TextStyle(
       color: titleColor,
-      fontSize: 12,
-      fontWeight: FontWeight.w500,
+      fontSize: 12.5,
+      fontWeight: FontWeight.w600,
       letterSpacing: 0,
       height: 1.15,
     );
@@ -124,34 +130,46 @@ class _AgentToolSummaryCardState extends State<AgentToolSummaryCard> {
       statusTagTextColor: statusTagTextColor,
     );
 
-    return Tooltip(
-      message: tooltipLines.join('\n'),
-      child: Align(
-        alignment: Alignment.centerLeft,
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxWidth: MediaQuery.of(context).size.width * 0.78,
-            minHeight: 34,
-          ),
-          child: Container(
-            margin: const EdgeInsets.only(top: 6, bottom: 2),
-            child: isSubagent
-                ? Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      capsule,
-                      for (final group in subagentGroups)
-                        _SubagentStatusBlock(
-                          group: group,
-                          shimmer:
-                              status == 'running' && !group.isTerminalStatus,
-                          expanded: _expandedSubagentKeys.contains(group.key),
-                          onTap: () => _toggleSubagentGroup(group.key),
-                        ),
-                    ],
-                  )
-                : capsule,
+    return _AgentToolCardWithImagePreview(
+      cardData: cardData,
+      child: Tooltip(
+        message: tooltipLines.join('\n'),
+        child: Align(
+          alignment: Alignment.centerLeft,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: MediaQuery.of(context).size.width * 0.78,
+              minHeight: 36,
+            ),
+            child: Container(
+              margin: const EdgeInsets.only(top: 5, bottom: 3),
+              child: isSubagent
+                  ? Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        capsule,
+                        for (final group in subagentGroups)
+                          _SubagentStatusBlock(
+                            group: group,
+                            shimmer:
+                                status == 'running' && !group.isTerminalStatus,
+                            expanded: _expandedSubagentKeys.contains(group.key),
+                            onTap: () => _toggleSubagentGroup(group.key),
+                          ),
+                      ],
+                    )
+                  : isPlan
+                      ? Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            capsule,
+                            _PlanEntriesBlock(cardData: cardData),
+                          ],
+                        )
+                      : capsule,
+            ),
           ),
         ),
       ),
@@ -192,18 +210,27 @@ class _AgentToolSummaryCardState extends State<AgentToolSummaryCard> {
           color: cardBackgroundColor,
           borderRadius: BorderRadius.circular(999),
           border: cardBorder,
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(
+                alpha: context.isDarkTheme ? 0.16 : 0.055,
+              ),
+              blurRadius: 8,
+              offset: const Offset(0, 3),
+            ),
+          ],
         ),
         child: InkWell(
           onTap: () =>
               unawaited(showAgentToolDetailSheet(context, cardData: cardData)),
           borderRadius: BorderRadius.circular(999),
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 10, 8),
+            padding: const EdgeInsets.fromLTRB(10, 6, 9, 6),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
                 _StatusIcon(status: status, toolType: cardData['toolType']),
-                const SizedBox(width: 8),
+                const SizedBox(width: 7),
                 Flexible(
                   child: status == 'running'
                       ? _FlowingToolTitleText(text: title, style: titleStyle)
@@ -218,11 +245,11 @@ class _AgentToolSummaryCardState extends State<AgentToolSummaryCard> {
                   const SizedBox(width: 8),
                   _DiffStatBadge(label: diffStatLabel),
                 ],
-                const SizedBox(width: 8),
+                const SizedBox(width: 7),
                 Container(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 7,
-                    vertical: 4,
+                    vertical: 3,
                   ),
                   decoration: BoxDecoration(
                     color: statusTagBackgroundColor,
@@ -247,104 +274,279 @@ class _AgentToolSummaryCardState extends State<AgentToolSummaryCard> {
   }
 }
 
-String? _publishedDashboardRoute(Map<String, dynamic> cardData) {
-  final toolName = canonicalAgentToolName(
-    (cardData['toolName'] ?? '').toString(),
-  );
-  if (toolName != 'project_publish' ||
-      (cardData['status'] ?? '').toString() != 'success') {
-    return null;
-  }
-  for (final rawJson in [
-    (cardData['resultPreviewJson'] ?? '').toString(),
-    (cardData['rawResultJson'] ?? '').toString(),
-  ]) {
-    final route = (_decodeJsonMap(rawJson)['dashboardRoute'] ?? '')
-        .toString()
-        .trim();
-    if (route.startsWith('/home/plugin_dashboard?pluginId=') &&
-        route.length > '/home/plugin_dashboard?pluginId='.length) {
-      return route;
-    }
-  }
-  return null;
-}
-
-class _PublishedProjectCard extends StatelessWidget {
-  const _PublishedProjectCard({
-    required this.cardData,
-    required this.dashboardRoute,
-  });
+class _PlanEntriesBlock extends StatelessWidget {
+  const _PlanEntriesBlock({required this.cardData});
 
   final Map<String, dynamic> cardData;
-  final String dashboardRoute;
 
   @override
   Widget build(BuildContext context) {
+    final entries = _planEntries(cardData);
+    if (entries.isEmpty) return const SizedBox.shrink();
     final palette = context.omniPalette;
-    final payload = _decodeJsonMap(
-      (cardData['resultPreviewJson'] ?? cardData['rawResultJson'] ?? '')
-          .toString(),
-    );
-    final name = (payload['name'] ?? payload['title'] ?? 'Vibe App')
-        .toString()
-        .trim();
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: Container(
-        key: const ValueKey('published-project-card'),
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.sizeOf(context).width * 0.84,
-        ),
-        margin: const EdgeInsets.only(top: 7, bottom: 3),
-        padding: const EdgeInsets.fromLTRB(13, 11, 10, 8),
-        decoration: BoxDecoration(
-          color: context.isDarkTheme
-              ? palette.surfaceSecondary
-              : const Color(0xFFF5F8FC),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: palette.borderSubtle),
-        ),
-        child: Row(
-          children: [
-            const Icon(LucideIcons.layoutDashboard, size: 18),
-            const SizedBox(width: 9),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    name.isEmpty ? 'Vibe App' : name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: palette.textPrimary,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                    ),
+    return Padding(
+      padding: const EdgeInsets.only(left: 12, top: 4, right: 8),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (var index = 0; index < entries.length; index++)
+            Padding(
+              padding: EdgeInsets.only(
+                bottom: index == entries.length - 1 ? 0 : 4,
+              ),
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 9,
+                  vertical: 7,
+                ),
+                decoration: BoxDecoration(
+                  color: context.isDarkTheme
+                      ? palette.surfaceElevated.withValues(alpha: 0.52)
+                      : palette.surfaceSecondary.withValues(alpha: 0.72),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: palette.borderSubtle.withValues(alpha: 0.72),
                   ),
-                  Text(
-                    LegacyTextLocalizer.localize('已发布并启用'),
-                    style: TextStyle(
-                      color: palette.textSecondary,
-                      fontSize: 11,
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.only(top: 1),
+                      child: Icon(
+                        _planEntryIcon(entries[index]['status']),
+                        size: 14,
+                        color: _planEntryColor(
+                          entries[index]['status'],
+                          palette,
+                        ),
+                      ),
                     ),
-                  ),
-                ],
+                    const SizedBox(width: 7),
+                    Expanded(
+                      child: Text(
+                        _planEntryText(entries[index], index),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: palette.textSecondary,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          height: 1.25,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
-            TextButton.icon(
-              key: const ValueKey('published-project-open-dashboard'),
-              onPressed: () => context.push(dashboardRoute),
-              icon: const Icon(LucideIcons.arrowUpRight, size: 15),
-              label: Text(LegacyTextLocalizer.localize('打开 Dashboard')),
-            ),
-          ],
-        ),
+        ],
       ),
     );
   }
+}
+
+List<Map<String, dynamic>> _planEntries(Map<String, dynamic> cardData) {
+  final raw = cardData['planEntries'] ?? cardData['entries'];
+  if (raw is! List) return const <Map<String, dynamic>>[];
+  return raw
+      .whereType<Map>()
+      .map((entry) => Map<String, dynamic>.from(entry))
+      .where((entry) => _planEntryText(entry, 0).trim().isNotEmpty)
+      .toList(growable: false);
+}
+
+String _planEntryText(Map<String, dynamic> entry, int index) {
+  final text = (entry['content'] ?? entry['title'] ?? entry['text'] ?? '')
+      .toString()
+      .trim();
+  return text.isEmpty ? '任务 ${index + 1}' : text;
+}
+
+IconData _planEntryIcon(Object? rawStatus) {
+  final status = rawStatus.toString().trim().toLowerCase();
+  if (status == 'completed' || status == 'complete' || status == 'done') {
+    return Icons.check_circle_rounded;
+  }
+  if (status == 'in_progress' ||
+      status == 'in-progress' ||
+      status == 'inprogress' ||
+      status == 'running') {
+    return Icons.radio_button_checked_rounded;
+  }
+  return Icons.radio_button_unchecked_rounded;
+}
+
+Color _planEntryColor(Object? rawStatus, dynamic palette) {
+  final status = rawStatus.toString().trim().toLowerCase();
+  if (status == 'completed' || status == 'complete' || status == 'done') {
+    return const Color(0xFF2F8F4E);
+  }
+  if (status == 'in_progress' ||
+      status == 'in-progress' ||
+      status == 'inprogress' ||
+      status == 'running') {
+    return palette.accentPrimary;
+  }
+  return palette.textTertiary;
+}
+
+class _AgentToolCardWithImagePreview extends StatelessWidget {
+  const _AgentToolCardWithImagePreview({
+    required this.cardData,
+    required this.child,
+  });
+
+  final Map<String, dynamic> cardData;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final images = _resolveAgentToolPreviewImages(cardData);
+    if (images.isEmpty) {
+      return child;
+    }
+    final cardId = (cardData['cardId'] ?? cardData['toolCallId'] ?? 'tool')
+        .toString();
+    final heroTags = List<String>.generate(
+      images.length,
+      (index) => 'agent_tool_image_${cardId}_$index',
+    );
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        child,
+        const SizedBox(height: 6),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            for (var index = 0; index < images.length; index++)
+              GestureDetector(
+                key: ValueKey('agent-tool-image-preview-$cardId-$index'),
+                onTap: () => ImagePreviewOverlay.showAll(
+                  context,
+                  sources: images.map((image) => image.source).toList(),
+                  initialIndex: index,
+                  heroTags: heroTags,
+                ),
+                child: Hero(
+                  tag: heroTags[index],
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: SizedBox(
+                      width: math
+                          .min(220, MediaQuery.sizeOf(context).width * 0.62)
+                          .toDouble(),
+                      height: 136,
+                      child: images[index].thumbnail,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _AgentToolPreviewImage {
+  const _AgentToolPreviewImage({required this.source, required this.thumbnail});
+
+  final ImagePreviewSource source;
+  final Widget thumbnail;
+}
+
+List<_AgentToolPreviewImage> _resolveAgentToolPreviewImages(
+  Map<String, dynamic> cardData,
+) {
+  final candidates = <dynamic>[
+    cardData['imageDataUrl'],
+    cardData['dataUrl'],
+    cardData['imageUrl'],
+    if (cardData['artifacts'] is List) ...(cardData['artifacts'] as List),
+  ];
+  final images = <_AgentToolPreviewImage>[];
+  final seen = <String>{};
+
+  void addCandidate(dynamic candidate) {
+    if (candidate is Map) {
+      final normalized = candidate.map(
+        (key, value) => MapEntry(key.toString(), value),
+      );
+      for (final key in const <String>[
+        'imageDataUrl',
+        'dataUrl',
+        'imageUrl',
+        'url',
+        'path',
+      ]) {
+        addCandidate(normalized[key]);
+      }
+      return;
+    }
+    final value = (candidate ?? '').toString().trim();
+    if (value.isEmpty || !seen.add(value)) {
+      return;
+    }
+    if (value.startsWith('data:image/')) {
+      final comma = value.indexOf(',');
+      if (comma < 0 || comma == value.length - 1) {
+        return;
+      }
+      try {
+        final bytes = base64Decode(value.substring(comma + 1));
+        images.add(
+          _AgentToolPreviewImage(
+            source: MemoryImageSource(bytes),
+            thumbnail: Image.memory(
+              bytes,
+              fit: BoxFit.cover,
+              gaplessPlayback: true,
+              errorBuilder: (_, _, _) => const ColoredBox(
+                color: Color(0xFFE9EEF5),
+                child: Icon(Icons.broken_image_outlined),
+              ),
+            ),
+          ),
+        );
+      } catch (_) {
+        return;
+      }
+      return;
+    }
+    if (value.startsWith('http://') || value.startsWith('https://')) {
+      images.add(
+        _AgentToolPreviewImage(
+          source: NetworkImageSource(value),
+          thumbnail: Image.network(value, fit: BoxFit.cover),
+        ),
+      );
+      return;
+    }
+    final lower = value.toLowerCase();
+    if (lower.endsWith('.png') ||
+        lower.endsWith('.jpg') ||
+        lower.endsWith('.jpeg') ||
+        lower.endsWith('.webp') ||
+        lower.endsWith('.gif')) {
+      images.add(
+        _AgentToolPreviewImage(
+          source: FileImageSource(value),
+          thumbnail: Image.file(File(value), fit: BoxFit.cover),
+        ),
+      );
+    }
+  }
+
+  for (final candidate in candidates) {
+    addCandidate(candidate);
+  }
+  return images;
 }
 
 bool _isCompletedVlmTask(Map<String, dynamic> cardData) {
@@ -1015,9 +1217,11 @@ class _FlowingInlineToolTitleState extends State<_FlowingInlineToolTitle>
     if (MediaQuery.disableAnimationsOf(context)) {
       return widget.child;
     }
+    // Keep motion as a live-state cue, but avoid the high-contrast white flash
+    // that previously made every running tool look like a neon badge.
     final highlightColor = context.isDarkTheme
-        ? Colors.white.withValues(alpha: 0.96)
-        : Colors.white.withValues(alpha: 0.92);
+        ? Colors.white.withValues(alpha: 0.42)
+        : Colors.white.withValues(alpha: 0.62);
     return AnimatedBuilder(
       animation: _controller,
       child: widget.child,
@@ -1833,9 +2037,10 @@ class _FlowingToolTitleTextState extends State<_FlowingToolTitleText>
     }
 
     final baseColor = widget.style.color ?? context.omniPalette.textPrimary;
+    // Motion remains visible for running calls without washing the title out.
     final highlightColor = context.isDarkTheme
-        ? Colors.white.withValues(alpha: 0.96)
-        : Colors.white.withValues(alpha: 0.92);
+        ? Colors.white.withValues(alpha: 0.42)
+        : Colors.white.withValues(alpha: 0.62);
 
     return AnimatedBuilder(
       animation: _controller,
@@ -1884,25 +2089,34 @@ class _StatusIcon extends StatelessWidget {
     final iconColor = context.isDarkTheme
         ? Color.lerp(context.omniPalette.textSecondary, color, 0.38)!
         : color;
-    return SizedBox(
+    return DecoratedBox(
       key: const ValueKey('agent-tool-summary-leading-icon'),
-      width: 20,
-      height: 20,
-      child: Center(
-        child: status == 'running'
-            ? SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(
-                  strokeWidth: 1.8,
-                  valueColor: AlwaysStoppedAnimation<Color>(iconColor),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: context.isDarkTheme ? 0.16 : 0.10),
+        shape: BoxShape.circle,
+      ),
+      child: SizedBox(
+        width: 24,
+        height: 24,
+        child: Center(
+          child: status == 'running'
+              ? SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 1.7,
+                    valueColor: AlwaysStoppedAnimation<Color>(iconColor),
+                  ),
+                )
+              : Icon(
+                  resolveAgentToolStatusIcon(
+                    status,
+                    (toolType ?? '').toString(),
+                  ),
+                  size: 16,
+                  color: iconColor,
                 ),
-              )
-            : Icon(
-                resolveAgentToolStatusIcon(status, (toolType ?? '').toString()),
-                size: 18,
-                color: iconColor,
-              ),
+        ),
       ),
     );
   }

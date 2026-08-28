@@ -36,6 +36,19 @@ class DebugOmniMindProviderBootstrapTest {
     }
 
     @Test
+    fun `device debug build can install explicitly configured provider`() {
+        assertTrue(
+            DebugOmniMindProviderBootstrap.shouldInstallDebugProvider(enabled = true)
+        )
+        assertTrue(
+            DebugOmniMindProviderBootstrap.shouldInstallDebugProvider(enabled = true)
+        )
+        assertFalse(
+            DebugOmniMindProviderBootstrap.shouldInstallDebugProvider(enabled = false)
+        )
+    }
+
+    @Test
     fun `legacy debug GLM scene binding migrates to OmniMind`() {
         assertTrue(
             DebugOmniMindProviderBootstrap.shouldReplaceDefaultBinding(
@@ -76,6 +89,16 @@ class DebugOmniMindProviderBootstrapTest {
         assertFalse(
             DebugOmniMindProviderBootstrap.shouldReplaceDefaultBinding(
                 existingProfileId = "debug-runtime-provider",
+                existingProfileConfigured = true,
+            )
+        )
+    }
+
+    @Test
+    fun `current debug provider binding remains user selected`() {
+        assertFalse(
+            DebugOmniMindProviderBootstrap.shouldReplaceDefaultBinding(
+                existingProfileId = DebugOmniMindProviderBootstrap.LLMTHU_PROFILE_ID,
                 existingProfileConfigured = true,
             )
         )

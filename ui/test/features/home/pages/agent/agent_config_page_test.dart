@@ -53,6 +53,9 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   const agentRuntimeChannel = MethodChannel('cn.com.omnimind.bot/AgentRuntime');
+  const assistCoreChannel = MethodChannel(
+    'cn.com.omnimind.bot/AssistCoreEvent',
+  );
 
   setUp(() async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
@@ -62,12 +65,85 @@ void main() {
   tearDown(() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(agentRuntimeChannel, null);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(assistCoreChannel, null);
   });
 
-  testWidgets('Codex config page reads and writes auth/config fields', (
+  testWidgets('shared Provider selector saves the Agent scene binding', (
     tester,
   ) async {
-    Map<String, dynamic>? saved;
+    Map<String, dynamic>? savedBinding;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(agentRuntimeChannel, (call) async {
+          if (call.method == 'agent/list') {
+            return _catalog(_agent('codex-acp', 'Codex'));
+          }
+          if (call.method == 'agent/config/read') {
+            return <String, dynamic>{
+              'agentId': 'codex-acp',
+              'kind': 'codex',
+              'configPath': '~/.codex/config.toml',
+              'authPath': '~/.codex/auth.json',
+            };
+          }
+          if (call.method == 'disconnect') {
+            return <String, dynamic>{'connected': false, 'ready': true};
+          }
+          return null;
+        });
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(assistCoreChannel, (call) async {
+          switch (call.method) {
+            case 'listModelProviderProfiles':
+              return <String, dynamic>{
+                'editingProfileId': 'provider-1',
+                'profiles': <Map<String, dynamic>>[
+                  <String, dynamic>{
+                    'id': 'provider-1',
+                    'name': 'DeepSeek Provider',
+                    'baseUrl': 'https://api.deepseek.com',
+                    'apiKey': 'sk-test',
+                    'configured': true,
+                    'hasApiKey': true,
+                    'revision': 1,
+                  },
+                ],
+              };
+            case 'getSceneModelBindings':
+              return <dynamic>[];
+            case 'fetchProviderModels':
+              return <Map<String, dynamic>>[
+                <String, dynamic>{'id': 'deepseek-v4-pro'},
+              ];
+            case 'saveSceneModelBinding':
+              savedBinding = Map<String, dynamic>.from(call.arguments as Map);
+              return <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'sceneId': 'scene.dispatch.model',
+                  'providerProfileId': 'provider-1',
+                  'modelId': 'deepseek-v4-pro',
+                },
+              ];
+          }
+          return null;
+        });
+
+    await _pumpPage(tester, 'codex-acp');
+    await tester.tap(
+      find.byKey(const Key('agent-shared-provider-model-selector')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('deepseek-v4-pro'));
+    await tester.pumpAndSettle();
+
+    expect(savedBinding?['sceneId'], 'scene.dispatch.model');
+    expect(savedBinding?['providerProfileId'], 'provider-1');
+    expect(savedBinding?['modelId'], 'deepseek-v4-pro');
+  });
+
+  testWidgets('Codex config page uses the shared Provider selector', (
+    tester,
+  ) async {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(agentRuntimeChannel, (call) async {
           if (call.method == 'agent/list') {
@@ -84,18 +160,6 @@ void main() {
               'apiKey': 'sk-old',
             };
           }
-          if (call.method == 'agent/config/write') {
-            saved = Map<String, dynamic>.from(call.arguments as Map);
-            return <String, dynamic>{
-              'agentId': 'codex-acp',
-              'kind': 'codex',
-              'configPath': '~/.codex/config.toml',
-              'authPath': '~/.codex/auth.json',
-              'baseUrl': saved!['baseUrl'],
-              'model': saved!['model'],
-              'apiKey': saved!['apiKey'],
-            };
-          }
           return null;
         });
 
@@ -103,25 +167,13 @@ void main() {
 
     expect(find.textContaining('~/.codex/config.toml'), findsOneWidget);
     expect(find.textContaining('~/.codex/auth.json'), findsOneWidget);
-    await tester.enterText(
-      find.byKey(const Key('codex-agent-base-url')),
-      'https://api.example/v1',
+    expect(
+      find.byKey(const Key('agent-shared-provider-model-selector')),
+      findsOneWidget,
     );
-    await tester.enterText(
-      find.byKey(const Key('codex-agent-model')),
-      'deepseek-chat',
-    );
-    await tester.enterText(
-      find.byKey(const Key('codex-agent-api-key')),
-      'sk-new',
-    );
-    await tester.tap(find.byKey(const Key('agent-config-save')));
-    await tester.pumpAndSettle();
-
-    expect(saved?['agentId'], 'codex-acp');
-    expect(saved?['baseUrl'], 'https://api.example/v1');
-    expect(saved?['model'], 'deepseek-chat');
-    expect(saved?['apiKey'], 'sk-new');
+    expect(find.byKey(const Key('codex-agent-base-url')), findsNothing);
+    expect(find.byKey(const Key('codex-agent-model')), findsNothing);
+    expect(find.byKey(const Key('codex-agent-api-key')), findsNothing);
   });
 
   testWidgets(
@@ -287,36 +339,23 @@ void main() {
 
     await _pumpPage(tester, 'deepseek-harness-acp');
 
-    expect(find.text('文件权限'), findsNothing);
     expect(
       find.byKey(const ValueKey('deepseek-harness-permission-read-only')),
-      findsNothing,
+      findsOneWidget,
     );
     expect(
       find.textContaining('~/.dsh/omnibot-acp/config.json'),
       findsOneWidget,
     );
-    await tester.enterText(
-      find.byKey(const Key('deepseek-harness-base-url')),
-      'https://gateway.example/v1',
-    );
-    await tester.enterText(
-      find.byKey(const Key('deepseek-harness-model')),
-      'deepseek-custom',
-    );
-    await tester.enterText(
-      find.byKey(const Key('deepseek-harness-api-key')),
-      'sk-new',
-    );
     await tester.tap(find.byKey(const Key('agent-config-save')));
     await tester.pumpAndSettle();
 
     expect(saved?['agentId'], 'deepseek-harness-acp');
-    expect(saved?['baseUrl'], 'https://gateway.example/v1');
-    expect(saved?['model'], 'deepseek-custom');
-    expect(saved?['apiKey'], 'sk-new');
     expect(saved?['reasoningEffort'], 'high');
-    expect(saved?.containsKey('permissionMode'), isFalse);
+    expect(saved?['permissionMode'], 'read-only');
+    expect(saved?.containsKey('baseUrl'), isFalse);
+    expect(saved?.containsKey('model'), isFalse);
+    expect(saved?.containsKey('apiKey'), isFalse);
   });
 }
 
@@ -348,7 +387,7 @@ Map<String, dynamic> _catalog(Map<String, dynamic> agent) {
 Map<String, dynamic> _agent(String id, String name) {
   final command = switch (id) {
     'codex-acp' => 'codex-acp',
-    'deepseek-harness-acp' => 'dsh-acp-demo',
+    'deepseek-harness-acp' => 'dsh',
     _ => 'claude-agent-acp',
   };
   return <String, dynamic>{

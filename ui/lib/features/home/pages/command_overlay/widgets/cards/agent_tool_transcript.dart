@@ -4,13 +4,18 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:ui/core/router/go_router_manager.dart';
 import 'package:ui/features/home/pages/chat/tool_activity_utils.dart';
 import 'package:ui/features/home/pages/command_overlay/widgets/cards/agent_diff_viewer.dart';
 import 'package:ui/features/home/pages/command_overlay/widgets/cards/terminal_output_utils.dart';
+import 'package:ui/l10n/legacy_text_localizer.dart';
 import 'package:ui/services/chat_detail_sheet_preferences.dart';
 import 'package:ui/services/agent_diff_parser.dart';
 import 'package:ui/services/agent_tool_call_parser.dart';
+import 'package:ui/services/assists_core_service.dart';
+import 'package:ui/services/omnibot_resource_service.dart';
 import 'package:ui/theme/app_colors.dart';
+import 'package:ui/utils/ui.dart';
 import 'package:ui/widgets/omni_glass.dart';
 
 const Color _kTimeoutStatusColor = Color(0xFFFF8A3D);
@@ -274,13 +279,10 @@ String _resolveAgentToolPromptAgentName(Map<String, dynamic> cardData) {
   if (explicit.isNotEmpty) {
     return explicit;
   }
-  return switch ((cardData['agentId'] ?? '').toString().trim()) {
-    'codex-acp' || 'codex-remote' => 'Codex',
-    'claude-code-acp' => 'Claude Code',
-    'opencode-acp' => 'OpenCode',
-    'deepseek-harness-acp' => 'DeepSeek Harness',
-    _ => '',
-  };
+  // The native ACP event carries the resolved display name when available.
+  // Keep an id fallback for custom/ newly-installed Harnesses instead of
+  // maintaining a vendor allow-list in the card renderer.
+  return (cardData['agentId'] ?? '').toString().trim();
 }
 
 String _resolveAgentToolPromptTitle(
@@ -986,6 +988,12 @@ class _AgentToolDetailContent extends StatelessWidget {
     final diffSummary = _resolveDiffSummary(cardData);
     final isDiffView = diffSummary?.files.isNotEmpty == true;
     final detailSpan = isDiffView ? null : _buildDetailTextSpan(transcript);
+    final actions = _resolveAgentToolActions(cardData);
+    final copyText = _agentToolCopyText(
+      cardData,
+      transcript,
+      isDiffView: isDiffView,
+    );
 
     return Column(
       children: [
@@ -1011,6 +1019,38 @@ class _AgentToolDetailContent extends StatelessWidget {
               _DialogMetaTag(label: typeLabel),
               const SizedBox(width: 6),
               _DialogStatusTag(status: status, label: statusLabel),
+              const SizedBox(width: 2),
+              IconButton(
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints.tightFor(
+                  width: 28,
+                  height: 28,
+                ),
+                splashRadius: 14,
+                tooltip: LegacyTextLocalizer.isEnglish
+                    ? 'Copy details'
+                    : '复制详情',
+                onPressed: copyText.isEmpty
+                    ? null
+                    : () async {
+                        final copied =
+                            await AssistsMessageService.copyToClipboard(
+                              copyText,
+                            );
+                        showToast(
+                          copied
+                              ? (LegacyTextLocalizer.isEnglish
+                                    ? 'Copied'
+                                    : '已复制')
+                              : (LegacyTextLocalizer.isEnglish
+                                    ? 'Copy failed'
+                                    : '复制失败'),
+                          type: copied ? ToastType.success : ToastType.error,
+                        );
+                      },
+                icon: const Icon(LucideIcons.copy, size: 15),
+              ),
             ],
           ),
         ),
@@ -1022,8 +1062,166 @@ class _AgentToolDetailContent extends StatelessWidget {
                   child: SelectableText.rich(detailSpan!),
                 ),
         ),
+        if (actions.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 0, 18, 14),
+            child: _AgentToolActionBar(actions: actions),
+          ),
       ],
     );
+  }
+}
+
+String _agentToolCopyText(
+  Map<String, dynamic> cardData,
+  AgentToolTranscript transcript, {
+  required bool isDiffView,
+}) {
+  final body = isDiffView
+      ? (cardData['diffText'] ?? '').toString()
+      : transcript.outputText;
+  final prompt = transcript.promptLine.trimRight();
+  final output = body.trimRight();
+  if (prompt.isEmpty) return output;
+  if (output.isEmpty) return prompt;
+  return '$prompt\n$output';
+}
+
+List<Map<String, dynamic>> _resolveAgentToolActions(
+  Map<String, dynamic> cardData,
+) {
+  final actions = <Map<String, dynamic>>[];
+  final rawActions = cardData['actions'];
+  if (rawActions is List) {
+    actions.addAll(
+      rawActions.whereType<Map>().map(
+        (item) => item.map((key, value) => MapEntry(key.toString(), value)),
+      ),
+    );
+  }
+  final workspaceId = (cardData['workspaceId'] ?? '').toString().trim();
+  final hasWorkspaceAction = actions.any(
+    (action) => (action['type'] ?? '').toString().trim() == 'workspace',
+  );
+  if (workspaceId.isNotEmpty && !hasWorkspaceAction) {
+    actions.add(<String, dynamic>{
+      'type': 'workspace',
+      'label': LegacyTextLocalizer.isEnglish ? 'Open workspace' : '打开工作区',
+      'payload': <String, dynamic>{'workspaceId': workspaceId},
+    });
+  }
+  final toolType = (cardData['toolType'] ?? '').toString().trim();
+  if (cardData['showScheduleAction'] == true || toolType == 'schedule') {
+    actions.add(<String, dynamic>{
+      'type': 'route',
+      'label': LegacyTextLocalizer.isEnglish
+          ? 'View scheduled tasks'
+          : '查看定时任务',
+      'target': '/task/scheduled_tasks',
+    });
+  }
+  if (cardData['showAlarmAction'] == true || toolType == 'alarm') {
+    actions.add(<String, dynamic>{
+      'type': 'route',
+      'label': LegacyTextLocalizer.isEnglish ? 'View alarms' : '查看闹钟列表',
+      'target': '/task/scheduled_tasks?tab=alarm',
+    });
+  }
+  return actions
+      .where((action) => (action['label'] ?? '').toString().trim().isNotEmpty)
+      .toList(growable: false);
+}
+
+class _AgentToolActionBar extends StatelessWidget {
+  const _AgentToolActionBar({required this.actions});
+
+  final List<Map<String, dynamic>> actions;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          for (var index = 0; index < actions.length; index++)
+            OutlinedButton(
+              key: ValueKey('agent-tool-action-$index'),
+              onPressed: () => unawaited(_runAgentToolAction(actions[index])),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFFDDE8F7),
+                side: const BorderSide(color: Color(0xFF34445E)),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                minimumSize: const Size(0, 34),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: Text(
+                actions[index]['label'].toString(),
+                style: const TextStyle(fontSize: 11.5),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+Future<void> _runAgentToolAction(Map<String, dynamic> action) async {
+  final type = (action['type'] ?? '').toString().trim().toLowerCase();
+  final target = (action['target'] ?? '').toString().trim();
+  final rawPayload = action['payload'];
+  final payload = rawPayload is Map
+      ? rawPayload.map((key, value) => MapEntry(key.toString(), value))
+      : const <String, dynamic>{};
+  final path = (payload['path'] ?? payload['workspacePath'] ?? '')
+      .toString()
+      .trim();
+  final shellPath =
+      (payload['shellPath'] ?? payload['workspaceShellPath'] ?? '')
+          .toString()
+          .trim();
+
+  if (type == 'route' && target.isNotEmpty) {
+    GoRouterManager.push(target);
+    return;
+  }
+  if (type == 'workspace') {
+    await OmnibotResourceService.openWorkspace(
+      workspaceId: payload['workspaceId']?.toString(),
+      absolutePath: path.isEmpty ? null : path,
+      shellPath: shellPath.isEmpty ? null : shellPath,
+      uri: target.isEmpty ? null : target,
+    );
+    return;
+  }
+  if (type == 'save' && path.isNotEmpty) {
+    await OmnibotResourceService.saveToLocal(
+      sourcePath: path,
+      fileName: (payload['fileName'] ?? payload['title'] ?? 'artifact')
+          .toString(),
+      mimeType: (payload['mimeType'] ?? 'application/octet-stream').toString(),
+    );
+    return;
+  }
+  if (path.isNotEmpty && (type == 'preview' || type == 'open')) {
+    await OmnibotResourceService.openFilePath(
+      path,
+      uri: target.isEmpty ? null : target,
+      title: payload['title']?.toString(),
+      previewKind: payload['previewKind']?.toString(),
+      mimeType: payload['mimeType']?.toString(),
+      shellPath: shellPath.isEmpty ? null : shellPath,
+    );
+    return;
+  }
+  if (target.isNotEmpty) {
+    if (!await OmnibotResourceService.handleLinkTap(target)) {
+      await OmnibotResourceService.openUri(target);
+    }
   }
 }
 

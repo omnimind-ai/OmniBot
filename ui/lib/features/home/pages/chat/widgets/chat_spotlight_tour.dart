@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:ui/theme/theme_context.dart';
+import 'package:ui/widgets/glass_popup.dart';
 
 class ChatSpotlightTour extends StatefulWidget {
   const ChatSpotlightTour({
@@ -39,9 +40,10 @@ class _ChatSpotlightTourState extends State<ChatSpotlightTour> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final anchorBox =
-          widget.anchorKey?.currentContext?.findRenderObject() as RenderBox?;
+          findActiveRenderObject(widget.anchorKey?.currentContext)
+              as RenderBox?;
       final overlayBox =
-          _overlayKey.currentContext?.findRenderObject() as RenderBox?;
+          findActiveRenderObject(_overlayKey.currentContext) as RenderBox?;
       if (anchorBox == null ||
           overlayBox == null ||
           !anchorBox.hasSize ||

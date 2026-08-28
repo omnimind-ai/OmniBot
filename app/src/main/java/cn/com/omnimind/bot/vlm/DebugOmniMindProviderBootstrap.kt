@@ -1,10 +1,10 @@
 package cn.com.omnimind.bot.vlm
 
+import android.content.Context
 import cn.com.omnimind.baselib.llm.ModelProviderConfigStore
 import cn.com.omnimind.baselib.llm.ModelProviderProfile
 import cn.com.omnimind.baselib.llm.OpenAiWireApi
 import cn.com.omnimind.baselib.llm.SceneModelBindingStore
-import cn.com.omnimind.baselib.llm.SceneOperationConfigStore
 import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.BuildConfig
 
@@ -15,12 +15,13 @@ object DebugOmniMindProviderBootstrap {
     private const val TAG = "DebugOmniMindProvider"
     private val DEFAULT_LLMTHU_SCENES = listOf(
         "scene.dispatch.model",
-        SceneOperationConfigStore.SCENE_ID,
         "scene.compactor.context.chat",
     )
 
-    fun install() {
-        if (!BuildConfig.ENABLE_LLMTHU_BOOTSTRAP) return
+    fun install(context: Context) {
+        if (!shouldInstallDebugProvider(BuildConfig.ENABLE_LLMTHU_BOOTSTRAP)) {
+            return
+        }
         val llmThuPlan = createLlmThuPlan(
             apiBase = BuildConfig.DEBUG_LLMTHU_API_BASE,
             apiKey = BuildConfig.DEBUG_LLMTHU_API_KEY,
@@ -77,6 +78,14 @@ object DebugOmniMindProviderBootstrap {
         )
     }
 
+    /**
+     * The device-validation APK is allowed to use the same explicitly
+     * configured LLMTHU Provider as the debug APK. The Provider is only
+     * written when the build enables the bootstrap and supplies a credential;
+     * otherwise the user's existing Provider configuration is preserved.
+     */
+    internal fun shouldInstallDebugProvider(enabled: Boolean): Boolean = enabled
+
     private val DEBUG_MANAGED_PROFILE_IDS = setOf(
         LEGACY_OMNIMIND_PROFILE_ID,
         LLMTHU_PROFILE_ID,
@@ -87,7 +96,7 @@ object DebugOmniMindProviderBootstrap {
         existingProfileConfigured: Boolean,
     ): Boolean = existingProfileId == null ||
         !existingProfileConfigured ||
-        existingProfileId in DEBUG_MANAGED_PROFILE_IDS
+        existingProfileId == LEGACY_OMNIMIND_PROFILE_ID
 
     internal fun createLlmThuPlan(
         apiBase: String,

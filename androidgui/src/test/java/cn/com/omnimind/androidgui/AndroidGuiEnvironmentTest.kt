@@ -34,6 +34,11 @@ class AndroidGuiEnvironmentTest {
     }
 
     @Test
+    fun `click gesture keeps a real tap duration`() {
+        assertEquals(100L, CLICK_GESTURE_DURATION_MS)
+    }
+
+    @Test
     fun `screen capture waits for transient accessibility reconnect`() = runBlocking {
         val platform = ReconnectingPlatform()
         val environment = AndroidGuiEnvironment(appContext = null, platform = platform)
@@ -79,6 +84,26 @@ class AndroidGuiEnvironmentTest {
 
         assertTrue(result.success)
         assertEquals(3, platform.observeCalls)
+        assertEquals("host_completed", result.diagnostics["state_stabilization"])
+        assertEquals("stable", result.diagnostics["state_stabilization_result"])
+    }
+
+    @Test
+    fun `action does not stabilize on repeated pre-action state before delayed transition`() = runBlocking {
+        val platform = ReconnectingPlatform().apply {
+            ready = true
+            observedStates += state(xml = "<hierarchy value=\"before\" />")
+            observedStates += state(xml = "<hierarchy value=\"before\" />")
+            observedStates += state(xml = "<hierarchy value=\"before\" />")
+            observedStates += state(xml = "<hierarchy value=\"after\" />")
+            observedStates += state(xml = "<hierarchy value=\"after\" />")
+        }
+        val environment = AndroidGuiEnvironment(appContext = null, platform = platform)
+
+        val result = environment.act(Action(tool = "click", args = mapOf("x" to 10, "y" to 20)))
+
+        assertTrue(result.success)
+        assertEquals(5, platform.observeCalls)
         assertEquals("host_completed", result.diagnostics["state_stabilization"])
         assertEquals("stable", result.diagnostics["state_stabilization_result"])
     }

@@ -489,7 +489,10 @@ object InternalRunLogStore {
             "task_name" to record.toolName.ifBlank { "vlm_task" },
             "goal" to record.goal,
             "task_parameters" to linkedMapOf<String, Any?>("goal" to record.goal),
-            "seed" to null,
+            // Android RunLogs do not have an AndroidWorld random seed. Use a
+            // stable non-null sentinel so the official OmniFlow RunLog schema
+            // survives the JSON bridge and can be consumed by save_function.
+            "seed" to 0,
             "status" to status,
             "success" to success,
             "validator" to linkedMapOf(
@@ -521,14 +524,12 @@ object InternalRunLogStore {
         val beforeState = statePayload(context, beforeStateId)
         val payload = linkedMapOf<String, Any?>(
             "step_index" to (numberToLong(step["step_index"]) ?: 0L).toInt(),
-            "before_state_id" to beforeStateId,
             "observation" to externalStatePayload(context, beforeStateId),
             "action" to externalActionPayload(
                 action = stringMap(step["action"]),
                 display = stringMap(beforeState["display"]),
             ),
             "result" to externalResultPayload(stringMap(step["result"])),
-            "after_state_id" to afterStateId,
             "next_observation" to externalStatePayload(context, afterStateId),
         )
         stringMap(step["metadata"]).takeIf { it.isNotEmpty() }?.let {
@@ -542,12 +543,15 @@ object InternalRunLogStore {
         stateId: String,
     ): Map<String, Any?> {
         val state = statePayload(context, stateId)
+        val display = stringMap(state["display"])
         return linkedMapOf(
-            // State screenshots and XML remain available through get_run_log_state.
-            // The public RunLog schema permits a null pixel reference when the
-            // recording only persisted the state id.
+            // The official RunLog schema requires a complete screenshot
+            // reference (including sha256). Android's internal state store
+            // has a path but not a content hash, so expose null rather than
+            // sending an invalid partial screenshot object. The XML forest,
+            // display metadata and state id remain the transfer evidence.
             "pixels" to null,
-            "forest" to null,
+            "forest" to state["xml"]?.toString().orEmpty(),
             "ui_elements" to emptyList<Any?>(),
             "auxiliaries" to linkedMapOf<String, Any?>(
                 "state_id" to stateId,

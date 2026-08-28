@@ -58,7 +58,7 @@ internal class RemoteCodexBridgeConnection(
                     gson.toJson(
                         mapOf(
                             "type" to "hello",
-                            "protocol" to 1,
+                            "protocol" to "acp",
                             "client" to "omnibot_android",
                             "token" to config.authToken,
                             "cwd" to config.cwd.trim()
@@ -155,7 +155,7 @@ internal class RemoteCodexBridgeConnection(
                 scope.launch { onStderrLine(message) }
             }
             else -> {
-                // Some bridge implementations proxy raw app-server JSON instead of an envelope.
+                // Some bridge implementations forward raw ACP JSON instead of an envelope.
                 scope.launch { onStdoutLine(raw) }
             }
         }

@@ -49,7 +49,7 @@ extension _HomeDrawerActions on HomeDrawerState {
     // 都会被 AgentConversationModePolicy 过滤掉)。chatOnly 保持继承,因为那是用户
     // 主动选择的纯聊天模式。
     final newMode = widget.newConversationMode == ConversationMode.subagent
-        ? ConversationMode.normal
+        ? ConversationMode.agent
         : widget.newConversationMode;
     _openThreadTarget(
       ConversationThreadTarget.newConversation(
@@ -134,11 +134,11 @@ extension _HomeDrawerActions on HomeDrawerState {
     }
   }
 
-  Future<void> _commitTitleEdit() async {
+  Future<void> _commitTitleEdit([String? submittedTitle]) async {
     final threadKey = _editingThreadKey;
     if (threadKey == null) return;
 
-    final newTitle = _titleEditingController.text.trim();
+    final newTitle = (submittedTitle ?? _titleEditingController.text).trim();
     final conversation = _allConversations
         .cast<ConversationModel?>()
         .firstWhere((c) => c!.threadKey == threadKey, orElse: () => null);
@@ -235,6 +235,21 @@ extension _HomeDrawerActions on HomeDrawerState {
     showToast(
       deleted ? context.trLegacy('已删除') : context.trLegacy('删除失败'),
       type: deleted ? ToastType.success : ToastType.error,
+    );
+  }
+
+  Future<void> _copyConversation(ConversationModel conversation) async {
+    if (_busyConversationKeys.contains(conversation.threadKey)) {
+      return;
+    }
+    final copied = await ConversationHistoryService.copyConversation(
+      conversation.id,
+      mode: conversation.mode,
+    );
+    if (!mounted) return;
+    showToast(
+      copied ? context.trLegacy('已复制对话') : context.trLegacy('复制失败'),
+      type: copied ? ToastType.success : ToastType.error,
     );
   }
 
@@ -417,6 +432,19 @@ extension _HomeDrawerActions on HomeDrawerState {
             ),
           ),
         ),
+      ConversationSlideAction(
+        onPressed: () => _copyConversation(conversation),
+        backgroundColor: context.isDarkTheme
+            ? context.omniPalette.surfaceElevated
+            : AppColors.text.withValues(alpha: 0.62),
+        child: const Center(
+          child: Icon(
+            Icons.content_copy_rounded,
+            size: HomeDrawerState._conversationActionIconSize,
+            color: Colors.white,
+          ),
+        ),
+      ),
       ConversationSlideAction(
         onPressed: () => conversation.isArchived
             ? _unarchiveConversation(conversation)

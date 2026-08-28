@@ -1,6 +1,7 @@
 package cn.com.omnimind.bot.ui.channel
 
 import android.content.Context
+import cn.com.omnimind.bot.agent.AgentRuntimeErrorSupport
 import cn.com.omnimind.bot.agent.runtime.AgentRuntimeManager
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
@@ -74,10 +75,16 @@ class AgentRuntimeChannel {
             }.onSuccess { payload ->
                 result.success(payload)
             }.onFailure { error ->
+                val detail = AgentRuntimeErrorSupport.safeDiagnosticMessage(error)
+                val failureKind = AgentRuntimeErrorSupport.failureKind(error)
                 result.error(
                     "AGENT_RUNTIME_CALL_FAILED",
-                    error.message ?: error.javaClass.simpleName,
-                    null
+                    AgentRuntimeErrorSupport.userFacingMessage(error)
+                        ?: "${call.method}: ${detail.ifBlank { error.javaClass.simpleName }}",
+                    buildMap {
+                        put("method", call.method)
+                        failureKind?.let { put("failureKind", it) }
+                    }
                 )
             }
         }

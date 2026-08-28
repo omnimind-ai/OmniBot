@@ -173,14 +173,7 @@ List<ChatMessageModel> resolveAgentToolMessagesForTask(
 }
 
 String? resolveAgentToolTaskId(ChatMessageModel message) {
-  final fromCard = (message.cardData?['taskId'] ?? '').toString().trim();
-  if (fromCard.isNotEmpty) {
-    return fromCard;
-  }
-  final fromStream = (message.streamMeta?['parentTaskId'] ?? '')
-      .toString()
-      .trim();
-  return fromStream.isEmpty ? null : fromStream;
+  return message.runId;
 }
 
 Map<String, dynamic>? resolveActiveAgentToolCard(

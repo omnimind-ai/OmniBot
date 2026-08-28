@@ -203,141 +203,90 @@ extension _ChatRuntimeThinkingSupport on ChatConversationRuntimeCoordinator {
     );
   }
 
-  String? _resolveThinkingCardToFinalize(
-    AgentStreamReduceResult reduceResult,
-    AgentStreamEvent event,
-  ) {
-    switch (event.kind) {
-      case AgentStreamEventKind.thinkingStarted:
-      case AgentStreamEventKind.thinkingSnapshot:
-        return reduceResult.isNewThinkingEntry
-            ? reduceResult.previousThinkingEntryId
-            : null;
-      case AgentStreamEventKind.textSnapshot:
-      case AgentStreamEventKind.retrying:
-      case AgentStreamEventKind.toolStarted:
-      case AgentStreamEventKind.toolProgress:
-      case AgentStreamEventKind.toolCompleted:
-      case AgentStreamEventKind.completed:
-      case AgentStreamEventKind.error:
-      case AgentStreamEventKind.permissionRequired:
-      case AgentStreamEventKind.clarifyRequired:
-        return reduceResult.previousThinkingEntryId;
-    }
+  void _clearAgentRetryPresentation(Map<String, dynamic> content) {
+    content.remove('agentRetrying');
+    content.remove('agentRetryStatusText');
+    content.remove('agentRetryCount');
+    content.remove('agentMaxRetries');
+    content.remove('agentRetryDelayMs');
+    content.remove('agentRetryReason');
+    content.remove('agentRetryable');
+    content.remove('agentContinuing');
+    content.remove('agentContinueStatusText');
+    content.remove('agentContinueable');
+    content.remove('agentContinueResumeMode');
+    content.remove('agentErrorText');
   }
 
-  void _finalizeThinkingCard(
+  void _applyThinkingUpdate(
     ChatConversationRuntimeState runtime,
-    String taskId, {
-    String? cardId,
-  }) {
-    final thinkingCardId = (cardId ?? '').trim();
-    if (taskId.trim().isEmpty || thinkingCardId.isEmpty) {
-      return;
-    }
-    final index = runtime.messages.indexWhere(
-      (msg) => msg.id == thinkingCardId,
-    );
-    if (index == -1) {
-      return;
-    }
-
-    final existing = runtime.messages[index];
-    final content = Map<String, dynamic>.from(existing.content ?? const {});
-    final cardData = Map<String, dynamic>.from(content['cardData'] ?? const {});
-    final currentStageRaw = cardData['stage'];
-    final currentStage = currentStageRaw is num
-        ? currentStageRaw.toInt()
-        : int.tryParse(currentStageRaw?.toString() ?? '');
-    final isLoading = cardData['isLoading'] == true;
-    if (!isLoading && currentStage == ThinkingStage.complete.value) {
-      return;
-    }
-
-    cardData['thinkingContent'] =
-        cardData['thinkingContent'] ?? runtime.deepThinkingContent;
-    cardData['isLoading'] = false;
-    cardData['stage'] = ThinkingStage.complete.value;
-    cardData['taskID'] = taskId;
-    cardData['cardId'] = thinkingCardId;
-    cardData['endTime'] ??= DateTime.now().millisecondsSinceEpoch;
-    content['cardData'] = cardData;
-    runtime.messages[index] = existing.copyWith(content: content);
-  }
-
-  void _persistDeepThinkingCardIfNeeded({
-    required int conversationId,
-    required String mode,
-    required ChatMessageModel message,
-  }) {
-    if (isEphemeralRuntime(conversationId: conversationId, mode: mode)) {
-      return;
-    }
-    final cardData = message.cardData;
-    if (message.type != 2 || cardData?['type'] != 'deep_thinking') {
-      return;
-    }
-    unawaited(
-      ConversationHistoryService.upsertConversationUiCard(
-        conversationId,
-        entryId: message.id,
-        cardData: buildPersistentDeepThinkingCardData(
-          Map<String, dynamic>.from(cardData!),
-        ),
-        createdAtMillis: message.createAt.millisecondsSinceEpoch,
-        mode: _conversationModeFromRuntimeMode(
-          mode,
-          conversation: runtimeFor(
-            conversationId: conversationId,
-            mode: mode,
-          )?.conversation,
-        ),
-      ),
-    );
-  }
-
-  void _finalizeThinkingCardsForTask(
-    ChatConversationRuntimeState runtime,
+    _TaskBinding binding,
     String taskId,
-  ) {
-    final endTime = DateTime.now().millisecondsSinceEpoch;
-    var touched = false;
-    for (var index = 0; index < runtime.messages.length; index++) {
-      final message = runtime.messages[index];
-      final cardData = message.cardData;
-      if (message.type != 2 || cardData?['type'] != 'deep_thinking') {
-        continue;
+    String thinking, {
+    bool notifyAfterUpdate = true,
+    bool schedulePersistence = true,
+  }) {
+    if (runtime.pendingThinkingRoundSplit) {
+      if (thinking.trim().isEmpty) return;
+      final previousThinkingCardId = _resolveThinkingCardId(runtime, taskId);
+      if (previousThinkingCardId != null) {
+        _updateThinkingCard(
+          runtime,
+          taskId,
+          cardId: previousThinkingCardId,
+          isLoading: false,
+          stage: ThinkingStage.complete.value,
+          lockCompleted: false,
+        );
       }
-      if ((cardData?['taskID'] ?? '').toString().trim() != taskId) {
-        continue;
-      }
-
-      final content = Map<String, dynamic>.from(message.content ?? const {});
-      final mutableCardData = Map<String, dynamic>.from(cardData ?? const {});
-      final currentStageRaw = mutableCardData['stage'];
-      final currentStage = currentStageRaw is num
-          ? currentStageRaw.toInt()
-          : int.tryParse(currentStageRaw?.toString() ?? '');
-      final isLoading = mutableCardData['isLoading'] == true;
-      if (!isLoading && currentStage == ThinkingStage.complete.value) {
-        continue;
-      }
-
-      mutableCardData['isLoading'] = false;
-      mutableCardData['stage'] = ThinkingStage.complete.value;
-      mutableCardData['endTime'] ??= endTime;
-      content['cardData'] = mutableCardData;
-      runtime.messages[index] = message.copyWith(content: content);
-      _persistDeepThinkingCardIfNeeded(
-        conversationId: runtime.conversationId,
-        mode: runtime.mode,
-        message: runtime.messages[index],
+      runtime.thinkingRound += 1;
+      runtime.activeThinkingCardId = '$taskId-thinking-${runtime.thinkingRound}';
+      _createThinkingCard(
+        runtime,
+        taskId,
+        cardId: runtime.activeThinkingCardId,
+        thinkingContent: thinking,
+        isLoading: true,
+        stage: ThinkingStage.thinking.value,
       );
-      touched = true;
-    }
-    if (touched) {
-      runtime.activeThinkingCardId = null;
+      runtime.deepThinkingContent = thinking;
       runtime.pendingThinkingRoundSplit = false;
+      if (notifyAfterUpdate) _notifyRuntimeListeners();
+      return;
+    }
+
+    runtime.deepThinkingContent = thinking;
+    runtime.lastAgentTurnId = taskId;
+    runtime.currentThinkingStage = ThinkingStage.thinking.value;
+    runtime.isDeepThinking = true;
+    final thinkingCardId = _resolveThinkingCardId(runtime, taskId);
+    if (thinkingCardId == null) {
+      runtime.activeThinkingCardId = _baseThinkingCardId(taskId);
+      _createThinkingCard(
+        runtime,
+        taskId,
+        cardId: runtime.activeThinkingCardId,
+        thinkingContent: thinking,
+        isLoading: true,
+        stage: runtime.currentThinkingStage,
+      );
+    } else {
+      _updateThinkingCard(
+        runtime,
+        taskId,
+        cardId: thinkingCardId,
+        thinkingContent: thinking,
+        isLoading: true,
+        stage: runtime.currentThinkingStage,
+        lockCompleted: false,
+      );
+    }
+    if (notifyAfterUpdate) _notifyRuntimeListeners();
+    if (schedulePersistence) {
+      schedulePersistRuntimeConversation(
+        conversationId: binding.conversationId,
+        mode: binding.mode,
+      );
     }
   }
 

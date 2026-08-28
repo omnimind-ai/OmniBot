@@ -80,7 +80,7 @@ class SandboxPluginBridgeRuntimeTest {
 
     @Test
     fun `fast html generation disables provider thinking`() {
-        val request = buildFastAiRequest(
+        val request = XiaowanChatCompletionRequestFactory.create(
             prompt = "生成三条训练建议",
             system = "使用中文",
             maxTokens = 500,

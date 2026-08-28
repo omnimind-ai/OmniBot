@@ -38,6 +38,7 @@ class ChatEmptyGreeting extends StatelessWidget {
   final List<HomeQuickPrompt> quickPrompts;
   final List<String> pinnedQuickPromptIds;
   final ValueChanged<HomeQuickPrompt>? onQuickPromptSelected;
+  final String? agentName;
   final String? agentWorkspaceName;
   final VoidCallback? onAgentWorkspaceTap;
 
@@ -50,6 +51,7 @@ class ChatEmptyGreeting extends StatelessWidget {
     this.quickPrompts = const <HomeQuickPrompt>[],
     this.pinnedQuickPromptIds = const <String>[],
     this.onQuickPromptSelected,
+    this.agentName,
     this.agentWorkspaceName,
     this.onAgentWorkspaceTap,
   });
@@ -63,7 +65,13 @@ class ChatEmptyGreeting extends StatelessWidget {
     final keywordColor = accentColor ?? palette.accentPrimary;
     final disableAnimations =
         MediaQuery.maybeOf(context)?.disableAnimations ?? false;
-    final headline = isEnglish ? "Hi 👋, I'm Omnibot" : '你好👋，我是小万';
+    final resolvedAgentName = agentName?.trim() ?? '';
+    final displayAgentName = resolvedAgentName.isEmpty
+        ? (isEnglish ? 'Omnibot' : '小万')
+        : resolvedAgentName;
+    final headline = isEnglish
+        ? "Hi 👋, I'm $displayAgentName"
+        : '你好👋，我是$displayAgentName';
     final prefix = isEnglish ? 'I can help you' : '我可以帮助你';
     final workspaceName = agentWorkspaceName?.trim() ?? '';
     final useAgentWorkspaceGreeting = workspaceName.isNotEmpty;

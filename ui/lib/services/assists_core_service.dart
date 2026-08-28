@@ -1,49 +1,11 @@
 import 'dart:async';
 
 import 'package:flutter/services.dart';
-import 'package:ui/models/agent_stream_event.dart';
-import 'package:ui/services/agent_schedule_bridge_service.dart';
 import 'package:ui/services/agent_tool_call_parser.dart';
 import 'package:ui/services/agent_message_kinds.dart';
 
 // 卡片推送
 typedef CardPushCallback<T> = void Function(Map<String, dynamic> cardData);
-//消息回执
-typedef ChatTaskMessageCallBack =
-    void Function(String taskID, String content, String? type);
-//消息回执结束
-typedef ChatTaskMessageEndCallBack =
-    void Function(String taskID, {Map<String, dynamic>? turnUsage});
-//Dispatch流式数据回调
-typedef DispatchStreamDataCallBack =
-    void Function(String taskID, String data, String fullContent);
-//Dispatch流式结束回调
-typedef DispatchStreamEndCallBack =
-    void Function(String taskID, String fullContent);
-//Dispatch流式错误回调
-typedef DispatchStreamErrorCallBack =
-    void Function(
-      String taskID,
-      String error,
-      String fullContent,
-      bool isRateLimited,
-    );
-
-// Agent相关回调
-typedef AgentPromptTokenUsageCallback =
-    void Function(
-      String taskId,
-      int latestPromptTokens,
-      int? promptTokenThreshold,
-    );
-typedef AgentContextCompactionStateCallback =
-    void Function(
-      String taskId,
-      bool isCompacting,
-      int? latestPromptTokens,
-      int? promptTokenThreshold,
-    );
-typedef AgentStreamEventCallback = void Function(AgentStreamEvent event);
 typedef ScheduledTaskCancelledCallBack = void Function(String taskId);
 typedef ScheduledTaskExecuteNowCallBack = void Function(String taskId);
 
@@ -241,16 +203,6 @@ class AssistsMessageService {
 
   // 回调函数
   static CardPushCallback? _onCardPushCallback;
-  static ChatTaskMessageCallBack? _onChatTaskMessageCallBack;
-  static ChatTaskMessageEndCallBack? _onChatTaskMessageEndCallBack;
-  static DispatchStreamDataCallBack? _onDispatchStreamDataCallBack;
-  static DispatchStreamEndCallBack? _onDispatchStreamEndCallBack;
-  static DispatchStreamErrorCallBack? _onDispatchStreamErrorCallBack;
-
-  // Agent回调
-  static AgentPromptTokenUsageCallback? _onAgentPromptTokenUsageCallback;
-  static AgentContextCompactionStateCallback?
-  _onAgentContextCompactionStateCallback;
 
   static ScheduledTaskCancelledCallBack? _onScheduledTaskCancelledCallBack;
   static ScheduledTaskExecuteNowCallBack? _onScheduledTaskExecuteNowCallBack;
@@ -268,12 +220,6 @@ class AssistsMessageService {
   // 不依赖 messagesChanged + DB reload 的事件链。
   static final List<void Function(Map<String, dynamic>)>
   _onExternalUserMessageAppendedCallbacks = [];
-
-  // 改为回调列表，支持多个监听器
-  static final List<ChatTaskMessageCallBack> _onChatTaskMessageCallBacks = [];
-  static final List<ChatTaskMessageEndCallBack> _onChatTaskMessageEndCallBacks =
-      [];
-  static final List<AgentStreamEventCallback> _onAgentStreamEventCallbacks = [];
 
   static Stream<Map<String, dynamic>> get conversationListChangedStream =>
       _conversationListChangedController.stream;
@@ -329,98 +275,6 @@ class AssistsMessageService {
             ),
           );
           break;
-        case 'onChatMessage':
-          final Map<String, dynamic> data = Map<String, dynamic>.from(
-            call.arguments,
-          );
-          print(
-            'onChatMessage content: ${data['content']}, type: ${data['type']}',
-          );
-          _onChatTaskMessageCallBack?.call(
-            data['taskID'],
-            data['content'],
-            data['type'],
-          );
-          for (final callback in _onChatTaskMessageCallBacks) {
-            callback(data['taskID'], data['content'], data['type']);
-          }
-          break;
-        case 'onChatMessageEnd':
-          final Map<String, dynamic> data = Map<String, dynamic>.from(
-            call.arguments,
-          );
-          final endTurnUsage = data['turnUsage'] != null
-              ? Map<String, dynamic>.from(data['turnUsage'] as Map)
-              : null;
-          _onChatTaskMessageEndCallBack?.call(
-            data['taskID'],
-            turnUsage: endTurnUsage,
-          );
-          for (final callback in _onChatTaskMessageEndCallBacks) {
-            callback(data['taskID'], turnUsage: endTurnUsage);
-          }
-          break;
-        case 'onDispatchStreamData':
-          final Map<String, dynamic> data = Map<String, dynamic>.from(
-            call.arguments,
-          );
-          _onDispatchStreamDataCallBack?.call(
-            data['taskID'] ?? '',
-            data['data'] ?? '',
-            data['fullContent'] ?? '',
-          );
-          break;
-        case 'onDispatchStreamEnd':
-          final Map<String, dynamic> data = Map<String, dynamic>.from(
-            call.arguments,
-          );
-          _onDispatchStreamEndCallBack?.call(
-            data['taskID'] ?? '',
-            data['fullContent'] ?? '',
-          );
-          break;
-        case 'onDispatchStreamError':
-          final Map<String, dynamic> data = Map<String, dynamic>.from(
-            call.arguments,
-          );
-          _onDispatchStreamErrorCallBack?.call(
-            data['taskID'] ?? '',
-            data['error'] ?? '',
-            data['fullContent'] ?? '',
-            data['isRateLimited'] == true,
-          );
-          break;
-        case 'onAgentPromptTokenUsageChanged':
-          final Map<String, dynamic> data = Map<String, dynamic>.from(
-            call.arguments,
-          );
-          final latestPromptTokens = _asNullableInt(data['latestPromptTokens']);
-          if (latestPromptTokens == null) {
-            break;
-          }
-          _onAgentPromptTokenUsageCallback?.call(
-            (data['taskId'] ?? '').toString(),
-            latestPromptTokens,
-            _asNullableInt(data['promptTokenThreshold']),
-          );
-          break;
-        case 'onAgentContextCompactionStateChanged':
-          final Map<String, dynamic> data = Map<String, dynamic>.from(
-            call.arguments,
-          );
-          _onAgentContextCompactionStateCallback?.call(
-            (data['taskId'] ?? '').toString(),
-            data['isCompacting'] == true,
-            _asNullableInt(data['latestPromptTokens']),
-            _asNullableInt(data['promptTokenThreshold']),
-          );
-          break;
-        case 'onAgentStreamEvent':
-          final event = AgentStreamEvent.fromMap(call.arguments as Map?);
-          for (final callback in _onAgentStreamEventCallbacks) {
-            callback(event);
-          }
-          break;
         case 'onScheduledTaskCancelled':
           final Map<String, dynamic> data = Map<String, dynamic>.from(
             call.arguments,
@@ -433,21 +287,6 @@ class AssistsMessageService {
           );
           _onScheduledTaskExecuteNowCallBack?.call(data['taskId'] ?? '');
           break;
-        case 'agentScheduleCreate':
-          return await AgentScheduleBridgeService.createTask(
-            Map<String, dynamic>.from(call.arguments as Map),
-          );
-        case 'agentScheduleList':
-          return await AgentScheduleBridgeService.listTasks();
-        case 'agentScheduleUpdate':
-          return await AgentScheduleBridgeService.updateTask(
-            Map<String, dynamic>.from(call.arguments as Map),
-          );
-        case 'agentScheduleDelete':
-          return await AgentScheduleBridgeService.deleteTask(
-            Map<String, dynamic>.from(call.arguments as Map),
-          );
-
         default:
           print('未处理的方法: ${call.method}');
       }
@@ -462,61 +301,6 @@ class AssistsMessageService {
     _onCardPushCallback = callback;
   }
 
-  static void setOnChatTaskMessageCallBack(ChatTaskMessageCallBack callback) {
-    _onChatTaskMessageCallBack = callback;
-  }
-
-  static void addOnChatTaskMessageCallBack(ChatTaskMessageCallBack? callback) {
-    if (callback != null && !_onChatTaskMessageCallBacks.contains(callback)) {
-      _onChatTaskMessageCallBacks.add(callback);
-    }
-  }
-
-  static void removeOnChatTaskMessageCallBack(
-    ChatTaskMessageCallBack? callback,
-  ) {
-    _onChatTaskMessageCallBacks.remove(callback);
-  }
-
-  static void setOnChatTaskMessageEndCallBack(
-    ChatTaskMessageEndCallBack callback,
-  ) {
-    _onChatTaskMessageEndCallBack = callback;
-  }
-
-  static void addOnChatTaskMessageEndCallBack(
-    ChatTaskMessageEndCallBack? callback,
-  ) {
-    if (callback != null &&
-        !_onChatTaskMessageEndCallBacks.contains(callback)) {
-      _onChatTaskMessageEndCallBacks.add(callback);
-    }
-  }
-
-  static void removeOnChatTaskMessageEndCallBack(
-    ChatTaskMessageEndCallBack? callback,
-  ) {
-    _onChatTaskMessageEndCallBacks.remove(callback);
-  }
-
-  static void setOnDispatchStreamDataCallBack(
-    DispatchStreamDataCallBack? callback,
-  ) {
-    _onDispatchStreamDataCallBack = callback;
-  }
-
-  static void setOnDispatchStreamEndCallBack(
-    DispatchStreamEndCallBack? callback,
-  ) {
-    _onDispatchStreamEndCallBack = callback;
-  }
-
-  static void setOnDispatchStreamErrorCallBack(
-    DispatchStreamErrorCallBack? callback,
-  ) {
-    _onDispatchStreamErrorCallBack = callback;
-  }
-
   static void setOnScheduledTaskCancelledCallBack(
     ScheduledTaskCancelledCallBack? callback,
   ) {
@@ -527,39 +311,6 @@ class AssistsMessageService {
     ScheduledTaskExecuteNowCallBack? callback,
   ) {
     _onScheduledTaskExecuteNowCallBack = callback;
-  }
-
-  static void setOnAgentPromptTokenUsageCallback(
-    AgentPromptTokenUsageCallback? callback,
-  ) {
-    _onAgentPromptTokenUsageCallback = callback;
-  }
-
-  static void setOnAgentContextCompactionStateCallback(
-    AgentContextCompactionStateCallback? callback,
-  ) {
-    _onAgentContextCompactionStateCallback = callback;
-  }
-
-  static int? _asNullableInt(dynamic raw) {
-    if (raw is int) return raw;
-    if (raw is num) return raw.toInt();
-    if (raw is String) return int.tryParse(raw);
-    return null;
-  }
-
-  static void setOnAgentStreamEventCallback(
-    AgentStreamEventCallback? callback,
-  ) {
-    if (callback != null && !_onAgentStreamEventCallbacks.contains(callback)) {
-      _onAgentStreamEventCallbacks.add(callback);
-    }
-  }
-
-  static void removeOnAgentStreamEventCallback(
-    AgentStreamEventCallback? callback,
-  ) {
-    _onAgentStreamEventCallbacks.remove(callback);
   }
 
   static void addOnExternalUserMessageAppendedCallback(
@@ -597,73 +348,6 @@ class AssistsMessageService {
     }
   }
 
-  /// 取消正在运行的聊天或 Agent 任务。
-  static Future<bool> cancelRunningTask({String? taskId}) async {
-    try {
-      var result = await assistCore.invokeMethod(
-        'cancelRunningTask',
-        taskId == null ? null : {'taskId': taskId},
-      );
-      return result == "SUCCESS";
-    } on PlatformException catch (e) {
-      print('取消运行中任务失败: ${e.message}');
-      return false;
-    }
-  }
-
-  /// 停止当前 Agent 正在执行的工具调用。
-  /// GUI 任务被用户停止后会同时结束当前 Agent 响应，避免再次发起 GUI 操作。
-  static Future<bool> stopAgentToolCall({
-    required String taskId,
-    required String cardId,
-  }) async {
-    try {
-      final result = await assistCore.invokeMethod(
-        'stopAgentToolCall',
-        <String, String>{'taskId': taskId, 'cardId': cardId},
-      );
-      return result == "SUCCESS";
-    } on PlatformException catch (e) {
-      print('停止工具调用失败: ${e.message}');
-      return false;
-    }
-  }
-
-  static Future<bool> retryAgentTask({required String taskId}) async {
-    try {
-      final result = await assistCore.invokeMethod(
-        'retryAgentTask',
-        <String, String>{'taskId': taskId},
-      );
-      return result == "SUCCESS";
-    } on PlatformException catch (e) {
-      print('retryAgentTask failed: ${e.message}');
-      return false;
-    }
-  }
-
-  static Future<bool> continueAgentTask({required String taskId}) async {
-    try {
-      final result = await assistCore.invokeMethod(
-        'continueAgentTask',
-        <String, String>{'taskId': taskId},
-      );
-      return result == "SUCCESS";
-    } on PlatformException catch (e) {
-      print('continueAgentTask failed: ${e.message}');
-      return false;
-    }
-  }
-
-  // cancel chat task
-  static Future<bool> cancelChatTask({String? taskId}) async {
-    var result = await assistCore.invokeMethod(
-      'cancelChatTask',
-      taskId == null ? null : {'taskId': taskId},
-    );
-    return result == "SUCCESS";
-  }
-
   static Future<bool> copyToClipboard(String text) async {
     try {
       var result = await assistCore.invokeMethod('copyToClipboard', {
@@ -683,54 +367,6 @@ class AssistsMessageService {
     } on PlatformException catch (e) {
       print('读取剪贴板失败: ${e.message}');
       return null;
-    }
-  }
-
-  //开始聊天任务
-  static Future<bool> createChatTask(
-    String taskID,
-    List<Map<String, dynamic>> content, {
-    String? provider,
-    Map<String, dynamic>? openClawConfig,
-    Map<String, dynamic>? modelOverride,
-    String? reasoningEffort,
-    int? conversationId,
-    String? conversationMode,
-    String? userMessage,
-    List<Map<String, dynamic>> userAttachments = const [],
-  }) async {
-    try {
-      print('createChatTask taskID: $taskID content: $content');
-      final args = {'taskID': taskID, 'content': content};
-      if (provider != null) {
-        args['provider'] = provider;
-      }
-      if (openClawConfig != null) {
-        args['openClawConfig'] = openClawConfig;
-      }
-      if (modelOverride != null) {
-        args['modelOverride'] = modelOverride;
-      }
-      if (reasoningEffort != null && reasoningEffort.trim().isNotEmpty) {
-        args['reasoningEffort'] = reasoningEffort.trim();
-      }
-      if (conversationId != null) {
-        args['conversationId'] = conversationId;
-      }
-      if (conversationMode != null && conversationMode.trim().isNotEmpty) {
-        args['conversationMode'] = conversationMode.trim();
-      }
-      if (userMessage != null) {
-        args['userMessage'] = userMessage;
-      }
-      if (userAttachments.isNotEmpty) {
-        args['userAttachments'] = userAttachments;
-      }
-      final result = await assistCore.invokeMethod('createChatTask', args);
-      return result == "SUCCESS";
-    } on PlatformException catch (e) {
-      print('createChatTask failed: ${e.message}');
-      return false;
     }
   }
 
@@ -886,71 +522,6 @@ class AssistsMessageService {
     } on PlatformException catch (e) {
       print('生成记忆中心问候语失败: ${e.message}');
       return null;
-    }
-  }
-
-  /// 创建 Agent 任务
-  static Future<bool> createAgentTask({
-    required String taskId,
-    required String userMessage,
-    List<Map<String, dynamic>> conversationHistory = const [],
-    List<Map<String, dynamic>> attachments = const [],
-    int? userMessageCreatedAtMillis,
-    int? conversationId,
-    String? conversationMode,
-    String? scheduledTaskId,
-    String? scheduledTaskTitle,
-    bool? scheduleNotificationEnabled,
-    Map<String, dynamic>? modelOverride,
-    String? reasoningEffort,
-    Map<String, String>? terminalEnvironment,
-  }) async {
-    try {
-      final args = <String, dynamic>{
-        'taskId': taskId,
-        'userMessage': userMessage,
-      };
-      if (conversationHistory.isNotEmpty) {
-        args['conversationHistory'] = conversationHistory;
-      }
-      if (conversationId != null) {
-        args['conversationId'] = conversationId;
-      }
-      if (conversationMode != null && conversationMode.trim().isNotEmpty) {
-        args['conversationMode'] = conversationMode.trim();
-      }
-      if (userMessageCreatedAtMillis != null &&
-          userMessageCreatedAtMillis > 0) {
-        args['userMessageCreatedAt'] = userMessageCreatedAtMillis;
-      }
-      if (scheduledTaskId != null && scheduledTaskId.trim().isNotEmpty) {
-        args['scheduledTaskId'] = scheduledTaskId.trim();
-      }
-      if (scheduledTaskTitle != null && scheduledTaskTitle.trim().isNotEmpty) {
-        args['scheduledTaskTitle'] = scheduledTaskTitle.trim();
-      }
-      if (scheduleNotificationEnabled != null) {
-        args['scheduleNotificationEnabled'] = scheduleNotificationEnabled;
-      }
-      if (attachments.isNotEmpty) {
-        args['attachments'] = attachments;
-      }
-      if (modelOverride != null) {
-        args['modelOverride'] = modelOverride;
-      }
-      if (reasoningEffort != null && reasoningEffort.trim().isNotEmpty) {
-        args['reasoningEffort'] = reasoningEffort.trim();
-      }
-      if (terminalEnvironment != null && terminalEnvironment.isNotEmpty) {
-        args['terminalEnvironment'] = terminalEnvironment;
-      }
-      final result = await assistCore.invokeMethod('createAgentTask', {
-        ...args,
-      });
-      return result == "SUCCESS";
-    } on PlatformException catch (e) {
-      print('创建 Agent 任务失败: ${e.message}');
-      return false;
     }
   }
 

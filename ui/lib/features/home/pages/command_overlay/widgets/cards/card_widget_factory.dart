@@ -9,6 +9,8 @@ import 'deep_thinking_card.dart';
 import 'permission_section_card.dart';
 import 'stage_hint_card.dart';
 import 'openclaw_attachment_card.dart';
+import 'acp_audio_card.dart';
+import 'package:ui/services/agent_acp_card_normalizer.dart';
 
 /// 任务执行前的回调类型
 typedef OnBeforeTaskExecute = Future<void> Function();
@@ -35,9 +37,13 @@ class CardWidgetFactory {
     AppBackgroundVisualProfile visualProfile =
         AppBackgroundVisualProfile.defaultProfile,
   }) {
+    cardData = AgentAcpCardNormalizer.normalize(cardData);
     final type = cardData['type'] as String? ?? 'unknown';
     if (isAgentRequestCardType(type)) {
-      return AgentRequestCard(cardData: cardData);
+      // ACP requests are transport state, not large nested forms.  The chat
+      // timeline projects them into a normal Agent bubble; this lightweight
+      // fallback is only used by legacy/raw card surfaces.
+      return AgentRequestNotice(cardData: cardData);
     }
 
     switch (type) {
@@ -57,8 +63,12 @@ class CardWidgetFactory {
           cardData['isCollapsible'],
           fallback: enableThinkingCollapse,
         );
-        final key = taskID != null
-            ? ValueKey('deep_thinking_${taskID}_${startTime ?? 'na'}')
+        final keyIdentity = cardId ?? taskID;
+        // cardId is the replacement identity. Including a mutable timestamp
+        // remounts the typewriter whenever a restored card receives a new
+        // boundary and makes a single reasoning stream look duplicated.
+        final key = keyIdentity != null
+            ? ValueKey('deep_thinking_$keyIdentity')
             : null;
         return DeepThinkingCard(
           key: key,
@@ -113,6 +123,8 @@ class CardWidgetFactory {
       case 'artifact_card':
         final artifact = cardData['artifact'] as Map<String, dynamic>? ?? {};
         return ArtifactCard(artifact: artifact);
+      case 'acp_audio':
+        return AcpAudioCard(cardData: cardData);
       default:
         return _UnknownCard(type: type);
     }

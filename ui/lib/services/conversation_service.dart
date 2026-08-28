@@ -143,10 +143,12 @@ class ConversationService {
   static Future<int?> createConversation({
     required String title,
     String? summary,
-    ConversationMode mode = ConversationMode.normal,
+    ConversationMode mode = ConversationMode.agent,
+    String? agentId,
     int? parentConversationId,
     ConversationMode? parentConversationMode,
     String? scheduledTaskId,
+    bool rethrowOnError = false,
   }) async {
     try {
       final result = await _assistCore
@@ -154,6 +156,8 @@ class ConversationService {
             'title': title,
             'summary': summary,
             'mode': mode.storageValue,
+            if (agentId != null && agentId.trim().isNotEmpty)
+              'agentId': agentId.trim(),
             if (parentConversationId != null && parentConversationId > 0)
               'parentConversationId': parentConversationId,
             if (parentConversationMode != null)
@@ -166,9 +170,11 @@ class ConversationService {
       return null;
     } on PlatformException catch (e) {
       debugPrint('创建对话失败: ${e.message}');
+      if (rethrowOnError) rethrow;
       return null;
     } catch (e) {
       debugPrint('创建对话失败: $e');
+      if (rethrowOnError) rethrow;
       return null;
     }
   }
@@ -297,7 +303,7 @@ class ConversationService {
       }
       await ConversationHistoryService.clearConversationMessages(
         conversationId,
-        mode: mode ?? ConversationMode.normal,
+        mode: mode ?? ConversationMode.agent,
       );
       await ConversationHistoryService.clearConversationThreadReferences(
         conversationId,
@@ -366,9 +372,11 @@ class ConversationService {
   }) async {
     try {
       if (archived) {
-        await AgentRuntimeService.archiveThread(conversationId: conversationId);
+        await AgentRuntimeService.archiveSession(
+          conversationId: conversationId,
+        );
       } else {
-        await AgentRuntimeService.unarchiveThread(
+        await AgentRuntimeService.unarchiveSession(
           conversationId: conversationId,
         );
       }
@@ -444,18 +452,22 @@ class ConversationService {
   static Future<bool> updateConversationTitle({
     required int conversationId,
     required String newTitle,
-    ConversationMode mode = ConversationMode.normal,
+    ConversationMode mode = ConversationMode.agent,
   }) async {
+    var acpSessionRenamed = false;
     if (mode == ConversationMode.agent) {
       try {
-        await AgentRuntimeService.setThreadName(
+        await AgentRuntimeService.setSessionName(
           conversationId: conversationId,
           name: newTitle,
         );
-        return true;
+        acpSessionRenamed = true;
       } catch (e) {
-        debugPrint('更新 Agent 对话标题失败: $e');
-        return false;
+        // Pre-ACP Xiaowan conversations can have durable history without an
+        // ACP session binding. Rename the durable Conversation row below so
+        // those conversations remain fully manageable; a future session/load
+        // can materialize their ACP session on demand.
+        debugPrint('更新 ACP 会话标题失败，回退对话标题: $e');
       }
     }
     try {
@@ -465,13 +477,13 @@ class ConversationService {
             'newTitle': newTitle,
             'mode': mode.storageValue,
           });
-      return result == 'SUCCESS';
+      return result == 'SUCCESS' || acpSessionRenamed;
     } on PlatformException catch (e) {
       debugPrint('更新对话标题失败: ${e.message}');
-      return false;
+      return acpSessionRenamed;
     } catch (e) {
       debugPrint('更新对话标题失败: $e');
-      return false;
+      return acpSessionRenamed;
     }
   }
 
@@ -517,7 +529,7 @@ class ConversationService {
 
   static Future<bool> setCurrentConversationId(
     int? conversationId, {
-    ConversationMode mode = ConversationMode.normal,
+    ConversationMode mode = ConversationMode.agent,
   }) async {
     try {
       final result = await _assistCore.invokeMethod<dynamic>(
@@ -539,7 +551,7 @@ class ConversationService {
   ) async {
     return setCurrentConversationId(
       target?.conversationId,
-      mode: target?.mode ?? ConversationMode.normal,
+      mode: target?.mode ?? ConversationMode.agent,
     );
   }
 

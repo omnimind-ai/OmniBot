@@ -598,6 +598,29 @@ class AgentOrchestratorTest {
     }
 
     @Test
+    fun noneReasoningEffortDisablesThinkingOnTheWire() = runBlocking {
+        val llmClient = FakeLlmClient(
+            turns = listOf(assistantTurn(content = "你好"))
+        )
+
+        createOrchestrator(llmClient, FakeToolExecutor()).run(
+            AgentOrchestrator.Input(
+                callback = RecordingCallback(),
+                initialMessages = initialMessages("hello"),
+                executionEnv = FakeExecutionEnvironment(
+                    "hello",
+                    reasoningEffort = "none"
+                )
+            )
+        )
+
+        val request = llmClient.requests.single()
+        assertEquals(false, request.enableThinking)
+        assertEquals(null, request.reasoningEffort)
+        assertEquals("disabled", request.thinking?.type)
+    }
+
+    @Test
     fun longReasoningUpdatesAreNotTruncated() = runBlocking {
         val longReasoning = buildString {
             repeat(900) { index ->
@@ -1285,6 +1308,55 @@ class AgentOrchestratorTest {
         assertEquals("invalid request payload", callback.errors.single())
         assertTrue(callback.lastErrorRetryable)
         assertTrue(callback.finalChatMessages().isEmpty())
+    }
+
+    @Test
+    fun `surfaces a provider stream failure without retrying`() = runBlocking {
+        val llmClient = FakeLlmClient(
+            turns = emptyList(),
+            failures = listOf(
+                IllegalStateException(
+                    "provider stream failed"
+                )
+            )
+        )
+        val callback = RecordingCallback()
+
+        val result = createOrchestrator(llmClient, FakeToolExecutor()).run(
+            AgentOrchestrator.Input(
+                callback = callback,
+                initialMessages = initialMessages("hello"),
+                executionEnv = FakeExecutionEnvironment("hello")
+            )
+        )
+
+        assertTrue(result is AgentResult.Error)
+        assertEquals(1, llmClient.requests.size)
+        assertTrue(callback.retryingEvents.isEmpty())
+        assertEquals("provider stream failed", callback.errors.single())
+    }
+
+    @Test
+    fun `does not expose an incomplete tool call parser error to the user`() = runBlocking {
+        val llmClient = FakeLlmClient(
+            turns = emptyList(),
+            failures = listOf(AgentIncompleteToolCallException(toolCallIndex = 1))
+        )
+        val callback = RecordingCallback()
+
+        val result = createOrchestrator(llmClient, FakeToolExecutor()).run(
+            AgentOrchestrator.Input(
+                callback = callback,
+                initialMessages = initialMessages("hello"),
+                executionEnv = FakeExecutionEnvironment("hello")
+            )
+        )
+
+        assertTrue(result is AgentResult.Error)
+        assertEquals(1, llmClient.requests.size)
+        assertTrue(callback.retryingEvents.isEmpty())
+        assertTrue(callback.errors.single().contains("Provider"))
+        assertFalse(callback.errors.single().contains("missing function.name"))
     }
 
     @Test

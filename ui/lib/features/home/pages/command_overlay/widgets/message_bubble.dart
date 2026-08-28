@@ -13,6 +13,8 @@ import 'package:ui/widgets/image_preview_overlay.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import '../../../../../models/chat_message_model.dart';
 import '../../../../../services/app_background_service.dart';
+import '../../../../../services/voice_playback_coordinator.dart';
+import '../../../../../services/voice_playback_channel_service.dart';
 import '../../../../../theme/theme_context.dart';
 import '../../../../../widgets/streaming_text.dart';
 import 'thinking_dots_indicator.dart';
@@ -1087,7 +1089,11 @@ class MessageBubble extends StatelessWidget {
     required bool includeTurnUsageFooter,
   }) {
     final speed = _decodeTokensPerSecond;
-    final aiText = _buildAiText(context, text);
+    final aiText = _buildAiText(
+      context,
+      text,
+      trailing: _buildVoiceAction(context, text),
+    );
     final continueStatus = _buildAgentContinueStatus(context);
     final retryingStatus = _buildAgentRetryingStatus(context);
     final errorFooter = _buildAgentErrorFooter(context, text);
@@ -1141,6 +1147,90 @@ class MessageBubble extends StatelessWidget {
           turnUsageFooter,
         ],
       ],
+    );
+  }
+
+  /// Voice playback is an optional ACP scene capability. Keep the control in
+  /// the same message bubble as the assistant text so enabling the scene has
+  /// an immediately visible affordance (and never creates a second input
+  /// surface).
+  Widget? _buildVoiceAction(BuildContext context, String text) {
+    if (message.user != 2 || message.type != 1 || text.trim().isEmpty) {
+      return null;
+    }
+    final coordinator = VoicePlaybackCoordinator.instance;
+    return AnimatedBuilder(
+      animation: coordinator,
+      builder: (context, _) {
+        if (!coordinator.shouldShowVoiceButton(
+          user: message.user,
+          type: message.type,
+          text: text,
+        )) {
+          return const SizedBox.shrink();
+        }
+        final state = coordinator.stateFor(message.id);
+        final isPlaying = state.status == VoicePlaybackStatus.playing;
+        final isBusy = state.status == VoicePlaybackStatus.synthesizing;
+        final isPaused = state.status == VoicePlaybackStatus.paused;
+        final hasError = state.status == VoicePlaybackStatus.error;
+        final statusLabel = isBusy
+            ? '语音生成中'
+            : hasError
+            ? '语音失败'
+            : isPaused
+            ? '已暂停'
+            : null;
+        final statusColor = hasError
+            ? Colors.red.shade400
+            : _resolvedAiSecondaryTextColor(context);
+        return Padding(
+          padding: const EdgeInsets.only(left: 4),
+          child: Semantics(
+            label: statusLabel ?? (isPlaying ? '暂停语音' : '播放语音'),
+            button: true,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                IconButton(
+                  key: ValueKey('voice-playback-${message.id}'),
+                  onPressed: isBusy
+                      ? null
+                      : () => coordinator.togglePlayback(
+                          messageId: message.id,
+                          text: text,
+                        ),
+                  tooltip: statusLabel ?? (isPlaying ? '暂停语音' : '播放语音'),
+                  visualDensity: VisualDensity.compact,
+                  iconSize: 17,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 28,
+                    minHeight: 28,
+                  ),
+                  icon: Icon(
+                    isBusy
+                        ? Icons.hourglass_top_rounded
+                        : isPlaying
+                        ? Icons.pause_circle_outline_rounded
+                        : Icons.volume_up_outlined,
+                    color: statusColor,
+                  ),
+                ),
+                if (statusLabel != null)
+                  Text(
+                    statusLabel,
+                    style: TextStyle(
+                      color: statusColor,
+                      fontSize: 11,
+                      height: 1.1,
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 

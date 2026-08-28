@@ -228,6 +228,18 @@ class _CommandOverlayState extends State<CommandOverlay> {
     });
   }
 
+  Future<void> _startManualRecordingFromCommandPanel() async {
+    _messageController.clear();
+    _hideSlashCommandPanel();
+    await ManualRecordingFlowController.startStandalone(
+      context: context,
+      inputFocusNode: _inputFocusNode,
+      userMessageText: '/record',
+      recordDebugScreenshots: true,
+      isMounted: () => mounted,
+    );
+  }
+
   bool _isPointerInside(GlobalKey key, Offset position) {
     final context = key.currentContext;
     if (context == null) return false;
@@ -283,6 +295,11 @@ class _CommandOverlayState extends State<CommandOverlay> {
   Future<bool> _tryHandleSlashCommand(String messageText) async {
     final trimmed = messageText.trim();
     if (!trimmed.startsWith('/')) return false;
+
+    if (trimmed == '/record') {
+      await _startManualRecordingFromCommandPanel();
+      return true;
+    }
 
     // 只拦截 /openclaw 本地配置命令，其他斜杠命令（如 /model、/help 等）
     // 透传给 OpenClaw 网关或作为普通消息发送
@@ -626,34 +643,80 @@ class _CommandOverlayState extends State<CommandOverlay> {
                         ),
                       ],
                     )
-                  : InkWell(
-                      onTap: () {
-                        _showOpenClawCommandPanel(expand: true);
-                      },
-                      borderRadius: BorderRadius.circular(10),
-                      child: Row(
-                        children: [
-                          Icon(Icons.link, size: 16, color: panelAccentColor),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              'OpenClaw',
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w600,
-                                color: panelTextColor,
+                  : Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        InkWell(
+                          onTap: () => unawaited(
+                            _startManualRecordingFromCommandPanel(),
+                          ),
+                          borderRadius: BorderRadius.circular(10),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  Icons.route_rounded,
+                                  size: 16,
+                                  color: panelAccentColor,
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    '/record',
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                      color: panelTextColor,
+                                    ),
+                                  ),
+                                ),
+                                Text(
+                                  '手动录制',
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: panelSecondaryTextColor,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        Divider(height: 12, color: palette.borderSubtle),
+                        InkWell(
+                          onTap: () {
+                            _showOpenClawCommandPanel(expand: true);
+                          },
+                          borderRadius: BorderRadius.circular(10),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.link,
+                                size: 16,
+                                color: panelAccentColor,
                               ),
-                            ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'OpenClaw',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: panelTextColor,
+                                  ),
+                                ),
+                              ),
+                              Text(
+                                '配置',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: panelSecondaryTextColor,
+                                ),
+                              ),
+                            ],
                           ),
-                          Text(
-                            '配置',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: panelSecondaryTextColor,
-                            ),
-                          ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
             ),
     );
@@ -730,14 +793,6 @@ class _CommandOverlayState extends State<CommandOverlay> {
                       onToggleOpenClaw: _setOpenClawEnabled,
                       onLongPressOpenClaw: () =>
                           _showOpenClawCommandPanel(expand: true),
-                      onManualRecordingTap: () =>
-                          ManualRecordingFlowController.startStandalone(
-                            context: context,
-                            inputFocusNode: _inputFocusNode,
-                            userMessageText: '手动录制',
-                            recordDebugScreenshots: true,
-                            isMounted: () => mounted,
-                          ),
                       useLargeComposerStyle: true,
                       useFrostedGlass: true, // command_overlay 使用毛玻璃效果
                       useAttachmentPickerForPlus: true,

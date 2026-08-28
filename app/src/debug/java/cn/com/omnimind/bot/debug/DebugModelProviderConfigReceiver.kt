@@ -32,6 +32,7 @@ class DebugModelProviderConfigReceiver : BroadcastReceiver() {
                     when (operation) {
                         OPERATION_QUERY -> queryState()
                         OPERATION_CONFIGURE -> configure(appContext, intent)
+                        OPERATION_BIND_EXISTING -> bindExisting(intent)
                         else -> error("unsupported operation: $operation")
                     }
                 }.getOrElse { error ->
@@ -106,6 +107,34 @@ class DebugModelProviderConfigReceiver : BroadcastReceiver() {
         )
     }
 
+    /**
+     * Debug-only device verification helper. It changes only the scene binding
+     * and never reads or accepts a credential, so a real Provider already saved
+     * on the device can be used without copying its API key into adb history.
+     */
+    private fun bindExisting(intent: Intent?): Map<String, Any?> {
+        val profileId = intent.stringExtra("profileId", "profile_id")
+        val modelId = intent.stringExtra("modelId", "model_id")
+        val sceneIds = parseSceneIds(intent.stringExtra("sceneIds", "scene_ids"))
+        require(profileId.isNotBlank()) { "profileId is empty" }
+        require(modelId.isNotBlank()) { "modelId is empty" }
+        val profile = ModelProviderConfigStore.getProfile(profileId)
+            ?: error("provider is not configured: $profileId")
+        require(profile.isConfigured()) { "provider is not configured: $profileId" }
+        sceneIds.forEach { sceneId ->
+            SceneModelBindingStore.saveBinding(
+                sceneId = sceneId,
+                providerProfileId = profileId,
+                modelId = modelId,
+            )
+        }
+        return queryState() + mapOf(
+            "boundExistingProfileId" to profileId,
+            "boundExistingModelId" to modelId,
+            "boundExistingSceneIds" to sceneIds,
+        )
+    }
+
     private fun queryState(): Map<String, Any?> = linkedMapOf(
         "success" to true,
         "editingProfileId" to ModelProviderConfigStore.getEditingProfileId(),
@@ -165,6 +194,7 @@ class DebugModelProviderConfigReceiver : BroadcastReceiver() {
         private const val TAG = "DebugModelProviderConfigReceiver"
         private const val RESULT_FILE = "debug-model-provider-config-result.json"
         private const val OPERATION_CONFIGURE = "configure"
+        private const val OPERATION_BIND_EXISTING = "bind_existing"
         private const val OPERATION_QUERY = "query"
         private const val DEFAULT_PROFILE_ID = "debug-runtime-provider"
         private const val DEFAULT_PROFILE_NAME = "OmniMind GPT 5.6 (Debug)"

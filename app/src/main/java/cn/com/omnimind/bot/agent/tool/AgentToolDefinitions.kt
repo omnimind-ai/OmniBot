@@ -19,6 +19,22 @@ import kotlinx.serialization.json.jsonPrimitive
 
 object AgentToolDefinitions {
     private const val TOOL_TITLE_FIELD = "tool_title"
+
+    /**
+     * Names used by the common coding Harnesses. The implementation remains
+     * OmniBot's existing handler, but the model-facing catalog uses the
+     * stable native vocabulary instead of exposing our private file/terminal
+     * names to Xiaowan.
+     */
+    private val nativeModelToolAliases: Map<String, String> = mapOf(
+        "file_read" to "read",
+        "file_write" to "write",
+        "file_edit" to "edit",
+        "terminal_execute" to "bash",
+        "file_list" to "glob",
+        "file_search" to "grep",
+        "browser_use" to "webfetch",
+    )
     
     private fun currentLocale(): PromptLocale = AppLocaleManager.currentPromptLocale()
 
@@ -237,8 +253,8 @@ object AgentToolDefinitions {
         "分派子任务" to "Dispatch Subtasks",
         "查询设备已安装应用列表。需要应用包名或确认应用是否已安装时优先调用。" to
             "Query the list of apps installed on the device. Prefer this when you need an app package name or need to confirm whether an app is installed.",
-        "通过 Android GUI 插件的 VLM 流程操作当前界面。只要用户要求操作手机或 App（例如下单咖啡、购物、联系人、设置、导航、打开应用），必须立即调用此工具，并把完整用户目标原样放入 goal；不要用 terminal/browser 代替，也不要直接回复已完成。Debug APK 已内置插件。" to
-            "Use this immediately whenever the user asks you to operate a phone or Android app (for example ordering coffee, shopping, contacts, settings, navigation, or opening an app). Pass the complete user goal in goal; do not use terminal/browser instead and do not claim completion in plain text. Debug APKs include the plugin.",
+        "通过 Android GUI 插件的 VLM 流程操作当前界面。只要用户要求操作手机或 App（例如下单咖啡、购物、联系人、设置、导航、打开应用），必须立即调用此工具，并把完整用户目标原样放入 goal；不要用 terminal/browser 代替，也不要直接回复已完成。若 OmniFlow 操作模块未启用，调用后会提示用户到插件市场手动启用。" to
+            "Use this immediately whenever the user asks you to operate a phone or Android app (for example ordering coffee, shopping, contacts, settings, navigation, or opening an app). Pass the complete user goal in goal; do not use terminal/browser instead and do not claim completion in plain text. If the OmniFlow operation module is disabled, this call tells the user to enable it manually from Plugin Market.",
         "要在 Android GUI 中完成的具体目标。" to
             "The concrete goal to complete in the Android GUI.",
         "可选关键词，可匹配应用名或包名。" to
@@ -525,6 +541,36 @@ object AgentToolDefinitions {
             "The task instructions that the subagent should execute immediately when triggered. Do not include scheduling phrases such as daily, at a specific time, scheduled, remind me, alarm, or create a task. Describe the real action that should be carried out at execution time."
     )
 
+    val toolSearchTool: JsonObject = buildJsonObject {
+        put("type", "function")
+        putJsonObject("function") {
+            put("name", "tools_search")
+            put("displayName", "查找可用工具")
+            put("toolType", "builtin")
+            put(
+                "description",
+                "按用户目标搜索当前 Agent 可用的内置工具、插件工具和 MCP 工具。工具不在当前列表时，先调用此工具；读取返回的工具名称和说明后，再调用具体工具。不要猜测工具名。"
+            )
+            putJsonObject("parameters") {
+                put("type", "object")
+                putJsonObject("properties") {
+                    putJsonObject("query") {
+                        put("type", "string")
+                        put("description", "要完成的目标或要查找的能力，例如读取文件、设置闹钟、联网搜索、操作手机或查询某个 MCP。")
+                    }
+                    putJsonObject("limit") {
+                        put("type", "integer")
+                        put("description", "返回工具数量上限，默认 8，范围 1-20。")
+                    }
+                }
+                putJsonArray("required") {
+                    add("query")
+                }
+                put("additionalProperties", false)
+            }
+        }
+    }
+
     val contextTimeNowTool: JsonObject = buildJsonObject {
         put("type", "function")
         putJsonObject("function") {
@@ -570,7 +616,7 @@ object AgentToolDefinitions {
             put("toolType", "builtin")
             put(
                 "description",
-                "手机或 Android App 操作必须使用此工具：例如下单咖啡、购物、联系人、设置、导航、打开应用等。把用户完整目标放入 goal，立即调用并等待结果；不要用 terminal/browser 代替，也不要直接回复已完成。Debug APK 已内置并启用 GUI/VLM 插件。"
+                "手机或 Android App 操作必须使用此工具：例如下单咖啡、购物、联系人、设置、导航、打开应用等。把用户完整目标放入 goal，立即调用并等待结果；不要用 terminal/browser 代替，也不要直接回复已完成。若 OmniFlow 操作模块未启用，调用后会提示用户手动启用，不会执行手机操作。"
             )
             putJsonObject("parameters") {
                 put("type", "object")
@@ -2216,9 +2262,12 @@ object AgentToolDefinitions {
 
     fun builtinTools(
         locale: PromptLocale = currentLocale(),
-        terminalDistribution: TerminalDistribution.Spec = TerminalDistribution.alpine
+        terminalDistribution: TerminalDistribution.Spec = TerminalDistribution.alpine,
+        includeVlmTool: Boolean = true,
     ): List<JsonObject> =
-        builtinToolDefinitions.map { decorateToolDefinition(it, locale, terminalDistribution) }
+        builtinToolDefinitions
+            .filter { includeVlmTool || it !== vlmTaskTool }
+            .map { decorateToolDefinition(it, locale, terminalDistribution) }
 
     fun scheduleTools(locale: PromptLocale = currentLocale()): List<JsonObject> =
         scheduleToolDefinitions.map { decorateToolDefinition(it, locale) }
@@ -2240,9 +2289,57 @@ object AgentToolDefinitions {
 
     fun staticTools(
         locale: PromptLocale = currentLocale(),
-        terminalDistribution: TerminalDistribution.Spec = TerminalDistribution.alpine
+        terminalDistribution: TerminalDistribution.Spec = TerminalDistribution.alpine,
+        includeVlmTool: Boolean = true,
     ): List<JsonObject> =
-        builtinTools(locale, terminalDistribution) + scheduleTools(locale) + alarmTools(locale) + calendarTools(locale) + musicTools(locale)
+        builtinTools(locale, terminalDistribution, includeVlmTool) +
+        scheduleTools(locale) + alarmTools(locale) + calendarTools(locale) + musicTools(locale)
+
+    /**
+     * Replace OmniBot's private names with the common Harness-native names
+     * only for the direct Agent model catalog. The MCP server keeps exposing
+     * the original complete catalog to external clients.
+     */
+    fun modelFacingTools(definitions: List<JsonObject>): List<JsonObject> {
+        val existingNames = definitions.mapNotNullTo(linkedSetOf()) { definition ->
+            (definition["function"] as? JsonObject)
+                ?.get("name")
+                ?.jsonPrimitive
+                ?.contentOrNull
+        }
+        return definitions.map { definition ->
+            val function = definition["function"] as? JsonObject ?: return@map definition
+            val currentName = function["name"]?.jsonPrimitive?.contentOrNull
+                ?: return@map definition
+            val modelName = nativeModelToolAliases[currentName]
+                ?: return@map definition
+            if (modelName in existingNames) {
+                // A plugin or remote MCP server already owns this native name;
+                // keep the original name rather than creating an ambiguous
+                // model catalog.
+                return@map definition
+            }
+            JsonObject(
+                definition.mapValues { (key, value) ->
+                    if (key != "function") {
+                        value
+                    } else {
+                        JsonObject(
+                            function.mapValues { (functionKey, functionValue) ->
+                                if (functionKey == "name") {
+                                    JsonPrimitive(modelName)
+                                } else {
+                                    functionValue
+                                }
+                            }
+                        )
+                    }
+                }
+            )
+        }
+    }
+
+    fun modelFacingToolNames(): Set<String> = nativeModelToolAliases.values.toSet()
 
     fun reservedToolNames(): Set<String> {
         val locale = PromptLocale.EN_US
@@ -2261,6 +2358,6 @@ object AgentToolDefinitions {
                 ?.get("name")
                 ?.jsonPrimitive
                 ?.contentOrNull
-        }
+        } + modelFacingToolNames()
     }
 }

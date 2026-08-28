@@ -31,7 +31,6 @@ import 'pages/mcp/remote_mcp_servers_page.dart';
 import 'pages/skill_store/skill_store_page.dart';
 import 'pages/plugin_market/plugin_market_page.dart';
 import 'pages/plugin_market/plugin_detail_page.dart';
-import 'pages/plugin_market/plugin_dashboard_page.dart';
 import 'package:ui/models/omni_plugin_item.dart';
 import 'pages/termux_setting/termux_setting_page.dart';
 import 'pages/scene_model_setting/scene_model_setting_page.dart';
@@ -367,18 +366,6 @@ List<GoRoute> homeRoutes = [
         initialPlugin: state.extra is OmniPluginItem
             ? state.extra! as OmniPluginItem
             : null,
-      ),
-    ),
-  ),
-
-  GoRoute(
-    path: '/home/plugin_dashboard',
-    name: 'home/plugin_dashboard',
-    pageBuilder: (context, state) => GoRouterManager.buildActivitySlidePage(
-      key: state.pageKey,
-      name: 'home/plugin_dashboard',
-      child: PluginDashboardPage(
-        pluginId: state.uri.queryParameters['pluginId']?.trim() ?? '',
       ),
     ),
   ),

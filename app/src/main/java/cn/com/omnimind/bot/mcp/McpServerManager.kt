@@ -45,6 +45,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import java.io.File
+import java.net.BindException
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.security.MessageDigest
@@ -69,6 +70,7 @@ object McpServerManager {
     private const val PREF_TOKEN_VAULT = "mcp_server_token_v2" // 加密后的 token
     private const val PREF_PORT = "mcp_server_port"
     private const val DEFAULT_PORT = 8899
+    private const val LOOPBACK_HOST = "127.0.0.1"
     private const val PORT_SEARCH_ATTEMPTS = 100
     private const val WEBCHAT_SESSION_COOKIE = "omnibot_webchat_session"
     private const val WEBCHAT_SESSION_TTL_MS = 7L * 24L * 60L * 60L * 1000L
@@ -116,6 +118,17 @@ object McpServerManager {
         return currentState()
     }
 
+    /**
+     * Makes the authenticated MCP endpoint available to an in-app Agent.
+     * Reuses the existing server and persisted port instead of creating a
+     * second private protocol or a second server lifecycle.
+     */
+    fun ensureRunning(context: Context): McpServerState {
+        currentState().takeIf { it.running }?.let { return it }
+        val port = mmkv.decodeInt(PREF_PORT, DEFAULT_PORT).takeIf { it > 0 } ?: DEFAULT_PORT
+        return startServer(context, port)
+    }
+
     fun refreshToken(context: Context): McpServerState {
         val newToken = generateToken()
         TokenVault.encryptAndStore(mmkv, PREF_TOKEN_VAULT, newToken)
@@ -136,6 +149,13 @@ object McpServerManager {
             token = ensureToken(),
         )
     }
+
+    /**
+     * Returns whether the user has enabled the persisted local MCP service.
+     * This is deliberately separate from [McpServerState.running]: after a
+     * process restart the preference can be true before the socket is restored.
+     */
+    internal fun isPersistedEnabled(): Boolean = mmkv.decodeBool(PREF_ENABLE, false)
 
     fun stopServer() {
         synchronized(serverLock) {
@@ -279,41 +299,85 @@ object McpServerManager {
 
     private fun startServer(context: Context, port: Int): McpServerState {
         synchronized(serverLock) {
-            try {
-                val lanIp = resolveLanIp()
-                    ?: throw IllegalStateException("未检测到可用的局域网 IPv4 地址")
-                if (isRunning) {
-                    val currentPort = mmkv.decodeInt(PREF_PORT, DEFAULT_PORT).takeIf { it > 0 } ?: DEFAULT_PORT
-                    if (currentPort == port) {
-                        activeHost = lanIp
-                        mmkv.encode(PREF_HOST, lanIp)
+            // Local ACP/DSH agents use loopback and must remain available even
+            // when Wi-Fi is absent. WebChat still advertises the LAN address
+            // whenever one exists.
+            val lanIp = resolveLanIp() ?: LOOPBACK_HOST
+            if (isRunning) {
+                val currentPort = mmkv.decodeInt(PREF_PORT, DEFAULT_PORT).takeIf { it > 0 } ?: DEFAULT_PORT
+                if (currentPort == port) {
+                    activeHost = lanIp
+                    mmkv.encode(PREF_HOST, lanIp)
+                    return currentState()
+                }
+                stopServerLocked()
+            }
+
+            var preferredPort = port
+            repeat(PORT_SEARCH_ATTEMPTS) {
+                // Some Android builds report every fixed-port probe as
+                // unavailable even though an ephemeral loopback port can be
+                // bound. Keep the preferred-port scan, but never make ACP
+                // unusable just because that probe is overly conservative.
+                val resolvedPort = runCatching { resolveAvailablePort(preferredPort, 1) }
+                    .getOrElse {
+                        runCatching { reserveEphemeralPort() }
+                            .onFailure { error ->
+                                OmniLog.w(
+                                    TAG,
+                                    "MCP fixed-port probe failed and ephemeral fallback failed: " +
+                                        (error.message ?: error.javaClass.simpleName),
+                                )
+                            }
+                            .getOrNull()
+                    }
+                    ?: return@repeat
+                val engine = buildServer(context, resolvedPort)
+                try {
+                    engine.start(wait = false)
+                    server = engine
+                    isRunning = true
+                    activeHost = lanIp
+                    mmkv.encode(PREF_ENABLE, true)
+                    mmkv.encode(PREF_PORT, resolvedPort)
+                    mmkv.encode(PREF_HOST, lanIp)
+                    if (resolvedPort != port) {
+                        OmniLog.w(TAG, "MCP port $port occupied; switched to $resolvedPort")
+                    }
+                    OmniLog.i(TAG, "MCP server started at http://$lanIp:$resolvedPort")
+                    return currentState()
+                } catch (error: Exception) {
+                    runCatching { engine.stop(500, 1_500) }
+                    if (!hasAddressAlreadyInUse(error)) {
+                        OmniLog.e(TAG, "startServer failed: ${error.message}")
                         return currentState()
                     }
-                    stopServerLocked()
+                    OmniLog.w(TAG, "MCP port $resolvedPort became occupied; retrying")
+                    preferredPort = resolvedPort + 1
                 }
-                val resolvedPort = resolveAvailablePort(port)
-                val engine = buildServer(context, resolvedPort)
-                engine.start(wait = false)
-
-                server = engine
-                isRunning = true
-                activeHost = lanIp
-                mmkv.encode(PREF_ENABLE, true)
-                mmkv.encode(PREF_PORT, resolvedPort)
-                mmkv.encode(PREF_HOST, lanIp)
-                if (resolvedPort != port) {
-                    OmniLog.w(TAG, "MCP port $port occupied; switched to $resolvedPort")
-                }
-                OmniLog.i(TAG, "MCP server started at http://$lanIp:$resolvedPort")
-                return currentState()
-            } catch (t: Throwable) {
-                server = null
-                isRunning = false
-                activeHost = null
-                OmniLog.e(TAG, "startServer failed: ${t.message}")
-                throw t
             }
+
+            server = null
+            isRunning = false
+            activeHost = null
+            mmkv.encode(PREF_ENABLE, false)
+            OmniLog.e(TAG, "startServer failed: no available MCP port")
+            return currentState()
         }
+    }
+
+    internal fun hasAddressAlreadyInUse(error: Throwable): Boolean {
+        val seen = mutableSetOf<Throwable>()
+        var current: Throwable? = error
+        while (current != null && seen.add(current)) {
+            if (current is BindException ||
+                current.message?.contains("Address already in use", ignoreCase = true) == true
+            ) {
+                return true
+            }
+            current = current.cause
+        }
+        return false
     }
 
     internal fun isTcpPortAvailable(port: Int): Boolean {
@@ -324,6 +388,10 @@ object McpServerManager {
                 socket.bind(InetSocketAddress("0.0.0.0", port))
             }
         }.isSuccess
+    }
+
+    internal fun reserveEphemeralPort(): Int = ServerSocket(0).use { socket ->
+        socket.localPort
     }
 
     internal fun resolveAvailablePort(
@@ -373,6 +441,15 @@ object McpServerManager {
                     if (bearerToken.isNullOrBlank() || !timingSafeEquals(bearerToken, token)) {
                         call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Authentication required"))
                         finish()
+                        return@intercept
+                    }
+                    if (ModernMcpProtocol.isModernRequest(call)) {
+                        ModernMcpProtocol.handle(
+                            call = call,
+                            context = appContext,
+                            scope = serverScope,
+                        )
+                        finish()
                     }
                 }
             }
@@ -380,6 +457,10 @@ object McpServerManager {
                 path = "/mcp",
                 enableDnsRebindingProtection = false,
             ) {
+                // This endpoint is the narrow ACP bridge: it intentionally
+                // publishes only AndroidDeviceMcpServer tools.  OmniBot's
+                // general Agent catalog remains internal to the app, while a
+                // Harness discovers its own built-in tools from its protocol.
                 AndroidDeviceMcpServer.create(appContext, serverScope)
             }
             routing {

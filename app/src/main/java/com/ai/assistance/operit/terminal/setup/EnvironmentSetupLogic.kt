@@ -1,6 +1,5 @@
 package com.ai.assistance.operit.terminal.setup
 
-import cn.com.omnimind.bot.agent.runtime.DEEPSEEK_HARNESS_NPM_PACKAGE_NAMES
 import cn.com.omnimind.bot.agent.runtime.DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND
 import cn.com.omnimind.bot.agent.runtime.DEEPSEEK_HARNESS_NATIVE_HEALTH_COMMAND
 import com.ai.assistance.operit.terminal.utils.SourceManager
@@ -15,16 +14,15 @@ object EnvironmentSetupLogic {
     )
 
     private val DEEPSEEK_HARNESS_PACKAGE_FILES =
-        DEEPSEEK_HARNESS_NPM_PACKAGE_NAMES.joinToString(" && ") { packageName ->
-            "test -f '/root/.npm-global/lib/node_modules/$packageName/package.json'"
-        }
+        "test -f '/root/.dsh/omnibot-acp/profiles/acp/package.json' && " +
+            "test -f '/root/.dsh/omnibot-acp/profiles/acp/node_modules/@openma/deepseek-harness-acp/package.json'"
     private val DEEPSEEK_HARNESS_CHECK_COMMAND =
         "PATH=\"/root/.npm-global/bin:${'$'}PATH\"; export PATH; " +
-            "command -v dsh-acp-demo >/dev/null 2>&1 && " +
+            "command -v dsh >/dev/null 2>&1 && " +
             DEEPSEEK_HARNESS_PACKAGE_FILES + " && " +
             DEEPSEEK_HARNESS_NATIVE_HEALTH_COMMAND
     private const val DEEPSEEK_HARNESS_VERSION_COMMAND =
-        "node -p \"require('/root/.npm-global/lib/node_modules/@deepseek-ai/dsh-acp-demo/package.json').version\""
+        "node -p \"require('/root/.npm-global/lib/node_modules/@deepseek-ai/dsh/package.json').version\""
 
     val packageDefinitions: List<PackageDefinition> = listOf(
         PackageDefinition("nodejs", "node --version", "dev"),
@@ -34,7 +32,11 @@ object EnvironmentSetupLogic {
         PackageDefinition("uv", "uv --version", "dev"),
         PackageDefinition("pip", "pip3 --version", "dev"),
         PackageDefinition("codex", "codex --version", "ai"),
-        PackageDefinition("claude_code", "claude --version", "ai"),
+        // claude-agent-acp is a long-lived ACP stdio server and does not
+        // implement a terminating --version command.  Probing it by
+        // launching the process blocks the setup coroutine forever; presence
+        // of the installed executable is the safe readiness check.
+        PackageDefinition("claude_code", "command -v claude-agent-acp", "ai"),
         PackageDefinition("opencode", "opencode --version", "ai"),
         PackageDefinition("deepseek_harness", DEEPSEEK_HARNESS_CHECK_COMMAND, "ai"),
         PackageDefinition("ssh_client", "ssh -V 2>&1", "ssh"),
@@ -72,7 +74,9 @@ object EnvironmentSetupLogic {
             "curl",
             "ripgrep",
             "build-base",
-            "python3"
+            "python3",
+            "linux-headers",
+            "util-linux-dev"
         ),
         "python" to listOf("python3"),
         "pip" to listOf("py3-pip"),
@@ -184,16 +188,26 @@ object EnvironmentSetupLogic {
             commands += "ln -sf /root/.npm-global/bin/codex /usr/local/bin/codex || true"
         }
         if ("claude_code" in requested) {
-            commands += "npm install -g --no-audit --no-fund @anthropic-ai/claude-code@latest"
-            commands += "ln -sf /root/.npm-global/bin/claude /usr/local/bin/claude || true"
+            commands += "npm install -g --no-audit --no-fund @agentclientprotocol/claude-agent-acp@latest"
+            commands += "ln -sf /root/.npm-global/bin/claude-agent-acp /usr/local/bin/claude-agent-acp || true"
         }
         if ("opencode" in requested) {
             commands += "npm install -g --no-audit --no-fund opencode-ai@latest"
+            // Android reports `process.platform=android`, so opencode-ai's
+            // optional Linux binary is skipped by npm even though the
+            // embedded Alpine runtime needs the arm64-musl vendor binary.
+            // Install that official platform package explicitly and publish
+            // its real executable instead of accepting a broken .exe shim.
+            commands += "if [ ! -x /root/.npm-global/lib/node_modules/opencode-linux-arm64-musl/bin/opencode ]; then " +
+                "rm -rf /root/.npm-global/lib/node_modules/opencode-linux-arm64-musl " +
+                "&& npm install -g --force --no-audit --no-fund --prefer-online opencode-linux-arm64-musl@latest; fi"
+            commands += "ln -sf /root/.npm-global/lib/node_modules/opencode-linux-arm64-musl/bin/opencode /root/.npm-global/bin/opencode"
             commands += "ln -sf /root/.npm-global/bin/opencode /usr/local/bin/opencode || true"
+            commands += "test -x /root/.npm-global/bin/opencode && /root/.npm-global/bin/opencode --version >/dev/null 2>&1"
         }
         if ("deepseek_harness" in requested) {
             commands += DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND
-            commands += "ln -sf /root/.npm-global/bin/dsh-acp-demo /usr/local/bin/dsh-acp-demo || true"
+            commands += "ln -sf /root/.npm-global/bin/dsh /usr/local/bin/dsh || true"
         }
         if ("openssh_server" in requested) {
             commands += "mkdir -p /var/run/sshd /etc/ssh"
@@ -307,8 +321,8 @@ object EnvironmentSetupLogic {
                 )
                 "claude_code" -> buildProbeSnippet(
                     packageId = packageId,
-                    commandCheck = "PATH=\"/root/.npm-global/bin:${'$'}PATH\"; export PATH; command -v claude >/dev/null 2>&1 && claude --version >/dev/null 2>&1",
-                    versionCommand = "claude --version"
+                    commandCheck = "PATH=\"/root/.npm-global/bin:${'$'}PATH\"; export PATH; command -v claude-agent-acp >/dev/null 2>&1",
+                    versionCommand = "command -v claude-agent-acp"
                 )
                 "opencode" -> buildProbeSnippet(
                     packageId = packageId,
@@ -372,7 +386,7 @@ object EnvironmentSetupLogic {
             "pip" -> "command -v pip3 && pip3 --version"
             "uv" -> "command -v uv && uv --version"
             "codex" -> "PATH=\"/root/.npm-global/bin:${'$'}PATH\"; export PATH; command -v codex && codex --version"
-            "claude_code" -> "PATH=\"/root/.npm-global/bin:${'$'}PATH\"; export PATH; command -v claude && claude --version"
+            "claude_code" -> "PATH=\"/root/.npm-global/bin:${'$'}PATH\"; export PATH; command -v claude-agent-acp"
             "opencode" -> "PATH=\"/root/.npm-global/bin:${'$'}PATH\"; export PATH; command -v opencode && opencode --version"
             "deepseek_harness" -> DEEPSEEK_HARNESS_CHECK_COMMAND
             "ripgrep" -> "command -v rg"
@@ -459,8 +473,8 @@ object EnvironmentSetupLogic {
         }
         if ("claude_code" in requested) {
             add(
-                "Claude Code CLI",
-                "PATH=\"/root/.npm-global/bin:${'$'}PATH\"; export PATH; claude --version >/dev/null 2>&1"
+                "Claude ACP adapter",
+                "PATH=\"/root/.npm-global/bin:${'$'}PATH\"; export PATH; command -v claude-agent-acp >/dev/null 2>&1"
             )
         }
         if ("opencode" in requested) {

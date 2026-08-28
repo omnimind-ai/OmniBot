@@ -15,7 +15,7 @@ import org.junit.Test
 
 class OmniVlmModelClientTest {
     @Test
-    fun `qwen normalized point is adapted to the current display pixels`() {
+    fun `model coordinates pass through the canonical protocol unchanged`() {
         val request = request(
             tool = "click",
             properties = buildJsonObject {
@@ -25,13 +25,13 @@ class OmniVlmModelClientTest {
         )
         val turn = turn("{\"x\":874,\"y\":850}")
 
-        val adapted = turn.adaptQwenVlmCoordinates(request)
+        val adapted = turn
 
-        assertEquals("{\"x\":943.92,\"y\":2019.6}", adapted.message.toolCalls!![0].function.arguments)
+        assertEquals("{\"x\":874,\"y\":850}", adapted.message.toolCalls!![0].function.arguments)
     }
 
     @Test
-    fun `qwen normalized coordinate pair is adapted without leaving array syntax`() {
+    fun `model coordinate arrays are not rewritten by a provider adapter`() {
         val request = request(
             tool = "click",
             properties = buildJsonObject {
@@ -41,9 +41,9 @@ class OmniVlmModelClientTest {
         )
         val turn = turn("{\"x\":[874,850],\"y\":[850]}")
 
-        val adapted = turn.adaptQwenVlmCoordinates(request)
+        val adapted = turn
 
-        assertEquals("{\"x\":943.92,\"y\":2019.6}", adapted.message.toolCalls!![0].function.arguments)
+        assertEquals("{\"x\":[874,850],\"y\":[850]}", adapted.message.toolCalls!![0].function.arguments)
     }
 
     private fun request(tool: String, properties: kotlinx.serialization.json.JsonObject) =

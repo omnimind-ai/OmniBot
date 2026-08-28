@@ -12,6 +12,8 @@ class SubagentToolCatalogView(
     private val parent: AgentToolCatalog,
     private val allowed: Set<String>
 ) : AgentToolCatalog {
+    override val usesProgressiveDiscovery: Boolean = parent.usesProgressiveDiscovery
+
 
     override val toolsForModel: List<ChatCompletionTool> by lazy {
         parent.toolsForModel.filter { tool ->
@@ -27,6 +29,14 @@ class SubagentToolCatalogView(
     override fun validateArguments(toolName: String, arguments: JsonObject) {
         ensureAllowed(toolName)
         parent.validateArguments(toolName, arguments)
+    }
+
+    override fun searchTools(query: String, limit: Int): List<AgentToolSearchEntry> {
+        return parent.searchTools(query, limit).filter { it.name in allowed }
+    }
+
+    override fun exposeToolNames(names: Set<String>) {
+        parent.exposeToolNames(names.intersect(allowed))
     }
 
     private fun ensureAllowed(toolName: String) {

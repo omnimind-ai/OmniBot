@@ -50,13 +50,15 @@ class ChatComposerState {
   bool hasPayload({
     required bool hasAttachments,
     required bool hasExternalPayload,
-  }) => hasText || hasAttachments || hasExternalPayload;
+    bool? hasTextOverride,
+  }) => (hasTextOverride ?? hasText) || hasAttachments || hasExternalPayload;
 
   ChatComposerPrimaryAction primaryAction({
     required bool isProcessing,
     required bool hasAttachments,
     required bool hasExternalPayload,
     bool supportsAttachmentFallback = false,
+    bool? hasTextOverride,
   }) {
     if (isProcessing) {
       return ChatComposerPrimaryAction.cancel;
@@ -64,6 +66,7 @@ class ChatComposerState {
     if (hasPayload(
       hasAttachments: hasAttachments,
       hasExternalPayload: hasExternalPayload,
+      hasTextOverride: hasTextOverride,
     )) {
       return ChatComposerPrimaryAction.send;
     }

@@ -21,6 +21,42 @@ class RuntimeBundleCatalog private constructor(
         bundles.firstOrNull { it.descriptor.id == pluginId }
             ?: throw IllegalArgumentException("Runtime bundle is not declared: $pluginId")
 
+    /**
+     * Apply remote metadata to the host catalog while retaining the APK's
+     * packaged baseline and locally declared plugin set.
+     */
+    internal fun mergeRemote(remote: RuntimeBundleCatalog): RuntimeBundleCatalog {
+        val remoteById = remote.bundles.associateBy { it.descriptor.id }
+        return RuntimeBundleCatalog(
+            bundles.map { local ->
+                val candidate = remoteById[local.descriptor.id]
+                    ?: return@map local
+                if (compareVersions(candidate.descriptor.version, local.descriptor.version) < 0) {
+                    return@map local
+                }
+                local.copy(
+                    descriptor = candidate.descriptor.copy(
+                        required = local.descriptor.required || candidate.descriptor.required,
+                        installByDefault =
+                            local.descriptor.installByDefault || candidate.descriptor.installByDefault,
+                        settingsSchema = candidate.descriptor.settingsSchema.takeUnless { it.isEmpty() }
+                            ?: local.descriptor.settingsSchema,
+                        presentation = candidate.descriptor.presentation.takeUnless { it.isEmpty() }
+                            ?: local.descriptor.presentation,
+                    ),
+                    runtimeSkill = candidate.runtimeSkill.copy(
+                        packagedAssetPath = local.runtimeSkill.packagedAssetPath
+                            ?: candidate.runtimeSkill.packagedAssetPath,
+                        packagedArchivePath = local.runtimeSkill.packagedArchivePath
+                            ?: candidate.runtimeSkill.packagedArchivePath,
+                        packagedArchiveSha256 = local.runtimeSkill.packagedArchiveSha256
+                            ?: candidate.runtimeSkill.packagedArchiveSha256,
+                    ).validated(),
+                )
+            },
+        )
+    }
+
     companion object {
         private const val ASSET_PATH = "catalog.v1.json"
         private val json = Json { ignoreUnknownKeys = true }
@@ -45,6 +81,18 @@ class RuntimeBundleCatalog private constructor(
             require(duplicateId == null) { "Duplicate runtime bundle id: $duplicateId" }
             return RuntimeBundleCatalog(bundles)
         }
+
+        private fun compareVersions(left: String, right: String): Int {
+            val leftParts = left.substringBefore('-').substringBefore('+')
+                .split('.').map { it.toIntOrNull() ?: 0 }
+            val rightParts = right.substringBefore('-').substringBefore('+')
+                .split('.').map { it.toIntOrNull() ?: 0 }
+            return (0 until maxOf(leftParts.size, rightParts.size))
+                .asSequence()
+                .map { index -> (leftParts.getOrNull(index) ?: 0).compareTo(rightParts.getOrNull(index) ?: 0) }
+                .firstOrNull { it != 0 }
+                ?: 0
+        }
     }
 }
 
@@ -66,6 +114,7 @@ private data class RuntimeBundlePluginWire(
     val downloadSizeBytes: Long = 0,
     val capabilities: List<String> = emptyList(),
     val required: Boolean = false,
+    val installByDefault: Boolean = false,
     val settingsSchema: JsonObject = JsonObject(emptyMap()),
     val presentation: JsonObject = JsonObject(emptyMap()),
     val adapter: String = "",
@@ -100,6 +149,7 @@ private data class RuntimeBundlePluginWire(
                 downloadSizeBytes = downloadSizeBytes,
                 capabilities = capabilities,
                 required = required,
+                installByDefault = installByDefault,
                 settingsSchema = settingsSchema,
                 presentation = presentation,
             ),
@@ -119,6 +169,7 @@ private data class RuntimeSkillWire(
     val id: String = "",
     val packagedAssetPath: String? = null,
     val packagedArchivePath: String? = null,
+    val packagedArchiveSha256: String? = null,
     val markerFile: String = "PACKAGED_RUNTIME_SKILL",
     val componentArchiveUrl: String? = null,
     val componentArchiveSha256: String? = null,
@@ -130,6 +181,8 @@ private data class RuntimeSkillWire(
         id = id,
         packagedAssetPath = packagedAssetPath,
         packagedArchivePath = packagedArchivePath,
+        packagedArchiveSha256 = packagedArchiveSha256 ?: componentArchiveSha256
+            .takeIf { !packagedArchivePath.isNullOrBlank() },
         markerFile = markerFile,
         componentArchiveUrl = componentArchiveUrl,
         componentArchiveSha256 = componentArchiveSha256,

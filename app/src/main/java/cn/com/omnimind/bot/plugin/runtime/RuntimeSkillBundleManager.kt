@@ -33,6 +33,7 @@ data class RuntimeSkillSpec(
     val id: String,
     val packagedAssetPath: String? = null,
     val packagedArchivePath: String? = null,
+    val packagedArchiveSha256: String? = null,
     val markerFile: String = "PACKAGED_RUNTIME_SKILL",
     val componentArchiveUrl: String? = null,
     val componentArchiveSha256: String? = null,
@@ -57,8 +58,16 @@ data class RuntimeSkillSpec(
         require(packagedAssetPath.isNullOrBlank() || packagedArchivePath.isNullOrBlank()) {
             "Runtime skill cannot declare both a packaged directory and archive"
         }
-        require(packagedArchivePath.isNullOrBlank() || !componentArchiveSha256.isNullOrBlank()) {
+        require(
+            packagedArchivePath.isNullOrBlank() ||
+                !packagedArchiveChecksum().isNullOrBlank()
+        ) {
             "Runtime skill packaged archive SHA-256 is required"
+        }
+        packagedArchiveSha256?.let { digest ->
+            require(digest.matches(Regex("^[a-f0-9]{64}$"))) {
+                "Runtime skill packaged archive SHA-256 is invalid"
+            }
         }
         require(
             !packagedAssetPath.isNullOrBlank() ||
@@ -95,6 +104,9 @@ data class RuntimeSkillSpec(
             "Runtime skill $field cannot escape its root"
         }
     }
+
+    internal fun packagedArchiveChecksum(): String? =
+        packagedArchiveSha256 ?: componentArchiveSha256
 }
 
 data class RuntimeSkillLocation(
@@ -399,7 +411,7 @@ class RuntimeSkillBundleManager(
                     unpackVerifiedComponentArchive(
                         archive = archive,
                         target = skillSource,
-                        expectedSha256 = requireNotNull(spec.componentArchiveSha256),
+                        expectedSha256 = requireNotNull(spec.packagedArchiveChecksum()),
                         componentId = spec.componentId,
                         componentVersion = spec.componentVersion,
                         runtimeSkillId = spec.id,
@@ -447,7 +459,7 @@ class RuntimeSkillBundleManager(
 
     private fun packagedMarker(): String = spec.packagedArchivePath
         ?.takeIf(String::isNotBlank)
-        ?.let { requireNotNull(spec.componentArchiveSha256) }
+        ?.let { requireNotNull(spec.packagedArchiveChecksum()) }
         ?: appContext.assets.open("${requirePackagedAssetPath()}/${spec.markerFile}")
             .bufferedReader()
             .use { it.readText().trim() }

@@ -12,7 +12,7 @@ class OmniFlowManagementToolHandlerTest {
     private val json = Json { explicitNulls = false }
 
     @Test
-    fun `saving a runlog defaults to agent visible`() {
+    fun `saving a runlog preserves the official arguments`() {
         val args = json.parseToJsonElement(
             """{"run_id":"gui-123"}""",
         ).jsonObject
@@ -23,13 +23,13 @@ class OmniFlowManagementToolHandlerTest {
         )
 
         assertEquals("gui-123", normalized["run_id"])
-        assertEquals(true, normalized["agent_visible"])
+        assertFalse(normalized.containsKey("agent_visible"))
     }
 
     @Test
-    fun `explicitly hidden converted runlog remains hidden`() {
+    fun `enhancement arguments are passed to the official save pipeline`() {
         val args = json.parseToJsonElement(
-            """{"run_id":"gui-123","agent_visible":false}""",
+            """{"run_id":"gui-123","functions":[{"function_id":"fn-1"}],"enhance":true,"instruction":"稳定化参数"}""",
         ).jsonObject
 
         val normalized = normalizeOmniFlowManagementArguments(
@@ -37,7 +37,13 @@ class OmniFlowManagementToolHandlerTest {
             args,
         )
 
-        assertFalse(normalized["agent_visible"] as Boolean)
+        assertEquals("gui-123", normalized["run_id"])
+        assertEquals(true, normalized["enhance"])
+        assertEquals("稳定化参数", normalized["instruction"])
+        assertEquals(
+            "fn-1",
+            ((normalized["functions"] as List<*>).single() as Map<*, *>)["function_id"],
+        )
     }
 
     @Test

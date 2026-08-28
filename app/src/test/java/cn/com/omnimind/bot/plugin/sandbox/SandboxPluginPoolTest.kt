@@ -123,15 +123,10 @@ class SandboxPluginPoolTest {
         assertEquals("4", root.resolve(pluginId).resolve(".omni/runtime.version").readText())
         assertTrue(installedBridge.contains("__omniRuntimeVersion', { value: 4"))
         assertTrue(installedBridge.contains("call('tool.call'"))
-        assertTrue(installedBridge.contains("window.__omniAppEvent"))
-        assertTrue(installedBridge.contains("send: (options) => call('app.send'"))
-        assertTrue(installedBridge.contains("cancel: (runId) => call('app.cancel'"))
-        assertTrue(installedBridge.contains("getState: () => call('app.getState'"))
-        assertEquals(
-            listOf(SandboxProjectPermission.DATABASE),
-            pool.dashboard(pluginId)["permissions"],
-        )
-        assertEquals(root.resolve(pluginId).canonicalPath, pool.dashboard(pluginId)["rootPath"])
+        assertFalse(installedBridge.contains("window.__omniAppEvent"))
+        assertFalse(installedBridge.contains("call('app.send'"))
+        assertFalse(installedBridge.contains("call('app.cancel'"))
+        assertFalse(installedBridge.contains("call('app.getState'"))
 
         val inserted = pool.executeTool(
             pluginId = pluginId,
@@ -171,7 +166,7 @@ class SandboxPluginPoolTest {
     }
 
     @Test
-    fun `opening dashboard upgrades an installed runtime without duplicating html tags`() {
+    fun `runtime upgrade does not duplicate injected html tags`() {
         val root = Files.createTempDirectory("sandbox-plugin-runtime-upgrade").toFile()
         val source = projectSource()
         val pool = SandboxPluginPool(
@@ -187,8 +182,8 @@ class SandboxPluginPoolTest {
         pluginDirectory.resolve(".omni/runtime.version").delete()
         pluginDirectory.resolve(".omni/bridge.js").writeText("window.omni = {}; // legacy")
 
-        pool.dashboard(pluginId)
-        pool.dashboard(pluginId)
+        pool.createProviders()
+        pool.createProviders()
 
         val upgradedHtml = entry.readText()
         val upgradedBridge = pluginDirectory.resolve(".omni/bridge.js").readText()
@@ -197,7 +192,7 @@ class SandboxPluginPoolTest {
         assertEquals(1, upgradedHtml.split("Content-Security-Policy").size - 1)
         assertEquals("4", pluginDirectory.resolve(".omni/runtime.version").readText())
         assertTrue(upgradedBridge.contains("call('tool.call'"))
-        assertTrue(upgradedBridge.contains("send: (options) => call('app.send'"))
+        assertFalse(upgradedBridge.contains("call('app.send'"))
     }
 
     @Test
@@ -331,7 +326,7 @@ class SandboxPluginPoolTest {
     }
 
     @Test
-    fun `project check reports undeclared Xiaowan app bridge`() {
+    fun `project check rejects removed external app bridge`() {
         val root = Files.createTempDirectory("sandbox-plugin-app-capability").toFile()
         val source = projectSource().apply {
             resolve("app.js").writeText("window.omni.app.send('make a plan');")
@@ -348,7 +343,7 @@ class SandboxPluginPoolTest {
 
         assertFalse(result.success)
         assertTrue(result.errorMessage.orEmpty().contains("app.js"))
-        assertTrue(result.errorMessage.orEmpty().contains("xiaowan permission"))
+        assertFalse(result.errorMessage.orEmpty().contains("xiaowan permission"))
     }
 
     @Test

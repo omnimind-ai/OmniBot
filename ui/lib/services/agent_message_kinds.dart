@@ -6,7 +6,7 @@ const String kAgentToolSummaryCardType = 'agent_tool_summary';
 const String kAgentRequestCardType = 'agent_request';
 
 // Read-only compatibility for conversation snapshots created before Agent mode
-// replaced the former Codex-specific presentation layer.
+// used the shared ACP tool card types.
 const String _legacyAgentToolUiStyle = 'codex_tool';
 const String _legacyAgentRequestCardType = 'codex_request';
 
@@ -42,8 +42,35 @@ String canonicalAgentRequestCardType(Object? value) {
 /// definitions, so the same card counted as a tool call in one file and not in
 /// another.
 bool isAgentToolSummaryMessage(ChatMessageModel message) {
-  return (message.cardData?['type'] ?? '').toString().trim() ==
-      kAgentToolSummaryCardType;
+  final type = (message.cardData?['type'] ?? '').toString().trim();
+  return type == kAgentToolSummaryCardType ||
+      type == 'tool_call' ||
+      type == 'tool_call_update' ||
+      type == 'commandExecution' ||
+      type == 'command_execution' ||
+      type == 'mcpToolCall' ||
+      type == 'mcp_tool_call' ||
+      type == 'webSearch' ||
+      type == 'web_search' ||
+      type == 'fileChange' ||
+      type == 'file_change' ||
+      type == 'plan' ||
+      type == 'todo_list';
+}
+
+/// Whether a tool-summary message is an ACP plan snapshot.
+///
+/// Plans are stateful protocol data rather than transient tool activity. Keep
+/// this predicate shared so the timeline can leave the plan card visible while
+/// its `planEntries` are replaced by subsequent ACP updates.
+bool isAgentPlanMessage(ChatMessageModel message) {
+  final card = message.cardData;
+  if (card == null) return false;
+  final type = (card['type'] ?? '').toString().trim().toLowerCase();
+  if (type == 'plan' || type == 'todo_list') return true;
+  if (type != kAgentToolSummaryCardType) return false;
+  return (card['toolType'] ?? '').toString().trim().toLowerCase() == 'plan' ||
+      (card['toolName'] ?? '').toString().trim().toLowerCase() == 'plan';
 }
 
 /// Whether the message is a tool-summary card produced by an ACP agent.
@@ -56,6 +83,28 @@ bool isAcpAgentToolSummaryMessage(ChatMessageModel message) {
 /// Whether the message is a request card (approval / user input).
 bool isAgentRequestMessage(ChatMessageModel message) {
   return isAgentRequestCardType(message.cardData?['type']);
+}
+
+/// ACP user-input requests are transport state, not conversation content.
+/// They are answered through the single chat composer and therefore must not
+/// be rendered as a second input card in the timeline.
+bool isAgentUserInputRequestMessage(ChatMessageModel message) {
+  if (!isAgentRequestMessage(message)) {
+    return false;
+  }
+  return (message.cardData?['requestKind'] ?? '').toString().trim() ==
+      'user_input';
+}
+
+/// ACP permission requests are transport state as well. They may still be
+/// answered by the runtime when a Harness explicitly asks for confirmation,
+/// but they use the shared compact request card in the timeline.
+bool isAgentApprovalRequestMessage(ChatMessageModel message) {
+  if (!isAgentRequestMessage(message)) {
+    return false;
+  }
+  return (message.cardData?['requestKind'] ?? '').toString().trim() ==
+      'approval';
 }
 
 /// Whether the text reads as the "task cancelled" marker.

@@ -123,7 +123,7 @@ class _PureChatToggleHarness extends StatefulWidget {
     this.selected = false,
     this.locked = false,
     this.showOmniAiTapCount = false,
-    this.showAgentTapCount = false,
+    this.includeAgent = true,
     this.translucent = false,
     this.visualProfile = AppBackgroundVisualProfile.defaultProfile,
   });
@@ -131,7 +131,7 @@ class _PureChatToggleHarness extends StatefulWidget {
   final bool selected;
   final bool locked;
   final bool showOmniAiTapCount;
-  final bool showAgentTapCount;
+  final bool includeAgent;
   final bool translucent;
   final AppBackgroundVisualProfile visualProfile;
 
@@ -144,7 +144,6 @@ class _PureChatToggleHarnessState extends State<_PureChatToggleHarness> {
   late final bool _locked = widget.locked;
   int _toggleCount = 0;
   int _omniAiTapCount = 0;
-  int _agentTapCount = 0;
 
   @override
   Widget build(BuildContext context) {
@@ -168,11 +167,13 @@ class _PureChatToggleHarnessState extends State<_PureChatToggleHarness> {
                     _toggleCount += 1;
                   });
                 },
-                onAgentTap: () {
-                  setState(() {
-                    _agentTapCount += 1;
-                  });
-                },
+                onAgentTap: () {},
+                onAcpAgentTap: widget.includeAgent ? (_) {} : null,
+                acpAgentModes: widget.includeAgent
+                    ? const <ChatAcpAgentModeOption>[
+                        ChatAcpAgentModeOption(id: 'codex-acp', name: 'Codex'),
+                      ]
+                    : const <ChatAcpAgentModeOption>[],
                 activeMode: ChatSurfaceMode.normal,
                 onModeChanged: (_) {},
                 displayLayer: ChatIslandDisplayLayer.mode,
@@ -191,7 +192,6 @@ class _PureChatToggleHarnessState extends State<_PureChatToggleHarness> {
               Text('toggles:$_toggleCount'),
               if (widget.showOmniAiTapCount)
                 Text('omniAiTaps:$_omniAiTapCount'),
-              if (widget.showAgentTapCount) Text('agentTaps:$_agentTapCount'),
             ],
           ),
         ),
@@ -445,28 +445,19 @@ void main() {
 
     final petButton = find.byKey(const ValueKey('chat-app-bar-pet-button'));
     final appBarContext = tester.element(find.byType(ChatAppBar));
-    SvgPicture petIcon() => tester.widget<SvgPicture>(
-      find.descendant(of: petButton, matching: find.byType(SvgPicture)),
+    Icon petIcon() => tester.widget<Icon>(
+      find.descendant(of: petButton, matching: find.byType(Icon)),
     );
 
     expect(find.text('petShowing:true'), findsOneWidget);
-    expect(
-      petIcon().colorFilter,
-      ColorFilter.mode(
-        appBarContext.omniPalette.accentPrimary,
-        BlendMode.srcIn,
-      ),
-    );
+    expect(petIcon().color, appBarContext.omniPalette.accentPrimary);
 
     await tester.tap(petButton);
     await tester.pump();
 
     expect(find.text('petTaps:1'), findsOneWidget);
     expect(find.text('petShowing:false'), findsOneWidget);
-    expect(
-      petIcon().colorFilter,
-      ColorFilter.mode(Colors.grey[800]!, BlendMode.srcIn),
-    );
+    expect(petIcon().color, Colors.grey[800]!);
   });
 
   testWidgets('does not expose a conversation ID copy shortcut', (
@@ -597,13 +588,13 @@ void main() {
     expect(find.text('toggles:0'), findsOneWidget);
   });
 
-  testWidgets('opens mode menu with OmniAi ACP Agent and pure chat actions', (
+  testWidgets('opens mode menu with Xiaowan and pure chat actions', (
     tester,
   ) async {
     await tester.pumpWidget(
       const _PureChatToggleHarness(
         showOmniAiTapCount: true,
-        showAgentTapCount: true,
+        includeAgent: false,
       ),
     );
 
@@ -618,7 +609,7 @@ void main() {
     );
     expect(
       find.byKey(const ValueKey('chat-app-bar-mode-menu-acp-codex-acp')),
-      findsOneWidget,
+      findsNothing,
     );
     expect(
       find.byKey(const ValueKey('chat-app-bar-mode-menu-pure-chat')),
@@ -654,17 +645,6 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('omniAiTaps:1'), findsOneWidget);
-
-    await tester.tap(
-      find.byKey(const ValueKey('chat-app-bar-pure-chat-button')),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(
-      find.byKey(const ValueKey('chat-app-bar-mode-menu-acp-codex-acp')),
-    );
-    await tester.pumpAndSettle();
-
-    expect(find.text('agentTaps:1'), findsOneWidget);
 
     await tester.tap(
       find.byKey(const ValueKey('chat-app-bar-pure-chat-button')),
@@ -725,17 +705,20 @@ void main() {
       final agentRow = find.byKey(
         const ValueKey('chat-app-bar-mode-menu-acp-codex-acp'),
       );
-      InkWell agentInkWell() => tester.widget<InkWell>(
-        find.descendant(of: agentRow, matching: find.byType(InkWell)),
+      GestureDetector agentGesture() => tester.widget<GestureDetector>(
+        find.descendant(of: agentRow, matching: find.byType(GestureDetector)),
       );
 
-      expect(agentInkWell().onTap, isNull);
+      // Harness rows stay actionable while the catalog is refreshing.  The
+      // selector cancels superseded handshakes, so a slow Agent must not
+      // freeze the whole switcher.
+      expect(agentGesture().onTap, isNotNull);
 
       isAgentLoading.value = false;
       await tester.pumpAndSettle();
 
       expect(agentRow, findsOneWidget);
-      expect(agentInkWell().onTap, isNotNull);
+      expect(agentGesture().onTap, isNotNull);
 
       await tester.tap(agentRow);
       await tester.pumpAndSettle();
@@ -744,7 +727,7 @@ void main() {
     },
   );
 
-  testWidgets('shows only enabled online ACP Agents in the mode menu', (
+  testWidgets('shows enabled installed ACP Agents in the mode menu', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -811,10 +794,14 @@ void main() {
       find.byKey(const ValueKey('chat-app-bar-mode-menu-acp-codex-acp')),
       findsOneWidget,
     );
+    for (final agentId in const <String>['unchecked-agent', 'offline-agent']) {
+      expect(
+        find.byKey(ValueKey('chat-app-bar-mode-menu-acp-$agentId')),
+        findsOneWidget,
+      );
+    }
     for (final agentId in const <String>[
       'disabled-agent',
-      'unchecked-agent',
-      'offline-agent',
       'missing-agent',
       'not-installed-agent',
       'codex-remote',
@@ -847,6 +834,7 @@ void main() {
                 ChatAcpAgentModeOption(
                   id: 'unchecked-agent',
                   name: 'Unchecked',
+                  installed: false,
                   status: 'unchecked',
                 ),
               ],
@@ -1243,6 +1231,12 @@ void main() {
               onAgentTap: () {
                 agentTapCount += 1;
               },
+              onAcpAgentTap: (_) {
+                agentTapCount += 1;
+              },
+              acpAgentModes: const <ChatAcpAgentModeOption>[
+                ChatAcpAgentModeOption(id: 'codex-acp', name: 'Codex'),
+              ],
               onAppUpdateTap: () {
                 tapCount += 1;
               },
@@ -1350,7 +1344,9 @@ void main() {
     expect(agentIcon.height, 22);
   });
 
-  testWidgets('uses current chat mode icon in surface slider', (tester) async {
+  testWidgets('keeps the surface slider icon independent from Harness brand', (
+    tester,
+  ) async {
     Future<void> pumpAppBar({
       bool isOmniAiSelected = false,
       bool isAgentSelected = false,
@@ -1392,10 +1388,10 @@ void main() {
     }
 
     await pumpAppBar(isOmniAiSelected: true);
-    expect(primaryIconIdentity(), contains('assets/home/avatar.svg'));
+    expect(primaryIconIdentity(), contains('assets/home/chat/agent.svg'));
 
     await pumpAppBar(isAgentSelected: true);
-    expect(primaryIconIdentity(), 'agent:codex-acp');
+    expect(primaryIconIdentity(), contains('assets/home/chat/agent.svg'));
 
     await pumpAppBar(isPureChatSelected: true);
     expect(primaryIconIdentity(), contains('assets/home/chat/pure_chat.svg'));

@@ -51,8 +51,8 @@ void main() {
 
     expect(find.text('Plan'), findsOneWidget);
     expect(find.text('Chat'), findsOneWidget);
-    expect(find.byType(TextField), findsOneWidget);
-    expect(find.text('No, tell Claude Code how to adjust'), findsOneWidget);
+    expect(find.byType(TextField), findsNothing);
+    expect(find.text('No, tell Claude Code how to adjust'), findsNothing);
     expect(find.text('ESC'), findsNothing);
 
     await tester.tap(find.text('Chat'));
@@ -121,7 +121,7 @@ void main() {
     expect(find.text('submitted: Chat'), findsNothing);
     expect(find.text('Plan'), findsOneWidget);
     expect(find.text('Chat'), findsOneWidget);
-    expect(find.text('No, tell Claude Code how to adjust'), findsOneWidget);
+    expect(find.text('No, tell Claude Code how to adjust'), findsNothing);
   });
 
   testWidgets('pending request restores exact submitted cache after refresh', (
@@ -144,7 +144,7 @@ void main() {
 
     expect(find.text('submitted: Chat'), findsOneWidget);
     expect(find.text('Plan'), findsNothing);
-    expect(find.text('No, tell Claude Code how to adjust'), findsNothing);
+    expect(find.byType(TextField), findsNothing);
   });
 
   testWidgets('does not render duplicate title and detail question text', (
@@ -163,7 +163,7 @@ void main() {
     expect(find.text('Choose mode'), findsOneWidget);
   });
 
-  testWidgets('custom answer input uses provider field styling', (
+  testWidgets('request card does not render a second free-text input', (
     tester,
   ) async {
     await tester.pumpWidget(
@@ -177,57 +177,79 @@ void main() {
       ),
     );
 
-    final optionRow = find.byKey(const ValueKey('agent-request-option-row-1'));
-    final customInput = find.byKey(
-      const ValueKey('agent-request-custom-answer-input'),
-    );
-    final textField = tester.widget<TextField>(find.byType(TextField));
-
-    expect(optionRow, findsOneWidget);
-    expect(customInput, findsOneWidget);
-    expect(textField.minLines, 1);
-    expect(textField.maxLines, 1);
-    expect(textField.textInputAction, TextInputAction.done);
     expect(
-      textField.decoration?.labelText,
-      'No, tell Claude Code how to adjust',
+      find.byKey(const ValueKey('agent-request-option-row-1')),
+      findsOneWidget,
     );
-    expect(textField.decoration?.hintText, 'Describe the adjustment');
-    expect(textField.style?.fontSize, 13);
-    expect(
-      tester.getTopLeft(customInput).dx,
-      closeTo(tester.getTopLeft(optionRow).dx, 0.1),
-    );
-    expect(
-      tester.getSize(customInput).width,
-      closeTo(tester.getSize(optionRow).width, 0.1),
-    );
+    expect(find.byType(TextField), findsNothing);
+    expect(find.text('Describe the adjustment'), findsNothing);
   });
 
-  testWidgets(
-    'custom answer input keeps keyboard clearance in scroll padding',
-    (tester) async {
-      await tester.pumpWidget(
-        MaterialApp(
-          home: Scaffold(
-            body: MediaQuery(
-              data: const MediaQueryData(
-                viewInsets: EdgeInsets.only(bottom: 320),
-              ),
-              child: AgentRequestCard(cardData: _requestCardData()),
-            ),
+  testWidgets('free-text requests also leave input to the main composer', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AgentRequestCard(
+            cardData: _requestCardData(rawParams: <String, dynamic>{}),
           ),
         ),
-      );
+      ),
+    );
 
-      final textField = tester.widget<TextField>(find.byType(TextField));
+    expect(find.byType(TextField), findsNothing);
+    expect(find.text('Ignore'), findsOneWidget);
+  });
 
-      expect(textField.scrollPadding.top, 24);
-      expect(textField.scrollPadding.bottom, 416);
-    },
-  );
+  testWidgets('compact notice resolves the live ACP schema question', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AgentRequestNotice(
+            cardData: <String, dynamic>{
+              'type': 'agent_request',
+              'requestKind': 'user_input',
+              'requestId': 'elicitation-live',
+              'title': 'The agent needs your input.',
+              'detail': 'The agent needs your input.',
+              'rawParamsJson': jsonEncode(<String, dynamic>{
+                'message': 'The agent needs your input.',
+                'requestedSchema': <String, dynamic>{
+                  'type': 'object',
+                  'properties': <String, dynamic>{
+                    'details': <String, dynamic>{
+                      'type': 'string',
+                      'title': '插件详情',
+                      'description': '请提供插件名称和用途',
+                      'oneOf': <Map<String, dynamic>>[
+                        <String, dynamic>{
+                          'const': 'android',
+                          'title': 'Android 插件',
+                        },
+                      ],
+                    },
+                  },
+                },
+              }),
+            },
+          ),
+        ),
+      ),
+    );
 
-  testWidgets('submits custom adjustment text when entered', (tester) async {
+    expect(find.text('插件详情'), findsOneWidget);
+    expect(find.textContaining('请提供插件名称和用途'), findsOneWidget);
+    expect(find.textContaining('可选：Android 插件'), findsOneWidget);
+    expect(find.text('The agent needs your input.'), findsNothing);
+    expect(find.byType(TextField), findsNothing);
+  });
+
+  testWidgets('ACP elicitation renders a form and submits typed primitives', (
+    tester,
+  ) async {
     MethodCall? submittedCall;
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
@@ -238,25 +260,57 @@ void main() {
 
     await tester.pumpWidget(
       MaterialApp(
-        home: Scaffold(body: AgentRequestCard(cardData: _requestCardData())),
+        home: Scaffold(
+          body: AgentRequestCard(
+            cardData: <String, dynamic>{
+              'type': 'agent_request',
+              'requestId': 'elicitation-1',
+              'cardId': 'elicitation-1-card',
+              'requestKind': 'user_input',
+              'structuredElicitation': true,
+              'title': 'Project details',
+              'detail': 'Provide the project information',
+              'status': 'pending',
+              'rawParamsJson': jsonEncode(<String, dynamic>{
+                'requestedSchema': <String, dynamic>{
+                  'type': 'object',
+                  'required': <String>['name', 'count'],
+                  'properties': <String, dynamic>{
+                    'name': <String, dynamic>{
+                      'type': 'string',
+                      'title': 'Name',
+                    },
+                    'count': <String, dynamic>{
+                      'type': 'integer',
+                      'title': 'Count',
+                    },
+                  },
+                },
+              }),
+            },
+          ),
+        ),
       ),
     );
 
-    await tester.enterText(
-      find.byType(TextField),
-      'Please make the options wider',
-    );
+    expect(find.byType(TextField), findsNWidgets(2));
+    await tester.enterText(find.byType(TextField).at(0), 'demo');
+    await tester.enterText(find.byType(TextField).at(1), '3');
+    // TextField.onChanged updates the form validity in a stateful card. Give
+    // that state transition a frame before tapping the submit action.
     await tester.pump();
     await tester.tap(find.text('Submit ↵'));
     await tester.pumpAndSettle();
 
+    expect(submittedCall?.method, 'respondToServerRequest');
     final arguments = Map<String, dynamic>.from(
       submittedCall!.arguments as Map,
     );
-    final response = Map<String, dynamic>.from(arguments['response'] as Map);
-    final answers = Map<String, dynamic>.from(response['answers'] as Map);
-    final mode = Map<String, dynamic>.from(answers['mode'] as Map);
-    expect(mode['answers'], <String>['Please make the options wider']);
+    expect(arguments['requestId'], 'elicitation-1');
+    expect(arguments['response'], {
+      'action': 'accept',
+      'content': {'name': 'demo', 'count': 3},
+    });
   });
 
   testWidgets('fills the available message width', (tester) async {
@@ -279,7 +333,10 @@ void main() {
   });
 }
 
-Map<String, dynamic> _requestCardData({String detail = 'Pick one'}) {
+Map<String, dynamic> _requestCardData({
+  String detail = 'Pick one',
+  Map<String, dynamic>? rawParams,
+}) {
   return <String, dynamic>{
     'type': 'agent_request',
     'agentId': 'claude-code-acp',
@@ -292,17 +349,20 @@ Map<String, dynamic> _requestCardData({String detail = 'Pick one'}) {
     'questionId': 'mode',
     'status': 'pending',
     'startTime': 1000,
-    'rawParamsJson': jsonEncode({
-      'questions': [
-        {
-          'id': 'mode',
-          'question': 'Choose mode',
-          'options': [
-            {'label': 'Plan', 'description': 'Plan first'},
-            {'label': 'Chat', 'description': 'Answer directly'},
-          ],
-        },
-      ],
-    }),
+    'rawParamsJson': jsonEncode(
+      rawParams ??
+          {
+            'questions': [
+              {
+                'id': 'mode',
+                'question': 'Choose mode',
+                'options': [
+                  {'label': 'Plan', 'description': 'Plan first'},
+                  {'label': 'Chat', 'description': 'Answer directly'},
+                ],
+              },
+            ],
+          },
+    ),
   };
 }

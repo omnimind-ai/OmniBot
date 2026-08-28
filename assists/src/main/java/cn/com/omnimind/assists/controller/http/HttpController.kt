@@ -1,6 +1,5 @@
 package cn.com.omnimind.assists.controller.http
 
-import cn.com.omnimind.assists.api.bean.TaskParams
 import cn.com.omnimind.assists.api.bean.ResultBean
 import cn.com.omnimind.baselib.account.AiRequestTransportPolicy
 import cn.com.omnimind.baselib.account.AiTransportRoute
@@ -10,6 +9,7 @@ import cn.com.omnimind.baselib.llm.AssistantToolCallFunction
 import cn.com.omnimind.baselib.llm.AiRequestLogEntry
 import cn.com.omnimind.baselib.llm.AiRequestLogStore
 import cn.com.omnimind.baselib.llm.ChatCompletionMessage
+import cn.com.omnimind.baselib.llm.ChatCompletionProtocolMetadata
 import cn.com.omnimind.baselib.llm.ChatCompletionRequest
 import cn.com.omnimind.baselib.llm.ChatCompletionStreamOptions
 import cn.com.omnimind.baselib.llm.DeepSeekProvider
@@ -21,8 +21,7 @@ import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.baselib.llm.ModelSceneRegistry
 import cn.com.omnimind.baselib.llm.OpenAiWireApi
 import cn.com.omnimind.baselib.llm.OpenAIResponsesRequest
-import cn.com.omnimind.baselib.llm.OfficialVlmOperationConfigStore
-import cn.com.omnimind.baselib.llm.OfficialVlmOperationRouteResolver
+import cn.com.omnimind.baselib.llm.OpenAiResponsesFunctionNameCodec
 import cn.com.omnimind.baselib.llm.OmniOfficialProvider
 import cn.com.omnimind.baselib.llm.PlatformAiProvisioner
 import cn.com.omnimind.baselib.llm.ProviderModelOption
@@ -63,6 +62,7 @@ import org.json.JSONArray
 object HttpController {
     private const val TAG = "HttpController"
     private const val RESPONSE_LOG_CHUNK_SIZE = 3500
+    private const val PROVIDER_MODELS_TIMEOUT_SECONDS = 4L
     private const val ROUTE_CUSTOM_OPENAI_COMPAT = "custom_openai_compat"
     private const val ANTHROPIC_EPHEMERAL_CACHE_TYPE = "ephemeral"
     private const val ANTHROPIC_MAX_CACHE_BREAKPOINTS = 4
@@ -218,18 +218,32 @@ object HttpController {
         ).toRouteInfo()
     }
 
-    private val openClawStreamClient: OkHttpClient by lazy {
-        OkHttpClient.Builder()
-            .connectTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
-            .readTimeout(0, java.util.concurrent.TimeUnit.SECONDS)
-            .writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
-            .build()
+    /**
+     * The GUI/VLM tool is invoked by an Agent, so it must use the same model
+     * route as that Agent unless the user explicitly configured a dedicated
+     * VLM binding.  Falling back to the built-in VLM model here used to make
+     * ACP calls silently jumped to a built-in VLM model even when the active
+     * Agent had a completely different, configured Provider/model.
+     */
+    internal fun resolveSceneDefaultModel(
+        sceneId: String,
+        sceneDefaultModel: String?,
+        sharedAgentModel: String?
+    ): String? {
+        if (sceneId != SceneOperationConfigStore.SCENE_ID) {
+            return sceneDefaultModel?.trim()?.takeIf { it.isNotEmpty() }
+        }
+        return sharedAgentModel?.trim()?.takeIf { it.isNotEmpty() }
     }
 
     private val sceneCompletionClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
             .connectTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
-            .readTimeout(180, java.util.concurrent.TimeUnit.SECONDS)
+            // Model completion may legitimately spend longer than three
+            // minutes before the response is complete.  Cancellation is
+            // owned by the request coroutine/user action, not a wall-clock
+            // generation deadline.
+            .readTimeout(0, java.util.concurrent.TimeUnit.SECONDS)
             .writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
             .build()
     }
@@ -759,16 +773,19 @@ object HttpController {
         }
     }
 
-    private fun buildAnthropicAssistantContent(message: ChatCompletionMessage): Any? {
-        val content = JSONArray()
-        message.reasoningContent?.trim()?.takeIf { it.isNotEmpty() }?.let { reasoning ->
-            val reasoningBlock = JSONObject()
-            reasoningBlock.put("type", "text")
-            reasoningBlock.put("text", reasoning)
-            content.put(
-                reasoningBlock
-            )
+    private fun buildAnthropicAssistantContent(
+        message: ChatCompletionMessage,
+        targetModel: String
+    ): Any? {
+        val replayBlocks = resolveAnthropicReplayContentBlocks(message, targetModel)
+        if (replayBlocks != null) {
+            return JSONArray(replayBlocks.toString())
         }
+
+        val content = JSONArray()
+        // Internal reasoning text is not an Anthropic content block. Replaying
+        // it as visible text changes the transcript and cannot replace the
+        // signed thinking block required by the Messages API.
         appendAnthropicContentBlocks(content, message.content)
         message.toolCalls.orEmpty().forEach { toolCall ->
             val inputJson = runCatching { JSONObject(toolCall.function.arguments) }.getOrElse { JSONObject() }
@@ -786,7 +803,6 @@ object HttpController {
         }
         if (
             content.length() == 1 &&
-            message.reasoningContent.isNullOrBlank() &&
             message.toolCalls.isNullOrEmpty()
         ) {
             val single = content.optJSONObject(0)
@@ -795,6 +811,23 @@ object HttpController {
             }
         }
         return content
+    }
+
+    private fun resolveAnthropicReplayContentBlocks(
+        message: ChatCompletionMessage,
+        targetModel: String
+    ): KxJsonArray? {
+        val anthropicState = message.protocolState?.anthropic ?: return null
+        val sourceModel = anthropicState.sourceModel?.trim().orEmpty()
+        return anthropicState.contentBlocks?.takeIf { blocks ->
+            blocks.isNotEmpty() && (
+                sourceModel.isEmpty() || sourceModel.equals(targetModel.trim(), ignoreCase = true)
+            )
+        }
+    }
+
+    private fun anthropicToolResultIsError(message: ChatCompletionMessage): Boolean? {
+        return message.protocolState?.anthropic?.toolResultIsError
     }
 
     private fun buildAnthropicTextBlock(text: String): JSONObject {
@@ -830,12 +863,6 @@ object HttpController {
         } else {
             null
         }
-        val defaultResolvedModel = when {
-            sceneProfile != null -> sceneProfile.model
-            requestedModel.startsWith("scene.") -> ModelSceneRegistry.resolveModel(requestedModel)
-            else -> requestedModel
-        }
-
         val explicitBase = explicitApiBase?.let(::normalizeApiBase)
         val explicitKey = explicitApiKey?.trim()?.takeIf { it.isNotEmpty() }
         val explicitHeaders = ProviderCustomHeaderUtils.sanitizeCustomHeaders(explicitCustomHeaders)
@@ -853,25 +880,56 @@ object HttpController {
                 source = "explicit"
             )
         }
-        val sceneBinding = sceneProfile?.sceneId?.let(SceneModelBindingStore::getBinding)
-        val boundProfile = sceneBinding?.providerProfileId?.let { profileId ->
-            ModelProviderConfigStore.getProfile(profileId)
-                ?: PlatformAiProvisioner.officialProfileOrNull()
-                    ?.takeIf { OmniOfficialProvider.isOfficialProfile(profileId) }
-        }
-        val officialVlmConfig = if (sceneProfile?.sceneId == SceneOperationConfigStore.SCENE_ID) {
-            OfficialVlmOperationRouteResolver.resolve(
-                sceneId = sceneProfile.sceneId,
-                hasExplicitRoute = explicitBase != null || explicitResolvedModel != null,
-                hasEffectiveSceneBinding =
-                    sceneBinding != null && boundProfile?.isConfigured() == true,
-                sceneConfig = SceneOperationConfigStore.getConfig(),
-                officialConfig = OfficialVlmOperationConfigStore.getConfig()
-            )
+        val directSceneBinding = sceneProfile?.sceneId?.let(SceneModelBindingStore::getBinding)
+        val sharedAgentBinding = if (
+            sceneProfile?.sceneId == SceneOperationConfigStore.SCENE_ID
+        ) {
+            SceneModelBindingStore.getBinding("scene.dispatch.model")
         } else {
             null
         }
-        val officialVlmApplied = officialVlmConfig != null
+        fun resolveBindingProfile(binding: cn.com.omnimind.baselib.llm.SceneModelBindingEntry?) =
+            binding?.providerProfileId?.let { profileId ->
+            ModelProviderConfigStore.getProfile(profileId)
+                ?: PlatformAiProvisioner.officialProfileOrNull()
+                    ?.takeIf { OmniOfficialProvider.isOfficialProfile(profileId) }
+            }
+        val directBoundProfile = resolveBindingProfile(directSceneBinding)
+        val sharedAgentBoundProfile = resolveBindingProfile(sharedAgentBinding)
+        val sharedAgentModel = sharedAgentBinding
+            ?.takeIf { sharedAgentBoundProfile?.isConfigured() == true }
+            ?.modelId
+            ?: ModelSceneRegistry.getRuntimeProfile("scene.dispatch.model")?.model
+        val defaultResolvedModel = when {
+            sceneProfile != null -> resolveSceneDefaultModel(
+                sceneId = sceneProfile.sceneId,
+                sceneDefaultModel = sceneProfile.model,
+                sharedAgentModel = if (
+                    sceneProfile.sceneId == SceneOperationConfigStore.SCENE_ID
+                ) {
+                    sharedAgentModel
+                } else {
+                    null
+                }
+            )
+            requestedModel.startsWith("scene.") -> ModelSceneRegistry.resolveModel(requestedModel)
+            else -> requestedModel
+        }
+        // A dedicated VLM binding wins. If it is absent or stale, inherit the
+        // active Agent binding so every Agent capability uses one Provider.
+        val sceneBinding = when {
+            directSceneBinding != null && directBoundProfile?.isConfigured() == true ->
+                directSceneBinding
+            sceneProfile?.sceneId == SceneOperationConfigStore.SCENE_ID &&
+                sharedAgentBinding != null && sharedAgentBoundProfile?.isConfigured() == true ->
+                sharedAgentBinding
+            else -> directSceneBinding
+        }
+        val boundProfile = resolveBindingProfile(sceneBinding)
+        // VLM is an Agent capability, not a second model route. Do not use the
+        // legacy official VLM service as an implicit fallback: when the Agent
+        // Provider/model is missing, the caller must receive a clear config
+        // error instead of silently selecting a second VLM model.
         val bindingApplied =
             explicitBase == null &&
                 explicitResolvedModel == null &&
@@ -885,33 +943,28 @@ object HttpController {
         val overrideModel = when {
             explicitResolvedModel != null -> explicitResolvedModel
             bindingApplied -> sceneBinding?.modelId
-            officialVlmApplied -> officialVlmConfig?.model
             else -> null
         }
         val overrideApplied =
             explicitBase != null ||
                 explicitResolvedModel != null ||
-                bindingApplied ||
-                officialVlmApplied
+                bindingApplied
 
         val providerBase = when {
             explicitBase != null -> explicitBase
             bindingApplied -> boundProfile?.baseUrl
-            officialVlmApplied -> officialVlmConfig?.apiBase
             providerConfig.isConfigured() -> providerConfig.baseUrl
             else -> null
         }
         val providerKey = when {
             explicitBase != null -> explicitKey
             bindingApplied -> boundProfile?.apiKey?.takeIf { it.isNotBlank() }
-            officialVlmApplied -> null
             providerBase != null -> providerConfig.apiKey.takeIf { it.isNotBlank() }
             else -> null
         }
         val providerHeaders = when {
             explicitBase != null -> explicitHeaders
             bindingApplied -> ProviderCustomHeaderUtils.sanitizeCustomHeaders(boundProfile?.customHeaders)
-            officialVlmApplied -> emptyMap()
             providerBase != null -> ProviderCustomHeaderUtils.sanitizeCustomHeaders(
                 providerConfig.customHeaders
             )
@@ -921,13 +974,11 @@ object HttpController {
             explicitProtocol != null -> explicitProtocol
             explicitBase != null -> DeepSeekProvider.normalizeProtocolType(null)
             bindingApplied -> boundProfile?.protocolType?.ifEmpty { "openai_compatible" } ?: "openai_compatible"
-            officialVlmApplied -> "openai_compatible"
             else -> ModelProviderConfigStore.getEditingProfile().protocolType.ifEmpty { "openai_compatible" }
         }
         val wireApi = when {
             explicitWire != null -> explicitWire
             bindingApplied -> boundProfile?.wireApi ?: OpenAiWireApi.CHAT_COMPLETIONS
-            officialVlmApplied -> officialVlmConfig.wireApi
             providerBase != null -> providerConfig.wireApi
             else -> ModelProviderConfigStore.getEditingProfile().wireApi
         }
@@ -946,7 +997,6 @@ object HttpController {
             (bindingApplied && OmniOfficialProvider.isOfficialProfile(boundProfile?.id)) ||
                 explicitOfficialProvider
         val routeTag = when {
-            officialVlmApplied -> OfficialVlmOperationRouteResolver.ROUTE_TAG
             officialProviderSelected -> AiRequestTransportPolicy.PLATFORM_ROUTE_TAG
             overrideApplied -> ROUTE_CUSTOM_OPENAI_COMPAT
             effectiveTransport == ModelSceneRegistry.SceneTransport.OPENAI_COMPATIBLE -> "openai_compatible"
@@ -974,8 +1024,7 @@ object HttpController {
             resolvedModel = when {
                 explicitResolvedModel != null -> explicitResolvedModel
                 bindingApplied -> sceneBinding?.modelId.orEmpty()
-                officialVlmApplied -> officialVlmConfig?.model.orEmpty()
-                else -> defaultResolvedModel
+                else -> defaultResolvedModel.orEmpty()
             },
             sceneProfile = sceneProfile,
             effectiveTransport = effectiveTransport,
@@ -985,12 +1034,10 @@ object HttpController {
             customHeaders = transportRoute.customHeaders,
             providerProfileId = when {
                 bindingApplied -> boundProfile?.id
-                officialVlmApplied -> OfficialVlmOperationRouteResolver.PROFILE_ID
                 else -> null
             },
             providerProfileName = when {
                 bindingApplied -> boundProfile?.name
-                officialVlmApplied -> OfficialVlmOperationRouteResolver.PROFILE_NAME
                 else -> null
             },
             routeTag = transportRoute.routeTag,
@@ -1165,6 +1212,7 @@ object HttpController {
         obj.put("model", request.model)
         obj.put("max_tokens", request.maxTokens ?: request.maxCompletionTokens ?: 4096)
         request.temperature?.let { obj.put("temperature", it) }
+        request.topP?.let { obj.put("top_p", it) }
 
         // Extract system messages → top-level system
         val systemMessages = request.messages.filter { it.role == "system" }
@@ -1218,22 +1266,34 @@ object HttpController {
         for (msg in nonSystemMessages) {
             when (msg.role) {
                 "assistant" -> {
-                    val content = buildAnthropicAssistantContent(msg)
+                    val content = buildAnthropicAssistantContent(msg, request.model)
                     if (content != null) {
                         messages.put(buildAnthropicMessage("assistant", content))
                     }
                 }
                 "tool" -> {
+                    val toolCallId = msg.toolCallId?.trim().orEmpty()
+                    if (toolCallId.isEmpty()) {
+                        // Old local history can contain a tool card without
+                        // the assistant envelope that introduced its id.
+                        // Anthropic rejects an empty tool_use_id; omit only
+                        // this orphan result and keep the rest of the turn.
+                        OmniLog.w(TAG, "dropping orphan Anthropic tool result without tool_use_id")
+                        continue
+                    }
                     // merge consecutive tool results into a single user message
                     val toolResultBlock = JSONObject()
                     toolResultBlock.put("type", "tool_result")
-                    toolResultBlock.put("tool_use_id", msg.toolCallId ?: "")
+                    toolResultBlock.put("tool_use_id", toolCallId)
                     toolResultBlock.put(
                         "content",
                         msg.content?.let {
                             if (it is kotlinx.serialization.json.JsonPrimitive) it.content else it.toString()
                         } ?: ""
                     )
+                    anthropicToolResultIsError(msg)?.let { isError ->
+                        toolResultBlock.put("is_error", isError)
+                    }
                     // Try to merge with previous user message if it's a tool_result batch
                     val lastMsg = if (messages.length() > 0) messages.optJSONObject(messages.length() - 1) else null
                     if (lastMsg != null && lastMsg.optString("role") == "user" &&
@@ -1281,6 +1341,9 @@ object HttpController {
                 tools.put(toolObj)
             }
             obj.put("tools", tools)
+
+            buildAnthropicToolChoice(request.toolChoice, request.parallelToolCalls)
+                ?.let { obj.put("tool_choice", JSONObject(it.toString())) }
         }
 
         if (request.stream) {
@@ -1289,6 +1352,70 @@ object HttpController {
 
         val requestJson = obj.toString() ?: "{}"
         return applyAnthropicAutomaticCacheControl(requestJson)
+    }
+
+    /**
+     * Projects the shared OpenAI-style tool selection into Anthropic's
+     * Messages API shape. Keeping this at the wire boundary is important:
+     * otherwise an ACP turn that requires one tool silently becomes Anthropic's
+     * default `auto` policy, and `parallelToolCalls = false` is lost as well.
+     */
+    private fun buildAnthropicToolChoice(
+        rawChoice: JsonElement?,
+        parallelToolCalls: Boolean?
+    ): KxJsonObject? {
+        val choice = when (rawChoice) {
+            null -> if (parallelToolCalls == false) {
+                buildJsonObject { put("type", "auto") }
+            } else {
+                null
+            }
+            is JsonPrimitive -> when (rawChoice.contentOrNull?.trim()?.lowercase()) {
+                "auto" -> buildJsonObject { put("type", "auto") }
+                "required", "any" -> buildJsonObject { put("type", "any") }
+                "none" -> buildJsonObject { put("type", "none") }
+                else -> null
+            }
+            is KxJsonObject -> {
+                val rawType = (rawChoice["type"] as? JsonPrimitive)
+                    ?.contentOrNull
+                    ?.trim()
+                    ?.lowercase()
+                val functionName = ((rawChoice["function"] as? KxJsonObject)
+                    ?.get("name") as? JsonPrimitive)
+                    ?.contentOrNull
+                    ?.trim()
+                    ?.takeIf { it.isNotEmpty() }
+                    ?: (rawChoice["name"] as? JsonPrimitive)
+                        ?.contentOrNull
+                        ?.trim()
+                        ?.takeIf { it.isNotEmpty() }
+                when {
+                    rawType == "auto" || rawType == "any" || rawType == "none" ->
+                        buildJsonObject { put("type", rawType) }
+                    rawType == "tool" && functionName != null ->
+                        buildJsonObject {
+                            put("type", "tool")
+                            put("name", functionName)
+                        }
+                    functionName != null ->
+                        buildJsonObject {
+                            put("type", "tool")
+                            put("name", functionName)
+                        }
+                    else -> null
+                }
+            }
+            else -> null
+        } ?: return null
+
+        if (
+            parallelToolCalls == false &&
+            (choice["type"] as? JsonPrimitive)?.contentOrNull != "none"
+        ) {
+            return KxJsonObject(choice + ("disable_parallel_tool_use" to JsonPrimitive(true)))
+        }
+        return choice
     }
 
     private fun applyAnthropicAutomaticCacheControl(requestJson: String): String {
@@ -1963,11 +2090,76 @@ object HttpController {
         }
     }
 
+    private class AnthropicStreamBlockBuilder(
+        private val initialBlock: KxJsonObject
+    ) {
+        private val blockType = (initialBlock["type"] as? JsonPrimitive)
+            ?.contentOrNull
+            .orEmpty()
+        private val text = StringBuilder(
+            (initialBlock["text"] as? JsonPrimitive)?.contentOrNull.orEmpty()
+        )
+        private val thinking = StringBuilder(
+            (initialBlock["thinking"] as? JsonPrimitive)?.contentOrNull.orEmpty()
+        )
+        private val signature = StringBuilder(
+            (initialBlock["signature"] as? JsonPrimitive)?.contentOrNull.orEmpty()
+        )
+        private val inputJson = StringBuilder()
+
+        fun appendText(value: String) {
+            text.append(value)
+        }
+
+        fun appendThinking(value: String) {
+            thinking.append(value)
+        }
+
+        fun appendSignature(value: String) {
+            signature.append(value)
+        }
+
+        fun appendInputJson(value: String) {
+            inputJson.append(value)
+        }
+
+        fun build(): KxJsonObject {
+            val fields = initialBlock.toMutableMap()
+            when (blockType) {
+                "text" -> fields["text"] = JsonPrimitive(text.toString())
+                "thinking" -> {
+                    fields["thinking"] = JsonPrimitive(thinking.toString())
+                    if (signature.isNotEmpty()) {
+                        fields["signature"] = JsonPrimitive(signature.toString())
+                    }
+                }
+                "tool_use" -> {
+                    val parsedInput = inputJson
+                        .takeIf { it.isNotEmpty() }
+                        ?.toString()
+                        ?.let { raw ->
+                            runCatching { completionJson.parseToJsonElement(raw) }.getOrNull()
+                        }
+                    if (parsedInput != null) {
+                        fields["input"] = parsedInput
+                    }
+                }
+            }
+            return KxJsonObject(fields)
+        }
+    }
+
     fun wrapAnthropicListener(outer: EventSourceListener): EventSourceListener {
         return object : EventSourceListener() {
             // per-stream state
-            private val toolUseBlocks = mutableMapOf<Int, KxJsonObject>() // index → {id, name}
-            private val toolArgBuffers = mutableMapOf<Int, StringBuilder>() // index → partial json
+            private val contentBlocks = sortedMapOf<Int, AnthropicStreamBlockBuilder>()
+            // Track client-side tool blocks separately. Anthropic server-side blocks
+            // (for example web search) may also emit input_json_delta, but those
+            // blocks do not have a function name and must not be projected as
+            // OpenAI function calls (otherwise the downstream parser reports
+            // `missing function.name`).
+            private val toolUseBlocks = mutableSetOf<Int>()
+            private val emittedContentBlockIndexes = mutableSetOf<Int>()
             private val usage = AnthropicUsageAccumulator()
 
             override fun onOpen(eventSource: EventSource, response: okhttp3.Response) {
@@ -2035,15 +2227,16 @@ object HttpController {
                     "content_block_start" -> {
                         val index = intField(json, "index") ?: 0
                         val block = objectField(json, "content_block") ?: return
+                        contentBlocks[index] = AnthropicStreamBlockBuilder(block)
                         when (stringField(block, "type")) {
                             "tool_use" -> {
+                                toolUseBlocks += index
                                 val toolId = stringField(block, "id").ifEmpty { "tool_$index" }
                                 val toolName = stringField(block, "name")
-                                toolUseBlocks[index] = buildJsonObject {
-                                    put("id", JsonPrimitive(toolId))
-                                    put("name", JsonPrimitive(toolName))
-                                }
-                                toolArgBuffers[index] = StringBuilder()
+                                val initialInput = block["input"]
+                                    ?.takeUnless { it is KxJsonObject && it.isEmpty() }
+                                    ?.toString()
+                                    .orEmpty()
                                 // emit tool_call header chunk
                                 val chunk = buildOpenAIChunk(
                                     deltaJson = buildJsonObject {
@@ -2059,7 +2252,7 @@ object HttpController {
                                                             "function",
                                                             buildJsonObject {
                                                                 put("name", JsonPrimitive(toolName))
-                                                                put("arguments", JsonPrimitive(""))
+                                                                put("arguments", JsonPrimitive(initialInput))
                                                             }
                                                         )
                                                     }
@@ -2083,6 +2276,22 @@ object HttpController {
                                     outer.onEvent(eventSource, id, type, chunk)
                                 }
                             }
+                            "thinking" -> {
+                                val thinking = stringField(block, "thinking")
+                                if (thinking.isNotEmpty()) {
+                                    outer.onEvent(
+                                        eventSource,
+                                        id,
+                                        type,
+                                        buildOpenAIChunk(
+                                            deltaJson = buildJsonObject {
+                                                put("reasoning_content", JsonPrimitive(thinking))
+                                            },
+                                            finishReason = null
+                                        )
+                                    )
+                                }
+                            }
                         }
                     }
                     "content_block_delta" -> {
@@ -2091,6 +2300,7 @@ object HttpController {
                         when (stringField(delta, "type")) {
                             "text_delta" -> {
                                 val text = stringField(delta, "text")
+                                contentBlocks[index]?.appendText(text)
                                 val chunk = buildOpenAIChunk(
                                     deltaJson = buildJsonObject {
                                         put("content", JsonPrimitive(text))
@@ -2100,8 +2310,20 @@ object HttpController {
                                 outer.onEvent(eventSource, id, type, chunk)
                             }
                             "input_json_delta" -> {
+                                // Anthropic also uses input_json_delta for server-side tools
+                                // such as web search. Only client tool_use blocks were
+                                // registered above and may be projected as OpenAI tool_calls.
+                                // Projecting an untracked server block creates an orphaned
+                                // tool call with arguments but no function.name.
+                                if (!toolUseBlocks.contains(index)) {
+                                    OmniLog.w(
+                                        TAG,
+                                        "ignored input_json_delta for non-client tool block index=$index"
+                                    )
+                                    return
+                                }
                                 val partialJson = stringField(delta, "partial_json")
-                                toolArgBuffers[index]?.append(partialJson)
+                                contentBlocks[index]?.appendInputJson(partialJson)
                                 val chunk = buildOpenAIChunk(
                                     deltaJson = buildJsonObject {
                                         put(
@@ -2127,6 +2349,7 @@ object HttpController {
                             }
                             "thinking_delta" -> {
                                 val thinking = stringField(delta, "thinking")
+                                contentBlocks[index]?.appendThinking(thinking)
                                 if (thinking.isNotEmpty()) {
                                     val chunk = buildOpenAIChunk(
                                         deltaJson = buildJsonObject {
@@ -2137,7 +2360,16 @@ object HttpController {
                                     outer.onEvent(eventSource, id, type, chunk)
                                 }
                             }
+                            "signature_delta" -> {
+                                contentBlocks[index]?.appendSignature(
+                                    stringField(delta, "signature")
+                                )
+                            }
                         }
+                    }
+                    "content_block_stop" -> {
+                        val index = intField(json, "index") ?: 0
+                        emitAnthropicContentBlock(eventSource, id, type, index)
                     }
                     "message_delta" -> {
                         usage.merge(objectField(json, "usage"))
@@ -2156,6 +2388,9 @@ object HttpController {
                         }
                     }
                     "message_stop" -> {
+                        contentBlocks.keys.forEach { index ->
+                            emitAnthropicContentBlock(eventSource, id, type, index)
+                        }
                         outer.onEvent(eventSource, id, type, "[DONE]")
                     }
                     "error" -> {
@@ -2190,6 +2425,30 @@ object HttpController {
                 response: okhttp3.Response?
             ) {
                 outer.onFailure(eventSource, t, response)
+            }
+
+            private fun emitAnthropicContentBlock(
+                eventSource: EventSource,
+                id: String?,
+                type: String?,
+                index: Int
+            ) {
+                val block = contentBlocks[index]?.build() ?: return
+                if (!emittedContentBlockIndexes.add(index)) return
+                outer.onEvent(
+                    eventSource,
+                    id,
+                    type,
+                    buildJsonObject {
+                        put(
+                            ChatCompletionProtocolMetadata.ANTHROPIC_STREAM_BLOCK_FIELD,
+                            buildJsonObject {
+                                put("index", index)
+                                put("block", block)
+                            }
+                        )
+                    }.toString()
+                )
             }
 
             private fun buildOpenAIChunk(
@@ -2594,8 +2853,11 @@ object HttpController {
         requestBodyJson: String,
         resolvedModel: String
     ): String {
-        val parsedRequest = completionJson.decodeFromString<ChatCompletionRequest>(requestBodyJson)
+        val decodedRequest = completionJson.decodeFromString<ChatCompletionRequest>(requestBodyJson)
             .copy(model = resolvedModel)
+        val parsedRequest = OpenAiResponsesFunctionNameCodec
+            .planFor(decodedRequest)
+            .encodeRequest(decodedRequest)
         val systemInstructions = parsedRequest.messages
             .filter { it.role == "system" }
             .mapNotNull { it.contentText().trim().takeIf { text -> text.isNotEmpty() } }
@@ -2621,16 +2883,55 @@ object HttpController {
 
     private fun buildResponsesInputItems(messages: List<ChatCompletionMessage>): List<JsonElement> {
         val items = mutableListOf<JsonElement>()
+        val pendingFunctionCallIds = linkedSetOf<String>()
+        val emittedFunctionCallOutputIds = linkedSetOf<String>()
+        var fallbackFunctionCallIndex = 0
+
+        fun appendMissingFunctionCallOutputs(reason: String) {
+            if (pendingFunctionCallIds.isEmpty()) return
+            pendingFunctionCallIds.toList().forEach { callId ->
+                if (callId in emittedFunctionCallOutputIds) return@forEach
+                items += buildJsonObject {
+                    put("type", "function_call_output")
+                    put("call_id", callId)
+                    put(
+                        "output",
+                        "[OmniBot] Missing tool output for function call $callId. " +
+                            "$reason Do not assume that the tool ran."
+                    )
+                }
+                emittedFunctionCallOutputIds += callId
+            }
+            pendingFunctionCallIds.clear()
+        }
+
         messages.forEach { message ->
             when (message.role) {
                 "tool" -> {
+                    val callId = message.toolCallId?.trim().orEmpty()
+                    if (callId.isEmpty() || callId !in pendingFunctionCallIds) {
+                        // Responses rejects an output without a matching function
+                        // call. This can happen when old history retained a tool
+                        // card but not its assistant tool-call envelope. Dropping
+                        // the orphan at this wire boundary keeps the rest of the
+                        // conversation usable; the card remains in local history.
+                        return@forEach
+                    }
+                    if (callId in emittedFunctionCallOutputIds) {
+                        return@forEach
+                    }
                     items += buildJsonObject {
                         put("type", "function_call_output")
-                        put("call_id", message.toolCallId.orEmpty())
+                        put("call_id", callId)
                         put("output", message.contentText())
                     }
+                    pendingFunctionCallIds -= callId
+                    emittedFunctionCallOutputIds += callId
                 }
                 "assistant" -> {
+                    appendMissingFunctionCallOutputs(
+                        reason = "A later assistant message started before the result was persisted."
+                    )
                     val visibleText = buildList {
                         message.reasoningContent?.trim()?.takeIf { it.isNotEmpty() }?.let { add(it) }
                         message.contentText().trim().takeIf { it.isNotEmpty() }?.let { add(it) }
@@ -2639,15 +2940,22 @@ object HttpController {
                         items += buildResponsesMessageItem("assistant", visibleText)
                     }
                     message.toolCalls.orEmpty().forEach { toolCall ->
+                        val callId = toolCall.id.trim().ifEmpty {
+                            "tool_call_${fallbackFunctionCallIndex++}"
+                        }
                         items += buildJsonObject {
                             put("type", "function_call")
-                            put("call_id", toolCall.id)
+                            put("call_id", callId)
                             put("name", toolCall.function.name)
                             put("arguments", toolCall.function.arguments)
                         }
+                        pendingFunctionCallIds += callId
                     }
                 }
                 else -> {
+                    appendMissingFunctionCallOutputs(
+                        reason = "A later user message started before the result was persisted."
+                    )
                     val text = message.contentText()
                     if (text.isNotBlank()) {
                         items += buildResponsesMessageItem(message.role.ifBlank { "user" }, text)
@@ -2655,6 +2963,9 @@ object HttpController {
                 }
             }
         }
+        appendMissingFunctionCallOutputs(
+            reason = "The saved conversation ended before the result was persisted."
+        )
         return items
     }
 
@@ -2793,7 +3104,10 @@ object HttpController {
         return when (payload) {
             is KxJsonObject -> KxJsonObject(
                 payload
-                    .filterKeys { it != "cache_control" }
+                    .filterKeys {
+                        it != "cache_control" &&
+                            it != ChatCompletionProtocolMetadata.STATE_FIELD
+                    }
                     .mapValues { (_, value) -> stripAnthropicOnlyFields(value) }
             )
             is KxJsonArray -> KxJsonArray(payload.map(::stripAnthropicOnlyFields))
@@ -3128,85 +3442,6 @@ object HttpController {
             forceHttp1 = forceHttp1
         )
     }
-
-    /**
-     * 发送 OpenClaw 的 OpenAI 兼容流式请求（/v1/chat/completions）
-     *
-     * @param openClawConfig OpenClaw 配置（baseUrl/token/userId/sessionKey）
-     * @param messages 对话消息列表
-     * @param event 事件监听器
-     * @return EventSource 事件源
-     */
-    suspend fun postOpenClawChatCompletionsStream(
-        openClawConfig: TaskParams.OpenClawConfig,
-        messages: List<Map<String, Any>>,
-        event: EventSourceListener
-    ): EventSource {
-        val baseUrl = openClawConfig.baseUrl.trim().trimEnd('/')
-        val url = "$baseUrl/v1/chat/completions"
-        val authToken = openClawConfig.token?.trim()
-
-        OmniLog.i(
-            "HttpController",
-            "OpenClaw stream url=$url messages=${messages.size} user=${openClawConfig.userId?.trim()} auth=${!authToken.isNullOrBlank()} sessionKey=${!openClawConfig.sessionKey.isNullOrBlank()}"
-        )
-
-        val jsonObject = JSONObject()
-        val messagesArray = JSONArray()
-        for (message in messages) {
-            val messageObject = JSONObject()
-            for ((key, value) in message) {
-                messageObject.put(key, value)
-            }
-            messagesArray.put(messageObject)
-        }
-        jsonObject.put("model", "openclaw")
-        jsonObject.put("stream", true)
-        jsonObject.put("messages", messagesArray)
-        val userId = openClawConfig.userId?.trim()
-        if (!userId.isNullOrEmpty()) {
-            jsonObject.put("user", userId)
-        }
-
-        val requestBody = jsonObject.toString().toRequestBody("application/json".toMediaType())
-        val requestBuilder = Request.Builder()
-            .url(url)
-            .addHeader("Accept", "text/event-stream")
-            .addHeader("Content-Type", "application/json")
-
-        if (!authToken.isNullOrEmpty()) {
-            requestBuilder.addHeader("Authorization", "Bearer $authToken")
-        }
-
-        val sessionKey = openClawConfig.sessionKey?.trim()
-        if (!sessionKey.isNullOrEmpty()) {
-            requestBuilder.addHeader("X-OpenClaw-Session-Key", sessionKey)
-        }
-
-        val request = requestBuilder.post(requestBody).build()
-        OmniLog.i(
-            "HttpController",
-            "OpenClaw request ready bodyBytes=${jsonObject.toString().length}"
-        )
-
-        return EventSources.createFactory(openClawStreamClient)
-            .newEventSource(
-                request,
-                createLoggingEventListener(
-                    "[openclaw/v1/chat/completions]",
-                    event,
-                    requestLogSeed = AiRequestLogSeed(
-                        label = "openclaw/chat.completions.stream",
-                        model = "openclaw",
-                        protocolType = "openai_compatible",
-                        url = url,
-                        stream = true,
-                        requestJson = jsonObject.toString()
-                    )
-                )
-            )
-    }
-
 
     /**
      * 发送 LLM 请求并获取响应（普通返回）
@@ -3635,7 +3870,26 @@ object HttpController {
             "[provider models protocol=$protocolType]",
             request.headers.toMultimap().mapValues { it.value.joinToString(",") }
         )
-        val response = OkHttpClient().newCall(request).execute()
+        // This endpoint is used while creating a local ACP session when the
+        // shared scene model binding has not been created yet. Keep the
+        // blocking OkHttp call itself bounded; a coroutine timeout alone
+        // cannot interrupt execute() while it is waiting on the socket.
+        val response = OkHttpClient.Builder()
+            .callTimeout(
+                PROVIDER_MODELS_TIMEOUT_SECONDS,
+                java.util.concurrent.TimeUnit.SECONDS,
+            )
+            .connectTimeout(
+                PROVIDER_MODELS_TIMEOUT_SECONDS,
+                java.util.concurrent.TimeUnit.SECONDS,
+            )
+            .readTimeout(
+                PROVIDER_MODELS_TIMEOUT_SECONDS,
+                java.util.concurrent.TimeUnit.SECONDS,
+            )
+            .build()
+            .newCall(request)
+            .execute()
         val responseBody = response.body?.string()
         if (!response.isSuccessful) {
             throw IllegalStateException(

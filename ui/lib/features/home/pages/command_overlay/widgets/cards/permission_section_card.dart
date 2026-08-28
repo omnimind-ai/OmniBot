@@ -34,6 +34,12 @@ class _PermissionSectionCardState extends State<PermissionSectionCard> {
             : requiredPermissionIds,
       ),
     ];
+    if (widget.cardData['autoOpenAuthorization'] == true &&
+        widget.onRequestAuthorize != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _goAuthorizePage();
+      });
+    }
   }
 
   void _goAuthorizePage() {

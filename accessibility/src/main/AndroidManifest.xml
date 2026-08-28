@@ -3,7 +3,7 @@
     <application>
         <service
             android:name=".service.AssistsService"
-            android:exported="false"
+            android:exported="true"
             android:label="@string/xiaowan_accessibility_label"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
             <intent-filter>

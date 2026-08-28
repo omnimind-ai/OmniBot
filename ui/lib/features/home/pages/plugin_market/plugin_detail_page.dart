@@ -100,48 +100,6 @@ class _PluginDetailPageState extends State<PluginDetailPage> {
     );
   }
 
-  Future<void> _pinToHome() async {
-    final plugin = _plugin;
-    if (plugin == null || _busy) return;
-    setState(() => _busy = true);
-    try {
-      final result = await OmniPluginService.pinToHome(plugin.id);
-      if (!mounted) return;
-      final status = result['status']?.toString() ?? '';
-      final message = switch (status) {
-        'requested' => _text(
-          '已发起添加；若桌面未出现，请允许小万“创建桌面快捷方式”后重试',
-          'Request sent. If it does not appear, allow XiaoWan to create home-screen shortcuts and retry',
-        ),
-        'updated' => _text('桌面入口已更新', 'Home-screen entry updated'),
-        'unsupported' => _text(
-          '当前桌面不支持快捷入口',
-          'This launcher does not support pinned shortcuts',
-        ),
-        'unavailable' => _text(
-          '这个插件还没有可打开的 Dashboard',
-          'This plugin does not provide an openable dashboard yet',
-        ),
-        _ => _text('未能添加桌面入口', 'Unable to add home-screen entry'),
-      };
-      showToast(
-        message,
-        type: status == 'requested' || status == 'updated'
-            ? ToastType.success
-            : ToastType.error,
-      );
-    } catch (_) {
-      if (mounted) {
-        showToast(
-          _text('未能添加桌面入口', 'Unable to add home-screen entry'),
-          type: ToastType.error,
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
   void _openPresentationAction(Map<String, dynamic> action) {
     final route = action['route']?.toString().trim() ?? '';
     if (route.isEmpty) return;
@@ -375,15 +333,6 @@ class _PluginDetailPageState extends State<PluginDetailPage> {
             const SizedBox(height: 12),
             _buildReadyGuide(plugin),
           ],
-        ],
-        if (plugin.installed && plugin.enabled) ...[
-          const SizedBox(height: 20),
-          OutlinedButton.icon(
-            key: const ValueKey('plugin-add-to-home-screen'),
-            onPressed: _busy ? null : _pinToHome,
-            icon: const Icon(Icons.add_to_home_screen_rounded),
-            label: Text(_text('添加到桌面', 'Add to Home Screen')),
-          ),
         ],
         const SizedBox(height: 24),
         Divider(color: palette.borderSubtle, height: 1),
@@ -712,10 +661,7 @@ class _PluginDetailPageState extends State<PluginDetailPage> {
 
   Widget _buildBottomActions(OmniPluginItem plugin) {
     final palette = context.omniPalette;
-    final dashboardAction = _map(plugin.presentation['dashboard']);
-    final installedAction = dashboardAction.isNotEmpty
-        ? dashboardAction
-        : _map(plugin.presentation['installedAction']);
+    final installedAction = _map(plugin.presentation['installedAction']);
     return Material(
       color: context.isDarkTheme ? palette.surfacePrimary : Colors.white,
       child: SafeArea(
@@ -798,8 +744,6 @@ class _PluginDetailPageState extends State<PluginDetailPage> {
                     ),
                   ],
                 )
-              : plugin.required
-              ? const SizedBox.shrink()
               : SizedBox(
                   width: double.infinity,
                   height: 46,

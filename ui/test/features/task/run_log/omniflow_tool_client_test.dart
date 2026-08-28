@@ -96,4 +96,21 @@ void main() {
     expect(result.success, isFalse);
     expect(result.errorMessage, contains('function_id'));
   });
+
+  test('parses the official plural save_function response', () {
+    final result = OmniFlowFunctionRegistrationResult.fromPayload(
+      <String, dynamic>{
+        'success': true,
+        'function_ids': <dynamic>['function.saved'],
+        'functions': <dynamic>[
+          <String, dynamic>{'function_id': 'function.saved', 'name': '已保存指令'},
+        ],
+      },
+      runId: 'run-2',
+    );
+
+    expect(result.success, isTrue);
+    expect(result.functionId, 'function.saved');
+    expect(result.function?['source_run_id'], 'run-2');
+  });
 }

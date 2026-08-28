@@ -44,6 +44,7 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
   set currentConversation(ConversationModel? value);
   ConversationThreadTarget? get routeThreadTarget;
   ConversationMode get activeConversationModeValue;
+  String? get agentIdForNewConversation => null;
   bool get hasMoreMessages;
   set hasMoreMessages(bool value);
   bool get isLoadingMore;
@@ -378,7 +379,12 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
         operationMode,
         conversationId,
         resolvedConversation,
-        List<ChatMessageModel>.from(messages),
+        // `savedMessages` is the snapshot actually selected for this load.
+        // When a live runtime already owns the conversation, the page-level
+        // list may still be empty after a refresh/rebuild. Passing `messages`
+        // here used to turn that transient empty list into an authoritative
+        // runtime snapshot and could erase the visible session.
+        List<ChatMessageModel>.from(savedMessages),
       );
     } catch (e) {
       debugPrint('加载对话失败: $e');
@@ -670,6 +676,7 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
     bool generateSummary = false,
     bool markComplete = false,
     int? lifecycleToken,
+    bool rethrowOnFailure = false,
   }) async {
     if (messages.isEmpty) return;
     final token = lifecycleToken ?? captureConversationLifecycleToken();
@@ -722,6 +729,10 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
           title: title,
           summary: summary,
           mode: snapshotMode,
+          agentId: snapshotMode == ConversationMode.agent
+              ? agentIdForNewConversation
+              : null,
+          rethrowOnError: rethrowOnFailure,
         );
 
         if (newConversationId != null) {
@@ -760,6 +771,10 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
             );
           }
         }
+      }
+
+      if (targetId == null) {
+        throw StateError('Conversation creation returned no id.');
       }
 
       if (targetId != null) {
@@ -833,6 +848,7 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
       }
     } catch (e) {
       debugPrint('保存对话失败: $e');
+      if (rethrowOnFailure) rethrow;
     }
   }
 

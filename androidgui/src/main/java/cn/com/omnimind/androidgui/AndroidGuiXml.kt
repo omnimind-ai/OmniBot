@@ -7,8 +7,11 @@ import android.view.accessibility.AccessibilityNodeInfo
 import java.io.StringWriter
 
 internal object AndroidGuiXml {
-    fun serialize(root: AccessibilityNodeInfo?): String {
-        if (root == null) return ""
+    fun serialize(root: AccessibilityNodeInfo?): String =
+        serialize(listOfNotNull(root))
+
+    fun serialize(roots: List<AccessibilityNodeInfo>): String {
+        if (roots.isEmpty()) return ""
         val output = StringWriter()
         val serializer = Xml.newSerializer().apply {
             setOutput(output)
@@ -74,12 +77,14 @@ internal object AndroidGuiXml {
         }
 
         try {
-            visit(root, 0)
+            roots.forEach { root -> visit(root, 0) }
             serializer.endTag(null, "hierarchy")
             serializer.endDocument()
         } finally {
-            @Suppress("DEPRECATION")
-            root.recycle()
+            roots.asReversed().forEach { root ->
+                @Suppress("DEPRECATION")
+                root.recycle()
+            }
         }
         return output.toString()
     }

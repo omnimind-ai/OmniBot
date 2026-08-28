@@ -167,7 +167,8 @@ class FileToolHandler(
     private val workspaceManager: AgentWorkspaceManager
 ) : ToolHandler {
     override val toolNames: Set<String> = setOf(
-        "file_read", "file_write", "file_edit", "file_list", "file_search", "file_stat", "file_move"
+        "file_read", "file_write", "file_edit", "file_list", "file_search", "file_stat", "file_move",
+        "read", "write", "edit", "glob", "grep"
     )
 
     override suspend fun execute(
@@ -179,11 +180,11 @@ class FileToolHandler(
         toolHandle: AgentToolExecutionHandle
     ): ToolExecutionResult {
         return when (toolCall.function.name) {
-            "file_read" -> executeFileRead(args, env.workspaceDescriptor, callback)
-            "file_write" -> executeFileWrite(args, env.workspaceDescriptor, callback)
-            "file_edit" -> executeFileEdit(args, env.workspaceDescriptor, callback)
-            "file_list" -> executeFileList(args, env.workspaceDescriptor, callback)
-            "file_search" -> executeFileSearch(args, env.workspaceDescriptor, callback)
+            "file_read", "read" -> executeFileRead(args, env.workspaceDescriptor, callback)
+            "file_write", "write" -> executeFileWrite(args, env.workspaceDescriptor, callback)
+            "file_edit", "edit" -> executeFileEdit(args, env.workspaceDescriptor, callback)
+            "file_list", "glob" -> executeFileList(args, env.workspaceDescriptor, callback)
+            "file_search", "grep" -> executeFileSearch(args, env.workspaceDescriptor, callback)
             "file_stat" -> executeFileStat(args, env.workspaceDescriptor, callback)
             "file_move" -> executeFileMove(args, env.workspaceDescriptor, callback)
             else -> ToolExecutionResult.Error(toolCall.function.name, "Unknown file tool")

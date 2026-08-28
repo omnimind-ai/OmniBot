@@ -222,12 +222,9 @@ private class SandboxBundleToolHandler(
             host.install(pluginId)
         }
         if (!state.enabled) host.setEnabled(pluginId, true)
-        val shortcut = SandboxPluginShortcutManager(appContext).pinOrUpdate(pluginId)
         return buildMap {
             putAll(published.payload)
             put("name", manifest.name)
-            put("dashboardRoute", "/home/plugin_dashboard?pluginId=$pluginId")
-            put("shortcut", shortcut.toMap())
         }
     }
 

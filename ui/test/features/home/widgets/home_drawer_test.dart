@@ -111,7 +111,7 @@ void main() {
     await tester.tap(find.text('开始对话'));
     await tester.pumpAndSettle();
 
-    expect(selectedMode, ConversationMode.normal);
+    expect(selectedMode, ConversationMode.agent);
   });
 
   testWidgets('shows the restored trajectory footer shortcut', (tester) async {
@@ -539,7 +539,8 @@ void main() {
 
     expect(find.text('Scheduled tasks'), findsOneWidget);
     expect(find.text('Pinned conversations'), findsOneWidget);
-    expect(find.text('OmniAi'), findsOneWidget);
+    // The default OmniAI/Xiaowan history has no redundant section header.
+    expect(find.text('OmniAi'), findsNothing);
     expect(find.text('Omnibot Guide'), findsNothing);
   });
 
@@ -617,9 +618,8 @@ void main() {
 
     final sectionHeaderLeft = tester.getTopLeft(find.text('定时任务')).dx;
 
-    // 顶层区块标题（定时任务/置顶会话/小万）左对齐；置顶条目与标题共用缩进。
+    // 顶层区块标题（定时任务/置顶会话）左对齐；置顶条目与标题共用缩进。
     expect(tester.getTopLeft(find.text('置顶会话')).dx, sectionHeaderLeft);
-    expect(tester.getTopLeft(find.text('小万')).dx, sectionHeaderLeft);
     expect(tester.getTopLeft(find.text('重点对话')).dx, sectionHeaderLeft);
 
     // 定时任务、置顶区块与历史记录在同一个滚动列表内，上滑时随列表一起
@@ -865,9 +865,16 @@ void main() {
       (widget) => widget is TextField && widget.controller?.text == '主会话',
     );
     expect(titleField, findsOneWidget);
+    final titleEditor = tester.widget<TextField>(titleField);
 
     await tester.enterText(titleField, '主会话改名');
-    await tester.testTextInput.receiveAction(TextInputAction.done);
+    titleEditor.onSubmitted?.call('主会话改名');
+    await tester.pumpAndSettle();
+    await tester.runAsync(() async {
+      for (var attempt = 0; attempt < 20 && renamedTitle == null; attempt++) {
+        await Future<void>.delayed(const Duration(milliseconds: 1));
+      }
+    });
     await tester.pumpAndSettle();
 
     expect(renamedTitle, '主会话改名');
@@ -1002,7 +1009,7 @@ void main() {
     );
     expect(rawState, contains('__home_drawer_scheduled__'));
     expect(rawState, contains('__home_drawer_pinned__'));
-    expect(rawState, contains('__home_drawer_scheduled_normal:1'));
+    expect(rawState, contains('__home_drawer_scheduled_agent:1'));
     expect(rawState, contains(dateKey));
 
     await tester.pumpWidget(const SizedBox.shrink());
@@ -1019,7 +1026,7 @@ void main() {
     expect(find.text('普通会话').hitTestable(), findsNothing);
   });
 
-  testWidgets('splits Agent, OmniAi and pure chat histories into sections', (
+  testWidgets('keeps default history flat and identifies each Agent Harness', (
     tester,
   ) async {
     // 相对时间标签依赖 LegacyTextLocalizer 的解析语言，固定为中文保证断言稳定。
@@ -1031,6 +1038,7 @@ void main() {
         'id': 11,
         'title': '修复登录问题',
         'mode': ConversationMode.agent.storageValue,
+        'agentId': 'codex-acp',
         'agentCwd': '/root/blog',
         'summary': null,
         'status': 0,
@@ -1043,6 +1051,7 @@ void main() {
         'id': 12,
         'title': '写周报脚本',
         'mode': ConversationMode.agent.storageValue,
+        'agentId': 'codex-acp',
         'agentCwd': '/root/blog/',
         'summary': null,
         'status': 0,
@@ -1055,6 +1064,7 @@ void main() {
         'id': 13,
         'title': '优化首页响应式',
         'mode': ConversationMode.agent.storageValue,
+        'agentId': 'codex-acp',
         'agentCwd': '/root/CoffeeMux',
         'summary': null,
         'status': 0,
@@ -1067,6 +1077,7 @@ void main() {
         'id': 14,
         'title': 'Agent 会话',
         'mode': ConversationMode.normal.storageValue,
+        'agentId': 'xiaowan-acp',
         'summary': null,
         'status': 0,
         'lastMessage': null,
@@ -1101,64 +1112,21 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // 三个模式区块并列展示。
-    expect(find.text('Agent'), findsOneWidget);
-    expect(find.text('小万'), findsOneWidget);
+    // Agent/Xiaowan histories share the default history timeline; no
+    // redundant Xiaowan section header is rendered.
+    expect(find.text('Agent'), findsNothing);
+    expect(find.text('小万'), findsNothing);
     expect(find.text('纯聊天'), findsOneWidget);
-    final agentSectionIcon = tester.widget<SvgPicture>(
-      find.byKey(
-        const ValueKey('home-drawer-section-icon-__home_drawer_agent__'),
-      ),
-    );
-    final omniAiSectionIcon = tester.widget<SvgPicture>(
-      find.byKey(
-        const ValueKey('home-drawer-section-icon-__home_drawer_omni_ai__'),
-      ),
-    );
-    expect(
-      agentSectionIcon.bytesLoader.toString(),
-      contains('assets/home/chat/agent.svg'),
-    );
-    expect(
-      omniAiSectionIcon.bytesLoader.toString(),
-      contains('assets/home/avatar.svg'),
-    );
 
-    // Agent 区块内按项目名分组，且项目按最近活跃排序。
-    expect(find.text('blog'), findsOneWidget);
-    expect(find.text('CoffeeMux'), findsOneWidget);
-    expect(
-      tester.getTopLeft(find.text('blog')).dy,
-      lessThan(tester.getTopLeft(find.text('CoffeeMux')).dy),
-    );
+    // 每条 Agent 会话直接显示具体 Harness，不再显示 Workspace 分组。
+    expect(find.text('blog'), findsNothing);
+    expect(find.text('CoffeeMux'), findsNothing);
+    expect(find.text('Codex'), findsNWidgets(3));
     expect(find.text('修复登录问题').hitTestable(), findsOneWidget);
     expect(find.text('写周报脚本').hitTestable(), findsOneWidget);
     expect(find.text('优化首页响应式').hitTestable(), findsOneWidget);
     expect(find.text('Agent 会话').hitTestable(), findsOneWidget);
     expect(find.text('闲聊会话'), findsOneWidget);
-
-    // 日期分组下的会话标题不再缩进：与区块标题、日期分组行共用同一左缘。
-    expect(
-      tester.getTopLeft(find.text('Agent 会话')).dx,
-      tester.getTopLeft(find.text('小万')).dx,
-    );
-
-    // Agent 条目展示相对时间标签而非日期分组。
-    expect(find.text('1 周'), findsNWidgets(3));
-
-    // 折叠单个项目只隐藏该项目下的会话。
-    await tester.tap(find.text('blog'));
-    await tester.pumpAndSettle();
-    expect(find.text('修复登录问题').hitTestable(), findsNothing);
-    expect(find.text('写周报脚本').hitTestable(), findsNothing);
-    expect(find.text('优化首页响应式').hitTestable(), findsOneWidget);
-
-    // 折叠整个 Agent 区块后项目行一并隐藏。
-    await tester.tap(find.text('Agent'));
-    await tester.pumpAndSettle();
-    expect(find.text('blog').hitTestable(), findsNothing);
-    expect(find.text('CoffeeMux').hitTestable(), findsNothing);
-    expect(find.text('优化首页响应式').hitTestable(), findsNothing);
 
     // 折叠纯聊天区块只影响纯聊天历史。
     await tester.tap(find.text('纯聊天'));

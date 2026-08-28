@@ -9,8 +9,6 @@ import kotlinx.serialization.json.put
 object OmniFlowManagementTools {
     const val LIST_FUNCTIONS = "list_functions"
     const val GET_FUNCTION = "get_function"
-    const val CREATE_FUNCTION = "create_function"
-    const val UPDATE_FUNCTION = "update_function"
     const val DELETE_FUNCTION = "delete_function"
     const val CLEAR_FUNCTIONS = "clear_functions"
     const val LIST_RUN_LOGS = "list_run_logs"
@@ -25,8 +23,6 @@ object OmniFlowManagementTools {
     val TOOL_NAMES = linkedSetOf(
         LIST_FUNCTIONS,
         GET_FUNCTION,
-        CREATE_FUNCTION,
-        UPDATE_FUNCTION,
         DELETE_FUNCTION,
         CLEAR_FUNCTIONS,
         LIST_RUN_LOGS,
@@ -58,33 +54,6 @@ object OmniFlowManagementTools {
             required = listOf("function_id"),
             properties = mapOf(
                 "function_id" to stringProperty("Function id returned by list_functions."),
-            ),
-        ),
-        definition(
-            CREATE_FUNCTION,
-            "Create Function",
-            "Register a complete canonical Function artifact. This is a low-level operation; " +
-                "to register a completed VLM RunLog as a reusable instruction, use " +
-                "save_function instead.",
-            required = listOf("function"),
-            properties = mapOf(
-                "function" to objectProperty("Canonical OmniFlow Function artifact."),
-            ),
-        ),
-        definition(
-            UPDATE_FUNCTION,
-            "Update Function",
-            "Edit or semantically enhance a registered Function.",
-            required = listOf("function_id"),
-            properties = mapOf(
-                "function_id" to stringProperty("Registered Function id."),
-                "mode" to stringProperty("Update mode: edit or enhance."),
-                "patch" to objectProperty("Canonical action edit patch."),
-                "dry_run" to booleanProperty("Preview without saving."),
-                "run_id" to stringProperty("Optional source RunLog id for enhancement."),
-                "instruction" to stringProperty(
-                    "Optional user guidance for semantic enhancement; omit for default enhancement.",
-                ),
             ),
         ),
         definition(
@@ -139,13 +108,17 @@ object OmniFlowManagementTools {
         definition(
             SAVE_FUNCTION,
             "Save Function",
-            "Register a successful RunLog as a replayable Function. Pass the run_id returned " +
-                "by the completed GUI task. The returned function_id is the internal id used " +
-                "for later recall; do not invent one.",
+            "Save a replayable Function grounded in a successful RunLog. For semantic " +
+                "enhancement, pass the existing Function in functions, set enhance=true, " +
+                "and provide instruction. The official runtime performs the staged " +
+                "source-grounded enhancement and writes the result to the same Store.",
             required = listOf("run_id"),
             properties = mapOf(
                 "run_id" to stringProperty("Source RunLog id."),
-                "agent_visible" to booleanProperty("Expose the Function to the Agent."),
+                "functions" to arrayProperty("Existing Function draft to enhance.", objectProperty("Function artifact.")),
+                "arguments" to objectProperty("Optional source arguments for the Function."),
+                "enhance" to booleanProperty("Run the official staged semantic enhancement."),
+                "instruction" to stringProperty("Optional enhancement guidance."),
             ),
         ),
         definition(
@@ -230,5 +203,14 @@ object OmniFlowManagementTools {
     private fun objectProperty(description: String) = buildJsonObject {
         put("type", "object")
         put("description", description)
+    }
+
+    private fun arrayProperty(
+        description: String,
+        items: kotlinx.serialization.json.JsonObject,
+    ) = buildJsonObject {
+        put("type", "array")
+        put("description", description)
+        put("items", items)
     }
 }

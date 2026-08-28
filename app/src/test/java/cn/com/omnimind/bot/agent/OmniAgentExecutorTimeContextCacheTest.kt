@@ -1,6 +1,8 @@
 package cn.com.omnimind.bot.agent
 
 import cn.com.omnimind.baselib.i18n.PromptLocale
+import cn.com.omnimind.baselib.llm.AssistantToolCall
+import cn.com.omnimind.baselib.llm.AssistantToolCallFunction
 import cn.com.omnimind.baselib.llm.ChatCompletionMessage
 import java.time.ZoneId
 import java.time.ZonedDateTime
@@ -140,6 +142,38 @@ class OmniAgentExecutorTimeContextCacheTest {
         assertEquals("tool result", text(messages.last()))
         assertEquals(1, messages.count { it.role == "user" })
         assertFalse(messages.any { text(it) == "runtime fallback prompt" })
+    }
+
+    @Test
+    fun filterChatOnlyHistoryMessagesRemovesAgentToolReplay() {
+        val assistantWithToolCall = ChatCompletionMessage(
+            role = "assistant",
+            content = JsonPrimitive("先查一下"),
+            toolCalls = listOf(
+                AssistantToolCall(
+                    id = "call-1",
+                    function = AssistantToolCallFunction(
+                        name = "tools_search",
+                        arguments = "{}"
+                    )
+                )
+            ),
+            reasoningContent = "内部思考"
+        )
+        val filtered = OmniAgentExecutor.filterChatOnlyHistoryMessages(
+            listOf(
+                message("user", "之前的问题"),
+                assistantWithToolCall,
+                message("tool", "工具结果"),
+                message("assistant", "之前的回答")
+            )
+        )
+
+        assertEquals(listOf("user", "assistant", "assistant"), filtered.map { it.role })
+        assertEquals("先查一下", text(filtered[1]))
+        assertTrue(filtered[1].toolCalls == null)
+        assertTrue(filtered[1].reasoningContent == null)
+        assertFalse(filtered.any { it.role == "tool" })
     }
 
     private fun message(role: String, content: String): ChatCompletionMessage {

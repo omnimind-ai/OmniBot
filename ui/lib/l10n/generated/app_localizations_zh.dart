@@ -1443,8 +1443,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get alpineOpenCode => 'OpenCode CLI（内置 ACP 支持）';
 
   @override
-  String get alpineDeepSeekHarness =>
-      'DeepSeek Harness（dsh）ACP 运行组件，安装时跟随 npm next 最新发布线';
+  String get alpineDeepSeekHarness => 'DeepSeek Harness（dsh）官方 ACP 运行组件';
 
   @override
   String get alpineSshClient => 'SSH 客户端';

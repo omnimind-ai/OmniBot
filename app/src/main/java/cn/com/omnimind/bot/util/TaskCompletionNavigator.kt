@@ -24,7 +24,7 @@ object TaskCompletionNavigator {
     )
 
     fun buildChatRoute(conversationId: Long?, mode: String?): String {
-        val normalizedMode = mode?.trim()?.ifEmpty { "normal" } ?: "normal"
+        val normalizedMode = normalizeConversationMode(mode)
         return if (conversationId != null && conversationId > 0) {
             "/home/chat?conversationId=$conversationId&mode=$normalizedMode"
         } else {
@@ -112,7 +112,7 @@ object TaskCompletionNavigator {
         preferredId: Long?,
         preferredMode: String?
     ): ResolvedChatTarget {
-        val normalizedPreferredMode = preferredMode?.trim()?.ifEmpty { "normal" } ?: "normal"
+        val normalizedPreferredMode = normalizeConversationMode(preferredMode)
         if (preferredId != null && preferredId > 0) {
             return ResolvedChatTarget(preferredId, normalizedPreferredMode)
         }
@@ -131,7 +131,7 @@ object TaskCompletionNavigator {
                         is String -> rawId.toLongOrNull()
                         else -> null
                     }?.takeIf { it > 0 }
-                    val mode = json.optString("mode", "normal").ifBlank { "normal" }
+                    val mode = normalizeConversationMode(json.optString("mode", "agent"))
                     val isNewConversation = json.optBoolean("isNewConversation", false)
                     if (isNewConversation) {
                         OmniLog.d(TAG, "使用 Flutter 上次可见空白线程兜底回跳: mode=$mode")
@@ -155,10 +155,18 @@ object TaskCompletionNavigator {
             if (parsedId != null) {
                 OmniLog.d(TAG, "使用 Flutter 持久化会话ID兜底回跳: $parsedId")
             }
-            ResolvedChatTarget(parsedId, "normal")
+            ResolvedChatTarget(parsedId, "agent")
         } catch (e: Exception) {
             OmniLog.e(TAG, "读取 Flutter 会话ID兜底值失败: ${e.message}")
             ResolvedChatTarget(null, normalizedPreferredMode)
+        }
+    }
+
+    private fun normalizeConversationMode(mode: String?): String {
+        return when (mode?.trim()?.lowercase()) {
+            null, "", "normal", "codex", "acp", "coding" -> "agent"
+            "chat", "chatonly", "chat-only" -> "chat_only"
+            else -> mode.trim().lowercase()
         }
     }
 }

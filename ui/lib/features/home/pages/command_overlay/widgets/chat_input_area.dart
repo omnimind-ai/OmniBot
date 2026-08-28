@@ -141,7 +141,6 @@ class ChatInputArea extends StatefulWidget {
   final ValueChanged<bool>? onToggleOpenClaw;
   final VoidCallback? onLongPressOpenClaw;
   final FutureOr<void> Function()? onTerminalTap;
-  final FutureOr<void> Function()? onManualRecordingTap;
 
   /// 是否使用毛玻璃效果（command_overlay 使用毛玻璃，chatbotsheet 使用白色+阴影）
   final bool useFrostedGlass;
@@ -165,7 +164,8 @@ class ChatInputArea extends StatefulWidget {
   final FutureOr<void> Function()? onAgentRunSettingsOpened;
   final AgentPermissionMode? agentPermissionMode;
   final List<AgentPermissionMode> agentPermissionModes;
-  final ValueChanged<AgentPermissionMode>? onAgentPermissionModeChanged;
+  final FutureOr<void> Function(AgentPermissionMode)?
+  onAgentPermissionModeChanged;
   final bool useIndependentSendButton;
 
   const ChatInputArea({
@@ -182,7 +182,6 @@ class ChatInputArea extends StatefulWidget {
     this.onToggleOpenClaw,
     this.onLongPressOpenClaw,
     this.onTerminalTap,
-    this.onManualRecordingTap,
     this.useFrostedGlass = false,
     this.useLargeComposerStyle = false,
     this.useAttachmentPickerForPlus = false,
@@ -491,7 +490,7 @@ abstract class _ChatInputAreaStateBase extends State<ChatInputArea>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _inputHeightReportScheduled = false;
       if (!mounted) return;
-      final renderBox = context.findRenderObject() as RenderBox?;
+      final renderBox = findActiveRenderObject(context) as RenderBox?;
       if (renderBox == null || !renderBox.hasSize) return;
       final height = renderBox.size.height;
       if ((height - _lastReportedInputHeight).abs() < 0.5) return;

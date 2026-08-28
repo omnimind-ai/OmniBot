@@ -28,6 +28,66 @@ class AgentConversationHistorySupportTest {
     }
 
     @Test
+    fun `paged history keeps legacy normal entries after agent migration`() {
+        val legacyEntry = AgentConversationEntry(
+            id = 1,
+            conversationId = 7,
+            conversationMode = "normal",
+            entryId = "legacy-user",
+            entryType = AgentConversationHistoryRepository.ENTRY_TYPE_USER_MESSAGE,
+            status = AgentConversationHistoryRepository.STATUS_SUCCESS,
+            summary = "旧对话内容",
+            payloadJson = "{}",
+            createdAt = 1,
+            updatedAt = 1
+        )
+        val canonicalEntry = legacyEntry.copy(
+            id = 2,
+            conversationMode = "agent",
+            entryId = "new-user",
+            summary = "新对话内容",
+            createdAt = 2,
+            updatedAt = 2
+        )
+
+        val (page, hasMore) = AgentConversationHistoryRepository.pageConversationEntries(
+            entries = listOf(canonicalEntry, legacyEntry),
+            limit = 20,
+            offset = 0
+        )
+
+        assertEquals(listOf("new-user", "legacy-user"), page.map { it.entryId })
+        assertFalse(hasMore)
+    }
+
+    @Test
+    fun `paged history reports more entries outside the bounded window`() {
+        val entries = (1..3).map { index ->
+            AgentConversationEntry(
+                id = index.toLong(),
+                conversationId = 7,
+                conversationMode = "agent",
+                entryId = "entry-$index",
+                entryType = AgentConversationHistoryRepository.ENTRY_TYPE_USER_MESSAGE,
+                status = AgentConversationHistoryRepository.STATUS_SUCCESS,
+                summary = "消息 $index",
+                payloadJson = "{}",
+                createdAt = index.toLong(),
+                updatedAt = index.toLong()
+            )
+        }
+
+        val (page, hasMore) = AgentConversationHistoryRepository.pageConversationEntries(
+            entries = entries,
+            limit = 1,
+            offset = 0
+        )
+
+        assertEquals(listOf("entry-3"), page.map { it.entryId })
+        assertTrue(hasMore)
+    }
+
+    @Test
     fun `stale ui snapshot cannot delete a pending external user message`() {
         val externalUser = mapOf<String, Any?>(
             "id" to "web-run-user",
@@ -455,6 +515,45 @@ class AgentConversationHistorySupportTest {
         val storedPayload = AgentConversationHistorySupport.readMap(stored.payloadJson)
 
         assertEquals("上一轮思考内容", storedPayload["reasoning_content"])
+    }
+
+    @Test
+    fun `prepareEntryForStorage keeps assistant turn usage`() {
+        val payload = AgentConversationHistorySupport.buildTextMessagePayload(
+            messageId = "a-usage",
+            user = 2,
+            text = "完成首轮",
+            isError = false,
+            streamMeta = null,
+            turnUsage = mapOf(
+                "ctx" to 18_797,
+                "in" to 18_797,
+                "out" to 296,
+                "cache" to 13_157
+            ),
+            createdAt = 1L
+        )
+        val entry = AgentConversationEntry(
+            id = 12,
+            conversationId = 7,
+            conversationMode = "normal",
+            entryId = "a-usage",
+            entryType = AgentConversationHistoryRepository.ENTRY_TYPE_ASSISTANT_MESSAGE,
+            status = AgentConversationHistoryRepository.STATUS_SUCCESS,
+            summary = "完成首轮",
+            payloadJson = gson.toJson(payload),
+            createdAt = 1,
+            updatedAt = 1
+        )
+
+        val stored = AgentConversationHistorySupport.prepareEntryForStorage(entry)
+        val storedPayload = AgentConversationHistorySupport.readMap(stored.payloadJson)
+        val storedUsage = storedPayload["turnUsage"] as Map<*, *>
+
+        assertEquals(18_797L, (storedUsage["ctx"] as Number).toLong())
+        assertEquals(18_797L, (storedUsage["in"] as Number).toLong())
+        assertEquals(296L, (storedUsage["out"] as Number).toLong())
+        assertEquals(13_157L, (storedUsage["cache"] as Number).toLong())
     }
 
     @Test

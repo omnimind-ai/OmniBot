@@ -32,8 +32,11 @@ object AgentToolConcurrencyPolicy {
 
     private val PARALLEL_SAFE_TOOL_NAMES: Set<String> = setOf(
         "file_read",
+        "read",
         "file_list",
+        "glob",
         "file_search",
+        "grep",
         "file_stat",
         "context_time_now",
         "context_apps_query",
@@ -56,7 +59,7 @@ object AgentToolConcurrencyPolicy {
         if (handler is ToolHandlerConcurrencyHint) {
             handler.concurrencyFor(toolName, args)?.let { return it }
         }
-        if (toolName == "browser_use") {
+        if (toolName == "browser_use" || toolName == "webfetch") {
             val action = (args["action"] as? JsonPrimitive)?.contentOrNull?.trim().orEmpty()
             return if (action in BROWSER_USE_PARALLEL_SAFE_ACTIONS) {
                 ToolConcurrency.PARALLEL_SAFE
@@ -75,15 +78,28 @@ object AgentToolConcurrencyPolicy {
      * Greedy partition: consecutive PARALLEL_SAFE calls merge into one batch;
      * any SERIAL_BARRIER call becomes its own batch. Preserves original order.
      *
-     * [classifier] lets callers swap in a handler-aware version; the default
-     * uses the static whitelist only.
+     * [classifier] lets callers swap in a handler-aware version. The
+     * two-argument overload uses the static whitelist.
+     *
+     * Keep the production call site on a real two-argument JVM method. Kotlin's
+     * default-argument bridge is normally harmless, but this method is called
+     * from a large suspend state machine on Android. On the tested Android 16
+     * ART build that bridge was the last frame before the native null receiver
+     * crash, so use an overload instead of a default lambda.
      */
     fun partitionToolCalls(
         calls: List<AssistantToolCall>,
         parsedArgs: Map<String, JsonObject>,
-        classifier: (AssistantToolCall, JsonObject) -> ToolConcurrency = { call, args ->
-            classify(call.function.name, args)
-        }
+    ): List<ToolBatch> = partitionToolCalls(
+        calls = calls,
+        parsedArgs = parsedArgs,
+        classifier = { call, args -> classify(call.function.name, args) },
+    )
+
+    fun partitionToolCalls(
+        calls: List<AssistantToolCall>,
+        parsedArgs: Map<String, JsonObject>,
+        classifier: (AssistantToolCall, JsonObject) -> ToolConcurrency,
     ): List<ToolBatch> {
         if (calls.isEmpty()) return emptyList()
         val batches = mutableListOf<ToolBatch>()

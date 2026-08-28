@@ -25,14 +25,6 @@ final Map<String, int> _agentEventDiagnosticCounter = <String, int>{};
 String _diagnosticEventMethod(Map<String, dynamic> event) {
   final method = _asAgentString(event['method']);
   if (method != null) {
-    if (method == 'codex/event') {
-      final params = _asAgentMap(event['params']) ?? const <String, dynamic>{};
-      final msg = _asAgentMap(params['msg']);
-      final msgType = _asAgentString(msg?['type']);
-      if (msgType != null) {
-        return 'codex/event:$msgType';
-      }
-    }
     if (method == 'rawResponseItem/completed' ||
         method == 'item/started' ||
         method == 'item/completed') {

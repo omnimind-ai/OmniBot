@@ -98,6 +98,7 @@ class AgentWorkspaceManager(
         private const val DIR_BROWSER = "browser"
         private const val DIR_SKILLS = "skills"
         private const val DIR_MEMORY = "memory"
+        private const val DIR_AUDIO = "audio"
         private const val DIR_PETS = "pets"
         private const val DIR_BUILTIN_PETS_ASSETS = "builtin_pets"
         private const val FILE_MEMORY = "MEMORY.md"
@@ -110,6 +111,11 @@ class AgentWorkspaceManager(
 
         fun internalRootDirectory(context: Context): File {
             return File(rootDirectory(context), INTERNAL_DIR)
+        }
+
+        /** Voice synthesis cache directory under the managed workspace. */
+        fun audioDirectory(context: Context): File {
+            return File(internalRootDirectory(context), DIR_AUDIO)
         }
 
         fun androidRootPath(context: Context): String {
@@ -233,6 +239,7 @@ class AgentWorkspaceManager(
             browserDir,
             skillsDir,
             memoryDir,
+            audioDirectory(context),
             petsDir,
             shortMemoriesDir,
             memoryIndexDir

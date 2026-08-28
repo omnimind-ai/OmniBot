@@ -62,6 +62,29 @@ void main() {
     },
   );
 
+  testWidgets('finished header without fold history has no chevron', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      _wrap(
+        AgentRunHeader(
+          taskId: 'turn-no-history',
+          agentId: 'codex-acp',
+          status: AgentRunStatus.finished,
+          startedAt: DateTime(2026, 7, 25, 15, 48, 0),
+          finishedAt: DateTime(2026, 7, 25, 15, 48, 1),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey('acp-processed-label')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('agent-run-summary-chevron-turn-no-history')),
+      findsNothing,
+    );
+  });
+
   testWidgets('header renders the agent brand exactly once', (tester) async {
     await tester.pumpWidget(
       _wrap(
@@ -83,6 +106,39 @@ void main() {
       findsOneWidget,
     );
   });
+
+  for (final agentId in const <String>[
+    'xiaowan-acp',
+    'codex-acp',
+    'claude-code-acp',
+    'opencode-acp',
+    'deepseek-harness-acp',
+  ]) {
+    testWidgets('$agentId brand fills the run avatar without a nested circle', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        _wrap(
+          AgentRunHeader(
+            taskId: 'turn-$agentId',
+            agentId: agentId,
+            status: AgentRunStatus.running,
+            startedAt: DateTime.now(),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      final runAvatar = find.byKey(
+        ValueKey('agent-run-acp-avatar-turn-$agentId'),
+      );
+      final brandIcon = tester.widget<AgentBrandIcon>(
+        find.descendant(of: runAvatar, matching: find.byType(AgentBrandIcon)),
+      );
+
+      expect(brandIcon.size, 30);
+    });
+  }
 
   testWidgets(
     'completion cross-fades the running label into the folded header',

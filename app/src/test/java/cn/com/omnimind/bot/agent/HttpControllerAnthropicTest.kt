@@ -1,6 +1,9 @@
 package cn.com.omnimind.bot.agent
 
 import cn.com.omnimind.assists.controller.http.HttpController
+import cn.com.omnimind.baselib.llm.AnthropicMessageProtocolState
+import cn.com.omnimind.baselib.llm.ChatCompletionMessage
+import cn.com.omnimind.baselib.llm.ChatCompletionProtocolState
 import cn.com.omnimind.baselib.llm.contentText
 import java.io.BufferedReader
 import java.io.BufferedWriter
@@ -12,6 +15,7 @@ import java.nio.charset.StandardCharsets
 import kotlin.concurrent.thread
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import okhttp3.Request
@@ -351,6 +355,133 @@ class HttpControllerAnthropicTest {
         )
         assertEquals(20, turn.usage?.promptTokens)
         assertEquals(4, turn.usage?.completionTokens)
+    }
+
+    @Test
+    fun `anthropic tool loop replays signed thinking blocks unchanged`() {
+        val chunks = mutableListOf<String>()
+        val wrapped = HttpController.wrapAnthropicListener(
+            object : EventSourceListener() {
+                override fun onEvent(
+                    eventSource: EventSource,
+                    id: String?,
+                    type: String?,
+                    data: String
+                ) {
+                    chunks += data
+                }
+            }
+        )
+        val source = dummyEventSource()
+        wrapped.onEvent(
+            source,
+            null,
+            "content_block_start",
+            """{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}"""
+        )
+        wrapped.onEvent(
+            source,
+            null,
+            "content_block_delta",
+            """{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"Need inspect."}}"""
+        )
+        wrapped.onEvent(
+            source,
+            null,
+            "content_block_delta",
+            """{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"opaque-signature"}}"""
+        )
+        wrapped.onEvent(
+            source,
+            null,
+            "content_block_stop",
+            """{"type":"content_block_stop","index":0}"""
+        )
+        wrapped.onEvent(
+            source,
+            null,
+            "content_block_start",
+            """{"type":"content_block_start","index":1,"content_block":{"type":"text","text":"Running command."}}"""
+        )
+        wrapped.onEvent(
+            source,
+            null,
+            "content_block_stop",
+            """{"type":"content_block_stop","index":1}"""
+        )
+        wrapped.onEvent(
+            source,
+            null,
+            "content_block_start",
+            """{"type":"content_block_start","index":2,"content_block":{"type":"tool_use","id":"tool_9","name":"terminal_execute","input":{}}}"""
+        )
+        wrapped.onEvent(
+            source,
+            null,
+            "content_block_delta",
+            """{"type":"content_block_delta","index":2,"delta":{"type":"input_json_delta","partial_json":"{\"command\":\"pwd\"}"}}"""
+        )
+        wrapped.onEvent(
+            source,
+            null,
+            "content_block_stop",
+            """{"type":"content_block_stop","index":2}"""
+        )
+        wrapped.onEvent(
+            source,
+            null,
+            "message_delta",
+            """{"type":"message_delta","delta":{"stop_reason":"tool_use"}}"""
+        )
+        wrapped.onEvent(source, null, "message_stop", """{"type":"message_stop"}""")
+
+        val accumulator = AgentLlmStreamAccumulator(
+            json = json,
+            captureAnthropicContentBlocks = true,
+            anthropicSourceModel = "deepseek-v4-flash-vision-exp"
+        )
+        chunks.forEach(accumulator::consume)
+        val assistant = accumulator.buildTurn().message
+        val replayBlocks = assistant.protocolState?.anthropic?.contentBlocks
+        assertNotNull(replayBlocks)
+        assertEquals("thinking", replayBlocks!![0].jsonObject["type"]?.jsonPrimitive?.content)
+        assertEquals(
+            "opaque-signature",
+            replayBlocks[0].jsonObject["signature"]?.jsonPrimitive?.content
+        )
+        assertEquals("Running command.", assistant.contentText())
+
+        val toolResult = ChatCompletionMessage(
+            role = "tool",
+            toolCallId = "tool_9",
+            content = JsonPrimitive("permission denied"),
+            protocolState = ChatCompletionProtocolState(
+                anthropic = AnthropicMessageProtocolState(toolResultIsError = true)
+            )
+        )
+        val replayMethod = HttpController::class.java.getDeclaredMethod(
+            "resolveAnthropicReplayContentBlocks",
+            ChatCompletionMessage::class.java,
+            String::class.java
+        )
+        replayMethod.isAccessible = true
+        val replayedAssistantBlocks = replayMethod.invoke(
+            HttpController,
+            assistant,
+            "deepseek-v4-flash-vision-exp"
+        )
+        assertEquals(replayBlocks, replayedAssistantBlocks)
+        assertEquals(
+            null,
+            replayMethod.invoke(HttpController, assistant, "claude-sonnet-other")
+        )
+
+        val errorMethod = HttpController::class.java.getDeclaredMethod(
+            "anthropicToolResultIsError",
+            ChatCompletionMessage::class.java
+        )
+        errorMethod.isAccessible = true
+        assertEquals(true, errorMethod.invoke(HttpController, toolResult))
     }
 
     @Test

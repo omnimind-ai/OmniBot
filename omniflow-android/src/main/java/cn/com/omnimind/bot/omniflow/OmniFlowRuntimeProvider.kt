@@ -27,7 +27,20 @@ class OmniFlowRuntimeProvider {
     suspend fun install(
         context: Context,
         platform: OmniFlowPlatform,
-    ): PreparedOmniFlowRuntime = prepare(context, platform)
+    ): PreparedOmniFlowRuntime = prepareMutex.withLock {
+        // Installing the plugin only needs to make its skill bundle and
+        // manifest available.  Python/bootstrap repair is deliberately left
+        // to the first actual OmniFlow tool call (or the background warmup).
+        // Keeping this phase lightweight prevents plugin restoration from
+        // blocking ACP's first response on apk index/network work.
+        prepared?.let { return@withLock it }
+        prepareFresh(
+            context.applicationContext,
+            platform,
+            refresh = false,
+            ensurePython = false,
+        )
+    }
 
     suspend fun update(
         context: Context,
@@ -43,7 +56,10 @@ class OmniFlowRuntimeProvider {
     ): PreparedOmniFlowRuntime {
         prepared?.let { return it }
         return prepareMutex.withLock {
-            prepared?.let { return@withLock it }
+            prepared?.let {
+                platform.ensurePython(context.applicationContext, it.manifest.pythonVersion)
+                return@withLock it
+            }
             prepareFresh(context.applicationContext, platform, refresh = false)
         }
     }
@@ -74,6 +90,7 @@ class OmniFlowRuntimeProvider {
         platform: OmniFlowPlatform,
         refresh: Boolean,
         packagedOnly: Boolean = false,
+        ensurePython: Boolean = true,
     ): PreparedOmniFlowRuntime {
         val startedAt = System.currentTimeMillis()
         log("prepare_start refresh=$refresh")
@@ -91,11 +108,18 @@ class OmniFlowRuntimeProvider {
             require(manifestFile.isFile) { "omniflow_skill_manifest_missing" }
             manifestFile.inputStream().use(::parseOmniFlowRuntimeManifest)
         }
-        platform.ensurePython(appContext, manifest.pythonVersion)
-        log(
-            "prepare_python_ready durationMs=${System.currentTimeMillis() - startedAt} " +
-                "python=${manifest.pythonVersion}",
-        )
+        if (ensurePython) {
+            platform.ensurePython(appContext, manifest.pythonVersion)
+            log(
+                "prepare_python_ready durationMs=${System.currentTimeMillis() - startedAt} " +
+                    "python=${manifest.pythonVersion}",
+            )
+        } else {
+            log(
+                "prepare_python_deferred durationMs=${System.currentTimeMillis() - startedAt} " +
+                    "python=${manifest.pythonVersion}",
+            )
+        }
         location = platform.bootstrapRuntimeSkill(appContext, location)
         log(
             "prepare_bootstrap_ready durationMs=${System.currentTimeMillis() - startedAt}",
@@ -138,8 +162,9 @@ class OmniFlowRuntimeProvider {
         manifest: OmniFlowRuntimeManifest,
     ) {
         val required = requiredOmniFlowRuntimePaths(manifest)
-        require(required.all { File(skillRoot, it).isFile }) {
-            "omniflow_skill_runtime_incomplete"
+        val missing = required.filterNot { File(skillRoot, it).isFile }
+        require(missing.isEmpty()) {
+            "omniflow_skill_runtime_incomplete:" + missing.joinToString(",")
         }
     }
 
@@ -155,8 +180,10 @@ class OmniFlowRuntimeProvider {
             "scripts/runtime/python/schemas/oob/omniflow_checker_rule.v1.json",
             "scripts/runtime/python/schemas/oob/omniflow_android_bridge.v2.json",
             "scripts/runtime/.runtime/omnitransfer/src/omnitransfer/runtime.py",
-            "scripts/runtime/.runtime/omnitransfer/src/omnitransfer/numpy_matcher.py",
             "scripts/runtime/.runtime/omnitransfer/src/omnitransfer/numpy_v9_matcher.py",
+            "scripts/runtime/.runtime/omnitransfer/src/omnitransfer/page_embedding.py",
+            "scripts/runtime/.runtime/omnitransfer/src/omnitransfer/unified_alignment.py",
+            "scripts/runtime/.runtime/omnitransfer/src/omnitransfer/visual_descriptor.py",
             "scripts/runtime/.runtime/omnitransfer/src/omnitransfer/${manifest.omniTransferCheckpoint}",
         )
 

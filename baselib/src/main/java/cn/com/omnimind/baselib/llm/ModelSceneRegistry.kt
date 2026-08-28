@@ -330,7 +330,16 @@ object ModelSceneRegistry {
 
     private fun parseSceneInfo(sceneId: String, config: Map<String, Any?>): SceneInfo? {
         val rawModel = (config["model"] as? String)?.trim().orEmpty()
-        val model = rawModel.takeIf { it.isNotEmpty() } ?: return null
+        val inheritsModelFrom = (config["inherits_model_from"] as? String)
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+        val model = when {
+            rawModel.isNotEmpty() -> rawModel
+            sceneId == SceneVoiceConfigStore.SCENE_ID ||
+                sceneId == "scene.dispatch.model" ||
+                inheritsModelFrom != null -> ""
+            else -> return null
+        }
         return SceneInfo(
             model = model,
             prompt = config["prompt"] as? String,
@@ -339,7 +348,7 @@ object ModelSceneRegistry {
             descriptionI18n = readLocalizedMap(config["description_i18n"]),
             transport = SceneTransport.fromRaw(config["transport"]),
             responseParser = ResponseParser.fromRaw(config["response_parser"]),
-            inheritsModelFrom = (config["inherits_model_from"] as? String)?.trim()?.takeIf { it.isNotEmpty() },
+            inheritsModelFrom = inheritsModelFrom,
             overrideGroup = (config["override_group"] as? String)?.trim()?.takeIf { it.isNotEmpty() }
         )
     }
@@ -378,6 +387,7 @@ object ModelSceneRegistry {
 
     private fun defaultTransportForScene(sceneId: String): SceneTransport {
         return when (sceneId) {
+            "scene.voice",
             "scene.dispatch.model",
             "scene.compactor.context.chat",
             "scene.memory.embedding",
@@ -391,6 +401,7 @@ object ModelSceneRegistry {
             "scene.compactor.context.chat",
             "scene.memory.embedding",
             "scene.memory.rollup",
+            "scene.voice",
             "scene.dispatch.model" -> ResponseParser.TEXT_CONTENT
             else -> ResponseParser.TEXT_CONTENT
         }

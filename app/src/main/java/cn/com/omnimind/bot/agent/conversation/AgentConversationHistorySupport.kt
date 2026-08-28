@@ -1773,6 +1773,11 @@ internal object AgentConversationHistorySupport {
             null
         }
         val safeStreamMeta = compactDisplayStreamMeta(payload["streamMeta"])
+        val safeTurnUsage = toStringAnyMap(payload["turnUsage"])
+            .mapValues { (_, value) -> parseLong(value) }
+            .filterValues { value -> value != null }
+            .mapValues { (_, value) -> value!! }
+            .takeIf { it.isNotEmpty() }
         val safeAttachments = compactDisplayList(content["attachments"])
         val agentId = firstNonBlank(content["agentId"], safeStreamMeta?.get("agentId"))
         val agentName = firstNonBlank(content["agentName"], safeStreamMeta?.get("agentName"))
@@ -1794,6 +1799,7 @@ internal object AgentConversationHistorySupport {
                     default = entry.status == AgentConversationHistoryRepository.STATUS_ERROR
                 ),
                 streamMeta = safeStreamMeta,
+                turnUsage = safeTurnUsage,
                 createdAt = entry.createdAt
             )
         }

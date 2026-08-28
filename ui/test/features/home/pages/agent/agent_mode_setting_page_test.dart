@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -40,11 +42,10 @@ void main() {
               _agent(
                 'deepseek-harness-acp',
                 'DeepSeek Harness',
-                'dsh-acp-demo',
+                'dsh',
                 'unchecked',
                 managedAdapter: true,
-                lastCheckError:
-                    'ACP adapter will be prepared during Initialize.',
+                lastCheckError: 'Harness 未初始化，请点击“安装官方 Harness”准备运行组件。',
               ),
             ],
           };
@@ -91,9 +92,10 @@ void main() {
     expect(find.byType(PopupMenuButton<String>), findsNothing);
     expect(find.text('初始化检测'), findsNothing);
     expect(find.text('重新检测'), findsNWidgets(2));
-    expect(find.text('准备并初始化'), findsOneWidget);
-    expect(find.text('配置'), findsNWidgets(4));
-    // 4 Agent 配置入口 + 1 远程 PC Bridge 入口。
+    expect(find.text('安装官方 Harness'), findsOneWidget);
+    expect(find.text('配置'), findsNWidgets(3));
+    expect(find.text('安装'), findsOneWidget);
+    // 3 Agent 配置入口 + 1 安装入口 + 1 远程 PC Bridge 入口。
     expect(find.byIcon(LucideIcons.chevronRight), findsNWidgets(5));
     expect(
       tester
@@ -224,6 +226,92 @@ void main() {
 
       expect(find.text('添加自定义 ACP Agent'), findsNothing);
       expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'managed Harness installation keeps unrelated settings interactive',
+    (tester) async {
+      final preparation = Completer<Map<String, dynamic>>();
+      var preparationCalls = 0;
+      addTearDown(() {
+        if (!preparation.isCompleted) {
+          preparation.complete(<String, dynamic>{
+            'ok': false,
+            'error': 'test cleanup',
+          });
+        }
+      });
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(agentRuntimeChannel, (call) async {
+            switch (call.method) {
+              case 'agent/list':
+                return <String, dynamic>{
+                  'selectedAgentId': 'codex-acp',
+                  'agents': <Map<String, dynamic>>[
+                    _agent('codex-acp', 'Codex', 'codex-acp', 'online'),
+                    _agent(
+                      'deepseek-harness-acp',
+                      'DeepSeek Harness',
+                      'dsh',
+                      'missing',
+                      managedAdapter: true,
+                    ),
+                  ],
+                };
+              case 'agent/prepare':
+                preparationCalls += 1;
+                expect(call.arguments, <String, Object?>{
+                  'agentId': 'deepseek-harness-acp',
+                });
+                return preparation.future;
+            }
+            return null;
+          });
+      tester.view.physicalSize = const Size(1080, 2200);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      Widget buildPage() => MaterialApp(
+        theme: AppTheme.lightTheme,
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        locale: const Locale('zh'),
+        home: const AgentModeSettingPage(),
+      );
+
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+
+      await tester.tap(
+        find.byKey(const Key('agent-check-deepseek-harness-acp')),
+      );
+      await tester.pump();
+
+      expect(find.text('后台安装中'), findsOneWidget);
+      await tester.tap(find.byTooltip('添加自定义 ACP Agent'));
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(find.text('添加自定义 ACP Agent'), findsOneWidget);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      await tester.pumpWidget(buildPage());
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(find.text('后台安装中'), findsOneWidget);
+
+      await tester.tap(
+        find.byKey(const Key('agent-navigation-deepseek-harness-acp')),
+      );
+      await tester.pump();
+      expect(preparationCalls, 1);
+
+      preparation.complete(<String, dynamic>{
+        'ok': false,
+        'error': 'expected test completion',
+      });
+      await tester.pump(const Duration(milliseconds: 500));
+      expect(find.text('后台安装中'), findsNothing);
     },
   );
 }

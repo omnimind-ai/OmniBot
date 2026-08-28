@@ -6,23 +6,134 @@ import android.os.Looper
 import android.util.Log
 import com.ai.assistance.operit.terminal.TerminalManager
 import com.ai.assistance.operit.terminal.setup.buildAlpinePackageInstallCommand
+import cn.com.omnimind.baselib.account.OmniAccount
 import cn.com.omnimind.baselib.database.DatabaseHelper
+import cn.com.omnimind.baselib.llm.ModelProviderProfile
+import cn.com.omnimind.baselib.llm.ModelProviderConfigStore
+import cn.com.omnimind.baselib.llm.OmniOfficialProvider
+import cn.com.omnimind.baselib.llm.OpenAiWireApi
+import cn.com.omnimind.baselib.llm.PlatformAiProvisioner
+import cn.com.omnimind.baselib.llm.ProviderModelOption
+import cn.com.omnimind.baselib.llm.SceneModelBindingStore
+import cn.com.omnimind.baselib.llm.SceneModelBindingEntry
+import cn.com.omnimind.assists.controller.http.HttpController
 import cn.com.omnimind.bot.BuildConfig
+import cn.com.omnimind.bot.agent.AgentConversationModePolicy
+import cn.com.omnimind.bot.agent.AgentConversationHistoryRepository
 import cn.com.omnimind.bot.agent.AgentAttachmentPromptSupport
 import cn.com.omnimind.bot.agent.AgentImageAttachmentSupport
 import cn.com.omnimind.bot.agent.AgentWorkspaceAttachmentSupport
 import cn.com.omnimind.bot.agent.AgentWorkspaceManager
+import cn.com.omnimind.bot.agent.AgentScheduleToolBridge
+import cn.com.omnimind.bot.agent.WorkspaceScheduledTaskScheduler
+import cn.com.omnimind.bot.mcp.McpServerManager
+import cn.com.omnimind.bot.terminal.EmbeddedTerminalSetupManager
+import cn.com.omnimind.bot.task.runtime.TaskRuntime
 import cn.com.omnimind.bot.util.TaskRuntimeSettings
 import com.rk.terminal.runtime.TerminalDistribution
 import com.google.gson.GsonBuilder
 import com.google.gson.JsonParser
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.coroutines.coroutineContext
 import java.io.File
+import java.util.UUID
+import java.util.ArrayDeque
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
+
+private const val MAX_PENDING_AGENT_EVENTS = 1024
+
+/**
+ * A durable conversation owns exactly one Harness. A caller may carry a stale
+ * UI selection, but that selection must never rebind an existing conversation
+ * to another ACP process. New conversations have no owner yet, so their
+ * explicit requested Harness becomes the owner.
+ */
+internal fun resolveConversationHarnessId(
+    chatOnly: Boolean,
+    requestedAgentId: String?,
+    conversationAgentId: String?,
+    conversationBindingAgentId: String?,
+    sessionAgentId: String?,
+    selectedAgentId: String,
+): String = if (chatOnly) {
+    AcpAgentProfileStore.XIAOWAN_AGENT_ID
+} else {
+    conversationAgentId?.takeIf(String::isNotBlank)
+        ?: conversationBindingAgentId?.takeIf(String::isNotBlank)
+        ?: requestedAgentId?.takeIf(String::isNotBlank)
+        ?: sessionAgentId?.takeIf(String::isNotBlank)
+        ?: selectedAgentId
+}
+
+/**
+ * A persisted scene binding is an optional Provider/model override for ACP.
+ * When it is absent or stale, Dispatch falls back to the current editing
+ * Provider and its verified model catalog; startup must not require a binding.
+ */
+internal fun resolveSharedAgentModel(
+    boundProviderProfileId: String?,
+    boundModel: String?
+): String? {
+    val normalizedBoundProviderProfileId = boundProviderProfileId?.trim().orEmpty()
+    val normalizedBoundModel = boundModel?.trim().orEmpty()
+    return if (
+        normalizedBoundProviderProfileId.isNotEmpty() &&
+        normalizedBoundModel.isNotEmpty()
+    ) {
+        normalizedBoundModel
+    } else {
+        null
+    }
+}
+
+internal fun resolveAgentProviderProfile(
+    boundProviderProfileId: String?,
+    configuredProfile: ModelProviderProfile?,
+    officialProfile: ModelProviderProfile?,
+): ModelProviderProfile? {
+    val normalizedId = boundProviderProfileId?.trim().orEmpty()
+    return configuredProfile?.takeIf { it.id == normalizedId }
+        ?: officialProfile?.takeIf {
+            it.id == normalizedId && OmniOfficialProvider.isOfficialProfile(normalizedId)
+        }
+}
+
+internal fun resolveAgentProviderApiKey(
+    profile: ModelProviderProfile,
+    officialBearerToken: String?,
+): String? {
+    val key = if (OmniOfficialProvider.isOfficialProfile(profile.id)) {
+        officialBearerToken
+    } else {
+        profile.apiKey
+    }
+    return key?.trim()?.takeIf(String::isNotEmpty)
+}
+
+internal suspend fun fetchAgentProviderModels(
+    profile: ModelProviderProfile,
+): List<ProviderModelOption> {
+    return if (OmniOfficialProvider.isOfficialProfile(profile.id)) {
+        PlatformAiProvisioner.ensureReadyAndGetModels()
+    } else {
+        HttpController.fetchProviderModels(
+            apiBase = profile.baseUrl,
+            apiKey = profile.apiKey,
+            customHeaders = profile.customHeaders,
+            protocolType = profile.protocolType,
+            wireApi = profile.wireApi
+        )
+    }
+}
 
 class AgentRuntimeManager private constructor(
     private val context: Context
@@ -31,19 +142,133 @@ class AgentRuntimeManager private constructor(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val sessionMutex = Mutex()
     private val threadStartMutex = Mutex()
+    // Preparing an official npm ACP adapter is an installation boundary, not
+    // a normal switch operation.  Serialize it so rapid agent switches cannot
+    // start multiple npm/native builds against the same terminal directory.
+    private val managedAcpPreparationGate = ManagedAcpPreparationGate()
+    // Serializes the short prompt-start handshake. The actual turn runs in
+    // the harness, but two callers must never race before the first turn id
+    // has been observed and registered locally.
+    private val turnStartMutex = Mutex()
     private val mainHandler = Handler(Looper.getMainLooper())
     private val bindingRepository = AgentSessionBindingRepository(appContext)
+    // ACP deltas arrive much faster than durable bindings can change. Cache
+    // positive ownership so every token does not issue a Room query.
+    private val threadConversationIds = ConcurrentHashMap<String, Long>()
+    private val historyRepository = AgentConversationHistoryRepository(appContext)
     private val remoteConfigStore = CodexRemoteBridgeConfigStore(appContext)
     private val acpAgentProfileStore = AcpAgentProfileStore(appContext)
+    private val scheduledTaskScheduler by lazy {
+        WorkspaceScheduledTaskScheduler(appContext)
+    }
+    private val xiaowanScheduleToolBridge = object : AgentScheduleToolBridge {
+        override suspend fun createTask(arguments: Map<String, Any?>): Map<String, Any?> =
+            scheduledTaskScheduler.upsertTask(arguments)
+
+        override suspend fun listTasks(): List<Map<String, Any?>> =
+            scheduledTaskScheduler.listTasks()
+
+        override suspend fun updateTask(arguments: Map<String, Any?>): Map<String, Any?> =
+            scheduledTaskScheduler.updateTask(arguments)
+
+        override suspend fun deleteTask(arguments: Map<String, Any?>): Map<String, Any?> =
+            mapOf(
+                "deleted" to scheduledTaskScheduler.deleteTask(
+                    arguments["taskId"]?.toString()
+                        ?: arguments["id"]?.toString().orEmpty()
+                )
+            )
+    }
     private val localAcpRuntime = LocalAcpRuntime(
         context = appContext,
         scope = scope,
         bindingRepository = bindingRepository,
         profileStore = acpAgentProfileStore,
         prepareLaunchEnvironment = ::prepareLocalAcpLaunch,
+        prepareSharedProviderBinding = ::prepareSharedProviderBinding,
+        buildHandoffContext = ::buildLocalAcpHandoffContext,
+        scheduleToolBridge = xiaowanScheduleToolBridge,
+        copyConversationHistory = { sourceConversationId, targetConversationId ->
+            historyRepository.copyConversationHistory(
+                sourceConversationId = sourceConversationId,
+                targetConversationId = targetConversationId,
+            )
+        },
         onMessage = ::handleServerMessage
     )
     private val activeTurnsByThreadId = ConcurrentHashMap<String, String>()
+    private val pendingTurnThreads = ConcurrentHashMap.newKeySet<String>()
+    private val promptRequestTurns = ConcurrentHashMap<String, Pair<String, String>>()
+    private val remotePromptJobs = ConcurrentHashMap<String, Job>()
+
+    private suspend fun buildLocalAcpHandoffContext(
+        conversationId: Long,
+        currentPrompt: String?
+    ): String? {
+        val promptSeed = historyRepository.buildPromptSeed(
+            conversationId = conversationId,
+            conversationMode = "agent"
+        )
+        return AgentHandoffContext.format(
+            conversationId = conversationId,
+            messages = promptSeed.historyMessages,
+            currentPrompt = currentPrompt
+        )
+    }
+
+    /**
+     * One lifecycle boundary for every Agent backend. ACP, a remote Codex
+     * bridge, and future Harness adapters all enter here once a turn id is
+     * known, so Android background survival is not coupled to any Agent loop.
+     */
+    private fun trackActiveTurn(threadId: String, turnId: String) {
+        val previousTurnId = activeTurnsByThreadId.put(threadId, turnId)
+        if (previousTurnId == turnId) return
+        previousTurnId?.let(::releaseTurnRuntime)
+        TaskRuntimeSettings.onTaskStarted(appContext)
+        if (!TaskRuntime.start(appContext, agentTurnRuntimeId(turnId))) {
+            Log.w("AgentRuntimeManager", "Unable to acquire foreground runtime for turn=$turnId")
+        }
+    }
+
+    /**
+     * Reserve a host turn before sending a remote ACP prompt. Remote ACP
+     * `session/update` notifications do not carry the host's turn id, so the
+     * reservation is also the identity fence used while projecting them.
+     */
+    private fun reserveActiveTurn(threadId: String, turnId: String) {
+        check(activeTurnsByThreadId.putIfAbsent(threadId, turnId) == null) {
+            "ACP session $threadId already has an active turn."
+        }
+        TaskRuntimeSettings.onTaskStarted(appContext)
+        if (!TaskRuntime.start(appContext, agentTurnRuntimeId(turnId))) {
+            Log.w("AgentRuntimeManager", "Unable to acquire foreground runtime for turn=$turnId")
+        }
+    }
+
+    private fun clearActiveTurn(threadId: String, expectedTurnId: String? = null) {
+        val removedTurnId = if (expectedTurnId == null) {
+            activeTurnsByThreadId.remove(threadId)
+        } else if (activeTurnsByThreadId.remove(threadId, expectedTurnId)) {
+            expectedTurnId
+        } else {
+            null
+        }
+        removedTurnId?.let(::releaseTurnRuntime)
+    }
+
+    private fun clearActiveTurns() {
+        activeTurnsByThreadId.entries.toList().forEach { (threadId, turnId) ->
+            if (activeTurnsByThreadId.remove(threadId, turnId)) {
+                releaseTurnRuntime(turnId)
+            }
+        }
+    }
+
+    private fun releaseTurnRuntime(turnId: String) {
+        TaskRuntime.finish(appContext, agentTurnRuntimeId(turnId))
+        TaskRuntimeSettings.onTaskFinished(appContext)
+    }
 
     @Volatile
     private var pendingThreadStartConversationId: Long? = null
@@ -55,12 +280,32 @@ class AgentRuntimeManager private constructor(
     @Volatile
     private var activeLocalDistributionId: String? = null
     @Volatile
+    private var localProbeCache: LocalProbeCache? = null
+    // The ACP filesystem preload is immutable for the lifetime of this app
+    // process. Rewriting it for every Harness switch performs a terminal IPC
+    // and, on a physical device, adds roughly 1–2 seconds before the target
+    // ACP process can even start. Keep the write as a one-time initialization.
+    @Volatile
+    private var acpFilesystemCompatReady = false
+    // Launch environments are deterministic for a given Harness/provider/
+    // model tuple. Keep them in memory so switching back to an already
+    // prepared Harness does not re-read two terminal config files or probe
+    // the MCP server before the ACP process can start.
+    private val acpLaunchEnvironmentCache =
+        ConcurrentHashMap<String, Map<String, String>>()
+    @Volatile
     private var eventListener: ((Map<String, Any?>) -> Unit)? = null
+    private val eventDispatchLock = Any()
+    private val pendingEvents = ArrayDeque<Map<String, Any?>>()
+    private val hostEventSequence = AtomicLong(0L)
     private val supplementalEventListeners =
         ConcurrentHashMap<String, (Map<String, Any?>) -> Unit>()
 
     fun setEventListener(listener: ((Map<String, Any?>) -> Unit)?) {
         eventListener = listener
+        if (listener != null) {
+            mainHandler.post(::drainPendingEvents)
+        }
     }
 
     internal fun setSupplementalEventListener(
@@ -78,13 +323,26 @@ class AgentRuntimeManager private constructor(
             null
         }
         val connected = if (runtime.kind == AgentRuntimeKind.LOCAL) {
-            localAcpRuntime.isConnected
+            localAcpRuntime.isConnected &&
+                activeRuntime == AgentRuntimeKind.LOCAL &&
+                activeLocalDistributionId == localDistributionId
         } else {
             isActiveSessionFor(runtime.kind, localDistributionId)
         }
         val probe = when (runtime.kind) {
             AgentRuntimeKind.REMOTE -> probeRemoteCodex(runtime.remoteConfig)
-            AgentRuntimeKind.LOCAL -> probeLocalAcpAgent()
+            AgentRuntimeKind.LOCAL -> if (connected && localAcpRuntime.isConnected) {
+                // A live ACP transport is stronger evidence than a second
+                // shell `command -v` probe. This is the normal single-turn
+                // path and must never wait on npm/terminal health checks.
+                AgentRuntimeProbe(
+                    ready = true,
+                    version = localAcpRuntime.agentVersion(),
+                    error = null
+                )
+            } else {
+                probeLocalAcpAgentCached()
+            }
         }
         return linkedMapOf<String, Any?>(
             "connected" to connected,
@@ -108,21 +366,21 @@ class AgentRuntimeManager private constructor(
             "remoteBridgeUrl" to runtime.remoteConfig.bridgeUrl,
             "remoteCwd" to runtime.remoteConfig.cwd,
             "remoteConfigured" to runtime.remoteConfig.isConfigured,
-            "remoteTransport" to probe.details["appServerTransport"],
-            "remoteDesktopAvailable" to probe.details["desktopAppServerAvailable"],
+            "remoteTransport" to probe.details["acpTransport"],
             "remoteActiveConnections" to probe.details["activeConnections"],
             "remoteUptimeMs" to probe.details["uptimeMs"]
         ).apply {
             if (runtime.kind == AgentRuntimeKind.LOCAL) {
                 putAll(localAcpRuntime.statusPayload())
             } else {
-                put("protocol", "app-server")
+                put("protocol", "acp")
             }
         }
     }
 
     suspend fun connect(): Map<String, Any?> {
         sessionMutex.withLock {
+            invalidateLocalProbeCache()
             val runtime = resolveRuntime()
             val localDistributionId = if (runtime.kind == AgentRuntimeKind.LOCAL) {
                 TerminalDistribution.selected().id
@@ -133,16 +391,47 @@ class AgentRuntimeManager private constructor(
                 return status()
             }
             if (runtime.kind == AgentRuntimeKind.LOCAL && localAcpRuntime.isConnected) {
-                return status()
+                if (activeLocalDistributionId == localDistributionId) {
+                    return status()
+                }
+                // The terminal distribution is part of the ACP process
+                // boundary. A distribution switch must not reuse a process
+                // or its probe/environment cache from the old rootfs.
+                localAcpRuntime.disconnect()
+                activeRuntime = null
+                activeLocalDistributionId = null
+                clearActiveTurns()
+                pendingTurnThreads.clear()
+                promptRequestTurns.clear()
             }
+            clearPendingEvents()
             val existing = session
             existing?.disconnect()
             session = null
             activeRuntime = null
             activeLocalDistributionId = null
-            activeTurnsByThreadId.clear()
+            clearActiveTurns()
             if (runtime.kind == AgentRuntimeKind.LOCAL) {
-                connectLocalAcp()
+                val profile = acpAgentProfileStore.selected()
+                Log.i(
+                    "AgentRuntimeManager",
+                    "Connecting selected local ACP agent id=${profile.id} command=${profile.command}"
+                )
+                try {
+                    connectLocalAcp()
+                    Log.i(
+                        "AgentRuntimeManager",
+                        "Connected selected local ACP agent id=${profile.id}"
+                    )
+                } catch (error: Throwable) {
+                    Log.e(
+                        "AgentRuntimeManager",
+                        "Failed to connect selected local ACP agent id=${profile.id}: " +
+                            (error.message ?: error.javaClass.simpleName),
+                        error
+                    )
+                    throw error
+                }
                 activeRuntime = AgentRuntimeKind.LOCAL
                 activeLocalDistributionId = localDistributionId
                 return status()
@@ -178,34 +467,192 @@ class AgentRuntimeManager private constructor(
 
     suspend fun disconnect(): Map<String, Any?> {
         sessionMutex.withLock {
+            remotePromptJobs.values.toList().forEach { job ->
+                job.cancel(CancellationException("Remote ACP runtime disconnected"))
+            }
+            remotePromptJobs.clear()
+            threadConversationIds.clear()
+            invalidateLocalProbeCache()
             session?.disconnect()
             session = null
+            clearPendingEvents()
             localAcpRuntime.disconnect()
             activeRuntime = null
             activeLocalDistributionId = null
-            activeTurnsByThreadId.clear()
+            clearActiveTurns()
+            pendingTurnThreads.clear()
+            promptRequestTurns.clear()
         }
         return status()
     }
 
+    /**
+     * Provider credentials and the scene model binding are launch inputs for
+     * every shared-provider Harness. Once either changes, the old process and
+     * Xiaowan's in-process session snapshot are stale. Tear down only the
+     * affected local runtime; the next ACP request reconnects from the new
+     * canonical configuration.
+     */
+    suspend fun invalidateSharedProviderRuntime(changedProviderProfileId: String? = null) {
+        sessionMutex.withLock {
+            val activeProfile = acpAgentProfileStore.list()
+                .firstOrNull { it.id == localAcpRuntime.activeAgentId() }
+                ?: return@withLock
+            if (!AcpAgentProfileStore.usesSharedProvider(activeProfile)) {
+                return@withLock
+            }
+            val boundProviderId = SceneModelBindingStore
+                .getBinding("scene.dispatch.model")
+                ?.providerProfileId
+                ?.trim()
+            if (!changedProviderProfileId.isNullOrBlank() &&
+                boundProviderId != changedProviderProfileId.trim()
+            ) {
+                return@withLock
+            }
+            invalidateLocalProbeCache()
+            // Provider credentials and the dispatch model are launch inputs.
+            // Do not let a later reconnect reuse an environment assembled
+            // from the previous Provider binding.
+            acpLaunchEnvironmentCache.clear()
+            clearPendingEvents()
+            localAcpRuntime.disconnect()
+            if (activeRuntime == AgentRuntimeKind.LOCAL) {
+                activeRuntime = null
+                activeLocalDistributionId = null
+                clearActiveTurns()
+                pendingTurnThreads.clear()
+                promptRequestTurns.clear()
+            }
+        }
+    }
+
     suspend fun handleMethod(method: String, args: Map<String, Any?>): Any? {
+        val canonicalArgs = AcpSessionCompatibility.canonicalize(method, args)
         if (method == "agent/config/read") {
-            return readAgentConfig(args)
+            return readAgentConfig(canonicalArgs)
         }
         if (method == "agent/config/write") {
-            return writeAgentConfig(args)
+            return writeAgentConfig(canonicalArgs)
         }
         if (method.startsWith("agent/")) {
-            return localAcpRuntime.handleMethod(method, args)
+            val previousSelectedAgentId = if (method == "agent/select") {
+                acpAgentProfileStore.selected().id
+            } else {
+                null
+            }
+            if (method == "agent/select" ||
+                method == "agent/refresh" ||
+                method == "agent/save" ||
+                method == "agent/delete" ||
+                method == "agent/prepare"
+            ) {
+                invalidateLocalProbeCache()
+            }
+            if (method == "agent/save" || method == "agent/delete") {
+                // Profile command/arguments/environment edits (and delete /
+                // recreate with the same custom id) invalidate the launch
+                // fast path even while the runtime is disconnected.
+                acpLaunchEnvironmentCache.clear()
+            }
+            if (method == "agent/select" || method == "agent/delete") {
+                // Conversation ownership lookups are transport-scoped. A
+                // different Harness must not inherit the previous process's
+                // thread cache (opaque ACP ids may be reused by vendors).
+                threadConversationIds.clear()
+            }
+            if (method == "agent/select") {
+                // Buffered events belong to the previous Harness. Do not
+                // replay them after an explicit ACP process switch.
+                clearPendingEvents()
+            }
+            val response = localAcpRuntime.handleMethod(method, canonicalArgs)
+            if (
+                method == "agent/select" &&
+                canonicalArgs.stringValue("agentId")?.trim() != previousSelectedAgentId
+            ) {
+                // LocalAcpRuntime tears down the old transport during a real
+                // switch. Release the manager-level turn/ownership caches at
+                // the same boundary so a cancelled old turn cannot block or
+                // label the new Harness.
+                clearActiveTurns()
+                pendingTurnThreads.clear()
+                promptRequestTurns.clear()
+            }
+            if (method == "agent/select" && localAcpRuntime.isConnected) {
+                activeRuntime = AgentRuntimeKind.LOCAL
+                activeLocalDistributionId = TerminalDistribution.selected().id
+            }
+            return response
         }
-        if (resolveRuntime().kind == AgentRuntimeKind.LOCAL && method in LOCAL_ACP_METHODS) {
-            ensureLocalAcpConnected(args)
-            return localAcpRuntime.handleMethod(method, args)
+        if (
+            method == "model/list" &&
+            resolveRuntime().kind == AgentRuntimeKind.LOCAL &&
+            acpAgentProfileStore.list()
+                .firstOrNull { it.id == localAcpRuntime.activeAgentId() }
+                ?.let(AcpAgentProfileStore::usesSharedProvider) == true
+        ) {
+            return listAuthoritativeProviderModels()
+        }
+        if (
+            resolveRuntime().kind == AgentRuntimeKind.LOCAL &&
+            (method in LOCAL_ACP_METHODS || isAcpExtensionMethod(method))
+        ) {
+            val localArgs = ensureLocalAcpConnected(method, canonicalArgs)
+            val response = localAcpRuntime.handleMethod(method, localArgs)
+            if (
+                method == "session/prompt" ||
+                method == "session/cancel" ||
+                method == "session/close"
+            ) {
+                val payload = response as? Map<*, *>
+                val threadId = payload?.get("threadId")?.toString()
+                    ?: payload?.get("sessionId")?.toString()
+                    ?: localArgs.stringValue("threadId")
+                    ?: localArgs.stringValue("sessionId")
+                val turnId = payload?.get("turnId")?.toString()
+                    ?: localArgs.stringValue("turnId")
+                    ?: localArgs.stringValue("promptId")
+                if (!threadId.isNullOrBlank()) {
+                    clearActiveTurn(threadId, turnId)
+                }
+            }
+            return response
+        }
+        if (resolveRuntime().kind == AgentRuntimeKind.REMOTE) {
+            when (method) {
+                "session/new" -> return startRemoteAcpSession(canonicalArgs)
+                // Prefer the canonical ACP method. Older codex-acp bridges
+                // predate session/load and only expose the app-server
+                // thread/resume alias, so keep that as a narrow fallback.
+                "session/load",
+                "session/resume" -> return loadRemoteAcpSession(canonicalArgs)
+                // The canonical list method is attempted first. The fallback
+                // keeps old bridges usable without making the host advertise
+                // a second, private transport.
+                "session/list" -> return listRemoteAcpSessions(canonicalArgs)
+                "session/prompt" -> return promptRemoteAcpSession(canonicalArgs)
+                "session/cancel" -> return cancelRemoteAcpSession(canonicalArgs)
+            }
         }
         return when (method) {
             "status" -> status()
             "connect" -> connect()
             "disconnect" -> disconnect()
+            // Both local and remote runtimes speak the same ACP session
+            // surface. Harness-specific operations do not cross this boundary.
+            "session/new" -> startThread(canonicalArgs).withAcpSessionId()
+            "session/load",
+            "session/resume" -> requestWithResolvedThread("thread/resume", canonicalArgs)
+                .withAcpSessionId()
+            "session/list" -> listThreads(canonicalArgs).withAcpSessions()
+            "session/prompt" -> startTurn(canonicalArgs).withAcpSessionId()
+            "session/cancel" -> interruptTurn(canonicalArgs).withAcpSessionId()
+            "session/archive" -> archiveThread(canonicalArgs, archived = true)
+                .withAcpSessionId()
+            "session/unarchive" -> archiveThread(canonicalArgs, archived = false)
+                .withAcpSessionId()
+            "session/name/set" -> setThreadName(canonicalArgs).withAcpSessionId()
             "thread/start" -> startThread(args)
             "thread/resume" -> requestWithResolvedThread("thread/resume", args)
             "thread/read" -> requestWithResolvedThread("thread/read", args)
@@ -236,7 +683,7 @@ class AgentRuntimeManager private constructor(
             "turn/start" -> startTurn(args)
             "turn/steer" -> steerTurn(args)
             "turn/interrupt" -> interruptTurn(args)
-            "review/start" -> startReview(args)
+            "review/start" -> startReview(canonicalArgs)
             "account/read" -> requestAccountMethod("account/read", null)
             "account/login/start" -> requestAccountMethod(
                 "account/login/start",
@@ -247,6 +694,206 @@ class AgentRuntimeManager private constructor(
             "respondToServerRequest" -> respondToServerRequest(args)
             else -> request(method, args)
         }
+    }
+
+    private suspend fun startRemoteAcpSession(
+        args: Map<String, Any?>
+    ): Map<String, Any?> {
+        val cwd = sanitizeAgentRuntimeAbsolutePath(args.stringValue("cwd"))
+            ?: resolveDefaultCwd()
+        val params = linkedMapOf<String, Any?>(
+            "cwd" to cwd,
+            "mcpServers" to emptyList<Any?>()
+        )
+        args["additionalDirectories"]?.let { params["additionalDirectories"] = it }
+        args.stringValue("model")?.let { params["model"] = it }
+        args.stringValue("effort")?.let { params["reasoningEffort"] = it }
+        val response = request("session/new", params)
+        val payload = response as? Map<String, Any?> ?: emptyMap()
+        val sessionId = extractThreadId(payload)
+            ?: payload.stringValue("id")
+            ?: throw IllegalStateException("ACP session/new did not return a session id.")
+        return payload.withAcpSessionId().withLocalIds(
+            threadId = sessionId,
+            conversationId = null
+        )
+    }
+
+    private suspend fun loadRemoteAcpSession(
+        args: Map<String, Any?>
+    ): Map<String, Any?> {
+        val sessionId = args.stringValue("sessionId")
+            ?: args.stringValue("threadId")
+            ?: throw IllegalArgumentException("sessionId is required")
+        val params = linkedMapOf<String, Any?>("sessionId" to sessionId)
+        args.stringValue("cwd")?.let { params["cwd"] = it }
+        args["additionalDirectories"]?.let { params["additionalDirectories"] = it }
+        args["_meta"]?.let { params["_meta"] = it }
+        return try {
+            (request("session/load", params) as? Map<String, Any?> ?: emptyMap())
+                .withAcpSessionId()
+                .withLocalIds(threadId = sessionId, conversationId = null)
+        } catch (error: Throwable) {
+            if (!isUnsupportedRemoteAcpMethod(error)) throw error
+            requestWithResolvedThread("thread/resume", args).withAcpSessionId()
+        }
+    }
+
+    private suspend fun listRemoteAcpSessions(
+        args: Map<String, Any?>
+    ): Map<String, Any?> {
+        val params = linkedMapOf<String, Any?>()
+        args["cursor"]?.let { params["cursor"] = it }
+        args["limit"]?.let { params["limit"] = it }
+        args.stringValue("cwd")?.let { params["cwd"] = it }
+        args["additionalDirectories"]?.let { params["additionalDirectories"] = it }
+        return try {
+            // Some ACP bridges return the list directly as the JSON-RPC
+            // result, while others wrap it in {sessions: [...]}. Normalize
+            // both forms at this boundary so clients never see an empty
+            // session list merely because the bridge chose the compact form.
+            val rawResponse = request("session/list", params)
+            val response = when (rawResponse) {
+                is Map<*, *> -> rawResponse.entries.associate { (key, value) ->
+                    key.toString() to value
+                }
+                is List<*> -> mapOf("sessions" to rawResponse)
+                else -> emptyMap()
+            }
+            response.withAcpSessions()
+        } catch (error: Throwable) {
+            if (!isUnsupportedRemoteAcpMethod(error)) throw error
+            listThreads(args).withAcpSessions()
+        }
+    }
+
+    private suspend fun promptRemoteAcpSession(
+        args: Map<String, Any?>
+    ): Map<String, Any?> {
+        val sessionId = args.stringValue("sessionId")
+            ?: args.stringValue("threadId")
+            ?: startRemoteAcpSession(args)["sessionId"]?.toString()
+            ?: throw IllegalStateException("ACP session/new did not return a session id.")
+        val requestId = args.stringValue("requestId")?.takeIf { it.isNotBlank() }
+        val requestKey = requestId?.let { "$sessionId|$it" }
+        requestKey?.let { key ->
+            promptRequestTurns[key]?.let { (knownSessionId, knownTurnId) ->
+                // A transport retry must not execute remote tools a second
+                // time. The first prompt still owns the event stream; return
+                // its identity so the caller can keep observing that turn.
+                return linkedMapOf<String, Any?>(
+                    "sessionId" to knownSessionId,
+                    "threadId" to knownSessionId,
+                    "promptId" to knownTurnId,
+                    "turnId" to knownTurnId,
+                    "deduplicated" to true,
+                    "completed" to false,
+                )
+            }
+        }
+        val turnId = UUID.randomUUID().toString()
+        reserveActiveTurn(sessionId, turnId)
+        val promptJob = coroutineContext[Job]
+        promptJob?.let { remotePromptJobs[sessionId] = it }
+        requestKey?.let { key ->
+            promptRequestTurns[key] = sessionId to turnId
+            if (promptRequestTurns.size > 256) {
+                promptRequestTurns.keys.firstOrNull()?.let(promptRequestTurns::remove)
+            }
+        }
+        return try {
+            val prompt = resolveInput(args, sessionId).map { block ->
+                LinkedHashMap<String, Any?>().apply {
+                    block.forEach { (key, value) ->
+                        if (key != "text_elements") put(key, value)
+                    }
+                }
+            }
+            val response = request(
+                "session/prompt",
+                mapOf("sessionId" to sessionId, "prompt" to prompt)
+            )
+            val payload = response as? Map<String, Any?> ?: emptyMap()
+            payload.withAcpSessionId().withLocalIds(
+                threadId = sessionId,
+                conversationId = null,
+                turnId = turnId
+            ).toMutableMap().apply {
+                put("completed", true)
+                payload.stringValue("stopReason")?.let { put("status", it) }
+            }
+        } catch (error: Throwable) {
+            // A remote bridge can fail the request without emitting the
+            // normal ACP turn/failed notification (for example a request
+            // timeout or a JSON-RPC transport error). The Flutter reducer
+            // otherwise keeps the turn in "thinking" forever. Emit a single
+            // terminal event only while this host turn still owns the active
+            // slot; a real remote terminal event will have cleared that slot
+            // already, so this cannot duplicate a completed failure.
+            val stillOwnsTurn = activeTurnsByThreadId[sessionId] == turnId
+            val shouldEmitFailure = stillOwnsTurn &&
+                (error !is CancellationException || error is TimeoutCancellationException)
+            if (shouldEmitFailure) {
+                val detail = error.message?.trim()
+                    ?.takeIf { it.isNotEmpty() }
+                    ?: error.javaClass.simpleName
+                emitEvent(
+                    linkedMapOf(
+                        "method" to "turn/failed",
+                        "workspaceId" to RemoteCodexAppServerSession.DEFAULT_WORKSPACE_ID,
+                        "threadId" to sessionId,
+                        "turnId" to turnId,
+                        "agentId" to AcpAgentProfileStore.CODEX_AGENT_ID,
+                        "agentName" to "Codex",
+                        "params" to mapOf(
+                            "threadId" to sessionId,
+                            "turnId" to turnId,
+                            "willRetry" to false,
+                            "error" to mapOf("message" to detail),
+                        ),
+                    )
+                )
+            }
+            throw error
+        } finally {
+            promptJob?.let { remotePromptJobs.remove(sessionId, it) }
+            clearActiveTurn(sessionId, turnId)
+        }
+    }
+
+    private suspend fun cancelRemoteAcpSession(
+        args: Map<String, Any?>
+    ): Map<String, Any?> {
+        val sessionId = args.stringValue("sessionId")
+            ?: args.stringValue("threadId")
+            ?: throw IllegalArgumentException("sessionId is required")
+        val turnId = args.stringValue("turnId") ?: activeTurnsByThreadId[sessionId]
+        if (turnId.isNullOrBlank()) {
+            return mapOf(
+                "ok" to true,
+                "cancelled" to false,
+                "sessionId" to sessionId,
+                "threadId" to sessionId,
+            )
+        }
+        val response = withTimeoutOrNull(REMOTE_CANCEL_TIMEOUT_MS) {
+            request("session/cancel", mapOf("sessionId" to sessionId))
+        } ?: mapOf(
+            "cancelled" to false,
+            "error" to "Remote ACP cancellation timed out",
+        )
+        // The bridge may acknowledge cancellation while the original
+        // session/prompt request is still suspended. Cancel that host-side
+        // waiter as well, so a late response cannot keep the old turn alive
+        // or block the next prompt on the same session.
+        remotePromptJobs[sessionId]?.let { promptJob ->
+            if (promptJob != coroutineContext[Job]) {
+                promptJob.cancel(CancellationException("Remote ACP turn cancelled"))
+            }
+        }
+        clearActiveTurn(sessionId, turnId)
+        return (response as? Map<String, Any?> ?: emptyMap()).withAcpSessionId()
+            .withLocalIds(threadId = sessionId, conversationId = null, turnId = turnId)
     }
 
     private suspend fun startThread(args: Map<String, Any?>): Map<String, Any?> = threadStartMutex.withLock {
@@ -278,6 +925,7 @@ class AgentRuntimeManager private constructor(
                     cwd = cwd,
                     title = extractThreadTitle(response)
                 )
+                threadConversationIds[threadId] = localConversationId
             }
             response.withLocalIds(threadId = threadId, conversationId = localConversationId)
         } finally {
@@ -307,7 +955,9 @@ class AgentRuntimeManager private constructor(
         val threadId = resolveThreadId(args)
         val params = linkedMapOf<String, Any?>("threadId" to threadId)
         if (method == "thread/read") {
-            args["includeTurns"]?.let { params["includeTurns"] = it }
+            (args["includeHistory"] ?: args["includeTurns"])?.let {
+                params["includeTurns"] = it
+            }
         }
         val response = request(method, params) as Map<String, Any?>
         if (shouldSyncLocalThreadBindings() && (method == "thread/read" || method == "thread/resume")) {
@@ -375,38 +1025,81 @@ class AgentRuntimeManager private constructor(
     }
 
     private suspend fun startTurn(args: Map<String, Any?>): Map<String, Any?> {
-        val cwd = sanitizeAgentRuntimeAbsolutePath(args.stringValue("cwd")) ?: resolveDefaultCwd()
-        var threadId = ensureThreadForTurn(args, cwd)
-        val params = buildTurnStartParams(
-            args = args,
-            cwd = cwd,
-            threadId = threadId
-        )
-        val response = try {
-            request("turn/start", params) as Map<String, Any?>
-        } catch (error: Throwable) {
-            if (!shouldRecoverMissingThread(error)) {
-                throw error
+        return turnStartMutex.withLock {
+            val cwd = sanitizeAgentRuntimeAbsolutePath(args.stringValue("cwd"))
+                ?: resolveDefaultCwd()
+            var threadId = ensureThreadForTurn(args, cwd)
+            val requestId = args.stringValue("requestId")
+                ?.takeIf { it.isNotBlank() }
+            var requestKey = requestId?.let { "$threadId|$it" }
+            requestKey?.let { key ->
+                promptRequestTurns[key]?.let { (knownThreadId, knownTurnId) ->
+                    return@withLock mapOf(
+                        "threadId" to knownThreadId,
+                        "turnId" to knownTurnId
+                    ).withLocalIds(
+                        threadId = knownThreadId,
+                        conversationId = localConversationIdForThread(knownThreadId),
+                        turnId = knownTurnId
+                    )
+                }
             }
-            Log.w(
-                "AgentRuntimeManager",
-                "Agent turn/start hit a missing thread; creating a fresh thread binding."
+            check(activeTurnsByThreadId[threadId] == null) {
+                "ACP session $threadId already has an active turn."
+            }
+            check(pendingTurnThreads.add(threadId)) {
+                "ACP session $threadId already has a turn starting."
+            }
+            var reservedThreadId = threadId
+            val params = buildTurnStartParams(
+                args = args,
+                cwd = cwd,
+                threadId = threadId
             )
-            val retryResponse = startThread(args + mapOf("cwd" to cwd))
-            threadId = retryResponse["threadId"]?.toString()?.trim()?.takeIf { it.isNotEmpty() }
-                ?: throw error
-            params["threadId"] = threadId
-            request("turn/start", params) as Map<String, Any?>
+            try {
+                val response = try {
+                    request("turn/start", params) as Map<String, Any?>
+                } catch (error: Throwable) {
+                    if (!shouldRecoverMissingThread(error)) {
+                        throw error
+                    }
+                    Log.w(
+                        "AgentRuntimeManager",
+                        "Agent turn/start hit a missing thread; creating a fresh thread binding."
+                    )
+                    val retryResponse = startThread(args + mapOf("cwd" to cwd))
+                    pendingTurnThreads.remove(reservedThreadId)
+                    threadId = retryResponse["threadId"]?.toString()?.trim()
+                        ?.takeIf { it.isNotEmpty() }
+                        ?: throw error
+                    check(pendingTurnThreads.add(threadId)) {
+                        "ACP session $threadId already has a turn starting."
+                    }
+                    reservedThreadId = threadId
+                    params["threadId"] = threadId
+                    requestKey = requestId?.let { "$threadId|$it" }
+                    request("turn/start", params) as Map<String, Any?>
+                }
+                val turnId = extractTurnId(response)
+                check(!turnId.isNullOrBlank()) {
+                    "Agent turn/start did not return a turn id."
+                }
+                trackActiveTurn(threadId, turnId)
+                requestKey?.let { key ->
+                    promptRequestTurns[key] = threadId to turnId
+                    if (promptRequestTurns.size > 256) {
+                        promptRequestTurns.keys.firstOrNull()?.let(promptRequestTurns::remove)
+                    }
+                }
+                response.withLocalIds(
+                    threadId = threadId,
+                    conversationId = localConversationIdForThread(threadId),
+                    turnId = turnId
+                )
+            } finally {
+                pendingTurnThreads.remove(reservedThreadId)
+            }
         }
-        val turnId = extractTurnId(response)
-        if (!turnId.isNullOrBlank()) {
-            activeTurnsByThreadId[threadId] = turnId
-        }
-        return response.withLocalIds(
-            threadId = threadId,
-            conversationId = localConversationIdForThread(threadId),
-            turnId = turnId
-        )
     }
 
     private suspend fun startReview(args: Map<String, Any?>): Map<String, Any?> {
@@ -442,18 +1135,19 @@ class AgentRuntimeManager private constructor(
         }
         val turnId = extractTurnId(response)
         if (!turnId.isNullOrBlank()) {
-            activeTurnsByThreadId[threadId] = turnId
+            trackActiveTurn(threadId, turnId)
         }
         return response.withLocalIds(
             threadId = threadId,
             conversationId = localConversationIdForThread(threadId),
             turnId = turnId
-        )
+        ).withAcpSessionId()
     }
 
     private suspend fun steerTurn(args: Map<String, Any?>): Map<String, Any?> {
         val threadId = resolveThreadId(args)
-        val expectedTurnId = args.stringValue("expectedTurnId")
+        val expectedTurnId = args.stringValue("expectedPromptId")
+            ?: args.stringValue("expectedTurnId")
             ?: args.stringValue("turnId")
             ?: activeTurnsByThreadId[threadId]
             ?: throw IllegalArgumentException("missing active Agent turn id")
@@ -474,14 +1168,15 @@ class AgentRuntimeManager private constructor(
 
     private suspend fun interruptTurn(args: Map<String, Any?>): Map<String, Any?> {
         val threadId = resolveThreadId(args)
-        val turnId = args.stringValue("turnId")
+        val turnId = args.stringValue("promptId")
+            ?: args.stringValue("turnId")
             ?: activeTurnsByThreadId[threadId]
             ?: throw IllegalArgumentException("missing active Agent turn id")
         val response = request(
             "turn/interrupt",
             mapOf("threadId" to threadId, "turnId" to turnId)
         ) as Map<String, Any?>
-        activeTurnsByThreadId.remove(threadId)
+        clearActiveTurn(threadId, turnId)
         return response.withLocalIds(
             threadId = threadId,
             conversationId = localConversationIdForThread(threadId),
@@ -490,6 +1185,10 @@ class AgentRuntimeManager private constructor(
     }
 
     private suspend fun respondToServerRequest(args: Map<String, Any?>): Map<String, Any?> {
+        if (resolveRuntime().kind == AgentRuntimeKind.LOCAL) {
+            return localAcpRuntime.handleMethod("respondToServerRequest", args)
+                as Map<String, Any?>
+        }
         val requestId = args["requestId"] ?: args["id"]
             ?: throw IllegalArgumentException("requestId is required")
         val result = args["response"] ?: args["result"]
@@ -521,8 +1220,25 @@ class AgentRuntimeManager private constructor(
             ?: throw IllegalArgumentException("agentId is required.")
         val profile = acpAgentProfileStore.list().firstOrNull { it.id == agentId }
             ?: throw IllegalArgumentException("Unknown ACP agent: $agentId")
+        val harnessAdapter = AcpHarnessAdapters.forProfile(profile)
+        val harnessConfigPath = harnessAdapter.launchConfigPath
+        if (harnessConfigPath != null) {
+            val payload = harnessAdapter.readConfigPayload(
+                profileId = profile.id,
+                rawConfig = readTerminalTextFile(
+                    path = harnessConfigPath,
+                    executorKey = harnessAdapter.launchConfigExecutorKey
+                        ?: "harness-config-read-${profile.id}"
+                ),
+                provider = currentAgentProviderCredentials(),
+                model = currentAgentBoundModel(),
+            ) ?: throw UnsupportedOperationException(
+                "Harness does not expose a readable configuration surface."
+            )
+            return payload
+        }
         return when (profile.id) {
-            AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID -> {
+            AcpAgentProfileStore.CODEX_AGENT_ID -> {
                 val configToml = readTerminalTextFile(
                     path = CODEX_CONFIG_TOML_PATH,
                     executorKey = "codex-agent-config-read"
@@ -531,13 +1247,15 @@ class AgentRuntimeManager private constructor(
                     path = CODEX_AUTH_JSON_PATH,
                     executorKey = "codex-agent-auth-read"
                 )
+                val sharedProvider = currentAgentProviderProfile()
                 linkedMapOf(
                     "agentId" to profile.id,
                     "kind" to "codex",
                     "configPath" to CODEX_CONFIG_TOML_DISPLAY_PATH,
                     "authPath" to CODEX_AUTH_JSON_DISPLAY_PATH,
-                    "baseUrl" to extractTomlString(configToml, "base_url").orEmpty(),
-                    "model" to extractTomlString(configToml, "model").orEmpty(),
+                    "baseUrl" to (sharedProvider?.baseUrl
+                        ?: extractTomlString(configToml, "base_url").orEmpty()),
+                    "model" to currentAgentBoundModel().orEmpty(),
                     "apiKey" to extractOpenAiApiKey(authJson).orEmpty()
                 )
             }
@@ -553,24 +1271,6 @@ class AgentRuntimeManager private constructor(
                 path = OPENCODE_CONFIG_JSON_PATH,
                 displayPath = OPENCODE_CONFIG_JSON_DISPLAY_PATH
             )
-            AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID -> {
-                val config = parseDeepSeekHarnessConfig(
-                    readTerminalTextFile(
-                        path = DEEPSEEK_HARNESS_CONFIG_PATH,
-                        executorKey = "deepseek-harness-config-read"
-                    )
-                )
-                linkedMapOf(
-                    "agentId" to profile.id,
-                    "kind" to "deepseek-harness",
-                    "configPath" to DEEPSEEK_HARNESS_CONFIG_DISPLAY_PATH,
-                    "baseUrl" to config.baseUrl,
-                    "model" to config.model,
-                    "apiKey" to config.apiKey,
-                    "reasoningEffort" to config.reasoningEffort,
-                    "permissionMode" to config.permissionMode
-                )
-            }
             else -> linkedMapOf(
                 "agentId" to profile.id,
                 "kind" to "profile"
@@ -601,20 +1301,61 @@ class AgentRuntimeManager private constructor(
             ?: throw IllegalArgumentException("agentId is required.")
         val profile = acpAgentProfileStore.list().firstOrNull { it.id == agentId }
             ?: throw IllegalArgumentException("Unknown ACP agent: $agentId")
+        val harnessAdapter = AcpHarnessAdapters.forProfile(profile)
+        val harnessConfigPath = harnessAdapter.launchConfigPath
+        if (harnessConfigPath != null) {
+            val content = harnessAdapter.writeConfigPayload(
+                args = args,
+                rawConfig = readTerminalTextFile(
+                    path = harnessConfigPath,
+                    executorKey = harnessAdapter.launchConfigExecutorKey
+                        ?: "harness-config-read-${profile.id}"
+                ),
+                provider = currentAgentProviderCredentials(),
+                model = currentAgentBoundModel(),
+            ) ?: throw UnsupportedOperationException(
+                "Harness does not expose a writable configuration surface."
+            )
+            requireAgentConfigSize(content)
+            writeTerminalTextFile(
+                path = harnessConfigPath,
+                content = content,
+                executorKey = "harness-config-write-${profile.id}"
+            )
+            localAcpRuntime.disconnect()
+            clearActiveTurns()
+            return readAgentConfig(mapOf("agentId" to profile.id))
+        }
         when (profile.id) {
-            AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID -> {
+            AcpAgentProfileStore.CODEX_AGENT_ID -> {
                 val baseUrl = args.stringValue("baseUrl")
                     ?: throw IllegalArgumentException("Base URL is required.")
                 val model = args.stringValue("model")
                     ?: throw IllegalArgumentException("Model ID is required.")
                 val apiKey = args.stringValue("apiKey")
                     ?: throw IllegalArgumentException("API Key is required.")
+                val providerModelResolution = resolveCurrentProviderModelIds(
+                    currentAgentProviderProfile()
+                )
+                val providerModels = providerModelResolution
+                    ?.takeIf { it.authoritative }
+                    ?.models
+                    .orEmpty()
+                val resolvedModel = resolveAcpLaunchModel(
+                    providerModelIds = providerModels.map(ProviderModelOption::id),
+                    boundModel = model
+                ) ?: throw IllegalArgumentException(
+                    "Model must be selected from the current Provider /models response."
+                )
                 writeCodexConfigFiles(
                     configToml = buildCodexConfigToml(
                         baseUrl = baseUrl,
-                        model = model
+                        model = resolvedModel,
+                        wireApi = args.stringValue("wireApi") ?: OpenAiWireApi.RESPONSES,
+                        modelCatalogPath = CODEX_MODEL_CATALOG_JSON_PATH
                     ),
-                    authJson = buildCodexAuthJson(apiKey)
+                    authJson = buildCodexAuthJson(apiKey),
+                    modelCatalogJson = buildCodexModelCatalogJson(providerModels)
                 )
             }
             CLAUDE_CODE_AGENT_ID -> {
@@ -647,32 +1388,19 @@ class AgentRuntimeManager private constructor(
                     executorKey = "agent-config-write-${profile.id}"
                 )
             }
-            AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID -> {
-                val current = parseDeepSeekHarnessConfig(
-                    readTerminalTextFile(
-                        path = DEEPSEEK_HARNESS_CONFIG_PATH,
-                        executorKey = "deepseek-harness-config-before-write"
-                    )
-                )
-                val config = deepSeekHarnessConfigFromArgs(args, current)
-                writeTerminalTextFile(
-                    path = DEEPSEEK_HARNESS_CONFIG_PATH,
-                    content = buildDeepSeekHarnessConfigJson(config),
-                    executorKey = "deepseek-harness-config-write"
-                )
-            }
             else -> throw UnsupportedOperationException(
                 "Custom ACP Agent settings are stored in its launch profile."
             )
         }
         localAcpRuntime.disconnect()
-        activeTurnsByThreadId.clear()
+        clearActiveTurns()
         return readAgentConfig(mapOf("agentId" to profile.id))
     }
 
     private suspend fun writeCodexConfigFiles(
         configToml: String,
-        authJson: String
+        authJson: String,
+        modelCatalogJson: String
     ) {
         val command = """
             set -eu
@@ -680,7 +1408,8 @@ class AgentRuntimeManager private constructor(
             umask 077
             printf %s ${shellQuote(configToml)} > ${shellQuote(CODEX_CONFIG_TOML_PATH)}
             printf %s ${shellQuote(authJson)} > ${shellQuote(CODEX_AUTH_JSON_PATH)}
-            chmod 600 ${shellQuote(CODEX_CONFIG_TOML_PATH)} ${shellQuote(CODEX_AUTH_JSON_PATH)}
+            printf %s ${shellQuote(modelCatalogJson)} > ${shellQuote(CODEX_MODEL_CATALOG_JSON_PATH)}
+            chmod 600 ${shellQuote(CODEX_CONFIG_TOML_PATH)} ${shellQuote(CODEX_AUTH_JSON_PATH)} ${shellQuote(CODEX_MODEL_CATALOG_JSON_PATH)}
         """.trimIndent()
         executeAgentConfigCommand(command, "codex-agent-config-write")
     }
@@ -720,6 +1449,9 @@ class AgentRuntimeManager private constructor(
             chmod 600 ${shellQuote(path)}
         """.trimIndent()
         executeAgentConfigCommand(command, executorKey)
+        // Explicit config publication invalidates the in-memory launch fast
+        // path. Persisted Harness files remain untouched.
+        acpLaunchEnvironmentCache.clear()
     }
 
     private suspend fun executeAgentConfigCommand(
@@ -761,7 +1493,7 @@ class AgentRuntimeManager private constructor(
             localAcpRuntime.disconnect()
             activeRuntime = null
             activeLocalDistributionId = null
-            activeTurnsByThreadId.clear()
+            clearActiveTurns()
         }
         return buildRemoteBridgeConfigPayload(
             remoteConfig = savedRemoteConfig,
@@ -877,6 +1609,7 @@ class AgentRuntimeManager private constructor(
 
     private suspend fun ensureThreadForTurn(args: Map<String, Any?>, cwd: String): String {
         val explicitThreadId = args.stringValue("threadId")
+            ?: args.stringValue("sessionId")
         if (!explicitThreadId.isNullOrBlank()) {
             return explicitThreadId
         }
@@ -903,18 +1636,26 @@ class AgentRuntimeManager private constructor(
         if (!shouldSyncLocalThreadBindings()) {
             return null
         }
-        return bindingRepository.getBindingByThreadId(threadId)?.conversationId
+        return cachedConversationIdForThread(threadId)
+    }
+
+    private suspend fun cachedConversationIdForThread(threadId: String): Long? {
+        val normalized = threadId.trim()
+        if (normalized.isEmpty()) return null
+        threadConversationIds[normalized]?.let { return it }
+        return bindingRepository.getBindingByThreadId(normalized)?.conversationId
+            ?.also { threadConversationIds[normalized] = it }
     }
 
     private fun syncActiveTurnSnapshot(threadId: String, response: Map<String, Any?>) {
         val active = remoteCodexThreadActivity(response)
         val activeTurnId = extractActiveTurnId(response)
         if (active == true && !activeTurnId.isNullOrBlank()) {
-            activeTurnsByThreadId[threadId] = activeTurnId
+            trackActiveTurn(threadId, activeTurnId)
             return
         }
         if (active == false) {
-            activeTurnsByThreadId.remove(threadId)
+            clearActiveTurn(threadId)
         }
     }
 
@@ -927,8 +1668,9 @@ class AgentRuntimeManager private constructor(
         return response["result"] ?: response
     }
 
-    private suspend fun connectLocalAcp() {
-        val profile = acpAgentProfileStore.selected()
+    private suspend fun connectLocalAcp(
+        profile: AcpAgentProfile = acpAgentProfileStore.selected()
+    ) {
         require(profile.enabled) {
             "No enabled ACP Agent is selected. Enable one in Agent mode settings."
         }
@@ -938,78 +1680,387 @@ class AgentRuntimeManager private constructor(
     private suspend fun prepareLocalAcpLaunch(
         profile: AcpAgentProfile
     ): Map<String, String> {
-        val deepSeekEnvironment = if (
-            profile.id == AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID &&
-            AcpAgentProfileStore.officialRuntime(profile) != null
-        ) {
-            val config = parseDeepSeekHarnessConfig(
-                readTerminalTextFile(
-                    path = DEEPSEEK_HARNESS_CONFIG_PATH,
-                    executorKey = "deepseek-harness-launch-config-read"
-                )
-            )
-            require(config.apiKey.isNotBlank()) {
-                "Configure the DeepSeek API key in Agent mode settings before starting DeepSeek Harness."
-            }
-            config.toEnvironment()
-        } else {
-            emptyMap()
-        }
+        val usesSharedProvider = AcpAgentProfileStore
+            .officialRuntime(profile)
+            ?.usesSharedProvider == true
+        // Installing a Harness is independent from the Dispatch Provider
+        // selection. A missing scene override must not block npm/native
+        // preparation or make a switch look like an install failure.
         ensureManagedAcpAdapter(profile)
-        return when (profile.id) {
-            AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID ->
-                mapOf("CODEX_HOME" to AgentRuntimeDefaults.CODEX_HOME)
-            AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID -> {
-                if (AcpAgentProfileStore.officialRuntime(profile) != null) {
-                    writeTerminalTextFile(
-                        path = DEEPSEEK_HARNESS_OMNIBOT_ACP_PLUGIN_PATH,
-                        content = readDeepSeekHarnessAcpPluginAsset(),
-                        executorKey = "deepseek-harness-acp-plugin-write"
-                    )
-                    writeTerminalTextFile(
-                        path = DEEPSEEK_HARNESS_CORDIS_PATH,
-                        content = buildDeepSeekHarnessCordisConfig(),
-                        executorKey = "deepseek-harness-cordis-write"
-                    )
-                }
-                deepSeekEnvironment
+        val sharedProviderProfile = currentAgentProviderProfile()
+        val sharedProvider = currentAgentProviderCredentials()
+        val boundModel = currentAgentBoundModel()
+        if (usesSharedProvider) {
+            checkNotNull(sharedProviderProfile) {
+                "Dispatch Model Provider is not configured. " +
+                    "Configure the default Provider before starting Harness."
             }
-            else -> emptyMap()
+            checkNotNull(sharedProvider) {
+                "Dispatch Model Provider has no usable credentials. " +
+                    "Check the default Provider configuration before starting Harness."
+            }
+        }
+        val providerModelResolution = if (
+            usesSharedProvider && boundModel.isNullOrBlank()
+        ) {
+            // A persisted Agent binding is enough to launch ACP. Only fall
+            // back to /models when the binding is incomplete; a normal
+            // Harness switch must not wait on a slow/offline catalog endpoint.
+            resolveCurrentProviderModelIds(
+                profile = sharedProviderProfile,
+                timeoutMs = AGENT_PROVIDER_MODEL_LOOKUP_TIMEOUT_MS,
+            )
+        } else {
+            null
+        }
+        val providerModels = providerModelResolution
+            ?.takeIf { it.authoritative }
+            ?.models
+            .orEmpty()
+        val resolvedModel = if (usesSharedProvider) {
+            val model = resolveAcpLaunchModelForDispatch(
+                providerModelIds = providerModels.map(ProviderModelOption::id),
+                dispatchModel = boundModel,
+            )
+            if (model == null) {
+                throw IllegalStateException(
+                    "Dispatch Model has no usable model. " +
+                        "Refresh the current Provider model list and choose a model."
+                )
+            }
+            model
+        } else {
+            resolveAcpLaunchModel(
+                providerModelIds = providerModels.map(ProviderModelOption::id),
+                boundModel = boundModel
+            )
+        }
+        val providerModelsForAdapter = if (usesSharedProvider && providerModels.isEmpty()) {
+            // A persisted binding is an explicit user choice. If /models is
+            // temporarily unavailable (or unsupported), keep the ACP launch
+            // usable and give adapters the minimum catalog entry they need.
+            val fallbackModel = requireNotNull(resolvedModel)
+            Log.w(
+                "AgentRuntimeManager",
+                "Provider /models unavailable for profile=${sharedProviderProfile?.id}; " +
+                    "using the persisted Agent model=$fallbackModel",
+            )
+            listOf(ProviderModelOption(id = fallbackModel, displayName = fallbackModel))
+        } else {
+            providerModels
+        }
+        val harnessAdapter = AcpHarnessAdapters.forProfile(profile)
+        localAcpRuntime.setSessionMcpEnabled(
+            harnessAdapter.supportsSessionMcp(sharedProvider)
+        )
+        val launchCacheKey = buildString {
+            append(profile.id)
+            append('|')
+            append(resolvedModel.orEmpty())
+            append('|')
+            // Credentials are never logged; the hash only invalidates the
+            // in-memory environment when a Provider/API key changes.
+            append(sharedProvider?.hashCode() ?: 0)
+        }
+        acpLaunchEnvironmentCache[launchCacheKey]?.let { cachedEnvironment ->
+            return cachedEnvironment
+        }
+        val existingHarnessConfig = harnessAdapter.launchConfigPath?.let { path ->
+            readTerminalTextFile(
+                path = path,
+                executorKey = harnessAdapter.launchConfigExecutorKey
+                    ?: "harness-launch-config-read"
+            )
+        }.orEmpty()
+        val mapping = AgentConfigAdapterRegistry.map(
+            AgentProviderMappingInput(
+                agentId = profile.id,
+                provider = sharedProvider,
+                model = resolvedModel,
+                harnessAdapter = harnessAdapter,
+            )
+        )
+        val existingAdapterConfig = mapping.launchConfigPath?.let { path ->
+            readTerminalTextFile(
+                path = path,
+                executorKey = mapping.launchConfigExecutorKey
+                    ?: "harness-launch-config-read"
+            )
+        }.orEmpty()
+        val mcpState = if (
+            harnessAdapter.mcpTransport == AcpHarnessMcpTransport.ENVIRONMENT
+        ) {
+            McpServerManager.ensureRunning(appContext)
+        } else {
+            McpServerManager.currentState()
+        }
+        val harnessEnvironment = harnessAdapter.launchEnvironment(
+            provider = sharedProvider,
+            model = resolvedModel,
+            rawConfig = existingHarnessConfig,
+            mcpState = mcpState,
+        ) ?: mapping.environment
+        // Official ACP persistence uses hard-link publication. Android's app
+        // sandbox rejects hard links, so install one narrow Node compatibility
+        // preload while keeping upstream ACP packages untouched.
+        if (!acpFilesystemCompatReady) {
+            writeTerminalTextFile(
+                path = ACP_FILESYSTEM_COMPAT_PATH,
+                content = ACP_FILESYSTEM_COMPAT_SCRIPT,
+                executorKey = "acp-filesystem-compat-write"
+            )
+            acpFilesystemCompatReady = true
+        }
+        val launchConfigWrites = AgentConfigAdapterRegistry.launchConfigWrites(
+            input = AgentProviderMappingInput(
+                agentId = profile.id,
+                provider = sharedProvider,
+                model = resolvedModel,
+                harnessAdapter = harnessAdapter,
+            ),
+            mapping = mapping,
+            providerModels = providerModelsForAdapter,
+            existingConfig = existingAdapterConfig,
+        )
+        launchConfigWrites.forEach { write ->
+            // Adapters are asked to produce the canonical config on every
+            // launch, but most Harness switches reuse the same Provider/model
+            // values. Avoid another terminal IPC and filesystem write when
+            // the target already contains that exact config.
+            val existingContent = when (write.path) {
+                mapping.launchConfigPath -> existingAdapterConfig
+                harnessAdapter.launchConfigPath -> existingHarnessConfig
+                else -> null
+            }
+            if (existingContent != null && existingContent == write.content) {
+                return@forEach
+            }
+            writeTerminalTextFile(
+                path = write.path,
+                content = write.content,
+                executorKey = write.executorKey,
+            )
+        }
+        val launchEnvironment =
+            if (launchConfigWrites.isNotEmpty()) mapping.environment else harnessEnvironment
+        acpLaunchEnvironmentCache[launchCacheKey] = launchEnvironment.toMap()
+        return launchEnvironment
+    }
+
+    /**
+     * Migrate old installs whose Provider/model was configured in normal chat
+     * but never written to the canonical Agent scene binding. This runs only
+     * when the binding is absent/incomplete; ordinary Harness switches remain
+     * a local binding lookup and do not call /models.
+     */
+    private suspend fun ensureSharedAgentProviderBinding(): SceneModelBindingEntry? {
+        val current = SceneModelBindingStore.getBinding("scene.dispatch.model")
+            ?.takeIf { it.providerProfileId.isNotBlank() && it.modelId.isNotBlank() }
+            ?.takeIf { binding ->
+                ModelProviderConfigStore.getProfile(binding.providerProfileId)
+                    ?.let { it.baseUrl.isNotBlank() && it.apiKey.isNotBlank() } == true
+            }
+        if (current != null) return current
+
+        val editingProfile = runCatching {
+            ModelProviderConfigStore.getEditingProfile()
+        }.getOrNull()?.takeIf {
+            it.baseUrl.isNotBlank() && it.apiKey.isNotBlank()
+        } ?: return null
+        val models = resolveCurrentProviderModelIds(
+            profile = editingProfile,
+            timeoutMs = AGENT_PROVIDER_MODEL_LOOKUP_TIMEOUT_MS,
+        )?.models.orEmpty()
+        val migrated = resolveSharedAgentProviderBinding(
+            currentBinding = current,
+            editingProfile = editingProfile,
+            availableModels = models,
+        ) ?: return null
+        SceneModelBindingStore.saveBinding(
+            sceneId = migrated.sceneId,
+            providerProfileId = migrated.providerProfileId,
+            modelId = migrated.modelId,
+        )
+        Log.i(
+            "AgentRuntimeManager",
+            "Migrated Agent Provider binding profile=${migrated.providerProfileId} " +
+                "model=${migrated.modelId}",
+        )
+        return migrated
+    }
+
+    private suspend fun prepareSharedProviderBinding() {
+        ensureSharedAgentProviderBinding()
+    }
+
+    private fun currentAgentProviderProfile(): ModelProviderProfile? = runCatching {
+        val binding = SceneModelBindingStore.getBinding("scene.dispatch.model")
+        val editingProfile = ModelProviderConfigStore.getEditingProfile()
+        val configuredProfile = binding
+            ?.providerProfileId
+            ?.let(ModelProviderConfigStore::getProfile)
+        resolveDispatchAgentProviderProfile(
+            boundProviderProfileId = binding?.providerProfileId,
+            configuredProfile = configuredProfile,
+            editingProfile = editingProfile,
+            officialProfile = PlatformAiProvisioner.officialProfileOrNull(),
+        )
+    }.getOrNull()
+
+    private fun currentAgentProviderCredentials(): AgentProviderCredentials? =
+        currentAgentProviderProfile()
+            ?.let { profile ->
+                val apiKey = resolveAgentProviderApiKey(
+                    profile = profile,
+                    officialBearerToken = OmniAccount.currentAiRequestAccess().bearerToken,
+                ) ?: return@let null
+                AgentProviderCredentials(
+                    baseUrl = profile.baseUrl,
+                    apiKey = apiKey,
+                    wireApi = profile.wireApi,
+                    customHeaders = profile.customHeaders,
+                    protocolType = profile.protocolType,
+                    supportsNamespaceTools = OmniOfficialProvider.isOfficialProfile(profile.id),
+                ).normalized()
+            }
+
+    private fun currentAgentBoundModel(): String? = runCatching {
+        val binding = SceneModelBindingStore.getBinding("scene.dispatch.model")
+        val boundProfile = binding?.let {
+            resolveAgentProviderProfile(
+                boundProviderProfileId = it.providerProfileId,
+                configuredProfile = ModelProviderConfigStore.getProfile(it.providerProfileId),
+                officialProfile = PlatformAiProvisioner.officialProfileOrNull(),
+            )
+        }?.takeIf { it.baseUrl.isNotBlank() }
+            ?: return@runCatching null
+        resolveSharedAgentModel(
+            boundProviderProfileId = binding.providerProfileId,
+            boundModel = binding.modelId
+        )
+    }.getOrNull()
+
+    private data class ProviderModelResolution(
+        val models: List<ProviderModelOption>,
+        val authoritative: Boolean
+    ) {
+        val modelIds: List<String>
+            get() = models.map { it.id.trim() }.filter(String::isNotEmpty)
+    }
+
+    private suspend fun resolveCurrentProviderModelIds(
+        profile: ModelProviderProfile?,
+        timeoutMs: Long? = null,
+    ): ProviderModelResolution? {
+        profile ?: return null
+        val fetched = runCatching {
+            val models = if (timeoutMs == null) {
+                fetchAgentProviderModels(profile)
+            } else {
+                withTimeoutOrNull(timeoutMs) {
+                    fetchAgentProviderModels(profile)
+                } ?: throw IllegalStateException(
+                    "Provider /models lookup timed out after ${timeoutMs}ms"
+                )
+            }
+            models.filter { it.id.trim().isNotEmpty() }
+        }.onFailure { error ->
+            Log.w(
+                "AgentRuntimeManager",
+                "Provider /models failed for profile=${profile.id}: " +
+                    (error.message ?: error.javaClass.simpleName),
+            )
+        }.getOrNull()
+        return fetched?.let { models ->
+            ProviderModelResolution(
+                models = models,
+                authoritative = true
+            )
         }
     }
 
-    private fun readDeepSeekHarnessAcpPluginAsset(): String {
-        return appContext.assets
-            .open(DEEPSEEK_HARNESS_OMNIBOT_ACP_PLUGIN_ASSET)
-            .bufferedReader()
-            .use { it.readText() }
+    private suspend fun listAuthoritativeProviderModels(): Map<String, Any?> {
+        val provider = currentAgentProviderProfile()
+        // The ACP model/list surface is also queried during app/bootstrap
+        // refreshes. Keep it bounded like launch preparation so an offline or
+        // partial-connectivity device never leaves the chat waiting on /models.
+        val modelResolution = resolveCurrentProviderModelIds(
+            profile = provider,
+            timeoutMs = AGENT_PROVIDER_MODEL_LOOKUP_TIMEOUT_MS,
+        )
+        return buildAuthoritativeProviderModelPayload(
+            providerModelIds = modelResolution
+                ?.takeIf { it.authoritative }
+                ?.modelIds,
+            boundModel = currentAgentBoundModel(),
+        )
     }
 
     private suspend fun ensureManagedAcpAdapter(profile: AcpAgentProfile) {
-        val runtime = AcpAgentProfileStore.officialRuntime(profile) ?: return
-        val packageName = runtime.managedAdapterPackage ?: return
-        val managedPackages = runtime.managedAdapterPackages
-            .ifEmpty { listOf(packageName) }
-        val commandAvailable = isTerminalCommandAvailable(profile.command)
-        val allPackagesReady = managedPackages.size == 1 ||
-            (commandAvailable && areManagedNpmPackagesInstalled(managedPackages))
-        val adapterHealthy = runtime.managedAdapterHealthCommand
-            ?.let { isTerminalShellCommandSuccessful(it) }
-            ?: true
-        if (commandAvailable && allPackagesReady && adapterHealthy) {
+        val runtime = AcpAgentProfileStore.officialRuntime(profile)
+            ?: return
+        if (runtime.managedAdapterPackage == null) {
             return
         }
-        if (!isTerminalCommandAvailable(runtime.discoveryCommand)) {
-            throw IllegalStateException(
-                "${profile.name} CLI was not found: ${runtime.discoveryCommand}. " +
-                    "Install it in Terminal Environment first."
-            )
+
+        // A previous successful ACP connection is the fast path.  In
+        // particular, do not make an already-healthy Harness wait for an
+        // unrelated Harness (for example DeepSeek) to finish installing.
+        val previousHealth = acpAgentProfileStore.health(profile.id)
+        if (shouldReuseManagedAcpPreparation(
+                healthStatus = previousHealth.status,
+                installed = previousHealth.installed,
+                preparationRevision = previousHealth.preparationRevision,
+                requiredRevision = runtime.preparationRevision,
+            )) {
+            return
         }
-        if (!isTerminalCommandAvailable("npm")) {
-            throw IllegalStateException(
-                "npm is required to prepare the ${profile.name} ACP adapter."
-            )
+
+        // Health is persisted, so a freshly restarted app can have an
+        // `unchecked` record even though another Harness is already fully
+        // installed. Probe the requested command without entering the
+        // installer gate; switching to an installed Harness stays independent
+        // from a concurrent DeepSeek installation.
+        if (managedAcpPreparationGate.isBusy) {
+            // Never make an unrelated foreground switch wait on a terminal
+            // readiness probe while another Harness is installing. A healthy
+            // target is already covered by the persisted online/installed
+            // fast path above; for an unknown target, the normal launch
+            // command check will fail quickly with a clear install message.
+            // The old probe could consume 5 seconds on every tap and made all
+            // Harnesses appear as slow as DeepSeek.
+            return
         }
+
+        // tryLock is intentional.  `agent/prepare` may spend minutes in npm
+        // or node-gyp.  `agent/select` must return a bounded preparation error
+        // instead of waiting on that job and making every other Harness look
+        // frozen.
+        managedAcpPreparationGate.run(profile.id) {
+            ensureManagedAcpAdapterLocked(profile)
+        }
+    }
+
+    private suspend fun ensureManagedAcpAdapterLocked(profile: AcpAgentProfile) {
+        val runtime = AcpAgentProfileStore.officialRuntime(profile) ?: return
+        val packageName = runtime.managedAdapterPackage ?: return
+        val previousHealth = acpAgentProfileStore.health(profile.id)
+        // A successful ACP initialize is the authoritative preparation
+        // result. Reusing it avoids running three terminal probes (including
+        // the package/health checks) on every foreground Harness switch. An
+        // explicit Agent check resets this health to `unchecked`; a missing
+        // command will still be caught by LocalAcpRuntime.requireLaunchCommand
+        // and invalidate the health on the next connect.
+        if (shouldReuseManagedAcpPreparation(
+                healthStatus = previousHealth.status,
+                installed = previousHealth.installed,
+                preparationRevision = previousHealth.preparationRevision,
+                requiredRevision = runtime.preparationRevision,
+            )) {
+            return
+        }
+        val managedPackages = runtime.managedAdapterPackages
+            .ifEmpty { listOf(packageName) }
         val installTargets = managedPackages.joinToString(" ") { shellQuote(it) }
         val nativeBuildPrerequisites = if (runtime.requiresNativeBuildTools) {
             MANAGED_NATIVE_BUILD_PREREQUISITES_COMMAND
@@ -1017,12 +2068,9 @@ class AgentRuntimeManager private constructor(
             ":"
         }
         val adapterHealthCheck = runtime.managedAdapterHealthCommand ?: ":"
-        val adapterInstallCommand = if (runtime.requiresNativeBuildTools) {
-            DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND
-        } else {
-            "npm install -g --prefix /root/.npm-global --no-audit --no-fund $installTargets"
-        }
-        val command = """
+        val adapterInstallCommand = runtime.managedInstallCommand
+            ?: "npm install -g --prefix /root/.npm-global --no-audit --no-fund $installTargets"
+        val installScript = """
             set -eu
             $nativeBuildPrerequisites
             mkdir -p /root/.npm-global/bin
@@ -1031,6 +2079,88 @@ class AgentRuntimeManager private constructor(
             command -v ${shellQuote(profile.command)} >/dev/null 2>&1
             $adapterHealthCheck
         """.trimIndent()
+        // The APK contains only this installer logic. A managed Harness may
+        // publish it to its adapter-owned path; the runtime itself remains in
+        // the terminal environment and is installed on explicit preparation.
+        val installScriptPath = runtime.managedInstallScriptPath
+        installScriptPath?.let {
+            writeTerminalTextFile(
+                path = it,
+                content = "#!/bin/sh\n$installScript\n",
+                executorKey = "harness-installer-script-write-${profile.id}"
+            )
+        }
+        val commandAvailable = isTerminalCommandAvailable(
+            command = profile.command,
+            timeoutMs = MANAGED_ACP_PROBE_TIMEOUT_MS,
+        )
+        // Some official Harnesses (DeepSeek ACP profile in particular) keep
+        // the adapter inside a vendor-owned profile directory rather than
+        // installing it globally. Their health command is the authoritative
+        // package-graph check; probing `/root/.npm-global` would incorrectly
+        // force a reinstall on every switch and bypass the vendor workflow.
+        val allPackagesReady = if (runtime.managedInstallScriptPath != null) {
+            commandAvailable
+        } else {
+            managedPackages.size == 1 ||
+                (commandAvailable && areManagedNpmPackagesInstalled(
+                    packageSpecs = managedPackages,
+                    timeoutMs = MANAGED_ACP_PROBE_TIMEOUT_MS,
+                ))
+        }
+        val adapterHealthy = runtime.managedAdapterHealthCommand
+            ?.let { isTerminalShellCommandSuccessful(it, MANAGED_ACP_PROBE_TIMEOUT_MS) }
+            ?: true
+        // Installation/update is an explicit preparation boundary. A normal
+        // Agent switch must reuse a healthy installed adapter; otherwise every
+        // switch would rerun the complete DSH npm/native installation.
+        if (!shouldPrepareManagedAcpAdapter(
+                agentId = profile.id,
+                commandAvailable = commandAvailable,
+                allPackagesReady = allPackagesReady,
+                adapterHealthy = adapterHealthy,
+            )
+        ) {
+            return
+        }
+        val previousPreparationFailure = previousHealth.error
+            ?.trim()
+            ?.startsWith("Failed to prepare", ignoreCase = true) == true
+        if (previousPreparationFailure) {
+            throw IllegalStateException(
+                "${previousHealth.error}. Open Agent settings and retry the official " +
+                    "${profile.name} installation."
+            )
+        }
+        if (!isTerminalCommandAvailable("npm", MANAGED_ACP_PROBE_TIMEOUT_MS)) {
+            val terminalPackageId = managedAgentTerminalPackageId(profile)
+            if (terminalPackageId == null) {
+                throw IllegalStateException(
+                    "npm is required to prepare the ${profile.name} ACP adapter."
+                )
+            }
+            val bootstrap = EmbeddedTerminalSetupManager(appContext).installPackages(
+                selectedPackageIds = listOf(terminalPackageId)
+            )
+            if (!bootstrap.success) {
+                val details = bootstrap.message.ifBlank { bootstrap.output.trim() }
+                throw IllegalStateException(
+                    details.ifBlank {
+                        "Unable to install the ${profile.name} ACP adapter prerequisites."
+                    }
+                )
+            }
+        }
+        if (!isTerminalCommandAvailable("npm", MANAGED_ACP_PROBE_TIMEOUT_MS)) {
+            throw IllegalStateException(
+                "npm is required to prepare the ${profile.name} ACP adapter."
+            )
+        }
+        val command = if (installScriptPath != null) {
+            "sh ${shellQuote(installScriptPath)}"
+        } else {
+            installScript
+        }
         val result = TerminalManager.getInstance(appContext).executeHiddenCommand(
             command = command,
             executorKey = "acp-adapter-install-${profile.id}",
@@ -1054,7 +2184,8 @@ class AgentRuntimeManager private constructor(
     }
 
     private suspend fun areManagedNpmPackagesInstalled(
-        packageSpecs: List<String>
+        packageSpecs: List<String>,
+        timeoutMs: Long = 20_000L,
     ): Boolean {
         if (packageSpecs.isEmpty()) return true
         val checks = packageSpecs.joinToString(" && ") { spec ->
@@ -1064,72 +2195,179 @@ class AgentRuntimeManager private constructor(
         val result = TerminalManager.getInstance(appContext).executeHiddenCommand(
             command = checks,
             executorKey = "acp-managed-packages-probe-${packageSpecs.hashCode()}",
-            timeoutMs = 20_000L
+            timeoutMs = timeoutMs
         )
         return result.isOk && result.exitCode == 0
     }
 
-    private suspend fun isTerminalCommandAvailable(command: String): Boolean {
+    private suspend fun isTerminalCommandAvailable(
+        command: String,
+        timeoutMs: Long = 20_000L,
+    ): Boolean {
         val result = TerminalManager.getInstance(appContext).executeHiddenCommand(
             command = "$MANAGED_NPM_PATH_PREFIX " +
                 "command -v ${shellQuote(command)} >/dev/null 2>&1",
             executorKey = "acp-command-probe-${command.hashCode()}",
-            timeoutMs = 20_000L
+            timeoutMs = timeoutMs
         )
         return result.isOk && result.exitCode == 0
     }
 
-    private suspend fun isTerminalShellCommandSuccessful(command: String): Boolean {
+    private suspend fun isTerminalShellCommandSuccessful(
+        command: String,
+        timeoutMs: Long = 20_000L,
+    ): Boolean {
         val result = TerminalManager.getInstance(appContext).executeHiddenCommand(
             command = "$MANAGED_NPM_PATH_PREFIX $command",
             executorKey = "acp-shell-health-${command.hashCode()}",
-            timeoutMs = 20_000L
+            timeoutMs = timeoutMs
         )
         return result.isOk && result.exitCode == 0
     }
 
-    private suspend fun ensureLocalAcpConnected(args: Map<String, Any?>) {
+    private suspend fun ensureLocalAcpConnected(
+        method: String,
+        args: Map<String, Any?>
+    ): Map<String, Any?> {
+        val conversationId = args.longValue("conversationId")
+        val persistedConversation = conversationId?.let {
+            DatabaseHelper.getConversationById(it)
+        }
+        val conversationMode = persistedConversation?.mode
+            ?: args.stringValue("conversationMode")
+        val chatOnly = AgentConversationModePolicy.isChatOnlyMode(conversationMode)
+        val normalConversation = AgentConversationModePolicy.isNormalMode(conversationMode)
         val requestedAgentId = args.stringValue("agentId")
         val explicitThreadId = args.stringValue("threadId")
-        val requestedThreadId = explicitThreadId
-            ?: args.longValue("conversationId")
-                ?.let { bindingRepository.getBindingByConversationId(it)?.threadId }
+        val conversationBinding = conversationId
+            ?.let { bindingRepository.getBindingByConversationId(it) }
+        val requestedThreadId = explicitThreadId ?: conversationBinding?.threadId
         val boundAgentId = requestedThreadId?.let {
             acpAgentProfileStore.agentIdForSession(it)
-                ?: AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID
         }
-        require(
-            requestedAgentId == null ||
-                boundAgentId == null ||
-                requestedAgentId == boundAgentId
+        val conversationAgentId = conversationId?.let {
+            acpAgentProfileStore.agentIdForConversation(it)
+        }
+        val conversationBindingAgentId = conversationBinding?.threadId?.let {
+            acpAgentProfileStore.agentIdForSession(it)
+        }
+        val explicitThreadConversationId = explicitThreadId?.let {
+            cachedConversationIdForThread(it)
+        }
+        val explicitThreadBelongsToAnotherConversation =
+            !explicitThreadMatchesConversation(
+                explicitThreadId = explicitThreadId,
+                requestedConversationId = conversationId,
+                boundConversationId = explicitThreadConversationId,
+            )
+        val sessionAgentIdForConversation = if (
+            explicitThreadId == null || !explicitThreadBelongsToAnotherConversation
         ) {
-            "ACP session $requestedThreadId belongs to agent $boundAgentId, not $requestedAgentId."
+            boundAgentId
+        } else {
+            null
         }
-        val targetAgentId = boundAgentId ?: requestedAgentId
-        val targetProfile = targetAgentId?.let { agentId ->
-            acpAgentProfileStore.list().firstOrNull { it.id == agentId }
-                ?: throw IllegalArgumentException("Unknown ACP agent: $agentId")
-        }
-        if (targetProfile != null) {
-            require(targetProfile.enabled) {
-                "ACP agent ${targetProfile.name} is disabled."
+        val selectedAgentId = acpAgentProfileStore.selected().id
+        val harnessResolution = AgentConversationModePolicy.resolveHarness(
+            conversationMode = conversationMode,
+            requestedAgentId = requestedAgentId,
+            conversationAgentId = conversationAgentId,
+            sessionAgentId = conversationBindingAgentId ?: sessionAgentIdForConversation,
+            selectedAgentId = selectedAgentId,
+            xiaowanAgentId = AcpAgentProfileStore.XIAOWAN_AGENT_ID,
+        )
+        require(!harnessResolution.hasConflict) {
+            val owner = harnessResolution.conflictWithAgentId
+            val requested = harnessResolution.requestedAgentId
+            if (conversationId != null) {
+                "Conversation $conversationId is bound to ACP agent $owner; " +
+                    "create a new conversation to switch to $requested."
+            } else {
+                "ACP session is bound to agent $owner; " +
+                    "create a new conversation to switch to $requested."
             }
         }
+        val targetAgentId = harnessResolution.agentId
+        val targetProfile = acpAgentProfileStore.list()
+            .firstOrNull { it.id == targetAgentId }
+            ?: throw IllegalArgumentException("Unknown ACP agent: $targetAgentId")
+        require(targetProfile.enabled) {
+            "ACP agent ${targetProfile.name} is disabled."
+        }
+        // An explicit session with an explicit Agent id but no persisted owner
+        // binding is legacy/untrusted state. For a prompt, do not resume it on
+        // the newly selected ACP process: create a fresh session and let the
+        // normal conversation handoff carry the durable context forward.
+        // Session/load remains strict about its explicit id so callers get a
+        // real load error instead of silently receiving a different session.
+        val unownedExplicitPrompt = method == "session/prompt" &&
+            explicitThreadId != null &&
+            requestedAgentId != null &&
+            boundAgentId == null
+        val boundThreadBelongsToAnotherAgent = explicitThreadId != null &&
+            boundAgentId != null &&
+            targetProfile != null &&
+            boundAgentId != targetProfile.id
+        // The Flutter page can retain the previous session id while the user
+        // switches conversations. A live ACP session is not a conversation
+        // identity: reusing it here makes XiaowanAcpConnection resolve the
+        // previous binding (or null) and the provider receives no durable
+        // history. Let the conversation binding win and create/resume the
+        // correct ACP session below.
+        val threadBelongsToAnotherAgent =
+            boundThreadBelongsToAnotherAgent || unownedExplicitPrompt ||
+                (chatOnly && boundAgentId != null &&
+                    targetProfile != null && boundAgentId != targetProfile.id)
+        val staleExplicitThread = explicitThreadBelongsToAnotherConversation
         if (targetProfile != null &&
-            targetProfile.id != acpAgentProfileStore.selected().id
+            (!localAcpRuntime.isConnected ||
+                localAcpRuntime.activeAgentId() != targetProfile.id)
         ) {
             check(!localAcpRuntime.hasActiveTurns()) {
                 "设备当前已有其他 ACP Agent 任务，暂时不能切换 Agent。"
             }
-            localAcpRuntime.disconnect()
-            acpAgentProfileStore.select(targetProfile.id)
+            if (localAcpRuntime.isConnected) {
+                localAcpRuntime.disconnect()
+            }
+            // A conversation/session may explicitly belong to a different
+            // Agent than the persisted default. Connect that profile for this
+            // request without changing the user's default selection. Only the
+            // explicit agent/select API is allowed to mutate that preference.
+            connectLocalAcp(profile = targetProfile)
+        }
+        if (conversationId != null && targetProfile != null) {
+            if (normalConversation && conversationAgentId != targetProfile.id) {
+                acpAgentProfileStore.repairConversationBinding(
+                    conversationId = conversationId,
+                    agentId = targetProfile.id,
+                )
+            } else {
+                acpAgentProfileStore.bindConversation(conversationId, targetProfile.id)
+            }
         }
         if (localAcpRuntime.isConnected) {
-            return
+            activeRuntime = AgentRuntimeKind.LOCAL
+            activeLocalDistributionId = TerminalDistribution.selected().id
+            return if (threadBelongsToAnotherAgent || staleExplicitThread) {
+                LinkedHashMap(args).apply {
+                    remove("threadId")
+                    remove("sessionId")
+                }
+            } else {
+                args
+            }
         }
         connectLocalAcp()
         activeRuntime = AgentRuntimeKind.LOCAL
         activeLocalDistributionId = TerminalDistribution.selected().id
+        return if (threadBelongsToAnotherAgent) {
+            LinkedHashMap(args).apply {
+                remove("threadId")
+                remove("sessionId")
+            }
+        } else {
+            args
+        }
     }
 
     private suspend fun requestAccountMethod(method: String, params: Any?): Any {
@@ -1152,10 +2390,10 @@ class AgentRuntimeManager private constructor(
         val existing = session
         if (isActiveSessionFor(runtime.kind, localDistributionId)) {
             return existing
-                ?: throw IllegalStateException("Codex app-server session is unavailable.")
+                ?: throw IllegalStateException("Remote ACP session is unavailable.")
         }
         connect()
-        return session ?: throw IllegalStateException("Codex app-server is not connected.")
+        return session ?: throw IllegalStateException("Remote ACP agent is not connected.")
     }
 
     private fun isActiveSessionFor(
@@ -1172,14 +2410,57 @@ class AgentRuntimeManager private constructor(
 
     private suspend fun handleServerMessage(message: Map<String, Any?>) {
         val method = extractRemoteCodexServerMethod(message)
+        val rawExtensionParams = message["params"]
         val explicitParams = extractRemoteCodexServerParams(message)
-        val params = if (explicitParams.isNotEmpty()) {
+        val params = if (method.startsWith("_") &&
+            rawExtensionParams != null &&
+            rawExtensionParams !is Map<*, *>
+        ) {
+            // JSON-RPC params may be an array or scalar for an extension. The
+            // shared manager historically accepts map-shaped params, so keep
+            // a lossless compatibility wrapper while the original payload
+            // remains available in `message` for Flutter diagnostics.
+            mapOf("_rawParams" to rawExtensionParams)
+        } else if (explicitParams.isNotEmpty()) {
             explicitParams
         } else {
             syntheticRemoteCodexServerParams(message, method)
         }
-        val threadId = extractThreadId(message)
-        val turnId = extractTurnId(message) ?: extractActiveTurnId(message)
+        val disconnectedIdentity = if (method == "codex/disconnected") {
+            activeTurnsByThreadId.entries.firstOrNull()
+                ?.let { it.key to it.value }
+        } else {
+            null
+        }
+        val threadId = extractThreadId(message) ?: disconnectedIdentity?.first
+        // ACP session/update is session-scoped on the wire. OpenCode is the
+        // one explicitly supported compatibility profile that emits valid
+        // turn-scoped updates without a turnId; Xiaowan and custom/legacy
+        // Harnesses must provide the canonical identity instead of being
+        // silently assigned to whatever turn happens to be active.
+        val remoteActiveTurnId = if (activeRuntime == AgentRuntimeKind.REMOTE) {
+            threadId?.let(activeTurnsByThreadId::get)
+        } else {
+            null
+        }
+        val implicitTurnId = if (
+            activeRuntime == AgentRuntimeKind.LOCAL &&
+            localAcpRuntime.activeAgentId() == OPENCODE_AGENT_ID
+        ) {
+            localAcpRuntime.activeTurnIdForSession(threadId)
+        } else {
+            null
+        }
+        // Standard ACP session/update notifications are session-scoped and
+        // do not require a turn id. While a remote prompt is active, project
+        // them onto the host turn reserved above; once it is cleared, late
+        // notifications remain quarantined instead of being attached to the
+        // next prompt.
+        val turnId = remoteActiveTurnId
+            ?: extractTurnId(message)
+            ?: extractActiveTurnId(message)
+            ?: disconnectedIdentity?.second
+            ?: implicitTurnId
         // Diagnostic: log every server-side method that reaches Kotlin so the
         // user can verify via `adb logcat -s AgentRuntimeManager:V` whether
         // commandExecution / rawResponseItem events actually arrive over the
@@ -1200,19 +2481,32 @@ class AgentRuntimeManager private constructor(
         } else {
             ""
         }
+        // A remote adapter can deliver notifications after the active-turn
+        // map has already been cleared. Never let such a turn-scoped event
+        // reach Flutter without an explicit turn id: the renderer would have
+        // to guess and could attach old tool output to the next turn.
+        if (isTurnScopedRemoteEvent(method, protocolEventType, params) &&
+            turnId.isNullOrBlank()
+        ) {
+            Log.w(
+                "AgentRuntimeManager",
+                "Dropping turn-scoped event without a turn id: method=$method " +
+                    "protocolEventType=$protocolEventType threadId=$threadId"
+            )
+            return
+        }
         if (!threadId.isNullOrBlank() && !turnId.isNullOrBlank() &&
             (method == "turn/started" ||
                 protocolEventType == "task_started" ||
                 protocolEventType == "turn_started")) {
-            activeTurnsByThreadId[threadId] = turnId
-            TaskRuntimeSettings.onTaskStarted(appContext)
+            trackActiveTurn(threadId, turnId)
         }
         if (!threadId.isNullOrBlank() && method == "thread/status/changed") {
             val active = remoteCodexThreadActivity(message)
             if (active == true && !turnId.isNullOrBlank()) {
-                activeTurnsByThreadId[threadId] = turnId
+                trackActiveTurn(threadId, turnId)
             } else if (active == false) {
-                activeTurnsByThreadId.remove(threadId)
+                clearActiveTurn(threadId)
             }
         }
         if (!threadId.isNullOrBlank() &&
@@ -1220,7 +2514,7 @@ class AgentRuntimeManager private constructor(
                 protocolEventType == "task_complete" ||
                 protocolEventType == "turn_complete" ||
                 protocolEventType == "turn_aborted")) {
-            activeTurnsByThreadId.remove(threadId)
+            clearActiveTurn(threadId, turnId)
         }
         if (!threadId.isNullOrBlank() &&
             (method == "error" || method == "turn/failed") &&
@@ -1229,14 +2523,14 @@ class AgentRuntimeManager private constructor(
             // turn fails terminally (no follow-up turn/completed will come).
             // Clear the active turn so subsequent thread/read responses
             // surface active=false to the Flutter side.
-            activeTurnsByThreadId.remove(threadId)
+            clearActiveTurn(threadId, turnId)
         }
         if (!threadId.isNullOrBlank() && method == "thread/closed") {
-            activeTurnsByThreadId.remove(threadId)
+            clearActiveTurn(threadId)
         }
 
         val eventAgentId = if (activeRuntime == AgentRuntimeKind.REMOTE) {
-            AcpAgentProfileStore.DEFAULT_CODEX_AGENT_ID
+            AcpAgentProfileStore.CODEX_AGENT_ID
         } else {
             threadId?.let(acpAgentProfileStore::agentIdForSession)
                 ?: localAcpRuntime.activeAgentId()
@@ -1262,12 +2556,14 @@ class AgentRuntimeManager private constructor(
         emitEvent(
             linkedMapOf(
                 "method" to method,
+                "id" to message["id"],
                 "workspaceId" to RemoteCodexAppServerSession.DEFAULT_WORKSPACE_ID,
                 "threadId" to threadId,
                 "turnId" to turnId,
                 "conversationId" to localConversationId,
                 "agentId" to eventAgentId,
                 "agentName" to eventAgentName,
+                "replay" to message["replay"],
                 "params" to params,
                 "message" to message
             )
@@ -1278,7 +2574,6 @@ class AgentRuntimeManager private constructor(
             protocolEventType == "task_complete" ||
             protocolEventType == "turn_complete") {
             runCatching {
-                TaskRuntimeSettings.onTaskFinished(appContext)
                 TaskRuntimeSettings.notifyTaskFinished(
                     context = appContext,
                     title = "$eventAgentName task completed",
@@ -1293,6 +2588,45 @@ class AgentRuntimeManager private constructor(
                 )
             }
         }
+    }
+
+    private fun isTurnScopedRemoteEvent(
+        method: String,
+        protocolEventType: String,
+        params: Map<String, Any?>
+    ): Boolean {
+        if (method == "session/update") {
+            val sessionUpdate = params.mapValue("update").stringValue("sessionUpdate")
+            return sessionUpdate in setOf(
+                "agent_message_chunk",
+                "agent_thought_chunk",
+                "tool_call",
+                "tool_call_update",
+                "plan",
+                "plan_update",
+                "plan_removed"
+            )
+        }
+        if (
+            method.startsWith("item/") ||
+            method == "rawResponseItem/completed" ||
+            method == "turn/plan/updated" ||
+            method == "turn/plan/removed" ||
+            method == "turn/diff/updated"
+        ) {
+            return true
+        }
+        return protocolEventType in setOf(
+            "task_started",
+            "turn_started",
+            "agent_message_delta",
+            "agent_thought_delta",
+            "tool_started",
+            "tool_updated",
+            "tool_completed",
+            "task_progress",
+            "turn_progress"
+        )
     }
 
     private suspend fun syncMessage(
@@ -1311,7 +2645,7 @@ class AgentRuntimeManager private constructor(
                 if (resolvedThreadId.isNullOrBlank()) {
                     null
                 } else {
-                    bindingRepository.ensureBinding(
+                    val conversationId = bindingRepository.ensureBinding(
                         threadId = resolvedThreadId,
                         conversationId = pendingThreadStartConversationId,
                         cwd = sanitizeAgentRuntimeAbsolutePath(thread.stringValue("cwd"))
@@ -1319,6 +2653,8 @@ class AgentRuntimeManager private constructor(
                             ?: resolveDefaultCwd(),
                         title = extractThreadTitle(message)
                     )
+                    threadConversationIds[resolvedThreadId] = conversationId
+                    conversationId
                 }
             }
             "thread/name/updated" -> {
@@ -1331,7 +2667,7 @@ class AgentRuntimeManager private constructor(
                             ?: params.stringValue("name")
                             ?: params.stringValue("title")
                     )
-                    bindingRepository.getBindingByThreadId(resolvedThreadId)?.conversationId
+                    cachedConversationIdForThread(resolvedThreadId)
                 } else {
                     null
                 }
@@ -1339,18 +2675,18 @@ class AgentRuntimeManager private constructor(
             "thread/archived" -> {
                 threadId?.let {
                     bindingRepository.setArchived(it, true)
-                    bindingRepository.getBindingByThreadId(it)?.conversationId
+                    cachedConversationIdForThread(it)
                 }
             }
             "thread/unarchived" -> {
                 threadId?.let {
                     bindingRepository.setArchived(it, false)
-                    bindingRepository.getBindingByThreadId(it)?.conversationId
+                    cachedConversationIdForThread(it)
                 }
             }
             else -> {
                 if (!threadId.isNullOrBlank()) {
-                    bindingRepository.getBindingByThreadId(threadId)?.conversationId
+                    cachedConversationIdForThread(threadId)
                 } else {
                     null
                 }
@@ -1360,35 +2696,116 @@ class AgentRuntimeManager private constructor(
 
     private suspend fun syncThreadListResponse(response: Map<String, Any?>) {
         collectThreadEntries(response).forEach { entry ->
-            bindingRepository.ensureBinding(
+            val conversationId = bindingRepository.ensureBinding(
                 threadId = entry.threadId,
                 cwd = sanitizeAgentRuntimeAbsolutePath(entry.cwd) ?: resolveDefaultCwd(),
                 title = entry.title,
                 archived = entry.archived
             )
+            threadConversationIds[entry.threadId] = conversationId
         }
     }
 
     private fun emitEvent(event: Map<String, Any?>) {
-        val listener = eventListener
-        val supplementalListeners = supplementalEventListeners.values.toList()
-        if (listener == null && supplementalListeners.isEmpty()) return
+        val delivered = if (event["eventId"]?.toString()?.isNotBlank() == true) {
+            event
+        } else {
+            val sequence = hostEventSequence.incrementAndGet()
+            LinkedHashMap(event).apply {
+                // This is host delivery metadata. The ACP payload under
+                // `params` remains untouched, so an ACP client can consume it
+                // without knowing about the Android event bridge.
+                put("eventId", "host:$sequence")
+                put("sequence", sequence)
+            }
+        }
         mainHandler.post {
+            dispatchEvent(delivered)
+        }
+    }
+
+    private fun dispatchEvent(event: Map<String, Any?>) {
+        val listener: ((Map<String, Any?>) -> Unit)?
+        val supplementalListeners: List<(Map<String, Any?>) -> Unit>
+        synchronized(eventDispatchLock) {
+            listener = eventListener
+            supplementalListeners = supplementalEventListeners.values.toList()
+            if (listener == null) {
+                enqueuePendingEventLocked(event)
+            }
+        }
+        if (listener != null) {
             runCatching {
-                listener?.invoke(event)
+                listener.invoke(event)
             }.onFailure { error ->
                 Log.w("AgentRuntimeManager", "primary event listener failed: ${error.message}")
             }
-            supplementalListeners.forEach { supplemental ->
-                runCatching {
-                    supplemental(event)
-                }.onFailure { error ->
-                    Log.w(
-                        "AgentRuntimeManager",
-                        "supplemental event listener failed: ${error.message}"
-                    )
+        }
+        supplementalListeners.forEach { supplemental ->
+            runCatching {
+                supplemental(event)
+            }.onFailure { error ->
+                Log.w(
+                    "AgentRuntimeManager",
+                    "supplemental event listener failed: ${error.message}"
+                )
+            }
+        }
+    }
+
+    private fun drainPendingEvents() {
+        while (true) {
+            val event = synchronized(eventDispatchLock) {
+                if (eventListener == null || pendingEvents.isEmpty()) {
+                    null
+                } else {
+                    pendingEvents.removeFirst()
+                }
+            } ?: return
+            val listener = eventListener ?: run {
+                synchronized(eventDispatchLock) {
+                    pendingEvents.addFirst(event)
+                }
+                return
+            }
+            runCatching {
+                listener.invoke(event)
+            }.onFailure { error ->
+                Log.w("AgentRuntimeManager", "buffered event delivery failed: ${error.message}")
+            }
+        }
+    }
+
+    private fun enqueuePendingEventLocked(event: Map<String, Any?>) {
+        if (pendingEvents.size >= MAX_PENDING_AGENT_EVENTS) {
+            val iterator = pendingEvents.iterator()
+            var removed = false
+            while (iterator.hasNext()) {
+                if (!isTerminalLifecycleEvent(iterator.next())) {
+                    iterator.remove()
+                    removed = true
+                    break
                 }
             }
+            if (!removed) {
+                pendingEvents.removeFirst()
+            }
+        }
+        pendingEvents.addLast(event)
+    }
+
+    private fun isTerminalLifecycleEvent(event: Map<String, Any?>): Boolean {
+        return event["method"]?.toString() in setOf(
+            "turn/completed",
+            "turn/failed",
+            "thread/closed",
+            "codex/disconnected",
+        )
+    }
+
+    private fun clearPendingEvents() {
+        synchronized(eventDispatchLock) {
+            pendingEvents.clear()
         }
     }
 
@@ -1401,6 +2818,13 @@ class AgentRuntimeManager private constructor(
                 error = "No enabled ACP Agent is selected."
             )
         }
+        if (profile.id == AcpAgentProfileStore.XIAOWAN_AGENT_ID) {
+            return AgentRuntimeProbe(
+                ready = true,
+                version = BuildConfig.VERSION_NAME,
+                error = null
+            )
+        }
         return runCatching {
             val environmentPrefix = profile.environment.entries.joinToString(" ") {
                 "${it.key}=${shellQuote(it.value)}"
@@ -1411,15 +2835,32 @@ class AgentRuntimeManager private constructor(
                 executorKey = "acp-agent-probe-${profile.id}",
                 timeoutMs = 15_000L
             )
+            val launchReady = result.isOk && result.exitCode == 0
+            val healthCommand = AcpAgentProfileStore
+                .officialRuntime(profile)
+                ?.managedAdapterHealthCommand
+            val healthResult = if (launchReady && healthCommand != null) {
+                TerminalManager.getInstance(appContext).executeHiddenCommand(
+                    command = "$MANAGED_NPM_PATH_PREFIX $healthCommand",
+                    executorKey = "acp-agent-health-probe-${profile.id}",
+                    timeoutMs = 8_000L
+                )
+            } else {
+                null
+            }
+            val healthy = healthResult == null ||
+                (healthResult.isOk && healthResult.exitCode == 0)
             AgentRuntimeProbe(
-                ready = result.isOk && result.exitCode == 0,
+                ready = launchReady && healthy,
                 version = null,
-                error = if (result.isOk && result.exitCode == 0) {
-                    null
-                } else {
-                    result.error.ifBlank {
+                error = when {
+                    !launchReady -> result.error.ifBlank {
                         "ACP agent command not found: ${profile.command}"
                     }
+                    !healthy -> healthResult?.error?.ifBlank {
+                        "ACP adapter health check failed: ${profile.name}"
+                    } ?: "ACP adapter health check failed: ${profile.name}"
+                    else -> null
                 }
             )
         }.getOrElse { error ->
@@ -1430,6 +2871,48 @@ class AgentRuntimeManager private constructor(
             )
         }
     }
+
+    /**
+     * `status()` is called at the beginning of every visible turn. A command
+     * probe is useful on an explicit refresh or after a Harness switch, but
+     * repeating it for every prompt adds a 15s shell timeout to the hot path.
+     * Keep the result briefly and invalidate it at lifecycle/configuration
+     * boundaries above.
+     */
+    private suspend fun probeLocalAcpAgentCached(): AgentRuntimeProbe {
+        val profile = acpAgentProfileStore.selected()
+        val fingerprint = localProbeFingerprint(profile)
+        val now = System.currentTimeMillis()
+        localProbeCache?.let { cached ->
+            if (
+                cached.profileFingerprint == fingerprint &&
+                now - cached.checkedAtMs in 0 until LOCAL_PROBE_CACHE_TTL_MS
+            ) {
+                return cached.probe
+            }
+        }
+        val probe = probeLocalAcpAgent()
+        localProbeCache = LocalProbeCache(
+            profileFingerprint = fingerprint,
+            checkedAtMs = System.currentTimeMillis(),
+            probe = probe
+        )
+        return probe
+    }
+
+    private fun invalidateLocalProbeCache() {
+        localProbeCache = null
+    }
+
+    private fun localProbeFingerprint(profile: AcpAgentProfile): String =
+        listOf(
+            TerminalDistribution.selected().id,
+            profile.id,
+            profile.command,
+            profile.enabled,
+            AcpAgentProfileStore.officialRuntime(profile)?.managedAdapterPackage,
+            profile.environment.hashCode()
+        ).joinToString("|")
 
     private suspend fun probeRemoteCodex(config: CodexRemoteBridgeConfig): AgentRuntimeProbe {
         val probe = probeCodexRemoteBridge(config)
@@ -1467,7 +2950,9 @@ class AgentRuntimeManager private constructor(
     }
 
     private suspend fun resolveThreadId(args: Map<String, Any?>): String {
-        val explicit = args.stringValue("threadId") ?: args.stringValue("thread_id")
+        val explicit = args.stringValue("threadId")
+            ?: args.stringValue("sessionId")
+            ?: args.stringValue("thread_id")
         if (!explicit.isNullOrBlank()) {
             return explicit
         }
@@ -1592,9 +3077,17 @@ class AgentRuntimeManager private constructor(
         val details: Map<String, Any?> = emptyMap()
     )
 
+    private data class LocalProbeCache(
+        val profileFingerprint: String,
+        val checkedAtMs: Long,
+        val probe: AgentRuntimeProbe
+    )
+
     companion object {
         @Volatile
         private var INSTANCE: AgentRuntimeManager? = null
+
+        private const val LOCAL_PROBE_CACHE_TTL_MS = 15_000L
 
         fun getInstance(context: Context): AgentRuntimeManager {
             return INSTANCE ?: synchronized(this) {
@@ -1603,7 +3096,30 @@ class AgentRuntimeManager private constructor(
                 }
             }
         }
+
+        fun getIfInitialized(): AgentRuntimeManager? = INSTANCE
     }
+}
+
+/**
+ * Resolves the Provider that currently drives Dispatch Model execution.
+ *
+ * The scene binding is an optional override, not a prerequisite for running a
+ * Harness. If it is missing or stale, use the Provider settings page's editing
+ * profile as the Dispatch default.
+ */
+internal fun resolveDispatchAgentProviderProfile(
+    boundProviderProfileId: String?,
+    configuredProfile: ModelProviderProfile?,
+    editingProfile: ModelProviderProfile?,
+    officialProfile: ModelProviderProfile?,
+): ModelProviderProfile? {
+    return resolveAgentProviderProfile(
+        boundProviderProfileId = boundProviderProfileId,
+        configuredProfile = configuredProfile,
+        officialProfile = officialProfile,
+    )?.takeIf { it.isConfigured() }
+        ?: editingProfile?.takeIf { it.isConfigured() }
 }
 
 private data class AgentRuntime(
@@ -1616,7 +3132,83 @@ private enum class AgentRuntimeKind(val payloadValue: String) {
     REMOTE("remote")
 }
 
-private const val MANAGED_ACP_INSTALL_TIMEOUT_MS = 10 * 60 * 1_000L
+// A foreground Agent switch must not leave the chat in an indefinite
+// Processing state when the device is offline or the npm registry is stalled.
+// The official installer remains unchanged; this only bounds one preparation
+// attempt and lets the UI surface its error so the user can retry explicitly.
+private const val MANAGED_ACP_INSTALL_TIMEOUT_MS = 8 * 60 * 1_000L
+private const val MANAGED_ACP_PROBE_TIMEOUT_MS = 5_000L
+private const val REMOTE_CANCEL_TIMEOUT_MS = 10_000L
+internal const val AGENT_PROVIDER_MODEL_LOOKUP_TIMEOUT_MS = 3_000L
+
+/**
+ * Raised instead of suspending a Harness switch behind another Harness's
+ * long-running npm/native preparation.
+ */
+internal class ManagedAcpPreparationInProgressException(
+    val preparingAgentId: String,
+) : IllegalStateException(
+    "Harness preparation is already running for $preparingAgentId. " +
+        "Wait for that installation to finish before starting another " +
+        "unprepared Harness."
+)
+
+/**
+ * Non-blocking ownership gate for the shared npm/native installation area.
+ * Keeping this seam small makes the foreground-switch guarantee testable
+ * without starting a terminal or an ACP process.
+ */
+internal class ManagedAcpPreparationGate {
+    private val mutex = Mutex()
+
+    @Volatile
+    private var ownerAgentId: String? = null
+
+    val isBusy: Boolean
+        get() = mutex.isLocked
+
+    val currentOwnerAgentId: String?
+        get() = ownerAgentId
+
+    suspend fun <T> run(agentId: String, operation: suspend () -> T): T {
+        if (!mutex.tryLock()) {
+            throw ManagedAcpPreparationInProgressException(
+                currentOwnerAgentId ?: "another Harness"
+            )
+        }
+        ownerAgentId = agentId
+        try {
+            return operation()
+        } finally {
+            ownerAgentId = null
+            mutex.unlock()
+        }
+    }
+}
+
+internal fun shouldPrepareManagedAcpAdapter(
+    agentId: String,
+    commandAvailable: Boolean,
+    allPackagesReady: Boolean,
+    adapterHealthy: Boolean,
+): Boolean {
+    // Keep the agent id in the decision signature because preparation is
+    // agent-specific, but reuse the same readiness contract for all managed
+    // adapters. Updating DSH is not part of every foreground switch.
+    return !(commandAvailable && allPackagesReady && adapterHealthy)
+}
+
+internal fun shouldReuseManagedAcpPreparation(
+    healthStatus: String,
+    installed: Boolean?,
+    preparationRevision: String? = null,
+    requiredRevision: String? = null,
+): Boolean {
+    return healthStatus == AcpAgentHealth.STATUS_ONLINE &&
+        installed == true &&
+        (requiredRevision == null || preparationRevision == requiredRevision)
+}
+
 private const val MANAGED_NPM_PATH_PREFIX =
     "PATH=\"/root/.npm-global/bin:\$PATH\"; export PATH;"
 internal val MANAGED_NATIVE_BUILD_PREREQUISITES_COMMAND = """
@@ -1632,52 +3224,53 @@ internal val MANAGED_NATIVE_BUILD_PREREQUISITES_COMMAND = """
         apt-get update
         DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends build-essential python3
       else
-        echo "DeepSeek Harness requires make, a C++ compiler, and Python 3 to build node-pty." >&2
+        echo "This Harness requires make, a C++ compiler, and Python 3 for its native dependencies." >&2
         return 1
       fi
     }
     ensure_native_build_tools
 """.trimIndent()
-private const val DEEPSEEK_HARNESS_HOME = "/root/.dsh/omnibot-acp"
-private const val DEEPSEEK_HARNESS_CONFIG_PATH =
-    "$DEEPSEEK_HARNESS_HOME/config.json"
-private const val DEEPSEEK_HARNESS_CONFIG_DISPLAY_PATH =
-    "~/.dsh/omnibot-acp/config.json"
-private const val DEEPSEEK_HARNESS_CORDIS_PATH =
-    "$DEEPSEEK_HARNESS_HOME/cordis.yml"
-private const val DEEPSEEK_HARNESS_OMNIBOT_ACP_PLUGIN_ASSET =
-    "deepseek_harness/omnibot-acp-demo.mjs"
-internal const val DEEPSEEK_HARNESS_OMNIBOT_ACP_PLUGIN_PATH =
-    "/root/.npm-global/lib/node_modules/@deepseek-ai/dsh-acp-demo/lib/omnibot-acp-demo.mjs"
-private const val DEEPSEEK_PUBLIC_BASE_URL = "https://api.deepseek.com"
-private const val DEEPSEEK_HARNESS_DEFAULT_MODEL = "deepseek-v4-pro"
-private const val DEEPSEEK_HARNESS_DEFAULT_REASONING_EFFORT = "max"
-private const val DEEPSEEK_HARNESS_DEFAULT_PERMISSION_MODE = "workspace-write"
-private val DEEPSEEK_HARNESS_REASONING_EFFORTS = setOf("off", "high", "max")
-private val DEEPSEEK_HARNESS_PERMISSION_MODES = setOf(
-    "read-only",
-    "workspace-write",
-    "danger-full-access"
-)
-
+internal const val OPENCODE_CONFIG_PATH = "/root/.config/opencode/opencode.json"
 private val LOCAL_ACP_METHODS = setOf(
-    "thread/start",
-    "thread/resume",
-    "thread/read",
-    "thread/list",
-    "thread/loaded/list",
+    "session/new",
+    "session/load",
+    "session/resume",
+    "session/fork",
+    "session/list",
+    "session/prompt",
+    "session/cancel",
+    "session/set_mode",
+    "session/set_config_option",
+    "session/close",
+    "session/delete",
+    "session/archive",
+    "session/unarchive",
+    "session/name/set",
     "thread/archive",
     "thread/unarchive",
     "thread/name/set",
     "model/list",
     "config/read",
+    "config/set",
     "collaborationMode/list",
-    "turn/start",
-    "turn/steer",
-    "turn/interrupt",
     "review/start",
-    "respondToServerRequest"
+    "authenticate",
+    "auth/authenticate",
+    "logout",
+    "auth/logout",
+    "providers/list",
+    "auth/providers/list",
+    "providers/set",
+    "auth/providers/set",
+    "providers/disable",
+    "auth/providers/disable",
+    "respondToServerRequest",
+    "notifyAcpExtension"
 )
+
+/** ACP extension methods live in the implementation-reserved underscore namespace. */
+private fun isAcpExtensionMethod(method: String): Boolean =
+    method.trim().startsWith("_")
 
 private data class RemoteCodexThreadListEntry(
     val threadId: String,
@@ -1709,6 +3302,55 @@ internal fun Map<String, Any?>.withLocalIds(
         result["active"] = active
     }
     return result
+}
+
+internal fun Map<String, Any?>.withAcpSessionId(): Map<String, Any?> {
+    val sessionId = stringValue("sessionId") ?: stringValue("threadId")
+    val promptId = stringValue("promptId") ?: stringValue("turnId")
+    val result = LinkedHashMap(this).apply {
+        if (!sessionId.isNullOrBlank()) {
+            put("sessionId", sessionId)
+        }
+        if (!promptId.isNullOrBlank()) {
+            put("promptId", promptId)
+        }
+    }
+    return AcpSessionCompatibility.withLegacyIds(result)
+}
+
+internal fun Map<String, Any?>.withAcpSessions(): Map<String, Any?> {
+    val sessions = this["sessions"] ?: this["threads"]
+    val normalized = (sessions as? List<*>)?.map { entry ->
+        val map = (entry as? Map<*, *>)?.entries?.associate { (key, value) ->
+            key.toString() to value
+        } ?: return@map entry
+        AcpSessionCompatibility.withLegacyIds(
+            LinkedHashMap(map).apply {
+                val sessionId = stringValue("sessionId") ?: stringValue("threadId")
+                if (!sessionId.isNullOrBlank()) put("sessionId", sessionId)
+            }
+        )
+    }
+    return LinkedHashMap(this).apply {
+        if (normalized != null) put("sessions", normalized)
+    }
+}
+
+/**
+ * Old remote codex-acp bridges expose the pre-ACP thread aliases but return a
+ * plain JSON-RPC error for newer session methods. Only that capability error
+ * is eligible for fallback; authentication, transport, and agent failures
+ * must still reach the caller unchanged.
+ */
+internal fun isUnsupportedRemoteAcpMethod(error: Throwable): Boolean {
+    val message = (error.message ?: error.toString()).lowercase()
+    return listOf(
+        "method not found",
+        "unknown method",
+        "unsupported method",
+        "not implemented",
+        "does not support",
+    ).any(message::contains)
 }
 
 internal fun sanitizeAgentRuntimeAbsolutePath(raw: String?): String? {
@@ -1923,148 +3565,57 @@ private fun buildRemoteBridgeConfigPayload(
     )
 }
 
-internal data class DeepSeekHarnessConfig(
-    val baseUrl: String = DEEPSEEK_PUBLIC_BASE_URL,
-    val model: String = DEEPSEEK_HARNESS_DEFAULT_MODEL,
-    val apiKey: String = "",
-    val reasoningEffort: String = DEEPSEEK_HARNESS_DEFAULT_REASONING_EFFORT,
-    val permissionMode: String = DEEPSEEK_HARNESS_DEFAULT_PERMISSION_MODE
-) {
-    fun toEnvironment(): Map<String, String> = linkedMapOf(
-        "DEEPSEEK_BASE_URL" to baseUrl,
-        "DEEPSEEK_API_KEY" to apiKey,
-        "DSH_MODEL" to model,
-        "DSH_REASONING_EFFORT" to reasoningEffort,
-        "DSH_PERMISSION_MODE" to permissionMode,
-        "DSH_ACP_HOME" to DEEPSEEK_HARNESS_HOME,
-        "NODE_NO_WARNINGS" to "1"
-    )
-}
-
-internal fun parseDeepSeekHarnessConfig(source: String): DeepSeekHarnessConfig {
-    val json = runCatching {
-        JsonParser.parseString(source)
-            .takeIf { it.isJsonObject }
-            ?.asJsonObject
-    }.getOrNull() ?: return DeepSeekHarnessConfig()
-    fun stringValue(key: String): String? = json.get(key)
-        ?.takeIf { it.isJsonPrimitive }
-        ?.asString
-        ?.trim()
-        ?.takeIf(String::isNotEmpty)
-    val reasoningEffort = stringValue("reasoningEffort")
-        ?.takeIf { it in DEEPSEEK_HARNESS_REASONING_EFFORTS }
-        ?: DEEPSEEK_HARNESS_DEFAULT_REASONING_EFFORT
-    val permissionMode = stringValue("permissionMode")
-        ?.takeIf { it in DEEPSEEK_HARNESS_PERMISSION_MODES }
-        ?: DEEPSEEK_HARNESS_DEFAULT_PERMISSION_MODE
-    return DeepSeekHarnessConfig(
-        baseUrl = stringValue("baseUrl") ?: DEEPSEEK_PUBLIC_BASE_URL,
-        model = stringValue("model") ?: DEEPSEEK_HARNESS_DEFAULT_MODEL,
-        apiKey = stringValue("apiKey").orEmpty(),
-        reasoningEffort = reasoningEffort,
-        permissionMode = permissionMode
-    )
-}
-
-internal fun deepSeekHarnessConfigFromArgs(
-    args: Map<String, Any?>,
-    current: DeepSeekHarnessConfig = DeepSeekHarnessConfig()
-): DeepSeekHarnessConfig {
-    val baseUrl = args.stringValue("baseUrl")
-        ?: throw IllegalArgumentException("DeepSeek Base URL is required.")
-    val model = args.stringValue("model")
-        ?: throw IllegalArgumentException("DeepSeek model ID is required.")
-    val apiKey = args.stringValue("apiKey")
-        ?: throw IllegalArgumentException("DeepSeek API key is required.")
-    val reasoningEffort = args.stringValue("reasoningEffort")
-        ?: DEEPSEEK_HARNESS_DEFAULT_REASONING_EFFORT
-    require(reasoningEffort in DEEPSEEK_HARNESS_REASONING_EFFORTS) {
-        "DeepSeek Harness reasoning effort must be off, high, or max."
-    }
-    val permissionMode = args.stringValue("permissionMode")
-        ?: current.permissionMode
-    require(permissionMode in DEEPSEEK_HARNESS_PERMISSION_MODES) {
-        "DeepSeek Harness permission mode must be read-only, workspace-write, or danger-full-access."
-    }
-    return DeepSeekHarnessConfig(
-        baseUrl = baseUrl,
-        model = model,
-        apiKey = apiKey,
-        reasoningEffort = reasoningEffort,
-        permissionMode = permissionMode
-    )
-}
-
-internal fun buildDeepSeekHarnessConfigJson(
-    config: DeepSeekHarnessConfig
+/**
+ * Official OpenCode v1 configuration for a custom OpenAI-compatible provider.
+ * The API key remains an environment substitution; the host only publishes
+ * the shared provider/model mapping into OpenCode's own config surface.
+ */
+internal fun buildOpenCodeConfigJson(
+    model: String,
+    baseUrl: String,
+    existingConfigJson: String = "",
 ): String {
-    return GsonBuilder()
-        .setPrettyPrinting()
-        .create()
-        .toJson(
-            linkedMapOf(
-                "baseUrl" to config.baseUrl,
-                "model" to config.model,
-                "apiKey" to config.apiKey,
-                "reasoningEffort" to config.reasoningEffort,
-                "permissionMode" to config.permissionMode
-            )
-        ) + "\n"
+    val providerModel = model.substringAfter("/", model)
+    val root = runCatching {
+        JsonParser.parseString(existingConfigJson).takeIf { it.isJsonObject }?.asJsonObject
+    }.getOrNull() ?: com.google.gson.JsonObject()
+    root.addProperty("\$schema", "https://opencode.ai/config.json")
+    root.addProperty("model", model)
+
+    val providers = root.getAsJsonObject("provider") ?: com.google.gson.JsonObject().also {
+        root.add("provider", it)
+    }
+    val provider = providers.getAsJsonObject(OPEN_CODE_PROVIDER_ID)
+        ?: com.google.gson.JsonObject().also {
+            providers.add(OPEN_CODE_PROVIDER_ID, it)
+        }
+    provider.addProperty("npm", "@ai-sdk/openai-compatible")
+    provider.addProperty("name", "OmniBot Provider")
+    val options = provider.getAsJsonObject("options") ?: com.google.gson.JsonObject().also {
+        provider.add("options", it)
+    }
+    options.addProperty("baseURL", baseUrl)
+    options.addProperty("apiKey", "{env:OPENAI_API_KEY}")
+    val models = provider.getAsJsonObject("models") ?: com.google.gson.JsonObject().also {
+        provider.add("models", it)
+    }
+    val modelConfig = models.getAsJsonObject(providerModel)
+        ?: com.google.gson.JsonObject().also {
+            models.add(providerModel, it)
+        }
+    modelConfig.addProperty("name", providerModel)
+    val limits = modelConfig.getAsJsonObject("limit") ?: com.google.gson.JsonObject().also {
+        modelConfig.add("limit", it)
+    }
+    limits.addProperty("context", 128000)
+    limits.addProperty("output", 8192)
+
+    return GsonBuilder().setPrettyPrinting().create().toJson(root) + "\n"
 }
 
-/** Phone-safe DeepSeek Harness composition with Omnibot's interactive ACP bridge. */
-internal fun buildDeepSeekHarnessCordisConfig(): String = """
-    - id: llm-deepseek
-      name: '@deepseek-ai/dsh-llm-deepseek'
-      config:
-        thinking: enabled
-        reasoningEffort: !!js "process.env.DSH_REASONING_EFFORT ?? 'max'"
 
-    - id: sandbox
-      name: '@deepseek-ai/dsh-sandbox-local'
-
-    - id: sandbox-policy
-      name: '@deepseek-ai/dsh-sandbox-policy'
-      config:
-        mode: !!js "process.env.DSH_PERMISSION_MODE ?? 'workspace-write'"
-        workspaceRoot: /workspace
-
-    - id: subprocess
-      name: '@deepseek-ai/dsh-subprocess-local'
-
-    - id: bash
-      name: '@deepseek-ai/dsh-bash-sandbox'
-      config:
-        timeoutMs: 60000
-
-    - id: approval
-      name: '@deepseek-ai/dsh-user-approval'
-      config:
-        policy: ask
-
-    - id: acp-agent
-      name: '$DEEPSEEK_HARNESS_OMNIBOT_ACP_PLUGIN_PATH'
-      config:
-        provider: deepseek-official
-        model: !!js "process.env.DSH_MODEL ?? 'deepseek-v4-pro'"
-        reasoningEffort: !!js "process.env.DSH_REASONING_EFFORT ?? 'max'"
-        permissionMode: !!js "process.env.DSH_PERMISSION_MODE ?? 'workspace-write'"
-        persistenceRoot: !!js "(process.env.DSH_ACP_HOME ?? '/root/.dsh/omnibot-acp') + '/sessions'"
-        persistenceCompression: none
-        workspaceContext:
-          maxBytes: 65536
-        skills:
-          enabled: false
-        toolBash:
-          enableRunInBackground: false
-        toolJobs: false
-        goals: false
-        persona: |
-          You are a coding assistant powered by {{model}} on DeepSeek Harness.
-          Your working directory is {{cwd}}. Inspect files, make focused changes,
-          and verify work with relevant tests before answering.
-""".trimIndent() + "\n"
+internal fun managedAgentTerminalPackageId(profile: AcpAgentProfile): String? =
+    AcpAgentProfileStore.officialRuntime(profile)?.terminalPackageId
 
 internal fun npmPackageName(spec: String): String {
     val versionSeparator = spec.lastIndexOf('@')
@@ -2075,23 +3626,44 @@ internal fun isRecoverableAgentThreadError(message: String): Boolean {
     val normalized = message.lowercase()
     return normalized.contains("thread not found") ||
         normalized.contains("unknown session") ||
-        normalized.contains("did not advertise session resume or loadsession")
+        normalized.contains("did not advertise session resume or loadsession") ||
+        normalized.contains("session not found") ||
+        normalized.contains("session does not exist") ||
+        normalized.contains("session file") && (
+            normalized.contains("not found") ||
+                normalized.contains("missing") ||
+                normalized.contains("does not exist")
+            ) ||
+        normalized.contains("metadata") && (
+            normalized.contains("not found") ||
+                normalized.contains("missing") ||
+                normalized.contains("does not exist")
+            )
 }
 
 internal fun buildCodexConfigToml(
     baseUrl: String,
-    model: String
+    model: String,
+    wireApi: String = OpenAiWireApi.RESPONSES,
+    modelCatalogPath: String? = null
 ): String {
+    val codexWireApi = if (OpenAiWireApi.isResponses(wireApi)) {
+        OpenAiWireApi.RESPONSES
+    } else {
+        "chat"
+    }
     val lines = mutableListOf(
         "model_provider = \"omnimind\"",
         "model = ${tomlString(model.trim())}",
-        "model_reasoning_effort = \"xhigh\"",
         "disable_response_storage = true",
+        modelCatalogPath?.trim()?.takeIf { it.isNotEmpty() }
+            ?.let { "model_catalog_json = ${tomlString(it)}" }
+            .orEmpty(),
         "",
         "[model_providers.omnimind]",
         "name = \"omnimind\"",
         "base_url = ${tomlString(baseUrl.trim())}",
-        "wire_api = \"responses\"",
+        "wire_api = \"$codexWireApi\"",
         "requires_openai_auth = true"
     )
     return lines.joinToString(separator = "\n", postfix = "\n")
@@ -2185,6 +3757,61 @@ private fun unescapeTomlBasicString(value: String): String {
     }
 }
 
+private fun extractJsonString(source: String, key: String): String? {
+    if (source.isBlank()) return null
+    val parsed = runCatching {
+        JsonParser.parseString(source)
+            .takeIf { it.isJsonObject }
+            ?.asJsonObject
+            ?.get(key)
+            ?.takeIf { it.isJsonPrimitive }
+            ?.asString
+    }.getOrNull()
+    if (!parsed.isNullOrBlank()) return parsed.trim()
+    return Regex(
+        pattern = """(?m)[\"']${Regex.escape(key)}[\"']\s*:\s*[\"']([^\"']+)[\"']"""
+    ).find(source)
+        ?.groupValues
+        ?.getOrNull(1)
+        ?.trim()
+        ?.takeIf(String::isNotEmpty)
+}
+
+private fun extractClaudeCodeModel(source: String): String? {
+    val parsed = runCatching {
+        JsonParser.parseString(source)
+            .takeIf { it.isJsonObject }
+            ?.asJsonObject
+    }.getOrNull()
+    val directModel = parsed?.get("model")
+        ?.takeIf { it.isJsonPrimitive }
+        ?.asString
+        ?.trim()
+        ?.takeIf(String::isNotEmpty)
+    if (directModel != null) return directModel
+    val environment = parsed?.getAsJsonObject("env")
+    val environmentModel = listOf("ANTHROPIC_MODEL", "ANTHROPIC_SMALL_FAST_MODEL")
+        .asSequence()
+        .mapNotNull { key ->
+            environment?.get(key)
+                ?.takeIf { it.isJsonPrimitive }
+                ?.asString
+                ?.trim()
+                ?.takeIf(String::isNotEmpty)
+        }
+        .firstOrNull()
+    return environmentModel
+        ?: extractJsonString(source, "ANTHROPIC_MODEL")
+        ?: extractJsonString(source, "ANTHROPIC_SMALL_FAST_MODEL")
+}
+
+private fun extractOpenCodeModel(source: String): String? {
+    return extractJsonString(source, "model")
+        ?.removePrefix("$OPEN_CODE_PROVIDER_ID/")
+        ?.trim()
+        ?.takeIf(String::isNotEmpty)
+}
+
 private fun extractOpenAiApiKey(source: String): String? {
     val trimmed = source.trim()
     if (trimmed.isEmpty()) return null
@@ -2223,10 +3850,11 @@ private fun Map<String, Any?>.longValue(key: String): Long? {
     }
 }
 
-private const val CLAUDE_CODE_AGENT_ID = "claude-code-acp"
-private const val OPENCODE_AGENT_ID = "opencode-acp"
-private const val CODEX_CONFIG_TOML_PATH = "/root/.codex/config.toml"
-private const val CODEX_AUTH_JSON_PATH = "/root/.codex/auth.json"
+internal const val CLAUDE_CODE_AGENT_ID = "claude-code-acp"
+internal const val OPENCODE_AGENT_ID = "opencode-acp"
+internal const val CODEX_CONFIG_TOML_PATH = "/root/.codex/config.toml"
+internal const val CODEX_AUTH_JSON_PATH = "/root/.codex/auth.json"
+internal const val CODEX_MODEL_CATALOG_JSON_PATH = "/root/.codex/provider-model-catalog.json"
 private const val CLAUDE_SETTINGS_JSON_PATH = "/root/.claude/settings.json"
 private const val OPENCODE_CONFIG_JSON_PATH = "/root/.config/opencode/opencode.json"
 private const val CODEX_CONFIG_TOML_DISPLAY_PATH = "~/.codex/config.toml"
@@ -2237,6 +3865,8 @@ private const val AGENT_CONFIG_START_MARKER = "__OMNI_AGENT_CONFIG_START__"
 private const val AGENT_CONFIG_END_MARKER = "__OMNI_AGENT_CONFIG_END__"
 private const val MAX_AGENT_CONFIG_FILE_CHARS = 1_048_576
 private const val DEFAULT_EMPTY_JSON_FILE = "{\n}\n"
+
+internal fun agentTurnRuntimeId(turnId: String): String = "agent-turn:${turnId.trim()}"
 
 private fun Map<String, Any?>.mapValue(key: String): Map<String, Any?> {
     val raw = this[key] as? Map<*, *> ?: return emptyMap()
@@ -2398,10 +4028,14 @@ private fun remoteCodexProtocolMsg(value: Any?, depth: Int = 0): Map<*, *>? {
     return null
 }
 
-private fun extractThreadId(value: Any?): String? {
+internal fun extractThreadId(value: Any?): String? {
     return extractStringRecursive(
         value = value,
-        keys = setOf("threadId", "thread_id"),
+        // Official ACP notifications use `sessionId`; `threadId` remains a
+        // compatibility alias for the app-server boundary. Reading the
+        // canonical field here keeps session/update events attached to the
+        // local conversation instead of dropping them before persistence.
+        keys = setOf("sessionId", "session_id", "threadId", "thread_id"),
         nestedObjectKeys = setOf(
             "thread",
             "message",
@@ -2410,6 +4044,7 @@ private fun extractThreadId(value: Any?): String? {
             "event",
             "notification",
             "params",
+            "update",
             "result",
             "_meta",
             "msg"
@@ -2417,10 +4052,13 @@ private fun extractThreadId(value: Any?): String? {
     )
 }
 
-private fun extractTurnId(value: Any?): String? {
+internal fun extractTurnId(value: Any?): String? {
     val fromTurn = extractStringRecursive(
         value = value,
-        keys = setOf("turnId", "turn_id"),
+        // `taskId`/`runId` are read-only compatibility aliases used by the
+        // removed AgentStreamEvent bridge. They are normalized into ACP's
+        // turnId before reaching Flutter; no legacy transport is restored.
+        keys = setOf("turnId", "turn_id", "taskId", "task_id", "runId", "run_id"),
         nestedObjectKeys = setOf(
             "turn",
             "message",
@@ -2429,6 +4067,7 @@ private fun extractTurnId(value: Any?): String? {
             "event",
             "notification",
             "params",
+            "update",
             "result",
             "_meta",
             "msg"
