@@ -1040,6 +1040,10 @@ extension _HomeDrawerConversationList on HomeDrawerState {
     final isBusy = _busyConversationKeys.contains(conversation.threadKey);
     final title = _resolveConversationTitle(conversation);
     final agentLabel = _conversationAgentLabel(conversation);
+    final isExecuting = _runtimeCoordinator.isAgentConversationActive(
+      conversation.id,
+    );
+    final isCompleted = !isExecuting && conversation.isCompleted;
     final showArchivedBadge = _isSearchActive && conversation.isArchived;
     final isEditing = _editingThreadKey == conversation.threadKey;
 
@@ -1091,14 +1095,11 @@ extension _HomeDrawerConversationList on HomeDrawerState {
                         ],
                         if (agentLabel != null && !isEditing) ...[
                           const SizedBox(width: 10),
-                          Text(
-                            agentLabel,
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w500,
-                              color: context.omniPalette.textTertiary,
-                              fontFamily: 'PingFang SC',
-                            ),
+                          _buildConversationAgentBadge(
+                            conversation: conversation,
+                            agentLabel: agentLabel,
+                            isExecuting: isExecuting,
+                            isCompleted: isCompleted,
                           ),
                         ],
                         if (trailingLabel != null && !isEditing) ...[
@@ -1146,9 +1147,11 @@ extension _HomeDrawerConversationList on HomeDrawerState {
     if (conversation.mode != ConversationMode.agent) {
       return null;
     }
-    final agentId = conversation.agentId?.trim().toLowerCase() ?? '';
-    if (agentId.isEmpty || agentId == 'xiaowan-acp') {
-      return null;
+    final agentId = AgentBrandIcon.normalizeAgentId(
+      conversation.agentId ?? 'xiaowan-acp',
+    );
+    if (agentId == 'xiaowan-acp') {
+      return LegacyTextLocalizer.localize('小万');
     }
     return switch (agentId) {
       'codex-acp' || 'codex-remote' => 'Codex',
@@ -1157,6 +1160,69 @@ extension _HomeDrawerConversationList on HomeDrawerState {
       'deepseek-harness-acp' => 'DeepSeek',
       _ => _humanizeAgentId(agentId),
     };
+  }
+
+  Widget _buildConversationAgentBadge({
+    required ConversationModel conversation,
+    required String agentLabel,
+    required bool isExecuting,
+    required bool isCompleted,
+  }) {
+    final statusLabel = isExecuting
+        ? '$agentLabel，执行中'
+        : isCompleted
+        ? '$agentLabel，已完成'
+        : agentLabel;
+    return Semantics(
+      label: statusLabel,
+      child: Tooltip(
+        message: isExecuting
+            ? '$agentLabel · 执行中'
+            : isCompleted
+            ? '$agentLabel · 已完成'
+            : agentLabel,
+        child: SizedBox(
+          key: isExecuting
+              ? ValueKey('home-drawer-running-${conversation.threadKey}')
+              : isCompleted
+              ? ValueKey('home-drawer-completed-${conversation.threadKey}')
+              : null,
+          width: 18,
+          height: 18,
+          child: Stack(
+            clipBehavior: Clip.none,
+            alignment: Alignment.center,
+            children: [
+              AgentBrandIcon(
+                agentId: conversation.agentId ?? 'xiaowan-acp',
+                size: 16,
+              ),
+              if (isExecuting || isCompleted)
+                Positioned(
+                  right: -1,
+                  bottom: -1,
+                  child: Container(
+                    width: 7,
+                    height: 7,
+                    decoration: BoxDecoration(
+                      color: isExecuting
+                          ? context.omniPalette.accentPrimary
+                          : Colors.transparent,
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: isExecuting
+                            ? context.omniPalette.pageBackground
+                            : context.omniPalette.textTertiary,
+                        width: isExecuting ? 1 : 1.2,
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   String _humanizeAgentId(String agentId) {

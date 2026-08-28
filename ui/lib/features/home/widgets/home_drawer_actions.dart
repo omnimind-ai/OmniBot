@@ -182,7 +182,15 @@ extension _HomeDrawerActions on HomeDrawerState {
       ConversationThreadTarget.existing(
         conversationId: conversation.id,
         mode: conversation.mode,
-        agentId: conversation.agentId,
+        // Legacy Agent conversations were created before agentId was
+        // persisted. Resolve that missing binding at the boundary so a
+        // switch cannot temporarily inherit whichever ACP is selected in the
+        // global UI state.
+        agentId:
+            conversation.agentId ??
+            (conversation.mode == ConversationMode.agent
+                ? 'xiaowan-acp'
+                : null),
       ),
     );
   }

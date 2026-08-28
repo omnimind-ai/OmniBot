@@ -21,6 +21,7 @@ import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.baselib.llm.ModelSceneRegistry
 import cn.com.omnimind.baselib.llm.OpenAiWireApi
 import cn.com.omnimind.baselib.llm.OpenAIResponsesRequest
+import cn.com.omnimind.baselib.llm.OpenAiResponsesCallIdCodec
 import cn.com.omnimind.baselib.llm.OpenAiResponsesFunctionNameCodec
 import cn.com.omnimind.baselib.llm.OmniOfficialProvider
 import cn.com.omnimind.baselib.llm.PlatformAiProvisioner
@@ -32,6 +33,7 @@ import cn.com.omnimind.baselib.llm.contentText
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
@@ -2753,84 +2755,84 @@ object HttpController {
     private fun buildRequestBodyWithResolvedModel(
         requestBodyJson: String,
         resolvedModel: String,
-        includeLegacyMirrors: Boolean,
         mirrorLegacyTokenFields: Boolean = true
     ): String {
-        return JSONObject(requestBodyJson).apply {
-            if (resolvedModel.isNotEmpty()) {
-                put("model", resolvedModel)
-            }
-            val toolsArray = optJSONArray("tools")
-            if (toolsArray != null && toolsArray.length() == 0) {
-                remove("tools")
-            }
-            val hasMaxCompletionTokens = has("max_completion_tokens")
-            val hasMaxTokens = has("max_tokens")
-            if (mirrorLegacyTokenFields && hasMaxCompletionTokens && !hasMaxTokens) {
-                put("max_tokens", opt("max_completion_tokens"))
-            } else if (!hasMaxCompletionTokens && hasMaxTokens) {
-                put("max_completion_tokens", opt("max_tokens"))
-            } else if (!mirrorLegacyTokenFields && hasMaxTokens) {
-                remove("max_tokens")
-            }
-            if (includeLegacyMirrors && has("tools") && !has("functions")) {
-                val currentToolsArray = optJSONArray("tools")
-                if (currentToolsArray != null && currentToolsArray.length() > 0) {
-                    val functionsArray = JSONArray()
-                    for (i in 0 until currentToolsArray.length()) {
-                        val toolObj = currentToolsArray.optJSONObject(i) ?: continue
-                        val functionObj = toolObj.optJSONObject("function") ?: continue
-                        val legacyFunction = JSONObject()
-                        if (functionObj.has("name")) {
-                            legacyFunction.put("name", functionObj.opt("name"))
-                        }
-                        if (functionObj.has("description")) {
-                            legacyFunction.put("description", functionObj.opt("description"))
-                        }
-                        if (functionObj.has("parameters")) {
-                            legacyFunction.put("parameters", functionObj.opt("parameters"))
-                        }
-                        if (legacyFunction.length() > 0) {
-                            functionsArray.put(legacyFunction)
-                        }
+        val root = runCatching {
+            completionJson.parseToJsonElement(requestBodyJson) as? KxJsonObject
+        }.getOrNull() ?: return requestBodyJson
+        val payload = root.toMutableMap()
+        if (resolvedModel.isNotEmpty()) {
+            payload["model"] = JsonPrimitive(resolvedModel)
+        }
+
+        // The app's canonical tool protocol is `tools` + `tool_choice`.
+        // Never synthesize or forward the deprecated Chat Completions
+        // `functions`/`function_call` fields to a user-configured API.
+        payload.remove("functions")
+        payload.remove("function_call")
+
+        val tools = payload["tools"] as? KxJsonArray
+        if (tools != null && tools.isEmpty()) {
+            payload.remove("tools")
+        }
+        val hasMaxCompletionTokens = payload.containsKey("max_completion_tokens")
+        val hasMaxTokens = payload.containsKey("max_tokens")
+        if (mirrorLegacyTokenFields && hasMaxCompletionTokens && !hasMaxTokens) {
+            payload["max_tokens"] = payload["max_completion_tokens"] ?: JsonNull
+        } else if (!hasMaxCompletionTokens && hasMaxTokens) {
+            payload["max_completion_tokens"] = payload["max_tokens"] ?: JsonNull
+        } else if (!mirrorLegacyTokenFields && hasMaxTokens) {
+            payload.remove("max_tokens")
+        }
+
+        return normalizeOpenAiChatCallIds(KxJsonObject(payload).toString())
+    }
+
+    /**
+     * Keep OpenAI-compatible chat requests within the same tool-call identity
+     * boundary as Responses. This is deliberately a wire-only conversion:
+     * local ACP history and tool routing continue to use the original IDs.
+     */
+    private fun normalizeOpenAiChatCallIds(requestBodyJson: String): String {
+        val request = runCatching {
+            completionJson.decodeFromString<ChatCompletionRequest>(requestBodyJson)
+        }.getOrNull() ?: return requestBodyJson
+        val plan = OpenAiResponsesCallIdCodec.planFor(request.messages)
+        val root = runCatching {
+            completionJson.parseToJsonElement(requestBodyJson) as? KxJsonObject
+        }.getOrNull() ?: return requestBodyJson
+        val messages = root["messages"] as? KxJsonArray ?: return requestBodyJson
+        val normalizedMessages = KxJsonArray(messages.map { rawMessage ->
+            val message = rawMessage as? KxJsonObject ?: return@map rawMessage
+            val normalized = message.toMutableMap()
+            val toolCalls = message["tool_calls"] as? KxJsonArray
+            if (toolCalls != null) {
+                normalized["tool_calls"] = KxJsonArray(toolCalls.map { rawToolCall ->
+                    val toolCall = rawToolCall as? KxJsonObject ?: return@map rawToolCall
+                    val rawId = (toolCall["id"] as? JsonPrimitive)?.contentOrNull
+                        ?.trim()
+                        .orEmpty()
+                    if (rawId.isEmpty()) {
+                        toolCall
+                    } else {
+                        KxJsonObject(toolCall + ("id" to JsonPrimitive(plan.encode(rawId))))
                     }
-                    if (functionsArray.length() > 0) {
-                        put("functions", functionsArray)
-                        if (!has("function_call")) {
-                            when (val toolChoice = opt("tool_choice")) {
-                                is String -> {
-                                    put(
-                                        "function_call",
-                                        if (toolChoice.equals("required", ignoreCase = true)) {
-                                            "auto"
-                                        } else {
-                                            toolChoice
-                                        }
-                                    )
-                                }
-                                is JSONObject -> {
-                                    val functionName = toolChoice.optJSONObject("function")
-                                        ?.optString("name")
-                                        ?.takeIf { it.isNotBlank() }
-                                    if (functionName != null) {
-                                        put("function_call", JSONObject().put("name", functionName))
-                                    } else {
-                                        put("function_call", "auto")
-                                    }
-                                }
-                                else -> put("function_call", "auto")
-                            }
-                        }
-                    }
-                }
+                })
             }
-        }.toString()
+            val rawToolCallId = (message["tool_call_id"] as? JsonPrimitive)?.contentOrNull
+                ?.trim()
+                .orEmpty()
+            if (rawToolCallId.isNotEmpty()) {
+                normalized["tool_call_id"] = JsonPrimitive(plan.encode(rawToolCallId))
+            }
+            KxJsonObject(normalized)
+        })
+        return KxJsonObject(root + ("messages" to normalizedMessages)).toString()
     }
 
     private fun buildOpenAICompatibleRequestBody(
         requestBodyJson: String,
         resolvedModel: String,
-        includeLegacyMirrors: Boolean,
         mirrorLegacyTokenFields: Boolean = true,
         protocolType: String,
         apiBase: String?
@@ -2838,7 +2840,6 @@ object HttpController {
         val baseBody = buildRequestBodyWithResolvedModel(
             requestBodyJson = requestBodyJson,
             resolvedModel = resolvedModel,
-            includeLegacyMirrors = includeLegacyMirrors,
             mirrorLegacyTokenFields = mirrorLegacyTokenFields
         )
         val protocolReadyBody = if (DeepSeekProvider.shouldUseOfficialAdapter(protocolType, apiBase)) {
@@ -2883,6 +2884,7 @@ object HttpController {
 
     private fun buildResponsesInputItems(messages: List<ChatCompletionMessage>): List<JsonElement> {
         val items = mutableListOf<JsonElement>()
+        val callIdPlan = OpenAiResponsesCallIdCodec.planFor(messages)
         val pendingFunctionCallIds = linkedSetOf<String>()
         val emittedFunctionCallOutputIds = linkedSetOf<String>()
         var fallbackFunctionCallIndex = 0
@@ -2908,7 +2910,8 @@ object HttpController {
         messages.forEach { message ->
             when (message.role) {
                 "tool" -> {
-                    val callId = message.toolCallId?.trim().orEmpty()
+                    val rawCallId = message.toolCallId?.trim().orEmpty()
+                    val callId = rawCallId.takeIf { it.isNotEmpty() }?.let(callIdPlan::encode).orEmpty()
                     if (callId.isEmpty() || callId !in pendingFunctionCallIds) {
                         // Responses rejects an output without a matching function
                         // call. This can happen when old history retained a tool
@@ -2940,9 +2943,10 @@ object HttpController {
                         items += buildResponsesMessageItem("assistant", visibleText)
                     }
                     message.toolCalls.orEmpty().forEach { toolCall ->
-                        val callId = toolCall.id.trim().ifEmpty {
+                        val rawCallId = toolCall.id.trim().ifEmpty {
                             "tool_call_${fallbackFunctionCallIndex++}"
                         }
+                        val callId = callIdPlan.encode(rawCallId)
                         items += buildJsonObject {
                             put("type", "function_call")
                             put("call_id", callId)
@@ -3165,7 +3169,6 @@ object HttpController {
             buildOpenAICompatibleRequestBody(
                 requestBodyJson = completionJson.encodeToString(chatRequest.copy(stream = true)),
                 resolvedModel = chatRequest.model,
-                includeLegacyMirrors = false,
                 protocolType = protocolType,
                 apiBase = base
             )
@@ -3245,7 +3248,6 @@ object HttpController {
             buildOpenAICompatibleRequestBody(
                 requestBodyJson = requestBodyJson,
                 resolvedModel = resolved.resolvedModel,
-                includeLegacyMirrors = false,
                 mirrorLegacyTokenFields = false,
                 protocolType = resolved.protocolType,
                 apiBase = base
@@ -3617,7 +3619,6 @@ object HttpController {
                 buildOpenAICompatibleRequestBody(
                     requestBodyJson = completionJson.encodeToString(variant.request),
                     resolvedModel = variant.request.model,
-                    includeLegacyMirrors = false,
                     protocolType = resolved.protocolType,
                     apiBase = base
                 )
@@ -3753,7 +3754,6 @@ object HttpController {
                 buildOpenAICompatibleRequestBody(
                     requestBodyJson = baseRequestJson.toString(),
                     resolvedModel = normalizedModel,
-                    includeLegacyMirrors = false,
                     protocolType = DeepSeekProvider.normalizeProtocolType(null),
                     apiBase = normalizedApiBase
                 )
@@ -3983,8 +3983,7 @@ object HttpController {
         val requestJson = completionJson.encodeToString(request)
         return buildRequestBodyWithResolvedModel(
             requestBodyJson = requestJson,
-            resolvedModel = request.model,
-            includeLegacyMirrors = false
+            resolvedModel = request.model
         )
     }
 

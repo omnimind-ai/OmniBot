@@ -98,8 +98,22 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 250));
 
-    expect(find.text('系统打开'), findsOneWidget);
-    expect(find.text('分享文件'), findsOneWidget);
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is Text &&
+            (widget.data == '系统打开' || widget.data == 'Open with system'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is Text &&
+            (widget.data == '分享文件' || widget.data == 'Share file'),
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('artifact preview keeps path and editor surfaces dark', (

@@ -836,6 +836,27 @@ void main() {
     },
   );
 
+  test('projects active Xiaowan conversations for the drawer', () {
+    const conversationId = 2010;
+    const taskId = 'drawer-running-task';
+
+    coordinator.beginAcpTurn(
+      taskId: taskId,
+      conversationId: conversationId,
+      mode: kChatRuntimeModeAgent,
+    );
+
+    expect(coordinator.activeAgentConversationIds, contains(conversationId));
+    expect(coordinator.isAgentConversationActive(conversationId), isTrue);
+
+    coordinator.unregisterTask(taskId);
+    expect(
+      coordinator.activeAgentConversationIds,
+      isNot(contains(conversationId)),
+    );
+    expect(coordinator.isAgentConversationActive(conversationId), isFalse);
+  });
+
   test('maps ACP tool updates to the tools island', () {
     const conversationId = 2501;
     applyAcp(

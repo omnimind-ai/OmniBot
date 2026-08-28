@@ -202,7 +202,10 @@ class OnboardingProviderController extends ChangeNotifier {
       return false;
     }
     if (!ModelProviderConfigService.isValidApiBase(baseUrl)) {
-      _error = t('请输入有效的 HTTPS API 地址。', 'Enter a valid HTTPS API base URL.');
+      _error = t(
+        '请输入有效的 HTTP 或 HTTPS API 地址。',
+        'Enter a valid HTTP or HTTPS API base URL.',
+      );
       _emit();
       return false;
     }

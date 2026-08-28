@@ -47,7 +47,7 @@ class AgentToolDefinitionsPrivilegedTest {
     }
 
     @Test
-    fun `privileged session start exposes confirmed flag`() {
+    fun `privileged session start leaves approval to ACP`() {
         val tool = AgentToolDefinitions.androidPrivilegedSessionStartTool(
             backend = ShizukuBackend.ADB,
             locale = PromptLocale.EN_US
@@ -55,8 +55,10 @@ class AgentToolDefinitionsPrivilegedTest {
         val function = tool["function"] as JsonObject
         val parameters = function["parameters"] as JsonObject
         val properties = parameters["properties"] as JsonObject
-        val confirmed = properties["confirmed"] as JsonObject
-
-        assertEquals("boolean", confirmed["type"]?.jsonPrimitive?.contentOrNull)
+        assertTrue("confirmed" !in properties)
+        assertTrue(
+            function["description"]?.jsonPrimitive?.contentOrNull
+                ?.contains("ACP", ignoreCase = true) == true
+        )
     }
 }

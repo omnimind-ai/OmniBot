@@ -28,6 +28,11 @@ class TurnMemoryLoadTracker {
         if (id.isNotBlank()) loaded.add(id)
     }
 
+    /** Returns true only for the first successful mark of this id. */
+    fun markLoadedIfAbsent(id: String): Boolean {
+        return id.isNotBlank() && loaded.add(id)
+    }
+
     fun isLoaded(id: String): Boolean = id in loaded
 
     fun loadedIds(): Set<String> = loaded.toSet()

@@ -255,6 +255,27 @@ class OmnibotResourceService {
     return result == true;
   }
 
+  /// Opens a local artifact in the device's default web browser.
+  ///
+  /// The native side stages the file behind a temporary, read-only
+  /// FileProvider URI and grants the browser access to it. Passing the raw
+  /// app-private path to a browser would work only inside the app process and
+  /// would fail for workspace files.
+  static Future<bool> openInBrowser({
+    required String sourcePath,
+    required String mimeType,
+  }) async {
+    await ensureWorkspacePathsLoaded();
+    if (!await _ensureResourceAccess(path: sourcePath)) {
+      return false;
+    }
+    final result = await _fileChannel.invokeMethod<dynamic>('openInBrowser', {
+      'sourcePath': sourcePath,
+      'mimeType': mimeType,
+    });
+    return result == true;
+  }
+
   static Future<bool> shareFile({
     required String sourcePath,
     required String fileName,

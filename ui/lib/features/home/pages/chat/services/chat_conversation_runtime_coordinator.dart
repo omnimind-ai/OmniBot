@@ -253,7 +253,8 @@ class ChatConversationRuntimeState {
       isCheckingExecutableTask ||
       isExecutingTask ||
       currentDispatchTurnId != null ||
-      currentAiMessages.isNotEmpty;
+      currentAiMessages.isNotEmpty ||
+      currentThinkingMessages.isNotEmpty;
 
   bool get shouldSuppressLocalMessageSnapshotEcho =>
       DateTime.now().millisecondsSinceEpoch <
@@ -595,6 +596,28 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     required String mode,
   }) {
     return _runtimes[_runtimeKey(conversationId: conversationId, mode: mode)];
+  }
+
+  /// Conversation ids with live work in the shared ACP projection.
+  ///
+  /// The drawer must read this from the same runtime/reducer that renders the
+  /// chat. A second event subscription in the drawer would create another
+  /// lifecycle interpretation and can disagree during a session switch.
+  Set<int> get activeAgentConversationIds => Set.unmodifiable(
+    _runtimes.values
+        .where(
+          (runtime) =>
+              runtime.mode == kChatRuntimeModeAgent && runtime.hasInFlightTask,
+        )
+        .map((runtime) => runtime.conversationId),
+  );
+
+  bool isAgentConversationActive(int conversationId) {
+    final runtime = runtimeFor(
+      conversationId: conversationId,
+      mode: kChatRuntimeModeAgent,
+    );
+    return runtime?.hasInFlightTask ?? false;
   }
 
   /// Resolves an incoming ACP event to the runtime that admitted its official

@@ -813,85 +813,109 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
 
   @override
   Future<void> _sendPureChatMessage(String aiMessageId) async {
-    try {
-      await _ensureActiveConversationReadyForStreaming();
-    } catch (error) {
-      if (mounted) {
-        handleAgentError('Conversation setup failed. Please retry. $error');
-      }
-      return;
-    }
-    final conversationId = _currentConversationId;
+    final dispatchTargetGeneration = _conversationTargetRequestId;
+    final dispatchMode = _activeMode;
+    final dispatchModeKey = _modeKey(dispatchMode);
+    final dispatchConversationMode = activeConversationModeValue;
+    final dispatchTarget = _resolvedThreadTarget;
+    final dispatchConversationId =
+        _currentConversationId ?? dispatchTarget?.conversationId;
+    final dispatchSessionId =
+        _normalAcpSessionConversationId == dispatchConversationId
+        ? _normalAcpSessionId
+        : null;
+    final dispatchPermissionMode = _agentPermissionMode;
+    final dispatchReasoningEffort = _activeConversationReasoningEffort;
+    final dispatchSelection =
+        _activeConversationModelOverrideSelection ??
+        _activeDispatchSceneSelection;
+    final dispatchTerminalEnvironment = _buildAgentTerminalEnvironmentPayload();
+    bool isDispatchTargetCurrent() =>
+        mounted && dispatchTargetGeneration == _conversationTargetRequestId;
+
+    var conversationId = dispatchConversationId;
     if (conversationId == null) {
-      if (mounted) {
+      if (!isDispatchTargetCurrent()) return;
+      try {
+        await _ensureActiveConversationReadyForStreaming();
+      } catch (error) {
+        if (isDispatchTargetCurrent()) {
+          handleAgentError('Conversation setup failed. Please retry. $error');
+        }
+        return;
+      }
+      if (!isDispatchTargetCurrent()) return;
+      conversationId = _currentConversationId;
+    }
+    if (conversationId == null) {
+      if (isDispatchTargetCurrent()) {
         handleAgentError('Conversation setup failed. Please retry.');
       }
       return;
     }
-
+    final dispatchMessages = List<ChatMessageModel>.from(_messages);
     final userMessage = latestUserUtterance();
     final userAttachments = await _latestUserAttachments();
+    if (!isDispatchTargetCurrent()) return;
 
-    _syncRuntimeSnapshotForMode(_activeMode);
-    _registerActiveTaskBinding(aiMessageId);
-    // Pure chat deliberately has no Agent/Harness thinking card. Its ACP
-    // stream updates the ordinary assistant text when content arrives.
+    final resolvedConversationId = conversationId;
+    _runtimeCoordinator.registerTask(
+      taskId: aiMessageId,
+      conversationId: resolvedConversationId,
+      mode: dispatchModeKey,
+    );
     try {
-      final selection =
-          _activeConversationModelOverrideSelection ??
-          _activeDispatchSceneSelection;
-      final reusableSessionId =
-          _normalAcpSessionConversationId == conversationId
-          ? _normalAcpSessionId
-          : null;
+      final reusableSessionId = dispatchSessionId;
       final response = await AgentRuntimeService.promptSession(
-        conversationId: conversationId,
+        conversationId: resolvedConversationId,
         sessionId: reusableSessionId,
         requestId: _buildPromptRequestId(aiMessageId),
         // Pure chat is an ACP turn with tools disabled, not a provider-only
         // transport. It deliberately has no Harness identity: otherwise a
         // previous DSH/Xiaowan switch leaks into the pure-chat session and
         // the runtime can reconnect the wrong Agent.
-        agentId: activeConversationModeValue == ConversationMode.chatOnly
+        agentId: dispatchConversationMode == ConversationMode.chatOnly
             ? null
             : _kXiaowanAcpAgentId,
         text: userMessage,
         attachments: userAttachments,
-        approvalPolicy: _agentPermissionMode.approvalPolicy,
-        approvalsReviewer: _agentPermissionMode.approvalsReviewer,
-        sandboxPolicy: _agentPermissionMode.sandboxPolicy,
-        model: selection?.modelId,
-        effort: _activeConversationReasoningEffort,
-        conversationMode: activeConversationModeValue.storageValue,
-        terminalEnvironment: _buildAgentTerminalEnvironmentPayload(),
+        approvalPolicy: dispatchPermissionMode.approvalPolicy,
+        approvalsReviewer: dispatchPermissionMode.approvalsReviewer,
+        sandboxPolicy: dispatchPermissionMode.sandboxPolicy,
+        model: dispatchSelection?.modelId,
+        effort: dispatchReasoningEffort,
+        conversationMode: dispatchConversationMode.storageValue,
+        terminalEnvironment: dispatchTerminalEnvironment,
       );
-      _normalAcpSessionId =
+      final responseSessionId =
           _asAgentString(response['sessionId']) ??
-          _asAgentString(response['threadId']) ??
-          _normalAcpSessionId;
-      if (_normalAcpSessionId != null) {
-        _normalAcpSessionConversationId = conversationId;
-      }
-      _normalAcpTurnId =
+          _asAgentString(response['threadId']);
+      final responseTurnId =
           _asAgentString(response['promptId']) ??
-          _asAgentString(response['turnId']) ??
-          _normalAcpTurnId;
-      if (_normalAcpSessionId == null) {
+          _asAgentString(response['turnId']);
+      if (isDispatchTargetCurrent()) {
+        _normalAcpSessionId = responseSessionId ?? dispatchSessionId;
+        if (_normalAcpSessionId != null) {
+          _normalAcpSessionConversationId = resolvedConversationId;
+        }
+        _normalAcpTurnId = responseTurnId;
+      }
+      if ((responseSessionId ?? dispatchSessionId) == null) {
         throw StateError('ACP did not return a session id');
       }
       await ConversationHistoryService.saveConversationMessages(
-        conversationId,
-        List<ChatMessageModel>.from(_messages),
-        mode: activeConversationModeValue,
+        resolvedConversationId,
+        dispatchMessages,
+        mode: dispatchConversationMode,
       );
     } catch (error) {
       _runtimeCoordinator.clearPureChatThinking(
         taskId: aiMessageId,
-        conversationId: conversationId,
-        mode: _modeKey(_activeMode),
+        conversationId: resolvedConversationId,
+        mode: dispatchModeKey,
       );
       _runtimeCoordinator.unregisterTask(aiMessageId);
-      if (!mounted) return;
+      if (!isDispatchTargetCurrent()) return;
       final errorId = DateTime.now().millisecondsSinceEpoch.toString();
       setState(() {
         _isAiResponding = false;
@@ -934,34 +958,74 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
     List<Map<String, dynamic>>? attachmentsOverride,
     String? requestIdOverride,
   }) async {
+    // A task flow can overlap conversation bootstrap and an ACP switch. Keep
+    // its complete routing context stable for the lifetime of the request;
+    // page fields are only a projection for the currently visible target.
+    final dispatchTargetGeneration = _conversationTargetRequestId;
+    final dispatchMode = _activeMode;
+    final dispatchModeKey = _modeKey(dispatchMode);
+    final dispatchConversationMode = activeConversationModeValue;
+    final dispatchTarget = _resolvedThreadTarget;
+    final dispatchConversationId =
+        _currentConversationId ?? dispatchTarget?.conversationId;
+    final dispatchSessionId =
+        _normalAcpSessionConversationId == dispatchConversationId
+        ? _normalAcpSessionId
+        : null;
+    final dispatchPermissionMode = _agentPermissionMode;
+    final dispatchReasoningEffort = _activeConversationReasoningEffort;
+    final dispatchSelection = _activeDispatchSceneSelection;
+    final dispatchTerminalEnvironment = _buildAgentTerminalEnvironmentPayload();
+    final dispatchUserMessage = promptText ?? latestUserUtterance();
+    final dispatchAttachments =
+        attachmentsOverride ?? _latestUserAgentAttachments();
+    final dispatchMessages = List<ChatMessageModel>.from(_messages);
+    bool isDispatchTargetCurrent() =>
+        mounted && dispatchTargetGeneration == _conversationTargetRequestId;
+
+    var conversationId = dispatchConversationId;
     try {
-      _currentDispatchTurnId = aiMessageId;
-      _deepThinkingContent = '';
-      _isDeepThinking = false;
-      _currentThinkingStage = 1;
-
-      _syncRuntimeSnapshotForMode(_activeMode);
-      _registerActiveTaskBinding(aiMessageId);
-
-      final userMessage = promptText ?? latestUserUtterance();
-      final attachments = attachmentsOverride ?? _latestUserAgentAttachments();
-      await _ensureActiveConversationReadyForStreaming();
-      final conversationId = _currentConversationId;
+      if (isDispatchTargetCurrent()) {
+        _currentDispatchTurnId = aiMessageId;
+        _deepThinkingContent = '';
+        _isDeepThinking = false;
+        _currentThinkingStage = 1;
+      }
+      if (conversationId != null) {
+        _runtimeCoordinator.registerTask(
+          taskId: aiMessageId,
+          conversationId: conversationId,
+          mode: dispatchModeKey,
+        );
+      } else {
+        if (!isDispatchTargetCurrent()) return false;
+        await _ensureActiveConversationReadyForStreaming();
+        if (!isDispatchTargetCurrent()) return false;
+        conversationId = _currentConversationId;
+      }
       if (conversationId == null) {
         throw StateError('conversationId is not ready');
       }
+      final resolvedConversationId = conversationId;
+      if (isDispatchTargetCurrent()) {
+        // Conversation bootstrap may have installed an empty/stale runtime
+        // projection after the host inserted the user message. Preserve the
+        // complete dispatch snapshot before the ACP turn starts.
+        _syncRuntimeSnapshotForMode(dispatchMode, messages: dispatchMessages);
+      }
+      _runtimeCoordinator.registerTask(
+        taskId: aiMessageId,
+        conversationId: resolvedConversationId,
+        mode: dispatchModeKey,
+      );
       _runtimeCoordinator.beginAcpTurn(
         taskId: aiMessageId,
-        conversationId: conversationId,
-        mode: _modeKey(_activeMode),
+        conversationId: resolvedConversationId,
+        mode: dispatchModeKey,
       );
-      final reusableSessionId =
-          _normalAcpSessionConversationId == conversationId
-          ? _normalAcpSessionId
-          : null;
       final response = await AgentRuntimeService.promptSession(
-        conversationId: conversationId,
-        sessionId: reusableSessionId,
+        conversationId: resolvedConversationId,
+        sessionId: dispatchSessionId,
         // A normal transport retry keeps the request id so ACP can safely
         // deduplicate an in-flight request. Manual retry/continue actions
         // must provide a fresh id; otherwise LocalAcpRuntime's idempotency
@@ -971,40 +1035,43 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
         // can briefly describe the previous process during an ACP switch;
         // using it here can send the first turn to the old Harness.
         agentId: _kXiaowanAcpAgentId,
-        text: userMessage,
-        attachments: attachments,
-        approvalPolicy: _agentPermissionMode.approvalPolicy,
-        approvalsReviewer: _agentPermissionMode.approvalsReviewer,
-        sandboxPolicy: _agentPermissionMode.sandboxPolicy,
-        model: _activeDispatchSceneSelection?.modelId,
-        effort: _activeConversationReasoningEffort,
-        conversationMode: activeConversationModeValue.storageValue,
-        terminalEnvironment: _buildAgentTerminalEnvironmentPayload(),
+        text: dispatchUserMessage,
+        attachments: dispatchAttachments,
+        approvalPolicy: dispatchPermissionMode.approvalPolicy,
+        approvalsReviewer: dispatchPermissionMode.approvalsReviewer,
+        sandboxPolicy: dispatchPermissionMode.sandboxPolicy,
+        model: dispatchSelection?.modelId,
+        effort: dispatchReasoningEffort,
+        conversationMode: dispatchConversationMode.storageValue,
+        terminalEnvironment: dispatchTerminalEnvironment,
       );
-      _normalAcpSessionId =
+      final responseSessionId =
           _asAgentString(response['sessionId']) ??
-          _asAgentString(response['threadId']) ??
-          _normalAcpSessionId;
-      if (_normalAcpSessionId != null) {
-        _normalAcpSessionConversationId = conversationId;
-      }
-      _normalAcpTurnId =
+          _asAgentString(response['threadId']);
+      final responseTurnId =
           _asAgentString(response['promptId']) ??
-          _asAgentString(response['turnId']) ??
-          _normalAcpTurnId;
-      if (_normalAcpSessionId == null) {
+          _asAgentString(response['turnId']);
+      if (isDispatchTargetCurrent()) {
+        _normalAcpSessionId = responseSessionId ?? dispatchSessionId;
+        if (_normalAcpSessionId != null) {
+          _normalAcpSessionConversationId = resolvedConversationId;
+        }
+        _normalAcpTurnId = responseTurnId;
+      }
+      if ((responseSessionId ?? dispatchSessionId) == null) {
         throw StateError('ACP did not return a session id');
       }
       await ConversationHistoryService.saveConversationMessages(
-        conversationId,
-        List<ChatMessageModel>.from(_messages),
-        mode: activeConversationModeValue,
+        resolvedConversationId,
+        dispatchMessages,
+        mode: dispatchConversationMode,
       );
       return true;
     } catch (e) {
-      if (_currentDispatchTurnId == aiMessageId) {
-        _runtimeCoordinator.unregisterTask(aiMessageId);
-      }
+      // The task id is globally unique, but its runtime binding is not the
+      // currently visible conversation after a switch. Always clean the old
+      // binding; only the current target may receive visible error state.
+      _runtimeCoordinator.unregisterTask(aiMessageId);
       debugPrint('Agent flow error: $e');
       return false;
     }

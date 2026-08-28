@@ -275,6 +275,14 @@ class ConversationModel {
 
   bool get isActive => status == 0;
 
+  /// Whether the conversation has reached its durable terminal state.
+  ///
+  /// This is persisted conversation metadata, not a replacement for the
+  /// shared runtime's live-work signal. The sidebar combines both sources:
+  /// runtime state wins for "running", while this flag supplies the stable
+  /// completed marker after the run has been folded into history.
+  bool get isCompleted => status == 1;
+
   bool get isScheduledChild =>
       parentConversationId != null && parentConversationId! > 0;
 

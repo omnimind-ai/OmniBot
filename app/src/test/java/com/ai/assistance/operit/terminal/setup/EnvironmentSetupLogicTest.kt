@@ -205,6 +205,9 @@ class EnvironmentSetupLogicTest {
         assertTrue(npmInstall.contains("npm_config_node_linker=hoisted"))
         assertTrue(npmInstall.contains("npm_config_package_import_method=copy"))
         assertTrue(npmInstall.contains("${'$'}DSH_PACKAGE_ROOT/node_modules"))
+        assertTrue(npmInstall.contains("prune_acp_profile_plugins"))
+        assertTrue(npmInstall.contains("dsh plugin --profile acp remove"))
+        assertTrue(npmInstall.contains("@openma/deepseek-harness-acp"))
         assertTrue(
             commands.contains(
                 "ln -sf /root/.npm-global/bin/dsh /usr/local/bin/dsh || true"

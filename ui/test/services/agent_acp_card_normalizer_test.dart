@@ -60,4 +60,15 @@ void main() {
       {'content': 'Report the result', 'status': 'completed'},
     ]);
   });
+
+  test('uses the ACP lifecycle status instead of raw tool output', () {
+    final card = AgentAcpCardNormalizer.normalize({
+      'type': 'tool_call_update',
+      'status': 'pending',
+      'success': false,
+      'rawOutput': {'success': false, 'question': '请确认执行高权限操作'},
+    });
+
+    expect(card['status'], 'pending');
+  });
 }

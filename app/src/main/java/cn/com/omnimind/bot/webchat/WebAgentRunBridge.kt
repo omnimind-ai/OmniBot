@@ -3,6 +3,7 @@ package cn.com.omnimind.bot.webchat
 import android.content.Context
 import cn.com.omnimind.bot.agent.AgentConversationHistoryRepository
 import cn.com.omnimind.bot.agent.AgentTextSanitizer
+import cn.com.omnimind.bot.agent.resolveAgentToolPayloadStatus
 import cn.com.omnimind.bot.agent.runtime.AgentRuntimeManager
 import com.google.gson.Gson
 import kotlinx.coroutines.CoroutineScope
@@ -10,6 +11,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -81,6 +84,10 @@ internal class WebAgentRunBridge(
     private val gson = Gson()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val events = Channel<Map<String, Any?>>(Channel.UNLIMITED)
+    // Admission is a conversation-level invariant. A concurrent HTTP retry
+    // must not replace a still-running state after observing a finished one.
+    // This lock covers only map admission, never ACP execution.
+    private val runAdmissionMutex = Mutex()
     private val runsByTaskId = ConcurrentHashMap<String, WebAgentRunState>()
     private val runsByConversationId = ConcurrentHashMap<Long, WebAgentRunState>()
     private val runsByThreadId = ConcurrentHashMap<String, WebAgentRunState>()
@@ -124,30 +131,37 @@ internal class WebAgentRunBridge(
                 ?: System.currentTimeMillis(),
             agentId = agentId?.trim()?.takeIf { it.isNotEmpty() }
         )
-        val existing = runsByConversationId.putIfAbsent(conversationId, state)
-        check(existing == null || existing.finished.get()) {
-            "该 Agent 会话已有运行中的任务"
-        }
-        if (existing != null) {
+        runAdmissionMutex.withLock {
+            val existing = runsByConversationId[conversationId]
+            check(existing == null || existing.finished.get()) {
+                "该 Agent 会话已有运行中的任务"
+            }
+            if (existing != null) {
+                removeState(existing)
+            }
             runsByConversationId[conversationId] = state
+            runsByTaskId[taskId] = state
         }
-        runsByTaskId[taskId] = state
-
-        // Reuse the external-message path so Flutter and WebChat receive the
-        // same stable user entry before any Agent stream event can overtake it.
-        conversationService.appendUserMessage(
-            conversationId = conversationId,
-            conversationMode = state.conversationMode,
-            entryId = "$taskId-user",
-            text = userMessage,
-            attachments = attachments,
-            createdAt = state.createdAt
-        )
 
         return try {
-            agentId?.trim()?.takeIf { it.isNotEmpty() }?.let {
-                manager.handleMethod("agent/select", mapOf("agentId" to it))
-            }
+            // Reuse the external-message path so Flutter and WebChat receive
+            // the same stable user entry before any Agent stream event can
+            // overtake it. Keep this inside the same failure boundary as ACP
+            // admission, otherwise a database error leaves a phantom run.
+            conversationService.appendUserMessage(
+                conversationId = conversationId,
+                conversationMode = state.conversationMode,
+                entryId = "$taskId-user",
+                text = userMessage,
+                attachments = attachments,
+                createdAt = state.createdAt
+            )
+            // `agent/select` changes the global default used by the Agent
+            // picker.  It is not a session binding and must not be issued as
+            // part of starting a conversation: two WebChat conversations can
+            // start concurrently with different Agents.  `session/prompt`
+            // carries the requested agentId and resolves the durable
+            // conversation owner at the ACP boundary.
             val arguments = buildWebAgentTurnArguments(
                 conversationId = conversationId,
                 userMessage = userMessage,
@@ -674,7 +688,7 @@ internal fun parseWebAgentEvent(event: Map<String, Any?>): WebAgentEventUpdate {
                     fallbackStatus = if (updateKind == "tool_call") {
                         "running"
                     } else {
-                        normalizeAgentToolStatus(update, "running")
+                        resolveAgentToolPayloadStatus(update, "running")
                     }
                 )
             )
@@ -880,7 +894,7 @@ private fun buildToolUpdate(
         entryId = agentEntryId(itemId, suffix),
         parentTaskId = parentTaskId,
         itemType = canonicalType,
-        status = normalizeAgentToolStatus(raw, fallbackStatus),
+        status = resolveAgentToolPayloadStatus(raw, fallbackStatus),
         raw = raw
     )
 }
@@ -995,28 +1009,13 @@ private fun agentProtocolToolStatus(type: String): String {
     }
 }
 
-private fun normalizeAgentToolStatus(
-    raw: Map<String, Any?>,
-    fallback: String
-): String {
-    if (raw["error"] != null || raw["success"] == false) return "error"
-    val exitCode = (raw["exitCode"] as? Number)?.toInt()
-        ?: (raw["exit_code"] as? Number)?.toInt()
-    if (exitCode != null && exitCode != 0) return "error"
-    return when (firstNonBlank(raw["status"], raw["state"])?.lowercase()) {
-        "running", "pending", "progress", "inprogress", "in_progress",
-        "executing", "started" -> "running"
-        "success", "succeeded", "completed", "complete", "applied", "done" -> "success"
-        "error", "failed", "failure", "rejected" -> "error"
-        "cancelled", "canceled", "incomplete", "interrupted", "aborted" -> "interrupted"
-        "timeout", "timedout" -> "timeout"
-        else -> if (raw["success"] == true) "success" else fallback
-    }
-}
-
 private fun agentToolStatusRank(status: String): Int {
     return when (status) {
-        "running" -> 0
+        // ACP permits a pending update while the tool is waiting for the
+        // client to answer session/request_permission. Treat pending and
+        // running as the same non-terminal phase so that transition is not
+        // discarded by the monotonic merge.
+        "pending", "running" -> 0
         "interrupted" -> 1
         "timeout" -> 2
         "error" -> 3

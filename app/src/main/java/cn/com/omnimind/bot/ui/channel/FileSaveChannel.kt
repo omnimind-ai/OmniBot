@@ -117,6 +117,7 @@ class FileSaveChannel {
             when (call.method) {
                 "saveFileWithSystemDialog" -> saveFileWithSystemDialog(call, result)
                 "openFile" -> openFile(call, result)
+                "openInBrowser" -> openInBrowser(call, result)
                 "shareFile" -> shareFile(call, result)
                 "shareText" -> shareText(call, result)
                 else -> result.notImplemented()
@@ -163,6 +164,63 @@ class FileSaveChannel {
             result.success(true)
         } catch (e: Exception) {
             OmniLog.e(TAG, "Failed to open file", e)
+            result.error("OPEN_FAILED", e.message, e.toString())
+        }
+    }
+
+    private fun openInBrowser(call: MethodCall, result: MethodChannel.Result) {
+        val activity = context as? Activity
+        if (activity == null) {
+            result.error("INIT_FAILED", "Not attached to activity", null)
+            return
+        }
+        val args = call.arguments as? Map<*, *>
+        val sourcePath = args?.get("sourcePath") as? String
+        val mimeType = args?.get("mimeType") as? String ?: "text/html"
+        if (sourcePath.isNullOrBlank()) {
+            result.error("INVALID_ARGS", "sourcePath is required", null)
+            return
+        }
+
+        try {
+            val sourceFile = File(sourcePath)
+            if (!sourceFile.exists()) {
+                result.error("INVALID_ARGS", "sourcePath does not exist", sourcePath)
+                return
+            }
+            val browserProbe = Intent(
+                Intent.ACTION_VIEW,
+                Uri.parse("https://example.com"),
+            ).apply {
+                addCategory(Intent.CATEGORY_BROWSABLE)
+            }
+            val browserPackage = activity.packageManager
+                .resolveActivity(browserProbe, PackageManager.MATCH_DEFAULT_ONLY)
+                ?.activityInfo
+                ?.packageName
+            if (browserPackage.isNullOrBlank()) {
+                result.error("OPEN_FAILED", "No web browser is installed", null)
+                return
+            }
+
+            val contentUri = buildShareableContentUri(activity, sourceFile)
+            val safeMimeType = resolveMimeType(sourceFile, mimeType)
+            val intent = buildViewIntent(
+                activity,
+                contentUri,
+                safeMimeType,
+                sourceFile.name,
+            ).apply {
+                // Resolve the browser using an HTTPS probe, then reuse the
+                // same read-only FileProvider URI for the local HTML file.
+                // This avoids handing the private app path to another app.
+                setPackage(browserPackage)
+            }
+            grantUriPermissionToResolvers(activity, intent, contentUri)
+            activity.startActivity(intent)
+            result.success(true)
+        } catch (e: Exception) {
+            OmniLog.e(TAG, "Failed to open file in browser", e)
             result.error("OPEN_FAILED", e.message, e.toString())
         }
     }

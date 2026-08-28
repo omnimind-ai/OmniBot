@@ -6,6 +6,17 @@ import 'package:ui/services/agent_runtime_service.dart';
 import 'package:ui/services/conversation_history_service.dart';
 import 'package:ui/services/storage_service.dart';
 import 'package:ui/theme/theme_context.dart';
+import 'package:ui/utils/ui.dart';
+
+String? _requestAgentId(Map<String, dynamic> cardData) {
+  final value = cardData['agentId']?.toString().trim() ?? '';
+  return value.isEmpty ? null : value;
+}
+
+int? _requestConversationId(Map<String, dynamic> cardData) {
+  final value = cardData['conversationId'];
+  return value is num ? value.toInt() : int.tryParse(value?.toString() ?? '');
+}
 
 class AgentRequestCard extends StatefulWidget {
   const AgentRequestCard({super.key, required this.cardData});
@@ -171,6 +182,9 @@ class _AgentRequestNoticeState extends State<AgentRequestNotice> {
       await AgentRuntimeService.respondToApproval(
         requestId: requestId,
         accepted: accepted,
+        sessionId: widget.cardData['sessionId']?.toString(),
+        agentId: _requestAgentId(widget.cardData),
+        conversationId: _requestConversationId(widget.cardData),
       );
       if (!mounted) return;
       setState(() {
@@ -180,6 +194,12 @@ class _AgentRequestNoticeState extends State<AgentRequestNotice> {
     } catch (_) {
       if (!mounted) return;
       setState(() => _submitting = false);
+      showToast(
+        Localizations.maybeLocaleOf(context)?.languageCode == 'en'
+            ? 'Reply was not sent. Try again.'
+            : '回复未送达，可以重试',
+        type: ToastType.warning,
+      );
     }
   }
 }
@@ -482,6 +502,9 @@ class _AgentRequestCardState extends State<AgentRequestCard> {
       return AgentRuntimeService.respondToApproval(
         requestId: requestId,
         accepted: accepted,
+        sessionId: widget.cardData['sessionId']?.toString(),
+        agentId: _requestAgentId(widget.cardData),
+        conversationId: _requestConversationId(widget.cardData),
       );
     }, accepted ? 'accepted' : 'declined');
   }
@@ -491,9 +514,19 @@ class _AgentRequestCardState extends State<AgentRequestCard> {
     if (requestId == null) return;
     await _submit(() {
       if (widget.cardData['structuredElicitation'] == true) {
-        return AgentRuntimeService.cancelElicitation(requestId: requestId);
+        return AgentRuntimeService.cancelElicitation(
+          requestId: requestId,
+          sessionId: widget.cardData['sessionId']?.toString(),
+          agentId: _requestAgentId(widget.cardData),
+          conversationId: _requestConversationId(widget.cardData),
+        );
       }
-      return AgentRuntimeService.ignoreUserInput(requestId: requestId);
+      return AgentRuntimeService.ignoreUserInput(
+        requestId: requestId,
+        sessionId: widget.cardData['sessionId']?.toString(),
+        agentId: _requestAgentId(widget.cardData),
+        conversationId: _requestConversationId(widget.cardData),
+      );
     }, 'ignored');
   }
 
@@ -508,6 +541,9 @@ class _AgentRequestCardState extends State<AgentRequestCard> {
         () => AgentRuntimeService.respondToElicitation(
           requestId: requestId,
           content: content,
+          sessionId: widget.cardData['sessionId']?.toString(),
+          agentId: _requestAgentId(widget.cardData),
+          conversationId: _requestConversationId(widget.cardData),
         ),
         'submitted',
         answers: content.values.map((value) => value.toString()).toList(),
@@ -522,6 +558,9 @@ class _AgentRequestCardState extends State<AgentRequestCard> {
           requestId: requestId,
           questionId: questionId,
           answers: <String>[answer],
+          sessionId: widget.cardData['sessionId']?.toString(),
+          agentId: _requestAgentId(widget.cardData),
+          conversationId: _requestConversationId(widget.cardData),
         );
       },
       'submitted',
@@ -550,9 +589,18 @@ class _AgentRequestCardState extends State<AgentRequestCard> {
     } catch (_) {
       if (!mounted) return;
       setState(() {
-        _localStatus = 'failed';
+        // Keep the request pending after a transport failure. The ACP
+        // request is still owned by the Harness and can be retried; marking
+        // it terminal here strands the Agent in its waiting state.
+        _localStatus = null;
         _isSubmitting = false;
       });
+      showToast(
+        Localizations.maybeLocaleOf(context)?.languageCode == 'en'
+            ? 'Reply was not sent. Try again.'
+            : '回复未送达，可以重试',
+        type: ToastType.warning,
+      );
     }
   }
 

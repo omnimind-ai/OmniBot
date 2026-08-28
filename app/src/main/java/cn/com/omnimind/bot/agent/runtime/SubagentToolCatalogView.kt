@@ -14,10 +14,9 @@ class SubagentToolCatalogView(
 ) : AgentToolCatalog {
     override val usesProgressiveDiscovery: Boolean = parent.usesProgressiveDiscovery
 
-
     override val toolsForModel: List<ChatCompletionTool> by lazy {
         parent.toolsForModel.filter { tool ->
-            tool.function.name in allowed
+            isAllowed(tool.function.name)
         }
     }
 
@@ -32,15 +31,29 @@ class SubagentToolCatalogView(
     }
 
     override fun searchTools(query: String, limit: Int): List<AgentToolSearchEntry> {
-        return parent.searchTools(query, limit).filter { it.name in allowed }
+        return parent.searchTools(query, limit).filter { isAllowed(it.name) }
     }
 
     override fun exposeToolNames(names: Set<String>) {
-        parent.exposeToolNames(names.intersect(allowed))
+        parent.exposeToolNames(names.filterTo(linkedSetOf(), ::isAllowed))
+    }
+
+    /**
+     * Profiles use the stable internal names, while direct Agent catalogs may
+     * expose common Harness names such as `read` or `bash`. Resolve both forms
+     * and reject an alias occupied by a plugin/MCP tool.
+     */
+    private fun isAllowed(toolName: String): Boolean {
+        if (toolName in allowed) return true
+        return allowed.any { sourceName ->
+            AgentToolDefinitions.modelFacingNameFor(sourceName) == toolName &&
+                parent.runtimeDescriptor(toolName).toolType ==
+                    parent.runtimeDescriptor(sourceName).toolType
+        }
     }
 
     private fun ensureAllowed(toolName: String) {
-        if (toolName !in allowed) {
+        if (!isAllowed(toolName)) {
             throw IllegalStateException(
                 "tool '$toolName' is not allowed for this subagent (whitelist=${allowed.size})"
             )

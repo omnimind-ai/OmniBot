@@ -19,6 +19,7 @@ class DebugOmniFlowControlReceiver : BroadcastReceiver() {
         val pendingResult = goAsync()
         val appContext = context.applicationContext
         val requestId = intent?.getStringExtra("requestId").orEmpty()
+        val resultFile = resultFileName(intent?.getStringExtra("resultFile"), requestId)
         scope.launch {
             val response = runCatching {
                 require(requestId.isNotBlank()) { "control_request_id_required" }
@@ -54,7 +55,7 @@ class DebugOmniFlowControlReceiver : BroadcastReceiver() {
                     "error" to (error.message ?: error.javaClass.simpleName),
                 )
             }
-            File(appContext.filesDir, RESULT_FILE).writeText(gson.toJson(response))
+            File(appContext.filesDir, resultFile).writeText(gson.toJson(response))
             Log.i(TAG, "control_finished requestId=$requestId success=${response["success"]}")
             pendingResult.finish()
         }
@@ -63,10 +64,19 @@ class DebugOmniFlowControlReceiver : BroadcastReceiver() {
     private companion object {
         const val SCHEMA_VERSION = "oob.control.v1"
         const val RESULT_FILE = "debug-omniflow-control-result.json"
+        private val REQUEST_RESULT_FILE = Regex("debug-omniflow-control-result-[A-Za-z0-9_-]+\\.json")
         const val TAG = "DebugOmniFlowControlReceiver"
         val SUPPORTED_OPERATIONS = setOf("observe", "act", "reset")
         val gson = GsonBuilder().disableHtmlEscaping().create()
         val mapType = object : TypeToken<Map<String, Any?>>() {}.type
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+        fun resultFileName(value: String?, requestId: String): String =
+            value?.trim()?.takeIf { REQUEST_RESULT_FILE.matches(it) }
+                ?: if (requestId.isNotBlank()) {
+                    "debug-omniflow-control-result-$requestId.json"
+                } else {
+                    RESULT_FILE
+                }
     }
 }

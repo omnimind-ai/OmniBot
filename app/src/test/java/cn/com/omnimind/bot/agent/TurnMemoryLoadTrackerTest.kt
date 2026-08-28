@@ -51,4 +51,11 @@ class TurnMemoryLoadTrackerTest {
         tracker.markLoaded("dup")
         assertEquals(1, tracker.loadedIds().size)
     }
+
+    @Test
+    fun `markLoadedIfAbsent is atomic for duplicate loads`() {
+        val tracker = TurnMemoryLoadTracker()
+        assertTrue(tracker.markLoadedIfAbsent("same-entry"))
+        assertFalse(tracker.markLoadedIfAbsent("same-entry"))
+    }
 }

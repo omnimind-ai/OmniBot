@@ -23,10 +23,12 @@ import 'package:ui/services/conversation_service.dart';
 import 'package:ui/services/omnibot_resource_service.dart';
 import 'package:ui/services/scheduled_task_storage_service.dart';
 import 'package:ui/services/storage_service.dart';
+import 'package:ui/features/home/pages/chat/services/chat_conversation_runtime_coordinator.dart';
 import 'package:ui/theme/app_colors.dart';
 import 'package:ui/theme/theme_context.dart';
 import 'package:ui/utils/cache_util.dart';
 import 'package:ui/utils/ui.dart';
+import 'package:ui/widgets/agent_brand_icon.dart';
 
 part 'home_drawer_actions.dart';
 part 'home_drawer_conversation_list.dart';
@@ -175,10 +177,14 @@ class HomeDrawerState extends ConsumerState<HomeDrawer> {
   _conversationListChangedSubscription;
   StreamSubscription<bool>? _sidebarPolicyChangedSubscription;
   StreamSubscription<List<ScheduledTask>>? _scheduledTasksChangedSubscription;
+  final ChatConversationRuntimeCoordinator _runtimeCoordinator =
+      ChatConversationRuntimeCoordinator.instance;
 
   @override
   void initState() {
     super.initState();
+    _runtimeCoordinator.ensureInitialized();
+    _runtimeCoordinator.addListener(_handleRuntimeCoordinatorChanged);
     _searchController.addListener(_handleSearchQueryChanged);
     _searchFocusNode.addListener(_handleSearchFocusChanged);
     _titleEditingFocusNode.addListener(_handleTitleEditingFocusChanged);
@@ -206,6 +212,7 @@ class HomeDrawerState extends ConsumerState<HomeDrawer> {
     _conversationListChangedSubscription?.cancel();
     _sidebarPolicyChangedSubscription?.cancel();
     _scheduledTasksChangedSubscription?.cancel();
+    _runtimeCoordinator.removeListener(_handleRuntimeCoordinatorChanged);
     if (_searchFocusNode.hasFocus) {
       widget.onSearchFocusChanged?.call(false);
     }
@@ -220,6 +227,13 @@ class HomeDrawerState extends ConsumerState<HomeDrawer> {
       ..dispose();
     _titleEditingController.dispose();
     super.dispose();
+  }
+
+  void _handleRuntimeCoordinatorChanged() {
+    if (!mounted) return;
+    // Runtime state is already canonical; rebuilding is enough. Do not reload
+    // the conversation list or derive a second event state in the drawer.
+    setState(() {});
   }
 
   void _handleScheduledTasksChanged(List<ScheduledTask> tasks) {

@@ -78,11 +78,15 @@ class _AgentToolSummaryCardState extends State<AgentToolSummaryCard> {
     final palette = context.omniPalette;
     final cardBackgroundColor = context.isDarkTheme
         ? Color.alphaBlend(
-            statusColor.withValues(alpha: status == 'running' ? 0.07 : 0.045),
+            statusColor.withValues(
+              alpha: status == 'running' || status == 'pending' ? 0.07 : 0.045,
+            ),
             palette.surfacePrimary,
           )
         : Color.alphaBlend(
-            statusColor.withValues(alpha: status == 'running' ? 0.055 : 0.035),
+            statusColor.withValues(
+              alpha: status == 'running' || status == 'pending' ? 0.055 : 0.035,
+            ),
             palette.surfacePrimary,
           );
     // Keep the capsule presentation, but give it one calm surface and a
@@ -160,15 +164,15 @@ class _AgentToolSummaryCardState extends State<AgentToolSummaryCard> {
                       ],
                     )
                   : isPlan
-                      ? Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            capsule,
-                            _PlanEntriesBlock(cardData: cardData),
-                          ],
-                        )
-                      : capsule,
+                  ? Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        capsule,
+                        _PlanEntriesBlock(cardData: cardData),
+                      ],
+                    )
+                  : capsule,
             ),
           ),
         ),
@@ -232,7 +236,9 @@ class _AgentToolSummaryCardState extends State<AgentToolSummaryCard> {
                 _StatusIcon(status: status, toolType: cardData['toolType']),
                 const SizedBox(width: 7),
                 Flexible(
-                  child: status == 'running'
+                  child:
+                      status == 'running' &&
+                          !isAgentToolAwaitingConfirmation(cardData)
                       ? _FlowingToolTitleText(text: title, style: titleStyle)
                       : Text(
                           title,
@@ -256,7 +262,10 @@ class _AgentToolSummaryCardState extends State<AgentToolSummaryCard> {
                     borderRadius: BorderRadius.circular(999),
                   ),
                   child: Text(
-                    status == 'running' ? typeLabel : statusLabel,
+                    status == 'running' &&
+                            !isAgentToolAwaitingConfirmation(cardData)
+                        ? typeLabel
+                        : statusLabel,
                     style: TextStyle(
                       color: statusTagTextColor,
                       fontSize: 10,
@@ -297,10 +306,7 @@ class _PlanEntriesBlock extends StatelessWidget {
               ),
               child: Container(
                 width: double.infinity,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 9,
-                  vertical: 7,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 7),
                 decoration: BoxDecoration(
                   color: context.isDarkTheme
                       ? palette.surfaceElevated.withValues(alpha: 0.52)
@@ -929,7 +935,10 @@ class _InlineToolCallCardState extends State<_InlineToolCallCard> {
                                 height: 1.18,
                               ),
                               fileNameColor: palette.accentPrimary,
-                              shimmer: isAgentTool && status == 'running',
+                              shimmer:
+                                  isAgentTool &&
+                                  status == 'running' &&
+                                  !isAgentToolAwaitingConfirmation(cardData),
                             ),
                           ),
                           if (diffStatLabel != null) ...[
@@ -1333,7 +1342,8 @@ String _inlineToolTrailingLabel(
   Map<String, dynamic> cardData, {
   required String status,
 }) {
-  final label = status == 'running'
+  final label =
+      status == 'running' && !isAgentToolAwaitingConfirmation(cardData)
       ? resolveAgentToolTypeLabel(cardData)
       : resolveAgentToolStatusLabel(cardData);
   return label.trim();
@@ -2109,10 +2119,12 @@ class _StatusIcon extends StatelessWidget {
                   ),
                 )
               : Icon(
-                  resolveAgentToolStatusIcon(
-                    status,
-                    (toolType ?? '').toString(),
-                  ),
+                  status == 'pending'
+                      ? Icons.hourglass_top_rounded
+                      : resolveAgentToolStatusIcon(
+                          status,
+                          (toolType ?? '').toString(),
+                        ),
                   size: 16,
                   color: iconColor,
                 ),

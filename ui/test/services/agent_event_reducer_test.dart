@@ -535,6 +535,42 @@ void main() {
     expect(runtime.messages.single.text, 'replayed');
   });
 
+  test('projects a live ACP user chunk only when the host query is absent', () {
+    final liveEvent = <String, dynamic>{
+      'method': 'session/update',
+      'turnId': 'turn-live-user',
+      'params': {
+        'sessionId': 'session-live-user',
+        'turnId': 'turn-live-user',
+        'update': {
+          'sessionUpdate': 'user_message_chunk',
+          'messageId': 'dsh-user-message',
+          'content': {'type': 'text', 'text': 'DSH 实时用户问题'},
+        },
+      },
+    };
+
+    reducer.reduce(runtime: runtime, event: liveEvent);
+
+    expect(runtime.messages, hasLength(1));
+    expect(runtime.messages.single.user, 1);
+    expect(runtime.messages.single.text, 'DSH 实时用户问题');
+
+    final hostRuntime = ChatConversationRuntimeState(
+      conversationId: 43,
+      mode: kChatRuntimeModeAgent,
+    );
+    addTearDown(hostRuntime.dispose);
+    hostRuntime.currentDispatchTurnId = 'turn-live-user-ai';
+    hostRuntime.messages.add(
+      ChatMessageModel.userMessage('DSH 实时用户问题', id: 'turn-live-user-user'),
+    );
+    reducer.reduce(runtime: hostRuntime, event: liveEvent);
+
+    expect(hostRuntime.messages, hasLength(1));
+    expect(hostRuntime.messages.single.id, 'turn-live-user-user');
+  });
+
   test('maps ACP elicitation requests into the shared request card', () {
     final result = reducer.reduce(
       runtime: runtime,
@@ -2973,6 +3009,30 @@ void main() {
     expect(card['subagentEvents'], hasLength(1));
   });
 
+  test('preserves the ACP terminal status over raw tool output', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'turnId': 'turn-actionable-status',
+        'params': {
+          'sessionId': 'session-actionable-status',
+          'update': {
+            'sessionUpdate': 'tool_call_update',
+            'toolCallId': 'actionable-1',
+            'kind': 'execute',
+            'title': '执行高权限操作',
+            'status': 'pending',
+            'rawOutput': {'success': false, 'question': '请确认执行高权限操作'},
+          },
+        },
+      },
+    );
+
+    final card = runtime.messages.single.cardData!;
+    expect(card['status'], 'pending');
+  });
+
   test(
     'keeps ACP subagent progress carried in rawInput and merges children',
     () {
@@ -3339,43 +3399,40 @@ void main() {
     }
   });
 
-  test(
-    'preserves an ACP terminal timeout as the existing timeout card state',
-    () {
-      reducer.reduce(
-        runtime: runtime,
-        event: {
-          'message': {
-            'method': 'session/update',
-            'turnId': 'turn-terminal-timeout',
-            'params': {
-              'sessionId': 'session-terminal-timeout',
-              'update': {
-                'sessionUpdate': 'tool_call_update',
-                'toolCallId': 'terminal-timeout-1',
-                'kind': 'other',
-                'title': 'bash',
-                'status': 'failed',
-                'rawOutput': {
-                  'toolType': 'terminal',
-                  'toolName': 'bash',
-                  'summary': 'Command timed out',
-                  'success': false,
-                  'timedOut': true,
-                  'terminalOutput': 'partial output',
-                },
+  test('uses the ACP failed status even when tool output says timeout', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'method': 'session/update',
+          'turnId': 'turn-terminal-timeout',
+          'params': {
+            'sessionId': 'session-terminal-timeout',
+            'update': {
+              'sessionUpdate': 'tool_call_update',
+              'toolCallId': 'terminal-timeout-1',
+              'kind': 'other',
+              'title': 'bash',
+              'status': 'failed',
+              'rawOutput': {
+                'toolType': 'terminal',
+                'toolName': 'bash',
+                'summary': 'Command timed out',
+                'success': false,
+                'timedOut': true,
+                'terminalOutput': 'partial output',
               },
             },
           },
         },
-      );
+      },
+    );
 
-      final cardData = runtime.messages.single.cardData!;
-      expect(cardData['toolType'], 'terminal');
-      expect(cardData['status'], 'timeout');
-      expect(cardData['terminalOutput'], 'partial output');
-    },
-  );
+    final cardData = runtime.messages.single.cardData!;
+    expect(cardData['toolType'], 'terminal');
+    expect(cardData['status'], 'error');
+    expect(cardData['terminalOutput'], 'partial output');
+  });
 
   test(
     'turns an ACP missing-accessibility result into an authorization card',

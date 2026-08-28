@@ -49,6 +49,8 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -553,6 +555,10 @@ class BrowserUseEngine(
         """
     }
     private val mainScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    // A WebView has one mutable tab set and one active tab. Keep operations on
+    // a workspace ordered, while allowing different workspace engines to run
+    // independently.
+    private val actionMutex = Mutex()
     private val tabs = linkedMapOf<Int, BrowserTab>()
     private var nextTabId = 0
     private var activeTabId: Int? = null
@@ -561,6 +567,8 @@ class BrowserUseEngine(
     private val viewportHeight = appContext.resources.displayMetrics.heightPixels.coerceAtLeast(1920)
     private val density = appContext.resources.displayMetrics.density
     private var currentAgentRunId: String = agentRunId
+    @Volatile
+    private var activeAgentRunId: String? = null
     private var currentWorkspace: AgentWorkspaceDescriptor = workspace
     private val hostStore = BrowserHostStore.create(workspace.id)
     private var defaultUserAgentProfile =
@@ -589,6 +597,15 @@ class BrowserUseEngine(
         get() = currentWorkspace.id
 
     suspend fun handleHostCall(
+        method: String,
+        arguments: Map<String, Any?> = emptyMap()
+    ): Any? {
+        return actionMutex.withLock {
+            handleHostCallInternal(method = method, arguments = arguments)
+        }
+    }
+
+    private suspend fun handleHostCallInternal(
         method: String,
         arguments: Map<String, Any?> = emptyMap()
     ): Any? {
@@ -764,6 +781,26 @@ class BrowserUseEngine(
     }
 
     suspend fun execute(request: BrowserUseRequest): BrowserUseOutcome {
+        return actionMutex.withLock { executeInternal(request) }
+    }
+
+    suspend fun execute(
+        request: BrowserUseRequest,
+        agentRunId: String,
+        workspace: AgentWorkspaceDescriptor,
+    ): BrowserUseOutcome {
+        return actionMutex.withLock {
+            bindRunContext(agentRunId = agentRunId, workspace = workspace)
+            activeAgentRunId = agentRunId
+            try {
+                executeInternal(request)
+            } finally {
+                activeAgentRunId = null
+            }
+        }
+    }
+
+    private suspend fun executeInternal(request: BrowserUseRequest): BrowserUseOutcome {
         return when (request.action) {
             BrowserUseAction.NEW_TAB -> executeNewTab(request)
             BrowserUseAction.LIST_TABS -> simpleOutcome(request, listTabsPayload())
@@ -1186,7 +1223,10 @@ class BrowserUseEngine(
         }
     }
 
-    suspend fun requestInterruptCurrentAction() {
+    suspend fun requestInterruptCurrentAction(agentRunId: String? = null) {
+        if (agentRunId != null && activeAgentRunId != null && activeAgentRunId != agentRunId) {
+            return
+        }
         withContext(Dispatchers.Main.immediate) {
             tabs.values.forEach { tab ->
                 runCatching { tab.webView.stopLoading() }

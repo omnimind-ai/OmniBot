@@ -49,6 +49,26 @@ class AgentBrandIcon extends StatelessWidget {
     ),
   };
 
+  /// Keep persisted/remote aliases on the same visual identity. An empty id
+  /// intentionally remains unknown here; callers that have domain
+  /// knowledge (for example, legacy drawer conversations) must resolve that
+  /// explicitly.
+  static String normalizeAgentId(String agentId) {
+    final normalized = agentId.trim().toLowerCase();
+    return switch (normalized) {
+      'xiaowan' || 'xiaowan-acp' => 'xiaowan-acp',
+      'codex' || 'codex-acp' || 'codex-remote' => 'codex-acp',
+      'claude' || 'claude-code' || 'claude-code-acp' => 'claude-code-acp',
+      'opencode' || 'open-code' || 'opencode-acp' => 'opencode-acp',
+      'deepseek' ||
+      'deepseek-acp' ||
+      'deepseek-harness' ||
+      'deepseek_harness' ||
+      'deepseek-harness-acp' => 'deepseek-harness-acp',
+      _ => normalized,
+    };
+  }
+
   /// Whether [agentId] has an explicit visual identity supplied by the app.
   ///
   /// Known Harness artwork is already a complete mark. Presentation layers
@@ -56,13 +76,13 @@ class AgentBrandIcon extends StatelessWidget {
   /// badge, which produces the visible "circle inside a circle" for marks
   /// such as Codex. Unknown custom Harnesses still use the generic host badge.
   static bool hasKnownBrand(String agentId) {
-    return _brands.containsKey(agentId.trim());
+    return _brands.containsKey(normalizeAgentId(agentId));
   }
 
   @override
   Widget build(BuildContext context) {
     final palette = context.omniPalette;
-    final normalizedAgentId = agentId.trim();
+    final normalizedAgentId = normalizeAgentId(agentId);
     final brand = _brands[normalizedAgentId];
     if (brand?.presentation == _AgentBrandPresentation.avatar) {
       return _XiaowanAgentAvatar(size: size);

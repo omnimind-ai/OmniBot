@@ -149,44 +149,34 @@ String normalizeAgentToolStatus(
   Map<String, dynamic> raw, {
   String fallbackStatus = 'running',
 }) {
-  // ACP tool updates can be terminal with `status: failed` while preserving
-  // the more specific timeout reason in adapter-defined rawOutput.
-  if (raw['timedOut'] == true || raw['timed_out'] == true) {
-    return 'timeout';
-  }
-  if (raw['error'] != null) {
-    return 'error';
-  }
-  final success = raw['success'];
-  if (success == false) {
-    return 'error';
-  }
-  final exitCode = _asInt(raw['exitCode'] ?? raw['exit_code']);
+  // ACP ToolCallStatus is the only lifecycle source of truth. rawOutput and
+  // rawResult are opaque tool data; reading status-like fields from them
+  // creates a second lifecycle and was the cause of the success/failure split
+  // in the command transcript.
   final explicit = _firstString([raw['status'], raw['state']]);
   final normalized = explicit?.trim().toLowerCase();
   if (normalized != null && normalized.isNotEmpty) {
-    if (normalized == 'running' ||
-        normalized == 'pending' ||
+    if (normalized == 'pending') {
+      return 'pending';
+    }
+    if (normalized == 'in_progress' ||
+        normalized == 'running' ||
         normalized == 'progress' ||
         normalized == 'inprogress' ||
-        normalized == 'in_progress' ||
         normalized == 'executing' ||
         normalized == 'started') {
       return 'running';
     }
-    if (normalized == 'success' ||
+    if (normalized == 'completed' ||
+        normalized == 'success' ||
         normalized == 'succeeded' ||
-        normalized == 'completed' ||
         normalized == 'complete' ||
         normalized == 'applied' ||
         normalized == 'done') {
-      if (exitCode != null && exitCode != 0) {
-        return 'error';
-      }
       return 'success';
     }
-    if (normalized == 'error' ||
-        normalized == 'failed' ||
+    if (normalized == 'failed' ||
+        normalized == 'error' ||
         normalized == 'failure' ||
         normalized == 'rejected') {
       return 'error';
@@ -202,10 +192,17 @@ String normalizeAgentToolStatus(
       return 'timeout';
     }
   }
+  // Non-ACP item snapshots do not always carry a status. Keep their
+  // compatibility projection based on fields at the item boundary only;
+  // never inspect rawOutput/rawResult for a lifecycle decision.
+  if (raw['error'] != null || raw['success'] == false) {
+    return 'error';
+  }
+  final exitCode = _asInt(raw['exitCode'] ?? raw['exit_code']);
   if (exitCode != null && exitCode != 0) {
     return 'error';
   }
-  if (success == true) {
+  if (raw['success'] == true) {
     return 'success';
   }
   return fallbackStatus;

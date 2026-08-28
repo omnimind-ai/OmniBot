@@ -152,9 +152,12 @@ OMNI_RELEASE_KEY_PWD=***
 ### ACP Runtime Maintenance Contract
 
 The shared Agent boundary is the official ACP session surface:
-`session/new`, `session/load`, `session/list`, `session/prompt`,
-`session/update`, and `session/cancel`. Every local Agent, PC Bridge, WebChat
-entry point, and future Harness adapter must use this boundary.
+`initialize`, `session/new`, `session/load`/`session/resume`, `session/list`,
+`session/prompt`, `session/update`, `session/cancel`, `session/close`, and
+`session/delete` where the negotiated capability supports them. JSON-RPC
+`$/cancel_request` is request cancellation, not a second Agent lifecycle.
+Every local Agent, PC Bridge, WebChat entry point, and future Harness adapter
+must use this boundary.
 
 Keep Agent state keyed by `conversationId` (local history), `sessionId`,
 `turnId`, `messageId`, and `toolCallId`. Do not add or revive Flutter/Kotlin
@@ -163,6 +166,36 @@ private stream protocols such as `AgentStreamEvent`, `acp/presentation`,
 capabilities must be exposed through the shared ACP runtime and MCP/plugin
 modules, then consumed by `AgentEventReducer` and
 `ChatConversationRuntimeCoordinator`.
+
+The following lifecycle invariants are permanent project rules:
+
+- Design changes from the top down: first map `Conversation -> ACP Session ->
+  Turn -> Item`, then reuse the existing owner and lifecycle before adding
+  code. A symptom must not create a second protocol, reducer, state machine,
+  or retry path.
+- A user send is one logical ACP `turnId`. A network/process attempt is only a
+  transport detail and must never replay the logical turn or create a second
+  user-visible reasoning/tool sequence.
+- Transport retry has one owner, is bounded, and is allowed only before
+  visible output. After output begins, preserve the existing turn and surface
+  the terminal transport error; do not silently switch routes or replay it.
+- `conversationId`, `sessionId`, `turnId`, `messageId`, and `toolCallId` are
+  the identity keys. `session/update` is session-scoped in ACP v1 and may not
+  carry a wire `turnId`; in that case the active host prompt reservation is
+  the attribution boundary, never a text snapshot or timing guess.
+- The Conversation history is the user-visible source of truth. ACP echo,
+  replay, reconnect, and snapshot events may confirm or merge existing items,
+  but must be idempotent and must not erase an already committed user query.
+- ACP event projection has one reducer and one ordering/merge policy. A
+  provider-specific adapter may normalize official ACP payloads, but it may
+  not invent a parallel presentation event or business lifecycle.
+- Agent processes and ACP sessions may run in parallel and may share reusable
+  infrastructure, but their state must remain scoped by Conversation and
+  session identity. Switching conversations must select the matching session
+  before sending a prompt or applying an update.
+- “Retrying”, “waiting for approval/input”, “cancelled”, “failed”, and
+  “completed” are ACP/runtime states, not free-form UI guesses. Show them only
+  when the owning lifecycle emits or proves that state.
 
 The plugin system is for MCP/tool capabilities. The standalone external App
 surface, WebView launcher, desktop shortcut, and `window.omni.app` bridge are

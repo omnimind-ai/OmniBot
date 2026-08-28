@@ -260,6 +260,7 @@ object ModelProviderConfigStore {
             ContentEndpointSecurity.requireSafe(
                 rawUrl = stripDirectRequestUrlMarker(normalizedBaseUrl),
                 allowInsecureLoopback = CredentialEndpointSecurity.isDebugLoopbackAllowed(),
+                allowInsecureTransport = true,
             )
         }
         val mmkv = MMKV.defaultMMKV()
@@ -564,6 +565,7 @@ object ModelProviderConfigStore {
         val safe = ContentEndpointSecurity.requireSafe(
             rawUrl = stripDirectRequestUrlMarker(rawUrl),
             allowInsecureLoopback = CredentialEndpointSecurity.isDebugLoopbackAllowed(),
+            allowInsecureTransport = true,
         )
         val uri = URI(safe).normalize()
         val scheme = uri.scheme.lowercase()
@@ -1031,6 +1033,7 @@ object ModelProviderConfigStore {
             ContentEndpointSecurity.requireSafe(
                 rawUrl = endpoint,
                 allowInsecureLoopback = CredentialEndpointSecurity.isDebugLoopbackAllowed(),
+                allowInsecureTransport = true,
             )
             true
         } catch (_: Exception) {

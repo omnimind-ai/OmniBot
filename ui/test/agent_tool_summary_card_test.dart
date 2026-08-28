@@ -93,6 +93,33 @@ void main() {
     expect(icon.size, 18);
   });
 
+  testWidgets('pending privileged confirmation is shown as waiting', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AgentToolSummaryCard(
+            cardData: {
+              'type': 'agent_tool_summary',
+              'uiStyle': 'agent_tool',
+              'status': 'running',
+              'toolName': 'android_privileged_action',
+              'toolTitle': '安卓高级动作',
+              'toolType': 'clarify',
+              'question': '高权限 shell 命令尚未执行，请确认后执行一次。',
+              'missingFields': ['arguments.confirmed'],
+            },
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('等待确认'), findsOneWidget);
+    expect(find.text('执行中'), findsNothing);
+    expect(find.text('安卓高级动作'), findsOneWidget);
+  });
+
   testWidgets('completed VLM tool renders GUI completion card', (tester) async {
     await tester.pumpWidget(
       MaterialApp(

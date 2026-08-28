@@ -1157,7 +1157,7 @@ class AgentOrchestratorTest {
     }
 
     @Test
-    fun `retries transient stream failures before succeeding`() = runBlocking {
+    fun `surfaces transient stream failure without replaying the logical turn`() = runBlocking {
         val llmClient = FakeLlmClient(
             turns = listOf(assistantTurn(content = "已在重连后成功完成。")),
             failures = listOf(
@@ -1181,15 +1181,47 @@ class AgentOrchestratorTest {
             )
         )
 
-        assertTrue(result is AgentResult.Success)
-        assertEquals(1, callback.retryingEvents.size)
-        assertEquals("已在重连后成功完成。", callback.finalChatMessages().last())
-        assertTrue(callback.errors.isEmpty())
-        assertFalse(callback.lastErrorRetryable)
+        assertTrue(result is AgentResult.Error)
+        assertEquals(1, llmClient.requests.size)
+        assertTrue(callback.retryingEvents.isEmpty())
+        assertEquals("HTTP 503: upstream temporarily unavailable", callback.errors.single())
+        assertTrue(callback.lastErrorRetryable)
+        assertTrue(callback.finalChatMessages().isEmpty())
     }
 
     @Test
-    fun `retries transient http 500 before succeeding`() = runBlocking {
+    fun `does not replay a provider turn in the orchestrator after client retry policy`() = runBlocking {
+        val llmClient = FakeLlmClient(
+            turns = listOf(assistantTurn(content = "不应被第二次调用")),
+            failures = listOf(
+                AgentStreamRequestException(
+                    statusCode = 503,
+                    reason = "upstream temporarily unavailable",
+                    responseBody = null
+                )
+            )
+        )
+        val callback = RecordingCallback()
+
+        val result = createOrchestrator(
+            llmClient = llmClient,
+            toolExecutor = FakeToolExecutor()
+        ).run(
+            AgentOrchestrator.Input(
+                callback = callback,
+                initialMessages = initialMessages("不要重复执行"),
+                executionEnv = FakeExecutionEnvironment("不要重复执行")
+            )
+        )
+
+        assertTrue(result is AgentResult.Error)
+        assertEquals(1, llmClient.requests.size)
+        assertTrue(callback.retryingEvents.isEmpty())
+        assertTrue(callback.finalChatMessages().isEmpty())
+    }
+
+    @Test
+    fun `surfaces transient http 500 without replaying the logical turn`() = runBlocking {
         val llmClient = FakeLlmClient(
             turns = listOf(assistantTurn(content = "服务恢复后已完成。")),
             failures = listOf(
@@ -1210,9 +1242,11 @@ class AgentOrchestratorTest {
             )
         )
 
-        assertTrue(result is AgentResult.Success)
-        assertEquals(2, llmClient.requests.size)
-        assertEquals(1, callback.retryingEvents.size)
+        assertTrue(result is AgentResult.Error)
+        assertEquals(1, llmClient.requests.size)
+        assertTrue(callback.retryingEvents.isEmpty())
+        assertEquals("HTTP 500: internal server error", callback.errors.single())
+        assertTrue(callback.lastErrorRetryable)
     }
 
     @Test
@@ -1244,7 +1278,7 @@ class AgentOrchestratorTest {
     }
 
     @Test
-    fun `surfaces retryable terminal error after exhausting transient retries`() = runBlocking {
+    fun `surfaces retryable transient error without orchestrator retries`() = runBlocking {
         val llmClient = FakeLlmClient(
             turns = emptyList(),
             failures = List(4) {
@@ -1269,7 +1303,8 @@ class AgentOrchestratorTest {
         )
 
         assertTrue(result is AgentResult.Error)
-        assertEquals(3, callback.retryingEvents.size)
+        assertEquals(1, llmClient.requests.size)
+        assertTrue(callback.retryingEvents.isEmpty())
         assertEquals(
             "HTTP 503: upstream temporarily unavailable",
             callback.errors.single()

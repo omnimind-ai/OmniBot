@@ -1,14 +1,9 @@
 package cn.com.omnimind.bot.agent.runtime
 
-import java.util.concurrent.atomic.AtomicInteger
-import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeout
 
 class LocalAcpRuntimeTest {
     @Test
@@ -32,29 +27,149 @@ class LocalAcpRuntimeTest {
     }
 
     @Test
-    fun `turn reservation does not serialize independent prompt execution`() = runBlocking {
-        val coordinator = AcpTurnStartCoordinator()
-        val executingCount = AtomicInteger(0)
-        val bothExecuting = CompletableDeferred<Unit>()
-        val releaseExecutions = CompletableDeferred<Unit>()
+    fun `turn lifecycle admits independent sessions without a global serial gate`() {
+        val lifecycle = AcpTurnLifecycleRegistry()
+        assertTrue(
+            lifecycle.reserve("session-a", "turn-a", null)
+                is AcpTurnReservation.Started
+        )
+        assertTrue(
+            lifecycle.reserve("session-b", "turn-b", null)
+                is AcpTurnReservation.Started
+        )
+    }
 
-        val turns = List(2) {
-            async {
-                coordinator.run {
-                    suspend {
-                        if (executingCount.incrementAndGet() == 2) {
-                            bothExecuting.complete(Unit)
-                        }
-                        releaseExecutions.await()
-                    }
-                }
-            }
-        }
+    @Test
+    fun `android turn resource identity includes the ACP session`() {
+        assertFalse(
+            agentTurnRuntimeId("session-a", "same-turn") ==
+                agentTurnRuntimeId("session-b", "same-turn")
+        )
+    }
 
-        withTimeout(1_000) { bothExecuting.await() }
-        releaseExecutions.complete(Unit)
-        turns.awaitAll()
-        Unit
+    @Test
+    fun `same session has one turn and request retry is idempotent`() {
+        val lifecycle = AcpTurnLifecycleRegistry()
+        val started = lifecycle.reserve("session", "turn-1", "request-1")
+        assertTrue(started is AcpTurnReservation.Started)
+        assertTrue(
+            lifecycle.reserve("session", "turn-1-retry", "request-1")
+                is AcpTurnReservation.InFlight
+        )
+        assertTrue(
+            lifecycle.reserve("session", "turn-2", "request-2")
+                is AcpTurnReservation.Busy
+        )
+        lifecycle.finish("session", "turn-1", "error", "failed")
+        assertTrue(
+            lifecycle.reserve("session", "turn-1-retry", "request-1")
+                is AcpTurnReservation.Completed
+        )
+    }
+
+    @Test
+    fun `transport routing follows identity instead of global runtime state`() {
+        assertTrue(
+            shouldRouteLocalAcpRequest(
+                remoteEnabled = true,
+                method = "session/prompt",
+                requestedAgentId = "xiaowan-acp",
+                sessionAgentId = null,
+                conversationAgentId = null,
+                localCodexSessionOwned = false,
+            )
+        )
+        assertFalse(
+            shouldRouteLocalAcpRequest(
+                remoteEnabled = true,
+                method = "session/prompt",
+                requestedAgentId = null,
+                sessionAgentId = null,
+                conversationAgentId = null,
+                localCodexSessionOwned = false,
+            )
+        )
+        assertTrue(
+            shouldRouteLocalAcpRequest(
+                remoteEnabled = true,
+                method = "session/prompt",
+                requestedAgentId = "codex-acp",
+                sessionAgentId = null,
+                conversationAgentId = null,
+                localCodexSessionOwned = true,
+            )
+        )
+        assertFalse(
+            shouldRouteLocalAcpRequest(
+                remoteEnabled = true,
+                method = "session/prompt",
+                requestedAgentId = "codex-acp",
+                sessionAgentId = null,
+                conversationAgentId = null,
+                localCodexSessionOwned = false,
+            )
+        )
+        assertTrue(
+            shouldRouteLocalAcpRequest(
+                remoteEnabled = true,
+                method = "respondToServerRequest",
+                requestedAgentId = null,
+                sessionAgentId = "xiaowan-acp",
+                conversationAgentId = null,
+                localCodexSessionOwned = false,
+            )
+        )
+    }
+
+    @Test
+    fun `server request reply follows request owner when session metadata is absent`() {
+        assertEquals(
+            AcpServerRequestRoute.Local("deepseek-harness-acp"),
+            resolveAcpServerRequestRoute(
+                remoteEnabled = true,
+                requestedAgentId = null,
+                sessionAgentId = null,
+                conversationAgentId = null,
+                pendingRequestAgentId = "deepseek-harness-acp",
+                selectedRuntime = AcpServerRequestRuntime.REMOTE,
+            ),
+        )
+        assertEquals(
+            AcpServerRequestRoute.Local("deepseek-harness-acp"),
+            resolveAcpServerRequestRoute(
+                remoteEnabled = true,
+                requestedAgentId = null,
+                sessionAgentId = null,
+                conversationAgentId = null,
+                pendingRequestAgentId = "deepseek-harness-acp",
+                selectedRuntime = AcpServerRequestRuntime.LOCAL,
+            ),
+        )
+    }
+
+    @Test
+    fun `server request owner is released after the response lifecycle`() {
+        val registry = AcpServerRequestOwnerRegistry()
+        registry.register("request-1", "deepseek-harness-acp", "session-1")
+
+        assertEquals(
+            AcpServerRequestOwner("deepseek-harness-acp", "session-1"),
+            registry.ownerFor("request-1"),
+        )
+
+        registry.remove("request-1")
+        assertEquals(null, registry.ownerFor("request-1"))
+    }
+
+    @Test
+    fun `only current owner can finish and terminal transition is single shot`() {
+        val lifecycle = AcpTurnLifecycleRegistry()
+        lifecycle.reserve("session", "turn-1", "request-1")
+        assertTrue(lifecycle.finish("session", "other", "completed") == null)
+        assertTrue(lifecycle.finish("session", "turn-1", "timeout") != null)
+        assertTrue(lifecycle.finish("session", "turn-1", "completed") == null)
+        val retry = lifecycle.reserve("session", "turn-2", "request-1")
+        assertTrue(retry is AcpTurnReservation.Completed)
     }
 
     @Test

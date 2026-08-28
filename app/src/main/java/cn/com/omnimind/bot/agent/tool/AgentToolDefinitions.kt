@@ -707,8 +707,8 @@ object AgentToolDefinitions {
                 put(
                     "description",
                     text(
-                        "通过 Shizuku 执行安卓高权限动作。这条能力链路独立于 `terminal_execute`：既保留受控 typed action，也支持 `action=shell.exec` 的一次性任意 shell。若确实需要保留 cwd、环境变量或 shell 状态，请改用 `android_privileged_session_*`。当前后端：$backendLabel。当前可见 action：$actionList。`shell.exec` 与高风险动作都必须在 `arguments.confirmed` 中显式确认。",
-                        "Run Android privileged actions through Shizuku. This path stays separate from `terminal_execute`: it keeps the typed allowlisted actions and also supports one-shot arbitrary shell via `action=shell.exec`. When you truly need persistent cwd, environment, or shell state, switch to `android_privileged_session_*`. Current backend: $backendLabel. Currently visible actions: $actionList. `shell.exec` and high-risk actions both require explicit confirmation in `arguments.confirmed`."
+                        "通过 Shizuku 执行安卓高权限动作。这条能力链路独立于 `terminal_execute`：既保留受控 typed action，也支持 `action=shell.exec` 的一次性任意 shell。若确实需要保留 cwd、环境变量或 shell 状态，请改用 `android_privileged_session_*`。当前后端：$backendLabel。当前可见 action：$actionList。需要授权时由 ACP 客户端统一请求确认。",
+                        "Run Android privileged actions through Shizuku. This path stays separate from `terminal_execute`: it keeps the typed allowlisted actions and also supports one-shot arbitrary shell via `action=shell.exec`. When you truly need persistent cwd, environment, or shell state, switch to `android_privileged_session_*`. Current backend: $backendLabel. Currently visible actions: $actionList. Permission is requested through the standard ACP client boundary when needed."
                     )
                 )
                 put(
@@ -739,8 +739,8 @@ object AgentToolDefinitions {
                             put(
                                 "description",
                                 text(
-                                    "动作参数对象。typed action 只传该 action 需要的字段；当 `action=shell.exec` 时，在这里传入 `command`、可选 `timeoutSeconds`、`workingDirectory`、`environment`，以及已获得用户明确同意后才传 `confirmed=true`。",
-                                    "Arguments object for the selected action. For typed actions, only include the fields that action needs. When `action=shell.exec`, provide `command`, optional `timeoutSeconds`, `workingDirectory`, `environment`, and only pass `confirmed=true` after explicit user consent."
+                                    "动作参数对象。typed action 只传该 action 需要的字段；当 `action=shell.exec` 时，在这里传入 `command`、可选 `timeoutSeconds`、`workingDirectory`、`environment`。需要授权时由 ACP 客户端统一请求确认。",
+                                    "Arguments object for the selected action. For typed actions, only include the fields that action needs. When `action=shell.exec`, provide `command`, optional `timeoutSeconds`, `workingDirectory`, and `environment`. Permission is requested through the standard ACP client boundary when needed."
                                 )
                             )
                         }
@@ -775,8 +775,8 @@ object AgentToolDefinitions {
                 put(
                     "description",
                     text(
-                        "启动一个可复用的 Shizuku 高权限 shell 会话，仅用于确实需要跨多轮保留 cwd、环境变量或 shell 状态的任务。当前后端：$backendLabel。此操作需要用户明确确认。",
-                        "Start a reusable Shizuku privileged shell session. Use it only when a task truly needs persistent cwd, environment variables, or shell state across turns. Current backend: $backendLabel. This operation requires explicit user confirmation."
+                        "启动一个可复用的 Shizuku 高权限 shell 会话，仅用于确实需要跨多轮保留 cwd、环境变量或 shell 状态的任务。当前后端：$backendLabel。需要确认时由 ACP 客户端统一请求权限。",
+                        "Start a reusable Shizuku privileged shell session. Use it only when a task truly needs persistent cwd, environment variables, or shell state across turns. Current backend: $backendLabel. When confirmation is needed, the standard ACP client boundary requests permission."
                     )
                 )
                 put(
@@ -803,10 +803,6 @@ object AgentToolDefinitions {
                             putJsonObject("additionalProperties") {
                                 put("type", "string")
                             }
-                        }
-                        putJsonObject("confirmed") {
-                            put("type", "boolean")
-                            put("description", text("只有在用户已明确同意时才传 true。", "Set to true only after the user has explicitly confirmed."))
                         }
                     }
                 }
@@ -835,8 +831,8 @@ object AgentToolDefinitions {
                 put(
                     "description",
                     text(
-                        "向已有的 Shizuku 高权限 shell 会话发送一条命令，并等待该命令完成。当前后端：$backendLabel。每次执行都需要用户明确确认。",
-                        "Send a command to an existing Shizuku privileged shell session and wait for that command to finish. Current backend: $backendLabel. Every execution requires explicit user confirmation."
+                        "向已有的 Shizuku 高权限 shell 会话发送一条命令，并等待该命令完成。当前后端：$backendLabel。每次需要确认时由 ACP 客户端统一请求权限。",
+                        "Send a command to an existing Shizuku privileged shell session and wait for that command to finish. Current backend: $backendLabel. When confirmation is needed, permission is requested through the standard ACP client boundary."
                     )
                 )
                 put(
@@ -860,10 +856,6 @@ object AgentToolDefinitions {
                         putJsonObject("timeoutSeconds") {
                             put("type", "integer")
                             put("description", text("等待该命令完成的超时时间，默认 120 秒，范围 5-600。", "Timeout in seconds while waiting for the command to finish. Default 120, range 5-600."))
-                        }
-                        putJsonObject("confirmed") {
-                            put("type", "boolean")
-                            put("description", text("只有在用户已明确同意时才传 true。", "Set to true only after the user has explicitly confirmed."))
                         }
                     }
                     putJsonArray("required") {
@@ -2340,6 +2332,10 @@ object AgentToolDefinitions {
     }
 
     fun modelFacingToolNames(): Set<String> = nativeModelToolAliases.values.toSet()
+
+    /** Resolve an internal tool name to the direct-Agent model name. */
+    internal fun modelFacingNameFor(toolName: String): String =
+        nativeModelToolAliases[toolName] ?: toolName
 
     fun reservedToolNames(): Set<String> {
         val locale = PromptLocale.EN_US

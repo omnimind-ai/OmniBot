@@ -191,6 +191,7 @@ class OmniAgentExecutor(
         terminalEnvironment: Map<String, String>,
         callback: AgentCallback,
         runControl: AgentRunControl = NoOpAgentRunControl,
+        permissionRequester: AgentPermissionRequester? = null,
         continueMode: Boolean = false,
         historyMessagesOverride: List<ChatCompletionMessage>? = null
     ): AgentResult {
@@ -375,6 +376,7 @@ class OmniAgentExecutor(
                         modelProviderProfileId = modelOverride?.providerProfileId,
                         terminalEnvironment = terminalEnvironment,
                         runControl = runControl,
+                        permissionRequester = permissionRequester,
                         longTermMemoryIndex = ltmIndex,
                         turnMemoryLoadTracker = memoryLoadTracker
                     )

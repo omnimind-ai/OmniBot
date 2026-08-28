@@ -413,6 +413,52 @@ class HttpAgentLlmClientTest {
     }
 
     @Test
+    fun `does not retry a stream after visible output has started`() = runBlocking {
+        val scope = CoroutineScope(Job() + Dispatchers.Default)
+        var attempts = 0
+        val updates = mutableListOf<String>()
+        try {
+            val client = HttpAgentLlmClient(
+                scope = scope,
+                modelOverride = testOverride(),
+                streamRequestOp = { _, _, listener, _, _, _, _, _, _, _ ->
+                    attempts += 1
+                    val source = dummyEventSource()
+                    listener.onOpen(source, okResponse())
+                    listener.onEvent(
+                        source,
+                        null,
+                        "message",
+                        """{"choices":[{"delta":{"content":"半截输出"}}]}""",
+                    )
+                    listener.onFailure(
+                        source,
+                        IllegalStateException("Software caused connection abort"),
+                        null,
+                    )
+                    source
+                },
+                maxTransientStreamRetries = 2,
+                transientStreamRetryDelayMs = 0L,
+                json = json,
+            )
+
+            val error = runCatching {
+                client.streamTurn(
+                    request = simpleRequest(),
+                    onContentUpdate = { updates += it },
+                )
+            }.exceptionOrNull()
+
+            assertTrue(error is AgentStreamRequestException)
+            assertEquals(1, attempts)
+            assertEquals(listOf("半截输出"), updates)
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
     fun `incomplete streamed tool call retries the same model turn once`() = runBlocking {
         val scope = CoroutineScope(Job() + Dispatchers.Default)
         var attempts = 0
@@ -615,6 +661,44 @@ class HttpAgentLlmClientTest {
             )
             assertEquals(true, variants.first().request.streamOptions?.includeUsage)
             assertNull(variants[1].request.streamOptions)
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `custom API request variants never emit deprecated legacy function fields`() {
+        val scope = CoroutineScope(Job() + Dispatchers.Default)
+        try {
+            val client = HttpAgentLlmClient(scope = scope, modelOverride = testOverride())
+            val request = simpleRequest().copy(
+                functions = listOf(ChatCompletionFunction(name = "click")),
+                functionCall = JsonPrimitive("auto"),
+                tools = listOf(
+                    ChatCompletionTool(
+                        function = ChatCompletionFunction(name = "click"),
+                    ),
+                ),
+                toolChoice = JsonPrimitive("auto"),
+            )
+
+            val variants = client.buildRequestVariants(
+                request = request,
+                routeInfo = routeInfo(
+                    requestedModel = "custom-model",
+                    resolvedModel = "custom-model",
+                    protocolType = "openai_compatible",
+                    requiresReasoningEcho = false,
+                    apiBase = "https://example.com/v1/chat/completions",
+                ),
+            )
+
+            assertTrue(variants.isNotEmpty())
+            variants.forEach { variant ->
+                assertNull(variant.request.functions)
+                assertNull(variant.request.functionCall)
+                assertTrue(variant.request.tools.isNotEmpty())
+            }
         } finally {
             scope.cancel()
         }

@@ -129,6 +129,40 @@ class AgentRuntimeProtocolPayloadTest {
     }
 
     @Test
+    fun adapterDependencyFailureIsOfflineNotMissingEvenWhenStderrMentionsNoSuchFile() {
+        val message = """
+            Failed to initialize ACP agent DeepSeek Harness:
+            Error [ERR_MODULE_NOT_FOUND]: Cannot find package @deepseek-ai/dsh-tools
+            proot warning: No such file or directory
+        """.trimIndent()
+
+        assertFalse(isMissingAcpAgentFailure(message))
+        assertTrue(isAcpInitializeFailure(message))
+
+        val health = managedAgentHealthFromProbe(
+            enabled = true,
+            launchInstalled = true,
+            healthCheckPassed = true,
+            previous = AcpAgentHealth(
+                status = AcpAgentHealth.STATUS_OFFLINE,
+                installed = true,
+                error = message,
+            ),
+        )
+
+        assertEquals(AcpAgentHealth.STATUS_OFFLINE, health.status)
+        assertEquals(true, health.installed)
+        assertEquals(message, health.error)
+    }
+
+    @Test
+    fun commandMissingStillUsesMissingStatus() {
+        assertTrue(isMissingAcpAgentFailure("ACP launch command not found: dsh-acp-android"))
+        assertTrue(isMissingAcpAgentFailure("sh: dsh-acp-android: command not found"))
+        assertFalse(isMissingAcpAgentFailure("plugin dependency failed to resolve"))
+    }
+
+    @Test
     fun sharedAgentModelUsesTheProviderBoundToTheAgentScene() {
         assertEquals(
             "provider-model",
@@ -223,6 +257,47 @@ class AgentRuntimeProtocolPayloadTest {
     }
 
     @Test
+    fun appSessionListPaginationUsesOpaqueCursorAndStableSnapshot() {
+        val sessions = (1..3).map { index ->
+            mapOf<String, Any?>("id" to "session-$index")
+        }
+        val identity: (Map<String, Any?>) -> String = { it["id"].toString() }
+
+        val first = paginateAcpItems(
+            sessions,
+            limit = 2,
+            cursor = null,
+            identity = identity,
+        )
+        assertEquals(listOf("session-1", "session-2"), first.items.map { it["id"] })
+        assertFalse(first.nextCursor.isNullOrBlank())
+        // The cursor is an opaque protocol value, not a session id or a
+        // second application-owned session object.
+        assertFalse(first.nextCursor!!.contains("session-3"))
+
+        val second = paginateAcpItems(
+            sessions,
+            limit = 2,
+            cursor = first.nextCursor,
+            identity = identity,
+        )
+        assertEquals(listOf("session-3"), second.items.map { it["id"] })
+        assertNull(second.nextCursor)
+
+        try {
+            paginateAcpItems(
+                sessions + mapOf<String, Any?>("id" to "session-4"),
+                limit = 2,
+                cursor = first.nextCursor,
+                identity = identity,
+            )
+            assertTrue("A cursor must not paginate a changed snapshot", false)
+        } catch (error: IllegalArgumentException) {
+            assertTrue(error.message.orEmpty().contains("changed"))
+        }
+    }
+
+    @Test
     fun acpSessionCompatibilityAddsLegacyIdsOnlyToResponses() {
         val response = AcpSessionCompatibility.withLegacyIds(
             mapOf("sessionId" to "session-1", "promptId" to "prompt-1")
@@ -230,6 +305,77 @@ class AgentRuntimeProtocolPayloadTest {
 
         assertEquals("session-1", response["threadId"])
         assertEquals("prompt-1", response["turnId"])
+    }
+
+    @Test
+    fun standardAcpSessionWireParamsStripHostOnlyIdentityFields() {
+        val params = standardAcpSessionWireParams(
+            method = "session/set_config_option",
+            args = mapOf(
+                "sessionId" to "session-1",
+                "threadId" to "legacy-thread-1",
+                "conversationId" to 42L,
+                "agentId" to "xiaowan-acp",
+                "configId" to "permission_mode",
+                "value" to "workspace-write",
+                "conversationMode" to "write",
+                "_meta" to mapOf("source" to "test"),
+            )
+        )
+
+        assertEquals(
+            mapOf(
+                "sessionId" to "session-1",
+                "configId" to "permission_mode",
+                "value" to "workspace-write",
+                "_meta" to mapOf("source" to "test"),
+            ),
+            params
+        )
+        assertFalse(params.containsKey("conversationId"))
+        assertFalse(params.containsKey("agentId"))
+        assertFalse(params.containsKey("threadId"))
+    }
+
+    @Test
+    fun standardAcpForkWireParamsKeepOnlyOfficialSessionFields() {
+        val params = standardAcpSessionWireParams(
+            method = "session/fork",
+            args = mapOf(
+                "sessionId" to "session-1",
+                "cwd" to "/workspace",
+                "additionalDirectories" to listOf("/workspace/shared"),
+                "conversationId" to 42L,
+                "agentId" to "codex-acp",
+            )
+        )
+
+        assertEquals(
+            mapOf(
+                "sessionId" to "session-1",
+                "cwd" to "/workspace",
+                "additionalDirectories" to listOf("/workspace/shared"),
+            ),
+            params
+        )
+    }
+
+    @Test
+    fun permissionRequestUsesOfficialToolCallUpdateShape() {
+        val toolCall = standardAcpPermissionToolCallPayload(
+            toolCallId = "tool-1",
+            title = "Run command",
+            optionNames = listOf("Allow once", "Reject"),
+        )
+
+        assertEquals("tool-1", toolCall["toolCallId"])
+        assertEquals("in_progress", toolCall["status"])
+        assertFalse(toolCall.containsKey("detail"))
+        assertEquals(
+            "Allow once\nReject",
+            ((toolCall["content"] as List<*>).single() as Map<*, *>)
+                .let { it["content"] as Map<*, *> }["text"]
+        )
     }
 
     @Test

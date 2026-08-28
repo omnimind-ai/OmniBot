@@ -197,9 +197,21 @@ internal fun SessionUpdate.toAcpSessionNotification(
         ).apply { putAcpMeta(_meta) }
     )
 
-    // The client is the author of user messages, so a replayed echo of one adds
-    // nothing to the timeline.
-    is SessionUpdate.UserMessageChunk -> null
+    // ACP agents may echo the submitted prompt as a user_message_chunk. Keep
+    // the official update intact: the host Conversation reducer decides
+    // whether it is a replay or a live echo and merges it idempotently with
+    // the locally committed user message. Dropping it here makes the DSH
+    // prompt disappear before it can reach the shared ACP projection.
+    is SessionUpdate.UserMessageChunk -> AcpSessionNotification(
+        sessionId = threadId,
+        update = linkedMapOf<String, Any?>(
+            "sessionUpdate" to "user_message_chunk",
+            "content" to content.acpPayload(),
+        ).apply {
+            messageId?.value?.let { put("messageId", it) }
+            putAcpMeta(_meta)
+        }
+    )
 }
 
 /**
@@ -217,7 +229,8 @@ internal fun SessionUpdate.isTurnScoped(): Boolean = when (this) {
     is SessionUpdate.ToolCallUpdate,
     is SessionUpdate.PlanUpdate,
     is SessionUpdate.PlanUpdateV2,
-    is SessionUpdate.PlanRemoved -> true
+    is SessionUpdate.PlanRemoved,
+    is SessionUpdate.UserMessageChunk -> true
     else -> false
 }
 

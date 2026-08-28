@@ -296,11 +296,13 @@ class ImageGenerationToolHandler(
                 apiKey = route.apiKey,
                 customHeaders = route.customHeaders,
                 requestJson = requestJson,
+                allowInsecureTransport = true,
             )
             OkHttpManager.sensitiveContentCall(
                 client = httpClient,
                 request = request,
                 allowInsecureLoopback = CredentialEndpointSecurity.isDebugLoopbackAllowed(),
+                allowInsecureTransport = true,
             ).awaitResponse()
         }
 
@@ -325,10 +327,12 @@ class ImageGenerationToolHandler(
         apiKey: String,
         customHeaders: Map<String, String>,
         requestJson: JSONObject,
+        allowInsecureTransport: Boolean = false,
     ): Request {
         val safeEndpoint = ContentEndpointSecurity.requireSafe(
             rawUrl = endpoint,
             allowInsecureLoopback = CredentialEndpointSecurity.isDebugLoopbackAllowed(),
+            allowInsecureTransport = allowInsecureTransport,
         )
         val mergedHeaders = ProviderCustomHeaderUtils.mergeHeaders(
             builtIn = linkedMapOf(
@@ -399,6 +403,7 @@ class ImageGenerationToolHandler(
         val safeUrl = ContentEndpointSecurity.requireSafe(
             rawUrl = url,
             allowInsecureLoopback = CredentialEndpointSecurity.isDebugLoopbackAllowed(),
+            allowInsecureTransport = !platform,
         )
         val request = Request.Builder().url(safeUrl).get().build()
         val client = if (platform) platformDownloadClient else httpClient
@@ -406,6 +411,7 @@ class ImageGenerationToolHandler(
             client = client,
             request = request,
             allowInsecureLoopback = CredentialEndpointSecurity.isDebugLoopbackAllowed(),
+            allowInsecureTransport = !platform,
         ).awaitResponse().use { response ->
             if (!response.isSuccessful) {
                 throw IllegalStateException("image download failed (${response.code})")

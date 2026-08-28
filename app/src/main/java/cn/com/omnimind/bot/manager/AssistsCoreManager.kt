@@ -621,7 +621,7 @@ class AssistsCoreManager(private val context: Context) {
                 ).toString()
                 rawResultJson = previewJson
                 success = true
-                status = "success"
+                status = AgentConversationHistoryRepository.STATUS_RUNNING
             }
             is ToolExecutionResult.PermissionRequired -> {
                 val names = result.missing.map(::localizedPermissionName)

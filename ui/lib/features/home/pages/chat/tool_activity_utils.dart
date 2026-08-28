@@ -180,7 +180,8 @@ Map<String, dynamic>? resolveActiveAgentToolCard(
   List<Map<String, dynamic>> cards,
 ) {
   for (final card in cards) {
-    if ((card['status'] ?? '').toString() == 'running') {
+    final status = (card['status'] ?? '').toString().trim().toLowerCase();
+    if (status == 'running' || status == 'pending') {
       return card;
     }
   }
@@ -268,6 +269,12 @@ String resolveAgentToolTerminalOutput(Map<String, dynamic> cardData) {
 }
 
 String resolveAgentToolPreview(Map<String, dynamic> cardData) {
+  if (isAgentToolAwaitingConfirmation(cardData)) {
+    final question = (cardData['question'] ?? '').toString().trim();
+    if (question.isNotEmpty) {
+      return LegacyTextLocalizer.localize(question);
+    }
+  }
   final toolType = (cardData['toolType'] ?? '').toString();
   if (toolType == 'terminal') {
     final output = resolveAgentToolTerminalOutput(cardData).trim();
@@ -324,12 +331,18 @@ String resolveAgentToolStatusLabel(Map<String, dynamic> cardData) {
   if (status == 'interrupted') {
     return LegacyTextLocalizer.localize('中断');
   }
+  if (status == 'pending') {
+    return LegacyTextLocalizer.localize('等待确认');
+  }
   switch (status) {
     case 'success':
       return LegacyTextLocalizer.localize('成功');
     case 'error':
       return LegacyTextLocalizer.localize('失败');
     default:
+      if (isAgentToolAwaitingConfirmation(cardData)) {
+        return LegacyTextLocalizer.localize('等待确认');
+      }
       if (toolType == 'terminal') return LegacyTextLocalizer.localize('运行中');
       if (toolType == 'browser') return LegacyTextLocalizer.localize('浏览中');
       if (toolType == 'search') return LegacyTextLocalizer.localize('搜索中');
@@ -339,6 +352,31 @@ String resolveAgentToolStatusLabel(Map<String, dynamic> cardData) {
       if (toolType == 'review') return LegacyTextLocalizer.localize('审阅中');
       return LegacyTextLocalizer.localize('执行中');
   }
+}
+
+/// A permission request is represented by the standard ACP `pending` lifecycle
+/// state. Legacy clarification cards remain recognized for restored history,
+/// but new ACP permission requests do not need a local business state.
+bool isAgentToolAwaitingConfirmation(Map<String, dynamic> cardData) {
+  final toolType = (cardData['toolType'] ?? '').toString().trim().toLowerCase();
+  final status = (cardData['status'] ?? '').toString().trim().toLowerCase();
+  if (status == 'pending') return true;
+  if (toolType != 'clarify' || status != 'running') return false;
+  final question = (cardData['question'] ?? '').toString().trim();
+  if (question.isEmpty) return false;
+  final fields = <String>[
+    if (cardData['missingFields'] is Iterable)
+      ...(cardData['missingFields'] as Iterable).map(
+        (value) => value.toString(),
+      ),
+    if (cardData['missing_fields'] is Iterable)
+      ...(cardData['missing_fields'] as Iterable).map(
+        (value) => value.toString(),
+      ),
+  ];
+  return fields.any(
+    (field) => field.trim().toLowerCase().endsWith('confirmed'),
+  );
 }
 
 String resolveAgentToolTypeLabel(Map<String, dynamic> cardData) {

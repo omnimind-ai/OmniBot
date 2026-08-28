@@ -19,6 +19,7 @@ object CredentialEndpointSecurity {
         rawUrl: String,
         hasCredential: Boolean,
         allowInsecureLoopback: Boolean = false,
+        allowInsecureTransport: Boolean = false,
     ): String {
         val normalized = rawUrl.trim()
         require(normalized.isNotEmpty()) { "Credential endpoint URL is required." }
@@ -37,6 +38,9 @@ object CredentialEndpointSecurity {
         }
         if (!hasCredential) return normalized
         if (scheme == "https" || scheme == "wss") return normalized
+        if (allowInsecureTransport && (scheme == "http" || scheme == "ws")) {
+            return normalized
+        }
         if (
             allowInsecureLoopback &&
             (scheme == "http" || scheme == "ws") &&

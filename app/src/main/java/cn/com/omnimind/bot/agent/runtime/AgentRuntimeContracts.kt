@@ -31,6 +31,13 @@ interface AgentExecutionEnvironment {
     val terminalEnvironment: Map<String, String>
     val runControl: AgentRunControl
 
+    /**
+     * The ACP client-side permission boundary for tools that need approval.
+     * Null is retained for non-ACP callers; those callers must not invent a
+     * second wire protocol and should apply their own host policy.
+     */
+    val permissionRequester: AgentPermissionRequester? get() = null
+
     /** Long-term memory slug index. Null when unavailable; tools handle gracefully. */
     val longTermMemoryIndex: LongTermMemoryIndex? get() = null
 
@@ -55,9 +62,19 @@ data class DefaultAgentExecutionEnvironment(
     override val modelProviderProfileId: String? = null,
     override val terminalEnvironment: Map<String, String> = emptyMap(),
     override val runControl: AgentRunControl = NoOpAgentRunControl,
+    override val permissionRequester: AgentPermissionRequester? = null,
     override val longTermMemoryIndex: LongTermMemoryIndex? = null,
     override val turnMemoryLoadTracker: TurnMemoryLoadTracker? = null
 ) : AgentExecutionEnvironment
+
+fun interface AgentPermissionRequester {
+    /** Returns true only when the user selected an allow option. */
+    suspend fun requestPermission(
+        toolCallId: String,
+        title: String,
+        detail: String,
+    ): Boolean
+}
 
 data class AgentToolSearchEntry(
     val name: String,

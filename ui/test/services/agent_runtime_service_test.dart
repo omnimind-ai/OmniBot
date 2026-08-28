@@ -490,6 +490,52 @@ void main() {
     });
   });
 
+  test('user input response carries its host routing identity', () async {
+    MethodCall? capturedCall;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      capturedCall = call;
+      return <String, dynamic>{'ok': true};
+    });
+
+    await AgentRuntimeService.respondToUserInput(
+      requestId: 'request-1',
+      questionId: 'answer',
+      answers: <String>['继续'],
+      sessionId: 'dsh-session-1',
+      agentId: 'deepseek-harness-acp',
+      conversationId: 42,
+    );
+
+    expect(capturedCall?.arguments, {
+      'requestId': 'request-1',
+      'agentId': 'deepseek-harness-acp',
+      'conversationId': 42,
+      'sessionId': 'dsh-session-1',
+      'response': {
+        'answers': {
+          'answer': {
+            'answers': <String>['继续'],
+          },
+        },
+      },
+    });
+  });
+
+  test('server response is not considered submitted without an ACP ACK', () {
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      return <String, dynamic>{};
+    });
+
+    expect(
+      AgentRuntimeService.respondToUserInput(
+        requestId: 'request-1',
+        questionId: 'answer',
+        answers: <String>['继续'],
+      ),
+      throwsStateError,
+    );
+  });
+
   test('readSession requests history by default', () async {
     MethodCall? capturedCall;
     messenger.setMockMethodCallHandler(channel, (call) async {

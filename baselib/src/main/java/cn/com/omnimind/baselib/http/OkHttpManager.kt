@@ -116,6 +116,7 @@ object OkHttpManager {
     fun sensitiveContentClient(
         client: OkHttpClient,
         allowInsecureLoopback: Boolean = false,
+        allowInsecureTransport: Boolean = false,
     ): OkHttpClient = client.newBuilder()
         .followRedirects(false)
         .followSslRedirects(false)
@@ -124,6 +125,7 @@ object OkHttpManager {
                 ContentEndpointSecurity.requireSafe(
                     rawUrl = chain.request().url.toString(),
                     allowInsecureLoopback = allowInsecureLoopback,
+                    allowInsecureTransport = allowInsecureTransport,
                 )
             } catch (_: IllegalArgumentException) {
                 throw IOException("Sensitive content endpoint was rejected.")
@@ -137,12 +139,18 @@ object OkHttpManager {
         client: OkHttpClient,
         request: Request,
         allowInsecureLoopback: Boolean = false,
+        allowInsecureTransport: Boolean = false,
     ): Call {
         ContentEndpointSecurity.requireSafe(
             rawUrl = request.url.toString(),
             allowInsecureLoopback = allowInsecureLoopback,
+            allowInsecureTransport = allowInsecureTransport,
         )
-        return sensitiveContentClient(client, allowInsecureLoopback).newCall(request)
+        return sensitiveContentClient(
+            client = client,
+            allowInsecureLoopback = allowInsecureLoopback,
+            allowInsecureTransport = allowInsecureTransport,
+        ).newCall(request)
     }
 
     /** Applies the same final-request gate to SSE, whose factory otherwise owns call creation. */

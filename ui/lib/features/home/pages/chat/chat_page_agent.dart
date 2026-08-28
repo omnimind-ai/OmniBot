@@ -1863,6 +1863,32 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     String? modelOverride,
     String? collaborationModeOverride,
   }) async {
+    // Freeze the dispatch target before the first await. The page is allowed
+    // to switch conversations while status/config/session calls are in
+    // flight, but that must not retarget this prompt to the newly visible
+    // ACP. The coordinator owns the old runtime; this request owns this
+    // immutable binding.
+    final dispatchTargetGeneration = _conversationTargetRequestId;
+    final dispatchTarget = _resolvedThreadTarget;
+    final dispatchMode = _activeMode;
+    final dispatchModeKey = _modeKey(dispatchMode);
+    final dispatchConversationId =
+        _currentConversationId ?? dispatchTarget?.conversationId;
+    final dispatchAgentId =
+        (dispatchTarget?.agentId ?? _activeAcpAgentId ?? _kXiaowanAcpAgentId)
+            .trim();
+    final dispatchSessionId = _activeAgentThreadId?.trim();
+    final dispatchPermissionMode = _agentPermissionMode;
+    final dispatchReasoningEffort = _activeAgentReasoningEffort;
+    final dispatchCollaborationMode =
+        collaborationModeOverride ?? _activeAgentCollaborationMode;
+    final dispatchTerminalEnvironment = _buildAgentTerminalEnvironmentPayload();
+    final dispatchActiveModel = _activeAgentModelId;
+    final dispatchLoadedModelSource = _loadedAgentModelSourceKey;
+    var dispatchMessages = List<ChatMessageModel>.from(_messages);
+    bool isDispatchTargetCurrent() =>
+        mounted && dispatchTargetGeneration == _conversationTargetRequestId;
+
     // Prime the active turn before status probing, ACP connection, adapter
     // preparation, or conversation persistence. The chat list can therefore
     // show the selected Agent and an elapsed processing state immediately,
@@ -1880,18 +1906,17 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     // the native runtime for status. DSH preparation/provider probes may take
     // several seconds, but no empty thinking card should be shown before ACP
     // emits a real reasoning/tool/text event.
-    final preflightConversationId = _currentConversationId;
+    final preflightConversationId = dispatchConversationId;
     if (preflightConversationId != null) {
-      _syncRuntimeSnapshotForMode(_activeMode);
       _runtimeCoordinator.registerTask(
         taskId: aiMessageId,
         conversationId: preflightConversationId,
-        mode: _modeKey(_activeMode),
+        mode: dispatchModeKey,
       );
       _runtimeCoordinator.beginAcpTurn(
         taskId: aiMessageId,
         conversationId: preflightConversationId,
-        mode: _modeKey(_activeMode),
+        mode: dispatchModeKey,
       );
     }
 
@@ -1899,7 +1924,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     try {
       status = await _refreshConnectedAgentRuntimeStatus();
     } catch (error) {
-      if (mounted) {
+      if (isDispatchTargetCurrent()) {
         _currentDispatchTurnId = aiMessageId;
         handleAgentError('Agent 连接失败: $error');
       }
@@ -1908,99 +1933,150 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       }
       return;
     }
-    final remoteCodex = agentModelSourceKey(status) == 'remote';
+    // Target metadata is authoritative. Runtime status is a shared/global
+    // snapshot and may still describe the previous ACP during a switch.
+    final remoteCodex =
+        dispatchTarget?.isRemoteCodexSessionTarget == true ||
+        dispatchTarget?.agentRuntime?.trim().toLowerCase() == 'remote' ||
+        dispatchAgentId == _kRemoteCodexModeAgentId ||
+        (dispatchTarget == null && agentModelSourceKey(status) == 'remote');
     int? conversationId;
     if (remoteCodex) {
-      conversationId = _ensureRemoteCodexRuntimeForCurrentMessages();
+      conversationId = dispatchSessionId == null || dispatchSessionId.isEmpty
+          ? _ensureRemoteCodexRuntimeForCurrentMessages()
+          : _ensureRemoteCodexRuntimeForThread(dispatchSessionId);
     } else {
-      try {
-        await _ensureActiveConversationReadyForStreaming();
-      } catch (error) {
-        if (mounted) {
-          _currentDispatchTurnId = aiMessageId;
-          handleAgentError('Conversation setup failed. Please retry. $error');
-        }
-        if (preflightConversationId != null) {
-          _runtimeCoordinator.unregisterTask(aiMessageId);
-        }
-        return;
-      }
-      conversationId = _currentConversationId;
       if (conversationId == null) {
-        if (mounted) {
+        if (!isDispatchTargetCurrent()) {
+          return;
+        }
+        try {
+          await _ensureActiveConversationReadyForStreaming();
+        } catch (error) {
+          if (isDispatchTargetCurrent()) {
+            _currentDispatchTurnId = aiMessageId;
+            handleAgentError('Conversation setup failed. Please retry. $error');
+          }
+          _runtimeCoordinator.unregisterTask(aiMessageId);
+          return;
+        }
+        if (!isDispatchTargetCurrent()) {
+          _runtimeCoordinator.unregisterTask(aiMessageId);
+          return;
+        }
+        conversationId = _currentConversationId;
+      }
+      if (conversationId == null) {
+        if (isDispatchTargetCurrent()) {
           _currentDispatchTurnId = aiMessageId;
           handleAgentError('Conversation setup failed. Please retry.');
         }
-        if (preflightConversationId != null) {
-          _runtimeCoordinator.unregisterTask(aiMessageId);
-        }
+        _runtimeCoordinator.unregisterTask(aiMessageId);
         return;
       }
     }
 
     final resolvedConversationId = conversationId;
-    _syncRuntimeSnapshotForMode(_activeMode);
-    _currentDispatchTurnId = aiMessageId;
+    if (isDispatchTargetCurrent()) {
+      // The user bubble is created before this method, but ACP bootstrap can
+      // replace the runtime projection while awaiting status/session setup.
+      // Reconcile the captured submission into the current page snapshot
+      // before ACP emits its live user echo, so both paths converge on one
+      // visible conversation message.
+      final currentMessages = List<ChatMessageModel>.from(_messages);
+      final expectedUserId = aiMessageId.endsWith('-ai')
+          ? '${aiMessageId.substring(0, aiMessageId.length - 3)}-user'
+          : null;
+      ChatMessageModel? submittedUser;
+      for (final message in dispatchMessages) {
+        if (message.user != 1) continue;
+        if (expectedUserId != null && message.id == expectedUserId) {
+          submittedUser = message;
+          break;
+        }
+      }
+      if (submittedUser == null && messageText.trim().isNotEmpty) {
+        for (final message in dispatchMessages) {
+          if (message.user == 1 && message.text == messageText) {
+            submittedUser = message;
+            break;
+          }
+        }
+      }
+      if (submittedUser != null &&
+          !currentMessages.any((message) => message.id == submittedUser!.id)) {
+        currentMessages.insert(0, submittedUser);
+      }
+      dispatchMessages = currentMessages;
+      _syncRuntimeSnapshotForMode(dispatchMode, messages: dispatchMessages);
+      _currentDispatchTurnId = aiMessageId;
+    }
     _runtimeCoordinator.registerTask(
       taskId: aiMessageId,
       conversationId: resolvedConversationId,
-      mode: _modeKey(_activeMode),
+      mode: dispatchModeKey,
     );
     _runtimeCoordinator.beginAcpTurn(
       taskId: aiMessageId,
       conversationId: resolvedConversationId,
-      mode: _modeKey(_activeMode),
+      mode: dispatchModeKey,
     );
     if (!remoteCodex) {
       await ConversationHistoryService.saveConversationMessages(
         resolvedConversationId,
-        List<ChatMessageModel>.from(_messages),
+        dispatchMessages,
         mode: ConversationMode.agent,
       );
     }
 
-    final collaborationModeForTurn =
-        collaborationModeOverride ?? _activeAgentCollaborationMode;
-    final turnUsesPlanMode = _isAgentPlanMode(collaborationModeForTurn);
+    final turnUsesPlanMode = _isAgentPlanMode(dispatchCollaborationMode);
     try {
-      final turnModel = await _resolveAgentRequestModel(
-        status,
+      final turnModel = selectAgentRequestModel(
+        status: status,
         overrideModel: modelOverride,
+        activeModel: dispatchActiveModel,
+        activeModelSourceMatches:
+            dispatchLoadedModelSource == agentModelSourceKey(status),
       );
       final response = await AgentRuntimeService.promptSession(
         conversationId: remoteCodex ? null : resolvedConversationId,
-        sessionId: _activeAgentThreadId,
+        sessionId: dispatchSessionId,
         // Keep the request id stable across a retry of this message. The ACP
         // runtime uses it to return the original turn instead of replaying
         // tool calls.
         requestId: aiMessageId,
-        agentId: remoteCodex ? null : _activeAcpAgentId,
+        agentId: remoteCodex ? null : dispatchAgentId,
         text: messageText,
         attachments: attachments,
-        approvalPolicy: _agentPermissionMode.approvalPolicy,
-        approvalsReviewer: _agentPermissionMode.approvalsReviewer,
-        sandboxPolicy: _agentPermissionMode.sandboxPolicy,
+        approvalPolicy: dispatchPermissionMode.approvalPolicy,
+        approvalsReviewer: dispatchPermissionMode.approvalsReviewer,
+        sandboxPolicy: dispatchPermissionMode.sandboxPolicy,
         model: turnModel,
-        effort: _activeAgentReasoningEffort,
-        collaborationMode: collaborationModeForTurn,
+        effort: dispatchReasoningEffort,
+        collaborationMode: dispatchCollaborationMode,
         // The Agent page owns ConversationMode.agent. Keep the mode on the
         // canonical ACP prompt so built-in agents read the same durable
         // history bucket that this page writes.
         conversationMode: ConversationMode.agent.storageValue,
-        terminalEnvironment: _buildAgentTerminalEnvironmentPayload(),
+        terminalEnvironment: dispatchTerminalEnvironment,
       );
       final resolvedThreadId = _asAgentString(response['threadId']);
-      if (resolvedThreadId != null && remoteCodex) {
+      if (resolvedThreadId != null &&
+          remoteCodex &&
+          isDispatchTargetCurrent()) {
         _activateRemoteCodexRuntimeForThread(resolvedThreadId);
       }
-      _activeAgentThreadId = resolvedThreadId ?? _activeAgentThreadId;
-      _activeAgentTurnId =
-          _asAgentString(response['turnId']) ?? _activeAgentTurnId;
-      if (turnUsesPlanMode && _activeAgentTurnId != null) {
-        _agentPlanTurnIds.add(_activeAgentTurnId!);
+      final responseTurnId = _asAgentString(response['turnId']);
+      if (isDispatchTargetCurrent()) {
+        _activeAgentThreadId = resolvedThreadId ?? dispatchSessionId;
+        _activeAgentTurnId = responseTurnId;
+        if (turnUsesPlanMode && _activeAgentTurnId != null) {
+          _agentPlanTurnIds.add(_activeAgentTurnId!);
+        }
       }
       final localConversationId = _asAgentInt(response['conversationId']);
-      if (!remoteCodex &&
+      if (isDispatchTargetCurrent() &&
+          !remoteCodex &&
           localConversationId != null &&
           localConversationId !=
               _modeState(ChatPageMode.agent).currentConversationId) {
@@ -2022,13 +2098,17 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         }
       }
       if (!remoteCodex) {
-        await _persistVisibleThreadTargetIfNeeded();
+        if (isDispatchTargetCurrent()) {
+          await _persistVisibleThreadTargetIfNeeded();
+        }
       }
-      await _writeAgentCommandPreferencesForCurrentConversation();
+      if (isDispatchTargetCurrent()) {
+        await _writeAgentCommandPreferencesForCurrentConversation();
+      }
     } catch (error) {
-      if (mounted) {
+      if (isDispatchTargetCurrent()) {
         handleAgentError(
-          '$_activeAcpAgentDisplayName 启动失败: '
+          '${dispatchAgentId == _kXiaowanAcpAgentId ? '小万' : _activeAcpAgentDisplayName} 启动失败: '
           '${formatAgentRuntimeErrorForUser(error)}',
         );
       }

@@ -10,6 +10,7 @@ import 'package:ui/services/office_preview_service.dart';
 import 'package:ui/services/omnibot_resource_service.dart';
 import 'package:ui/services/pdf_preview_service.dart';
 import 'package:ui/theme/theme_context.dart';
+import 'package:ui/utils/ui.dart';
 import 'package:ui/widgets/chat_drawer_gesture_guard.dart';
 import 'package:ui/widgets/image_preview_overlay.dart';
 import 'package:ui/l10n/legacy_text_localizer.dart';
@@ -1366,6 +1367,58 @@ class _OmnibotInlineHtmlCardState extends State<_OmnibotInlineHtmlCard> {
     }
   }
 
+  Future<void> _openExpanded() async {
+    if (!widget.metadata.exists) return;
+    await _openMetadata(context, widget.metadata, onOpen: widget.onOpen);
+  }
+
+  Future<void> _openInBrowser() async {
+    if (!widget.metadata.exists) return;
+    final isEnglish = LegacyTextLocalizer.isEnglish;
+    try {
+      final opened = await OmnibotResourceService.openInBrowser(
+        sourcePath: widget.metadata.path,
+        mimeType: widget.metadata.mimeType,
+      );
+      if (!mounted || opened) return;
+      showToast(
+        isEnglish ? 'Browser opening failed' : '浏览器打开失败',
+        type: ToastType.error,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      showToast(
+        isEnglish ? 'Browser opening failed: $error' : '浏览器打开失败：$error',
+        type: ToastType.error,
+      );
+    }
+  }
+
+  Future<void> _saveToDevice() async {
+    if (!widget.metadata.exists) return;
+    final isEnglish = LegacyTextLocalizer.isEnglish;
+    try {
+      final savedUri = await OmnibotResourceService.saveToLocal(
+        sourcePath: widget.metadata.path,
+        fileName: widget.metadata.title,
+        mimeType: widget.metadata.mimeType,
+      );
+      if (!mounted) return;
+      showToast(
+        savedUri == null
+            ? (isEnglish ? 'Save failed' : '保存失败')
+            : (isEnglish ? 'Saved to device' : '已保存到设备'),
+        type: savedUri == null ? ToastType.error : ToastType.success,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      showToast(
+        isEnglish ? 'Save failed: $error' : '保存失败：$error',
+        type: ToastType.error,
+      );
+    }
+  }
+
   Future<void> _updateMeasuredHeight() async {
     if (widget.preferredHeight != null) return;
     try {
@@ -1505,6 +1558,55 @@ class _OmnibotInlineHtmlCardState extends State<_OmnibotInlineHtmlCard> {
                     child: Center(child: CircularProgressIndicator()),
                   ),
                 ),
+              Positioned(
+                top: 10,
+                right: 10,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.92),
+                    borderRadius: BorderRadius.circular(12),
+                    boxShadow: const [
+                      BoxShadow(
+                        color: Color(0x220F172A),
+                        blurRadius: 8,
+                        offset: Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        key: const ValueKey('html-preview-expand'),
+                        tooltip: LegacyTextLocalizer.isEnglish
+                            ? 'Open larger preview'
+                            : '放大预览',
+                        onPressed: _openExpanded,
+                        visualDensity: VisualDensity.compact,
+                        icon: const Icon(Icons.fullscreen_rounded),
+                      ),
+                      IconButton(
+                        key: const ValueKey('html-preview-browser'),
+                        tooltip: LegacyTextLocalizer.isEnglish
+                            ? 'Open in browser'
+                            : '在浏览器打开',
+                        onPressed: _openInBrowser,
+                        visualDensity: VisualDensity.compact,
+                        icon: const Icon(Icons.open_in_browser_rounded),
+                      ),
+                      IconButton(
+                        key: const ValueKey('html-preview-save'),
+                        tooltip: LegacyTextLocalizer.isEnglish
+                            ? 'Save to device'
+                            : '保存到设备',
+                        onPressed: _saveToDevice,
+                        visualDensity: VisualDensity.compact,
+                        icon: const Icon(Icons.download_rounded),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ],
           ),
         ),

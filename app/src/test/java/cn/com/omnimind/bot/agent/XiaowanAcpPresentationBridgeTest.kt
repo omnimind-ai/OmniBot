@@ -11,6 +11,7 @@ import com.agentclientprotocol.model.ContentBlock
 import com.agentclientprotocol.model.SessionUpdate
 import com.agentclientprotocol.model.StopReason
 import com.agentclientprotocol.model.ToolKind
+import com.agentclientprotocol.model.ToolCallStatus
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -18,10 +19,39 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.double
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 
 class XiaowanAcpPresentationBridgeTest {
+    @Test
+    fun `permission outcome requires an explicit allow option`() {
+        val json = Json { ignoreUnknownKeys = true }
+        assertTrue(
+            isAllowedAcpPermissionOutcome(
+                json.parseToJsonElement(
+                    """{"outcome":{"outcome":"selected","optionId":"allow_once"}}"""
+                )
+            )
+        )
+        assertFalse(
+            isAllowedAcpPermissionOutcome(
+                json.parseToJsonElement(
+                    """{"outcome":{"outcome":"selected","optionId":"reject_once"}}"""
+                )
+            )
+        )
+        assertFalse(
+            isAllowedAcpPermissionOutcome(
+                json.parseToJsonElement(
+                    """{"outcome":{"outcome":"selected"}}"""
+                )
+            )
+        )
+    }
+
 
     @Test
     fun `provider finish reasons map to ACP stop reasons`() {
@@ -58,6 +88,75 @@ class XiaowanAcpPresentationBridgeTest {
 
         val tool = updates.filterIsInstance<SessionUpdate.ToolCall>().single()
         assertEquals(ToolKind.EXECUTE, tool.kind)
+    }
+
+    @Test
+    fun `legacy tool start without an ACP id is ignored`() = runBlocking {
+        val updates = mutableListOf<SessionUpdate>()
+        val bridge = XiaowanAcpEventBridge { updates += it }
+
+        bridge.onToolCallStart("android_privileged_action", JsonObject(emptyMap()))
+
+        assertTrue(updates.isEmpty())
+    }
+
+    @Test
+    fun `replayed tool start with the same ACP id is idempotent`() = runBlocking {
+        val updates = mutableListOf<SessionUpdate>()
+        val bridge = XiaowanAcpEventBridge { updates += it }
+
+        bridge.onToolCallStart("call-1", "android_privileged_action", JsonObject(emptyMap()))
+        bridge.onToolCallStart("call-1", "android_privileged_action", JsonObject(emptyMap()))
+        bridge.onToolCallComplete(
+            "call-1",
+            "android_privileged_action",
+            ToolExecutionResult.Error("android_privileged_action", "done"),
+        )
+        bridge.onToolCallStart("call-1", "android_privileged_action", JsonObject(emptyMap()))
+
+        assertEquals(1, updates.filterIsInstance<SessionUpdate.ToolCall>().size)
+    }
+
+    @Test
+    fun `orphan tool completion does not invent an ACP call id`() = runBlocking {
+        val updates = mutableListOf<SessionUpdate>()
+        val bridge = XiaowanAcpEventBridge { updates += it }
+
+        bridge.onToolCallComplete("android_privileged_action", ToolExecutionResult.Error("android_privileged_action", "missing"))
+
+        assertTrue(updates.isEmpty())
+    }
+
+    @Test
+    fun `orphan tool progress does not invent an ACP call id`() = runBlocking {
+        val updates = mutableListOf<SessionUpdate>()
+        val bridge = XiaowanAcpEventBridge { updates += it }
+
+        bridge.onToolCallProgress("android_privileged_action", "执行中")
+
+        assertTrue(updates.isEmpty())
+    }
+
+    @Test
+    fun `permission waiting updates the existing ACP tool call`() = runBlocking {
+        val updates = mutableListOf<SessionUpdate>()
+        val bridge = XiaowanAcpEventBridge { updates += it }
+
+        bridge.onToolCallStart(
+            "call-privileged",
+            "android_privileged_action",
+            JsonObject(emptyMap()),
+        )
+        bridge.emitToolPending(
+            toolCallId = "call-privileged",
+            title = "需要确认高权限操作",
+            detail = "命令尚未执行，请确认。",
+        )
+
+        val toolUpdates = updates.filterIsInstance<SessionUpdate.ToolCallUpdate>()
+        assertEquals(1, toolUpdates.size)
+        assertEquals("call-privileged", toolUpdates.single().toolCallId.value)
+        assertEquals(ToolCallStatus.PENDING, toolUpdates.single().status)
     }
 
     @Test
@@ -266,6 +365,25 @@ class XiaowanAcpPresentationBridgeTest {
             (namespace["reasoning"] as JsonObject)["segmentIndex"]?.jsonPrimitive?.content
         }
         assertEquals(listOf("0", "1"), segments)
+    }
+
+    @Test
+    fun `provider snapshot reset does not fabricate a connection retry card`() = runBlocking {
+        val updates = mutableListOf<SessionUpdate>()
+        val bridge = XiaowanAcpEventBridge { updates += it }
+
+        bridge.onChatMessage("第一代答案", isFinal = false)
+        bridge.onChatMessage("新一代答案", isFinal = true)
+
+        val messages = updates.filterIsInstance<SessionUpdate.AgentMessageChunk>()
+        assertEquals(2, messages.size)
+        assertTrue(
+            messages.none { message ->
+                val namespace = (message._meta as? JsonObject)
+                    ?.get("cn.com.omnimind.agent") as? JsonObject
+                namespace?.containsKey("retry") == true
+            }
+        )
     }
 
     @Test
@@ -506,6 +624,19 @@ class XiaowanAcpPresentationBridgeTest {
     }
 
     @Test
+    fun `prompt token usage is emitted as the standard ACP usage update`() = runBlocking {
+        val updates = mutableListOf<SessionUpdate>()
+        val bridge = XiaowanAcpEventBridge { updates += it }
+
+        bridge.onPromptTokenUsageChanged(100, 128_000)
+
+        val usage = updates.filterIsInstance<SessionUpdate.UsageUpdate>().single()
+        assertEquals(100L, usage.used)
+        assertEquals(128_000L, usage.size)
+        assertEquals(kotlinx.serialization.json.JsonNull, usage._meta)
+    }
+
+    @Test
     fun `completion projects legacy output state and restores empty output fallback`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
         val bridge = XiaowanAcpEventBridge { updates += it }
@@ -651,5 +782,26 @@ class XiaowanAcpPresentationBridgeTest {
             "无障碍权限",
             (rawOutput["missing"] as JsonArray).single().jsonPrimitive.content,
         )
+    }
+
+    @Test
+    fun `clarification tool result uses ACP pending status`() = runBlocking {
+        val updates = mutableListOf<SessionUpdate>()
+        val bridge = XiaowanAcpEventBridge { updates += it }
+
+        bridge.onToolCallStart("call-confirm", "android_privileged_action", JsonObject(emptyMap()))
+        bridge.onToolCallComplete(
+            "call-confirm",
+            "android_privileged_action",
+            ToolExecutionResult.Clarify(
+                question = "确认执行高权限 shell 命令？",
+                missingFields = listOf("arguments.confirmed"),
+            ),
+        )
+
+        val completion = updates.filterIsInstance<SessionUpdate.ToolCallUpdate>().last()
+        assertEquals(ToolCallStatus.PENDING, completion.status)
+        val rawOutput = completion.rawOutput as JsonObject
+        assertEquals("确认执行高权限 shell 命令？", rawOutput["question"]?.jsonPrimitive?.content)
     }
 }

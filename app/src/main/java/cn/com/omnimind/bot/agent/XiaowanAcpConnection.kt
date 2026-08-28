@@ -32,6 +32,7 @@ import com.agentclientprotocol.common.Event
 import com.agentclientprotocol.common.SessionCreationParameters
 import com.agentclientprotocol.model.AgentCapabilities
 import com.agentclientprotocol.model.ContentBlock
+import com.agentclientprotocol.model.DeleteSessionResponse
 import com.agentclientprotocol.model.EmbeddedResourceResource
 import com.agentclientprotocol.model.Implementation
 import com.agentclientprotocol.model.MessageId
@@ -41,6 +42,7 @@ import com.agentclientprotocol.model.PromptResponse
 import com.agentclientprotocol.model.PromptCapabilities
 import com.agentclientprotocol.model.SessionCapabilities
 import com.agentclientprotocol.model.SessionCloseCapabilities
+import com.agentclientprotocol.model.SessionDeleteCapabilities
 import com.agentclientprotocol.model.SessionForkCapabilities
 import com.agentclientprotocol.model.SessionInfo
 import com.agentclientprotocol.model.SessionListCapabilities
@@ -54,8 +56,10 @@ import com.agentclientprotocol.model.ToolCallId
 import com.agentclientprotocol.model.ToolCallStatus
 import com.agentclientprotocol.model.Usage
 import cn.com.omnimind.bot.agent.AgentOutputKind
+import cn.com.omnimind.bot.agent.AgentPermissionRequester
 import com.agentclientprotocol.model.ToolKind
 import com.agentclientprotocol.protocol.Protocol
+import com.agentclientprotocol.rpc.MethodName
 import com.agentclientprotocol.rpc.JsonRpcMessage
 import com.agentclientprotocol.transport.BaseTransport
 import com.agentclientprotocol.transport.Transport
@@ -96,6 +100,7 @@ internal class XiaowanAcpConnection(
     private val ensureSharedProviderBinding: suspend () -> Unit = {},
     private val conversationIdProvider: suspend (String) -> Long? = { null },
     private val isXiaowanSession: suspend (String) -> Boolean = { true },
+    private val deleteSession: suspend (String) -> Unit = {},
 ) : AcpRuntimeConnection {
     private lateinit var clientTransport: LoopbackTransport
     private lateinit var serverTransport: LoopbackTransport
@@ -135,6 +140,16 @@ internal class XiaowanAcpConnection(
                 ensureSharedProviderBinding = ensureSharedProviderBinding,
                 conversationIdProvider = conversationIdProvider,
                 isXiaowanSession = isXiaowanSession,
+                deleteSessionCallback = deleteSession,
+                requestPermission = { sessionId, toolCallId, title, detail ->
+                    requestClientPermission(
+                        protocol = serverProtocol,
+                        sessionId = sessionId,
+                        toolCallId = toolCallId,
+                        title = title,
+                        detail = detail,
+                    )
+                },
             )
         )
         return clientTransport
@@ -157,9 +172,76 @@ internal class XiaowanAcpConnection(
         if (::serverTransport.isInitialized) serverTransport.close()
     }
 
+    private suspend fun requestClientPermission(
+        protocol: Protocol,
+        sessionId: String,
+        toolCallId: String,
+        title: String,
+        detail: String,
+    ): Boolean {
+        val response = protocol.sendRequestRaw(
+            MethodName("session/request_permission"),
+            jsonObjectFromMap(
+                mapOf(
+                    "sessionId" to sessionId,
+                    "toolCall" to mapOf(
+                        "toolCallId" to toolCallId,
+                        // ACP has no separate human-readable permission
+                        // message field. The tool-call title is the standard
+                        // place for the client to show the exact operation.
+                        "title" to title,
+                        "kind" to "execute",
+                        "status" to "pending",
+                        "rawInput" to mapOf(
+                            "detail" to detail.ifBlank { title },
+                        ),
+                    ),
+                    "options" to listOf(
+                        mapOf(
+                            "optionId" to "allow_once",
+                            "name" to "允许一次",
+                            "kind" to "allow_once",
+                        ),
+                        mapOf(
+                            "optionId" to "reject_once",
+                            "name" to "拒绝",
+                            "kind" to "reject_once",
+                        ),
+                    ),
+                )
+            ),
+            SessionId(sessionId),
+        )
+        return isAllowedAcpPermissionOutcome(response)
+    }
+
     private companion object {
         private const val TAG = "XiaowanAcpConnection"
     }
+}
+
+/**
+ * ACP reports both a terminal outcome and the selected option. `selected`
+ * alone is not approval: a client selecting `reject_once` also returns a
+ * selected outcome. Fail closed unless the selected option is one of the
+ * explicit allow choices we advertised above.
+ */
+internal fun isAllowedAcpPermissionOutcome(response: JsonElement?): Boolean {
+    val outcome = (response as? JsonObject)?.get("outcome") as? JsonObject
+        ?: return false
+    val state = outcome["outcome"]
+        ?.jsonPrimitive
+        ?.contentOrNull
+        ?.trim()
+        ?.lowercase()
+    if (state != "selected") return false
+    val optionId = outcome["optionId"]
+        ?.jsonPrimitive
+        ?.contentOrNull
+        ?.trim()
+        ?.lowercase()
+        ?: return false
+    return optionId == "allow_once" || optionId == "allow_always"
 }
 
 private class XiaowanAgentSupport(
@@ -169,6 +251,8 @@ private class XiaowanAgentSupport(
     private val ensureSharedProviderBinding: suspend () -> Unit,
     private val conversationIdProvider: suspend (String) -> Long?,
     private val isXiaowanSession: suspend (String) -> Boolean,
+    private val deleteSessionCallback: suspend (String) -> Unit,
+    private val requestPermission: suspend (String, String, String, String) -> Boolean,
 ) : AgentSupport {
     private companion object {
         private const val TAG = "XiaowanAcpConnection"
@@ -212,6 +296,7 @@ private class XiaowanAgentSupport(
                     list = SessionListCapabilities(),
                     fork = SessionForkCapabilities(),
                     resume = SessionResumeCapabilities(),
+                    delete = SessionDeleteCapabilities(),
                     close = SessionCloseCapabilities(),
                 )
             ),
@@ -232,7 +317,16 @@ private class XiaowanAgentSupport(
         return createXiaowanSession(SessionId(UUID.randomUUID().toString()))
     }
 
-    private suspend fun createXiaowanSession(sessionId: SessionId): AgentSession {
+    private suspend fun createXiaowanSession(
+        sessionId: SessionId,
+        requirePersistedSession: Boolean = false,
+    ): AgentSession {
+        if (requirePersistedSession) {
+            val conversationId = conversationIdProvider(sessionId.value)
+            require(conversationId != null) {
+                "Xiaowan ACP session does not exist: ${sessionId.value}"
+            }
+        }
         val models = loadXiaowanModels()
         return XiaowanAgentSession(
             context = context,
@@ -243,6 +337,7 @@ private class XiaowanAgentSupport(
             configuredModelId = models.configuredModelId,
             providerProfile = models.providerProfile,
             sessionId = sessionId,
+            requestPermission = requestPermission,
         )
     }
 
@@ -279,12 +374,23 @@ private class XiaowanAgentSupport(
         return result.asSequence()
     }
 
+    override suspend fun deleteSession(
+        sessionId: SessionId,
+        _meta: JsonElement?
+    ): DeleteSessionResponse {
+        require(isXiaowanSession(sessionId.value)) {
+            "Xiaowan ACP session does not exist: ${sessionId.value}"
+        }
+        deleteSessionCallback(sessionId.value)
+        return DeleteSessionResponse(JsonNull)
+    }
+
     override suspend fun loadSession(
         sessionId: SessionId,
         sessionParameters: SessionCreationParameters
     ): AgentSession {
         validateXiaowanSessionParameters(sessionParameters)
-        return createXiaowanSession(sessionId)
+        return createXiaowanSession(sessionId, requirePersistedSession = true)
     }
 
     override suspend fun resumeSession(
@@ -292,7 +398,7 @@ private class XiaowanAgentSupport(
         sessionParameters: SessionCreationParameters
     ): AgentSession {
         validateXiaowanSessionParameters(sessionParameters)
-        return createXiaowanSession(sessionId)
+        return createXiaowanSession(sessionId, requirePersistedSession = true)
     }
 
     override suspend fun forkSession(
@@ -343,29 +449,29 @@ private class XiaowanAgentSupport(
             "Dispatch Model Provider is not configured. Configure the default Provider and retry."
         )
         cachedModels?.let { cached ->
-            if (canReuseXiaowanModels(usableBinding, profile, cached)) {
+            if (canReuseXiaowanModels(usableBinding, profile, cached) ||
+                (usableBinding == null &&
+                    cached.providerProfileId == profile.id &&
+                    cached.providerProfile == profile.toSessionSnapshot())
+            ) {
                 Log.i(TAG, "ACP timing agent=xiaowan stage=model_ready source=connection_cache")
                 return cached
             }
             cachedModels = null
         }
         val startedAtNanos = System.nanoTime()
-        // A complete persisted scene binding already identifies the Provider
-        // and model required to start a session. Do not put ACP initialize on
-        // the network critical path just to populate optional model choices;
-        // the catalog can be refreshed later by the model picker.
-        val catalog = if (usableBinding != null) {
-            emptyList()
-        } else {
-            runCatching {
-                withTimeoutOrNull(AGENT_PROVIDER_MODEL_LOOKUP_TIMEOUT_MS) {
-                    fetchAgentProviderModels(profile)
-                }.orEmpty()
-            }.onFailure { error ->
-                Log.w(TAG, "Provider /models failed for Xiaowan ACP: " +
-                    (error.message ?: error.javaClass.simpleName))
-            }.getOrDefault(emptyList())
-        }
+        // availableModels is part of the ACP session contract and is
+        // immutable for the lifetime of this session. Discover the catalog
+        // once here so a bound model does not accidentally hide the other
+        // models or force the no-binding path to call /models twice.
+        val catalog = runCatching {
+            withTimeoutOrNull(AGENT_PROVIDER_MODEL_LOOKUP_TIMEOUT_MS) {
+                fetchAgentProviderModels(profile)
+            }.orEmpty()
+        }.onFailure { error ->
+            Log.w(TAG, "Provider /models failed for Xiaowan ACP: " +
+                (error.message ?: error.javaClass.simpleName))
+        }.getOrDefault(emptyList())
         val boundModels = buildXiaowanModelsFromBinding(usableBinding, catalog)
         // Keep the bound model first so existing sessions remain stable, then
         // append the provider's verified catalog. If discovery is unavailable
@@ -383,17 +489,7 @@ private class XiaowanAgentSupport(
         // There is no persisted scene binding yet. Use the current Dispatch
         // Provider catalog for an ephemeral default; do not write a binding
         // merely to make ACP startup succeed.
-        val availableModels = runCatching {
-            withTimeoutOrNull(AGENT_PROVIDER_MODEL_LOOKUP_TIMEOUT_MS) {
-                fetchAgentProviderModels(profile)
-            }.orEmpty()
-        }.onFailure { error ->
-            Log.w(
-                TAG,
-                "Provider /models failed for Xiaowan ACP: " +
-                    (error.message ?: error.javaClass.simpleName),
-            )
-        }.getOrDefault(emptyList())
+        val availableModels = catalog
         val fallbackBinding = resolveSharedAgentProviderBinding(
             currentBinding = null,
             editingProfile = profile,
@@ -527,6 +623,7 @@ private class XiaowanAgentSession(
     private val configuredModelId: String,
     private val providerProfile: ModelProviderProfile,
     override val sessionId: SessionId,
+    private val requestPermission: suspend (String, String, String, String) -> Boolean,
 ) : AgentSession {
     private companion object {
         private const val TAG = "XiaowanAcpConnection"
@@ -570,12 +667,16 @@ private class XiaowanAgentSession(
 
     override suspend fun prompt(
         content: List<ContentBlock>,
-        meta: JsonElement?,
+        _meta: JsonElement?,
     ): Flow<Event> = channelFlow {
         val promptJob = coroutineContext[Job]
-        activePromptJob = promptJob
         try {
             promptMutex.withLock {
+        // The cancellation handle belongs to the prompt that owns the
+        // session mutex. Assigning it before acquiring the mutex lets a
+        // queued second prompt overwrite the first prompt's handle; a stop
+        // request would then cancel the waiter instead of the running turn.
+        activePromptJob = promptJob
         val promptParts = buildXiaowanPromptParts(content)
         val text = promptParts.text
         require(text.isNotEmpty() || promptParts.attachments.isNotEmpty()) {
@@ -598,7 +699,7 @@ private class XiaowanAgentSession(
                 "inMemoryMessages=${messages.size} historySource=" +
                 if (conversationId != null) "conversation" else "session_memory"
         )
-        val requestedConversationMode = (meta as? JsonObject)
+        val requestedConversationMode = (_meta as? JsonObject)
             ?.get("conversationMode")
             ?.jsonPrimitive
             ?.content
@@ -628,12 +729,12 @@ private class XiaowanAgentSession(
                 "modeSource=${if (persistedConversationMode != null) "conversation" else "acp_meta_or_agent_default"}"
         )
         val reasoningEffort = normalizeXiaowanReasoningEffort(
-            (meta as? JsonObject)
+            (_meta as? JsonObject)
                 ?.get("reasoningEffort")
                 ?.jsonPrimitive
                 ?.content
         )
-        val terminalEnvironment = xiaowanTerminalEnvironmentFromMeta(meta)
+        val terminalEnvironment = xiaowanTerminalEnvironmentFromMeta(_meta)
         val result = executor.processUserMessage(
             userMessage = text,
             conversationHistory = emptyList(),
@@ -646,6 +747,10 @@ private class XiaowanAgentSession(
             terminalEnvironment = terminalEnvironment,
             callback = streamBridge,
             runControl = NoOpAgentRunControl,
+            permissionRequester = AgentPermissionRequester { toolCallId, title, detail ->
+                streamBridge.emitToolPending(toolCallId, title, detail)
+                requestPermission(sessionId.value, toolCallId, title, detail)
+            },
             historyMessagesOverride = messages.toList().takeIf { conversationId == null },
         )
         val answer = when (result) {
@@ -812,23 +917,15 @@ internal fun buildXiaowanPromptParts(content: List<ContentBlock>): XiaowanPrompt
                 }
             }
             is ContentBlock.Audio -> {
-                val mimeType = block.mimeType.trim().ifEmpty { "audio/*" }
-                val data = block.data.trim()
-                if (data.isEmpty()) return@forEach
-                attachments += buildMap<String, Any?> {
-                    put("name", "audio")
-                    put("fileName", "audio")
-                    put("mimeType", mimeType)
-                    put("isAudio", true)
-                    put("sendToModel", true)
-                    if (data.isNotEmpty()) {
-                        put(
-                            "dataUrl",
-                            if (data.startsWith("data:", ignoreCase = true)) data
-                            else "data:$mimeType;base64,$data"
-                        )
-                    }
-                }
+                // Xiaowan advertises promptCapabilities.audio=false. Do not
+                // turn an unsupported ACP block into an attachment that the
+                // shared executor may ignore; that would make the user think
+                // the model received audio when it did not. The caller gets a
+                // typed turn failure and can choose a provider with audio
+                // input instead.
+                throw UnsupportedOperationException(
+                    "Xiaowan ACP does not support audio prompt content"
+                )
             }
             is ContentBlock.ResourceLink -> {
                 val uri = block.uri.trim()
@@ -902,7 +999,6 @@ internal fun buildXiaowanPromptParts(content: List<ContentBlock>): XiaowanPrompt
                     }
                 }
             }
-            else -> Unit
         }
     }
     return XiaowanPromptParts(
@@ -947,6 +1043,14 @@ internal class XiaowanAcpEventBridge(
     private var generationId = UUID.randomUUID().toString()
     private val toolIdsByName = mutableMapOf<String, ArrayDeque<String>>()
     private val toolTypesById = mutableMapOf<String, String?>()
+    /**
+     * ACP tool-call ids are the identity of one tool invocation.  A provider
+     * retry or callback replay may repeat the start notification; emitting a
+     * second `tool_call` for the same id creates duplicate cards and leaves
+     * completion status split across two local items.
+     */
+    private val seenToolCallIds = mutableSetOf<String>()
+    private val startedToolCallIds = mutableSetOf<String>()
 
     suspend fun emitAssistantSnapshot(snapshot: String) {
         callbackMutex.withLock {
@@ -962,19 +1066,12 @@ internal class XiaowanAcpEventBridge(
             !snapshot.startsWith(assistantSnapshot) &&
             !assistantSnapshot.startsWith(snapshot)
         if (snapshotReset) {
-            // A transparent provider retry can reset the cumulative assistant
-            // snapshot without first delivering AgentCallback.onRetrying.
-            // Close the visible failed attempt and give the next generation a
-            // fresh ACP message identity, otherwise the reducer would either
-            // append two answers or treat the failed prefix as final output.
-            emitAssistantStatus(
-                acpPresentationMeta(
-                    "retry" to mapOf(
-                        "message" to "连接中断，正在重试…",
-                        "reason" to "provider_stream_reset",
-                    )
-                )
-            )
+            // A provider may start a fresh cumulative snapshot after a tool
+            // boundary or reconnect. Give it a new message identity so the
+            // reducer cannot glue unrelated generations together. A retry
+            // status is emitted only by the explicit ACP retry callback; this
+            // inferred reset is not proof that a retry happened and must not
+            // surface a false "connection interrupted" card.
             assistantSnapshot = ""
             assistantMessageId = MessageId(UUID.randomUUID().toString())
         }
@@ -1073,9 +1170,10 @@ internal class XiaowanAcpEventBridge(
         toolName: String,
         arguments: kotlinx.serialization.json.JsonObject,
     ) {
-        callbackMutex.withLock {
-            emitToolStart(UUID.randomUUID().toString(), toolName, arguments)
-        }
+        // ACP requires a toolCallId for every tool lifecycle update. The
+        // legacy callback has no identity, so do not mint a local UUID here;
+        // an invented id cannot be matched to its completion and produces an
+        // orphan card. AgentOrchestrator uses the id-aware overload below.
     }
 
     override suspend fun onToolCallStart(
@@ -1084,7 +1182,9 @@ internal class XiaowanAcpEventBridge(
         arguments: kotlinx.serialization.json.JsonObject,
     ) {
         callbackMutex.withLock {
-            emitToolStart(toolCallId.ifBlank { UUID.randomUUID().toString() }, toolName, arguments)
+            if (toolCallId.isNotBlank()) {
+                emitToolStart(toolCallId, toolName, arguments)
+            }
         }
     }
 
@@ -1095,12 +1195,9 @@ internal class XiaowanAcpEventBridge(
         toolType: String?,
     ) {
         callbackMutex.withLock {
-            emitToolStart(
-                toolCallId.ifBlank { UUID.randomUUID().toString() },
-                toolName,
-                arguments,
-                toolType,
-            )
+            if (toolCallId.isNotBlank()) {
+                emitToolStart(toolCallId, toolName, arguments, toolType)
+            }
         }
     }
 
@@ -1110,6 +1207,12 @@ internal class XiaowanAcpEventBridge(
         arguments: kotlinx.serialization.json.JsonObject,
         toolType: String? = null,
     ) {
+        // Keep a per-turn tombstone as well as the active set. The active set
+        // is removed after a terminal update, but a replayed start after
+        // completion must remain a no-op too.
+        if (!seenToolCallIds.add(toolCallId) || !startedToolCallIds.add(toolCallId)) {
+            return
+        }
         // ACP keeps the event order, so the next reasoning update belongs to
         // a new visible segment after this tool call. Delay allocating the
         // new message id until that reasoning actually arrives; otherwise a
@@ -1120,7 +1223,7 @@ internal class XiaowanAcpEventBridge(
         emitUpdate(
             SessionUpdate.ToolCall(
                 toolCallId = ToolCallId(toolCallId),
-                title = toolName,
+                title = xiaowanToolTitle(toolName),
                 kind = xiaowanToolKind(toolName, toolType),
                 status = ToolCallStatus.IN_PROGRESS,
                 content = listOf(
@@ -1142,9 +1245,10 @@ internal class XiaowanAcpEventBridge(
         callbackMutex.withLock {
             val ids = toolIdsByName[toolName].orEmpty().toList()
             if (ids.isEmpty()) {
-                val generatedId = UUID.randomUUID().toString()
-                toolIdsByName.getOrPut(toolName) { ArrayDeque() }.addLast(generatedId)
-                emitToolProgress(generatedId, toolName, progress, extras)
+                // A progress callback without a preceding tool start has no
+                // ACP identity. Never manufacture one: doing so creates an
+                // orphan card and makes retries appear as duplicate tools.
+                return@withLock
             } else {
                 // The legacy callback does not carry toolCallId. When the
                 // same tool runs in parallel, selecting the last id can put
@@ -1168,11 +1272,12 @@ internal class XiaowanAcpEventBridge(
         callbackMutex.withLock {
             val resolvedId = toolCallId.ifBlank {
                 toolIdsByName[toolName]?.lastOrNull()
-                    ?: UUID.randomUUID().toString().also {
-                        toolIdsByName.getOrPut(toolName) { ArrayDeque() }.addLast(it)
-                    }
             }
-            emitToolProgress(resolvedId, toolName, progress, extras)
+            // A tool update without a preceding ACP tool_call has no valid
+            // identity. Do not invent one: that creates an orphan card and
+            // can make one provider retry look like a second tool execution.
+            resolvedId?.takeIf(startedToolCallIds::contains)
+                ?.let { emitToolProgress(it, toolName, progress, extras) }
         }
     }
 
@@ -1185,10 +1290,10 @@ internal class XiaowanAcpEventBridge(
         emitUpdate(
             SessionUpdate.ToolCallUpdate(
                 toolCallId = ToolCallId(toolCallId),
-                title = toolName,
+                title = xiaowanToolTitle(toolName),
                 kind = xiaowanToolKind(
                     toolName,
-                    toolIdsByName[toolName]?.firstOrNull()?.let(toolTypesById::get),
+                    toolTypesById[toolCallId],
                 ),
                 status = ToolCallStatus.IN_PROGRESS,
                 content = listOf(
@@ -1200,6 +1305,33 @@ internal class XiaowanAcpEventBridge(
                 _meta = JsonNull,
             )
         )
+    }
+
+    suspend fun emitToolPending(
+        toolCallId: String,
+        title: String,
+        detail: String,
+    ) {
+        callbackMutex.withLock {
+            if (!startedToolCallIds.contains(toolCallId)) return@withLock
+            emitUpdate(
+                SessionUpdate.ToolCallUpdate(
+                    toolCallId = ToolCallId(toolCallId),
+                    title = title,
+                    kind = ToolKind.EXECUTE,
+                    status = ToolCallStatus.PENDING,
+                    content = listOf(
+                        ToolCallContent.Content(
+                            ContentBlock.Text(detail.ifBlank { title })
+                        )
+                    ),
+                    locations = emptyList(),
+                    rawInput = JsonNull,
+                    rawOutput = JsonNull,
+                    _meta = JsonNull,
+                )
+            )
+        }
     }
 
     override suspend fun onToolCallComplete(
@@ -1237,7 +1369,9 @@ internal class XiaowanAcpEventBridge(
         toolName: String,
         result: ToolExecutionResult,
     ) {
-        val resolvedToolCallId = toolCallId ?: UUID.randomUUID().toString()
+        val resolvedToolCallId = toolCallId
+            ?.takeIf(startedToolCallIds::contains)
+            ?: return
         val text = toolResultText(result)
         val permissionPayload = (result as? ToolExecutionResult.PermissionRequired)
             ?.let { permissionResult ->
@@ -1256,9 +1390,13 @@ internal class XiaowanAcpEventBridge(
         emitUpdate(
             SessionUpdate.ToolCallUpdate(
                 toolCallId = ToolCallId(resolvedToolCallId),
-                title = toolName,
+                title = xiaowanToolTitle(toolName),
                 kind = xiaowanToolKind(toolName, toolTypesById[resolvedToolCallId]),
-                status = if (toolResultSucceeded(result)) {
+                status = if (result is ToolExecutionResult.Clarify) {
+                    // ACP's standard pending state covers a tool waiting for
+                    // approval/input. Do not encode that state in rawOutput.
+                    ToolCallStatus.PENDING
+                } else if (toolResultSucceeded(result)) {
                     ToolCallStatus.COMPLETED
                 } else {
                     ToolCallStatus.FAILED
@@ -1272,6 +1410,10 @@ internal class XiaowanAcpEventBridge(
                 _meta = JsonNull,
             )
         )
+        // Keep the identity alive until the terminal ACP update has actually
+        // been emitted. Removing it before the update makes the completion
+        // look orphaned to the guard above.
+        finalizeToolCallId(resolvedToolCallId)
     }
 
     private fun removeToolCallId(toolName: String, requestedId: String?): String? {
@@ -1283,8 +1425,12 @@ internal class XiaowanAcpEventBridge(
         if (ids.isEmpty()) {
             toolIdsByName.remove(toolName)
         }
-        resolved?.let(toolTypesById::remove)
         return resolved
+    }
+
+    private fun finalizeToolCallId(toolCallId: String) {
+        toolTypesById.remove(toolCallId)
+        startedToolCallIds.remove(toolCallId)
     }
 
     override suspend fun onChatMessage(message: String) {
@@ -1360,14 +1506,7 @@ internal class XiaowanAcpEventBridge(
         promptTokenThreshold: Int?,
     ) {
         callbackMutex.withLock {
-            emitAssistantStatus(
-                acpPresentationMeta(
-                    "usage" to mapOf(
-                        "latestPromptTokens" to latestPromptTokens,
-                        "promptTokenThreshold" to promptTokenThreshold,
-                    )
-                )
-            )
+            emitAcpUsageUpdate(latestPromptTokens, promptTokenThreshold)
         }
     }
 
@@ -1446,6 +1585,10 @@ internal class XiaowanAcpEventBridge(
             } else {
                 emitAssistantStatus(meta)
             }
+            emitAcpUsageUpdate(
+                used = success.latestPromptTokens ?: success.response.latestPromptTokens,
+                size = success.promptTokenThreshold ?: success.response.promptTokenThreshold,
+            )
         }
     }
     override suspend fun onError(error: String) {
@@ -1492,6 +1635,20 @@ internal class XiaowanAcpEventBridge(
                 content = ContentBlock.Text(""),
                 messageId = assistantMessageId,
                 _meta = meta,
+            )
+        )
+    }
+
+    /** Emit the ACP session-level context usage update when both dimensions exist. */
+    private suspend fun emitAcpUsageUpdate(used: Int?, size: Int?) {
+        val normalizedUsed = used?.coerceAtLeast(0)?.toLong() ?: return
+        val normalizedSize = size?.coerceAtLeast(1)?.toLong() ?: return
+        emitUpdate(
+            SessionUpdate.UsageUpdate(
+                used = normalizedUsed,
+                size = normalizedSize,
+                cost = null,
+                _meta = JsonNull,
             )
         )
     }
@@ -1815,6 +1972,24 @@ private fun xiaowanToolKind(toolName: String, declaredToolType: String? = null):
         normalized.containsAny("terminal", "shell", "exec", "command", "bash", "zsh") -> ToolKind.EXECUTE
         else -> ToolKind.OTHER
     }
+}
+
+/** ACP title is user-facing; the function name remains in toolName/rawInput. */
+private fun xiaowanToolTitle(toolName: String): String = when (toolName.trim()) {
+    "android_privileged_action" -> "安卓高级动作"
+    "android_privileged_session_start" -> "启动高权限会话"
+    "android_privileged_session_exec" -> "执行高权限命令"
+    "android_privileged_session_read" -> "读取高权限输出"
+    "android_privileged_session_stop" -> "结束高权限会话"
+    "terminal_execute", "bash" -> "执行终端命令"
+    "file_read", "read" -> "读取文件"
+    "file_write", "write" -> "写入文件"
+    "file_edit", "edit" -> "编辑文件"
+    "file_list", "glob" -> "列出文件"
+    "file_search", "grep" -> "搜索文件"
+    "browser_use", "webfetch" -> "浏览器操作"
+    "vlm_task" -> "执行界面操作"
+    else -> toolName
 }
 
 /** Maps provider finish_reason values to the finite ACP stop-reason enum. */

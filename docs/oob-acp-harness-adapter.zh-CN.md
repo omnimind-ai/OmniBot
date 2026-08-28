@@ -45,13 +45,15 @@ val adapter = AcpHarnessAdapters.forProfile(profile)
 
 以下是统一兼容层，除非真实协议验证证明某 Harness 有明确差异，否则不应复制：
 
-- ACP `session/new`、`session/load`、`session/list`、`session/prompt`、`session/update`、`session/cancel` 生命周期。
+- ACP `initialize`、`session/new`、`session/load`/`session/resume`、`session/list`、`session/prompt`、`session/update`、`session/cancel`、`session/close` 和 `session/delete` 生命周期（按协商能力启用）。
 - `conversationId`、`sessionId`、`turnId`、`messageId`、`toolCallId` 的绑定和恢复。
 - Provider/模型绑定、`/models` authoritative 解析、缺少绑定时的错误语义。
 - ACP 流式事件进入 `AgentEventReducer` 和聊天 UI 的渲染路径。
 - MCP server 的启动、端口、token 和停止生命周期。
 - OmniFlow/MCP 插件注册、安装、启停和 Function Store；Harness 只消费能力，不拥有第二套插件系统。
 - 取消、超时、断线重连、旧会话兼容和统一错误映射。
+- `session/update` 的官方 v1 语义是 session-scoped；它不保证携带 `turnId`。Host 只能用已预留的活动 prompt 关联本轮，不能要求 Harness 伪造协议字段，也不能按文本快照猜测归属。
+- ACP 的 `user_message_chunk` 必须先完整保留到共享事件投影，再由 Conversation 历史按 `messageId` 幂等合并；不能在 Harness adapter 中直接丢弃。
 - Android 文件系统的 ACP hard-link 兼容 preload。它是所有本地 ACP runtime 的统一兼容层，不是某个 Harness 的协议分支。
 
 ## 当前配置矩阵

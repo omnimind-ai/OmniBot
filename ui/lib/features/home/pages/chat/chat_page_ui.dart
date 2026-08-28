@@ -2389,18 +2389,29 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
       return true;
     }
     final questionId = (card['questionId'] ?? 'answer').toString();
+    final agentId = card['agentId']?.toString().trim();
+    final rawConversationId = card['conversationId'];
+    final conversationId = rawConversationId is num
+        ? rawConversationId.toInt()
+        : int.tryParse(rawConversationId?.toString() ?? '');
     _pendingAgentInputResponseInFlight = true;
     try {
       if (card['structuredElicitation'] == true) {
         await AgentRuntimeService.respondToElicitation(
           requestId: requestId,
           content: _singleComposerElicitationContent(card, text),
+          sessionId: card['sessionId']?.toString(),
+          agentId: agentId,
+          conversationId: conversationId,
         );
       } else {
         await AgentRuntimeService.respondToUserInput(
           requestId: requestId,
           questionId: questionId,
           answers: <String>[text],
+          sessionId: card['sessionId']?.toString(),
+          agentId: agentId,
+          conversationId: conversationId,
         );
       }
       _markPendingAgentUserInputAnswered(card, text);
@@ -2520,10 +2531,24 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
     final runtime = _activeRuntime;
     if (runtime == null) return;
     final requestId = card['requestId']?.toString();
+    final sessionId = card['sessionId']?.toString().trim();
+    final agentId = card['agentId']?.toString().trim();
     for (var index = 0; index < runtime.messages.length; index++) {
       final message = runtime.messages[index];
       final cardData = message.cardData;
       if (cardData == null || cardData['requestId']?.toString() != requestId) {
+        continue;
+      }
+      if (sessionId != null &&
+          sessionId.isNotEmpty &&
+          cardData['sessionId'] != null &&
+          cardData['sessionId']?.toString().trim() != sessionId) {
+        continue;
+      }
+      if (agentId != null &&
+          agentId.isNotEmpty &&
+          cardData['agentId'] != null &&
+          cardData['agentId']?.toString().trim() != agentId) {
         continue;
       }
       final nextCard = Map<String, dynamic>.from(cardData)
@@ -3006,7 +3031,6 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
     content.remove('agentErrorText');
     return message.copyWith(content: content, isError: false);
   }
-
 
   String _formatTokenCount(int value) {
     return value.toString().replaceAllMapped(

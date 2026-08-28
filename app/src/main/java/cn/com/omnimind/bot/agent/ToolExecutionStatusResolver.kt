@@ -2,8 +2,12 @@ package cn.com.omnimind.bot.agent
 
 internal fun resolveToolExecutionStatus(result: ToolExecutionResult): String {
     return when (result) {
-        is ToolExecutionResult.ChatMessage,
-        is ToolExecutionResult.Clarify,
+        is ToolExecutionResult.ChatMessage -> AgentConversationHistoryRepository.STATUS_INTERRUPTED
+
+        // ACP represents a tool waiting for approval/input as pending. The
+        // local history uses the existing running presentation state; no
+        // second business lifecycle is persisted.
+        is ToolExecutionResult.Clarify -> AgentConversationHistoryRepository.STATUS_RUNNING
 
         is ToolExecutionResult.PermissionRequired -> AgentConversationHistoryRepository.STATUS_INTERRUPTED
 

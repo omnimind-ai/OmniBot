@@ -141,7 +141,7 @@ private val DEEPSEEK_HARNESS_DECLARED_CAPABILITIES: Map<String, Any?> = mapOf(
 internal const val DEEPSEEK_HARNESS_NPM_CHANNEL = "next"
 internal const val DEEPSEEK_HARNESS_PNPM_VERSION = "11.22.0"
 internal const val DEEPSEEK_HARNESS_PREPARATION_REVISION =
-    "deepseek-dsh-pnpm-copy-v6"
+    "deepseek-dsh-pnpm-copy-v7"
 private const val DEEPSEEK_HARNESS_NPM_PRIMARY_REGISTRY =
     "https://registry.npmmirror.com"
 private const val DEEPSEEK_HARNESS_NPM_FALLBACK_REGISTRY =
@@ -342,6 +342,27 @@ internal val DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND = """
         @deepseek-ai/dsh@$DEEPSEEK_HARNESS_NPM_CHANNEL
       dsh plugin --profile acp add @openma/deepseek-harness-acp@latest
     fi
+    # The ACP profile is a managed, headless composition. A previous Web UI
+    # or developer session may have left web-only/plugin-demo bundles in this
+    # same profile (for example studio, appshot, or a local hello plugin).
+    # Those rows wait for services such as webServer and make ACP initialize
+    # fail before it can answer session/new. Reconcile the profile through
+    # DSH's official plugin command and retain only the ACP bundle; user
+    # extensions can still live in their own explicitly selected DSH profile.
+    prune_acp_profile_plugins() {
+      cd "${'$'}DSH_HOME/profiles/acp"
+      node --input-type=module -e '
+        import fs from "node:fs";
+        const packageJson = JSON.parse(fs.readFileSync("package.json", "utf8"));
+        for (const name of Object.keys(packageJson.dependencies ?? {})) {
+          if (name !== "@openma/deepseek-harness-acp") console.log(name);
+        }
+      ' | while IFS= read -r package_name; do
+        [ -n "${'$'}package_name" ] || continue
+        dsh plugin --profile acp remove "${'$'}package_name"
+      done
+    }
+    prune_acp_profile_plugins
     # Android proot's link2symlink layer can turn pnpm's hard links inside the
     # official profile into a two-hop absolute link chain:
     # module.js -> .../.l2s.<hash>0001 -> .../.l2s.<hash>0001.0002

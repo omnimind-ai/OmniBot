@@ -282,11 +282,30 @@ class AcpSessionUpdateMapperTest {
         assertTrue(
             SessionUpdate.ToolCallUpdate(toolCallId = ToolCallId("c")).isTurnScoped()
         )
+        assertTrue(
+            SessionUpdate.UserMessageChunk(content = ContentBlock.Text("x")).isTurnScoped()
+        )
 
         assertFalse(SessionUpdate.SessionInfoUpdate(title = "t").isTurnScoped())
         assertFalse(
             SessionUpdate.AvailableCommandsUpdate(availableCommands = emptyList())
                 .isTurnScoped()
+        )
+    }
+
+    @Test
+    fun userMessageChunkIsPreservedForTheSharedConversationReducer() {
+        val update = SessionUpdate.UserMessageChunk(
+            content = ContentBlock.Text("DSH user query"),
+            messageId = MessageId("user-message-1"),
+        ).toAcpSessionNotification("session-1")
+
+        assertEquals("session-1", update?.sessionId)
+        assertEquals("user_message_chunk", update?.update?.get("sessionUpdate"))
+        assertEquals("user-message-1", update?.update?.get("messageId"))
+        assertEquals(
+            mapOf("type" to "text", "text" to "DSH user query"),
+            update?.update?.get("content"),
         )
     }
 

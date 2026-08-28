@@ -12,6 +12,7 @@ class AcpCapabilities {
     this.sessionList = false,
     this.sessionFork = false,
     this.sessionResume = false,
+    this.sessionDelete = false,
     this.sessionClose = false,
     this.sessionAdditionalDirectories = false,
     this.authMethods = const <Map<String, dynamic>>[],
@@ -40,6 +41,7 @@ class AcpCapabilities {
   final bool sessionList;
   final bool sessionFork;
   final bool sessionResume;
+  final bool sessionDelete;
   final bool sessionClose;
   final bool sessionAdditionalDirectories;
   final List<Map<String, dynamic>> authMethods;
@@ -78,6 +80,7 @@ class AcpCapabilities {
       sessionList: _bool(session?['list']),
       sessionFork: _bool(session?['fork']),
       sessionResume: _bool(session?['resume']),
+      sessionDelete: _bool(session?['delete']),
       sessionClose: _bool(session?['close']),
       sessionAdditionalDirectories: _bool(session?['additionalDirectories']),
       authMethods: _mapList(auth?['methods']),
@@ -124,6 +127,8 @@ class AcpCapabilities {
         return sessionFork;
       case 'session/resume':
         return sessionResume;
+      case 'session/delete':
+        return sessionDelete;
       case 'session/close':
         return sessionClose;
       case 'session/additionaldirectories':

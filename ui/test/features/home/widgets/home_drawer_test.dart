@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -9,6 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ui/features/home/state/habitual_hand_controller.dart';
 import 'package:ui/features/home/widgets/conversation_slidable.dart';
 import 'package:ui/features/home/widgets/home_drawer.dart';
+import 'package:ui/features/home/pages/chat/services/chat_conversation_runtime_coordinator.dart';
 import 'package:ui/l10n/app_language_mode.dart';
 import 'package:ui/l10n/generated/app_localizations.dart';
 import 'package:ui/l10n/legacy_text_localizer.dart';
@@ -17,6 +20,7 @@ import 'package:ui/models/conversation_thread_target.dart';
 import 'package:ui/models/habitual_hand.dart';
 import 'package:ui/services/scheduled_task_storage_service.dart';
 import 'package:ui/services/storage_service.dart';
+import 'package:ui/widgets/agent_brand_icon.dart';
 
 class _SvgTestAssetBundle extends CachingAssetBundle {
   static final Uint8List _svgBytes = Uint8List.fromList(
@@ -35,6 +39,21 @@ class _SvgTestAssetBundle extends CachingAssetBundle {
   @override
   Future<String> loadString(String key, {bool cache = true}) async {
     return utf8.decode(_svgBytes);
+  }
+
+  @override
+  Future<T> loadStructuredBinaryData<T>(
+    String key,
+    FutureOr<T> Function(ByteData data) parser,
+  ) {
+    // Image.asset uses the manifest to resolve the default Xiaowan avatar.
+    // Keep the test bundle's SVG stub for normal assets, but use Flutter's
+    // real manifest so the image provider does not try to decode SVG bytes as
+    // AssetManifest.bin.
+    if (key == 'AssetManifest.bin') {
+      return rootBundle.loadStructuredBinaryData(key, parser);
+    }
+    return super.loadStructuredBinaryData(key, parser);
   }
 }
 
@@ -371,7 +390,7 @@ void main() {
         matching: find.byType(ConversationSlidable),
       ),
     );
-    expect(scheduledChildSlidable.actions, hasLength(2));
+    expect(scheduledChildSlidable.actions, hasLength(3));
   });
 
   testWidgets('unfocuses search field when tapping outside', (tester) async {
@@ -1121,7 +1140,12 @@ void main() {
     // 每条 Agent 会话直接显示具体 Harness，不再显示 Workspace 分组。
     expect(find.text('blog'), findsNothing);
     expect(find.text('CoffeeMux'), findsNothing);
-    expect(find.text('Codex'), findsNWidgets(3));
+    expect(
+      find.byWidgetPredicate(
+        (widget) => widget is AgentBrandIcon && widget.agentId == 'codex-acp',
+      ),
+      findsNWidgets(3),
+    );
     expect(find.text('修复登录问题').hitTestable(), findsOneWidget);
     expect(find.text('写周报脚本').hitTestable(), findsOneWidget);
     expect(find.text('优化首页响应式').hitTestable(), findsOneWidget);
@@ -1134,6 +1158,97 @@ void main() {
     expect(find.text('闲聊会话').hitTestable(), findsNothing);
     expect(find.text('Agent 会话').hitTestable(), findsOneWidget);
   });
+
+  testWidgets('marks an active Xiaowan conversation with a running dot', (
+    tester,
+  ) async {
+    final coordinator = ChatConversationRuntimeCoordinator.instance;
+    coordinator.resetForTest();
+    coordinator.ensureInitialized();
+    addTearDown(coordinator.resetForTest);
+    nativeConversations = <Map<String, Object?>>[
+      <String, Object?>{
+        'id': 60,
+        'title': '正在处理',
+        'mode': ConversationMode.agent.storageValue,
+        'summary': null,
+        'status': 0,
+        'lastMessage': null,
+        'messageCount': 0,
+        'createdAt': 1,
+        'updatedAt': 2,
+      },
+    ];
+    coordinator.beginAcpTurn(
+      taskId: 'running-xiaowan-task',
+      conversationId: 60,
+      mode: kChatRuntimeModeAgent,
+    );
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DefaultAssetBundle(
+          bundle: _SvgTestAssetBundle(),
+          child: _buildProviderScope(
+            child: const Scaffold(
+              body: SizedBox(width: 360, height: 720, child: HomeDrawer()),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byKey(const ValueKey('home-drawer-running-agent:60')),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets(
+    'marks a completed Xiaowan conversation with a completion circle',
+    (tester) async {
+      LegacyTextLocalizer.setResolvedLocale(const Locale('zh'));
+      addTearDown(LegacyTextLocalizer.clearResolvedLocale);
+      final coordinator = ChatConversationRuntimeCoordinator.instance;
+      coordinator.resetForTest();
+      coordinator.ensureInitialized();
+      addTearDown(coordinator.resetForTest);
+      nativeConversations = <Map<String, Object?>>[
+        <String, Object?>{
+          'id': 61,
+          'title': '已完成任务',
+          'mode': ConversationMode.agent.storageValue,
+          'summary': null,
+          'status': 1,
+          'lastMessage': '完成',
+          'messageCount': 2,
+          'createdAt': 1,
+          'updatedAt': 2,
+        },
+      ];
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DefaultAssetBundle(
+            bundle: _SvgTestAssetBundle(),
+            child: _buildProviderScope(
+              child: const Scaffold(
+                body: SizedBox(width: 360, height: 720, child: HomeDrawer()),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('home-drawer-completed-agent:61')),
+        findsOneWidget,
+      );
+      expect(find.byTooltip('小万 · 已完成'), findsOneWidget);
+    },
+  );
 }
 
 Widget _buildProviderScope({required Widget child}) {
