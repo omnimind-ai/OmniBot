@@ -119,6 +119,26 @@ class LocalAcpRuntimeTest {
                 localCodexSessionOwned = false,
             )
         )
+        assertTrue(
+            shouldRouteLocalAcpRequest(
+                remoteEnabled = true,
+                method = "initialize",
+                requestedAgentId = "xiaowan-acp",
+                sessionAgentId = null,
+                conversationAgentId = null,
+                localCodexSessionOwned = false,
+            )
+        )
+        assertTrue(
+            shouldRouteLocalAcpRequest(
+                remoteEnabled = true,
+                method = "\$/cancel_request",
+                requestedAgentId = "deepseek-harness-acp",
+                sessionAgentId = null,
+                conversationAgentId = null,
+                localCodexSessionOwned = false,
+            )
+        )
     }
 
     @Test
@@ -159,6 +179,58 @@ class LocalAcpRuntimeTest {
 
         registry.remove("request-1")
         assertEquals(null, registry.ownerFor("request-1"))
+    }
+
+    @Test
+    fun `same request id on parallel ACP transports stays independently addressable`() {
+        val registry = AcpServerRequestOwnerRegistry()
+        registry.register("same-id", "xiaowan-acp", "xiaowan-session")
+        registry.register("same-id", "deepseek-harness-acp", "dsh-session")
+
+        assertEquals(null, registry.ownerFor("same-id"))
+        assertEquals(
+            AcpServerRequestOwner("xiaowan-acp", "xiaowan-session"),
+            registry.resolve("same-id", agentId = "xiaowan-acp"),
+        )
+        assertEquals(
+            AcpServerRequestOwner("deepseek-harness-acp", "dsh-session"),
+            registry.resolve("same-id", sessionId = "dsh-session"),
+        )
+
+        registry.remove("same-id", agentId = "xiaowan-acp", sessionId = "xiaowan-session")
+        assertEquals(
+            AcpServerRequestOwner("deepseek-harness-acp", "dsh-session"),
+            registry.ownerFor("same-id"),
+        )
+    }
+
+    @Test
+    fun `ambiguous ACP request id cannot fall back to selected Agent`() {
+        val registry = AcpServerRequestOwnerRegistry()
+        registry.register("same-id", "xiaowan-acp", null)
+        registry.register("same-id", "deepseek-harness-acp", null)
+
+        var failed = false
+        try {
+            registry.resolve("same-id")
+        } catch (_: IllegalArgumentException) {
+            failed = true
+        }
+        assertTrue(failed)
+    }
+
+    @Test
+    fun `request identity mismatch cannot fall back to the only pending owner`() {
+        val registry = AcpServerRequestOwnerRegistry()
+        registry.register("request-1", "deepseek-harness-acp", "dsh-session")
+
+        var failed = false
+        try {
+            registry.resolve("request-1", agentId = "xiaowan-acp")
+        } catch (_: IllegalArgumentException) {
+            failed = true
+        }
+        assertTrue(failed)
     }
 
     @Test

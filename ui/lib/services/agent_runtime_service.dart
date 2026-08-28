@@ -795,6 +795,16 @@ class AgentRuntimeService {
     return AgentRuntimeStatus.fromMap(result);
   }
 
+  /// Returns the already negotiated ACP AgentInfo. The native host performs
+  /// the wire handshake once per transport; callers must not create a second
+  /// session just to initialize a shared ACP client.
+  static Future<Map<String, dynamic>> initialize({String? agentId}) {
+    return _invokeMap('initialize', {
+      if (agentId != null && agentId.trim().isNotEmpty)
+        'agentId': agentId.trim(),
+    });
+  }
+
   static Future<AcpAgentCatalog> listAgents() async {
     return AcpAgentCatalog.fromMap(await _invokeMap('agent/list'));
   }
@@ -1208,6 +1218,22 @@ class AgentRuntimeService {
       if (conversationId != null) 'conversationId': conversationId,
       if (promptId != null) 'promptId': promptId,
       if (runId != null && runId.trim().isNotEmpty) 'runId': runId.trim(),
+    });
+  }
+
+  /// Cancels one JSON-RPC request. This is deliberately separate from
+  /// session/cancel, which cancels the active ACP turn/session lifecycle.
+  static Future<Map<String, dynamic>> cancelRequest({
+    required Object requestId,
+    String? sessionId,
+    String? agentId,
+  }) {
+    return _invokeMap('\$/cancel_request', {
+      'requestId': requestId,
+      if (sessionId != null && sessionId.trim().isNotEmpty)
+        'sessionId': sessionId.trim(),
+      if (agentId != null && agentId.trim().isNotEmpty)
+        'agentId': agentId.trim(),
     });
   }
 

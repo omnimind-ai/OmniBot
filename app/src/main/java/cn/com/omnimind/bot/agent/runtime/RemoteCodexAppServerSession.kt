@@ -26,6 +26,9 @@ internal class RemoteCodexAppServerSession(
     private val nextId = AtomicLong(1L)
 
     @Volatile
+    private var initializeResult: Map<String, Any?> = emptyMap()
+
+    @Volatile
     private var connection: RemoteCodexAppServerConnection? = null
 
     val isRunning: Boolean
@@ -50,11 +53,14 @@ internal class RemoteCodexAppServerSession(
 
         try {
             withTimeout(INITIALIZE_TIMEOUT_MS) {
-                sendRequest(
+                val response = sendRequest(
                     method = "initialize",
                     params = buildInitializeParams(clientVersion),
                     timeoutMs = INITIALIZE_TIMEOUT_MS
                 )
+                initializeResult = (response["result"] as? Map<*, *>).orEmpty()
+                    .entries
+                    .associate { (key, value) -> key.toString() to value }
             }
             sendNotification("initialized", null)
             onServerMessage(
@@ -125,8 +131,11 @@ internal class RemoteCodexAppServerSession(
             deferred.completeExceptionally(IllegalStateException("Remote ACP agent disconnected."))
         }
         pending.clear()
+        initializeResult = emptyMap()
         currentConnection?.close()
     }
+
+    fun initializePayload(): Map<String, Any?> = initializeResult
 
     private suspend fun handleConnectionExit(
         exitedConnection: RemoteCodexAppServerConnection,

@@ -606,17 +606,23 @@ internal class LocalAcpRuntime(
             Log.w(TAG, "Timed out cancelling ACP prompts before switch")
         }
         promptJobs.clear()
-        pendingPermissions.keys.forEach(serverRequestOwners::remove)
+        pendingPermissions.keys.forEach {
+            serverRequestOwners.remove(it, activeAgentId())
+        }
         pendingPermissions.values.forEach { it.response.complete(null) }
         pendingPermissions.clear()
-        pendingElicitations.keys.forEach(serverRequestOwners::remove)
+        pendingElicitations.keys.forEach {
+            serverRequestOwners.remove(it, activeAgentId())
+        }
         pendingElicitations.values.forEach { pending ->
             pending.response.complete(
                 CreateElicitationResponse(action = ElicitationAction.Cancel)
             )
         }
         pendingElicitations.clear()
-        pendingExtensionRequests.keys.forEach(serverRequestOwners::remove)
+        pendingExtensionRequests.keys.forEach {
+            serverRequestOwners.remove(it, activeAgentId())
+        }
         pendingExtensionRequests.values.forEach { pending ->
             pending.response.complete(
                 RawAcpExtensionReply(
@@ -688,6 +694,18 @@ internal class LocalAcpRuntime(
         )
     }
 
+    /** Return the negotiated ACP initialize result without handshaking twice. */
+    private fun initializePayload(): Map<String, Any?> {
+        val info = requireAgentInfo()
+        // Re-serialize the SDK's negotiated AgentInfo instead of rebuilding a
+        // host-specific approximation. This keeps field names, auth methods,
+        // optional capabilities and _meta aligned with the ACP wire schema.
+        @Suppress("UNCHECKED_CAST")
+        return jsonToAny(Json.encodeToJsonElement(AgentInfo.serializer(), info))
+            as? Map<String, Any?>
+            ?: error("ACP initialize result is not an object.")
+    }
+
     private suspend fun agentsPayload(
         refreshAvailability: Boolean = true,
         includeRuntimeStatus: Boolean = false,
@@ -730,6 +748,7 @@ internal class LocalAcpRuntime(
             // terminology out of the client-facing transport; these names
             // are the protocol's session operations and are shared by every
             // local ACP agent.
+            "initialize" -> initializePayload()
             "session/new" -> newAcpSession(canonicalArgs)
             "session/load" -> loadAcpSession(canonicalArgs)
             "session/resume" -> resumeAcpSession(canonicalArgs)
@@ -741,6 +760,7 @@ internal class LocalAcpRuntime(
             "session/set_config_option" -> setSessionConfigOption(canonicalArgs)
             "session/close" -> closeAcpSession(canonicalArgs)
             "session/delete" -> deleteAcpSession(canonicalArgs)
+            "\$/cancel_request" -> cancelAcpRequest(canonicalArgs)
             // The session surface is canonical. The implementation below
             // still uses the historical thread-named helpers, so normalize
             // their response back to sessionId/promptId at this boundary.
@@ -1091,6 +1111,22 @@ internal class LocalAcpRuntime(
             }.toString()
         ) ?: throw IllegalStateException("ACP agent is not connected.")
         return mapOf("ok" to true, "method" to method)
+    }
+
+    /** Forward JSON-RPC request cancellation as a notification. */
+    private suspend fun cancelAcpRequest(
+        args: Map<String, Any?>
+    ): Map<String, Any?> {
+        val requestId = args["requestId"] ?: args["id"]
+            ?: throw IllegalArgumentException("requestId is required")
+        connection?.sendRawMessage(
+            buildJsonObject {
+                put("jsonrpc", "2.0")
+                put("method", "\$/cancel_request")
+                put("params", anyToAcpJson(mapOf("requestId" to requestId)))
+            }.toString()
+        ) ?: throw IllegalStateException("ACP agent is not connected.")
+        return mapOf("ok" to true, "cancelled" to true, "requestId" to requestId)
     }
 
     private fun Map<String, Any?>.withoutLocalIds(): Map<String, Any?> =
@@ -2533,12 +2569,12 @@ internal class LocalAcpRuntime(
         val requestId = args["requestId"]?.toString()
             ?: throw IllegalArgumentException("requestId is required")
         pendingElicitations.remove(requestId)?.let { pending ->
-            serverRequestOwners.remove(requestId)
+            serverRequestOwners.remove(requestId, activeAgentId(), pending.sessionId)
             pending.response.complete(elicitationResponse(args))
             return mapOf("ok" to true)
         }
         pendingExtensionRequests.remove(requestId)?.let { pending ->
-            serverRequestOwners.remove(requestId)
+            serverRequestOwners.remove(requestId, activeAgentId(), pending.sessionId)
             val error = args["error"]?.let(::anyToAcpJson)
             val result = if (error == null) {
                 args["response"]?.let(::anyToAcpJson)
@@ -2552,7 +2588,7 @@ internal class LocalAcpRuntime(
         }
         val pending = pendingPermissions.remove(requestId)
             ?: throw IllegalArgumentException("Unknown ACP permission request: $requestId")
-        serverRequestOwners.remove(requestId)
+        serverRequestOwners.remove(requestId, activeAgentId(), pending.sessionId)
         val response = args.mapValue("response")
         val explicitOptionId = response.stringValue("optionId")
             ?: response.stringValue("selectedOptionId")
@@ -2591,13 +2627,13 @@ internal class LocalAcpRuntime(
         if (threadId.isBlank()) return
         pendingPermissions.entries.toList().forEach { (requestId, pending) ->
             if (pending.sessionId == threadId && pendingPermissions.remove(requestId, pending)) {
-                serverRequestOwners.remove(requestId)
+                serverRequestOwners.remove(requestId, activeAgentId(), pending.sessionId)
                 pending.response.complete(null)
             }
         }
         pendingElicitations.entries.toList().forEach { (requestId, pending) ->
             if (pending.sessionId == threadId && pendingElicitations.remove(requestId, pending)) {
-                serverRequestOwners.remove(requestId)
+                serverRequestOwners.remove(requestId, activeAgentId(), pending.sessionId)
                 pending.response.complete(
                     CreateElicitationResponse(action = ElicitationAction.Cancel)
                 )
@@ -2607,7 +2643,7 @@ internal class LocalAcpRuntime(
             if (pending.sessionId == threadId &&
                 pendingExtensionRequests.remove(requestId, pending)
             ) {
-                serverRequestOwners.remove(requestId)
+                serverRequestOwners.remove(requestId, activeAgentId(), pending.sessionId)
                 pending.response.complete(
                     RawAcpExtensionReply(
                         error = buildJsonObject {
@@ -2654,7 +2690,7 @@ internal class LocalAcpRuntime(
             return response.await()
         } finally {
             pendingExtensionRequests.remove(requestId, pending)
-            serverRequestOwners.remove(requestId)
+            serverRequestOwners.remove(requestId, activeAgentId(), sessionId)
             sessionId?.let { id ->
                 turnLifecycle.activeTurnId(id)?.let { turnId ->
                     turnLifecycle.markRunning(id, turnId)
@@ -3324,7 +3360,7 @@ internal class LocalAcpRuntime(
                 requestId,
                 PendingElicitationRequest(sessionId = sessionId, response = response)
             )
-            serverRequestOwners.remove(requestId)
+            serverRequestOwners.remove(requestId, activeAgentId(), sessionId)
             sessionId?.let { id ->
                 turnLifecycle.activeTurnId(id)?.let { turnId ->
                     turnLifecycle.markRunning(id, turnId)

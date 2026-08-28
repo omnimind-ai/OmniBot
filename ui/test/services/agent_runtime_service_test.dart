@@ -32,6 +32,40 @@ void main() {
     );
   });
 
+  test('initialize stays on the shared ACP boundary', () async {
+    MethodCall? capturedCall;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      capturedCall = call;
+      return <String, dynamic>{'protocolVersion': 1};
+    });
+
+    await AgentRuntimeService.initialize(agentId: 'xiaowan-acp');
+
+    expect(capturedCall?.method, 'initialize');
+    expect(capturedCall?.arguments, {'agentId': 'xiaowan-acp'});
+  });
+
+  test('request cancellation is not encoded as session cancellation', () async {
+    MethodCall? capturedCall;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      capturedCall = call;
+      return <String, dynamic>{'ok': true, 'cancelled': true};
+    });
+
+    await AgentRuntimeService.cancelRequest(
+      requestId: 'request-1',
+      sessionId: 'session-1',
+      agentId: 'xiaowan-acp',
+    );
+
+    expect(capturedCall?.method, '\$/cancel_request');
+    expect(capturedCall?.arguments, {
+      'requestId': 'request-1',
+      'sessionId': 'session-1',
+      'agentId': 'xiaowan-acp',
+    });
+  });
+
   test('parses the live status bundled with an agent switch response', () {
     final catalog = AcpAgentCatalog.fromMap(<String, dynamic>{
       'selectedAgentId': 'claude-code',

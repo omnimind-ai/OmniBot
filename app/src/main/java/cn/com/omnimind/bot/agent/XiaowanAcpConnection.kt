@@ -59,8 +59,9 @@ import cn.com.omnimind.bot.agent.AgentOutputKind
 import cn.com.omnimind.bot.agent.AgentPermissionRequester
 import com.agentclientprotocol.model.ToolKind
 import com.agentclientprotocol.protocol.Protocol
-import com.agentclientprotocol.rpc.MethodName
+import com.agentclientprotocol.rpc.JsonRpcNotification
 import com.agentclientprotocol.rpc.JsonRpcMessage
+import com.agentclientprotocol.rpc.MethodName
 import com.agentclientprotocol.transport.BaseTransport
 import com.agentclientprotocol.transport.Transport
 import kotlinx.coroutines.CompletableDeferred
@@ -161,6 +162,20 @@ internal class XiaowanAcpConnection(
     }
 
     override fun diagnosticSummary(): String = ""
+
+    override suspend fun sendRawMessage(line: String) {
+        check(::clientTransport.isInitialized && clientTransport.started) {
+            "ACP loopback transport is not connected."
+        }
+        val message = Json.decodeFromString(
+            JsonRpcMessage.serializer(),
+            line.trim()
+        )
+        check(message is JsonRpcNotification) {
+            "Xiaowan raw ACP message must be a notification."
+        }
+        clientTransport.send(message)
+    }
 
     override fun exitDescription(exitCode: Int?): String =
         "Built-in Xiaowan ACP Agent closed before initialize completed"

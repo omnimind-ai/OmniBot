@@ -18,35 +18,124 @@ internal data class AcpServerRequestOwner(
 )
 
 internal class AcpServerRequestOwnerRegistry {
-    private val owners = ConcurrentHashMap<String, AcpServerRequestOwner>()
+    /**
+     * JSON-RPC request ids are scoped to a transport. Two local ACP
+     * processes are therefore allowed to use the same id at the same time.
+     * Keep all owners instead of silently overwriting the first one.
+     */
+    private val owners = ConcurrentHashMap<String, MutableSet<AcpServerRequestOwner>>()
 
     fun register(requestId: Any?, agentId: String, sessionId: String?) {
         val key = requestId.keyOrNull() ?: return
         val normalizedAgentId = agentId.trim()
         if (normalizedAgentId.isEmpty()) return
-        owners[key] = AcpServerRequestOwner(
+        val owner = AcpServerRequestOwner(
             agentId = normalizedAgentId,
             sessionId = sessionId?.trim()?.takeIf(String::isNotEmpty),
         )
+        owners.compute(key) { _, current ->
+            (current ?: ConcurrentHashMap.newKeySet()).apply { add(owner) }
+        }
     }
 
     fun ownerFor(requestId: Any?): AcpServerRequestOwner? =
-        requestId.keyOrNull()?.let(owners::get)
+        ownersFor(requestId).singleOrNull()
 
-    fun remove(requestId: Any?) {
-        requestId.keyOrNull()?.let(owners::remove)
+    /**
+     * Resolve only when the identity supplied by the client leaves one
+     * transport owner. An ambiguous id is an error, never a reason to guess
+     * from the selected Agent.
+     */
+    fun resolve(
+        requestId: Any?,
+        agentId: String? = null,
+        sessionId: String? = null,
+    ): AcpServerRequestOwner? {
+        val candidates = ownersFor(requestId)
+        if (candidates.isEmpty()) return null
+        val normalizedAgentId = agentId.normalizedOrNull()
+        val normalizedSessionId = sessionId.normalizedOrNull()
+        val narrowed = candidates.filter { owner ->
+            (normalizedAgentId == null || owner.agentId == normalizedAgentId) &&
+                (normalizedSessionId == null ||
+                    owner.sessionId == null ||
+                    owner.sessionId == normalizedSessionId)
+        }
+        return when {
+            narrowed.size == 1 -> narrowed.single()
+            narrowed.isEmpty() -> throw IllegalArgumentException(
+                "ACP server request identity does not match its owner."
+            )
+            else -> throw IllegalArgumentException(
+                "ACP server request id is ambiguous; provide agentId or sessionId."
+            )
+        }
+    }
+
+    fun ownersFor(requestId: Any?): List<AcpServerRequestOwner> =
+        requestId.keyOrNull()?.let { key ->
+            owners[key]?.toList().orEmpty()
+        }.orEmpty()
+
+    /**
+     * Remove one owner after a response. A bare removal is safe only when the
+     * id is unique; otherwise it deliberately does nothing so another
+     * transport's pending request cannot be lost.
+     */
+    fun remove(
+        requestId: Any?,
+        agentId: String? = null,
+        sessionId: String? = null,
+    ) {
+        val key = requestId.keyOrNull() ?: return
+        val current = owners[key] ?: return
+        val normalizedAgentId = agentId.normalizedOrNull()
+        val normalizedSessionId = sessionId.normalizedOrNull()
+        val target = synchronized(current) {
+            val candidates = current.filter { owner ->
+                (normalizedAgentId == null || owner.agentId == normalizedAgentId) &&
+                    (normalizedSessionId == null ||
+                        owner.sessionId == null ||
+                        owner.sessionId == normalizedSessionId)
+            }
+            if (candidates.size == 1 ||
+                candidates.isEmpty() && current.size == 1
+            ) {
+                candidates.singleOrNull() ?: current.singleOrNull()
+            } else {
+                null
+            }
+        }
+        if (target != null) {
+            owners.computeIfPresent(key) { _, value ->
+                synchronized(value) {
+                    value.remove(target)
+                    value.takeIf { it.isNotEmpty() }
+                }
+            }
+        }
     }
 
     fun removeForSession(sessionId: String) {
         val normalized = sessionId.trim()
         if (normalized.isEmpty()) return
-        owners.entries.removeIf { it.value.sessionId == normalized }
+        owners.entries.removeIf { (_, value) ->
+            synchronized(value) {
+                value.removeIf { it.sessionId == normalized }
+                value.isEmpty()
+            }
+        }
     }
 
     fun removeForAgent(agentId: String) {
         val normalized = agentId.trim()
         if (normalized.isEmpty()) return
-        owners.entries.removeIf { it.value.agentId == normalized }
+        owners.entries.removeIf { (_, value) ->
+            synchronized(value) {
+                value.removeIf { it.agentId == normalized }
+                value.isEmpty()
+            }
+        }
     }
 
     private fun Any?.keyOrNull(): String? = when (this) {
@@ -54,6 +143,9 @@ internal class AcpServerRequestOwnerRegistry {
         is String -> trim().takeIf(String::isNotEmpty)
         else -> toString().trim().takeIf(String::isNotEmpty)
     }
+
+    private fun String?.normalizedOrNull(): String? =
+        this?.trim()?.takeIf(String::isNotEmpty)
 }
 
 internal enum class AcpServerRequestRuntime {

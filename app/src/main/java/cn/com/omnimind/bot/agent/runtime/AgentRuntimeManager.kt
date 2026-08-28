@@ -657,6 +657,9 @@ class AgentRuntimeManager private constructor(
 
     suspend fun handleMethod(method: String, args: Map<String, Any?>): Any? {
         val canonicalArgs = AcpSessionCompatibility.canonicalize(method, args)
+        if (method == "initialize") {
+            return initializeAcp(canonicalArgs)
+        }
         // The remote bridge is a Codex transport, not a global mode switch.
         // An explicit/bound local ACP session must keep routing to its own
         // process even while the remote Codex bridge is enabled.
@@ -753,6 +756,7 @@ class AgentRuntimeManager private constructor(
                 "session/list" -> return listRemoteAcpSessions(canonicalArgs)
                 "session/prompt" -> return promptRemoteAcpSession(canonicalArgs)
                 "session/cancel" -> return cancelRemoteAcpSession(canonicalArgs)
+                "\$/cancel_request" -> return cancelRemoteAcpRequest(canonicalArgs)
                 "session/fork",
                 "session/close",
                 "session/delete",
@@ -821,6 +825,44 @@ class AgentRuntimeManager private constructor(
             "respondToServerRequest" -> respondToServerRequest(args)
             else -> request(method, args)
         }
+    }
+
+    /**
+     * ACP initialize is a connection handshake, not a second session. Local
+     * and remote transports perform it exactly once when they connect; this
+     * method exposes the already negotiated result to shared clients and is
+     * therefore idempotent.
+     */
+    private suspend fun initializeAcp(args: Map<String, Any?>): Map<String, Any?> {
+        val routeLocal = shouldRouteLocalAcp("initialize", args)
+        if (resolveRuntime().kind == AgentRuntimeKind.LOCAL || routeLocal) {
+            // initialize is connection-scoped. Never let a conversation or
+            // session hint in a bridge envelope bind/switch the ACP runtime.
+            val connectionArgs = args.filterKeys { it == "agentId" }
+            val (runtime, localArgs) = ensureLocalAcpConnected(
+                "initialize",
+                connectionArgs,
+            )
+            return runtime.handleMethod("initialize", localArgs)
+                as Map<String, Any?>
+        }
+        if (!isActiveSessionFor(AgentRuntimeKind.REMOTE, null)) {
+            connect()
+        }
+        return ensureConnectedSession().initializePayload()
+    }
+
+    /** JSON-RPC request cancellation is a notification, not session/cancel. */
+    private suspend fun cancelRemoteAcpRequest(
+        args: Map<String, Any?>
+    ): Map<String, Any?> {
+        val requestId = args["requestId"] ?: args["id"]
+            ?: throw IllegalArgumentException("requestId is required")
+        ensureConnectedSession().sendNotification(
+            "\$/cancel_request",
+            mapOf("requestId" to requestId),
+        )
+        return mapOf("ok" to true, "cancelled" to true, "requestId" to requestId)
     }
 
     private suspend fun startRemoteAcpSession(
@@ -1367,13 +1409,18 @@ class AgentRuntimeManager private constructor(
             ?: throw IllegalArgumentException("requestId is required")
         val sessionId = args.stringValue("sessionId")
             ?: args.stringValue("threadId")
+        val pendingRequestOwner = pendingAcpServerRequests.resolve(
+            requestId = requestId,
+            agentId = args.stringValue("agentId"),
+            sessionId = sessionId,
+        )
         val route = resolveAcpServerRequestRoute(
             remoteEnabled = remoteConfigStore.read().enabled,
             requestedAgentId = args.stringValue("agentId"),
             sessionAgentId = sessionId?.let(acpAgentProfileStore::agentIdForSession),
             conversationAgentId = args.longValue("conversationId")
                 ?.let(acpAgentProfileStore::agentIdForConversation),
-            pendingRequestAgentId = pendingAcpServerRequests.ownerFor(requestId)?.agentId,
+            pendingRequestAgentId = pendingRequestOwner?.agentId,
             selectedRuntime = if (resolveRuntime().kind == AgentRuntimeKind.LOCAL) {
                 AcpServerRequestRuntime.LOCAL
             } else {
@@ -3488,6 +3535,7 @@ internal val MANAGED_NATIVE_BUILD_PREREQUISITES_COMMAND = """
 """.trimIndent()
 internal const val OPENCODE_CONFIG_PATH = "/root/.config/opencode/opencode.json"
 private val LOCAL_ACP_METHODS = setOf(
+    "initialize",
     "session/new",
     "session/load",
     "session/resume",
@@ -3521,6 +3569,7 @@ private val LOCAL_ACP_METHODS = setOf(
     "providers/disable",
     "auth/providers/disable",
     "respondToServerRequest",
+    "\$/cancel_request",
     "notifyAcpExtension"
 )
 
