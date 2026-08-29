@@ -7,7 +7,7 @@ plugins {
 
 android {
     namespace = "cn.com.omnimind.androidgui"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         minSdk = 29

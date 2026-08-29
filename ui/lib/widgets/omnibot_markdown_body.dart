@@ -5,7 +5,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_math_fork/flutter_math.dart';
-import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:markdown/markdown.dart' as md;
 import 'package:ui/l10n/legacy_text_localizer.dart';
 import 'package:ui/services/omnibot_resource_service.dart';
@@ -663,8 +663,7 @@ class OmnibotMarkdownBody extends StatelessWidget {
           trailingInline: trailingInline,
           onResourceOpen: onResourceOpen,
         ),
-        sizedImageBuilder: (config) {
-          final uri = config.uri;
+        imageBuilder: (uri, title, alt) {
           if (uri.scheme == 'omnibot') {
             final metadata = OmnibotResourceService.resolveUri(uri.toString());
             if (metadata != null) {

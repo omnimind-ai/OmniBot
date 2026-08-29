@@ -1134,7 +1134,7 @@ class HttpAgentLlmClientTest {
             .protocol(Protocol.HTTP_1_1)
             .code(200)
             .message("OK")
-            .body(body?.toResponseBody())
+            .body((body ?: "").toResponseBody())
             .build()
     }
 

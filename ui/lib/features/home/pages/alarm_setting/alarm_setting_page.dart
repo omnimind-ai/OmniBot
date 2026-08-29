@@ -73,16 +73,15 @@ class _AlarmSettingPageState extends State<AlarmSettingPage> {
       return;
     }
 
-    final result = await FilePicker.platform.pickFiles(
+    final file = await FilePicker.pickFile(
       type: FileType.custom,
       allowedExtensions: const ['mp3'],
-      allowMultiple: false,
     );
 
-    if (result == null || result.files.isEmpty) {
+    if (file == null) {
       return;
     }
-    final path = result.files.first.path;
+    final path = file.path;
     if (path == null || path.isEmpty) {
       showToast(context.l10n.alarmInvalidFilePath, type: ToastType.warning);
       return;

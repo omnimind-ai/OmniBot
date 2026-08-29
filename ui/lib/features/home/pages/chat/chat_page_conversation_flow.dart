@@ -219,14 +219,20 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
   @override
   Future<void> _pickAttachments() async {
     try {
-      final result = await FilePicker.platform.pickFiles(
+      final files = await FilePicker.pickFiles(
         allowMultiple: true,
         type: FileType.any,
       );
-      if (result == null || result.files.isEmpty || !mounted) return;
+      if (files.isEmpty || !mounted) return;
 
+      final fileSizes = <String, int>{};
+      for (final file in files) {
+        final path = file.path;
+        if (path == null || path.isEmpty) continue;
+        fileSizes[path] = await file.length();
+      }
       setState(() {
-        for (final file in result.files) {
+        for (final file in files) {
           final path = file.path;
           if (path == null || path.isEmpty) continue;
           final exists = _pendingAttachments.any((item) => item.path == path);
@@ -237,12 +243,13 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
           final extension = (file.extension ?? '').toLowerCase();
           final mimeType = _mimeTypeFromExtension(path, extension: extension);
           final isImage = _isImageFilePath(path, mimeType: mimeType);
+          final fileSize = fileSizes[path] ?? 0;
           _pendingAttachments.add(
             ChatInputAttachment(
               id: '${path}_${DateTime.now().microsecondsSinceEpoch}',
               name: displayName,
               path: path,
-              size: file.size > 0 ? file.size : null,
+              size: fileSize > 0 ? fileSize : null,
               mimeType: mimeType,
               isImage: isImage,
             ),
