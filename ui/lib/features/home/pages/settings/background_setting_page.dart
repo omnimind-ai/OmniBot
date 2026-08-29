@@ -262,14 +262,13 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
 
   Future<void> _pickLocalImage() async {
     try {
-      final result = await FilePicker.platform.pickFiles(
+      final file = await FilePicker.pickFile(
         type: FileType.image,
-        allowMultiple: false,
       );
-      if (result == null || result.files.isEmpty) {
+      if (file == null) {
         return;
       }
-      final path = result.files.single.path;
+      final path = file.path;
       if (path == null || path.isEmpty) {
         showToast('选择图片失败：无法读取图片路径', type: ToastType.error);
         return;
@@ -2009,22 +2008,15 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
     if (_petBusy) return;
     setState(() => _petBusy = true);
     try {
-      final picked = await FilePicker.platform.pickFiles(
+      final selectedFile = await FilePicker.pickFile(
         type: FileType.custom,
         allowedExtensions: const ['zip'],
-        allowMultiple: false,
-        withData: true,
       );
-      if (picked == null || picked.files.isEmpty) {
+      if (selectedFile == null) {
         return;
       }
-      final selectedFile = picked.files.single;
-      final bytes =
-          selectedFile.bytes ??
-          (selectedFile.path == null
-              ? null
-              : await File(selectedFile.path!).readAsBytes());
-      if (bytes == null || bytes.isEmpty) {
+      final bytes = await selectedFile.readAsBytes();
+      if (bytes.isEmpty) {
         throw const PetPackageException('无法读取宠物压缩包');
       }
       final installed = await const PetPackageInstaller().installArchiveBytes(

@@ -25,55 +25,58 @@ dependencies:
     sdk: flutter
   flutter_localizations:
     sdk: flutter
-  shared_preferences: ^2.5.3
-  intl: ^0.20.2
-  loading_animation_widget: ^1.2.1
-  flutter_markdown: ^0.7.7
-  carousel_slider: ^5.1.1
-  permission_handler: ^12.0.1
+  shared_preferences: ^2.5.5
+  intl: ^0.20.3
+  loading_animation_widget: ^1.3.0
+  flutter_markdown_plus: ^1.0.12
+  carousel_slider: ^5.1.2
+  permission_handler: ^13.0.1
   url_launcher: ^6.3.2
   flutter_slidable: ^4.0.3
   flutter_switch: ^0.3.2
-  simple_gradient_text: ^1.3.0
+  simple_gradient_text: ^1.4.0
   dotted_border: ^3.1.0
-  gradient_borders: ^1.0.2
+  gradient_borders: ^1.0.4
 
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
-  cupertino_icons: ^1.0.8
-  http: ^1.5.0
-  flutter_riverpod: ^2.5.1
-  riverpod_annotation: ^2.3.5
-  webview_flutter: ^4.4.2
-  webview_flutter_android: 4.10.13
-  fluttertoast: ^9.0.0
-  go_router: ^14.2.7
-  flutter_svg: ^2.0.10+1
-  gal: ^2.3.2
-  image_picker: ^1.2.0
-  cached_network_image: ^3.4.1
-  dio: ^5.9.0
-  path_provider: ^2.1.5
-  file_picker: ^8.1.2
-  just_audio: ^0.10.5
-  archive: ^4.0.9
-  markdown: ^7.3.0
-  flutter_math_fork: ^0.7.3
-  video_player: ^2.10.0
-  xml: ^6.6.1
-  mobile_scanner: ^7.2.0
-  lucide_icons_flutter: ^3.1.14+2
+  cupertino_icons: ^1.0.9
+  http: ^1.6.0
+  flutter_riverpod: ^3.4.2
+  riverpod_annotation: ^4.0.6
+  webview_flutter: ^4.14.1
+  webview_flutter_android: ^4.10.13
+  fluttertoast: ^10.0.0
+  go_router: ^18.0.0
+  flutter_svg: ^2.3.0
+  gal: ^2.3.3
+  image_picker: ^1.2.3
+  cached_network_image: ^4.0.0
+  flutter_cache_manager: ^3.4.2
+  dio: ^5.11.0
+  path_provider: ^2.1.6
+  file_picker: ^12.1.2
+  just_audio: ^0.10.6
+  archive: ^4.2.0
+  markdown: ^7.3.1
+  flutter_math_fork: ^0.7.4
+  video_player: ^2.14.0
+  xml: ^7.0.1
+  mobile_scanner: ^7.4.0
+  lucide_icons_flutter: ^3.1.17
   qr_flutter: ^4.1.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^5.0.0
-  build_runner: ^2.4.13
-  riverpod_generator: ^2.3.11
+  flutter_lints: ^6.0.0
+  build_runner: ^2.16.0
+  riverpod_generator: ^4.0.8
 
 dependency_overrides:
+  # These plugin versions retain Groovy build scripts that work with the
+  # embedded Flutter module while its AGP 9 migration is completed.
   flutter_plugin_android_lifecycle: 2.0.33
   image_picker_android: 0.8.13+14
   path_provider_android: 2.2.22

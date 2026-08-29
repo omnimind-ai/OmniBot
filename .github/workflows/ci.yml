@@ -17,7 +17,8 @@ env:
   JAVA_VERSION: '17'
   NODE_VERSION: '22'
   PNPM_VERSION: '10.28.0'
-  FLUTTER_VERSION: '3.38.7'
+  FLUTTER_VERSION: '3.47.2'
+  ANDROID_PLATFORM_VERSION: '37'
   NDK_VERSION: '28.2.13676358'
   ALLOWED_THIRD_PARTY_WRAPPER_SHA: 'ee3739525a995bcb5601621a6e2daec1f183bbefc375743acc235cec33547e04'
 
@@ -85,6 +86,21 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+
+      - name: Cache Android SDK platform
+        id: cache-android-platform
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ env.ANDROID_SDK_ROOT }}/platforms/android-${{ env.ANDROID_PLATFORM_VERSION }}
+            ${{ env.ANDROID_SDK_ROOT }}/licenses
+          key: ${{ runner.os }}-android-platform-${{ env.ANDROID_PLATFORM_VERSION }}
+
+      - name: Install Android SDK platform
+        if: steps.cache-android-platform.outputs.cache-hit != 'true'
+        run: |
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager "platforms;android-${{ env.ANDROID_PLATFORM_VERSION }}"
 
       - name: Cache Android NDK
         id: cache-android-ndk

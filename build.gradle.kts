@@ -1,4 +1,5 @@
 import com.android.build.api.dsl.ApplicationExtension
+import com.android.build.api.variant.LibraryAndroidComponentsExtension
 import org.gradle.kotlin.dsl.configure
 
 // Top-level build file where you can add configuration options common to all sub-projects/modules.
@@ -33,6 +34,19 @@ subprojects {
         plugins.withId("com.android.application") {
             extensions.configure<ApplicationExtension> {
                 ndkVersion = androidNdkVersion
+            }
+        }
+    }
+
+    // Flutter's generated module still defaults to SDK 36, while the latest
+    // Android dependencies in this host require SDK 37. Keep the generated
+    // project out of source control and override it from the host build.
+    if (path == ":flutter") {
+        pluginManager.withPlugin("com.android.library") {
+            extensions.configure<LibraryAndroidComponentsExtension> {
+                finalizeDsl { extension ->
+                    extension.compileSdk = 37
+                }
             }
         }
     }

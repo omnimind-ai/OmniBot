@@ -562,7 +562,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
     }
     try {
       await OmnibotResourceService.ensureWorkspacePathsLoaded();
-      final selectedDirectoryPath = await FilePicker.platform.getDirectoryPath(
+      final selectedDirectoryPath = await FilePicker.getDirectoryPath(
         dialogTitle: _workspaceMountPickTitle,
       );
       if (!mounted ||

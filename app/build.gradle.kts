@@ -163,7 +163,7 @@ val syncPluginAssets by tasks.registering(Sync::class) {
 
 android {
     namespace = "cn.com.omnimind.bot"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "cn.com.omnimind.bot"

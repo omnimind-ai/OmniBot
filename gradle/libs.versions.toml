@@ -1,54 +1,54 @@
 [versions]
-agp = "8.13.2"
-glide = "5.0.5"
-gson = "2.13.2"
-kotlin = "2.4.0"
-coreKtx = "1.13.0"
+agp = "9.3.2"
+glide = "5.0.9"
+gson = "2.14.0"
+kotlin = "2.4.10"
+coreKtx = "1.19.0"
 junit = "4.13.2"
 junitVersion = "1.3.0"
 espressoCore = "3.7.0"
-lifecycleLivedataKtx = "2.9.3"
-lifecycleRuntimeKtx = "2.7.0"
-activityCompose = "1.8.2"
-composeBom = "2024.09.00"
-appcompat = "1.7.1"
-location = "6.4.3"
-loggingInterceptor = "4.12.0"
-lottie = "6.6.10"
-material = "1.12.0"
-animationCore = "1.9.0"
-kotlinStdlib = "2.4.0"
-kotlinxCoroutines = "1.9.0"
+lifecycleLivedataKtx = "2.11.0"
+lifecycleRuntimeKtx = "2.11.0"
+activityCompose = "1.13.0"
+composeBom = "2026.08.00"
+appcompat = "1.8.0"
+location = "11.2.100"
+loggingInterceptor = "5.5.0"
+lottie = "6.7.1"
+material = "1.14.0"
+animationCore = "1.12.0"
+kotlinStdlib = "2.4.10"
+kotlinxCoroutines = "1.11.0"
 agentClientProtocol = "0.30.1"
-lifecycleService = "2.9.3"
-mmkv = "2.2.3"
+lifecycleService = "2.11.0"
+mmkv = "2.4.2"
 nanohttpd = "2.3.1"
 roomPaging = "2.8.4"
-search = "9.4.0"
-securityCrypto = "1.1.0-alpha06"
-okhttp = "4.9.0"
-okhttpVersion = "4.12.0"
-coreSplashscreen = "1.0.1"
+search = "9.7.1"
+securityCrypto = "1.1.0"
+okhttp = "5.5.0"
+okhttpVersion = "5.5.0"
+coreSplashscreen = "1.2.0"
 roomCompiler = "2.8.4"
-pagingCommon = "3.2.1"
+pagingCommon = "3.5.1"
 roomKtx = "2.8.4"
 roomRuntime = "2.8.4"
-ktor = "3.5.1"
+ktor = "3.5.2"
 mcpKotlinSdk = "0.15.0"
-kotlinMetadataJvm = "2.4.0"
-kotlinxSerializationJson = "1.7.3"
+kotlinMetadataJvm = "2.4.10"
+kotlinxSerializationJson = "1.11.0"
 valiktor = "0.12.0"
-composeMaterialCore = "1.5.2"
-mustache = "0.9.10"
+composeMaterialCore = "1.6.2"
+mustache = "0.9.14"
 fastjson = "1.1.72.android"
-bouncycastle = "1.78.1"
-androidxNavigation = "2.8.9"
+bouncycastle = "1.85.2"
+androidxNavigation = "2.10.0"
 accompanistSystemuicontroller = "0.36.0"
 anrwatchdog = "1.4.0"
 blankjUtilcode = "1.31.1"
-constraintlayout = "2.2.1"
-navigationFragment = "2.8.9"
-navigationUi = "2.8.9"
+constraintlayout = "2.2.2"
+navigationFragment = "2.10.0"
+navigationUi = "2.10.0"
 palette = "1.0.0"
 shizuku = "13.1.5"
 androidSvg = "1.4"
@@ -58,7 +58,7 @@ accompanist-systemuicontroller = { module = "com.google.accompanist:accompanist-
 anrwatchdog = { module = "com.github.anrwatchdog:anrwatchdog", version.ref = "anrwatchdog" }
 appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
-androidx-documentfile = { group = "androidx.documentfile", name = "documentfile", version = "1.0.1" }
+androidx-documentfile = { group = "androidx.documentfile", name = "documentfile", version = "1.1.0" }
 androidx-material-icons-core = { group = "androidx.compose.material", name = "material-icons-core" }
 androidx-palette = { module = "androidx.palette:palette", version.ref = "palette" }
 androidsvg = { module = "com.caverock:androidsvg-aar", version.ref = "androidSvg" }
@@ -135,7 +135,7 @@ androidx-room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = 
 ktor-serialization-kotlinx-json = { module = "io.ktor:ktor-serialization-kotlinx-json", version.ref = "ktor" }
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinxSerializationJson" }
 search = { module = "com.amap.api:search", version.ref = "search" }
-work-runtime = { group = "androidx.work", name = "work-runtime-ktx", version = "2.9.0" }
+work-runtime = { group = "androidx.work", name = "work-runtime-ktx", version = "2.11.2" }
 valiktor-core = { group = "org.valiktor", name = "valiktor-core", version.ref = "valiktor" }
 mustache-compiler = { group = "com.github.spullara.mustache.java", name = "compiler", version.ref = "mustache" }
 fastjson = { group = "com.alibaba", name = "fastjson", version.ref = "fastjson" }
@@ -158,6 +158,7 @@ androidx-compose-material-core = { group = "androidx.wear.compose", name = "comp
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 android-library = { id = "com.android.library", version.ref = "agp" }
+legacy-kapt = { id = "com.android.legacy-kapt", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
