@@ -74,10 +74,13 @@ class RuntimeBundleTest(unittest.TestCase):
             "INSTALL_DIR.json",
             "SKILL.md",
             "scripts/runtime/python/omniflow/bridge.py",
+            "scripts/runtime/python/src/integrations/android_world/apps.py",
             "scripts/runtime/python/config/paper_androidworld.json",
             "vendor/site-packages/json_repair/__init__.py",
+            "vendor/site-packages/PIL/__init__.py",
             "scripts/runtime/python/schemas/oob/omniflow_android_bridge.v2.json",
             "scripts/runtime/.runtime/omnitransfer/src/omnitransfer/runtime.py",
+            "scripts/runtime/.runtime/omnitransfer/src/omnitransfer/numpy_v10_matcher.py",
         }
         self.assertTrue(required <= self.names)
         self.assertIn(
@@ -118,15 +121,13 @@ class RuntimeBundleTest(unittest.TestCase):
         execution = self.files[
             "scripts/runtime/python/omniflow/runtime/execution.py"
         ].decode("utf-8")
-        self.assertTrue(
-            "_ALIGNMENT_MIN_PROBABILITY = 0.0" in execution
-            or "_ALIGNMENT_MIN_PROBABILITY = MINIMUM_CONTEXTUAL_MAPPING_CONFIDENCE" in execution
-        )
+        self.assertIn("omnitransfer", execution)
+        self.assertNotIn("coordinate_stretch_fallback", execution)
 
-    def test_release_pins_canonical_omnitransfer_v9(self) -> None:
+    def test_release_pins_canonical_omnitransfer_v10_numpy(self) -> None:
         commit = self.properties["omnitransfer.commit"]
         prefix = "scripts/runtime/.runtime/omnitransfer/src/omnitransfer/"
-        for relative in ("runtime.py", "numpy_v9_matcher.py"):
+        for relative in ("runtime.py", "numpy_v10_matcher.py"):
             self.assertEqual(
                 committed_file(OMNITRANSFER_ROOT, commit, f"src/omnitransfer/{relative}"),
                 self.files[prefix + relative],
@@ -136,6 +137,7 @@ class RuntimeBundleTest(unittest.TestCase):
         with ZipFile(BytesIO(self.files[checkpoint])) as weights:
             weight_names = set(weights.namelist())
             checkpoint_config = weights.read("__config_json__.npy")
+        self.assertIn(b'"architecture":"omnitransfer_point_conditioned_sparse_graph_v10"', checkpoint_config)
         self.assertIn(b'"visual_encoder":"deterministic_icon_v1"', checkpoint_config)
         self.assertFalse(any(name.startswith("visual_encoder.") for name in weight_names))
         self.assertIn("missing_visual.npy", weight_names)

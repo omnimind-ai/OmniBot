@@ -162,7 +162,14 @@ class OmniFlowToolClient {
     Map<String, dynamic> arguments, {
     String? goal,
   }) {
-    return _call(functionId, arguments, goal: goal);
+    // Function ids are data, not tool names.  The native bridge exposes the
+    // single official run_function management tool and forwards the id to
+    // OmniFlow's FunctionStore.  Sending the id as the MCP tool name makes
+    // the bridge reject valid Functions as tool_not_exposed:<id>.
+    return _call('run_function', <String, dynamic>{
+      'function_id': functionId,
+      'arguments': arguments,
+    }, goal: goal);
   }
 
   static Future<Map<String, dynamic>> _call(

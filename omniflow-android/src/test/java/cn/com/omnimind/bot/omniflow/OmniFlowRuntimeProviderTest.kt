@@ -80,6 +80,10 @@ class OmniFlowRuntimeProviderTest {
         val required = OmniFlowRuntimeProvider().requiredOmniFlowRuntimePaths(manifest)
 
         assertTrue("scripts/runtime/python/omniflow/runlog.py" in required)
+        assertTrue("vendor/site-packages/PIL/__init__.py" in required)
+        assertTrue(
+            "scripts/runtime/python/src/integrations/android_world/apps.py" in required
+        )
         assertTrue(
             "scripts/runtime/.runtime/omnitransfer/src/omnitransfer/page_embedding.py" in required
         )
@@ -88,6 +92,9 @@ class OmniFlowRuntimeProviderTest {
         )
         assertTrue(
             "scripts/runtime/.runtime/omnitransfer/src/omnitransfer/visual_descriptor.py" in required
+        )
+        assertTrue(
+            "scripts/runtime/.runtime/omnitransfer/src/omnitransfer/numpy_v10_matcher.py" in required
         )
         assertFalse(
             "scripts/runtime/.runtime/omnitransfer/src/omnitransfer/numpy_matcher.py" in required

@@ -37,14 +37,15 @@ class OmniFlowToolChannelManualRecordingTest {
     }
 
     @Test
-    fun functionRegistrationFreezesTheRunLogAlongsideTheFunctionDraft() {
+    fun functionRegistrationUsesTheOfficialFunctionSaveContract() {
         val source = projectSource(
             "app/src/main/java/cn/com/omnimind/bot/omniflow/OmniFlowFunctionRegistration.kt",
         )
 
         assertTrue(source.contains("val sourceRunLog = InternalRunLogStore.timelinePayload("))
         assertTrue(source.contains("\"run_log\" to sourceRunLog"))
-        assertTrue(!source.contains("\"functions\" to listOf(function)"))
+        assertTrue(source.contains("\"agent_visible\" to agentVisible"))
+        assertTrue(!source.contains("RunLogReusableFunctionCompiler"))
     }
 
     @Test

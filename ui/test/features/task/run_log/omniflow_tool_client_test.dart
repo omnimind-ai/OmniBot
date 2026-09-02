@@ -49,7 +49,7 @@ void main() {
         'list_functions',
         'list_run_logs',
         'save_function',
-        'function.demo',
+        'run_function',
       ]);
       expect(
         ((calls[2].arguments as Map)['arguments'] as Map)['run_id'],
@@ -58,6 +58,10 @@ void main() {
       expect(
         (calls.last.arguments as Map)['goal'],
         '演示指令\n参数: {"query":"ice"}',
+      );
+      expect(
+        ((calls.last.arguments as Map)['arguments'] as Map)['function_id'],
+        'function.demo',
       );
     },
   );

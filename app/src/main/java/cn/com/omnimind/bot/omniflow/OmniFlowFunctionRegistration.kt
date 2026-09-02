@@ -15,14 +15,13 @@ object OmniFlowFunctionRegistration {
     ): Map<String, Any?> {
         val normalizedRunId = runId.trim()
         require(normalizedRunId.isNotEmpty()) { "run_id_required" }
-        val record = requireNotNull(
+        requireNotNull(
             InternalRunLogStore.getRun(context.applicationContext, normalizedRunId),
         ) { "run_log_not_found:$normalizedRunId" }
-        // Send the canonical RunLog snapshot with the Function draft.  The
-        // Python compiler must freeze transfer_states.json from the same
-        // evidence that produced this Function; resolving the RunLog again
-        // through the Android host introduces a race with RunLog cleanup and
-        // was the source of missing source_state failures on replay.
+        // Kotlin only supplies the canonical RunLog.  The official Python
+        // compiler owns RunLog -> Function projection, schema validation,
+        // and transfer-state freezing; there must not be a second Android
+        // converter here.
         val sourceRunLog = InternalRunLogStore.timelinePayload(
             context.applicationContext,
             normalizedRunId,
@@ -34,6 +33,7 @@ object OmniFlowFunctionRegistration {
                 arguments = mapOf(
                     "run_id" to normalizedRunId,
                     "run_log" to sourceRunLog,
+                    "agent_visible" to agentVisible,
                 ),
             ),
             source = source,

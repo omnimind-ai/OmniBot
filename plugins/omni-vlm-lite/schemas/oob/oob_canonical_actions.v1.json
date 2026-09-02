@@ -66,8 +66,8 @@
         {"name": "text", "type": "string", "required": true, "description": {"zh_cn": "要输入的文本内容。", "en_us": "Text content to type."}},
         {"name": "node_id", "type": "string", "persisted": false, "description": {"zh_cn": "可选。live XML 中已确认的无障碍节点 id。", "en_us": "Optional. Confirmed accessibility node id from live XML."}},
         {"name": "node_resource_id", "type": "string", "persisted": false, "description": {"zh_cn": "可选。录制或 XML grounding 得到的 Android resource-id，用于重放定位诊断和迁移。", "en_us": "Optional. Android resource-id captured from recording or XML grounding, used for replay targeting diagnostics and transfer."}},
-        {"name": "x", "type": "number", "required": true, "persisted": false, "description": {"zh_cn": "目标输入框中心的 required 0..1000 相对 X 坐标；执行前会解码为屏幕绝对像素。", "en_us": "Required 0..1000 relative X coordinate of the input target center; decoded to absolute screen pixels before execution."}, "minimum": 0, "maximum": 1000},
-        {"name": "y", "type": "number", "required": true, "persisted": false, "description": {"zh_cn": "目标输入框中心的 required 0..1000 相对 Y 坐标；执行前会解码为屏幕绝对像素。", "en_us": "Required 0..1000 relative Y coordinate of the input target center; decoded to absolute screen pixels before execution."}, "minimum": 0, "maximum": 1000}
+        {"name": "x", "type": "number", "required": true, "description": {"zh_cn": "目标输入框中心的 required 0..1000 相对 X 坐标；执行前会解码为屏幕绝对像素。", "en_us": "Required 0..1000 relative X coordinate of the input target center; decoded to absolute screen pixels before execution."}, "minimum": 0, "maximum": 1000},
+        {"name": "y", "type": "number", "required": true, "description": {"zh_cn": "目标输入框中心的 required 0..1000 相对 Y 坐标；执行前会解码为屏幕绝对像素。", "en_us": "Required 0..1000 relative Y coordinate of the input target center; decoded to absolute screen pixels before execution."}, "minimum": 0, "maximum": 1000}
       ]
     },
     {

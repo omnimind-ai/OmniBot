@@ -349,7 +349,14 @@ internal object AndroidDeviceMcpServer {
                 .associate { (key, value) -> key.toString() to value }
             OmniFlow.callTool(
                 context = context,
-                toolCall = OmniFlow.ToolCall(functionId, functionArguments),
+                toolCall = OmniFlow.ToolCall(
+                    name = "run_function",
+                    arguments = mapOf(
+                        "function_id" to functionId,
+                        "arguments" to functionArguments,
+                        "goal" to arguments["goal"],
+                    ).filterValues { it != null },
+                ),
                 goal = arguments["goal"]?.toString().orEmpty().ifBlank { functionId },
                 source = "mcp",
                 runLogToolName = functionId,
