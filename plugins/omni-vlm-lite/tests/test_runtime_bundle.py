@@ -6,6 +6,8 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
+from tempfile import TemporaryDirectory
 import unittest
 from zipfile import ZipFile
 
@@ -145,6 +147,50 @@ class RuntimeBundleTest(unittest.TestCase):
         self.assertIn("min_probability=0.0", runtime)
         self.assertIn("min_margin=0.0", runtime)
         self.assertNotIn("coordinate_stretch_fallback", runtime)
+
+    def test_embedded_runtime_preflight_accepts_its_pinned_checkpoint(self) -> None:
+        with TemporaryDirectory(prefix="omniflow-runtime-preflight-") as temporary:
+            runtime_root = Path(temporary)
+            with ZipFile(self.archive_path) as archive:
+                archive.extractall(runtime_root)
+            python_root = runtime_root / "scripts/runtime/python"
+            transfer_root = runtime_root / "scripts/runtime/.runtime/omnitransfer"
+            checkpoint = (
+                transfer_root
+                / "src/omnitransfer"
+                / self.properties["omnitransfer.checkpoint"]
+            )
+            environment = os.environ.copy()
+            environment["PYTHONPATH"] = os.pathsep.join(
+                (
+                    str(python_root),
+                    str(runtime_root / "vendor/site-packages"),
+                    str(transfer_root / "src"),
+                )
+            )
+            environment["OMNITRANSFER_ROOT"] = str(transfer_root)
+            environment["OMNITRANSFER_MATCHER_CHECKPOINT"] = str(checkpoint)
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    (
+                        "from omniflow.transfer.runtime import "
+                        "preflight_omnitransfer; "
+                        "assert preflight_omnitransfer()['ready']"
+                    ),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=environment,
+                timeout=60,
+            )
+            self.assertEqual(
+                completed.returncode,
+                0,
+                msg=completed.stderr or completed.stdout,
+            )
 
 if __name__ == "__main__":
     unittest.main()

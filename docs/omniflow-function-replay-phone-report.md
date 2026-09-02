@@ -38,11 +38,13 @@
 | OmniFlow runtime component | `2.1.8` |
 | OmniTransfer | point-conditioned sparse graph V10，checkpoint `d1700845f599b9854b29a435166dfb18ce6a141fb4ab76bce7687c88188637a4` |
 | OOB canonical action schema | `eb552c08e89123f42667c2c3296db9b3094d74715dfdb4d0cb7df50aeec62333` |
-| 组件包 SHA-256 | `644ad6289383246762e137cbc08c8a22ab51f397663abe9c040b9338b2ae4a79` |
-| 组件包大小 | 11,143,337 bytes |
-| 最新 APK SHA-256 | `ec5e31ae943f5f160aa9ed23cab08062653b8ef73e9ce4510a81f25dc1d9fe81` |
+| 组件包 SHA-256 | `17b821fbe0502125b0d66dee10969cb61574d5b28533783e27eed14af8ac2d17` |
+| 组件包大小 | 11,143,456 bytes |
+| 最新 APK SHA-256 | `c5eb4de9543fb8b1e7652ee5d9e752a15ee1a805e33c1ba87a98c610279ee7c2` |
 
-手机端 marker 已与本次组件包 SHA 一致；runtime 中包含 Python 官方执行层的 timing 字段，未使用 Kotlin 侧重复转换或坐标回放。APK 安装后的首次 OmniFlow 调用会按 catalog 校验并替换本地组件，已在本次手机测试中确认替换成功。
+手机端 marker 已与本次组件包 SHA 一致；runtime 中包含 Python 官方执行层的 timing 字段，未使用 Kotlin 侧重复转换或坐标回放。APK 安装后的首次 OmniFlow 调用会按 catalog 校验并替换本地组件，已在本次手机测试中确认替换成功。更新后直接调用 `list_functions` 返回 `complete_source_workflow`，`prepare_ready` 和 `warmup_ready` 均成功，且没有 `omnitransfer_degraded`。
+
+本次更新还修复了一个发布包契约问题：新导出的 NumPy V10 checkpoint SHA 为 `d1700845…88637a4`，旧的 Python runtime 白名单没有接受它，导致包虽能安装但 preflight 会退化为 `backend=unavailable`。现在运行时接受该正式导出物，组件回归测试和手机端 preflight 均通过。这个修复不改变 Transfer 算法、候选策略或 ACP 生命周期。
 
 ## 二、Transfer 面临的挑战
 
@@ -119,6 +121,8 @@ forward 的结果依赖当前 source/target graph、截图证据和候选集合�
 ### 4.4 最新 APK 正式 Function Replay
 
 使用上述官方编译出的 `complete_source_workflow`，参数为 `input_text=Omni`，在同一台 OnePlus PJE110 上从小红书冷启动首页开始连续执行 5 轮。每轮均通过 `run_function`，每一步均使用 `omnitransfer_point_conditioned_sparse_graph_v10`，没有模型调用、fallback 或源设备坐标直通。
+
+注：下表的 5 轮是本次 runtime 重新打包前已完成的正式 Replay 数据，用于保留端到端行为基线；本次新包更新后的验证已完成组件 preflight、runtime warmup 和官方函数列表检查。更新后再次从小红书前台触发调试广播时，ColorOS 将后台 OmniBot 进程标记为 `frozen by super freeze`，广播没有被执行，因此不把这次系统调度失败伪装成新包 Replay 成功。
 
 | 指标 | 结果 |
 | --- | ---: |
@@ -243,4 +247,4 @@ CPU 使用 `/proc/<pid>/stat` 的累计 user+system ticks 采样，百分比按�
 
 本次补充实测进一步确认了两个发布前置条件：ColorOS 的“允许小万打开小红书”需要先由用户确认一次；Function 的第一步必须对应 `open_app` 后可复现的源页面。当前手机上的 OmniLink 对端 `V2502A` 仍显示离线，后台日志为 `omnilink_provider_route_unavailable`；这只阻断依赖该远端 host 的 Online/Bridge 路径，不应在本地 OmniFlow 生命周期中新增 renew 或隐式重试来掩盖它。
 
-本结论覆盖已实际执行并闭环验证的“小红书搜索 Omni”和历史“小红书搜索美食”Function；不能外推到未在手机上录制、编译并验证的下单、关注、联系人写入等任务。
+本结论覆盖已实际执行并闭环验证的“小红书搜索 Omni”和历史“小红书搜索美食”Function；本次新包已在手机完成更新、preflight、warmup 和 Function 列表验证，但仍需在关闭 ColorOS super-freeze 的测试条件下补做一次 post-update 的完整 Function Replay。不能外推到未在手机上录制、编译并验证的下单、关注、联系人写入等任务。
