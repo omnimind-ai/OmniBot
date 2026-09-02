@@ -18,7 +18,7 @@
 3. 缓存使用 LRU 上限 16，并将视觉数组设为只读，避免跨 replay 共享可变数据。
 4. 跨页面 forward、关联层、assignment 和候选策略保持原样；缓存失效仍然回到官方计算路径。
 
-在相同页面样本的本地 NumPy 基准中，warm replay 的 Transfer 计算从约 85.4 ms 降至约 70.1 ms（约 17.9%），输入动作从约 58.7 ms 降至约 46.1 ms（约 21.5%），点击动作的另一组 `48×140` 样本从约 81.8 ms 降至约 67.8 ms（约 17.1%）。这是 Transfer 内核的基准，不是整条 Function wall time。新版 APK 已在真实手机上由官方 `save_function` 编译录制 RunLog，并完成 5 轮完整 Replay；因此当前结论是“优化已部署且闭环可用”，早先的系统启动确认和源状态不一致属于前置失败样本，不是最新版最终结果。
+在相同页面样本的本地 NumPy 基准中，warm replay 的 Transfer 计算从约 85.4 ms 降至约 70.1 ms（约 17.9%），输入动作从约 58.7 ms 降至约 46.1 ms（约 21.5%），点击动作的另一组 `48×140` 样本从约 81.8 ms 降至约 67.8 ms（约 17.1%）。这是 Transfer 内核的基准，不是整条 Function wall time。新版 APK 已在真实手机上由官方 `save_function` 编译录制 RunLog，并完成淘宝 3 轮完整 Replay；小红书的 5 轮结果作为历史对照保留。早先的系统启动确认、无障碍未就绪和源状态不一致属于前置失败样本，不是 Transfer 矩阵本身失败。
 
 ## 版本与一致性
 
@@ -26,11 +26,11 @@
 | --- | --- |
 | App | `cn.com.omnimind.bot` `versionCode=10` |
 | OmniFlow runtime component | `2.1.8` |
-| OmniTransfer | point-conditioned sparse graph V10，checkpoint `5dbf5e895dbb0867f052ded625da673b6be95c278541e76a9d3486d7c7664b51` |
+| OmniTransfer | point-conditioned sparse graph V10，checkpoint `d1700845f599b9854b29a435166dfb18ce6a141fb4ab76bce7687c88188637a4` |
 | OOB canonical action schema | `eb552c08e89123f42667c2c3296db9b3094d74715dfdb4d0cb7df50aeec62333` |
-| 组件包 SHA-256 | `0fe02bac110d2900f595f9ae22dde7894385bd5226a1a9e2b131962b2d6f5732` |
-| 组件包大小 | 11,142,435 bytes |
-| 最新 APK SHA-256 | `c82165e17d846cc0f2c2721c5ea7a6d11ff7bef66cf4bf583b6e316e1c2ada52` |
+| 组件包 SHA-256 | `644ad6289383246762e137cbc08c8a22ab51f397663abe9c040b9338b2ae4a79` |
+| 组件包大小 | 11,143,337 bytes |
+| 最新 APK SHA-256 | `ec5e31ae943f5f160aa9ed23cab08062653b8ef73e9ce4510a81f25dc1d9fe81` |
 
 手机端 marker 已与本次组件包 SHA 一致；runtime 中包含 Python 官方执行层的 timing 字段，未使用 Kotlin 侧重复转换或坐标回放。APK 安装后的首次 OmniFlow 调用会按 catalog 校验并替换本地组件，已在本次手机测试中确认替换成功。
 
@@ -69,7 +69,7 @@ forward 的结果依赖当前 source/target graph、截图证据和候选集合�
 | 已确认的问题 | 不能采用的做法 | 本次采用的做法 | 对应证据 |
 | --- | --- | --- | --- |
 | 真实主要 pair shape 约为 `48×140`，不是 `141×141` | 固定 top-k 截断候选节点 | 保留 `all_nodes`，只缓存不改变语义的输入 | V10 配置与本地矩阵形状见 4.1 |
-| 每次 replay 会重复做 graph/visual 预处理 | 缓存最终坐标或整个 forward 结果 | LRU 缓存 graph encoding、visual patches 和 mask | warm Transfer 约提升 17.1%–21.5%，单测 `6 passed` |
+| 每次 replay 会重复做 graph/visual 预处理 | 缓存最终坐标或整个 forward 结果 | LRU 缓存 graph encoding、visual patches 和 mask | warm Transfer 约提升 17.1%–21.5%，相关测试 `8 passed` |
 | 页面切换时 package/activity 可能先于 XML 到达 | 在没有 hierarchy 时立即匹配，或自行重开 session | 在官方 Python observation 边界等待可用 hierarchy | OmniFlow readiness 回归测试 `10 passed`；手机已完成新组件替换 |
 | Function wall time 不等于 Transfer kernel time | 用单个毫秒数代表整条 Replay | 分开报告 Transfer、动作、观察、入口和模型调用 | 历史手机 run 的逐步耗时和在线 VLM 分解见第六、七节 |
 | 手机通过 USB 时无法得到可信电流 | 用电量百分比或 `current=0` 推算功耗 | 明确标记功耗不可用，不填伪造数据 | `dumpsys battery` 显示 USB powered |
@@ -86,11 +86,11 @@ forward 的结果依赖当前 source/target graph、截图证据和候选集合�
 | input_text | `48×86` | 56.6 ms | 46.0 | 46.0 | 45.9 | 46.5 | 46.1 ms | 约 21.5% |
 | click | `48×140` | 83.5 ms | 67.0 | 69.6 | 67.4 | 67.3 | 67.8 ms | 约 17.1% |
 
-优化前对应基线约为 `85.4 ms`、`58.7 ms` 和 `81.8 ms`。缓存没有改变输出校验，也没有改变候选策略；新增回归测试确认同一 matcher 对同一 graph 的两次 forward 只执行一次 graph 编码和一次视觉预处理，相关 OmniTransfer 测试为 `6 passed`。
+优化前对应基线约为 `85.4 ms`、`58.7 ms` 和 `81.8 ms`。缓存没有改变输出校验，也没有改变候选策略；新增回归测试确认同一 matcher 对同一 graph 的两次 forward 只执行一次 graph 编码和一次视觉预处理，相关 OmniTransfer 测试为 `8 passed`。
 
 ### 4.2 真实手机端到端基准
 
-真实手机上的端到端数据必须区分“前置失败”和“正式 Replay”。前置失败用于定位系统授权或录制状态问题，正式 Replay 才用于评价最新版。新版 APK 已包含缓存后的 `2.1.8` runtime、`run_function` 官方协议路径和 hierarchy readiness 修复；官方 `save_function` 已将重新录制的 RunLog 编译为带 `input_text` 绑定的 Function，随后 5 轮均实际进入 V10 Transfer 并完成全部动作，详见 4.4。
+真实手机上的端到端数据必须区分“前置失败”和“正式 Replay”。前置失败用于定位系统授权或录制状态问题，正式 Replay 才用于评价最新版。新版 APK 已包含缓存后的 `2.1.8` runtime、`run_function` 官方协议路径和 hierarchy readiness 检查；官方 `save_function` 已将重新录制的 RunLog 编译为带 `input_text` 绑定的 Function，随后淘宝 3 轮均实际进入 V10 Transfer 并完成全部动作，详见 4.5。
 
 ### 4.3 本次新版部署的实测失败样本
 
@@ -122,6 +122,20 @@ forward 的结果依赖当前 source/target graph、截图证据和候选集合�
 
 5 轮的 `duration_ms` 为 `8606、9071、9122、8312、8878`。逐步平均耗时为：点击搜索框 `3.124 s`，输入文字 `2.451 s`，提交搜索 `2.157 s`。最终包名均为 `com.xingin.xhs`，完成原因均为 `function_completed`。
 
+### 4.5 新版 OmniTransfer decoder 的真实淘宝复测
+
+淘宝复测专门覆盖了之前暴露问题的页面：源状态和目标状态都同时存在“搜索栏”和“展开”控件。旧 decoder 在离线重放中曾把 `com.taobao.taobao:id/iv_more_tab` 排在搜索栏前面，导致真实 Replay 第一动作错误；新版没有删除候选，也没有使用旧坐标，而是在官方 decoder 的既有 pair score 上增加语义精确项。离线同权重对比为：旧配置 rank1 是“展开,按钮”（0.6165），新配置 rank1 是“搜索栏”（0.6893）。
+
+| 真实 run | 结果 | 总时长 | Transfer（click / input） | V10 结果 | 最终页面 |
+| --- | --- | ---: | ---: | --- | --- |
+| `tool-feb739a9-2994-444b-a366-9f1b59c41bca` | 3/3 | 15.149 s | 2.199 / 1.200 s | 搜索栏 rank1 | `com.taobao.search.sf.MainSearchResultActivity` |
+| `tool-1d732757-3d20-4671-a2e9-36ebe1d47e6b` | 3/3 | 13.604 s | 3.779 / 1.281 s | 搜索栏 rank1 | `com.taobao.search.sf.MainSearchResultActivity` |
+| `tool-18f44a49-17b4-4d10-92e6-d23e7e929607` | 3/3 | 11.150 s | 4.540 / 1.246 s | 搜索栏 rank1 | `com.taobao.search.sf.MainSearchResultActivity` |
+
+三轮均为 `model_calls=0`、`fallback_steps=0`、`function_completed`，并使用同一个 checkpoint `d1700845f...88637a4`。逐步平均为：点击搜索栏 `5.328 s`（其中 Transfer `3.506 s`），输入文字 `2.858 s`（Transfer `1.242 s`），提交 `2.551 s`；端到端平均 `13.301 s`。点击 Transfer 的波动来自淘宝首页网络内容和页面层级变化，不是候选裁剪；三次目标候选都正确且可执行。
+
+同一轮之前还有两个明确的非业务失败：无障碍服务未绑定时返回 `android_gui_accessibility_not_ready`；错误地用 `goAsync()` 持有长时间 Broadcast 时，ColorOS 在约 10 秒后报告 `Broadcast ANR` 并杀掉 `cn.com.omnimind.bot`。后者是测试入口生命周期问题，已恢复为原有异步调试入口，没有进入生产 OmniFlow 生命周期，也没有作为 Transfer 成功率计入。
+
 ## 五、历史真实手机结果
 
 | 路径 | 次数 | 成功 | 步骤 | 模型调用 | fallback | 用时 |
@@ -129,9 +143,10 @@ forward 的结果依赖当前 source/target graph、截图证据和候选集合�
 | 在线 VLM 对照 | 1 | 1 | 3/3 | 2 | 0 | 28.912 s |
 | 历史 Function Replay | 3 | 3 | 3/3 | 0 | 0 | 8.752–14.066 s |
 | 历史最终 APK Replay | 2 | 2 | 3/3 | 0 | 0 | 6.704–14.862 s |
-| 最新 APK 正式 Replay | 5 | 5 | 3/3 | 0 | 0 | 8.312–9.122 s，平均 8.798 s |
+| 最新 APK 小红书对照 Replay | 5 | 5 | 3/3 | 0 | 0 | 8.312–9.122 s，平均 8.798 s |
+| 最新 APK 淘宝 decoder 修复后 Replay | 3 | 3 | 3/3 | 0 | 0 | 11.150–15.149 s，平均 13.301 s |
 
-Replay 的直接效果是稳定完成 3 个动作：进入搜索、输入“Omni”、提交查询。最终界面包名为 `com.xingin.xhs`，搜索结果页面可见。三步均使用 OmniTransfer V10 映射；没有 VLM fallback，也没有 source-device 坐标 passthrough。
+Replay 的直接效果是稳定完成 3 个动作：进入搜索、输入关键词、提交查询。小红书对照最终进入 `com.xingin.xhs` 搜索结果页；淘宝修复后最终进入 `com.taobao.search.sf.MainSearchResultActivity`。三步均使用 OmniTransfer V10 映射；没有 VLM fallback，也没有 source-device 坐标 passthrough。
 
 ## 六、最新版与历史版本的逐步耗时
 
@@ -188,6 +203,15 @@ CPU 使用 `/proc/<pid>/stat` 的累计 user+system ticks 采样，百分比按�
 
 因此最新版这两轮的 CPU 平均约 `42.3%`，观测峰值 `134.4%`；峰值超过 100% 表示进程在短时间内使用了多个核，不表示电量百分比。由于 RSS 是进程级峰值代理，不能把它等同于整个系统内存或 PSS 峰值。
 
+淘宝修复后第三轮使用 Android `top` 在运行期间采样，得到的端侧观测如下。`top` 的 CPU 是系统进程采样值，Python bridge 与 OmniBot 是两个不同进程，不能相加成单一“Transfer CPU”。
+
+| 进程 | 观测 CPU | 观测 RES/RSS |
+| --- | ---: | ---: |
+| `cn.com.omnimind.bot` | 16.6%–72.4% | 710–855 MB |
+| `python3 -m omniflow.bridge` | 21.4%–496% | 67–141 MB |
+
+该轮结束后的 `dumpsys meminfo` 快照为 OmniBot PSS `541,354 KB`、RSS `748,276 KB`；Python bridge PSS `69,156 KB`、RSS `69,160 KB`。Python 的峰值超过 100% 是多核并行使用的结果，不能解释为电量比例。这个采样说明手机端真正的峰值不只来自 `48×140` pair score，还包括 Flutter/Android 宿主、NumPy bridge 和页面观察分配。
+
 历史最终 APK 测试结束后的 `dumpsys meminfo` 快照为：
 
 - OmniBot：PSS 519,859 KB，RSS 725,184 KB。
@@ -203,9 +227,9 @@ CPU 使用 `/proc/<pid>/stat` 的累计 user+system ticks 采样，百分比按�
 
 ## 十、稳定性判断与下一步
 
-历史小红书 Function 在当前 OnePlus 真实设备上已达到实机可用状态；加上本次最新版重新编译的 Function，正式 Replay 共 10 次，均 3/3 成功，0 次模型调用，0 次 fallback。最新版 5 轮的范围为 `8.312–9.122 s`，比历史结果的波动更窄，说明从可复现首页开始录制并采用官方状态证据后，流程已经稳定。
+历史小红书 Function 在当前 OnePlus 真实设备上已达到实机可用状态；本次淘宝 Function 在 decoder 修复后 3 轮均 3/3 成功，0 次模型调用，0 次 fallback。小红书对照 5 轮范围为 `8.312–9.122 s`；淘宝修复后 3 轮范围为 `11.150–15.149 s`。这说明算法正确性已从之前的“错误候选 rank1”修复，但淘宝端到端时长仍受首页动态内容、输入法和页面网络加载影响，不能与小红书时长直接横比。
 
-当前可以把最新版标记为“端到端可用”：组件替换、官方 `save_function` 编译、`run_function` 执行、V10 Transfer、动作落地、动作后 observation、历史 RunLog 提交均已闭环。此前的系统启动确认和录制源状态不一致仍作为失败防线保留，不能通过 renew、隐式重试或源坐标兜底绕过。
+当前可以把最新版标记为“在已验证的搜索场景端到端可用”：组件替换、官方 `save_function` 编译、`run_function` 执行、V10 Transfer、动作落地、动作后 observation、历史 RunLog 提交均已闭环。淘宝的 decoder 修复已在 3 轮真机 Replay 中复现；此前的系统启动确认、无障碍未就绪和录制源状态不一致仍作为失败防线保留，不能通过 renew、隐式重试或源坐标兜底绕过。
 
 本次补充实测进一步确认了两个发布前置条件：ColorOS 的“允许小万打开小红书”需要先由用户确认一次；Function 的第一步必须对应 `open_app` 后可复现的源页面。当前手机上的 OmniLink 对端 `V2502A` 仍显示离线，后台日志为 `omnilink_provider_route_unavailable`；这只阻断依赖该远端 host 的 Online/Bridge 路径，不应在本地 OmniFlow 生命周期中新增 renew 或隐式重试来掩盖它。
 

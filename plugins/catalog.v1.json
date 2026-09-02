@@ -27,10 +27,10 @@
         "id": "omniflow-gui-runtime",
         "packagedArchivePath": "runtime-components/omniflow-gui-runtime-2.1.8.zip",
         "componentArchiveUrl": "https://github.com/omnimind-ai/OmniBotSkills/releases/download/omniflow-gui-runtime-v2.1.8/omniflow-gui-runtime-2.1.8.zip",
-        "componentArchiveSha256": "0fe02bac110d2900f595f9ae22dde7894385bd5226a1a9e2b131962b2d6f5732",
-        "packagedArchiveSha256": "0fe02bac110d2900f595f9ae22dde7894385bd5226a1a9e2b131962b2d6f5732",
+        "componentArchiveSha256": "644ad6289383246762e137cbc08c8a22ab51f397663abe9c040b9338b2ae4a79",
+        "packagedArchiveSha256": "644ad6289383246762e137cbc08c8a22ab51f397663abe9c040b9338b2ae4a79",
         "installTimeoutSeconds": 900,
-        "prebuiltRuntimeSha256": "0fe02bac110d2900f595f9ae22dde7894385bd5226a1a9e2b131962b2d6f5732"
+        "prebuiltRuntimeSha256": "644ad6289383246762e137cbc08c8a22ab51f397663abe9c040b9338b2ae4a79"
       },
       "presentation": {
         "description": {
