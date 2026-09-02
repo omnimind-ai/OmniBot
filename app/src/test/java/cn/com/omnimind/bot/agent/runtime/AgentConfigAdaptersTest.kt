@@ -1,5 +1,6 @@
 package cn.com.omnimind.bot.agent.runtime
 
+import cn.com.omnimind.baselib.llm.DeepSeekProvider
 import cn.com.omnimind.baselib.llm.ProviderModelOption
 import cn.com.omnimind.baselib.llm.OpenAiWireApi
 import com.google.gson.JsonParser
@@ -564,12 +565,71 @@ class AgentConfigAdaptersTest {
         assertTrue(model["base_instructions"].asString.isNotBlank())
         assertEquals("list", model["visibility"].asString)
         assertEquals(false, model["supports_parallel_tool_calls"].asBoolean)
+        assertEquals(
+            listOf("text", "image"),
+            model["input_modalities"].asJsonArray.map { it.asString },
+        )
         assertEquals("medium", model["default_reasoning_level"].asString)
         assertEquals(
             listOf("medium"),
             model["supported_reasoning_levels"].asJsonArray.map {
                 it.asJsonObject["effort"].asString
             },
+        )
+    }
+
+    @Test
+    fun codexCatalogUsesResolvedProviderVisionCapabilityWhenMetadataIsMissing() {
+        val catalog = JsonParser.parseString(
+            buildCodexModelCatalogJson(
+                providerModels = listOf(
+                    ProviderModelOption(id = "deepseek-v4-pro"),
+                    ProviderModelOption(id = "deepseek-v4-flash-vision-exp"),
+                ),
+                provider = AgentProviderCredentials(
+                    baseUrl = DeepSeekProvider.OFFICIAL_BASE_URL,
+                    apiKey = "secret",
+                    protocolType = DeepSeekProvider.PROTOCOL_TYPE,
+                ),
+            ),
+        ).asJsonObject
+        val models = catalog.getAsJsonArray("models")
+            .associateBy { it.asJsonObject["slug"].asString }
+
+        assertEquals(
+            listOf("text"),
+            models.getValue("deepseek-v4-pro")
+                .asJsonObject["input_modalities"].asJsonArray.map { it.asString },
+        )
+        assertEquals(
+            listOf("text", "image"),
+            models.getValue("deepseek-v4-flash-vision-exp")
+                .asJsonObject["input_modalities"].asJsonArray.map { it.asString },
+        )
+    }
+
+    @Test
+    fun codexCatalogKeepsExplicitModalitiesAheadOfRouteFallback() {
+        val catalog = JsonParser.parseString(
+            buildCodexModelCatalogJson(
+                providerModels = listOf(
+                    ProviderModelOption(
+                        id = "deepseek-v4-flash-vision-exp",
+                        inputModalities = listOf("text"),
+                    ),
+                ),
+                provider = AgentProviderCredentials(
+                    baseUrl = DeepSeekProvider.OFFICIAL_BASE_URL,
+                    apiKey = "secret",
+                    protocolType = DeepSeekProvider.PROTOCOL_TYPE,
+                ),
+            ),
+        ).asJsonObject
+        val model = catalog.getAsJsonArray("models").single().asJsonObject
+
+        assertEquals(
+            listOf("text"),
+            model["input_modalities"].asJsonArray.map { it.asString },
         )
     }
 

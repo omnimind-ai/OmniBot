@@ -272,7 +272,10 @@ private object CodexConfigAdapter : AgentConfigAdapter {
             ),
             AgentConfigWrite(
                 path = CODEX_MODEL_CATALOG_JSON_PATH,
-                content = buildCodexModelCatalogJson(providerModels),
+                content = buildCodexModelCatalogJson(
+                    providerModels = providerModels,
+                    provider = provider,
+                ),
                 executorKey = "codex-agent-config-write",
             ),
         )
@@ -450,7 +453,8 @@ internal fun resolveAcpLaunchModelForDispatch(
 }
 
 internal fun buildCodexModelCatalogJson(
-    providerModels: List<ProviderModelOption>
+    providerModels: List<ProviderModelOption>,
+    provider: AgentProviderCredentials? = null,
 ): String {
     val models = JsonArray()
     providerModels
@@ -469,12 +473,10 @@ internal fun buildCodexModelCatalogJson(
             // the shared gateway rejects. Keep the adapter's default explicit
             // and conservative; it does not change the Provider model ID.
             val reasoningLevels = listOf("medium")
-            val inputModalities = providerModel.inputModalities
-                .map { it.trim().lowercase() }
-                .filter { it in CODEX_SUPPORTED_INPUT_MODALITIES }
-                .distinct()
-                .toMutableList()
-            if ("text" !in inputModalities) inputModalities += "text"
+            val inputModalities = resolveCodexInputModalities(
+                providerModel = providerModel,
+                provider = provider,
+            )
 
             val model = JsonObject().apply {
                 addProperty("slug", modelId)
@@ -548,8 +550,57 @@ internal fun buildCodexModelCatalogJson(
         .toJson(JsonObject().apply { add("models", models) }) + "\n"
 }
 
+/**
+ * Resolve the image capability written to Codex's model catalog.
+ *
+ * An omitted `input_modalities` field means "unknown" in a Provider
+ * `/models` response. Writing `text` for that case is not neutral: Codex
+ * treats the catalog value as an explicit capability and rejects image input
+ * before the request reaches the upstream model. Keep explicit model
+ * metadata authoritative, then use the resolved Provider route capability,
+ * and finally preserve Codex's text-plus-image default for unknown routes.
+ */
+internal fun resolveCodexInputModalities(
+    providerModel: ProviderModelOption,
+    provider: AgentProviderCredentials? = null,
+): List<String> {
+    val declaredModalities = providerModel.inputModalities
+        .map { it.trim().lowercase() }
+        .filter { it in CODEX_SUPPORTED_INPUT_MODALITIES }
+        .distinct()
+    if (declaredModalities.isNotEmpty()) {
+        return declaredModalities.toMutableList().apply {
+            if ("text" !in this) add("text")
+        }
+    }
+
+    // Some compatible /models endpoints expose this as `attachment` or
+    // `vision` instead of an input modality list. Treat an explicit boolean
+    // as a model declaration, but do not let it override a modality list.
+    providerModel.attachment?.let { supportsImage ->
+        return if (supportsImage) {
+            CODEX_DEFAULT_INPUT_MODALITIES
+        } else {
+            listOf("text")
+        }
+    }
+
+    val routeSupportsImage = provider?.let {
+        DeepSeekProvider.requestCapabilities(
+            protocolType = it.protocolType,
+            apiBase = it.baseUrl,
+            model = providerModel.id,
+        ).supportsVisionInput
+    }
+    return when (routeSupportsImage) {
+        false -> listOf("text")
+        true, null -> CODEX_DEFAULT_INPUT_MODALITIES
+    }
+}
+
 private const val CODEX_DEFAULT_CONTEXT_WINDOW = 272000
 private val CODEX_SUPPORTED_INPUT_MODALITIES = setOf("text", "image", "audio")
+private val CODEX_DEFAULT_INPUT_MODALITIES = listOf("text", "image")
 private const val CODEX_PROVIDER_BASE_INSTRUCTIONS =
     "You are a coding agent. Follow the user's instructions, inspect the workspace, and make safe, precise changes."
 

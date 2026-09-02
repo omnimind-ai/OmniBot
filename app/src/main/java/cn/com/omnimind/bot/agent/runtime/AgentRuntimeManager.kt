@@ -1760,8 +1760,9 @@ class AgentRuntimeManager private constructor(
                     ?: throw IllegalArgumentException("Model ID is required.")
                 val apiKey = args.stringValue("apiKey")
                     ?: throw IllegalArgumentException("API Key is required.")
+                val providerProfile = currentAgentProviderProfile()
                 val providerModelResolution = resolveCurrentProviderModelIds(
-                    currentAgentProviderProfile()
+                    providerProfile
                 )
                 val providerModels = providerModelResolution
                     ?.takeIf { it.authoritative }
@@ -1780,11 +1781,20 @@ class AgentRuntimeManager private constructor(
                         wireApi = args.stringValue("wireApi") ?: OpenAiWireApi.RESPONSES,
                         modelCatalogPath = CODEX_MODEL_CATALOG_JSON_PATH,
                         envHttpHeaders = buildAcpHeaderBindings(
-                            currentAgentProviderProfile()?.customHeaders.orEmpty()
+                            providerProfile?.customHeaders.orEmpty()
                         ).envHttpHeaders,
                     ),
                     authJson = buildCodexAuthJson(apiKey),
-                    modelCatalogJson = buildCodexModelCatalogJson(providerModels)
+                    modelCatalogJson = buildCodexModelCatalogJson(
+                        providerModels = providerModels,
+                        provider = AgentProviderCredentials(
+                            baseUrl = baseUrl,
+                            apiKey = apiKey,
+                            wireApi = args.stringValue("wireApi") ?: OpenAiWireApi.RESPONSES,
+                            customHeaders = providerProfile?.customHeaders.orEmpty(),
+                            protocolType = providerProfile?.protocolType ?: "openai_compatible",
+                        ),
+                    )
                 )
             }
             CLAUDE_CODE_AGENT_ID -> {
