@@ -7,17 +7,33 @@
 
 ## 一、问题、判断与结论
 
-本报告按一条完整的论证链组织：先说明 Transfer 面对的真实挑战，再解释为什么几个看似直接的加速办法会失效，然后给出不改变官方语义的优化，最后用 Transfer 内核、手机端 Function Replay、CPU 和内存数据验证效果。这样可以把“算法为什么慢”“为什么不能简单砍矩阵”和“优化是否真的有效”分开回答。
+本报告按汇报需要组织为“挑战 → 现有做法为什么失效 → 数据支撑 → 最终取舍”四步。这里要先把 Transfer 的计算边界和整条 Function Replay 的 wall time 分开，否则很容易把页面启动、动作执行、观察等待或云端模型耗时误算成 Matrix 耗时。
 
-### 可直接用于汇报的完整表述
+### 1. 挑战：Transfer 到底在计算什么
 
-这次 Transfer 慢，首先不是因为系统盲目构造了一个巨大的方阵，而是因为它要在真实页面之间完成一次受动作条件约束的语义映射：先把当前页面的 UI hierarchy 和截图转换成图特征，再在源页面动作节点与目标页面全部可用节点之间计算关联，经过稀疏图一致性和 refinement 后，才决定当前设备上哪个控件可以执行。真实样本的主要 pair shape 约为 `48×140`，不是 `141×141`；因此真正的挑战是跨页面匹配、动态页面变化和重复输入预处理叠加在一起，而不是单一矩阵的平方规模。
+这次 Transfer 慢，首先不是因为系统盲目构造了一个巨大的方阵，而是因为它要在真实页面之间完成一次受动作条件约束的语义映射：先把当前页面的 UI hierarchy 和截图转换成图特征，再在源页面动作节点与目标页面全部可用节点之间计算关联，经过 point-conditioned sparse graph 和 refinement 后，才决定当前设备上哪个控件可以执行。真实样本的主要 pair shape 约为 `48×140`，不是 `141×141`；按 512 维 float32 pair feature 估算，单个 pair feature 张量约为 13.1 MiB。
 
-几个直觉上的“提速”办法会失效。把目标节点固定截成 top-k，虽然能缩小计算量，却可能提前裁掉搜索框、提交按钮等合法目标，改变官方 `candidate_policy=all_nodes` 的语义；只记住上一次坐标或 resource-id，则是在绕过 Transfer，页面滚动、重建或分辨率变化后会把旧页面证据误当成当前页面；把整个 forward 或最终坐标缓存下来，也会把旧 observation 带进下一步动作。更严重的是，这些做法会掩盖映射失败，违反长期规则中“映射失败必须报告失败并交给 VLM fallback，不能静默回放源设备坐标”的要求。新增 renew、reopen 或私有 retry 同样不合适，因为那会改变 ACP 对 session、turn、item 的生命周期判断。
+因此真正的挑战有三层：跨页面的语义匹配、页面动态变化导致的输入证据失效，以及每个动作重复做 graph/visual 预处理。端到端耗时还会叠加 host action、动作后的 observation、输入法、App 页面加载和 Python bridge 调度。不能把这些不同阶段合并称为“Matrix 太大”。
 
-所以本次只缓存不改变语义的部分：同一份 hierarchy 的 graph encoding、数值特征和有界关系，以及同一份 hierarchy 加同一张 screenshot 的 visual patches 和 mask；跨页面 forward、关联层、assignment、候选策略和动作落地全部保留官方路径，缓存使用 LRU 16，并将视觉数组设为只读。这样既没有减少候选，也没有缓存旧坐标。数据表明，点击样本的 warm Transfer 从约 `85.4 ms` 降到 `70.1 ms`，改善约 `17.9%`；输入样本从约 `58.7 ms` 降到 `46.1 ms`，改善约 `21.5%`；另一组点击样本从约 `81.8 ms` 降到 `67.8 ms`，改善约 `17.1%`。这些是 Transfer 内核数据，不冒充整条 Replay 的 wall time。
+### 2. 为什么几个直觉上的提速方案会失效
 
-真机结果也支持这个判断：新版组件在 OnePlus PJE110 上用官方 `save_function` 编译并通过 `run_function` 回放，小红书搜索 5/5 完成，平均 `8.798 s`，0 次模型调用、0 次 fallback；针对旧 decoder 错选“展开”控件的问题，淘宝修复后 3/3 完成，平均 `13.301 s`，三轮都将搜索栏排在 rank 1 并进入搜索结果页。端到端剩余耗时主要来自 host action、动作后 observation、输入法和页面加载，而不是可以用删候选节点解决的一个“超大 Matrix”。因此当前最合理的结论是：保留全量候选和官方失败语义，优化输入缓存；把动态页面和系统调度造成的波动单独测量，而不是用降低正确性换取表面上的毫秒数。
+把目标节点固定截成 top-k，虽然可以缩小计算量，却可能提前裁掉搜索框、提交按钮等合法目标，改变官方 `candidate_policy=all_nodes` 的语义；节点排序也不等于动作相关性排序。只记住上一次坐标或 resource-id，则是在绕过 Transfer，页面滚动、重建、分辨率变化或控件替换后，旧页面证据可能被误当成当前页面。
+
+把整个 forward、最终坐标或动作结果缓存下来，同样会把旧 observation 带进下一步动作。它不仅可能点击错误控件，还会掩盖真正的映射失败，违反长期规则中“映射失败必须报告失败并交给 VLM fallback，不能静默回放源设备坐标”的要求。新增 renew、reopen 或私有 retry 也不能作为性能修复，因为那会改变 ACP 对 session、turn、item 的生命周期判断，制造一个表现上方便、语义上不一致的第二生命周期。
+
+### 3. 数据支撑：当前瓶颈和优化收益分别在哪里
+
+本次只缓存不改变语义的部分：同一份 hierarchy 的 graph encoding、数值特征和有界关系，以及同一份 hierarchy 加同一张 screenshot 的 visual patches 和 mask；缓存使用 LRU 16，视觉数组设为只读。跨页面 forward、关联层、assignment、候选策略和动作落地全部保留官方路径，因此没有减少候选、没有缓存旧坐标，也没有新增 Kotlin 侧执行器。
+
+Transfer 内核 warm benchmark 显示：点击样本从约 `85.4 ms` 降到 `70.1 ms`，改善约 `17.9%`；输入样本从约 `58.7 ms` 降到 `46.1 ms`，改善约 `21.5%`；另一组点击样本从约 `81.8 ms` 降到 `67.8 ms`，改善约 `17.1%`。这些是 Transfer 内核数据，不冒充整条 Replay 的 wall time。
+
+真机数据也支持这个判断：新版组件在 OnePlus PJE110 上用官方 `save_function` 编译并通过 `run_function` 回放，小红书搜索 5/5 完成，平均 `8.798 s`，0 次模型调用、0 次 fallback；针对旧 decoder 错选“展开”控件的问题，淘宝修复后 3/3 完成，平均 `13.301 s`，三轮都将搜索栏排在 rank 1 并进入搜索结果页。端到端剩余耗时主要来自 host action、动作后 observation、输入法和页面加载，而不是删掉候选节点就能解决的“超大 Matrix”。
+
+### 4. 最终取舍：怎样继续提速才不会改变 ACP/Transfer 语义
+
+当前最合理的实现是：保留官方 V10 的 `all_nodes` 候选和失败/fallback 语义，只复用当前 observation 的纯输入预处理结果，并对缓存设置明确的输入指纹和有界淘汰。页面 hierarchy、截图、设备尺寸、模型或 checkpoint 发生变化时必须失效；跨页面匹配、最终 assignment、坐标和动作结果永不跨 observation 复用。
+
+如果后续仍需要降低峰值内存，安全的候选方向是在官方 Python 计算边界内做等价的分块计算或低峰值临时数组复用：按目标节点分块计算 pair features，再按官方 assignment/refinement 需要合并，并用数值等价测试证明输出不变。这个方向目前只能作为下一步实验，不能在没有等价性证明时直接改成 top-k、坐标缓存或另一套本地算法。也就是说，优化目标是“少重复准备、少临时内存、保持全量候选”，不是“少算几个看起来不重要的节点”。
 
 ## 版本与一致性
 
@@ -140,6 +156,45 @@ forward 的结果依赖当前 source/target graph、截图证据和候选集合�
 | `tool-18f44a49-17b4-4d10-92e6-d23e7e929607` | 3/3 | 11.150 s | 4.540 / 1.246 s | 搜索栏 rank1 | `com.taobao.search.sf.MainSearchResultActivity` |
 
 三轮均为 `model_calls=0`、`fallback_steps=0`、`function_completed`，并使用同一个 checkpoint `d1700845f...88637a4`。逐步平均为：点击搜索栏 `5.328 s`（其中 Transfer `3.506 s`），输入文字 `2.858 s`（Transfer `1.242 s`），提交 `2.551 s`；端到端平均 `13.301 s`。点击 Transfer 的波动来自淘宝首页网络内容和页面层级变化，不是候选裁剪；三次目标候选都正确且可执行。
+
+#### 为什么这三轮看起来慢
+
+把三条 RunLog 的明细展开后，瓶颈可以量化，而不是笼统归因于 Matrix：
+
+| 阶段 | 三轮平均 | 三轮范围 | 说明 |
+| --- | ---: | ---: | --- |
+| 第一步点击的 Transfer | `3,506 ms` | `2,199–4,540 ms` | 本轮最大单点开销；当前页面是淘宝动态首页，目标 hierarchy/视觉证据变化最大 |
+| 第一步点击的 host action + 观察 | `1,697 ms` | `1,234–2,200 ms` | 包含手势下发和点击后页面/输入法状态观察 |
+| 第一步完整 step | `5,295 ms` | `3,896–6,023 ms` | Transfer 约占该 step `66.2%` |
+| 第二步输入的 Transfer | `1,242 ms` | `1,200–1,281 ms` | 只对当前输入框做一次映射 |
+| 第二步输入的 host action + 观察 | `1,589 ms` | `1,478–1,647 ms` | 输入法与文本变化的端侧耗时 |
+| 第二步完整 step | `2,858 ms` | `2,796–2,913 ms` | Transfer 约占该 step `43.5%` |
+| 第三步回车的 Transfer | `0 ms` | `0 ms` | `press_key` 没有坐标目标，直接执行，不进入 Transfer |
+| 第三步回车的 host action + 观察 | `2,531 ms` | `866–3,441 ms` | 搜索结果页面网络加载和观察波动明显 |
+| 三步之外的入口/初始调度 | 约 `2,597 ms` | — | 总 wall time 与三个 step timing 的差额 |
+
+所以答案是：Transfer 确实偏慢，但不是“整个 13 秒都是 Transfer”，也不是把 `top_k=3` 计算了三次。三轮的点击 Transfer 平均 `3.506 s`，只占整轮平均 `13.301 s` 的约 `26.4%`；点击和输入两次 Transfer 合计 `4.749 s`，占约 `35.7%`，其余约 `64.3%` 来自动作执行、页面观察、输入法/网络页面变化以及 Function 入口调度。
+
+#### 为什么需要多次计算
+
+当前官方执行边界是一条明确的链：每个需要坐标落地的动作先用“该动作的源 state + 当前 target observation”做一次映射，再执行动作，再获取新的 observation。因为点击后淘宝从首页进入输入法窗口，输入后又进入结果页，三次 observation 的 XML、activity、截图都不同，不能复用上一页的最终坐标。这里的“多次”是跨动作的必要重新映射，不是同一动作的无条件重复。
+
+单次 V10 forward 内部也有固定的模型结构：源/目标节点编码一次；两层 association refinement；每层分别做 source→target 和 target→source 的 cross-context；每层生成一次 pair features 和 sparse-graph consistency；前后还要完成 unary/final affinity 与 partial assignment。`top_k=3` 只是在这一轮完整打分后选出前三项，不会触发三次 forward。本次三轮成功日志没有 `transfer_attempts`、retry、VLM fallback 或第二次同动作执行，因此没有证据表明慢是由隐式重试造成的。
+
+第一步之所以最慢，是因为它面对动态淘宝首页，目标 hierarchy 有约 315 个 XML 节点、输入后页面约 145 个节点，且首页每轮内容不同；V10 仍按 `all_nodes` 保留合法候选，实际主要 pair shape 约为 `48×140`。同样的动作第一次 Transfer 在三轮分别为 `2.199 s、3.779 s、4.540 s`，波动超过 2 倍，说明手机 CPU 调度、NumPy 临时数组分配、动态页面/视觉证据和 bridge 状态共同影响耗时，不能只用候选数量解释。
+
+#### 当前可做的安全加速
+
+现有 LRU 缓存只复用了 graph encoding、visual patches/mask 等纯输入预处理；而淘宝每个动作拿到的是新的 target observation，所以缓存命中有限。这解释了为什么本地 warm benchmark 能从约 `85.4 ms` 降到 `70.1 ms`，但真机第一步仍可能达到数秒：两者测试的是不同层级，前者是同一输入的 matcher warm latency，后者包含手机端完整 V10 forward、Python bridge 和动态 observation。
+
+下一步最有价值的优化顺序应是：
+
+1. 在官方 Python 层把“完整 immutable observation → node states/sparse page representation”作为可缓存对象，缓存键同时包含 hierarchy、截图/视觉证据、显示尺寸、模型和 checkpoint；页面证据变化就失效。当前不能只缓存最终坐标。
+2. 保持 `all_nodes`，但在 pair feature 和 local context 的计算中使用内存有界的 target 分块，最后用数值等价测试确认 assignment、rank 和最终动作完全一致。这样降低峰值临时数组，不牺牲召回。
+3. 让单个 matcher/NumPy 运行时常驻并复用已加载 checkpoint；当前 `_load_matcher` 已有进程内缓存，成功日志也没有显示每步重新加载 checkpoint。
+4. 单独测量 Python bridge 序列化、手机 CPU 调度和 observation 等待，避免把这些耗时误算成 Transfer；如果目标是缩短整轮 wall time，减少一次无效 observation 的价值可能高于继续压缩 pair matrix。
+
+其中第 1、2 项属于后续可验证的优化方向；在完成输出等价、候选完整性和失败语义回归前，不应直接改成 top-k、坐标缓存或另一套本地匹配算法。
 
 同一轮之前还有两个明确的非业务失败：无障碍服务未绑定时返回 `android_gui_accessibility_not_ready`；错误地用 `goAsync()` 持有长时间 Broadcast 时，ColorOS 在约 10 秒后报告 `Broadcast ANR` 并杀掉 `cn.com.omnimind.bot`。后者是测试入口生命周期问题，已恢复为原有异步调试入口，没有进入生产 OmniFlow 生命周期，也没有作为 Transfer 成功率计入。
 
