@@ -134,7 +134,7 @@ class AgentEventReducer {
     // Old Harness payloads may still arrive through a host that has migrated
     // to the ACP EventChannel. Convert them at this one boundary; do not
     // reintroduce the removed private stream or a second reducer.
-    event = _normalizeLegacyAgentEvent(event);
+    event = _acpLegacyEventAdapter.normalize(event);
     final hostEventId = _firstString([event['eventId'], event['hostEventId']]);
     if (hostEventId != null && runtime.hasProcessedAcpEventId(hostEventId)) {
       return AgentReduceResult(
@@ -462,7 +462,7 @@ class AgentEventReducer {
         sessionId: sessionId,
         itemId: itemId,
         messageId: acpEventMessageId(event),
-        legacy: _isLegacyAgentEvent(event),
+        legacy: _acpLegacyEventAdapter.isLegacy(event),
       );
       // An item or terminal event without a turn cannot be safely assigned to
       // the active run. Guessing here lets a delayed old Harness event mutate
@@ -6608,15 +6608,204 @@ bool _canSafelyFinalizeUnidentifiedTurn(
       runtime.currentDispatchTurnId?.trim().isNotEmpty == true;
 }
 
-bool _isLegacyAgentEvent(Map<String, dynamic> event) {
-  return event['legacyCompatibility'] == true ||
-      event.containsKey('taskId') ||
-      event.containsKey('task_id') ||
-      event.containsKey('streamKind') ||
-      event.containsKey('eventKind') ||
-      event.containsKey('kind') &&
-          _resolveAgentEventMethod(event: event, message: event).isEmpty;
+/// Compatibility adapter for payloads emitted by pre-ACP Harnesses.
+///
+/// This is the only place where the removed AgentStreamEvent vocabulary is
+/// imported. The result is an official ACP-shaped event consumed by the one
+/// shared AgentEventReducer below; no second reducer or stream is introduced.
+class AcpLegacyEventAdapter {
+  const AcpLegacyEventAdapter();
+
+  bool isLegacy(Map<String, dynamic> event) {
+    return event['legacyCompatibility'] == true ||
+        event.containsKey('taskId') ||
+        event.containsKey('task_id') ||
+        event.containsKey('streamKind') ||
+        event.containsKey('eventKind') ||
+        event.containsKey('kind') &&
+            _resolveAgentEventMethod(event: event, message: event).isEmpty;
+  }
+
+  /// Converts the removed `AgentStreamEvent` data shape into official ACP item
+  /// notifications. This is deliberately an in-process import adapter: old
+  /// clients must still enter through the ACP runtime/bridge, and no legacy
+  /// method channel or stream endpoint is revived.
+  Map<String, dynamic> normalize(Map<String, dynamic> source) {
+    if (_resolveAgentEventMethod(event: source, message: source).isNotEmpty) {
+      return source;
+    }
+    final kind = _string(
+      source['kind'] ?? source['streamKind'] ?? source['eventKind'],
+    )?.toLowerCase();
+    if (kind == null || kind.isEmpty) {
+      return source;
+    }
+
+    final taskId = _firstString([
+      source['taskId'],
+      source['task_id'],
+      source['turnId'],
+      source['turn_id'],
+      source['runId'],
+      source['run_id'],
+    ]);
+    final entryId = _firstString([
+      source['entryId'],
+      source['entry_id'],
+      source['messageId'],
+      source['message_id'],
+      source['itemId'],
+      source['item_id'],
+      source['callId'],
+      source['call_id'],
+    ]);
+    final sessionId = _firstString([
+      source['sessionId'],
+      source['session_id'],
+      source['threadId'],
+      source['thread_id'],
+    ]);
+    final requestId =
+        source['requestId'] ??
+        source['request_id'] ??
+        source['requestID'] ??
+        source['id'];
+    final sequence = _firstString([source['seq'], source['sequence']]);
+    final eventId =
+        _firstString([source['eventId'], source['hostEventId']]) ??
+        (taskId != null && sequence != null
+            ? 'legacy:$taskId:$sequence'
+            : null);
+    final common = <String, dynamic>{
+      if (sessionId != null) 'sessionId': sessionId,
+      if (taskId != null) 'turnId': taskId,
+      if (requestId is String && requestId.trim().isNotEmpty)
+        'requestId': requestId.trim(),
+      if (requestId is num) 'requestId': requestId,
+      if (eventId != null) 'eventId': eventId,
+      'legacyCompatibility': true,
+    };
+    final text = source['text'] ?? source['content'];
+    final thinking = source['thinking'] ?? source['reasoning'];
+    final toolName = _firstString([
+      source['toolName'],
+      source['tool_name'],
+      source['displayName'],
+    ]);
+    final item = <String, dynamic>{
+      if (entryId != null) 'id': entryId,
+      if (entryId != null) 'itemId': entryId,
+      if (toolName != null) 'toolName': toolName,
+      if (source['toolType'] != null) 'toolType': source['toolType'],
+      if (source['status'] != null) 'status': source['status'],
+      if (source['summary'] != null) 'summary': source['summary'],
+      if (source['error'] != null) 'error': source['error'],
+      if (source['rawOutput'] != null) 'rawOutput': source['rawOutput'],
+      if (source['result'] != null) 'rawOutput': source['result'],
+    };
+
+    Map<String, dynamic> eventWith(String method, Map<String, dynamic> params) {
+      return <String, dynamic>{
+        ...common,
+        'method': method,
+        'params': <String, dynamic>{
+          ...common,
+          ...params,
+          '_compatibility': <String, dynamic>{
+            'source': 'legacy_agent_stream',
+            'kind': kind,
+          },
+        },
+      };
+    }
+
+    switch (kind) {
+      case 'thinking_started':
+      case 'thinking_snapshot':
+      case 'thinking':
+        return eventWith('item/reasoning/delta', {
+          if (entryId != null) 'itemId': entryId,
+          'delta': thinking ?? text ?? '',
+        });
+      case 'text_snapshot':
+      case 'assistant_message':
+      case 'message':
+      case 'text':
+        return eventWith('item/agentMessage/delta', {
+          if (entryId != null) 'itemId': entryId,
+          'delta': text ?? '',
+        });
+      case 'tool_started':
+        return eventWith('item/started', {
+          'item': <String, dynamic>{
+            ...item,
+            'type': source['itemType'] ?? 'dynamicToolCall',
+            'status': source['status'] ?? 'in_progress',
+          },
+        });
+      case 'tool_progress':
+        return eventWith('item/updated', {
+          'item': <String, dynamic>{...item, 'type': 'dynamicToolCall'},
+        });
+      case 'tool_completed':
+        return eventWith('item/completed', {
+          'item': <String, dynamic>{
+            ...item,
+            'type': source['itemType'] ?? 'dynamicToolCall',
+            'status': source['status'] ?? 'completed',
+          },
+        });
+      case 'permission_required':
+        return eventWith('item/started', {
+          'item': <String, dynamic>{
+            ...item,
+            'id': entryId ?? 'legacy-permission',
+            'type': 'requestApproval',
+          },
+        });
+      case 'clarify_required':
+        return eventWith('item/started', {
+          'item': <String, dynamic>{
+            ...item,
+            'id': entryId ?? 'legacy-clarification',
+            'type': 'requestUserInput',
+            'question': source['question'] ?? text ?? '',
+            'missingFields':
+                source['missingFields'] ??
+                source['missing'] ??
+                const <dynamic>[],
+          },
+        });
+      case 'completed':
+        return eventWith('turn/completed', const <String, dynamic>{});
+      case 'error':
+        return eventWith('turn/failed', {
+          'error': source['error'] ?? source['message'] ?? text ?? '',
+        });
+      case 'retrying':
+        return eventWith('item/agentMessage/delta', {
+          if (entryId != null) 'itemId': entryId,
+          'delta': '',
+          'acpPresentation': <String, dynamic>{
+            'retry': <String, dynamic>{
+              if (source['retryCount'] != null) 'count': source['retryCount'],
+              if (source['maxRetries'] != null)
+                'maxRetries': source['maxRetries'],
+              'message': source['message'] ?? '正在重试…',
+              if (source['reason'] != null) 'reason': source['reason'],
+            },
+          },
+        });
+      default:
+        // Unknown legacy kinds are retained for diagnostics instead of being
+        // guessed into a visible card. Future ACP extensions can add a real
+        // session/update projection without modifying this adapter.
+        return <String, dynamic>{...source, 'legacyCompatibility': true};
+    }
+  }
 }
+
+const _acpLegacyEventAdapter = AcpLegacyEventAdapter();
 
 bool _canUseHostTurnReservation(
   ChatConversationRuntimeState runtime,
@@ -6629,180 +6818,6 @@ bool _canUseHostTurnReservation(
       runtime.isAiResponding &&
       runtime.activeAcpTurnId == null &&
       runtime.currentDispatchTurnId?.trim().isNotEmpty == true;
-}
-
-/// Converts the removed `AgentStreamEvent` data shape into official ACP item
-/// notifications. This is deliberately an in-process import adapter: old
-/// clients must still enter through the ACP runtime/bridge, and no legacy
-/// method channel or stream endpoint is revived.
-Map<String, dynamic> _normalizeLegacyAgentEvent(Map<String, dynamic> source) {
-  if (_resolveAgentEventMethod(event: source, message: source).isNotEmpty) {
-    return source;
-  }
-  final kind = _string(
-    source['kind'] ?? source['streamKind'] ?? source['eventKind'],
-  )?.toLowerCase();
-  if (kind == null || kind.isEmpty) {
-    return source;
-  }
-
-  final taskId = _firstString([
-    source['taskId'],
-    source['task_id'],
-    source['turnId'],
-    source['turn_id'],
-    source['runId'],
-    source['run_id'],
-  ]);
-  final entryId = _firstString([
-    source['entryId'],
-    source['entry_id'],
-    source['messageId'],
-    source['message_id'],
-    source['itemId'],
-    source['item_id'],
-    source['callId'],
-    source['call_id'],
-  ]);
-  final sessionId = _firstString([
-    source['sessionId'],
-    source['session_id'],
-    source['threadId'],
-    source['thread_id'],
-  ]);
-  final requestId =
-      source['requestId'] ??
-      source['request_id'] ??
-      source['requestID'] ??
-      source['id'];
-  final sequence = _firstString([source['seq'], source['sequence']]);
-  final eventId =
-      _firstString([source['eventId'], source['hostEventId']]) ??
-      (taskId != null && sequence != null ? 'legacy:$taskId:$sequence' : null);
-  final common = <String, dynamic>{
-    if (sessionId != null) 'sessionId': sessionId,
-    if (taskId != null) 'turnId': taskId,
-    if (requestId is String && requestId.trim().isNotEmpty)
-      'requestId': requestId.trim(),
-    if (requestId is num) 'requestId': requestId,
-    if (eventId != null) 'eventId': eventId,
-    'legacyCompatibility': true,
-  };
-  final text = source['text'] ?? source['content'];
-  final thinking = source['thinking'] ?? source['reasoning'];
-  final toolName = _firstString([
-    source['toolName'],
-    source['tool_name'],
-    source['displayName'],
-  ]);
-  final item = <String, dynamic>{
-    if (entryId != null) 'id': entryId,
-    if (entryId != null) 'itemId': entryId,
-    if (toolName != null) 'toolName': toolName,
-    if (source['toolType'] != null) 'toolType': source['toolType'],
-    if (source['status'] != null) 'status': source['status'],
-    if (source['summary'] != null) 'summary': source['summary'],
-    if (source['error'] != null) 'error': source['error'],
-    if (source['rawOutput'] != null) 'rawOutput': source['rawOutput'],
-    if (source['result'] != null) 'rawOutput': source['result'],
-  };
-
-  Map<String, dynamic> eventWith(String method, Map<String, dynamic> params) {
-    return <String, dynamic>{
-      ...common,
-      'method': method,
-      'params': <String, dynamic>{
-        ...common,
-        ...params,
-        '_compatibility': <String, dynamic>{
-          'source': 'legacy_agent_stream',
-          'kind': kind,
-        },
-      },
-    };
-  }
-
-  switch (kind) {
-    case 'thinking_started':
-    case 'thinking_snapshot':
-    case 'thinking':
-      return eventWith('item/reasoning/delta', {
-        if (entryId != null) 'itemId': entryId,
-        'delta': thinking ?? text ?? '',
-      });
-    case 'text_snapshot':
-    case 'assistant_message':
-    case 'message':
-    case 'text':
-      return eventWith('item/agentMessage/delta', {
-        if (entryId != null) 'itemId': entryId,
-        'delta': text ?? '',
-      });
-    case 'tool_started':
-      return eventWith('item/started', {
-        'item': <String, dynamic>{
-          ...item,
-          'type': source['itemType'] ?? 'dynamicToolCall',
-          'status': source['status'] ?? 'in_progress',
-        },
-      });
-    case 'tool_progress':
-      return eventWith('item/updated', {
-        'item': <String, dynamic>{...item, 'type': 'dynamicToolCall'},
-      });
-    case 'tool_completed':
-      return eventWith('item/completed', {
-        'item': <String, dynamic>{
-          ...item,
-          'type': source['itemType'] ?? 'dynamicToolCall',
-          'status': source['status'] ?? 'completed',
-        },
-      });
-    case 'permission_required':
-      return eventWith('item/started', {
-        'item': <String, dynamic>{
-          ...item,
-          'id': entryId ?? 'legacy-permission',
-          'type': 'requestApproval',
-        },
-      });
-    case 'clarify_required':
-      return eventWith('item/started', {
-        'item': <String, dynamic>{
-          ...item,
-          'id': entryId ?? 'legacy-clarification',
-          'type': 'requestUserInput',
-          'question': source['question'] ?? text ?? '',
-          'missingFields':
-              source['missingFields'] ?? source['missing'] ?? const <dynamic>[],
-        },
-      });
-    case 'completed':
-      return eventWith('turn/completed', const <String, dynamic>{});
-    case 'error':
-      return eventWith('turn/failed', {
-        'error': source['error'] ?? source['message'] ?? text ?? '',
-      });
-    case 'retrying':
-      return eventWith('item/agentMessage/delta', {
-        if (entryId != null) 'itemId': entryId,
-        'delta': '',
-        'acpPresentation': <String, dynamic>{
-          'retry': <String, dynamic>{
-            if (source['retryCount'] != null) 'count': source['retryCount'],
-            if (source['maxRetries'] != null)
-              'maxRetries': source['maxRetries'],
-            'message': source['message'] ?? '正在重试…',
-            if (source['reason'] != null) 'reason': source['reason'],
-          },
-        },
-      });
-    default:
-      // Unknown legacy kinds are retained for diagnostics instead of being
-      // guessed into a visible card. Future ACP extensions can add a real
-      // session/update projection without modifying this adapter.
-      return <String, dynamic>{...source, 'legacyCompatibility': true};
-  }
 }
 
 String _resolveAgentEventMethod({
