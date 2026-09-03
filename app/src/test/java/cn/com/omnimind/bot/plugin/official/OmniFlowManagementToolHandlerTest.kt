@@ -75,6 +75,24 @@ class OmniFlowManagementToolHandlerTest {
     }
 
     @Test
+    fun `replay strips presentation fields before the strict bridge`() {
+        val canonical = canonicalRunFunctionArguments(
+            mapOf(
+                "function_id" to "complete_source_workflow",
+                "arguments" to mapOf("input_text" to "Omni"),
+                "goal" to "搜索 Omni",
+                "tool_title" to "执行小红书搜索Omni",
+            ),
+        )
+
+        assertEquals(
+            setOf("function_id", "arguments", "goal"),
+            canonical.keys,
+        )
+        assertFalse(canonical.containsKey("tool_title"))
+    }
+
+    @Test
     fun `developer override tools are exposed with recovery confirmation`() {
         val definitions = OmniFlowManagementTools.definitions().associateBy { it.name }
 

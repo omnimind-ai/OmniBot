@@ -38,9 +38,9 @@
 | OmniFlow runtime component | `2.1.8` |
 | OmniTransfer | point-conditioned sparse graph V10，checkpoint `d1700845f599b9854b29a435166dfb18ce6a141fb4ab76bce7687c88188637a4` |
 | OOB canonical action schema | `eb552c08e89123f42667c2c3296db9b3094d74715dfdb4d0cb7df50aeec62333` |
-| 组件包 SHA-256 | `17b821fbe0502125b0d66dee10969cb61574d5b28533783e27eed14af8ac2d17` |
-| 组件包大小 | 11,143,456 bytes |
-| 最新 APK SHA-256 | `c5eb4de9543fb8b1e7652ee5d9e752a15ee1a805e33c1ba87a98c610279ee7c2` |
+| 组件包 SHA-256 | `85a639ab77bbea92ee52bed77986e85d08a350fb60cadd74fc114f856ad06e0a` |
+| 组件包大小 | 11,143,583 bytes |
+| 最新 APK SHA-256 | `747767abeb294158947ff2c88735a35bbeccad93bf2c479f70322f8b398db879` |
 
 手机端 marker 已与本次组件包 SHA 一致；runtime 中包含 Python 官方执行层的 timing 字段，未使用 Kotlin 侧重复转换或坐标回放。APK 安装后的首次 OmniFlow 调用会按 catalog 校验并替换本地组件，已在本次手机测试中确认替换成功。更新后直接调用 `list_functions` 返回 `complete_source_workflow`，`prepare_ready` 和 `warmup_ready` 均成功，且没有 `omnitransfer_degraded`。
 
@@ -122,7 +122,7 @@ forward 的结果依赖当前 source/target graph、截图证据和候选集合�
 
 使用上述官方编译出的 `complete_source_workflow`，参数为 `input_text=Omni`，在同一台 OnePlus PJE110 上从小红书冷启动首页开始连续执行 5 轮。每轮均通过 `run_function`，每一步均使用 `omnitransfer_point_conditioned_sparse_graph_v10`，没有模型调用、fallback 或源设备坐标直通。
 
-注：下表的 5 轮是本次 runtime 重新打包前已完成的正式 Replay 数据，用于保留端到端行为基线；本次新包更新后的验证已完成组件 preflight、runtime warmup 和官方函数列表检查。更新后再次从小红书前台触发调试广播时，ColorOS 将后台 OmniBot 进程标记为 `frozen by super freeze`，广播没有被执行，因此不把这次系统调度失败伪装成新包 Replay 成功。
+注：下表的 5 轮是本次 runtime 重新打包前已完成的正式 Replay 数据，用于保留端到端行为基线；本次新包更新后的完整聊天入口 Replay 结果见 4.7。此前从小红书前台触发调试广播时，ColorOS 将后台 OmniBot 进程标记为 `frozen by super freeze`，广播没有被执行，因此那次系统调度失败不计入成功率。
 
 | 指标 | 结果 |
 | --- | ---: |
@@ -150,6 +150,29 @@ forward 的结果依赖当前 source/target graph、截图证据和候选集合�
 
 同一轮之前还有两个明确的非业务失败：无障碍服务未绑定时返回 `android_gui_accessibility_not_ready`；错误地用 `goAsync()` 持有长时间 Broadcast 时，ColorOS 在约 10 秒后报告 `Broadcast ANR` 并杀掉 `cn.com.omnimind.bot`。后者是测试入口生命周期问题，已恢复为原有异步调试入口，没有进入生产 OmniFlow 生命周期，也没有作为 Transfer 成功率计入。
 
+### 4.6 新包正式聊天入口的 Replay 归因复测
+
+新包安装并确认无障碍服务绑定后，先从正式聊天入口发送“执行已保存的小红书搜索函数，参数为 `input_text=Omni`”。这次复测暴露了一个比 Transfer 更靠前的工具面缺口：本地 Agent 的 `AgentToolRegistry` 有 `list_functions`，但没有 `run_function`。模型因此先列出 Function，随后只能选择 `vlm_task` 重新规划；该轮直到约 `88.2 s` 被 ACP 取消，`TaskRuntimeService` 正常收到取消并结束，没有进入 Function 的 Transfer 计算。设备截图后来显示的是上一轮 VLM 搜索结果，不把它计为本次 Replay 成功。
+
+修复方式是把官方 `run_function` 加入同一个 OmniFlow management tool descriptor，并由现有 `OmniFlowManagementToolHandler` 转发到 `OmniFlow.callTool`；没有新增坐标执行器、第二套 Replay、renew/reopen 或私有 retry。随后又发现模型在第二次调用中混入展示字段 `tool_title`，Python bridge 按官方严格契约返回 `request_unknown_fields:tool_title`。修复方式是在同一个 Kotlin/Python 边界只保留官方字段 `function_id`、`arguments`、`goal`，并按真实 Function id 写入 RunLog。
+
+### 4.7 修复后正式聊天入口的完整 Function Replay
+
+在安装包含上述修复的 APK 后，从正式聊天入口发送“执行已保存的小红书搜索函数，参数为 `input_text=Omni`”。本轮不再调用 `vlm_task`，而是直接由 Agent 调用官方 `run_function`；Function id 为 `complete_source_workflow`，三步全部通过 OmniTransfer V10 完成。
+
+| 指标 | 实测结果 |
+| --- | ---: |
+| 结果 | 成功 |
+| Function | `complete_source_workflow` |
+| 动作 | 3/3 |
+| 总耗时 | `10.894 s` |
+| 模型调用 | 0 |
+| fallback | 0 |
+| done reason | `function_completed` |
+| 最终页面 | 小红书 `com.xingin.xhs` 搜索 Omni 结果页 |
+
+逐步 Transfer timing 为：打开小红书由官方 checker 完成；点击搜索栏 `1,069.872 ms`；输入 Omni `1,025.208 ms`；提交搜索 `844.558 ms`。三步均记录 `mapping_mode=omnitransfer_point_conditioned_sparse_graph_v10`、正式 checkpoint `d1700845f...88637a4`，目标候选均为可执行节点。打开 App 的首个页面恢复耗时受 ColorOS/小红书启动状态影响，不能归因给 Transfer 矩阵。
+
 ## 五、历史真实手机结果
 
 | 路径 | 次数 | 成功 | 步骤 | 模型调用 | fallback | 用时 |
@@ -158,6 +181,7 @@ forward 的结果依赖当前 source/target graph、截图证据和候选集合�
 | 历史 Function Replay | 3 | 3 | 3/3 | 0 | 0 | 8.752–14.066 s |
 | 历史最终 APK Replay | 2 | 2 | 3/3 | 0 | 0 | 6.704–14.862 s |
 | 最新 APK 小红书对照 Replay | 5 | 5 | 3/3 | 0 | 0 | 8.312–9.122 s，平均 8.798 s |
+| 修复后正式聊天入口 Function Replay | 1 | 1 | 3/3 | 0 | 0 | 10.894 s |
 | 最新 APK 淘宝 decoder 修复后 Replay | 3 | 3 | 3/3 | 0 | 0 | 11.150–15.149 s，平均 13.301 s |
 
 Replay 的直接效果是稳定完成 3 个动作：进入搜索、输入关键词、提交查询。小红书对照最终进入 `com.xingin.xhs` 搜索结果页；淘宝修复后最终进入 `com.taobao.search.sf.MainSearchResultActivity`。三步均使用 OmniTransfer V10 映射；没有 VLM fallback，也没有 source-device 坐标 passthrough。
@@ -243,8 +267,8 @@ CPU 使用 `/proc/<pid>/stat` 的累计 user+system ticks 采样，百分比按�
 
 历史小红书 Function 在当前 OnePlus 真实设备上已达到实机可用状态；本次淘宝 Function 在 decoder 修复后 3 轮均 3/3 成功，0 次模型调用，0 次 fallback。小红书对照 5 轮范围为 `8.312–9.122 s`；淘宝修复后 3 轮范围为 `11.150–15.149 s`。这说明算法正确性已从之前的“错误候选 rank1”修复，但淘宝端到端时长仍受首页动态内容、输入法和页面网络加载影响，不能与小红书时长直接横比。
 
-当前可以把最新版标记为“在已验证的搜索场景端到端可用”：组件替换、官方 `save_function` 编译、`run_function` 执行、V10 Transfer、动作落地、动作后 observation、历史 RunLog 提交均已闭环。淘宝的 decoder 修复已在 3 轮真机 Replay 中复现；此前的系统启动确认、无障碍未就绪和录制源状态不一致仍作为失败防线保留，不能通过 renew、隐式重试或源坐标兜底绕过。
+当前可以把最新版标记为“在已验证的搜索场景端到端可用”：组件替换、官方 `save_function` 编译、正式聊天入口 `run_function` 执行、V10 Transfer、动作落地、动作后 observation、RunLog 提交均已闭环。淘宝的 decoder 修复已在 3 轮真机 Replay 中复现；此前的系统启动确认、无障碍未就绪、展示字段污染和录制源状态不一致仍作为失败防线保留，不能通过 renew、隐式重试或源坐标兜底绕过。
 
 本次补充实测进一步确认了两个发布前置条件：ColorOS 的“允许小万打开小红书”需要先由用户确认一次；Function 的第一步必须对应 `open_app` 后可复现的源页面。当前手机上的 OmniLink 对端 `V2502A` 仍显示离线，后台日志为 `omnilink_provider_route_unavailable`；这只阻断依赖该远端 host 的 Online/Bridge 路径，不应在本地 OmniFlow 生命周期中新增 renew 或隐式重试来掩盖它。
 
-本结论覆盖已实际执行并闭环验证的“小红书搜索 Omni”和历史“小红书搜索美食”Function；本次新包已在手机完成更新、preflight、warmup 和 Function 列表验证，但仍需在关闭 ColorOS super-freeze 的测试条件下补做一次 post-update 的完整 Function Replay。不能外推到未在手机上录制、编译并验证的下单、关注、联系人写入等任务。
+本结论覆盖已实际执行并闭环验证的“小红书搜索 Omni”和历史“小红书搜索美食”Function；本次新包已在手机完成更新、preflight、warmup、Function 列表验证，以及修复后正式聊天入口的完整 Function Replay。不能外推到未在手机上录制、编译并验证的下单、关注、联系人写入等任务。

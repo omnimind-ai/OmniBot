@@ -73,6 +73,11 @@ class OmniFlowManagementToolHandler(context: Context) : ToolHandler {
                     )
                 }
             }
+            val toolArguments = if (toolName == OmniFlowManagementTools.RUN_FUNCTION) {
+                canonicalRunFunctionArguments(normalizedArguments)
+            } else {
+                normalizedArguments
+            }
             val modelClient = if (OmniFlowPluginRuntime.isEnabled()) {
                     HttpAgentLlmClient(CoroutineScope(currentCoroutineContext()))
                         .asOmniFlowModelClient()
@@ -81,7 +86,20 @@ class OmniFlowManagementToolHandler(context: Context) : ToolHandler {
                 }
             val payload = OmniFlow.callTool(
                 context = helper.context,
-                toolCall = OmniFlow.ToolCall(toolName, normalizedArguments),
+                toolCall = OmniFlow.ToolCall(toolName, toolArguments),
+                goal = if (toolName == OmniFlowManagementTools.RUN_FUNCTION) {
+                    toolArguments["goal"]?.toString()
+                        ?.trim()
+                        .orEmpty()
+                        .ifBlank { toolArguments["function_id"]?.toString().orEmpty() }
+                } else {
+                    toolName
+                },
+                runLogToolName = if (toolName == OmniFlowManagementTools.RUN_FUNCTION) {
+                    toolArguments["function_id"]?.toString().orEmpty()
+                } else {
+                    toolName
+                },
                 modelClient = modelClient,
             ).payload
             val encoded = helper.mapToJsonElement(payload).toString()
@@ -198,6 +216,18 @@ internal fun normalizeOmniFlowManagementArguments(
     // remains independent of Android Context and is easy to regression-test.
     args.entries.forEach { (key, value) ->
         put(key, jsonElementToManagementValue(value))
+    }
+}
+
+/**
+ * Keep the local Agent boundary aligned with the official Python run_function
+ * contract. Presentation-only fields must not leak into the strict bridge.
+ */
+internal fun canonicalRunFunctionArguments(
+    arguments: Map<String, Any?>,
+): Map<String, Any?> = buildMap {
+    listOf("function_id", "arguments", "goal").forEach { key ->
+        if (arguments.containsKey(key)) put(key, arguments[key])
     }
 }
 

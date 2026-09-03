@@ -8,6 +8,7 @@ import kotlinx.serialization.json.put
 
 object OmniFlowManagementTools {
     const val LIST_FUNCTIONS = "list_functions"
+    const val RUN_FUNCTION = "run_function"
     const val GET_FUNCTION = "get_function"
     const val DELETE_FUNCTION = "delete_function"
     const val CLEAR_FUNCTIONS = "clear_functions"
@@ -22,6 +23,7 @@ object OmniFlowManagementTools {
 
     val TOOL_NAMES = linkedSetOf(
         LIST_FUNCTIONS,
+        RUN_FUNCTION,
         GET_FUNCTION,
         DELETE_FUNCTION,
         CLEAR_FUNCTIONS,
@@ -45,6 +47,19 @@ object OmniFlowManagementTools {
                 "limit" to integerProperty("Maximum number of Functions to return."),
                 "offset" to integerProperty("Pagination offset."),
                 "include_hidden" to booleanProperty("Include Functions hidden from the Agent."),
+            ),
+        ),
+        definition(
+            RUN_FUNCTION,
+            "Run Function",
+            "Replay one registered GUI Function through the official OmniFlow runtime. " +
+                "Pass the function_id returned by list_functions and semantic arguments; " +
+                "the runtime owns Transfer mapping, action dispatch, observation, and completion.",
+            required = listOf("function_id"),
+            properties = mapOf(
+                "function_id" to stringProperty("Registered Function id returned by list_functions."),
+                "arguments" to objectProperty("Semantic Function arguments."),
+                "goal" to stringProperty("Optional display goal for this replay."),
             ),
         ),
         definition(

@@ -32,4 +32,15 @@ class OmniFlowManagementToolsTest {
         assertTrue(properties.contains("instruction"))
         assertFalse(properties.contains("agent_visible"))
     }
+
+    @Test
+    fun `replay uses the official run function contract`() {
+        val replay = OmniFlowManagementTools.definitions()
+            .first { it.name == OmniFlowManagementTools.RUN_FUNCTION }
+
+        assertTrue(replay.parameters["required"].toString().contains("function_id"))
+        val properties = replay.parameters["properties"].toString()
+        assertTrue(properties.contains("arguments"))
+        assertTrue(properties.contains("goal"))
+    }
 }
