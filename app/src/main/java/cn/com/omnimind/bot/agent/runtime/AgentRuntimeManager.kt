@@ -734,6 +734,25 @@ class AgentRuntimeManager private constructor(
     }
 
     suspend fun handleMethod(method: String, args: Map<String, Any?>): Any? {
+        val compatibilityRequest = AcpLegacyCompatibilityAdapter.adapt(method, args)
+        return AcpLegacyCompatibilityAdapter.adaptResponse(
+            compatibilityRequest,
+            handleCanonicalMethod(
+                compatibilityRequest.method,
+                compatibilityRequest.args,
+            ),
+        )
+    }
+
+    /**
+     * Canonical ACP application surface. Legacy names are normalized before
+     * entering this method, so new business code cannot accidentally create
+     * another thread/turn lifecycle.
+     */
+    private suspend fun handleCanonicalMethod(
+        method: String,
+        args: Map<String, Any?>,
+    ): Any? {
         val canonicalArgs = AcpSessionCompatibility.canonicalize(method, args)
         if (method == "initialize") {
             return initializeAcp(canonicalArgs)
@@ -855,14 +874,6 @@ class AgentRuntimeManager private constructor(
             "session/unarchive" -> archiveThread(canonicalArgs, archived = false)
                 .withAcpSessionId()
             "session/name/set" -> setThreadName(canonicalArgs).withAcpSessionId()
-            "thread/start" -> startThread(args)
-            "thread/resume" -> requestWithResolvedThread("thread/resume", args)
-            "thread/read" -> requestWithResolvedThread("thread/read", args)
-            "thread/list" -> listThreads(args)
-            "thread/loaded/list" -> requestWrappedList("thread/loaded/list", args, "threads")
-            "thread/archive" -> archiveThread(args, archived = true)
-            "thread/unarchive" -> archiveThread(args, archived = false)
-            "thread/name/set" -> setThreadName(args)
             "model/list" -> requestWrappedList(
                 "model/list",
                 args.ifEmpty { mapOf("limit" to 100) },
@@ -882,9 +893,7 @@ class AgentRuntimeManager private constructor(
             "config/remote/fs/write" -> writeRemoteFile(args)
             "config/remote/fs/delete" -> deleteRemotePath(args)
             "config/remote/fs/move" -> moveRemotePath(args)
-            "turn/start" -> startTurn(args)
-            "turn/steer" -> steerTurn(args)
-            "turn/interrupt" -> interruptTurn(args)
+            AcpLegacyCompatibilityAdapter.TURN_STEER -> steerTurn(canonicalArgs)
             "review/start" -> startReview(canonicalArgs)
             "account/read" -> requestAccountMethod("account/read", null)
             "account/login/start" -> requestAccountMethod(
@@ -894,7 +903,7 @@ class AgentRuntimeManager private constructor(
             "account/login/cancel" -> requestAccountMethod("account/login/cancel", args)
             "account/rateLimits/read" -> requestAccountMethod("account/rateLimits/read", null)
             "respondToServerRequest" -> respondToServerRequest(args)
-            else -> request(method, args)
+            else -> request(method, canonicalArgs)
         }
     }
 

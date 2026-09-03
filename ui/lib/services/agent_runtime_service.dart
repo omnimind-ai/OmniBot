@@ -951,8 +951,9 @@ class AgentRuntimeService {
     });
   }
 
-  // Canonical ACP application API. New code must use session/prompt names;
-  // the methods below keep the previous Dart surface working for old builds.
+  // Canonical ACP application API. New business code must use these
+  // session/* methods. Legacy thread/turn requests are accepted only by the
+  // native compatibility adapter and are not exposed as a Dart service API.
   static Future<Map<String, dynamic>> newSession({
     int? conversationId,
     String? cwd,
@@ -1554,32 +1555,6 @@ class AgentRuntimeService {
       if (remoteCwd.trim().isNotEmpty) 'remoteCwd': remoteCwd.trim(),
       'path': path.trim(),
       'destinationPath': destinationPath.trim(),
-    });
-  }
-
-  static Future<Map<String, dynamic>> steerTurn({
-    String? threadId,
-    int? conversationId,
-    String? turnId,
-    required String text,
-  }) {
-    return _invokeMap('turn/steer', {
-      if (threadId != null) 'threadId': threadId,
-      if (conversationId != null) 'conversationId': conversationId,
-      if (turnId != null) 'turnId': turnId,
-      'text': text,
-    });
-  }
-
-  static Future<Map<String, dynamic>> interruptTurn({
-    String? threadId,
-    int? conversationId,
-    String? turnId,
-  }) {
-    return _invokeMap('session/cancel', {
-      if (threadId != null) 'threadId': threadId,
-      if (conversationId != null) 'conversationId': conversationId,
-      if (turnId != null) 'turnId': turnId,
     });
   }
 
