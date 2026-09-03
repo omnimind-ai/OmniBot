@@ -19,17 +19,6 @@
 
 真机结果也支持这个判断：新版组件在 OnePlus PJE110 上用官方 `save_function` 编译并通过 `run_function` 回放，小红书搜索 5/5 完成，平均 `8.798 s`，0 次模型调用、0 次 fallback；针对旧 decoder 错选“展开”控件的问题，淘宝修复后 3/3 完成，平均 `13.301 s`，三轮都将搜索栏排在 rank 1 并进入搜索结果页。端到端剩余耗时主要来自 host action、动作后 observation、输入法和页面加载，而不是可以用删候选节点解决的一个“超大 Matrix”。因此当前最合理的结论是：保留全量候选和官方失败语义，优化输入缓存；把动态页面和系统调度造成的波动单独测量，而不是用降低正确性换取表面上的毫秒数。
 
-先给结论：Transfer 慢的根因不是“需要一个 141×141 的巨大矩阵”，而是 V10 在每一步都要把当前页面编码成图，再对源页面节点和目标页面的全部候选节点进行跨页面关联、稀疏图匹配和两层 refinement。当前真实页面的主要形状是约 `48×140`，而不是 `141×141`；真正占时间的是多次 NumPy 张量计算和页面输入重复预处理。
-
-全量候选不能直接裁成前 N 个节点：V10 的官方配置是 `candidate_policy=all_nodes`，每个启用的目标节点都可能是合法动作目标。硬截断会改变匹配语义，可能把正确控件裁掉，也会违反“映射失败后交给 VLM，而不是静默使用源设备坐标”的长期规则。因此本次优化选择缓存“不会改变结果的中间输入”，而不是减少候选集合：
-
-1. 对同一份 UI hierarchy 缓存 `encode_graph` 的 token、数值特征和有界关系。
-2. 对同一份 hierarchy 加同一份 screenshot 缓存 visual patches 和 mask。
-3. 缓存使用 LRU 上限 16，并将视觉数组设为只读，避免跨 replay 共享可变数据。
-4. 跨页面 forward、关联层、assignment 和候选策略保持原样；缓存失效仍然回到官方计算路径。
-
-在相同页面样本的本地 NumPy 基准中，warm replay 的 Transfer 计算从约 85.4 ms 降至约 70.1 ms（约 17.9%），输入动作从约 58.7 ms 降至约 46.1 ms（约 21.5%），点击动作的另一组 `48×140` 样本从约 81.8 ms 降至约 67.8 ms（约 17.1%）。这是 Transfer 内核的基准，不是整条 Function wall time。新版 APK 已在真实手机上由官方 `save_function` 编译录制 RunLog，并完成淘宝 3 轮完整 Replay；小红书的 5 轮结果作为历史对照保留。早先的系统启动确认、无障碍未就绪和源状态不一致属于前置失败样本，不是 Transfer 矩阵本身失败。
-
 ## 版本与一致性
 
 | 项目 | 实际值 |
@@ -45,6 +34,10 @@
 手机端 marker 已与本次组件包 SHA 一致；runtime 中包含 Python 官方执行层的 timing 字段，未使用 Kotlin 侧重复转换或坐标回放。APK 安装后的首次 OmniFlow 调用会按 catalog 校验并替换本地组件，已在本次手机测试中确认替换成功。更新后直接调用 `list_functions` 返回 `complete_source_workflow`，`prepare_ready` 和 `warmup_ready` 均成功，且没有 `omnitransfer_degraded`。
 
 本次更新还修复了一个发布包契约问题：新导出的 NumPy V10 checkpoint SHA 为 `d1700845…88637a4`，旧的 Python runtime 白名单没有接受它，导致包虽能安装但 preflight 会退化为 `backend=unavailable`。现在运行时接受该正式导出物，组件回归测试和手机端 preflight 均通过。这个修复不改变 Transfer 算法、候选策略或 ACP 生命周期。
+
+### 当前测试基线说明
+
+当前实现已经是 point-conditioned sparse graph V10；OmniTransfer 工作区同时保留着一批尚未随实现升级的旧测试。按当前实现执行的 V10 NumPy、缓存、Transfer contract 与输入适配用例为 `5 passed`；OmniFlow 的生命周期、action schema、候选准入、RunLog 编译和渲染绑定用例为 `47 passed`。另一批旧断言仍要求 `unified_association_v1`、旧 checkpoint SHA 或旧模型字段，因此会失败；这反映的是测试基线未同步，不是手机端本次 Replay 失败。发布前仍应把这些旧断言迁移到 V10 contract，或明确标记为 legacy，不能把两套版本混报。
 
 ## 二、Transfer 面临的挑战
 
