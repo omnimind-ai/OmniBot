@@ -233,12 +233,17 @@ class AcpSessionUpdateMapperTest {
     }
 
     @Test
-    fun userMessageChunkProducesNothing() {
-        // The client authored the user's message; replaying it back adds nothing
-        // to the timeline.
-        assertNull(
-            SessionUpdate.UserMessageChunk(content = ContentBlock.Text("hi"))
-                .toAcpSessionNotification("thread-1")
+    fun userMessageChunkStaysInTheOfficialSessionUpdateEnvelope() {
+        // The ACP transport keeps the official echo. The Conversation reducer
+        // owns idempotent merge with the locally committed user message.
+        val event = SessionUpdate.UserMessageChunk(content = ContentBlock.Text("hi"))
+            .toAcpSessionNotification("thread-1")
+
+        assertEquals("thread-1", event?.sessionId)
+        assertEquals("user_message_chunk", event?.update?.get("sessionUpdate"))
+        assertEquals(
+            mapOf("type" to "text", "text" to "hi"),
+            event?.update?.get("content"),
         )
     }
 
@@ -282,11 +287,30 @@ class AcpSessionUpdateMapperTest {
         assertTrue(
             SessionUpdate.ToolCallUpdate(toolCallId = ToolCallId("c")).isTurnScoped()
         )
+        assertTrue(
+            SessionUpdate.UserMessageChunk(content = ContentBlock.Text("x")).isTurnScoped()
+        )
 
         assertFalse(SessionUpdate.SessionInfoUpdate(title = "t").isTurnScoped())
         assertFalse(
             SessionUpdate.AvailableCommandsUpdate(availableCommands = emptyList())
                 .isTurnScoped()
+        )
+    }
+
+    @Test
+    fun userMessageChunkIsPreservedForTheSharedConversationReducer() {
+        val update = SessionUpdate.UserMessageChunk(
+            content = ContentBlock.Text("DSH user query"),
+            messageId = MessageId("user-message-1"),
+        ).toAcpSessionNotification("session-1")
+
+        assertEquals("session-1", update?.sessionId)
+        assertEquals("user_message_chunk", update?.update?.get("sessionUpdate"))
+        assertEquals("user-message-1", update?.update?.get("messageId"))
+        assertEquals(
+            mapOf("type" to "text", "text" to "DSH user query"),
+            update?.update?.get("content"),
         )
     }
 

@@ -43,8 +43,39 @@ data class OmniPluginToolGroup(
     val handlerFactory: () -> ToolHandler
 )
 
+/**
+ * A user-facing operation contributed by a plugin.
+ *
+ * Actions are intentionally separate from Agent tool calls: a settings page
+ * can invoke one without manufacturing an ACP turn, while the plugin may
+ * still expose the same business operation through a normal tool adapter.
+ */
+data class OmniPluginActionDefinition(
+    val id: String,
+    val displayName: String,
+    val description: String,
+    val presentation: JsonObject = JsonObject(emptyMap()),
+    val ownerPluginId: String? = null,
+)
+
+interface OmniPluginActionHandler {
+    val actionIds: Set<String>
+
+    fun canHandle(actionId: String): Boolean = actionId in actionIds
+
+    suspend fun execute(actionId: String, args: JsonObject): JsonObject
+
+    suspend fun dispose() = Unit
+}
+
+data class OmniPluginActionGroup(
+    val definitions: List<OmniPluginActionDefinition>,
+    val handlerFactory: () -> OmniPluginActionHandler,
+)
+
 data class OmniPluginContribution(
-    val toolGroups: List<OmniPluginToolGroup> = emptyList()
+    val toolGroups: List<OmniPluginToolGroup> = emptyList(),
+    val actionGroups: List<OmniPluginActionGroup> = emptyList(),
 )
 
 interface OmniPlugin {

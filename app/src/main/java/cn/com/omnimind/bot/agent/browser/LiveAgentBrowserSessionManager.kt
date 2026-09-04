@@ -10,25 +10,24 @@ interface AgentBrowserLiveSessionHandle {
 }
 
 class LiveAgentBrowserSessionStore<T : AgentBrowserLiveSessionHandle> {
+    private val sessions = linkedMapOf<String, T>()
     @Volatile
-    private var currentSession: T? = null
+    private var currentWorkspaceId: String? = null
 
     @Synchronized
     fun acquire(workspaceId: String, create: () -> T): T {
-        val existing = currentSession
-        if (existing != null && existing.workspaceId == workspaceId) {
-            return existing
-        }
-        existing?.closeSession()
-        return create().also { currentSession = it }
+        val existing = sessions[workspaceId]
+        currentWorkspaceId = workspaceId
+        return existing ?: create().also { sessions[workspaceId] = it }
     }
 
-    fun current(): T? = currentSession
+    fun current(): T? = currentWorkspaceId?.let(sessions::get)
 
     @Synchronized
     fun clear() {
-        currentSession?.closeSession()
-        currentSession = null
+        sessions.values.toList().forEach { it.closeSession() }
+        sessions.clear()
+        currentWorkspaceId = null
     }
 }
 
@@ -49,7 +48,6 @@ object LiveAgentBrowserSessionManager {
                 workspace = workspace
             )
         }
-        engine.bindRunContext(agentRunId = agentRunId, workspace = workspace)
         return engine
     }
 

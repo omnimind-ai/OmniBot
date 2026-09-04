@@ -37,7 +37,8 @@ class ToolSearchHandler(
         if (query.isBlank()) {
             return ToolExecutionResult.Error(NAME, helper.localized("缺少工具搜索目标"))
         }
-        val limit = (args["limit"]?.jsonPrimitive?.intOrNull ?: 8).coerceIn(1, 20)
+        val limit = args["limit"]?.jsonPrimitive?.intOrNull
+            ?.takeIf { it > 0 }
         val matches = catalog.searchTools(query, limit)
         val payload = mapOf(
             "query" to query,

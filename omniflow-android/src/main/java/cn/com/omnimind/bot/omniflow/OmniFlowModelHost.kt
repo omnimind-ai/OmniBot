@@ -31,6 +31,7 @@ class OmniFlowModelHost(
     private val modelClient: OmniFlowModelClient,
     private val imageCompressor: (String) -> String = ::compressVlmImage,
     private val onReasoningUpdate: suspend (String) -> Unit = {},
+    private val maxRejectedActionRetries: Int? = null,
 ) {
     private val json = Json {
         ignoreUnknownKeys = true
@@ -69,8 +70,11 @@ class OmniFlowModelHost(
                 break
             }
             rejectedAttempts += 1
-            check(rejectedAttempts <= MAX_REJECTED_ACTION_RETRIES) {
-                "model_repeated_explicitly_rejected_action:${rejectedAction.tool}"
+            if (
+                maxRejectedActionRetries != null &&
+                    rejectedAttempts > maxRejectedActionRetries
+            ) {
+                error("model_repeated_explicitly_rejected_action:${rejectedAction.tool}")
             }
             activeRequest = activeRequest.copy(
                 messages = activeRequest.messages + ChatCompletionMessage(
@@ -246,7 +250,6 @@ class OmniFlowModelHost(
     }
 
     companion object {
-        private const val MAX_REJECTED_ACTION_RETRIES = 3
         private const val COORDINATE_MATCH_TOLERANCE_PX = 2.0
         private val STALLED_ACTION_ERRORS = setOf(
             "action_completed_without_state_change",
@@ -292,7 +295,7 @@ class OmniFlowModelHost(
                         content = JsonPrimitive(firstText(payload["prompt"])),
                     ),
                 ),
-                maxCompletionTokens = intValue(payload["max_tokens"], defaultValue = 1800),
+                maxCompletionTokens = (payload["max_tokens"] as? Number)?.toInt(),
                 temperature = (payload["temperature"] as? Number)?.toDouble() ?: 0.1,
                 stream = true,
                 streamOptions = ChatCompletionStreamOptions(),

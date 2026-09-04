@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ui/features/home/pages/agent/agent_config_page.dart';
 import 'package:ui/l10n/generated/app_localizations.dart';
+import 'package:ui/services/model_provider_config_service.dart';
 import 'package:ui/services/storage_service.dart';
 import 'package:ui/theme/app_theme.dart';
 import 'package:ui/widgets/predictive_back_gesture_wrapper.dart';
@@ -111,10 +112,6 @@ void main() {
               };
             case 'getSceneModelBindings':
               return <dynamic>[];
-            case 'fetchProviderModels':
-              return <Map<String, dynamic>>[
-                <String, dynamic>{'id': 'deepseek-v4-pro'},
-              ];
             case 'saveSceneModelBinding':
               savedBinding = Map<String, dynamic>.from(call.arguments as Map);
               return <Map<String, dynamic>>[
@@ -127,6 +124,18 @@ void main() {
           }
           return null;
         });
+
+    await ModelProviderConfigService.saveCachedFetchedModels(
+      profileId: 'provider-1',
+      apiBase: 'https://api.deepseek.com',
+      profileRevision: 1,
+      models: const <ProviderModelOption>[
+        ProviderModelOption(
+          id: 'deepseek-v4-pro',
+          displayName: 'deepseek-v4-pro',
+        ),
+      ],
+    );
 
     await _pumpPage(tester, 'codex-acp');
     await tester.tap(

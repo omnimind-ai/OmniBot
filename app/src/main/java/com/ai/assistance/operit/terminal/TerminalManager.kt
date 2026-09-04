@@ -260,7 +260,7 @@ class TerminalManager private constructor(
     suspend fun executeHiddenCommand(
         command: String,
         executorKey: String,
-        timeoutMs: Long,
+        timeoutMs: Long?,
         distribution: TerminalDistribution.Spec = TerminalDistribution.selected(),
         onProcessStarted: ((Process) -> Unit)? = null,
         onOutputChunk: suspend (String) -> Unit = {}
@@ -348,7 +348,12 @@ class TerminalManager private constructor(
                         }
                     }
 
-                    val finished = process.waitFor(timeoutMs, TimeUnit.MILLISECONDS)
+                    val finished = if (timeoutMs == null) {
+                        process.waitFor()
+                        true
+                    } else {
+                        process.waitFor(timeoutMs, TimeUnit.MILLISECONDS)
+                    }
                     if (!finished) {
                         terminateHiddenExecProcess(process)
                         finishReaders()

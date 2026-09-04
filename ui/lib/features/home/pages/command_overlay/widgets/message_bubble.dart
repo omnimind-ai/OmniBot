@@ -62,7 +62,6 @@ class MessageBubble extends StatelessWidget {
   final void Function(ChatMessageModel message, LongPressStartDetails details)?
   onUserMessageLongPressStart;
   final VoidCallback? onRetryAgentMessage;
-  final VoidCallback? onContinueAgentMessage;
   final VoidCallback? onUserMessageEditTap;
   final VoidCallback? onStreamingTextLayoutChanged;
   final AppBackgroundVisualProfile visualProfile;
@@ -83,7 +82,6 @@ class MessageBubble extends StatelessWidget {
     this.onRequestAuthorize,
     this.onUserMessageLongPressStart,
     this.onRetryAgentMessage,
-    this.onContinueAgentMessage,
     this.onUserMessageEditTap,
     this.onStreamingTextLayoutChanged,
     this.visualProfile = AppBackgroundVisualProfile.defaultProfile,
@@ -1094,7 +1092,6 @@ class MessageBubble extends StatelessWidget {
       text,
       trailing: _buildVoiceAction(context, text),
     );
-    final continueStatus = _buildAgentContinueStatus(context);
     final retryingStatus = _buildAgentRetryingStatus(context);
     final errorFooter = _buildAgentErrorFooter(context, text);
     final turnUsageFooter = includeTurnUsageFooter
@@ -1120,27 +1117,18 @@ class MessageBubble extends StatelessWidget {
             ),
           ),
         ],
-        if (continueStatus != null) ...[
-          if (showPrimaryText || speed != null) const SizedBox(height: 8),
-          continueStatus,
-        ],
         if (retryingStatus != null) ...[
-          if (showPrimaryText || speed != null || continueStatus != null)
-            const SizedBox(height: 8),
+          if (showPrimaryText || speed != null) const SizedBox(height: 8),
           retryingStatus,
         ],
         if (errorFooter != null) ...[
-          if (showPrimaryText ||
-              speed != null ||
-              continueStatus != null ||
-              retryingStatus != null)
+          if (showPrimaryText || speed != null || retryingStatus != null)
             const SizedBox(height: 8),
           errorFooter,
         ],
         if (turnUsageFooter != null) ...[
           if (showPrimaryText ||
               speed != null ||
-              continueStatus != null ||
               retryingStatus != null ||
               errorFooter != null)
             const SizedBox(height: 8),
@@ -1271,31 +1259,17 @@ class MessageBubble extends StatelessWidget {
     );
   }
 
-  Widget? _buildAgentContinueStatus(BuildContext context) {
-    // 续跑期间不再单独显示"正在从当前轮继续…"+转圈,
-    // 让旧 bubble 看起来就像一条普通的待更新消息,等首帧新内容到达整体替换。
-    return null;
-  }
-
   Widget? _buildAgentErrorFooter(BuildContext context, String text) {
-    // 续跑期间隐藏整个错误页脚(报错文字 + Continue 提示框 + Retry 按钮),
-    // 不让用户在新内容到达前看到任何残留的失败状态。
-    if (message.content?['agentContinuing'] == true) {
-      return null;
-    }
     final errorText = (message.content?['agentErrorText'] ?? '')
         .toString()
         .trim();
     final retryable = message.content?['agentRetryable'] == true;
-    final continueable = message.content?['agentContinueable'] == true;
     final showRetryButton = retryable && onRetryAgentMessage != null;
-    final showContinueButton = continueable && onContinueAgentMessage != null;
     final showErrorText = errorText.isNotEmpty && errorText != text.trim();
-    if (!showErrorText && !showRetryButton && !showContinueButton) {
+    if (!showErrorText && !showRetryButton) {
       return null;
     }
     final warningColor = Theme.of(context).colorScheme.error;
-    final continueColor = const Color(0xFFFF9F1A);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1315,50 +1289,6 @@ class MessageBubble extends StatelessWidget {
               ),
             ),
           ),
-        if (showContinueButton) ...[
-          if (showErrorText) const SizedBox(height: 8),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(
-              color: continueColor.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    LegacyTextLocalizer.isEnglish
-                        ? 'Interrupted. Continue from this turn.'
-                        : '已中断，点击「继续」从当前轮恢复',
-                    style: TextStyle(
-                      fontSize: 12 * _chatTextScale,
-                      color: continueColor.withValues(alpha: 0.96),
-                      height: 1.4,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                FilledButton.tonalIcon(
-                  onPressed: onContinueAgentMessage,
-                  icon: const Icon(Icons.play_arrow_rounded, size: 16),
-                  label: Text(
-                    LegacyTextLocalizer.isEnglish ? 'Continue' : '继续',
-                  ),
-                  style: FilledButton.styleFrom(
-                    foregroundColor: Colors.white,
-                    backgroundColor: continueColor,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 8,
-                    ),
-                    visualDensity: VisualDensity.compact,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
         if (showRetryButton)
           Align(
             alignment: Alignment.centerLeft,

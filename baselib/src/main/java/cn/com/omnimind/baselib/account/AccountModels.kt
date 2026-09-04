@@ -143,8 +143,8 @@ class AccountNotConfiguredException :
 class AccountNotAuthenticatedException :
     AccountException("The user is not signed in")
 
-class AccountCredentialStorageException :
-    AccountException("Secure account credential storage is unavailable")
+class AccountCredentialStorageException(cause: Throwable? = null) :
+    AccountException("Secure account credential storage is unavailable", cause)
 
 class CloudServiceUpgradeRequiredException(
     val currentVersion: String,

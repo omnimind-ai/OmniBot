@@ -1,7 +1,9 @@
 package cn.com.omnimind.bot.agent.runtime
 
 import cn.com.omnimind.baselib.llm.ProviderModelOption
+import cn.com.omnimind.baselib.llm.DeepSeekProvider
 import cn.com.omnimind.baselib.llm.OpenAiWireApi
+import cn.com.omnimind.baselib.llm.ProviderCustomHeaderUtils
 import com.google.gson.GsonBuilder
 import com.google.gson.JsonArray
 import com.google.gson.JsonNull
@@ -34,12 +36,9 @@ internal fun AgentProviderCredentials.normalized(): AgentProviderCredentials {
     require(!normalizedBaseUrl.any(Char::isWhitespace)) {
         "Provider base URL contains whitespace."
     }
-    val normalizedHeaders = customHeaders
-        .mapNotNull { (key, value) ->
-            val normalizedKey = key.trim()
-            if (normalizedKey.isEmpty()) null else normalizedKey to value.trim()
-        }
-        .toMap()
+    val normalizedHeaders = ProviderCustomHeaderUtils
+        .sanitizeCustomHeaders(customHeaders)
+        .mapValues { (_, value) -> value.trim() }
     return copy(
         baseUrl = normalizedBaseUrl,
         apiKey = apiKey.trim(),
@@ -69,6 +68,8 @@ internal data class AgentProviderMapping(
     /** Optional Harness-owned config file read before launch. */
     val launchConfigPath: String? = null,
     val launchConfigExecutorKey: String? = null,
+    /** Official Codex env_http_headers bindings for Provider custom headers. */
+    val codexEnvHttpHeaders: Map<String, String> = emptyMap(),
 )
 
 internal data class AgentConfigWrite(
@@ -76,6 +77,55 @@ internal data class AgentConfigWrite(
     val content: String,
     val executorKey: String,
 )
+
+/**
+ * Merge user launch options with the canonical Provider mapping.
+ *
+ * Provider credentials/model/protocol values are owned by the shared
+ * Provider. Profile environment values may add Harness-specific options, but
+ * must not shadow those canonical values with stale settings from an older
+ * Agent configuration.
+ */
+internal fun mergeAcpLaunchEnvironment(
+    profileEnvironment: Map<String, String>,
+    providerEnvironment: Map<String, String>,
+): Map<String, String> = buildMap {
+    profileEnvironment.forEach { (key, value) ->
+        if (key !in PROVIDER_OWNED_ENVIRONMENT_KEYS &&
+            !key.startsWith(PROVIDER_HEADER_ENV_PREFIX)
+        ) {
+            put(key, value)
+        }
+    }
+    putAll(providerEnvironment)
+}
+
+/**
+ * Provider credentials and model selection are never profile configuration.
+ * Remove these keys even when the current Provider is absent, otherwise a
+ * stale persisted profile can silently resurrect an old route or credential.
+ */
+private val PROVIDER_OWNED_ENVIRONMENT_KEYS = setOf(
+    "OPENAI_API_KEY",
+    "OPENAI_BASE_URL",
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_BASE_URL",
+    "ANTHROPIC_MODEL",
+    "ANTHROPIC_SMALL_FAST_MODEL",
+    "DEEPSEEK_API_KEY",
+    "DEEPSEEK_BASE_URL",
+    "DSH_MODEL",
+    "KIMI_CODE_HOME",
+    "KIMI_MODEL_NAME",
+    "KIMI_MODEL_API_KEY",
+    "KIMI_MODEL_BASE_URL",
+    "KIMI_MODEL_PROVIDER_TYPE",
+    "KIMI_MODEL_CAPABILITIES",
+    "KIMI_MODEL_THINKING_EFFORT",
+    "KIMI_CODE_CUSTOM_HEADERS",
+)
+private const val PROVIDER_HEADER_ENV_PREFIX = "OMNIBOT_PROVIDER_HEADER_"
 
 internal interface AgentConfigAdapter {
     fun map(input: AgentProviderMappingInput): AgentProviderMapping
@@ -93,6 +143,7 @@ internal object AgentConfigAdapterRegistry {
         DeepSeekHarnessConfigAdapter,
         CodexConfigAdapter,
         ClaudeCodeConfigAdapter,
+        KimiCodeConfigAdapter,
         OpenCodeConfigAdapter
     )
 
@@ -128,6 +179,8 @@ internal object AgentConfigAdapterRegistry {
                 this === CodexConfigAdapter
             AcpHarnessProviderConfigKind.CLAUDE_CODE ->
                 this === ClaudeCodeConfigAdapter
+            AcpHarnessProviderConfigKind.KIMI_CODE ->
+                this === KimiCodeConfigAdapter
             AcpHarnessProviderConfigKind.OPEN_CODE ->
                 this === OpenCodeConfigAdapter
             AcpHarnessProviderConfigKind.STANDARD -> false
@@ -160,10 +213,6 @@ private object DeepSeekHarnessConfigAdapter : AgentConfigAdapter {
         existingConfig: String,
     ): List<AgentConfigWrite> {
         val model = input.model?.trim()?.takeIf { it.isNotEmpty() } ?: return emptyList()
-        // DSH's official DeepSeek adapter defaults to 256K output tokens. Many
-        // OpenAI-compatible gateways (including the active GLM route) cap the
-        // request at 131072, so publish a normal user-settings override through
-        // DSH's documented hot-reload surface instead of patching vendor code.
         return listOf(
             AgentConfigWrite(
                 path = DEEPSEEK_HARNESS_SETTINGS_PATH,
@@ -176,15 +225,14 @@ private object DeepSeekHarnessConfigAdapter : AgentConfigAdapter {
 
 private fun buildDeepSeekHarnessSettingsYaml(model: String): String = buildString {
     appendLine("llm-deepseek:")
-    appendLine("  maxTokens: 8192")
     appendLine("  models:")
     appendLine("    - id: '${model.replace("'", "''")}'")
-    appendLine("      maxTokens: 8192")
 }
 
 private object CodexConfigAdapter : AgentConfigAdapter {
     override fun map(input: AgentProviderMappingInput): AgentProviderMapping {
         val provider = input.provider
+        val headerBindings = provider?.let { buildAcpHeaderBindings(it.customHeaders) }
         val environment = if (provider == null) {
             mapOf("CODEX_HOME" to AgentRuntimeDefaults.CODEX_HOME)
         } else {
@@ -192,7 +240,7 @@ private object CodexConfigAdapter : AgentConfigAdapter {
                 "CODEX_HOME" to AgentRuntimeDefaults.CODEX_HOME,
                 "OPENAI_BASE_URL" to normalizeCodexBaseUrl(provider.baseUrl),
                 "OPENAI_API_KEY" to provider.apiKey
-            )
+            ) + headerBindings?.environment.orEmpty()
         }
         return AgentProviderMapping(
             environment = environment,
@@ -203,7 +251,8 @@ private object CodexConfigAdapter : AgentConfigAdapter {
             // and DSH, but Codex must receive its own official Responses
             // transport setting.
             codexWireApi = provider?.let { OpenAiWireApi.RESPONSES },
-            codexBaseUrl = provider?.baseUrl?.let(::normalizeCodexBaseUrl)
+            codexBaseUrl = provider?.baseUrl?.let(::normalizeCodexBaseUrl),
+            codexEnvHttpHeaders = headerBindings?.envHttpHeaders.orEmpty(),
         )
     }
 
@@ -223,6 +272,7 @@ private object CodexConfigAdapter : AgentConfigAdapter {
                     model = model,
                     wireApi = mapping.codexWireApi ?: OpenAiWireApi.RESPONSES,
                     modelCatalogPath = CODEX_MODEL_CATALOG_JSON_PATH,
+                    envHttpHeaders = mapping.codexEnvHttpHeaders,
                 ),
                 executorKey = "codex-agent-config-write",
             ),
@@ -233,7 +283,10 @@ private object CodexConfigAdapter : AgentConfigAdapter {
             ),
             AgentConfigWrite(
                 path = CODEX_MODEL_CATALOG_JSON_PATH,
-                content = buildCodexModelCatalogJson(providerModels),
+                content = buildCodexModelCatalogJson(
+                    providerModels = providerModels,
+                    provider = provider,
+                ),
                 executorKey = "codex-agent-config-write",
             ),
         )
@@ -244,11 +297,26 @@ private object ClaudeCodeConfigAdapter : AgentConfigAdapter {
     override fun map(input: AgentProviderMappingInput): AgentProviderMapping {
         val provider = input.provider ?: return AgentProviderMapping()
         val model = input.model?.trim()?.takeIf { it.isNotEmpty() }
+        val anthropicBaseUrl = normalizeClaudeCodeBaseUrl(provider.baseUrl)
+        val customHeaders = provider.customHeaders
+            .entries
+            .joinToString("\n") { (name, value) -> "$name: $value" }
+        require(
+            provider.protocolType.equals("anthropic", ignoreCase = true) ||
+                isAnthropicCompatibleBaseUrl(anthropicBaseUrl)
+        ) {
+            "Claude Code requires an Anthropic-compatible Provider endpoint. " +
+                "Configure the Provider protocol as Anthropic or use its /anthropic endpoint; " +
+                "the current endpoint is OpenAI-compatible: ${provider.baseUrl}"
+        }
         return AgentProviderMapping(
             environment = buildMap {
-                put("ANTHROPIC_BASE_URL", normalizeClaudeCodeBaseUrl(provider.baseUrl))
+                put("ANTHROPIC_BASE_URL", anthropicBaseUrl)
                 put("ANTHROPIC_API_KEY", provider.apiKey)
                 put("ANTHROPIC_AUTH_TOKEN", provider.apiKey)
+                if (customHeaders.isNotBlank()) {
+                    put("ANTHROPIC_CUSTOM_HEADERS", customHeaders)
+                }
                 if (model != null) {
                     // Official Claude Code model override. Without this the
                     // CLI falls back to claude-opus and a shared gateway can
@@ -261,15 +329,35 @@ private object ClaudeCodeConfigAdapter : AgentConfigAdapter {
     }
 }
 
+private fun isAnthropicCompatibleBaseUrl(value: String): Boolean {
+    return value.endsWith("/anthropic", ignoreCase = true) ||
+        value.endsWith("/apps/anthropic", ignoreCase = true)
+}
+
+private object KimiCodeConfigAdapter : AgentConfigAdapter {
+    override fun map(input: AgentProviderMappingInput): AgentProviderMapping {
+        val provider = input.provider
+        val model = input.model
+        return AgentProviderMapping(
+            environment = if (provider != null && model != null) {
+                buildKimiCodeEnvironment(provider = provider, model = model)
+            } else {
+                kimiCodeBaseEnvironment()
+            },
+        )
+    }
+}
+
 private object OpenCodeConfigAdapter : AgentConfigAdapter {
     override fun map(input: AgentProviderMappingInput): AgentProviderMapping {
         val provider = input.provider ?: return AgentProviderMapping()
         val model = input.model?.trim()?.takeIf { it.isNotEmpty() }
+        val headerBindings = buildAcpHeaderBindings(provider.customHeaders)
         return AgentProviderMapping(
             environment = mapOf(
                 "OPENAI_BASE_URL" to normalizeOpenCodeBaseUrl(provider.baseUrl),
                 "OPENAI_API_KEY" to provider.apiKey
-            ),
+            ) + headerBindings.environment,
             openCodeModel = model?.let { "$OPEN_CODE_PROVIDER_ID/$it" },
             openCodeBaseUrl = normalizeOpenCodeBaseUrl(provider.baseUrl),
             launchConfigPath = OPENCODE_CONFIG_PATH,
@@ -292,6 +380,7 @@ private object OpenCodeConfigAdapter : AgentConfigAdapter {
                     model = model,
                     baseUrl = mapping.openCodeBaseUrl ?: provider.baseUrl,
                     existingConfigJson = existingConfig,
+                    customHeaders = provider.customHeaders,
                 ),
                 executorKey = "opencode-agent-config-write",
             )
@@ -389,7 +478,8 @@ internal fun resolveAcpLaunchModelForDispatch(
 }
 
 internal fun buildCodexModelCatalogJson(
-    providerModels: List<ProviderModelOption>
+    providerModels: List<ProviderModelOption>,
+    provider: AgentProviderCredentials? = null,
 ): String {
     val models = JsonArray()
     providerModels
@@ -408,12 +498,10 @@ internal fun buildCodexModelCatalogJson(
             // the shared gateway rejects. Keep the adapter's default explicit
             // and conservative; it does not change the Provider model ID.
             val reasoningLevels = listOf("medium")
-            val inputModalities = providerModel.inputModalities
-                .map { it.trim().lowercase() }
-                .filter { it in CODEX_SUPPORTED_INPUT_MODALITIES }
-                .distinct()
-                .toMutableList()
-            if ("text" !in inputModalities) inputModalities += "text"
+            val inputModalities = resolveCodexInputModalities(
+                providerModel = providerModel,
+                provider = provider,
+            )
 
             val model = JsonObject().apply {
                 addProperty("slug", modelId)
@@ -487,8 +575,57 @@ internal fun buildCodexModelCatalogJson(
         .toJson(JsonObject().apply { add("models", models) }) + "\n"
 }
 
+/**
+ * Resolve the image capability written to Codex's model catalog.
+ *
+ * An omitted `input_modalities` field means "unknown" in a Provider
+ * `/models` response. Writing `text` for that case is not neutral: Codex
+ * treats the catalog value as an explicit capability and rejects image input
+ * before the request reaches the upstream model. Keep explicit model
+ * metadata authoritative, then use the resolved Provider route capability,
+ * and finally preserve Codex's text-plus-image default for unknown routes.
+ */
+internal fun resolveCodexInputModalities(
+    providerModel: ProviderModelOption,
+    provider: AgentProviderCredentials? = null,
+): List<String> {
+    val declaredModalities = providerModel.inputModalities
+        .map { it.trim().lowercase() }
+        .filter { it in CODEX_SUPPORTED_INPUT_MODALITIES }
+        .distinct()
+    if (declaredModalities.isNotEmpty()) {
+        return declaredModalities.toMutableList().apply {
+            if ("text" !in this) add("text")
+        }
+    }
+
+    // Some compatible /models endpoints expose this as `attachment` or
+    // `vision` instead of an input modality list. Treat an explicit boolean
+    // as a model declaration, but do not let it override a modality list.
+    providerModel.attachment?.let { supportsImage ->
+        return if (supportsImage) {
+            CODEX_DEFAULT_INPUT_MODALITIES
+        } else {
+            listOf("text")
+        }
+    }
+
+    val routeSupportsImage = provider?.let {
+        DeepSeekProvider.requestCapabilities(
+            protocolType = it.protocolType,
+            apiBase = it.baseUrl,
+            model = providerModel.id,
+        ).supportsVisionInput
+    }
+    return when (routeSupportsImage) {
+        false -> listOf("text")
+        true, null -> CODEX_DEFAULT_INPUT_MODALITIES
+    }
+}
+
 private const val CODEX_DEFAULT_CONTEXT_WINDOW = 272000
 private val CODEX_SUPPORTED_INPUT_MODALITIES = setOf("text", "image", "audio")
+private val CODEX_DEFAULT_INPUT_MODALITIES = listOf("text", "image")
 private const val CODEX_PROVIDER_BASE_INSTRUCTIONS =
     "You are a coding agent. Follow the user's instructions, inspect the workspace, and make safe, precise changes."
 
@@ -548,6 +685,35 @@ internal fun buildSharedAgentProviderEnvironment(
     ).environment
 }
 
+/**
+ * Exposes editable Provider headers to official Harnesses without copying
+ * secret values into their durable config files. The generated variable names
+ * are stable for one ordered header map and are consumed only by official
+ * configuration fields such as Codex `env_http_headers` and OpenCode's
+ * `{env:...}` header references.
+ */
+internal data class AcpHeaderBindings(
+    val environment: Map<String, String>,
+    val envHttpHeaders: Map<String, String>,
+)
+
+internal fun buildAcpHeaderBindings(
+    headers: Map<String, String>,
+): AcpHeaderBindings {
+    val sanitized = ProviderCustomHeaderUtils.sanitizeCustomHeaders(headers)
+    val environment = linkedMapOf<String, String>()
+    val envHttpHeaders = linkedMapOf<String, String>()
+    sanitized.entries.forEachIndexed { index, (name, value) ->
+        val envName = "$PROVIDER_HEADER_ENV_PREFIX$index"
+        environment[envName] = value
+        envHttpHeaders[name] = envName
+    }
+    return AcpHeaderBindings(
+        environment = environment,
+        envHttpHeaders = envHttpHeaders,
+    )
+}
+
 internal fun normalizeCodexBaseUrl(baseUrl: String): String {
     var normalized = baseUrl.trim().trimEnd('/')
     listOf(
@@ -588,12 +754,11 @@ internal fun normalizeOpenCodeBaseUrl(baseUrl: String): String {
 }
 
 /**
- * Claude Code speaks Anthropic Messages over ACP.  Alibaba Model Studio
- * publishes a separate official Anthropic-compatible endpoint; its normal
- * provider URL is the OpenAI-compatible endpoint used by Codex/OpenCode.
- * Remap only the documented Alibaba endpoints here.  Other providers keep
- * their configured URL untouched because the host cannot infer a compatible
- * protocol from a generic URL.
+ * Claude Code speaks Anthropic Messages over ACP. Some Providers publish a
+ * separate Anthropic-compatible path while their normal Provider URL is the
+ * OpenAI-compatible path used by Xiaowan/Codex/OpenCode. Remap only known
+ * official endpoints; a generic proxy URL must remain untouched because the
+ * host cannot infer its protocol contract.
  */
 internal fun normalizeClaudeCodeBaseUrl(baseUrl: String): String {
     var normalized = baseUrl.trim().trimEnd('/')
@@ -609,13 +774,34 @@ internal fun normalizeClaudeCodeBaseUrl(baseUrl: String): String {
         return normalized
     }
 
+    // DeepSeek publishes separate OpenAI and Anthropic roots on the same
+    // official host. Claude Code must use the documented Anthropic root;
+    // passing the shared OpenAI root makes the model appear unavailable even
+    // though the same Provider/model works through Xiaowan.
+    if (DeepSeekProvider.isOfficialBaseUrl(normalized)) {
+        val uri = java.net.URI(normalized)
+        return "${uri.scheme}://${uri.rawAuthority}/anthropic"
+    }
+
     val host = runCatching {
         java.net.URI(normalized).host?.lowercase()
     }.getOrNull().orEmpty()
+    val isMiniMax = host == "api.minimaxi.com" || host == "api.minimax.io"
     val isAlibabaModelStudio = host == "dashscope.aliyuncs.com" ||
         host == "dashscope-us.aliyuncs.com" ||
         host.endsWith(".dashscope.aliyuncs.com") ||
         host.endsWith(".maas.aliyuncs.com")
+    if (isMiniMax) {
+        return when {
+            normalized.endsWith("/anthropic/v1", ignoreCase = true) ->
+                normalized.dropLast("/v1".length)
+            normalized.endsWith("/anthropic", ignoreCase = true) -> normalized
+            else -> {
+                val uri = java.net.URI(normalized)
+                "${uri.scheme}://${uri.rawAuthority}/anthropic"
+            }
+        }
+    }
     if (!isAlibabaModelStudio) return normalized
 
     val openAiPath = when {

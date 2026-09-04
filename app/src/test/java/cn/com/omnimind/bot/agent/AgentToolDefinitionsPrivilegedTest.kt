@@ -24,8 +24,14 @@ class AgentToolDefinitionsPrivilegedTest {
         val properties = parameters["properties"] as JsonObject
         val action = properties["action"] as JsonObject
         val enumValues = action["enum"] as JsonArray
+        val arguments = properties["arguments"] as JsonObject
+        val argumentProperties = arguments["properties"] as JsonObject
 
         assertTrue(enumValues.any { it.jsonPrimitive.contentOrNull == "shell.exec" })
+        assertTrue("packageName" in argumentProperties)
+        assertTrue("activityName" in argumentProperties)
+        assertTrue("command" in argumentProperties)
+        assertEquals(false, arguments["additionalProperties"]?.toString()?.toBoolean())
         assertTrue(
             function["description"]?.jsonPrimitive?.contentOrNull?.contains("one-shot arbitrary shell") ==
                 true
@@ -47,7 +53,7 @@ class AgentToolDefinitionsPrivilegedTest {
     }
 
     @Test
-    fun `privileged session start exposes confirmed flag`() {
+    fun `privileged session start leaves approval to ACP`() {
         val tool = AgentToolDefinitions.androidPrivilegedSessionStartTool(
             backend = ShizukuBackend.ADB,
             locale = PromptLocale.EN_US
@@ -55,8 +61,10 @@ class AgentToolDefinitionsPrivilegedTest {
         val function = tool["function"] as JsonObject
         val parameters = function["parameters"] as JsonObject
         val properties = parameters["properties"] as JsonObject
-        val confirmed = properties["confirmed"] as JsonObject
-
-        assertEquals("boolean", confirmed["type"]?.jsonPrimitive?.contentOrNull)
+        assertTrue("confirmed" !in properties)
+        assertTrue(
+            function["description"]?.jsonPrimitive?.contentOrNull
+                ?.contains("ACP", ignoreCase = true) == true
+        )
     }
 }

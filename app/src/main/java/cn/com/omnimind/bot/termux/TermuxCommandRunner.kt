@@ -11,13 +11,12 @@ data class TermuxCommandSpec(
     val executionMode: String = EXECUTION_MODE_TERMUX,
     val prootDistro: String? = null,
     val workingDirectory: String? = null,
-    val timeoutSeconds: Int = DEFAULT_TIMEOUT_SECONDS,
+    val timeoutSeconds: Int? = null,
     val environment: Map<String, String> = emptyMap()
 ) {
     companion object {
         const val EXECUTION_MODE_TERMUX = "termux"
         const val EXECUTION_MODE_PROOT = "proot"
-        const val DEFAULT_TIMEOUT_SECONDS = 60
     }
 }
 
@@ -186,11 +185,7 @@ object TermuxCommandRunner {
             ?.let { TerminalDistribution.fromId(it).id }
             ?: TerminalDistribution.selected().id
         return spec.copy(
-            executionMode = if (executionMode.isBlank()) {
-                TermuxCommandSpec.EXECUTION_MODE_PROOT
-            } else {
-                executionMode
-            },
+            executionMode = executionMode,
             prootDistro = prootDistro
         )
     }

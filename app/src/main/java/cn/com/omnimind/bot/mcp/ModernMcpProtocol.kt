@@ -18,10 +18,13 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import kotlinx.serialization.json.putJsonObject
+import java.nio.ByteBuffer
+import java.nio.charset.CodingErrorAction
+import java.nio.charset.StandardCharsets
+import java.util.Base64
 
 /**
  * Thin protocol boundary for MCP 2026-07-28.
@@ -51,7 +54,10 @@ internal object ModernMcpProtocol {
 
     internal fun isModernRequest(call: ApplicationCall): Boolean =
         call.request.path() == "/mcp" &&
-            call.request.headers[PROTOCOL_VERSION_HEADER] == PROTOCOL_VERSION
+            (
+                call.request.headers[PROTOCOL_VERSION_HEADER] == PROTOCOL_VERSION ||
+                    call.request.headers[METHOD_HEADER] != null
+                )
 
     internal suspend fun handle(
         call: ApplicationCall,
@@ -67,8 +73,7 @@ internal object ModernMcpProtocol {
         }
         val id = request["id"] ?: JsonNull
         val method = call.request.headers[METHOD_HEADER]
-            ?: request["method"]?.jsonPrimitive?.contentOrNull
-        val bodyMethod = request["method"]?.jsonPrimitive?.contentOrNull
+        val bodyMethod = (request["method"] as? JsonPrimitive)?.contentOrNull
         if (method.isNullOrBlank() || bodyMethod != method) {
             respondError(
                 call,
@@ -80,17 +85,27 @@ internal object ModernMcpProtocol {
             return
         }
         if (call.request.headers[PROTOCOL_VERSION_HEADER] != PROTOCOL_VERSION) {
+            val requested = call.request.headers[PROTOCOL_VERSION_HEADER]
+                ?.takeIf(String::isNotBlank)
+                ?: "unknown"
             respondError(
                 call,
                 id,
                 -32022,
                 "Unsupported MCP protocol version",
                 status = HttpStatusCode.BadRequest,
+                data = buildJsonObject {
+                    putJsonArray("supported") { add(JsonPrimitive(PROTOCOL_VERSION)) }
+                    put("requested", requested)
+                },
             )
             return
         }
-        val meta = request["_meta"]?.jsonObject
-        val metaVersion = meta?.get(META_PROTOCOL_VERSION)?.jsonPrimitive?.contentOrNull
+        val params = request["params"] as? JsonObject ?: JsonObject(emptyMap())
+        // MCP 2026 request metadata is scoped to params, matching RequestParams
+        // in the official schema. It is not a JSON-RPC envelope field.
+        val meta = params["_meta"] as? JsonObject
+        val metaVersion = (meta?.get(META_PROTOCOL_VERSION) as? JsonPrimitive)?.contentOrNull
         if (metaVersion != PROTOCOL_VERSION) {
             respondError(
                 call,
@@ -101,14 +116,25 @@ internal object ModernMcpProtocol {
             )
             return
         }
-        if (meta[META_CLIENT_INFO] !is JsonObject ||
-            meta[META_CLIENT_CAPABILITIES] !is JsonObject
-        ) {
+        // clientInfo is SHOULD/optional; clientCapabilities is required on
+        // every modern request and must not be inferred from an earlier call.
+        if (meta[META_CLIENT_CAPABILITIES] !is JsonObject) {
             respondError(
                 call,
                 id,
                 -32021,
                 "Modern MCP request metadata is incomplete",
+                status = HttpStatusCode.BadRequest,
+            )
+            return
+        }
+        val clientInfo = meta[META_CLIENT_INFO]
+        if (clientInfo != null && !isValidImplementation(clientInfo)) {
+            respondError(
+                call,
+                id,
+                -32602,
+                "Modern MCP clientInfo is invalid",
                 status = HttpStatusCode.BadRequest,
             )
             return
@@ -119,6 +145,9 @@ internal object ModernMcpProtocol {
                 call,
                 id,
                 buildJsonObject {
+                    put("resultType", "complete")
+                    put("ttlMs", 0)
+                    put("cacheScope", "private")
                     putJsonArray("supportedVersions") {
                         add(JsonPrimitive(PROTOCOL_VERSION))
                     }
@@ -141,6 +170,9 @@ internal object ModernMcpProtocol {
                     call,
                     id,
                     buildJsonObject {
+                        put("resultType", "complete")
+                        put("ttlMs", 0)
+                        put("cacheScope", "private")
                         putJsonArray("tools") {
                             tools.forEach { add(toolToJson(it)) }
                         }
@@ -150,9 +182,9 @@ internal object ModernMcpProtocol {
             }
 
             "tools/call" -> {
-                val params = request["params"]?.jsonObject.orEmpty()
-                val toolName = params["name"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                val toolName = (params["name"] as? JsonPrimitive)?.contentOrNull.orEmpty()
                 val headerName = call.request.headers[NAME_HEADER]
+                    ?.let(::decodeMcpHeaderValue)
                 if (toolName.isBlank() || headerName != toolName) {
                     respondError(
                         call,
@@ -163,7 +195,7 @@ internal object ModernMcpProtocol {
                     )
                     return
                 }
-                val arguments = params["arguments"]?.jsonObject.orEmpty()
+                val arguments = params["arguments"] as? JsonObject ?: JsonObject(emptyMap())
                 val result = AndroidDeviceMcpServer.modernCallTool(
                     context = context,
                     scope = scope,
@@ -177,13 +209,25 @@ internal object ModernMcpProtocol {
                     call,
                     id,
                     buildJsonObject {
+                        put("resultType", "complete")
                         resultJson.forEach { (key, value) -> put(key, value) }
-                        putJsonObject("_meta") { put(META_SERVER_INFO, serverInfo) }
+                        putJsonObject("_meta") {
+                            (resultJson["_meta"] as? JsonObject)?.forEach { (key, value) ->
+                                put(key, value)
+                            }
+                            put(META_SERVER_INFO, serverInfo)
+                        }
                     },
                 )
             }
 
-            else -> respondError(call, id, -32601, "Method not found: $method")
+            else -> respondError(
+                call,
+                id,
+                -32601,
+                "Method not found: $method",
+                status = HttpStatusCode.NotFound,
+            )
         }
     }
 
@@ -201,6 +245,16 @@ internal object ModernMcpProtocol {
                 }
             }
         }
+
+    private fun isValidImplementation(value: JsonElement): Boolean {
+        val implementation = value as? JsonObject ?: return false
+        return (implementation["name"] as? JsonPrimitive)
+            ?.contentOrNull
+            ?.isNotBlank() == true &&
+            (implementation["version"] as? JsonPrimitive)
+                ?.contentOrNull
+                ?.isNotBlank() == true
+    }
 
     private suspend fun respondResult(
         call: ApplicationCall,
@@ -224,6 +278,7 @@ internal object ModernMcpProtocol {
         code: Int,
         message: String,
         status: HttpStatusCode = HttpStatusCode.OK,
+        data: JsonObject? = null,
     ) {
         call.respondText(
             text = buildJsonObject {
@@ -232,11 +287,37 @@ internal object ModernMcpProtocol {
                 putJsonObject("error") {
                     put("code", code)
                     put("message", message)
+                    data?.let { put("data", it) }
                 }
             }.toString(),
             contentType = ContentType.Application.Json,
             status = status,
         )
     }
+
+    /** Decode the header-safe sentinel required for non-ASCII MCP names. */
+    internal fun decodeMcpHeaderValue(value: String): String? {
+        if (!value.startsWith(BASE64_PREFIX) || !value.endsWith(BASE64_SUFFIX)) {
+            return value.takeIf { raw ->
+                raw == raw.trim() && raw.all { char -> char.code in 0x20..0x7e }
+            }
+        }
+        val encoded = value.substring(
+            BASE64_PREFIX.length,
+            value.length - BASE64_SUFFIX.length,
+        )
+        return runCatching {
+            val bytes = Base64.getDecoder().decode(encoded)
+            StandardCharsets.UTF_8
+                .newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT)
+                .decode(ByteBuffer.wrap(bytes))
+                .toString()
+        }.getOrNull()
+    }
+
+    private const val BASE64_PREFIX = "=?base64?"
+    private const val BASE64_SUFFIX = "?="
 
 }

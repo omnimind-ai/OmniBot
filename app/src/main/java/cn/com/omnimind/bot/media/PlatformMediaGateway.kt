@@ -1,5 +1,8 @@
 package cn.com.omnimind.bot.media
 
+import cn.com.omnimind.baselib.account.AccountApiException
+import cn.com.omnimind.baselib.account.AccountCredentialStorageException
+import cn.com.omnimind.baselib.account.AccountNotAuthenticatedException
 import cn.com.omnimind.baselib.account.AiAccessMode
 import cn.com.omnimind.baselib.account.AiRequestAccess
 import cn.com.omnimind.baselib.account.OmniAccount
@@ -58,14 +61,39 @@ internal class PlatformMediaGatewayExecutor(
         } catch (error: CancellationException) {
             throw error
         } catch (error: Throwable) {
-            throw PlatformGatewayException(
+            throw refreshFailure(error)
+        }
+        return executeRequest(requestFactory(requireCredentials(accessProvider())))
+    }
+
+    private fun refreshFailure(error: Throwable): PlatformGatewayException {
+        val sessionIsInvalid = error is AccountNotAuthenticatedException ||
+            (error is AccountApiException && (
+                error.statusCode == 401 ||
+                    error.errorCode.equals("invalid_refresh_token", ignoreCase = true)
+                ))
+        if (sessionIsInvalid) {
+            return PlatformGatewayException(
                 statusCode = 401,
                 errorCode = "invalid_access_token",
                 message = "登录状态已失效，请重新登录",
                 cause = error,
             )
         }
-        return executeRequest(requestFactory(requireCredentials(accessProvider())))
+        if (error is AccountCredentialStorageException) {
+            return PlatformGatewayException(
+                statusCode = null,
+                errorCode = "account_credential_storage_unavailable",
+                message = "登录凭证暂时无法读取，请重启应用后重试",
+                cause = error,
+            )
+        }
+        return PlatformGatewayException(
+            statusCode = null,
+            errorCode = "account_refresh_failed",
+            message = "登录状态暂时无法验证，请检查网络后重试",
+            cause = error,
+        )
     }
 
     private fun requireCredentials(access: AiRequestAccess): PlatformGatewayCredentials {
@@ -197,6 +225,8 @@ internal object PlatformMediaProtocol {
         stableUserMessageForErrorCode(code)?.let { return it }
         return when (code?.lowercase()) {
             "invalid_access_token" -> "登录状态已失效，请重新登录"
+            "account_credential_storage_unavailable" -> "登录凭证暂时无法读取，请重启应用后重试"
+            "account_refresh_failed" -> "登录状态暂时无法验证，请检查网络后重试"
             "access_denied" -> "当前官方模型或接口不可用"
             else -> when (statusCode) {
                 401 -> "登录状态已失效，请重新登录"

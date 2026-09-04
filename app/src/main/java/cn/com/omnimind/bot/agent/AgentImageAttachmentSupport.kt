@@ -51,7 +51,10 @@ internal object AgentImageAttachmentSupport {
             }
             return runCatching {
                 val mimeType = normalizeImageMimeType(mimeTypeHint, file.name)
-                val encoded = Base64.encodeToString(file.readBytes(), Base64.NO_WRAP)
+                val encoded = Base64.encodeToString(
+                    readAgentAttachmentBytes(file),
+                    Base64.NO_WRAP
+                )
                 "data:$mimeType;base64,$encoded"
             }.onFailure { error ->
                 OmniLog.w(TAG, "read image file failed: ${file.absolutePath}: ${error.message}")

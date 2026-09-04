@@ -6,14 +6,15 @@ import java.net.URI
  * Transport policy for endpoints that receive user content.
  *
  * A request remains sensitive when it has no API key: prompts, attachments, workspace paths,
- * MCP arguments, and model responses must not cross plaintext HTTP/WebSocket transports.
- * Production therefore requires HTTPS/WSS. Debug builds may explicitly opt in to plaintext only
- * for a literal loopback host; LAN and public hosts are never exempted.
+ * MCP arguments, and model responses must be checked at the final request boundary. HTTPS/WSS is
+ * the default; a user-configured local Provider may explicitly opt in to HTTP/WS because Android
+ * LAN gateways commonly do not expose TLS. Callers that do not explicitly opt in remain secure.
  */
 object ContentEndpointSecurity {
     fun requireSafe(
         rawUrl: String,
         allowInsecureLoopback: Boolean = false,
+        allowInsecureTransport: Boolean = false,
     ): String {
         val normalized = rawUrl.trim()
         require(normalized.isNotEmpty()) { "User content endpoint URL is required." }
@@ -22,6 +23,7 @@ object ContentEndpointSecurity {
         require(uri.isAbsolute) { "User content endpoint URL must be absolute." }
         val scheme = uri.scheme?.lowercase().orEmpty()
         if (
+            !allowInsecureTransport &&
             allowInsecureLoopback &&
             (scheme == "http" || scheme == "ws") &&
             !isLiteralIpLoopback(uri.host)
@@ -34,6 +36,7 @@ object ContentEndpointSecurity {
             rawUrl = normalized,
             hasCredential = true,
             allowInsecureLoopback = allowInsecureLoopback,
+            allowInsecureTransport = allowInsecureTransport,
         )
     }
 

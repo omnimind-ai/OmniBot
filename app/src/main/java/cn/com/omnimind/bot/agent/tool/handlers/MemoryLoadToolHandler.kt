@@ -49,19 +49,7 @@ class MemoryLoadToolHandler(
 
             val tracker = env.turnMemoryLoadTracker
             if (tracker != null && tracker.isLoaded(slug)) {
-                val payload = mapOf(
-                    "slug" to slug,
-                    "alreadyInContext" to true,
-                    "summary" to "该长期记忆已在本轮上下文中。"
-                )
-                val payloadJson = helper.encodeLocalizedPayload(payload)
-                return ToolExecutionResult.ContextResult(
-                    toolName = toolName,
-                    summaryText = helper.localized("该长期记忆已加载，跳过重复读取。"),
-                    previewJson = payloadJson,
-                    rawResultJson = payloadJson,
-                    success = true
-                )
+                return alreadyLoadedResult(toolName, slug)
             }
 
             val entry = ltmIndex.get(slug)
@@ -70,7 +58,9 @@ class MemoryLoadToolHandler(
                     helper.localized("未找到 slug=$slug 对应的长期记忆条目")
                 )
 
-            tracker?.markLoaded(slug)
+            if (tracker != null && !tracker.markLoadedIfAbsent(slug)) {
+                return alreadyLoadedResult(toolName, slug)
+            }
 
             val payload = linkedMapOf<String, Any?>(
                 "slug" to entry.slug,
@@ -95,5 +85,24 @@ class MemoryLoadToolHandler(
                 helper.localized(e.message ?: "memory_load failed")
             )
         }
+    }
+
+    private fun alreadyLoadedResult(
+        toolName: String,
+        slug: String
+    ): ToolExecutionResult.ContextResult {
+        val payload = mapOf(
+            "slug" to slug,
+            "alreadyInContext" to true,
+            "summary" to "该长期记忆已在本轮上下文中。"
+        )
+        val payloadJson = helper.encodeLocalizedPayload(payload)
+        return ToolExecutionResult.ContextResult(
+            toolName = toolName,
+            summaryText = helper.localized("该长期记忆已加载，跳过重复读取。"),
+            previewJson = payloadJson,
+            rawResultJson = payloadJson,
+            success = true
+        )
     }
 }

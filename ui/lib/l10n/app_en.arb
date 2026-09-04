@@ -504,6 +504,7 @@
   "alpineClaudeCode": "Anthropic Claude Code CLI for ACP Agents",
   "alpineOpenCode": "OpenCode CLI with built-in ACP support",
   "alpineDeepSeekHarness": "DeepSeek Harness (dsh) official ACP runtime",
+  "alpineKimiCode": "Kimi Code official CLI and local Web UI",
   "alpineSshClient": "SSH Client",
   "alpineSshpass": "SSH Password Helper",
   "alpineOpenSshServer": "OpenSSH Server",

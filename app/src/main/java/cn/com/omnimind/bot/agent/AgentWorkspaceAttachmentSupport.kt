@@ -1,16 +1,56 @@
 package cn.com.omnimind.bot.agent
 
 import android.util.Base64
+import android.net.Uri
 import cn.com.omnimind.baselib.util.OmniLog
+import java.io.ByteArrayOutputStream
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.InputStream
-import java.nio.file.Files
-import java.nio.file.StandardCopyOption
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.UUID
+
+internal const val MAX_AGENT_ATTACHMENT_BYTES = 20L * 1024L * 1024L
+internal const val MAX_AGENT_ATTACHMENT_COUNT = 8
+internal const val MAX_AGENT_ATTACHMENT_BATCH_BYTES = 64L * 1024L * 1024L
+
+internal class AgentAttachmentPreparationException(message: String) :
+    IllegalArgumentException(message)
+
+internal fun readAgentAttachmentBytes(file: File): ByteArray {
+    if (!file.exists() || !file.isFile) {
+        throw AgentAttachmentPreparationException("附件文件不可读：${file.name}")
+    }
+    if (file.length() > MAX_AGENT_ATTACHMENT_BYTES) {
+        throw AgentAttachmentPreparationException(
+            "附件过大，最大支持 ${MAX_AGENT_ATTACHMENT_BYTES / (1024L * 1024L)} MB：${file.name}"
+        )
+    }
+    val output = ByteArrayOutputStream(file.length().coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
+    file.inputStream().use { input ->
+        copyAttachmentStream(input, output)
+    }
+    return output.toByteArray()
+}
+
+private fun copyAttachmentStream(input: InputStream, output: java.io.OutputStream): Long {
+    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+    var total = 0L
+    while (true) {
+        val count = input.read(buffer)
+        if (count < 0) break
+        total += count
+        if (total > MAX_AGENT_ATTACHMENT_BYTES) {
+            throw AgentAttachmentPreparationException(
+                "附件过大，最大支持 ${MAX_AGENT_ATTACHMENT_BYTES / (1024L * 1024L)} MB"
+            )
+        }
+        output.write(buffer, 0, count)
+    }
+    return total
+}
 
 internal object AgentWorkspaceAttachmentSupport {
     private const val TAG = "AgentWorkspaceAttachment"
@@ -23,14 +63,46 @@ internal object AgentWorkspaceAttachmentSupport {
         if (rawAttachments.isEmpty()) {
             return emptyList()
         }
-        return rawAttachments.map { attachment ->
-            prepareSingleAttachment(context, taskId, attachment)
+        if (rawAttachments.size > MAX_AGENT_ATTACHMENT_COUNT) {
+            throw AgentAttachmentPreparationException(
+                "附件数量过多，最多支持 $MAX_AGENT_ATTACHMENT_COUNT 个"
+            )
+        }
+        val workspaceManager = AgentWorkspaceManager(context)
+        workspaceManager.ensureRuntimeDirectories()
+        val batchDirectory = createAttachmentBatchDirectory(workspaceManager, taskId)
+            ?: throw AgentAttachmentPreparationException("无法创建附件工作区")
+        return try {
+            var totalBytes = 0L
+            val prepared = rawAttachments.map { attachment ->
+                val prepared = prepareSingleAttachment(
+                    context = context,
+                    workspaceManager = workspaceManager,
+                    batchDirectory = batchDirectory,
+                    rawAttachment = attachment
+                )
+                totalBytes += preparedAttachmentBytes(prepared)
+                if (totalBytes > MAX_AGENT_ATTACHMENT_BATCH_BYTES) {
+                    throw AgentAttachmentPreparationException(
+                        "附件总大小超过 ${MAX_AGENT_ATTACHMENT_BATCH_BYTES / (1024L * 1024L)} MB"
+                    )
+                }
+                prepared
+            }
+            if (batchDirectory.listFiles().isNullOrEmpty()) {
+                runCatching { batchDirectory.delete() }
+            }
+            prepared
+        } catch (error: Throwable) {
+            runCatching { batchDirectory.deleteRecursively() }
+            throw error
         }
     }
 
     private fun prepareSingleAttachment(
         context: android.content.Context,
-        taskId: String,
+        workspaceManager: AgentWorkspaceManager,
+        batchDirectory: File,
         rawAttachment: Map<String, Any?>
     ): Map<String, Any?> {
         val attachment = LinkedHashMap(rawAttachment)
@@ -50,50 +122,127 @@ internal object AgentWorkspaceAttachmentSupport {
         }
 
         val localPath = attachment["path"]?.toString()?.trim().orEmpty()
+            .ifEmpty {
+                when (val rawUrl = attachment["url"]) {
+                    is Map<*, *> -> rawUrl["url"]?.toString()?.trim().orEmpty()
+                    else -> rawUrl?.toString()?.trim().orEmpty()
+                }
+            }
         if (localPath.startsWith("http://", ignoreCase = true) ||
             localPath.startsWith("https://", ignoreCase = true)
         ) {
             return attachment
         }
 
-        val source = localPath.takeIf { it.isNotEmpty() }?.let(::File)
+        val sourceUri = localPath.takeIf { it.isNotEmpty() }?.let(Uri::parse)
+        if (sourceUri?.scheme.equals("content", ignoreCase = true)) {
+            val contentUri = sourceUri ?: return attachment
+            return copyContentUriIntoWorkspace(
+                context = context,
+                workspaceManager = workspaceManager,
+                batchDirectory = batchDirectory,
+                uri = contentUri,
+                attachment = attachment
+            ) ?: throw AgentAttachmentPreparationException(
+                "无法读取附件，请重新选择后再试：${resolveAttachmentName(attachment, "attachment")}"
+            )
+        }
+
+        val source = when {
+            sourceUri?.scheme.equals("file", ignoreCase = true) ->
+                sourceUri?.path?.let(::File)
+            else -> localPath.takeIf { it.isNotEmpty() }?.let(::File)
+        }
         if (source != null && source.exists() && source.isFile) {
             return copyIntoWorkspace(
-                context = context,
-                taskId = taskId,
+                workspaceManager = workspaceManager,
+                batchDirectory = batchDirectory,
                 source = source,
                 attachment = attachment
-            ) ?: attachment
+            ) ?: if (isImage) {
+                throw AgentAttachmentPreparationException(
+                    "无法读取图片附件，请重新选择后再试：${source.name}"
+                )
+            } else {
+                attachment
+            }
         }
 
         val dataUrl = extractDataUrl(attachment)
         if (dataUrl.isEmpty()) {
+            if (isImage && localPath.isNotEmpty()) {
+                throw AgentAttachmentPreparationException(
+                    "图片附件不存在或已失去访问权限：${resolveAttachmentName(attachment, localPath)}"
+                )
+            }
             return attachment
         }
 
         return copyDataUrlIntoWorkspace(
-            context = context,
-            taskId = taskId,
+            workspaceManager = workspaceManager,
+            batchDirectory = batchDirectory,
             dataUrl = dataUrl,
             attachment = attachment
-        ) ?: attachment
+        ) ?: throw AgentAttachmentPreparationException(
+            "无法读取图片附件，请重新选择后再试：${resolveAttachmentName(attachment, "attachment")}"
+        )
+    }
+
+    private fun copyContentUriIntoWorkspace(
+        context: android.content.Context,
+        workspaceManager: AgentWorkspaceManager,
+        batchDirectory: File,
+        uri: Uri,
+        attachment: LinkedHashMap<String, Any?>
+    ): Map<String, Any?>? {
+        val preferredName = ensureExtension(
+            resolveAttachmentName(attachment, "attachment"),
+            context.contentResolver.getType(uri).orEmpty()
+        )
+        val target = File(batchDirectory, "${UUID.randomUUID()}_${sanitizeFileName(preferredName)}")
+        return try {
+            val input = context.contentResolver.openInputStream(uri)
+                ?: throw AgentAttachmentPreparationException("系统未授予附件读取权限")
+            input.use { source ->
+                target.outputStream().use { sink ->
+                    copyAttachmentStream(source, sink)
+                }
+            }
+            buildPreparedAttachment(
+                workspaceManager = workspaceManager,
+                target = target,
+                attachment = attachment,
+                preferredName = preferredName,
+                mimeTypeHint = context.contentResolver.getType(uri).orEmpty()
+            )
+        } catch (error: AgentAttachmentPreparationException) {
+            runCatching { target.delete() }
+            throw error
+        } catch (error: Exception) {
+            OmniLog.w(TAG, "Failed to copy content URI attachment: ${error.message}")
+            runCatching { target.delete() }
+            null
+        }
     }
 
     private fun copyIntoWorkspace(
-        context: android.content.Context,
-        taskId: String,
+        workspaceManager: AgentWorkspaceManager,
+        batchDirectory: File,
         source: File,
         attachment: LinkedHashMap<String, Any?>
     ): Map<String, Any?>? {
-        val workspaceManager = AgentWorkspaceManager(context)
-        workspaceManager.ensureRuntimeDirectories()
-        val dir = attachmentBatchDirectory(workspaceManager, taskId) ?: return null
-
         val preferredName = resolveAttachmentName(attachment, source.name)
-        val target = File(dir, "${UUID.randomUUID()}_${sanitizeFileName(preferredName)}")
+        val target = File(batchDirectory, "${UUID.randomUUID()}_${sanitizeFileName(preferredName)}")
         return try {
-            Files.copy(source.toPath(), target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            source.inputStream().use { input ->
+                target.outputStream().use { output ->
+                    copyAttachmentStream(input, output)
+                }
+            }
             buildPreparedAttachment(workspaceManager, target, attachment, preferredName)
+        } catch (error: AgentAttachmentPreparationException) {
+            runCatching { target.delete() }
+            throw error
         } catch (error: Exception) {
             OmniLog.w(
                 TAG,
@@ -105,15 +254,12 @@ internal object AgentWorkspaceAttachmentSupport {
     }
 
     private fun copyDataUrlIntoWorkspace(
-        context: android.content.Context,
-        taskId: String,
+        workspaceManager: AgentWorkspaceManager,
+        batchDirectory: File,
         dataUrl: String,
         attachment: LinkedHashMap<String, Any?>
     ): Map<String, Any?>? {
         val decoded = decodeDataUrl(dataUrl) ?: return null
-        val workspaceManager = AgentWorkspaceManager(context)
-        workspaceManager.ensureRuntimeDirectories()
-        val dir = attachmentBatchDirectory(workspaceManager, taskId) ?: return null
         val preferredName = ensureExtension(
             resolveAttachmentName(
                 attachment,
@@ -121,11 +267,11 @@ internal object AgentWorkspaceAttachmentSupport {
             ),
             decoded.mimeType
         )
-        val target = File(dir, "${UUID.randomUUID()}_${sanitizeFileName(preferredName)}")
+        val target = File(batchDirectory, "${UUID.randomUUID()}_${sanitizeFileName(preferredName)}")
         return try {
             decoded.bytes.use { source ->
                 target.outputStream().use { sink ->
-                    source.copyTo(sink)
+                    copyAttachmentStream(source, sink)
                 }
             }
             buildPreparedAttachment(
@@ -135,6 +281,9 @@ internal object AgentWorkspaceAttachmentSupport {
                 preferredName = preferredName,
                 mimeTypeHint = decoded.mimeType
             )
+        } catch (error: AgentAttachmentPreparationException) {
+            runCatching { target.delete() }
+            throw error
         } catch (error: Exception) {
             OmniLog.w(TAG, "Failed to persist dataUrl attachment: ${error.message}")
             runCatching { target.delete() }
@@ -142,11 +291,15 @@ internal object AgentWorkspaceAttachmentSupport {
         }
     }
 
-    private fun attachmentBatchDirectory(
+    private fun createAttachmentBatchDirectory(
         workspaceManager: AgentWorkspaceManager,
         taskId: String
     ): File? {
-        val batchName = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+        // Timestamp alone is not an ownership key: two prompts can prepare
+        // attachments in the same second. A unique batch keeps rollback of a
+        // failed prompt from deleting another prompt's files.
+        val batchName = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date()) +
+            "_" + UUID.randomUUID().toString().take(8)
         val dir = File(
             workspaceManager.attachmentsDirectory(),
             "${sanitizeSegment(taskId)}/$batchName"
@@ -156,6 +309,19 @@ internal object AgentWorkspaceAttachmentSupport {
             return null
         }
         return dir
+    }
+
+    private fun preparedAttachmentBytes(attachment: Map<String, Any?>): Long {
+        val path = attachment["path"]?.toString()?.trim().orEmpty()
+        val pathBytes = path.takeIf { it.isNotEmpty() }?.let(::File)
+            ?.takeIf { it.isFile }
+            ?.length()
+        if (pathBytes != null) return pathBytes
+        return when (val rawSize = attachment["size"] ?: attachment["sizeBytes"]) {
+            is Number -> rawSize.toLong().coerceAtLeast(0L)
+            is String -> rawSize.trim().toLongOrNull()?.coerceAtLeast(0L) ?: 0L
+            else -> 0L
+        }
     }
 
     private fun buildPreparedAttachment(
@@ -223,6 +389,12 @@ internal object AgentWorkspaceAttachmentSupport {
         }
         val mimeType = meta.substringBefore(';').trim().ifEmpty {
             "application/octet-stream"
+        }
+        val maxEncodedLength = (MAX_AGENT_ATTACHMENT_BYTES * 4L / 3L) + 4L
+        if (payload.length.toLong() > maxEncodedLength) {
+            throw AgentAttachmentPreparationException(
+                "附件过大，最大支持 ${MAX_AGENT_ATTACHMENT_BYTES / (1024L * 1024L)} MB"
+            )
         }
         val bytes = runCatching { Base64.decode(payload, Base64.DEFAULT) }.getOrNull()
             ?: return null

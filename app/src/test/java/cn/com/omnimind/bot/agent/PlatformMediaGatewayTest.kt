@@ -2,6 +2,7 @@ package cn.com.omnimind.bot.media
 
 import cn.com.omnimind.baselib.account.AiAccessMode
 import cn.com.omnimind.baselib.account.AiRequestAccess
+import cn.com.omnimind.baselib.account.AccountApiException
 import java.util.ArrayDeque
 import kotlinx.coroutines.runBlocking
 import okhttp3.MediaType.Companion.toMediaType
@@ -82,7 +83,7 @@ class PlatformMediaGatewayTest {
     }
 
     @Test
-    fun mapsRefreshFailureToSafeAuthenticationError() = runBlocking {
+    fun mapsRefreshNetworkFailureWithoutForcingAnotherLogin() = runBlocking {
         val request = Request.Builder().url("https://gateway.example.com/v1/images/generations").build()
         val executor = PlatformMediaGatewayExecutor(
             executeRequest = { response(request, 401, "{}") },
@@ -100,9 +101,36 @@ class PlatformMediaGatewayTest {
 
         assertTrue(error is PlatformGatewayException)
         error as PlatformGatewayException
+        assertEquals("account_refresh_failed", error.errorCode)
+        assertTrue(error.message.orEmpty().contains("检查网络"))
+        assertFalse(error.message.orEmpty().contains("重新登录"))
+    }
+
+    @Test
+    fun mapsRejectedRefreshTokenToAuthenticationError() = runBlocking {
+        val request = Request.Builder().url("https://gateway.example.com/v1/images/generations").build()
+        val executor = PlatformMediaGatewayExecutor(
+            executeRequest = { response(request, 401, "{}") },
+            accessProvider = {
+                AiRequestAccess(
+                    mode = AiAccessMode.PLATFORM,
+                    platformGatewayUrl = "https://gateway.example.com",
+                    bearerToken = "expired-token",
+                )
+            },
+            refreshSession = {
+                throw AccountApiException(401, "invalid_refresh_token", "private refresh detail")
+            },
+        )
+
+        val error = runCatching { executor.execute { request } }.exceptionOrNull()
+
+        assertTrue(error is PlatformGatewayException)
+        error as PlatformGatewayException
         assertEquals(401, error.statusCode)
         assertEquals("invalid_access_token", error.errorCode)
-        assertFalse(error.message.orEmpty().contains("internal refresh detail"))
+        assertTrue(error.message.orEmpty().contains("重新登录"))
+        assertFalse(error.message.orEmpty().contains("private refresh detail"))
     }
 
     @Test

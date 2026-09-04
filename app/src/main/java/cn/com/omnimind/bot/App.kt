@@ -1,6 +1,7 @@
 package cn.com.omnimind.bot
 
 import BaseApplication
+import cn.com.omnimind.baselib.account.AccountCredentialStorageException
 import cn.com.omnimind.baselib.account.OmniAccount
 import cn.com.omnimind.baselib.database.DatabaseHelper
 import cn.com.omnimind.baselib.i18n.AppLocaleManager
@@ -214,11 +215,19 @@ class App : BaseApplication() {
             }.onFailure {
                 OmniLog.w("AppStartup", "Cloud-service version policy check failed: ${it.message}")
             }
-            if (
-                OmniAccount.isConfigured() &&
-                OmniAccount.repository().isSignedIn() &&
-                OmniAccount.currentCloudServiceAccess().allowed
-            ) {
+            val signedIn = runCatching {
+                OmniAccount.isConfigured() && OmniAccount.repository().isSignedIn()
+            }.onFailure { error ->
+                if (error is AccountCredentialStorageException) {
+                    OmniLog.w(
+                        "AppStartup",
+                        "Secure account storage is temporarily unavailable; deferring AI sync",
+                    )
+                } else {
+                    OmniLog.w("AppStartup", "Account session state check failed: ${error.message}")
+                }
+            }.getOrDefault(false)
+            if (signedIn && OmniAccount.currentCloudServiceAccess().allowed) {
                 runCatching {
                     val settings = OmniAccount.repository().getAiSettings()
                     PlatformAiProvisioner.synchronize(settings)

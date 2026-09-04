@@ -13,7 +13,12 @@ import 'package:ui/widgets/omni_glass.dart';
 import 'package:ui/widgets/omnibot_markdown_body.dart';
 import 'package:ui/widgets/omnibot_resource_widgets.dart';
 
-enum _ArtifactPreviewAction { openWithSystem, shareFile }
+enum _ArtifactPreviewAction {
+  openInBrowser,
+  saveFile,
+  openWithSystem,
+  shareFile,
+}
 
 bool shouldOpenOmnibotArtifactInFullPage(String previewKind) {
   return previewKind == 'html';
@@ -257,6 +262,53 @@ class _OmnibotArtifactPreviewPageState
     }
   }
 
+  Future<void> _handleOpenInBrowser() async {
+    final isEnglish = Localizations.localeOf(context).languageCode == 'en';
+    try {
+      final opened = await OmnibotResourceService.openInBrowser(
+        sourcePath: widget.path,
+        mimeType: widget.mimeType,
+      );
+      if (!mounted) return;
+      if (!opened) {
+        showToast(
+          isEnglish ? 'Browser opening failed' : '浏览器打开失败',
+          type: ToastType.error,
+        );
+      }
+    } catch (error) {
+      if (!mounted) return;
+      showToast(
+        isEnglish ? 'Browser opening failed: $error' : '浏览器打开失败：$error',
+        type: ToastType.error,
+      );
+    }
+  }
+
+  Future<void> _handleSaveFile() async {
+    final isEnglish = Localizations.localeOf(context).languageCode == 'en';
+    try {
+      final savedUri = await OmnibotResourceService.saveToLocal(
+        sourcePath: widget.path,
+        fileName: widget.title,
+        mimeType: widget.mimeType,
+      );
+      if (!mounted) return;
+      showToast(
+        savedUri == null
+            ? (isEnglish ? 'Save failed' : '保存失败')
+            : (isEnglish ? 'Saved to device' : '已保存到设备'),
+        type: savedUri == null ? ToastType.error : ToastType.success,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      showToast(
+        isEnglish ? 'Save failed: $error' : '保存失败：$error',
+        type: ToastType.error,
+      );
+    }
+  }
+
   Future<void> _handleShareFile() async {
     final isEnglish = Localizations.localeOf(context).languageCode == 'en';
     try {
@@ -283,6 +335,12 @@ class _OmnibotArtifactPreviewPageState
 
   void _handleToolbarAction(_ArtifactPreviewAction action) {
     switch (action) {
+      case _ArtifactPreviewAction.openInBrowser:
+        unawaited(_handleOpenInBrowser());
+        break;
+      case _ArtifactPreviewAction.saveFile:
+        unawaited(_handleSaveFile());
+        break;
       case _ArtifactPreviewAction.openWithSystem:
         unawaited(_handleOpenWithSystem());
         break;
@@ -569,6 +627,23 @@ class _OmnibotArtifactPreviewPageState
           splashRadius: 18,
           onSelected: _handleToolbarAction,
           itemBuilder: (context) => [
+            if (widget.previewKind == 'html')
+              PopupMenuItem<_ArtifactPreviewAction>(
+                value: _ArtifactPreviewAction.openInBrowser,
+                child: Text(
+                  Localizations.localeOf(context).languageCode == 'en'
+                      ? 'Open in browser'
+                      : '在浏览器打开',
+                ),
+              ),
+            PopupMenuItem<_ArtifactPreviewAction>(
+              value: _ArtifactPreviewAction.saveFile,
+              child: Text(
+                Localizations.localeOf(context).languageCode == 'en'
+                    ? 'Save to device'
+                    : '保存到设备',
+              ),
+            ),
             PopupMenuItem<_ArtifactPreviewAction>(
               value: _ArtifactPreviewAction.openWithSystem,
               child: Text(

@@ -20,15 +20,16 @@ import kotlinx.serialization.json.JsonPrimitive
  *    ([SubagentToolCatalogView]) so it can only use tools allowed by its profile
  *  - its own [TurnMemoryLoadTracker] so subagent loads don't leak into the
  *    parent's same-turn dedup
- *  - hard caps on rounds (per profile, default 12) and output tokens (4096)
+ *  - the parent runtime owns optional budgets; no implicit round or token cap
  *
  * Parent cancellation propagates naturally through structured concurrency:
  * if the parent's tool call is cancelled, [supervisorScope] tears down every
  * in-flight subagent's coroutine.
  *
  * NOTE: We deliberately reuse the parent's existing [AgentToolExecutor]
- * router rather than constructing a new one — the router is stateless per
- * call, so this saves resources. The lazy provider is required because
+ * router rather than constructing a new one. The router may own terminal,
+ * browser, or plugin resources, so child orchestrators are explicitly
+ * non-owners and must never dispose it. The lazy provider is required because
  * SubagentToolHandler → SubagentDispatcher → router is a construction-time
  * cycle that we break with deferred lookup.
  */
@@ -92,7 +93,7 @@ class SubagentDispatcher(
         progressReporter: (suspend (SubagentProgressEvent) -> Unit)? = null
     ): List<SubagentRunResult> {
         if (tasks.isEmpty()) return emptyList()
-        val limit = concurrency.coerceIn(1, 6)
+        val limit = concurrency.coerceAtLeast(1)
         val progressSequence = AtomicLong(0)
         emitProgress(
             progressReporter,
@@ -179,7 +180,8 @@ class SubagentDispatcher(
                 toolRouter = toolExecutorProvider(),
                 eventAdapter = eventAdapter,
                 model = model,
-                toolImageContinuationPolicy = toolImageContinuationPolicy
+                toolImageContinuationPolicy = toolImageContinuationPolicy,
+                ownsToolRouter = false
             )
             val result = orchestrator.run(
                 AgentOrchestrator.Input(
@@ -189,9 +191,10 @@ class SubagentDispatcher(
                     conversationId = null,
                     contextCompactor = null,
                     maxModelRounds = spec.budgetRounds
-                        ?.coerceIn(1, profile.maxRounds)
+                        ?: parentEnv.runtimeSettings.maxModelRounds
                         ?: profile.maxRounds,
-                    maxCompletionTokens = profile.maxOutputTokens
+                    maxCompletionTokens = parentEnv.runtimeSettings.maxCompletionTokens
+                        ?: profile.maxOutputTokens,
                 )
             )
             when (result) {

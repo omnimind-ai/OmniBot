@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'agent_tool_call_parser.dart';
+
 class AgentAcpCardNormalizer {
   const AgentAcpCardNormalizer._();
 
@@ -118,7 +120,12 @@ class AgentAcpCardNormalizer {
     card['toolTitle'] ??= card['title'] ?? card['name'] ?? '工具调用';
     card['displayName'] ??= card['toolTitle'];
     card['toolType'] ??= _toolType(type);
-    card['status'] ??= 'running';
+    card['status'] = normalizeAgentToolStatus(
+      card,
+      fallbackStatus: _string(card['status']).trim().isEmpty
+          ? 'running'
+          : _string(card['status']),
+    );
     card['summary'] ??= _contentText(card['content'] ?? card['rawOutput']);
     card['progress'] ??= card['summary'];
     return card;

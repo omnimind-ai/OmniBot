@@ -55,5 +55,13 @@ class AgentToolDefinitionsVlmTest {
         assertTrue("terminal_execute" !in names)
         assertTrue("browser_use" !in names)
         assertTrue("read" in AgentToolDefinitions.reservedToolNames())
+
+        val bashDescription = definitions
+            .mapNotNull { it["function"] as? JsonObject }
+            .single { it["name"]?.jsonPrimitive?.contentOrNull == "bash" }
+            .getValue("description")
+            .jsonPrimitive
+            .content
+        assertTrue("terminal_execute" !in bashDescription)
     }
 }

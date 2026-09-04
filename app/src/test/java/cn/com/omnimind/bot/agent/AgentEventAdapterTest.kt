@@ -34,10 +34,10 @@ class AgentEventAdapterTest {
             previewKind = "text"
         )
 
-        val compact = adapter.compactToolResultContent(raw, artifact)
+        val compact = adapter.compactToolResultContent(raw, artifact, maxChars = 12 * 1024)
         val payload = json.parseToJsonElement(compact).jsonObject
 
-        assertTrue(compact.length < AgentEventAdapter.MAX_MODEL_TOOL_RESULT_CHARS)
+        assertTrue(compact.length < 12 * 1024)
         assertEquals("true", payload["outputTruncated"]?.jsonPrimitive?.content)
         assertEquals(raw.length.toString(), payload["originalChars"]?.jsonPrimitive?.content)
         assertEquals(
@@ -46,5 +46,12 @@ class AgentEventAdapterTest {
         )
         assertTrue(payload["headTail"]?.jsonPrimitive?.content.orEmpty().contains("middle omitted"))
         assertFalse(compact.contains("x".repeat(10_000)))
+    }
+
+    @Test
+    fun `tool result is not truncated without an explicit setting`() {
+        val raw = "x".repeat(20_000)
+
+        assertEquals(raw, adapter.compactToolResultContent(raw, offloadArtifact = null))
     }
 }

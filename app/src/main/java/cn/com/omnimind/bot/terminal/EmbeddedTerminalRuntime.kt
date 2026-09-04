@@ -18,7 +18,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -587,7 +586,7 @@ object EmbeddedTerminalRuntime {
         context: Context,
         command: String,
         workingDirectory: String?,
-        timeoutSeconds: Int,
+        timeoutSeconds: Int?,
         environment: Map<String, String> = emptyMap(),
         onProcessStarted: ((Process) -> Unit)? = null,
         onLiveUpdate: suspend (TermuxLiveUpdate) -> Unit = {}
@@ -640,7 +639,7 @@ object EmbeddedTerminalRuntime {
         val hiddenResult = terminalManager(context).executeHiddenCommand(
             command = wrappedCommand,
             executorKey = buildExecutorKey(workingDirectory),
-            timeoutMs = timeoutSeconds * 1000L,
+            timeoutMs = timeoutSeconds?.toLong()?.times(1000L),
             onProcessStarted = onProcessStarted,
             onOutputChunk = { chunk ->
                 val cleanedChunk = sanitizeTerminalNoise(chunk)
@@ -748,7 +747,6 @@ object EmbeddedTerminalRuntime {
                     sessionId = actualSessionId,
                     command = "cd ${TermuxCommandBuilder.quoteForShell(targetWorkingDirectory)}",
                     workingDirectory = null,
-                    timeoutSeconds = 30,
                     environment = environment
                 )
                 require(cwdResult.completed && cwdResult.success) {
@@ -778,7 +776,6 @@ object EmbeddedTerminalRuntime {
         sessionId: String,
         command: String,
         workingDirectory: String?,
-        timeoutSeconds: Int,
         environment: Map<String, String> = emptyMap(),
         onLiveUpdate: suspend (TermuxLiveUpdate) -> Unit = {}
     ): SessionCommandResult {
@@ -828,7 +825,6 @@ object EmbeddedTerminalRuntime {
                     context = context,
                     handle = handle,
                     command = "cd ${TermuxCommandBuilder.quoteForShell(workingDirectory)}",
-                    timeoutSeconds = 30,
                     environment = environment
                 )
                 if (!cwdResult.completed || !cwdResult.success) {
@@ -840,7 +836,6 @@ object EmbeddedTerminalRuntime {
                 context = context,
                 handle = handle,
                 command = command,
-                timeoutSeconds = timeoutSeconds,
                 environment = environment,
                 onLiveUpdate = onLiveUpdate
             ).copy(sessionId = sessionId)
@@ -965,7 +960,6 @@ object EmbeddedTerminalRuntime {
         context: Context,
         handle: SessionHandle,
         command: String,
-        timeoutSeconds: Int,
         environment: Map<String, String> = emptyMap(),
         onLiveUpdate: suspend (TermuxLiveUpdate) -> Unit = {}
     ): SessionCommandResult {
@@ -992,56 +986,42 @@ object EmbeddedTerminalRuntime {
 
         var completionTranscript: String? = null
         var previousVisibleOutput = ""
-        withTimeoutOrNull(timeoutSeconds * 1000L) {
-            while (completionTranscript == null) {
-                val currentTranscript = ReTerminalSessionBridge.getSession(
-                    context = context,
-                    sessionId = handle.externalSessionId
-                )?.getTranscriptText().orEmpty()
-                val liveOutput = buildSessionLiveOutputUpdate(
-                    previousVisibleOutput = previousVisibleOutput,
-                    rawOutput = currentTranscript.safeSubstring(transcriptStart),
-                    token = token
-                )
-                if (liveOutput.visibleOutput != previousVisibleOutput) {
-                    previousVisibleOutput = liveOutput.visibleOutput
-                }
-                if (liveOutput.outputDelta.isNotBlank()) {
-                    onLiveUpdate(
-                        TermuxLiveUpdate(
-                            sessionId = handle.externalSessionId,
-                            summary = summarizeLiveTerminalChunk(liveOutput.outputDelta),
-                            outputDelta = liveOutput.outputDelta,
-                            streamState = "running"
-                        )
-                    )
-                }
-                if (liveOutput.exitCode != null) {
-                    completionTranscript = currentTranscript
-                    continue
-                }
-                delay(150)
+        while (completionTranscript == null) {
+            val currentTranscript = ReTerminalSessionBridge.getSession(
+                context = context,
+                sessionId = handle.externalSessionId
+            )?.getTranscriptText().orEmpty()
+            val liveOutput = buildSessionLiveOutputUpdate(
+                previousVisibleOutput = previousVisibleOutput,
+                rawOutput = currentTranscript.safeSubstring(transcriptStart),
+                token = token
+            )
+            if (liveOutput.visibleOutput != previousVisibleOutput) {
+                previousVisibleOutput = liveOutput.visibleOutput
             }
+            if (liveOutput.outputDelta.isNotBlank()) {
+                onLiveUpdate(
+                    TermuxLiveUpdate(
+                        sessionId = handle.externalSessionId,
+                        summary = summarizeLiveTerminalChunk(liveOutput.outputDelta),
+                        outputDelta = liveOutput.outputDelta,
+                        streamState = "running"
+                    )
+                )
+            }
+            if (liveOutput.exitCode != null) {
+                completionTranscript = currentTranscript
+                continue
+            }
+            delay(150)
         }
         val snapshot = readSession(context, handle.externalSessionId)
-        if (completionTranscript == null) {
-            return SessionCommandResult(
-                sessionId = handle.externalSessionId,
-                completed = false,
-                success = false,
-                exitCode = null,
-                timedOut = true,
-                output = "",
-                transcript = snapshot.transcript,
-                currentDirectory = snapshot.currentDirectory,
-                errorMessage = "终端会话命令执行超时，可能仍在后台继续运行。"
-            )
-        }
+        val completedTranscript = requireNotNull(completionTranscript)
 
-        val completionOutput = if (completionTranscript.length <= transcriptStart) {
+        val completionOutput = if (completedTranscript.length <= transcriptStart) {
             ""
         } else {
-            completionTranscript.substring(transcriptStart)
+            completedTranscript.substring(transcriptStart)
         }
         val parsed = parsePersistentCommandOutput(
             rawOutput = completionOutput,

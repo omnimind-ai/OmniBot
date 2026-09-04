@@ -10,6 +10,7 @@ import '../../command_overlay/services/chat_service.dart';
 const String kChatContextStorageKey = 'chat_context_for_summary';
 const String kCompactedContextSummaryPrefix =
     '<context-summary> The following is a summary of the earlier conversation that was compacted to save context space.';
+const int _kMaxInlineImageBytes = 20 * 1024 * 1024;
 
 /// 聊天调度支持 Mixin
 /// 负责处理可执行任务、发送消息等功能
@@ -276,6 +277,11 @@ mixin ChatDispatchSupport<T extends StatefulWidget> on State<T> {
     final file = File(path);
     if (!file.existsSync()) return '';
     try {
+      // This is retained only for the legacy history builder. The active ACP
+      // path keeps the resource reference and lets Native materialize it.
+      // Bound the compatibility path as well so one old caller cannot turn a
+      // large image into an unbounded Dart memory allocation.
+      if (file.lengthSync() > _kMaxInlineImageBytes) return '';
       final bytes = file.readAsBytesSync();
       if (bytes.isEmpty) return '';
       final mimeType = (attachment['mimeType'] as String? ?? '')

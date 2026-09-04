@@ -44,7 +44,7 @@ class VlmToolHandler(context: Context) : ToolHandler {
         toolCall: AssistantToolCall,
         args: JsonObject,
         runtimeDescriptor: AgentToolRegistry.RuntimeToolDescriptor,
-        _env: AgentExecutionEnvironment,
+        env: AgentExecutionEnvironment,
         callback: AgentCallback,
         toolHandle: AgentToolExecutionHandle,
     ): ToolExecutionResult {
@@ -103,8 +103,13 @@ class VlmToolHandler(context: Context) : ToolHandler {
                 request = OmniVlmPlugin.Request(
                     goal = goal,
                     runId = runId,
+                    maxSteps = env.runtimeSettings.maxVlmSteps,
+                    maxRejectedActionRetries = env.runtimeSettings.maxRejectedActionRetries,
                 ),
-                modelClient = HttpAgentLlmClient(CoroutineScope(currentCoroutineContext()))
+                modelClient = HttpAgentLlmClient(
+                    scope = CoroutineScope(currentCoroutineContext()),
+                    runtimeSettings = env.runtimeSettings,
+                )
                     .asOmniFlowModelClient(),
                 hooks = OmniVlmPlugin.Hooks(
                     beforeOperation = {
@@ -136,8 +141,10 @@ class VlmToolHandler(context: Context) : ToolHandler {
             val content = firstNonBlank(result["finished_content"])
             if (doneReason == "waiting_input") {
                 val question = content.ifBlank { "请提供继续执行所需的信息。" }
-                callback.onClarifyRequired(question, null)
-                return ToolExecutionResult.Clarify(question, null)
+                return ToolExecutionResult.Error(
+                    OmniVlmPlugin.RUN_LOG_TOOL,
+                    "视觉任务需要额外输入，当前未提供交互通道：$question",
+                )
             }
             if (doneReason == "cancelled") {
                 val message = firstNonBlank(result["error_message"], result["error_code"])

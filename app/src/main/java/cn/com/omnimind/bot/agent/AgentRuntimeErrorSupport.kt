@@ -10,6 +10,7 @@ internal object AgentRuntimeErrorSupport {
     const val PROVIDER_NOT_BOUND = "provider_not_bound"
     const val PROVIDER_UNAVAILABLE = "provider_unavailable"
     const val PROVIDER_MODEL_UNAVAILABLE = "provider_model_unavailable"
+    const val PROVIDER_STREAM_IDLE_TIMEOUT = "provider_stream_idle_timeout"
     const val PROVIDER_TOOL_CALL_INCOMPLETE = "provider_tool_call_incomplete"
     const val HARNESS_PREPARATION_IN_PROGRESS = "harness_preparation_in_progress"
     const val HARNESS_PROFILE_MISSING = "harness_profile_missing"
@@ -28,6 +29,8 @@ internal object AgentRuntimeErrorSupport {
                 "统一 Agent Provider 不可用或凭据不完整。请检查 Provider 配置后重试。"
             isProviderModelUnavailable(error) ->
                 "统一 Agent 模型当前不可用。请刷新 Provider 模型列表并重新选择模型。"
+            isStreamIdleTimeout(error) ->
+                "Provider 连续一段时间没有返回新的流式更新。请检查接口地址、模型和网络后重试。"
             isIncompleteToolCall(error) ->
                 "Provider 返回了不完整的工具调用。应用已自动重试一次，但响应仍缺少工具名称；" +
                     "请重试本轮。若持续出现，请检查 Provider 是否完整转发 tool_calls/function.name。"
@@ -46,6 +49,7 @@ internal object AgentRuntimeErrorSupport {
             isCertificateValidationFailure(error) -> PROVIDER_TLS_CERTIFICATE_FAILURE
             isProviderNotBound(error) -> PROVIDER_NOT_BOUND
             isProviderModelUnavailable(error) -> PROVIDER_MODEL_UNAVAILABLE
+            isStreamIdleTimeout(error) -> PROVIDER_STREAM_IDLE_TIMEOUT
             isProviderUnavailable(error) -> PROVIDER_UNAVAILABLE
             isIncompleteToolCall(error) -> PROVIDER_TOOL_CALL_INCOMPLETE
             isHarnessPreparationInProgress(error) -> HARNESS_PREPARATION_IN_PROGRESS
@@ -96,6 +100,14 @@ internal object AgentRuntimeErrorSupport {
                 (it.contains("unavailable") ||
                     it.contains("no usable credentials") ||
                     it.contains("not configured"))
+        }
+
+    private fun isStreamIdleTimeout(error: Throwable): Boolean =
+        generateSequence(error) { it.cause }.any {
+            it.message.orEmpty().contains(
+                "chat completion stream idle timeout",
+                ignoreCase = true,
+            )
         }
 
     private fun errorMessages(error: Throwable): Sequence<String> =

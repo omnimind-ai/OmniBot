@@ -27,9 +27,17 @@ interface AgentExecutionEnvironment {
     val workspaceMemoryService: WorkspaceMemoryService
     val conversationMode: String
     val reasoningEffort: String?
+    val runtimeSettings: AgentRuntimeSettings get() = AgentRuntimeSettings()
     val modelProviderProfileId: String? get() = null
     val terminalEnvironment: Map<String, String>
     val runControl: AgentRunControl
+
+    /**
+     * The ACP client-side permission boundary for tools that need approval.
+     * Null is retained for non-ACP callers; those callers must not invent a
+     * second wire protocol and should apply their own host policy.
+     */
+    val permissionRequester: AgentPermissionRequester? get() = null
 
     /** Long-term memory slug index. Null when unavailable; tools handle gracefully. */
     val longTermMemoryIndex: LongTermMemoryIndex? get() = null
@@ -52,12 +60,23 @@ data class DefaultAgentExecutionEnvironment(
     override val workspaceMemoryService: WorkspaceMemoryService,
     override val conversationMode: String,
     override val reasoningEffort: String? = null,
+    override val runtimeSettings: AgentRuntimeSettings = AgentRuntimeSettings(),
     override val modelProviderProfileId: String? = null,
     override val terminalEnvironment: Map<String, String> = emptyMap(),
     override val runControl: AgentRunControl = NoOpAgentRunControl,
+    override val permissionRequester: AgentPermissionRequester? = null,
     override val longTermMemoryIndex: LongTermMemoryIndex? = null,
     override val turnMemoryLoadTracker: TurnMemoryLoadTracker? = null
 ) : AgentExecutionEnvironment
+
+fun interface AgentPermissionRequester {
+    /** Returns true only when the user selected an allow option. */
+    suspend fun requestPermission(
+        toolCallId: String,
+        title: String,
+        detail: String,
+    ): Boolean
+}
 
 data class AgentToolSearchEntry(
     val name: String,
@@ -78,7 +97,7 @@ interface AgentToolCatalog {
     fun validateArguments(toolName: String, arguments: JsonObject)
 
     /** Search the complete internal catalog without exposing every schema. */
-    fun searchTools(query: String, limit: Int): List<AgentToolSearchEntry> = emptyList()
+    fun searchTools(query: String, limit: Int? = null): List<AgentToolSearchEntry> = emptyList()
 
     /** Make selected schemas visible to the next model round. */
     fun exposeToolNames(names: Set<String>) = Unit

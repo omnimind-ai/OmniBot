@@ -357,9 +357,14 @@ class OmniFlowDeviceDispatcher internal constructor(
         }
     }
     private val modelHost = modelClient?.let { client ->
-        OmniFlowModelHost(client) { thinking ->
-            onProgress(thinking, progressPayload(mapOf("thinking" to thinking)))
-        }
+        OmniFlowModelHost(
+            modelClient = client,
+            onReasoningUpdate = { thinking ->
+                onProgress(thinking, progressPayload(mapOf("thinking" to thinking)))
+            },
+            maxRejectedActionRetries = (request?.toolCall?.arguments
+                ?.get("max_rejected_action_retries") as? Number)?.toInt(),
+        )
     }
     private val modelMetrics = ModelRunLogMetrics()
     private val hostCall = OmniFlowPythonHostCall(::callDevice)

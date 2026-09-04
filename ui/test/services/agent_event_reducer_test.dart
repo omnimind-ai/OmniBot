@@ -272,31 +272,6 @@ void main() {
     expect(runtime.messages.single.user, 2);
   });
 
-  test('remote disconnect finalizes an active ACP turn', () {
-    runtime
-      ..isAiResponding = true
-      ..currentDispatchTurnId = 'remote-turn-1'
-      ..activeRunId = 'remote-turn-1';
-
-    final result = reducer.reduce(
-      runtime: runtime,
-      event: {
-        'eventId': 'remote-disconnect:1',
-        'method': 'codex/disconnected',
-        'params': {'exitCode': 7},
-      },
-    );
-
-    expect(result.handled, isTrue);
-    expect(runtime.isAiResponding, isFalse);
-    expect(
-      runtime.messages.any(
-        (message) => message.cardData?['title'] == 'turn/failed',
-      ),
-      isTrue,
-    );
-  });
-
   test('ACP assistant chunks preserve Markdown whitespace byte for byte', () {
     const chunks = <String>[
       '程序运行成功了！',
@@ -535,6 +510,42 @@ void main() {
     expect(runtime.messages.single.text, 'replayed');
   });
 
+  test('projects a live ACP user chunk only when the host query is absent', () {
+    final liveEvent = <String, dynamic>{
+      'method': 'session/update',
+      'turnId': 'turn-live-user',
+      'params': {
+        'sessionId': 'session-live-user',
+        'turnId': 'turn-live-user',
+        'update': {
+          'sessionUpdate': 'user_message_chunk',
+          'messageId': 'dsh-user-message',
+          'content': {'type': 'text', 'text': 'DSH 实时用户问题'},
+        },
+      },
+    };
+
+    reducer.reduce(runtime: runtime, event: liveEvent);
+
+    expect(runtime.messages, hasLength(1));
+    expect(runtime.messages.single.user, 1);
+    expect(runtime.messages.single.text, 'DSH 实时用户问题');
+
+    final hostRuntime = ChatConversationRuntimeState(
+      conversationId: 43,
+      mode: kChatRuntimeModeAgent,
+    );
+    addTearDown(hostRuntime.dispose);
+    hostRuntime.currentDispatchTurnId = 'turn-live-user-ai';
+    hostRuntime.messages.add(
+      ChatMessageModel.userMessage('DSH 实时用户问题', id: 'turn-live-user-user'),
+    );
+    reducer.reduce(runtime: hostRuntime, event: liveEvent);
+
+    expect(hostRuntime.messages, hasLength(1));
+    expect(hostRuntime.messages.single.id, 'turn-live-user-user');
+  });
+
   test('maps ACP elicitation requests into the shared request card', () {
     final result = reducer.reduce(
       runtime: runtime,
@@ -557,6 +568,37 @@ void main() {
     expect(runtime.messages.single.cardData?['type'], 'agent_request');
     expect(runtime.messages.single.cardData?['requestKind'], 'user_input');
     expect(runtime.messages.single.cardData?['requestId'], 'elicitation-1');
+  });
+
+  test('preserves request ownership when a later ACP update omits it', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'agentId': 'xiaowan-acp',
+        'agentName': '小万',
+        'message': {
+          'id': 'elicitation-owner-1',
+          'method': 'elicitation/create',
+          'params': {'sessionId': 'session-owner-1', 'title': '需要确认'},
+        },
+      },
+    );
+
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'id': 'elicitation-owner-1',
+          'method': 'elicitation/create',
+          'params': {'title': '需要确认（更新）'},
+        },
+      },
+    );
+
+    final card = runtime.messages.single.cardData!;
+    expect(card['agentId'], 'xiaowan-acp');
+    expect(card['agentName'], '小万');
+    expect(card['sessionId'], 'session-owner-1');
   });
 
   test('uses the ACP elicitation schema instead of a generic input title', () {
@@ -1092,7 +1134,7 @@ void main() {
 
     expect(started.handled, isTrue);
     expect(runtime.activeAcpTurnId, 'acp-turn-1');
-    expect(runtime.currentDispatchTurnId, 'acp-turn-1');
+    expect(runtime.currentDispatchTurnId, 'request-1-ai');
 
     reducer.reduce(
       runtime: runtime,
@@ -1153,6 +1195,7 @@ void main() {
         runtime: runtime,
         event: {
           'method': 'session/update',
+          'allowImplicitTurnAdmission': true,
           'params': {
             'sessionId': 'session-1',
             'turnId': 'acp-turn-1',
@@ -1181,6 +1224,34 @@ void main() {
       expect(runtime.activeAcpTurnId, isNull);
     },
   );
+
+  test('does not admit an untrusted first event as the active turn', () {
+    runtime
+      ..currentDispatchTurnId = 'request-1-ai'
+      ..lastAgentTurnId = 'request-1-ai'
+      ..isAiResponding = true;
+
+    final result = reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'params': {
+          'sessionId': 'session-1',
+          'turnId': 'late-old-turn',
+          'update': {
+            'sessionUpdate': 'agent_message_chunk',
+            'messageId': 'message-old',
+            'content': {'text': '迟到的旧输出'},
+          },
+        },
+      },
+    );
+
+    expect(result.handled, isTrue);
+    expect(runtime.activeAcpTurnId, isNull);
+    expect(runtime.messages, isEmpty);
+    expect(runtime.currentDispatchTurnId, 'request-1-ai');
+  });
 
   test('late output from an older turn cannot reclaim the active turn', () {
     reducer.reduce(
@@ -1217,6 +1288,23 @@ void main() {
     expect(runtime.messages, isEmpty);
   });
 
+  test('turn started without an id does not invent an ACP turn identity', () {
+    runtime.activeRunId = 'local-run-without-wire-id';
+    runtime.currentDispatchTurnId = 'local-run-without-wire-id';
+    runtime.isAiResponding = true;
+
+    final result = reducer.reduce(
+      runtime: runtime,
+      event: {'method': 'turn/started', 'params': <String, dynamic>{}},
+    );
+
+    expect(result.handled, isTrue);
+    expect(runtime.activeAcpTurnId, isNull);
+    expect(runtime.activeRunId, 'local-run-without-wire-id');
+    expect(runtime.currentDispatchTurnId, 'local-run-without-wire-id');
+    expect(runtime.isAiResponding, isTrue);
+  });
+
   test('turn-scoped ACP update without a turn id is ignored', () {
     runtime.currentDispatchTurnId = 'turn-active';
     runtime.lastAgentTurnId = 'turn-active';
@@ -1240,6 +1328,35 @@ void main() {
     expect(runtime.messages, isEmpty);
     expect(runtime.currentDispatchTurnId, 'turn-active');
   });
+
+  test(
+    'uses the host prompt reservation for an ACP update without turn id',
+    () {
+      runtime.currentDispatchTurnId = 'local-reserved-turn';
+      runtime.lastAgentTurnId = 'local-reserved-turn';
+      runtime.isAiResponding = true;
+      final result = reducer.reduce(
+        runtime: runtime,
+        event: {
+          'method': 'session/update',
+          'allowImplicitTurnAdmission': true,
+          'params': {
+            'sessionId': 'session-1',
+            'update': {
+              'sessionUpdate': 'agent_message_chunk',
+              'messageId': 'message-1',
+              'content': {'type': 'text', 'text': '通过宿主 reservation 归属'},
+            },
+          },
+        },
+      );
+
+      expect(result.handled, isTrue);
+      expect(runtime.messages.single.text, '通过宿主 reservation 归属');
+      expect(runtime.currentDispatchTurnId, 'local-reserved-turn');
+      expect(runtime.activeAcpTurnId, isNull);
+    },
+  );
 
   test('late completion from an older turn does not clear the newer turn', () {
     reducer.reduce(
@@ -2104,10 +2221,10 @@ void main() {
     expect(message.isError, isTrue);
     expect(message.content?['agentErrorText'], '网络连接中断');
     expect(message.content?['agentRetryable'], isTrue);
-    expect(message.content?['agentContinueable'], isFalse);
+    expect(message.content?['agentContinueable'], isNull);
   });
 
-  test('keeps partial ACP output non-error when recovery is continuable', () {
+  test('does not project partial ACP recovery as a continuation action', () {
     reducer.reduce(
       runtime: runtime,
       event: {
@@ -2138,8 +2255,8 @@ void main() {
     final message = runtime.messages.single;
     expect(message.text, '半截答案');
     expect(message.isError, isFalse);
-    expect(message.content?['agentContinueable'], isTrue);
-    expect(message.content?['agentContinueResumeMode'], 'approximate');
+    expect(message.content?['agentContinueable'], isNull);
+    expect(message.content?['agentContinueResumeMode'], isNull);
   });
 
   test(
@@ -2606,8 +2723,14 @@ void main() {
       conversationId: 8102,
       mode: kChatRuntimeModeAgent,
     );
-    first.acceptsAcpEvent(sessionId: 'session-background-1');
-    second.acceptsAcpEvent(sessionId: 'session-background-2');
+    first.acceptsAcpEvent(
+      sessionId: 'session-background-1',
+      allowSessionAdmission: true,
+    );
+    second.acceptsAcpEvent(
+      sessionId: 'session-background-2',
+      allowSessionAdmission: true,
+    );
 
     expect(
       coordinator.conversationIdForAcpEvent(sessionId: 'session-background-2'),
@@ -2971,6 +3094,30 @@ void main() {
     expect(card['fullOutputArtifact']?['id'], 'full-output-1');
     expect(card['subagentStatusText'], '子任务已完成');
     expect(card['subagentEvents'], hasLength(1));
+  });
+
+  test('preserves the ACP terminal status over raw tool output', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'turnId': 'turn-actionable-status',
+        'params': {
+          'sessionId': 'session-actionable-status',
+          'update': {
+            'sessionUpdate': 'tool_call_update',
+            'toolCallId': 'actionable-1',
+            'kind': 'execute',
+            'title': '执行高权限操作',
+            'status': 'pending',
+            'rawOutput': {'success': false, 'question': '请确认执行高权限操作'},
+          },
+        },
+      },
+    );
+
+    final card = runtime.messages.single.cardData!;
+    expect(card['status'], 'pending');
   });
 
   test(
@@ -3339,43 +3486,40 @@ void main() {
     }
   });
 
-  test(
-    'preserves an ACP terminal timeout as the existing timeout card state',
-    () {
-      reducer.reduce(
-        runtime: runtime,
-        event: {
-          'message': {
-            'method': 'session/update',
-            'turnId': 'turn-terminal-timeout',
-            'params': {
-              'sessionId': 'session-terminal-timeout',
-              'update': {
-                'sessionUpdate': 'tool_call_update',
-                'toolCallId': 'terminal-timeout-1',
-                'kind': 'other',
-                'title': 'bash',
-                'status': 'failed',
-                'rawOutput': {
-                  'toolType': 'terminal',
-                  'toolName': 'bash',
-                  'summary': 'Command timed out',
-                  'success': false,
-                  'timedOut': true,
-                  'terminalOutput': 'partial output',
-                },
+  test('uses the ACP failed status even when tool output says timeout', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'method': 'session/update',
+          'turnId': 'turn-terminal-timeout',
+          'params': {
+            'sessionId': 'session-terminal-timeout',
+            'update': {
+              'sessionUpdate': 'tool_call_update',
+              'toolCallId': 'terminal-timeout-1',
+              'kind': 'other',
+              'title': 'bash',
+              'status': 'failed',
+              'rawOutput': {
+                'toolType': 'terminal',
+                'toolName': 'bash',
+                'summary': 'Command timed out',
+                'success': false,
+                'timedOut': true,
+                'terminalOutput': 'partial output',
               },
             },
           },
         },
-      );
+      },
+    );
 
-      final cardData = runtime.messages.single.cardData!;
-      expect(cardData['toolType'], 'terminal');
-      expect(cardData['status'], 'timeout');
-      expect(cardData['terminalOutput'], 'partial output');
-    },
-  );
+    final cardData = runtime.messages.single.cardData!;
+    expect(cardData['toolType'], 'terminal');
+    expect(cardData['status'], 'error');
+    expect(cardData['terminalOutput'], 'partial output');
+  });
 
   test(
     'turns an ACP missing-accessibility result into an authorization card',
@@ -5547,6 +5691,9 @@ diff --git a/lib/main.dart b/lib/main.dart
     reducer.reduce(
       runtime: runtime,
       event: {
+        'agentId': 'deepseek-harness-acp',
+        'agentName': 'DeepSeek Harness',
+        'sessionId': 'session-top-level',
         'message': {
           'id': 'request-1',
           'method': 'item/tool/requestUserInput',
@@ -5566,6 +5713,9 @@ diff --git a/lib/main.dart b/lib/main.dart
     expect(cardData['rawParamsJson'], contains('Choose one'));
     expect(cardData['status'], 'pending');
     expect(cardData['conversationId'], 42);
+    expect(cardData['sessionId'], 'session-top-level');
+    expect(cardData['agentId'], 'deepseek-harness-acp');
+    expect(cardData['agentName'], 'DeepSeek Harness');
   });
 
   test('preserves request id when ACP places it inside params', () {
@@ -6147,6 +6297,109 @@ diff --git a/lib/main.dart b/lib/main.dart
         .cardData!;
     expect(thinking['isLoading'], isFalse);
     expect(thinking['stage'], ThinkingStage.complete.value);
+  });
+
+  test(
+    'turn/failed finalizes a local run when the official turn id differs',
+    () {
+      runtime
+        ..isAiResponding = true
+        ..activeRunId = 'local-run-1'
+        ..currentDispatchTurnId = 'local-run-1'
+        ..lastAgentTurnId = 'local-run-1'
+        ..activeAcpTurnId = 'official-turn-1';
+
+      reducer.reduce(
+        runtime: runtime,
+        event: {
+          'method': 'turn/failed',
+          'turnId': 'official-turn-1',
+          'params': {
+            'threadId': 'session-1',
+            'turnId': 'official-turn-1',
+            'error': {'message': 'provider failed'},
+          },
+        },
+      );
+
+      expect(runtime.isAiResponding, isFalse);
+      expect(runtime.currentDispatchTurnId, isNull);
+      expect(runtime.activeAcpTurnId, isNull);
+    },
+  );
+
+  test(
+    'terminal error finalizes a local run when the official turn id differs',
+    () {
+      runtime
+        ..isAiResponding = true
+        ..activeRunId = 'local-run-2'
+        ..currentDispatchTurnId = 'local-run-2'
+        ..lastAgentTurnId = 'local-run-2'
+        ..activeAcpTurnId = 'official-turn-2';
+
+      reducer.reduce(
+        runtime: runtime,
+        event: {
+          'method': 'error',
+          'turnId': 'official-turn-2',
+          'params': {
+            'threadId': 'session-2',
+            'turnId': 'official-turn-2',
+            'willRetry': false,
+            'message': 'connection lost',
+          },
+        },
+      );
+
+      expect(runtime.isAiResponding, isFalse);
+      expect(runtime.currentDispatchTurnId, isNull);
+      expect(runtime.activeAcpTurnId, isNull);
+    },
+  );
+
+  test('turn completed with a cancelled stop reason stays cancelled', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'turn/started',
+        'turnId': 'cancelled-turn',
+        'params': {'turnId': 'cancelled-turn'},
+      },
+    );
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'turnId': 'cancelled-turn',
+        'params': {
+          'update': {
+            'sessionUpdate': 'agent_thought_chunk',
+            'messageId': 'cancelled-thought',
+            'content': {'text': '处理中'},
+          },
+        },
+      },
+    );
+
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'turn/completed',
+        'turnId': 'cancelled-turn',
+        'params': {
+          'turnId': 'cancelled-turn',
+          'status': 'completed',
+          'stopReason': 'cancelled',
+        },
+      },
+    );
+
+    expect(runtime.isAiResponding, isFalse);
+    final thinking = runtime.messages.firstWhere(
+      (message) => message.cardData?['type'] == 'deep_thinking',
+    );
+    expect(thinking.cardData?['stage'], ThinkingStage.cancelled.value);
   });
 
   test('top-level nested Provider error is rendered as a concise message', () {

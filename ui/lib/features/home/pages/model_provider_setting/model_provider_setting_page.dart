@@ -763,34 +763,12 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
     final cached = await ModelProviderConfigService.getCachedFetchedModels(
       profileId: profile.id,
       apiBase: profile.baseUrl,
+      profileRevision: profile.revision,
     );
-    if (profile.sourceType == 'omnibot_official' && profile.ready) {
-      try {
-        return await ModelProviderConfigService.fetchModels(
-          profileId: profile.id,
-          providerName: profile.name,
-        );
-      } catch (_) {
-        return cached;
-      }
-    }
-    if (!enrichMetadata) {
-      if (cached.isNotEmpty) {
-        return cached;
-      }
-      // A newly created Provider has no cache yet. Populate it once while
-      // opening the page so the model section does not appear empty until
-      // the user discovers the manual refresh button.
-      try {
-        return await ModelProviderConfigService.fetchModels(
-          profileId: profile.id,
-          providerName: profile.name,
-          capability: 'text',
-        );
-      } catch (_) {
-        return cached;
-      }
-    }
+    // Opening or switching the Provider editor is read-only. The persisted
+    // catalog is the Provider document; network discovery belongs only to
+    // save/verify or the explicit "refresh models" action.
+    if (!enrichMetadata) return cached;
     return _enrichModelsForProfile(profile, cached);
   }
 

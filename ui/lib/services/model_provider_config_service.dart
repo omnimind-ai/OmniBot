@@ -473,7 +473,12 @@ class ModelProviderConfigService {
           'protocolType': protocolType,
           'wireApi': resolvedWireApi,
         });
-    return ModelProviderProfileSummary.fromMap(result);
+    final saved = ModelProviderProfileSummary.fromMap(result);
+    // Provider credentials/endpoint changes invalidate the previously
+    // verified catalog. The next explicit refresh repopulates the same
+    // persisted Provider document with the new profile revision.
+    await invalidateCachedFetchedModels(saved.id);
+    return saved;
   }
 
   static Future<ModelProviderProfilesPayload> deleteProfile(
@@ -775,6 +780,22 @@ class ModelProviderConfigService {
     }
   }
 
+  /// Remove the catalog document for a Provider whose credentials or endpoint
+  /// changed. This is deliberately local-only; it never starts a replacement
+  /// `/models` request. The caller decides when discovery is appropriate.
+  static Future<void> invalidateCachedFetchedModels(String profileId) async {
+    final normalizedProfileId = _canonicalProfileId(profileId);
+    if (normalizedProfileId.isEmpty) return;
+    await _migrateLegacyStorageIfNeeded(normalizedProfileId);
+    final current = _readJsonMap(_kCachedFetchedModelsKey);
+    if (!current.containsKey(normalizedProfileId)) return;
+    current.remove(normalizedProfileId);
+    await StorageService.setString(
+      _kCachedFetchedModelsKey,
+      jsonEncode(current),
+    );
+  }
+
   static Future<void> saveCachedFetchedModels({
     required String profileId,
     required String apiBase,
@@ -949,12 +970,7 @@ class ModelProviderConfigService {
       apiBase: profile.baseUrl,
       profileRevision: profile.revision,
     );
-    final cachedForDisplay = cached.isNotEmpty
-        ? cached
-        : await getCachedFetchedModels(
-            profileId: profile.id,
-            apiBase: profile.baseUrl,
-          );
+    final cachedForDisplay = cached;
     final manualIds = profile.sourceType == 'omnibot_official'
         ? const <String>[]
         : await getManualModelIds(profileId: profile.id);
@@ -984,29 +1000,19 @@ class ModelProviderConfigService {
       );
       return visibleModels(<ProviderModelOption>[...fetched, ...cached]);
     } catch (_) {
-      // Keep the Provider catalog available when a transient/auth failure
-      // prevents a fresh /models request. These cached models came from this
-      // same Provider profile and endpoint; never use ACP harness models. A
-      // revision mismatch is still usable for this failure-only fallback:
-      // the endpoint identity is checked, while the next successful refresh
-      // replaces the stale revision.
-      final fallbackCached = cached.isNotEmpty
-          ? cached
-          : await getCachedFetchedModels(
-              profileId: profile.id,
-              apiBase: profile.baseUrl,
-            );
-      return visibleModels(fallbackCached);
+      // Keep only the catalog verified for this exact Provider revision. A
+      // credential/endpoint edit must not resurrect an older document merely
+      // because the network refresh failed.
+      return visibleModels(cached);
     }
   }
 
   static Future<List<ProviderModelGroup>> loadChatModelGroups({
-    bool refresh = true,
+    bool refresh = false,
   }) async {
     final payload = await listProfiles();
-    // Provider model discovery is independent per profile. Keep the default
-    // refresh behavior for explicit refreshes, but do not serialize unrelated
-    // /models requests behind the slowest Provider.
+    // Startup and conversation reads are cache-only. Callers must opt into
+    // refresh=true only for an explicit catalog refresh action.
     return Future.wait(
       payload.profiles.map((profile) async {
         final models = await _loadChatModelOptionsForProfile(

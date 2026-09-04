@@ -5,6 +5,7 @@ import cn.com.omnimind.bot.BuildConfig
 import cn.com.omnimind.bot.plugin.OmniPluginProviderRegistry
 import cn.com.omnimind.bot.plugin.runtime.RuntimeBundleAdapterRegistry
 import cn.com.omnimind.bot.plugin.runtime.RemoteRuntimeBundleCatalogStore
+import cn.com.omnimind.bot.plugin.official.agentweb.AgentWebPluginProvider
 import cn.com.omnimind.bot.plugin.sandbox.SandboxPluginPool
 import cn.com.omnimind.bot.plugin.sandbox.SandboxRuntimeBundleAdapter
 import java.util.concurrent.atomic.AtomicBoolean
@@ -15,6 +16,9 @@ object OfficialOmniPluginProviders {
 
     fun register() {
         if (!registered.compareAndSet(false, true)) return
+        OmniPluginProviderRegistry.register(AgentWebPluginProvider.ID) { context ->
+            AgentWebPluginProvider(context)
+        }
         RuntimeBundleAdapterRegistry.register(OmniVlmLiteProvider.ADAPTER_ID) { context, definition ->
             OmniVlmLiteProvider(context, definition)
         }

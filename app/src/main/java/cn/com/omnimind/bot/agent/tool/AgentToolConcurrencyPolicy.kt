@@ -30,6 +30,22 @@ data class ToolBatch(
  */
 object AgentToolConcurrencyPolicy {
 
+    /**
+     * These tools are not globally exclusive. They are turn boundaries: once
+     * one is selected from an assistant item, the current Agent turn must
+     * return its result before the model chooses the next tool. Other ACP
+     * sessions remain free to run their own turns.
+     */
+    private val TURN_BOUNDARY_TOOL_NAMES: Set<String> = setOf(
+        "terminal_execute",
+        "bash",
+        "android_privileged_action",
+        "android_privileged_session_start",
+        "android_privileged_session_exec",
+        "android_privileged_session_read",
+        "android_privileged_session_stop",
+    )
+
     private val PARALLEL_SAFE_TOOL_NAMES: Set<String> = setOf(
         "file_read",
         "read",
@@ -73,6 +89,9 @@ object AgentToolConcurrencyPolicy {
             ToolConcurrency.SERIAL_BARRIER
         }
     }
+
+    fun isTurnBoundary(toolName: String): Boolean =
+        toolName in TURN_BOUNDARY_TOOL_NAMES
 
     /**
      * Greedy partition: consecutive PARALLEL_SAFE calls merge into one batch;

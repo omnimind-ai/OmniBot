@@ -225,6 +225,45 @@ class OmniPluginPlatform(
         OmniPluginSession(toolDefinitions = definitions, toolHandlers = handlers)
     }
 
+    suspend fun listActionDefinitions(): List<OmniPluginActionDefinition> = mutex.withLock {
+        ensureInitialized()
+        activePlugins.flatMap { (pluginId, active) ->
+            active.contribution.actionGroups.flatMap { group ->
+                group.definitions.map { definition ->
+                    definition.copy(ownerPluginId = pluginId)
+                }
+            }
+        }
+    }
+
+    suspend fun openActionSession(pluginId: String): OmniPluginSession = mutex.withLock {
+        ensureInitialized()
+        val active = activePlugins[pluginId]
+            ?: throw IllegalArgumentException("Plugin must be installed and enabled: $pluginId")
+        val definitions = active.contribution.actionGroups.flatMap { group ->
+            group.definitions.map { definition -> definition.copy(ownerPluginId = pluginId) }
+        }
+        val handlers = mutableListOf<OmniPluginActionHandler>()
+        try {
+            active.contribution.actionGroups.forEach { group ->
+                val handler = group.handlerFactory()
+                validateActionHandler(group, handler)
+                handlers += handler
+            }
+        } catch (error: Throwable) {
+            handlers.asReversed().forEach { handler ->
+                runCatching { handler.dispose() }
+            }
+            throw error
+        }
+        OmniPluginSession(
+            toolDefinitions = emptyList(),
+            toolHandlers = emptyList(),
+            actionDefinitions = definitions,
+            actionHandlers = handlers,
+        )
+    }
+
     private suspend fun ensureInitialized() {
         if (initialized) return
         val providerMap = providers().associateBy { it.descriptor.id }
@@ -333,6 +372,14 @@ class OmniPluginPlatform(
                 runCatching { probe.dispose() }
             }
         }
+        contribution.actionGroups.forEach { group ->
+            val probe = group.handlerFactory()
+            try {
+                validateActionHandler(group, probe)
+            } finally {
+                runCatching { probe.dispose() }
+            }
+        }
         try {
             plugin.onEnable()
         } catch (error: Throwable) {
@@ -371,12 +418,45 @@ class OmniPluginPlatform(
                 "Plugin $pluginId contains an empty tool group"
             }
         }
+        val actionIds = contribution.actionGroups
+            .flatMap { group -> group.definitions.map { it.id } }
+        require(actionIds.size == actionIds.toSet().size) {
+            "Plugin $pluginId declares duplicate action ids"
+        }
+        actionIds.forEach { actionId ->
+            require(TOOL_NAME.matches(actionId)) {
+                "Plugin $pluginId declares invalid action id: $actionId"
+            }
+            val owner = activePlugins.entries.firstOrNull { (_, active) ->
+                active.contribution.actionGroups.any { group ->
+                    group.definitions.any { it.id == actionId }
+                }
+            }?.key
+            require(owner == null || owner == pluginId) {
+                "Plugin $pluginId action $actionId conflicts with plugin $owner"
+            }
+        }
+        contribution.actionGroups.forEach { group ->
+            require(group.definitions.isNotEmpty()) {
+                "Plugin $pluginId contains an empty action group"
+            }
+        }
     }
 
     private fun validateHandler(group: OmniPluginToolGroup, handler: ToolHandler) {
         val expected = group.definitions.mapTo(linkedSetOf()) { it.name }
         require(handler.toolNames == expected) {
             "Plugin handler tools ${handler.toolNames} do not match definitions $expected"
+        }
+    }
+
+    private fun validateActionHandler(
+        group: OmniPluginActionGroup,
+        handler: OmniPluginActionHandler,
+    ) {
+        val expected = group.definitions.mapTo(linkedSetOf()) { it.id }
+        require(handler.actionIds == expected) {
+            "Plugin handler actions ${handler.actionIds} do not match definitions $expected"
         }
     }
 

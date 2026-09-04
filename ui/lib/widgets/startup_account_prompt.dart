@@ -103,6 +103,7 @@ class _StartupAccountPromptState extends State<StartupAccountPrompt> {
           await (widget.loadSession ?? AccountService.getSessionState)();
       if (!mounted ||
           !session.configured ||
+          !session.credentialStorageAvailable ||
           session.signedIn ||
           !session.cloudServicePolicyKnown ||
           !session.cloudServiceAccessAllowed) {

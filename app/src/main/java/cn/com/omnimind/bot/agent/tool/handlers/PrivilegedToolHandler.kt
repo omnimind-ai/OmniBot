@@ -51,7 +51,7 @@ class PrivilegedToolHandler(
     data class PrivilegedSessionExecArgs(
         val sessionId: String,
         val command: String,
-        val timeoutSeconds: Int,
+        val timeoutSeconds: Int?,
         val confirmed: Boolean
     )
 
@@ -73,10 +73,15 @@ class PrivilegedToolHandler(
         toolHandle: AgentToolExecutionHandle
     ): ToolExecutionResult {
         return when (toolCall.function.name) {
-            "android_privileged_action" -> executeAndroidPrivilegedAction(args, callback)
-            "android_privileged_session_start" -> executeAndroidPrivilegedSessionStart(args, env.workspaceDescriptor, callback)
-            "android_privileged_session_exec" -> executeAndroidPrivilegedSessionExec(args, env.workspaceDescriptor, callback, toolHandle)
-            "android_privileged_session_read" -> executeAndroidPrivilegedSessionRead(args, env.workspaceDescriptor, callback)
+            "android_privileged_action" -> executeAndroidPrivilegedAction(args, callback, env, toolHandle.toolCallId)
+            "android_privileged_session_start" -> executeAndroidPrivilegedSessionStart(args, env.workspaceDescriptor, callback, env, toolHandle.toolCallId)
+            "android_privileged_session_exec" -> executeAndroidPrivilegedSessionExec(args, env.workspaceDescriptor, callback, toolHandle, env)
+            "android_privileged_session_read" -> executeAndroidPrivilegedSessionRead(
+                args,
+                env.workspaceDescriptor,
+                env.runtimeSettings,
+                callback,
+            )
             "android_privileged_session_stop" -> executeAndroidPrivilegedSessionStop(args, env.workspaceDescriptor, callback)
             else -> ToolExecutionResult.Error(toolCall.function.name, "Unknown privileged tool")
         }
@@ -109,10 +114,15 @@ class PrivilegedToolHandler(
         return workspaceManager.buildArtifactForFile(logFile, sourceTool)
     }
 
-    private suspend fun executeAndroidPrivilegedAction(args: JsonObject, callback: AgentCallback): ToolExecutionResult {
+    private suspend fun executeAndroidPrivilegedAction(
+        args: JsonObject,
+        callback: AgentCallback,
+        env: AgentExecutionEnvironment,
+        toolCallId: String,
+    ): ToolExecutionResult {
         val toolName = "android_privileged_action"
         return try {
-            val parsed = parseAndroidPrivilegedArgs(args)
+            val parsed = parseAndroidPrivilegedArgs(args, env.runtimeSettings)
             val shizukuManager = ShizukuCapabilityManager.get(helper.context)
             val status = shizukuManager.getStatus()
             if (!status.isGranted()) {
@@ -121,29 +131,57 @@ class PrivilegedToolHandler(
             if (!PrivilegedActionPolicy.isSupported(parsed.action, status.backend, arguments = parsed.arguments)) {
                 return ToolExecutionResult.Error(toolName, helper.localized("当前 Shizuku 后端不支持该动作：${parsed.action}"))
             }
+            // Confirmation is a gate, not a tool-progress state. Do not emit
+            // "正在执行" or call the privileged backend before the user has
+            // confirmed; otherwise the ACP timeline shows an execution card
+            // beside a later clarification and users read it as a duplicate
+            // success/failure.
+            var effectiveArgs = parsed
+            if (PrivilegedActionPolicy.requiresConfirmation(parsed.action) &&
+                !parsed.arguments["confirmed"].isTruthyFlag()
+            ) {
+                PrivilegedActionPolicy.blockedCommandReason(parsed.command)?.let { reason ->
+                    return ToolExecutionResult.Error(toolName, helper.localized(reason))
+                }
+                val confirmation = requestPrivilegedConfirmation(
+                    action = parsed.action,
+                    command = parsed.command,
+                    env = env,
+                    toolCallId = toolCallId,
+                    toolName = toolName,
+                )
+                if (confirmation != null) return confirmation
+                effectiveArgs = parsed.copy(
+                    arguments = parsed.arguments + ("confirmed" to "true")
+                )
+            }
             helper.reportToolProgress(
                 callback, toolName, "正在执行 Shizuku 高级动作",
                 mapOf("action" to parsed.action, "backend" to status.backend.name, "command" to parsed.command, "availableActions" to status.availableActions)
             )
             val result = if (parsed.action == PrivilegedActionPolicy.ACTION_SHELL_EXEC) {
                 shizukuManager.executeRawShell(
-                    command = parsed.command.orEmpty(),
-                    timeoutSeconds = parsed.timeoutSeconds,
-                    workingDirectory = parsed.workingDirectory,
-                    environment = parsed.environment,
-                    confirmed = parsed.arguments["confirmed"].isTruthyFlag()
+                    command = effectiveArgs.command.orEmpty(),
+                    timeoutSeconds = effectiveArgs.timeoutSeconds,
+                    workingDirectory = effectiveArgs.workingDirectory,
+                    environment = effectiveArgs.environment,
+                    confirmed = effectiveArgs.arguments["confirmed"].isTruthyFlag()
                 )
             } else {
                 shizukuManager.executeAgentAction(
-                    action = parsed.action,
-                    arguments = parsed.arguments,
-                    requiresConfirmation = PrivilegedActionPolicy.requiresConfirmation(parsed.action)
+                    action = effectiveArgs.action,
+                    arguments = effectiveArgs.arguments,
+                    requiresConfirmation = PrivilegedActionPolicy.requiresConfirmation(effectiveArgs.action)
                 )
             }
             if (result.requiresConfirmation || result.code == "confirmation_required") {
-                val question = privilegedConfirmationQuestion(parsed.action, parsed.command)
-                callback.onClarifyRequired(question, listOf("arguments.confirmed"))
-                return ToolExecutionResult.Clarify(question, listOf("arguments.confirmed"))
+                // Confirmation is owned by the ACP permission request above.
+                // A backend asking for it again means the gate and backend
+                // disagree; do not create a second Clarify lifecycle.
+                return ToolExecutionResult.Error(
+                    toolName,
+                    helper.localized("高级动作确认状态不一致，命令未执行。"),
+                )
             }
             val payload = result.toMap().toMutableMap().apply { this["message"] = localizedPrivilegedMessage(result) }
             val payloadJson = helper.encodeLocalizedPayload(payload)
@@ -156,19 +194,36 @@ class PrivilegedToolHandler(
         catch (e: Exception) { ToolExecutionResult.Error(toolName, helper.localized(e.message ?: "Shizuku 动作执行失败")) }
     }
 
-    private suspend fun executeAndroidPrivilegedSessionStart(args: JsonObject, workspace: AgentWorkspaceDescriptor, callback: AgentCallback): ToolExecutionResult {
+    private suspend fun executeAndroidPrivilegedSessionStart(
+        args: JsonObject,
+        workspace: AgentWorkspaceDescriptor,
+        callback: AgentCallback,
+        env: AgentExecutionEnvironment,
+        toolCallId: String,
+    ): ToolExecutionResult {
         val toolName = "android_privileged_session_start"
         return try {
-            val parsed = parsePrivilegedSessionStartArgs(args)
+            var parsed = parsePrivilegedSessionStartArgs(args)
             val shizukuManager = ShizukuCapabilityManager.get(helper.context)
             val status = shizukuManager.getStatus()
             if (!status.isGranted()) { return helper.permissionRequiredResult(callback, listOf("Shizuku 权限")) }
+            if (!parsed.confirmed) {
+                val confirmation = requestPrivilegedConfirmation(
+                    action = SharedHelper.PRIVILEGED_SESSION_START_ACTION,
+                    env = env,
+                    toolCallId = toolCallId,
+                    toolName = toolName,
+                )
+                if (confirmation != null) return confirmation
+                parsed = parsed.copy(confirmed = true)
+            }
             helper.reportToolProgress(callback, toolName, "正在启动高权限 Shizuku 会话", mapOf("backend" to status.backend.name, "workingDirectory" to parsed.workingDirectory))
             val result = shizukuManager.startPrivilegedSession(sessionName = parsed.sessionName, workingDirectory = parsed.workingDirectory, environment = parsed.environment, confirmed = parsed.confirmed)
             if (result.requiresConfirmation || result.code == "confirmation_required") {
-                val question = privilegedConfirmationQuestion(SharedHelper.PRIVILEGED_SESSION_START_ACTION)
-                callback.onClarifyRequired(question, listOf("confirmed"))
-                return ToolExecutionResult.Clarify(question, listOf("confirmed"))
+                return ToolExecutionResult.Error(
+                    toolName,
+                    helper.localized("高权限会话确认状态不一致，会话未启动。"),
+                )
             }
             val artifacts = mutableListOf<ArtifactRef>()
             if (result.success) {
@@ -192,21 +247,42 @@ class PrivilegedToolHandler(
         catch (e: Exception) { helper.errorResult(toolName, e.message, "高权限会话启动失败") }
     }
 
-    private suspend fun executeAndroidPrivilegedSessionExec(args: JsonObject, workspace: AgentWorkspaceDescriptor, callback: AgentCallback, toolHandle: AgentToolExecutionHandle): ToolExecutionResult {
+    private suspend fun executeAndroidPrivilegedSessionExec(
+        args: JsonObject,
+        workspace: AgentWorkspaceDescriptor,
+        callback: AgentCallback,
+        toolHandle: AgentToolExecutionHandle,
+        env: AgentExecutionEnvironment,
+    ): ToolExecutionResult {
         val toolName = "android_privileged_session_exec"
         return try {
-            val parsed = parsePrivilegedSessionExecArgs(args)
+            var parsed = parsePrivilegedSessionExecArgs(args, env.runtimeSettings)
             require(isOwnedPrivilegedSession(workspace.id, parsed.sessionId)) { "高权限会话不存在或不属于当前 workspace：${parsed.sessionId}" }
             val shizukuManager = ShizukuCapabilityManager.get(helper.context)
             val status = shizukuManager.getStatus()
             if (!status.isGranted()) { return helper.permissionRequiredResult(callback, listOf("Shizuku 权限")) }
+            if (!parsed.confirmed) {
+                PrivilegedActionPolicy.blockedCommandReason(parsed.command)?.let { reason ->
+                    return ToolExecutionResult.Error(toolName, helper.localized(reason))
+                }
+                val confirmation = requestPrivilegedConfirmation(
+                    action = SharedHelper.PRIVILEGED_SESSION_EXEC_ACTION,
+                    command = parsed.command,
+                    env = env,
+                    toolCallId = toolHandle.toolCallId,
+                    toolName = toolName,
+                )
+                if (confirmation != null) return confirmation
+                parsed = parsed.copy(confirmed = true)
+            }
             helper.reportToolProgress(callback, toolName, "正在执行高权限 Shizuku 命令", mapOf("backend" to status.backend.name, "sessionId" to parsed.sessionId, "command" to parsed.command), toolHandle = toolHandle)
             toolHandle.bindStopAction { shizukuManager.stopPrivilegedSession(parsed.sessionId) }
             val result = shizukuManager.execPrivilegedSession(sessionId = parsed.sessionId, command = parsed.command, timeoutSeconds = parsed.timeoutSeconds, confirmed = parsed.confirmed)
             if (result.requiresConfirmation || result.code == "confirmation_required") {
-                val question = privilegedConfirmationQuestion(SharedHelper.PRIVILEGED_SESSION_EXEC_ACTION, parsed.command)
-                callback.onClarifyRequired(question, listOf("confirmed"))
-                return ToolExecutionResult.Clarify(question, listOf("confirmed"))
+                return ToolExecutionResult.Error(
+                    toolName,
+                    helper.localized("高权限会话确认状态不一致，命令未执行。"),
+                )
             }
             if (result.code == "session_not_found") { forgetOwnedPrivilegedSession(parsed.sessionId) }
             val transcript = result.transcript.ifBlank { result.output }
@@ -226,10 +302,15 @@ class PrivilegedToolHandler(
         catch (e: Exception) { helper.errorResult(toolName, e.message, "高权限会话命令执行失败") }
     }
 
-    private suspend fun executeAndroidPrivilegedSessionRead(args: JsonObject, workspace: AgentWorkspaceDescriptor, callback: AgentCallback): ToolExecutionResult {
+    private suspend fun executeAndroidPrivilegedSessionRead(
+        args: JsonObject,
+        workspace: AgentWorkspaceDescriptor,
+        runtimeSettings: AgentRuntimeSettings,
+        callback: AgentCallback,
+    ): ToolExecutionResult {
         val toolName = "android_privileged_session_read"
         return try {
-            val parsed = parsePrivilegedSessionReadArgs(args)
+            val parsed = parsePrivilegedSessionReadArgs(args, runtimeSettings)
             require(isOwnedPrivilegedSession(workspace.id, parsed.sessionId)) { "高权限会话不存在或不属于当前 workspace：${parsed.sessionId}" }
             val shizukuManager = ShizukuCapabilityManager.get(helper.context)
             val status = shizukuManager.getStatus()
@@ -273,7 +354,10 @@ class PrivilegedToolHandler(
         catch (e: Exception) { helper.errorResult(toolName, e.message, "结束高权限会话失败") }
     }
 
-    private fun parseAndroidPrivilegedArgs(args: JsonObject): AndroidPrivilegedArgs {
+    private fun parseAndroidPrivilegedArgs(
+        args: JsonObject,
+        runtimeSettings: AgentRuntimeSettings,
+    ): AndroidPrivilegedArgs {
         val action = args["action"]?.jsonPrimitive?.contentOrNull?.trim()?.lowercase().orEmpty()
         require(action.isNotEmpty()) { "action 不能为空" }
         val rawArguments = args["arguments"] as? JsonObject ?: JsonObject(emptyMap())
@@ -281,7 +365,9 @@ class PrivilegedToolHandler(
             action = action,
             arguments = helper.jsonObjectToStringMap(rawArguments, excludedKeys = setOf("environment")),
             command = rawArguments["command"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() },
-            timeoutSeconds = rawArguments["timeoutSeconds"]?.jsonPrimitive?.intOrNull?.coerceIn(5, 600),
+            timeoutSeconds = rawArguments["timeoutSeconds"]?.jsonPrimitive?.intOrNull
+                ?.takeIf { it > 0 }
+                ?: runtimeSettings.terminalTimeoutSeconds,
             workingDirectory = rawArguments["workingDirectory"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() },
             environment = helper.parseEnvironmentMap(rawArguments["environment"] as? JsonObject)
         )
@@ -296,22 +382,36 @@ class PrivilegedToolHandler(
         )
     }
 
-    private fun parsePrivilegedSessionExecArgs(args: JsonObject): PrivilegedSessionExecArgs {
+    private fun parsePrivilegedSessionExecArgs(
+        args: JsonObject,
+        runtimeSettings: AgentRuntimeSettings,
+    ): PrivilegedSessionExecArgs {
         val sessionId = args["sessionId"]?.jsonPrimitive?.content?.trim().orEmpty()
         val command = args["command"]?.jsonPrimitive?.content?.trim().orEmpty()
         require(sessionId.isNotEmpty()) { "缺少 sessionId" }
         require(command.isNotEmpty()) { "缺少 command" }
         return PrivilegedSessionExecArgs(
             sessionId = sessionId, command = command,
-            timeoutSeconds = args["timeoutSeconds"]?.jsonPrimitive?.intOrNull?.coerceIn(5, 600) ?: 120,
+            timeoutSeconds = args["timeoutSeconds"]?.jsonPrimitive?.intOrNull
+                ?.takeIf { it > 0 }
+                ?: runtimeSettings.terminalTimeoutSeconds,
             confirmed = helper.parseConfirmedFlag(args["confirmed"])
         )
     }
 
-    private fun parsePrivilegedSessionReadArgs(args: JsonObject): PrivilegedSessionReadArgs {
+    private fun parsePrivilegedSessionReadArgs(
+        args: JsonObject,
+        runtimeSettings: AgentRuntimeSettings,
+    ): PrivilegedSessionReadArgs {
         val sessionId = args["sessionId"]?.jsonPrimitive?.content?.trim().orEmpty()
         require(sessionId.isNotEmpty()) { "缺少 sessionId" }
-        return PrivilegedSessionReadArgs(sessionId = sessionId, maxChars = args["maxChars"]?.jsonPrimitive?.intOrNull?.coerceIn(256, 64_000) ?: SharedHelper.DEFAULT_TERMINAL_SESSION_READ_MAX_CHARS)
+        return PrivilegedSessionReadArgs(
+            sessionId = sessionId,
+            maxChars = args["maxChars"]?.jsonPrimitive?.intOrNull
+                ?.takeIf { it > 0 }
+                ?: runtimeSettings.terminalSessionReadMaxChars
+                ?: Int.MAX_VALUE,
+        )
     }
 
     private fun parsePrivilegedSessionStopArgs(args: JsonObject): PrivilegedSessionStopArgs {
@@ -322,11 +422,60 @@ class PrivilegedToolHandler(
 
     private fun privilegedConfirmationQuestion(action: String, command: String? = null): String {
         val preview = command?.lineSequence()?.firstOrNull()?.trim()?.takeIf { it.isNotEmpty() }?.let { if (it.length <= 120) it else it.take(120) + "..." }
+        val target = preview ?: action
+        val suffix = if (helper.isEnglishLocale) {
+            " It has not run yet. Reply \"confirm\" to run it once, or \"cancel\" to stop."
+        } else {
+            "当前尚未执行。请回复“确认”执行一次，或回复“取消”停止。"
+        }
         return when (PrivilegedActionPolicy.normalizeAction(action)) {
-            PrivilegedActionPolicy.ACTION_SHELL_EXEC -> if (helper.isEnglishLocale) "The privileged shell command `${preview ?: action}` requires explicit confirmation before I continue." else "高权限 shell 命令 `${preview ?: action}` 需要用户明确确认后我再继续。"
-            SharedHelper.PRIVILEGED_SESSION_START_ACTION -> if (helper.isEnglishLocale) "Starting a persistent privileged shell session requires explicit confirmation before I continue." else "启动持久化高权限 shell 会话需要用户明确确认后我再继续。"
-            SharedHelper.PRIVILEGED_SESSION_EXEC_ACTION -> if (helper.isEnglishLocale) "The privileged session command `${preview ?: action}` requires explicit confirmation before I continue." else "高权限会话命令 `${preview ?: action}` 需要用户明确确认后我再继续。"
-            else -> if (helper.isEnglishLocale) "The action `$action` changes privileged Android state. Please confirm before I continue." else "动作 `$action` 会修改高权限安卓系统状态，请先明确确认后我再继续。"
+            PrivilegedActionPolicy.ACTION_SHELL_EXEC -> if (helper.isEnglishLocale) "The privileged shell command `$target` requires your confirmation.$suffix" else "高权限 shell 命令“$target”需要你的确认。$suffix"
+            SharedHelper.PRIVILEGED_SESSION_START_ACTION -> if (helper.isEnglishLocale) "Starting a persistent privileged shell session requires your confirmation.$suffix" else "启动持久化高权限 shell 会话需要你的确认。$suffix"
+            SharedHelper.PRIVILEGED_SESSION_EXEC_ACTION -> if (helper.isEnglishLocale) "The privileged session command `$target` requires your confirmation.$suffix" else "高权限会话命令“$target”需要你的确认。$suffix"
+            else -> if (helper.isEnglishLocale) "The privileged action `$target` requires your confirmation.$suffix" else "高权限动作“$target”需要你的确认。$suffix"
+        }
+    }
+
+    private suspend fun requestPrivilegedConfirmation(
+        action: String,
+        command: String? = null,
+        env: AgentExecutionEnvironment,
+        toolCallId: String,
+        toolName: String,
+    ): ToolExecutionResult? {
+        val question = privilegedConfirmationQuestion(action, command)
+        val requester = env.permissionRequester
+        if (requester != null) {
+            val allowed = requester.requestPermission(
+                toolCallId = toolCallId,
+                title = privilegedPermissionTitle(action),
+                detail = question,
+            )
+            return if (allowed) {
+                null
+            } else {
+                ToolExecutionResult.Error(
+                    toolName,
+                    helper.localized("用户拒绝了高权限操作，命令未执行。"),
+                )
+            }
+        }
+        return ToolExecutionResult.Error(
+            toolName,
+            helper.localized("高权限操作需要授权，但当前未提供授权通道，操作已停止。"),
+        )
+    }
+
+    private fun privilegedPermissionTitle(action: String): String {
+        return when (PrivilegedActionPolicy.normalizeAction(action)) {
+            PrivilegedActionPolicy.ACTION_SHELL_EXEC ->
+                if (helper.isEnglishLocale) "Run privileged shell command" else "执行高权限 Shell 命令"
+            SharedHelper.PRIVILEGED_SESSION_START_ACTION ->
+                if (helper.isEnglishLocale) "Start privileged shell session" else "启动高权限 Shell 会话"
+            SharedHelper.PRIVILEGED_SESSION_EXEC_ACTION ->
+                if (helper.isEnglishLocale) "Run privileged session command" else "执行高权限会话命令"
+            else ->
+                if (helper.isEnglishLocale) "Run privileged action" else "执行高权限动作"
         }
     }
 

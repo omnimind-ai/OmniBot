@@ -466,7 +466,10 @@ class _CommandOverlayState extends State<CommandOverlay> {
 
       setState(() {
         for (final file in result.files) {
-          final path = file.path;
+          // Android file_picker can return a readable content URI in
+          // `identifier` while `path` is null (cloud/document providers).
+          // Keep that identifier so the ACP boundary can materialize it.
+          final path = file.path ?? file.identifier;
           if (path == null || path.isEmpty) continue;
           final exists = _pendingAttachments.any((item) => item.path == path);
           if (exists) continue;

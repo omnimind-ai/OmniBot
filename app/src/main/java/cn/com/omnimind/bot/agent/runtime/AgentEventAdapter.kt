@@ -12,8 +12,6 @@ class AgentEventAdapter(
     private val json: Json
 ) {
     companion object {
-        internal const val MAX_MODEL_TOOL_RESULT_CHARS = 12 * 1024
-        private const val MODEL_TOOL_RESULT_PREVIEW_CHARS = 6 * 1024
     }
 
     fun mapOutputKind(result: ToolExecutionResult): AgentOutputKind {
@@ -180,15 +178,17 @@ class AgentEventAdapter(
 
     fun compactToolResultContent(
         rawContent: String,
-        offloadArtifact: ArtifactRef?
+        offloadArtifact: ArtifactRef?,
+        maxChars: Int? = null,
     ): String {
-        if (rawContent.length <= MAX_MODEL_TOOL_RESULT_CHARS) return rawContent
+        val limit = maxChars?.takeIf { it > 0 } ?: return rawContent
+        if (rawContent.length <= limit) return rawContent
         val original = runCatching {
             json.parseToJsonElement(rawContent) as? JsonObject
         }.getOrNull()
         val preview = headTail(
             value = rawContent,
-            maxChars = MODEL_TOOL_RESULT_PREVIEW_CHARS,
+            maxChars = (limit / 2).coerceAtLeast(1),
             hasOffloadArtifact = offloadArtifact != null
         )
         val compact = linkedMapOf<String, Any?>()
@@ -213,7 +213,7 @@ class AgentEventAdapter(
         original?.get("artifacts")?.let { compact["artifacts"] = it }
         original?.get("actions")?.let { compact["actions"] = it }
         val encoded = json.encodeToString(mapToJsonElement(compact))
-        if (encoded.length <= MAX_MODEL_TOOL_RESULT_CHARS) return encoded
+        if (encoded.length <= limit) return encoded
 
         // A tool may put an unexpectedly large summary or artifact/action list
         // in its envelope. Keep the model-facing contract strictly bounded even
@@ -228,7 +228,7 @@ class AgentEventAdapter(
         offloadArtifact?.let { artifact ->
             minimal["fullOutputArtifact"] = artifact.toPayload()
         }
-        return json.encodeToString(mapToJsonElement(minimal))
+        return json.encodeToString(mapToJsonElement(minimal)).take(limit)
     }
 
     private fun headTail(

@@ -23,6 +23,7 @@ import cn.com.omnimind.baselib.llm.AiRequestLogStore
 import cn.com.omnimind.baselib.llm.DeepSeekProvider
 import cn.com.omnimind.baselib.llm.ModelProviderConfig
 import cn.com.omnimind.baselib.llm.ModelProviderProfile
+import cn.com.omnimind.baselib.llm.ReasoningEffort
 import cn.com.omnimind.baselib.llm.ModelProviderConfigStore
 import cn.com.omnimind.baselib.llm.ModelSceneRegistry
 import cn.com.omnimind.baselib.llm.ProviderModelOption
@@ -143,11 +144,7 @@ internal fun resolveDirectAgentModelOverride(
 }
 
 internal fun normalizeReasoningEffort(raw: String?): String? {
-    val normalized = raw?.trim()?.lowercase().orEmpty()
-    return when (normalized) {
-        "no", "low", "high", "xhigh", "max" -> normalized
-        else -> null
-    }
+    return ReasoningEffort.normalize(raw)
 }
 
 internal fun resolveAgentReasoningEffort(
@@ -158,7 +155,7 @@ internal fun resolveAgentReasoningEffort(
     }.getOrNull()
 ): String? {
     if (!reasoningEffort.isNullOrBlank()) {
-        return reasoningEffort
+        return ReasoningEffort.normalize(reasoningEffort)
     }
     val useOfficialDeepSeekDefault = if (modelOverride != null) {
         DeepSeekProvider.shouldUseOfficialAdapter(
@@ -171,7 +168,7 @@ internal fun resolveAgentReasoningEffort(
             apiBase = fallbackProfile?.baseUrl
         )
     }
-    return if (useOfficialDeepSeekDefault) "max" else null
+    return if (useOfficialDeepSeekDefault) ReasoningEffort.MAX else null
 }
 
 internal data class AgentFinalErrorResolution(
@@ -621,7 +618,7 @@ class AssistsCoreManager(private val context: Context) {
                 ).toString()
                 rawResultJson = previewJson
                 success = true
-                status = "success"
+                status = AgentConversationHistoryRepository.STATUS_RUNNING
             }
             is ToolExecutionResult.PermissionRequired -> {
                 val names = result.missing.map(::localizedPermissionName)
@@ -1232,7 +1229,7 @@ class AssistsCoreManager(private val context: Context) {
                     )
                 )
             ),
-            maxCompletionTokens = 128,
+            maxCompletionTokens = null,
             temperature = 0.7,
             tools = listOf(
                 ChatCompletionTool(

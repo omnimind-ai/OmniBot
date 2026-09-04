@@ -35,6 +35,7 @@ internal enum class AcpHarnessProviderConfigKind {
     STANDARD,
     CODEX,
     CLAUDE_CODE,
+    KIMI_CODE,
     OPEN_CODE,
     DEEPSEEK_HARNESS,
 }
@@ -112,6 +113,11 @@ internal object AcpHarnessAdapters {
     val claudeCode: AcpHarnessAdapter = object : AcpHarnessAdapter {
         override val mcpTransport = AcpHarnessMcpTransport.SESSION_DECLARATION
         override val providerConfigKind = AcpHarnessProviderConfigKind.CLAUDE_CODE
+    }
+
+    val kimiCode: AcpHarnessAdapter = object : AcpHarnessAdapter {
+        override val mcpTransport = AcpHarnessMcpTransport.SESSION_DECLARATION
+        override val providerConfigKind = AcpHarnessProviderConfigKind.KIMI_CODE
     }
 
     val openCode: AcpHarnessAdapter = object : AcpHarnessAdapter {
@@ -276,7 +282,6 @@ private const val DEEPSEEK_HARNESS_DEFAULT_MODEL = ""
 // some OpenAI-compatible gateways. Keep the official adapter request within
 // the common 1..131072 range while allowing a user-provided DSH_MAX_TOKENS to
 // override it through the profile environment.
-private const val DEEPSEEK_HARNESS_DEFAULT_MAX_TOKENS = "8192"
 // Keep ordinary prompts responsive. Users can still select `max` explicitly
 // through the official ACP config surface for complex tasks.
 private const val DEEPSEEK_HARNESS_DEFAULT_REASONING_EFFORT = "high"
@@ -300,7 +305,6 @@ internal data class DeepSeekHarnessConfig(
         "DEEPSEEK_BASE_URL" to baseUrl,
         "DEEPSEEK_API_KEY" to apiKey,
         "DSH_MODEL" to model,
-        "DSH_MAX_TOKENS" to DEEPSEEK_HARNESS_DEFAULT_MAX_TOKENS,
         "DSH_REASONING_EFFORT" to reasoningEffort,
         "DSH_PI_AI_REASONING_EFFORT" to reasoningEffort,
         "DSH_THINKING" to if (reasoningEffort == "off") "disabled" else "enabled",

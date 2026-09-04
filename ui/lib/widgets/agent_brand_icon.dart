@@ -6,7 +6,7 @@ import 'package:ui/widgets/agent_avatar.dart';
 
 /// ACP Agent 品牌图标。
 ///
-/// 已知的内置 Agent（Codex / Claude Code / OpenCode / DeepSeek Harness）渲染各自来自 Lobe Icons
+/// 已知的内置 Agent（Kimi Code / DeepSeek Harness / Codex / Claude Code / OpenCode）渲染各自来自 Lobe Icons
 /// (https://icons.lobehub.com) 的原始品牌 SVG。小万沿用可编辑的 AgentAvatarService，
 /// 让头像选择器同时影响 ACP 顶部、运行头和旧兼容卡片；未识别的自定义 Agent
 /// 回退到默认机器人图标 [Icons.smart_toy_outlined]。
@@ -38,6 +38,10 @@ class AgentBrandIcon extends StatelessWidget {
     ),
     'codex-acp': _AgentBrand('assets/agents/codex.svg'),
     'codex-remote': _AgentBrand('assets/agents/codex.svg'),
+    'kimi-code-acp': _AgentBrand(
+      'assets/provider_icons/moonshot.svg',
+      brandColor: Color(0xFF1783FF),
+    ),
     'claude-code-acp': _AgentBrand(
       'assets/agents/claude_code.svg',
       brandColor: Color(0xFFD97757),
@@ -49,6 +53,27 @@ class AgentBrandIcon extends StatelessWidget {
     ),
   };
 
+  /// Keep persisted/remote aliases on the same visual identity. An empty id
+  /// intentionally remains unknown here; callers that have domain
+  /// knowledge (for example, legacy drawer conversations) must resolve that
+  /// explicitly.
+  static String normalizeAgentId(String agentId) {
+    final normalized = agentId.trim().toLowerCase();
+    return switch (normalized) {
+      'xiaowan' || 'xiaowan-acp' => 'xiaowan-acp',
+      'codex' || 'codex-acp' || 'codex-remote' => 'codex-acp',
+      'kimi' || 'kimi-code' || 'kimi-code-acp' => 'kimi-code-acp',
+      'claude' || 'claude-code' || 'claude-code-acp' => 'claude-code-acp',
+      'opencode' || 'open-code' || 'opencode-acp' => 'opencode-acp',
+      'deepseek' ||
+      'deepseek-acp' ||
+      'deepseek-harness' ||
+      'deepseek_harness' ||
+      'deepseek-harness-acp' => 'deepseek-harness-acp',
+      _ => normalized,
+    };
+  }
+
   /// Whether [agentId] has an explicit visual identity supplied by the app.
   ///
   /// Known Harness artwork is already a complete mark. Presentation layers
@@ -56,13 +81,13 @@ class AgentBrandIcon extends StatelessWidget {
   /// badge, which produces the visible "circle inside a circle" for marks
   /// such as Codex. Unknown custom Harnesses still use the generic host badge.
   static bool hasKnownBrand(String agentId) {
-    return _brands.containsKey(agentId.trim());
+    return _brands.containsKey(normalizeAgentId(agentId));
   }
 
   @override
   Widget build(BuildContext context) {
     final palette = context.omniPalette;
-    final normalizedAgentId = agentId.trim();
+    final normalizedAgentId = normalizeAgentId(agentId);
     final brand = _brands[normalizedAgentId];
     if (brand?.presentation == _AgentBrandPresentation.avatar) {
       return _XiaowanAgentAvatar(size: size);

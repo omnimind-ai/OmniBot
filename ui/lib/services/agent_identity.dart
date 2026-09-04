@@ -195,6 +195,25 @@ String? acpEventItemId(Map<String, dynamic> event) {
   ]);
 }
 
+/// Returns whether the host explicitly reserved the first event for the
+/// currently active local prompt. This is delivery metadata, not an ACP
+/// protocol field. Keeping the envelope walk here gives routing, admission,
+/// and reduction one interpretation of the reservation marker.
+bool acpEventAllowsImplicitTurnAdmission(Map<String, dynamic> event) {
+  return _acpEnvelopeContainsTrue(event, 'allowImplicitTurnAdmission');
+}
+
+/// Identifies the removed pre-ACP event shape at the compatibility boundary.
+/// New ACP traffic must not inherit its unscoped admission semantics.
+bool acpEventIsLegacyCompatibilityShape(Map<String, dynamic> event) {
+  return event['legacyCompatibility'] == true ||
+      event.containsKey('kind') ||
+      event.containsKey('streamKind') ||
+      event.containsKey('eventKind') ||
+      event.containsKey('taskId') ||
+      event.containsKey('task_id');
+}
+
 String? _acpEnvelopeIdentity(
   Map<String, dynamic> root,
   List<String> keys, {
@@ -228,6 +247,34 @@ String? _acpEnvelopeIdentity(
     if (value != null) return value;
   }
   return null;
+}
+
+bool _acpEnvelopeContainsTrue(
+  Map<String, dynamic> root,
+  String key, {
+  int depth = 0,
+}) {
+  if (depth > 6) return false;
+  if (root[key] == true) return true;
+  for (final envelopeKey in const <String>[
+    'params',
+    'message',
+    'payload',
+    'data',
+    'event',
+    'notification',
+    'result',
+  ]) {
+    final nested = root[envelopeKey];
+    if (nested is! Map) continue;
+    final nestedMap = nested.map(
+      (key, value) => MapEntry(key.toString(), value),
+    );
+    if (_acpEnvelopeContainsTrue(nestedMap, key, depth: depth + 1)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 bool _nonEmpty(String? value) => value?.trim().isNotEmpty == true;

@@ -983,6 +983,9 @@ class _AccountPageState extends State<AccountPage> {
     final session = _session;
     if (session == null) return _buildErrorState();
     if (!session.configured) return _buildNotConfigured();
+    if (!session.credentialStorageAvailable) {
+      return _buildCredentialStorageUnavailable();
+    }
     if (!session.cloudServiceAccessAllowed) {
       return _buildCloudServiceBlocked(session);
     }
@@ -1082,6 +1085,58 @@ class _AccountPageState extends State<AccountPage> {
                     'This build has no OMNIBOT_BASE_URL. Configure the public service domain and rebuild.',
                   ),
                   style: TextStyle(color: context.omniPalette.textSecondary),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCredentialStorageUnavailable() {
+    return SafeArea(
+      top: false,
+      bottom: false,
+      child: ListView(
+        padding: edgeToEdgeScrollPadding(
+          context,
+          const EdgeInsets.fromLTRB(18, 10, 18, 28),
+        ),
+        children: [
+          SettingsSectionTitle(label: _text('账号', 'Account')),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(4, 4, 4, 12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  LucideIcons.lockKeyhole,
+                  size: 28,
+                  color: context.omniPalette.textSecondary,
+                ),
+                const SizedBox(height: 14),
+                Text(
+                  _text(
+                    '登录凭证暂时无法读取',
+                    'Sign-in credentials are temporarily unavailable',
+                  ),
+                  style: Theme.of(context).textTheme.titleLarge,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  _text(
+                    '系统安全存储正在恢复，当前不会把你当作已退出登录。请稍后重试，必要时重启应用。',
+                    'The secure storage is recovering. You are not being signed out. Try again shortly, or restart the app if needed.',
+                  ),
+                  style: TextStyle(color: context.omniPalette.textSecondary),
+                ),
+                const SizedBox(height: 20),
+                FilledButton.icon(
+                  key: const ValueKey('account-credential-storage-retry'),
+                  onPressed: _loading ? null : _loadAccount,
+                  icon: const Icon(LucideIcons.refreshCw, size: 18),
+                  label: Text(_text('重试', 'Retry')),
                 ),
               ],
             ),

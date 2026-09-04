@@ -22,6 +22,105 @@ extension _HomeDrawerHeaderFooter on HomeDrawerState {
     return context.omniPalette.textSecondary;
   }
 
+  Widget _buildWebQuickLaunchBar() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+      child: Row(
+        children: [
+          for (int index = 0; index < _webQuickActions.length; index++) ...[
+            if (index > 0) const SizedBox(width: 8),
+            Expanded(
+              child: _buildWebQuickLaunchButton(_webQuickActions[index]),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWebQuickLaunchButton(OmniPluginActionItem action) {
+    final english = Localizations.localeOf(context).languageCode == 'en';
+    final key = '${action.pluginId}/${action.id}';
+    final busy = _busyWebQuickActionKey == key;
+    final disabled = _busyWebQuickActionKey != null;
+    final agentId = action.presentation['agentId']?.toString().trim() ?? '';
+    final label = action.localizedPresentationValue(
+      'shortLabel',
+      english: english,
+      fallback: action.displayName,
+    );
+    final semanticLabel = action.localizedPresentationValue(
+      'label',
+      english: english,
+      fallback: action.displayName,
+    );
+    final surface = context.isDarkTheme
+        ? context.omniPalette.surfaceSecondary
+        : Colors.white;
+
+    return Semantics(
+      button: true,
+      enabled: !disabled,
+      label: semanticLabel,
+      child: Tooltip(
+        message: semanticLabel,
+        excludeFromSemantics: true,
+        child: Opacity(
+          opacity: disabled && !busy ? 0.5 : 1,
+          child: Material(
+            color: surface,
+            borderRadius: BorderRadius.circular(16),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              key: ValueKey('home-drawer-web-$agentId'),
+              onTap: disabled ? null : () => _invokeWebQuickAction(action),
+              borderRadius: BorderRadius.circular(16),
+              child: SizedBox(
+                height: 48,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    AnimatedSwitcher(
+                      duration: const Duration(milliseconds: 160),
+                      child: busy
+                          ? SizedBox(
+                              key: const ValueKey('busy'),
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: context.omniPalette.accentPrimary,
+                              ),
+                            )
+                          : AgentBrandIcon(
+                              key: const ValueKey('brand'),
+                              agentId: agentId,
+                              size: 20,
+                            ),
+                    ),
+                    const SizedBox(width: 8),
+                    Flexible(
+                      child: Text(
+                        label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: _drawerTextColor,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildFooterShortcutBar() {
     final items = <_DrawerShortcutAction>[
       _DrawerShortcutAction(

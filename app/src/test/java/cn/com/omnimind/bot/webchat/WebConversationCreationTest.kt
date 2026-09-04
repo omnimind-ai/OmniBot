@@ -275,6 +275,31 @@ class WebConversationCreationTest {
     }
 
     @Test
+    fun `web ACP uses pending status over nested raw output`() {
+        val tool = parseWebAgentEvent(
+            mapOf(
+                "method" to "session/update",
+                "turnId" to "turn-actionable",
+                "params" to mapOf(
+                    "update" to mapOf(
+                        "sessionUpdate" to "tool_call_update",
+                        "toolCallId" to "tool-actionable",
+                        "title" to "高权限操作",
+                        "status" to "pending",
+                        "success" to false,
+                        "rawOutput" to mapOf(
+                            "success" to false,
+                            "question" to "请确认执行高权限操作"
+                        )
+                    )
+                )
+            )
+        ).tool
+
+        assertEquals("pending", tool?.status)
+    }
+
+    @Test
     fun `first user message becomes the conversation title like Flutter`() {
         assertEquals("帮我分析这个项目", deriveWebConversationTitle("  帮我分析这个项目  "))
         assertEquals(

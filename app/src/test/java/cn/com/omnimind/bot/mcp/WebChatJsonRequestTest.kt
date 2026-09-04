@@ -3,6 +3,7 @@ package cn.com.omnimind.bot.mcp
 import com.google.gson.JsonSyntaxException
 import com.google.gson.JsonParser
 import io.ktor.client.request.request
+import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
@@ -16,6 +17,7 @@ import io.ktor.server.testing.testApplication
 import io.ktor.serialization.gson.gson
 import io.ktor.serialization.kotlinx.json.json
 import io.modelcontextprotocol.kotlin.sdk.types.McpJson
+import io.ktor.server.plugins.BadRequestException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -53,6 +55,36 @@ class WebChatJsonRequestTest {
         val payload = JsonParser.parseString(response.bodyAsText()).asJsonObject
         assertTrue(payload.get("success").asBoolean)
         assertEquals(8899, payload.getAsJsonObject("server").get("port").asInt)
+    }
+
+    @Test
+    fun sessionBootstrapRouteRejectsInvalidJsonBody() = testApplication {
+        application {
+            routing {
+                post("/webchat/api/session/bootstrap") {
+                    try {
+                        call.receiveOptionalWebChatJsonObject()
+                        call.respondWebChatJson(mapOf("success" to true))
+                    } catch (_: BadRequestException) {
+                        call.respondWebChatJson(
+                            mapOf("error" to "Invalid JSON request body"),
+                            HttpStatusCode.BadRequest
+                        )
+                    }
+                }
+            }
+        }
+
+        val response = client.request("/webchat/api/session/bootstrap") {
+            method = HttpMethod.Post
+            setBody("[not-an-object]")
+            headers.append(HttpHeaders.ContentType, ContentType.Application.Json.toString())
+        }
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertEquals(
+            "Invalid JSON request body",
+            JsonParser.parseString(response.bodyAsText()).asJsonObject.get("error").asString
+        )
     }
 
     @Test

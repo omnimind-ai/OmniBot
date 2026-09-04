@@ -4,6 +4,7 @@ import cn.com.omnimind.baselib.i18n.PromptLocale
 import com.rk.terminal.runtime.TerminalDistribution
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertEquals
@@ -48,17 +49,9 @@ class AgentSystemPromptTest {
     }
 
     @Test
-    fun buildCachedSystemPromptContentAddsEphemeralCacheControl() {
+    fun buildCachedSystemPromptContentUsesStandardTextContent() {
         val content = OmniAgentExecutor.buildCachedSystemPromptContent("system prompt")
-        val blocks = content as JsonArray
-        val firstBlock = blocks.first() as JsonObject
-
-        assertEquals("\"text\"", firstBlock["type"].toString())
-        assertEquals("\"system prompt\"", firstBlock["text"].toString())
-        assertEquals(
-            "\"ephemeral\"",
-            (firstBlock["cache_control"] as JsonObject)["type"].toString()
-        )
+        assertEquals(JsonPrimitive("system prompt"), content)
     }
 
     @Test

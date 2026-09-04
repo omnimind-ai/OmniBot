@@ -94,12 +94,36 @@ object OmniAccount {
     fun currentAiRequestAccess(): AiRequestAccess {
         val repository = configuredRepository
         val cloudServiceAccess = currentCloudServiceAccess()
+        if (repository == null) {
+            return AiRequestAccess(mode = AiAccessMode.BYOK)
+        }
+        val signedIn = try {
+            repository.isSignedIn()
+        } catch (_: AccountCredentialStorageException) {
+            return AiRequestAccess(
+                mode = AiAccessMode.PLATFORM,
+                unavailableReason = "登录凭证暂时无法读取，请重启应用后重试",
+            )
+        }
+        if (!signedIn) {
+            return AiRequestAccess(mode = AiAccessMode.BYOK)
+        }
+        val accessToken = try {
+            repository.accessTokenForPlatformGateway()
+        } catch (_: AccountCredentialStorageException) {
+            return AiRequestAccess(
+                mode = AiAccessMode.PLATFORM,
+                unavailableReason = "登录凭证暂时无法读取，请重启应用后重试",
+            )
+        } catch (_: AccountNotAuthenticatedException) {
+            null
+        }
         return AiRequestAccessResolver.resolve(
-            accountConfigured = repository != null,
-            signedIn = repository?.isSignedIn() == true,
-            cachedMode = repository?.cachedAiAccessMode(),
+            accountConfigured = true,
+            signedIn = signedIn,
+            cachedMode = repository.cachedAiAccessMode(),
             platformGatewayUrl = configuredPlatformGatewayUrl,
-            accessToken = runCatching { repository?.accessTokenForPlatformGateway() }.getOrNull(),
+            accessToken = accessToken,
             allowInsecureLoopback = configuredAllowInsecureLoopback,
             cloudServiceAccess = cloudServiceAccess,
         )

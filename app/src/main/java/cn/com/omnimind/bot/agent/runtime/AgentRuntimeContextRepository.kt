@@ -55,7 +55,7 @@ internal object AgentRuntimeContextQuery {
         query: String?,
         limit: Int
     ): List<AgentRuntimeContextRepository.AppQueryItem> {
-        val safeLimit = limit.coerceIn(1, 100)
+        val safeLimit = limit.takeIf { it > 0 } ?: Int.MAX_VALUE
         val base = apps.entries.map { (appName, packageName) ->
             AgentRuntimeContextRepository.AppQueryItem(
                 appName = appName,

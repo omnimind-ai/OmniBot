@@ -83,7 +83,7 @@ class ChannelManager {
         hideFromRecentsChannel.onCreate(context)
         appUpdateChannel.onCreate(context)
         mcpServerChannel.onCreate(context)
-        remoteMcpConfigChannel.onCreate()
+        remoteMcpConfigChannel.onCreate(context)
         overlayChannel.onCreate(context)
         storageUsageChannel.onCreate(context)
         agentRuntimeChannel.onCreate(context)

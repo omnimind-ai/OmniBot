@@ -8,8 +8,9 @@ import 'package:ui/models/conversation_model.dart';
 ///
 /// Keeping these values together prevents the page from maintaining dozens of
 /// parallel maps whose keys and reset semantics can silently drift apart.
-/// Runtime-backed values remain mirrored here for the short period before a
-/// conversation runtime has been created.
+/// Agent execution facts are owned by ChatConversationRuntimeCoordinator; the
+/// legacy fields below remain only for non-Agent compatibility paths and are
+/// never used to admit or terminate an ACP turn.
 class ChatPageModeState {
   final ChatMessageListNavigator messageListNavigator =
       ChatMessageListNavigator();

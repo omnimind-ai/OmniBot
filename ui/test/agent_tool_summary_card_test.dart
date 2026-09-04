@@ -7,6 +7,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:ui/features/home/pages/command_overlay/widgets/cards/agent_tool_summary_card.dart';
 import 'package:ui/features/home/pages/command_overlay/widgets/cards/agent_tool_transcript.dart';
 import 'package:ui/features/home/pages/command_overlay/widgets/cards/terminal_output_utils.dart';
+import 'package:ui/features/home/pages/chat/tool_activity_utils.dart';
 import 'package:ui/l10n/legacy_text_localizer.dart';
 import 'package:ui/services/app_background_service.dart';
 import 'package:ui/widgets/image_preview_overlay.dart';
@@ -91,6 +92,33 @@ void main() {
       find.descendant(of: leadingIcon, matching: find.byType(Icon)),
     );
     expect(icon.size, 18);
+  });
+
+  testWidgets('pending privileged confirmation is shown as waiting', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AgentToolSummaryCard(
+            cardData: {
+              'type': 'agent_tool_summary',
+              'uiStyle': 'agent_tool',
+              'status': 'running',
+              'toolName': 'android_privileged_action',
+              'toolTitle': '安卓高级动作',
+              'toolType': 'clarify',
+              'question': '高权限 shell 命令尚未执行，请确认后执行一次。',
+              'missingFields': ['arguments.confirmed'],
+            },
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('等待确认'), findsOneWidget);
+    expect(find.text('执行中'), findsNothing);
+    expect(find.text('安卓高级动作'), findsOneWidget);
   });
 
   testWidgets('completed VLM tool renders GUI completion card', (tester) async {
@@ -408,6 +436,44 @@ void main() {
 
     expect(find.text('Read README.md'), findsOneWidget);
     expect(find.byType(ShaderMask), findsOneWidget);
+  });
+
+  test('running file write exposes the action and target without reasoning', () {
+    final label = resolveAgentToolProgressTitle(
+      {
+        'status': 'running',
+        'toolName': 'file_write',
+        'toolType': 'file',
+        'argsJson': jsonEncode({'path': 'notes/draft.md'}),
+      },
+      isEnglish: false,
+    );
+
+    expect(label, '正在写入文件：draft.md');
+  });
+
+  testWidgets('running file write card is visible without a thinking card', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: AgentToolSummaryCard(
+            cardData: {
+              'type': 'agent_tool_summary',
+              'status': 'running',
+              'toolName': 'file_write',
+              'toolType': 'file',
+              'filePath': 'notes/draft.md',
+              'argsJson': jsonEncode({'path': 'notes/draft.md'}),
+            },
+          ),
+        ),
+      ),
+    );
+
+    expect(find.textContaining('正在写入文件'), findsOneWidget);
+    expect(find.text('draft.md'), findsOneWidget);
   });
 
   testWidgets(

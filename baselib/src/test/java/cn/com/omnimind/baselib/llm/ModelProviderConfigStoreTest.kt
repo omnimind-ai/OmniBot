@@ -63,12 +63,12 @@ class ModelProviderConfigStoreTest {
     }
 
     @Test
-    fun hydrateDropsCredentialsForPublicCleartextEndpoint() {
+    fun providerKeepsCredentialsForExplicitlyConfiguredHttpEndpoint() {
         CredentialEndpointSecurity.configureDebugLoopback(false)
         val hydrated = ModelProviderConfigStore.mergeProfileSecrets(
             ModelProviderProfile(
-                id = "unsafe",
-                name = "Unsafe",
+                id = "xiaowan-http",
+                name = "Xiaowan HTTP Provider",
                 baseUrl = "http://192.168.1.20:8080/v1",
             ),
             ModelProviderSecrets(
@@ -77,8 +77,8 @@ class ModelProviderConfigStoreTest {
             ),
         )
 
-        assertEquals("", hydrated.apiKey)
-        assertTrue(hydrated.customHeaders.isEmpty())
+        assertEquals("secret", hydrated.apiKey)
+        assertEquals("secret-2", hydrated.customHeaders["X-Custom-Token"])
     }
 
     @Test

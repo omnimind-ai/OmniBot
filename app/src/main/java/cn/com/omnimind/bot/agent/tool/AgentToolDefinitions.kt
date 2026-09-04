@@ -283,8 +283,8 @@ object AgentToolDefinitions {
             "Optional session name. Generated automatically when omitted.",
         "可选，会话初始工作目录。默认使用当前 workspace cwd。" to
             "Optional initial working directory for the session. Defaults to the current workspace cwd.",
-        "向已有 {{OMNIBOT_TERMINAL_DISTRIBUTION}} session 发送一条非交互命令，并等待该命令完成。只在你明确想复用同一个 session 的 cwd、环境变量、后台任务或中间状态时使用。若命令会持续运行很久（例如启动 node/python 服务），应设置较短 timeoutSeconds，让工具尽快返回，再用 terminal_session_read 追踪输出，并在不再需要时调用 terminal_session_stop。" to
-            "Send a non-interactive command to an existing {{OMNIBOT_TERMINAL_DISTRIBUTION}} session and wait for that command to finish. Use this only when you explicitly want to reuse the same session's cwd, environment variables, background jobs, or intermediate state. If the command may run for a long time, such as starting a node or Python service, use a shorter timeout so the tool returns quickly, then monitor output with `terminal_session_read` and stop the session with `terminal_session_stop` when finished.",
+        "向已有 {{OMNIBOT_TERMINAL_DISTRIBUTION}} session 发送一条非交互命令，并等待终端真实报告该命令完成。只在你明确想复用同一个 session 的 cwd、环境变量、后台任务或中间状态时使用。长时间运行的命令保持在当前 ACP tool call 中，用户需要停止时取消当前 ACP turn 或调用 terminal_session_stop。" to
+            "Send a non-interactive command to an existing {{OMNIBOT_TERMINAL_DISTRIBUTION}} session and wait for the terminal to report completion. Use this only when you explicitly want to reuse the same session's cwd, environment variables, background jobs, or intermediate state. Long-running commands remain in the current ACP tool call; cancel the current ACP turn or call `terminal_session_stop` when the user wants to stop.",
         "执行后等待结果，再判断是否继续读取日志、再次执行或结束 session。" to
             "Wait for the result after execution, then decide whether to read logs, run another command, or stop the session.",
         "terminal_session_start 返回的 sessionId。" to
@@ -560,7 +560,7 @@ object AgentToolDefinitions {
                     }
                     putJsonObject("limit") {
                         put("type", "integer")
-                        put("description", "返回工具数量上限，默认 8，范围 1-20。")
+                        put("description", "可选：限制返回工具数量；不填写则返回全部匹配工具。")
                     }
                 }
                 putJsonArray("required") {
@@ -707,8 +707,8 @@ object AgentToolDefinitions {
                 put(
                     "description",
                     text(
-                        "通过 Shizuku 执行安卓高权限动作。这条能力链路独立于 `terminal_execute`：既保留受控 typed action，也支持 `action=shell.exec` 的一次性任意 shell。若确实需要保留 cwd、环境变量或 shell 状态，请改用 `android_privileged_session_*`。当前后端：$backendLabel。当前可见 action：$actionList。`shell.exec` 与高风险动作都必须在 `arguments.confirmed` 中显式确认。",
-                        "Run Android privileged actions through Shizuku. This path stays separate from `terminal_execute`: it keeps the typed allowlisted actions and also supports one-shot arbitrary shell via `action=shell.exec`. When you truly need persistent cwd, environment, or shell state, switch to `android_privileged_session_*`. Current backend: $backendLabel. Currently visible actions: $actionList. `shell.exec` and high-risk actions both require explicit confirmation in `arguments.confirmed`."
+                        "通过 Shizuku 执行安卓高权限动作。这条能力链路独立于 `terminal_execute`：既保留受控 typed action，也支持 `action=shell.exec` 的一次性任意 shell。若确实需要保留 cwd、环境变量或 shell 状态，请改用 `android_privileged_session_*`。当前后端：$backendLabel。当前可见 action：$actionList。需要授权时由 ACP 客户端统一请求确认。",
+                        "Run Android privileged actions through Shizuku. This path stays separate from `terminal_execute`: it keeps the typed allowlisted actions and also supports one-shot arbitrary shell via `action=shell.exec`. When you truly need persistent cwd, environment, or shell state, switch to `android_privileged_session_*`. Current backend: $backendLabel. Currently visible actions: $actionList. Permission is requested through the standard ACP client boundary when needed."
                     )
                 )
                 put(
@@ -736,11 +736,111 @@ object AgentToolDefinitions {
                         }
                         putJsonObject("arguments") {
                             put("type", "object")
+                            // Keep the nested action arguments explicit. The
+                            // handler already consumes this stable contract;
+                            // leaving the object without properties forces the
+                            // model to guess that launch_activity needs
+                            // packageName/activityName rather than command.
+                            putJsonObject("properties") {
+                                putJsonObject("packageName") {
+                                    put("type", "string")
+                                    put(
+                                        "description",
+                                        text("目标应用包名，例如 com.example.app。", "Target application package name, for example com.example.app.")
+                                    )
+                                }
+                                putJsonObject("activityName") {
+                                    put("type", "string")
+                                    put(
+                                        "description",
+                                        text("可选的完整 Activity 组件名；不传则启动应用的 Launcher。", "Optional fully-qualified Activity component; omit it to launch the app's Launcher activity.")
+                                    )
+                                }
+                                putJsonObject("permission") {
+                                    put("type", "string")
+                                    put("description", text("要授予或撤销的 Android 权限名。", "Android permission name to grant or revoke."))
+                                }
+                                putJsonObject("mode") {
+                                    put("type", "string")
+                                    put("description", text("AppOps 模式。", "AppOps mode."))
+                                }
+                                putJsonObject("op") {
+                                    put("type", "string")
+                                    put("description", text("AppOps 操作名。", "AppOps operation name."))
+                                }
+                                putJsonObject("namespace") {
+                                    put("type", "string")
+                                    put("description", text("允许的 Android settings 命名空间。", "Allowed Android settings namespace."))
+                                }
+                                putJsonObject("key") {
+                                    put("type", "string")
+                                    put("description", text("settings key 或设备按键名。", "Settings key or device key name."))
+                                }
+                                putJsonObject("value") {
+                                    put("type", "string")
+                                    put("description", text("要写入 settings 的值。", "Value to write to settings."))
+                                }
+                                putJsonObject("enabled") {
+                                    put("type", "boolean")
+                                    put("description", text("是否启用该设备功能。", "Whether to enable the device feature."))
+                                }
+                                putJsonObject("text") {
+                                    put("type", "string")
+                                    put("description", text("要输入到设备的文本。", "Text to input on the device."))
+                                }
+                                putJsonObject("name") {
+                                    put("type", "string")
+                                    put("description", text("要读取的属性名。", "Property name to read."))
+                                }
+                                putJsonObject("prop") {
+                                    put("type", "string")
+                                    put("description", text("兼容的属性名字段。", "Compatibility property-name field."))
+                                }
+                                putJsonObject("service") {
+                                    put("type", "string")
+                                    put("description", text("要读取的 dumpsys 服务名。", "dumpsys service name to read."))
+                                }
+                                putJsonObject("buffer") {
+                                    put("type", "string")
+                                    put("description", text("logcat 缓冲区，默认 main。", "logcat buffer, default main."))
+                                }
+                                putJsonObject("lines") {
+                                    put("type", "integer")
+                                    put("description", text("返回的日志行数。", "Number of log lines to return."))
+                                }
+                                putJsonObject("command") {
+                                    put("type", "string")
+                                    put(
+                                        "description",
+                                        text("仅当 action=shell.exec 时填写；launch_activity 不使用 command。", "Use only when action=shell.exec; launch_activity does not use command.")
+                                    )
+                                }
+                                putJsonObject("timeoutSeconds") {
+                                    put("type", "integer")
+                                    put("description", text("shell.exec 超时秒数，范围 5-600。", "shell.exec timeout in seconds, from 5 to 600."))
+                                }
+                                putJsonObject("workingDirectory") {
+                                    put("type", "string")
+                                    put("description", text("shell.exec 的工作目录。", "Working directory for shell.exec."))
+                                }
+                                putJsonObject("environment") {
+                                    put("type", "object")
+                                    put("description", text("shell.exec 的环境变量。", "Environment variables for shell.exec."))
+                                    putJsonObject("additionalProperties") {
+                                        put("type", "string")
+                                    }
+                                }
+                                putJsonObject("confirmed") {
+                                    put("type", "boolean")
+                                    put("description", text("仅用于已完成用户确认的高风险动作。", "Use only after the user has confirmed a high-risk action."))
+                                }
+                            }
+                            put("additionalProperties", false)
                             put(
                                 "description",
                                 text(
-                                    "动作参数对象。typed action 只传该 action 需要的字段；当 `action=shell.exec` 时，在这里传入 `command`、可选 `timeoutSeconds`、`workingDirectory`、`environment`，以及已获得用户明确同意后才传 `confirmed=true`。",
-                                    "Arguments object for the selected action. For typed actions, only include the fields that action needs. When `action=shell.exec`, provide `command`, optional `timeoutSeconds`, `workingDirectory`, `environment`, and only pass `confirmed=true` after explicit user consent."
+                                    "动作参数对象。typed action 只传该 action 需要的字段；当 `action=shell.exec` 时，在这里传入 `command`、可选 `timeoutSeconds`、`workingDirectory`、`environment`。需要授权时由 ACP 客户端统一请求确认。",
+                                    "Arguments object for the selected action. For typed actions, only include the fields that action needs. When `action=shell.exec`, provide `command`, optional `timeoutSeconds`, `workingDirectory`, and `environment`. Permission is requested through the standard ACP client boundary when needed."
                                 )
                             )
                         }
@@ -775,8 +875,8 @@ object AgentToolDefinitions {
                 put(
                     "description",
                     text(
-                        "启动一个可复用的 Shizuku 高权限 shell 会话，仅用于确实需要跨多轮保留 cwd、环境变量或 shell 状态的任务。当前后端：$backendLabel。此操作需要用户明确确认。",
-                        "Start a reusable Shizuku privileged shell session. Use it only when a task truly needs persistent cwd, environment variables, or shell state across turns. Current backend: $backendLabel. This operation requires explicit user confirmation."
+                        "启动一个可复用的 Shizuku 高权限 shell 会话，仅用于确实需要跨多轮保留 cwd、环境变量或 shell 状态的任务。当前后端：$backendLabel。需要确认时由 ACP 客户端统一请求权限。",
+                        "Start a reusable Shizuku privileged shell session. Use it only when a task truly needs persistent cwd, environment variables, or shell state across turns. Current backend: $backendLabel. When confirmation is needed, the standard ACP client boundary requests permission."
                     )
                 )
                 put(
@@ -803,10 +903,6 @@ object AgentToolDefinitions {
                             putJsonObject("additionalProperties") {
                                 put("type", "string")
                             }
-                        }
-                        putJsonObject("confirmed") {
-                            put("type", "boolean")
-                            put("description", text("只有在用户已明确同意时才传 true。", "Set to true only after the user has explicitly confirmed."))
                         }
                     }
                 }
@@ -835,8 +931,8 @@ object AgentToolDefinitions {
                 put(
                     "description",
                     text(
-                        "向已有的 Shizuku 高权限 shell 会话发送一条命令，并等待该命令完成。当前后端：$backendLabel。每次执行都需要用户明确确认。",
-                        "Send a command to an existing Shizuku privileged shell session and wait for that command to finish. Current backend: $backendLabel. Every execution requires explicit user confirmation."
+                        "向已有的 Shizuku 高权限 shell 会话发送一条命令，并等待该命令完成。当前后端：$backendLabel。每次需要确认时由 ACP 客户端统一请求权限。",
+                        "Send a command to an existing Shizuku privileged shell session and wait for that command to finish. Current backend: $backendLabel. When confirmation is needed, permission is requested through the standard ACP client boundary."
                     )
                 )
                 put(
@@ -860,10 +956,6 @@ object AgentToolDefinitions {
                         putJsonObject("timeoutSeconds") {
                             put("type", "integer")
                             put("description", text("等待该命令完成的超时时间，默认 120 秒，范围 5-600。", "Timeout in seconds while waiting for the command to finish. Default 120, range 5-600."))
-                        }
-                        putJsonObject("confirmed") {
-                            put("type", "boolean")
-                            put("description", text("只有在用户已明确同意时才传 true。", "Set to true only after the user has explicitly confirmed."))
                         }
                     }
                     putJsonArray("required") {
@@ -1005,7 +1097,7 @@ object AgentToolDefinitions {
             put("name", "terminal_session_exec")
             put("displayName", "执行 {{OMNIBOT_TERMINAL_DISTRIBUTION}} 会话命令")
             put("toolType", "terminal")
-            put("description", "向已有 {{OMNIBOT_TERMINAL_DISTRIBUTION}} session 发送一条非交互命令，并等待该命令完成。只在你明确想复用同一个 session 的 cwd、环境变量、后台任务或中间状态时使用。若命令会持续运行很久（例如启动 node/python 服务），应设置较短 timeoutSeconds，让工具尽快返回，再用 terminal_session_read 追踪输出，并在不再需要时调用 terminal_session_stop。")
+            put("description", "向已有 {{OMNIBOT_TERMINAL_DISTRIBUTION}} session 发送一条非交互命令，并等待终端真实报告该命令完成。只在你明确想复用同一个 session 的 cwd、环境变量、后台任务或中间状态时使用。长时间运行的命令保持在当前 ACP tool call 中，用户需要停止时取消当前 ACP turn 或调用 terminal_session_stop。")
             put("postToolRule", "执行后等待结果，再判断是否继续读取日志、再次执行或结束 session。")
             putJsonObject("parameters") {
                 put("type", "object")
@@ -1021,10 +1113,6 @@ object AgentToolDefinitions {
                     putJsonObject("workingDirectory") {
                         put("type", "string")
                         put("description", "可选，本次命令执行前要切换到的目录。")
-                    }
-                    putJsonObject("timeoutSeconds") {
-                        put("type", "integer")
-                        put("description", "等待该命令完成的超时时间，默认 120 秒，范围 5-600。")
                     }
                 }
                 putJsonArray("required") {
@@ -2319,27 +2407,61 @@ object AgentToolDefinitions {
                 // model catalog.
                 return@map definition
             }
+            val modelFunction = JsonObject(
+                function.mapValues { (functionKey, functionValue) ->
+                    if (functionKey == "name") {
+                        JsonPrimitive(modelName)
+                    } else {
+                        rewriteModelToolDescriptions(functionValue)
+                    }
+                }
+            )
             JsonObject(
                 definition.mapValues { (key, value) ->
-                    if (key != "function") {
-                        value
-                    } else {
-                        JsonObject(
-                            function.mapValues { (functionKey, functionValue) ->
-                                if (functionKey == "name") {
-                                    JsonPrimitive(modelName)
-                                } else {
-                                    functionValue
-                                }
-                            }
-                        )
-                    }
+                    if (key == "function") modelFunction else value
                 }
             )
         }
     }
 
+    /**
+     * Keep the schema vocabulary coherent after a model-facing rename. A
+     * renamed function whose description still says `terminal_execute` or
+     * `file_read` teaches the model to emit a name that is absent from the
+     * catalog, which is exactly the kind of stale-tool failure this layer is
+     * meant to prevent. Only description fields are rewritten; enum values,
+     * paths, and arbitrary user/plugin data are left untouched.
+     */
+    private fun rewriteModelToolDescriptions(value: JsonElement): JsonElement {
+        return when (value) {
+            is JsonObject -> JsonObject(
+                value.mapValues { (key, child) ->
+                    if (key == "description" && child is JsonPrimitive && child.isString) {
+                        JsonPrimitive(rewriteModelToolDescription(child.content))
+                    } else {
+                        rewriteModelToolDescriptions(child)
+                    }
+                }
+            )
+            is JsonArray -> JsonArray(value.map(::rewriteModelToolDescriptions))
+            else -> value
+        }
+    }
+
+    private fun rewriteModelToolDescription(text: String): String {
+        return nativeModelToolAliases.entries.fold(text) { current, (nativeName, modelName) ->
+            current.replace(
+                Regex("(?<![A-Za-z0-9_])${Regex.escape(nativeName)}(?![A-Za-z0-9_])"),
+                modelName,
+            )
+        }
+    }
+
     fun modelFacingToolNames(): Set<String> = nativeModelToolAliases.values.toSet()
+
+    /** Resolve an internal tool name to the direct-Agent model name. */
+    internal fun modelFacingNameFor(toolName: String): String =
+        nativeModelToolAliases[toolName] ?: toolName
 
     fun reservedToolNames(): Set<String> {
         val locale = PromptLocale.EN_US

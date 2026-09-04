@@ -131,18 +131,26 @@ export async function runProviderSmoke({
   };
 }
 
-export async function runProviderSmokeFromEnvironment(env = process.env) {
+export function providerSmokeConfigFromEnvironment(env = process.env) {
   const apiKey = String(
     env.OMNIBOT_TEST_API_KEY || env.LLMTHU_API_KEY || env.OPENAI_API_KEY || "",
   ).trim();
   const baseUrl = String(
-    env.OMNIBOT_TEST_BASE_URL || env.LLMTHU_API_BASE_URL || "https://llmapi.paratera.com",
+    env.OMNIBOT_TEST_BASE_URL ||
+      env.LLMTHU_API_BASE ||
+      env.LLMTHU_API_BASE_URL ||
+      "https://llmapi.paratera.com",
   ).trim();
   const model = String(
     env.OMNIBOT_TEST_MODEL || env.LLMTHU_MODEL || "GLM-5.1",
   ).trim();
-  const timeoutMs = Number(env.OMNIBOT_TEST_TIMEOUT_MS || 30_000);
-  const signal = AbortSignal.timeout(Number.isFinite(timeoutMs) ? timeoutMs : 30_000);
+  const timeoutMs = Number(env.OMNIBOT_TEST_TIMEOUT_MS || 120_000);
+  return { apiKey, baseUrl, model, timeoutMs };
+}
+
+export async function runProviderSmokeFromEnvironment(env = process.env) {
+  const { apiKey, baseUrl, model, timeoutMs } = providerSmokeConfigFromEnvironment(env);
+  const signal = AbortSignal.timeout(Number.isFinite(timeoutMs) ? timeoutMs : 120_000);
   const result = await runProviderSmoke({
     baseUrl,
     apiKey,

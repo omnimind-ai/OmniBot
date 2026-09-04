@@ -34,7 +34,7 @@ class LiveAgentBrowserSessionStoreTest {
     }
 
     @Test
-    fun `replaces live session when workspace changes`() {
+    fun `keeps independent live sessions when workspace changes`() {
         val store = LiveAgentBrowserSessionStore<FakeSession>()
 
         val first = store.acquire("conversation_1") {
@@ -45,7 +45,7 @@ class LiveAgentBrowserSessionStoreTest {
         }
 
         assertNotSame(first, second)
-        assertEquals(1, first.closeCount)
+        assertEquals(0, first.closeCount)
         assertEquals(0, second.closeCount)
     }
 

@@ -15,6 +15,9 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   const agentRuntimeChannel = MethodChannel('cn.com.omnimind.bot/AgentRuntime');
+  const pluginPlatformChannel = MethodChannel(
+    'cn.com.omnimind.bot/PluginPlatform',
+  );
 
   setUp(() async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
@@ -50,11 +53,18 @@ void main() {
             ],
           };
         });
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(pluginPlatformChannel, (call) async {
+          if (call.method == 'listActions') return <dynamic>[];
+          return null;
+        });
   });
 
   tearDown(() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(agentRuntimeChannel, null);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(pluginPlatformChannel, null);
   });
 
   testWidgets('shows the managed ACP Agent catalog without Gemini', (
@@ -314,6 +324,81 @@ void main() {
       expect(find.text('后台安装中'), findsNothing);
     },
   );
+
+  testWidgets('renders and invokes Agent Web actions from the plugin catalog', (
+    tester,
+  ) async {
+    final calls = <MethodCall>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(pluginPlatformChannel, (call) async {
+          calls.add(call);
+          if (call.method == 'listActions') {
+            return <Map<String, dynamic>>[
+              <String, dynamic>{
+                'id': 'open_kimi_web',
+                'pluginId': 'com.omnimind.agent-web',
+                'displayName': 'Kimi Code Web',
+                'description': 'Open Kimi Code Web',
+                'presentation': <String, dynamic>{
+                  'placement': 'agent_settings',
+                  'packageId': 'kimi',
+                  'label': <String, String>{
+                    'zh': 'Kimi Code Web',
+                    'en': 'Kimi Code Web',
+                  },
+                  'description': <String, String>{
+                    'zh': '在系统浏览器中打开本机 Web 界面',
+                    'en': 'Open the local Web UI',
+                  },
+                },
+              },
+            ];
+          }
+          if (call.method == 'invokeAction') {
+            return <String, dynamic>{
+              'success': true,
+              'code': 'OPENED',
+              'serviceId': 'kimi',
+              'packageId': 'kimi',
+              'running': true,
+            };
+          }
+          return null;
+        });
+    tester.view.physicalSize = const Size(1080, 2200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.lightTheme,
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        locale: const Locale('zh'),
+        home: const AgentModeSettingPage(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('本地 Web 界面'), findsOneWidget);
+    expect(find.text('Kimi Code Web'), findsOneWidget);
+    expect(find.text('在系统浏览器中打开本机 Web 界面'), findsOneWidget);
+    await tester.tap(
+      find.byKey(
+        const Key('plugin-action-button-com.omnimind.agent-web/open_kimi_web'),
+      ),
+    );
+    await tester.pump();
+
+    final invocation = calls.lastWhere((call) => call.method == 'invokeAction');
+    expect(invocation.arguments, <String, Object?>{
+      'pluginId': 'com.omnimind.agent-web',
+      'actionId': 'open_kimi_web',
+      'arguments': <String, dynamic>{},
+    });
+    expect(tester.takeException(), isNull);
+  });
 }
 
 Map<String, dynamic> _agent(

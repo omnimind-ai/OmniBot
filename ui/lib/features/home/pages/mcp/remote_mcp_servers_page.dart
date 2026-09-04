@@ -36,6 +36,16 @@ class _RemoteMcpServersPageState extends State<RemoteMcpServersPage> {
         _servers = servers;
         _loading = false;
       });
+    } on PlatformException catch (e) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+      showToast(
+        e.message ??
+            (Localizations.localeOf(context).languageCode == 'en'
+                ? 'Failed to load MCP tools'
+                : '加载 MCP 工具失败'),
+        type: ToastType.error,
+      );
     } catch (e) {
       if (!mounted) return;
       setState(() => _loading = false);
@@ -93,6 +103,7 @@ class _RemoteMcpServersPageState extends State<RemoteMcpServersPage> {
             : '工具列表已刷新',
       );
     } on PlatformException catch (e) {
+      await _reloadServersSilently();
       showToast(
         e.message ??
             (Localizations.localeOf(context).languageCode == 'en'
@@ -109,6 +120,16 @@ class _RemoteMcpServersPageState extends State<RemoteMcpServersPage> {
       );
     } finally {
       _setBusy(server.id, false);
+    }
+  }
+
+  Future<void> _reloadServersSilently() async {
+    try {
+      final servers = await RemoteMcpConfigService.listServers();
+      if (!mounted) return;
+      setState(() => _servers = servers);
+    } catch (_) {
+      // Preserve the operation error already shown to the user.
     }
   }
 

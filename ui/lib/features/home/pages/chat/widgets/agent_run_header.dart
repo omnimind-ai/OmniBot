@@ -25,6 +25,7 @@ class AgentRunHeader extends StatefulWidget {
     required this.status,
     required this.startedAt,
     this.finishedAt,
+    this.activeToolLabel,
     this.expanded = false,
     this.onToggleExpanded,
   });
@@ -36,6 +37,10 @@ class AgentRunHeader extends StatefulWidget {
 
   /// When the turn ended. Null while it is running.
   final DateTime? finishedAt;
+
+  /// A display-only projection of the active ACP tool call. Null when the
+  /// turn is thinking or waiting for the next provider update.
+  final String? activeToolLabel;
 
   final bool expanded;
 
@@ -108,9 +113,11 @@ class _AgentRunHeaderState extends State<AgentRunHeader> {
     final running = widget.isRunning;
     final canToggleExpanded = !running && widget.onToggleExpanded != null;
     final label = running
-        ? (isEnglish
-              ? 'Processing ${_elapsedSeconds}s'
-              : '正在处理 ${_elapsedSeconds}s')
+        ? (widget.activeToolLabel?.trim().isNotEmpty == true
+              ? '${widget.activeToolLabel} · ${_elapsedSeconds}s'
+              : (isEnglish
+                    ? 'Processing ${_elapsedSeconds}s'
+                    : '正在处理 ${_elapsedSeconds}s'))
         : _finishedLabel(isEnglish);
     final labelColor = running
         ? palette.textTertiary

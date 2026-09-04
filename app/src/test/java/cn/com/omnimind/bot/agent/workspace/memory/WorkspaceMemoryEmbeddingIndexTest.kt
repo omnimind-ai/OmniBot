@@ -1,6 +1,7 @@
 package cn.com.omnimind.bot.agent
 
 import cn.com.omnimind.baselib.llm.ModelProviderProfile
+import cn.com.omnimind.bot.agent.workspace.memory.LongTermMemoryIndex
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -96,6 +97,44 @@ class WorkspaceMemoryEmbeddingIndexTest {
         )
         assertTrue(
             current.canReuseFor(chunk, config, configId, null, shouldRequestEmbeddings = false)
+        )
+    }
+
+    @Test
+    fun `index keeps the loadable long term memory slug`() {
+        val config = embeddingConfig()
+        val configId = requireNotNull(config.embeddingConfigId())
+        val text = "用户长期偏好中文回复"
+        val slug = LongTermMemoryIndex.makeSlug(text)
+        val chunk = MemoryChunk(
+            id = "chunk-1",
+            source = ".omnibot/memory/MEMORY.md",
+            date = null,
+            text = text,
+            slug = slug,
+        )
+        val current = MemoryIndexEntry(
+            id = chunk.id,
+            source = chunk.source,
+            date = chunk.date,
+            text = chunk.text,
+            slug = slug,
+            embedding = listOf(0.1, 0.2, 0.3),
+            embeddingConfigId = configId,
+            embeddingDimensions = 3,
+        )
+
+        assertTrue(
+            current.canReuseFor(chunk, config, configId, 3, shouldRequestEmbeddings = true)
+        )
+        assertFalse(
+            current.copy(slug = null).canReuseFor(
+                chunk,
+                config,
+                configId,
+                3,
+                shouldRequestEmbeddings = true,
+            )
         )
     }
 

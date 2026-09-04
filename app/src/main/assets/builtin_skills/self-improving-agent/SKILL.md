@@ -81,7 +81,7 @@ sh <scriptsDir>/omnibot_auto_log.sh search 关键词
 sh <scriptsDir>/omnibot_auto_log.sh promote LRN-20260409-ABC
 ```
 
-If you need to refine an existing entry instead of appending a new one, use `file_read` and `file_edit`.
+If you need to refine an existing entry instead of appending a new one, use `read` and `edit`.
 
 ## Output Discipline
 

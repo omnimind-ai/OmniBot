@@ -24,6 +24,19 @@ class ToolExecutionStatusResolverTest {
     }
 
     @Test
+    fun `clarification without an ACP request channel is terminal failure`() {
+        assertEquals(
+            AgentConversationHistoryRepository.STATUS_ERROR,
+            resolveToolExecutionStatus(
+                ToolExecutionResult.Clarify(
+                    question = "确认执行高权限命令？",
+                    missingFields = listOf("arguments.confirmed")
+                )
+            )
+        )
+    }
+
+    @Test
     fun `permission required resolves to interrupted status`() {
         assertEquals(
             AgentConversationHistoryRepository.STATUS_INTERRUPTED,

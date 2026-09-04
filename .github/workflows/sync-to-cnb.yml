@@ -2,6 +2,10 @@ name: Sync to CNB
 
 on:
   push:
+    branches:
+      - main
+    tags:
+      - 'v*'
   workflow_dispatch:
 
 permissions:

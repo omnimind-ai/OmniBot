@@ -6,6 +6,7 @@ import cn.com.omnimind.baselib.shizuku.PrivilegedActionPolicy
 import cn.com.omnimind.baselib.shizuku.ShizukuBackend
 import cn.com.omnimind.baselib.shizuku.ShizukuCapabilityManager
 import cn.com.omnimind.baselib.util.OmniLog
+import cn.com.omnimind.bot.agent.tool.AgentCapabilityToolDefinition
 import cn.com.omnimind.bot.plugin.OmniPluginToolDefinition
 import com.rk.terminal.runtime.TerminalDistribution
 import kotlinx.serialization.json.JsonArray
@@ -25,6 +26,7 @@ class AgentToolRegistry(
     private val conversationMode: String = AgentConversationModePolicy.AGENT_MODE,
     terminalDistribution: TerminalDistribution.Spec = TerminalDistribution.alpine,
     pluginToolDefinitions: List<OmniPluginToolDefinition> = emptyList(),
+    capabilityToolDefinitions: List<AgentCapabilityToolDefinition> = emptyList(),
     userMessage: String? = null,
     toolRoutingMode: AgentToolRoutingMode = AgentToolRoutingMode.DEFAULT,
     // Keep the visual-operation entry visible so the Agent can explain how
@@ -43,7 +45,13 @@ class AgentToolRegistry(
     private val runtimeDescriptors = linkedMapOf<String, RuntimeToolDescriptor>()
     private val allToolsByName = linkedMapOf<String, ChatCompletionTool>()
     private val exposedToolNames = linkedSetOf<String>()
-    override val usesProgressiveDiscovery: Boolean = userMessage != null
+    // The direct Agent catalog is eagerly populated by
+    // AgentToolVisibilitySelector. Keeping this flag tied to userMessage
+    // incorrectly makes aliases such as `file_read` fail the stale
+    // "call tools_search first" guard even though FileToolHandler supports
+    // them. Progressive discovery remains an explicit catalog capability;
+    // this registry no longer claims to use it.
+    override val usesProgressiveDiscovery: Boolean = false
     override val toolsForModel: List<ChatCompletionTool>
         get() = exposedToolNames.mapNotNull { allToolsByName[it] }
 
@@ -102,7 +110,7 @@ class AgentToolRegistry(
         }
         runtimeDefinitions.addAll(AgentToolDefinitions.memoryTools(locale))
         runtimeDefinitions.addAll(AgentToolDefinitions.subagentTools(locale))
-        if (pluginToolDefinitions.isNotEmpty()) {
+        if (pluginToolDefinitions.isNotEmpty() || capabilityToolDefinitions.isNotEmpty()) {
             val occupiedNames = runtimeDefinitions.mapNotNullTo(linkedSetOf()) { definition ->
                 (definition["function"] as? JsonObject)
                     ?.get("name")
@@ -126,6 +134,29 @@ class AgentToolRegistry(
                             }
                             put("description", JsonPrimitive(pluginTool.description))
                             put("parameters", pluginTool.parameters)
+                        })
+                    },
+                    locale,
+                    terminalDistribution
+                )
+            }
+            capabilityToolDefinitions.forEach { capabilityTool ->
+                require(capabilityTool.name !in occupiedNames) {
+                    "Capability tool conflicts with an existing tool: ${capabilityTool.name}"
+                }
+                occupiedNames += capabilityTool.name
+                runtimeDefinitions += AgentToolDefinitions.decorateToolDefinition(
+                    buildJsonObject {
+                        put("type", JsonPrimitive("function"))
+                        put("function", buildJsonObject {
+                            put("name", JsonPrimitive(capabilityTool.name))
+                            put("displayName", JsonPrimitive(capabilityTool.displayName))
+                            put("toolType", JsonPrimitive(capabilityTool.toolType))
+                            capabilityTool.serverName?.let {
+                                put("serverName", JsonPrimitive(it))
+                            }
+                            put("description", JsonPrimitive(capabilityTool.description))
+                            put("parameters", capabilityTool.parameters)
                         })
                     },
                     locale,
@@ -247,7 +278,7 @@ class AgentToolRegistry(
         )
     }
 
-    override fun searchTools(query: String, limit: Int): List<AgentToolSearchEntry> {
+    override fun searchTools(query: String, limit: Int?): List<AgentToolSearchEntry> {
         val normalizedTerms = query
             .trim()
             .lowercase()
@@ -284,10 +315,11 @@ class AgentToolRegistry(
             }
             .sortedWith(compareByDescending<Pair<AgentToolSearchEntry, Int>> { it.second }
                 .thenBy { it.first.name.lowercase() })
-            .take(limit.coerceIn(1, 50))
-            .map { it.first }
-            .toList()
-        return scored
+        return if (limit == null) {
+            scored.map { it.first }.toList()
+        } else {
+            scored.take(limit.coerceAtLeast(1)).map { it.first }.toList()
+        }
     }
 
     override fun exposeToolNames(names: Set<String>) {

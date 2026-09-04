@@ -13,7 +13,8 @@ class OmniVlmPlugin internal constructor(
         val runId: String = "gui-${UUID.randomUUID()}",
         val stepSkillGuidance: String = "",
         val deferUserInput: Boolean = true,
-        val maxSteps: Int = DEFAULT_MAX_STEPS,
+        val maxSteps: Int? = null,
+        val maxRejectedActionRetries: Int? = null,
     )
 
     data class Hooks(
@@ -62,7 +63,6 @@ class OmniVlmPlugin internal constructor(
         const val MODEL_SCENE = "scene.vlm.operation.primary"
         const val RUN_GUI_TOOL = "run_gui"
         const val RUN_LOG_TOOL = "vlm_task"
-        const val DEFAULT_MAX_STEPS = 20
         private val shared = OmniVlmPlugin(DefaultOmniVlmBackend)
 
         suspend fun execute(
@@ -148,5 +148,6 @@ internal fun OmniVlmPlugin.Request.runGuiArguments(): Map<String, Any?> = buildM
         put("step_skill_guidance", it)
     }
     put("defer_user_input", deferUserInput)
-    put("max_steps", maxSteps)
+    maxSteps?.let { put("max_steps", it) }
+    maxRejectedActionRetries?.let { put("max_rejected_action_retries", it) }
 }

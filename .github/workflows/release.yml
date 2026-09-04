@@ -275,7 +275,11 @@ jobs:
           test -f "${RELEASE_ASSET_DIR}/manifest.txt"
           find "${RELEASE_ASSET_DIR}" -maxdepth 1 -type f -print | sort
 
-      - name: Upload release artifacts
+      # A tagged/manual release already uploads the same files to the GitHub
+      # Release below. Keep the artifact-only manual mode, but do not pay for
+      # a second upload on the normal release path.
+      - name: Upload release artifacts for artifact-only runs
+        if: steps.release_ref.outputs.publish_release != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: release-apk-${{ steps.release_ref.outputs.safe_ref_name }}

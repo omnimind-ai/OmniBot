@@ -32,7 +32,12 @@ class ContextToolHandler(
     ): ToolExecutionResult {
         return when (toolCall.function.name) {
             "context_time_now" -> executeContextTimeNow()
-            "context_apps_query" -> executeContextAppsQuery(args, env.runtimeContextRepository, callback)
+            "context_apps_query" -> executeContextAppsQuery(
+                args,
+                env.runtimeContextRepository,
+                env.runtimeSettings,
+                callback,
+            )
             else -> ToolExecutionResult.Error(toolCall.function.name, "Unknown context tool")
         }
     }
@@ -63,6 +68,7 @@ class ContextToolHandler(
     private suspend fun executeContextAppsQuery(
         args: JsonObject,
         runtimeContextRepository: AgentRuntimeContextRepository,
+        runtimeSettings: AgentRuntimeSettings,
         callback: AgentCallback
     ): ToolExecutionResult {
         val toolName = "context_apps_query"
@@ -74,7 +80,10 @@ class ContextToolHandler(
             helper.reportToolProgress(callback, toolName, "正在查询已安装应用")
             helper.ensureRunActive()
             val query = args["query"]?.jsonPrimitive?.contentOrNull?.trim()
-            val limit = helper.parseContextQueryLimit(args["limit"]?.jsonPrimitive?.intOrNull)
+            val limit = helper.parseContextQueryLimit(
+                rawLimit = args["limit"]?.jsonPrimitive?.intOrNull,
+                configuredLimit = runtimeSettings.contextQueryLimit,
+            )
             val items = runtimeContextRepository.queryInstalledApps(query = query, limit = limit)
             val payload = linkedMapOf<String, Any?>(
                 "query" to query.orEmpty(),

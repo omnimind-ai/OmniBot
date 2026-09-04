@@ -95,7 +95,8 @@ class ConversationReasoningEffortService {
   static const String _kConversationReasoningEffortsKey =
       'conversation_reasoning_efforts_v1';
   static const Set<String> _kSupportedEfforts = {
-    'no',
+    'none',
+    'medium',
     'low',
     'high',
     'xhigh',
@@ -154,9 +155,16 @@ class ConversationReasoningEffortService {
 
   static String? _normalizeEffort(String? raw) {
     final normalized = raw?.trim().toLowerCase();
-    if (normalized == null || !_kSupportedEfforts.contains(normalized)) {
+    if (normalized == null || normalized.isEmpty) {
       return null;
     }
-    return normalized;
+    // `no` was the historical storage value. Read it as the canonical
+    // `none`; all new writes use the same value as the native Agent path.
+    final canonical = switch (normalized) {
+      'no' || 'off' || 'disabled' => 'none',
+      'med' => 'medium',
+      _ => normalized,
+    };
+    return _kSupportedEfforts.contains(canonical) ? canonical : null;
   }
 }

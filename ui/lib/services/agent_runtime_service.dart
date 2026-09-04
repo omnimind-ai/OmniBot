@@ -138,6 +138,8 @@ String formatAgentRuntimeErrorForUser(Object? error) {
       return '统一 Agent 模型当前不可用，请刷新模型列表后重新选择。';
     case 'provider_tls_certificate_failure':
       return 'Provider HTTPS 证书校验失败，请检查设备时间和证书链。';
+    case 'provider_stream_idle_timeout':
+      return 'Provider 长时间没有返回新的流式更新，请检查接口地址、模型和网络后重试。';
     case 'provider_tool_call_incomplete':
       return 'Provider 返回了不完整的工具调用，缺少工具名称。已自动重试；请重试本轮，或检查 Provider 是否完整转发 tool_calls/function.name。';
     case 'harness_preparation_in_progress':
@@ -184,6 +186,55 @@ List<String> extractAcpModelIds(Map<String, dynamic> response) {
     _collectAcpRootModelListFallback(response, rawItems);
   }
   return _uniqueAcpChoiceIds(rawItems);
+}
+
+/// Returns the Agent-owned ACP config id for thought/reasoning choices.
+///
+/// Codex currently uses `reasoning_effort`, while other ACP Agents may use a
+/// different id. Keep the id next to the values so a live
+/// `session/set_config_option` call does not guess a vendor field.
+String? extractAcpReasoningEffortConfigId(Map<String, dynamic> response) {
+  String? visit(Map<dynamic, dynamic> source) {
+    for (final entry in source.entries) {
+      final value = entry.value;
+      if (value is List) {
+        if (_normalizeAcpConfigKey(entry.key.toString()) == 'configoptions') {
+          for (final item in value) {
+            final option = _normalizeMap(item);
+            if (option == null) continue;
+            final id = option['id']?.toString().trim() ?? '';
+            final category = _normalizeAcpConfigKey(
+              option['category']?.toString() ?? '',
+            );
+            if (id.isNotEmpty &&
+                option['options'] is List &&
+                (category == 'thoughtlevel' ||
+                    id.toLowerCase() == 'reasoning_effort' ||
+                    id.toLowerCase() == 'reasoning-effort' ||
+                    id.toLowerCase() == 'effort')) {
+              return id;
+            }
+          }
+        }
+        for (final item in value) {
+          final nested = _normalizeMap(item);
+          if (nested != null) {
+            final found = visit(nested);
+            if (found != null) return found;
+          }
+        }
+      } else {
+        final nested = _normalizeMap(value);
+        if (nested != null) {
+          final found = visit(nested);
+          if (found != null) return found;
+        }
+      }
+    }
+    return null;
+  }
+
+  return visit(response);
 }
 
 /// Extracts only ACP thought-level/reasoning choices.
@@ -795,6 +846,16 @@ class AgentRuntimeService {
     return AgentRuntimeStatus.fromMap(result);
   }
 
+  /// Returns the already negotiated ACP AgentInfo. The native host performs
+  /// the wire handshake once per transport; callers must not create a second
+  /// session just to initialize a shared ACP client.
+  static Future<Map<String, dynamic>> initialize({String? agentId}) {
+    return _invokeMap('initialize', {
+      if (agentId != null && agentId.trim().isNotEmpty)
+        'agentId': agentId.trim(),
+    });
+  }
+
   static Future<AcpAgentCatalog> listAgents() async {
     return AcpAgentCatalog.fromMap(await _invokeMap('agent/list'));
   }
@@ -876,6 +937,7 @@ class AgentRuntimeService {
     String? reasoningEffort,
     String? permissionMode,
     String? content,
+    Map<String, dynamic>? runtimeSettings,
   }) {
     return _invokeMap('agent/config/write', {
       'agentId': agentId.trim(),
@@ -885,6 +947,7 @@ class AgentRuntimeService {
       if (reasoningEffort != null) 'reasoningEffort': reasoningEffort,
       if (permissionMode != null) 'permissionMode': permissionMode,
       if (content != null) 'content': content,
+      if (runtimeSettings != null) 'runtimeSettings': runtimeSettings,
     });
   }
 
@@ -911,6 +974,44 @@ class AgentRuntimeService {
       if (additionalDirectories.isNotEmpty)
         'additionalDirectories': additionalDirectories,
     });
+  }
+
+  /// Resolves the ACP session identity required by a prompt.
+  ///
+  /// A missing session is an application-level bootstrap case, not a second
+  /// protocol. Keep the bootstrap on the official `session/new` operation and
+  /// return only the stable identity that the caller must use for
+  /// `session/prompt`. Legacy callers may still call `promptSession` without
+  /// an id; new lifecycle code should resolve it here first.
+  static Future<String> ensureSession({
+    String? sessionId,
+    int? conversationId,
+    String? cwd,
+    String? model,
+    String? effort,
+    String? collaborationMode,
+    String? conversationMode,
+    List<String> additionalDirectories = const <String>[],
+  }) async {
+    final existing = sessionId?.trim() ?? '';
+    if (existing.isNotEmpty) return existing;
+
+    final response = await newSession(
+      conversationId: conversationId,
+      cwd: cwd,
+      model: model,
+      effort: effort,
+      collaborationMode: collaborationMode,
+      conversationMode: conversationMode,
+      additionalDirectories: additionalDirectories,
+    );
+    final resolved = (response['sessionId'] ?? response['threadId'])
+        ?.toString()
+        .trim();
+    if (resolved == null || resolved.isEmpty) {
+      throw StateError('ACP session/new did not return a session id');
+    }
+    return resolved;
   }
 
   static Future<Map<String, dynamic>> loadSession({
@@ -1211,6 +1312,22 @@ class AgentRuntimeService {
     });
   }
 
+  /// Cancels one JSON-RPC request. This is deliberately separate from
+  /// session/cancel, which cancels the active ACP turn/session lifecycle.
+  static Future<Map<String, dynamic>> cancelRequest({
+    required Object requestId,
+    String? sessionId,
+    String? agentId,
+  }) {
+    return _invokeMap('\$/cancel_request', {
+      'requestId': requestId,
+      if (sessionId != null && sessionId.trim().isNotEmpty)
+        'sessionId': sessionId.trim(),
+      if (agentId != null && agentId.trim().isNotEmpty)
+        'agentId': agentId.trim(),
+    });
+  }
+
   static Future<Map<String, dynamic>> reviewSession({
     String? sessionId,
     int? conversationId,
@@ -1486,9 +1603,17 @@ class AgentRuntimeService {
   static Future<Map<String, dynamic>> respondToApproval({
     required Object requestId,
     required bool accepted,
+    String? sessionId,
+    String? agentId,
+    int? conversationId,
   }) {
-    return _invokeMap('respondToServerRequest', {
+    return _invokeServerResponse({
       'requestId': requestId,
+      if (agentId != null && agentId.trim().isNotEmpty)
+        'agentId': agentId.trim(),
+      if (conversationId != null) 'conversationId': conversationId,
+      if (sessionId != null && sessionId.trim().isNotEmpty)
+        'sessionId': sessionId.trim(),
       'response': {'decision': accepted ? 'accept' : 'decline'},
     });
   }
@@ -1497,9 +1622,17 @@ class AgentRuntimeService {
     required Object requestId,
     required String questionId,
     required List<String> answers,
+    String? sessionId,
+    String? agentId,
+    int? conversationId,
   }) {
-    return _invokeMap('respondToServerRequest', {
+    return _invokeServerResponse({
       'requestId': requestId,
+      if (agentId != null && agentId.trim().isNotEmpty)
+        'agentId': agentId.trim(),
+      if (conversationId != null) 'conversationId': conversationId,
+      if (sessionId != null && sessionId.trim().isNotEmpty)
+        'sessionId': sessionId.trim(),
       'response': {
         'answers': {
           questionId: {'answers': answers},
@@ -1514,27 +1647,51 @@ class AgentRuntimeService {
   static Future<Map<String, dynamic>> respondToElicitation({
     required Object requestId,
     required Map<String, dynamic> content,
+    String? sessionId,
+    String? agentId,
+    int? conversationId,
   }) {
-    return _invokeMap('respondToServerRequest', {
+    return _invokeServerResponse({
       'requestId': requestId,
+      if (agentId != null && agentId.trim().isNotEmpty)
+        'agentId': agentId.trim(),
+      if (conversationId != null) 'conversationId': conversationId,
+      if (sessionId != null && sessionId.trim().isNotEmpty)
+        'sessionId': sessionId.trim(),
       'response': {'action': 'accept', 'content': content},
     });
   }
 
   static Future<Map<String, dynamic>> cancelElicitation({
     required Object requestId,
+    String? sessionId,
+    String? agentId,
+    int? conversationId,
   }) {
-    return _invokeMap('respondToServerRequest', {
+    return _invokeServerResponse({
       'requestId': requestId,
+      if (agentId != null && agentId.trim().isNotEmpty)
+        'agentId': agentId.trim(),
+      if (conversationId != null) 'conversationId': conversationId,
+      if (sessionId != null && sessionId.trim().isNotEmpty)
+        'sessionId': sessionId.trim(),
       'response': {'action': 'cancel'},
     });
   }
 
   static Future<Map<String, dynamic>> ignoreUserInput({
     required Object requestId,
+    String? sessionId,
+    String? agentId,
+    int? conversationId,
   }) {
-    return _invokeMap('respondToServerRequest', {
+    return _invokeServerResponse({
       'requestId': requestId,
+      if (agentId != null && agentId.trim().isNotEmpty)
+        'agentId': agentId.trim(),
+      if (conversationId != null) 'conversationId': conversationId,
+      if (sessionId != null && sessionId.trim().isNotEmpty)
+        'sessionId': sessionId.trim(),
       'response': {'answers': <String, dynamic>{}},
     });
   }
@@ -1566,6 +1723,16 @@ class AgentRuntimeService {
   ]) async {
     final result = await _methodChannel.invokeMethod<dynamic>(method, args);
     return _normalizeMap(result) ?? <String, dynamic>{};
+  }
+
+  static Future<Map<String, dynamic>> _invokeServerResponse(
+    Map<String, dynamic> args,
+  ) async {
+    final result = await _invokeMap('respondToServerRequest', args);
+    if (result['ok'] != true) {
+      throw StateError('ACP server request was not acknowledged');
+    }
+    return result;
   }
 
   static Future<dynamic> _invokeValue(

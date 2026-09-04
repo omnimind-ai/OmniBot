@@ -2,8 +2,11 @@ package cn.com.omnimind.bot.agent
 
 internal fun resolveToolExecutionStatus(result: ToolExecutionResult): String {
     return when (result) {
-        is ToolExecutionResult.ChatMessage,
-        is ToolExecutionResult.Clarify,
+        is ToolExecutionResult.ChatMessage -> AgentConversationHistoryRepository.STATUS_INTERRUPTED
+
+        // A local Clarify result has no ACP request/response channel. Treat it
+        // as a terminal failure instead of leaving history in RUNNING.
+        is ToolExecutionResult.Clarify -> AgentConversationHistoryRepository.STATUS_ERROR
 
         is ToolExecutionResult.PermissionRequired -> AgentConversationHistoryRepository.STATUS_INTERRUPTED
 

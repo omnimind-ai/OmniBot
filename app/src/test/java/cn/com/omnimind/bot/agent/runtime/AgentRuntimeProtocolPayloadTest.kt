@@ -16,6 +16,33 @@ import org.junit.Test
 
 class AgentRuntimeProtocolPayloadTest {
     @Test
+    fun reasoningEffortUsesTheAdvertisedOfficialAcpConfigOption() {
+        val configId = resolveAdvertisedReasoningEffortConfigId(
+            payload = mapOf(
+                "configOptions" to listOf(
+                    mapOf(
+                        "id" to "thinking_level",
+                        "category" to "thought_level",
+                        "options" to listOf(
+                            mapOf("value" to "low"),
+                            mapOf("value" to "high"),
+                        ),
+                    ),
+                ),
+            ),
+            requestedEffort = "high",
+        )
+
+        assertEquals("thinking_level", configId)
+        assertNull(
+            resolveAdvertisedReasoningEffortConfigId(
+                payload = mapOf("configOptions" to emptyList<Any>()),
+                requestedEffort = "high",
+            ),
+        )
+    }
+
+    @Test
     fun acpExtensionRequestIsParsedWithoutChangingStandardMessages() {
         val request = parseAcpExtensionLine(
             "{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"_omnibot/presentation\",\"params\":{\"card\":\"usage\"}}"
@@ -129,6 +156,40 @@ class AgentRuntimeProtocolPayloadTest {
     }
 
     @Test
+    fun adapterDependencyFailureIsOfflineNotMissingEvenWhenStderrMentionsNoSuchFile() {
+        val message = """
+            Failed to initialize ACP agent DeepSeek Harness:
+            Error [ERR_MODULE_NOT_FOUND]: Cannot find package @deepseek-ai/dsh-tools
+            proot warning: No such file or directory
+        """.trimIndent()
+
+        assertFalse(isMissingAcpAgentFailure(message))
+        assertTrue(isAcpInitializeFailure(message))
+
+        val health = managedAgentHealthFromProbe(
+            enabled = true,
+            launchInstalled = true,
+            healthCheckPassed = true,
+            previous = AcpAgentHealth(
+                status = AcpAgentHealth.STATUS_OFFLINE,
+                installed = true,
+                error = message,
+            ),
+        )
+
+        assertEquals(AcpAgentHealth.STATUS_OFFLINE, health.status)
+        assertEquals(true, health.installed)
+        assertEquals(message, health.error)
+    }
+
+    @Test
+    fun commandMissingStillUsesMissingStatus() {
+        assertTrue(isMissingAcpAgentFailure("ACP launch command not found: dsh-acp-android"))
+        assertTrue(isMissingAcpAgentFailure("sh: dsh-acp-android: command not found"))
+        assertFalse(isMissingAcpAgentFailure("plugin dependency failed to resolve"))
+    }
+
+    @Test
     fun sharedAgentModelUsesTheProviderBoundToTheAgentScene() {
         assertEquals(
             "provider-model",
@@ -166,6 +227,41 @@ class AgentRuntimeProtocolPayloadTest {
         )
 
         assertEquals("acp-session-1", extractThreadId(notification))
+    }
+
+    @Test
+    fun explicitEventTurnIdWinsOverTheCurrentlyActiveHostTurn() {
+        assertEquals(
+            "late-old-turn",
+            resolveObservedTurnId(
+                explicitTurnId = " late-old-turn ",
+                activeEventTurnId = null,
+                hostActiveTurnId = "new-current-turn",
+                disconnectedTurnId = null,
+                implicitTurnId = null,
+            )
+        )
+        assertEquals(
+            "new-current-turn",
+            resolveObservedTurnId(
+                explicitTurnId = null,
+                activeEventTurnId = null,
+                hostActiveTurnId = "new-current-turn",
+                disconnectedTurnId = null,
+                implicitTurnId = "compat-turn",
+            )
+        )
+        assertEquals(
+            "new-current-turn",
+            resolveObservedTurnId(
+                explicitTurnId = "provider-turn",
+                activeEventTurnId = null,
+                hostActiveTurnId = "new-current-turn",
+                disconnectedTurnId = null,
+                implicitTurnId = null,
+                preferHostActiveTurn = true,
+            )
+        )
     }
 
     @Test
@@ -223,6 +319,47 @@ class AgentRuntimeProtocolPayloadTest {
     }
 
     @Test
+    fun appSessionListPaginationUsesOpaqueCursorAndStableSnapshot() {
+        val sessions = (1..3).map { index ->
+            mapOf<String, Any?>("id" to "session-$index")
+        }
+        val identity: (Map<String, Any?>) -> String = { it["id"].toString() }
+
+        val first = paginateAcpItems(
+            sessions,
+            limit = 2,
+            cursor = null,
+            identity = identity,
+        )
+        assertEquals(listOf("session-1", "session-2"), first.items.map { it["id"] })
+        assertFalse(first.nextCursor.isNullOrBlank())
+        // The cursor is an opaque protocol value, not a session id or a
+        // second application-owned session object.
+        assertFalse(first.nextCursor!!.contains("session-3"))
+
+        val second = paginateAcpItems(
+            sessions,
+            limit = 2,
+            cursor = first.nextCursor,
+            identity = identity,
+        )
+        assertEquals(listOf("session-3"), second.items.map { it["id"] })
+        assertNull(second.nextCursor)
+
+        try {
+            paginateAcpItems(
+                sessions + mapOf<String, Any?>("id" to "session-4"),
+                limit = 2,
+                cursor = first.nextCursor,
+                identity = identity,
+            )
+            assertTrue("A cursor must not paginate a changed snapshot", false)
+        } catch (error: IllegalArgumentException) {
+            assertTrue(error.message.orEmpty().contains("changed"))
+        }
+    }
+
+    @Test
     fun acpSessionCompatibilityAddsLegacyIdsOnlyToResponses() {
         val response = AcpSessionCompatibility.withLegacyIds(
             mapOf("sessionId" to "session-1", "promptId" to "prompt-1")
@@ -230,6 +367,77 @@ class AgentRuntimeProtocolPayloadTest {
 
         assertEquals("session-1", response["threadId"])
         assertEquals("prompt-1", response["turnId"])
+    }
+
+    @Test
+    fun standardAcpSessionWireParamsStripHostOnlyIdentityFields() {
+        val params = standardAcpSessionWireParams(
+            method = "session/set_config_option",
+            args = mapOf(
+                "sessionId" to "session-1",
+                "threadId" to "legacy-thread-1",
+                "conversationId" to 42L,
+                "agentId" to "xiaowan-acp",
+                "configId" to "permission_mode",
+                "value" to "workspace-write",
+                "conversationMode" to "write",
+                "_meta" to mapOf("source" to "test"),
+            )
+        )
+
+        assertEquals(
+            mapOf(
+                "sessionId" to "session-1",
+                "configId" to "permission_mode",
+                "value" to "workspace-write",
+                "_meta" to mapOf("source" to "test"),
+            ),
+            params
+        )
+        assertFalse(params.containsKey("conversationId"))
+        assertFalse(params.containsKey("agentId"))
+        assertFalse(params.containsKey("threadId"))
+    }
+
+    @Test
+    fun standardAcpForkWireParamsKeepOnlyOfficialSessionFields() {
+        val params = standardAcpSessionWireParams(
+            method = "session/fork",
+            args = mapOf(
+                "sessionId" to "session-1",
+                "cwd" to "/workspace",
+                "additionalDirectories" to listOf("/workspace/shared"),
+                "conversationId" to 42L,
+                "agentId" to "codex-acp",
+            )
+        )
+
+        assertEquals(
+            mapOf(
+                "sessionId" to "session-1",
+                "cwd" to "/workspace",
+                "additionalDirectories" to listOf("/workspace/shared"),
+            ),
+            params
+        )
+    }
+
+    @Test
+    fun permissionRequestUsesOfficialToolCallUpdateShape() {
+        val toolCall = standardAcpPermissionToolCallPayload(
+            toolCallId = "tool-1",
+            title = "Run command",
+            optionNames = listOf("Allow once", "Reject"),
+        )
+
+        assertEquals("tool-1", toolCall["toolCallId"])
+        assertEquals("in_progress", toolCall["status"])
+        assertFalse(toolCall.containsKey("detail"))
+        assertEquals(
+            "Allow once\nReject",
+            ((toolCall["content"] as List<*>).single() as Map<*, *>)
+                .let { it["content"] as Map<*, *> }["text"]
+        )
     }
 
     @Test
@@ -278,7 +486,7 @@ class AgentRuntimeProtocolPayloadTest {
     @Test
     fun managedAcpCatalogIncludesSupportedAgentsWithoutGemini() {
         assertEquals(
-            listOf("小万", "Codex", "Claude Code", "OpenCode", "DeepSeek Harness"),
+            listOf("小万", "Kimi Code", "Claude Code", "Codex", "OpenCode", "DeepSeek Harness"),
             AcpAgentProfileStore.OFFICIAL_AGENTS.map { it.name }
         )
         assertTrue(AcpAgentProfileStore.OFFICIAL_AGENTS.all { it.builtIn })
@@ -313,6 +521,19 @@ class AgentRuntimeProtocolPayloadTest {
             AcpAgentProfileStore.officialRuntime(xiaowan)?.discoveryCommand
         )
         assertNull(AcpAgentProfileStore.officialRuntime(xiaowan)?.managedAdapterPackage)
+        val kimi = AcpAgentProfileStore.OFFICIAL_AGENTS.first {
+            it.id == AcpAgentProfileStore.KIMI_CODE_AGENT_ID
+        }
+        assertEquals("kimi", kimi.command)
+        assertEquals(listOf("acp"), kimi.arguments)
+        val kimiRuntime = AcpAgentProfileStore.officialRuntime(kimi)
+        assertEquals("kimi", kimiRuntime?.discoveryCommand)
+        assertEquals(KIMI_CODE_NPM_PACKAGE_SPEC, kimiRuntime?.managedAdapterPackage)
+        assertEquals("kimi", kimiRuntime?.terminalPackageId)
+        assertEquals(
+            AcpHarnessProviderConfigKind.KIMI_CODE,
+            kimiRuntime?.harnessAdapter?.providerConfigKind,
+        )
         val deepSeek = AcpAgentProfileStore.OFFICIAL_AGENTS.first {
             it.id == AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID
         }
@@ -345,9 +566,21 @@ class AgentRuntimeProtocolPayloadTest {
         assertTrue(MANAGED_NATIVE_BUILD_PREREQUISITES_COMMAND.contains("apk fix --no-cache"))
         assertTrue(MANAGED_NATIVE_BUILD_PREREQUISITES_COMMAND.contains("apk fix --no-cache --upgrade"))
         assertTrue(MANAGED_NATIVE_BUILD_PREREQUISITES_COMMAND.contains("build-essential python3"))
-        assertTrue(DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("dsh plugin --profile acp add"))
+        assertTrue(DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("dsh plugin --profile acp add -w"))
         assertTrue(DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("profiles/acp/package.json"))
         assertTrue(DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("pnpm@$DEEPSEEK_HARNESS_PNPM_VERSION"))
+        assertTrue(DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("PNPM_CONFIG_PACKAGE_IMPORT_METHOD=copy"))
+        assertTrue(DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("PROFILE_LAYOUT_MARKER"))
+        assertTrue(
+            DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains(
+                "timeout 30 dsh-acp-android --profile acp --dump-config"
+            )
+        )
+        assertTrue(
+            DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains(
+                "pnpm config set --location=project packageImportMethod copy"
+            )
+        )
         assertTrue(
             DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("DSH_HOME=\"/root/.dsh/omnibot-acp\"")
         )
@@ -602,6 +835,14 @@ class AgentRuntimeProtocolPayloadTest {
 
     @Test
     fun managedAgentInstallationUsesTheExistingOfficialTerminalSetupIds() {
+        assertEquals(
+            "kimi",
+            managedAgentTerminalPackageId(
+                AcpAgentProfileStore.OFFICIAL_AGENTS.first {
+                    it.id == AcpAgentProfileStore.KIMI_CODE_AGENT_ID
+                }
+            )
+        )
         assertEquals(
             "deepseek_harness",
             managedAgentTerminalPackageId(
@@ -1110,21 +1351,21 @@ class AgentRuntimeProtocolPayloadTest {
     fun turnTerminalStatusPrefersTheAcpStopReason() {
         assertEquals(
             "end_turn",
-            resolveTurnTerminalStatus("END_TURN", cancelled = false, error = null)
+            resolveTurnTerminalStatus("END_TURN", promptResponseReceived = true, cancelled = false, error = null)
         )
         assertEquals(
             "max_tokens",
-            resolveTurnTerminalStatus("max_tokens", cancelled = false, error = null)
+            resolveTurnTerminalStatus("max_tokens", promptResponseReceived = true, cancelled = false, error = null)
         )
         assertEquals(
             "refusal",
-            resolveTurnTerminalStatus("REFUSAL", cancelled = false, error = null)
+            resolveTurnTerminalStatus("REFUSAL", promptResponseReceived = true, cancelled = false, error = null)
         )
         // A stop reason still wins once the agent has reported one, even if the
         // surrounding coroutine was torn down afterwards.
         assertEquals(
             "end_turn",
-            resolveTurnTerminalStatus("end_turn", cancelled = true, error = RuntimeException())
+            resolveTurnTerminalStatus("end_turn", promptResponseReceived = true, cancelled = true, error = RuntimeException())
         )
     }
 
@@ -1134,22 +1375,54 @@ class AgentRuntimeProtocolPayloadTest {
         // so cancellation has to outrank failure.
         assertEquals(
             "cancelled",
-            resolveTurnTerminalStatus(null, cancelled = true, error = RuntimeException("boom"))
+            resolveTurnTerminalStatus(null, promptResponseReceived = false, cancelled = true, error = RuntimeException("boom"))
         )
         assertEquals(
             "error",
-            resolveTurnTerminalStatus(null, cancelled = false, error = IllegalStateException())
+            resolveTurnTerminalStatus(null, promptResponseReceived = false, cancelled = false, error = IllegalStateException())
         )
         // The regression that stranded every codex-acp conversation: a prompt
         // flow that completes without ever emitting a prompt response must
         // still terminate the turn rather than leave it running forever.
         assertEquals(
-            "end_turn",
-            resolveTurnTerminalStatus(null, cancelled = false, error = null)
+            "error",
+            resolveTurnTerminalStatus(null, promptResponseReceived = false, cancelled = false, error = null)
         )
         assertEquals(
-            "end_turn",
-            resolveTurnTerminalStatus("   ", cancelled = false, error = null)
+            "error",
+            resolveTurnTerminalStatus("   ", promptResponseReceived = false, cancelled = false, error = null)
+        )
+    }
+
+    @Test
+    fun remotePromptUsesOfficialStopReasonForTerminalProjection() {
+        assertEquals(
+            "cancelled",
+            terminalStatusFromAcpParams(mapOf("stopReason" to "cancelled"))
+        )
+        assertEquals(
+            "error",
+            terminalStatusFromAcpParams(mapOf("status" to "failed"))
+        )
+        assertEquals(
+            "completed",
+            terminalStatusFromAcpParams(mapOf("stopReason" to "end_turn"))
+        )
+        assertEquals(
+            "cancelled",
+            terminalStatusFromAcpParams(emptyMap(), fallback = "cancelled")
+        )
+    }
+
+    @Test
+    fun remoteEventUsesTheHostSessionConversationBinding() {
+        assertEquals(
+            42L,
+            resolveAcpEventConversationId(
+                remoteEvent = true,
+                sessionConversationId = 42L,
+                projectedConversationId = null,
+            )
         )
     }
 

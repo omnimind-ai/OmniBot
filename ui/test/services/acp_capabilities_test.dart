@@ -6,7 +6,12 @@ void main() {
     final capabilities = AcpCapabilities.fromMap({
       'loadSession': true,
       'prompt': {'image': true, 'audio': false, 'embeddedContext': true},
-      'session': {'list': true, 'resume': true, 'close': true},
+      'session': {
+        'list': true,
+        'resume': true,
+        'delete': true,
+        'close': true,
+      },
       'auth': {
         'methods': [
           {'id': 'oauth', 'name': 'OAuth'},
@@ -27,6 +32,7 @@ void main() {
     expect(capabilities.promptEmbeddedContext, isTrue);
     expect(capabilities.sessionList, isTrue);
     expect(capabilities.sessionResume, isTrue);
+    expect(capabilities.sessionDelete, isTrue);
     expect(capabilities.sessionClose, isTrue);
     expect(capabilities.authMethods.single['id'], 'oauth');
     expect(capabilities.authLogout, isTrue);
@@ -38,6 +44,7 @@ void main() {
     expect(capabilities.clientElicitationForm, isTrue);
     expect(capabilities.clientElicitationUrl, isTrue);
     expect(capabilities.supports('session/load'), isTrue);
+    expect(capabilities.supports('session/delete'), isTrue);
     expect(capabilities.supports('prompt/image'), isTrue);
     expect(capabilities.supports('terminal'), isTrue);
     expect(capabilities.supports('fs/read_text_file'), isTrue);

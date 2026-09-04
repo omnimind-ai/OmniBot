@@ -65,6 +65,9 @@ void main() {
     final arguments = Map<String, dynamic>.from(
       submittedCall!.arguments as Map,
     );
+    expect(arguments['sessionId'], 'session-1');
+    expect(arguments['agentId'], 'deepseek-harness-acp');
+    expect(arguments['conversationId'], 42);
     final response = Map<String, dynamic>.from(arguments['response'] as Map);
     final answers = Map<String, dynamic>.from(response['answers'] as Map);
     final mode = Map<String, dynamic>.from(answers['mode'] as Map);
@@ -99,6 +102,9 @@ void main() {
       submittedCall!.arguments as Map,
     );
     expect(arguments['requestId'], 'request-1');
+    expect(arguments['sessionId'], 'session-1');
+    expect(arguments['agentId'], 'deepseek-harness-acp');
+    expect(arguments['conversationId'], 42);
     expect(arguments['response'], {'answers': <String, dynamic>{}});
     expect(find.text('ignored'), findsOneWidget);
   });
@@ -341,6 +347,8 @@ Map<String, dynamic> _requestCardData({
     'type': 'agent_request',
     'agentId': 'claude-code-acp',
     'agentName': 'Claude Code',
+    'sessionId': 'session-1',
+    'conversationId': 42,
     'requestId': 'request-1',
     'cardId': 'request-1-card',
     'requestKind': 'user_input',

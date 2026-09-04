@@ -173,12 +173,6 @@ class EnvironmentSetupLogicTest {
         assertTrue(npmInstall.contains("@deepseek-ai/dsh@next"))
         assertTrue(npmInstall.contains("@openma/deepseek-harness-acp@latest"))
         assertTrue(npmInstall.contains("DSH_PACKAGE_ROOT/package.json"))
-        assertTrue(npmInstall.contains("materialize_pnpm_link"))
-        assertTrue(npmInstall.contains("target_name=\"${'$'}{target##*/}\""))
-        assertTrue(npmInstall.contains("store_prefix=\"/root/.local/share/pnpm/store/v11/files/"))
-        assertTrue(npmInstall.contains("[ ! -L \"${'$'}store_file\" ]"))
-        assertTrue(npmInstall.contains("*/workspace/*|/workspace/*"))
-        assertTrue(npmInstall.contains("workspace_source=\"/workspace/"))
         assertTrue(npmInstall.contains("npm cache clean --force"))
         assertTrue(npmInstall.contains("@deepseek-ai/.dsh-*"))
         assertTrue(npmInstall.contains("if ! command -v pnpm"))
@@ -195,16 +189,36 @@ class EnvironmentSetupLogicTest {
         assertTrue(npmInstall.contains("test -x /root/.npm-global/bin/dsh"))
         assertTrue(npmInstall.contains("dsh-acp-android"))
         assertTrue(npmInstall.contains("--expose-internals"))
+        assertTrue(npmInstall.contains("omnibot-acp-headless.patch.yml"))
+        assertTrue(npmInstall.contains("dsh-plugin-mgr"))
+        assertTrue(npmInstall.contains("dsh-plugin-studio"))
+        assertTrue(npmInstall.contains("- id: uisfx"))
         assertTrue(npmInstall.contains("node-pty"))
         assertTrue(npmInstall.contains("npm_config_build_from_source=true"))
         assertTrue(npmInstall.contains("npm rebuild --prefix"))
-        assertTrue(npmInstall.contains("find \"${'$'}node_root\" -type l"))
-        assertTrue(npmInstall.contains("${'$'}DSH_HOME/profiles/acp/node_modules"))
-        assertTrue(npmInstall.contains("${'$'}DSH_HOME/profiles/node_modules"))
-        assertTrue(npmInstall.contains("rm -f \"${'$'}link\""))
-        assertTrue(npmInstall.contains("npm_config_node_linker=hoisted"))
-        assertTrue(npmInstall.contains("npm_config_package_import_method=copy"))
+        assertTrue(npmInstall.contains("command -v apk"))
+        assertTrue(npmInstall.contains("command -v apt-get"))
+        assertTrue(npmInstall.contains("build-essential python3"))
+        assertTrue(npmInstall.contains("PNPM_CONFIG_NODE_LINKER=hoisted"))
+        assertTrue(npmInstall.contains("PNPM_CONFIG_PACKAGE_IMPORT_METHOD=copy"))
+        assertTrue(npmInstall.contains("pnpm config set --location=project nodeLinker hoisted"))
+        assertTrue(npmInstall.contains("pnpm config set --location=project packageImportMethod copy"))
+        assertTrue(npmInstall.contains("dsh plugin --profile acp add -w"))
+        assertTrue(npmInstall.contains("dsh_acp_profile_is_healthy"))
+        assertTrue(npmInstall.contains("PROFILE_LAYOUT_MARKER"))
+        assertTrue(npmInstall.contains("rm -rf \"${'$'}DSH_HOME/profiles\""))
+        assertTrue(npmInstall.contains("timeout 30 dsh-acp-android --profile acp --dump-config"))
+        assertTrue(npmInstall.contains("plugin command exited"))
+        assertTrue(!npmInstall.contains("npm_config_node_linker"))
+        assertTrue(!npmInstall.contains("npm_config_package_import_method"))
+        assertTrue(!npmInstall.contains("materialize_pnpm_link"))
+        assertTrue(!npmInstall.contains("pnpm install --force"))
         assertTrue(npmInstall.contains("${'$'}DSH_PACKAGE_ROOT/node_modules"))
+        // Preparation may repair the official adapter, but it must never
+        // delete user-installed plugins from the persistent ACP profile.
+        assertTrue(!npmInstall.contains("prune_acp_profile_plugins"))
+        assertTrue(!npmInstall.contains("dsh plugin --profile acp remove"))
+        assertTrue(npmInstall.contains("@openma/deepseek-harness-acp"))
         assertTrue(
             commands.contains(
                 "ln -sf /root/.npm-global/bin/dsh /usr/local/bin/dsh || true"
@@ -223,14 +237,48 @@ class EnvironmentSetupLogicTest {
         assertTrue(command.contains("command -v dsh-acp-android"))
         assertTrue(command.contains("/root/.dsh/omnibot-acp/profiles/acp/package.json"))
         assertTrue(command.contains("@openma/deepseek-harness-acp/package.json"))
-        assertTrue(command.contains("node-pty/lib/utils.js"))
-        assertTrue(command.contains(".local/share/pnpm/store"))
-        assertTrue(command.contains("/root/.npm-global/lib/node_modules/@openma"))
-        assertTrue(command.contains("readlink"))
-        assertTrue(command.contains("import fs from 'node:fs'; JSON.parse(fs.readFileSync"))
-        assertTrue(command.contains("await import('@openma/deepseek-harness-acp/plugin')"))
-        assertTrue(command.contains("await import('@openma/deepseek-harness-acp/stdio')"))
+        assertTrue(command.contains("require('/root/.npm-global/lib/node_modules/@deepseek-ai/dsh/node_modules/node-pty')"))
+        assertTrue(command.contains("nodeLinker:[[:space:]]*hoisted"))
+        assertTrue(command.contains("packageImportMethod:[[:space:]]*copy"))
+        assertTrue(command.contains("const profile=JSON.parse(fs.readFileSync"))
+        assertTrue(command.contains("bundles.includes('@openma/deepseek-harness-acp')"))
+        assertTrue(command.contains("deepseek-harness-acp/dist/plugin.js"))
+        assertTrue(command.contains("deepseek-harness-acp/dist/stdio.js"))
+        assertTrue(command.contains("test ! -L"))
+        assertTrue(!command.contains("await import('@openma/deepseek-harness-acp/plugin')"))
+        assertTrue(!command.contains("await import('@openma/deepseek-harness-acp/stdio')"))
         assertTrue(command.contains("cd /root/.dsh/omnibot-acp/profiles/acp"))
+        assertTrue(!command.contains("readlink"))
+    }
+
+    @Test
+    fun buildInstallCommands_installsOfficialKimiCodeRuntime() {
+        val commands = EnvironmentSetupLogic.buildInstallCommands(
+            selectedPackageIds = listOf("kimi"),
+            repositorySetupCommand = "",
+        )
+
+        val apkAdd = commands.first { it.contains("omnibot_apk_add") }
+        assertTrue(apkAdd.contains("nodejs"))
+        assertTrue(apkAdd.contains("npm"))
+        assertTrue(apkAdd.contains("git"))
+        val npmInstall = commands.first { it.contains("@moonshot-ai/kimi-code@latest") }
+        assertTrue(npmInstall.contains("--no-audit"))
+        assertTrue(npmInstall.contains("registry.npmmirror.com"))
+        assertTrue(
+            commands.contains(
+                "ln -sf /root/.npm-global/bin/kimi /usr/local/bin/kimi || true",
+            ),
+        )
+    }
+
+    @Test
+    fun buildInventoryProbeCommand_requiresKimiCodeNodeVersion() {
+        val command = EnvironmentSetupLogic.buildInventoryProbeCommand(listOf("kimi"))
+
+        assertTrue(command.contains("command -v kimi"))
+        assertTrue(command.contains("major === 22 && minor < 19"))
+        assertTrue(command.contains("kimi --version"))
     }
 
     @Test
@@ -345,7 +393,15 @@ class EnvironmentSetupLogicTest {
     @Test
     fun buildSetupScript_isShellSafeForEveryPackageCombination() {
         val packageIds = EnvironmentSetupLogic.packageDefinitions.map { it.id }
-        val tempDir = Files.createTempDirectory("omni-setup-script-test").toFile()
+        val workingModes = listOf(WorkingMode.ALPINE, WorkingMode.UBUNTU)
+        val processes = workingModes.associateWith { workingMode ->
+            ProcessBuilder("/bin/sh", "-n")
+                .redirectErrorStream(true)
+                .start()
+        }
+        val writers = processes.mapValues { (_, process) ->
+            process.outputStream.bufferedWriter()
+        }
 
         try {
             val total = 1 shl packageIds.size
@@ -353,7 +409,7 @@ class EnvironmentSetupLogicTest {
                 val selectedPackageIds = packageIds.filterIndexed { index, _ ->
                     mask and (1 shl index) != 0
                 }
-                listOf(WorkingMode.ALPINE, WorkingMode.UBUNTU).forEach { workingMode ->
+                workingModes.forEach { workingMode ->
                     val repositorySetupCommand = if (workingMode == WorkingMode.UBUNTU) {
                         UbuntuRepositoryManager.buildRepositorySetupCommand(
                             UbuntuPackageMirror.TSINGHUA
@@ -366,30 +422,32 @@ class EnvironmentSetupLogicTest {
                         repositorySetupCommand = repositorySetupCommand,
                         workingMode = workingMode
                     )
-                    val scriptFile = File(tempDir, "setup-$workingMode-$mask.sh")
-                    scriptFile.writeText(
-                        EnvironmentSetupLogic.buildSetupScript(
-                            commands = distroCommands,
-                            selectedPackageIds = selectedPackageIds,
-                            workingMode = workingMode
-                        )
+                    val script = EnvironmentSetupLogic.buildSetupScript(
+                        commands = distroCommands,
+                        selectedPackageIds = selectedPackageIds,
+                        workingMode = workingMode
                     )
-
-                    val process = ProcessBuilder("/bin/sh", "-n", scriptFile.absolutePath)
-                        .redirectErrorStream(true)
-                        .start()
-                    val output = process.inputStream.bufferedReader().use { it.readText() }.trim()
-                    val exitCode = process.waitFor()
-
-                    assertEquals(
-                        "Shell syntax check failed for mode=$workingMode $selectedPackageIds: $output",
-                        0,
-                        exitCode
-                    )
+                    val writer = writers.getValue(workingMode)
+                    writer.write("# combination mask=$mask\n")
+                    writer.write(script)
+                    writer.write("\n")
                 }
             }
         } finally {
-            tempDir.deleteRecursively()
+            writers.values.forEach { writer ->
+                runCatching { writer.close() }
+            }
+        }
+
+        processes.forEach { (workingMode, process) ->
+            val output = process.inputStream.bufferedReader().use { it.readText() }.trim()
+            val exitCode = process.waitFor()
+
+            assertEquals(
+                "Shell syntax check failed for mode=$workingMode: $output",
+                0,
+                exitCode
+            )
         }
     }
 }

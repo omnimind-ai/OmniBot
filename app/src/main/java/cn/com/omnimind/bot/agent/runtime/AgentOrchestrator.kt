@@ -16,7 +16,6 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.coroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -99,17 +98,17 @@ class AgentOrchestrator(
     private val eventAdapter: AgentEventAdapter,
     private val model: String,
     private val toolImageContinuationPolicy: AgentToolImageContinuationPolicy =
-        AgentToolImageContinuationPolicy.DEFAULT
+        AgentToolImageContinuationPolicy.DEFAULT,
+    /**
+     * A child orchestrator may borrow a parent's router. Only the owner may
+     * release the handlers and their process/session resources.
+     */
+    private val ownsToolRouter: Boolean = true
 ) {
     private data class RetryDecision(
         val retryable: Boolean,
         val reason: String
     )
-
-    private class ExhaustedRetryableTurnFailure(
-        val errorMessage: String,
-        cause: Throwable
-    ) : RuntimeException(errorMessage, cause)
 
     private class TerminalTurnRequestFailure(
         val errorMessage: String,
@@ -120,14 +119,6 @@ class AgentOrchestrator(
         val errorMessage: String,
         cause: Throwable
     ) : RuntimeException(errorMessage, cause)
-
-    private data class TextOnlyStopDecision(
-        val allowFinish: Boolean,
-        val shouldRecover: Boolean,
-        val taskStillExecuting: Boolean,
-        val completeFinalAnswer: Boolean,
-        val reason: String
-    )
 
     private data class SkillCompletionPolicy(
         val skillId: String,
@@ -148,7 +139,7 @@ class AgentOrchestrator(
         val promptCacheKey: String? = null,
         val contextCompactor: AgentContextCompactionController? = null,
         val maxModelRounds: Int? = null,
-        val maxCompletionTokens: Int = 16384
+        val maxCompletionTokens: Int? = null
     )
 
     private val json = Json {
@@ -158,11 +149,6 @@ class AgentOrchestrator(
         prettyPrint = true
     }
     private val tag = "AgentOrchestrator"
-    private val maxLengthContinuationRounds = 3
-    private val maxMissingToolCallRecoveryRounds = 1
-    private val maxTurnRequestRetries = 3
-    private val turnRetryDelaysMs = listOf(500L, 1500L, 3000L)
-
     private data class TurnUsage(
         val promptTokens: Int? = null,
         val completionTokens: Int? = null,
@@ -206,6 +192,10 @@ class AgentOrchestrator(
             .take(12)
     }
 
+    private fun contextStateFingerprint(messages: List<ChatCompletionMessage>): String {
+        return shortFingerprint(json.encodeToString(messages))
+    }
+
     private fun resolveTurnUsage(turn: ChatCompletionTurn): TurnUsage {
         val usage = turn.usage
         val promptTokens = usage?.promptTokens
@@ -239,7 +229,6 @@ class AgentOrchestrator(
     suspend fun run(input: Input): AgentResult {
         val callback = input.callback
         val memory: AgentChatMemory = MutableListChatMemory(input.initialMessages)
-        val primaryUserGoal = resolvePrimaryUserGoal(input)
         val completionPolicies = resolveSkillCompletionPolicies(input.executionEnv.resolvedSkills)
         // Keep this as an explicit loop instead of the inline `mapTo` call.
         // This code runs inside the ACP request coroutine and can be resumed
@@ -266,14 +255,49 @@ class AgentOrchestrator(
         var lastDecodeTokensPerSecond: Double? = null
         var completedModelRounds = 0
         var lengthContinuationRounds = 0
-        var missingToolCallRecoveryRounds = 0
         var contextOverflowRecoveryRounds = 0
+        val contextCompactionStates = mutableSetOf(
+            contextStateFingerprint(input.initialMessages)
+        )
         var terminated = false
         var terminalError: AgentResult.Error? = null
 
+        suspend fun compactContextForOverflow(): Boolean {
+            val settings = input.executionEnv.runtimeSettings
+            val maxRecoveryRounds = settings.maxContextOverflowRecoveryRounds
+            if (maxRecoveryRounds != null &&
+                contextOverflowRecoveryRounds >= maxRecoveryRounds
+            ) {
+                return false
+            }
+            val compacted = input.contextCompactor?.compactForOverflow(
+                conversationId = input.conversationId,
+                conversationMode = input.executionEnv.conversationMode,
+                latestPromptTokens = latestPromptTokens,
+                messages = memory.snapshot(),
+                promptTokenThresholdOverride = latestPromptTokenThreshold,
+                callback = callback
+            ) ?: return false
+            if (!contextCompactionStates.add(contextStateFingerprint(compacted))) {
+                logInfo(tag, "context_overflow compacted=false reason=no_progress")
+                return false
+            }
+            memory.replaceAll(compacted)
+            contextOverflowRecoveryRounds += 1
+            completedModelRounds = (completedModelRounds - 1).coerceAtLeast(0)
+            logInfo(
+                tag,
+                "context_overflow compacted=true " +
+                    "retry=$contextOverflowRecoveryRounds/${maxRecoveryRounds ?: "unlimited"}"
+            )
+            return true
+        }
+
         try {
             roundLoop@ while (true) {
-                val maxModelRounds = input.maxModelRounds?.coerceAtLeast(1)
+                val settings = input.executionEnv.runtimeSettings
+                val maxModelRounds = (input.maxModelRounds ?: settings.maxModelRounds)
+                    ?.takeIf { it > 0 }
                 if (maxModelRounds != null && completedModelRounds >= maxModelRounds) {
                     val message = t(
                         "Agent 已达到 $maxModelRounds 轮模型调用上限。",
@@ -317,12 +341,13 @@ class AgentOrchestrator(
                     "disabled",
                 )
                 val turn = try {
-                    streamTurnWithRetry(
+                    streamTurnWithTransportPolicy(
                         callback = callback,
                         request = ChatCompletionRequest(
                             messages = requestMessages,
                             model = model,
-                            maxCompletionTokens = input.maxCompletionTokens.coerceIn(1, 16384),
+                            maxCompletionTokens = input.maxCompletionTokens
+                                ?: settings.maxCompletionTokens,
                             stream = true,
                             streamOptions = ChatCompletionStreamOptions(includeUsage = true),
                             enableThinking = if (disableThinking) false else null,
@@ -339,32 +364,8 @@ class AgentOrchestrator(
                         ),
                         assistantContentPrefix = assistantContentPrefix
                     )
-                } catch (e: ExhaustedRetryableTurnFailure) {
-                    callback.onError(e.errorMessage, true)
-                    terminalError = AgentResult.Error(e.errorMessage, e)
-                    terminated = true
-                    break@roundLoop
                 } catch (e: ContextOverflowTurnFailure) {
-                    val compacted = if (contextOverflowRecoveryRounds < 1) {
-                        input.contextCompactor?.compactForOverflow(
-                            conversationId = input.conversationId,
-                            conversationMode = input.executionEnv.conversationMode,
-                            latestPromptTokens = latestPromptTokens,
-                            messages = memory.snapshot(),
-                            promptTokenThresholdOverride = latestPromptTokenThreshold,
-                            callback = callback
-                        )
-                    } else {
-                        null
-                    }
-                    if (compacted != null) {
-                        memory.replaceAll(compacted)
-                        contextOverflowRecoveryRounds += 1
-                        completedModelRounds = (completedModelRounds - 1).coerceAtLeast(0)
-                        logInfo(
-                            tag,
-                            "context_overflow compacted=true retry=$contextOverflowRecoveryRounds/1"
-                        )
+                    if (compactContextForOverflow()) {
                         continue@roundLoop
                     }
                     callback.onError(e.errorMessage, true)
@@ -390,29 +391,16 @@ class AgentOrchestrator(
                         completionTokens = turnUsage.completionTokens,
                         contextCapacityTokens = latestPromptTokenThreshold
                     ) &&
-                    contextOverflowRecoveryRounds < 1
+                    (settings.maxContextOverflowRecoveryRounds == null ||
+                        contextOverflowRecoveryRounds < settings.maxContextOverflowRecoveryRounds)
                 ) {
-                    val compacted = input.contextCompactor?.compactForOverflow(
-                        conversationId = input.conversationId,
-                        conversationMode = input.executionEnv.conversationMode,
-                        latestPromptTokens = latestPromptTokens,
-                        messages = memory.snapshot(),
-                        promptTokenThresholdOverride = latestPromptTokenThreshold,
-                        callback = callback
-                    )
-                    if (compacted != null) {
-                        memory.replaceAll(compacted)
-                        contextOverflowRecoveryRounds += 1
-                        completedModelRounds = (completedModelRounds - 1).coerceAtLeast(0)
-                        logInfo(
-                            tag,
-                            "context_capacity_length_stop compacted=true " +
-                                "retry=$contextOverflowRecoveryRounds/1"
-                        )
+                    if (compactContextForOverflow()) {
                         continue@roundLoop
                     }
                 }
                 contextOverflowRecoveryRounds = 0
+                contextCompactionStates.clear()
+                contextCompactionStates += contextStateFingerprint(memory.snapshot())
                 lastPrefillTokensPerSecond =
                     turn.usage?.prefillTokensPerSecond ?: lastPrefillTokensPerSecond
                 lastDecodeTokensPerSecond =
@@ -471,6 +459,16 @@ class AgentOrchestrator(
                 if (toolCalls.isNotEmpty() && isLengthFinishReason(lastFinishReason)) {
                     val reason = buildTruncatedToolCallMessage()
                     toolCalls.forEach { toolCall ->
+                        // Even a rejected/truncated call must follow ACP's
+                        // start -> terminal-update lifecycle. The bridge
+                        // deliberately drops terminal updates for unknown
+                        // ids, so do not emit a completion without its start.
+                        callback.onToolCallStart(
+                            toolCall.id,
+                            toolCall.function.name,
+                            JsonObject(emptyMap()),
+                            toolRegistry.runtimeDescriptor(toolCall.function.name).toolType,
+                        )
                         val result = ToolExecutionResult.Error(
                             toolName = toolCall.function.name,
                             message = reason
@@ -493,7 +491,6 @@ class AgentOrchestrator(
                     }
                     accumulatedAssistantContent = ""
                     lengthContinuationRounds = 0
-                    missingToolCallRecoveryRounds = 0
                     logInfo(
                         tag,
                         "round=$round rejected_truncated_tool_calls=${toolCalls.size} " +
@@ -504,16 +501,17 @@ class AgentOrchestrator(
 
                 if (toolCalls.isEmpty()) {
                     if (
-                        isLengthFinishReason(lastFinishReason) &&
+                                isLengthFinishReason(lastFinishReason) &&
                         rawAssistantContent.isNotBlank() &&
-                        lengthContinuationRounds < maxLengthContinuationRounds
+                        (settings.maxLengthContinuationRounds == null ||
+                            lengthContinuationRounds < settings.maxLengthContinuationRounds)
                     ) {
                         lengthContinuationRounds += 1
                         accumulatedAssistantContent = lastAssistantContent
                         memory.add(buildLengthContinuationMessage())
                         logInfo(
                             tag,
-                            "round=$round finish_reason=${lastFinishReason.orEmpty()} auto_continue=$lengthContinuationRounds/${maxLengthContinuationRounds} accumulated_content_len=${accumulatedAssistantContent.length}"
+                            "round=$round finish_reason=${lastFinishReason.orEmpty()} auto_continue=$lengthContinuationRounds/${settings.maxLengthContinuationRounds ?: "unlimited"} accumulated_content_len=${accumulatedAssistantContent.length}"
                         )
                         continue@roundLoop
                     }
@@ -536,8 +534,8 @@ class AgentOrchestrator(
                         }
                         val recoveryCount = completionRecoveryRounds
                             .getOrDefault(pendingCompletion.policy.skillId, 0)
-                        val maxRecoveryRounds = pendingCompletion.policy.completionTools.size + 1
-                        if (recoveryCount < maxRecoveryRounds) {
+                        val maxRecoveryRounds = settings.maxMissingToolCallRecoveryRounds
+                        if (maxRecoveryRounds == null || recoveryCount < maxRecoveryRounds) {
                             completionRecoveryRounds[pendingCompletion.policy.skillId] = recoveryCount + 1
                             memory.add(buildSkillCompletionRecoveryMessage(pendingCompletion))
                             logInfo(
@@ -558,34 +556,6 @@ class AgentOrchestrator(
                         terminated = true
                         break@roundLoop
                     }
-                    val textOnlyStopDecision = evaluateTextOnlyStopDecision(
-                        finishReason = lastFinishReason,
-                        assistantContent = lastAssistantContent,
-                        userGoal = primaryUserGoal,
-                        roundStartsAfterToolResult = roundStartsAfterToolResult,
-                        hasPriorToolCall = executedTools.any { it !is ToolExecutionResult.ChatMessage }
-                    )
-                    logInfo(
-                        tag,
-                        "round=$round text_only_stop allow_finish=${textOnlyStopDecision.allowFinish} " +
-                            "should_recover=${textOnlyStopDecision.shouldRecover} " +
-                            "task_still_executing=${textOnlyStopDecision.taskStillExecuting} " +
-                            "complete_final_answer=${textOnlyStopDecision.completeFinalAnswer} " +
-                            "reason=${textOnlyStopDecision.reason}"
-                    )
-                    if (
-                        textOnlyStopDecision.shouldRecover &&
-                        missingToolCallRecoveryRounds < maxMissingToolCallRecoveryRounds
-                    ) {
-                        missingToolCallRecoveryRounds += 1
-                        memory.add(buildMissingToolCallRecoveryMessage())
-                        logInfo(
-                            tag,
-                            "round=$round no_tool_call_with_action_intent " +
-                                "auto_recover=$missingToolCallRecoveryRounds/$maxMissingToolCallRecoveryRounds"
-                        )
-                        continue@roundLoop
-                    }
                     val fallbackMessage = lastAssistantContent.ifBlank {
                         "我已完成思考，但暂时无法生成回复，请重试。"
                     }
@@ -603,7 +573,6 @@ class AgentOrchestrator(
                 }
                 accumulatedAssistantContent = ""
                 lengthContinuationRounds = 0
-                missingToolCallRecoveryRounds = 0
 
                 var advanceToNextRound = false
                 var pendingToolCallBackfillReason: String? = null
@@ -631,6 +600,12 @@ class AgentOrchestrator(
                         val descriptor = toolRegistry.runtimeDescriptor(toolCall.function.name)
                         descriptorMap[toolCall.id] = descriptor
                         executedTools.add(result)
+                        callback.onToolCallStart(
+                            toolCall.id,
+                            toolCall.function.name,
+                            JsonObject(emptyMap()),
+                            descriptor.toolType,
+                        )
                         callback.onToolCallComplete(
                             toolCall.id,
                             toolCall.function.name,
@@ -673,6 +648,12 @@ class AgentOrchestrator(
                             failureStage = "argument_parse"
                         )
                         executedTools.add(result)
+                        callback.onToolCallStart(
+                            toolCall.id,
+                            toolCall.function.name,
+                            JsonObject(emptyMap()),
+                            descriptor.toolType,
+                        )
                         callback.onToolCallComplete(
                             toolCall.id,
                             toolCall.function.name,
@@ -715,6 +696,12 @@ class AgentOrchestrator(
                             failureStage = "argument_validation"
                         )
                         executedTools.add(result)
+                        callback.onToolCallStart(
+                            toolCall.id,
+                            toolCall.function.name,
+                            parsedArgs,
+                            descriptor.toolType,
+                        )
                         callback.onToolCallComplete(
                             toolCall.id,
                             toolCall.function.name,
@@ -880,7 +867,7 @@ class AgentOrchestrator(
                             if (
                                 !terminated &&
                                 !advanceToNextRound &&
-                                isExclusiveTurnBoundaryTool(call.function.name)
+                                AgentToolConcurrencyPolicy.isTurnBoundary(call.function.name)
                             ) {
                                 advanceToNextRound = true
                                 breakBatchLoopAfterPost = true
@@ -921,7 +908,11 @@ class AgentOrchestrator(
                 }
             }
         } catch (e: CancellationException) {
-            throw e
+            // Cancellation is a normal ACP prompt outcome. Convert it at the
+            // Agent boundary so Android does not rethrow a pending coroutine
+            // exception from the protocol dispatcher; the ACP adapter maps
+            // this result to PromptResponse(CANCELLED).
+            return AgentResult.Error("Agent execution cancelled", e)
         } catch (e: Exception) {
             // Keep the same retry policy for failures that escape the
             // streaming-specific branches.  In particular, transient tool
@@ -939,7 +930,9 @@ class AgentOrchestrator(
             callback.onError(message, decision.retryable)
             return AgentResult.Error(message, e)
         } finally {
-            runCatching { toolRouter.dispose() }
+            if (ownsToolRouter) {
+                runCatching { toolRouter.dispose() }
+            }
         }
 
         terminalError?.let { return it }
@@ -987,73 +980,53 @@ class AgentOrchestrator(
         return finalResult
     }
 
-    private suspend fun streamTurnWithRetry(
+    private suspend fun streamTurnWithTransportPolicy(
         callback: AgentCallback,
         request: ChatCompletionRequest,
         assistantContentPrefix: String
     ): ChatCompletionTurn {
-        var retryCount = 0
-        while (true) {
-            try {
-                return llmClient.streamTurn(
-                    request = request,
-                    onReasoningUpdate = { reasoning ->
-                        if (reasoning.isNotBlank()) {
-                            callback.onThinkingUpdate(normalizeThinkingText(reasoning))
-                        }
-                    },
-                    onContentUpdate = { content ->
-                        if (content.isNotBlank()) {
-                            callback.onChatMessage(
-                                combineContinuationContent(
-                                    prefix = assistantContentPrefix,
-                                    content = content
-                                ),
-                                false
-                            )
-                        }
+        try {
+            // AgentLlmClient is the sole owner of transport retries. Retrying
+            // this method would replay the complete logical round, including
+            // streamed reasoning and tool intent, and can produce duplicate
+            // thoughts/cards. A failed turn is surfaced to the UI instead.
+            return llmClient.streamTurn(
+                request = request,
+                onReasoningUpdate = { reasoning ->
+                    if (reasoning.isNotBlank()) {
+                        callback.onThinkingUpdate(normalizeThinkingText(reasoning))
                     }
-                )
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                if (isContextOverflowTurnFailure(e)) {
-                    val requestError = e as AgentStreamRequestException
-                    throw ContextOverflowTurnFailure(
-                        errorMessage = formatTurnFailureReason(
-                            requestError.statusCode,
-                            requestError.reason
-                        ),
-                        cause = e
-                    )
-                }
-                val decision = classifyRetryableTurnFailure(e)
-                val canRetry = decision.retryable && retryCount < maxTurnRequestRetries
-                if (!canRetry) {
-                    if (decision.retryable) {
-                        throw ExhaustedRetryableTurnFailure(
-                            errorMessage = decision.reason,
-                            cause = e
+                },
+                onContentUpdate = { content ->
+                    if (content.isNotBlank()) {
+                        callback.onChatMessage(
+                            combineContinuationContent(
+                                prefix = assistantContentPrefix,
+                                content = content
+                            ),
+                            false
                         )
                     }
-                    throw TerminalTurnRequestFailure(
-                        errorMessage = decision.reason,
-                        cause = e
-                    )
                 }
-
-                retryCount += 1
-                val retryDelayMs = turnRetryDelaysMs
-                    .getOrElse(retryCount - 1) { turnRetryDelaysMs.last() }
-                callback.onRetrying(
-                    retryCount = retryCount,
-                    maxRetries = maxTurnRequestRetries,
-                    retryDelayMs = retryDelayMs,
-                    message = buildRetryingStatusMessage(retryCount, maxTurnRequestRetries),
-                    retryReason = decision.reason
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (isContextOverflowTurnFailure(e)) {
+                val requestError = e as AgentStreamRequestException
+                throw ContextOverflowTurnFailure(
+                    errorMessage = formatTurnFailureReason(
+                        requestError.statusCode,
+                        requestError.reason
+                    ),
+                    cause = e
                 )
-                delay(retryDelayMs)
             }
+            val decision = classifyRetryableTurnFailure(e)
+            throw TerminalTurnRequestFailure(
+                errorMessage = decision.reason,
+                cause = e
+            )
         }
     }
 
@@ -1141,8 +1114,9 @@ class AgentOrchestrator(
             result = result,
             extras = failureLearning?.toPayload() ?: emptyMap()
         )
+        val maxToolResultChars = env.runtimeSettings.maxToolResultChars
         val offloadArtifact = if (
-            rawTextContent.length > AgentEventAdapter.MAX_MODEL_TOOL_RESULT_CHARS
+            maxToolResultChars != null && rawTextContent.length > maxToolResultChars
         ) {
             runCatching {
                 env.workspaceManager.writeOffload(
@@ -1156,7 +1130,8 @@ class AgentOrchestrator(
         }
         val textContent = eventAdapter.compactToolResultContent(
             rawContent = rawTextContent,
-            offloadArtifact = offloadArtifact
+            offloadArtifact = offloadArtifact,
+            maxChars = maxToolResultChars,
         )
         val imageDataUrl = (result as? ToolExecutionResult.ContextResult)
             ?.imageDataUrl
@@ -1173,11 +1148,31 @@ class AgentOrchestrator(
             )
         }
 
+        val skippedUnsupportedBrowserImage =
+            result is ToolExecutionResult.ContextResult &&
+                !result.imageDataUrl.isNullOrBlank() &&
+                imageDataUrl == null &&
+                toolCall.function.name.equals("browser_use", ignoreCase = true)
+        val modelTextContent = if (skippedUnsupportedBrowserImage) {
+            buildString {
+                append(textContent)
+                append("\n\n")
+                append(
+                    t(
+                        zh = "当前模型不支持图片输入，本次截图未发送图片。请继续使用 browser_use 的 get_text 或 get_readable 读取当前页面文字；复用结果中的 tab_id，不要再次请求 read_image。",
+                        en = "The current model does not support image input, so the screenshot was not sent. Continue with browser_use get_text or get_readable on the same tab_id; do not request read_image again."
+                    )
+                )
+            }
+        } else {
+            textContent
+        }
+
         val content: JsonElement = if (imageDataUrl != null) {
             buildJsonArray {
                 add(buildJsonObject {
                     put("type", "text")
-                    put("text", textContent)
+                    put("text", modelTextContent)
                 })
                 add(buildJsonObject {
                     put("type", "image_url")
@@ -1187,7 +1182,7 @@ class AgentOrchestrator(
                 })
             }
         } else {
-            JsonPrimitive(textContent)
+            JsonPrimitive(modelTextContent)
         }
 
         val toolResultMessage = ChatCompletionMessage(
@@ -1232,6 +1227,15 @@ class AgentOrchestrator(
                 toolName = toolCall.function.name,
                 message = buildSyntheticToolSkipMessage(reason)
             )
+            val displayArguments = runCatching {
+                parseToolArguments(toolCall.function.arguments)
+            }.getOrDefault(JsonObject(emptyMap()))
+            callback.onToolCallStart(
+                toolCall.id,
+                toolCall.function.name,
+                displayArguments,
+                descriptor.toolType,
+            )
             callback.onToolCallComplete(
                 toolCall.id,
                 toolCall.function.name,
@@ -1263,15 +1267,6 @@ class AgentOrchestrator(
             "本轮未执行该工具。原因：$reason 如仍需要此工具，请由模型在下一轮重新发起。",
             "This tool was not executed in this turn. Reason: $reason If it is still needed, the model should call it again in the next turn."
         )
-    }
-
-    private fun isExclusiveTurnBoundaryTool(toolName: String): Boolean {
-        return toolName == "terminal_execute" ||
-            toolName == "android_privileged_action" ||
-            toolName == "android_privileged_session_start" ||
-            toolName == "android_privileged_session_exec" ||
-            toolName == "android_privileged_session_read" ||
-            toolName == "android_privileged_session_stop"
     }
 
     private fun isUserStoppedVlmTask(
@@ -1452,10 +1447,13 @@ class AgentOrchestrator(
         // exact request from the orchestrator only multiplies a dead-provider
         // wait (45s x 3 previously) and leaves ACP/UI stuck on "thinking".
         // Surface the failure so the user can retry explicitly.
-        if (error.message.orEmpty().contains("chat completion stream idle timeout")) {
+        if (AgentRuntimeErrorSupport.failureKind(error) ==
+            AgentRuntimeErrorSupport.PROVIDER_STREAM_IDLE_TIMEOUT
+        ) {
             return RetryDecision(
                 retryable = false,
-                reason = error.message.orEmpty()
+                reason = AgentRuntimeErrorSupport.userFacingMessage(error)
+                    ?: error.message.orEmpty()
             )
         }
         if (error is AgentStreamRequestException) {
@@ -1555,27 +1553,6 @@ class AgentOrchestrator(
         return statusCode?.let { "HTTP $it: $normalizedReason" } ?: normalizedReason
     }
 
-    private fun buildRetryingStatusMessage(retryCount: Int, maxRetries: Int): String {
-        return t(
-            "连接中断，正在重试 $retryCount/$maxRetries…",
-            "Connection interrupted. Retrying $retryCount/$maxRetries..."
-        )
-    }
-
-    private fun resolvePrimaryUserGoal(input: Input): String {
-        val envUserMessage = AgentTextSanitizer.sanitizeUtf16(input.executionEnv.userMessage).trim()
-        if (envUserMessage.isNotEmpty()) {
-            return envUserMessage
-        }
-        return input.initialMessages
-            .asReversed()
-            .firstOrNull { it.role == "user" }
-            ?.contentText()
-            ?.let(AgentTextSanitizer::sanitizeUtf16)
-            ?.trim()
-            .orEmpty()
-    }
-
     private fun resolveSkillCompletionPolicies(
         skills: List<ResolvedSkillContext>
     ): List<SkillCompletionPolicy> {
@@ -1648,239 +1625,11 @@ class AgentOrchestrator(
         }
     }
 
-    private fun evaluateTextOnlyStopDecision(
-        finishReason: String?,
-        assistantContent: String,
-        userGoal: String,
-        roundStartsAfterToolResult: Boolean,
-        hasPriorToolCall: Boolean
-    ): TextOnlyStopDecision {
-        if (!isStopFinishReason(finishReason)) {
-            return TextOnlyStopDecision(
-                allowFinish = true,
-                shouldRecover = false,
-                taskStillExecuting = false,
-                completeFinalAnswer = true,
-                reason = "non_stop_finish_reason"
-            )
-        }
-        val normalized = AgentTextSanitizer.sanitizeUtf16(assistantContent).trim()
-        if (normalized.isEmpty()) {
-            return TextOnlyStopDecision(
-                allowFinish = true,
-                shouldRecover = false,
-                taskStillExecuting = false,
-                completeFinalAnswer = false,
-                reason = "blank_text_reply"
-            )
-        }
-        val actionGoal = userGoalRequiresExternalAction(userGoal)
-        val actionIntent = containsActionIntentWithoutToolCall(normalized)
-        val intermediateUpdate = looksLikeIntermediateExecutionUpdate(normalized)
-        val explicitFinalCue = containsExplicitFinalAnswerCue(normalized)
-        val answerTooThinForActionGoal =
-            actionGoal &&
-                normalized.length < 18 &&
-                !explicitFinalCue &&
-                !roundStartsAfterToolResult
-        val completeFinalAnswer =
-            looksLikeCompleteFinalAnswer(
-                content = normalized,
-                explicitFinalCue = explicitFinalCue,
-                actionIntent = actionIntent,
-                intermediateUpdate = intermediateUpdate,
-                answerTooThinForActionGoal = answerTooThinForActionGoal
-            )
-        // 仅在用户目标本身就需要外部动作（actionGoal）时，才把"过渡语/中间态描述"
-        // 视作未完成执行。否则纯聊天里的"接下来…""我先看一下你的想法…"会被误判，
-        // 触发硬编码的 missingToolCallRecovery，导致用户感知到的卡顿与重复回复。
-        val taskStillExecuting =
-            roundStartsAfterToolResult ||
-                (hasPriorToolCall && (actionIntent || intermediateUpdate)) ||
-                (actionGoal && (actionIntent || intermediateUpdate)) ||
-                answerTooThinForActionGoal
-        val shouldRecover = taskStillExecuting && !completeFinalAnswer
-        val reason = when {
-            roundStartsAfterToolResult && !completeFinalAnswer -> "pending_tool_chain"
-            actionGoal && actionIntent && !completeFinalAnswer -> "action_intent_without_tool_call"
-            actionGoal && intermediateUpdate && !completeFinalAnswer -> "intermediate_status_without_result"
-            answerTooThinForActionGoal -> "action_goal_reply_too_thin"
-            completeFinalAnswer -> "complete_final_answer"
-            else -> "plain_text_terminal_reply"
-        }
-        return TextOnlyStopDecision(
-            allowFinish = !shouldRecover,
-            shouldRecover = shouldRecover,
-            taskStillExecuting = taskStillExecuting,
-            completeFinalAnswer = completeFinalAnswer,
-            reason = reason
-        )
-    }
-
-    private fun containsActionIntentWithoutToolCall(content: String): Boolean {
-        val normalized = content.lowercase()
-        val chineseActionCues = listOf(
-            "让我查一下",
-            "让我查一查",
-            "让我查询一下",
-            "我先查一下",
-            "我先查询一下",
-            "让我检查一下",
-            "我先检查一下",
-            "让我搜一下",
-            "让我搜索一下",
-            "我先搜一下",
-            "我先搜索一下",
-            "让我看一下",
-            "让我看一看",
-            "我先看一下",
-            "我先看一看",
-            "我去查一下",
-            "我去看一下"
-        )
-        if (chineseActionCues.any(normalized::contains)) {
-            return true
-        }
-        val chineseActionIntent = Regex(
-            """(?:让我|我)(?:先|再|再一次|最后一次|最后再|去)?(?:查找|寻找|查询|检查|搜索|搜|查看|看|核实|确认|回到|返回|回去|尝试|试着|筛选)""",
-            RegexOption.IGNORE_CASE
-        )
-        if (chineseActionIntent.containsMatchIn(content)) {
-            return true
-        }
-        val chineseDeferredActionIntent = Regex(
-            """(?:让我|我来|我会|我将|我先|我再|我去|我来为您|我来帮您|我帮您)(?:[^。！？；，,\n]{0,16})?(?:查找|寻找|查询|检查|搜索|搜|查看|看|核实|确认|回到|返回|回去|尝试|试着|筛选|过滤|定位|打开|点击|进入|读取|执行|运行)""",
-            RegexOption.IGNORE_CASE
-        )
-        if (chineseDeferredActionIntent.containsMatchIn(content)) {
-            return true
-        }
-        val englishActionIntent = Regex(
-            """\b(?:let me|i(?:'ll| will)|first,\s*let me)\s+(?:check|look|search|verify|see|find|try|return)\b""",
-            RegexOption.IGNORE_CASE
-        )
-        return englishActionIntent.containsMatchIn(content)
-    }
-
-    private fun userGoalRequiresExternalAction(content: String): Boolean {
-        val normalized = AgentTextSanitizer.sanitizeUtf16(content).trim()
-        if (normalized.isEmpty()) return false
-        val chineseActionGoal = Regex(
-            """(?:打开|查找|查询|搜索|搜一下|查看|看一下|点击|进入|导航|跳转|返回|回到|筛选|过滤|定位|读取|执行|运行|安装|下载|提交|填写|选择|勾选|切换|创建|删除|修改|重试)""",
-            RegexOption.IGNORE_CASE
-        )
-        if (chineseActionGoal.containsMatchIn(normalized)) {
-            return true
-        }
-        val englishActionGoal = Regex(
-            """\b(?:open|search|find|look up|check|click|navigate|go to|return|filter|read|run|install|download|submit|fill|select|toggle|create|delete|edit|retry)\b""",
-            RegexOption.IGNORE_CASE
-        )
-        return englishActionGoal.containsMatchIn(normalized)
-    }
-
-    private fun looksLikeIntermediateExecutionUpdate(content: String): Boolean {
-        val normalized = content.lowercase()
-        val chineseProgressCues = listOf(
-            "接下来",
-            "随后",
-            "稍后",
-            "稍等",
-            "等我",
-            "准备",
-            "正在",
-            "然后继续",
-            "继续筛选",
-            "继续查找",
-            "继续搜索",
-            "继续尝试",
-            "最后一次尝试",
-            "尝试返回",
-            "回到首页",
-            "返回首页"
-        )
-        if (chineseProgressCues.any(normalized::contains)) {
-            return true
-        }
-        val englishProgressCue = Regex(
-            """\b(?:next|then|after that|let me continue|continuing|continue to|continue with|still trying|one more try|trying to return)\b""",
-            RegexOption.IGNORE_CASE
-        )
-        return englishProgressCue.containsMatchIn(content)
-    }
-
-    private fun containsExplicitFinalAnswerCue(content: String): Boolean {
-        val normalized = content.lowercase()
-        val chineseFinalCues = listOf(
-            "建议",
-            "结论",
-            "总结",
-            "如下",
-            "步骤",
-            "推荐",
-            "答案",
-            "综合现有信息",
-            "已完成",
-            "处理完成",
-            "已经完成",
-            "已查到",
-            "已找到",
-            "读取失败",
-            "校验失败",
-            "当前限制",
-            "无法直接",
-            "不能直接",
-            "用户手动停止"
-        )
-        if (chineseFinalCues.any(normalized::contains)) {
-            return true
-        }
-        val structuredAnswer = Regex(
-            """(?:^|\n)\s*(?:\d+\.\s|-\s|•\s|一、|二、|三、)""",
-            RegexOption.MULTILINE
-        )
-        if (structuredAnswer.containsMatchIn(content)) {
-            return true
-        }
-        val englishFinalCue = Regex(
-            """\b(?:recommend|summary|conclusion|steps|result|answer|done|completed|cannot directly|can't directly)\b""",
-            RegexOption.IGNORE_CASE
-        )
-        return englishFinalCue.containsMatchIn(content)
-    }
-
-    private fun looksLikeCompleteFinalAnswer(
-        content: String,
-        explicitFinalCue: Boolean,
-        actionIntent: Boolean,
-        intermediateUpdate: Boolean,
-        answerTooThinForActionGoal: Boolean
-    ): Boolean {
-        if (content.isBlank()) return false
-        if (answerTooThinForActionGoal) return false
-        if (explicitFinalCue) return true
-        if (actionIntent) return false
-        if (intermediateUpdate) return false
-        return true
-    }
-
     private fun buildLengthContinuationMessage(): ChatCompletionMessage {
         return ChatCompletionMessage(
             role = "user",
             content = JsonPrimitive(
                 "上一条 assistant 回复因为达到输出长度上限被截断。请从中断处继续完成原任务，不要重复已经输出的内容，不要重新开头，不要解释本提示。"
-            )
-        )
-    }
-
-    private fun buildMissingToolCallRecoveryMessage(): ChatCompletionMessage {
-        return ChatCompletionMessage(
-            role = "user",
-            content = JsonPrimitive(
-                t(
-                    "你上一条回复还停留在执行中间态，但没有真正发起 tool_call，也没有给出完整最终答案。请继续同一任务：如果还需要操作、查询、点击、筛选或导航，必须返回标准 tool_call；如果不需要工具，请直接给出完整最终答案。不要只回复“我先查一下”“接下来继续处理”这类过渡语。",
-                    "Your previous reply was still in an in-progress execution state, but you did not emit a tool_call or provide a complete final answer. Continue the same task: if any action, lookup, click, filter, or navigation is still needed, you must return a standard tool_call; if no tool is needed, reply with the complete final answer directly. Do not answer with transitional text such as 'let me check' or 'next I will continue' only."
-                )
             )
         )
     }

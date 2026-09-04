@@ -28,6 +28,7 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
   late final TextEditingController _commandController;
   late final TextEditingController _argumentsController;
   late final TextEditingController _environmentController;
+  late final TextEditingController _runtimeSettingsController;
 
   AcpAgentProfile? _agent;
   String _kind = '';
@@ -62,6 +63,7 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
     _commandController = TextEditingController();
     _argumentsController = TextEditingController();
     _environmentController = TextEditingController();
+    _runtimeSettingsController = TextEditingController();
     unawaited(_load());
   }
 
@@ -74,6 +76,7 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
     _commandController.dispose();
     _argumentsController.dispose();
     _environmentController.dispose();
+    _runtimeSettingsController.dispose();
     super.dispose();
   }
 
@@ -135,6 +138,13 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
     _configPath =
         payload['configPath']?.toString() ?? payload['path']?.toString() ?? '';
     _authPath = payload['authPath']?.toString() ?? '';
+    final runtimeSettings = payload['runtimeSettings'];
+    _setText(
+      _runtimeSettingsController,
+      runtimeSettings is Map
+          ? const JsonEncoder.withIndent('  ').convert(runtimeSettings)
+          : '{\n}\n',
+    );
     _reasoningEffort = switch (payload['reasoningEffort']?.toString()) {
       'off' => 'off',
       'high' => 'high',
@@ -153,19 +163,15 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
       final bindings = await SceneModelConfigService.getSceneModelBindings();
       final models = <String, List<ProviderModelOption>>{};
       for (final profile in profilesPayload.profiles) {
-        var options = <ProviderModelOption>[];
-        if (profile.configured) {
-          try {
-            options = await ModelProviderConfigService.fetchModels(
-              profileId: profile.id,
-              providerName: profile.name,
-              capability: 'text',
-            );
-          } catch (_) {
-            // Agent selection only accepts models verified by this Provider.
-          }
-        }
-        models[profile.id] = options;
+        // This page reads the persisted Provider document. It must not turn
+        // merely opening Agent settings into a serialized /models sweep.
+        models[profile.id] = profile.configured
+            ? await ModelProviderConfigService.getStoredModelOptionsForProfile(
+                profile.id,
+                profile: profile,
+                enrichMetadata: false,
+              )
+            : const <ProviderModelOption>[];
       }
       final persistedBinding = bindings
           .where((item) => item.sceneId == 'scene.dispatch.model')
@@ -355,8 +361,18 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
       _error = null;
     });
     try {
+      final runtimeSettingsValue = jsonDecode(_runtimeSettingsController.text);
+      if (runtimeSettingsValue is! Map) {
+        throw const FormatException('runtimeSettings must contain a JSON object.');
+      }
       switch (_kind) {
         case 'codex':
+          final payload = await AgentRuntimeService.writeAgentConfig(
+            _agent!.id,
+            runtimeSettings: Map<String, dynamic>.from(runtimeSettingsValue),
+          );
+          if (!mounted) return;
+          _syncPayload(payload);
           break;
         case 'json':
           final content = _contentController.text;
@@ -369,6 +385,7 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
           final payload = await AgentRuntimeService.writeAgentConfig(
             _agent!.id,
             content: content,
+            runtimeSettings: Map<String, dynamic>.from(runtimeSettingsValue),
           );
           if (!mounted) return;
           _syncPayload(payload);
@@ -377,6 +394,7 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
           final payload = await AgentRuntimeService.writeAgentConfig(
             _agent!.id,
             content: _contentController.text,
+            runtimeSettings: Map<String, dynamic>.from(runtimeSettingsValue),
           );
           if (!mounted) return;
           _syncPayload(payload);
@@ -386,6 +404,7 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
             _agent!.id,
             reasoningEffort: _reasoningEffort,
             permissionMode: _permissionMode,
+            runtimeSettings: Map<String, dynamic>.from(runtimeSettingsValue),
           );
           if (!mounted) return;
           _syncPayload(payload);
@@ -418,6 +437,10 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
             _agent = saved;
             _syncAgent(saved);
           }
+          await AgentRuntimeService.writeAgentConfig(
+            _agent!.id,
+            runtimeSettings: Map<String, dynamic>.from(runtimeSettingsValue),
+          );
           break;
         default:
           throw UnsupportedError(
@@ -552,7 +575,7 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
                         ),
                       ),
                     ],
-                    if (_kind.isNotEmpty && _kind != 'codex') ...[
+                    if (_kind.isNotEmpty) ...[
                       const SizedBox(height: 18),
                       FilledButton.icon(
                         key: const Key('agent-config-save'),
@@ -638,6 +661,8 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
           ),
           style: Theme.of(context).textTheme.bodySmall,
         ),
+        const SizedBox(height: 14),
+        _buildRuntimeSettingsEditor(),
       ],
     );
   }
@@ -772,6 +797,8 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
             style: Theme.of(context).textTheme.bodySmall,
           ),
         ),
+        const SizedBox(height: 14),
+        _buildRuntimeSettingsEditor(),
       ],
     );
   }
@@ -810,7 +837,28 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
           value: _enabled,
           onChanged: (value) => setState(() => _enabled = value),
         ),
+        const SizedBox(height: 14),
+        _buildRuntimeSettingsEditor(),
       ],
+    );
+  }
+
+  Widget _buildRuntimeSettingsEditor() {
+    return TextField(
+      key: const Key('agent-runtime-settings-content'),
+      controller: _runtimeSettingsController,
+      minLines: 10,
+      maxLines: 22,
+      keyboardType: TextInputType.multiline,
+      style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+      decoration: InputDecoration(
+        labelText: _text('统一运行配置（JSON）', 'Unified runtime settings (JSON)'),
+        alignLabelWithHint: true,
+        helperText: _text(
+          'null 表示不设置 Agent 能力上限；协议、权限和设备资源保护仍由宿主负责。',
+          'null means no Agent capability limit; protocol, permission, and device resource protection remain host-owned.',
+        ),
+      ),
     );
   }
 }

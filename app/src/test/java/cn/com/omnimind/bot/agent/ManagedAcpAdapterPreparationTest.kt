@@ -7,6 +7,7 @@ import cn.com.omnimind.bot.agent.runtime.ManagedAcpPreparationInProgressExceptio
 import cn.com.omnimind.bot.agent.runtime.ManagedAcpPreparationGate
 import cn.com.omnimind.bot.agent.runtime.managedAgentPreparationHealth
 import cn.com.omnimind.bot.agent.runtime.shouldPrepareManagedAcpAdapter
+import cn.com.omnimind.bot.agent.runtime.shouldProbeManagedAcpLaunchCommand
 import cn.com.omnimind.bot.agent.runtime.shouldReuseManagedAcpPreparation
 import cn.com.omnimind.bot.agent.runtime.resolveAcpLaunchModelForDispatch
 import kotlinx.coroutines.CompletableDeferred
@@ -38,6 +39,30 @@ class ManagedAcpAdapterPreparationTest {
                 commandAvailable = false,
                 allPackagesReady = false,
                 adapterHealthy = false,
+            )
+        )
+    }
+
+    @Test
+    fun `stale installer revision is prepared even when the old tree is healthy`() {
+        assertTrue(
+            shouldPrepareManagedAcpAdapter(
+                agentId = AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID,
+                commandAvailable = true,
+                allPackagesReady = true,
+                adapterHealthy = true,
+                preparationRevision = "deepseek-dsh-pnpm-copy-v8",
+                requiredRevision = DEEPSEEK_HARNESS_PREPARATION_REVISION,
+            )
+        )
+        assertFalse(
+            shouldPrepareManagedAcpAdapter(
+                agentId = AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID,
+                commandAvailable = true,
+                allPackagesReady = true,
+                adapterHealthy = true,
+                preparationRevision = DEEPSEEK_HARNESS_PREPARATION_REVISION,
+                requiredRevision = DEEPSEEK_HARNESS_PREPARATION_REVISION,
             )
         )
     }
@@ -101,6 +126,44 @@ class ManagedAcpAdapterPreparationTest {
                 installed = true,
                 preparationRevision = DEEPSEEK_HARNESS_PREPARATION_REVISION,
                 requiredRevision = DEEPSEEK_HARNESS_PREPARATION_REVISION,
+            )
+        )
+    }
+
+    @Test
+    fun `healthy managed adapter skips the foreground launch command probe`() {
+        assertFalse(
+            shouldProbeManagedAcpLaunchCommand(
+                managedAdapter = true,
+                healthStatus = AcpAgentHealth.STATUS_ONLINE,
+                installed = true,
+            )
+        )
+    }
+
+    @Test
+    fun `custom or stale adapter health still verifies the launch command`() {
+        assertTrue(
+            shouldProbeManagedAcpLaunchCommand(
+                managedAdapter = false,
+                healthStatus = AcpAgentHealth.STATUS_ONLINE,
+                installed = true,
+            )
+        )
+        assertTrue(
+            shouldProbeManagedAcpLaunchCommand(
+                managedAdapter = true,
+                healthStatus = AcpAgentHealth.STATUS_ONLINE,
+                installed = true,
+                preparationRevision = "old",
+                requiredRevision = DEEPSEEK_HARNESS_PREPARATION_REVISION,
+            )
+        )
+        assertTrue(
+            shouldProbeManagedAcpLaunchCommand(
+                managedAdapter = true,
+                healthStatus = AcpAgentHealth.STATUS_UNCHECKED,
+                installed = true,
             )
         )
     }

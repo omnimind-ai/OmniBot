@@ -238,7 +238,6 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
         profiles: profilesPayload.profiles,
         providerModelsByProfileId: enriched,
       );
-      _scheduleProviderModelRefresh(profilesPayload.profiles);
     } catch (_) {
       if (!mounted) return;
       showToast(context.l10n.sceneModelLoadFailed, type: ToastType.error);
@@ -263,15 +262,6 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
         showToast(context.trLegacy('语音设置保存失败：$error'), type: ToastType.error);
       }
     }
-  }
-
-  void _scheduleProviderModelRefresh(
-    List<ModelProviderProfileSummary> profiles,
-  ) {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || !identical(_profiles, profiles)) return;
-      unawaited(_refreshProviderModelsInBackground());
-    });
   }
 
   Map<String, List<ProviderModelOption>> _mergeBindingModels({

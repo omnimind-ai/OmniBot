@@ -1,6 +1,7 @@
 package cn.com.omnimind.bot.agent.runtime
 
 import cn.com.omnimind.baselib.llm.ModelProviderProfile
+import cn.com.omnimind.baselib.llm.ProviderModelOption
 import cn.com.omnimind.baselib.llm.SceneModelBindingEntry
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -35,6 +36,22 @@ class XiaowanProviderCacheTest {
         val profile = providerProfile(revision = 1L, apiKey = "")
 
         assertTrue(hasUsableSharedProviderBinding(binding, profile))
+    }
+
+    @Test
+    fun `provider catalog is retained after the bound model`() {
+        val models = requireNotNull(
+            buildXiaowanModelsFromBinding(
+                binding,
+                catalog = listOf(
+                    ProviderModelOption(id = "model-1", displayName = "Primary"),
+                    ProviderModelOption(id = "model-2", displayName = "Alternative"),
+                ),
+            )
+        )
+
+        assertTrue(models.available.map { it.modelId.value } == listOf("model-1", "model-2"))
+        assertTrue(models.available[1].name == "Alternative")
     }
 
     private fun providerProfile(revision: Long, apiKey: String) = ModelProviderProfile(

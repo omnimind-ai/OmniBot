@@ -38,6 +38,21 @@ class AgentRuntimeErrorSupportTest {
     }
 
     @Test
+    fun `provider stream idle timeout maps to a recoverable provider message`() {
+        val error = AgentStreamIdleTimeoutException(90_000L)
+
+        assertEquals(
+            AgentRuntimeErrorSupport.PROVIDER_STREAM_IDLE_TIMEOUT,
+            AgentRuntimeErrorSupport.failureKind(error)
+        )
+        assertTrue(
+            AgentRuntimeErrorSupport.userFacingMessage(error)
+                .orEmpty()
+                .contains("没有返回新的流式更新")
+        )
+    }
+
+    @Test
     fun `provider readiness failures get actionable boundary kinds`() {
         val error = IllegalStateException(
             "Agent Provider is not bound to scene.dispatch.model."

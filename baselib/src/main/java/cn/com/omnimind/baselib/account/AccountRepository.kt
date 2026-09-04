@@ -3,6 +3,8 @@ package cn.com.omnimind.baselib.account
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import java.time.Instant
+import java.time.format.DateTimeParseException
 
 class AccountRepository(
     private val remote: AccountRemoteDataSource,
@@ -13,6 +15,31 @@ class AccountRepository(
         CloudServiceAccessState::allowedByDefault,
 ) {
     private val refreshMutex = Mutex()
+
+    /**
+     * Access tokens are short lived.  A foreground transition can happen
+     * without any account API request in between, so waiting for the first
+     * official-AI request to receive 401 makes the resume path look like a
+     * logout.  Refresh only when the durable expiry says it is necessary;
+     * ordinary foreground transitions stay offline and do not rotate tokens.
+     */
+    suspend fun refreshSessionIfNeeded(
+        now: Instant = Instant.now(),
+        refreshSkewSeconds: Long = ACCESS_TOKEN_REFRESH_SKEW_SECONDS,
+    ): Boolean {
+        requireCloudServiceAccess()
+        val current = tokenStore.read() ?: return false
+        if (!isAccessTokenExpiring(
+                expiresAt = current.accessExpiresAt,
+                now = now,
+                refreshSkewSeconds = refreshSkewSeconds,
+            )
+        ) {
+            return false
+        }
+        refreshSession()
+        return true
+    }
 
     fun isSignedIn(): Boolean = tokenStore.read() != null
 
@@ -234,6 +261,26 @@ class AccountRepository(
             )
         }
         throw CloudServicePolicyUnavailableException(message)
+    }
+
+    private fun isAccessTokenExpiring(
+        expiresAt: String,
+        now: Instant,
+        refreshSkewSeconds: Long,
+    ): Boolean {
+        val expiry = try {
+            Instant.parse(expiresAt)
+        } catch (_: DateTimeParseException) {
+            // Keep the existing reactive 401 recovery for legacy/unknown
+            // timestamps.  A malformed timestamp must not force a logout or
+            // cause a refresh on every app resume.
+            return false
+        }
+        return !expiry.isAfter(now.plusSeconds(refreshSkewSeconds.coerceAtLeast(0L)))
+    }
+
+    private companion object {
+        const val ACCESS_TOKEN_REFRESH_SKEW_SECONDS = 30L
     }
 }
 

@@ -278,7 +278,7 @@ mixin _ChatPageOpenClawMixin on _ChatPageStateBase {
         trimmed.substring('/effort'.length).trimLeft(),
       );
       if (effort == null) {
-        _showSnackBar('可用思考强度：no、low、high、xhigh、max');
+        _showSnackBar('可用思考强度：none、low、medium、high、xhigh、max');
         return true;
       }
       await _applyConversationReasoningEffort(effort);

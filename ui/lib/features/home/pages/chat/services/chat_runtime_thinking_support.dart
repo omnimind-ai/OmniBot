@@ -211,10 +211,6 @@ extension _ChatRuntimeThinkingSupport on ChatConversationRuntimeCoordinator {
     content.remove('agentRetryDelayMs');
     content.remove('agentRetryReason');
     content.remove('agentRetryable');
-    content.remove('agentContinuing');
-    content.remove('agentContinueStatusText');
-    content.remove('agentContinueable');
-    content.remove('agentContinueResumeMode');
     content.remove('agentErrorText');
   }
 
@@ -240,7 +236,8 @@ extension _ChatRuntimeThinkingSupport on ChatConversationRuntimeCoordinator {
         );
       }
       runtime.thinkingRound += 1;
-      runtime.activeThinkingCardId = '$taskId-thinking-${runtime.thinkingRound}';
+      runtime.activeThinkingCardId =
+          '$taskId-thinking-${runtime.thinkingRound}';
       _createThinkingCard(
         runtime,
         taskId,

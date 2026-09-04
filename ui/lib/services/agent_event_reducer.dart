@@ -21,6 +21,7 @@ class AgentReduceResult {
     this.requestId,
     this.collaborationMode,
     this.compatibilityWarning,
+    this.affectsActiveTurn = true,
   });
 
   final bool handled;
@@ -30,10 +31,101 @@ class AgentReduceResult {
   final Object? requestId;
   final String? collaborationMode;
   final String? compatibilityWarning;
+
+  /// Whether the event was allowed to mutate the currently active local turn.
+  ///
+  /// A stale event can still be [handled] so the shared reducer consumes it
+  /// without noisy logging, while being unrelated to the turn the page may
+  /// cancel or display. Keep that distinction explicit at the reducer seam.
+  final bool affectsActiveTurn;
+
+  AgentReduceResult copyWith({bool? affectsActiveTurn}) {
+    return AgentReduceResult(
+      handled: handled,
+      method: method,
+      threadId: threadId,
+      turnId: turnId,
+      requestId: requestId,
+      collaborationMode: collaborationMode,
+      compatibilityWarning: compatibilityWarning,
+      affectsActiveTurn: affectsActiveTurn ?? this.affectsActiveTurn,
+    );
+  }
 }
 
 class AgentEventReducer {
   const AgentEventReducer();
+
+  /// Projects the terminal result of the official ACP `session/prompt`
+  /// request. PromptResponse is a request result rather than a
+  /// `session/update` notification, so it must enter this same reducer
+  /// instead of being converted into a private `turn/*` event.
+  AgentReduceResult reducePromptResponse({
+    required ChatConversationRuntimeState runtime,
+    required String? sessionId,
+    String? turnId,
+    String? stopReason,
+    String? error,
+  }) {
+    final normalizedSessionId = sessionId?.trim();
+    final normalizedTurnId = turnId?.trim().isNotEmpty == true
+        ? turnId!.trim()
+        : runtime.activeAcpTurnId?.trim();
+    final reason = stopReason?.trim().toLowerCase() ?? '';
+    final isCancelled = reason == 'cancelled' || reason == 'canceled';
+    final isFailure =
+        error?.trim().isNotEmpty == true ||
+        reason == 'error' ||
+        reason == 'failed' ||
+        reason == 'failure' ||
+        reason == 'timeout';
+    final taskId =
+        runtime.resolveAcpEventRunId(
+          sessionId: normalizedSessionId,
+          turnId: normalizedTurnId,
+          fallback:
+              runtime.activeRunId ??
+              runtime.currentDispatchTurnId ??
+              runtime.lastAgentTurnId,
+        ) ??
+        runtime.currentDispatchTurnId ??
+        runtime.lastAgentTurnId ??
+        normalizedTurnId ??
+        'agent-${runtime.conversationId}';
+    if (isFailure) {
+      final detail = error?.trim().isNotEmpty == true
+          ? error!.trim()
+          : (stopReason?.trim().isNotEmpty == true
+                ? stopReason!.trim()
+                : 'ACP session/prompt failed.');
+      _recordTurnFailure(
+        runtime,
+        taskId: taskId,
+        detail: formatAgentRuntimeErrorForUser(detail),
+        params: <String, dynamic>{
+          if (normalizedSessionId != null && normalizedSessionId.isNotEmpty)
+            'sessionId': normalizedSessionId,
+          if (normalizedTurnId != null && normalizedTurnId.isNotEmpty)
+            'turnId': normalizedTurnId,
+          if (stopReason != null) 'stopReason': stopReason,
+          'error': detail,
+        },
+      );
+    }
+    _completeTurn(
+      runtime,
+      taskId,
+      acpTurnId: normalizedTurnId,
+      appendCancelIfEmpty: isCancelled,
+      cancelled: isCancelled,
+    );
+    return AgentReduceResult(
+      handled: true,
+      method: 'session/prompt',
+      threadId: normalizedSessionId,
+      turnId: normalizedTurnId,
+    );
+  }
 
   AgentReduceResult reduce({
     required ChatConversationRuntimeState runtime,
@@ -44,8 +136,7 @@ class AgentEventReducer {
     // reintroduce the removed private stream or a second reducer.
     event = _normalizeLegacyAgentEvent(event);
     final hostEventId = _firstString([event['eventId'], event['hostEventId']]);
-    if (hostEventId != null &&
-        !runtime.rememberProcessedAcpEventId(hostEventId)) {
+    if (hostEventId != null && runtime.hasProcessedAcpEventId(hostEventId)) {
       return AgentReduceResult(
         handled: true,
         method: _resolveAgentEventMethod(event: event, message: event),
@@ -53,6 +144,22 @@ class AgentEventReducer {
         turnId: acpEventTurnId(event),
       );
     }
+
+    // Do not mark an event processed until the complete projection returns.
+    // If a listener fails halfway through reduction, the runtime can replay
+    // the event instead of either duplicating a partial side effect or losing
+    // it behind an eagerly consumed id.
+    final result = _reduceNormalized(runtime: runtime, event: event);
+    if (hostEventId != null) {
+      runtime.rememberProcessedAcpEventId(hostEventId);
+    }
+    return result;
+  }
+
+  AgentReduceResult _reduceNormalized({
+    required ChatConversationRuntimeState runtime,
+    required Map<String, dynamic> event,
+  }) {
     final message = _asStringMap(event['message']) ?? event;
     final method = _resolveAgentEventMethod(event: event, message: message);
     if (method.isEmpty) {
@@ -60,6 +167,26 @@ class AgentEventReducer {
     }
 
     final params = _eventParams(event: event, message: message, method: method);
+    // An actionable request card must carry its owner at creation time. The
+    // coordinator still annotates older messages, but response routing cannot
+    // depend on that later pass when local ACP processes run in parallel or a
+    // conversation is switched while an event is being delivered.
+    final eventAgentId = _firstString([
+      event['agentId'],
+      event['agent_id'],
+      message['agentId'],
+      message['agent_id'],
+      params['agentId'],
+      params['agent_id'],
+    ]);
+    final eventAgentName = _firstString([
+      event['agentName'],
+      event['agent_name'],
+      message['agentName'],
+      message['agent_name'],
+      params['agentName'],
+      params['agent_name'],
+    ]);
 
     // ACP implementation extensions are valid Agent->Client traffic, not
     // unknown failures. Keep their original namespace and payload in the
@@ -137,6 +264,12 @@ class AgentEventReducer {
         event['task_id'],
         event['runId'],
         event['run_id'],
+        message['turnId'],
+        message['turn_id'],
+        message['taskId'],
+        message['task_id'],
+        message['runId'],
+        message['run_id'],
         params['turnId'],
         params['turn_id'],
         params['taskId'],
@@ -148,7 +281,9 @@ class AgentEventReducer {
         update?['taskId'],
         update?['task_id'],
       ]);
-      if (scopedUpdate && updateTurnId == null) {
+      final hasHostTurnReservation =
+          updateTurnId == null && _canUseHostTurnReservation(runtime, event);
+      if (scopedUpdate && updateTurnId == null && !hasHostTurnReservation) {
         // ACP updates are streamed inside a prompt turn. Never manufacture a
         // local owner from sessionId or messageId: that reattaches late data
         // to the next prompt and recreates the duplicate-conversation bug.
@@ -285,6 +420,12 @@ class AgentEventReducer {
       event['task_id'],
       event['runId'],
       event['run_id'],
+      message['turnId'],
+      message['turn_id'],
+      message['taskId'],
+      message['task_id'],
+      message['runId'],
+      message['run_id'],
       params['turnId'],
       params['turn_id'],
       params['taskId'],
@@ -309,9 +450,12 @@ class AgentEventReducer {
     final canSafelyFinalizeUnidentifiedTurn =
         turnId == null &&
         _canSafelyFinalizeUnidentifiedTurn(runtime, method, params);
+    final hasHostTurnReservation =
+        turnId == null && _canUseHostTurnReservation(runtime, event);
     if (_requiresAcpTurnIdentity(method, params) &&
         turnId == null &&
-        !canSafelyFinalizeUnidentifiedTurn) {
+        !canSafelyFinalizeUnidentifiedTurn &&
+        !hasHostTurnReservation) {
       final shouldWarnUser = runtime.rememberAcpCompatibilityDiagnostic(
         reason: 'turn_id_missing',
         method: method,
@@ -354,6 +498,7 @@ class AgentEventReducer {
     final isTurnAdmission =
         method == 'turn/started' ||
         (turnId != null &&
+            acpEventAllowsImplicitTurnAdmission(event) &&
             admittedAcpTurnId == null &&
             runtime.isAiResponding &&
             runtime.currentDispatchTurnId != null &&
@@ -380,7 +525,7 @@ class AgentEventReducer {
     // streamMeta/cardData for protocol correlation. This prevents a provider
     // turn id arriving after the prompt from renaming the visible run.
     final parentTaskId =
-        runtime.resolveRunId(
+        runtime.resolveAcpEventRunId(
           sessionId: sessionId,
           turnId: turnId,
           fallback: _firstString([
@@ -415,7 +560,12 @@ class AgentEventReducer {
     }
 
     if (method == 'turn/started') {
-      runtime.activeAcpTurnId = turnId ?? parentTaskId;
+      // A missing wire turn id is a compatibility shape, not permission to
+      // promote the local render/run id into ACP identity space. Keep the
+      // local reservation active and wait for an official id-bearing event.
+      if (turnId != null) {
+        runtime.activeAcpTurnId = turnId;
+      }
       _touchActiveTurn(runtime, parentTaskId);
       return AgentReduceResult(
         handled: true,
@@ -454,7 +604,14 @@ class AgentEventReducer {
     }
 
     if (method == 'turn/completed' || method == 'thread/closed') {
-      _completeTurn(runtime, parentTaskId, acpTurnId: turnId);
+      final terminalStatus = _acpTerminalStatus(params);
+      _completeTurn(
+        runtime,
+        parentTaskId,
+        acpTurnId: turnId,
+        appendCancelIfEmpty: terminalStatus == 'cancelled',
+        cancelled: terminalStatus == 'cancelled',
+      );
       return AgentReduceResult(
         handled: true,
         method: method,
@@ -678,6 +835,9 @@ class AgentEventReducer {
           title: _approvalTitle(itemType, item),
           detail: _approvalDetail(item),
           params: item,
+          agentId: eventAgentId,
+          agentName: eventAgentName,
+          sessionId: sessionId,
           toolCallId: startedItemId,
           streamMeta: _streamMeta(
             runtime,
@@ -704,6 +864,9 @@ class AgentEventReducer {
           detail: question.detail,
           questionId: question.id,
           params: item,
+          agentId: eventAgentId,
+          agentName: eventAgentName,
+          sessionId: sessionId,
           toolCallId: startedItemId,
           streamMeta: _streamMeta(
             runtime,
@@ -723,14 +886,7 @@ class AgentEventReducer {
     }
 
     if (method == 'item/userMessage/delta') {
-      if (params['replay'] != true) {
-        return AgentReduceResult(
-          handled: true,
-          method: method,
-          threadId: threadId,
-          turnId: turnId,
-        );
-      }
+      final isReplay = params['replay'] == true;
       final delta =
           _extractText(params['delta']) ??
           _extractText(params['text']) ??
@@ -743,6 +899,45 @@ class AgentEventReducer {
         final text = (runtime.currentAcpUserMessages[entryId] ?? '') + delta;
         runtime.currentAcpUserMessages[entryId] = text;
         final messageId = '$entryId-agent-user';
+
+        // ChatPage inserts the user bubble before opening ACP. Live ACP user
+        // echoes must converge on that bubble, not create a second one. The
+        // local dispatch id is the only reliable bridge between the host
+        // message and the official ACP turn; never deduplicate historical
+        // prompts by text alone.
+        if (!isReplay) {
+          final dispatchIds = <String>{
+            if (runtime.currentDispatchTurnId?.trim().isNotEmpty == true)
+              runtime.currentDispatchTurnId!.trim(),
+            if (runtime.activeRunId?.trim().isNotEmpty == true)
+              runtime.activeRunId!.trim(),
+          };
+          final expectedHostUserIds = dispatchIds
+              .where((id) => id.endsWith('-ai'))
+              .map((id) => '${id.substring(0, id.length - 3)}-user')
+              .toSet();
+          final hostIndex = runtime.messages.indexWhere(
+            (message) =>
+                message.user == 1 && expectedHostUserIds.contains(message.id),
+          );
+          if (hostIndex >= 0) {
+            // A provider may have emitted one echo before the host snapshot
+            // was installed. Remove only the generated fallback for this
+            // event; unrelated user history must remain untouched.
+            final fallbackIndex = runtime.messages.indexWhere(
+              (message) => message.id == messageId && message.user == 1,
+            );
+            if (fallbackIndex >= 0 && fallbackIndex != hostIndex) {
+              runtime.messages.removeAt(fallbackIndex);
+            }
+            return AgentReduceResult(
+              handled: true,
+              method: method,
+              threadId: threadId,
+              turnId: turnId,
+            );
+          }
+        }
         final existingIndex = runtime.messages.indexWhere(
           (message) => message.id == messageId,
         );
@@ -1102,6 +1297,9 @@ class AgentEventReducer {
         title: _approvalTitle(method, params),
         detail: _approvalDetail(params),
         params: params,
+        agentId: eventAgentId,
+        agentName: eventAgentName,
+        sessionId: sessionId,
         toolCallId: _firstString([
           params['toolCallId'],
           params['tool_call_id'],
@@ -1166,6 +1364,9 @@ class AgentEventReducer {
         title: title,
         detail: detail,
         params: params,
+        agentId: eventAgentId,
+        agentName: eventAgentName,
+        sessionId: sessionId,
         structuredElicitation: true,
         streamMeta: _streamMeta(
           runtime,
@@ -1197,6 +1398,9 @@ class AgentEventReducer {
         detail: question.detail,
         questionId: question.id,
         params: params,
+        agentId: eventAgentId,
+        agentName: eventAgentName,
+        sessionId: sessionId,
         toolCallId: _firstString([
           params['toolCallId'],
           params['tool_call_id'],
@@ -1331,33 +1535,12 @@ class AgentEventReducer {
           runtime.currentDispatchTurnId ??
           runtime.lastAgentTurnId ??
           parentTaskId;
-      _completeTurn(runtime, completionTaskId, appendCancelIfEmpty: false);
-      return AgentReduceResult(
-        handled: true,
-        method: method,
-        threadId: threadId,
-        turnId: turnId,
+      _completeTurn(
+        runtime,
+        completionTaskId,
+        acpTurnId: turnId,
+        appendCancelIfEmpty: false,
       );
-    }
-
-    if (method == 'codex/disconnected') {
-      // A remote bridge can disappear before it has a chance to send the
-      // normal turn/failed notification. Finalize the one active host turn
-      // here; otherwise the chat remains in "thinking" forever and the next
-      // prompt is rejected as a second active turn.
-      final taskId =
-          runtime.currentDispatchTurnId ??
-          runtime.lastAgentTurnId ??
-          runtime.activeRunId;
-      if (runtime.isAiResponding && taskId != null && taskId.isNotEmpty) {
-        _recordTurnFailure(
-          runtime,
-          taskId: taskId,
-          detail: 'Remote ACP bridge disconnected.',
-          params: params,
-        );
-        _completeTurn(runtime, taskId, appendCancelIfEmpty: false);
-      }
       return AgentReduceResult(
         handled: true,
         method: method,
@@ -1446,7 +1629,12 @@ class AgentEventReducer {
             runtime.currentDispatchTurnId ??
             runtime.lastAgentTurnId ??
             parentTaskId;
-        _completeTurn(runtime, completionTaskId, appendCancelIfEmpty: false);
+        _completeTurn(
+          runtime,
+          completionTaskId,
+          acpTurnId: turnId,
+          appendCancelIfEmpty: false,
+        );
       }
       return AgentReduceResult(
         handled: true,
@@ -1774,11 +1962,6 @@ class AgentEventReducer {
       content['agentErrorText'] = error;
     }
     content['agentRetryable'] = recovery['retryable'] == true;
-    content['agentContinueable'] = recovery['continueable'] == true;
-    final resumeMode = recovery['resumeMode'] ?? recovery['continueResumeMode'];
-    if (resumeMode != null) {
-      content['agentContinueResumeMode'] = resumeMode;
-    }
     final persistAsError = recovery['persistAsError'];
     runtime.messages[index] = existing.copyWith(
       content: content,
@@ -1879,22 +2062,9 @@ class AgentEventReducer {
   ) {
     runtime.completedAgentTurnIds.remove(parentTaskId);
     runtime.isAiResponding = true;
-    if (runtime.activeAcpTurnId == null && parentTaskId.trim().isNotEmpty) {
-      // The first official session/update can be the admission boundary for
-      // adapters that do not expose a separate turn/started notification.
-      runtime.activeAcpTurnId = parentTaskId;
-    }
     runtime.activeRunId ??= parentTaskId;
-    // currentDispatchTurnId/lastAgentTurnId are compatibility names used by
-    // older page state. Their value is now always the stable run id, never an
-    // ACP turn id.
-    runtime.currentDispatchTurnId ??= runtime.activeRunId;
-    // Keep the old field observable for native/page compatibility. The UI
-    // active-id getter above uses activeRunId, so this protocol alias cannot
-    // create a second visible run.
-    if (runtime.activeAcpTurnId != null) {
-      runtime.currentDispatchTurnId = runtime.activeAcpTurnId;
-    }
+    // currentDispatchTurnId is now only a compatibility alias for activeRunId
+    // and therefore must not be overwritten with the official ACP turn id.
     runtime.lastAgentTurnId = runtime.activeRunId;
     runtime.currentThinkingStage = ThinkingStage.thinking.value;
   }
@@ -2805,6 +2975,9 @@ class AgentEventReducer {
     required String detail,
     required Map<String, dynamic> params,
     required Map<String, dynamic> streamMeta,
+    String? agentId,
+    String? agentName,
+    String? sessionId,
     String? toolCallId,
     String? questionId,
     bool structuredElicitation = false,
@@ -2826,9 +2999,26 @@ class AgentEventReducer {
         nextRequestId.isNotEmpty &&
         existingRequestId == nextRequestId;
     final existingCardData = existing?.cardData ?? const <String, dynamic>{};
+    final requestAgentId = _firstString([
+      agentId,
+      params['agentId'],
+      params['agent_id'],
+      existingCardData['agentId'],
+      existingCardData['agent_id'],
+    ]);
+    final requestAgentName = _firstString([
+      agentName,
+      params['agentName'],
+      params['agent_name'],
+      existingCardData['agentName'],
+      existingCardData['agent_name'],
+    ]);
     final requestSessionId = _firstString([
+      sessionId,
       params['sessionId'],
       params['session_id'],
+      existingCardData['sessionId'],
+      existingCardData['session_id'],
     ]);
     final status = _resolveRequestStatus(
       requestKind: requestKind,
@@ -2843,6 +3033,8 @@ class AgentEventReducer {
       'runId': taskId,
       'requestId': requestId,
       if (requestId == null) 'interactionUnavailable': true,
+      if (requestAgentId != null) 'agentId': requestAgentId,
+      if (requestAgentName != null) 'agentName': requestAgentName,
       if (requestSessionId != null) 'sessionId': requestSessionId,
       if (toolCallId != null && toolCallId.trim().isNotEmpty)
         'toolCallId': toolCallId.trim(),
@@ -3171,10 +3363,10 @@ class AgentEventReducer {
           runtime,
           parentTaskId: taskId,
           entryId: cardId,
-          kind: toolInfo.status == 'running'
+          kind: _isActiveAgentToolStatus(toolInfo.status)
               ? 'tool_progress'
               : 'tool_completed',
-          isFinal: toolInfo.status != 'running',
+          isFinal: !_isActiveAgentToolStatus(toolInfo.status),
           existingMessage: existingMessage,
         ),
         touchTurn: false,
@@ -3238,8 +3430,10 @@ class AgentEventReducer {
         runtime,
         parentTaskId: taskId,
         entryId: cardId,
-        kind: toolInfo.status == 'running' ? 'tool_progress' : 'tool_completed',
-        isFinal: toolInfo.status != 'running',
+        kind: _isActiveAgentToolStatus(toolInfo.status)
+            ? 'tool_progress'
+            : 'tool_completed',
+        isFinal: !_isActiveAgentToolStatus(toolInfo.status),
       ),
       touchTurn: false,
     );
@@ -3431,6 +3625,7 @@ class AgentEventReducer {
     // produced reasoning or tool activity. Cancellation is represented by an
     // explicit cancelled thread status, not by an empty assistant message.
     bool appendCancelIfEmpty = false,
+    bool cancelled = false,
   }) {
     final wasActive = runtime.activeAgentTurnIds.contains(taskId);
     // The UI primes a local render task before ACP has emitted its official
@@ -3510,7 +3705,9 @@ class AgentEventReducer {
     runtime.deepThinkingContent = '';
     runtime.isDeepThinking = false;
     runtime.activeThinkingCardId = null;
-    runtime.currentThinkingStage = ThinkingStage.complete.value;
+    runtime.currentThinkingStage = cancelled
+        ? ThinkingStage.cancelled.value
+        : ThinkingStage.complete.value;
     _markAssistantMessagesFinalForTask(runtime, ownerTaskId);
     _clearAcpRetryPresentationForTask(runtime, ownerTaskId);
     if (!isManualCancel) {
@@ -4131,6 +4328,14 @@ class AgentEventReducer {
     }.contains(status.trim().toLowerCase());
   }
 
+  bool _isActiveAgentToolStatus(String status) {
+    return const <String>{
+      'running',
+      'pending',
+      'progress',
+    }.contains(status.trim().toLowerCase());
+  }
+
   String? _findToolCardIdForCallId(
     ChatConversationRuntimeState runtime,
     String callId, {
@@ -4535,6 +4740,9 @@ class AgentEventReducer {
       params['prompt'],
       toolCall?['reason'],
       toolCall?['description'],
+      toolCall?['detail'],
+      _extractText(toolCall?['content']),
+      input['detail'],
     ]);
     if (reason != null && !_isGenericApprovalLabel(reason)) {
       parts.add(reason);
@@ -4963,6 +5171,20 @@ class AgentEventReducer {
   }
 }
 
+String _acpTerminalStatus(Map<String, dynamic> params) {
+  final status = _normalizeStatus(
+    _firstString([
+          params['stopReason'],
+          params['stop_reason'],
+          params['status'],
+          params['state'],
+        ]) ??
+        '',
+  );
+  if (_statusIsCancelled(status) || status == 'aborted') return 'cancelled';
+  return status;
+}
+
 class _AgentQuestion {
   const _AgentQuestion({
     required this.id,
@@ -5026,9 +5248,14 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
 }) {
   final update = _asStringMap(params['update']);
   if (update == null) return null;
+  final message = _asStringMap(event['message']);
   final sessionId = _firstString([
     event['sessionId'],
     event['session_id'],
+    message?['sessionId'],
+    message?['session_id'],
+    message?['threadId'],
+    message?['thread_id'],
     params['sessionId'],
     params['session_id'],
     event['threadId'],
@@ -5041,6 +5268,12 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
   final turnId = _firstString([
     event['turnId'],
     event['turn_id'],
+    message?['turnId'],
+    message?['turn_id'],
+    message?['taskId'],
+    message?['task_id'],
+    message?['runId'],
+    message?['run_id'],
     params['turnId'],
     params['turn_id'],
     update['turnId'],
@@ -5100,6 +5333,8 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
       if (sessionId != null) 'sessionId': sessionId,
       if (sessionId != null) 'threadId': sessionId,
       if (turnId != null) 'turnId': turnId,
+      if (acpEventAllowsImplicitTurnAdmission(event))
+        'allowImplicitTurnAdmission': true,
     };
   }
 
@@ -5151,21 +5386,21 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
         }),
       };
     case 'user_message_chunk':
-      // The host owns live user-message persistence. Only an explicit
-      // session/load replay may project ACP user history into the timeline;
-      // otherwise the normal prompt would be duplicated.
+      // ACP session/load replays and live turn echoes share one projection
+      // seam. A live echo is safe only with an official turn identity; the
+      // reducer then deduplicates it against the host's optimistic message.
       final isReplay =
           update['replay'] == true ||
           params['replay'] == true ||
           event['replay'] == true;
-      if (!isReplay) return null;
+      if (!isReplay && turnId == null) return null;
       return <String, dynamic>{
         'method': 'item/userMessage/delta',
         'params': projectedParams(<String, dynamic>{
           'itemId': scopedMessageId,
           if (scopedEntryId != null) 'entryId': scopedEntryId,
           'delta': _extractStreamingText(update['content']) ?? '',
-          'replay': true,
+          'replay': isReplay,
         }),
       };
     case 'tool_call':
@@ -5350,7 +5585,9 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
       );
       final status = switch (state) {
         'running' || 'active' || 'busy' => 'running',
-        'requiresaction' => 'requires_action',
+        // ACP has no extra lifecycle state here. A provider-specific
+        // requires-action alias is only an in-progress interaction.
+        'requiresaction' => 'running',
         'idle' || 'complete' || 'completed' => switch (stopReason) {
           'cancelled' ||
           'canceled' ||
@@ -6379,6 +6616,19 @@ bool _isLegacyAgentEvent(Map<String, dynamic> event) {
       event.containsKey('eventKind') ||
       event.containsKey('kind') &&
           _resolveAgentEventMethod(event: event, message: event).isEmpty;
+}
+
+bool _canUseHostTurnReservation(
+  ChatConversationRuntimeState runtime,
+  Map<String, dynamic> event,
+) {
+  // ACP v1 session/update is session-scoped and may have no wire turn id.
+  // Only the host's active prompt reservation can attribute that update; an
+  // arbitrary provider id or a stale text snapshot is not sufficient.
+  return acpEventAllowsImplicitTurnAdmission(event) &&
+      runtime.isAiResponding &&
+      runtime.activeAcpTurnId == null &&
+      runtime.currentDispatchTurnId?.trim().isNotEmpty == true;
 }
 
 /// Converts the removed `AgentStreamEvent` data shape into official ACP item

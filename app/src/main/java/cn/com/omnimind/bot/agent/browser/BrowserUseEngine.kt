@@ -49,6 +49,8 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -58,6 +60,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -175,7 +178,10 @@ data class BrowserUseRequest(
     val scrollCount: Int = DEFAULT_BROWSER_SCROLL_COUNT
 ) {
     companion object {
-        fun fromJson(args: JsonObject): BrowserUseRequest {
+        fun fromJson(
+            args: JsonObject,
+            runtimeSettings: AgentRuntimeSettings = AgentRuntimeSettings(),
+        ): BrowserUseRequest {
             val toolTitle = args["tool_title"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
             require(toolTitle.isNotEmpty()) { "browser_use 缺少 tool_title" }
 
@@ -193,16 +199,19 @@ data class BrowserUseRequest(
                 ?.coerceIn(1, 20_000)
                 ?: DEFAULT_BROWSER_SCROLL_AMOUNT
             val maxDepth = args["max_depth"]?.jsonPrimitive?.intOrNull
-                ?.coerceIn(1, 8)
+                ?.takeIf { it > 0 }
+                ?: runtimeSettings.browserMaxDepth
                 ?: DEFAULT_BROWSER_MAX_DEPTH
             val scrollCount = args["scroll_count"]?.jsonPrimitive?.intOrNull
-                ?.coerceIn(1, MAX_BROWSER_SCROLL_COUNT)
+                ?.takeIf { it > 0 }
+                ?: runtimeSettings.browserMaxScrollCount
                 ?: DEFAULT_BROWSER_SCROLL_COUNT
             val fuzzy = args["fuzzy"]?.jsonPrimitive?.booleanOrNull ?: true
             val readImage = args["read_image"]?.jsonPrimitive?.booleanOrNull ?: false
             val key = args["key"]?.jsonPrimitive?.contentOrNull
-            val timeoutMs = args["timeout_ms"]?.jsonPrimitive?.intOrNull
-                ?.toLong()?.coerceIn(500, 30_000)
+            val timeoutMs = args["timeout_ms"]?.jsonPrimitive?.longOrNull
+                ?.takeIf { it > 0L }
+                ?: runtimeSettings.browserActionTimeoutMs
                 ?: 5000L
 
             val request = BrowserUseRequest(
@@ -305,6 +314,23 @@ object BrowserUseSupport {
                 normalizedKeywords.any { keyword -> normalizedName == keyword }
             }
         }.sortedBy { it.lowercase(Locale.ROOT) }
+    }
+
+    /**
+     * Select only explicitly requested cookies. A non-empty filter that
+     * matches nothing is a safe failure, never permission to broaden the
+     * export to every cookie in the current browser session.
+     */
+    fun selectCookieNames(
+        names: Collection<String>,
+        keywords: List<String>,
+        fuzzy: Boolean
+    ): List<String> {
+        val selected = filterCookieNames(names, keywords, fuzzy)
+        require(keywords.isEmpty() || selected.isNotEmpty() || names.isEmpty()) {
+            "没有匹配的 Cookie，已拒绝扩大导出范围"
+        }
+        return selected
     }
 
     fun sanitizeCookieEnvName(cookieName: String): String {
@@ -553,6 +579,10 @@ class BrowserUseEngine(
         """
     }
     private val mainScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    // A WebView has one mutable tab set and one active tab. Keep operations on
+    // a workspace ordered, while allowing different workspace engines to run
+    // independently.
+    private val actionMutex = Mutex()
     private val tabs = linkedMapOf<Int, BrowserTab>()
     private var nextTabId = 0
     private var activeTabId: Int? = null
@@ -561,6 +591,8 @@ class BrowserUseEngine(
     private val viewportHeight = appContext.resources.displayMetrics.heightPixels.coerceAtLeast(1920)
     private val density = appContext.resources.displayMetrics.density
     private var currentAgentRunId: String = agentRunId
+    @Volatile
+    private var activeAgentRunId: String? = null
     private var currentWorkspace: AgentWorkspaceDescriptor = workspace
     private val hostStore = BrowserHostStore.create(workspace.id)
     private var defaultUserAgentProfile =
@@ -589,6 +621,15 @@ class BrowserUseEngine(
         get() = currentWorkspace.id
 
     suspend fun handleHostCall(
+        method: String,
+        arguments: Map<String, Any?> = emptyMap()
+    ): Any? {
+        return actionMutex.withLock {
+            handleHostCallInternal(method = method, arguments = arguments)
+        }
+    }
+
+    private suspend fun handleHostCallInternal(
         method: String,
         arguments: Map<String, Any?> = emptyMap()
     ): Any? {
@@ -764,6 +805,26 @@ class BrowserUseEngine(
     }
 
     suspend fun execute(request: BrowserUseRequest): BrowserUseOutcome {
+        return actionMutex.withLock { executeInternal(request) }
+    }
+
+    suspend fun execute(
+        request: BrowserUseRequest,
+        agentRunId: String,
+        workspace: AgentWorkspaceDescriptor,
+    ): BrowserUseOutcome {
+        return actionMutex.withLock {
+            bindRunContext(agentRunId = agentRunId, workspace = workspace)
+            activeAgentRunId = agentRunId
+            try {
+                executeInternal(request)
+            } finally {
+                activeAgentRunId = null
+            }
+        }
+    }
+
+    private suspend fun executeInternal(request: BrowserUseRequest): BrowserUseOutcome {
         return when (request.action) {
             BrowserUseAction.NEW_TAB -> executeNewTab(request)
             BrowserUseAction.LIST_TABS -> simpleOutcome(request, listTabsPayload())
@@ -1186,7 +1247,10 @@ class BrowserUseEngine(
         }
     }
 
-    suspend fun requestInterruptCurrentAction() {
+    suspend fun requestInterruptCurrentAction(agentRunId: String? = null) {
+        if (agentRunId != null && activeAgentRunId != null && activeAgentRunId != agentRunId) {
+            return
+        }
         withContext(Dispatchers.Main.immediate) {
             tabs.values.forEach { tab ->
                 runCatching { tab.webView.stopLoading() }
@@ -1876,18 +1940,12 @@ class BrowserUseEngine(
         val currentUrl = tab.currentUrl?.takeIf { it.isNotBlank() && it != "about:blank" }
             ?: throw IllegalStateException("当前标签页没有可用页面，无法读取 cookies")
         val cookiePairs = collectCookiesForUrl(currentUrl).toList()
-        val matchedNames = BrowserUseSupport.filterCookieNames(
+        val matchedNames = BrowserUseSupport.selectCookieNames(
             names = cookiePairs.map { it.first },
             keywords = request.keywords,
             fuzzy = request.fuzzy
         )
-        val fallbackToAllCookies =
-            matchedNames.isEmpty() && request.keywords.isNotEmpty() && cookiePairs.isNotEmpty()
-        val exportedPairs = if (fallbackToAllCookies) {
-            cookiePairs
-        } else {
-            cookiePairs.filter { (name, _) -> matchedNames.contains(name) }
-        }
+        val exportedPairs = cookiePairs.filter { (name, _) -> matchedNames.contains(name) }
         val exportedNames = exportedPairs.map { it.first }
         val envFile = workspaceManager.newOffloadFile(
             agentRunId = currentAgentRunId,
@@ -1921,7 +1979,6 @@ class BrowserUseEngine(
                     "envShellPath" to envShellPath,
                     "envAndroidPath" to envFile.absolutePath,
                     "cookieLookupUrls" to buildCookieLookupUrls(currentUrl),
-                    "keywordFallbackToAll" to fallbackToAllCookies,
                     "fuzzy" to request.fuzzy,
                     "keywords" to request.keywords
                 )

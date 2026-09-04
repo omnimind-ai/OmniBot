@@ -39,16 +39,22 @@ class BrowserToolHandler(
         val toolName = "browser_use"
         return try {
             helper.requireWorkspaceStorageAccess(callback)?.let { return it }
-            val request = BrowserUseRequest.fromJson(args)
+            val request = BrowserUseRequest.fromJson(args, env.runtimeSettings)
             val engine = LiveAgentBrowserSessionManager.acquireEngine(
                 context = helper.context,
                 workspaceManager = workspaceManager,
                 agentRunId = env.agentRunId,
                 workspace = env.workspaceDescriptor
             )
-            toolHandle.bindStopAction { engine.requestInterruptCurrentAction() }
+            toolHandle.bindStopAction {
+                engine.requestInterruptCurrentAction(agentRunId = env.agentRunId)
+            }
             helper.reportToolProgress(callback, toolName, request.toolTitle, mapOf("summary" to request.toolTitle), toolHandle = toolHandle)
-            val outcome = engine.execute(request)
+            val outcome = engine.execute(
+                request = request,
+                agentRunId = env.agentRunId,
+                workspace = env.workspaceDescriptor,
+            )
             val payload = linkedMapOf<String, Any?>("toolTitle" to request.toolTitle).apply { putAll(outcome.payload) }
             val encoded = helper.encodeLocalizedPayload(payload)
             ToolExecutionResult.ContextResult(

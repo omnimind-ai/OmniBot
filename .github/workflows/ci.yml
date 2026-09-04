@@ -1,10 +1,14 @@
-name: CI
+name: Pull Request CI
 
 on:
   pull_request:
-  push:
     branches:
       - main
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
@@ -114,10 +118,9 @@ jobs:
         working-directory: ui
         run: flutter analyze --no-fatal-warnings --no-fatal-infos
 
-      - name: Gradle verify develop standard debug
+      - name: Gradle unit tests and lint
         run: >-
           ./gradlew --no-daemon --parallel --build-cache
           :app:testDevelopStandardDebugUnitTest
-          :app:assembleDevelopStandardDebug
           :app:lintDevelopStandardDebug
           -Ptarget=lib/main_standard.dart

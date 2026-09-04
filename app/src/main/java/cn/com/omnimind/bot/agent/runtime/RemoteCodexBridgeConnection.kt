@@ -2,13 +2,16 @@ package cn.com.omnimind.bot.agent.runtime
 
 import android.util.Base64
 import android.util.Log
+import cn.com.omnimind.bot.agent.readAgentAttachmentBytes
 import com.google.gson.Gson
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -26,6 +29,64 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 private const val REMOTE_BRIDGE_TAG = "RemoteCodexBridge"
 
+/**
+ * OkHttp invokes WebSocket callbacks in arrival order, but ACP callbacks are
+ * suspending. Keep the transport order after that boundary as well: launching
+ * every callback independently would let a later response overtake an earlier
+ * session/update or terminal frame.
+ */
+internal class RemoteCodexInboundEventQueue(
+    private val scope: CoroutineScope,
+    private val onFailure: (Throwable) -> Unit = {}
+) {
+    private val events = Channel<suspend () -> Unit>(Channel.UNLIMITED)
+    private val terminal = AtomicBoolean(false)
+    private val drainJob = scope.launch {
+        for (event in events) {
+            try {
+                event.invoke()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                onFailure(error)
+            }
+        }
+    }
+
+    fun offer(event: suspend () -> Unit): Boolean {
+        if (terminal.get()) return false
+        return events.trySend(event).isSuccess
+    }
+
+    /**
+     * A transport terminal event is a lifecycle boundary, not another FIFO
+     * payload. Cancel queued/in-flight delivery first, then dispatch the
+     * terminal callback independently so a stuck session/update cannot strand
+     * every active turn in a loading state.
+     */
+    fun offerTerminal(event: suspend () -> Unit): Boolean {
+        if (!terminal.compareAndSet(false, true)) return false
+        events.close()
+        drainJob.cancel()
+        scope.launch {
+            try {
+                event.invoke()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                onFailure(error)
+            }
+        }
+        return true
+    }
+
+    suspend fun close() {
+        terminal.set(true)
+        events.close()
+        drainJob.join()
+    }
+}
+
 internal class RemoteCodexBridgeConnection(
     private val config: CodexRemoteBridgeConfig,
     private val scope: CoroutineScope,
@@ -34,6 +95,10 @@ internal class RemoteCodexBridgeConnection(
     private val gson = Gson()
     private val started = CompletableDeferred<Unit>()
     private val closed = AtomicBoolean(false)
+    private val inboundEvents = RemoteCodexInboundEventQueue(scope) { error ->
+        Log.w(REMOTE_BRIDGE_TAG, "Inbound bridge event failed: ${error.message}")
+    }
+    private val terminalQueued = AtomicBoolean(false)
 
     @Volatile
     private var webSocket: WebSocket? = null
@@ -54,7 +119,7 @@ internal class RemoteCodexBridgeConnection(
         val listener = object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 this@RemoteCodexBridgeConnection.webSocket = webSocket
-                webSocket.send(
+                val sent = webSocket.send(
                     gson.toJson(
                         mapOf(
                             "type" to "hello",
@@ -65,15 +130,73 @@ internal class RemoteCodexBridgeConnection(
                         )
                     )
                 )
+                if (!sent && !started.isCompleted) {
+                    val error = IllegalStateException("Codex bridge hello send failed.")
+                    closed.set(true)
+                    started.completeExceptionally(error)
+                    if (terminalQueued.compareAndSet(false, true)) {
+                        enqueueTerminal {
+                            onStderrLine(error.message.orEmpty())
+                            onExit(null)
+                        }
+                    }
+                    webSocket.cancel()
+                }
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
-                handleBridgeMessage(
-                    raw = text,
-                    onStdoutLine = onStdoutLine,
-                    onStderrLine = onStderrLine,
-                    onExit = onExit
-                )
+                val terminalFrame = bridgeMessageType(text) == "exit"
+                // OkHttp may deliver a callback that raced with failure or a
+                // clean close. Once this transport has a terminal boundary,
+                // no later frame may enter the ACP session again.
+                if (closed.get() || terminalQueued.get()) {
+                    return
+                }
+                if (terminalFrame &&
+                    !terminalQueued.compareAndSet(false, true)
+                ) {
+                    return
+                }
+                if (terminalFrame) {
+                    enqueueTerminal {
+                        handleBridgeMessage(
+                            raw = text,
+                            onStdoutLine = onStdoutLine,
+                            onStderrLine = onStderrLine,
+                            onExit = onExit
+                        )
+                    }
+                    return
+                }
+                enqueueInbound {
+                    // Frames can already be queued when an earlier callback
+                    // fails. Re-check at execution time so those stale
+                    // frames cannot run after the terminal boundary.
+                    if (!terminalFrame && (closed.get() || terminalQueued.get())) {
+                        return@enqueueInbound
+                    }
+                    try {
+                        handleBridgeMessage(
+                            raw = text,
+                            onStdoutLine = onStdoutLine,
+                            onStderrLine = onStderrLine,
+                            onExit = onExit
+                        )
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (error: Throwable) {
+                        // The queue cannot recover a failed ACP callback by
+                        // dropping that event: if it was the terminal update,
+                        // Flutter would keep the turn in "thinking" forever.
+                        // Fail the transport through the same lifecycle path
+                        // used by WebSocket onFailure/onClosed instead.
+                        handleInboundEventFailure(
+                            error = error,
+                            onStderrLine = onStderrLine,
+                            onExit = onExit
+                        )
+                    }
+                }
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
@@ -81,9 +204,11 @@ internal class RemoteCodexBridgeConnection(
                 if (!started.isCompleted) {
                     started.completeExceptionally(t)
                 }
-                scope.launch {
-                    onStderrLine(t.message ?: t.javaClass.simpleName)
-                    onExit(null)
+                if (terminalQueued.compareAndSet(false, true)) {
+                    enqueueTerminal {
+                        onStderrLine(t.message ?: t.javaClass.simpleName)
+                        onExit(null)
+                    }
                 }
             }
 
@@ -93,14 +218,27 @@ internal class RemoteCodexBridgeConnection(
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 closed.set(true)
-                scope.launch {
-                    onExit(code)
+                if (terminalQueued.compareAndSet(false, true)) {
+                    enqueueTerminal {
+                        onExit(code)
+                    }
                 }
             }
         }
         client.newWebSocket(request, listener)
-        withTimeout(START_TIMEOUT_MS) {
-            started.await()
+        try {
+            withTimeout(START_TIMEOUT_MS) {
+                started.await()
+            }
+        } catch (error: Throwable) {
+            // A bridge that never completes hello must not leave a live
+            // WebSocket and a drain worker behind. Both would otherwise keep
+            // delivering late lifecycle events into a failed ACP session.
+            closed.set(true)
+            webSocket?.cancel()
+            webSocket = null
+            inboundEvents.close()
+            throw error
         }
     }
 
@@ -120,12 +258,14 @@ internal class RemoteCodexBridgeConnection(
 
     override suspend fun close() {
         closed.set(true)
+        terminalQueued.set(true)
         val current = webSocket
         webSocket = null
         runCatching { current?.close(1000, "client closed") }
+        inboundEvents.close()
     }
 
-    private fun handleBridgeMessage(
+    private suspend fun handleBridgeMessage(
         raw: String,
         onStdoutLine: suspend (String) -> Unit,
         onStderrLine: suspend (String) -> Unit,
@@ -137,28 +277,65 @@ internal class RemoteCodexBridgeConnection(
         when (type) {
             "hello" -> handleHello(obj)
             "stdout" -> obj.stringValue("line")?.let { line ->
-                scope.launch { onStdoutLine(line) }
+                onStdoutLine(line)
             }
             "stderr" -> obj.stringValue("line")?.let { line ->
-                scope.launch { onStderrLine(line) }
+                onStderrLine(line)
             }
             "exit" -> {
                 closed.set(true)
                 val exitCode = obj.get("exitCode")?.asIntOrNull()
-                scope.launch { onExit(exitCode) }
+                onExit(exitCode)
             }
             "error" -> {
                 val message = obj.stringValue("message") ?: "Codex bridge error."
                 if (!started.isCompleted) {
                     started.completeExceptionally(IllegalStateException(message))
                 }
-                scope.launch { onStderrLine(message) }
+                onStderrLine(message)
             }
             else -> {
                 // Some bridge implementations forward raw ACP JSON instead of an envelope.
-                scope.launch { onStdoutLine(raw) }
+                onStdoutLine(raw)
             }
         }
+    }
+
+    private fun enqueueInbound(event: suspend () -> Unit) {
+        if (!inboundEvents.offer(event)) {
+            Log.w(REMOTE_BRIDGE_TAG, "Dropping inbound bridge event after queue close")
+        }
+    }
+
+    private fun enqueueTerminal(event: suspend () -> Unit) {
+        if (!inboundEvents.offerTerminal(event)) {
+            Log.w(REMOTE_BRIDGE_TAG, "Dropping duplicate inbound bridge terminal event")
+        }
+    }
+
+    private suspend fun handleInboundEventFailure(
+        error: Throwable,
+        onStderrLine: suspend (String) -> Unit,
+        onExit: suspend (Int?) -> Unit,
+    ) {
+        closed.set(true)
+        webSocket?.cancel()
+        val detail = error.message?.takeIf { it.isNotBlank() }
+            ?: error.javaClass.simpleName
+        onStderrLine("Inbound ACP event failed: $detail")
+        if (terminalQueued.compareAndSet(false, true)) {
+            onExit(null)
+        }
+    }
+
+    private fun bridgeMessageType(raw: String): String? {
+        return runCatching {
+            JsonParser.parseString(raw)
+                .takeIf { it.isJsonObject }
+                ?.asJsonObject
+                ?.get("type")
+                ?.asStringOrNull()
+        }.getOrNull()
     }
 
     private fun handleHello(obj: JsonObject) {
@@ -329,7 +506,9 @@ internal suspend fun uploadCodexRemoteBridgeAttachment(
         )
     }
     val dataBase64 = withContext(Dispatchers.IO) {
-        Base64.encodeToString(source.readBytes(), Base64.NO_WRAP)
+        // Keep the remote bridge on the same bounded attachment contract as
+        // local ACP. Do not read an arbitrary picker path into memory.
+        Base64.encodeToString(readAgentAttachmentBytes(source), Base64.NO_WRAP)
     }
     return requestRemoteBridgeJsonPost(
         config = config,

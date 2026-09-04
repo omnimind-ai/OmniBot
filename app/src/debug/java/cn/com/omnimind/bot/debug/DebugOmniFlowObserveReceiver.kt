@@ -16,6 +16,8 @@ class DebugOmniFlowObserveReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent?) {
         val pendingResult = goAsync()
         val appContext = context.applicationContext
+        val requestId = intent?.getStringExtra("requestId")?.trim().orEmpty()
+        val resultFile = resultFileName(intent?.getStringExtra("resultFile"), requestId)
         scope.launch {
             try {
                 val screenshot = intent?.getBooleanExtra("includeScreenshot", false) == true
@@ -30,15 +32,17 @@ class DebugOmniFlowObserveReceiver : BroadcastReceiver() {
                     "success" to true,
                     "state" to state,
                 )
-                File(appContext.filesDir, RESULT_FILE).writeText(gson.toJson(payload))
+                if (requestId.isNotBlank()) payload["request_id"] = requestId
+                File(appContext.filesDir, resultFile).writeText(gson.toJson(payload))
                 Log.i(TAG, "observe_finished success=true screenshot=$screenshot")
             } catch (error: Throwable) {
-                val payload = mapOf(
+                val payload = linkedMapOf<String, Any?>(
                     "schema_version" to "oob.observe.v1",
                     "success" to false,
                     "error" to (error.message ?: error.javaClass.simpleName),
                 )
-                File(appContext.filesDir, RESULT_FILE).writeText(gson.toJson(payload))
+                if (requestId.isNotBlank()) payload["request_id"] = requestId
+                File(appContext.filesDir, resultFile).writeText(gson.toJson(payload))
                 Log.e(TAG, "observe_finished success=false", error)
             } finally {
                 pendingResult.finish()
@@ -48,8 +52,17 @@ class DebugOmniFlowObserveReceiver : BroadcastReceiver() {
 
     private companion object {
         const val RESULT_FILE = "debug-omniflow-observe-result.json"
+        private val REQUEST_RESULT_FILE = Regex("debug-omniflow-observe-result-[A-Za-z0-9_-]+\\.json")
         const val TAG = "DebugOmniFlowObserveReceiver"
         val gson = GsonBuilder().disableHtmlEscaping().create()
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+        fun resultFileName(value: String?, requestId: String): String =
+            value?.trim()?.takeIf { REQUEST_RESULT_FILE.matches(it) }
+                ?: if (requestId.isNotBlank()) {
+                    "debug-omniflow-observe-result-$requestId.json"
+                } else {
+                    RESULT_FILE
+                }
     }
 }

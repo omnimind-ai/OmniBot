@@ -175,6 +175,18 @@ class SandboxConnectorContractTest {
     }
 
     @Test
+    fun `xiaowan request leaves output token budget to the provider when omitted`() {
+        val request = SandboxProjectConnectorRegistry.buildXiaowanRequest(
+            config = JsonObject(
+                mapOf("instruction" to JsonPrimitive("Return the result.")),
+            ),
+            args = JsonObject(mapOf("goal" to JsonPrimitive("Complete the task."))),
+        )
+
+        assertEquals(null, request.maxCompletionTokens)
+    }
+
+    @Test
     fun `framework tool title is not forwarded to project connectors`() {
         val sanitized = SandboxProjectConnectorRegistry.sanitizeArguments(
             JsonObject(

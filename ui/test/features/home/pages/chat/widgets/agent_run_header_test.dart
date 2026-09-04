@@ -33,6 +33,24 @@ void main() {
     expect(find.textContaining('正在处理 6s'), findsOneWidget);
   });
 
+  testWidgets('running header identifies the active ACP tool', (tester) async {
+    await tester.pumpWidget(
+      _wrap(
+        AgentRunHeader(
+          taskId: 'turn-file-write',
+          agentId: 'xiaowan-acp',
+          status: AgentRunStatus.running,
+          startedAt: DateTime.now(),
+          activeToolLabel: '正在写入文件：draft.md',
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.textContaining('正在写入文件：draft.md'), findsOneWidget);
+    expect(find.textContaining('正在处理'), findsNothing);
+  });
+
   testWidgets(
     'finished header shows processed label, elapsed time and chevron',
     (tester) async {

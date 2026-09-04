@@ -1299,6 +1299,55 @@ void main() {
   );
 
   testWidgets(
+    'ACP file write remains visible when the turn has no reasoning card',
+    (tester) async {
+      final controller = ScrollController();
+      final startedAt = DateTime.now().subtract(const Duration(seconds: 2));
+      const taskId = 'file-write-turn';
+
+      await tester.pumpWidget(
+        _buildLocalizedApp(
+          child: SizedBox(
+            width: 400,
+            height: 520,
+            child: ChatMessageList(
+              messages: <ChatMessageModel>[
+                ChatMessageModel.cardMessage(
+                  <String, dynamic>{
+                    'type': 'agent_tool_summary',
+                    'taskId': taskId,
+                    'runId': taskId,
+                    'status': 'running',
+                    'toolName': 'file_write',
+                    'toolTitle': '写入文件',
+                    'toolType': 'file',
+                    'filePath': 'notes/draft.md',
+                    'argsJson': '{"path":"notes/draft.md"}',
+                  },
+                  id: 'file-write-card',
+                  streamMeta: const <String, dynamic>{
+                    'parentTaskId': taskId,
+                    'kind': 'tool_started',
+                  },
+                ).copyWith(createAt: startedAt),
+              ],
+              activeAgentTurnIds: const <String>{taskId},
+              useAcpPresentation: true,
+              activeAcpAgentId: 'xiaowan-acp',
+              scrollController: controller,
+              onBeforeTaskExecute: () async {},
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.textContaining('正在写入文件：draft.md'), findsOneWidget);
+      expect(find.text('draft.md'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
     'active Claude response shows its brand icon before text and keeps it after folding',
     (tester) async {
       final controller = ScrollController();

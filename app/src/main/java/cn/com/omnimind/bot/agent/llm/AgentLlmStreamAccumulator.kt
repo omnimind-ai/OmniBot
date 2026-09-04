@@ -260,13 +260,7 @@ class AgentLlmStreamAccumulator(
 
     fun canFinalizeOnClosed(): Boolean {
         return hasDoneSignal() ||
-            !finishReason.isNullOrBlank() ||
-            // A few OpenAI-compatible gateways close the SSE connection after
-            // the last assistant delta without sending [DONE], finish_reason,
-            // or a usage object. The content already received is the only
-            // terminal signal available in that case; refusing to finalize
-            // leaves the owning ACP session/prompt suspended forever.
-            hasAssistantPayload()
+            !finishReason.isNullOrBlank()
     }
 
     fun buildTurn(): ChatCompletionTurn {

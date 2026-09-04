@@ -39,13 +39,6 @@ class SharedHelper(
         const val PRIVILEGED_SESSION_WORKSPACE_PREFIX = "__privileged__:"
         const val PRIVILEGED_SESSION_START_ACTION = "shell.session_start"
         const val PRIVILEGED_SESSION_EXEC_ACTION = "shell.session_exec"
-        const val DEFAULT_CONTEXT_QUERY_LIMIT = 20
-        const val DEFAULT_FILE_READ_MAX_CHARS = 8000
-        const val DEFAULT_FILE_LIST_LIMIT = 200
-        const val DEFAULT_FILE_SEARCH_LIMIT = 50
-        const val DEFAULT_TERMINAL_SESSION_READ_MAX_CHARS = 4000
-        const val DEFAULT_SKILLS_LIST_LIMIT = 50
-        const val DEFAULT_SKILL_READ_MAX_CHARS = 16_000
     }
 
     val isEnglishLocale: Boolean
@@ -505,8 +498,10 @@ class SharedHelper(
         }
     }
 
-    fun parseContextQueryLimit(rawLimit: Int?): Int {
-        return rawLimit?.coerceIn(1, 100) ?: DEFAULT_CONTEXT_QUERY_LIMIT
+    fun parseContextQueryLimit(rawLimit: Int?, configuredLimit: Int?): Int {
+        return rawLimit?.takeIf { it > 0 }
+            ?: configuredLimit?.takeIf { it > 0 }
+            ?: Int.MAX_VALUE
     }
 
     fun parseEnvironmentMap(raw: JsonObject?): Map<String, String> {

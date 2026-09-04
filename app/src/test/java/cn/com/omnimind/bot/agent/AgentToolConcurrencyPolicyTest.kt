@@ -63,6 +63,14 @@ class AgentToolConcurrencyPolicyTest {
     }
 
     @Test
+    fun `turn boundary is scoped to the current turn rather than all ACP sessions`() {
+        assertTrue(AgentToolConcurrencyPolicy.isTurnBoundary("bash"))
+        assertTrue(AgentToolConcurrencyPolicy.isTurnBoundary("android_privileged_action"))
+        assertTrue(!AgentToolConcurrencyPolicy.isTurnBoundary("file_write"))
+        assertTrue(!AgentToolConcurrencyPolicy.isTurnBoundary("file_read"))
+    }
+
+    @Test
     fun `browser_use parallel-safe only for read actions`() {
         val readAction = buildJsonObject { put("action", "get_text") }
         val writeAction = buildJsonObject { put("action", "click") }

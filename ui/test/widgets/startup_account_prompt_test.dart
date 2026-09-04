@@ -128,6 +128,31 @@ void main() {
     },
   );
 
+  testWidgets('does not show login while secure storage is unavailable', (
+    tester,
+  ) async {
+    final navigatorKey = GlobalKey<NavigatorState>();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorKey: navigatorKey,
+        home: StartupAccountPrompt(
+          navigatorKey: navigatorKey,
+          refreshVersionPolicy: () async {},
+          loadSession: () async => const AccountSessionState(
+            configured: true,
+            signedIn: false,
+            credentialStorageAvailable: false,
+          ),
+          child: const Scaffold(body: Text('home')),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('startup-account-card')), findsNothing);
+  });
+
   testWidgets('dismissing outside the card also disables future prompts', (
     tester,
   ) async {

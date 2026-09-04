@@ -1545,6 +1545,9 @@ class AppLocalizationsEn extends AppLocalizations {
       'DeepSeek Harness (dsh) official ACP runtime';
 
   @override
+  String get alpineKimiCode => 'Kimi Code official CLI and local Web UI';
+
+  @override
   String get alpineSshClient => 'SSH Client';
 
   @override

@@ -34,6 +34,7 @@ double _chatAppBarModeMenuAgentIconSize(String agentId) {
   // 校正，让它们在 40px 菜单行内看起来接近同一大小。
   return switch (agentId.trim()) {
     'xiaowan-acp' => 23,
+    'kimi-code-acp' => 21,
     'codex-acp' || 'codex-remote' => 19,
     'claude-code-acp' => 21,
     'opencode-acp' => 22,
@@ -664,8 +665,7 @@ class _ChatAppBarModeShortcutButtonState
                   // an unrelated slow Harness (notably DeepSeek) freeze the
                   // whole switcher.
                   enabled:
-                      widget.onAcpAgentTap != null ||
-                      widget.onAgentTap != null,
+                      widget.onAcpAgentTap != null || widget.onAgentTap != null,
                   iconSize: _chatAppBarModeMenuAgentIconSize(agent.id),
                 ),
               _ChatAppBarModeShortcutMenuItemData(

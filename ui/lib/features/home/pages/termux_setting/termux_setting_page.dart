@@ -103,6 +103,12 @@ const List<_EnvironmentDefinition> _environmentDefinitions =
         groupKey: 'alpineAiAgent',
       ),
       _EnvironmentDefinition(
+        id: 'kimi',
+        title: 'Kimi Code',
+        descriptionKey: 'alpineKimiCode',
+        groupKey: 'alpineAiAgent',
+      ),
+      _EnvironmentDefinition(
         id: 'ssh_client',
         title: 'ssh',
         descriptionKey: 'alpineSshClient',
@@ -253,6 +259,8 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
         return l10n.alpineOpenCode;
       case 'alpineDeepSeekHarness':
         return l10n.alpineDeepSeekHarness;
+      case 'alpineKimiCode':
+        return l10n.alpineKimiCode;
       case 'alpineSshClient':
         return l10n.alpineSshClient;
       case 'alpineSshpass':

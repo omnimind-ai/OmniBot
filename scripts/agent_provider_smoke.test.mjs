@@ -4,9 +4,26 @@ import test from "node:test";
 import {
   buildChatCompletionRequest,
   extractModelIds,
+  providerSmokeConfigFromEnvironment,
   providerModelsUrl,
   runProviderSmoke,
 } from "./agent_provider_smoke.mjs";
+
+test("provider smoke reads the documented LLMTHU base variable", () => {
+  assert.deepEqual(
+    providerSmokeConfigFromEnvironment({
+      LLMTHU_API_KEY: "test-token",
+      LLMTHU_API_BASE: "https://provider.example/v1",
+      LLMTHU_MODEL: "model-a",
+    }),
+    {
+      apiKey: "test-token",
+      baseUrl: "https://provider.example/v1",
+      model: "model-a",
+      timeoutMs: 120_000,
+    },
+  );
+});
 
 test("providerModelsUrl normalizes OpenAI-compatible base URLs", () => {
   assert.equal(

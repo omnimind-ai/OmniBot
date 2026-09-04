@@ -27,9 +27,9 @@ Options:
 
 Live Provider environment:
   OMNIBOT_TEST_API_KEY   Preferred token; fallback: LLMTHU_API_KEY or OPENAI_API_KEY.
-  OMNIBOT_TEST_BASE_URL  Preferred base URL; fallback: LLMTHU_API_BASE_URL.
+  OMNIBOT_TEST_BASE_URL  Preferred base URL; fallback: LLMTHU_API_BASE or LLMTHU_API_BASE_URL.
   OMNIBOT_TEST_MODEL     Preferred model; fallback: LLMTHU_MODEL or GLM-5.1.
-  OMNIBOT_TEST_TIMEOUT_MS Request timeout; default: 30000.
+  OMNIBOT_TEST_TIMEOUT_MS Request timeout; default: 120000.
 EOF
 }
 

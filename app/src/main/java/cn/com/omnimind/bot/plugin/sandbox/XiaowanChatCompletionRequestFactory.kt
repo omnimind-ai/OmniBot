@@ -4,6 +4,7 @@ import cn.com.omnimind.baselib.llm.ChatCompletionMessage
 import cn.com.omnimind.baselib.llm.ChatCompletionRequest
 import cn.com.omnimind.baselib.llm.ChatCompletionStreamOptions
 import cn.com.omnimind.baselib.llm.ChatCompletionThinking
+import cn.com.omnimind.baselib.llm.ReasoningEffort
 import cn.com.omnimind.bot.agent.AgentConversationContextCompactor
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -15,20 +16,15 @@ import kotlinx.serialization.json.JsonPrimitive
  * [HttpAgentLlmClient] resolve the configured provider and route.
  */
 internal object XiaowanChatCompletionRequestFactory {
-    const val MIN_MAX_TOKENS = 32
-    const val DEFAULT_MAX_TOKENS = 800
-    const val MAX_MAX_TOKENS = 4_096
     const val DEFAULT_TEMPERATURE = 0.4
     const val DEFAULT_REASONING_EFFORT = "none"
     const val MAX_PROMPT_CHARS = 32_000
     const val MAX_SYSTEM_CHARS = 8_000
 
-    private val reasoningEfforts = setOf("none", "low", "medium", "high")
-
     fun create(
         prompt: String,
         system: String = "",
-        maxTokens: Int = DEFAULT_MAX_TOKENS,
+        maxTokens: Int? = null,
         temperature: Double = DEFAULT_TEMPERATURE,
         reasoningEffort: String = DEFAULT_REASONING_EFFORT,
     ): ChatCompletionRequest {
@@ -38,11 +34,7 @@ internal object XiaowanChatCompletionRequestFactory {
         require(system.length <= MAX_SYSTEM_CHARS) {
             "system exceeds the $MAX_SYSTEM_CHARS character limit"
         }
-        val normalizedEffort = reasoningEffort.trim().lowercase()
-            .takeIf { it in reasoningEfforts }
-            ?: throw IllegalArgumentException(
-                "reasoning_effort must be one of ${reasoningEfforts.joinToString()}",
-            )
+        val normalizedEffort = normalizeReasoningEffort(reasoningEffort)
         val messages = buildList {
             if (system.isNotEmpty()) {
                 add(ChatCompletionMessage(role = "system", content = JsonPrimitive(system)))
@@ -59,7 +51,7 @@ internal object XiaowanChatCompletionRequestFactory {
 
     fun create(
         messages: List<ChatCompletionMessage>,
-        maxTokens: Int = DEFAULT_MAX_TOKENS,
+        maxTokens: Int? = null,
         temperature: Double = DEFAULT_TEMPERATURE,
         reasoningEffort: String = DEFAULT_REASONING_EFFORT,
     ): ChatCompletionRequest {
@@ -67,15 +59,11 @@ internal object XiaowanChatCompletionRequestFactory {
         require(messages.sumOf { it.content?.toString()?.length ?: 0 } <= MAX_PROMPT_CHARS) {
             "messages exceed the $MAX_PROMPT_CHARS character limit"
         }
-        val normalizedEffort = reasoningEffort.trim().lowercase()
-            .takeIf { it in reasoningEfforts }
-            ?: throw IllegalArgumentException(
-                "reasoning_effort must be one of ${reasoningEfforts.joinToString()}",
-            )
+        val normalizedEffort = normalizeReasoningEffort(reasoningEffort)
         return ChatCompletionRequest(
             messages = messages,
             model = AgentConversationContextCompactor.DEFAULT_AGENT_MODEL_SCENE,
-            maxCompletionTokens = maxTokens.coerceIn(MIN_MAX_TOKENS, MAX_MAX_TOKENS),
+            maxCompletionTokens = maxTokens,
             temperature = temperature.coerceIn(0.0, 2.0),
             stream = true,
             streamOptions = ChatCompletionStreamOptions(),
@@ -87,5 +75,24 @@ internal object XiaowanChatCompletionRequestFactory {
                 null
             },
         )
+    }
+
+    /** Xiaowan's configured Provider supports four levels; higher host values
+     * are intentionally reduced at this adapter boundary. */
+    private fun normalizeReasoningEffort(value: String): String {
+        return when (ReasoningEffort.normalize(value)) {
+            ReasoningEffort.NONE -> ReasoningEffort.NONE
+            ReasoningEffort.LOW -> ReasoningEffort.LOW
+            ReasoningEffort.MEDIUM -> ReasoningEffort.MEDIUM
+            ReasoningEffort.HIGH,
+            ReasoningEffort.XHIGH,
+            ReasoningEffort.MAX -> ReasoningEffort.HIGH
+            null -> throw IllegalArgumentException(
+                "reasoning_effort must be one of ${ReasoningEffort.supported.joinToString()}",
+            )
+            else -> throw IllegalArgumentException(
+                "reasoning_effort must be one of ${ReasoningEffort.supported.joinToString()}",
+            )
+        }
     }
 }

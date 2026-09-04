@@ -53,9 +53,28 @@ class AccountChannel {
         when (call.method) {
             "getSessionState" -> launch(result) {
                 val cloudServiceAccess = OmniAccount.currentCloudServiceAccess()
+                val configured = OmniAccount.isConfigured()
+                var signedIn = false
+                var credentialStorageAvailable = true
+                if (configured) {
+                    try {
+                        signedIn = OmniAccount.repository().isSignedIn()
+                    } catch (_: AccountCredentialStorageException) {
+                        // A transient Keystore/EncryptedSharedPreferences failure
+                        // is not a signed-out state. Let Flutter render a retry
+                        // state instead of opening the login form.
+                        credentialStorageAvailable = false
+                    }
+                }
                 mapOf(
-                    "configured" to OmniAccount.isConfigured(),
-                    "signedIn" to (OmniAccount.isConfigured() && OmniAccount.repository().isSignedIn()),
+                    "configured" to configured,
+                    "signedIn" to signedIn,
+                    "credentialStorageAvailable" to credentialStorageAvailable,
+                    "credentialStorageUnavailableReason" to if (credentialStorageAvailable) {
+                        null
+                    } else {
+                        "Secure account credential storage is temporarily unavailable"
+                    },
                     "cloudServiceAccessAllowed" to cloudServiceAccess.allowed,
                     "cloudServicePolicyKnown" to cloudServiceAccess.policyKnown,
                     "currentVersion" to cloudServiceAccess.currentVersion,

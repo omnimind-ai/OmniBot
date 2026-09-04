@@ -82,13 +82,13 @@ class OnboardingProviderConnectionPage extends StatelessWidget {
           decoration: onboardingInputDecoration(
             context,
             label: 'API Base URL',
-            hint: 'https://api.example.com/v1',
+          hint: 'https://api.example.com/v1 或 http://192.168.1.10:8000/v1',
             icon: LucideIcons.globe2,
             helper: isCustom
                 ? onbTr(
                     context,
-                    '填写兼容 OpenAI 或 Anthropic 协议的 HTTPS 地址。',
-                    'Use an HTTPS endpoint compatible with OpenAI or Anthropic.',
+                    '填写兼容 OpenAI 或 Anthropic 协议的 HTTP/HTTPS 地址。',
+                    'Use an HTTP/HTTPS endpoint compatible with OpenAI or Anthropic.',
                   )
                 : onbTr(
                     context,

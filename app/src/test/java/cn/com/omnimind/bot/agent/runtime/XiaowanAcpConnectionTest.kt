@@ -1,13 +1,70 @@
 package cn.com.omnimind.bot.agent.runtime
 
+import cn.com.omnimind.bot.mcp.RemoteMcpCallResult
+import cn.com.omnimind.bot.mcp.RemoteMcpToolDescriptor
 import com.agentclientprotocol.model.ContentBlock
 import com.agentclientprotocol.model.SessionUpdate
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class XiaowanAcpConnectionTest {
+
+    @Test
+    fun `xiaowan advertises only the ACP lifecycle and MCP transports it implements`() {
+        val capabilities = xiaowanAgentCapabilities()
+
+        assertFalse(capabilities.loadSession)
+        assertTrue(capabilities.mcpCapabilities.http)
+        assertTrue(capabilities.mcpCapabilities.sse)
+        assertNotNull(capabilities.sessionCapabilities.list)
+        assertNotNull(capabilities.sessionCapabilities.resume)
+        assertNotNull(capabilities.sessionCapabilities.delete)
+        assertNotNull(capabilities.sessionCapabilities.close)
+        assertNull(capabilities.sessionCapabilities.fork)
+    }
+
+    @Test
+    fun `session MCP tools receive safe unique model names and MCP metadata`() {
+        val connection = fakeMcpConnection("session-server", "团队 MCP")
+        val descriptor = RemoteMcpToolDescriptor(
+            serverId = connection.connectionId,
+            serverName = connection.serverName,
+            toolName = "查询/天气",
+            description = "查询天气",
+            inputSchema = mapOf("type" to "object"),
+        )
+        val bindings = buildXiaowanMcpToolBindings(
+            listOf(
+                XiaowanMcpDiscoveredTool(connection, descriptor),
+                XiaowanMcpDiscoveredTool(connection, descriptor),
+            )
+        )
+
+        assertEquals(2, bindings.map { it.modelToolName }.distinct().size)
+        bindings.forEach { binding ->
+            assertTrue(binding.modelToolName.length <= 64)
+            assertTrue(binding.modelToolName.matches(Regex("[A-Za-z0-9_-]+")))
+        }
+        val module = XiaowanMcpCapabilityModule(bindings)
+        assertEquals(setOf("mcp"), module.toolDefinitions.map { it.toolType }.toSet())
+        assertEquals(setOf("团队 MCP"), module.toolDefinitions.map { it.serverName }.toSet())
+        assertEquals(bindings.map { it.modelToolName }.toSet(), module.handlers.single().toolNames)
+    }
+
+    @Test
+    fun `xiaowan adapter uses canonical reasoning aliases and provider levels`() {
+        assertEquals("none", normalizeXiaowanReasoningEffort("no"))
+        assertEquals("medium", normalizeXiaowanReasoningEffort("MEDIUM"))
+        assertEquals("high", normalizeXiaowanReasoningEffort("xhigh"))
+        assertEquals("high", normalizeXiaowanReasoningEffort("max"))
+        assertNull(normalizeXiaowanReasoningEffort("provider-specific-level"))
+    }
 
     @Test
     fun `explicit reasoning rounds use separate ACP thought messages`() = runBlocking {
@@ -28,5 +85,24 @@ class XiaowanAcpConnectionTest {
         }
         assertEquals(2, contentUpdates.size)
         assertNotEquals(contentUpdates[0].content, contentUpdates[1].content)
+    }
+
+    private fun fakeMcpConnection(
+        id: String,
+        name: String,
+    ): XiaowanMcpServerConnection = object : XiaowanMcpServerConnection {
+        override val connectionId: String = id
+        override val serverName: String = name
+
+        override suspend fun start() = Unit
+
+        override suspend fun listTools(): List<RemoteMcpToolDescriptor> = emptyList()
+
+        override suspend fun callTool(
+            toolName: String,
+            arguments: Map<String, Any?>,
+        ): RemoteMcpCallResult = error("not used")
+
+        override suspend fun close() = Unit
     }
 }

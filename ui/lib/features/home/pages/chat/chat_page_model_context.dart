@@ -31,78 +31,10 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
           overrideSelection: _activeConversationModelOverrideSelection,
         );
       });
-      // Normal page loading paints from cache immediately. Provider refreshes
-      // remain background work; only the explicit selector path force-refreshes
-      // the small official catalog before it opens.
-      unawaited(_refreshActiveChatProviderModelsInBackground());
       await _syncInvalidNormalConversationOverrideIfNeeded();
       await _syncActiveNormalConversationPromptTokenThreshold();
     } catch (e) {
       debugPrint('加载聊天模型上下文失败: $e');
-    }
-  }
-
-  Future<void> _refreshActiveChatProviderModelsInBackground() async {
-    // Agent mode has a durable Provider/model binding and its ACP runtime is
-    // already responsible for the active turn. Do not start a second network
-    // catalog refresh while a Harness is being connected; the normal chat
-    // surface will refresh the same Provider when it becomes visible.
-    if (_activeMode == ChatPageMode.agent) {
-      return;
-    }
-    final selection = _activeDispatchSceneSelection;
-    if (selection == null) {
-      return;
-    }
-    final profile = _modelProviderProfiles
-        .where((item) => item.id == selection.providerProfileId)
-        .firstOrNull;
-    if (profile == null || !profile.configured) {
-      return;
-    }
-
-    final refreshSerial = ++_chatModelCatalogRefreshSerial;
-    try {
-      await ModelProviderConfigService.fetchModels(
-        profileId: profile.id,
-        providerName: profile.name,
-        capability: 'text',
-      );
-      final refreshed =
-          await ModelProviderConfigService.getChatModelOptionsForProfile(
-            profile.id,
-            profile: profile,
-          );
-      if (!mounted || refreshSerial != _chatModelCatalogRefreshSerial) {
-        return;
-      }
-      final currentSelection = _activeDispatchSceneSelection;
-      if (currentSelection == null ||
-          currentSelection.providerProfileId != profile.id) {
-        return;
-      }
-      final next = <String, List<ProviderModelOption>>{
-        for (final entry in _modelOptionsByProfileId.entries)
-          entry.key: List<ProviderModelOption>.from(entry.value),
-      };
-      next[profile.id] = refreshed;
-      setState(() {
-        _modelOptionsByProfileId = _mergeChatModelOptions(
-          profiles: _modelProviderProfiles,
-          source: next,
-          sceneCatalog: _sceneCatalog,
-          overrideSelection: _activeConversationModelOverrideSelection,
-        );
-      });
-      // Agent mode has its own slash-model list, but it must be a projection
-      // of this same Provider catalog. Rebuild it after the background fetch
-      // so a cold cache cannot leave only the currently bound model visible.
-      if (_activeMode == ChatPageMode.agent) {
-        unawaited(_loadAgentModelOptions(force: true));
-      }
-    } catch (_) {
-      // Cached Provider models remain usable when the background refresh
-      // fails. The next explicit model-picker refresh can retry it.
     }
   }
 
@@ -433,7 +365,7 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
     }
     showToast(
       LegacyTextLocalizer.localize(
-        normalizedEffort == 'no' ? '已关闭思考' : '已设置思考强度为 $normalizedEffort',
+        normalizedEffort == 'none' ? '已关闭思考' : '已设置思考强度为 $normalizedEffort',
       ),
       type: ToastType.success,
     );
@@ -700,6 +632,8 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
     }
     final cached = await ModelProviderConfigService.getCachedFetchedModels(
       profileId: profile.id,
+      apiBase: profile.baseUrl,
+      profileRevision: profile.revision,
     );
     if (cached.isEmpty) {
       return;

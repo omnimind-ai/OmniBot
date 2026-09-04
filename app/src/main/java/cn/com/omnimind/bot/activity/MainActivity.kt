@@ -10,6 +10,7 @@ import android.os.Bundle
 import android.view.WindowManager
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
+import cn.com.omnimind.baselib.account.OmniAccount
 import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.App
 import cn.com.omnimind.bot.terminal.EmbeddedTerminalAutoStartManager
@@ -146,6 +147,19 @@ class MainActivity : FlutterActivity() {
         TaskRuntimeSettings.attachActivity(this)
         TaskRuntimeSettings.onActivityResumed(this)
         AppUpdateManager.requestSilentCheckIfDue(this)
+        lifecycleScope.launch {
+            runCatching {
+                if (OmniAccount.isConfigured()) {
+                    OmniAccount.repository().refreshSessionIfNeeded()
+                }
+            }.onFailure { error ->
+                // A foreground refresh is best effort.  The request owner
+                // still handles a real 401, while this path prevents a
+                // normally expired access token from being presented as an
+                // unexpected logout after app switching.
+                OmniLog.w(TAG, "Foreground account session refresh skipped", error)
+            }
+        }
 
     }
 

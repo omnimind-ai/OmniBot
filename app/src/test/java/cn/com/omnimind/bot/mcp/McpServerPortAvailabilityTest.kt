@@ -9,6 +9,55 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class McpServerPortAvailabilityTest {
+
+    @Test
+    fun `MCP authority validation permits loopback and LAN but rejects rebinding origins`() {
+        val allowed = listOf("127.0.0.1", "192.168.1.20", "localhost", "[::1]")
+
+        assertTrue(
+            McpServerManager.isAllowedMcpRequestAuthority(
+                host = "192.168.1.20:8899",
+                origin = "http://192.168.1.20:8899",
+                allowedHosts = allowed,
+            )
+        )
+        assertTrue(
+            McpServerManager.isAllowedMcpRequestAuthority(
+                host = "127.0.0.1",
+                origin = null,
+                allowedHosts = allowed,
+            )
+        )
+        assertTrue(
+            McpServerManager.isAllowedMcpRequestAuthority(
+                host = "[::1]:8899",
+                origin = "http://[::1]:8899",
+                allowedHosts = allowed,
+            )
+        )
+        assertFalse(
+            McpServerManager.isAllowedMcpRequestAuthority(
+                host = "127.0.0.1",
+                origin = "https://attacker.example",
+                allowedHosts = allowed,
+            )
+        )
+        assertFalse(
+            McpServerManager.isAllowedMcpRequestAuthority(
+                host = "attacker.example",
+                origin = null,
+                allowedHosts = allowed,
+            )
+        )
+        assertFalse(
+            McpServerManager.isAllowedMcpRequestAuthority(
+                host = "attacker.example@127.0.0.1",
+                origin = null,
+                allowedHosts = allowed,
+            )
+        )
+    }
+
     @Test
     fun occupiedPortIsRejectedBeforeStartingKtor() {
         ServerSocket().use { socket ->

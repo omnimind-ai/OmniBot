@@ -68,13 +68,50 @@ class AgentRuntimeMcpTest {
                     endpointUrl = "https://mcp.example.test/sse",
                 ),
             ),
+            supportsHttp = true,
+            supportsSse = true,
         )
 
-        assertEquals(1, servers.size)
+        assertEquals(2, servers.size)
         val first = servers.first() as McpServer.Http
         assertEquals("Filesystem", first.name)
         assertEquals("https://mcp.example.test/mcp", first.url)
         assertEquals("Bearer remote-token", first.headers.single().value)
+        val second = servers[1] as McpServer.Sse
+        assertEquals("Legacy SSE", second.name)
+        assertEquals("https://mcp.example.test/sse", second.url)
+    }
+
+    @Test
+    fun configuredRemoteMcpServersRespectNegotiatedTransportCapabilities() {
+        val configured = listOf(
+            RemoteMcpServerConfig(
+                id = "http",
+                name = "HTTP",
+                endpointUrl = "https://mcp.example.test/mcp",
+            ),
+            RemoteMcpServerConfig(
+                id = "sse",
+                name = "SSE",
+                endpointUrl = "https://mcp.example.test/events",
+                transport = cn.com.omnimind.bot.mcp.RemoteMcpTransport.SSE,
+            ),
+        )
+
+        assertTrue(
+            buildConfiguredRemoteAcpMcpServers(
+                configured,
+                supportsHttp = true,
+                supportsSse = false,
+            ).single() is McpServer.Http
+        )
+        assertTrue(
+            buildConfiguredRemoteAcpMcpServers(
+                configured,
+                supportsHttp = false,
+                supportsSse = true,
+            ).single() is McpServer.Sse
+        )
     }
 
     @Test

@@ -39,6 +39,7 @@ import okhttp3.sse.EventSource
 import okhttp3.sse.EventSourceListener
 import java.net.URI
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 interface AgentLlmClient {
     suspend fun streamTurn(
@@ -57,6 +58,10 @@ class AgentStreamRequestException(
         statusCode?.let { "($it)" }.orEmpty()
     }: $reason"
 )
+
+class AgentStreamIdleTimeoutException(
+    val timeoutMillis: Long,
+) : RuntimeException("chat completion stream idle timeout after ${timeoutMillis}ms")
 
 class AgentStreamReasoningLeakException(
     reason: String
@@ -129,18 +134,31 @@ class HttpAgentLlmClient(
                 )
         }
     },
-    private val maxTransientStreamRetries: Int = 2,
-    private val transientStreamRetryDelayMs: Long = 750L,
+    // This is the single transport retry owner. A retry is safe only before
+    // visible output exists; replaying a started stream duplicates reasoning,
+    // text, and potentially tool intent.
+    private val maxTransientStreamRetries: Int? = null,
+    private val transientStreamRetryDelayMs: Long? = null,
+    private val streamIdleTimeoutMs: Long? = null,
     private val json: Json = Json {
         ignoreUnknownKeys = true
         isLenient = true
         encodeDefaults = true
         explicitNulls = false
-    }
+    },
+    // ACP has its own inactivity watchdog. Keep the Provider transport
+    // deadline shorter so a dead SSE connection is converted into a terminal
+    // Agent error before ACP reports a stalled turn with no recovery path.
+    private val runtimeSettings: AgentRuntimeSettings = AgentRuntimeSettings(),
 ) : AgentLlmClient {
+    private val effectiveMaxTransientStreamRetries: Int?
+        get() = runtimeSettings.maxTransientStreamRetries ?: maxTransientStreamRetries
+    private val effectiveTransientStreamRetryDelayMs: Long?
+        get() = runtimeSettings.transientStreamRetryDelayMs ?: transientStreamRetryDelayMs
+    private val effectiveStreamIdleTimeoutMs: Long?
+        get() = runtimeSettings.streamIdleTimeoutMs ?: streamIdleTimeoutMs
     private val modelOverride: AgentModelOverride? = modelOverride?.normalized()
     private val tag = "HttpAgentLlmClient"
-
     private companion object {
         const val REASONING_UPDATE_INTERVAL_MS =
             ReasoningStreamUpdatePolicy.DEFAULT_INTERVAL_MS
@@ -163,7 +181,6 @@ class HttpAgentLlmClient(
         // and the 16K ceiling can reserve several times a user's weekly allowance
         // before the vision model is called. A vision turn only needs the current
         // image question; subsequent text turns still use the normal agent context.
-        const val PLATFORM_VISION_MAX_COMPLETION_TOKENS = 1_024
     }
 
     internal data class StreamRequestVariant(
@@ -240,6 +257,18 @@ class HttpAgentLlmClient(
         val modelCandidates = buildModelCandidates(request.model)
         val sanitizedRequest = sanitizeRequestForTarget(request)
         var lastFailure: AgentStreamRequestException? = null
+        var emittedOutput = false
+        suspend fun forwardOutput(
+            callback: (suspend (String) -> Unit)?,
+            value: String,
+        ) {
+            if (value.isNotBlank()) emittedOutput = true
+            callback?.invoke(value)
+        }
+        val routedReasoningUpdate: (suspend (String) -> Unit)? =
+            onReasoningUpdate?.let { callback -> { value -> forwardOutput(callback, value) } }
+        val routedContentUpdate: (suspend (String) -> Unit)? =
+            onContentUpdate?.let { callback -> { value -> forwardOutput(callback, value) } }
 
         for (modelIndex in modelCandidates.indices) {
             val candidateModel = modelCandidates[modelIndex]
@@ -252,7 +281,8 @@ class HttpAgentLlmClient(
                 modelOverride?.protocolType,
                 modelOverride?.wireApi
             )
-            val variants = buildRequestVariants(sanitizedRequest, routeInfo)
+            val routeRequest = AgentProviderRequestPolicy.prepare(routeInfo, sanitizedRequest)
+            val variants = buildRequestVariants(routeRequest, routeInfo)
             for (variantIndex in variants.indices) {
                 val variant = variants[variantIndex]
                 try {
@@ -280,13 +310,42 @@ class HttpAgentLlmClient(
                         requestJson = requestJson,
                         explicitModel = effectiveExplicitModel,
                         platformRoute = AiRequestTransportPolicy.isPlatformRoute(routeInfo.routeTag),
-                        onReasoningUpdate = onReasoningUpdate,
-                        onContentUpdate = onContentUpdate
+                        onReasoningUpdate = routedReasoningUpdate,
+                        onContentUpdate = routedContentUpdate
                     )
                     return responsesNamePlan?.restoreTurn(turn) ?: turn
                 } catch (error: AgentStreamRequestException) {
                     lastFailure = error
-                    if (isBadRequest(error) && isThinkingDisableRejected(error)) {
+                    if (!emittedOutput) {
+                        val thinkingParameterFree = AgentProviderRequestPolicy.requestAfterFailure(
+                            routeInfo = routeInfo,
+                            request = variant.request,
+                            error = error,
+                        )
+                        if (thinkingParameterFree != null) {
+                            OmniLog.w(
+                                tag,
+                                "provider rejected enable_thinking; retrying without provider-specific thinking parameters"
+                            )
+                            val fallbackPlan = if (OpenAiWireApi.isResponses(routeInfo.wireApi)) {
+                                OpenAiResponsesFunctionNameCodec.planFor(thinkingParameterFree)
+                            } else {
+                                null
+                            }
+                            val fallbackWireRequest =
+                                fallbackPlan?.encodeRequest(thinkingParameterFree) ?: thinkingParameterFree
+                            val turn = streamTurnWithPlatformAuthRetry(
+                                model = candidateModel,
+                                requestJson = json.encodeToString(fallbackWireRequest),
+                                explicitModel = effectiveExplicitModel,
+                                platformRoute = AiRequestTransportPolicy.isPlatformRoute(routeInfo.routeTag),
+                                onReasoningUpdate = routedReasoningUpdate,
+                                onContentUpdate = routedContentUpdate,
+                            )
+                            return fallbackPlan?.restoreTurn(turn) ?: turn
+                        }
+                    }
+                    if (!emittedOutput && isBadRequest(error) && isThinkingDisableRejected(error)) {
                         val thinkingCompatible = withThinkingEnabled(variant.request)
                         if (thinkingCompatible != variant.request) {
                             OmniLog.w(tag, "provider rejected disabled thinking; retrying with low effort")
@@ -302,16 +361,19 @@ class HttpAgentLlmClient(
                                 requestJson = json.encodeToString(fallbackWireRequest),
                                 explicitModel = effectiveExplicitModel,
                                 platformRoute = AiRequestTransportPolicy.isPlatformRoute(routeInfo.routeTag),
-                                onReasoningUpdate = onReasoningUpdate,
-                                onContentUpdate = onContentUpdate,
+                                onReasoningUpdate = routedReasoningUpdate,
+                                onContentUpdate = routedContentUpdate,
                             )
                             return fallbackPlan?.restoreTurn(turn) ?: turn
                         }
                     }
-                    if (isBadRequest(error) && isTextOnlyContentRejected(error)) {
+                    if (!emittedOutput && isImageContentRejected(error)) {
                         val textOnly = withoutUnsupportedImageBlocks(variant.request)
                         if (textOnly != variant.request) {
-                            OmniLog.w(tag, "provider rejected image content; retrying text-only request")
+                            OmniLog.w(
+                                tag,
+                                "provider rejected image content; retrying without inline image"
+                            )
                             val fallbackPlan = if (OpenAiWireApi.isResponses(routeInfo.wireApi)) {
                                 OpenAiResponsesFunctionNameCodec.planFor(textOnly)
                             } else {
@@ -324,8 +386,8 @@ class HttpAgentLlmClient(
                                     requestJson = json.encodeToString(fallbackWireRequest),
                                     explicitModel = effectiveExplicitModel,
                                     platformRoute = AiRequestTransportPolicy.isPlatformRoute(routeInfo.routeTag),
-                                    onReasoningUpdate = onReasoningUpdate,
-                                    onContentUpdate = onContentUpdate,
+                                    onReasoningUpdate = routedReasoningUpdate,
+                                    onContentUpdate = routedContentUpdate,
                                 )
                                 return fallbackPlan?.restoreTurn(turn) ?: turn
                             } catch (fallbackError: AgentStreamRequestException) {
@@ -343,15 +405,17 @@ class HttpAgentLlmClient(
                                     requestJson = json.encodeToString(thinkingWireRequest),
                                     explicitModel = effectiveExplicitModel,
                                     platformRoute = AiRequestTransportPolicy.isPlatformRoute(routeInfo.routeTag),
-                                    onReasoningUpdate = onReasoningUpdate,
-                                    onContentUpdate = onContentUpdate,
+                                    onReasoningUpdate = routedReasoningUpdate,
+                                    onContentUpdate = routedContentUpdate,
                                 )
                                 return thinkingPlan?.restoreTurn(turn) ?: turn
                             }
                         }
                     }
                     val canRetryVariant =
-                        error.statusCode == 400 && variantIndex < variants.lastIndex
+                        !emittedOutput &&
+                            error.statusCode == 400 &&
+                            variantIndex < variants.lastIndex
                     if (canRetryVariant) {
                         OmniLog.w(
                             tag,
@@ -361,7 +425,9 @@ class HttpAgentLlmClient(
                     }
 
                     val canFallbackModel =
-                        modelIndex < modelCandidates.lastIndex && isModelNotSupported(error)
+                        !emittedOutput &&
+                            modelIndex < modelCandidates.lastIndex &&
+                            isModelNotSupported(error)
                     if (canFallbackModel) {
                         val nextModel = modelCandidates[modelIndex + 1]
                         OmniLog.w(
@@ -372,7 +438,7 @@ class HttpAgentLlmClient(
                     }
                     throw error
                 } catch (error: AgentStreamReasoningLeakException) {
-                    if (shouldRetryNextVariantAfterReasoningLeak(routeInfo, variants, variantIndex)) {
+                    if (!emittedOutput && shouldRetryNextVariantAfterReasoningLeak(routeInfo, variants, variantIndex)) {
                         OmniLog.w(
                             tag,
                             "stream variant=${variant.name} leaked inline reasoning on guarded route; retrying next conservative variant"
@@ -395,14 +461,39 @@ class HttpAgentLlmClient(
         onReasoningUpdate: (suspend (String) -> Unit)?,
         onContentUpdate: (suspend (String) -> Unit)?,
     ): ChatCompletionTurn {
+        var emittedOutput = false
+        suspend fun forward(
+            callback: (suspend (String) -> Unit)?,
+            value: String,
+        ) {
+            if (value.isNotBlank()) emittedOutput = true
+            callback?.invoke(value)
+        }
         return try {
-            streamTurnOnce(model, requestJson, explicitModel, onReasoningUpdate, onContentUpdate)
+            streamTurnOnce(
+                model,
+                requestJson,
+                explicitModel,
+                onReasoningUpdate = { value -> forward(onReasoningUpdate, value) },
+                onContentUpdate = { value -> forward(onContentUpdate, value) },
+            )
         } catch (error: AgentStreamRequestException) {
-            if (error.statusCode != 401 || !platformRoute || !refreshPlatformSessionOp()) {
+            if (
+                error.statusCode != 401 ||
+                emittedOutput ||
+                !platformRoute ||
+                !refreshPlatformSessionOp()
+            ) {
                 throw error
             }
             OmniLog.i(tag, "platform access token refreshed after 401; retrying once")
-            streamTurnOnce(model, requestJson, explicitModel, onReasoningUpdate, onContentUpdate)
+            streamTurnOnce(
+                model,
+                requestJson,
+                explicitModel,
+                onReasoningUpdate = { value -> forward(onReasoningUpdate, value) },
+                onContentUpdate = { value -> forward(onContentUpdate, value) },
+            )
         }
     }
 
@@ -413,28 +504,36 @@ class HttpAgentLlmClient(
         onReasoningUpdate: (suspend (String) -> Unit)?,
         onContentUpdate: (suspend (String) -> Unit)?
     ): ChatCompletionTurn {
-        val retryCount = maxTransientStreamRetries.coerceAtLeast(0)
+        val retryCount = effectiveMaxTransientStreamRetries?.coerceAtLeast(0) ?: 0
         var retriedIncompleteToolCall = false
         repeat(retryCount + 1) { attempt ->
+            var attemptProducedOutput = false
+            suspend fun forward(
+                callback: (suspend (String) -> Unit)?,
+                value: String,
+            ) {
+                if (value.isNotBlank()) attemptProducedOutput = true
+                callback?.invoke(value)
+            }
             try {
                 return try {
                     doStreamTurnOnce(
                         model,
                         requestJson,
                         explicitModel,
-                        onReasoningUpdate,
-                        onContentUpdate,
+                        onReasoningUpdate = { value -> forward(onReasoningUpdate, value) },
+                        onContentUpdate = { value -> forward(onContentUpdate, value) },
                         forceHttp1 = false,
                     )
                 } catch (error: AgentStreamRequestException) {
-                    if (isHttp2ProtocolError(error)) {
+                    if (isHttp2ProtocolError(error) && !attemptProducedOutput) {
                         OmniLog.w(tag, "HTTP/2 stream PROTOCOL_ERROR, retrying with HTTP/1.1")
                         doStreamTurnOnce(
                             model,
                             requestJson,
                             explicitModel,
-                            onReasoningUpdate,
-                            onContentUpdate,
+                            onReasoningUpdate = { value -> forward(onReasoningUpdate, value) },
+                            onContentUpdate = { value -> forward(onContentUpdate, value) },
                             forceHttp1 = true,
                         )
                     } else {
@@ -442,8 +541,13 @@ class HttpAgentLlmClient(
                     }
                 }
             } catch (error: AgentStreamRequestException) {
-                if (attempt >= retryCount || !isTransientStreamFailure(error)) throw error
-                val delayMs = transientStreamRetryDelayMs.coerceAtLeast(0L) * (attempt + 1L)
+                if (
+                    attemptProducedOutput ||
+                    attempt >= retryCount ||
+                    !isTransientStreamFailure(error)
+                ) throw error
+                val delayMs = (effectiveTransientStreamRetryDelayMs ?: 0L)
+                    .coerceAtLeast(0L) * (attempt + 1L)
                 OmniLog.w(
                     tag,
                     "transient stream failure, retrying attempt=${attempt + 1}/$retryCount " +
@@ -451,7 +555,11 @@ class HttpAgentLlmClient(
                 )
                 if (delayMs > 0L) delay(delayMs)
             } catch (error: AgentIncompleteToolCallException) {
-                if (retriedIncompleteToolCall || attempt >= retryCount) throw error
+                if (
+                    attemptProducedOutput ||
+                    retriedIncompleteToolCall ||
+                    attempt >= retryCount
+                ) throw error
                 retriedIncompleteToolCall = true
                 OmniLog.w(
                     tag,
@@ -524,10 +632,12 @@ class HttpAgentLlmClient(
         )
         val accumulator = AgentLlmStreamAccumulator(
             json = json,
-            includeReasoningInAssistantMessage = routeInfo.requiresReasoningEcho,
+            includeReasoningInAssistantMessage =
+                routeInfo.providerCapabilities.requiresReasoningContentForToolCalls,
             bufferLeadingTextUntilInlineThinkTag = shouldBufferLeadingInlineThinkTag(routeInfo),
             guardLeadingReasoningLeak = shouldGuardNvidiaKimiReasoningLeak(routeInfo),
-            captureAnthropicContentBlocks = routeInfo.requiresAnthropicThinkingReplay,
+            captureAnthropicContentBlocks =
+                routeInfo.providerCapabilities.requiresAnthropicThinkingReplay,
             anthropicSourceModel = routeInfo.resolvedModel
         )
         var lastReasoning = ""
@@ -537,6 +647,7 @@ class HttpAgentLlmClient(
         val reasoningLock = Any()
         var lastContent = ""
         var eventSource: EventSource? = null
+        val lastStreamActivityAtMs = AtomicLong(startedAtMs)
         val emissionQueue = Channel<suspend () -> Unit>(Channel.UNLIMITED)
         val emissionLock = Any()
         val emissionJob = scope.launch {
@@ -666,8 +777,37 @@ class HttpAgentLlmClient(
             eventSource?.cancel()
         }
 
+        fun failIdleStream(timeoutMs: Long) {
+            if (!completed.compareAndSet(false, true)) return
+            val error = AgentStreamIdleTimeoutException(timeoutMs)
+            OmniLog.w(
+                tag,
+                "ACP provider timing stage=stream_idle_timeout " +
+                    "elapsedMs=${System.currentTimeMillis() - startedAtMs}"
+            )
+            streamDone.completeExceptionally(error)
+            eventSource?.cancel()
+        }
+
+        val idleWatchdog = effectiveStreamIdleTimeoutMs?.let { timeoutMs ->
+            scope.launch {
+                val checkIntervalMs = timeoutMs.coerceIn(1L, 1_000L)
+                while (!completed.get()) {
+                    delay(checkIntervalMs)
+                    if (
+                        System.currentTimeMillis() - lastStreamActivityAtMs.get() >=
+                        timeoutMs.coerceAtLeast(1L)
+                    ) {
+                        failIdleStream(timeoutMs)
+                        break
+                    }
+                }
+            }
+        }
+
         val listener = object : EventSourceListener() {
             override fun onOpen(eventSource: EventSource, response: Response) {
+                lastStreamActivityAtMs.set(System.currentTimeMillis())
                 OmniLog.i(
                     tag,
                     "ACP provider timing stage=stream_open " +
@@ -683,6 +823,7 @@ class HttpAgentLlmClient(
                 data: String
             ) {
                 if (completed.get()) return
+                lastStreamActivityAtMs.set(System.currentTimeMillis())
                 runCatching {
                     if (!firstEventLogged) {
                         firstEventLogged = true
@@ -734,6 +875,7 @@ class HttpAgentLlmClient(
                 if (completed.get()) {
                     return
                 }
+                lastStreamActivityAtMs.set(System.currentTimeMillis())
                 if (accumulator.canFinalizeOnClosed()) {
                     completeStream()
                     return
@@ -747,6 +889,7 @@ class HttpAgentLlmClient(
 
             override fun onFailure(eventSource: EventSource, t: Throwable?, response: Response?) {
                 if (!completed.compareAndSet(false, true)) return
+                lastStreamActivityAtMs.set(System.currentTimeMillis())
                 OmniLog.w(
                     tag,
                     "ACP provider timing stage=stream_failed " +
@@ -797,6 +940,7 @@ class HttpAgentLlmClient(
             )
             return streamDone.await()
         } finally {
+            idleWatchdog?.cancel()
             reasoningEmitJob?.cancel()
             eventSource?.cancel()
             emissionQueue.close()
@@ -808,7 +952,7 @@ class HttpAgentLlmClient(
         turn: ChatCompletionTurn,
         routeInfo: HttpController.ChatCompletionRouteInfo
     ) {
-        if (!routeInfo.requiresReasoningEcho) {
+        if (!routeInfo.providerCapabilities.requiresReasoningContentForToolCalls) {
             return
         }
         if (turn.reasoning.isBlank()) {
@@ -827,7 +971,15 @@ class HttpAgentLlmClient(
         request: ChatCompletionRequest,
         routeInfo: HttpController.ChatCompletionRouteInfo
     ): List<StreamRequestVariant> {
-        val normalizedRequest = request
+        // `functions`/`function_call` are the pre-tools Chat Completions
+        // contract. They are rejected (or reported as deprecated) by newer
+        // OpenAI-compatible APIs. Normalize at the shared request boundary
+        // so every retry variant, including error fallbacks, stays on the
+        // standard `tools`/`tool_choice` contract.
+        val normalizedRequest = request.copy(
+            functions = null,
+            functionCall = null,
+        )
         val requiresNativeToolCalls = normalizedRequest.tools.isNotEmpty() &&
             normalizedRequest.parallelToolCalls == false &&
             (normalizedRequest.toolChoice as? JsonPrimitive)
@@ -868,22 +1020,6 @@ class HttpAgentLlmClient(
             return variants
         }
 
-        val legacyFunctions = compatibleRequest.tools.map { it.function }
-        val legacyRequest = legacyFunctions
-            .takeIf {
-                it.isNotEmpty() &&
-                    !routeInfo.wireApi.equals("responses", ignoreCase = true)
-            }
-            ?.let {
-                compatibleRequest.copy(
-                    streamOptions = null,
-                    parallelToolCalls = null,
-                    toolChoice = null,
-                    tools = emptyList(),
-                    functions = it,
-                    functionCall = toLegacyFunctionCall(request.toolChoice)
-                )
-            }
         add(
             "minimal",
             compatibleRequest.copy(
@@ -893,9 +1029,6 @@ class HttpAgentLlmClient(
             )
         )
 
-        if (legacyRequest != null) {
-            add("legacy_functions", legacyRequest)
-        }
         request.promptCacheKey?.let {
             add(
                 "no_prompt_cache_key",
@@ -916,10 +1049,33 @@ class HttpAgentLlmClient(
             (text.contains("only") || text.contains("范围") || text.contains("['text']"))
     }
 
+    private fun isImageContentRejected(error: AgentStreamRequestException): Boolean {
+        if (!isBadRequest(error)) return false
+        val text = (error.reason + " " + error.responseBody.orEmpty()).lowercase()
+        val mentionsImage = text.contains("image") ||
+            text.contains("image_url") ||
+            text.contains("vision") ||
+            text.contains("multimodal") ||
+            text.contains("多模态") ||
+            text.contains("图片")
+        if (!mentionsImage) return isTextOnlyContentRejected(error)
+        return text.contains("unsupported") ||
+            text.contains("not support") ||
+            text.contains("not supported") ||
+            text.contains("invalid") ||
+            text.contains("unknown") ||
+            text.contains("only") ||
+            text.contains("too large") ||
+            text.contains("不支持") ||
+            text.contains("无效") ||
+            text.contains("过大")
+    }
+
     private fun isBadRequest(error: AgentStreamRequestException): Boolean {
         if (error.statusCode == 400) return true
         val text = (error.reason + " " + error.responseBody.orEmpty()).lowercase()
-        return text.contains("status_code=400") || text.contains("status code: 400") ||
+        return text.contains("status_code=400") ||
+            text.contains("status code: 400") ||
             text.contains("bad request")
     }
 
@@ -1083,32 +1239,6 @@ class HttpAgentLlmClient(
             .getOrDefault(DeepSeekProvider.normalizeProtocolType(null))
     }
 
-    private fun toLegacyFunctionCall(toolChoice: JsonElement?): JsonElement? {
-        if (toolChoice == null) return null
-        return when (toolChoice) {
-            is JsonPrimitive -> {
-                val raw = toolChoice.contentOrNull?.trim().orEmpty()
-                when {
-                    raw.isEmpty() || raw.equals("none", ignoreCase = true) -> null
-                    raw.equals("required", ignoreCase = true) -> JsonPrimitive("auto")
-                    else -> JsonPrimitive(raw)
-                }
-            }
-
-            is JsonObject -> {
-                val functionName =
-                    extractJsonText((toolChoice["function"] as? JsonObject)?.get("name"))
-                if (functionName.isNullOrBlank()) {
-                    JsonPrimitive("auto")
-                } else {
-                    JsonObject(mapOf("name" to JsonPrimitive(functionName)))
-                }
-            }
-
-            else -> JsonPrimitive("auto")
-        }
-    }
-
     private fun extractRawResponseBody(response: Response?): String? {
         val body = runCatching { response?.body?.string() }.getOrNull()?.trim().orEmpty()
         return body.takeIf { it.isNotEmpty() }
@@ -1224,10 +1354,8 @@ class HttpAgentLlmClient(
         return copy(
             messages = currentImageMessage?.let(::listOf) ?: messages,
             model = model,
-            maxCompletionTokens = maxCompletionTokens?.coerceAtMost(
-                PLATFORM_VISION_MAX_COMPLETION_TOKENS
-            ),
-            maxTokens = maxTokens?.coerceAtMost(PLATFORM_VISION_MAX_COMPLETION_TOKENS),
+            maxCompletionTokens = maxCompletionTokens,
+            maxTokens = maxTokens,
             tools = emptyList(),
             toolChoice = null,
             parallelToolCalls = null,

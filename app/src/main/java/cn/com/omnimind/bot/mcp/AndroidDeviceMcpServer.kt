@@ -335,8 +335,7 @@ internal object AndroidDeviceMcpServer {
                     goal = goal,
                     stepSkillGuidance = arguments["step_skill_guidance"]?.toString().orEmpty(),
                     deferUserInput = arguments["defer_user_input"] as? Boolean ?: true,
-                    maxSteps = (arguments["max_steps"] as? Number)?.toInt()
-                        ?: OmniVlmPlugin.DEFAULT_MAX_STEPS,
+                    maxSteps = (arguments["max_steps"] as? Number)?.toInt(),
                 ),
                 modelClient = modelClient,
             ).payload

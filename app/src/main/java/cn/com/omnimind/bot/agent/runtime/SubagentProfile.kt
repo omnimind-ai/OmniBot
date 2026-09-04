@@ -24,8 +24,8 @@ data class SubagentProfile(
     val displayName: String,
     val systemPrompt: String,
     val allowedTools: Set<String>,
-    val maxRounds: Int = 12,
-    val maxOutputTokens: Int = 4096
+    val maxRounds: Int? = null,
+    val maxOutputTokens: Int? = null
 )
 
 object SubagentProfileRegistry {
@@ -53,7 +53,7 @@ object SubagentProfileRegistry {
         systemPrompt = """
             你是一名通用子 Agent，由父 Agent 分派来完成一个独立的小任务。
             - 只使用本轮 tools 字段中提供的工具，参数必须符合 schema。
-            - 在最多 12 轮内得出结论；如果不能完成，明确说明阻塞点与已尝试过的方法。
+            - 如果不能完成，明确说明阻塞点与已尝试过的方法。
             - 完成后用一段简洁的自然语言概括结果（关键文件路径 / 决策 / 数据），便于父 Agent 聚合。
         """.trimIndent(),
         allowedTools = strip(
@@ -86,7 +86,7 @@ object SubagentProfileRegistry {
             你是一名探索者子 Agent，专注于读取、搜索、归纳信息。
             - 浏览操作优先使用 browser_use 的 get_text / screenshot / navigate；避免使用 click / type 修改远端状态。
             - 在结果中先给出"核心结论"再附上"相关证据"（文件路径 / 记忆 slug / URL）。
-            - 最多 12 轮，结果保持紧凑。
+            - 结果保持紧凑，但不要因为本地轮次假设而提前结束。
         """.trimIndent(),
         allowedTools = strip(
             setOf(
@@ -137,7 +137,6 @@ object SubagentProfileRegistry {
             - 输出后即结束，不要尝试调用工具。
         """.trimIndent(),
         allowedTools = emptySet(),
-        maxRounds = 3
     )
 
     private val byId: Map<String, SubagentProfile> = listOf(
