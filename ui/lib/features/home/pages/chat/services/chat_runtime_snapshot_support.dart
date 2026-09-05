@@ -74,6 +74,15 @@ extension ChatRuntimeSnapshotSupport on ChatConversationRuntimeCoordinator {
     });
     final snapshotHasLiveWork =
         isAiResponding || isCheckingExecutableTask || isExecutingTask;
+    // Page dispatch snapshots may refresh the same admitted prompt before
+    // session/prompt starts. Its clock belongs to admission/completion, not
+    // to the item projection buffers cleared below.
+    final preservedPromptTimingKey =
+        hasBoundLiveTask &&
+            currentDispatchTurnId != null &&
+            currentDispatchTurnId == runtime.currentDispatchTurnId
+        ? 'prompt:$currentDispatchTurnId'
+        : null;
     if (hasBoundLiveTask && !snapshotHasLiveWork) {
       // A history/poll snapshot has no turn identity. Once this runtime has
       // admitted a new logical turn, an idle snapshot is necessarily older or
@@ -167,7 +176,9 @@ extension ChatRuntimeSnapshotSupport on ChatConversationRuntimeCoordinator {
     runtime.browserSessionSnapshot = browserSessionSnapshot;
     runtime._streamingTextBatches.clear();
     runtime.agentEntrySequences.clear();
-    runtime.agentEntryStartTimes.clear();
+    runtime.agentEntryStartTimes.removeWhere(
+      (key, _) => key != preservedPromptTimingKey,
+    );
     _pruneAgentReplayDeltaOffsets(runtime, normalizedMessages);
     runtime.agentNextEntrySequence = 0;
     notifyListeners();

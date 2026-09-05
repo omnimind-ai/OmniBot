@@ -1676,6 +1676,75 @@ void main() {
   );
 
   test(
+    'page dispatch snapshot preserves prompt timing through history commit',
+    () async {
+      const conversationId = 2211;
+      const turnId = 'page-dispatch-timing';
+      coordinator.beginAcpTurn(
+        taskId: turnId,
+        conversationId: conversationId,
+        mode: kChatRuntimeModeAgent,
+      );
+      final runtime = coordinator.runtimeFor(
+        conversationId: conversationId,
+        mode: kChatRuntimeModeAgent,
+      )!;
+      // Match _sendAgentMessage: admission, page snapshots, ACP output, response.
+      // Do not seed the start timestamp: exercise the production admission owner.
+      final startedAt = runtime.agentEntryStartTimes['prompt:$turnId'];
+      expect(startedAt, isA<int>());
+      runtime.agentEntryStartTimes['previous-item'] = 1;
+      for (var refresh = 0; refresh < 2; refresh++) {
+        coordinator.replaceConversationSnapshot(
+          conversationId: conversationId,
+          mode: kChatRuntimeModeAgent,
+          messages: [ChatMessageModel.userMessage('时间回归测试')],
+          isAiResponding: runtime.isAiResponding,
+          currentDispatchTurnId: runtime.currentDispatchTurnId,
+          lastAgentTurnId: runtime.lastAgentTurnId,
+        );
+        expect(runtime.agentEntryStartTimes, {'prompt:$turnId': startedAt});
+      }
+      applyAcp(
+        conversationId,
+        'session/update',
+        turnId: turnId,
+        params: {
+          'update': {
+            'sessionUpdate': 'agent_message_chunk',
+            'content': {'type': 'text', 'text': '测试完成'},
+          },
+        },
+      );
+      completePrompt(conversationId, turnId: turnId);
+      final reply = runtime.messages.singleWhere(
+        (m) => m.type == 1 && m.user == 2,
+      );
+      expect(reply.turnUsage?['endedAt'], isA<int>());
+      expect(reply.turnUsage?['durationMs'], isNonNegative);
+      expect(
+        runtime.agentEntryStartTimes.containsKey('prompt:$turnId'),
+        isFalse,
+      );
+      await coordinator.flushPendingPersistence(
+        conversationId: conversationId,
+        mode: kChatRuntimeModeAgent,
+      );
+      final committed = recordedMethodCalls.lastWhere(
+        (call) => call.method == 'replaceConversationMessages',
+      );
+      final messages = committed.arguments['messages'] as List;
+      final saved = messages.cast<Map>().singleWhere(
+        (m) => m['id'] == reply.id,
+      );
+      expect(
+        ChatMessageModel.fromJson(Map<String, dynamic>.from(saved)).turnUsage,
+        reply.turnUsage,
+      );
+    },
+  );
+
+  test(
     'prompt timing belongs to the final visible reply in a multi-message turn',
     () {
       const conversationId = 2210;
