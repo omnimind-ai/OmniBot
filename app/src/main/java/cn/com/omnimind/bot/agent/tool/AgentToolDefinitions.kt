@@ -18,92 +18,8 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
 object AgentToolDefinitions {
-    private const val TOOL_TITLE_FIELD = "tool_title"
 
-    /**
-     * Names used by the common coding Harnesses. The implementation remains
-     * OmniBot's existing handler, but the model-facing catalog uses the
-     * stable native vocabulary instead of exposing our private file/terminal
-     * names to Xiaowan.
-     */
-    private val nativeModelToolAliases: Map<String, String> = mapOf(
-        "file_read" to "read",
-        "file_write" to "write",
-        "file_edit" to "edit",
-        "terminal_execute" to "bash",
-        "file_list" to "glob",
-        "file_search" to "grep",
-        "browser_use" to "webfetch",
-    )
-    
     private fun currentLocale(): PromptLocale = AppLocaleManager.currentPromptLocale()
-
-    private fun toolTitlePropertySchema(locale: PromptLocale): JsonObject = buildJsonObject {
-        put("type", "string")
-        put(
-            "description",
-            when (locale) {
-                PromptLocale.ZH_CN ->
-                    "本次工具调用要做什么的简洁标题，展示给用户，建议 4-12 个字并使用与用户相同的语言。"
-                PromptLocale.EN_US ->
-                    "A concise title describing what this tool call is doing. It is shown to the user, should stay short, and should use the same language as the user."
-            }
-        )
-    }
-
-    fun decorateParameterSchema(
-        parameters: JsonObject,
-        locale: PromptLocale = currentLocale()
-    ): JsonObject {
-        val properties = (parameters["properties"] as? JsonObject) ?: JsonObject(emptyMap())
-        val required = (parameters["required"] as? JsonArray)
-            ?.mapNotNull { it.jsonPrimitive.contentOrNull?.trim() }
-            ?.filter { it.isNotEmpty() }
-            ?.toMutableList()
-            ?: mutableListOf()
-
-        val updatedProperties = buildJsonObject {
-            put(TOOL_TITLE_FIELD, toolTitlePropertySchema(locale))
-            properties.forEach { (key, value) ->
-                if (key != TOOL_TITLE_FIELD) {
-                    put(key, value)
-                }
-            }
-        }
-
-        if (!required.contains(TOOL_TITLE_FIELD)) {
-            required.add(0, TOOL_TITLE_FIELD)
-        }
-
-        return buildJsonObject {
-            parameters.forEach { (key, value) ->
-                when (key) {
-                    "properties" -> put("properties", updatedProperties)
-                    "required" -> {
-                        put(
-                            "required",
-                            buildJsonArray {
-                                required.forEach { add(JsonPrimitive(it)) }
-                            }
-                        )
-                    }
-
-                    else -> put(key, value)
-                }
-            }
-            if (parameters["properties"] == null) {
-                put("properties", updatedProperties)
-            }
-            if (parameters["required"] == null) {
-                put(
-                    "required",
-                    buildJsonArray {
-                        required.forEach { add(JsonPrimitive(it)) }
-                    }
-                )
-            }
-        }
-    }
 
     fun decorateToolDefinition(
         definition: JsonObject,
@@ -111,11 +27,6 @@ object AgentToolDefinitions {
         terminalDistribution: TerminalDistribution.Spec = TerminalDistribution.alpine
     ): JsonObject {
         val function = definition["function"] as? JsonObject ?: return definition
-        val parameters = (function["parameters"] as? JsonObject) ?: buildJsonObject {
-            put("type", "object")
-            put("properties", JsonObject(emptyMap()))
-        }
-
         val decorated = buildJsonObject {
             definition.forEach { (key, value) ->
                 if (key != "function") {
@@ -125,22 +36,22 @@ object AgentToolDefinitions {
             put(
                 "function",
                 buildJsonObject {
-                    function.forEach { (key, value) ->
-                        when (key) {
-                            "description" -> put("description", value)
+                function.forEach { (key, value) ->
+                    when (key) {
+                        // `postToolRule` was an OmniBot-specific model
+                        // scheduling protocol (for example, making a tool
+                        // occupy a whole tool-call batch). ACP already owns
+                        // prompt completion and lets the model issue further
+                        // tool calls after it receives results, so this
+                        // private field must not enter any runtime catalog.
+                        "postToolRule" -> Unit
 
-                            "parameters" -> put(
-                                "parameters",
-                                decorateParameterSchema(parameters, locale)
-                            )
+                        "description" -> put("description", value)
+
+                            "parameters" -> put("parameters", value)
 
                             else -> put(key, value)
                         }
-                    }
-                    // no fallback description needed; tool_title is already
-                    // a required parameter with its own schema description.
-                    if (function["parameters"] == null) {
-                        put("parameters", decorateParameterSchema(parameters, locale))
                     }
                 }
             )
@@ -259,8 +170,8 @@ object AgentToolDefinitions {
             "The concrete goal to complete in the Android GUI.",
         "可选关键词，可匹配应用名或包名。" to
             "Optional keyword filter. Matches app names or package names.",
-        "可选，返回数量上限，默认 20，范围 1-100。" to
-            "Optional maximum number of results to return. Default 20, range 1-100.",
+        "可选，返回数量上限。省略时返回执行环境提供的完整结果。" to
+            "Optional maximum number of results to return. When omitted, returns the complete result provided by the execution environment.",
         "通过应用内置的 {{OMNIBOT_TERMINAL_DISTRIBUTION}}（proot）环境执行一次性的非交互命令。这是默认首选的 {{OMNIBOT_TERMINAL_DISTRIBUTION}} 工具，适合文件处理、脚本、网络诊断、git、python、包管理等绝大多数 CLI 任务；不用于手机界面操作，也不用于交互式 TUI。只有明确需要跨多轮保留 cwd、环境或后台进程时，才改用 terminal_session_*。" to
             "Run a one-shot non-interactive command inside the app's built-in {{OMNIBOT_TERMINAL_DISTRIBUTION}} (proot) environment. This is the default {{OMNIBOT_TERMINAL_DISTRIBUTION}} tool for most CLI work such as file operations, scripts, network diagnostics, git, Python, and package management. It is not for phone UI actions or interactive TUIs. Only switch to `terminal_session_*` when you truly need to preserve cwd, environment, or background state across turns.",
         "terminal_execute 应单独占据当前 tool_calls。该工具会固定在 {{OMNIBOT_TERMINAL_DISTRIBUTION}} 中以 executionMode=proot（prootDistro={{OMNIBOT_TERMINAL_DISTRIBUTION_ID}}）执行，传入其他 executionMode 或 distro 会被忽略。若执行失败，可在下一轮基于 stdout/stderr/errorMessage 自行决定是否再次显式调用 terminal_execute；不要在同一个 tool_calls 中串联其他结果依赖型工具。" to
@@ -273,8 +184,8 @@ object AgentToolDefinitions {
             "Optional compatibility field. `{{OMNIBOT_TERMINAL_DISTRIBUTION_ID}}` ({{OMNIBOT_TERMINAL_DISTRIBUTION}}) is always used right now, and other distros are ignored.",
         "可选工作目录，建议使用绝对路径。" to
             "Optional working directory. Prefer an absolute path.",
-        "等待结果的超时时间，默认 60 秒，范围 5-300。" to
-            "Timeout in seconds while waiting for the result. Default 60, range 5-300.",
+        "可选：等待结果的超时时间（秒）。省略时由执行环境决定。" to
+            "Optional timeout in seconds while waiting for the result. The execution environment decides when omitted.",
         "启动一个可复用的 {{OMNIBOT_TERMINAL_DISTRIBUTION}} 会话，仅用于确实需要在后续多轮中保留 cwd、shell 环境、中间文件状态或后台进程的任务。返回的 sessionId 由底层 ReTerminal 原生生成并持久托管，后续必须显式传给 terminal_session_exec/read/stop。不要为了运行单条命令、检查工具是否存在、读取单个文件或执行一次性脚本而使用它，这些场景应优先用 terminal_execute。" to
             "Start a reusable {{OMNIBOT_TERMINAL_DISTRIBUTION}} session. Use it only when later turns truly need to preserve cwd, shell environment, intermediate file state, or background processes. The returned sessionId is generated and managed by the native ReTerminal layer and must be passed explicitly to `terminal_session_exec`, `terminal_session_read`, and `terminal_session_stop`. Do not use it for one-off commands, tool existence checks, reading a single file, or one-shot scripts; prefer `terminal_execute` for those.",
         "启动后等待 {{OMNIBOT_TERMINAL_DISTRIBUTION}} 会话结果，再决定是否继续向该 session 发送命令。" to
@@ -293,22 +204,22 @@ object AgentToolDefinitions {
             "Single non-interactive shell command to execute.",
         "可选，本次命令执行前要切换到的目录。" to
             "Optional directory to switch into before running this command.",
-        "等待该命令完成的超时时间，默认 120 秒，范围 5-600。" to
-            "Timeout in seconds while waiting for this command to finish. Default 120, range 5-600.",
+        "可选：等待该命令完成的超时时间（秒）。省略时由执行环境决定。" to
+            "Optional timeout in seconds while waiting for this command to finish. The execution environment decides when omitted.",
         "读取 {{OMNIBOT_TERMINAL_DISTRIBUTION}} session 最近一次命令日志或最近的 {{OMNIBOT_TERMINAL_DISTRIBUTION}} 输出。默认应把它视为读取该 session 最新尾部输出，而不是重新查看最早的历史。只在已经启动并复用了 terminal_session_* 的前提下使用。" to
             "Read the latest command log or most recent {{OMNIBOT_TERMINAL_DISTRIBUTION}} output from a {{OMNIBOT_TERMINAL_DISTRIBUTION}} session. Treat it as reading the newest tail output for that session, not replaying the oldest history. Use it only after you have already started and are reusing `terminal_session_*`.",
         "读取结果后再决定是否继续执行命令。" to
             "After reading the result, decide whether to run more commands.",
-        "最多返回多少字符，默认 4000，范围 256-64000。" to
-            "Maximum number of characters to return. Default 4000, range 256-64000.",
+        "可选：最多返回多少字符。省略时返回执行环境允许的内容。" to
+            "Optional maximum number of characters to return. When omitted, return what the execution environment permits.",
         "停止已有 {{OMNIBOT_TERMINAL_DISTRIBUTION}} session，并清理对应 tmux 会话。完成状态化 {{OMNIBOT_TERMINAL_DISTRIBUTION}} 任务后再调用。" to
             "Stop an existing {{OMNIBOT_TERMINAL_DISTRIBUTION}} session and clean up the corresponding tmux session. Call this after the stateful {{OMNIBOT_TERMINAL_DISTRIBUTION}} task is complete.",
         "{{OMNIBOT_TERMINAL_DISTRIBUTION}} session id。" to
             "{{OMNIBOT_TERMINAL_DISTRIBUTION}} session id.",
         "结束后等待工具结果，再回复用户。" to
             "Wait for the tool result after stopping the session before replying to the user.",
-        "控制一个最多 3 个标签页的离屏浏览器。不要用它打开 App deep link、omnibot:// 非 browser 资源或应用内路由。浏览器只支持访问 http(s) 页面，以及 omnibot://browser/... 资源文件。使用 navigate 打开页面，screenshot 查看当前视口截图（传 read_image=true 可让模型直接看到截图内容），click/type/hover 与元素交互，get_text/get_readable 抽取内容，scroll 导航长页面，scroll_and_collect 在一次调用中滚动并收集无限列表内容，find_elements 发现可交互元素，get_page_info 获取页面元信息，get_backbone 获取 DOM 骨架，execute_js 执行脚本，fetch 复用当前页面 session 下载资源并返回 omnibot://browser/... 产物，new_tab/close_tab/list_tabs 管理标签页，go_back/go_forward 浏览器前进后退，press_key 模拟键盘按键，wait_for_selector 等待元素出现，get_cookies 返回 cookie 摘要与可复用的 offload env 脚本路径，set_user_agent 兼容 desktop_safari/mobile_safari 入参但实际切换 Android Chrome 风格桌面/移动 UA。结果可能包含 riskChallengeDetected、riskChallengeKind、recommendedNextAction、throttleDelayMs；若 riskChallengeDetected=true，应停止自动交互/刷新并请用户手动接管。tool_title 必须是 5-10 个字的简洁摘要，并使用与用户相同的语言。" to
-            "Control an off-screen browser with up to 3 tabs. Do not use it for app deep links, non-browser `omnibot://` resources, or in-app routes. The browser supports http(s) pages and `omnibot://browser/...` resources. Use navigate to open pages, screenshot to capture the current viewport (set read_image=true if the model should inspect the screenshot directly), click/type/hover for interaction, get_text/get_readable for extraction, scroll for long-page navigation, scroll_and_collect to collect infinite-list content in one call, find_elements to discover interactable elements, get_page_info for metadata, get_backbone for a DOM skeleton, execute_js for scripting, fetch to download resources with the current page session and return `omnibot://browser/...` artifacts, new_tab/close_tab/list_tabs for tab management, go_back/go_forward for navigation history, press_key to simulate keys, wait_for_selector to wait for elements, get_cookies for cookie summaries plus a reusable offload env script path, and set_user_agent to accept desktop_safari/mobile_safari for compatibility while actually switching Android Chrome-style desktop/mobile UAs. Results may include riskChallengeDetected, riskChallengeKind, recommendedNextAction, and throttleDelayMs; when riskChallengeDetected=true, stop automated interaction/reload attempts and ask the user to take over manually. `tool_title` must be a concise 5-10 word summary in the same language as the user.",
+        "控制离屏浏览器。不要用它打开 App deep link、omnibot:// 非 browser 资源或应用内路由。浏览器只支持访问 http(s) 页面，以及 omnibot://browser/... 资源文件。使用 navigate 打开页面，screenshot 查看当前视口截图（传 read_image=true 可让模型直接看到截图内容），click/type/hover 与元素交互，get_text/get_readable 抽取内容，scroll 导航长页面，scroll_and_collect 在一次调用中滚动并收集无限列表内容，find_elements 发现可交互元素，get_page_info 获取页面元信息，get_backbone 获取 DOM 骨架，execute_js 执行脚本，fetch 复用当前页面 session 下载资源并返回 omnibot://browser/... 产物，new_tab/close_tab/list_tabs 管理标签页，go_back/go_forward 浏览器前进后退，press_key 模拟键盘按键，wait_for_selector 等待元素出现，get_cookies 返回 cookie 摘要与可复用的 offload env 脚本路径，set_user_agent 兼容 desktop_safari/mobile_safari 入参但实际切换 Android Chrome 风格桌面/移动 UA。结果可能包含 riskChallengeDetected、riskChallengeKind、recommendedNextAction、throttleDelayMs；若 riskChallengeDetected=true，应停止自动交互/刷新并请用户手动接管。" to
+            "Control an off-screen browser. Do not use it for app deep links, non-browser `omnibot://` resources, or in-app routes. The browser supports http(s) pages and `omnibot://browser/...` resources. Use navigate to open pages, screenshot to capture the current viewport (set read_image=true if the model should inspect the screenshot directly), click/type/hover for interaction, get_text/get_readable for extraction, scroll for long-page navigation, scroll_and_collect to collect infinite-list content in one call, find_elements to discover interactable elements, get_page_info for metadata, get_backbone for a DOM skeleton, execute_js for scripting, fetch to download resources with the current page session and return `omnibot://browser/...` artifacts, new_tab/close_tab/list_tabs for tab management, go_back/go_forward for navigation history, press_key to simulate keys, wait_for_selector to wait for elements, get_cookies for cookie summaries plus a reusable offload env script path, and set_user_agent to accept desktop_safari/mobile_safari for compatibility while actually switching Android Chrome-style desktop/mobile UAs. Results may include riskChallengeDetected, riskChallengeKind, recommendedNextAction, and throttleDelayMs; when riskChallengeDetected=true, stop automated interaction/reload attempts and ask the user to take over manually.",
         "本次工具调用要做什么的简洁摘要，5-10 个字，展示给用户。" to
             "A concise summary of what this tool call is doing. Keep it to about 5-10 words and show it to the user.",
         "浏览器动作。" to "Browser action.",
@@ -323,16 +234,17 @@ object AgentToolDefinitions {
             "X coordinate of the click or input target. Can be used instead of selector.",
         "点击或输入目标的 Y 坐标，可替代 selector。" to
             "Y coordinate of the click or input target. Can be used instead of selector.",
-        "滚动像素量，默认 500。" to "Scroll amount in pixels. Default 500.",
+        "scroll 或 scroll_and_collect 使用的滚动像素量；需要时显式提供。" to
+            "Scroll amount for scroll or scroll_and_collect; provide it explicitly when needed.",
         "滚动方向。" to "Scroll direction.",
         "目标标签页 ID；不传时默认使用最近活跃标签页。" to
             "Target tab ID. Uses the most recently active tab by default.",
         "scroll_and_collect 的内容项 selector；不传时自动探测。" to
             "Item selector for scroll_and_collect. Auto-detected when omitted.",
-        "scroll_and_collect 的滚动次数，默认 10，最大 20。" to
-            "Number of scrolls for scroll_and_collect. Default 10, maximum 20.",
-        "get_backbone 的最大深度，默认 5。" to
-            "Maximum depth for get_backbone. Default 5.",
+        "scroll_and_collect 的滚动次数；需要时显式提供。" to
+            "Number of scrolls for scroll_and_collect; provide it explicitly when needed.",
+        "get_backbone 的最大深度；需要时显式提供。" to
+            "Maximum depth for get_backbone; provide it explicitly when needed.",
         "要切换到的 UA profile；枚举名保持兼容，实际使用 Android Chrome 风格桌面/移动 UA。" to
             "UA profile to switch to. Enum names remain compatible; the actual user agents are Android Chrome-style desktop/mobile UAs.",
         "get_cookies 的 cookie 名过滤关键词。可传空格分隔字符串，兼容数组字符串输入。fuzzy=true 时要求所有关键词都包含在 cookie 名中；fuzzy=false 时要求精确命中任一 cookie 名。" to
@@ -343,14 +255,14 @@ object AgentToolDefinitions {
             "Only applies to screenshot. When true, the screenshot is embedded as a base64 image in the tool result so the model can analyze the page content directly. Default false.",
         "press_key 动作要模拟的按键名，例如 Enter、Escape、Tab、ArrowDown。" to
             "Key name to simulate for the press_key action, such as Enter, Escape, Tab, or ArrowDown.",
-        "wait_for_selector 的超时毫秒数，默认 5000，范围 500-30000。" to
-            "Timeout in milliseconds for wait_for_selector. Default 5000, range 500-30000.",
+        "wait_for_selector 的可选超时毫秒数；省略时由浏览器执行环境决定。" to
+            "Optional timeout in milliseconds for wait_for_selector. The browser execution environment decides when omitted.",
         "读取 workspace 或 Omnibot 白名单目录中的文件内容。" to
             "Read file contents from the workspace or Omnibot allowlisted directories.",
         "文件路径，可使用相对 workspace 路径或 omnibot:// uri。" to
             "File path. May use a workspace-relative path or an `omnibot://` URI.",
-        "最多读取字符数，默认 8000，范围 128-64000。" to
-            "Maximum number of characters to read. Default 8000, range 128-64000.",
+        "可选：最多读取字符数。省略时返回执行环境允许的内容。" to
+            "Optional maximum number of characters to read. When omitted, return what the execution environment permits.",
         "可选，从指定字符偏移开始读取。" to
             "Optional character offset to start reading from.",
         "可选，从第几行开始读取，1-based。" to
@@ -375,18 +287,16 @@ object AgentToolDefinitions {
         "目录路径。默认当前 workspace。" to
             "Directory path. Defaults to the current workspace.",
         "是否递归列出。默认 false。" to "Whether to list recursively. Default false.",
-        "递归时最大深度，默认 2，范围 1-6。" to
-            "Maximum recursion depth. Default 2, range 1-6.",
-        "最多返回多少项，默认 200，范围 1-1000。" to
-            "Maximum number of items to return. Default 200, range 1-1000.",
+        "可选，递归时最大深度。省略时由执行环境决定。" to
+            "Optional maximum recursion depth. The execution environment decides when omitted.",
+        "可选，最多返回多少项。省略时返回执行环境提供的完整结果。" to
+            "Optional maximum number of items to return. When omitted, returns the complete result provided by the execution environment.",
         "在目录中递归搜索文件名或文本内容。" to
             "Recursively search file names or text contents in a directory.",
         "搜索起始目录，默认当前 workspace。" to
             "Search root directory. Defaults to the current workspace.",
         "要搜索的关键词。" to "Keyword to search for.",
         "是否区分大小写，默认 false。" to "Whether the search is case-sensitive. Default false.",
-        "最多返回结果数，默认 50，范围 1-200。" to
-            "Maximum number of results to return. Default 50, range 1-200.",
         "查看文件或目录的元信息。" to
             "Inspect metadata for a file or directory.",
         "目标路径。" to "Target path.",
@@ -401,16 +311,14 @@ object AgentToolDefinitions {
             "List the currently available skills index, including each skill's id, name, path, and capability directories. Prefer this when the user asks what skills are installed, whether a category of skill exists, or when you want to inspect the catalog before deciding whether to read a SKILL.md file.",
         "可选关键词，匹配 skill id、名称、描述或路径。" to
             "Optional keyword filter matching skill id, name, description, or path.",
-        "返回数量上限，默认 50，范围 1-200。" to
-            "Maximum number of results to return. Default 50, range 1-200.",
         "按 skill id、名称或路径读取某个已安装 skill 的 SKILL.md 正文和相关目录信息。当你知道某个 skill 可能相关，但本轮只掌握索引信息时调用。" to
             "Read the SKILL.md body and related directory information for an installed skill by skill id, name, or path. Use this when a skill looks relevant but you currently know only its index metadata.",
         "读取 skill 后等待结果，再根据返回的正文、scripts、references、assets 路径决定下一步。" to
             "Wait for the result after reading the skill, then decide the next step based on the returned body plus any scripts, references, or asset paths.",
         "skill 的 id、名称、SKILL.md 路径或 skill 根目录路径。建议先用 skills_list 查看。" to
             "Skill id, skill name, SKILL.md path, or the skill root directory path. Prefer checking with skills_list first.",
-        "最多返回多少字符的正文，默认 16000，范围 512-64000。" to
-            "Maximum number of body characters to return. Default 16000, range 512-64000.",
+        "可选：最多返回多少字符的正文。省略时返回执行环境允许的内容。" to
+            "Optional maximum number of body characters to return. When omitted, return what the execution environment permits.",
         "创建新的定时任务。执行后等待工具结果，再决定是否回复用户。" to
             "Create a new scheduled task. Wait for the tool result before deciding how to reply to the user.",
         "创建完成后不要在同一轮继续调用其他工具；请等待工具结果，并通过 response 输出最终答复。" to
@@ -477,8 +385,8 @@ object AgentToolDefinitions {
         "可选，查询结束时间，ISO-8601。" to "Optional query end time in ISO-8601 format.",
         "可选关键词，匹配标题或地点。" to
             "Optional keyword matching title or location.",
-        "可选返回上限，默认 50，范围 1-200。" to
-            "Optional maximum number of results to return. Default 50, range 1-200.",
+        "可选返回上限；省略时返回该时间范围内的完整结果。" to
+            "Optional maximum number of results to return. When omitted, return the complete result in the requested time range.",
         "按 eventId 修改日历事件。" to "Update a calendar event by eventId.",
         "修改后等待工具结果，再向用户同步。" to
             "Wait for the tool result after updating, then sync the result back to the user.",
@@ -502,15 +410,15 @@ object AgentToolDefinitions {
         "读取结果后再决定是否写入新的短期或长期记忆。" to
             "Review the result first, then decide whether to write new short-term or long-term memory.",
         "检索语句。" to "Search query.",
-        "返回条数上限，默认 8，范围 1-20。" to
-            "Maximum number of hits to return. Default 8, range 1-20.",
+        "可选，返回条数上限。省略时返回执行环境提供的完整结果。" to
+            "Optional maximum number of hits to return. When omitted, returns the complete result provided by the execution environment.",
         "将当轮过程性信息写入 `.omnibot/memory/short-memories/YY-MM-DD.md`。" to
             "Write short-term process information from this turn into `.omnibot/memory/short-memories/YY-MM-DD.md`.",
         "写入成功后再继续执行其他步骤。" to
             "Continue with later steps only after the write succeeds.",
         "要写入的短期记忆文本。" to "Short-term memory text to write.",
-        "将稳定偏好、长期约束、身份事实写入 `.omnibot/memory/MEMORY.md`。自动去重相同条目。" to
-            "Write stable preferences, long-term constraints, and identity facts into `.omnibot/memory/MEMORY.md`. Duplicate entries are removed automatically.",
+        "将稳定偏好、长期约束、身份事实写入 `.omnibot/memory/MEMORY.md`。" to
+            "Write stable preferences, long-term constraints, and identity facts into `.omnibot/memory/MEMORY.md`.",
         "要沉淀的长期记忆内容。" to "Long-term memory content to preserve.",
         "写入后等待工具结果，再向用户确认。" to
             "Wait for the tool result after writing, then confirm with the user.",
@@ -519,22 +427,23 @@ object AgentToolDefinitions {
         "整理后等待工具结果，再决定是否补充长期记忆。" to
             "Wait for the tool result after the rollup, then decide whether to add more long-term memory.",
         "可选日期，格式 YYYY-MM-DD。" to "Optional date in YYYY-MM-DD format.",
-        "把多个相互独立、可并行的小任务主动分派给具有隔离上下文的 subagent，并返回聚合结果。简单任务或必须严格串行共享中间状态的任务不要分派。" to
-            "Proactively dispatch multiple independent, parallelizable subtasks to subagents with isolated contexts and return the aggregated result. Do not dispatch trivial tasks or tasks that must share intermediate state in strict sequence.",
+        "仅当用户明确要求分派或并行时，把多个相互独立的小任务交给具有隔离上下文的 subagent，并返回聚合结果。" to
+            "Only when the user explicitly asks to delegate or parallelize, dispatch independent subtasks to subagents with isolated contexts and return the aggregated result.",
         "分派后等待工具结果，再汇总给用户。" to
             "Wait for the tool result after dispatching, then summarize it for the user.",
-        "需要并行执行的子任务列表。每项都要包含自足的 instruction，并按任务性质选择 profileId。" to
-            "List of subtasks to execute in parallel. Each item must contain a self-contained instruction and choose a profileId appropriate for the task.",
+        "要分派的子任务列表。每项都要包含自足的 instruction；profileId 为可选任务提示。" to
+            "List of subtasks to delegate. Each item must contain a self-contained instruction; profileId is optional task guidance.",
         "子任务的完整、自足指令，不要依赖主会话中未写入此处的上下文。" to
             "Complete, self-contained instructions for the subtask. Do not rely on main-conversation context that is not included here.",
-        "专家类型：general 可读写工作区；explorer 只读检索与查证；memory-curator 整理记忆；planner 只输出计划。" to
-            "Expert type: general can read and write the workspace; explorer performs read-only research and verification; memory-curator organizes memory; planner only produces a plan.",
-        "未给子任务指定 profileId 时使用的专家类型，默认 general。" to
-            "Expert type used when a subtask omits profileId. Defaults to general.",
-        "并发度，默认 2，范围 1-6。" to "Concurrency level. Default 2, range 1-6.",
+        "可选任务提示：general、explorer、memory-curator 或 planner。所有 profile 都继承当前 harness 已提供的能力。" to
+            "Optional task guidance: general, explorer, memory-curator, or planner. Every profile inherits the capabilities provided by the current harness.",
+        "子任务省略 profileId 时使用的可选任务提示，默认 general。" to
+            "Optional task guidance used when a subtask omits profileId. Defaults to general.",
+        "并发度，可选；省略时按本次子任务数并行执行。" to
+            "Optional concurrency. When omitted, all subtasks in this request run in parallel.",
         "结果聚合要求，可选。" to "Optional instructions for result aggregation.",
-        "创建新的定时任务。`targetKind=subagent` 为唯一支持的执行类型。执行后等待工具结果，再决定是否回复用户；`subagentPrompt` 必须写成任务触发时要立即执行的动作，不要重复填写“每天几点提醒我/定时去做”这类调度描述。" to
-            "Create a new scheduled task. `targetKind=subagent` is the only supported execution type. Wait for the tool result before replying; `subagentPrompt` must describe the concrete action to execute at trigger time instead of repeating scheduling phrasing such as daily at a given time or remind me to do it.",
+        "创建新的定时任务。`targetKind=subagent` 为唯一支持的执行类型；`subagentPrompt` 必须写成任务触发时要立即执行的动作，不要重复填写“每天几点提醒我/定时去做”这类调度描述。" to
+            "Create a new scheduled task. `targetKind=subagent` is the only supported execution type; `subagentPrompt` must describe the concrete action to execute at trigger time instead of repeating scheduling phrasing such as daily at a given time or remind me to do it.",
         "修改已有定时任务的时间、标题、每日重复或启停状态。`targetKind=subagent` 为唯一支持的执行类型；更新后的 `subagentPrompt` 仍应描述触发时真正执行的动作，而不是再次描述调度本身。" to
             "Update an existing scheduled task's time, title, daily repeat, or enabled state. `targetKind=subagent` is the only supported execution type; the updated `subagentPrompt` should still describe the real action to execute at trigger time rather than restating the schedule itself.",
         "subagent 被触发时要立即执行的任务说明。不要把“每天/几点/定时/提醒/闹钟/创建任务”等调度话术写进去，而要写成到点后此刻真正要完成的动作。" to
@@ -601,7 +510,7 @@ object AgentToolDefinitions {
                     }
                     putJsonObject("limit") {
                         put("type", "integer")
-                        put("description", "可选，返回数量上限，默认 20，范围 1-100。")
+                        put("description", "可选，返回数量上限。省略时返回执行环境提供的完整结果。")
                     }
                 }
             }
@@ -616,7 +525,7 @@ object AgentToolDefinitions {
             put("toolType", "builtin")
             put(
                 "description",
-                "手机或 Android App 操作必须使用此工具：例如下单咖啡、购物、联系人、设置、导航、打开应用等。把用户完整目标放入 goal，立即调用并等待结果；不要用 terminal/browser 代替，也不要直接回复已完成。若 OmniFlow 操作模块未启用，调用后会提示用户手动启用，不会执行手机操作。"
+                "手机或 Android App 操作必须使用此工具：例如下单咖啡、购物、联系人、设置、导航、打开应用等。把用户完整目标放入 goal；不要用 terminal/browser 代替。若 OmniFlow 操作模块未启用，调用后会提示用户手动启用，不会执行手机操作。"
             )
             putJsonObject("parameters") {
                 put("type", "object")
@@ -673,7 +582,7 @@ object AgentToolDefinitions {
                     }
                     putJsonObject("timeoutSeconds") {
                         put("type", "integer")
-                        put("description", "等待结果的超时时间，默认 60 秒，范围 5-300。")
+                        put("description", "可选：等待结果的超时时间（秒）。省略时由执行环境决定。")
                     }
                 }
                 putJsonArray("required") {
@@ -817,7 +726,7 @@ object AgentToolDefinitions {
                                 }
                                 putJsonObject("timeoutSeconds") {
                                     put("type", "integer")
-                                    put("description", text("shell.exec 超时秒数，范围 5-600。", "shell.exec timeout in seconds, from 5 to 600."))
+                        put("description", text("可选：shell.exec 超时秒数。省略时由执行环境决定。", "Optional shell.exec timeout in seconds. The execution environment decides when omitted."))
                                 }
                                 putJsonObject("workingDirectory") {
                                     put("type", "string")
@@ -955,7 +864,7 @@ object AgentToolDefinitions {
                         }
                         putJsonObject("timeoutSeconds") {
                             put("type", "integer")
-                            put("description", text("等待该命令完成的超时时间，默认 120 秒，范围 5-600。", "Timeout in seconds while waiting for the command to finish. Default 120, range 5-600."))
+                            put("description", text("可选：等待该命令完成的超时时间（秒）。省略时由执行环境决定。", "Optional timeout in seconds while waiting for the command to finish. The execution environment decides when omitted."))
                         }
                     }
                     putJsonArray("required") {
@@ -1005,10 +914,6 @@ object AgentToolDefinitions {
                         putJsonObject("sessionId") {
                             put("type", "string")
                             put("description", text("`android_privileged_session_start` 返回的 sessionId。", "The sessionId returned by `android_privileged_session_start`."))
-                        }
-                        putJsonObject("maxChars") {
-                            put("type", "integer")
-                            put("description", text("最多返回多少字符，默认 4000，范围 256-64000。", "Maximum number of characters to return. Default 4000, range 256-64000."))
                         }
                     }
                     putJsonArray("required") {
@@ -1138,10 +1043,6 @@ object AgentToolDefinitions {
                         put("type", "string")
                         put("description", "{{OMNIBOT_TERMINAL_DISTRIBUTION}} session id。")
                     }
-                    putJsonObject("maxChars") {
-                        put("type", "integer")
-                        put("description", "最多返回多少字符，默认 4000，范围 256-64000。")
-                    }
                 }
                 putJsonArray("required") {
                     add("sessionId")
@@ -1181,15 +1082,11 @@ object AgentToolDefinitions {
             put("toolType", "browser")
             put(
                 "description",
-                "控制一个最多 3 个标签页的离屏浏览器。不要用它打开 App deep link、omnibot:// 非 browser 资源或应用内路由。浏览器只支持访问 http(s) 页面，以及 omnibot://browser/... 资源文件。使用 navigate 打开页面，screenshot 查看当前视口截图（传 read_image=true 可让模型直接看到截图内容），click/type/hover 与元素交互，get_text/get_readable 抽取内容，scroll 导航长页面，scroll_and_collect 在一次调用中滚动并收集无限列表内容，find_elements 发现可交互元素，get_page_info 获取页面元信息，get_backbone 获取 DOM 骨架，execute_js 执行脚本，fetch 复用当前页面 session 下载资源并返回 omnibot://browser/... 产物，new_tab/close_tab/list_tabs 管理标签页，go_back/go_forward 浏览器前进后退，press_key 模拟键盘按键，wait_for_selector 等待元素出现，get_cookies 返回 cookie 摘要与可复用的 offload env 脚本路径，set_user_agent 兼容 desktop_safari/mobile_safari 入参但实际切换 Android Chrome 风格桌面/移动 UA。结果可能包含 riskChallengeDetected、riskChallengeKind、recommendedNextAction、throttleDelayMs；若 riskChallengeDetected=true，应停止自动交互/刷新并请用户手动接管。tool_title 必须是 5-10 个字的简洁摘要，并使用与用户相同的语言。"
+                "控制离屏浏览器。不要用它打开 App deep link、omnibot:// 非 browser 资源或应用内路由。浏览器只支持访问 http(s) 页面，以及 omnibot://browser/... 资源文件。使用 navigate 打开页面，screenshot 查看当前视口截图（传 read_image=true 可让模型直接看到截图内容），click/type/hover 与元素交互，get_text/get_readable 抽取内容，scroll 导航长页面，scroll_and_collect 在一次调用中滚动并收集无限列表内容，find_elements 发现可交互元素，get_page_info 获取页面元信息，get_backbone 获取 DOM 骨架，execute_js 执行脚本，fetch 复用当前页面 session 下载资源并返回 omnibot://browser/... 产物，new_tab/close_tab/list_tabs 管理标签页，go_back/go_forward 浏览器前进后退，press_key 模拟键盘按键，wait_for_selector 等待元素出现，get_cookies 返回 cookie 摘要与可复用的 offload env 脚本路径，set_user_agent 兼容 desktop_safari/mobile_safari 入参但实际切换 Android Chrome 风格桌面/移动 UA。结果可能包含 riskChallengeDetected、riskChallengeKind、recommendedNextAction、throttleDelayMs；若 riskChallengeDetected=true，应停止自动交互/刷新并请用户手动接管。"
             )
             putJsonObject("parameters") {
                 put("type", "object")
                 putJsonObject("properties") {
-                    putJsonObject("tool_title") {
-                        put("type", "string")
-                        put("description", "本次工具调用要做什么的简洁摘要，5-10 个字，展示给用户。")
-                    }
                     putJsonObject("action") {
                         put("type", "string")
                         put("description", "浏览器动作。")
@@ -1245,7 +1142,7 @@ object AgentToolDefinitions {
                     }
                     putJsonObject("amount") {
                         put("type", "integer")
-                        put("description", "滚动像素量，默认 500。")
+                        put("description", "scroll 或 scroll_and_collect 使用的滚动像素量；需要时显式提供。")
                     }
                     putJsonObject("direction") {
                         put("type", "string")
@@ -1265,11 +1162,11 @@ object AgentToolDefinitions {
                     }
                     putJsonObject("scroll_count") {
                         put("type", "integer")
-                        put("description", "scroll_and_collect 的滚动次数，默认 10，最大 20。")
+                        put("description", "scroll_and_collect 的滚动次数；需要时显式提供。")
                     }
                     putJsonObject("max_depth") {
                         put("type", "integer")
-                        put("description", "get_backbone 的最大深度，默认 5。")
+                        put("description", "get_backbone 的最大深度；需要时显式提供。")
                     }
                     putJsonObject("user_agent") {
                         put("type", "string")
@@ -1300,11 +1197,10 @@ object AgentToolDefinitions {
                     }
                     putJsonObject("timeout_ms") {
                         put("type", "integer")
-                        put("description", "wait_for_selector 的超时毫秒数，默认 5000，范围 500-30000。")
+                        put("description", "wait_for_selector 的可选超时毫秒数；省略时由浏览器执行环境决定。")
                     }
                 }
                 putJsonArray("required") {
-                    add("tool_title")
                     add("action")
                 }
             }
@@ -1324,10 +1220,6 @@ object AgentToolDefinitions {
                     putJsonObject("path") {
                         put("type", "string")
                         put("description", "文件路径，可使用相对 workspace 路径或 omnibot:// uri。")
-                    }
-                    putJsonObject("maxChars") {
-                        put("type", "integer")
-                        put("description", "最多读取字符数，默认 8000，范围 128-64000。")
                     }
                     putJsonObject("offset") {
                         put("type", "integer")
@@ -1515,11 +1407,11 @@ object AgentToolDefinitions {
                     }
                     putJsonObject("maxDepth") {
                         put("type", "integer")
-                        put("description", "递归时最大深度，默认 2，范围 1-6。")
+                        put("description", "可选，递归时最大深度。省略时由执行环境决定。")
                     }
                     putJsonObject("limit") {
                         put("type", "integer")
-                        put("description", "最多返回多少项，默认 200，范围 1-1000。")
+                        put("description", "可选，最多返回多少项。省略时返回执行环境提供的完整结果。")
                     }
                 }
             }
@@ -1550,7 +1442,7 @@ object AgentToolDefinitions {
                     }
                     putJsonObject("maxResults") {
                         put("type", "integer")
-                        put("description", "最多返回结果数，默认 50，范围 1-200。")
+                        put("description", "可选，最多返回多少项。省略时返回执行环境提供的完整结果。")
                     }
                 }
                 putJsonArray("required") {
@@ -1630,7 +1522,7 @@ object AgentToolDefinitions {
                     }
                     putJsonObject("limit") {
                         put("type", "integer")
-                        put("description", "返回数量上限，默认 50，范围 1-200。")
+                        put("description", "可选，最多返回多少项。省略时返回执行环境提供的完整结果。")
                     }
                 }
             }
@@ -1652,10 +1544,6 @@ object AgentToolDefinitions {
                         put("type", "string")
                         put("description", "skill 的 id、名称、SKILL.md 路径或 skill 根目录路径。建议先用 skills_list 查看。")
                     }
-                    putJsonObject("maxChars") {
-                        put("type", "integer")
-                        put("description", "最多返回多少字符的正文，默认 16000，范围 512-64000。")
-                    }
                 }
                 putJsonArray("required") {
                     add("skillId")
@@ -1670,7 +1558,7 @@ object AgentToolDefinitions {
             put("name", "schedule_task_create")
             put("displayName", "创建定时任务")
             put("toolType", "schedule")
-            put("description", "创建新的定时任务。`targetKind=subagent` 为唯一支持的执行类型。执行后等待工具结果，再决定是否回复用户；`subagentPrompt` 必须写成任务触发时要立即执行的动作，不要重复填写“每天几点提醒我/定时去做”这类调度描述。")
+            put("description", "创建新的定时任务。`targetKind=subagent` 为唯一支持的执行类型；`subagentPrompt` 必须写成任务触发时要立即执行的动作，不要重复填写“每天几点提醒我/定时去做”这类调度描述。")
             put("postToolRule", "创建完成后不要在同一轮继续调用其他工具；请等待工具结果，并通过 response 输出最终答复。")
             putJsonObject("parameters") {
                 put("type", "object")
@@ -1980,7 +1868,7 @@ object AgentToolDefinitions {
                     }
                     putJsonObject("limit") {
                         put("type", "integer")
-                        put("description", "可选返回上限，默认 50，范围 1-200。")
+                        put("description", "可选返回上限；省略时返回该时间范围内的完整结果。")
                     }
                 }
             }
@@ -2112,7 +2000,7 @@ object AgentToolDefinitions {
                     }
                     putJsonObject("limit") {
                         put("type", "integer")
-                        put("description", "返回条数上限，默认 8，范围 1-20。")
+                        put("description", "可选，返回条数上限。省略时返回执行环境提供的完整结果。")
                     }
                 }
                 putJsonArray("required") {
@@ -2128,7 +2016,7 @@ object AgentToolDefinitions {
             put("name", "memory_write_daily")
             put("displayName", "写入当日记忆")
             put("toolType", "memory")
-            put("description", "把本轮值得跨会话记住的信息写入当日短期记忆 `.omnibot/memory/short-memories/YY-MM-DD.md`。这是每轮的默认动作：只要出现用户偏好、关键决定及理由、任务进度、外部标识(路径/ID/别名)或被用户纠正的事实，就应调用；宁可多写短期，也不要遗漏。")
+            put("description", "把需要跨会话保留的用户偏好、关键决定、任务进度或外部标识写入当日短期记忆 `.omnibot/memory/short-memories/YY-MM-DD.md`。仅在任务或用户明确需要持久化该事实时调用。")
             put("postToolRule", "写入成功后再继续执行其他步骤。")
             putJsonObject("parameters") {
                 put("type", "object")
@@ -2151,7 +2039,7 @@ object AgentToolDefinitions {
             put("name", "memory_upsert_longterm")
             put("displayName", "沉淀长期记忆")
             put("toolType", "memory")
-            put("description", "把跨会话稳定、可复用的结论(稳定偏好、长期约束、身份事实)写入 `.omnibot/memory/MEMORY.md`。仅用于有长期价值的信息；一次性过程细节请改用 `memory_write_daily` 写短期。自动去重相同或高度重复的条目。")
+            put("description", "把跨会话稳定、可复用的结论(稳定偏好、长期约束、身份事实)写入 `.omnibot/memory/MEMORY.md`。仅用于有长期价值的信息；一次性过程细节请改用 `memory_write_daily` 写短期。")
             put("postToolRule", "写入后等待工具结果，再向用户确认。")
             putJsonObject("parameters") {
                 put("type", "object")
@@ -2194,7 +2082,7 @@ object AgentToolDefinitions {
             put("name", "memory_load")
             put("displayName", "加载长期记忆")
             put("toolType", "memory")
-            put("description", "按 slug 加载完整的长期记忆条目正文。slug 来自 memory_search 返回的长期记忆命中。同一轮内重复加载会被自动跳过。")
+            put("description", "按 slug 加载完整的长期记忆条目正文。slug 来自 memory_search 返回的长期记忆命中。")
             put("postToolRule", "读取后再决定是否需要进一步检索或写入。")
             putJsonObject("parameters") {
                 put("type", "object")
@@ -2219,7 +2107,7 @@ object AgentToolDefinitions {
             put("toolType", "subagent")
             put(
                 "description",
-                "把多个相互独立、可并行的小任务主动分派给具有隔离上下文的 subagent，并返回聚合结果。简单任务或必须严格串行共享中间状态的任务不要分派。"
+                "仅当用户明确要求分派或并行时，把多个相互独立的小任务交给具有隔离上下文的 subagent，并返回聚合结果。"
             )
             put("postToolRule", "分派后等待工具结果，再汇总给用户。")
             putJsonObject("parameters") {
@@ -2247,7 +2135,7 @@ object AgentToolDefinitions {
                                     }
                                     put(
                                         "description",
-                                        "专家类型：general 可读写工作区；explorer 只读检索与查证；memory-curator 整理记忆；planner 只输出计划。"
+                                        "可选任务提示：general、explorer、memory-curator 或 planner。所有 profile 都继承当前 harness 已提供的能力。"
                                     )
                                 }
                             }
@@ -2257,7 +2145,7 @@ object AgentToolDefinitions {
                         }
                         put(
                             "description",
-                            "需要并行执行的子任务列表。每项都要包含自足的 instruction，并按任务性质选择 profileId。"
+                            "要分派的子任务列表。每项都要包含自足的 instruction；profileId 为可选任务提示。"
                         )
                     }
                     putJsonObject("defaultProfileId") {
@@ -2270,12 +2158,12 @@ object AgentToolDefinitions {
                         }
                         put(
                             "description",
-                            "未给子任务指定 profileId 时使用的专家类型，默认 general。"
+                            "子任务省略 profileId 时使用的可选任务提示，默认 general。"
                         )
                     }
                     putJsonObject("concurrency") {
                         put("type", "integer")
-                        put("description", "并发度，默认 2，范围 1-6。")
+                        put("description", "可选并发度；省略时按本次子任务数并行执行。")
                     }
                     putJsonObject("mergeInstruction") {
                         put("type", "string")
@@ -2383,86 +2271,6 @@ object AgentToolDefinitions {
         builtinTools(locale, terminalDistribution, includeVlmTool) +
         scheduleTools(locale) + alarmTools(locale) + calendarTools(locale) + musicTools(locale)
 
-    /**
-     * Replace OmniBot's private names with the common Harness-native names
-     * only for the direct Agent model catalog. The MCP server keeps exposing
-     * the original complete catalog to external clients.
-     */
-    fun modelFacingTools(definitions: List<JsonObject>): List<JsonObject> {
-        val existingNames = definitions.mapNotNullTo(linkedSetOf()) { definition ->
-            (definition["function"] as? JsonObject)
-                ?.get("name")
-                ?.jsonPrimitive
-                ?.contentOrNull
-        }
-        return definitions.map { definition ->
-            val function = definition["function"] as? JsonObject ?: return@map definition
-            val currentName = function["name"]?.jsonPrimitive?.contentOrNull
-                ?: return@map definition
-            val modelName = nativeModelToolAliases[currentName]
-                ?: return@map definition
-            if (modelName in existingNames) {
-                // A plugin or remote MCP server already owns this native name;
-                // keep the original name rather than creating an ambiguous
-                // model catalog.
-                return@map definition
-            }
-            val modelFunction = JsonObject(
-                function.mapValues { (functionKey, functionValue) ->
-                    if (functionKey == "name") {
-                        JsonPrimitive(modelName)
-                    } else {
-                        rewriteModelToolDescriptions(functionValue)
-                    }
-                }
-            )
-            JsonObject(
-                definition.mapValues { (key, value) ->
-                    if (key == "function") modelFunction else value
-                }
-            )
-        }
-    }
-
-    /**
-     * Keep the schema vocabulary coherent after a model-facing rename. A
-     * renamed function whose description still says `terminal_execute` or
-     * `file_read` teaches the model to emit a name that is absent from the
-     * catalog, which is exactly the kind of stale-tool failure this layer is
-     * meant to prevent. Only description fields are rewritten; enum values,
-     * paths, and arbitrary user/plugin data are left untouched.
-     */
-    private fun rewriteModelToolDescriptions(value: JsonElement): JsonElement {
-        return when (value) {
-            is JsonObject -> JsonObject(
-                value.mapValues { (key, child) ->
-                    if (key == "description" && child is JsonPrimitive && child.isString) {
-                        JsonPrimitive(rewriteModelToolDescription(child.content))
-                    } else {
-                        rewriteModelToolDescriptions(child)
-                    }
-                }
-            )
-            is JsonArray -> JsonArray(value.map(::rewriteModelToolDescriptions))
-            else -> value
-        }
-    }
-
-    private fun rewriteModelToolDescription(text: String): String {
-        return nativeModelToolAliases.entries.fold(text) { current, (nativeName, modelName) ->
-            current.replace(
-                Regex("(?<![A-Za-z0-9_])${Regex.escape(nativeName)}(?![A-Za-z0-9_])"),
-                modelName,
-            )
-        }
-    }
-
-    fun modelFacingToolNames(): Set<String> = nativeModelToolAliases.values.toSet()
-
-    /** Resolve an internal tool name to the direct-Agent model name. */
-    internal fun modelFacingNameFor(toolName: String): String =
-        nativeModelToolAliases[toolName] ?: toolName
-
     fun reservedToolNames(): Set<String> {
         val locale = PromptLocale.EN_US
         val definitions = buildList {
@@ -2480,6 +2288,6 @@ object AgentToolDefinitions {
                 ?.get("name")
                 ?.jsonPrimitive
                 ?.contentOrNull
-        } + modelFacingToolNames()
+        }
     }
 }

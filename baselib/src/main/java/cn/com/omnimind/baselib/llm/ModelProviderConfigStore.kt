@@ -148,6 +148,22 @@ object ModelProviderConfigStore {
         return appendOfficialPlatformProfile(created)
     }
 
+    /** Read the Provider editor's existing catalog; never refresh on session startup. */
+    fun cachedModels(context: Context, profile: ModelProviderProfile): List<ProviderModelOption> = runCatching {
+        val raw = context.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
+            .getString("flutter.cached_provider_models_with_base_v2", null)
+            ?: return@runCatching emptyList()
+        val bucket = JsonParser.parseString(raw).asJsonObject[profile.id]?.asJsonObject
+            ?: return@runCatching emptyList()
+        val base = bucket["apiBase"]?.asString.orEmpty()
+        val revision = bucket["profileRevision"]?.asLong ?: 0L
+        if (base != normalizeBaseUrl(profile.baseUrl).orEmpty() || revision != profile.revision) {
+            return@runCatching emptyList()
+        }
+        bucket["models"]?.asJsonArray?.map { Gson().fromJson(it, ProviderModelOption::class.java) }
+            ?.filter { !it.id.isNullOrBlank() }.orEmpty()
+    }.getOrDefault(emptyList())
+
     fun getEditingProfileId(): String {
         val profiles = listProfiles()
         val mmkv = MMKV.defaultMMKV()

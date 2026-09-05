@@ -8,6 +8,7 @@ import com.google.gson.GsonBuilder
 import com.google.gson.JsonArray
 import com.google.gson.JsonNull
 import com.google.gson.JsonObject
+import com.google.gson.JsonParser
 
 /**
  * The app has one provider configuration. Official ACP runtimes each expose
@@ -78,21 +79,27 @@ internal data class AgentConfigWrite(
     val executorKey: String,
 )
 
+/** File access owned by the runtime transport, not by a Harness converter. */
+internal interface AgentConfigFileAccess {
+    suspend fun read(path: String, executorKey: String): String
+    suspend fun write(path: String, content: String, executorKey: String)
+}
+
 /**
  * Merge user launch options with the canonical Provider mapping.
  *
- * Provider credentials/model/protocol values are owned by the shared
- * Provider. Profile environment values may add Harness-specific options, but
- * must not shadow those canonical values with stale settings from an older
- * Agent configuration.
+ * Only profiles using the shared Provider reserve its credential/model keys.
+ * Custom ACP agents own their configuration, including those environment keys.
  */
 internal fun mergeAcpLaunchEnvironment(
-    profileEnvironment: Map<String, String>,
+    profile: AcpAgentProfile,
     providerEnvironment: Map<String, String>,
 ): Map<String, String> = buildMap {
-    profileEnvironment.forEach { (key, value) ->
-        if (key !in PROVIDER_OWNED_ENVIRONMENT_KEYS &&
-            !key.startsWith(PROVIDER_HEADER_ENV_PREFIX)
+    val usesSharedProvider = AcpAgentProfileStore.usesSharedProvider(profile)
+    profile.environment.forEach { (key, value) ->
+        if (!usesSharedProvider ||
+            (key !in PROVIDER_OWNED_ENVIRONMENT_KEYS &&
+                !key.startsWith(PROVIDER_HEADER_ENV_PREFIX))
         ) {
             put(key, value)
         }
@@ -101,9 +108,8 @@ internal fun mergeAcpLaunchEnvironment(
 }
 
 /**
- * Provider credentials and model selection are never profile configuration.
- * Remove these keys even when the current Provider is absent, otherwise a
- * stale persisted profile can silently resurrect an old route or credential.
+ * For shared-Provider profiles, remove stale keys even when that Provider is
+ * absent so an old route or credential cannot silently become active again.
  */
 private val PROVIDER_OWNED_ENVIRONMENT_KEYS = setOf(
     "OPENAI_API_KEY",
@@ -130,6 +136,17 @@ private const val PROVIDER_HEADER_ENV_PREFIX = "OMNIBOT_PROVIDER_HEADER_"
 internal interface AgentConfigAdapter {
     fun map(input: AgentProviderMappingInput): AgentProviderMapping
 
+    suspend fun readConfig(
+        input: AgentProviderMappingInput,
+        access: AgentConfigFileAccess,
+    ): Map<String, Any?>? = null
+
+    fun directConfigWrites(
+        input: AgentProviderMappingInput,
+        args: Map<String, Any?>,
+        providerModels: List<ProviderModelOption> = emptyList(),
+    ): List<AgentConfigWrite> = emptyList()
+
     fun launchConfigWrites(
         input: AgentProviderMappingInput,
         mapping: AgentProviderMapping,
@@ -139,19 +156,42 @@ internal interface AgentConfigAdapter {
 }
 
 internal object AgentConfigAdapterRegistry {
-    private val adapters: List<AgentConfigAdapter> = listOf(
-        DeepSeekHarnessConfigAdapter,
-        CodexConfigAdapter,
-        ClaudeCodeConfigAdapter,
-        KimiCodeConfigAdapter,
-        OpenCodeConfigAdapter
+    private val adaptersById: Map<String, AgentConfigAdapter> = mapOf(
+        "deepseek-harness" to DeepSeekHarnessConfigAdapter,
+        "codex" to CodexConfigAdapter,
+        "claude-code" to ClaudeCodeConfigAdapter,
+        "kimi-code" to KimiCodeConfigAdapter,
+        "open-code" to OpenCodeConfigAdapter,
     )
 
     fun map(input: AgentProviderMappingInput): AgentProviderMapping {
         val normalizedInput = input.normalized()
-        return adapters.firstOrNull { it.supports(normalizedInput) }
+        return adapterFor(normalizedInput)
             ?.map(normalizedInput)
             ?: AgentProviderMapping()
+    }
+
+    suspend fun readConfig(
+        input: AgentProviderMappingInput,
+        access: AgentConfigFileAccess,
+    ): Map<String, Any?>? {
+        val normalizedInput = input.normalized()
+        return adapterFor(normalizedInput)?.readConfig(normalizedInput, access)
+    }
+
+    fun directConfigWrites(
+        input: AgentProviderMappingInput,
+        args: Map<String, Any?>,
+        providerModels: List<ProviderModelOption>,
+    ): List<AgentConfigWrite> {
+        val normalizedInput = input.normalized()
+        return adapterFor(normalizedInput)
+            ?.directConfigWrites(
+                input = normalizedInput,
+                args = args,
+                providerModels = providerModels,
+            )
+            .orEmpty()
     }
 
     fun launchConfigWrites(
@@ -161,7 +201,7 @@ internal object AgentConfigAdapterRegistry {
         existingConfig: String,
     ): List<AgentConfigWrite> {
         val normalizedInput = input.normalized()
-        return adapters.firstOrNull { it.supports(normalizedInput) }
+        return adapterFor(normalizedInput)
         ?.launchConfigWrites(
             input = normalizedInput,
             mapping = mapping,
@@ -171,20 +211,9 @@ internal object AgentConfigAdapterRegistry {
         .orEmpty()
     }
 
-    private fun AgentConfigAdapter.supports(input: AgentProviderMappingInput): Boolean {
-        return when (input.harnessAdapter.providerConfigKind) {
-            AcpHarnessProviderConfigKind.DEEPSEEK_HARNESS ->
-                this === DeepSeekHarnessConfigAdapter
-            AcpHarnessProviderConfigKind.CODEX ->
-                this === CodexConfigAdapter
-            AcpHarnessProviderConfigKind.CLAUDE_CODE ->
-                this === ClaudeCodeConfigAdapter
-            AcpHarnessProviderConfigKind.KIMI_CODE ->
-                this === KimiCodeConfigAdapter
-            AcpHarnessProviderConfigKind.OPEN_CODE ->
-                this === OpenCodeConfigAdapter
-            AcpHarnessProviderConfigKind.STANDARD -> false
-        }
+    private fun adapterFor(input: AgentProviderMappingInput): AgentConfigAdapter? {
+        return input.harnessAdapter.configAdapterId
+            ?.let(adaptersById::get)
     }
 }
 
@@ -192,201 +221,6 @@ private fun AgentProviderMappingInput.normalized(): AgentProviderMappingInput = 
     provider = provider?.normalized(),
     model = model?.trim()?.takeIf { it.isNotEmpty() },
 )
-
-private object DeepSeekHarnessConfigAdapter : AgentConfigAdapter {
-    override fun map(input: AgentProviderMappingInput): AgentProviderMapping {
-        val config = syncAgentProviderCredentials(
-            config = input.deepSeekConfig,
-            sharedProvider = input.provider,
-            sharedModel = input.model
-        )
-        return AgentProviderMapping(
-            environment = config.toEnvironment(),
-            deepSeekConfig = config
-        )
-    }
-
-    override fun launchConfigWrites(
-        input: AgentProviderMappingInput,
-        mapping: AgentProviderMapping,
-        providerModels: List<ProviderModelOption>,
-        existingConfig: String,
-    ): List<AgentConfigWrite> {
-        val model = input.model?.trim()?.takeIf { it.isNotEmpty() } ?: return emptyList()
-        return listOf(
-            AgentConfigWrite(
-                path = DEEPSEEK_HARNESS_SETTINGS_PATH,
-                content = buildDeepSeekHarnessSettingsYaml(model),
-                executorKey = "deepseek-agent-settings-write",
-            )
-        )
-    }
-}
-
-private fun buildDeepSeekHarnessSettingsYaml(model: String): String = buildString {
-    appendLine("llm-deepseek:")
-    appendLine("  models:")
-    appendLine("    - id: '${model.replace("'", "''")}'")
-}
-
-private object CodexConfigAdapter : AgentConfigAdapter {
-    override fun map(input: AgentProviderMappingInput): AgentProviderMapping {
-        val provider = input.provider
-        val headerBindings = provider?.let { buildAcpHeaderBindings(it.customHeaders) }
-        val environment = if (provider == null) {
-            mapOf("CODEX_HOME" to AgentRuntimeDefaults.CODEX_HOME)
-        } else {
-            mapOf(
-                "CODEX_HOME" to AgentRuntimeDefaults.CODEX_HOME,
-                "OPENAI_BASE_URL" to normalizeCodexBaseUrl(provider.baseUrl),
-                "OPENAI_API_KEY" to provider.apiKey
-            ) + headerBindings?.environment.orEmpty()
-        }
-        return AgentProviderMapping(
-            environment = environment,
-            codexModel = input.model?.trim()?.takeIf { it.isNotEmpty() },
-            // Current Codex ACP (1.1.x) removed the legacy Chat Completions
-            // wire and rejects `wire_api = "chat"` during every request.
-            // The shared Provider may still use Chat Completions for the app
-            // and DSH, but Codex must receive its own official Responses
-            // transport setting.
-            codexWireApi = provider?.let { OpenAiWireApi.RESPONSES },
-            codexBaseUrl = provider?.baseUrl?.let(::normalizeCodexBaseUrl),
-            codexEnvHttpHeaders = headerBindings?.envHttpHeaders.orEmpty(),
-        )
-    }
-
-    override fun launchConfigWrites(
-        input: AgentProviderMappingInput,
-        mapping: AgentProviderMapping,
-        providerModels: List<ProviderModelOption>,
-        existingConfig: String,
-    ): List<AgentConfigWrite> {
-        val provider = input.provider ?: return emptyList()
-        val model = mapping.codexModel ?: return emptyList()
-        return listOf(
-            AgentConfigWrite(
-                path = CODEX_CONFIG_TOML_PATH,
-                content = buildCodexConfigToml(
-                    baseUrl = mapping.codexBaseUrl ?: provider.baseUrl,
-                    model = model,
-                    wireApi = mapping.codexWireApi ?: OpenAiWireApi.RESPONSES,
-                    modelCatalogPath = CODEX_MODEL_CATALOG_JSON_PATH,
-                    envHttpHeaders = mapping.codexEnvHttpHeaders,
-                ),
-                executorKey = "codex-agent-config-write",
-            ),
-            AgentConfigWrite(
-                path = CODEX_AUTH_JSON_PATH,
-                content = buildCodexAuthJson(provider.apiKey),
-                executorKey = "codex-agent-config-write",
-            ),
-            AgentConfigWrite(
-                path = CODEX_MODEL_CATALOG_JSON_PATH,
-                content = buildCodexModelCatalogJson(
-                    providerModels = providerModels,
-                    provider = provider,
-                ),
-                executorKey = "codex-agent-config-write",
-            ),
-        )
-    }
-}
-
-private object ClaudeCodeConfigAdapter : AgentConfigAdapter {
-    override fun map(input: AgentProviderMappingInput): AgentProviderMapping {
-        val provider = input.provider ?: return AgentProviderMapping()
-        val model = input.model?.trim()?.takeIf { it.isNotEmpty() }
-        val anthropicBaseUrl = normalizeClaudeCodeBaseUrl(provider.baseUrl)
-        val customHeaders = provider.customHeaders
-            .entries
-            .joinToString("\n") { (name, value) -> "$name: $value" }
-        require(
-            provider.protocolType.equals("anthropic", ignoreCase = true) ||
-                isAnthropicCompatibleBaseUrl(anthropicBaseUrl)
-        ) {
-            "Claude Code requires an Anthropic-compatible Provider endpoint. " +
-                "Configure the Provider protocol as Anthropic or use its /anthropic endpoint; " +
-                "the current endpoint is OpenAI-compatible: ${provider.baseUrl}"
-        }
-        return AgentProviderMapping(
-            environment = buildMap {
-                put("ANTHROPIC_BASE_URL", anthropicBaseUrl)
-                put("ANTHROPIC_API_KEY", provider.apiKey)
-                put("ANTHROPIC_AUTH_TOKEN", provider.apiKey)
-                if (customHeaders.isNotBlank()) {
-                    put("ANTHROPIC_CUSTOM_HEADERS", customHeaders)
-                }
-                if (model != null) {
-                    // Official Claude Code model override. Without this the
-                    // CLI falls back to claude-opus and a shared gateway can
-                    // reject the request before it reaches the model.
-                    put("ANTHROPIC_MODEL", model)
-                    put("ANTHROPIC_SMALL_FAST_MODEL", model)
-                }
-            }
-        )
-    }
-}
-
-private fun isAnthropicCompatibleBaseUrl(value: String): Boolean {
-    return value.endsWith("/anthropic", ignoreCase = true) ||
-        value.endsWith("/apps/anthropic", ignoreCase = true)
-}
-
-private object KimiCodeConfigAdapter : AgentConfigAdapter {
-    override fun map(input: AgentProviderMappingInput): AgentProviderMapping {
-        val provider = input.provider
-        val model = input.model
-        return AgentProviderMapping(
-            environment = if (provider != null && model != null) {
-                buildKimiCodeEnvironment(provider = provider, model = model)
-            } else {
-                kimiCodeBaseEnvironment()
-            },
-        )
-    }
-}
-
-private object OpenCodeConfigAdapter : AgentConfigAdapter {
-    override fun map(input: AgentProviderMappingInput): AgentProviderMapping {
-        val provider = input.provider ?: return AgentProviderMapping()
-        val model = input.model?.trim()?.takeIf { it.isNotEmpty() }
-        val headerBindings = buildAcpHeaderBindings(provider.customHeaders)
-        return AgentProviderMapping(
-            environment = mapOf(
-                "OPENAI_BASE_URL" to normalizeOpenCodeBaseUrl(provider.baseUrl),
-                "OPENAI_API_KEY" to provider.apiKey
-            ) + headerBindings.environment,
-            openCodeModel = model?.let { "$OPEN_CODE_PROVIDER_ID/$it" },
-            openCodeBaseUrl = normalizeOpenCodeBaseUrl(provider.baseUrl),
-            launchConfigPath = OPENCODE_CONFIG_PATH,
-            launchConfigExecutorKey = "opencode-agent-config-read",
-        )
-    }
-
-    override fun launchConfigWrites(
-        input: AgentProviderMappingInput,
-        mapping: AgentProviderMapping,
-        providerModels: List<ProviderModelOption>,
-        existingConfig: String,
-    ): List<AgentConfigWrite> {
-        val provider = input.provider ?: return emptyList()
-        val model = mapping.openCodeModel ?: return emptyList()
-        return listOf(
-            AgentConfigWrite(
-                path = OPENCODE_CONFIG_PATH,
-                content = buildOpenCodeConfigJson(
-                    model = model,
-                    baseUrl = mapping.openCodeBaseUrl ?: provider.baseUrl,
-                    existingConfigJson = existingConfig,
-                    customHeaders = provider.customHeaders,
-                ),
-                executorKey = "opencode-agent-config-write",
-            )
-        )
-    }
-}
 
 internal fun syncAgentProviderCredentials(
     config: DeepSeekHarnessConfig,
@@ -542,8 +376,11 @@ internal fun buildCodexModelCatalogJson(
                 add("apply_patch_tool_type", JsonNull.INSTANCE)
                 addProperty("web_search_tool_type", "text")
                 add("truncation_policy", JsonObject().apply {
-                    addProperty("mode", "bytes")
-                    addProperty("limit", 10000)
+                    // Required official Codex model metadata. Use the configured
+                    // context capacity instead of a separate 10 KB host ceiling.
+                    // Codex's tool_output_token_limit remains an explicit override.
+                    addProperty("mode", "tokens")
+                    addProperty("limit", contextWindow)
                 })
                 addProperty("supports_image_detail_original", false)
                 addProperty("context_window", contextWindow)
@@ -663,26 +500,6 @@ private fun String?.normalizedModelId(): String? = this
 private fun String?.findMatchingModel(candidates: List<String>): String? {
     val value = this ?: return null
     return candidates.firstOrNull { it == value || it.equals(value, ignoreCase = true) }
-}
-
-internal fun buildSharedAgentProviderEnvironment(
-    agentId: String,
-    credentials: AgentProviderCredentials?
-): Map<String, String> {
-    // Compatibility helper for older callers that still pass an agent id.
-    // The actual mapping is still selected by the resolved Harness adapter.
-    val harnessAdapter = AcpAgentProfileStore.OFFICIAL_AGENTS
-        .firstOrNull { it.id == agentId }
-        ?.let(AcpHarnessAdapters::forProfile)
-        ?: AcpHarnessAdapters.standard
-    return AgentConfigAdapterRegistry.map(
-        AgentProviderMappingInput(
-            agentId = agentId,
-            provider = credentials,
-            model = null,
-            harnessAdapter = harnessAdapter,
-        )
-    ).environment
 }
 
 /**

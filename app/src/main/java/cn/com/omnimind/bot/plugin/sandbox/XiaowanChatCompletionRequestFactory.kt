@@ -18,8 +18,6 @@ import kotlinx.serialization.json.JsonPrimitive
 internal object XiaowanChatCompletionRequestFactory {
     const val DEFAULT_TEMPERATURE = 0.4
     const val DEFAULT_REASONING_EFFORT = "none"
-    const val MAX_PROMPT_CHARS = 32_000
-    const val MAX_SYSTEM_CHARS = 8_000
 
     fun create(
         prompt: String,
@@ -28,13 +26,6 @@ internal object XiaowanChatCompletionRequestFactory {
         temperature: Double = DEFAULT_TEMPERATURE,
         reasoningEffort: String = DEFAULT_REASONING_EFFORT,
     ): ChatCompletionRequest {
-        require(prompt.length <= MAX_PROMPT_CHARS) {
-            "prompt exceeds the $MAX_PROMPT_CHARS character limit"
-        }
-        require(system.length <= MAX_SYSTEM_CHARS) {
-            "system exceeds the $MAX_SYSTEM_CHARS character limit"
-        }
-        val normalizedEffort = normalizeReasoningEffort(reasoningEffort)
         val messages = buildList {
             if (system.isNotEmpty()) {
                 add(ChatCompletionMessage(role = "system", content = JsonPrimitive(system)))
@@ -56,9 +47,6 @@ internal object XiaowanChatCompletionRequestFactory {
         reasoningEffort: String = DEFAULT_REASONING_EFFORT,
     ): ChatCompletionRequest {
         require(messages.isNotEmpty()) { "messages must not be empty" }
-        require(messages.sumOf { it.content?.toString()?.length ?: 0 } <= MAX_PROMPT_CHARS) {
-            "messages exceed the $MAX_PROMPT_CHARS character limit"
-        }
         val normalizedEffort = normalizeReasoningEffort(reasoningEffort)
         return ChatCompletionRequest(
             messages = messages,

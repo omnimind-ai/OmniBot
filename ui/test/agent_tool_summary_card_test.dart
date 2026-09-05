@@ -13,6 +13,30 @@ import 'package:ui/services/app_background_service.dart';
 import 'package:ui/widgets/image_preview_overlay.dart';
 
 void main() {
+  testWidgets(
+    'streaming HTML input is pending, not executing or awaiting approval',
+    (tester) async {
+      final card = <String, dynamic>{
+        'type': 'agent_tool_summary',
+        'status': 'pending',
+        'toolName': 'file_write',
+        'toolTitle': '写入文件',
+        'toolType': 'file',
+        'argsJson': '{"path":"/workspace/index.html","content":"<html>',
+      };
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: AgentToolSummaryCard(cardData: card)),
+        ),
+      );
+      expect(isAgentToolAwaitingConfirmation(card), isFalse);
+      expect(find.text(resolveAgentToolStatusLabel(card)), findsOneWidget);
+      expect(find.textContaining('等待确认'), findsNothing);
+      expect(find.textContaining('正在写入'), findsNothing);
+      expect(find.text('成功'), findsNothing);
+    },
+  );
+
   setUp(() {
     LegacyTextLocalizer.setResolvedLocale(const Locale('zh'));
   });
@@ -81,17 +105,14 @@ void main() {
       const ValueKey('agent-tool-summary-leading-icon'),
     );
     expect(leadingIcon, findsOneWidget);
-    final iconSlot = tester.widget<SizedBox>(leadingIcon);
-    expect(iconSlot.width, 20);
-    expect(iconSlot.height, 20);
-    expect(
-      find.descendant(of: leadingIcon, matching: find.byType(DecoratedBox)),
-      findsNothing,
-    );
+    // Preserve the existing capsule presentation, not its older widget tree.
+    final iconDecoration = tester.widget<DecoratedBox>(leadingIcon);
+    expect((iconDecoration.decoration as BoxDecoration).shape, BoxShape.circle);
+    expect(tester.getSize(leadingIcon), const Size(24, 24));
     final icon = tester.widget<Icon>(
       find.descendant(of: leadingIcon, matching: find.byType(Icon)),
     );
-    expect(icon.size, 18);
+    expect(icon.size, 16);
   });
 
   testWidgets('pending privileged confirmation is shown as waiting', (
@@ -438,19 +459,19 @@ void main() {
     expect(find.byType(ShaderMask), findsOneWidget);
   });
 
-  test('running file write exposes the action and target without reasoning', () {
-    final label = resolveAgentToolProgressTitle(
-      {
+  test(
+    'running file write exposes the action and target without reasoning',
+    () {
+      final label = resolveAgentToolProgressTitle({
         'status': 'running',
         'toolName': 'file_write',
         'toolType': 'file',
         'argsJson': jsonEncode({'path': 'notes/draft.md'}),
-      },
-      isEnglish: false,
-    );
+      }, isEnglish: false);
 
-    expect(label, '正在写入文件：draft.md');
-  });
+      expect(label, '正在写入文件：draft.md');
+    },
+  );
 
   testWidgets('running file write card is visible without a thinking card', (
     tester,
@@ -668,7 +689,7 @@ diff --git a/lib/main.dart b/lib/main.dart
 
     final title = tester.widget<Text>(find.text('同步索引'));
     expect(title.style?.color, customTextColor);
-    expect(title.style?.fontSize, 12);
+    expect(title.style?.fontSize, 12.5);
   });
 
   testWidgets('subagent card shows status line and expands timeline', (

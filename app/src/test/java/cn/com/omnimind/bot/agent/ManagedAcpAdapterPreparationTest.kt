@@ -2,7 +2,6 @@ package cn.com.omnimind.bot.agent
 
 import cn.com.omnimind.bot.agent.runtime.AcpAgentProfileStore
 import cn.com.omnimind.bot.agent.runtime.AcpAgentHealth
-import cn.com.omnimind.bot.agent.runtime.DEEPSEEK_HARNESS_PREPARATION_REVISION
 import cn.com.omnimind.bot.agent.runtime.ManagedAcpPreparationInProgressException
 import cn.com.omnimind.bot.agent.runtime.ManagedAcpPreparationGate
 import cn.com.omnimind.bot.agent.runtime.managedAgentPreparationHealth
@@ -19,6 +18,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ManagedAcpAdapterPreparationTest {
+    private companion object {
+        const val DEEPSEEK_HARNESS_PREPARATION_REVISION = "deepseek-dsh-profile-reset-v13"
+    }
     @Test
     fun `a healthy installed DSH adapter is reused during agent switching`() {
         assertFalse(

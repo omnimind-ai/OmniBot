@@ -36,6 +36,7 @@ import android.webkit.WebViewClient
 import android.webkit.URLUtil
 import androidx.core.content.FileProvider
 import cn.com.omnimind.baselib.permission.PermissionRequest as RuntimePermissionRequest
+import cn.com.omnimind.bot.agent.browser.BrowserToolResultPayloads
 import cn.com.omnimind.bot.webchat.FlutterChatSyncBridge
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -79,11 +80,6 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.random.Random
 
-private const val DEFAULT_BROWSER_SCROLL_AMOUNT = 500
-private const val DEFAULT_BROWSER_SCROLL_COUNT = 10
-private const val MAX_BROWSER_SCROLL_COUNT = 20
-private const val DEFAULT_BROWSER_MAX_DEPTH = 5
-private const val MAX_BROWSER_TABS = 3
 private const val NAVIGATION_TIMEOUT_MS = 30_000L
 private const val ACTION_SETTLE_DELAY_MS = 250L
 private const val LOAD_SETTLE_DELAY_MS = 600L
@@ -94,8 +90,6 @@ private const val READ_IMAGE_JPEG_QUALITY = 75
 private const val READ_IMAGE_MAX_WIDTH = 1280
 private const val PREVIEW_FRAME_JPEG_QUALITY = 72
 private const val PREVIEW_FRAME_MAX_WIDTH = 420
-private const val LARGE_TEXT_THRESHOLD = 12_000
-private const val FIND_ELEMENTS_LIMIT = 60
 private const val TYPE_INPUT_CHUNK_SIZE = 3
 private const val TYPE_INPUT_CHUNK_DELAY_MS = 35L
 
@@ -164,7 +158,7 @@ data class BrowserUseRequest(
     val script: String? = null,
     val coordinateX: Int? = null,
     val coordinateY: Int? = null,
-    val amount: Int = DEFAULT_BROWSER_SCROLL_AMOUNT,
+    val amount: Int? = null,
     val keywords: List<String> = emptyList(),
     val itemSelector: String? = null,
     val direction: String? = null,
@@ -173,21 +167,19 @@ data class BrowserUseRequest(
     val fuzzy: Boolean = true,
     val readImage: Boolean = false,
     val key: String? = null,
-    val timeoutMs: Long = 5000L,
-    val maxDepth: Int = DEFAULT_BROWSER_MAX_DEPTH,
-    val scrollCount: Int = DEFAULT_BROWSER_SCROLL_COUNT
+    val timeoutMs: Long? = null,
+    val maxDepth: Int? = null,
+    val scrollCount: Int? = null
 ) {
     companion object {
-        fun fromJson(
-            args: JsonObject,
-            runtimeSettings: AgentRuntimeSettings = AgentRuntimeSettings(),
-        ): BrowserUseRequest {
-            val toolTitle = args["tool_title"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
-            require(toolTitle.isNotEmpty()) { "browser_use 缺少 tool_title" }
-
+        fun fromJson(args: JsonObject): BrowserUseRequest {
             val action = BrowserUseAction.fromWire(
                 args["action"]?.jsonPrimitive?.contentOrNull
             ) ?: throw IllegalArgumentException("browser_use action 非法或缺失")
+            val toolTitle = args["tool_title"]?.jsonPrimitive?.contentOrNull
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() }
+                ?: action.wireName
 
             val coordinateX = args["coordinate_x"]?.jsonPrimitive?.intOrNull
             val coordinateY = args["coordinate_y"]?.jsonPrimitive?.intOrNull
@@ -196,23 +188,13 @@ data class BrowserUseRequest(
             }
 
             val amount = args["amount"]?.jsonPrimitive?.intOrNull
-                ?.coerceIn(1, 20_000)
-                ?: DEFAULT_BROWSER_SCROLL_AMOUNT
             val maxDepth = args["max_depth"]?.jsonPrimitive?.intOrNull
-                ?.takeIf { it > 0 }
-                ?: runtimeSettings.browserMaxDepth
-                ?: DEFAULT_BROWSER_MAX_DEPTH
             val scrollCount = args["scroll_count"]?.jsonPrimitive?.intOrNull
-                ?.takeIf { it > 0 }
-                ?: runtimeSettings.browserMaxScrollCount
-                ?: DEFAULT_BROWSER_SCROLL_COUNT
             val fuzzy = args["fuzzy"]?.jsonPrimitive?.booleanOrNull ?: true
             val readImage = args["read_image"]?.jsonPrimitive?.booleanOrNull ?: false
             val key = args["key"]?.jsonPrimitive?.contentOrNull
             val timeoutMs = args["timeout_ms"]?.jsonPrimitive?.longOrNull
                 ?.takeIf { it > 0L }
-                ?: runtimeSettings.browserActionTimeoutMs
-                ?: 5000L
 
             val request = BrowserUseRequest(
                 toolTitle = toolTitle,
@@ -245,6 +227,20 @@ data class BrowserUseRequest(
 
     private fun validate() {
         when (action) {
+            BrowserUseAction.SCROLL -> require(amount != null && amount > 0) {
+                "scroll 需要提供正数 amount"
+            }
+            BrowserUseAction.SCROLL_AND_COLLECT -> {
+                require(scrollCount != null && scrollCount > 0) {
+                    "scroll_and_collect 需要提供正数 scroll_count"
+                }
+                require(amount != null && amount > 0) {
+                    "scroll_and_collect 需要提供正数 amount"
+                }
+            }
+            BrowserUseAction.GET_BACKBONE -> require(maxDepth != null && maxDepth > 0) {
+                "get_backbone 需要提供正数 max_depth"
+            }
             BrowserUseAction.NAVIGATE -> require(!url.isNullOrBlank()) { "navigate 缺少 url" }
             BrowserUseAction.CLICK,
             BrowserUseAction.HOVER -> require(hasSelectorOrCoordinates()) {
@@ -260,7 +256,10 @@ data class BrowserUseRequest(
             BrowserUseAction.SET_USER_AGENT -> require(userAgent != null) { "set_user_agent 缺少 user_agent" }
             BrowserUseAction.FETCH -> require(!url.isNullOrBlank()) { "fetch 缺少 url" }
             BrowserUseAction.PRESS_KEY -> require(!key.isNullOrBlank()) { "press_key 缺少 key" }
-            BrowserUseAction.WAIT_FOR_SELECTOR -> require(!selector.isNullOrBlank()) { "wait_for_selector 缺少 selector" }
+            BrowserUseAction.WAIT_FOR_SELECTOR -> {
+                require(!selector.isNullOrBlank()) { "wait_for_selector 缺少 selector" }
+                require(timeoutMs != null && timeoutMs > 0) { "wait_for_selector 需要提供正数 timeout_ms" }
+            }
             else -> Unit
         }
     }
@@ -471,7 +470,7 @@ class BrowserUseEngine(
                 function selectorForElement(node) {
                     if (!node || !(node instanceof Element)) return null;
                     if (node.id) return '#' + node.id;
-                    const classes = Array.from(node.classList || []).slice(0, 2).join('.');
+                    const classes = Array.from(node.classList || []).join('.');
                     return node.tagName.toLowerCase() + (classes ? '.' + classes : '');
                 }
                 function describeElement(node) {
@@ -480,8 +479,8 @@ class BrowserUseEngine(
                     return {
                         tag: (node.tagName || '').toLowerCase(),
                         id: node.id || null,
-                        classes: Array.from(node.classList || []).slice(0, 4),
-                        text: normalizeText((node.innerText || node.textContent || '').slice(0, 240)),
+                        classes: Array.from(node.classList || []),
+                        text: normalizeText(node.innerText || node.textContent || ''),
                         href: node.getAttribute('href'),
                         role: node.getAttribute('role'),
                         visible: isVisible(node),
@@ -546,17 +545,24 @@ class BrowserUseEngine(
                     if (bestCount >= 3) return best;
                     return 'body > *';
                 }
-                function safeSerialize(value, depth) {
-                    if (depth > 4) return '[MaxDepth]';
+                function safeSerialize(value, seen) {
                     if (value === null || value === undefined) return null;
                     if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return value;
                     if (value instanceof Element) return describeElement(value);
-                    if (Array.isArray(value)) return value.slice(0, 80).map(function(item) { return safeSerialize(item, depth + 1); });
+                    var visited = seen || new WeakSet();
+                    if (visited.has(value)) return '[Circular]';
+                    visited.add(value);
+                    if (Array.isArray(value)) {
+                        var arrayResult = value.map(function(item) { return safeSerialize(item, visited); });
+                        visited.delete(value);
+                        return arrayResult;
+                    }
                     if (typeof value === 'object') {
                         var result = {};
-                        Object.keys(value).slice(0, 60).forEach(function(key) {
-                            try { result[key] = safeSerialize(value[key], depth + 1); } catch(_) {}
+                        Object.keys(value).forEach(function(key) {
+                            try { result[key] = safeSerialize(value[key], visited); } catch(_) {}
                         });
+                        visited.delete(value);
                         return result;
                     }
                     return String(value);
@@ -1660,13 +1666,14 @@ class BrowserUseEngine(
     private suspend fun executeScroll(request: BrowserUseRequest): BrowserUseOutcome {
         val tab = requirePageTab(request)
         riskBlockedOutcomeIfNeeded(request, tab)?.let { return it }
+        val amount = requireNotNull(request.amount) { "scroll 缺少 amount" }
         val direction = request.direction?.takeIf { it == "up" || it == "down" } ?: "down"
         val selectorLiteral = request.selector?.let { JSONObject.quote(it) } ?: "null"
         val value = evaluateValue(
             tab,
             """
                 const selector = $selectorLiteral;
-                const amount = ${request.amount};
+                const amount = $amount;
                 const direction = ${JSONObject.quote(direction)};
                 const delta = direction === 'up' ? -amount : amount;
                 const target = selector ? resolveScrollable(document.querySelector(selector), selector) : resolveScrollable(null, null);
@@ -1697,22 +1704,17 @@ class BrowserUseEngine(
         val tab = requirePageTab(request)
         riskBlockedOutcomeIfNeeded(request, tab)?.let { return it }
         val throttleDelayMs = applyHostThrottle(BrowserUseAction.SCROLL_AND_COLLECT, tab.currentUrl)
+        val scrollCount = requireNotNull(request.scrollCount) { "scroll_and_collect 缺少 scroll_count" }
         val seen = linkedSetOf<String>()
         var selectorUsed: String? = request.itemSelector
-        repeat(request.scrollCount) { index ->
+        repeat(scrollCount) { index ->
             val value = evaluateValue(
                 tab,
-                """
-                    const explicitSelector = ${request.itemSelector?.let { JSONObject.quote(it) } ?: "null"};
-                    const selector = explicitSelector || detectCollectionSelector();
-                    const nodes = selector ? Array.from(document.querySelectorAll(selector)).filter(isVisible) : [];
-                    const items = nodes.map(node => normalizeText((node.innerText || node.textContent || '').slice(0, 800)))
-                        .filter(Boolean);
-                    return {
-                        selectorUsed: selector,
-                        items: items.slice(0, 80)
-                    };
-                """.trimIndent()
+                BrowserObservationScripts.scrollAndCollect(
+                    explicitSelectorLiteral = request.itemSelector
+                        ?.let { JSONObject.quote(it) }
+                        ?: "null"
+                )
             ).jsonObject
             selectorUsed = value["selectorUsed"]?.jsonPrimitive?.contentOrNull ?: selectorUsed
             value["items"]?.jsonArray?.forEach { item ->
@@ -1721,7 +1723,7 @@ class BrowserUseEngine(
                     ?.takeIf { it.isNotEmpty() }
                     ?.let { seen.add(it) }
             }
-            if (index != request.scrollCount - 1) {
+            if (index != scrollCount - 1) {
                 executeScroll(
                     request.copy(
                         direction = request.direction ?: "down",
@@ -1747,11 +1749,7 @@ class BrowserUseEngine(
             ?: JSONObject.quote("a, button, input, textarea, select, [role=\"button\"], [onclick], [tabindex]")
         val value = evaluateValue(
             tab,
-            """
-                const selector = $selectorLiteral;
-                const nodes = Array.from(document.querySelectorAll(selector)).filter(isVisible).slice(0, $FIND_ELEMENTS_LIMIT);
-                return nodes.map(node => describeElement(node));
-            """.trimIndent()
+            BrowserObservationScripts.findElements(selectorLiteral)
         )
         val elements = (jsonElementToAny(value) as? List<*>) ?: emptyList<Any?>()
         return simpleOutcome(
@@ -1783,27 +1781,10 @@ class BrowserUseEngine(
 
     private suspend fun executeGetBackbone(request: BrowserUseRequest): BrowserUseOutcome {
         val tab = requirePageTab(request)
+        val maxDepth = requireNotNull(request.maxDepth) { "get_backbone 缺少 max_depth" }
         val value = evaluateValue(
             tab,
-            """
-                function buildBackbone(node, depth) {
-                    if (!node || depth > ${request.maxDepth}) return null;
-                    const children = Array.from(node.children || [])
-                        .slice(0, 12)
-                        .map(child => buildBackbone(child, depth + 1))
-                        .filter(Boolean);
-                    return {
-                        tag: (node.tagName || '').toLowerCase(),
-                        id: node.id || null,
-                        classes: Array.from(node.classList || []).slice(0, 3),
-                        role: node.getAttribute ? node.getAttribute('role') : null,
-                        text: normalizeText((node.innerText || node.textContent || '').slice(0, 120)),
-                        interactive: isInteractive(node),
-                        children: children
-                    };
-                }
-                return buildBackbone(document.body, 0);
-            """.trimIndent()
+            BrowserObservationScripts.backbone(maxDepth)
         )
         return buildStructuredOutcome(
             request = request,
@@ -1874,7 +1855,7 @@ class BrowserUseEngine(
         if (responseCode >= 400) {
             val message = withContext(Dispatchers.IO) {
                 runCatching { connection.errorStream?.bufferedReader()?.use { it.readText() } }.getOrNull()
-            }.orEmpty().take(400)
+            }.orEmpty()
             val challenge = BrowserRiskControl.detectChallenge(
                 statusCode = responseCode,
                 bodyText = message,
@@ -2071,8 +2052,9 @@ class BrowserUseEngine(
 
     private suspend fun executeWaitForSelector(request: BrowserUseRequest): BrowserUseOutcome {
         val tab = requirePageTab(request)
+        val timeoutMs = requireNotNull(request.timeoutMs) { "wait_for_selector 缺少 timeout_ms" }
         val selectorLiteral = JSONObject.quote(request.selector)
-        val deadline = System.currentTimeMillis() + request.timeoutMs
+        val deadline = System.currentTimeMillis() + timeoutMs
         val pollInterval = 250L
         var found = false
         var visible = false
@@ -2100,7 +2082,7 @@ class BrowserUseEngine(
                     "selector" to request.selector,
                     "found" to found,
                     "visible" to visible,
-                    "timeoutMs" to request.timeoutMs
+                    "timeoutMs" to timeoutMs
                 )
             )
         )
@@ -2145,32 +2127,13 @@ class BrowserUseEngine(
         text: String,
         extra: Map<String, Any?> = emptyMap()
     ): BrowserUseOutcome {
-        val artifacts = mutableListOf<ArtifactRef>()
-        val payloadExtra = extra.toMutableMap()
-        if (text.length > LARGE_TEXT_THRESHOLD) {
-            val file = workspaceManager.newBrowserFile(
-                agentRunId = currentAgentRunId,
-                prefix = request.action.wireName,
-                extension = "txt"
-            )
-            file.writeText(text)
-            val artifact = workspaceManager.buildArtifactForFile(file, "browser_use")
-            artifacts += artifact
-            payloadExtra["textSnippet"] = text.take(4_000)
-            payloadExtra["artifactUri"] = artifact.uri
-            payloadExtra["textLength"] = text.length
-        } else {
-            payloadExtra["text"] = text
-            payloadExtra["textLength"] = text.length
-        }
         return BrowserUseOutcome(
             summaryText = request.toolTitle,
             payload = buildCommonPayload(
                 tab = tab,
                 action = request.action,
-                extra = payloadExtra
-            ),
-            artifacts = artifacts
+                extra = BrowserToolResultPayloads.text(text = text, extra = extra)
+            )
         )
     }
 
@@ -2181,34 +2144,17 @@ class BrowserUseEngine(
         items: List<String>,
         throttleDelayMs: Long? = null
     ): BrowserUseOutcome {
-        val extra = linkedMapOf<String, Any?>(
-            "selectorUsed" to selectorUsed,
-            "itemCount" to items.size
-        )
-        val artifacts = mutableListOf<ArtifactRef>()
-        if (items.size > 20) {
-            val file = workspaceManager.newBrowserFile(
-                agentRunId = currentAgentRunId,
-                prefix = "scroll_collect",
-                extension = "json"
-            )
-            file.writeText(JSONObject(mapOf("items" to items)).toString(2))
-            val artifact = workspaceManager.buildArtifactForFile(file, "browser_use")
-            artifacts += artifact
-            extra["itemsPreview"] = items.take(20)
-            extra["artifactUri"] = artifact.uri
-        } else {
-            extra["items"] = items
-        }
         return BrowserUseOutcome(
             summaryText = request.toolTitle,
             payload = buildCommonPayload(
                 tab = tab,
                 action = request.action,
-                extra = extra,
+                extra = BrowserToolResultPayloads.collection(
+                    selectorUsed = selectorUsed,
+                    items = items
+                ),
                 throttleDelayMs = throttleDelayMs
-            ),
-            artifacts = artifacts
+            )
         )
     }
 
@@ -2219,38 +2165,14 @@ class BrowserUseEngine(
         value: JsonElement,
         extension: String
     ): BrowserUseOutcome {
-        val content = when (value) {
-            JsonNull -> "null"
-            else -> json.encodeToString(JsonElement.serializer(), value)
-        }
-        val artifacts = mutableListOf<ArtifactRef>()
-        val extra = linkedMapOf<String, Any?>()
-        if (content.length > LARGE_TEXT_THRESHOLD) {
-            val file = workspaceManager.newBrowserFile(
-                agentRunId = currentAgentRunId,
-                prefix = request.action.wireName,
-                extension = extension
-            )
-            file.writeText(content)
-            val artifact = workspaceManager.buildArtifactForFile(file, "browser_use")
-            artifacts += artifact
-            extra[label] = when (value) {
-                is JsonArray -> (jsonElementToAny(value) as? List<*>)?.take(10)
-                is JsonObject -> mapOf("offloaded" to true)
-                else -> content.take(4_000)
-            }
-            extra["artifactUri"] = artifact.uri
-        } else {
-            extra[label] = jsonElementToAny(value)
-        }
+        val extra = linkedMapOf<String, Any?>(label to jsonElementToAny(value))
         return BrowserUseOutcome(
             summaryText = request.toolTitle,
             payload = buildCommonPayload(
                 tab = tab,
                 action = request.action,
                 extra = extra
-            ),
-            artifacts = artifacts
+            )
         )
     }
 
@@ -2311,7 +2233,6 @@ class BrowserUseEngine(
         profile: BrowserUserAgentProfile = defaultUserAgentProfile
     ): BrowserTab {
         require(Looper.myLooper() == Looper.getMainLooper()) { "createTabOnMain must run on main thread" }
-        require(tabs.size < MAX_BROWSER_TABS) { "浏览器标签页上限为 $MAX_BROWSER_TABS" }
         val tabId = ++nextTabId
         val contextWrapper = MutableContextWrapper(appContext)
         val webView = WebView(contextWrapper).apply {
@@ -2682,7 +2603,7 @@ class BrowserUseEngine(
                     const __result = (function() {
                         ${body.orEmpty()}
                     })();
-                    return JSON.stringify({ ok: true, value: safeSerialize(__result, 0) });
+                    return JSON.stringify({ ok: true, value: safeSerialize(__result) });
                 } catch (error) {
                     return JSON.stringify({
                         ok: false,
@@ -3747,7 +3668,7 @@ class BrowserUseEngine(
             isUserGesture: Boolean,
             resultMsg: android.os.Message?
         ): Boolean {
-            if (resultMsg == null || tabs.size >= MAX_BROWSER_TABS) {
+            if (resultMsg == null) {
                 return false
             }
             val popupTab = createTabOnMain(tab.userAgentProfile)

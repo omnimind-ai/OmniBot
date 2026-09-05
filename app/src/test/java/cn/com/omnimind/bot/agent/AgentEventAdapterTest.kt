@@ -5,7 +5,6 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AgentEventAdapterTest {
@@ -13,45 +12,26 @@ class AgentEventAdapterTest {
     private val adapter = AgentEventAdapter(json)
 
     @Test
-    fun `small tool result is returned byte for byte`() {
-        val raw = """{"toolName":"memory_search","success":true,"result":"ok"}"""
+    fun `file and skill output survives the model envelope without content loss`() {
+        for (toolName in listOf("file_read", "skills_read")) {
+            for (raw in listOf("ok", "开头" + "正文".repeat(100_000) + "END")) {
+                val result = ToolExecutionResult.ContextResult(
+                    toolName = toolName,
+                    summaryText = raw,
+                    previewJson = raw,
+                    rawResultJson = raw,
+                )
+                val payload = json.parseToJsonElement(adapter.toolResultContent(
+                    descriptor = AgentToolRegistry.RuntimeToolDescriptor(toolName, toolName, "file"),
+                    result = result,
+                    extras = emptyMap(),
+                )).jsonObject
 
-        assertEquals(raw, adapter.compactToolResultContent(raw, offloadArtifact = null))
-    }
-
-    @Test
-    fun `large tool result is bounded and points to full artifact`() {
-        val raw = """{"toolName":"file_read","success":true,"summary":"done","rawResultJson":"${"x".repeat(20_000)}"}"""
-        val artifact = ArtifactRef(
-            id = "artifact-1",
-            uri = "omnibot://workspace/offloads/result.json",
-            title = "result.json",
-            mimeType = "application/json",
-            size = raw.length.toLong(),
-            sourceTool = "file_read",
-            workspacePath = "/workspace/offloads/result.json",
-            androidPath = "/data/user/0/app/offloads/result.json",
-            previewKind = "text"
-        )
-
-        val compact = adapter.compactToolResultContent(raw, artifact, maxChars = 12 * 1024)
-        val payload = json.parseToJsonElement(compact).jsonObject
-
-        assertTrue(compact.length < 12 * 1024)
-        assertEquals("true", payload["outputTruncated"]?.jsonPrimitive?.content)
-        assertEquals(raw.length.toString(), payload["originalChars"]?.jsonPrimitive?.content)
-        assertEquals(
-            artifact.uri,
-            payload["fullOutputArtifact"]?.jsonObject?.get("uri")?.jsonPrimitive?.content
-        )
-        assertTrue(payload["headTail"]?.jsonPrimitive?.content.orEmpty().contains("middle omitted"))
-        assertFalse(compact.contains("x".repeat(10_000)))
-    }
-
-    @Test
-    fun `tool result is not truncated without an explicit setting`() {
-        val raw = "x".repeat(20_000)
-
-        assertEquals(raw, adapter.compactToolResultContent(raw, offloadArtifact = null))
+                assertEquals(raw, payload["rawResultJson"]?.jsonPrimitive?.content)
+                assertEquals(raw, payload["previewJson"]?.jsonPrimitive?.content)
+                assertEquals(raw, payload["summary"]?.jsonPrimitive?.content)
+                assertFalse(payload.containsKey("outputTruncated"))
+            }
+        }
     }
 }

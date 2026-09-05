@@ -37,9 +37,14 @@ class ConversationModelSelectorContent extends StatefulWidget {
     super.key,
     required this.width,
     required this.maxHeight,
-    required this.profiles,
-    required this.providerModelsByProfileId,
-    required this.currentSelection,
+    this.profiles = const [],
+    this.providerModelsByProfileId = const {},
+    this.currentSelection,
+    this.options,
+    this.selectedValue,
+    this.onSelectValue,
+    this.header,
+    this.showVendorIcons = true,
     this.onSearchSubmitted,
     this.onSelect,
     this.footer,
@@ -51,6 +56,13 @@ class ConversationModelSelectorContent extends StatefulWidget {
     this.showProfileHeaders = true,
     this.allowProfileCollapse = true,
   });
+
+  /// Session-declared choices use the same card without fabricating providers.
+  final List<ProviderModelOption>? options;
+  final String? selectedValue;
+  final ValueChanged<String>? onSelectValue;
+  final Widget? header;
+  final bool showVendorIcons;
 
   final double width;
   final double maxHeight;
@@ -362,13 +374,14 @@ class _ConversationModelSelectorContentState
   }
 
   Widget _buildModelRow({
-    required ModelProviderProfileSummary profile,
+    ModelProviderProfileSummary? profile,
     required ProviderModelOption model,
   }) {
     final displayName = model.displayName.trim();
-    final selected =
-        widget.currentSelection?.providerProfileId == profile.id &&
-        widget.currentSelection?.modelId == model.id;
+    final selected = widget.options != null
+        ? widget.selectedValue == model.id
+        : widget.currentSelection?.providerProfileId == profile?.id &&
+              widget.currentSelection?.modelId == model.id;
     final palette = context.omniPalette;
     final isDark = context.isDarkTheme;
     final rowKeyPrefix = widget.modelRowKeyPrefix;
@@ -381,18 +394,24 @@ class _ConversationModelSelectorContentState
           key: rowKeyPrefix == null
               ? null
               : ValueKey('$rowKeyPrefix-${model.id}'),
-          onTap: () {
-            final selection = ConversationModelSelection(
-              providerProfileId: profile.id,
-              modelId: model.id,
-            );
-            final onSelect = widget.onSelect;
-            if (onSelect != null) {
-              onSelect(selection);
-            } else {
-              Navigator.of(context).pop(selection);
-            }
-          },
+          onTap: widget.options != null && widget.onSelectValue == null
+              ? null
+              : () {
+                  if (widget.options != null) {
+                    widget.onSelectValue?.call(model.id);
+                    return;
+                  }
+                  final selection = ConversationModelSelection(
+                    providerProfileId: profile!.id,
+                    modelId: model.id,
+                  );
+                  final onSelect = widget.onSelect;
+                  if (onSelect != null) {
+                    onSelect(selection);
+                  } else {
+                    Navigator.of(context).pop(selection);
+                  }
+                },
           borderRadius: BorderRadius.circular(12),
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -410,15 +429,17 @@ class _ConversationModelSelectorContentState
             ),
             child: Row(
               children: [
-                ProviderVendorIcon(
-                  vendor: ModelVendorCatalog.resolve(
-                    model.id,
-                    ownedBy: model.ownedBy,
-                    providerId: model.modelsDevProviderId,
+                if (widget.showVendorIcons) ...[
+                  ProviderVendorIcon(
+                    vendor: ModelVendorCatalog.resolve(
+                      model.id,
+                      ownedBy: model.ownedBy,
+                      providerId: model.modelsDevProviderId,
+                    ),
+                    size: 14,
                   ),
-                  size: 14,
-                ),
-                const SizedBox(width: 6),
+                  const SizedBox(width: 6),
+                ],
                 Expanded(
                   child: Text(
                     displayName.isEmpty ? model.id : displayName,
@@ -476,6 +497,16 @@ class _ConversationModelSelectorContentState
         .where((profile) => profile.configured)
         .toList();
     final visibleProfiles = _visibleProfiles;
+    final query = _searchController.text.trim().toLowerCase();
+    final choices = widget.options
+        ?.where(
+          (item) =>
+              !widget.showSearchField ||
+              query.isEmpty ||
+              item.id.toLowerCase().contains(query) ||
+              item.displayName.toLowerCase().contains(query),
+        )
+        .toList();
     return SizedBox(
       width: widget.width,
       child: OmniGlassPanel(
@@ -488,8 +519,25 @@ class _ConversationModelSelectorContentState
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                if (widget.header != null) widget.header!,
                 if (widget.showSearchField) _buildSearchRow(),
-                if (configuredProfiles.isEmpty)
+                if (choices != null)
+                  Flexible(
+                    child: ListView(
+                      shrinkWrap: true,
+                      controller: _listScrollController,
+                      padding: const EdgeInsets.symmetric(vertical: 8),
+                      children: [
+                        if (choices.isEmpty)
+                          _buildMutedMessage(
+                            widget.emptyMatchesLabel ?? '没有匹配的选项',
+                          ),
+                        for (final model in choices)
+                          _buildModelRow(model: model),
+                      ],
+                    ),
+                  )
+                else if (configuredProfiles.isEmpty)
                   Padding(
                     padding: const EdgeInsets.all(16),
                     child: Text(

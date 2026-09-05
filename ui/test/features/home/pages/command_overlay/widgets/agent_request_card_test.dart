@@ -66,7 +66,7 @@ void main() {
       submittedCall!.arguments as Map,
     );
     expect(arguments['sessionId'], 'session-1');
-    expect(arguments['agentId'], 'deepseek-harness-acp');
+    expect(arguments['agentId'], _requestCardData()['agentId']);
     expect(arguments['conversationId'], 42);
     final response = Map<String, dynamic>.from(arguments['response'] as Map);
     final answers = Map<String, dynamic>.from(response['answers'] as Map);
@@ -103,7 +103,7 @@ void main() {
     );
     expect(arguments['requestId'], 'request-1');
     expect(arguments['sessionId'], 'session-1');
-    expect(arguments['agentId'], 'deepseek-harness-acp');
+    expect(arguments['agentId'], _requestCardData()['agentId']);
     expect(arguments['conversationId'], 42);
     expect(arguments['response'], {'answers': <String, dynamic>{}});
     expect(find.text('ignored'), findsOneWidget);

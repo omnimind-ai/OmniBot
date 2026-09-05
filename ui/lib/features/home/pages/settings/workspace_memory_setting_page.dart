@@ -28,7 +28,7 @@ class _WorkspaceMemorySettingPageState
   bool _savingChat = false;
   bool _savingMemory = false;
   bool _embeddingEnabled = true;
-  bool _rollupEnabled = true;
+  bool _rollupEnabled = false;
   WorkspaceMemoryEmbeddingConfig? _embeddingConfig;
   WorkspaceMemoryRollupStatus? _rollupStatus;
 

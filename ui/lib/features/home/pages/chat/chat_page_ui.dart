@@ -1,8 +1,6 @@
 part of 'chat_page.dart';
 
 const int _kDefaultContextTokenThreshold = 128000;
-const int _kMinContextTokenThreshold = 10000;
-const int _kMaxContextTokenThreshold = 1000000;
 const double _kChatMessageBottomSafeSpacing = 12.0;
 const double _kSlashCommandDrawerRadius = 18.0;
 const double _kSlashCommandDrawerHandleWidth = 36.0;
@@ -18,6 +16,59 @@ const List<String> _kAgentReasoningEffortOptions = <String>[
 enum _UserMessageQuickAction { copy, edit, retry }
 
 mixin _ChatPageUiMixin on _ChatPageStateBase {
+  Widget _buildAcpConfigButton() {
+    final generation = _conversationTargetRequestId;
+    final mode = _activeMode;
+    final agentId = _activeAcpAgentId;
+    int? targetConversationId = _currentConversationId;
+    bool isCurrent() => mounted && generation == _conversationTargetRequestId;
+    Future<Map<String, dynamic>> read({bool refreshConfig = false}) async {
+      if (!isCurrent()) throw StateError('Conversation changed');
+      await _ensureActiveConversationReadyForStreaming();
+      if (!isCurrent()) throw StateError('Conversation changed');
+      targetConversationId = _currentConversationId;
+      final response = await AgentRuntimeService.readSession(
+        conversationId: targetConversationId,
+        agentId: agentId,
+        conversationMode: _modeKey(mode),
+        includeHistory: false,
+        refreshConfig: refreshConfig,
+      );
+      if (!isCurrent()) throw StateError('Conversation changed');
+      final sessionId = (response['sessionId'] ?? response['threadId'])
+          ?.toString();
+      if (sessionId != null && sessionId.isNotEmpty) {
+        // Reuse the session whose official settings the user is editing.
+        // The next send must not create a replacement session with defaults.
+        if (mode == ChatPageMode.normal) {
+          _normalAcpSessionId = sessionId;
+        } else {
+          _activeAgentThreadId = sessionId;
+        }
+      }
+      return response;
+    }
+
+    return AcpConfigButton(
+      key: ValueKey('acp-config-$generation'),
+      isRunning: _isAiResponding,
+      onVisibilityChanged: _onPopupVisibilityChanged,
+      load: () => read(),
+      refresh: () => read(refreshConfig: true),
+      write: (sessionId, configId, value) async {
+        if (!isCurrent()) throw StateError('Conversation changed');
+        if (_isAiResponding) throw StateError('本轮结束后可修改运行参数');
+        return AgentRuntimeService.setSessionConfigOption(
+          sessionId: sessionId,
+          conversationId: targetConversationId,
+          agentId: agentId,
+          configId: configId,
+          value: value,
+        );
+      },
+    );
+  }
+
   ChatPaneOverlayAnchorGeometry? _lastStableToolActivityAnchorGeometry;
   static const double _kChatInputWrapperTopPadding = 8.0;
   static const double _kChatInputFallbackHeight = 80.0;
@@ -1439,16 +1490,22 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
                           _activeMode == ChatPageMode.openclaw
                           ? null
                           : this._handleContextUsageRingLongPress,
-                      modelPickerSettings: ChatModelPickerSettings(
-                        modelId: _activeDispatchSceneSelection?.modelId ?? '',
-                        hasSelectableModels: _hasSelectableProviderModels,
-                        anchorKey: _firstUseTourModelAnchorKey,
-                        onPointerDown: () {
-                          _suppressNextOutsideTapKeyboardHide = true;
-                        },
-                        onOpen: (anchorContext) =>
-                            _openConversationModelSelector(anchorContext),
-                      ),
+                      modelPickerSettings: _activeMode == ChatPageMode.openclaw
+                          ? ChatModelPickerSettings(
+                              modelId:
+                                  _activeDispatchSceneSelection?.modelId ?? '',
+                              hasSelectableModels: _hasSelectableProviderModels,
+                              anchorKey: _firstUseTourModelAnchorKey,
+                              onPointerDown: () {
+                                _suppressNextOutsideTapKeyboardHide = true;
+                              },
+                              onOpen: (anchorContext) =>
+                                  _openConversationModelSelector(anchorContext),
+                            )
+                          : null,
+                      runtimeConfigButton: _activeMode == ChatPageMode.openclaw
+                          ? null
+                          : _buildAcpConfigButton(),
                       agentRunSettings: null,
                       onAgentRunSettingsOpened: null,
                       onAgentRunSettingsChanged: null,

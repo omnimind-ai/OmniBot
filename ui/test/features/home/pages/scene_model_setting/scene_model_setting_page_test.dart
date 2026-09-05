@@ -87,6 +87,7 @@ void main() {
   late bool providerReady;
   late bool includeOfficialProvider;
   late int providerFetchCount;
+  late List<Map<String, dynamic>> sceneBindings;
   late List<Map<String, dynamic>> providerFetchResponse;
   late List<Map<String, dynamic>> officialFetchResponse;
   late Map<String, List<Map<String, dynamic>>>
@@ -120,6 +121,7 @@ void main() {
     providerReady = true;
     includeOfficialProvider = false;
     providerFetchCount = 0;
+    sceneBindings = <Map<String, dynamic>>[];
     providerFetchResponse = <Map<String, dynamic>>[];
     officialFetchResponse = <Map<String, dynamic>>[];
     officialFetchResponsesByCapability = <String, List<Map<String, dynamic>>>{};
@@ -189,7 +191,14 @@ void main() {
                 },
               ];
             case 'getSceneModelBindings':
-              return <Map<String, dynamic>>[];
+              return sceneBindings;
+            case 'saveSceneModelBinding':
+              final binding = Map<String, dynamic>.from(call.arguments as Map);
+              sceneBindings.removeWhere(
+                (item) => item['sceneId'] == binding['sceneId'],
+              );
+              sceneBindings.add(binding);
+              return sceneBindings;
             case 'listModelProviderProfiles':
               return <String, dynamic>{
                 'profiles': <Map<String, dynamic>>[
@@ -629,24 +638,42 @@ void main() {
   });
 
   testWidgets(
-    'GUI can switch from explicit official model to custom provider',
+    'GUI switches providers through the shared scene binding and restores it',
     (tester) async {
-      tester.view.physicalSize = const Size(1080, 2000);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
-
-      await tester.pumpWidget(buildTestApp(const SceneModelSettingPage()));
-      await tester.pumpAndSettle();
-
-      expect(find.text('小万官方内置模型'), findsOneWidget);
+      includeOfficialProvider = true;
+      providerFetchResponse = <Map<String, dynamic>>[
+        {'id': 'custom-gui-model'},
+      ];
+      officialFetchResponse = <Map<String, dynamic>>[
+        {'id': 'official-gui-model'},
+      ];
+      sceneBindings = <Map<String, dynamic>>[
+        {
+          'sceneId': 'scene.vlm.operation.primary',
+          'providerProfileId': 'omnibot-official-ai',
+          'modelId': 'official-gui-model',
+        },
+      ];
+      await pumpSceneSettings(tester);
       await tester.tap(
-        find.byKey(const Key('operation-scene-official-toggle')),
+        find.byKey(
+          const Key('scene-model-selector-scene.vlm.operation.primary'),
+        ),
       );
       await tester.pumpAndSettle();
-
-      expect(savedOperationConfig['useOfficialService'], isFalse);
-      expect(find.text('小万官方内置模型'), findsNothing);
+      await tester.tap(find.text('Provider One'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('custom-gui-model'));
+      await tester.pumpAndSettle();
+      expect(
+        sceneBindings.single,
+        containsPair('providerProfileId', 'provider-1'),
+      );
+      expect(sceneBindings.single, containsPair('modelId', 'custom-gui-model'));
+      await tester.pumpWidget(const SizedBox.shrink());
+      await pumpSceneSettings(tester);
+      await tester.pumpAndSettle();
+      expect(find.text('Provider One / custom-gui-model'), findsOneWidget);
     },
   );
 

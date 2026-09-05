@@ -15,19 +15,14 @@ private const val LOCAL_AGENT_MCP_HOST = "127.0.0.1"
 /**
  * Builds the standard ACP session-level MCP declaration used by local agents.
  *
- * A Harness that cannot consume session-level MCP declarations receives the
- * same endpoint through its adapter-owned launch environment instead.
+ * Local Harnesses receive this only through the official ACP session/new
+ * declaration. Tool discovery and namespacing remain Harness-owned.
  */
 internal fun buildLocalAgentAcpMcpServers(
-    harnessAdapter: AcpHarnessAdapter,
     supportsHttp: Boolean,
     state: McpServerState,
 ): List<McpServer> {
-    if (!supportsHttp ||
-        harnessAdapter.mcpTransport != AcpHarnessMcpTransport.SESSION_DECLARATION
-    ) {
-        return emptyList()
-    }
+    if (!supportsHttp) return emptyList()
     require(state.running) { "Omnibot MCP server is not running." }
     require(state.port in 1..65535) { "Omnibot MCP server port is invalid." }
     require(state.token.isNotBlank()) { "Omnibot MCP server token is missing." }

@@ -28,19 +28,19 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
   late final TextEditingController _commandController;
   late final TextEditingController _argumentsController;
   late final TextEditingController _environmentController;
-  late final TextEditingController _runtimeSettingsController;
 
   AcpAgentProfile? _agent;
   String _kind = '';
   String _configPath = '';
   String _authPath = '';
+  int _configRevision = 0;
   bool _loading = true;
   bool _saving = false;
   bool _obscureApiKey = true;
   bool _enabled = true;
   bool _changed = false;
-  String _reasoningEffort = 'max';
-  String _permissionMode = 'workspace-write';
+  String? _reasoningEffort;
+  String? _permissionMode;
   bool _sharedModelLoading = true;
   bool _sharedModelSaving = false;
   List<ModelProviderProfileSummary> _providerProfiles = const [];
@@ -63,7 +63,6 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
     _commandController = TextEditingController();
     _argumentsController = TextEditingController();
     _environmentController = TextEditingController();
-    _runtimeSettingsController = TextEditingController();
     unawaited(_load());
   }
 
@@ -76,7 +75,6 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
     _commandController.dispose();
     _argumentsController.dispose();
     _environmentController.dispose();
-    _runtimeSettingsController.dispose();
     super.dispose();
   }
 
@@ -131,6 +129,12 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
   }
 
   void _syncPayload(Map<String, dynamic> payload) {
+    _configRevision = switch (payload['revision']) {
+      int value => value,
+      num value => value.toInt(),
+      String value => int.tryParse(value) ?? 0,
+      _ => 0,
+    };
     _setText(_baseUrlController, payload['baseUrl']?.toString() ?? '');
     _setText(_modelController, payload['model']?.toString() ?? '');
     _setText(_apiKeyController, payload['apiKey']?.toString() ?? '');
@@ -138,23 +142,10 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
     _configPath =
         payload['configPath']?.toString() ?? payload['path']?.toString() ?? '';
     _authPath = payload['authPath']?.toString() ?? '';
-    final runtimeSettings = payload['runtimeSettings'];
-    _setText(
-      _runtimeSettingsController,
-      runtimeSettings is Map
-          ? const JsonEncoder.withIndent('  ').convert(runtimeSettings)
-          : '{\n}\n',
-    );
-    _reasoningEffort = switch (payload['reasoningEffort']?.toString()) {
-      'off' => 'off',
-      'high' => 'high',
-      _ => 'max',
-    };
-    _permissionMode = switch (payload['permissionMode']?.toString()) {
-      'read-only' => 'read-only',
-      'danger-full-access' => 'danger-full-access',
-      _ => 'workspace-write',
-    };
+    _reasoningEffort = payload['reasoningEffort']?.toString().trim();
+    _permissionMode = payload['permissionMode']?.toString().trim();
+    if (_reasoningEffort?.isEmpty == true) _reasoningEffort = null;
+    if (_permissionMode?.isEmpty == true) _permissionMode = null;
   }
 
   Future<void> _loadSharedModelSelection() async {
@@ -361,15 +352,11 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
       _error = null;
     });
     try {
-      final runtimeSettingsValue = jsonDecode(_runtimeSettingsController.text);
-      if (runtimeSettingsValue is! Map) {
-        throw const FormatException('runtimeSettings must contain a JSON object.');
-      }
       switch (_kind) {
         case 'codex':
           final payload = await AgentRuntimeService.writeAgentConfig(
             _agent!.id,
-            runtimeSettings: Map<String, dynamic>.from(runtimeSettingsValue),
+            expectedRevision: _configRevision > 0 ? _configRevision : null,
           );
           if (!mounted) return;
           _syncPayload(payload);
@@ -385,7 +372,7 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
           final payload = await AgentRuntimeService.writeAgentConfig(
             _agent!.id,
             content: content,
-            runtimeSettings: Map<String, dynamic>.from(runtimeSettingsValue),
+            expectedRevision: _configRevision > 0 ? _configRevision : null,
           );
           if (!mounted) return;
           _syncPayload(payload);
@@ -394,7 +381,7 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
           final payload = await AgentRuntimeService.writeAgentConfig(
             _agent!.id,
             content: _contentController.text,
-            runtimeSettings: Map<String, dynamic>.from(runtimeSettingsValue),
+            expectedRevision: _configRevision > 0 ? _configRevision : null,
           );
           if (!mounted) return;
           _syncPayload(payload);
@@ -404,7 +391,7 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
             _agent!.id,
             reasoningEffort: _reasoningEffort,
             permissionMode: _permissionMode,
-            runtimeSettings: Map<String, dynamic>.from(runtimeSettingsValue),
+            expectedRevision: _configRevision > 0 ? _configRevision : null,
           );
           if (!mounted) return;
           _syncPayload(payload);
@@ -437,10 +424,6 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
             _agent = saved;
             _syncAgent(saved);
           }
-          await AgentRuntimeService.writeAgentConfig(
-            _agent!.id,
-            runtimeSettings: Map<String, dynamic>.from(runtimeSettingsValue),
-          );
           break;
         default:
           throw UnsupportedError(
@@ -632,8 +615,8 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
         'The shared Provider and model are used by default. This page only keeps the official DSH configuration entry. After installation, Check only verifies the current runtime state.',
       ),
       'profile' => _text(
-        '自定义 Agent 只管理 ACP 启动命令、参数与环境；Provider 和模型仍由统一 Agent 配置提供。',
-        'Custom Agents only manage the ACP launch command, arguments, and environment; the shared Agent Provider supplies credentials and model.',
+        '保存不会中断当前对话；启动命令、参数与环境变量在下次启动 Agent 进程时生效。Provider 和模型由该 Agent 自身的配置管理。',
+        'Saving does not interrupt the current conversation. Command, arguments, and environment changes apply when the Agent process next starts. Provider and model settings are managed by the Agent itself.',
       ),
       _ => '',
     };
@@ -661,8 +644,6 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
           ),
           style: Theme.of(context).textTheme.bodySmall,
         ),
-        const SizedBox(height: 14),
-        _buildRuntimeSettingsEditor(),
       ],
     );
   }
@@ -797,8 +778,6 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
             style: Theme.of(context).textTheme.bodySmall,
           ),
         ),
-        const SizedBox(height: 14),
-        _buildRuntimeSettingsEditor(),
       ],
     );
   }
@@ -837,30 +816,10 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
           value: _enabled,
           onChanged: (value) => setState(() => _enabled = value),
         ),
-        const SizedBox(height: 14),
-        _buildRuntimeSettingsEditor(),
       ],
     );
   }
 
-  Widget _buildRuntimeSettingsEditor() {
-    return TextField(
-      key: const Key('agent-runtime-settings-content'),
-      controller: _runtimeSettingsController,
-      minLines: 10,
-      maxLines: 22,
-      keyboardType: TextInputType.multiline,
-      style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-      decoration: InputDecoration(
-        labelText: _text('统一运行配置（JSON）', 'Unified runtime settings (JSON)'),
-        alignLabelWithHint: true,
-        helperText: _text(
-          'null 表示不设置 Agent 能力上限；协议、权限和设备资源保护仍由宿主负责。',
-          'null means no Agent capability limit; protocol, permission, and device resource protection remain host-owned.',
-        ),
-      ),
-    );
-  }
 }
 
 class _SharedModelSelection {

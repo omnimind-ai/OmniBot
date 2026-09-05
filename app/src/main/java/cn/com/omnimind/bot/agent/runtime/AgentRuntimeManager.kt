@@ -22,12 +22,9 @@ import cn.com.omnimind.bot.agent.AgentConversationModePolicy
 import cn.com.omnimind.bot.agent.AgentConversationHistoryRepository
 import cn.com.omnimind.bot.agent.AgentAttachmentPromptSupport
 import cn.com.omnimind.bot.agent.AgentImageAttachmentSupport
-import cn.com.omnimind.bot.agent.AgentProviderRequestPolicy
 import cn.com.omnimind.bot.agent.AgentWorkspaceAttachmentSupport
 import cn.com.omnimind.bot.agent.AgentWorkspaceManager
 import cn.com.omnimind.bot.agent.AgentScheduleToolBridge
-import cn.com.omnimind.bot.agent.AgentRuntimeSettings
-import cn.com.omnimind.bot.agent.AgentRuntimeSettingsStore
 import cn.com.omnimind.bot.agent.WorkspaceScheduledTaskScheduler
 import cn.com.omnimind.bot.mcp.McpServerManager
 import cn.com.omnimind.bot.terminal.EmbeddedTerminalSetupManager
@@ -51,23 +48,6 @@ import java.util.UUID
 import java.util.ArrayDeque
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
-
-private val HARNESS_CONFIG_UPDATE_KEYS = setOf(
-    "baseUrl",
-    "model",
-    "apiKey",
-    "wireApi",
-    "content",
-    "reasoningEffort",
-    "permissionMode",
-)
-
-internal fun isRuntimeSettingsOnlyAgentConfigUpdate(args: Map<String, Any?>): Boolean {
-    return args.containsKey("runtimeSettings") &&
-        args.keys.none(HARNESS_CONFIG_UPDATE_KEYS::contains)
-}
-
-private const val MAX_PENDING_AGENT_EVENTS = 1024
 
 /**
  * A durable conversation owns exactly one Harness. A caller may carry a stale
@@ -676,10 +656,6 @@ class AgentRuntimeManager private constructor(
      */
     suspend fun invalidateSharedProviderRuntime(changedProviderProfileId: String? = null) {
         sessionMutex.withLock {
-            // The request policy is capability learning, not durable Provider
-            // configuration. Editing a profile must invalidate that learning
-            // even when no ACP process is currently connected.
-            AgentProviderRequestPolicy.invalidate()
             val activeProfiles = acpAgentProfileStore.list().filter { profile ->
                 AcpAgentProfileStore.usesSharedProvider(profile) &&
                     localRuntimeFor(profile.id).isConnected
@@ -734,6 +710,25 @@ class AgentRuntimeManager private constructor(
     }
 
     suspend fun handleMethod(method: String, args: Map<String, Any?>): Any? {
+        val compatibilityRequest = AcpLegacyCompatibilityAdapter.adapt(method, args)
+        return AcpLegacyCompatibilityAdapter.adaptResponse(
+            compatibilityRequest,
+            handleCanonicalMethod(
+                compatibilityRequest.method,
+                compatibilityRequest.args,
+            ),
+        )
+    }
+
+    /**
+     * Canonical ACP application surface. Legacy names are normalized before
+     * entering this method, so new business code cannot accidentally create
+     * another thread/turn lifecycle.
+     */
+    private suspend fun handleCanonicalMethod(
+        method: String,
+        args: Map<String, Any?>,
+    ): Any? {
         val canonicalArgs = AcpSessionCompatibility.canonicalize(method, args)
         if (method == "initialize") {
             return initializeAcp(canonicalArgs)
@@ -756,10 +751,16 @@ class AgentRuntimeManager private constructor(
         if (method == "agent/config/write") {
             return writeAgentConfig(canonicalArgs)
         }
+        if (method == "agent/config/rollback") {
+            return rollbackAgentConfig(canonicalArgs)
+        }
         if (method.startsWith("agent/")) {
             val requestedAgentId = canonicalArgs.stringValue("agentId")
                 ?: canonicalArgs.mapValue("agent").stringValue("id")
                 ?: acpAgentProfileStore.selected().id
+            val targetProfile = acpAgentProfileStore.list().firstOrNull {
+                it.id == requestedAgentId
+            } ?: acpAgentProfileStore.selected()
             val targetLocalRuntime = localRuntimeFor(requestedAgentId)
             if (method == "agent/select" ||
                 method == "agent/refresh" ||
@@ -774,6 +775,13 @@ class AgentRuntimeManager private constructor(
                 // recreate with the same custom id) invalidate the launch
                 // fast path even while the runtime is disconnected.
                 acpLaunchEnvironmentCache.clear()
+            }
+            // Installation is an explicit settings action.  A normal
+            // agent/select or session launch may connect an already installed
+            // Harness, but must never start npm, a native build, or a package
+            // bootstrap behind the chat UI.
+            if (method == "agent/prepare") {
+                ensureManagedAcpAdapter(targetProfile)
             }
             val response = targetLocalRuntime.handleMethod(method, canonicalArgs)
             if (method == "agent/select" && targetLocalRuntime.isConnected) {
@@ -848,24 +856,14 @@ class AgentRuntimeManager private constructor(
             "session/resume" -> requestWithResolvedThread("thread/resume", canonicalArgs)
                 .withAcpSessionId()
             "session/list" -> listThreads(canonicalArgs).withAcpSessions()
-            "session/prompt" -> startTurn(canonicalArgs).withAcpSessionId()
-            "session/cancel" -> interruptTurn(canonicalArgs).withAcpSessionId()
             "session/archive" -> archiveThread(canonicalArgs, archived = true)
                 .withAcpSessionId()
             "session/unarchive" -> archiveThread(canonicalArgs, archived = false)
                 .withAcpSessionId()
             "session/name/set" -> setThreadName(canonicalArgs).withAcpSessionId()
-            "thread/start" -> startThread(args)
-            "thread/resume" -> requestWithResolvedThread("thread/resume", args)
-            "thread/read" -> requestWithResolvedThread("thread/read", args)
-            "thread/list" -> listThreads(args)
-            "thread/loaded/list" -> requestWrappedList("thread/loaded/list", args, "threads")
-            "thread/archive" -> archiveThread(args, archived = true)
-            "thread/unarchive" -> archiveThread(args, archived = false)
-            "thread/name/set" -> setThreadName(args)
             "model/list" -> requestWrappedList(
                 "model/list",
-                args.ifEmpty { mapOf("limit" to 100) },
+                canonicalArgs,
                 "models"
             )
             "config/read" -> readEffectiveRunConfig()
@@ -882,9 +880,6 @@ class AgentRuntimeManager private constructor(
             "config/remote/fs/write" -> writeRemoteFile(args)
             "config/remote/fs/delete" -> deleteRemotePath(args)
             "config/remote/fs/move" -> moveRemotePath(args)
-            "turn/start" -> startTurn(args)
-            "turn/steer" -> steerTurn(args)
-            "turn/interrupt" -> interruptTurn(args)
             "review/start" -> startReview(canonicalArgs)
             "account/read" -> requestAccountMethod("account/read", null)
             "account/login/start" -> requestAccountMethod(
@@ -894,7 +889,7 @@ class AgentRuntimeManager private constructor(
             "account/login/cancel" -> requestAccountMethod("account/login/cancel", args)
             "account/rateLimits/read" -> requestAccountMethod("account/rateLimits/read", null)
             "respondToServerRequest" -> respondToServerRequest(args)
-            else -> request(method, args)
+            else -> request(method, canonicalArgs)
         }
     }
 
@@ -1212,12 +1207,7 @@ class AgentRuntimeManager private constructor(
                 error is CancellationException -> "cancelled"
                 else -> "error"
             }
-            // A remote bridge can fail the request without emitting the
-            // normal ACP turn/failed notification (for example a request
-            // timeout or a JSON-RPC transport error). The Flutter reducer
-            // otherwise keeps the turn in "thinking" forever. Claim and
-            // close the host lifecycle before returning the owning request
-            // error; the caller projects that official terminal boundary.
+            // Only the owning session/prompt request reports terminal failure.
             val detail = error.message?.trim()
                 ?.takeIf { it.isNotEmpty() }
                 ?: error.javaClass.simpleName
@@ -1230,7 +1220,6 @@ class AgentRuntimeManager private constructor(
             throw error
         } finally {
             remotePromptExecutions.remove(sessionId, execution)
-            clearActiveTurn(sessionId, turnId, terminalStatus = terminalStatus)
         }
     }
 
@@ -1360,10 +1349,6 @@ class AgentRuntimeManager private constructor(
         args: Map<String, Any?>
     ): Map<String, Any?> {
         val threadId = resolveThreadId(args)
-        // The response is a snapshot, not a lock. Only let it mutate the
-        // ownership it observed when the request was sent; a newer turn may
-        // have been admitted while the server was replying.
-        val observedTurnId = remoteTurnOwnership.activeTurnId(threadId)
         val params = linkedMapOf<String, Any?>("threadId" to threadId)
         if (method == "thread/read") {
             (args["includeHistory"] ?: args["includeTurns"])?.let {
@@ -1373,9 +1358,6 @@ class AgentRuntimeManager private constructor(
         val response = request(method, params) as Map<String, Any?>
         if (shouldSyncLocalThreadBindings() && (method == "thread/read" || method == "thread/resume")) {
             syncThreadListResponse(response)
-        }
-        if (method == "thread/read" || method == "thread/resume") {
-            syncActiveTurnSnapshot(threadId, response, observedTurnId)
         }
         val activeTurnId = remoteTurnOwnership.activeTurnId(threadId)
         return response.withLocalIds(
@@ -1435,74 +1417,6 @@ class AgentRuntimeManager private constructor(
         }
     }
 
-    private suspend fun startTurn(args: Map<String, Any?>): Map<String, Any?> {
-        val cwd = sanitizeAgentRuntimeAbsolutePath(args.stringValue("cwd"))
-            ?: resolveDefaultCwd()
-        var threadId = ensureThreadForTurn(args, cwd)
-        val requestId = args.stringValue("requestId")
-            ?.takeIf { it.isNotBlank() }
-        requestId?.let { id ->
-            remoteTurnOwnership.requestRecord(threadId, id)?.let { known ->
-                return mapOf(
-                    "threadId" to known.sessionId,
-                    "turnId" to known.turnId
-                ).withLocalIds(
-                    threadId = known.sessionId,
-                    conversationId = conversationIdForSession(known.sessionId),
-                    turnId = known.turnId
-                )
-                }
-        }
-        check(remoteTurnOwnership.activeTurnId(threadId) == null) {
-            "ACP session $threadId already has an active turn."
-        }
-        check(pendingTurnThreads.add(threadId)) {
-            "ACP session $threadId already has a turn starting."
-        }
-        var reservedThreadId = threadId
-        val params = buildTurnStartParams(
-            args = args,
-            cwd = cwd,
-            threadId = threadId
-        )
-        return try {
-            val response = try {
-                request("turn/start", params) as Map<String, Any?>
-            } catch (error: Throwable) {
-                if (!shouldRecoverMissingThread(error)) {
-                    throw error
-                }
-                Log.w(
-                    "AgentRuntimeManager",
-                    "Agent turn/start hit a missing thread; creating a fresh thread binding."
-                )
-                val retryResponse = startThread(args + mapOf("cwd" to cwd))
-                pendingTurnThreads.remove(reservedThreadId)
-                threadId = retryResponse["threadId"]?.toString()?.trim()
-                    ?.takeIf { it.isNotEmpty() }
-                    ?: throw error
-                check(pendingTurnThreads.add(threadId)) {
-                    "ACP session $threadId already has a turn starting."
-                }
-                reservedThreadId = threadId
-                params["threadId"] = threadId
-                request("turn/start", params) as Map<String, Any?>
-            }
-            val turnId = extractTurnId(response)
-            check(!turnId.isNullOrBlank()) {
-                "Agent turn/start did not return a turn id."
-            }
-            admitRemoteTurn(threadId, turnId, requestId)
-            response.withLocalIds(
-                threadId = threadId,
-                conversationId = conversationIdForSession(threadId),
-                turnId = turnId
-            )
-        } finally {
-            pendingTurnThreads.remove(reservedThreadId)
-        }
-    }
-
     private suspend fun startReview(args: Map<String, Any?>): Map<String, Any?> {
         val cwd = sanitizeAgentRuntimeAbsolutePath(args.stringValue("cwd")) ?: resolveDefaultCwd()
         var threadId = ensureThreadForTurn(args, cwd)
@@ -1543,50 +1457,6 @@ class AgentRuntimeManager private constructor(
                 conversationId = conversationIdForSession(threadId),
             turnId = turnId
         ).withAcpSessionId()
-    }
-
-    private suspend fun steerTurn(args: Map<String, Any?>): Map<String, Any?> {
-        val threadId = resolveThreadId(args)
-        val expectedTurnId = args.stringValue("expectedPromptId")
-            ?: args.stringValue("expectedTurnId")
-            ?: args.stringValue("turnId")
-            ?: remoteTurnOwnership.activeTurnId(threadId)
-            ?: throw IllegalArgumentException("missing active Agent turn id")
-        val response = request(
-            "turn/steer",
-            mapOf(
-                "threadId" to threadId,
-                "expectedTurnId" to expectedTurnId,
-                "input" to resolveInput(args)
-            )
-        ) as Map<String, Any?>
-        return response.withLocalIds(
-            threadId = threadId,
-                conversationId = conversationIdForSession(threadId),
-            turnId = expectedTurnId
-        )
-    }
-
-    private suspend fun interruptTurn(args: Map<String, Any?>): Map<String, Any?> {
-        val threadId = resolveThreadId(args)
-        val turnId = args.stringValue("promptId")
-            ?: args.stringValue("turnId")
-            ?: remoteTurnOwnership.activeTurnId(threadId)
-            ?: throw IllegalArgumentException("missing active Agent turn id")
-        val response = request(
-            "turn/interrupt",
-            mapOf("threadId" to threadId, "turnId" to turnId)
-        ) as Map<String, Any?>
-        clearActiveTurn(
-            threadId = threadId,
-            expectedTurnId = turnId,
-            terminalStatus = "cancelled",
-        )
-        return response.withLocalIds(
-            threadId = threadId,
-            conversationId = conversationIdForSession(threadId),
-            turnId = turnId
-        )
     }
 
     private suspend fun respondToServerRequest(args: Map<String, Any?>): Map<String, Any?> {
@@ -1647,9 +1517,6 @@ class AgentRuntimeManager private constructor(
     private suspend fun readAgentConfig(args: Map<String, Any?>): Map<String, Any?> {
         val agentId = args.stringValue("agentId")
             ?: throw IllegalArgumentException("agentId is required.")
-        val runtimeSettings = AgentRuntimeSettingsStore
-            .read(appContext, agentId)
-            .toMap()
         val profile = acpAgentProfileStore.list().firstOrNull { it.id == agentId }
             ?: throw IllegalArgumentException("Unknown ACP agent: $agentId")
         val harnessAdapter = AcpHarnessAdapters.forProfile(profile)
@@ -1667,66 +1534,29 @@ class AgentRuntimeManager private constructor(
             ) ?: throw UnsupportedOperationException(
                 "Harness does not expose a readable configuration surface."
             )
-            return payload + ("runtimeSettings" to runtimeSettings)
+            return withAgentConfigMetadata(profile.id, payload)
         }
-        return when (profile.id) {
-            AcpAgentProfileStore.CODEX_AGENT_ID -> {
-                val configToml = readTerminalTextFile(
-                    path = CODEX_CONFIG_TOML_PATH,
-                    executorKey = "codex-agent-config-read"
-                )
-                val authJson = readTerminalTextFile(
-                    path = CODEX_AUTH_JSON_PATH,
-                    executorKey = "codex-agent-auth-read"
-                )
-                val sharedProvider = currentAgentProviderProfile()
-                linkedMapOf<String, Any?>(
-                    "agentId" to profile.id,
-                    "kind" to "codex",
-                    "configPath" to CODEX_CONFIG_TOML_DISPLAY_PATH,
-                    "authPath" to CODEX_AUTH_JSON_DISPLAY_PATH,
-                    "baseUrl" to (sharedProvider?.baseUrl
-                        ?: extractTomlString(configToml, "base_url").orEmpty()),
-                    "model" to currentAgentBoundModel().orEmpty(),
-                    "apiKey" to extractOpenAiApiKey(authJson).orEmpty(),
-                    "runtimeSettings" to runtimeSettings,
-                )
-            }
-            CLAUDE_CODE_AGENT_ID -> readRawAgentConfig(
-                profile = profile,
-                kind = "json",
-                path = CLAUDE_SETTINGS_JSON_PATH,
-                displayPath = CLAUDE_SETTINGS_JSON_DISPLAY_PATH
-            ) + ("runtimeSettings" to runtimeSettings)
-            OPENCODE_AGENT_ID -> readRawAgentConfig(
-                profile = profile,
-                kind = "jsonc",
-                path = OPENCODE_CONFIG_JSON_PATH,
-                displayPath = OPENCODE_CONFIG_JSON_DISPLAY_PATH
-            ) + ("runtimeSettings" to runtimeSettings)
-            else -> linkedMapOf(
+        val adapterConfig = AgentConfigAdapterRegistry.readConfig(
+            input = AgentProviderMappingInput(
+                agentId = profile.id,
+                provider = currentAgentProviderCredentials(),
+                model = currentAgentBoundModel(),
+                harnessAdapter = harnessAdapter,
+            ),
+            access = object : AgentConfigFileAccess {
+                override suspend fun read(path: String, executorKey: String): String =
+                    readTerminalTextFile(path, executorKey)
+
+                override suspend fun write(path: String, content: String, executorKey: String) =
+                    writeTerminalTextFile(path, content, executorKey)
+            },
+        )
+        return withAgentConfigMetadata(
+            profile.id,
+            adapterConfig ?: linkedMapOf(
                 "agentId" to profile.id,
                 "kind" to "profile",
-                "runtimeSettings" to runtimeSettings,
-            )
-        }
-    }
-
-    private suspend fun readRawAgentConfig(
-        profile: AcpAgentProfile,
-        kind: String,
-        path: String,
-        displayPath: String
-    ): Map<String, Any?> {
-        val stored = readTerminalTextFile(
-            path = path,
-            executorKey = "agent-config-read-${profile.id}"
-        )
-        return linkedMapOf(
-            "agentId" to profile.id,
-            "kind" to kind,
-            "path" to displayPath,
-            "content" to stored.ifBlank { DEFAULT_EMPTY_JSON_FILE }
+            ),
         )
     }
 
@@ -1735,19 +1565,7 @@ class AgentRuntimeManager private constructor(
             ?: throw IllegalArgumentException("agentId is required.")
         val profile = acpAgentProfileStore.list().firstOrNull { it.id == agentId }
             ?: throw IllegalArgumentException("Unknown ACP agent: $agentId")
-        val runtimeSettings = args["runtimeSettings"]?.let { value ->
-            when (value) {
-                is Map<*, *> -> AgentRuntimeSettings.fromMap(value)
-                is String -> AgentRuntimeSettings.fromJson(value)
-                else -> throw IllegalArgumentException("runtimeSettings must be an object or JSON object")
-            }
-        }
-        if (runtimeSettings != null && isRuntimeSettingsOnlyAgentConfigUpdate(args)) {
-            localRuntimeFor(profile.id).disconnect()
-            clearActiveTurnsForAgent(profile.id)
-            AgentRuntimeSettingsStore.write(appContext, agentId, runtimeSettings)
-            return readAgentConfig(mapOf("agentId" to profile.id))
-        }
+        validateExpectedConfigRevision(agentId, args)
         val harnessAdapter = AcpHarnessAdapters.forProfile(profile)
         val harnessConfigPath = harnessAdapter.launchConfigPath
         if (harnessConfigPath != null) {
@@ -1763,121 +1581,147 @@ class AgentRuntimeManager private constructor(
             ) ?: throw UnsupportedOperationException(
                 "Harness does not expose a writable configuration surface."
             )
-            requireAgentConfigSize(content)
             writeTerminalTextFile(
                 path = harnessConfigPath,
                 content = content,
                 executorKey = "harness-config-write-${profile.id}"
             )
+            recordAgentConfigRevision(
+                agentId = profile.id,
+                operation = "write",
+                paths = listOf(harnessConfigPath),
+            )
             localRuntimeFor(profile.id).disconnect()
             clearActiveTurnsForAgent(profile.id)
-            runtimeSettings?.let { AgentRuntimeSettingsStore.write(appContext, agentId, it) }
             return readAgentConfig(mapOf("agentId" to profile.id))
         }
-        when (profile.id) {
-            AcpAgentProfileStore.CODEX_AGENT_ID -> {
-                val baseUrl = args.stringValue("baseUrl")
-                    ?: throw IllegalArgumentException("Base URL is required.")
-                val model = args.stringValue("model")
-                    ?: throw IllegalArgumentException("Model ID is required.")
-                val apiKey = args.stringValue("apiKey")
-                    ?: throw IllegalArgumentException("API Key is required.")
-                val providerProfile = currentAgentProviderProfile()
-                val providerModelResolution = resolveCurrentProviderModelIds(
-                    providerProfile
-                )
-                val providerModels = providerModelResolution
-                    ?.takeIf { it.authoritative }
-                    ?.models
-                    .orEmpty()
-                val resolvedModel = resolveAcpLaunchModel(
-                    providerModelIds = providerModels.map(ProviderModelOption::id),
-                    boundModel = model
-                ) ?: throw IllegalArgumentException(
-                    "Model must be selected from the current Provider /models response."
-                )
-                writeCodexConfigFiles(
-                    configToml = buildCodexConfigToml(
-                        baseUrl = baseUrl,
-                        model = resolvedModel,
-                        wireApi = args.stringValue("wireApi") ?: OpenAiWireApi.RESPONSES,
-                        modelCatalogPath = CODEX_MODEL_CATALOG_JSON_PATH,
-                        envHttpHeaders = buildAcpHeaderBindings(
-                            providerProfile?.customHeaders.orEmpty()
-                        ).envHttpHeaders,
-                    ),
-                    authJson = buildCodexAuthJson(apiKey),
-                    modelCatalogJson = buildCodexModelCatalogJson(
-                        providerModels = providerModels,
-                        provider = AgentProviderCredentials(
-                            baseUrl = baseUrl,
-                            apiKey = apiKey,
-                            wireApi = args.stringValue("wireApi") ?: OpenAiWireApi.RESPONSES,
-                            customHeaders = providerProfile?.customHeaders.orEmpty(),
-                            protocolType = providerProfile?.protocolType ?: "openai_compatible",
-                        ),
-                    )
-                )
-            }
-            CLAUDE_CODE_AGENT_ID -> {
-                val content = args.stringValuePreservingWhitespace("content")
-                    ?.ifBlank { DEFAULT_EMPTY_JSON_FILE }
-                    ?: throw IllegalArgumentException("settings.json content is required.")
-                requireAgentConfigSize(content)
-                runCatching {
-                    require(JsonParser.parseString(content).isJsonObject)
-                }.getOrElse {
-                    throw IllegalArgumentException(
-                        "Claude Code settings.json must contain a valid JSON object.",
-                        it
-                    )
-                }
-                writeTerminalTextFile(
-                    path = CLAUDE_SETTINGS_JSON_PATH,
-                    content = content,
-                    executorKey = "agent-config-write-${profile.id}"
-                )
-            }
-            OPENCODE_AGENT_ID -> {
-                val content = args.stringValuePreservingWhitespace("content")
-                    ?.ifBlank { DEFAULT_EMPTY_JSON_FILE }
-                    ?: throw IllegalArgumentException("opencode.json content is required.")
-                requireAgentConfigSize(content)
-                writeTerminalTextFile(
-                    path = OPENCODE_CONFIG_JSON_PATH,
-                    content = content,
-                    executorKey = "agent-config-write-${profile.id}"
-                )
-            }
-            else -> {
-                if (runtimeSettings == null) {
-                    throw UnsupportedOperationException(
-                        "Custom ACP Agent settings are stored in its launch profile."
-                    )
-                }
-            }
+        val providerProfile = currentAgentProviderProfile()
+        val configuredProvider = currentAgentProviderCredentials()
+        val writeProvider = configuredProvider ?: run {
+            val baseUrl = args.stringValue("baseUrl")
+                ?: ""
+            val apiKey = args.stringValue("apiKey")
+                ?: ""
+            if (baseUrl.isBlank() || apiKey.isBlank()) null else AgentProviderCredentials(
+                baseUrl = baseUrl,
+                apiKey = apiKey,
+                wireApi = args.stringValue("wireApi") ?: OpenAiWireApi.RESPONSES,
+                customHeaders = providerProfile?.customHeaders.orEmpty(),
+                protocolType = providerProfile?.protocolType ?: "openai_compatible",
+            )
         }
+        val providerModels = resolveCurrentProviderModelIds(providerProfile)
+            ?.takeIf { it.authoritative }
+            ?.models
+            .orEmpty()
+        val writes = AgentConfigAdapterRegistry.directConfigWrites(
+            input = AgentProviderMappingInput(
+                agentId = profile.id,
+                provider = writeProvider,
+                model = args.stringValue("model") ?: currentAgentBoundModel(),
+                harnessAdapter = harnessAdapter,
+            ),
+            args = args,
+            providerModels = providerModels,
+        )
+        if (writes.isEmpty()) {
+            throw UnsupportedOperationException(
+                "This ACP Harness does not expose a writable configuration surface."
+            )
+        }
+        writes.forEach { write ->
+            writeTerminalTextFile(
+                path = write.path,
+                content = write.content,
+                executorKey = write.executorKey,
+            )
+        }
+        recordAgentConfigRevision(
+            agentId = profile.id,
+            operation = "write",
+            paths = writes.map(AgentConfigWrite::path),
+        )
         localRuntimeFor(profile.id).disconnect()
         clearActiveTurnsForAgent(profile.id)
-        runtimeSettings?.let { AgentRuntimeSettingsStore.write(appContext, agentId, it) }
         return readAgentConfig(mapOf("agentId" to profile.id))
     }
 
-    private suspend fun writeCodexConfigFiles(
-        configToml: String,
-        authJson: String,
-        modelCatalogJson: String
+    private suspend fun rollbackAgentConfig(args: Map<String, Any?>): Map<String, Any?> {
+        val agentId = args.stringValue("agentId")
+            ?: throw IllegalArgumentException("agentId is required.")
+        val profile = acpAgentProfileStore.list().firstOrNull { it.id == agentId }
+            ?: throw IllegalArgumentException("Unknown ACP agent: $agentId")
+        validateExpectedConfigRevision(agentId, args)
+        val targetRevision = args.longValue("targetRevision")
+            ?: throw IllegalArgumentException("targetRevision is required.")
+        val snapshot = acpAgentProfileStore.configSnapshot(agentId, targetRevision)
+        require(snapshot.isNotEmpty()) { "Agent config revision has no files." }
+        snapshot.forEach { (path, content) ->
+            writeTerminalTextFile(
+                path = path,
+                content = content,
+                executorKey = "agent-config-rollback-${profile.id}",
+            )
+        }
+        recordAgentConfigRevision(
+            agentId = profile.id,
+            operation = "rollback",
+            paths = snapshot.keys.toList(),
+        )
+        localRuntimeFor(profile.id).disconnect()
+        clearActiveTurnsForAgent(profile.id)
+        return readAgentConfig(mapOf("agentId" to profile.id))
+    }
+
+    private fun validateExpectedConfigRevision(
+        agentId: String,
+        args: Map<String, Any?>,
     ) {
-        val command = """
-            set -eu
-            mkdir -p ${shellQuote(AgentRuntimeDefaults.CODEX_HOME)}
-            umask 077
-            printf %s ${shellQuote(configToml)} > ${shellQuote(CODEX_CONFIG_TOML_PATH)}
-            printf %s ${shellQuote(authJson)} > ${shellQuote(CODEX_AUTH_JSON_PATH)}
-            printf %s ${shellQuote(modelCatalogJson)} > ${shellQuote(CODEX_MODEL_CATALOG_JSON_PATH)}
-            chmod 600 ${shellQuote(CODEX_CONFIG_TOML_PATH)} ${shellQuote(CODEX_AUTH_JSON_PATH)} ${shellQuote(CODEX_MODEL_CATALOG_JSON_PATH)}
-        """.trimIndent()
-        executeAgentConfigCommand(command, "codex-agent-config-write")
+        val expected = args.longValue("expectedRevision") ?: return
+        val actual = acpAgentProfileStore.configRevision(agentId)
+        require(expected == actual) {
+            "Agent config changed concurrently (expected revision $expected, current $actual)."
+        }
+    }
+
+    private suspend fun recordAgentConfigRevision(
+        agentId: String,
+        operation: String,
+        paths: List<String>,
+    ) {
+        val files = paths.distinct().associateWith { path ->
+            readAgentConfigFileForRevision(path, agentId)
+        }
+        acpAgentProfileStore.recordConfigRevision(
+            agentId = agentId,
+            operation = operation,
+            files = files,
+        )
+    }
+
+    private suspend fun readAgentConfigFileForRevision(path: String, agentId: String): String =
+        readTerminalTextFile(
+            path = path,
+            executorKey = "agent-config-revision-read-$agentId",
+        )
+
+    private fun withAgentConfigMetadata(
+        agentId: String,
+        payload: Map<String, Any?>,
+    ): Map<String, Any?> = linkedMapOf<String, Any?>().apply {
+        putAll(payload)
+        put("revision", acpAgentProfileStore.configRevision(agentId))
+        put(
+            "audit",
+            acpAgentProfileStore.configAudit(agentId).map { entry ->
+                linkedMapOf<String, Any?>(
+                    "revision" to entry.revision,
+                    "operation" to entry.operation,
+                    "paths" to entry.paths,
+                    "createdAt" to entry.createdAt,
+                )
+            },
+        )
     }
 
     private suspend fun readTerminalTextFile(
@@ -1927,7 +1771,7 @@ class AgentRuntimeManager private constructor(
         val result = TerminalManager.getInstance(appContext).executeHiddenCommand(
             command = command,
             executorKey = executorKey,
-            timeoutMs = 30_000L
+            timeoutMs = null
         )
         if (!result.isOk || result.exitCode != 0) {
             throw IllegalStateException(
@@ -2058,25 +1902,6 @@ class AgentRuntimeManager private constructor(
         )
     }
 
-    private suspend fun buildTurnStartParams(
-        args: Map<String, Any?>,
-        cwd: String,
-        threadId: String
-    ): MutableMap<String, Any?> {
-        val params = linkedMapOf<String, Any?>(
-            "threadId" to threadId,
-            "input" to resolveInput(args, threadId),
-            "cwd" to cwd,
-            "approvalPolicy" to (args.stringValue("approvalPolicy") ?: "on-request"),
-            "sandboxPolicy" to (args["sandboxPolicy"] ?: buildAgentSandboxPolicy(cwd))
-        )
-        args.stringValue("approvalsReviewer")?.let {
-            params["approvalsReviewer"] = it
-        }
-        addAgentOptionalRunParams(params, args)
-        return params
-    }
-
     private fun buildReviewStartParams(
         args: Map<String, Any?>,
         threadId: String
@@ -2129,24 +1954,6 @@ class AgentRuntimeManager private constructor(
             ?.also { sessionConversationIds[normalized] = it }
     }
 
-    private fun syncActiveTurnSnapshot(
-        threadId: String,
-        response: Map<String, Any?>,
-        observedTurnId: String?,
-    ) {
-        val active = remoteCodexThreadActivity(response)
-        val activeTurnId = extractActiveTurnId(response)
-        if (active == true && !activeTurnId.isNullOrBlank()) {
-            val currentTurnId = remoteTurnOwnership.activeTurnId(threadId)
-            if (currentTurnId == null || currentTurnId == activeTurnId) {
-                admitRemoteTurn(threadId, activeTurnId)
-            }
-            return
-        }
-        if (active == false && observedTurnId != null) {
-            clearActiveTurn(threadId, expectedTurnId = observedTurnId)
-        }
-    }
 
     private suspend fun request(method: String, params: Any?): Any {
         val response = ensureConnectedSession().sendRequest(method, params)
@@ -2173,10 +1980,9 @@ class AgentRuntimeManager private constructor(
         val usesSharedProvider = AcpAgentProfileStore
             .officialRuntime(profile)
             ?.usesSharedProvider == true
-        // Installing a Harness is independent from the Dispatch Provider
-        // selection. A missing scene override must not block npm/native
-        // preparation or make a switch look like an install failure.
-        ensureManagedAcpAdapter(profile)
+        // This path only builds launch environment for an already installed
+        // Harness.  Dependency installation belongs exclusively to the
+        // explicit `agent/prepare` request above.
         val sharedProviderProfile = currentAgentProviderProfile()
         val sharedProvider = currentAgentProviderCredentials()
         val boundModel = currentAgentBoundModel()
@@ -2264,18 +2070,10 @@ class AgentRuntimeManager private constructor(
                     ?: "harness-launch-config-read"
             )
         }.orEmpty()
-        val mcpState = if (
-            harnessAdapter.mcpTransport == AcpHarnessMcpTransport.ENVIRONMENT
-        ) {
-            McpServerManager.ensureRunning(appContext)
-        } else {
-            McpServerManager.currentState()
-        }
         val harnessEnvironment = harnessAdapter.launchEnvironment(
             provider = sharedProvider,
             model = resolvedModel,
             rawConfig = existingHarnessConfig,
-            mcpState = mcpState,
         ) ?: mapping.environment
         // Official ACP persistence uses hard-link publication. Android's app
         // sandbox rejects hard links, so install one narrow Node compatibility
@@ -2882,20 +2680,17 @@ class AgentRuntimeManager private constructor(
         } else {
             selectedLocalRuntime()
         }
-        // ACP session/update is session-scoped on the wire. OpenCode is the
-        // one explicitly supported compatibility profile that emits valid
-        // turn-scoped updates without a turnId; Xiaowan and custom/legacy
-        // Harnesses must provide the canonical identity instead of being
-        // silently assigned to whatever turn happens to be active.
+        // ACP session/update is session-scoped on the wire. When an external
+        // local Harness omits a turn id, the active prompt reservation for
+        // this exact session is the only valid attribution boundary. This is
+        // a protocol rule, not a Harness-specific capability: never infer an
+        // identity from text, timing, or the selected Agent.
         val remoteActiveTurnId = if (sourceAgentId == null) {
             threadId?.let(remoteTurnOwnership::activeTurnId)
         } else {
             null
         }
-        val implicitTurnId = if (
-            sourceAgentId != null &&
-            localEventAgentId == OPENCODE_AGENT_ID
-        ) {
+        val implicitTurnId = if (sourceAgentId != null) {
             localEventRuntime.activeTurnIdForSession(threadId)
         } else {
             null
@@ -2971,49 +2766,6 @@ class AgentRuntimeManager private constructor(
                 protocolEventType == "task_started" ||
                 protocolEventType == "turn_started")) {
             admitRemoteTurn(threadId, turnId)
-        }
-        if (!threadId.isNullOrBlank() && method == "thread/status/changed") {
-            val active = remoteCodexThreadActivity(publicMessage)
-            if (active == true && !turnId.isNullOrBlank()) {
-                admitRemoteTurn(threadId, turnId)
-            } else if (active == false && remotePromptExecutions[threadId] == null) {
-                // An in-flight ACP session/prompt owns its terminal boundary.
-                // A session-level idle notification can race the official
-                // prompt response and carries no stop reason, so it must not
-                // preempt that response. Legacy turn requests have no ACP
-                // prompt execution resource and may still use this fallback.
-                clearActiveTurn(threadId)
-            }
-        }
-        if (!threadId.isNullOrBlank() &&
-            (method == "turn/completed" ||
-                protocolEventType == "task_complete" ||
-                protocolEventType == "turn_complete" ||
-                protocolEventType == "turn_aborted")) {
-            clearActiveTurn(
-                threadId,
-                turnId,
-                terminalStatus = terminalStatusFromAcpParams(
-                    params,
-                    fallback = if (protocolEventType == "turn_aborted") {
-                        "cancelled"
-                    } else {
-                        "completed"
-                    }
-                ),
-            )
-        }
-        if (!threadId.isNullOrBlank() &&
-            (method == "error" || method == "turn/failed") &&
-            params["willRetry"] != true) {
-            // codex app-server emits top-level `error` notifications when a
-            // turn fails terminally (no follow-up turn/completed will come).
-            // Clear the active turn so subsequent thread/read responses
-            // surface active=false to the Flutter side.
-            clearActiveTurn(threadId, turnId, terminalStatus = "error")
-        }
-        if (!threadId.isNullOrBlank() && method == "thread/closed") {
-            clearActiveTurn(threadId, terminalStatus = "cancelled")
         }
 
         val eventAgentId = if (sourceAgentId == null) {
@@ -3356,7 +3108,7 @@ class AgentRuntimeManager private constructor(
                 error = "No enabled ACP Agent is selected."
             )
         }
-        if (profile.id == AcpAgentProfileStore.XIAOWAN_AGENT_ID) {
+        if (profile.officialRuntime?.embedded == true) {
             return AgentRuntimeProbe(
                 ready = true,
                 version = BuildConfig.VERSION_NAME,
@@ -3714,71 +3466,12 @@ internal fun resolveAdvertisedReasoningEffortConfigId(
         ?.takeIf { it.isNotEmpty() }
 }
 
-/**
- * Bound the disconnected EventChannel buffer without ever evicting the only
- * terminal signal for a live ACP identity. Dropping ordinary deltas is
- * recoverable from a later snapshot; dropping `turn/completed`/`turn/failed`
- * strands the UI in its processing state forever.
- */
+/** Queue ACP updates verbatim until Flutter binds its one shared reducer. */
 internal fun enqueuePendingAgentEvent(
     pendingEvents: ArrayDeque<Map<String, Any?>>,
     event: Map<String, Any?>,
 ) {
-    if (pendingEvents.size >= MAX_PENDING_AGENT_EVENTS) {
-        val iterator = pendingEvents.iterator()
-        var removedNonTerminal = false
-        while (iterator.hasNext()) {
-            if (!isTerminalAgentLifecycleEvent(iterator.next())) {
-                iterator.remove()
-                removedNonTerminal = true
-                break
-            }
-        }
-        if (!removedNonTerminal) {
-            if (!isTerminalAgentLifecycleEvent(event)) {
-                // A saturated queue containing only terminal boundaries is
-                // already the most valuable state we can deliver. Do not
-                // evict one of those boundaries for another delta.
-                return
-            }
-            val incomingIdentity = terminalAgentLifecycleIdentity(event)
-            if (incomingIdentity != null) {
-                val duplicateIterator = pendingEvents.iterator()
-                while (duplicateIterator.hasNext()) {
-                    if (terminalAgentLifecycleIdentity(duplicateIterator.next()) == incomingIdentity) {
-                        duplicateIterator.remove()
-                        break
-                    }
-                }
-            }
-            // Unique terminal boundaries are retained even if the queue grows
-            // beyond the normal delta bound. The number of such entries is
-            // limited by live ACP turns, and correctness is more important
-            // than silently losing a session's final state.
-        }
-    }
     pendingEvents.addLast(event)
-}
-
-private fun isTerminalAgentLifecycleEvent(event: Map<String, Any?>): Boolean {
-    return event["method"]?.toString() in setOf(
-        "turn/completed",
-        "turn/failed",
-        "thread/closed",
-    )
-}
-
-private fun terminalAgentLifecycleIdentity(event: Map<String, Any?>): String? {
-    if (!isTerminalAgentLifecycleEvent(event)) return null
-    val method = event["method"]?.toString()?.trim().orEmpty()
-    val conversationId = event["conversationId"]?.toString()?.trim().orEmpty()
-    val sessionId = (event["sessionId"] ?: event["threadId"])?.toString()
-        ?.trim().orEmpty()
-    val turnId = event["turnId"]?.toString()?.trim().orEmpty()
-    if (sessionId.isEmpty() && turnId.isEmpty() && conversationId.isEmpty()) {
-        return null
-    }
-    return listOf(method, conversationId, sessionId, turnId).joinToString("\u0000")
 }
 
 internal fun terminalStatusFromAcpParams(
@@ -4466,7 +4159,7 @@ private fun extractMarkedBlock(
         .removeSuffix("\n")
 }
 
-private fun extractTomlString(source: String, key: String): String? {
+internal fun extractTomlString(source: String, key: String): String? {
     if (source.isBlank()) return null
     val escapedKey = Regex.escape(key)
     return Regex(
@@ -4557,7 +4250,7 @@ private fun extractOpenCodeModel(source: String): String? {
         ?.takeIf(String::isNotEmpty)
 }
 
-private fun extractOpenAiApiKey(source: String): String? {
+internal fun extractOpenAiApiKey(source: String): String? {
     val trimmed = source.trim()
     if (trimmed.isEmpty()) return null
     return runCatching {
@@ -4570,12 +4263,6 @@ private fun extractOpenAiApiKey(source: String): String? {
             ?.trim()
             ?.takeIf(String::isNotEmpty)
     }.getOrNull()
-}
-
-private fun requireAgentConfigSize(content: String) {
-    require(content.length <= MAX_AGENT_CONFIG_FILE_CHARS) {
-        "Agent configuration is too large."
-    }
 }
 
 private fun Map<String, Any?>.stringValue(key: String): String? {
@@ -4596,20 +4283,18 @@ private fun Map<String, Any?>.longValue(key: String): Long? {
 }
 
 internal const val CLAUDE_CODE_AGENT_ID = "claude-code-acp"
-internal const val OPENCODE_AGENT_ID = "opencode-acp"
 internal const val CODEX_CONFIG_TOML_PATH = "/root/.codex/config.toml"
 internal const val CODEX_AUTH_JSON_PATH = "/root/.codex/auth.json"
 internal const val CODEX_MODEL_CATALOG_JSON_PATH = "/root/.codex/provider-model-catalog.json"
-private const val CLAUDE_SETTINGS_JSON_PATH = "/root/.claude/settings.json"
-private const val OPENCODE_CONFIG_JSON_PATH = "/root/.config/opencode/opencode.json"
-private const val CODEX_CONFIG_TOML_DISPLAY_PATH = "~/.codex/config.toml"
-private const val CODEX_AUTH_JSON_DISPLAY_PATH = "~/.codex/auth.json"
-private const val CLAUDE_SETTINGS_JSON_DISPLAY_PATH = "~/.claude/settings.json"
-private const val OPENCODE_CONFIG_JSON_DISPLAY_PATH = "~/.config/opencode/opencode.json"
+internal const val CLAUDE_SETTINGS_CONFIG_PATH = "/root/.claude/settings.json"
+internal const val OPENCODE_CONFIG_JSON_PATH = "/root/.config/opencode/opencode.json"
+internal const val CODEX_CONFIG_TOML_DISPLAY_PATH = "~/.codex/config.toml"
+internal const val CODEX_AUTH_JSON_DISPLAY_PATH = "~/.codex/auth.json"
+internal const val CLAUDE_SETTINGS_JSON_DISPLAY_PATH = "~/.claude/settings.json"
+internal const val OPENCODE_CONFIG_JSON_DISPLAY_PATH = "~/.config/opencode/opencode.json"
 private const val AGENT_CONFIG_START_MARKER = "__OMNI_AGENT_CONFIG_START__"
 private const val AGENT_CONFIG_END_MARKER = "__OMNI_AGENT_CONFIG_END__"
-private const val MAX_AGENT_CONFIG_FILE_CHARS = 1_048_576
-private const val DEFAULT_EMPTY_JSON_FILE = "{\n}\n"
+internal const val DEFAULT_EMPTY_JSON_FILE = "{\n}\n"
 
 private fun Map<String, Any?>.mapValue(key: String): Map<String, Any?> {
     val raw = this[key] as? Map<*, *> ?: return emptyMap()

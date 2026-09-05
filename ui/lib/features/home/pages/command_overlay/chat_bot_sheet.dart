@@ -755,26 +755,12 @@ class _ChatBotSheetState extends State<ChatBotSheet>
     _acpCloseStarted = true;
     if (_hasLiveAcpTurn) {
       try {
-        final response = await AgentRuntimeService.cancelPrompt(
+        await AgentRuntimeService.cancelPrompt(
           sessionId: sessionId,
           conversationId: conversationId,
           promptId: _acpPromptId,
           runId: _currentDispatchTurnId,
         );
-        final runtime = _runtimeCoordinator.runtimeFor(
-          conversationId: conversationId,
-          mode: _runtimeMode,
-        );
-        if (runtime?.isAiResponding == true) {
-          _runtimeCoordinator.applyAcpPromptResponse(
-            conversationId: conversationId,
-            mode: _runtimeMode,
-            sessionId: response['sessionId']?.toString() ?? sessionId,
-            turnId: response['turnId']?.toString() ?? _acpPromptId,
-            stopReason: 'cancelled',
-            conversation: _currentConversation,
-          );
-        }
       } catch (error) {
         debugPrint('ACP 取消请求失败: $error');
       }
@@ -792,9 +778,8 @@ class _ChatBotSheetState extends State<ChatBotSheet>
   }
 
   /// Waits for the ACP cancellation request to settle, then mirrors the
-  /// coordinator projection. The terminal `turn/completed` event is the
-  /// authority for cancelled state; this method only refreshes presentation
-  /// after that lifecycle has had a chance to run.
+  /// coordinator projection. The original prompt response owns the terminal
+  /// state; the cancellation acknowledgement cannot end the turn.
   Future<void> _finishAcpCancellationPresentation() async {
     await _closeAcpLifecycle();
     if (!mounted) return;
@@ -806,10 +791,8 @@ class _ChatBotSheetState extends State<ChatBotSheet>
             mode: _runtimeMode,
           );
     if (runtime?.isAiResponding == true) {
-      // The native ACP boundary normally emits the terminal event before
-      // session/cancel returns. Keep the reservation if it did not; clearing
-      // it here would recreate the endless-spinner/late-event race.
-      debugPrint('ACP cancellation returned before terminal event');
+      // The Agent may still send final updates before PromptResponse.
+      debugPrint('ACP cancellation returned before prompt response');
       return;
     }
     if (runtime != null) {
@@ -1307,6 +1290,7 @@ class _ChatBotSheetState extends State<ChatBotSheet>
 
   // 新增：Agent 流程
   Future<bool> _tryAgentFlow(String aiMessageId, String userMessageId) async {
+    final conversationId = _currentConversationId;
     try {
       setState(() {
         _currentDispatchTurnId = aiMessageId;
@@ -1315,7 +1299,6 @@ class _ChatBotSheetState extends State<ChatBotSheet>
 
       final userMessage = _latestUserUtterance();
       final attachments = _latestUserAgentAttachments();
-      final conversationId = _currentConversationId;
       if (conversationId == null) {
         throw StateError('conversationId is not ready');
       }
@@ -1343,6 +1326,7 @@ class _ChatBotSheetState extends State<ChatBotSheet>
         mode: _runtimeMode,
       );
       var status = await AgentRuntimeService.status();
+      if (!_canContinueAcpTurn(aiMessageId)) return false;
       if (!status.connected) {
         status = await AgentRuntimeService.connect();
       }
@@ -1356,10 +1340,6 @@ class _ChatBotSheetState extends State<ChatBotSheet>
           .where((item) => item.sceneId == 'scene.dispatch.model')
           .firstOrNull;
       if (!_canContinueAcpTurn(aiMessageId)) return false;
-      // A previous explicit stop closes its short-lived ACP session. A new
-      // logical turn gets a fresh session and therefore a fresh close guard.
-      _acpCloseStarted = false;
-
       // ACP separates session ownership from prompt execution. Reserve the
       // session first so cancellation and late-event attribution have a
       // stable official identity before the potentially long prompt call.
@@ -1375,6 +1355,9 @@ class _ChatBotSheetState extends State<ChatBotSheet>
       if ((_acpSessionId ?? '').isEmpty) {
         throw StateError('ACP did not return a session id');
       }
+      // A stop may have arrived while session/new was pending. Its earlier
+      // cleanup did not own this newly returned session.
+      _acpCloseStarted = false;
       if (!_canContinueAcpTurn(aiMessageId)) {
         await _closeAcpLifecycle();
         return false;
@@ -1390,25 +1373,31 @@ class _ChatBotSheetState extends State<ChatBotSheet>
         model: dispatchScene?.effectiveModel.trim(),
         conversationMode: ConversationMode.agent.storageValue,
       );
-      _acpSessionId =
+      final responseSessionId =
           (response['sessionId'] ?? response['threadId'] ?? _acpSessionId)
               ?.toString()
               .trim();
-      _acpPromptId = (response['promptId'] ?? response['turnId'])
+      final responsePromptId = (response['promptId'] ?? response['turnId'])
           ?.toString()
           .trim();
       if (conversationId != null) {
-        _runtimeCoordinator.applyAcpPromptResponse(
+        final result = _runtimeCoordinator.applyAcpPromptResponse(
+          taskId: aiMessageId,
           conversationId: conversationId,
           mode: _runtimeMode,
-          sessionId: _acpSessionId,
-          turnId: _acpPromptId,
+          sessionId: responseSessionId,
+          turnId: responsePromptId,
           stopReason:
               response['stopReason']?.toString() ??
               response['status']?.toString(),
           error: response['error']?.toString(),
           conversation: _currentConversation,
         );
+        if (result.handled) {
+          _acpSessionId = responseSessionId;
+          _acpPromptId = responsePromptId;
+          _syncAcpRuntimePresentation(conversationId);
+        }
       }
       return true;
     } catch (e) {
@@ -1420,7 +1409,8 @@ class _ChatBotSheetState extends State<ChatBotSheet>
               mode: _runtimeMode,
             );
       if (conversationId != null && runtime?.isAiResponding == true) {
-        _runtimeCoordinator.applyAcpPromptResponse(
+        final result = _runtimeCoordinator.applyAcpPromptResponse(
+          taskId: aiMessageId,
           conversationId: conversationId,
           mode: _runtimeMode,
           sessionId: runtime?.activeAcpSessionId ?? _acpSessionId,
@@ -1429,9 +1419,26 @@ class _ChatBotSheetState extends State<ChatBotSheet>
           error: e.toString(),
           conversation: _currentConversation,
         );
+        if (result.handled) {
+          _syncAcpRuntimePresentation(conversationId);
+        }
       }
       debugPrint('Agent flow error: $e');
       return false;
+    } finally {
+      if (conversationId != null) {
+        // If preparation stopped before session/prompt, there is no ACP
+        // PromptResponse to await. Release only this host reservation. For
+        // submitted prompts, the response/error above has already reduced it.
+        _runtimeCoordinator.unregisterTask(
+          aiMessageId,
+          conversationId: conversationId,
+          mode: _runtimeMode,
+        );
+        if (_currentDispatchTurnId == aiMessageId) {
+          _syncAcpRuntimePresentation(conversationId);
+        }
+      }
     }
   }
 
@@ -1455,17 +1462,23 @@ class _ChatBotSheetState extends State<ChatBotSheet>
       event: event,
       conversation: _currentConversation,
     );
-    final runtime = _runtimeCoordinator.runtimeFor(
-      conversationId: conversationId,
-      mode: _runtimeMode,
-    );
-    if (!result.handled || runtime == null) {
+    if (!result.handled) {
       return;
     }
     final eventTurnId = result.turnId ?? event['turnId']?.toString().trim();
     if (eventTurnId != null && eventTurnId.isNotEmpty) {
       _acpPromptId = eventTurnId;
     }
+    _syncAcpRuntimePresentation(conversationId);
+  }
+
+  void _syncAcpRuntimePresentation(int conversationId) {
+    if (!mounted || conversationId != _currentConversationId) return;
+    final runtime = _runtimeCoordinator.runtimeFor(
+      conversationId: conversationId,
+      mode: _runtimeMode,
+    );
+    if (runtime == null) return;
     final nextMessages = List<ChatMessageModel>.from(runtime.messages);
     setState(() {
       _messages
@@ -1731,7 +1744,10 @@ class _ChatBotSheetState extends State<ChatBotSheet>
   void _sendChatMessage(String aiMessageId) {
     unawaited(
       _tryAgentFlow(aiMessageId, '').then((success) {
-        if (!success && mounted && !_closeRequested) {
+        if (!success &&
+            mounted &&
+            !_closeRequested &&
+            _currentDispatchTurnId == aiMessageId) {
           _showAcpStartError(
             aiMessageId,
             LegacyTextLocalizer.isEnglish
@@ -1780,8 +1796,8 @@ class _ChatBotSheetState extends State<ChatBotSheet>
             mode: _runtimeMode,
           );
         }
-        // ACP owns cancellation and emits the terminal turn event. Keep the
-        // task reservation and loading projection until that event is
+        // ACP owns cancellation through the original prompt response. Keep
+        // the task reservation and loading projection until that response is
         // reduced; otherwise the event is dropped by the current-turn guard
         // and the native session can continue after this sheet looks idle.
         unawaited(_finishAcpCancellationPresentation());
@@ -1812,7 +1828,7 @@ class _ChatBotSheetState extends State<ChatBotSheet>
         conversationId: conversationId,
         mode: _runtimeMode,
       );
-      // Keep the official ACP turn alive until its terminal notification is
+      // Keep the official ACP turn alive until its prompt response is
       // projected by the shared reducer. `taskId` remains the card identity;
       // the cancellation request itself uses the reserved session/turn.
       unawaited(_finishAcpCancellationPresentation());

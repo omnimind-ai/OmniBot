@@ -126,13 +126,6 @@ internal class PlatformMediaGatewayExecutor(
 }
 
 internal object PlatformMediaProtocol {
-    /**
-     * New API accepts JSON bodies below 16 MiB. Keep a full 1 MiB below that
-     * boundary so headers, proxy framing, and small server-side wrappers cannot
-     * turn an accepted client payload into a 413 at the public gateway.
-     */
-    internal const val MAX_PLATFORM_JSON_UTF8_BYTES: Long = 15L * 1024L * 1024L
-
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true
@@ -182,17 +175,6 @@ internal object PlatformMediaProtocol {
             errorCode = code,
             message = userMessage(statusCode, code),
         )
-    }
-
-    fun requirePlatformJsonRequestWithinLimit(jsonBody: String) {
-        val utf8Bytes = jsonBody.toByteArray(Charsets.UTF_8).size.toLong()
-        if (utf8Bytes > MAX_PLATFORM_JSON_UTF8_BYTES) {
-            throw PlatformGatewayException(
-                statusCode = null,
-                errorCode = "request_too_large",
-                message = "官方 AI 请求内容过大，请减少历史消息或图片后重试（发送上限 15 MiB）",
-            )
-        }
     }
 
     fun readBodyLimited(response: Response, maxBytes: Long): ByteArray {

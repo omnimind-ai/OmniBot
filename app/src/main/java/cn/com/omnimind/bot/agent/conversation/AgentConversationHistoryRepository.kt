@@ -3,7 +3,6 @@ package cn.com.omnimind.bot.agent
 import android.content.Context
 import cn.com.omnimind.baselib.database.AgentConversationEntry
 import cn.com.omnimind.baselib.database.AgentConversationEntryHeader
-import cn.com.omnimind.baselib.database.AgentConversationEntryRecord
 import cn.com.omnimind.baselib.database.Conversation
 import cn.com.omnimind.baselib.database.DatabaseHelper
 import cn.com.omnimind.baselib.llm.ChatCompletionMessage
@@ -434,37 +433,28 @@ class AgentConversationHistoryRepository(
         offset: Int
     ): Pair<List<Map<String, Any?>>, Boolean> = withContext(Dispatchers.IO) {
         val effectiveConversationMode = resolveConversationMode(conversationId, conversationMode)
-        // Read a bounded window from every compatibility bucket before
-        // slicing the page. The old implementation queried only `agent`, so
-        // conversations written as `normal` appeared empty after the default
-        // switched to canonical Agent mode. Do not load the entire history on
-        // every scroll request.
-        val candidateModes = conversationModeCandidates(effectiveConversationMode)
-        val windowSize = offset.coerceAtLeast(0) + limit.coerceAtLeast(1)
-        val allEntries = loadThreadEntriesDescWindowSafe(
-            conversationId = conversationId,
-            conversationModes = candidateModes,
-            maxEntriesPerMode = windowSize
+        // Compatibility buckets must be merged before user-visible paging.
+        // A per-bucket window can contain only duplicate migrated rows; then
+        // a later unique message becomes an empty page that is impossible for
+        // the UI cursor to advance past. The database reader is already
+        // internally paged, so collect the complete logical thread here and
+        // apply the caller's display page only after deduplication.
+        val allEntries = loadThreadEntriesDescSafePaged(
+            conversationId,
+            effectiveConversationMode
         )
         val (entries, hasMore) = pageConversationEntries(
             entries = allEntries,
             limit = limit,
             offset = offset
         )
-        val hasUnloadedEntries = candidateModes.any { storageMode ->
-            DatabaseHelper.countAgentConversationThreadEntries(
-                conversationId = conversationId,
-                conversationMode = storageMode
-            ) > windowSize
-        }
-        val normalized = if (offset == 0) {
-            normalizeEntriesForDisplay(entries)
-        } else {
-            entries
-        }
+        // Every page is historical UI. A card from an older page must not
+        // stay visually running merely because it was not in the first page
+        // loaded after process restore.
+        val normalized = normalizeEntriesForDisplay(entries)
         val messagePayloads = normalized.mapNotNull { entry -> entryToMessagePayload(entry) }
         val sorted = ConversationSnapshotOrdering.sortForDisplay(messagePayloads)
-        Pair(sorted, hasMore || hasUnloadedEntries)
+        Pair(sorted, hasMore)
     }
 
     suspend fun clearConversationMessages(
@@ -804,19 +794,15 @@ class AgentConversationHistoryRepository(
         conversationMode: String,
         entryId: String
     ): AgentConversationEntry? {
-        var record: AgentConversationEntryRecord? = null
         for (storageMode in conversationModeCandidates(conversationMode)) {
-            record = DatabaseHelper.getAgentConversationEntryByThreadAndIdSafe(
+            val entry = DatabaseHelper.getAgentConversationEntryByThreadAndId(
                 conversationId = conversationId,
                 conversationMode = storageMode,
-                entryId = entryId,
-                payloadLimit = AgentConversationHistorySupport.MAX_STORAGE_ENTRY_PAYLOAD_CHARS,
-                summaryLimit = AgentConversationHistorySupport.MAX_STORAGE_SUMMARY_CHARS
+                entryId = entryId
             )
-            if (record != null) break
+            if (entry != null) return entry
         }
-        record ?: return null
-        return materializeEntries(listOf(record)).singleOrNull()
+        return null
     }
 
     private suspend fun loadThreadEntriesAscSafePaged(
@@ -862,48 +848,6 @@ class AgentConversationHistoryRepository(
         return entries
     }
 
-    private suspend fun loadThreadEntriesDescWindowSafe(
-        conversationId: Long,
-        conversationModes: List<String>,
-        maxEntriesPerMode: Int
-    ): List<AgentConversationEntry> {
-        val boundedSize = maxEntriesPerMode.coerceAtLeast(1)
-        return conversationModes
-            .flatMap { storageMode ->
-                loadThreadEntriesDescWindowSafeForMode(
-                    conversationId = conversationId,
-                    conversationMode = storageMode,
-                    maxEntries = boundedSize
-                )
-            }
-            .distinctBy { entry -> entry.entryId }
-            .sortedWith(compareByDescending<AgentConversationEntry> { it.createdAt }
-                .thenByDescending { it.id })
-    }
-
-    private suspend fun loadThreadEntriesDescWindowSafeForMode(
-        conversationId: Long,
-        conversationMode: String,
-        maxEntries: Int
-    ): List<AgentConversationEntry> {
-        val entries = mutableListOf<AgentConversationEntry>()
-        var offset = 0
-        val boundedSize = maxEntries.coerceAtLeast(1)
-        while (entries.size < boundedSize) {
-            val page = loadThreadEntriesDescPagedSafe(
-                conversationId = conversationId,
-                conversationMode = conversationMode,
-                limit = minOf(SAFE_HISTORY_PAGE_SIZE, boundedSize - entries.size),
-                offset = offset
-            )
-            if (page.isEmpty()) break
-            entries += page
-            offset += page.size
-            if (page.size < SAFE_HISTORY_PAGE_SIZE) break
-        }
-        return entries
-    }
-
     private fun conversationModeCandidates(conversationMode: String): List<String> {
         val normalized = conversationMode.trim().lowercase().ifEmpty { "agent" }
         return if (normalized in setOf("normal", "agent", "codex", "acp", "coding")) {
@@ -939,36 +883,12 @@ class AgentConversationHistoryRepository(
         limit: Int,
         offset: Int
     ): List<AgentConversationEntry> {
-        val records = DatabaseHelper.getAgentConversationEntriesDescPagedSafe(
+        return DatabaseHelper.getAgentConversationEntriesDescPaged(
             conversationId = conversationId,
             conversationMode = conversationMode,
             limit = limit,
-            offset = offset,
-            payloadLimit = AgentConversationHistorySupport.MAX_STORAGE_ENTRY_PAYLOAD_CHARS,
-            summaryLimit = AgentConversationHistorySupport.MAX_STORAGE_SUMMARY_CHARS
+            offset = offset
         )
-        return materializeEntries(records)
-    }
-
-    private suspend fun materializeEntries(
-        records: List<AgentConversationEntryRecord>
-    ): List<AgentConversationEntry> {
-        if (records.isEmpty()) return emptyList()
-        val materialized = records.map(AgentConversationHistorySupport::materializeRecord)
-        repairRecoveredEntries(materialized)
-        return materialized.map { it.entry }
-    }
-
-    private suspend fun repairRecoveredEntries(
-        entries: List<AgentConversationHistorySupport.MaterializedEntry>
-    ) {
-        entries
-            .asSequence()
-            .filter { it.needsRepair }
-            .map { it.entry }
-            .forEach { repaired ->
-                upsertEntry(repaired)
-            }
     }
 
     private fun toStringAnyMap(value: Any?): Map<String, Any?> {

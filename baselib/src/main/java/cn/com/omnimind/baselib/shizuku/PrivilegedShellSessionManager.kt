@@ -28,11 +28,8 @@ internal object PrivilegedShellSessionManager {
         val workingDirectory: String? = null,
     )
 
-    private class RollingTextBuffer(
-        private val capacity: Int,
-    ) {
+    private class RollingTextBuffer {
         private val builder = StringBuilder()
-        private var truncated = false
 
         fun appendLine(line: String) {
             appendText("$line\n")
@@ -43,25 +40,18 @@ internal object PrivilegedShellSessionManager {
                 return
             }
             builder.append(text)
-            if (builder.length > capacity) {
-                builder.delete(0, builder.length - capacity)
-                truncated = true
-            }
         }
 
-        fun snapshot(maxChars: Int = capacity): String {
-            val raw = if (builder.length <= maxChars) {
-                builder.toString()
-            } else {
-                builder.substring(builder.length - maxChars)
-            }.trimEnd()
-            if (!truncated && builder.length <= maxChars) {
-                return raw
+        fun snapshot(maxChars: Int? = null): String {
+            val raw = builder.toString()
+            if (maxChars == null || raw.length <= maxChars) {
+                return raw.trimEnd()
             }
-            return if (raw.isEmpty()) {
+            val tail = raw.takeLast(maxChars).trimEnd()
+            return if (tail.isEmpty()) {
                 "...[earlier output truncated]"
             } else {
-                "...[earlier output truncated]\n$raw"
+                "...[earlier output truncated]\n$tail"
             }
         }
     }
@@ -72,8 +62,8 @@ internal object PrivilegedShellSessionManager {
         val stderrMarker: String,
         val recordTranscript: Boolean,
     ) {
-        val stdoutBuffer = RollingTextBuffer(COMMAND_BUFFER_LIMIT)
-        val stderrBuffer = RollingTextBuffer(COMMAND_BUFFER_LIMIT)
+        val stdoutBuffer = RollingTextBuffer()
+        val stderrBuffer = RollingTextBuffer()
         var stdoutDone: Boolean = false
         var stderrDone: Boolean = false
         var completed: Boolean = false
@@ -89,7 +79,7 @@ internal object PrivilegedShellSessionManager {
     ) {
         private val lock = Object()
         private val writer: BufferedWriter = process.outputStream.bufferedWriter()
-        private val transcriptBuffer = RollingTextBuffer(TRANSCRIPT_BUFFER_LIMIT)
+        private val transcriptBuffer = RollingTextBuffer()
 
         @Volatile
         private var currentCommand: CommandState? = null
@@ -138,7 +128,7 @@ internal object PrivilegedShellSessionManager {
                         success = false,
                         code = "session_busy",
                         message = "A command is still running in the privileged shell session.",
-                        transcript = transcriptBuffer.snapshot(DEFAULT_SESSION_READ_MAX_CHARS),
+                        transcript = transcriptBuffer.snapshot(),
                         commandRunning = true
                     )
                 }
@@ -176,7 +166,7 @@ internal object PrivilegedShellSessionManager {
                         },
                         stdout = commandState.stdoutBuffer.snapshot(),
                         stderr = commandState.stderrBuffer.snapshot(),
-                        transcript = transcriptBuffer.snapshot(DEFAULT_SESSION_READ_MAX_CHARS),
+                        transcript = transcriptBuffer.snapshot(),
                         exitCode = commandState.exitCode,
                         workingDirectory = commandState.workingDirectory
                     )
@@ -190,7 +180,7 @@ internal object PrivilegedShellSessionManager {
                             ?: "The privileged shell session closed unexpectedly.",
                         stdout = commandState.stdoutBuffer.snapshot(),
                         stderr = commandState.stderrBuffer.snapshot(),
-                        transcript = transcriptBuffer.snapshot(DEFAULT_SESSION_READ_MAX_CHARS)
+                        transcript = transcriptBuffer.snapshot()
                     )
                 }
 
@@ -200,14 +190,14 @@ internal object PrivilegedShellSessionManager {
                     message = "The privileged shell session command timed out.",
                     stdout = commandState.stdoutBuffer.snapshot(),
                     stderr = commandState.stderrBuffer.snapshot(),
-                    transcript = transcriptBuffer.snapshot(DEFAULT_SESSION_READ_MAX_CHARS),
+                    transcript = transcriptBuffer.snapshot(),
                     timedOut = true,
                     commandRunning = true
                 )
             }
         }
 
-        fun readTranscript(maxChars: Int): String {
+        fun readTranscript(maxChars: Int?): String {
             synchronized(lock) {
                 return transcriptBuffer.snapshot(maxChars)
             }
@@ -491,8 +481,7 @@ internal object PrivilegedShellSessionManager {
                 message = "The privileged shell session does not exist.",
                 sessionId = sessionId
             )
-        val maxChars = request.arguments["maxChars"]?.toIntOrNull()?.coerceIn(256, 64_000)
-            ?: DEFAULT_SESSION_READ_MAX_CHARS
+        val maxChars = request.arguments["maxChars"]?.toIntOrNull()?.takeIf { it > 0 }
         val transcript = session.readTranscript(maxChars)
         if (!session.isAlive()) {
             sessions.remove(sessionId)
@@ -632,9 +621,6 @@ internal object PrivilegedShellSessionManager {
 
     private const val TAG = "PrivilegedShellSessionMgr"
     private const val SHELL_PATH = "/system/bin/sh"
-    private const val TRANSCRIPT_BUFFER_LIMIT = 96_000
-    private const val COMMAND_BUFFER_LIMIT = 24_000
-    private const val DEFAULT_SESSION_READ_MAX_CHARS = 4_000
     private const val DEFAULT_SESSION_EXEC_TIMEOUT_SECONDS = 120
     private const val UNIT_SEPARATOR = '\u001F'
     private val ENV_KEY_PATTERN = Regex("^[A-Za-z_][A-Za-z0-9_]*$")

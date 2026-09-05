@@ -1,7 +1,7 @@
 package com.ai.assistance.operit.terminal.setup
 
-import cn.com.omnimind.bot.agent.runtime.DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND
-import cn.com.omnimind.bot.agent.runtime.DEEPSEEK_HARNESS_NATIVE_HEALTH_COMMAND
+import android.content.Context
+import cn.com.omnimind.bot.agent.runtime.AcpAgentCatalog
 import cn.com.omnimind.bot.agent.runtime.KIMI_CODE_NATIVE_HEALTH_COMMAND
 import cn.com.omnimind.bot.agent.runtime.KIMI_CODE_NPM_INSTALL_COMMAND
 import com.ai.assistance.operit.terminal.utils.SourceManager
@@ -9,6 +9,10 @@ import com.rk.terminal.runtime.UbuntuRepositoryManager
 import com.rk.terminal.ui.screens.settings.WorkingMode
 
 object EnvironmentSetupLogic {
+    private const val DEEPSEEK_HARNESS_HEALTH_COMMAND =
+        "PATH=\"/root/.npm-global/bin:\${'$'}PATH\"; export PATH; " +
+            "command -v dsh >/dev/null 2>&1 && " +
+            "command -v dsh-acp-android >/dev/null 2>&1"
     data class PackageDefinition(
         val id: String,
         val command: String,
@@ -19,10 +23,10 @@ object EnvironmentSetupLogic {
         "test -f '/root/.dsh/omnibot-acp/profiles/acp/package.json' && " +
             "test -f '/root/.dsh/omnibot-acp/profiles/acp/node_modules/@openma/deepseek-harness-acp/package.json'"
     private val DEEPSEEK_HARNESS_CHECK_COMMAND =
-        "PATH=\"/root/.npm-global/bin:${'$'}PATH\"; export PATH; " +
+            "PATH=\"/root/.npm-global/bin:${'$'}PATH\"; export PATH; " +
             "command -v dsh >/dev/null 2>&1 && " +
             DEEPSEEK_HARNESS_PACKAGE_FILES + " && " +
-            DEEPSEEK_HARNESS_NATIVE_HEALTH_COMMAND
+            DEEPSEEK_HARNESS_HEALTH_COMMAND
     private const val DEEPSEEK_HARNESS_VERSION_COMMAND =
         "node -p \"require('/root/.npm-global/lib/node_modules/@deepseek-ai/dsh/package.json').version\""
     private const val KIMI_CODE_VERSION_COMMAND = "kimi --version"
@@ -123,19 +127,22 @@ object EnvironmentSetupLogic {
 
     fun buildInstallCommands(
         selectedPackageIds: List<String>,
-        sourceManager: SourceManager
+        sourceManager: SourceManager,
+        context: Context? = null,
     ): List<String> {
         return buildInstallCommands(
             selectedPackageIds = selectedPackageIds,
             repositorySetupCommand = sourceManager.buildRepositorySetupCommand(),
-            workingMode = sourceManager.distributionWorkingMode
+            workingMode = sourceManager.distributionWorkingMode,
+            harnessInstallCommands = context?.let(::catalogInstallCommands).orEmpty(),
         )
     }
 
     internal fun buildInstallCommands(
         selectedPackageIds: List<String>,
         repositorySetupCommand: String,
-        workingMode: Int = WorkingMode.ALPINE
+        workingMode: Int = WorkingMode.ALPINE,
+        harnessInstallCommands: Map<String, String> = emptyMap(),
     ): List<String> {
         val requested = selectedPackageIds
             .map(::canonicalPackageId)
@@ -212,7 +219,10 @@ object EnvironmentSetupLogic {
             commands += "test -x /root/.npm-global/bin/opencode && /root/.npm-global/bin/opencode --version >/dev/null 2>&1"
         }
         if ("deepseek_harness" in requested) {
-            commands += DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND
+            commands += harnessInstallCommands["deepseek_harness"]
+                ?: throw IllegalStateException(
+                    "The ACP Harness catalog is required to install DeepSeek Harness."
+                )
             commands += "ln -sf /root/.npm-global/bin/dsh /usr/local/bin/dsh || true"
         }
         if ("kimi" in requested) {
@@ -226,6 +236,14 @@ object EnvironmentSetupLogic {
 
         return commands
     }
+
+    private fun catalogInstallCommands(context: Context): Map<String, String> =
+        AcpAgentCatalog.load(context).agents.mapNotNull { profile ->
+            val packageId = profile.officialRuntime?.terminalPackageId ?: return@mapNotNull null
+            val command = profile.officialRuntime?.managedInstallCommand
+                ?: return@mapNotNull null
+            packageId to command
+        }.toMap()
 
     internal fun buildSetupScript(
         commands: List<String>,

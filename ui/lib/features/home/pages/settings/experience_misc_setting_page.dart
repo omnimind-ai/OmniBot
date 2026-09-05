@@ -33,7 +33,7 @@ class _ExperienceMiscSettingPageState
   bool _preventScreenSleepDuringTasksEnabled = true;
   bool _taskCompletionNotificationEnabled = true;
   bool _useIndependentChatSendButton = true;
-  bool _recentConversationsOnlyEnabled = true;
+  bool _recentConversationsOnlyEnabled = false;
   ChatStartupBehavior _chatStartupBehavior = ChatStartupBehavior.resumeLast;
 
   @override

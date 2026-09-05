@@ -1146,14 +1146,21 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
 
     setState(() => _isFetchingModels = true);
     try {
-      final models = await ModelProviderConfigService.fetchModels(
-        apiBase: baseUrl,
-        apiKey: _apiKeyDirty ? _apiKeyController.text.trim() : null,
-        customHeaders: _customHeadersDirty ? customHeaders : null,
-        profileId: current.id,
-        providerName: current.name,
-      );
+      // Discovery must describe the saved Provider revision. Otherwise a
+      // later autosave invalidates the just-fetched list on page exit.
+      if (_shouldAutoSaveDraft && !await _persistProfileDraft()) return;
       if (!mounted) return;
+      final savedProfile = _currentProfile;
+      if (savedProfile == null || savedProfile.id != current.id) return;
+      final models = await ModelProviderConfigService.fetchModels(
+        profileId: savedProfile.id,
+        providerName: savedProfile.name,
+      );
+      if (!mounted ||
+          _currentProfile?.id != savedProfile.id ||
+          _currentProfile?.revision != savedProfile.revision ||
+          _shouldAutoSaveDraft)
+        return;
       setState(() {
         _remoteModels = models;
       });
@@ -1325,7 +1332,8 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
         ),
         ModelProviderConfigService.saveCachedFetchedModels(
           profileId: current.id,
-          apiBase: _baseUrlController.text.trim(),
+          apiBase: current.baseUrl,
+          profileRevision: current.revision,
           models: _remoteModels,
         ),
       ]);

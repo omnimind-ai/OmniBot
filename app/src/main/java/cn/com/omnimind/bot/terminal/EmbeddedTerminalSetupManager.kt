@@ -338,7 +338,8 @@ class EmbeddedTerminalSetupManager(
     private fun buildInstallCommands(selectedPackageIds: List<String>): List<String> {
         return EnvironmentSetupLogic.buildInstallCommands(
             selectedPackageIds = selectedPackageIds,
-            sourceManager = sourceManager
+            sourceManager = sourceManager,
+            context = context,
         )
     }
 

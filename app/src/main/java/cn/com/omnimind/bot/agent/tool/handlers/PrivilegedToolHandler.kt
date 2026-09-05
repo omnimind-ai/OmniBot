@@ -56,8 +56,7 @@ class PrivilegedToolHandler(
     )
 
     data class PrivilegedSessionReadArgs(
-        val sessionId: String,
-        val maxChars: Int
+        val sessionId: String
     )
 
     data class PrivilegedSessionStopArgs(
@@ -79,7 +78,6 @@ class PrivilegedToolHandler(
             "android_privileged_session_read" -> executeAndroidPrivilegedSessionRead(
                 args,
                 env.workspaceDescriptor,
-                env.runtimeSettings,
                 callback,
             )
             "android_privileged_session_stop" -> executeAndroidPrivilegedSessionStop(args, env.workspaceDescriptor, callback)
@@ -122,7 +120,7 @@ class PrivilegedToolHandler(
     ): ToolExecutionResult {
         val toolName = "android_privileged_action"
         return try {
-            val parsed = parseAndroidPrivilegedArgs(args, env.runtimeSettings)
+            val parsed = parseAndroidPrivilegedArgs(args)
             val shizukuManager = ShizukuCapabilityManager.get(helper.context)
             val status = shizukuManager.getStatus()
             if (!status.isGranted()) {
@@ -256,7 +254,7 @@ class PrivilegedToolHandler(
     ): ToolExecutionResult {
         val toolName = "android_privileged_session_exec"
         return try {
-            var parsed = parsePrivilegedSessionExecArgs(args, env.runtimeSettings)
+            var parsed = parsePrivilegedSessionExecArgs(args)
             require(isOwnedPrivilegedSession(workspace.id, parsed.sessionId)) { "高权限会话不存在或不属于当前 workspace：${parsed.sessionId}" }
             val shizukuManager = ShizukuCapabilityManager.get(helper.context)
             val status = shizukuManager.getStatus()
@@ -305,19 +303,18 @@ class PrivilegedToolHandler(
     private suspend fun executeAndroidPrivilegedSessionRead(
         args: JsonObject,
         workspace: AgentWorkspaceDescriptor,
-        runtimeSettings: AgentRuntimeSettings,
         callback: AgentCallback,
     ): ToolExecutionResult {
         val toolName = "android_privileged_session_read"
         return try {
-            val parsed = parsePrivilegedSessionReadArgs(args, runtimeSettings)
+            val parsed = parsePrivilegedSessionReadArgs(args)
             require(isOwnedPrivilegedSession(workspace.id, parsed.sessionId)) { "高权限会话不存在或不属于当前 workspace：${parsed.sessionId}" }
             val shizukuManager = ShizukuCapabilityManager.get(helper.context)
             val status = shizukuManager.getStatus()
             if (!status.isGranted()) { return helper.permissionRequiredResult(callback, listOf("Shizuku 权限")) }
-            val result = shizukuManager.readPrivilegedSession(sessionId = parsed.sessionId, maxChars = parsed.maxChars)
+            val result = shizukuManager.readPrivilegedSession(sessionId = parsed.sessionId)
             if (result.code == "session_not_found") { forgetOwnedPrivilegedSession(parsed.sessionId) }
-            val transcript = helper.truncateTerminalTail(result.transcript.ifBlank { result.output }, parsed.maxChars)
+            val transcript = result.transcript.ifBlank { result.output }
             val artifacts = mutableListOf<ArtifactRef>()
             if (transcript.isNotBlank()) { artifacts += persistPrivilegedSessionTranscript(workspace = workspace, sessionId = parsed.sessionId, transcript = transcript, sourceTool = toolName) }
             val payload = result.toMap().toMutableMap().apply {
@@ -356,7 +353,6 @@ class PrivilegedToolHandler(
 
     private fun parseAndroidPrivilegedArgs(
         args: JsonObject,
-        runtimeSettings: AgentRuntimeSettings,
     ): AndroidPrivilegedArgs {
         val action = args["action"]?.jsonPrimitive?.contentOrNull?.trim()?.lowercase().orEmpty()
         require(action.isNotEmpty()) { "action 不能为空" }
@@ -365,9 +361,7 @@ class PrivilegedToolHandler(
             action = action,
             arguments = helper.jsonObjectToStringMap(rawArguments, excludedKeys = setOf("environment")),
             command = rawArguments["command"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() },
-            timeoutSeconds = rawArguments["timeoutSeconds"]?.jsonPrimitive?.intOrNull
-                ?.takeIf { it > 0 }
-                ?: runtimeSettings.terminalTimeoutSeconds,
+            timeoutSeconds = rawArguments["timeoutSeconds"]?.jsonPrimitive?.intOrNull?.takeIf { it > 0 },
             workingDirectory = rawArguments["workingDirectory"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() },
             environment = helper.parseEnvironmentMap(rawArguments["environment"] as? JsonObject)
         )
@@ -384,7 +378,6 @@ class PrivilegedToolHandler(
 
     private fun parsePrivilegedSessionExecArgs(
         args: JsonObject,
-        runtimeSettings: AgentRuntimeSettings,
     ): PrivilegedSessionExecArgs {
         val sessionId = args["sessionId"]?.jsonPrimitive?.content?.trim().orEmpty()
         val command = args["command"]?.jsonPrimitive?.content?.trim().orEmpty()
@@ -392,25 +385,18 @@ class PrivilegedToolHandler(
         require(command.isNotEmpty()) { "缺少 command" }
         return PrivilegedSessionExecArgs(
             sessionId = sessionId, command = command,
-            timeoutSeconds = args["timeoutSeconds"]?.jsonPrimitive?.intOrNull
-                ?.takeIf { it > 0 }
-                ?: runtimeSettings.terminalTimeoutSeconds,
+            timeoutSeconds = args["timeoutSeconds"]?.jsonPrimitive?.intOrNull?.takeIf { it > 0 },
             confirmed = helper.parseConfirmedFlag(args["confirmed"])
         )
     }
 
     private fun parsePrivilegedSessionReadArgs(
         args: JsonObject,
-        runtimeSettings: AgentRuntimeSettings,
     ): PrivilegedSessionReadArgs {
         val sessionId = args["sessionId"]?.jsonPrimitive?.content?.trim().orEmpty()
         require(sessionId.isNotEmpty()) { "缺少 sessionId" }
         return PrivilegedSessionReadArgs(
             sessionId = sessionId,
-            maxChars = args["maxChars"]?.jsonPrimitive?.intOrNull
-                ?.takeIf { it > 0 }
-                ?: runtimeSettings.terminalSessionReadMaxChars
-                ?: Int.MAX_VALUE,
         )
     }
 

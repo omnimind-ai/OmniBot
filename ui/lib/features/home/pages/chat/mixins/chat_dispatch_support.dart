@@ -1,22 +1,14 @@
-import 'dart:convert';
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:ui/models/conversation_model.dart';
 import '../../../../../models/chat_message_model.dart';
 import '../../../../../services/storage_service.dart';
-import '../../command_overlay/services/chat_service.dart';
 
 /// 聊天上下文存储的key
 const String kChatContextStorageKey = 'chat_context_for_summary';
-const String kCompactedContextSummaryPrefix =
-    '<context-summary> The following is a summary of the earlier conversation that was compacted to save context space.';
-const int _kMaxInlineImageBytes = 20 * 1024 * 1024;
 
 /// 聊天调度支持 Mixin
 /// 负责处理可执行任务、发送消息等功能
 mixin ChatDispatchSupport<T extends StatefulWidget> on State<T> {
-  final Map<String, String> _imageDataUrlCache = <String, String>{};
-
   // ===================== 抽象属性/方法（需要在主类中实现）=====================
 
   List<ChatMessageModel> get messages;
@@ -49,6 +41,7 @@ mixin ChatDispatchSupport<T extends StatefulWidget> on State<T> {
     bool generateSummary,
     bool markComplete,
     bool rethrowOnFailure = false,
+    bool allowEmpty = false,
   });
 
   // ===================== 上下文保存 =====================
@@ -70,46 +63,6 @@ mixin ChatDispatchSupport<T extends StatefulWidget> on State<T> {
   Future<void> handleBeforeTaskExecute() async {
     await saveChatContext();
     await persistConversationSnapshot();
-  }
-
-  // ===================== 对话历史构建 =====================
-
-  /// 构建对话历史
-  List<Map<String, dynamic>> buildConversationHistory() {
-    final List<Map<String, dynamic>> history = [];
-    final recentMessages = ChatService.getRecentMessages(
-      messages,
-      maxCount: 10,
-    );
-
-    for (final message in recentMessages) {
-      if (message.user == 1) {
-        final content = _buildMessageContentForModel(message);
-        if (content is String && content.isNotEmpty) {
-          history.insert(0, {'role': 'user', 'content': content});
-        } else if (content is List && content.isNotEmpty) {
-          history.insert(0, {'role': 'user', 'content': content});
-        }
-      } else if (message.user == 2) {
-        final text = message.content?['text'] as String? ?? '';
-        if (text.isNotEmpty) {
-          history.insert(0, {'role': 'assistant', 'content': text});
-        }
-      }
-    }
-    final contextSummary = (currentConversation?.contextSummary ?? '').trim();
-    if (contextSummary.isNotEmpty &&
-        !history.any((message) {
-          final content = message['content'];
-          return content is String &&
-              content.startsWith(kCompactedContextSummaryPrefix);
-        })) {
-      history.insert(0, {
-        'role': 'user',
-        'content': '$kCompactedContextSummaryPrefix\n$contextSummary',
-      });
-    }
-    return history;
   }
 
   /// 获取最新的用户输入
@@ -147,40 +100,6 @@ mixin ChatDispatchSupport<T extends StatefulWidget> on State<T> {
     final attachmentHint = '已附加附件：${names.join('、')}';
     if (text.trim().isEmpty) return attachmentHint;
     return '$text\n$attachmentHint';
-  }
-
-  dynamic _buildMessageContentForModel(ChatMessageModel message) {
-    final attachments = _extractAttachmentList(message);
-    final imageAttachments = attachments
-        .where(
-          (item) =>
-              _isImageAttachment(item) && _shouldSendAttachmentToModel(item),
-        )
-        .toList();
-
-    if (imageAttachments.isEmpty) {
-      return _buildMessageTextForModel(message);
-    }
-
-    final blocks = <Map<String, dynamic>>[];
-    final normalizedText = _buildMessageTextForModel(message).trim();
-    if (normalizedText.isNotEmpty) {
-      blocks.add({'type': 'text', 'text': normalizedText});
-    }
-
-    for (final attachment in imageAttachments) {
-      final url = _resolveImageAttachmentUrl(attachment);
-      if (url.isEmpty) continue;
-      blocks.add({
-        'type': 'image_url',
-        'image_url': {'url': url},
-      });
-    }
-
-    if (blocks.isEmpty) {
-      return _buildMessageTextForModel(message);
-    }
-    return blocks;
   }
 
   List<Map<String, dynamic>> _extractAttachmentList(ChatMessageModel message) {
@@ -256,61 +175,6 @@ mixin ChatDispatchSupport<T extends StatefulWidget> on State<T> {
     if (path.isEmpty) return '';
     final normalized = path.replaceAll('\\', '/');
     return normalized.split('/').last;
-  }
-
-  String _resolveImageAttachmentUrl(Map<String, dynamic> attachment) {
-    final dataUrl = (attachment['dataUrl'] as String? ?? '').trim();
-    if (dataUrl.startsWith('data:')) return dataUrl;
-
-    final url = (attachment['url'] as String? ?? '').trim();
-    if (url.startsWith('http://') ||
-        url.startsWith('https://') ||
-        url.startsWith('data:')) {
-      return url;
-    }
-
-    final path = (attachment['path'] as String? ?? '').trim();
-    if (path.isEmpty) return '';
-    final cached = _imageDataUrlCache[path];
-    if (cached != null && cached.isNotEmpty) return cached;
-
-    final file = File(path);
-    if (!file.existsSync()) return '';
-    try {
-      // This is retained only for the legacy history builder. The active ACP
-      // path keeps the resource reference and lets Native materialize it.
-      // Bound the compatibility path as well so one old caller cannot turn a
-      // large image into an unbounded Dart memory allocation.
-      if (file.lengthSync() > _kMaxInlineImageBytes) return '';
-      final bytes = file.readAsBytesSync();
-      if (bytes.isEmpty) return '';
-      final mimeType = (attachment['mimeType'] as String? ?? '')
-          .trim()
-          .toLowerCase();
-      final safeMimeType = mimeType.startsWith('image/')
-          ? mimeType
-          : _guessImageMimeType(path);
-      final encoded = base64Encode(bytes);
-      final normalized = 'data:$safeMimeType;base64,$encoded';
-      _imageDataUrlCache[path] = normalized;
-      return normalized;
-    } catch (_) {
-      return '';
-    }
-  }
-
-  String _guessImageMimeType(String path) {
-    final lower = path.toLowerCase();
-    if (lower.endsWith('.png')) return 'image/png';
-    if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) {
-      return 'image/jpeg';
-    }
-    if (lower.endsWith('.gif')) return 'image/gif';
-    if (lower.endsWith('.webp')) return 'image/webp';
-    if (lower.endsWith('.bmp')) return 'image/bmp';
-    if (lower.endsWith('.heic')) return 'image/heic';
-    if (lower.endsWith('.heif')) return 'image/heif';
-    return 'image/png';
   }
 
   /// 添加用户消息

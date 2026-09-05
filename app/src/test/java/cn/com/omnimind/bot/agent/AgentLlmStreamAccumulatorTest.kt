@@ -8,6 +8,16 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AgentLlmStreamAccumulatorTest {
+    @Test
+    fun `partial parallel inputs retain provider ids and exact content without invented cards`() {
+        val accumulator = AgentLlmStreamAccumulator(json = Json)
+        accumulator.consume("""{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"a","function":{"name":"file_write","arguments":"{"}},{"index":1,"function":{"name":"file_write","arguments":"{"}},{"index":2,"id":"unnamed","function":{"arguments":"{"}}]}}]}""")
+        assertEquals(listOf("a"), accumulator.currentToolCalls().map { it.id })
+        accumulator.consume("""{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"content\":\"<html>"}},{"index":1,"id":"b","function":{"arguments":"\"path\":"}}]}}]}""")
+        assertEquals(listOf("a", "b"), accumulator.currentToolCalls().map { it.id })
+        assertEquals(listOf("{\"content\":\"<html>", "{\"path\":"), accumulator.currentToolCalls().map { it.function.arguments })
+    }
+
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true
@@ -329,136 +339,24 @@ class AgentLlmStreamAccumulatorTest {
     }
 
     @Test
-    fun `route-gated leading buffer reclassifies text before close tag for non local providers`() {
-        val accumulator = AgentLlmStreamAccumulator(
-            json = json,
-            bufferLeadingTextUntilInlineThinkTag = true
-        )
+    fun `streams ordinary content immediately without provider-specific buffering`() {
+        val accumulator = AgentLlmStreamAccumulator(json = json)
 
-        accumulator.consume("""{"choices":[{"delta":{"content":"inner reasoning</think>final answer"}}]}""")
+        accumulator.consume("""{"choices":[{"delta":{"content":"The user is asking for a build fix."}}]}""")
+
+        assertEquals("The user is asking for a build fix.", accumulator.currentContent())
+        assertEquals("The user is asking for a build fix.", accumulator.buildTurn().message.contentText())
+    }
+
+    @Test
+    fun `only complete inline think tags classify stream content as reasoning`() {
+        val accumulator = AgentLlmStreamAccumulator(json = json)
+
+        accumulator.consume("""{"choices":[{"delta":{"content":"<think>inner reasoning</think>final answer"}}]}""")
 
         val turn = accumulator.buildTurn()
 
         assertEquals("inner reasoning", turn.reasoning)
         assertEquals("final answer", turn.message.contentText())
-    }
-
-    @Test
-    fun `route-gated leading buffer reclassifies split close tag for non local providers`() {
-        val accumulator = AgentLlmStreamAccumulator(
-            json = json,
-            bufferLeadingTextUntilInlineThinkTag = true
-        )
-
-        accumulator.consume("""{"choices":[{"delta":{"content":"inner reasoning</th"}}]}""")
-        accumulator.consume("""{"choices":[{"delta":{"content":"ink>final answer"}}]}""")
-
-        val turn = accumulator.buildTurn()
-
-        assertEquals("inner reasoning", turn.reasoning)
-        assertEquals("final answer", turn.message.contentText())
-    }
-
-    @Test
-    fun `route-gated leading buffer flushes normal content when no think tag appears`() {
-        val accumulator = AgentLlmStreamAccumulator(
-            json = json,
-            bufferLeadingTextUntilInlineThinkTag = true
-        )
-
-        accumulator.consume("""{"choices":[{"delta":{"content":"normal answer"}}]}""")
-
-        val turn = accumulator.buildTurn()
-
-        assertEquals("", turn.reasoning)
-        assertEquals("normal answer", turn.message.contentText())
-    }
-
-    @Test
-    fun `route-gated leading buffer streams content after separate reasoning channel`() {
-        val accumulator = AgentLlmStreamAccumulator(
-            json = json,
-            bufferLeadingTextUntilInlineThinkTag = true
-        )
-
-        accumulator.consume("""{"choices":[{"delta":{"content":"","reasoning_content":"先分析"}}]}""")
-        accumulator.consume("""{"choices":[{"delta":{"content":"最终"}}]}""")
-
-        assertEquals("最终", accumulator.currentContent())
-
-        accumulator.consume("""{"choices":[{"delta":{"content":"回答"}}]}""")
-        val turn = accumulator.buildTurn()
-
-        assertEquals("先分析", turn.reasoning)
-        assertEquals("最终回答", turn.message.contentText())
-    }
-
-    @Test
-    fun `route-gated leading buffer releases same-chunk content when reasoning channel appears`() {
-        val accumulator = AgentLlmStreamAccumulator(
-            json = json,
-            bufferLeadingTextUntilInlineThinkTag = true
-        )
-
-        accumulator.consume("""{"choices":[{"delta":{"content":"答案","reasoning_content":"思考"}}]}""")
-
-        assertEquals("答案", accumulator.currentContent())
-
-        val turn = accumulator.buildTurn()
-
-        assertEquals("思考", turn.reasoning)
-        assertEquals("答案", turn.message.contentText())
-    }
-
-    @Test
-    fun `guarded leading buffer releases large normal content before stream end`() {
-        val accumulator = AgentLlmStreamAccumulator(
-            json = json,
-            bufferLeadingTextUntilInlineThinkTag = true,
-            guardLeadingReasoningLeak = true
-        )
-        val safeChunk = "A".repeat(950)
-
-        accumulator.consume("""{"choices":[{"delta":{"content":"$safeChunk"}}]}""")
-
-        assertEquals(safeChunk, accumulator.currentContent())
-    }
-
-    @Test
-    fun `guarded leading buffer aborts on high confidence reasoning leak pattern`() {
-        val accumulator = AgentLlmStreamAccumulator(
-            json = json,
-            bufferLeadingTextUntilInlineThinkTag = true,
-            guardLeadingReasoningLeak = true
-        )
-
-        val error = runCatching {
-            accumulator.consume(
-                """{"choices":[{"delta":{"content":"# Understanding the User's Question\nThe user is asking for a fix"}}]}"""
-            )
-        }.exceptionOrNull()
-
-        requireNotNull(error)
-        assertTrue(error is AgentStreamReasoningLeakException)
-        assertTrue(error.message.orEmpty().contains("guarded route leaked reasoning-looking content"))
-        assertEquals("", accumulator.currentContent())
-    }
-
-    @Test
-    fun `guarded leading buffer does not abort on single secondary pattern`() {
-        val accumulator = AgentLlmStreamAccumulator(
-            json = json,
-            bufferLeadingTextUntilInlineThinkTag = true,
-            guardLeadingReasoningLeak = true
-        )
-
-        accumulator.consume(
-            """{"choices":[{"delta":{"content":"The user is asking about the build fix."}}]}"""
-        )
-
-        val turn = accumulator.buildTurn()
-
-        assertEquals("", turn.reasoning)
-        assertEquals("The user is asking about the build fix.", turn.message.contentText())
     }
 }

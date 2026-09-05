@@ -45,6 +45,22 @@ void main() {
     expect(capturedCall?.arguments, {'agentId': 'xiaowan-acp'});
   });
 
+  test(
+    'listSessions leaves page size to the active ACP harness by default',
+    () async {
+      MethodCall? capturedCall;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        capturedCall = call;
+        return <String, dynamic>{'sessions': <Map<String, dynamic>>[]};
+      });
+
+      await AgentRuntimeService.listSessions();
+
+      expect(capturedCall?.method, 'session/list');
+      expect(capturedCall?.arguments, isEmpty);
+    },
+  );
+
   test('ensureSession reserves a session before a new prompt', () async {
     final calls = <MethodCall>[];
     messenger.setMockMethodCallHandler(channel, (call) async {
@@ -290,26 +306,29 @@ void main() {
     },
   );
 
-  test('lists codex models, collaboration modes, and config', () async {
-    final calls = <MethodCall>[];
-    messenger.setMockMethodCallHandler(channel, (call) async {
-      calls.add(call);
-      return <String, dynamic>{'ok': true};
-    });
+  test(
+    'lists the complete harness model catalog, collaboration modes, and config',
+    () async {
+      final calls = <MethodCall>[];
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        calls.add(call);
+        return <String, dynamic>{'ok': true};
+      });
 
-    await AgentRuntimeService.listModels();
-    await AgentRuntimeService.listCollaborationModes();
-    await AgentRuntimeService.readConfig();
-    await AgentRuntimeService.listLoadedSessions();
+      await AgentRuntimeService.listModels();
+      await AgentRuntimeService.listCollaborationModes();
+      await AgentRuntimeService.readConfig();
+      await AgentRuntimeService.listLoadedSessions();
 
-    expect(calls.map((call) => call.method), [
-      'model/list',
-      'collaborationMode/list',
-      'config/read',
-      'session/list',
-    ]);
-    expect(calls.first.arguments, {'limit': 100});
-  });
+      expect(calls.map((call) => call.method), [
+        'model/list',
+        'collaborationMode/list',
+        'config/read',
+        'session/list',
+      ]);
+      expect(calls.first.arguments, isEmpty);
+    },
+  );
 
   test('sets a Harness-owned ACP config option', () async {
     MethodCall? capturedCall;
@@ -811,6 +830,42 @@ void main() {
     expect(catalog.selectedAgent?.name, '小万');
   });
 
+  for (final custom in <Map<String, dynamic>>[
+    {'id': 'user-adapter', 'name': '小万', 'command': 'my-acp'},
+    {'id': 'user-adapter', 'name': '小万 Bot', 'command': 'my-bot-acp'},
+    {'id': 'user-adapter', 'name': 'Xiaowan_Bot', 'command': 'my-other-acp'},
+    {
+      'id': 'user-adapter',
+      'name': 'My Agent',
+      'command': '/workspace/xiaowan-next/acp',
+    },
+    {
+      'id': 'user-adapter',
+      'name': 'My configuration',
+      'command': 'omnibot-xiaowan-acp',
+    },
+  ]) {
+    test('custom ACP profile remains selectable: ${custom['command']}', () {
+      final catalog = AcpAgentCatalog.fromMap(<String, dynamic>{
+        'selectedAgentId': custom['id'],
+        'agents': <Map<String, dynamic>>[
+          {
+            'id': 'xiaowan-acp',
+            'name': '小万',
+            'command': 'omnibot-xiaowan-acp',
+            'builtIn': true,
+          },
+          custom,
+        ],
+      });
+      expect(catalog.agents.map((agent) => agent.id), [
+        'xiaowan-acp',
+        'user-adapter',
+      ]);
+      expect(catalog.selectedAgent?.id, 'user-adapter');
+    });
+  }
+
   test('local Agent requests use the selected ACP model', () {
     final model = selectAgentRequestModel(
       status: const AgentRuntimeStatus(
@@ -887,6 +942,22 @@ void main() {
     expect(message, contains('MCP'));
     expect(message, isNot(contains('{"error"')));
   });
+
+  test(
+    'provider abort reports an interrupted response without claiming a retry',
+    () {
+      final message = formatAgentRuntimeErrorForUser(
+        PlatformException(
+          code: 'AGENT_RUNTIME_CALL_FAILED',
+          message: 'Software caused connection abort',
+          details: {'failureKind': 'provider_stream_interrupted'},
+        ),
+      );
+      expect(message, contains('连接中断'));
+      expect(message, contains('未完成的工具调用不会执行'));
+      expect(message, isNot(contains('已自动重试')));
+    },
+  );
 
   test('incomplete tool calls are mapped to an actionable user error', () {
     final message = formatAgentRuntimeErrorForUser(

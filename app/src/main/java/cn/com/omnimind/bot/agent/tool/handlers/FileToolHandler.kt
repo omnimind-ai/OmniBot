@@ -183,7 +183,6 @@ class FileToolHandler(
             "file_read", "read" -> executeFileRead(
                 args,
                 env.workspaceDescriptor,
-                env.runtimeSettings,
                 callback,
             )
             "file_write", "write" -> executeFileWrite(args, env.workspaceDescriptor, callback)
@@ -191,13 +190,11 @@ class FileToolHandler(
             "file_list", "glob" -> executeFileList(
                 args,
                 env.workspaceDescriptor,
-                env.runtimeSettings,
                 callback,
             )
             "file_search", "grep" -> executeFileSearch(
                 args,
                 env.workspaceDescriptor,
-                env.runtimeSettings,
                 callback,
             )
             "file_stat" -> executeFileStat(args, env.workspaceDescriptor, callback)
@@ -209,7 +206,6 @@ class FileToolHandler(
     private suspend fun executeFileRead(
         args: JsonObject,
         workspace: AgentWorkspaceDescriptor,
-        runtimeSettings: AgentRuntimeSettings,
         callback: AgentCallback
     ): ToolExecutionResult {
         val toolName = "file_read"
@@ -226,9 +222,6 @@ class FileToolHandler(
             )
             require(file.exists()) { "文件不存在：${file.absolutePath}" }
             require(file.isFile) { "目标不是文件：${file.absolutePath}" }
-            val maxChars = args["maxChars"]?.jsonPrimitive?.intOrNull
-                ?.takeIf { it > 0 }
-                ?: runtimeSettings.fileReadMaxChars
             val offset = args["offset"]?.jsonPrimitive?.intOrNull?.coerceAtLeast(0) ?: 0
             val lineStart = args["lineStart"]?.jsonPrimitive?.intOrNull?.coerceAtLeast(1)
             val lineCount = args["lineCount"]?.jsonPrimitive?.intOrNull?.coerceAtLeast(1)
@@ -268,7 +261,7 @@ class FileToolHandler(
                     "path" to shellPath,
                     "androidPath" to file.absolutePath,
                     "uri" to artifact.uri,
-                    "content" to (maxChars?.let { helper.truncateText(sliced, it) } ?: sliced),
+                    "content" to sliced,
                     "size" to file.length(),
                     "mimeType" to mimeType
                 )
@@ -421,7 +414,6 @@ class FileToolHandler(
     private suspend fun executeFileList(
         args: JsonObject,
         workspace: AgentWorkspaceDescriptor,
-        runtimeSettings: AgentRuntimeSettings,
         callback: AgentCallback
     ): ToolExecutionResult {
         val toolName = "file_list"
@@ -436,12 +428,8 @@ class FileToolHandler(
             }
             require(directory.exists() && directory.isDirectory) { "目录不存在：${directory.absolutePath}" }
             val recursive = args["recursive"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
-            val maxDepth = args["maxDepth"]?.jsonPrimitive?.intOrNull
-                ?.takeIf { it > 0 }
-                ?: runtimeSettings.fileListMaxDepth
-            val limit = args["limit"]?.jsonPrimitive?.intOrNull
-                ?.takeIf { it > 0 }
-                ?: runtimeSettings.fileListLimit
+            val maxDepth = args["maxDepth"]?.jsonPrimitive?.intOrNull?.takeIf { it > 0 }
+            val limit = args["limit"]?.jsonPrimitive?.intOrNull?.takeIf { it > 0 }
             val files = if (recursive) {
                 val walked = directory.walkTopDown()
                 val depthLimited = if (maxDepth != null) walked.maxDepth(maxDepth) else walked
@@ -488,7 +476,6 @@ class FileToolHandler(
     private suspend fun executeFileSearch(
         args: JsonObject,
         workspace: AgentWorkspaceDescriptor,
-        runtimeSettings: AgentRuntimeSettings,
         callback: AgentCallback
     ): ToolExecutionResult {
         val toolName = "file_search"
@@ -505,9 +492,7 @@ class FileToolHandler(
             }
             require(directory.exists() && directory.isDirectory) { "目录不存在：${directory.absolutePath}" }
             val caseSensitive = args["caseSensitive"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
-            val maxResults = args["maxResults"]?.jsonPrimitive?.intOrNull
-                ?.takeIf { it > 0 }
-                ?: runtimeSettings.fileSearchLimit
+            val maxResults = args["maxResults"]?.jsonPrimitive?.intOrNull?.takeIf { it > 0 }
             val searchNeedle = if (caseSensitive) query else query.lowercase()
             val results = mutableListOf<Map<String, Any?>>()
             directory.walkTopDown().forEach { file ->

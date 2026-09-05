@@ -27,8 +27,6 @@ class AgentToolRegistry(
     terminalDistribution: TerminalDistribution.Spec = TerminalDistribution.alpine,
     pluginToolDefinitions: List<OmniPluginToolDefinition> = emptyList(),
     capabilityToolDefinitions: List<AgentCapabilityToolDefinition> = emptyList(),
-    userMessage: String? = null,
-    toolRoutingMode: AgentToolRoutingMode = AgentToolRoutingMode.DEFAULT,
     // Keep the visual-operation entry visible so the Agent can explain how
     // to enable it. VlmToolHandler gates execution until OmniFlow is enabled.
     includeVlmTool: Boolean = true,
@@ -44,16 +42,8 @@ class AgentToolRegistry(
     private val toolSchemas = linkedMapOf<String, JsonObject>()
     private val runtimeDescriptors = linkedMapOf<String, RuntimeToolDescriptor>()
     private val allToolsByName = linkedMapOf<String, ChatCompletionTool>()
-    private val exposedToolNames = linkedSetOf<String>()
-    // The direct Agent catalog is eagerly populated by
-    // AgentToolVisibilitySelector. Keeping this flag tied to userMessage
-    // incorrectly makes aliases such as `file_read` fail the stale
-    // "call tools_search first" guard even though FileToolHandler supports
-    // them. Progressive discovery remains an explicit catalog capability;
-    // this registry no longer claims to use it.
-    override val usesProgressiveDiscovery: Boolean = false
     override val toolsForModel: List<ChatCompletionTool>
-        get() = exposedToolNames.mapNotNull { allToolsByName[it] }
+        get() = allToolsByName.values.toList()
 
     init {
         val locale = AppLocaleManager.resolvePromptLocale(context)
@@ -173,64 +163,15 @@ class AgentToolRegistry(
                     ?.lowercase()
                     .orEmpty()
             }
-        val modelConversationDefinitions = if (userMessage != null) {
-            AgentToolDefinitions.modelFacingTools(conversationDefinitions)
-        } else {
-            conversationDefinitions
-        }
-        val selectedToolNames = userMessage?.let { message ->
-            AgentToolVisibilitySelector.select(
-                userMessage = message,
-                routingMode = toolRoutingMode,
-                candidates = modelConversationDefinitions.mapNotNull { definition ->
-                    val function = definition["function"] as? JsonObject
-                        ?: return@mapNotNull null
-                    val name = function["name"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
-                    if (name.isBlank()) return@mapNotNull null
-                    val toolType = function["toolType"]?.jsonPrimitive?.contentOrNull?.trim()
-                        .orEmpty()
-                    AgentToolVisibilitySelector.ToolCandidate(
-                        name = name,
-                        displayName = function["displayName"]?.jsonPrimitive?.contentOrNull
-                            .orEmpty(),
-                        description = function["description"]?.jsonPrimitive?.contentOrNull
-                            .orEmpty(),
-                        owner = function["serverName"]?.jsonPrimitive?.contentOrNull,
-                        dynamic = toolType == "plugin" || toolType == "mcp",
-                    )
-                },
-            )
-        }
-        val initialToolNames = if (selectedToolNames == null) {
-            modelConversationDefinitions
-                .mapNotNull { definition ->
-                    (definition["function"] as? JsonObject)
-                        ?.get("name")
-                        ?.jsonPrimitive
-                        ?.contentOrNull
-                        ?.trim()
-                }
-                .toSet()
-        } else {
-            selectedToolNames
-        }
-
-        modelConversationDefinitions.forEach { definition ->
+        conversationDefinitions.forEach { definition ->
             registerModelDefinition(definition)
         }
-
-        exposedToolNames += if (selectedToolNames == null) {
-            allToolsByName.keys
-        } else {
-            initialToolNames
-        }.filter { it in allToolsByName }
 
         // Debug dump: full registered tool list to verify which ones the LLM actually receives.
         OmniLog.i(
             tag,
-            "registered_tools count=${toolsForModel.size} " +
+                "registered_tools count=${toolsForModel.size} " +
                 "conversationMode=$conversationMode " +
-                "toolRoutingMode=$toolRoutingMode " +
                 "subagent_present=${"subagent_dispatch" in runtimeDescriptors.keys} " +
                 "memory_load_present=${"memory_load" in runtimeDescriptors.keys} " +
                 "names=[${runtimeDescriptors.keys.joinToString(",")}]"
@@ -287,7 +228,6 @@ class AgentToolRegistry(
             .filter(String::isNotBlank)
         val scored = runtimeDescriptors.values
             .asSequence()
-            .filter { it.name != AgentToolVisibilitySelector.TOOL_SEARCH_NAME }
             .mapNotNull { descriptor ->
                 val tool = allToolsByName[descriptor.name] ?: return@mapNotNull null
                 val haystack = buildString {
@@ -319,14 +259,6 @@ class AgentToolRegistry(
             scored.map { it.first }.toList()
         } else {
             scored.take(limit.coerceAtLeast(1)).map { it.first }.toList()
-        }
-    }
-
-    override fun exposeToolNames(names: Set<String>) {
-        names.forEach { name ->
-            if (name in allToolsByName) {
-                exposedToolNames += name
-            }
         }
     }
 

@@ -10,7 +10,6 @@ import cn.com.omnimind.baselib.llm.ModelProviderConfigStore
 import cn.com.omnimind.baselib.llm.ModelProviderProfile
 import cn.com.omnimind.baselib.llm.PlatformAiProvisioner
 import cn.com.omnimind.baselib.llm.ProviderModelOption
-import cn.com.omnimind.baselib.llm.ReasoningEffort
 import cn.com.omnimind.baselib.llm.SceneModelBindingEntry
 import cn.com.omnimind.baselib.llm.SceneModelBindingStore
 import cn.com.omnimind.bot.BuildConfig
@@ -19,14 +18,11 @@ import cn.com.omnimind.bot.agent.AgentConversationModePolicy
 import cn.com.omnimind.bot.agent.AgentModelOverride
 import cn.com.omnimind.bot.agent.AgentResult
 import cn.com.omnimind.bot.agent.AgentRuntimeContextRepository
-import cn.com.omnimind.bot.agent.AgentRuntimeSettingsStore
-import cn.com.omnimind.bot.agent.AgentRuntimeSettings
 import cn.com.omnimind.bot.agent.AgentScheduleToolBridge
 import cn.com.omnimind.bot.agent.NoOpAgentRunControl
 import cn.com.omnimind.bot.agent.OmniAgentExecutor
 import cn.com.omnimind.bot.agent.ToolExecutionResult
 import cn.com.omnimind.bot.agent.resolveAgentPermissionIds
-import cn.com.omnimind.bot.plugin.sandbox.XiaowanChatCompletionRequestFactory
 import com.agentclientprotocol.agent.Agent
 import com.agentclientprotocol.agent.AgentInfo
 import com.agentclientprotocol.agent.AgentSession
@@ -283,9 +279,8 @@ private class XiaowanAgentSupport(
         private const val TAG = "XiaowanAcpConnection"
     }
 
-    @Volatile
-    private var cachedModels: XiaowanModels? = null
     private val activeSessions = ConcurrentHashMap<String, XiaowanAgentSession>()
+    private val profileStore = AcpAgentProfileStore(context)
 
     override suspend fun initialize(clientInfo: ClientInfo): AgentInfo {
         // Provider/model resolution is owned by Dispatch Model. A persisted
@@ -336,6 +331,10 @@ private class XiaowanAgentSupport(
             }
         }
         val models = loadXiaowanModels()
+        val saved = profileStore.sessionConfiguration(sessionId.value)
+        val selectedModel = saved["model"]
+            ?.takeIf { saved["providerProfileId"] == models.providerProfileId }
+            ?: models.configuredModelId
         val mcpSession = XiaowanMcpSession.open(
             context = context,
             scope = scope,
@@ -349,8 +348,9 @@ private class XiaowanAgentSupport(
             scope = scope,
             scheduleToolBridge = scheduleToolBridge,
             conversationIdProvider = conversationIdProvider,
-            availableModels = models.available,
-            configuredModelId = models.configuredModelId,
+            availableModels = (models.available + ModelInfo(ModelId(selectedModel), selectedModel))
+                .distinctBy { it.modelId },
+            configuredModelId = selectedModel,
             providerProfile = models.providerProfile,
             sessionId = sessionId,
             requestPermission = requestPermission,
@@ -359,6 +359,9 @@ private class XiaowanAgentSupport(
                 activeSessions.remove(closedSessionId, session)
             },
         )
+        saved["reasoning_effort"]?.let { effort ->
+            runCatching { session.setConfigOption(com.agentclientprotocol.model.SessionConfigId("reasoning_effort"), com.agentclientprotocol.model.SessionConfigOptionValue.StringValue(effort), JsonNull) }
+        }
         activeSessions.remove(sessionId.value)?.close(JsonNull)
         activeSessions[sessionId.value] = session
         return session
@@ -415,6 +418,10 @@ private class XiaowanAgentSupport(
         sessionParameters: SessionCreationParameters
     ): AgentSession {
         validateXiaowanSessionParameters(sessionParameters)
+        activeSessions[sessionId.value]?.let { existing ->
+            existing.refreshModels()
+            return existing
+        }
         return createXiaowanSession(
             sessionId = sessionId,
             sessionParameters = sessionParameters,
@@ -494,32 +501,11 @@ private class XiaowanAgentSupport(
         ) ?: throw IllegalStateException(
             "Dispatch Model Provider is not configured. Configure the default Provider and retry."
         )
-        cachedModels?.let { cached ->
-            if (canReuseXiaowanModels(usableBinding, profile, cached)) {
-                Log.i(TAG, "ACP timing agent=xiaowan stage=model_ready source=connection_cache")
-                return cached
-            }
-            cachedModels = null
-        }
         val startedAtNanos = System.nanoTime()
-        // A durable Dispatch binding is already the user's selected model
-        // and is sufficient to complete ACP initialize. /models is catalog
-        // metadata, not a session prerequisite; querying it here made every
-        // Xiaowan launch wait on a slow or unavailable Provider even though
-        // the selected model was known.
-        Log.i(
-            TAG,
-            "ACP timing agent=xiaowan stage=model_catalog " +
-                "source=durable_binding elapsedMs=${elapsedMillis(startedAtNanos)}"
-        )
-        val catalog = emptyList<ProviderModelOption>()
+        val catalog = ModelProviderConfigStore.cachedModels(context, profile)
         val boundModels = buildXiaowanModelsFromBinding(usableBinding, catalog)
-        // The bound model is the complete ACP startup document. The full
-        // Provider catalog remains available in the Provider editor and can
-        // be refreshed there without delaying this session handshake.
         boundModels?.let {
             val resolved = it.copy(providerProfile = profile.toSessionSnapshot())
-            cachedModels = resolved
             Log.i(
                 TAG,
                 "ACP timing agent=xiaowan stage=model_ready source=binding " +
@@ -642,7 +628,7 @@ private class XiaowanAgentSession(
     scope: CoroutineScope,
     private val scheduleToolBridge: AgentScheduleToolBridge,
     private val conversationIdProvider: suspend (String) -> Long?,
-    override val availableModels: List<ModelInfo>,
+    override var availableModels: List<ModelInfo>,
     private val configuredModelId: String,
     private val providerProfile: ModelProviderProfile,
     override val sessionId: SessionId,
@@ -659,7 +645,8 @@ private class XiaowanAgentSession(
     @Volatile
     private var activePromptJob: Job? = null
     private val closed = AtomicBoolean(false)
-    private var selectedModelId: String = configuredModelId
+    private val sessionConfig = XiaowanSessionConfig(availableModels, configuredModelId)
+    private val selectedModelId: String get() = sessionConfig.model
     private val executor = OmniAgentExecutor(
         context = context,
         scope = scope,
@@ -768,24 +755,10 @@ private class XiaowanAgentSession(
                 "conversationMode=$conversationMode " +
                 "modeSource=${if (persistedConversationMode != null) "conversation" else "acp_meta_or_agent_default"}"
         )
-        val reasoningEffort = normalizeXiaowanReasoningEffort(
-            (_meta as? JsonObject)
-                ?.get("reasoningEffort")
-                ?.jsonPrimitive
-                ?.content
-        )
+        // No Provider-declared reasoning enum is available. Do not invent one
+        // or override the model's own thinking default.
+        val reasoningEffort = sessionConfig.requestEffort
         val terminalEnvironment = xiaowanTerminalEnvironmentFromMeta(_meta)
-        val runtimeSettings = (_meta as? JsonObject)
-            ?.get("runtimeSettings")
-            ?.let { element ->
-                runCatching {
-                    AgentRuntimeSettings.fromJson(element.toString())
-                }.getOrNull()
-            }
-            ?: AgentRuntimeSettingsStore.read(
-                context,
-                AcpAgentProfileStore.XIAOWAN_AGENT_ID,
-            )
         val result = executor.processUserMessage(
             userMessage = text,
             conversationHistory = emptyList(),
@@ -795,7 +768,6 @@ private class XiaowanAgentSession(
             conversationMode = conversationMode,
             modelOverride = selectedModelOverride(),
             reasoningEffort = reasoningEffort,
-            runtimeSettings = runtimeSettings,
             terminalEnvironment = terminalEnvironment,
             callback = streamBridge,
             runControl = NoOpAgentRunControl,
@@ -907,8 +879,46 @@ private class XiaowanAgentSession(
         require(availableModels.any { it.modelId == modelId }) {
             "Model is not available from the configured Provider: ${modelId.value}"
         }
-        selectedModelId = modelId.value
+        setConfigOption(com.agentclientprotocol.model.SessionConfigId("model"),
+            com.agentclientprotocol.model.SessionConfigOptionValue.StringValue(modelId.value), _meta)
         return SetSessionModelResponse(JsonNull)
+    }
+
+    suspend fun refreshModels() {
+        val catalog = if (cn.com.omnimind.baselib.llm.OmniOfficialProvider.isOfficialProfile(providerProfile.id)) {
+            PlatformAiProvisioner.refreshAndGetModels(null)
+        } else {
+            cn.com.omnimind.assists.controller.http.HttpController.fetchProviderModels(
+                apiBase = providerProfile.baseUrl, apiKey = providerProfile.apiKey,
+                customHeaders = providerProfile.customHeaders, protocolType = providerProfile.protocolType,
+                wireApi = providerProfile.wireApi,
+            )
+        }
+        availableModels = (catalog.map { ModelInfo(ModelId(it.id), it.displayName.ifBlank { it.id }) } +
+            ModelInfo(ModelId(selectedModelId), selectedModelId)).distinctBy { it.modelId }
+        sessionConfig.replaceModels(availableModels)
+        Log.i(TAG, "ACP model catalog refreshed count=${availableModels.size}")
+    }
+
+    override val configOptions: List<com.agentclientprotocol.model.SessionConfigOption>
+        get() = sessionConfig.options
+
+    override suspend fun setConfigOption(
+        configId: com.agentclientprotocol.model.SessionConfigId,
+        value: com.agentclientprotocol.model.SessionConfigOptionValue,
+        _meta: JsonElement?,
+    ): com.agentclientprotocol.model.SetSessionConfigOptionResponse {
+        check(activePromptJob?.isActive != true) { "Session configuration can only change while idle" }
+        val updated = XiaowanSessionConfig(availableModels, selectedModelId)
+        updated.set("reasoning_effort", com.agentclientprotocol.model.SessionConfigOptionValue.StringValue(sessionConfig.effort))
+        updated.set(configId.value, value)
+        AcpAgentProfileStore(context).saveSessionConfiguration(sessionId.value, mapOf(
+            "providerProfileId" to providerProfile.id,
+            "model" to updated.model,
+            "reasoning_effort" to updated.effort,
+        ))
+        sessionConfig.set(configId.value, value)
+        return com.agentclientprotocol.model.SetSessionConfigOptionResponse(configOptions)
     }
 
     private fun selectedModelOverride(): cn.com.omnimind.bot.agent.AgentModelOverride? {
@@ -984,29 +994,6 @@ internal fun xiaowanAgentCapabilities(): AgentCapabilities = AgentCapabilities(
     ),
 )
 
-/**
- * Maps the shared ACP vocabulary at the Xiaowan adapter boundary. Keeping
- * this pure makes the provider-facing contract testable without constructing
- * an Android Agent session.
- */
-internal fun normalizeXiaowanReasoningEffort(value: String?): String? {
-    val raw = value?.trim()
-    if (raw.isNullOrEmpty()) {
-        // The Provider's default may enable deep thinking even for a
-        // one-word greeting. ACP effort is optional, so Xiaowan follows
-        // its request factory and keeps thinking opt-in rather than
-        // turning every ordinary Agent turn into a long deliberation.
-        return XiaowanChatCompletionRequestFactory.DEFAULT_REASONING_EFFORT
-    }
-    return when (ReasoningEffort.normalize(raw)) {
-        ReasoningEffort.NONE -> ReasoningEffort.NONE
-        ReasoningEffort.LOW -> ReasoningEffort.LOW
-        ReasoningEffort.MEDIUM -> ReasoningEffort.MEDIUM
-        ReasoningEffort.HIGH, ReasoningEffort.XHIGH, ReasoningEffort.MAX ->
-            ReasoningEffort.HIGH
-        else -> null
-    }
-}
 
 internal data class XiaowanPromptParts(
     val text: String,
@@ -1318,6 +1305,39 @@ internal class XiaowanAcpEventBridge(
         }
     }
 
+    override suspend fun onToolCallInput(
+        toolCall: cn.com.omnimind.bot.agent.AssistantToolCall,
+        toolType: String?,
+    ) {
+        callbackMutex.withLock {
+            val id = toolCall.id
+            val name = toolCall.function.name
+            if (id.isBlank() || name.isBlank() || startedToolCallIds.contains(id)) return@withLock
+            val first = seenToolCallIds.add(id)
+            if (!first && !toolTypesById.containsKey(id)) return@withLock // terminal replay
+            val input = JsonPrimitive(toolCall.function.arguments)
+            if (first) {
+                reasoningSegmentPending = true
+                toolIdsByName.getOrPut(name) { ArrayDeque() }.addLast(id)
+                toolTypesById[id] = toolType
+                emitUpdate(SessionUpdate.ToolCall(
+                    toolCallId = ToolCallId(id),
+                    title = xiaowanToolTitle(name),
+                    kind = xiaowanToolKind(name, toolType),
+                    status = ToolCallStatus.PENDING,
+                    rawInput = input,
+                ))
+            } else {
+                emitUpdate(SessionUpdate.ToolCallUpdate(
+                    toolCallId = ToolCallId(id),
+                    title = xiaowanToolTitle(name),
+                    kind = xiaowanToolKind(name, toolType),
+                    rawInput = input,
+                ))
+            }
+        }
+    }
+
     override suspend fun onToolCallStart(
         toolName: String,
         arguments: kotlinx.serialization.json.JsonObject,
@@ -1362,16 +1382,26 @@ internal class XiaowanAcpEventBridge(
         // Keep a per-turn tombstone as well as the active set. The active set
         // is removed after a terminal update, but a replayed start after
         // completion must remain a no-op too.
-        if (!seenToolCallIds.add(toolCallId) || !startedToolCallIds.add(toolCallId)) {
-            return
-        }
+        val first = seenToolCallIds.add(toolCallId)
+        if (!first && !toolTypesById.containsKey(toolCallId)) return
+        if (!startedToolCallIds.add(toolCallId)) return
         // ACP keeps the event order, so the next reasoning update belongs to
         // a new visible segment after this tool call. Delay allocating the
         // new message id until that reasoning actually arrives; otherwise a
         // tool-only round would leave an empty thought card in the timeline.
         reasoningSegmentPending = true
-        toolIdsByName.getOrPut(toolName) { ArrayDeque() }.addLast(toolCallId)
+        if (first) toolIdsByName.getOrPut(toolName) { ArrayDeque() }.addLast(toolCallId)
         toolTypesById[toolCallId] = toolType
+        if (!first) {
+            emitUpdate(SessionUpdate.ToolCallUpdate(
+                toolCallId = ToolCallId(toolCallId),
+                title = xiaowanToolTitle(toolName),
+                kind = xiaowanToolKind(toolName, toolType),
+                status = ToolCallStatus.IN_PROGRESS,
+                rawInput = arguments,
+            ))
+            return
+        }
         emitUpdate(
             SessionUpdate.ToolCall(
                 toolCallId = ToolCallId(toolCallId),
@@ -1612,43 +1642,6 @@ internal class XiaowanAcpEventBridge(
         }
     }
 
-    override suspend fun onRetrying(
-        retryCount: Int,
-        maxRetries: Int,
-        retryDelayMs: Long,
-        message: String,
-        retryReason: String?,
-    ) {
-        callbackMutex.withLock {
-            // A retry restarts the provider generation inside the same Agent
-            // round. Do not let the next cumulative reasoning snapshot reopen
-            // the failed attempt's visible card; the shared ACP reducer uses
-            // this boundary to render retry -> reasoning as a new segment.
-            if (thoughtSnapshot.isNotEmpty()) {
-                reasoningSegmentPending = true
-            }
-            generationId = UUID.randomUUID().toString()
-            val retryMeta = acpPresentationMeta(
-                "retry" to mapOf(
-                    "count" to retryCount,
-                    "maxRetries" to maxRetries,
-                    "delayMs" to retryDelayMs,
-                    "message" to message,
-                    "reason" to retryReason,
-                    "generationId" to generationId,
-                )
-            )
-            emitAssistantStatus(retryMeta)
-            if (assistantSnapshot.isNotEmpty()) {
-                // The retry metadata belongs to the failed assistant attempt.
-                // Future chunks must use a fresh message id so partial output
-                // cannot be silently extended by the retry generation.
-                assistantSnapshot = ""
-                assistantMessageId = MessageId(UUID.randomUUID().toString())
-            }
-        }
-    }
-
     override suspend fun onPromptTokenUsageChanged(
         latestPromptTokens: Int,
         promptTokenThreshold: Int?,
@@ -1663,22 +1656,9 @@ internal class XiaowanAcpEventBridge(
         latestPromptTokens: Int?,
         promptTokenThreshold: Int?,
     ) {
-        callbackMutex.withLock {
-            emitUpdate(
-                SessionUpdate.AgentThoughtChunk(
-                    content = ContentBlock.Text(""),
-                    messageId = thoughtMessageId,
-                    _meta = acpPresentationMeta(
-                        "compaction" to mapOf(
-                            "status" to if (isCompacting) "compressing" else "completed",
-                            "trigger" to "auto",
-                            "latestPromptTokens" to latestPromptTokens,
-                            "promptTokenThreshold" to promptTokenThreshold,
-                        )
-                    ),
-                )
-            )
-        }
+        // Automatic compaction is not an ACP session or turn state. Manual
+        // `/compact` owns its own UI marker, so do not synthesize a private
+        // presentation update for this internal callback.
     }
 
     override suspend fun onClarifyRequired(question: String, missingFields: List<String>?) {

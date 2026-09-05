@@ -213,7 +213,10 @@ internal class AcpPromptExecution(
 
     /** Hard transport teardown; unlike user cancellation it may stop ACP IO. */
     fun cancelForTransport(cause: CancellationException) {
-        val job = synchronized(lock) { promptJob ?: preparationJob }
+        val job = synchronized(lock) {
+            cancellationRequested = true
+            promptJob ?: preparationJob
+        }
         job?.cancel(cause)
     }
 }
@@ -223,7 +226,7 @@ internal class AcpPromptExecution(
  *
  * ClientSession owns prompt execution, cancellation and stop reasons. This
  * class does not model a second lifecycle: it only reserves one host turn per
- * session, remembers request ids for idempotent retries, and records a bounded
+ * session, remembers request ids for idempotent retries, and records the
  * terminal result after the official prompt has ended.
  */
 /**
@@ -232,9 +235,7 @@ internal class AcpPromptExecution(
  * part of the storage key. Scoped registries below are views only; they do
  * not own another copy of lifecycle state.
  */
-internal class AcpTurnOwnershipStore(
-    private val maxRequestTombstones: Int = 256,
-) {
+internal class AcpTurnOwnershipStore {
     private val lock = Any()
     private val activeBySession = linkedMapOf<AcpTurnSessionKey, AcpTurnRecord>()
     private val requestRecords = linkedMapOf<AcpTurnRequestKey, AcpTurnRecord>()
@@ -337,7 +338,6 @@ internal class AcpTurnOwnershipStore(
         current.requestId?.let { requestId ->
             requestRecords[AcpTurnRequestKey(scope, sessionId, requestId)] = finished
         }
-        trimRequestTombstones(scope)
         finished
     }
 
@@ -371,19 +371,7 @@ internal class AcpTurnOwnershipStore(
                 requestRecords[AcpTurnRequestKey(scope, record.sessionId, requestId)] = record
             }
         }
-        trimRequestTombstones(scope)
         finished
-    }
-
-    private fun trimRequestTombstones(scopeId: String) {
-        val scope = normalizeScope(scopeId)
-        while (requestRecords.keys.count { it.scopeId == scope } > maxRequestTombstones) {
-            val removable = requestRecords.entries.firstOrNull {
-                it.key.scopeId == scope && it.value.terminal != null
-            }
-                ?: break
-            requestRecords.remove(removable.key)
-        }
     }
 
     private fun normalizeScope(value: String): String =
@@ -709,7 +697,7 @@ internal class LocalAcpRuntime(
             )
         } else {
             val launchEnvironment = mergeAcpLaunchEnvironment(
-                profileEnvironment = profile.environment,
+                profile = profile,
                 providerEnvironment = baseEnvironment,
             )
             activeLaunchEnvironment = launchEnvironment
@@ -1598,14 +1586,9 @@ internal class LocalAcpRuntime(
             Log.i(TAG, "Switching ACP agent to ${selected.id}; closing previous process")
             disconnect()
         }
-        // Selecting a managed Agent is also the one-click install/start
-        // action.  Previously the Flutter shortcut only persisted the
-        // selected profile and then called `status()`.  A missing managed
-        // command therefore made `status.ready` false, so connect() — the
-        // only boundary that installs the official runtime — was never
-        // reached.  Keep preparation here at the ACP boundary so every
-        // caller (top shortcut, settings, restored mode, and future clients)
-        // gets the same official installation path.
+        // Selection may start an already prepared ACP process. Installing or
+        // repairing a managed Harness is deliberately separate: it is the
+        // explicit `agent/prepare` settings action, never a chat transition.
         return try {
             connect(profile = selected)
             agentsPayload(
@@ -1637,9 +1620,9 @@ internal class LocalAcpRuntime(
                 enabled = profileMap["enabled"] != false
             )
         )
-        if (activeProfile?.id == saved.id) {
-            disconnect()
-        }
+        // Saving changes the next process launch, not the current ACP
+        // session. Keep activeProfile/activeLaunchEnvironment as the running
+        // process snapshot; explicit disconnect/switch still owns teardown.
         return linkedMapOf(
             "agent" to saved.toPayload(
                 selected = profileStore.selected().id == saved.id,
@@ -2121,6 +2104,15 @@ internal class LocalAcpRuntime(
                 )
             }
             sessions[threadId]?.let {
+                if (args["refreshConfig"] == true && activeAgentId() == AcpAgentProfileStore.XIAOWAN_AGENT_ID) {
+                    check(turnOwnership.activeTurnId(threadId) == null) { "本轮结束后可刷新模型列表" }
+                    val cwd = sessionCwds[threadId] ?: "/workspace"
+                    val refreshed = requireClient().loadSession(
+                        SessionId(threadId), sessionCreationParameters(cwd, args), operationsFactory()
+                    )
+                    registerSession(refreshed, cwd)
+                    return@withLock sessionPayload(refreshed, bindingRepository.getBindingByThreadId(threadId)?.conversationId)
+                }
                 Log.i(
                     TAG,
                     "ACP session/load restored in-memory session=${compactId(threadId)}"
@@ -2234,7 +2226,7 @@ internal class LocalAcpRuntime(
     }
 
     private suspend fun listThreads(args: Map<String, Any?>): Map<String, Any?> {
-        val limit = (args["limit"] as? Number)?.toInt()?.coerceIn(1, 200) ?: 50
+        val limit = (args["limit"] as? Number)?.toInt()
         val capabilities = requireAgentInfo().capabilities
         val allEntries = if (capabilities.sessionCapabilities.list != null) {
             requireClient().listSessions(
@@ -2270,9 +2262,9 @@ internal class LocalAcpRuntime(
                 )
             }
         }
-        // The app bridge exposes an opaque cursor over a materialized list.
-        // Keep the snapshot order deterministic so a retry with the same
-        // cursor cannot reshuffle entries from ConcurrentHashMap/Agent output.
+        // The app bridge exposes an opaque cursor only when the caller asks
+        // for one. Keep the snapshot order deterministic so an explicit page
+        // retry cannot reshuffle entries from ConcurrentHashMap/Agent output.
         val orderedEntries = allEntries.sortedBy { entry ->
             entry["sessionId"]?.toString()
                 ?: entry["threadId"]?.toString()
@@ -3254,7 +3246,6 @@ internal class LocalAcpRuntime(
         }
         val declaredServers = if (sessionMcpEnabled) {
             buildLocalAgentAcpMcpServers(
-                harnessAdapter = AcpHarnessAdapters.forProfile(profile),
                 supportsHttp = shouldDeclareLocalServer,
                 state = mcpState
             ) + buildConfiguredRemoteAcpMcpServers(
@@ -3614,12 +3605,6 @@ internal class LocalAcpRuntime(
                     lines.forEach { line ->
                         synchronized(output) {
                             output.append(line).append('\n')
-                            if (output.length > MAX_ACP_TERMINAL_BUFFER_CHARS) {
-                                output.delete(
-                                    0,
-                                    output.length - MAX_ACP_TERMINAL_BUFFER_CHARS
-                                )
-                            }
                         }
                     }
                 }
@@ -3628,9 +3613,7 @@ internal class LocalAcpRuntime(
                 process = process,
                 output = output,
                 readerJob = readerJob,
-                outputByteLimit = outputByteLimit?.toLong()?.coerceAtMost(
-                    MAX_ACP_TERMINAL_BUFFER_CHARS.toLong()
-                )
+                outputByteLimit = outputByteLimit
             )
             return CreateTerminalResponse(terminalId)
         }
@@ -3720,12 +3703,7 @@ internal class LocalAcpRuntime(
             val content = if (line == null && limit == null) {
                 file.readText()
             } else {
-                val start = ((line ?: 1u).toLong() - 1L).coerceAtLeast(0L).toInt()
-                val count = limit?.toLong()?.coerceAtMost(MAX_FILE_LINES.toLong())?.toInt()
-                    ?: MAX_FILE_LINES
-                file.useLines { lines ->
-                    lines.drop(start).take(count).joinToString("\n")
-                }
+                file.useLines { lines -> selectAcpTextFileLines(lines, line, limit) }
             }
             ReadTextFileResponse(content)
         }
@@ -4077,7 +4055,7 @@ internal class LocalAcpRuntime(
         val process: Process,
         val output: StringBuilder,
         val readerJob: Job,
-        val outputByteLimit: Long?
+        val outputByteLimit: ULong?
     )
 
     companion object {
@@ -4088,9 +4066,6 @@ internal class LocalAcpRuntime(
         private const val CANCEL_REQUEST_TIMEOUT_MS = 2_000L
         private const val CANCEL_JOIN_TIMEOUT_MS = 2_000L
         private const val COMMAND_PROBE_TIMEOUT_MS = 20_000L
-        private const val MAX_FILE_LINES = 20_000
-        private const val MAX_ACP_TERMINAL_BUFFER_CHARS = 256_000
-
     }
 }
 
@@ -4781,12 +4756,36 @@ private fun jsonToAny(value: JsonElement): Any? = when (value) {
     else -> null
 }
 
-private fun tailByBytes(value: String, limit: Long?): Pair<String, Boolean> {
-    if (limit == null || limit <= 0L) return value to false
+internal fun tailByBytes(value: String, limit: ULong?): Pair<String, Boolean> {
+    if (limit == null || limit == 0uL) return value to false
     val bytes = value.toByteArray(StandardCharsets.UTF_8)
-    if (bytes.size <= limit) return value to false
-    val start = bytes.size - limit.toInt().coerceAtMost(bytes.size)
+    if (bytes.size.toULong() <= limit) return value to false
+    val retainedBytes = minOf(limit, bytes.size.toULong()).toInt()
+    val start = bytes.size - retainedBytes
     return String(bytes.copyOfRange(start, bytes.size), StandardCharsets.UTF_8) to true
+}
+
+internal fun selectAcpTextFileLines(
+    lines: Sequence<String>,
+    line: UInt?,
+    limit: UInt?,
+): String {
+    val iterator = lines.iterator()
+    var skipped = 0L
+    val start = ((line ?: 1u).toLong() - 1L).coerceAtLeast(0L)
+    while (skipped < start && iterator.hasNext()) {
+        iterator.next()
+        skipped += 1
+    }
+    val requested = limit?.toULong()
+    var emitted = 0uL
+    return buildString {
+        while (iterator.hasNext() && (requested == null || emitted < requested)) {
+            if (isNotEmpty()) append('\n')
+            append(iterator.next())
+            emitted += 1uL
+        }
+    }
 }
 
 private fun Map<String, Any?>.stringValue(key: String): String? =
@@ -4910,8 +4909,6 @@ private fun shellQuoteAcp(value: String): String =
     "'" + value.replace("'", "'\"'\"'") + "'"
 
 internal object AgentHandoffContext {
-    private const val MAX_HANDOFF_CHARS = 96_000
-
     fun format(
         conversationId: Long,
         messages: List<ChatCompletionMessage>,
@@ -4942,14 +4939,7 @@ internal object AgentHandoffContext {
                 appendLine(renderContent(message))
             }
         }.trim()
-        if (rendered.length <= MAX_HANDOFF_CHARS) return rendered
-        return buildString {
-            appendLine("[OmniBot handoff]")
-            appendLine("Older context was omitted from this handoff and remains available in local history; continue from the retained tail.")
-            appendLine("Conversation ID: $conversationId")
-            appendLine()
-            append(rendered.takeLast(MAX_HANDOFF_CHARS))
-        }
+        return rendered
     }
 
     private fun renderContent(message: ChatCompletionMessage): String {

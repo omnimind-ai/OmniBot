@@ -27,8 +27,6 @@ data class McpFileRecord(
 
 object McpFileInbox {
     private const val TAG = "[McpFileInbox]"
-    private const val MAX_FILES = 20
-    private const val FILE_TTL_MS = 2 * 60 * 60 * 1000L
     private const val TOKEN_TTL_MS = 15 * 60 * 1000L
 
     private val lock = Any()
@@ -116,20 +114,10 @@ object McpFileInbox {
     }
 
     private fun cleanupLocked() {
-        val now = System.currentTimeMillis()
-        val expiredIds = records.values.filter { record ->
-            val expired = now - record.createdAt > FILE_TTL_MS
-            val missing = !File(record.path).exists()
-            expired || missing
+        val missingIds = records.values.filter { record ->
+            !File(record.path).exists()
         }.map { it.id }
-
-        expiredIds.forEach { removeLocked(it) }
-
-        val overflow = records.size - MAX_FILES
-        if (overflow > 0) {
-            val oldest = records.values.sortedBy { it.createdAt }.take(overflow)
-            oldest.forEach { removeLocked(it.id) }
-        }
+        missingIds.forEach { removeLocked(it) }
     }
 
     private fun removeLocked(fileId: String): Boolean {

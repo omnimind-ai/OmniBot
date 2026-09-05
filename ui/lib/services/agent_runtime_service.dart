@@ -135,9 +135,11 @@ String formatAgentRuntimeErrorForUser(Object? error) {
     case 'provider_unavailable':
       return '统一 Agent Provider 不可用或凭据不完整，请检查 Provider 配置。';
     case 'provider_model_unavailable':
-      return '统一 Agent 模型当前不可用，请刷新模型列表后重新选择。';
+      return '服务商拒绝了当前模型。本轮已停止，请重新选择可用模型后重试。';
     case 'provider_tls_certificate_failure':
       return 'Provider HTTPS 证书校验失败，请检查设备时间和证书链。';
+    case 'provider_stream_interrupted':
+      return '模型响应期间连接中断。本轮已停止，请检查网络后重试；未完成的工具调用不会执行。';
     case 'provider_stream_idle_timeout':
       return 'Provider 长时间没有返回新的流式更新，请检查接口地址、模型和网络后重试。';
     case 'provider_tool_call_incomplete':
@@ -553,14 +555,9 @@ class AcpAgentCatalog {
 }
 
 String _agentCatalogIdentity(AcpAgentProfile agent) {
-  final normalizedName = agent.name.trim().toLowerCase().replaceAll(
-    RegExp(r'[\s_-]+'),
-    '',
-  );
   if (agent.id == 'xiaowan-acp' ||
-      agent.command.toLowerCase() == 'omnibot-xiaowan-acp' ||
-      normalizedName == '小万bot' ||
-      normalizedName == 'xiaowanbot') {
+      agent.id.toLowerCase() == 'legacy-xiaowan-bot' ||
+      agent.id.toLowerCase() == 'legacy-xiaowan-command') {
     return 'xiaowan-acp';
   }
   return 'id:${agent.id}';
@@ -937,7 +934,7 @@ class AgentRuntimeService {
     String? reasoningEffort,
     String? permissionMode,
     String? content,
-    Map<String, dynamic>? runtimeSettings,
+    int? expectedRevision,
   }) {
     return _invokeMap('agent/config/write', {
       'agentId': agentId.trim(),
@@ -947,12 +944,25 @@ class AgentRuntimeService {
       if (reasoningEffort != null) 'reasoningEffort': reasoningEffort,
       if (permissionMode != null) 'permissionMode': permissionMode,
       if (content != null) 'content': content,
-      if (runtimeSettings != null) 'runtimeSettings': runtimeSettings,
+      if (expectedRevision != null) 'expectedRevision': expectedRevision,
     });
   }
 
-  // Canonical ACP application API. New code must use session/prompt names;
-  // the methods below keep the previous Dart surface working for old builds.
+  static Future<Map<String, dynamic>> rollbackAgentConfig(
+    String agentId, {
+    required int targetRevision,
+    int? expectedRevision,
+  }) {
+    return _invokeMap('agent/config/rollback', {
+      'agentId': agentId.trim(),
+      'targetRevision': targetRevision,
+      if (expectedRevision != null) 'expectedRevision': expectedRevision,
+    });
+  }
+
+  // Canonical ACP application API. New business code must use these
+  // session/* methods. Legacy thread/turn requests are accepted only by the
+  // native compatibility adapter and are not exposed as a Dart service API.
   static Future<Map<String, dynamic>> newSession({
     int? conversationId,
     String? cwd,
@@ -1062,6 +1072,7 @@ class AgentRuntimeService {
     int? conversationId,
     String? agentId,
     bool includeHistory = true,
+    bool refreshConfig = false,
     String? conversationMode,
   }) {
     return _invokeMap('session/load', {
@@ -1070,19 +1081,20 @@ class AgentRuntimeService {
       if (agentId != null && agentId.trim().isNotEmpty)
         'agentId': agentId.trim(),
       'includeHistory': includeHistory,
+      if (refreshConfig) 'refreshConfig': true,
       if (conversationMode != null && conversationMode.trim().isNotEmpty)
         'conversationMode': conversationMode.trim(),
     });
   }
 
   static Future<Map<String, dynamic>> listSessions({
-    int limit = 50,
+    int? limit,
     String? cursor,
     String? cwd,
     List<String> additionalDirectories = const <String>[],
   }) {
     return _invokeMap('session/list', {
-      'limit': limit,
+      if (limit != null) 'limit': limit,
       if (cursor != null && cursor.trim().isNotEmpty) 'cursor': cursor.trim(),
       if (cwd != null && cwd.trim().isNotEmpty) 'cwd': cwd.trim(),
       if (additionalDirectories.isNotEmpty)
@@ -1388,7 +1400,7 @@ class AgentRuntimeService {
   }
 
   static Future<Map<String, dynamic>> listModels() {
-    return _invokeMap('model/list', {'limit': 100});
+    return _invokeMap('model/list');
   }
 
   static Future<Map<String, dynamic>> listModelsForStatus(
@@ -1554,32 +1566,6 @@ class AgentRuntimeService {
       if (remoteCwd.trim().isNotEmpty) 'remoteCwd': remoteCwd.trim(),
       'path': path.trim(),
       'destinationPath': destinationPath.trim(),
-    });
-  }
-
-  static Future<Map<String, dynamic>> steerTurn({
-    String? threadId,
-    int? conversationId,
-    String? turnId,
-    required String text,
-  }) {
-    return _invokeMap('turn/steer', {
-      if (threadId != null) 'threadId': threadId,
-      if (conversationId != null) 'conversationId': conversationId,
-      if (turnId != null) 'turnId': turnId,
-      'text': text,
-    });
-  }
-
-  static Future<Map<String, dynamic>> interruptTurn({
-    String? threadId,
-    int? conversationId,
-    String? turnId,
-  }) {
-    return _invokeMap('session/cancel', {
-      if (threadId != null) 'threadId': threadId,
-      if (conversationId != null) 'conversationId': conversationId,
-      if (turnId != null) 'turnId': turnId,
     });
   }
 

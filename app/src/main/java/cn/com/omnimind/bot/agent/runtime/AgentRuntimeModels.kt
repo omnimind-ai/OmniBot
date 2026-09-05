@@ -225,11 +225,6 @@ data class ResolvedSkillContext(
     }
 }
 
-data class SkillCompatibilityResult(
-    val available: Boolean,
-    val reason: String? = null
-)
-
 data class SkillMatchResult(
     val entry: SkillIndexEntry,
     val confidence: Double,

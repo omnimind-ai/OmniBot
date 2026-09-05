@@ -10,11 +10,8 @@ import cn.com.omnimind.baselib.llm.ChatCompletionStreamOptions
 import cn.com.omnimind.baselib.llm.ChatCompletionTool
 import cn.com.omnimind.baselib.llm.contentText
 import cn.com.omnimind.baselib.util.OmniLog
-import cn.com.omnimind.bot.agent.tool.AgentToolConcurrencyPolicy
-import cn.com.omnimind.bot.agent.tool.handlers.ToolSearchHandler
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
@@ -30,67 +27,6 @@ import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
 import java.security.MessageDigest
 
-private val CONTEXT_OVERFLOW_PATTERNS = listOf(
-    Regex("prompt is too long", RegexOption.IGNORE_CASE),
-    Regex("request_too_large", RegexOption.IGNORE_CASE),
-    Regex("input is too long for requested model", RegexOption.IGNORE_CASE),
-    Regex("exceeds (?:the )?context window", RegexOption.IGNORE_CASE),
-    Regex("exceeds (?:the )?(?:model'?s )?maximum context length", RegexOption.IGNORE_CASE),
-    Regex("input token count.*exceeds the maximum", RegexOption.IGNORE_CASE),
-    Regex("maximum prompt length is \\d+", RegexOption.IGNORE_CASE),
-    Regex("reduce the length of the messages", RegexOption.IGNORE_CASE),
-    Regex("maximum context length is \\d+ tokens", RegexOption.IGNORE_CASE),
-    Regex("exceeds (?:the )?maximum allowed input length", RegexOption.IGNORE_CASE),
-    Regex("exceeds the available context size", RegexOption.IGNORE_CASE),
-    Regex("greater than the context length", RegexOption.IGNORE_CASE),
-    Regex("context window exceeds limit", RegexOption.IGNORE_CASE),
-    Regex("exceeded model token limit", RegexOption.IGNORE_CASE),
-    Regex("too large for model with \\d+ maximum context length", RegexOption.IGNORE_CASE),
-    Regex("model_context_window_exceeded", RegexOption.IGNORE_CASE),
-    Regex("prompt too long; exceeded (?:max )?context length", RegexOption.IGNORE_CASE),
-    Regex("range of input length should be", RegexOption.IGNORE_CASE),
-    Regex("context[_ ]length[_ ]exceeded", RegexOption.IGNORE_CASE),
-    Regex("too many tokens", RegexOption.IGNORE_CASE),
-    Regex("token limit exceeded", RegexOption.IGNORE_CASE)
-)
-
-private val NON_CONTEXT_OVERFLOW_PATTERNS = listOf(
-    Regex("rate limit", RegexOption.IGNORE_CASE),
-    Regex("too many requests", RegexOption.IGNORE_CASE),
-    Regex("throttl", RegexOption.IGNORE_CASE)
-)
-
-internal fun isContextOverflowTurnFailure(error: Throwable): Boolean {
-    if (error !is AgentStreamRequestException) return false
-    val failureText = buildString {
-        append(error.reason)
-        error.responseBody?.takeIf { it.isNotBlank() }?.let { body ->
-            append(' ')
-            append(body)
-        }
-    }
-    if (NON_CONTEXT_OVERFLOW_PATTERNS.any { it.containsMatchIn(failureText) }) {
-        return false
-    }
-    return CONTEXT_OVERFLOW_PATTERNS.any { it.containsMatchIn(failureText) }
-}
-
-internal fun isLengthStopAtContextCapacity(
-    finishReason: String?,
-    promptTokens: Int?,
-    completionTokens: Int?,
-    contextCapacityTokens: Int?
-): Boolean {
-    val normalizedReason = finishReason?.trim()?.lowercase().orEmpty()
-    val isLengthStop = normalizedReason == "length" ||
-        normalizedReason == "max_tokens" ||
-        normalizedReason == "max_completion_tokens"
-    if (!isLengthStop || completionTokens != 0) return false
-    val prompt = promptTokens?.takeIf { it >= 0 } ?: return false
-    val capacity = contextCapacityTokens?.takeIf { it > 0 } ?: return false
-    return prompt.toLong() * 100L >= capacity.toLong() * 99L
-}
-
 class AgentOrchestrator(
     private val llmClient: AgentLlmClient,
     private val toolRegistry: AgentToolCatalog,
@@ -105,41 +41,12 @@ class AgentOrchestrator(
      */
     private val ownsToolRouter: Boolean = true
 ) {
-    private data class RetryDecision(
-        val retryable: Boolean,
-        val reason: String
-    )
-
-    private class TerminalTurnRequestFailure(
-        val errorMessage: String,
-        cause: Throwable
-    ) : RuntimeException(errorMessage, cause)
-
-    private class ContextOverflowTurnFailure(
-        val errorMessage: String,
-        cause: Throwable
-    ) : RuntimeException(errorMessage, cause)
-
-    private data class SkillCompletionPolicy(
-        val skillId: String,
-        val startTools: Set<String>,
-        val completionTools: List<String>
-    )
-
-    private data class PendingSkillCompletion(
-        val policy: SkillCompletionPolicy,
-        val nextTool: String
-    )
-
     data class Input(
         val callback: AgentCallback,
         val initialMessages: List<ChatCompletionMessage>,
         val executionEnv: AgentExecutionEnvironment,
         val conversationId: Long? = null,
-        val promptCacheKey: String? = null,
-        val contextCompactor: AgentContextCompactionController? = null,
-        val maxModelRounds: Int? = null,
-        val maxCompletionTokens: Int? = null
+        val promptCacheKey: String? = null
     )
 
     private val json = Json {
@@ -192,10 +99,6 @@ class AgentOrchestrator(
             .take(12)
     }
 
-    private fun contextStateFingerprint(messages: List<ChatCompletionMessage>): String {
-        return shortFingerprint(json.encodeToString(messages))
-    }
-
     private fun resolveTurnUsage(turn: ChatCompletionTurn): TurnUsage {
         val usage = turn.usage
         val promptTokens = usage?.promptTokens
@@ -229,19 +132,12 @@ class AgentOrchestrator(
     suspend fun run(input: Input): AgentResult {
         val callback = input.callback
         val memory: AgentChatMemory = MutableListChatMemory(input.initialMessages)
-        val completionPolicies = resolveSkillCompletionPolicies(input.executionEnv.resolvedSkills)
         // Keep this as an explicit loop instead of the inline `mapTo` call.
         // This code runs inside the ACP request coroutine and can be resumed
         // while a counterpart sends $/cancelRequest.  The generated inline
         // collection bridge is needlessly fragile on Android/R8 in that
         // cancellation path; the mutable set is also clearer about the
         // de-duplication contract used by tool-choice recovery.
-        val availableToolNames = linkedSetOf<String>()
-        for (tool in toolRegistry.toolsForModel) {
-            availableToolNames += tool.function.name
-        }
-        val completionProgress = mutableMapOf<String, Int>()
-        val completionRecoveryRounds = mutableMapOf<String, Int>()
         val executedTools = mutableListOf<ToolExecutionResult>()
         var outputKind = AgentOutputKind.NONE
         var hasUserFacingOutput = false
@@ -249,75 +145,18 @@ class AgentOrchestrator(
         var accumulatedAssistantContent = ""
         var lastFinishReason: String? = null
         var latestPromptTokens: Int? = null
-        var latestPromptTokenThreshold: Int? = null
         var lastTurnUsage: TurnUsage? = null
         var lastPrefillTokensPerSecond: Double? = null
         var lastDecodeTokensPerSecond: Double? = null
         var completedModelRounds = 0
-        var lengthContinuationRounds = 0
-        var contextOverflowRecoveryRounds = 0
-        val contextCompactionStates = mutableSetOf(
-            contextStateFingerprint(input.initialMessages)
-        )
         var terminated = false
-        var terminalError: AgentResult.Error? = null
-
-        suspend fun compactContextForOverflow(): Boolean {
-            val settings = input.executionEnv.runtimeSettings
-            val maxRecoveryRounds = settings.maxContextOverflowRecoveryRounds
-            if (maxRecoveryRounds != null &&
-                contextOverflowRecoveryRounds >= maxRecoveryRounds
-            ) {
-                return false
-            }
-            val compacted = input.contextCompactor?.compactForOverflow(
-                conversationId = input.conversationId,
-                conversationMode = input.executionEnv.conversationMode,
-                latestPromptTokens = latestPromptTokens,
-                messages = memory.snapshot(),
-                promptTokenThresholdOverride = latestPromptTokenThreshold,
-                callback = callback
-            ) ?: return false
-            if (!contextCompactionStates.add(contextStateFingerprint(compacted))) {
-                logInfo(tag, "context_overflow compacted=false reason=no_progress")
-                return false
-            }
-            memory.replaceAll(compacted)
-            contextOverflowRecoveryRounds += 1
-            completedModelRounds = (completedModelRounds - 1).coerceAtLeast(0)
-            logInfo(
-                tag,
-                "context_overflow compacted=true " +
-                    "retry=$contextOverflowRecoveryRounds/${maxRecoveryRounds ?: "unlimited"}"
-            )
-            return true
-        }
 
         try {
             roundLoop@ while (true) {
-                val settings = input.executionEnv.runtimeSettings
-                val maxModelRounds = (input.maxModelRounds ?: settings.maxModelRounds)
-                    ?.takeIf { it > 0 }
-                if (maxModelRounds != null && completedModelRounds >= maxModelRounds) {
-                    val message = t(
-                        "Agent 已达到 $maxModelRounds 轮模型调用上限。",
-                        "Agent reached the $maxModelRounds-round model-call limit."
-                    )
-                    callback.onError(message, false)
-                    terminalError = AgentResult.Error(message)
-                    terminated = true
-                    break@roundLoop
-                }
                 completedModelRounds += 1
                 val round = completedModelRounds
                 val assistantContentPrefix = accumulatedAssistantContent
                 callback.onThinkingStart()
-                val roundStartsAfterToolResult = memory.lastRole() == "tool"
-                val toolChoiceForRound = if (roundStartsAfterToolResult) {
-                    null
-                } else {
-                    JsonPrimitive("auto")
-                }
                 logInfo(
                     tag,
                     "round=$round request_tools=${toolRegistry.toolsForModel.size}"
@@ -340,67 +179,40 @@ class AgentOrchestrator(
                     "off",
                     "disabled",
                 )
-                val turn = try {
-                    streamTurnWithTransportPolicy(
-                        callback = callback,
-                        request = ChatCompletionRequest(
-                            messages = requestMessages,
-                            model = model,
-                            maxCompletionTokens = input.maxCompletionTokens
-                                ?: settings.maxCompletionTokens,
-                            stream = true,
-                            streamOptions = ChatCompletionStreamOptions(includeUsage = true),
-                            enableThinking = if (disableThinking) false else null,
-                            reasoningEffort = if (disableThinking) null else input.executionEnv.reasoningEffort,
-                            thinking = if (disableThinking) {
-                                cn.com.omnimind.baselib.llm.ChatCompletionThinking(type = "disabled")
-                            } else {
-                                null
-                            },
-                            promptCacheKey = input.promptCacheKey,
-                            tools = toolRegistry.toolsForModel,
-                            toolChoice = toolChoiceForRound,
-                            parallelToolCalls = true
-                        ),
-                        assistantContentPrefix = assistantContentPrefix
-                    )
-                } catch (e: ContextOverflowTurnFailure) {
-                    if (compactContextForOverflow()) {
-                        continue@roundLoop
-                    }
-                    callback.onError(e.errorMessage, true)
-                    terminalError = AgentResult.Error(e.errorMessage, e)
-                    terminated = true
-                    break@roundLoop
-                } catch (e: TerminalTurnRequestFailure) {
-                    callback.onError(e.errorMessage, true)
-                    terminalError = AgentResult.Error(e.errorMessage, e)
-                    terminated = true
-                    break@roundLoop
-                }
+                val turn = streamTurn(
+                    callback = callback,
+                    request = ChatCompletionRequest(
+                        messages = requestMessages,
+                        model = model,
+                        maxCompletionTokens = null,
+                        stream = true,
+                        streamOptions = ChatCompletionStreamOptions(includeUsage = true),
+                        enableThinking = if (disableThinking) false else null,
+                        reasoningEffort = if (disableThinking) null else input.executionEnv.reasoningEffort,
+                        thinking = if (disableThinking) {
+                            cn.com.omnimind.baselib.llm.ChatCompletionThinking(type = "disabled")
+                        } else {
+                            null
+                        },
+                        promptCacheKey = input.promptCacheKey,
+                        tools = toolRegistry.toolsForModel,
+                        // These optional controls belong to the active
+                        // Harness/Provider. The shared loop supplies the
+                        // tool surface and preserves all tool results,
+                        // without overriding the provider's own defaults.
+                        toolChoice = null,
+                        // The configured Harness/Provider owns whether
+                        // independent tool calls may run in parallel.
+                        // Omitting this optional OpenAI-compatible field
+                        // keeps the shared ACP loop free of a local policy.
+                        parallelToolCalls = null
+                    ),
+                    assistantContentPrefix = assistantContentPrefix
+                )
                 val turnUsage = resolveTurnUsage(turn)
                 lastTurnUsage = turnUsage
                 lastFinishReason = turn.finishReason
                 latestPromptTokens = turnUsage.promptTokens
-                latestPromptTokenThreshold =
-                    input.contextCompactor?.resolvePromptTokenThreshold(input.conversationId)
-                if (
-                    isLengthStopAtContextCapacity(
-                        finishReason = lastFinishReason,
-                        promptTokens = turnUsage.promptTokens,
-                        completionTokens = turnUsage.completionTokens,
-                        contextCapacityTokens = latestPromptTokenThreshold
-                    ) &&
-                    (settings.maxContextOverflowRecoveryRounds == null ||
-                        contextOverflowRecoveryRounds < settings.maxContextOverflowRecoveryRounds)
-                ) {
-                    if (compactContextForOverflow()) {
-                        continue@roundLoop
-                    }
-                }
-                contextOverflowRecoveryRounds = 0
-                contextCompactionStates.clear()
-                contextCompactionStates += contextStateFingerprint(memory.snapshot())
                 lastPrefillTokensPerSecond =
                     turn.usage?.prefillTokensPerSecond ?: lastPrefillTokensPerSecond
                 lastDecodeTokensPerSecond =
@@ -431,131 +243,11 @@ class AgentOrchestrator(
                 latestPromptTokens?.let { promptTokens ->
                     callback.onPromptTokenUsageChanged(
                         latestPromptTokens = promptTokens,
-                        promptTokenThreshold = latestPromptTokenThreshold
+                        promptTokenThreshold = null
                     )
-                }
-                input.contextCompactor?.let { compactor ->
-                    val compacted = compactor.compactIfNeeded(
-                        conversationId = input.conversationId,
-                        conversationMode = input.executionEnv.conversationMode,
-                        promptTokens = latestPromptTokens,
-                        messages = memory.snapshot(),
-                        contextTokens = AgentConversationContextCompactor
-                            .resolveReportedContextTokens(
-                                promptTokens = turnUsage.promptTokens,
-                                completionTokens = turnUsage.completionTokens,
-                                totalTokens = turnUsage.totalTokens
-                            ),
-                        promptTokenThresholdOverride = latestPromptTokenThreshold,
-                        callback = callback
-                    )
-                    memory.replaceAll(compacted)
-                }
-
-                // A provider can finish with `length` after streaming a syntactically
-                // valid but incomplete tool-call argument object. Never execute those
-                // calls: feed one result per call back to the model so it can re-issue
-                // the complete operation in the next round.
-                if (toolCalls.isNotEmpty() && isLengthFinishReason(lastFinishReason)) {
-                    val reason = buildTruncatedToolCallMessage()
-                    toolCalls.forEach { toolCall ->
-                        // Even a rejected/truncated call must follow ACP's
-                        // start -> terminal-update lifecycle. The bridge
-                        // deliberately drops terminal updates for unknown
-                        // ids, so do not emit a completion without its start.
-                        callback.onToolCallStart(
-                            toolCall.id,
-                            toolCall.function.name,
-                            JsonObject(emptyMap()),
-                            toolRegistry.runtimeDescriptor(toolCall.function.name).toolType,
-                        )
-                        val result = ToolExecutionResult.Error(
-                            toolName = toolCall.function.name,
-                            message = reason
-                        )
-                        executedTools.add(result)
-                        callback.onToolCallComplete(
-                            toolCall.id,
-                            toolCall.function.name,
-                            result
-                        )
-                        appendToolResultMessage(
-                            memory = memory,
-                            env = input.executionEnv,
-                            callback = callback,
-                            assistantMessage = assistantMessageForMemory,
-                            toolCall = toolCall,
-                            descriptor = toolRegistry.runtimeDescriptor(toolCall.function.name),
-                            result = result
-                        )
-                    }
-                    accumulatedAssistantContent = ""
-                    lengthContinuationRounds = 0
-                    logInfo(
-                        tag,
-                        "round=$round rejected_truncated_tool_calls=${toolCalls.size} " +
-                            "finish_reason=${lastFinishReason.orEmpty()}"
-                    )
-                    continue@roundLoop
                 }
 
                 if (toolCalls.isEmpty()) {
-                    if (
-                                isLengthFinishReason(lastFinishReason) &&
-                        rawAssistantContent.isNotBlank() &&
-                        (settings.maxLengthContinuationRounds == null ||
-                            lengthContinuationRounds < settings.maxLengthContinuationRounds)
-                    ) {
-                        lengthContinuationRounds += 1
-                        accumulatedAssistantContent = lastAssistantContent
-                        memory.add(buildLengthContinuationMessage())
-                        logInfo(
-                            tag,
-                            "round=$round finish_reason=${lastFinishReason.orEmpty()} auto_continue=$lengthContinuationRounds/${settings.maxLengthContinuationRounds ?: "unlimited"} accumulated_content_len=${accumulatedAssistantContent.length}"
-                        )
-                        continue@roundLoop
-                    }
-                    val pendingCompletion = pendingSkillCompletion(
-                        policies = completionPolicies,
-                        completionProgress = completionProgress
-                    )
-                    if (pendingCompletion != null && isStopFinishReason(lastFinishReason)) {
-                        val unavailableTools = pendingCompletion.policy.completionTools
-                            .filterNot(availableToolNames::contains)
-                        if (unavailableTools.isNotEmpty()) {
-                            val message = t(
-                                "Skill ${pendingCompletion.policy.skillId} 无法完成：缺少工具 ${unavailableTools.joinToString(", ")}。",
-                                "Skill ${pendingCompletion.policy.skillId} cannot complete because these tools are unavailable: ${unavailableTools.joinToString(", ")}."
-                            )
-                            callback.onError(message, false)
-                            terminalError = AgentResult.Error(message)
-                            terminated = true
-                            break@roundLoop
-                        }
-                        val recoveryCount = completionRecoveryRounds
-                            .getOrDefault(pendingCompletion.policy.skillId, 0)
-                        val maxRecoveryRounds = settings.maxMissingToolCallRecoveryRounds
-                        if (maxRecoveryRounds == null || recoveryCount < maxRecoveryRounds) {
-                            completionRecoveryRounds[pendingCompletion.policy.skillId] = recoveryCount + 1
-                            memory.add(buildSkillCompletionRecoveryMessage(pendingCompletion))
-                            logInfo(
-                                tag,
-                                "round=$round skill_completion_pending " +
-                                    "skill=${pendingCompletion.policy.skillId} " +
-                                    "next_tool=${pendingCompletion.nextTool} " +
-                                    "recovery=${recoveryCount + 1}/$maxRecoveryRounds"
-                            )
-                            continue@roundLoop
-                        }
-                        val message = t(
-                            "项目文件已生成，但 ${pendingCompletion.nextTool} 尚未成功，不能标记为已完成。",
-                            "Project files were generated, but ${pendingCompletion.nextTool} has not succeeded, so the task cannot be marked complete."
-                        )
-                        callback.onError(message, false)
-                        terminalError = AgentResult.Error(message)
-                        terminated = true
-                        break@roundLoop
-                    }
                     val fallbackMessage = lastAssistantContent.ifBlank {
                         "我已完成思考，但暂时无法生成回复，请重试。"
                     }
@@ -572,8 +264,6 @@ class AgentOrchestrator(
                     break
                 }
                 accumulatedAssistantContent = ""
-                lengthContinuationRounds = 0
-
                 var advanceToNextRound = false
                 var pendingToolCallBackfillReason: String? = null
                 val descriptorMap = mutableMapOf<String, AgentToolRegistry.RuntimeToolDescriptor>()
@@ -586,19 +276,15 @@ class AgentOrchestrator(
                 // (matching pre-refactor semantics: write the error tool message,
                 // skip remaining calls, and advance to the next LLM round).
                 parsePhase@ for (toolCall in toolCalls) {
-                    if (
-                        toolRegistry.usesProgressiveDiscovery &&
-                        toolRegistry.toolsForModel.none { it.function.name == toolCall.function.name }
-                    ) {
+                    val descriptor = toolRegistry.runtimeDescriptor(toolCall.function.name)
+                    descriptorMap[toolCall.id] = descriptor
+                    val parsedArgs: JsonObject = try {
+                        parseToolArguments(toolCall.function.arguments)
+                    } catch (error: Exception) {
                         val result = ToolExecutionResult.Error(
                             toolCall.function.name,
-                            t(
-                                "工具 ${toolCall.function.name} 尚未加载，请先调用 tools_search 查找并加载它。",
-                                "Tool ${toolCall.function.name} is not loaded yet. Call tools_search first to discover it."
-                            )
+                            error.message ?: "Invalid tool arguments JSON"
                         )
-                        val descriptor = toolRegistry.runtimeDescriptor(toolCall.function.name)
-                        descriptorMap[toolCall.id] = descriptor
                         executedTools.add(result)
                         callback.onToolCallStart(
                             toolCall.id,
@@ -619,55 +305,6 @@ class AgentOrchestrator(
                             toolCall = toolCall,
                             descriptor = descriptor,
                             result = result
-                        )
-                        writtenToolCallIds += toolCall.id
-                        hasUserFacingOutput =
-                            hasUserFacingOutput || eventAdapter.hasUserVisibleOutput(result)
-                        advanceToNextRound = true
-                        pendingToolCallBackfillReason = t(
-                            "工具尚未加载，当前 assistant 消息中的剩余 tool_call 未执行。",
-                            "The tool was not loaded, so the remaining tool calls in this assistant message were not executed."
-                        )
-                        break@parsePhase
-                    }
-                    val descriptor = toolRegistry.runtimeDescriptor(toolCall.function.name)
-                    descriptorMap[toolCall.id] = descriptor
-                    val parsedArgs: JsonObject = try {
-                        parseToolArguments(toolCall.function.arguments)
-                    } catch (error: Exception) {
-                        val result = ToolExecutionResult.Error(
-                            toolCall.function.name,
-                            error.message ?: "Invalid tool arguments JSON"
-                        )
-                        val failureLearning = buildFailureLearningPayload(
-                            env = input.executionEnv,
-                            toolCall = toolCall,
-                            descriptor = descriptor,
-                            argumentsJson = null,
-                            result = result,
-                            failureStage = "argument_parse"
-                        )
-                        executedTools.add(result)
-                        callback.onToolCallStart(
-                            toolCall.id,
-                            toolCall.function.name,
-                            JsonObject(emptyMap()),
-                            descriptor.toolType,
-                        )
-                        callback.onToolCallComplete(
-                            toolCall.id,
-                            toolCall.function.name,
-                            result
-                        )
-                        appendToolResultMessage(
-                            memory = memory,
-                            env = input.executionEnv,
-                            callback = callback,
-                            assistantMessage = assistantMessageForMemory,
-                            toolCall = toolCall,
-                            descriptor = descriptor,
-                            result = result,
-                            failureLearning = failureLearning
                         )
                         writtenToolCallIds += toolCall.id
                         hasUserFacingOutput =
@@ -686,14 +323,6 @@ class AgentOrchestrator(
                         val result = ToolExecutionResult.Error(
                             toolCall.function.name,
                             validationError.message ?: "Tool arguments validation failed"
-                        )
-                        val failureLearning = buildFailureLearningPayload(
-                            env = input.executionEnv,
-                            toolCall = toolCall,
-                            descriptor = descriptor,
-                            argumentsJson = parsedArgs.toString(),
-                            result = result,
-                            failureStage = "argument_validation"
                         )
                         executedTools.add(result)
                         callback.onToolCallStart(
@@ -714,8 +343,7 @@ class AgentOrchestrator(
                             assistantMessage = assistantMessageForMemory,
                             toolCall = toolCall,
                             descriptor = descriptor,
-                            result = result,
-                            failureLearning = failureLearning
+                            result = result
                         )
                         writtenToolCallIds += toolCall.id
                         hasUserFacingOutput =
@@ -731,157 +359,69 @@ class AgentOrchestrator(
                     validatedCalls.add(toolCall)
                 }
 
-                // Phase B — partition validated calls into batches and execute.
+                // Phase B — execute the calls in the model's declared order.
+                // The runtime does not add a second tool scheduler: a tool
+                // result is committed before the next model-selected call so
+                // identity, cancellation, and user-visible activity stay in
+                // one straightforward ACP prompt loop.
                 if (!advanceToNextRound && validatedCalls.isNotEmpty()) {
-                    val batches = AgentToolConcurrencyPolicy.partitionToolCalls(
-                        validatedCalls,
-                        parsedArgsMap
-                    )
                     logInfo(
                         tag,
-                        "round=$round batches=${batches.size} " +
-                            batches.joinToString(separator = ",") { batch ->
-                                "${if (batch.parallel) "P" else "S"}${batch.calls.size}"
-                            }
+                        "round=$round model_tool_calls=${validatedCalls.size}"
                     )
 
-                    batchLoop@ for (batch in batches) {
-                        val batchResults: List<Pair<AssistantToolCall, ToolExecutionResult>>
-                        if (batch.parallel && batch.calls.size > 1) {
-                            // Parallel batch: launch async per call. callback.onToolCallStart /
-                            // onToolCallComplete fire from inside each async (lets UI update each
-                            // card independently). State mutation + memory append happen serially
-                            // below to preserve ToolCall ↔ ToolMessage pairing order.
-                            batchResults = coroutineScope {
-                                batch.calls.map { call ->
-                                    async {
-                                        val desc = descriptorMap.getValue(call.id)
-                                        val args = parsedArgsMap.getValue(call.id)
-                                        val result = executeSingleTool(
-                                            env = input.executionEnv,
-                                            callback = callback,
-                                            toolCall = call,
-                                            descriptor = desc,
-                                            parsedArgs = args
-                                        )
-                                        callback.onToolCallComplete(
-                                            call.id,
-                                            call.function.name,
-                                            result
-                                        )
-                                        call to result
-                                    }
-                                }.awaitAll()
-                            }
-                        } else {
-                            // Serial batch (single call or barrier).
-                            val singles = mutableListOf<Pair<AssistantToolCall, ToolExecutionResult>>()
-                            for (call in batch.calls) {
-                                val desc = descriptorMap.getValue(call.id)
-                                val args = parsedArgsMap.getValue(call.id)
-                                val result = executeSingleTool(
-                                    env = input.executionEnv,
-                                    callback = callback,
-                                    toolCall = call,
-                                    descriptor = desc,
-                                    parsedArgs = args
-                                )
-                                callback.onToolCallComplete(
-                                    call.id,
-                                    call.function.name,
-                                    result
-                                )
-                                singles.add(call to result)
-                            }
-                            batchResults = singles
+                    for (call in validatedCalls) {
+                        val desc = descriptorMap.getValue(call.id)
+                        val args = parsedArgsMap.getValue(call.id)
+                        val result = executeSingleTool(
+                            env = input.executionEnv,
+                            callback = callback,
+                            toolCall = call,
+                            descriptor = desc,
+                            parsedArgs = args
+                        )
+                        callback.onToolCallComplete(
+                            call.id,
+                            call.function.name,
+                            result
+                        )
+                        executedTools.add(result)
+                        appendToolResultMessage(
+                            memory = memory,
+                            env = input.executionEnv,
+                            callback = callback,
+                            assistantMessage = assistantMessageForMemory,
+                            toolCall = call,
+                            descriptor = desc,
+                            result = result
+                        )
+                        writtenToolCallIds += call.id
+
+                        if (!terminated && !advanceToNextRound && eventAdapter.hasUserVisibleOutput(result)) {
+                            hasUserFacingOutput = true
                         }
-
-                        var breakBatchLoopAfterPost = false
-                        // Phase C — serial post-process: write results back to memory in
-                        // original call order, accumulate UI state, honor stop conditions.
-                        for ((call, result) in batchResults) {
-                            val desc = descriptorMap.getValue(call.id)
-                            val args = parsedArgsMap.getValue(call.id)
-                            executedTools.add(result)
-                            activateDiscoveredTools(call.function.name, result)
-                            recordSkillCompletionToolAttempt(
-                                policies = completionPolicies,
-                                completionProgress = completionProgress,
-                                toolName = call.function.name,
-                                successful = isSuccessfulToolResult(result)
-                            )
-                            val failureLearning = buildFailureLearningPayload(
-                                env = input.executionEnv,
-                                toolCall = call,
-                                descriptor = desc,
-                                argumentsJson = args.toString(),
-                                result = result,
-                                failureStage = "execution"
-                            )
-                            if (failureLearning == null) {
-                                resolveFailureLearningAfterSuccess(
-                                    env = input.executionEnv,
-                                    toolCall = call,
-                                    argumentsJson = args.toString(),
-                                    result = result
-                                )
-                            }
-                            appendToolResultMessage(
-                                memory = memory,
-                                env = input.executionEnv,
-                                callback = callback,
-                                assistantMessage = assistantMessageForMemory,
-                                toolCall = call,
-                                descriptor = desc,
-                                result = result,
-                                failureLearning = failureLearning
-                            )
-                            writtenToolCallIds += call.id
-
-                            if (!terminated && !advanceToNextRound && eventAdapter.hasUserVisibleOutput(result)) {
-                                hasUserFacingOutput = true
-                            }
-                            if (!terminated && !advanceToNextRound) {
-                                val mappedKind = eventAdapter.mapOutputKind(result)
-                                if (mappedKind != AgentOutputKind.NONE) {
-                                    outputKind = mappedKind
-                                }
-                            }
-                            if (
-                                !terminated &&
-                                isUserStoppedVlmTask(call.function.name, result)
-                            ) {
-                                terminated = true
-                                pendingToolCallBackfillReason = t(
-                                    "GUI 任务已被用户停止，当前 assistant 消息中的剩余 tool_call 未继续处理。",
-                                    "The GUI task was stopped by the user, so the remaining tool calls in this assistant message were not processed."
-                                )
-                            }
-                            if (!terminated && eventAdapter.isConversationStoppingResult(result)) {
-                                terminated = true
-                                pendingToolCallBackfillReason = t(
-                                    "工具 ${call.function.name} 的结果已结束当前对话，当前 assistant 消息中的剩余 tool_call 未继续处理。",
-                                    "The result of tool ${call.function.name} ended the conversation, so the remaining tool calls in this assistant message were not processed."
-                                )
-                            }
-                            if (
-                                !terminated &&
-                                !advanceToNextRound &&
-                                AgentToolConcurrencyPolicy.isTurnBoundary(call.function.name)
-                            ) {
-                                advanceToNextRound = true
-                                breakBatchLoopAfterPost = true
-                                pendingToolCallBackfillReason = t(
-                                    "独占工具 ${call.function.name} 已占用本轮，当前 assistant 消息中的剩余 tool_call 未执行。",
-                                    "Exclusive tool ${call.function.name} occupied this turn, so the remaining tool calls in this assistant message were not executed."
-                                )
-                            }
-                            if (terminated) {
-                                breakBatchLoopAfterPost = true
+                        if (!terminated && !advanceToNextRound) {
+                            val mappedKind = eventAdapter.mapOutputKind(result)
+                            if (mappedKind != AgentOutputKind.NONE) {
+                                outputKind = mappedKind
                             }
                         }
-                        if (breakBatchLoopAfterPost) {
-                            break@batchLoop
+                        if (!terminated && isUserStoppedVlmTask(call.function.name, result)) {
+                            terminated = true
+                            pendingToolCallBackfillReason = t(
+                                "GUI 任务已被用户停止，当前 assistant 消息中的剩余 tool_call 未继续处理。",
+                                "The GUI task was stopped by the user, so the remaining tool calls in this assistant message were not processed."
+                            )
+                        }
+                        if (!terminated && eventAdapter.isConversationStoppingResult(result)) {
+                            terminated = true
+                            pendingToolCallBackfillReason = t(
+                                "工具 ${call.function.name} 的结果已结束当前对话，当前 assistant 消息中的剩余 tool_call 未继续处理。",
+                                "The result of tool ${call.function.name} ended the conversation, so the remaining tool calls in this assistant message were not processed."
+                            )
+                        }
+                        if (terminated) {
+                            break
                         }
                     }
                 }
@@ -914,28 +454,19 @@ class AgentOrchestrator(
             // this result to PromptResponse(CANCELLED).
             return AgentResult.Error("Agent execution cancelled", e)
         } catch (e: Exception) {
-            // Keep the same retry policy for failures that escape the
-            // streaming-specific branches.  In particular, transient tool
-            // router/transport exceptions must expose the manual Retry action
-            // instead of becoming an unrecoverable generic error.  The
-            // classifier still rejects provider limits and malformed tool
-            // calls, so a retry cannot blindly repeat a side-effecting tool.
-            val decision = classifyRetryableTurnFailure(e)
-            val message = decision.reason.ifBlank {
-                t(
-                    "Agent 执行失败，请重试。",
-                    "Agent execution failed. Please retry."
-                )
-            }
-            callback.onError(message, decision.retryable)
+            // A retry is always an explicit new user send.  Do not infer a
+            // different UI action from provider-specific status codes or
+            // error strings: that turns transport heuristics into a private
+            // lifecycle policy and prevents the user from retrying after
+            // fixing credentials, quota, or a transient service issue.
+            val message = terminalFailureMessage(e)
+            callback.onError(message, retryable = true)
             return AgentResult.Error(message, e)
         } finally {
             if (ownsToolRouter) {
                 runCatching { toolRouter.dispose() }
             }
         }
-
-        terminalError?.let { return it }
 
         if (!hasUserFacingOutput) {
             val fallbackMessage = lastAssistantContent.ifBlank {
@@ -960,7 +491,7 @@ class AgentOrchestrator(
                 content = lastAssistantContent,
                 finishReason = lastFinishReason,
                 latestPromptTokens = latestPromptTokens,
-                promptTokenThreshold = latestPromptTokenThreshold,
+                promptTokenThreshold = null,
                 completionTokens = lastTurnUsage?.completionTokens,
                 cachedTokens = lastTurnUsage?.cachedTokens,
                 cacheCreationTokens = lastTurnUsage?.cacheCreationTokens,
@@ -970,7 +501,7 @@ class AgentOrchestrator(
             outputKind = outputKind.value,
             hasUserVisibleOutput = hasUserFacingOutput,
             latestPromptTokens = latestPromptTokens,
-            promptTokenThreshold = latestPromptTokenThreshold,
+            promptTokenThreshold = null,
             completionTokens = lastTurnUsage?.completionTokens,
             cachedTokens = lastTurnUsage?.cachedTokens,
             cacheCreationTokens = lastTurnUsage?.cacheCreationTokens,
@@ -980,54 +511,37 @@ class AgentOrchestrator(
         return finalResult
     }
 
-    private suspend fun streamTurnWithTransportPolicy(
+    private suspend fun streamTurn(
         callback: AgentCallback,
         request: ChatCompletionRequest,
         assistantContentPrefix: String
     ): ChatCompletionTurn {
-        try {
-            // AgentLlmClient is the sole owner of transport retries. Retrying
-            // this method would replay the complete logical round, including
-            // streamed reasoning and tool intent, and can produce duplicate
-            // thoughts/cards. A failed turn is surfaced to the UI instead.
-            return llmClient.streamTurn(
-                request = request,
-                onReasoningUpdate = { reasoning ->
-                    if (reasoning.isNotBlank()) {
-                        callback.onThinkingUpdate(normalizeThinkingText(reasoning))
-                    }
-                },
-                onContentUpdate = { content ->
-                    if (content.isNotBlank()) {
-                        callback.onChatMessage(
-                            combineContinuationContent(
-                                prefix = assistantContentPrefix,
-                                content = content
-                            ),
-                            false
-                        )
-                    }
+        // AgentLlmClient is the sole owner of transport retries. Retrying
+        // this method would replay the complete logical round, including
+        // streamed reasoning and tool intent, and can produce duplicate
+        // thoughts/cards. A failed turn is surfaced to the UI instead.
+        return llmClient.streamTurn(
+            request = request,
+            onReasoningUpdate = { reasoning ->
+                if (reasoning.isNotBlank()) {
+                    callback.onThinkingUpdate(normalizeThinkingText(reasoning))
                 }
-            )
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            if (isContextOverflowTurnFailure(e)) {
-                val requestError = e as AgentStreamRequestException
-                throw ContextOverflowTurnFailure(
-                    errorMessage = formatTurnFailureReason(
-                        requestError.statusCode,
-                        requestError.reason
-                    ),
-                    cause = e
-                )
+            },
+            onToolCallInput = { call ->
+                callback.onToolCallInput(call, toolRegistry.runtimeDescriptor(call.function.name).toolType)
+            },
+            onContentUpdate = { content ->
+                if (content.isNotBlank()) {
+                    callback.onChatMessage(
+                        combineContinuationContent(
+                            prefix = assistantContentPrefix,
+                            content = content
+                        ),
+                        false
+                    )
+                }
             }
-            val decision = classifyRetryableTurnFailure(e)
-            throw TerminalTurnRequestFailure(
-                errorMessage = decision.reason,
-                cause = e
-            )
-        }
+        )
     }
 
     private suspend fun executeSingleTool(
@@ -1076,29 +590,6 @@ class AgentOrchestrator(
         }
     }
 
-    private fun activateDiscoveredTools(
-        toolName: String,
-        result: ToolExecutionResult,
-    ) {
-        if (toolName != ToolSearchHandler.NAME) return
-        val rawResult = (result as? ToolExecutionResult.ContextResult)?.rawResultJson
-            ?: return
-        val names = runCatching {
-            val payload = json.parseToJsonElement(rawResult) as? JsonObject
-            val tools = payload?.get("tools") as? JsonArray
-            tools.orEmpty().mapNotNull { item ->
-                (item as? JsonObject)?.get("name")?.jsonPrimitive?.contentOrNull
-            }.toSet()
-        }.getOrDefault(emptySet())
-        if (names.isNotEmpty()) {
-            toolRegistry.exposeToolNames(names)
-            logInfo(
-                tag,
-                "tool_discovery activated=${names.size} visible=${toolRegistry.toolsForModel.size}"
-            )
-        }
-    }
-
     private suspend fun appendToolResultMessage(
         memory: AgentChatMemory,
         env: AgentExecutionEnvironment,
@@ -1107,31 +598,11 @@ class AgentOrchestrator(
         toolCall: AssistantToolCall,
         descriptor: AgentToolRegistry.RuntimeToolDescriptor,
         result: ToolExecutionResult,
-        failureLearning: FailureLearningHookPayload? = null
     ) {
-        val rawTextContent = eventAdapter.toolResultContent(
+        val textContent = eventAdapter.toolResultContent(
             descriptor = descriptor,
             result = result,
-            extras = failureLearning?.toPayload() ?: emptyMap()
-        )
-        val maxToolResultChars = env.runtimeSettings.maxToolResultChars
-        val offloadArtifact = if (
-            maxToolResultChars != null && rawTextContent.length > maxToolResultChars
-        ) {
-            runCatching {
-                env.workspaceManager.writeOffload(
-                    agentRunId = env.agentRunId,
-                    extension = "json",
-                    content = rawTextContent
-                )
-            }.getOrNull()
-        } else {
-            null
-        }
-        val textContent = eventAdapter.compactToolResultContent(
-            rawContent = rawTextContent,
-            offloadArtifact = offloadArtifact,
-            maxChars = maxToolResultChars,
+            extras = emptyMap()
         )
         val imageDataUrl = (result as? ToolExecutionResult.ContextResult)
             ?.imageDataUrl
@@ -1227,20 +698,11 @@ class AgentOrchestrator(
                 toolName = toolCall.function.name,
                 message = buildSyntheticToolSkipMessage(reason)
             )
-            val displayArguments = runCatching {
-                parseToolArguments(toolCall.function.arguments)
-            }.getOrDefault(JsonObject(emptyMap()))
-            callback.onToolCallStart(
-                toolCall.id,
-                toolCall.function.name,
-                displayArguments,
-                descriptor.toolType,
-            )
-            callback.onToolCallComplete(
-                toolCall.id,
-                toolCall.function.name,
-                syntheticResult
-            )
+            // The provider requires a matching tool result before it can
+            // continue this prompt, but this call never executed.  Keep the
+            // protocol-only result out of the user-visible tool timeline so
+            // chat does not claim an operation started or failed when it was
+            // deliberately skipped.
             appendToolResultMessage(
                 memory = memory,
                 env = env,
@@ -1332,60 +794,6 @@ class AgentOrchestrator(
         }
     }
 
-    private fun buildFailureLearningPayload(
-        env: AgentExecutionEnvironment,
-        toolCall: AssistantToolCall,
-        descriptor: AgentToolRegistry.RuntimeToolDescriptor,
-        argumentsJson: String?,
-        result: ToolExecutionResult,
-        failureStage: String
-    ): FailureLearningHookPayload? {
-        if (!SelfImprovingSkillFailureHook.shouldHandle(result)) {
-            return null
-        }
-        val skill = env.failureLearningSkill ?: return null
-        val payload = SelfImprovingSkillFailureHook.capture(
-            skillsRoot = env.workspaceManager.skillsRoot(),
-            skill = skill,
-            userMessage = env.userMessage,
-            toolName = toolCall.function.name,
-            toolType = descriptor.toolType,
-            argumentsJson = argumentsJson,
-            result = result,
-            agentRunId = env.agentRunId,
-            failureStage = failureStage
-        ) ?: return null
-        return payload.copy(
-            logShellPath = env.workspaceManager.shellPathForAndroid(payload.logFile)
-        )
-    }
-
-    private fun resolveFailureLearningAfterSuccess(
-        env: AgentExecutionEnvironment,
-        toolCall: AssistantToolCall,
-        argumentsJson: String?,
-        result: ToolExecutionResult
-    ) {
-        if (env.failureLearningSkill == null) return
-        val resolution = SelfImprovingSkillFailureHook.resolveAfterSuccess(
-            skillsRoot = env.workspaceManager.skillsRoot(),
-            agentRunId = env.agentRunId,
-            toolName = toolCall.function.name,
-            argumentsJson = argumentsJson,
-            result = result
-        ) ?: return
-        if (resolution.shouldPromoteDaily) {
-            runCatching {
-                env.workspaceMemoryService.appendDailyMemoryIfNovel(resolution.lesson)
-            }
-        }
-        logInfo(
-            tag,
-            "self_improving_resolved entry=${resolution.entryId} " +
-                "tool=${toolCall.function.name} promoted_daily=${resolution.shouldPromoteDaily}"
-        )
-    }
-
     private fun normalizeAssistantContentForNextRound(
         content: JsonElement?,
         toolCalls: List<AssistantToolCall>
@@ -1424,126 +832,16 @@ class AgentOrchestrator(
         return normalized.trim()
     }
 
-    private fun isLengthFinishReason(reason: String?): Boolean {
-        val normalized = reason?.trim()?.lowercase().orEmpty()
-        return normalized == "length" ||
-            normalized == "max_tokens" ||
-            normalized == "max_completion_tokens"
-    }
-
-    private fun buildTruncatedToolCallMessage(): String {
-        return t(
-            "本工具调用未执行：模型输出达到长度上限，参数可能被截断。请在下一轮重新发起并提供完整参数。",
-            "This tool call was not executed because the model output reached its length limit and the arguments may be truncated. Re-issue it in the next round with complete arguments."
-        )
-    }
-
     private fun isStopFinishReason(reason: String?): Boolean {
         return reason?.trim()?.lowercase() == "stop"
     }
 
-    private fun classifyRetryableTurnFailure(error: Throwable): RetryDecision {
-        // The LLM client already owns the stream-idle deadline. Retrying this
-        // exact request from the orchestrator only multiplies a dead-provider
-        // wait (45s x 3 previously) and leaves ACP/UI stuck on "thinking".
-        // Surface the failure so the user can retry explicitly.
-        if (AgentRuntimeErrorSupport.failureKind(error) ==
-            AgentRuntimeErrorSupport.PROVIDER_STREAM_IDLE_TIMEOUT
-        ) {
-            return RetryDecision(
-                retryable = false,
-                reason = AgentRuntimeErrorSupport.userFacingMessage(error)
-                    ?: error.message.orEmpty()
-            )
-        }
+    private fun terminalFailureMessage(error: Throwable): String {
+        AgentRuntimeErrorSupport.userFacingMessage(error)?.let { return it }
         if (error is AgentStreamRequestException) {
-            val statusCode = error.statusCode
-            val providerFailureText = buildString {
-                append(error.reason)
-                error.responseBody?.takeIf { it.isNotBlank() }?.let {
-                    append(' ')
-                    append(it)
-                }
-            }
-            if (looksLikeNonRetryableProviderLimitFailure(providerFailureText)) {
-                return RetryDecision(
-                    retryable = false,
-                    reason = formatTurnFailureReason(statusCode, error.reason)
-                )
-            }
-            val retryableStatus = statusCode == 408 ||
-                statusCode == 429 ||
-                statusCode == 500 ||
-                statusCode == 502 ||
-                statusCode == 503 ||
-                statusCode == 504 ||
-                statusCode == 524 ||
-                statusCode == 529
-            val retryableReason = looksLikeTransientTransportFailure(error.reason)
-            if (retryableStatus || retryableReason) {
-                return RetryDecision(
-                    retryable = true,
-                    reason = formatTurnFailureReason(statusCode, error.reason)
-                )
-            }
-            return RetryDecision(
-                retryable = false,
-                reason = error.reason
-            )
+            return formatTurnFailureReason(error.statusCode, error.reason)
         }
-
-        val message = error.message?.trim().orEmpty()
-        AgentRuntimeErrorSupport.userFacingMessage(error)?.let { userFacingMessage ->
-            return RetryDecision(
-                retryable = false,
-                reason = userFacingMessage
-            )
-        }
-        if (looksLikeTransientTransportFailure(message)) {
-            return RetryDecision(
-                retryable = true,
-                reason = formatTurnFailureReason(null, message)
-            )
-        }
-        return RetryDecision(
-            retryable = false,
-            reason = message.ifEmpty { error::class.java.simpleName }
-        )
-    }
-
-    private fun looksLikeNonRetryableProviderLimitFailure(message: String): Boolean {
-        if (message.isBlank()) return false
-        val normalized = message.lowercase()
-        return normalized.contains("insufficient_quota") ||
-            normalized.contains("quota exceeded") ||
-            normalized.contains("out of budget") ||
-            normalized.contains("billing") ||
-            normalized.contains("monthly usage limit") ||
-            normalized.contains("weekly usage limit") ||
-            normalized.contains("freeusagelimiterror") ||
-            normalized.contains("gousagelimiterror") ||
-            normalized.contains("available balance")
-    }
-
-    private fun looksLikeTransientTransportFailure(message: String): Boolean {
-        if (message.isBlank()) return false
-        val normalized = message.lowercase()
-        return normalized.contains("idle timeout") ||
-            normalized.contains("closed before completion signal") ||
-            normalized.contains("unknown stream failure") ||
-            normalized.contains("timeout") ||
-            normalized.contains("timed out") ||
-            normalized.contains("connection reset") ||
-            normalized.contains("unexpected end of stream") ||
-            normalized.contains("software caused connection abort") ||
-            normalized.contains("broken pipe") ||
-            normalized.contains("connection refused") ||
-            normalized.contains("connection aborted") ||
-            normalized.contains("eofexception") ||
-            normalized.contains("protocol_error") ||
-            normalized.contains("stream was reset") ||
-            normalized.contains("network") ||
-            normalized.contains("temporarily unavailable")
+        return AgentRuntimeErrorSupport.safeDiagnosticMessage(error)
     }
 
     private fun formatTurnFailureReason(statusCode: Int?, reason: String): String {
@@ -1551,63 +849,6 @@ class AgentOrchestrator(
             t("请求失败，请稍后重试。", "Request failed. Please try again later.")
         }
         return statusCode?.let { "HTTP $it: $normalizedReason" } ?: normalizedReason
-    }
-
-    private fun resolveSkillCompletionPolicies(
-        skills: List<ResolvedSkillContext>
-    ): List<SkillCompletionPolicy> {
-        return skills.mapNotNull { skill ->
-            val completionTools = parseToolNameList(skill.frontmatter["completion-tools"])
-            if (completionTools.isEmpty()) {
-                return@mapNotNull null
-            }
-            SkillCompletionPolicy(
-                skillId = skill.skillId,
-                startTools = parseToolNameList(skill.frontmatter["completion-start-tools"]).toSet(),
-                completionTools = completionTools
-            )
-        }
-    }
-
-    private fun parseToolNameList(raw: String?): List<String> {
-        return raw.orEmpty()
-            .split(Regex("[,\\s]+"))
-            .map(String::trim)
-            .filter(String::isNotEmpty)
-            .distinct()
-    }
-
-    private fun pendingSkillCompletion(
-        policies: List<SkillCompletionPolicy>,
-        completionProgress: Map<String, Int>
-    ): PendingSkillCompletion? {
-        return policies.firstNotNullOfOrNull { policy ->
-            val completedCount = completionProgress[policy.skillId]
-                ?: return@firstNotNullOfOrNull null
-            policy.completionTools.getOrNull(completedCount)?.let { nextTool ->
-                PendingSkillCompletion(policy = policy, nextTool = nextTool)
-            }
-        }
-    }
-
-    private fun recordSkillCompletionToolAttempt(
-        policies: List<SkillCompletionPolicy>,
-        completionProgress: MutableMap<String, Int>,
-        toolName: String,
-        successful: Boolean
-    ) {
-        policies.forEach { policy ->
-            if (
-                policy.skillId !in completionProgress &&
-                (policy.startTools.isEmpty() || toolName in policy.startTools)
-            ) {
-                completionProgress[policy.skillId] = 0
-            }
-            val completedCount = completionProgress[policy.skillId] ?: return@forEach
-            if (successful && policy.completionTools.getOrNull(completedCount) == toolName) {
-                completionProgress[policy.skillId] = completedCount + 1
-            }
-        }
     }
 
     private fun isSuccessfulToolResult(result: ToolExecutionResult): Boolean {
@@ -1623,29 +864,6 @@ class AgentOrchestrator(
             is ToolExecutionResult.TerminalResult -> result.success && !result.timedOut
             is ToolExecutionResult.ContextResult -> result.success
         }
-    }
-
-    private fun buildLengthContinuationMessage(): ChatCompletionMessage {
-        return ChatCompletionMessage(
-            role = "user",
-            content = JsonPrimitive(
-                "上一条 assistant 回复因为达到输出长度上限被截断。请从中断处继续完成原任务，不要重复已经输出的内容，不要重新开头，不要解释本提示。"
-            )
-        )
-    }
-
-    private fun buildSkillCompletionRecoveryMessage(
-        pending: PendingSkillCompletion
-    ): ChatCompletionMessage {
-        return ChatCompletionMessage(
-            role = "user",
-            content = JsonPrimitive(
-                t(
-                    "当前已加载的 Skill ${pending.policy.skillId} 声明了完成契约。你已经开始执行该流程，但 ${pending.nextTool} 尚未成功。不要声称任务已完成；请继续修复必要文件并调用 ${pending.nextTool}。只有完成工具序列 ${pending.policy.completionTools.joinToString(" -> ")} 全部成功后，才能给出最终完成回复。",
-                    "The loaded skill ${pending.policy.skillId} declares a completion contract. You started that workflow, but ${pending.nextTool} has not succeeded. Do not claim completion; continue fixing the required files and call ${pending.nextTool}. Give a final completion response only after the full tool sequence ${pending.policy.completionTools.joinToString(" -> ")} succeeds."
-                )
-            )
-        )
     }
 
     private fun combineContinuationContent(prefix: String, content: String): String {

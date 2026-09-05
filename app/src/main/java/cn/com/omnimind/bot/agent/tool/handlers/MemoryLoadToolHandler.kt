@@ -5,7 +5,6 @@ import cn.com.omnimind.bot.agent.AgentExecutionEnvironment
 import cn.com.omnimind.bot.agent.AgentToolExecutionHandle
 import cn.com.omnimind.bot.agent.AgentToolRegistry
 import cn.com.omnimind.bot.agent.ToolExecutionResult
-import cn.com.omnimind.bot.agent.tool.ToolConcurrency
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -15,19 +14,14 @@ import kotlinx.serialization.json.jsonPrimitive
  * `memory_load(slug)` — fetches the full body of a long-term memory entry
  * by its slug from a prior `memory_search` result.
  *
- * Same-turn dedup: if the slug was already loaded this turn we return a
- * short "alreadyInContext" hint instead of the body again — saves tokens
- * and signals to the LLM that the content is already visible.
+ * Every explicit call returns the stored body. The runtime does not replace a
+ * requested memory with a host-generated "already loaded" placeholder.
  */
 class MemoryLoadToolHandler(
     private val helper: SharedHelper
-) : ToolHandler, ToolHandlerConcurrencyHint {
+) : ToolHandler {
 
     override val toolNames: Set<String> = setOf("memory_load")
-
-    override fun concurrencyFor(toolName: String, args: JsonObject): ToolConcurrency? {
-        return ToolConcurrency.PARALLEL_SAFE
-    }
 
     override suspend fun execute(
         toolCall: cn.com.omnimind.baselib.llm.AssistantToolCall,
@@ -47,20 +41,11 @@ class MemoryLoadToolHandler(
                     helper.localized("当前会话未启用长期记忆索引")
                 )
 
-            val tracker = env.turnMemoryLoadTracker
-            if (tracker != null && tracker.isLoaded(slug)) {
-                return alreadyLoadedResult(toolName, slug)
-            }
-
             val entry = ltmIndex.get(slug)
                 ?: return ToolExecutionResult.Error(
                     toolName,
                     helper.localized("未找到 slug=$slug 对应的长期记忆条目")
                 )
-
-            if (tracker != null && !tracker.markLoadedIfAbsent(slug)) {
-                return alreadyLoadedResult(toolName, slug)
-            }
 
             val payload = linkedMapOf<String, Any?>(
                 "slug" to entry.slug,
@@ -87,22 +72,4 @@ class MemoryLoadToolHandler(
         }
     }
 
-    private fun alreadyLoadedResult(
-        toolName: String,
-        slug: String
-    ): ToolExecutionResult.ContextResult {
-        val payload = mapOf(
-            "slug" to slug,
-            "alreadyInContext" to true,
-            "summary" to "该长期记忆已在本轮上下文中。"
-        )
-        val payloadJson = helper.encodeLocalizedPayload(payload)
-        return ToolExecutionResult.ContextResult(
-            toolName = toolName,
-            summaryText = helper.localized("该长期记忆已加载，跳过重复读取。"),
-            previewJson = payloadJson,
-            rawResultJson = payloadJson,
-            success = true
-        )
-    }
 }

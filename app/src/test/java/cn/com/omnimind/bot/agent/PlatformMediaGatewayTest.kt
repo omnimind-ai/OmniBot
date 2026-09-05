@@ -175,21 +175,6 @@ class PlatformMediaGatewayTest {
     }
 
     @Test
-    fun rejectsFinalUtf8JsonAboveSafePlatformLimit() {
-        val body = "你".repeat(
-            (PlatformMediaProtocol.MAX_PLATFORM_JSON_UTF8_BYTES / 3L).toInt() + 1
-        )
-
-        val error = runCatching {
-            PlatformMediaProtocol.requirePlatformJsonRequestWithinLimit(body)
-        }.exceptionOrNull()
-
-        assertTrue(error is PlatformGatewayException)
-        assertEquals("request_too_large", (error as PlatformGatewayException).errorCode)
-        assertTrue(error.message.orEmpty().contains("15 MiB"))
-    }
-
-    @Test
     fun recognizesLegacyFalseSuccessQuotaEnvelopeWithoutLeakingUpstreamMessage() {
         val quotaBytes = """
             {"success":false,"code":"quota_exceeded","message":"internal upstream detail"}

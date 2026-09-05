@@ -150,12 +150,12 @@ class WorkspaceMemoryService {
   }
 
   static Future<List<WorkspaceShortMemoryItem>> getShortMemories({
-    int days = 14,
-    int limit = 240,
+    int? days,
+    int? limit,
   }) async {
     final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
       'getWorkspaceShortMemories',
-      {'days': days, 'limit': limit},
+      {if (days != null) 'days': days, if (limit != null) 'limit': limit},
     );
     final rawItems = (result?['items'] as List?) ?? const [];
     return rawItems

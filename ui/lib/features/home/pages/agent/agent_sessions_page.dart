@@ -130,9 +130,9 @@ class _AgentSessionsPageState extends State<AgentSessionsPage> {
         }
       }
       String? cursor;
-      for (var page = 0; page < 8; page++) {
+      final seenCursors = <String>{};
+      while (true) {
         final payload = await AgentRuntimeService.listSessions(
-          limit: 100,
           cursor: cursor,
         );
         payloads.add(payload);
@@ -142,7 +142,7 @@ class _AgentSessionsPageState extends State<AgentSessionsPage> {
               payload['nextPageCursor'] ??
               payload['next_page_cursor'],
         );
-        if (nextCursor == null || nextCursor == cursor) {
+        if (nextCursor == null || !seenCursors.add(nextCursor)) {
           break;
         }
         cursor = nextCursor;

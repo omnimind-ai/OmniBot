@@ -47,6 +47,33 @@ class HttpAgentLlmClientTest {
     }
 
     @Test
+    fun `does not replay partial tool arguments after http2 reset`() = runBlocking {
+        val scope = CoroutineScope(Job() + Dispatchers.Default)
+        var attempts = 0
+        try {
+            val client = HttpAgentLlmClient(
+                scope = scope,
+                modelOverride = testOverride(),
+                streamRequestOp = { _, _, listener, _, _, _, _, _, _, _ ->
+                    attempts++
+                    val source = dummyEventSource()
+                    listener.onOpen(source, okResponse())
+                    listener.onEvent(source, null, "message",
+                        """{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"write_file","arguments":"{"}}]}}]}""")
+                    listener.onFailure(source, java.io.IOException("stream was reset: CANCEL"), okResponse())
+                    source
+                },
+                maxTransientStreamRetries = 2,
+                transientStreamRetryDelayMs = 0,
+                json = json,
+            )
+            val error = runCatching { client.streamTurn(simpleRequest()) }.exceptionOrNull()
+            assertTrue(error is AgentStreamRequestException)
+            assertEquals(1, attempts)
+        } finally { scope.cancel() }
+    }
+
+    @Test
     fun `platform image input uses catalog vision model`() = runBlocking {
         val scope = CoroutineScope(Job() + Dispatchers.Default)
         val requestedModels = mutableListOf<String>()
@@ -219,7 +246,7 @@ class HttpAgentLlmClientTest {
     }
 
     @Test
-    fun `platform multi image request over safe JSON limit is rejected before send`() = runBlocking {
+    fun `platform multi image request beyond the former host limit reaches the harness`() = runBlocking {
         val scope = CoroutineScope(Job() + Dispatchers.Default)
         var requestCount = 0
         try {
@@ -236,9 +263,18 @@ class HttpAgentLlmClientTest {
                         routeTag = "platform_gateway",
                     )
                 },
-                streamRequestOp = { _, _, _, _, _, _, _, _, _, _ ->
+                streamRequestOp = { _, _, listener, _, _, _, _, _, _, _ ->
                     requestCount += 1
-                    dummyEventSource()
+                    val source = dummyEventSource()
+                    listener.onOpen(source, okResponse())
+                    listener.onEvent(
+                        source,
+                        null,
+                        "message",
+                        """{"choices":[{"delta":{"content":"accepted"},"finish_reason":"stop"}]}""",
+                    )
+                    listener.onEvent(source, null, "message", "[DONE]")
+                    source
                 },
                 resolvePlatformVisionModelOp = { "official-vision-model" },
                 json = json,
@@ -267,54 +303,10 @@ class HttpAgentLlmClientTest {
                 stream = true,
             )
 
-            val error = runCatching { client.streamTurn(request) }.exceptionOrNull()
+            val turn = client.streamTurn(request)
 
-            assertTrue(error?.message.orEmpty().contains("请求内容过大"))
-            assertEquals(0, requestCount)
-        } finally {
-            scope.cancel()
-        }
-    }
-
-    @Test
-    fun `platform long unicode context is measured as final UTF8 and rejected before send`() = runBlocking {
-        val scope = CoroutineScope(Job() + Dispatchers.Default)
-        var requestCount = 0
-        try {
-            val client = HttpAgentLlmClient(
-                scope = scope,
-                modelOverride = testOverride(),
-                resolveRouteInfoOp = { model, _, _, _, _, protocolType, _ ->
-                    routeInfo(
-                        requestedModel = model,
-                        resolvedModel = model,
-                        protocolType = protocolType ?: "openai_compatible",
-                        requiresReasoningEcho = false,
-                        providerProfileId = null,
-                        routeTag = "platform_gateway",
-                    )
-                },
-                streamRequestOp = { _, _, _, _, _, _, _, _, _, _ ->
-                    requestCount += 1
-                    dummyEventSource()
-                },
-                json = json,
-            )
-            val longUnicodeContext = "你".repeat(
-                (PlatformMediaProtocol.MAX_PLATFORM_JSON_UTF8_BYTES / 3L).toInt() + 1
-            )
-            val request = ChatCompletionRequest(
-                model = "official-text-model",
-                messages = listOf(
-                    ChatCompletionMessage("user", JsonPrimitive(longUnicodeContext))
-                ),
-                stream = true,
-            )
-
-            val error = runCatching { client.streamTurn(request) }.exceptionOrNull()
-
-            assertTrue(error?.message.orEmpty().contains("15 MiB"))
-            assertEquals(0, requestCount)
+            assertEquals("accepted", turn.message.contentText())
+            assertEquals(1, requestCount)
         } finally {
             scope.cancel()
         }
@@ -367,6 +359,87 @@ class HttpAgentLlmClientTest {
             assertEquals("ok", turn.message.contentText())
             assertEquals(2, requestCount)
             assertEquals(1, refreshCount)
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `platform 401 after visible output preserves the started prompt without refresh or replay`() = runBlocking {
+        val scope = CoroutineScope(Job() + Dispatchers.Default)
+        var requestCount = 0
+        var refreshCount = 0
+        val updates = mutableListOf<String>()
+        try {
+            val client = HttpAgentLlmClient(
+                scope = scope,
+                modelOverride = testOverride(),
+                resolveRouteInfoOp = { model, _, _, _, explicitModel, protocolType, _ ->
+                    routeInfo(
+                        requestedModel = model,
+                        resolvedModel = explicitModel ?: model,
+                        protocolType = protocolType ?: "openai_compatible",
+                        requiresReasoningEcho = false,
+                        routeTag = "platform_gateway",
+                    )
+                },
+                streamRequestOp = { _, _, listener, _, _, _, _, _, _, _ ->
+                    requestCount += 1
+                    val source = dummyEventSource()
+                    listener.onOpen(source, okResponse())
+                    listener.onEvent(
+                        source,
+                        null,
+                        "message",
+                        """{"choices":[{"delta":{"content":"已输出的半截回答"}}]}""",
+                    )
+                    listener.onFailure(source, null, unauthorizedResponse())
+                    source
+                },
+                refreshPlatformSessionOp = {
+                    refreshCount += 1
+                    true
+                },
+                json = json,
+            )
+
+            val error = runCatching {
+                client.streamTurn(
+                    request = simpleRequest(),
+                    onContentUpdate = { updates += it },
+                )
+            }.exceptionOrNull()
+
+            assertTrue(error is AgentStreamRequestException)
+            assertEquals(401, (error as AgentStreamRequestException).statusCode)
+            assertEquals(1, requestCount)
+            assertEquals(0, refreshCount)
+            assertEquals(listOf("已输出的半截回答"), updates)
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `provider failure retains its complete response body`() = runBlocking {
+        val scope = CoroutineScope(Job() + Dispatchers.Default)
+        val responseBody = "provider-detail-".repeat(500)
+        try {
+            val client = HttpAgentLlmClient(
+                scope = scope,
+                modelOverride = testOverride(),
+                streamRequestOp = { _, _, listener, _, _, _, _, _, _, _ ->
+                    val source = dummyEventSource()
+                    listener.onFailure(source, null, failedResponse(responseBody))
+                    source
+                },
+                json = json,
+            )
+
+            val error = runCatching { client.streamTurn(simpleRequest()) }.exceptionOrNull()
+
+            assertTrue(error is AgentStreamRequestException)
+            assertEquals(responseBody, (error as AgentStreamRequestException).responseBody)
         } finally {
             scope.cancel()
         }
@@ -580,7 +653,7 @@ class HttpAgentLlmClientTest {
     }
 
     @Test
-    fun `unsupported enable thinking parameter is removed before retry`() = runBlocking {
+    fun `unsupported thinking parameter ends the original request without retry`() = runBlocking {
         val scope = CoroutineScope(Job() + Dispatchers.Default)
         var attempts = 0
         val requestBodies = mutableListOf<String>()
@@ -592,89 +665,43 @@ class HttpAgentLlmClientTest {
                     attempts += 1
                     requestBodies += body
                     val source = dummyEventSource()
-                    if (attempts == 1) {
-                        listener.onFailure(
-                            source,
-                            IllegalStateException("bad request"),
-                            Response.Builder()
-                                .request(Request.Builder().url("https://example.com").build())
-                                .protocol(Protocol.HTTP_1_1)
-                                .code(400)
-                                .message("Bad Request")
-                                .body(
-                                    "{\"error\":{\"message\":\"Validation: Unsupported parameter(s): `enable_thinking`\"}}"
-                                        .toResponseBody()
-                                )
-                                .build(),
-                        )
-                    } else {
-                        listener.onOpen(source, okResponse())
-                        listener.onEvent(
-                            source,
-                            null,
-                            "message",
-                            """{"choices":[{"delta":{"content":"已恢复"},"finish_reason":"stop"}]}"""
-                        )
-                        listener.onEvent(source, null, "message", "[DONE]")
-                    }
-                    source
-                },
-                maxTransientStreamRetries = 0,
-                json = json,
-            )
-
-            val turn = client.streamTurn(
-                simpleRequest().copy(
-                    enableThinking = true,
-                    thinking = cn.com.omnimind.baselib.llm.ChatCompletionThinking(type = "enabled"),
-                )
-            )
-
-            assertEquals("已恢复", turn.message.contentText())
-            assertEquals(2, attempts)
-            assertTrue(requestBodies.first().contains("enable_thinking"))
-            assertFalse(requestBodies[1].contains("enable_thinking"))
-            assertFalse(requestBodies[1].contains("\"thinking\""))
-
-            // The capability result belongs to the Provider route, not to a
-            // single ACP session/client instance. A new client represents a
-            // second Conversation and must reuse the learned route policy.
-            val secondClient = HttpAgentLlmClient(
-                scope = scope,
-                modelOverride = testOverride(),
-                streamRequestOp = { _, body, listener, _, _, _, _, _, _, _ ->
-                    attempts += 1
-                    requestBodies += body
-                    val source = dummyEventSource()
-                    listener.onOpen(source, okResponse())
-                    listener.onEvent(
+                    listener.onFailure(
                         source,
-                        null,
-                        "message",
-                        """{"choices":[{"delta":{"content":"已恢复"},"finish_reason":"stop"}]}"""
+                        IllegalStateException("bad request"),
+                        Response.Builder()
+                            .request(Request.Builder().url("https://example.com").build())
+                            .protocol(Protocol.HTTP_1_1)
+                            .code(400)
+                            .message("Bad Request")
+                            .body(
+                                "{\"error\":{\"message\":\"Validation: Unsupported parameter(s): `enable_thinking`\"}}"
+                                    .toResponseBody()
+                            )
+                            .build(),
                     )
-                    listener.onEvent(source, null, "message", "[DONE]")
                     source
                 },
                 maxTransientStreamRetries = 0,
                 json = json,
             )
-            secondClient.streamTurn(
+
+            val error = runCatching { client.streamTurn(
                 simpleRequest().copy(
                     enableThinking = true,
                     thinking = cn.com.omnimind.baselib.llm.ChatCompletionThinking(type = "enabled"),
                 )
-            )
-            assertEquals(3, attempts)
-            assertFalse(requestBodies[2].contains("enable_thinking"))
-            assertFalse(requestBodies[2].contains("\"thinking\""))
+            ) }.exceptionOrNull()
+
+            assertTrue(error is AgentStreamRequestException)
+            assertEquals(1, attempts)
+            assertTrue(requestBodies.first().contains("enable_thinking"))
         } finally {
             scope.cancel()
         }
     }
 
     @Test
-    fun `unsupported image content falls back to workspace path`() = runBlocking {
+    fun `unsupported image content ends the original request without stripping the image`() = runBlocking {
         val scope = CoroutineScope(Job() + Dispatchers.Default)
         var attempts = 0
         val requestBodies = mutableListOf<String>()
@@ -686,31 +713,20 @@ class HttpAgentLlmClientTest {
                     attempts += 1
                     requestBodies += body
                     val source = dummyEventSource()
-                    if (attempts == 1) {
-                        listener.onFailure(
-                            source,
-                            IllegalStateException("bad request"),
-                            Response.Builder()
-                                .request(Request.Builder().url("https://example.com").build())
-                                .protocol(Protocol.HTTP_1_1)
-                                .code(400)
-                                .message("Bad Request")
-                                .body(
-                                    "{\"error\":{\"message\":\"image_url is not supported\"}}"
-                                        .toResponseBody()
-                                )
-                                .build(),
-                        )
-                    } else {
-                        listener.onOpen(source, okResponse())
-                        listener.onEvent(
-                            source,
-                            null,
-                            "message",
-                            """{"choices":[{"delta":{"content":"已通过文件读取"},"finish_reason":"stop"}]}"""
-                        )
-                        listener.onEvent(source, null, "message", "[DONE]")
-                    }
+                    listener.onFailure(
+                        source,
+                        IllegalStateException("bad request"),
+                        Response.Builder()
+                            .request(Request.Builder().url("https://example.com").build())
+                            .protocol(Protocol.HTTP_1_1)
+                            .code(400)
+                            .message("Bad Request")
+                            .body(
+                                "{\"error\":{\"message\":\"image_url is not supported\"}}"
+                                    .toResponseBody()
+                            )
+                            .build(),
+                    )
                     source
                 },
                 maxTransientStreamRetries = 0,
@@ -720,19 +736,17 @@ class HttpAgentLlmClientTest {
                 """[{"type":"text","text":"请分析图片\n已添加到 workspace，可通过以下路径读取：\n- image.png: file:///workspace/image.png"},{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}}]"""
             )
 
-            val turn = client.streamTurn(
+            val error = runCatching { client.streamTurn(
                 ChatCompletionRequest(
                     model = "test-model",
                     messages = listOf(ChatCompletionMessage("user", imageContent)),
                     stream = true,
                 )
-            )
+            ) }.exceptionOrNull()
 
-            assertEquals("已通过文件读取", turn.message.contentText())
-            assertEquals(2, attempts)
+            assertTrue(error is AgentStreamRequestException)
+            assertEquals(1, attempts)
             assertTrue(requestBodies.first().contains("image_url"))
-            assertFalse(requestBodies[1].contains("image_url"))
-            assertTrue(requestBodies[1].contains("file:///workspace/image.png"))
         } finally {
             scope.cancel()
         }
@@ -795,135 +809,42 @@ class HttpAgentLlmClientTest {
     }
 
     @Test
-    fun `request variants preserve provider content and keep native tools`() {
+    fun `actual transport preserves caller fields without request variants`() = runBlocking {
         val scope = CoroutineScope(Job() + Dispatchers.Default)
+        val requests = mutableListOf<String>()
         try {
-            val client = HttpAgentLlmClient(scope = scope, modelOverride = testOverride())
+            val client = HttpAgentLlmClient(
+                scope = scope,
+                modelOverride = testOverride(),
+                streamRequestOp = { _, body, listener, _, _, _, _, _, _, _ ->
+                    requests += body
+                    val source = dummyEventSource()
+                    listener.onOpen(source, okResponse())
+                    listener.onEvent(source, null, "message",
+                        """{"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}""")
+                    listener.onEvent(source, null, "message", "[DONE]")
+                    source
+                },
+                json = json,
+            )
             val request = simpleRequest().copy(
-                messages = listOf(
-                    cn.com.omnimind.baselib.llm.ChatCompletionMessage(
-                        role = "system",
-                        content = JsonPrimitive("Choose one tool"),
-                    ),
-                    cn.com.omnimind.baselib.llm.ChatCompletionMessage(
-                        role = "user",
-                        content = JsonArray(
-                            listOf(
-                                JsonObject(
-                                    mapOf(
-                                        "type" to JsonPrimitive("text"),
-                                        "text" to JsonPrimitive("Current screen"),
-                                    )
-                                )
-                            )
-                        ),
-                    ),
-                ),
-                tools = listOf(
-                    ChatCompletionTool(
-                        function = ChatCompletionFunction(name = "click"),
-                    ),
-                ),
+                messages = listOf(ChatCompletionMessage(role = "system", content = JsonPrimitive("Choose one tool"))),
+                tools = listOf(ChatCompletionTool(function = ChatCompletionFunction(name = "click"))),
+                functions = listOf(ChatCompletionFunction(name = "click")),
+                functionCall = JsonPrimitive("auto"),
                 toolChoice = JsonPrimitive("required"),
                 parallelToolCalls = false,
                 streamOptions = ChatCompletionStreamOptions(),
             )
-
-            val variants = client.buildRequestVariants(
-                request = request,
-                routeInfo = routeInfo(
-                    requestedModel = "scene.vlm.operation.primary",
-                    resolvedModel = "GLM-5.1",
-                    protocolType = "openai_compatible",
-                    requiresReasoningEcho = false,
-                    apiBase = "https://llmapi.paratera.com/v1/chat/completions",
-                ),
-            )
-
-            assertEquals(listOf("default", "no_stream_options"), variants.map { it.name })
-            assertNotNull(variants.first().request.streamOptions)
-            assertEquals("click", variants.first().request.tools.single().function.name)
-            assertNull(variants.first().request.functions)
-            val systemText = variants.first().request.messages.first().content
-                ?.jsonPrimitive
-                ?.content
-            assertEquals("Choose one tool", systemText)
-        } finally {
-            scope.cancel()
-        }
+            client.streamTurn(request)
+            assertEquals(1, requests.size)
+            assertEquals(json.parseToJsonElement(json.encodeToString(ChatCompletionRequest.serializer(), request)),
+                json.parseToJsonElement(requests.single()))
+        } finally { scope.cancel() }
     }
 
     @Test
-    fun `Paratera GLM Agent route requests exact streaming usage before compatibility fallback`() {
-        val scope = CoroutineScope(Job() + Dispatchers.Default)
-        try {
-            val client = HttpAgentLlmClient(scope = scope, modelOverride = testOverride())
-            val request = simpleRequest().copy(
-                streamOptions = ChatCompletionStreamOptions(),
-            )
-
-            val variants = client.buildRequestVariants(
-                request = request,
-                routeInfo = routeInfo(
-                    requestedModel = "scene.dispatch.model",
-                    resolvedModel = "GLM-5.1",
-                    protocolType = "openai_compatible",
-                    requiresReasoningEcho = false,
-                    apiBase = "https://llmapi.paratera.com/v1/chat/completions",
-                ),
-            )
-
-            assertEquals(
-                listOf("default", "no_stream_options"),
-                variants.take(2).map { it.name },
-            )
-            assertEquals(true, variants.first().request.streamOptions?.includeUsage)
-            assertNull(variants[1].request.streamOptions)
-        } finally {
-            scope.cancel()
-        }
-    }
-
-    @Test
-    fun `custom API request variants never emit deprecated legacy function fields`() {
-        val scope = CoroutineScope(Job() + Dispatchers.Default)
-        try {
-            val client = HttpAgentLlmClient(scope = scope, modelOverride = testOverride())
-            val request = simpleRequest().copy(
-                functions = listOf(ChatCompletionFunction(name = "click")),
-                functionCall = JsonPrimitive("auto"),
-                tools = listOf(
-                    ChatCompletionTool(
-                        function = ChatCompletionFunction(name = "click"),
-                    ),
-                ),
-                toolChoice = JsonPrimitive("auto"),
-            )
-
-            val variants = client.buildRequestVariants(
-                request = request,
-                routeInfo = routeInfo(
-                    requestedModel = "custom-model",
-                    resolvedModel = "custom-model",
-                    protocolType = "openai_compatible",
-                    requiresReasoningEcho = false,
-                    apiBase = "https://example.com/v1/chat/completions",
-                ),
-            )
-
-            assertTrue(variants.isNotEmpty())
-            variants.forEach { variant ->
-                assertNull(variant.request.functions)
-                assertNull(variant.request.functionCall)
-                assertTrue(variant.request.tools.isNotEmpty())
-            }
-        } finally {
-            scope.cancel()
-        }
-    }
-
-    @Test
-    fun `provider request keeps oversized tool call ids within wire limit`() {
+    fun `shared request boundary preserves tool call identities`() {
         val longId = "response_" + "x".repeat(81)
         val request = simpleRequest().copy(
             messages = listOf(
@@ -947,25 +868,14 @@ class HttpAgentLlmClientTest {
             ),
         )
 
-        val prepared = AgentProviderRequestPolicy.prepare(
-            routeInfo = routeInfo(
-                requestedModel = "test-model",
-                resolvedModel = "test-model",
-                protocolType = "openai_compatible",
-                requiresReasoningEcho = false,
-            ),
-            request = request,
-        )
-        val normalizedId = prepared.messages[0].toolCalls!!.single().id
+        val prepared = request
 
-        assertTrue(normalizedId.length <= 64)
-        assertTrue(normalizedId.startsWith("call_"))
-        assertEquals(normalizedId, prepared.messages[1].toolCallId)
-        assertEquals(longId, request.messages[0].toolCalls!!.single().id)
+        assertEquals(longId, prepared.messages[0].toolCalls!!.single().id)
+        assertEquals(longId, prepared.messages[1].toolCallId)
     }
 
     @Test
-    fun `official deepseek request omits redundant auto tool choice`() {
+    fun `shared request boundary preserves explicit auto tool choice`() {
         val request = simpleRequest().copy(
             tools = listOf(
                 ChatCompletionTool(
@@ -975,18 +885,9 @@ class HttpAgentLlmClientTest {
             toolChoice = JsonPrimitive("auto"),
         )
 
-        val prepared = AgentProviderRequestPolicy.prepare(
-            routeInfo = routeInfo(
-                requestedModel = "deepseek-v4-flash",
-                resolvedModel = "deepseek-v4-flash",
-                protocolType = "deepseek",
-                requiresReasoningEcho = true,
-                apiBase = "https://api.deepseek.com",
-            ),
-            request = request,
-        )
+        val prepared = request
 
-        assertNull(prepared.toolChoice)
+        assertEquals("auto", prepared.toolChoice?.jsonPrimitive?.content)
         assertTrue(prepared.tools.isNotEmpty())
     }
 
@@ -1001,16 +902,7 @@ class HttpAgentLlmClientTest {
             toolChoice = JsonPrimitive("required"),
         )
 
-        val prepared = AgentProviderRequestPolicy.prepare(
-            routeInfo = routeInfo(
-                requestedModel = "deepseek-v4-flash",
-                resolvedModel = "deepseek-v4-flash",
-                protocolType = "deepseek",
-                requiresReasoningEcho = true,
-                apiBase = "https://api.deepseek.com",
-            ),
-            request = request,
-        )
+        val prepared = request
 
         assertEquals("required", prepared.toolChoice?.jsonPrimitive?.content)
     }
@@ -1101,6 +993,9 @@ class HttpAgentLlmClientTest {
 
             val turn = client.streamTurn(request)
 
+            val streamedNames = mutableListOf<String>()
+            client.streamTurn(request, onToolCallInput = { streamedNames += it.function.name })
+            assertEquals(listOf("agent.status"), streamedNames)
             assertTrue(sentWireName.matches(Regex("^[a-zA-Z0-9_-]+$")))
             assertTrue(sentWireName.length <= 64)
             assertEquals("agent.status", turn.message.toolCalls?.single()?.function?.name)
@@ -1459,6 +1354,16 @@ class HttpAgentLlmClientTest {
             .build()
     }
 
+    private fun failedResponse(body: String): Response {
+        return Response.Builder()
+            .request(Request.Builder().url("https://example.com").build())
+            .protocol(Protocol.HTTP_1_1)
+            .code(400)
+            .message("Bad Request")
+            .body(body.toResponseBody())
+            .build()
+    }
+
     private fun routeInfo(
         requestedModel: String,
         resolvedModel: String,
@@ -1485,7 +1390,7 @@ class HttpAgentLlmClientTest {
             .copy(requiresReasoningContentForToolCalls = requiresReasoningEcho)
     )
     @Test
-    fun `qwen openai compatible route reclassifies leading content before closing think tag`() = runBlocking {
+    fun `provider model name does not reinterpret a close tag as hidden reasoning`() = runBlocking {
         val scope = CoroutineScope(Job() + Dispatchers.Default)
         try {
             val client = HttpAgentLlmClient(
@@ -1522,8 +1427,8 @@ class HttpAgentLlmClientTest {
 
             val turn = client.streamTurn(request = simpleRequest())
 
-            assertEquals("first reasoning", turn.reasoning)
-            assertEquals("final answer", turn.message.contentText())
+            assertEquals("", turn.reasoning)
+            assertEquals("first reasoning</think>final answer", turn.message.contentText())
         } finally {
             scope.cancel()
         }

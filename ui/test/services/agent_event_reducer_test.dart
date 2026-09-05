@@ -26,6 +26,106 @@ void main() {
     runtime.dispose();
   });
 
+  test(
+    'partial HTML input stays current on the same card and survives serialization',
+    () {
+      const partials = ['{"content":"<html>', '{"content":"<html>正在生成正文'];
+      for (var index = 0; index < partials.length; index++) {
+        reducer.reduce(
+          runtime: runtime,
+          event: {
+            'method': 'session/update',
+            'turnId': 'html-turn',
+            'params': {
+              'sessionId': 'html-session',
+              'update': {
+                'sessionUpdate': index == 0 ? 'tool_call' : 'tool_call_update',
+                'toolCallId': 'html-input',
+                if (index == 0) ...{
+                  'title': '写入文件',
+                  'kind': 'edit',
+                  'status': 'pending',
+                },
+                'rawInput': partials[index],
+              },
+            },
+          },
+        );
+        final card = runtime.messages.single.cardData!;
+        expect(card['status'], 'pending');
+        expect(card['argsJson'], partials[index]);
+        expect(card['toolCallId'], 'html-input');
+        final restored = ChatMessageModel.fromJson(
+          jsonDecode(jsonEncode(runtime.messages.single.toJson())),
+        );
+        expect(restored.cardData!['argsJson'], partials[index]);
+      }
+    },
+  );
+
+  for (final stopReason in ['cancelled', 'error', 'end_turn']) {
+    test(
+      'official $stopReason never invents success for unfinished HTML tools',
+      () {
+        for (final entry in {
+          'input': 'pending',
+          'writing': 'in_progress',
+          'saved': 'completed',
+          'denied': 'failed',
+        }.entries) {
+          reducer.reduce(
+            runtime: runtime,
+            event: {
+              'method': 'session/update',
+              'turnId': 'html-turn',
+              'params': {
+                'sessionId': 'html-session',
+                'update': {
+                  'sessionUpdate': 'tool_call',
+                  'toolCallId': entry.key,
+                  'title': '写入文件',
+                  'kind': 'edit',
+                  'status': entry.value,
+                  'rawInput': entry.key == 'input'
+                      ? '{"content":"<html>'
+                      : {'path': '/workspace/${entry.key}.html'},
+                },
+              },
+            },
+          );
+        }
+        reducer.reducePromptResponse(
+          runtime: runtime,
+          sessionId: 'html-session',
+          turnId: 'html-turn',
+          stopReason: stopReason,
+          error: stopReason == 'error' ? 'connection lost' : null,
+        );
+        final cards = runtime.messages
+            .where((message) => message.cardData?['toolType'] == 'file')
+            .map((message) => message.cardData!)
+            .toList();
+        expect(cards, hasLength(4));
+        expect(
+          {for (final card in cards) card['toolCallId']: card['status']},
+          {
+            'input': 'pending',
+            'writing': 'running',
+            'saved': 'success',
+            'denied': 'error',
+          },
+        );
+        expect(runtime.isAiResponding, isFalse);
+        expect(
+          cards.any(
+            (card) => (card['argsJson'] ?? '').toString().contains('<html>'),
+          ),
+          isTrue,
+        );
+      },
+    );
+  }
+
   test('reads ACP identity through the bridge event envelope', () {
     final event = <String, dynamic>{
       'message': {
@@ -88,7 +188,8 @@ void main() {
       event: {'kind': 'completed', 'taskId': 'legacy-task-1', 'seq': 2},
     );
 
-    expect(runtime.isAiResponding, isFalse);
+    expect(runtime.isAiResponding, isTrue);
+    expect(runtime.messages.single.text, '旧 Harness 的回答');
     expect(runtime.acpCompatibilityDiagnostics, isEmpty);
   });
 
@@ -254,6 +355,28 @@ void main() {
         <dynamic>['phase-1', 0.5],
       ]),
     );
+  });
+
+  test('retains all ACP extension updates for a long-lived conversation', () {
+    for (var index = 0; index < 700; index += 1) {
+      reducer.reduce(
+        runtime: runtime,
+        event: {
+          'method': 'session/update',
+          'params': {
+            'sessionId': 'session-long-extension-history',
+            'update': {
+              'sessionUpdate': 'vendor_progress',
+              'rawUpdate': {'sequence': index},
+            },
+          },
+        },
+      );
+    }
+
+    expect(runtime.acpExtensionUpdates, hasLength(700));
+    expect(runtime.acpExtensionUpdates.first['rawUpdate']['sequence'], 0);
+    expect(runtime.acpExtensionUpdates.last['rawUpdate']['sequence'], 699);
   });
 
   test('maps agent message deltas into assistant text', () {
@@ -816,12 +939,11 @@ void main() {
     expect(thinking.cardData?['isLoading'], isFalse);
     expect(runtime.isAiResponding, isTrue);
 
-    reducer.reduce(
+    reducer.reducePromptResponse(
       runtime: runtime,
-      event: {
-        'method': 'turn/completed',
-        'params': {'turnId': 'turn-1'},
-      },
+      sessionId: null,
+      turnId: 'turn-1',
+      stopReason: 'end_turn',
     );
 
     expect(thinking.cardData?['isLoading'], isFalse);
@@ -885,12 +1007,11 @@ void main() {
       isEmpty,
     );
 
-    reducer.reduce(
+    reducer.reducePromptResponse(
       runtime: runtime,
-      event: {
-        'method': 'turn/completed',
-        'params': {'turnId': 'turn-1'},
-      },
+      sessionId: null,
+      turnId: 'turn-1',
+      stopReason: 'end_turn',
     );
 
     expect(runtime.isAiResponding, isFalse);
@@ -904,12 +1025,11 @@ void main() {
       ..lastAgentTurnId = 'local-request'
       ..activeAcpTurnId = 'turn-1';
 
-    reducer.reduce(
+    reducer.reducePromptResponse(
       runtime: runtime,
-      event: {
-        'method': 'turn/completed',
-        'params': {'sessionId': 'session-1', 'turnId': 'turn-1'},
-      },
+      sessionId: 'session-1',
+      turnId: 'turn-1',
+      stopReason: 'end_turn',
     );
 
     expect(runtime.isAiResponding, isFalse);
@@ -918,7 +1038,7 @@ void main() {
   });
 
   test(
-    'terminal event closes a primed turn that never admitted its ACP id',
+    'prompt response closes its primed request without an admitted ACP id',
     () {
       runtime
         ..isAiResponding = true
@@ -945,12 +1065,11 @@ void main() {
         ),
       );
 
-      reducer.reduce(
+      reducer.reducePromptResponse(
         runtime: runtime,
-        event: {
-          'method': 'turn/completed',
-          'params': {'turnId': 'official-turn-1'},
-        },
+        sessionId: null,
+        turnId: 'official-turn-1',
+        stopReason: 'end_turn',
       );
 
       final card = runtime.messages.single.cardData!;
@@ -962,15 +1081,17 @@ void main() {
     },
   );
 
-  test('id-less terminal closes the only pre-ACP local turn safely', () {
+  test('owning prompt response without a wire id closes its local request', () {
     runtime
       ..isAiResponding = true
       ..currentDispatchTurnId = 'local-request'
       ..lastAgentTurnId = 'local-request';
 
-    reducer.reduce(
+    reducer.reducePromptResponse(
       runtime: runtime,
-      event: const {'method': 'turn/completed', 'params': <String, dynamic>{}},
+      sessionId: null,
+      turnId: null,
+      stopReason: 'end_turn',
     );
 
     expect(runtime.isAiResponding, isFalse);
@@ -992,7 +1113,7 @@ void main() {
 
     expect(runtime.isAiResponding, isTrue);
     expect(runtime.activeAcpTurnId, 'official-turn-1');
-    expect(runtime.acpCompatibilityDiagnostics, hasLength(1));
+    expect(runtime.acpCompatibilityDiagnostics, isEmpty);
   });
 
   test(
@@ -1080,18 +1201,11 @@ void main() {
     );
     expect(runtime.activeAgentTurnIds, <String>{'turn-1'});
 
-    reducer.reduce(
+    reducer.reducePromptResponse(
       runtime: runtime,
-      event: {
-        'turnId': 'turn-1',
-        'message': {
-          'method': 'turn/completed',
-          'params': {
-            'threadId': 'thread-1',
-            'turn': {'id': 'turn-1', 'status': 'end_turn'},
-          },
-        },
-      },
+      sessionId: null,
+      turnId: 'turn-1',
+      stopReason: 'end_turn',
     );
 
     expect(runtime.isAiResponding, isFalse);
@@ -1105,14 +1219,11 @@ void main() {
     runtime.lastAgentTurnId = 'turn-1';
     runtime.isAiResponding = true;
 
-    reducer.reduce(
+    reducer.reducePromptResponse(
       runtime: runtime,
-      event: {
-        'message': {
-          'method': 'turn/completed',
-          'params': {'turnId': 'turn-1'},
-        },
-      },
+      sessionId: null,
+      turnId: 'turn-1',
+      stopReason: 'end_turn',
     );
 
     expect(runtime.activeAgentTurnIds, isEmpty);
@@ -1136,12 +1247,11 @@ void main() {
     expect(runtime.activeAcpTurnId, 'acp-turn-1');
     expect(runtime.currentDispatchTurnId, 'request-1-ai');
 
-    reducer.reduce(
+    reducer.reducePromptResponse(
       runtime: runtime,
-      event: {
-        'method': 'turn/completed',
-        'params': {'turnId': 'acp-turn-1'},
-      },
+      sessionId: null,
+      turnId: 'acp-turn-1',
+      stopReason: 'end_turn',
     );
 
     expect(runtime.activeAcpTurnId, isNull);
@@ -1211,12 +1321,11 @@ void main() {
       expect(runtime.activeAcpTurnId, 'acp-turn-1');
       expect(runtime.messages.single.text, 'OpenCode response');
 
-      reducer.reduce(
+      reducer.reducePromptResponse(
         runtime: runtime,
-        event: {
-          'method': 'turn/completed',
-          'params': {'sessionId': 'session-1', 'turnId': 'acp-turn-1'},
-        },
+        sessionId: 'session-1',
+        turnId: 'acp-turn-1',
+        stopReason: 'end_turn',
       );
 
       expect(runtime.isAiResponding, isFalse);
@@ -1409,17 +1518,11 @@ void main() {
         },
       },
     );
-    reducer.reduce(
+    reducer.reducePromptResponse(
       runtime: runtime,
-      event: {
-        'message': {
-          'method': 'turn/completed',
-          'params': {
-            'turnId': 'turn-1',
-            'turn': {'id': 'turn-1', 'status': 'end_turn'},
-          },
-        },
-      },
+      sessionId: null,
+      turnId: 'turn-1',
+      stopReason: 'end_turn',
     );
 
     reducer.reduce(
@@ -2159,6 +2262,8 @@ void main() {
     reducer.reduce(runtime: runtime, event: base);
 
     expect(runtime.messages, isEmpty);
+    expect(runtime.isAiResponding, isFalse);
+    expect(runtime.currentDispatchTurnId, isNull);
 
     reducer.reduce(
       runtime: runtime,
@@ -2181,12 +2286,11 @@ void main() {
     expect(message.content?['agentRetryCount'], 1);
     expect(message.content?['agentMaxRetries'], 3);
 
-    reducer.reduce(
+    reducer.reducePromptResponse(
       runtime: runtime,
-      event: {
-        'method': 'turn/completed',
-        'params': {'turnId': 'turn-retry'},
-      },
+      sessionId: null,
+      turnId: 'turn-retry',
+      stopReason: 'end_turn',
     );
     expect(runtime.messages.single.content?['agentRetrying'], isNull);
   });
@@ -2346,7 +2450,7 @@ void main() {
     },
   );
 
-  test('projects ACP context compaction into the shared marker card', () {
+  test('ignores private automatic compaction presentation metadata', () {
     const base = <String, dynamic>{
       'method': 'session/update',
       'turnId': 'turn-compaction',
@@ -2371,10 +2475,8 @@ void main() {
     };
     reducer.reduce(runtime: runtime, event: base);
 
-    final activeMarker = runtime.messages.single;
-    expect(activeMarker.cardData?['type'], 'context_compaction_marker');
-    expect(activeMarker.cardData?['status'], 'compressing');
-    expect(runtime.isContextCompressing, isTrue);
+    expect(runtime.messages, isEmpty);
+    expect(runtime.isContextCompressing, isFalse);
 
     reducer.reduce(
       runtime: runtime,
@@ -2396,8 +2498,7 @@ void main() {
       },
     );
 
-    expect(runtime.messages, hasLength(1));
-    expect(runtime.messages.single.cardData?['status'], 'completed');
+    expect(runtime.messages, isEmpty);
     expect(runtime.isContextCompressing, isFalse);
   });
 
@@ -2664,7 +2765,7 @@ void main() {
     expect(runtime.messages.single.user, 2);
   });
 
-  test('keeps the ACP v2 session lifecycle visible without a turn id', () {
+  test('legacy state_change cannot start a prompt without a request', () {
     final running = reducer.reduce(
       runtime: runtime,
       event: {
@@ -2677,7 +2778,8 @@ void main() {
     );
 
     expect(running.handled, isTrue);
-    expect(runtime.isAiResponding, isTrue);
+    expect(running.compatibilityWarning, isNull);
+    expect(runtime.isAiResponding, isFalse);
 
     final idle = reducer.reduce(
       runtime: runtime,
@@ -2698,8 +2800,8 @@ void main() {
     expect(runtime.isAiResponding, isFalse);
   });
 
-  test('accepts the pre-release ACP state_update spelling', () {
-    reducer.reduce(
+  test('ignores the pre-release ACP state_update spelling', () {
+    final result = reducer.reduce(
       runtime: runtime,
       event: {
         'method': 'session/update',
@@ -2710,7 +2812,9 @@ void main() {
       },
     );
 
-    expect(runtime.isAiResponding, isTrue);
+    expect(result.handled, isTrue);
+    expect(result.compatibilityWarning, isNull);
+    expect(runtime.isAiResponding, isFalse);
   });
 
   test('routes a session-only event to its background conversation', () {
@@ -3693,14 +3797,11 @@ void main() {
       );
       expect(result.handled, isTrue);
       if (turn == 'turn-1') {
-        reducer.reduce(
+        reducer.reducePromptResponse(
           runtime: runtime,
-          event: {
-            'message': {
-              'method': 'turn/completed',
-              'params': {'turnId': turn},
-            },
-          },
+          sessionId: null,
+          turnId: turn,
+          stopReason: 'end_turn',
         );
       }
     }
@@ -3738,14 +3839,11 @@ void main() {
       runtime: runtime,
       event: messageEvent(turnId: 'turn-1', text: '第一轮'),
     );
-    reducer.reduce(
+    reducer.reducePromptResponse(
       runtime: runtime,
-      event: {
-        'message': {
-          'method': 'turn/completed',
-          'params': {'turnId': 'turn-1'},
-        },
-      },
+      sessionId: null,
+      turnId: 'turn-1',
+      stopReason: 'end_turn',
     );
     reducer.reduce(
       runtime: runtime,
@@ -3827,6 +3925,31 @@ void main() {
     expect(cardData['toolName'], 'agent.commandExec');
     expect(cardData['terminalOutput'], 'hello\n');
     expect(cardData['status'], 'running');
+  });
+
+  test('keeps a large terminal output delta intact in its tool card', () {
+    final output = List<String>.generate(
+      700,
+      (index) => 'line-$index ${'x' * 180}',
+    ).join('\n');
+    expect(output.length, greaterThan(128 * 1024));
+
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'method': 'command/exec/outputDelta',
+          'params': {
+            'processId': 'proc-large-output',
+            'stream': 'stdout',
+            'deltaBase64': base64Encode(utf8.encode(output)),
+          },
+        },
+      },
+    );
+
+    expect(runtime.messages, hasLength(1));
+    expect(runtime.messages.single.cardData?['terminalOutput'], output);
   });
 
   test('late standalone process output stays with its original run', () {
@@ -4629,6 +4752,50 @@ diff --git a/lib/main.dart b/lib/main.dart
     expect(cardData['summary'], contains('All tests passed'));
   });
 
+  test(
+    'hydrates the complete remote tool output behind its compact summary',
+    () {
+      final completeOutput =
+          'first remote fact\n' +
+          List<String>.filled(256, 'middle remote fact').join('\n') +
+          '\ntail remote fact must survive';
+      final messages = remoteCodexMessagesFromThreadResponseForTesting({
+        'thread': {
+          'id': 'thread-1',
+          'turns': [
+            {
+              'id': 'turn-1',
+              'items': [
+                {
+                  'type': 'function_call',
+                  'name': 'exec_command',
+                  'call_id': 'raw-cmd-long-output',
+                  'arguments': '{"cmd":"inspect"}',
+                },
+                {
+                  'type': 'function_call_output',
+                  'call_id': 'raw-cmd-long-output',
+                  'output': completeOutput,
+                },
+              ],
+            },
+          ],
+        },
+      });
+
+      final cardData = messages.single.cardData!;
+      expect(
+        cardData['summary'],
+        isNot(contains('tail remote fact must survive')),
+      );
+      expect(cardData['rawResultJson'], contains('first remote fact'));
+      expect(
+        cardData['rawResultJson'],
+        contains('tail remote fact must survive'),
+      );
+    },
+  );
+
   test('hydrates codex user image blocks as message attachments', () {
     final messages = remoteCodexMessagesFromThreadResponseForTesting({
       'thread': {
@@ -4928,7 +5095,7 @@ diff --git a/lib/main.dart b/lib/main.dart
     expect(runtime.messages.last.streamMeta?['seq'], 1);
   });
 
-  test('marks thread active from object status payload', () {
+  test('thread active status cannot start a prompt', () {
     final result = reducer.reduce(
       runtime: runtime,
       event: {
@@ -4942,8 +5109,8 @@ diff --git a/lib/main.dart b/lib/main.dart
       },
     );
 
-    expect(result.handled, isTrue);
-    expect(runtime.isAiResponding, isTrue);
+    expect(result.handled, isFalse);
+    expect(runtime.isAiResponding, isFalse);
   });
 
   test('marks upstream turn started notification as processing', () {
@@ -5005,32 +5172,7 @@ diff --git a/lib/main.dart b/lib/main.dart
     },
   );
 
-  test('detects stale-normalized remote active turn shape', () {
-    final looksActive = remoteCodexLatestTurnLooksExternallyActiveForTesting({
-      'thread': {
-        'id': 'thread-1',
-        'status': {'type': 'idle'},
-        'turns': [
-          {
-            'id': 'turn-1',
-            'status': 'interrupted',
-            'completedAt': null,
-            'items': [
-              {
-                'id': 'reasoning-1',
-                'type': 'reasoning',
-                'summary': ['still writing'],
-              },
-            ],
-          },
-        ],
-      },
-    });
-
-    expect(looksActive, isTrue);
-  });
-
-  test('marks thread idle from object status payload', () {
+  test('ignores legacy thread status payloads', () {
     reducer.reduce(
       runtime: runtime,
       event: {
@@ -5057,11 +5199,11 @@ diff --git a/lib/main.dart b/lib/main.dart
       },
     );
 
-    expect(result.handled, isTrue);
+    expect(result.handled, isFalse);
     expect(runtime.isAiResponding, isFalse);
   });
 
-  test('thread idle finalizes active turn without cancellation body', () {
+  test('thread idle leaves reasoning active until the prompt response', () {
     reducer.reduce(
       runtime: runtime,
       event: {
@@ -5099,12 +5241,21 @@ diff --git a/lib/main.dart b/lib/main.dart
       },
     );
 
-    expect(runtime.isAiResponding, isFalse);
-    expect(runtime.currentDispatchTurnId, isNull);
+    expect(runtime.isAiResponding, isTrue);
+    expect(runtime.currentDispatchTurnId, 'turn-1');
     expect(
       runtime.messages.any((message) => message.id.endsWith('cancelled')),
       isFalse,
     );
+    expect(runtime.messages.single.cardData!['isLoading'], isTrue);
+    reducer.reducePromptResponse(
+      runtime: runtime,
+      sessionId: null,
+      turnId: 'turn-1',
+      stopReason: 'end_turn',
+    );
+    expect(runtime.isAiResponding, isFalse);
+    expect(runtime.currentDispatchTurnId, isNull);
     expect(runtime.messages.single.cardData!['isLoading'], isFalse);
   });
 
@@ -5467,14 +5618,11 @@ diff --git a/lib/main.dart b/lib/main.dart
     expect(midTurnCard['stage'], ThinkingStage.thinking.value);
 
     // turn/completed is the terminal signal that finalizes the thinking card.
-    reducer.reduce(
+    reducer.reducePromptResponse(
       runtime: runtime,
-      event: {
-        'message': {
-          'method': 'turn/completed',
-          'params': {'turnId': 'turn-1'},
-        },
-      },
+      sessionId: null,
+      turnId: 'turn-1',
+      stopReason: 'end_turn',
     );
 
     final completedCard = runtime.messages
@@ -5510,14 +5658,11 @@ diff --git a/lib/main.dart b/lib/main.dart
       },
     );
 
-    reducer.reduce(
+    reducer.reducePromptResponse(
       runtime: runtime,
-      event: {
-        'message': {
-          'method': 'turn/completed',
-          'params': {'turnId': 'turn-1'},
-        },
-      },
+      sessionId: null,
+      turnId: 'turn-1',
+      stopReason: 'end_turn',
     );
 
     expect(
@@ -5608,14 +5753,11 @@ diff --git a/lib/main.dart b/lib/main.dart
           },
         },
       );
-      reducer.reduce(
+      reducer.reducePromptResponse(
         runtime: runtime,
-        event: {
-          'message': {
-            'method': 'turn/completed',
-            'params': {'turnId': turnId},
-          },
-        },
+        sessionId: null,
+        turnId: turnId,
+        stopReason: 'end_turn',
       );
     }
 
@@ -6089,14 +6231,11 @@ diff --git a/lib/main.dart b/lib/main.dart
       'first thoughtsecond thought',
     );
 
-    reducer.reduce(
+    reducer.reducePromptResponse(
       runtime: runtime,
-      event: {
-        'message': {
-          'method': 'turn/completed',
-          'params': {'turnId': 'turn-1'},
-        },
-      },
+      sessionId: null,
+      turnId: 'turn-1',
+      stopReason: 'end_turn',
     );
 
     final completedThinkingMessages = runtime.messages
@@ -6228,14 +6367,11 @@ diff --git a/lib/main.dart b/lib/main.dart
         },
       },
     );
-    reducer.reduce(
+    reducer.reducePromptResponse(
       runtime: runtime,
-      event: {
-        'message': {
-          'method': 'turn/completed',
-          'params': {'threadId': 'thread-1', 'turnId': 'turn-1'},
-        },
-      },
+      sessionId: null,
+      turnId: 'turn-1',
+      stopReason: 'end_turn',
     );
 
     final card = runtime.messages.firstWhere(
@@ -6248,7 +6384,7 @@ diff --git a/lib/main.dart b/lib/main.dart
     expect(runtime.isAiResponding, isFalse);
   });
 
-  test('top-level error with willRetry=false finalizes the active turn', () {
+  test('owning prompt transport failure finalizes the active request', () {
     reducer.reduce(
       runtime: runtime,
       event: {
@@ -6275,19 +6411,12 @@ diff --git a/lib/main.dart b/lib/main.dart
 
     expect(runtime.isAiResponding, isTrue);
 
-    reducer.reduce(
+    reducer.reducePromptResponse(
       runtime: runtime,
-      event: {
-        'message': {
-          'method': 'error',
-          'params': {
-            'threadId': 'thread-1',
-            'turnId': 'turn-1',
-            'willRetry': false,
-            'message': 'connection lost',
-          },
-        },
-      },
+      sessionId: null,
+      turnId: 'turn-1',
+      stopReason: 'error',
+      error: 'connection lost',
     );
 
     expect(runtime.isAiResponding, isFalse);
@@ -6300,7 +6429,7 @@ diff --git a/lib/main.dart b/lib/main.dart
   });
 
   test(
-    'turn/failed finalizes a local run when the official turn id differs',
+    'prompt failure finalizes a local run when the official turn id differs',
     () {
       runtime
         ..isAiResponding = true
@@ -6309,17 +6438,12 @@ diff --git a/lib/main.dart b/lib/main.dart
         ..lastAgentTurnId = 'local-run-1'
         ..activeAcpTurnId = 'official-turn-1';
 
-      reducer.reduce(
+      reducer.reducePromptResponse(
         runtime: runtime,
-        event: {
-          'method': 'turn/failed',
-          'turnId': 'official-turn-1',
-          'params': {
-            'threadId': 'session-1',
-            'turnId': 'official-turn-1',
-            'error': {'message': 'provider failed'},
-          },
-        },
+        sessionId: null,
+        turnId: 'official-turn-1',
+        stopReason: 'error',
+        error: 'provider failed',
       );
 
       expect(runtime.isAiResponding, isFalse);
@@ -6338,18 +6462,12 @@ diff --git a/lib/main.dart b/lib/main.dart
         ..lastAgentTurnId = 'local-run-2'
         ..activeAcpTurnId = 'official-turn-2';
 
-      reducer.reduce(
+      reducer.reducePromptResponse(
         runtime: runtime,
-        event: {
-          'method': 'error',
-          'turnId': 'official-turn-2',
-          'params': {
-            'threadId': 'session-2',
-            'turnId': 'official-turn-2',
-            'willRetry': false,
-            'message': 'connection lost',
-          },
-        },
+        sessionId: null,
+        turnId: 'official-turn-2',
+        stopReason: 'error',
+        error: 'connection lost',
       );
 
       expect(runtime.isAiResponding, isFalse);
@@ -6382,17 +6500,11 @@ diff --git a/lib/main.dart b/lib/main.dart
       },
     );
 
-    reducer.reduce(
+    reducer.reducePromptResponse(
       runtime: runtime,
-      event: {
-        'method': 'turn/completed',
-        'turnId': 'cancelled-turn',
-        'params': {
-          'turnId': 'cancelled-turn',
-          'status': 'completed',
-          'stopReason': 'cancelled',
-        },
-      },
+      sessionId: null,
+      turnId: 'cancelled-turn',
+      stopReason: 'cancelled',
     );
 
     expect(runtime.isAiResponding, isFalse);
@@ -6402,23 +6514,13 @@ diff --git a/lib/main.dart b/lib/main.dart
     expect(thinking.cardData?['stage'], ThinkingStage.cancelled.value);
   });
 
-  test('top-level nested Provider error is rendered as a concise message', () {
-    reducer.reduce(
+  test('owning prompt Provider error is rendered as a concise message', () {
+    reducer.reducePromptResponse(
       runtime: runtime,
-      event: {
-        'message': {
-          'method': 'error',
-          'params': {
-            'threadId': 'thread-1',
-            'turnId': 'turn-1',
-            'willRetry': false,
-            'error': {
-              'message': 'Invalid JSON data: tools[8].type is unsupported',
-              'type': 'invalid_request_error',
-            },
-          },
-        },
-      },
+      sessionId: null,
+      turnId: 'turn-1',
+      stopReason: 'error',
+      error: 'Invalid JSON data: tools[8].type is unsupported',
     );
 
     final statusCard = runtime.messages.firstWhere(

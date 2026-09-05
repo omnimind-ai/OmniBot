@@ -43,9 +43,14 @@ class MemoryToolHandler(
                     helper.reportToolProgress(callback, toolName, "正在检索 workspace 记忆")
                     val query = args["query"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
                     require(query.isNotEmpty()) { "query 不能为空" }
-                    val limit = args["limit"]?.jsonPrimitive?.intOrNull?.coerceIn(1, 20) ?: 8
+                    val requestedLimit = args["limit"]?.jsonPrimitive?.intOrNull
+                    require(requestedLimit == null || requestedLimit > 0) {
+                        "limit 必须大于 0"
+                    }
+                    // The local runtime never imposes its own search-result
+                    // ceiling. An explicit request is honored as written.
+                    val limit = requestedLimit ?: Int.MAX_VALUE
                     val result = env.workspaceMemoryService.searchMemory(query, limit)
-                    val tracker = env.turnMemoryLoadTracker
                     val payload = linkedMapOf<String, Any?>(
                         "query" to result.query,
                         "usedEmbedding" to result.usedEmbedding,
@@ -58,10 +63,7 @@ class MemoryToolHandler(
                                 "text" to hit.text,
                                 "source" to hit.source,
                                 "date" to hit.date,
-                                "score" to hit.score,
-                                "alreadyInContext" to (
-                                    tracker?.isLoaded(hit.slug ?: hit.id) == true
-                                )
+                                "score" to hit.score
                             )
                         }
                     )
@@ -80,17 +82,15 @@ class MemoryToolHandler(
                     helper.reportToolProgress(callback, toolName, "正在写入当日记忆")
                     val text = args["text"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
                     require(text.isNotEmpty()) { "text 不能为空" }
-                    val inserted = env.workspaceMemoryService.appendDailyMemoryIfNovel(text)
+                    env.workspaceMemoryService.appendDailyMemory(text)
                     val payload = mapOf(
-                        "inserted" to inserted,
-                        "summary" to if (inserted) "已写入当日记忆" else "检测到重复，已跳过"
+                        "inserted" to true,
+                        "summary" to "已写入当日记忆"
                     )
                     val payloadJson = helper.encodeLocalizedPayload(payload)
                     ToolExecutionResult.ContextResult(
                         toolName = toolName,
-                        summaryText = helper.localized(
-                            if (inserted) "已写入当日短期记忆。" else "当日短期记忆已存在同类条目，跳过写入。"
-                        ),
+                        summaryText = helper.localized("已写入当日短期记忆。"),
                         previewJson = payloadJson, rawResultJson = payloadJson, success = true
                     )
                 }
@@ -98,12 +98,12 @@ class MemoryToolHandler(
                     helper.reportToolProgress(callback, toolName, "正在沉淀长期记忆")
                     val text = args["text"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
                     require(text.isNotEmpty()) { "text 不能为空" }
-                    val inserted = env.workspaceMemoryService.upsertLongTermMemory(text)
-                    val payload = mapOf("inserted" to inserted, "summary" to if (inserted) "已写入长期记忆" else "检测到重复，已跳过")
+                    env.workspaceMemoryService.appendLongTermMemory(text)
+                    val payload = mapOf("inserted" to true, "summary" to "已写入长期记忆")
                     val payloadJson = helper.encodeLocalizedPayload(payload)
                     ToolExecutionResult.ContextResult(
                         toolName = toolName,
-                        summaryText = helper.localized(if (inserted) "已沉淀一条长期记忆。" else "长期记忆已存在同类条目，跳过写入。"),
+                        summaryText = helper.localized("已沉淀一条长期记忆。"),
                         previewJson = payloadJson, rawResultJson = payloadJson, success = true
                     )
                 }

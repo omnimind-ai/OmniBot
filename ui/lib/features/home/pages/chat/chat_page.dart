@@ -79,6 +79,7 @@ import 'mixins/conversation_manager.dart';
 import 'chat_page_models.dart';
 import 'tool_activity_utils.dart';
 import 'widgets/chat_widgets.dart';
+import 'widgets/acp_config_button.dart';
 import 'widgets/chat_browser_overlay.dart';
 import 'widgets/chat_message_anchor_bar.dart';
 import 'widgets/pet_overlay_permission_sheet.dart';
@@ -248,7 +249,6 @@ abstract class _ChatPageStateBase extends State<ChatPage>
       ComposerKeyboardMetricsTracker();
   ChatPageModeState _modeState(ChatPageMode mode) => _modeStates[mode.index];
   bool _isAwaitingAuthorizeResult = false;
-  bool _isRetryingLatestInstructionAfterAuth = false;
   bool _suppressNextOutsideTapKeyboardHide = false;
   static const String _openClawWaitingHint = '等待龙虾烹饪';
   static const String _openClawWaitingStatusKey = 'openclaw_waiting';
@@ -273,13 +273,8 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   StreamSubscription<Map<String, dynamic>>? _omniLinkEventSubscription;
   final Set<String> _pendingManualAgentRetryTaskIds = <String>{};
   bool _pendingAgentInputResponseInFlight = false;
-  Timer? _remoteCodexSessionSyncTimer;
   bool _remoteCodexSessionSyncInFlight = false;
   String? _remoteCodexSessionSyncThreadId;
-  String _remoteCodexSessionSyncSignature = '';
-  String? _remoteCodexActivityThreadId;
-  String _remoteCodexActivityContentSignature = '';
-  int? _remoteCodexLastContentChangeAtMs;
   AgentRuntimeStatus _agentRuntimeStatus = AgentRuntimeStatus.disconnected;
   AcpAgentCatalog? _agentCatalog;
   bool _isAgentCatalogLoading = false;
@@ -302,7 +297,6 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   String? _activeAgentReasoningEffort;
   String? _agentReasoningEffortConfigId;
   String? _activeAgentCollaborationMode;
-  final Set<String> _agentPlanTurnIds = <String>{};
   bool _isAgentModelListLoading = false;
   bool _isAgentCollaborationModeListLoading = false;
   String? _agentModelListError;
@@ -1589,62 +1583,23 @@ abstract class _ChatPageStateBase extends State<ChatPage>
         : runtime?.currentDispatchTurnId;
     final displayError = formatAgentRuntimeErrorForUser(error);
     if (runtime == null || taskId == null || taskId.trim().isEmpty) {
-      final fallback = _modeState(_activeMode);
-      fallback.isAiResponding = false;
-      fallback.isCheckingExecutableTask = false;
-      fallback.isExecutingTask = false;
-      fallback.isContextCompressing = false;
-      fallback.isDeepThinking = false;
-      fallback.deepThinkingContent = '';
-      fallback.currentDispatchTurnId = null;
-      fallback.currentThinkingStage = 1;
-      if (mounted) {
-        showToast(displayError, type: ToastType.error);
-        setState(() {});
-      }
-      return;
-    }
-    // Error callbacks are asynchronous. The task id must still own the live
-    // ACP turn before this page mutates the shared runtime; otherwise an old
-    // failed request can stop a newer request in the same conversation.
-    if (!_runtimeCoordinator.isTaskActive(
-      taskId: taskId,
-      conversationId: runtime.conversationId,
-      mode: _modeKey(_activeMode),
-    )) {
+      if (mounted) showToast(displayError, type: ToastType.error);
       return;
     }
     _runtimeCoordinator.clearTaskThinkingPresentation(
       taskId: taskId,
       conversationId: runtime.conversationId,
-      mode: _modeKey(_activeMode),
+      mode: runtime.mode,
     );
-    final messageId = '$taskId-error';
-    final message = ChatMessageModel(
-      id: messageId,
-      type: 1,
-      user: 2,
-      content: <String, dynamic>{'text': displayError, 'id': messageId},
-      isError: true,
-    );
-    final index = runtime.messages.indexWhere((item) => item.id == messageId);
-    if (index == -1) {
-      runtime.messages.insert(0, message);
-    } else {
-      runtime.messages[index] = message;
-    }
-    // Fence the failed task here as well as in individual send catches. This
-    // covers preflight/setup failures that reach the shared error handler and
-    // prevents a late ACP update from reviving the failed thinking card.
-    _runtimeCoordinator.unregisterTask(
-      taskId,
+    _runtimeCoordinator.applyAcpPromptResponse(
+      taskId: taskId,
       conversationId: runtime.conversationId,
-      mode: _modeKey(_activeMode),
+      mode: runtime.mode,
+      sessionId: runtime.activeAcpSessionId,
+      turnId: runtime.activeAcpTurnId,
+      stopReason: 'error',
+      error: displayError,
     );
-    if (mounted) {
-      setState(() {});
-    }
-    unawaited(saveConversation());
   }
 
   void interruptActiveToolCard({String? summary}) {
@@ -1914,6 +1869,7 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   Future<void> _sendAgentMessage(
     String aiMessageId,
     String messageText, {
+    required String userMessageId,
     List<Map<String, dynamic>> attachments = const [],
     String? modelOverride,
     String? collaborationModeOverride,
@@ -2137,8 +2093,6 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     String? requestIdOverride,
   });
 
-  String _buildManualRetryRequestId(String taskId);
-
   Future<List<Map<String, dynamic>>> _latestUserAttachments();
 
   void _onCancelTask();
@@ -2156,10 +2110,6 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   Future<void> _requestAuthorizeForExecution(
     List<String> requiredPermissionIds,
   );
-
-  Future<void> _retryLatestInstructionAfterAuth();
-
-  void _removeFailedAttemptMessages();
 
   Widget _buildSlashCommandPanel();
 

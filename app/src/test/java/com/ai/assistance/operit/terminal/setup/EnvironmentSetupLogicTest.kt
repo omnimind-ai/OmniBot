@@ -159,7 +159,11 @@ class EnvironmentSetupLogicTest {
     fun buildInstallCommands_installsLatestDeepSeekHarnessRuntime() {
         val commands = EnvironmentSetupLogic.buildInstallCommands(
             selectedPackageIds = listOf("deepseek_harness"),
-            repositorySetupCommand = ""
+            repositorySetupCommand = "",
+            harnessInstallCommands = mapOf(
+                "deepseek_harness" to
+                    File("src/main/assets/acp/install/deepseek-harness.sh").readText(),
+            ),
         )
 
         val apkAdd = commands.first { it.contains("omnibot_apk_add") }
@@ -235,20 +239,8 @@ class EnvironmentSetupLogicTest {
 
         assertTrue(command.contains("command -v dsh"))
         assertTrue(command.contains("command -v dsh-acp-android"))
-        assertTrue(command.contains("/root/.dsh/omnibot-acp/profiles/acp/package.json"))
-        assertTrue(command.contains("@openma/deepseek-harness-acp/package.json"))
-        assertTrue(command.contains("require('/root/.npm-global/lib/node_modules/@deepseek-ai/dsh/node_modules/node-pty')"))
-        assertTrue(command.contains("nodeLinker:[[:space:]]*hoisted"))
-        assertTrue(command.contains("packageImportMethod:[[:space:]]*copy"))
-        assertTrue(command.contains("const profile=JSON.parse(fs.readFileSync"))
-        assertTrue(command.contains("bundles.includes('@openma/deepseek-harness-acp')"))
-        assertTrue(command.contains("deepseek-harness-acp/dist/plugin.js"))
-        assertTrue(command.contains("deepseek-harness-acp/dist/stdio.js"))
-        assertTrue(command.contains("test ! -L"))
         assertTrue(!command.contains("await import('@openma/deepseek-harness-acp/plugin')"))
         assertTrue(!command.contains("await import('@openma/deepseek-harness-acp/stdio')"))
-        assertTrue(command.contains("cd /root/.dsh/omnibot-acp/profiles/acp"))
-        assertTrue(!command.contains("readlink"))
     }
 
     @Test
@@ -342,7 +334,11 @@ class EnvironmentSetupLogicTest {
         val commands = EnvironmentSetupLogic.buildInstallCommands(
             selectedPackageIds = listOf("deepseek_harness"),
             repositorySetupCommand = "",
-            workingMode = WorkingMode.UBUNTU
+            workingMode = WorkingMode.UBUNTU,
+            harnessInstallCommands = mapOf(
+                "deepseek_harness" to
+                    File("src/main/assets/acp/install/deepseek-harness.sh").readText(),
+            ),
         )
 
         val aptInstall = commands.last { it.startsWith("apt-get update") }
@@ -420,7 +416,15 @@ class EnvironmentSetupLogicTest {
                     val distroCommands = EnvironmentSetupLogic.buildInstallCommands(
                         selectedPackageIds = selectedPackageIds,
                         repositorySetupCommand = repositorySetupCommand,
-                        workingMode = workingMode
+                        workingMode = workingMode,
+                        harnessInstallCommands = if ("deepseek_harness" in selectedPackageIds) {
+                            mapOf(
+                                "deepseek_harness" to
+                                    File("src/main/assets/acp/install/deepseek-harness.sh").readText(),
+                            )
+                        } else {
+                            emptyMap()
+                        },
                     )
                     val script = EnvironmentSetupLogic.buildSetupScript(
                         commands = distroCommands,

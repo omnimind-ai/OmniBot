@@ -278,8 +278,8 @@ class StorageService {
   }
 
   static bool isRecentConversationsOnlyEnabled() {
-    return getBool(kRecentConversationsOnlyEnabledKey, defaultValue: true) ??
-        true;
+    return getBool(kRecentConversationsOnlyEnabledKey, defaultValue: false) ??
+        false;
   }
 
   static ChatStartupBehavior getChatStartupBehavior() {

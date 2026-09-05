@@ -9,6 +9,7 @@ import {
   createConversationDraft,
   isPersistedConversation,
 } from "./conversationDraft";
+import { appendConversationNavigation } from "./conversationNavigation";
 import { conversationKey } from "./format";
 import { useRealtime } from "./hooks/useRealtime";
 import { reconcileCodexMessages } from "./messageReconciliation";
@@ -126,9 +127,9 @@ export default function App() {
     const history = conversationHistoryRef.current;
     const index = conversationHistoryIndexRef.current;
     if (history[index] === key) return;
-    const nextHistory = [...history.slice(0, index + 1), key].slice(-50);
-    conversationHistoryRef.current = nextHistory;
-    conversationHistoryIndexRef.current = nextHistory.length - 1;
+    const next = appendConversationNavigation({ keys: history, index }, key);
+    conversationHistoryRef.current = next.keys;
+    conversationHistoryIndexRef.current = next.index;
   }
 
   function navigationTarget(direction: -1 | 1) {
@@ -505,7 +506,7 @@ export default function App() {
   async function openWorkspaceFile(path: string) {
     try {
       const payload = await request<WorkspaceFilePayload>("/workspaces/file", {
-        query: { path, maxChars: 64_000 },
+        query: { path },
       });
       setWorkspaceFilePath(path);
       setWorkspaceContent(String(payload?.content ?? ""));

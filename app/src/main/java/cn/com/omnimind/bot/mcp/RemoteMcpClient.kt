@@ -1164,14 +1164,13 @@ object RemoteMcpClient {
             }
         }
         if (textBlocks.isNotEmpty()) {
-            return textBlocks.joinToString("\n").take(600)
+            return textBlocks.joinToString("\n")
         }
-        return gson.toJson(result).take(600)
+        return gson.toJson(result)
     }
 
     private fun buildPreviewJson(result: Any?): String {
-        val raw = gson.toJson(result)
-        return if (raw.length <= 1200) raw else raw.take(1200) + "..."
+        return gson.toJson(result)
     }
 
     private fun deepStringMap(value: Any?): Map<String, Any?>? {

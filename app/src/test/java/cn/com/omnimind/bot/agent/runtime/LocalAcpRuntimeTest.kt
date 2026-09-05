@@ -1,6 +1,7 @@
 package cn.com.omnimind.bot.agent.runtime
 
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import java.util.ArrayDeque
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
@@ -9,7 +10,33 @@ import org.junit.Test
 
 class LocalAcpRuntimeTest {
     @Test
-    fun `pending event buffer keeps terminal boundaries when saturated`() {
+    fun `ACP terminal keeps complete output unless the caller requests a byte limit`() {
+        val output = "line\n".repeat(80_000)
+
+        assertEquals(output to false, tailByBytes(output, null))
+        assertEquals("def" to true, tailByBytes("abcdef", 3uL))
+    }
+
+    @Test
+    fun `ACP file reads keep every requested line unless the caller supplies a limit`() {
+        val lines = (1..20_001).asSequence().map { "line-$it" }
+        val complete = selectAcpTextFileLines(lines, line = 1u, limit = null)
+
+        assertTrue(complete.startsWith("line-1\n"))
+        assertTrue(complete.endsWith("line-20001"))
+        assertEquals(20_001, complete.lineSequence().count())
+        assertEquals(
+            "line-3\nline-4",
+            selectAcpTextFileLines(
+                sequenceOf("line-1", "line-2", "line-3", "line-4", "line-5"),
+                line = 3u,
+                limit = 2u,
+            ),
+        )
+    }
+
+    @Test
+    fun `pending event buffer preserves every update beyond the former cap`() {
         val events = ArrayDeque<Map<String, Any?>>()
         repeat(1024) { index ->
             enqueuePendingAgentEvent(
@@ -18,41 +45,12 @@ class LocalAcpRuntimeTest {
             )
         }
 
-        val terminal = mapOf(
-            "method" to "turn/failed",
-            "sessionId" to "session-buffer",
-            "turnId" to "turn-buffer",
-        )
-        enqueuePendingAgentEvent(events, terminal)
+        val finalUpdate = mapOf("method" to "session/update", "sequence" to 1024)
+        enqueuePendingAgentEvent(events, finalUpdate)
 
-        assertTrue(events.contains(terminal))
-        assertEquals(1024, events.size)
-    }
-
-    @Test
-    fun `pending event buffer does not evict unique terminal boundaries`() {
-        val events = ArrayDeque<Map<String, Any?>>()
-        repeat(1024) { index ->
-            enqueuePendingAgentEvent(
-                events,
-                mapOf(
-                    "method" to "turn/completed",
-                    "sessionId" to "session-$index",
-                    "turnId" to "turn-$index",
-                ),
-            )
-        }
-
-        val extraTerminal = mapOf(
-            "method" to "turn/failed",
-            "sessionId" to "session-extra",
-            "turnId" to "turn-extra",
-        )
-        enqueuePendingAgentEvent(events, extraTerminal)
-
-        assertTrue(events.size > 1024)
-        assertTrue(events.first()["sessionId"] == "session-0")
-        assertTrue(events.contains(extraTerminal))
+        assertEquals(1025, events.size)
+        assertEquals(0, events.first()["sequence"])
+        assertEquals(finalUpdate, events.last())
     }
 
     @Test
@@ -138,6 +136,42 @@ class LocalAcpRuntimeTest {
     }
 
     @Test
+    fun `completed ACP requests stay idempotent beyond the former tombstone cap`() {
+        val ownership = AcpTurnOwnershipRegistry()
+
+        repeat(300) { index ->
+            val turnId = "turn-$index"
+            val requestId = "request-$index"
+            assertTrue(ownership.reserve("session", turnId, requestId) is AcpTurnReservation.Started)
+            assertTrue(ownership.finish("session", turnId, "completed") != null)
+        }
+
+        assertTrue(
+            ownership.reserve("session", "retry-old", "request-0")
+                is AcpTurnReservation.Completed
+        )
+    }
+
+    @Test
+    fun `a cancelled turn ends only itself and the next user prompt can start`() {
+        val ownership = AcpTurnOwnershipRegistry()
+        assertTrue(
+            ownership.reserve("session", "turn-cancelled", "request-cancelled")
+                is AcpTurnReservation.Started
+        )
+        assertTrue(ownership.finish("session", "turn-cancelled", "cancelled") != null)
+
+        assertTrue(
+            ownership.reserve("session", "turn-next", "request-next")
+                is AcpTurnReservation.Started
+        )
+        assertTrue(
+            ownership.reserve("session", "turn-cancelled-retry", "request-cancelled")
+                is AcpTurnReservation.Completed
+        )
+    }
+
+    @Test
     fun `legacy start event can attach request identity to the existing turn`() {
         val ownership = AcpTurnOwnershipRegistry()
         ownership.reserve("session", "turn-1", null)
@@ -197,6 +231,51 @@ class LocalAcpRuntimeTest {
         assertFalse(execution.tryStartPrompt())
         assertTrue(preparation.isCancelled)
         assertTrue(prompt.isCancelled)
+    }
+
+    @Test
+    fun `transport disconnect before prompt attachment cancels the late job`() {
+        val preparation = Job()
+        val execution = AcpPromptExecution(preparation)
+
+        execution.cancelForTransport(CancellationException("ACP runtime disconnected"))
+        val latePrompt = Job()
+        execution.attachPromptJob(latePrompt)
+
+        assertTrue(preparation.isCancelled)
+        assertTrue(latePrompt.isCancelled)
+        assertFalse(execution.tryStartPrompt())
+    }
+
+    @Test
+    fun `transport disconnect without a preparation job still rejects late prompt admission`() {
+        val execution = AcpPromptExecution(null)
+        execution.cancelForTransport(CancellationException("ACP runtime disconnected"))
+
+        val latePrompt = Job()
+        execution.attachPromptJob(latePrompt)
+
+        assertTrue(latePrompt.isCancelled)
+        assertFalse(execution.tryStartPrompt())
+    }
+
+    @Test
+    fun `transport disconnect cancels an admitted prompt but not another execution`() {
+        val prompt = Job()
+        val execution = AcpPromptExecution(null)
+        execution.attachPromptJob(prompt)
+        assertTrue(execution.tryStartPrompt())
+        val otherPrompt = Job()
+        val otherExecution = AcpPromptExecution(null)
+        otherExecution.attachPromptJob(otherPrompt)
+
+        execution.cancelForTransport(CancellationException("ACP runtime disconnected"))
+        execution.cancelForTransport(CancellationException("duplicate disconnect"))
+
+        assertTrue(prompt.isCancelled)
+        assertFalse(otherPrompt.isCancelled)
+        assertTrue(otherExecution.tryStartPrompt())
+        otherPrompt.cancel()
     }
 
     @Test

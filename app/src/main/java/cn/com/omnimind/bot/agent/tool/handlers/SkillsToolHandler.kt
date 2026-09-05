@@ -35,13 +35,11 @@ class SkillsToolHandler(
             "skills_list" -> executeSkillsList(
                 args,
                 env.workspaceDescriptor,
-                env.runtimeSettings,
                 callback,
             )
             "skills_read" -> executeSkillsRead(
                 args,
                 env.workspaceDescriptor,
-                env.runtimeSettings,
                 callback,
             )
             else -> ToolExecutionResult.Error(toolCall.function.name, "Unknown skills tool")
@@ -51,21 +49,16 @@ class SkillsToolHandler(
     private suspend fun executeSkillsList(
         args: JsonObject,
         workspace: AgentWorkspaceDescriptor,
-        runtimeSettings: AgentRuntimeSettings,
         callback: AgentCallback,
     ): ToolExecutionResult {
         val toolName = "skills_list"
         return try {
             helper.requireWorkspaceStorageAccess(callback)?.let { return it }
             val query = args["query"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
-            val limit = args["limit"]?.jsonPrimitive?.intOrNull
-                ?.takeIf { it > 0 }
-                ?: runtimeSettings.skillsListLimit
+            val limit = args["limit"]?.jsonPrimitive?.intOrNull?.takeIf { it > 0 }
             val normalizedQuery = query.lowercase()
             val entries = skillIndexService.listInstalledSkills()
                 .filter { entry ->
-                    val compatibility = SkillCompatibilityChecker.evaluate(entry)
-                    if (!compatibility.available) return@filter false
                     if (normalizedQuery.isBlank()) true
                     else listOf(
                         entry.id,
@@ -115,7 +108,6 @@ class SkillsToolHandler(
     private suspend fun executeSkillsRead(
         args: JsonObject,
         workspace: AgentWorkspaceDescriptor,
-        runtimeSettings: AgentRuntimeSettings,
         callback: AgentCallback,
     ): ToolExecutionResult {
         val toolName = "skills_read"
@@ -123,12 +115,7 @@ class SkillsToolHandler(
             helper.requireWorkspaceStorageAccess(callback)?.let { return it }
             val skillId = args["skillId"]?.jsonPrimitive?.content?.trim().orEmpty()
             require(skillId.isNotEmpty()) { "缺少 skillId" }
-            val maxChars = args["maxChars"]?.jsonPrimitive?.intOrNull
-                ?.takeIf { it > 0 }
-                ?: runtimeSettings.skillReadMaxChars
             val entry = skillIndexService.findInstalledSkill(skillId) ?: throw IllegalArgumentException("未找到 skill：$skillId")
-            val compatibility = SkillCompatibilityChecker.evaluate(entry)
-            require(compatibility.available) { compatibility.reason ?: "当前环境不可用" }
             val resolved = skillLoader.load(entry, "agent 主动读取 skill") ?: throw IllegalStateException("读取 SKILL.md 失败：${entry.shellSkillFilePath}")
             val skillFile = File(entry.skillFilePath)
             val artifact = workspaceManager.buildArtifactForFile(skillFile, toolName)
@@ -142,9 +129,7 @@ class SkillsToolHandler(
                 "references" to resolved.loadedReferences,
                 "metadata" to resolved.metadata.mapValues { (_, value) -> resolveDistributionText(value) },
                 "frontmatter" to resolved.frontmatter.mapValues { (_, value) -> resolveDistributionText(value) },
-                "bodyMarkdown" to (maxChars?.let {
-                    helper.truncateText(resolveDistributionText(resolved.bodyMarkdown), it)
-                } ?: resolveDistributionText(resolved.bodyMarkdown)),
+                "bodyMarkdown" to resolveDistributionText(resolved.bodyMarkdown),
                 "uri" to artifact.uri
             )
             ToolExecutionResult.ContextResult(

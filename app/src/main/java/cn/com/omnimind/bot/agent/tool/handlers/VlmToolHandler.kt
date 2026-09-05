@@ -103,12 +103,9 @@ class VlmToolHandler(context: Context) : ToolHandler {
                 request = OmniVlmPlugin.Request(
                     goal = goal,
                     runId = runId,
-                    maxSteps = env.runtimeSettings.maxVlmSteps,
-                    maxRejectedActionRetries = env.runtimeSettings.maxRejectedActionRetries,
                 ),
                 modelClient = HttpAgentLlmClient(
                     scope = CoroutineScope(currentCoroutineContext()),
-                    runtimeSettings = env.runtimeSettings,
                 )
                     .asOmniFlowModelClient(),
                 hooks = OmniVlmPlugin.Hooks(

@@ -7,34 +7,11 @@ const Color kTerminalSurfaceBlackElevated = Color(0xFF0C1016);
 const Color kTerminalSurfaceShadow = Color(0x52000000);
 
 class TerminalOutputUtils {
-  static const int maxChars = 64 * 1024;
-  static const int maxLines = 600;
-  static const String truncationNotice = '[更早输出已省略]\n';
-
   static String trim(String value) {
-    if (value.isEmpty) return value;
-
-    var candidate = value;
-    if (candidate.length > maxChars) {
-      candidate = candidate.substring(candidate.length - maxChars);
-    }
-
-    final lines = candidate.split('\n');
-    if (lines.length > maxLines) {
-      candidate = lines.sublist(lines.length - maxLines).join('\n');
-    }
-
-    final wasTrimmed =
-        candidate.length < value.length || lines.length > maxLines;
-    if (!wasTrimmed) {
-      return candidate;
-    }
-
-    final body = candidate.startsWith(truncationNotice)
-        ? candidate.substring(truncationNotice.length)
-        : candidate;
-    final remaining = maxChars - truncationNotice.length;
-    return '$truncationNotice${body.substring(body.length > remaining ? body.length - remaining : 0)}';
+    // This value feeds the detail sheet and its copy action.  Preview widgets
+    // decide their own presentation length, but this shared source must not
+    // discard a user's terminal result before either can render it.
+    return value;
   }
 
   static String buildDisplayOutput({

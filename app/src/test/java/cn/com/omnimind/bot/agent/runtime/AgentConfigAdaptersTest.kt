@@ -3,6 +3,7 @@ package cn.com.omnimind.bot.agent.runtime
 import cn.com.omnimind.baselib.llm.DeepSeekProvider
 import cn.com.omnimind.baselib.llm.ProviderModelOption
 import cn.com.omnimind.baselib.llm.OpenAiWireApi
+import com.google.gson.Gson
 import com.google.gson.JsonParser
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -14,24 +15,6 @@ class AgentConfigAdaptersTest {
         baseUrl = "https://llmapi.paratera.com/v1",
         apiKey = "secret",
     )
-
-    @Test
-    fun runtimeSettingsCanBeSavedWithoutChangingHarnessConfig() {
-        assertTrue(
-            isRuntimeSettingsOnlyAgentConfigUpdate(
-                mapOf("agentId" to "codex", "runtimeSettings" to emptyMap<String, Any?>())
-            )
-        )
-        assertFalse(
-            isRuntimeSettingsOnlyAgentConfigUpdate(
-                mapOf(
-                    "agentId" to "codex",
-                    "runtimeSettings" to emptyMap<String, Any?>(),
-                    "model" to "next-model",
-                )
-            )
-        )
-    }
 
     @Test
     fun sharedAgentModelRequiresAnExplicitProviderBinding() {
@@ -59,7 +42,7 @@ class AgentConfigAdaptersTest {
     }
 
     @Test
-    fun legacyXiaowanAliasesAreRecognizedForMigration() {
+    fun knownLegacyIdentityMigratesButCustomDisplayNameDoesNot() {
         assertTrue(
             AcpAgentProfileStore.isLegacyXiaowanAlias(
                 AcpAgentProfile(
@@ -69,7 +52,7 @@ class AgentConfigAdaptersTest {
                 ),
             ),
         )
-        assertTrue(
+        assertFalse(
             AcpAgentProfileStore.isLegacyXiaowanAlias(
                 AcpAgentProfile(
                     id = "custom-xiaowan",
@@ -144,7 +127,7 @@ class AgentConfigAdaptersTest {
 
         val openCode = AgentConfigAdapterRegistry.map(
             AgentProviderMappingInput(
-                agentId = OPENCODE_AGENT_ID,
+                agentId = "opencode-acp",
                 provider = provider,
                 model = model,
                 harnessAdapter = AcpHarnessAdapters.openCode,
@@ -280,7 +263,7 @@ class AgentConfigAdaptersTest {
 
         val openCode = AgentConfigAdapterRegistry.map(
             AgentProviderMappingInput(
-                agentId = OPENCODE_AGENT_ID,
+                agentId = "opencode-acp",
                 provider = configuredProvider,
                 model = "model-a",
                 harnessAdapter = AcpHarnessAdapters.openCode,
@@ -288,7 +271,7 @@ class AgentConfigAdaptersTest {
         )
         val openCodeConfig = AgentConfigAdapterRegistry.launchConfigWrites(
             input = AgentProviderMappingInput(
-                agentId = OPENCODE_AGENT_ID,
+                agentId = "opencode-acp",
                 provider = configuredProvider,
                 model = "model-a",
                 harnessAdapter = AcpHarnessAdapters.openCode,
@@ -315,7 +298,7 @@ class AgentConfigAdaptersTest {
     fun editableProviderChangesRecomputeMappingWithoutStaleValues() {
         val first = AgentConfigAdapterRegistry.map(
             AgentProviderMappingInput(
-                agentId = OPENCODE_AGENT_ID,
+                agentId = "opencode-acp",
                 provider = AgentProviderCredentials(
                     baseUrl = "https://old.example.com/v1",
                     apiKey = "old-key",
@@ -327,7 +310,7 @@ class AgentConfigAdaptersTest {
         )
         val second = AgentConfigAdapterRegistry.map(
             AgentProviderMappingInput(
-                agentId = OPENCODE_AGENT_ID,
+                agentId = "opencode-acp",
                 provider = AgentProviderCredentials(
                     baseUrl = "https://new.example.com/v1",
                     apiKey = "new-key",
@@ -496,7 +479,7 @@ class AgentConfigAdaptersTest {
             AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID,
             AcpAgentProfileStore.CODEX_AGENT_ID,
             CLAUDE_CODE_AGENT_ID,
-            OPENCODE_AGENT_ID,
+            "opencode-acp",
         ).forEach { agentId ->
             val mapping = AgentConfigAdapterRegistry.map(
                 AgentProviderMappingInput(
@@ -515,7 +498,7 @@ class AgentConfigAdaptersTest {
                     assertEquals(null, mapping.codexModel)
                 CLAUDE_CODE_AGENT_ID ->
                     assertEquals(null, mapping.environment["ANTHROPIC_MODEL"])
-                OPENCODE_AGENT_ID ->
+                "opencode-acp" ->
                     assertEquals(null, mapping.openCodeModel)
             }
         }
@@ -589,6 +572,8 @@ class AgentConfigAdaptersTest {
         assertEquals("deepseek-v4-pro", model["slug"].asString)
         assertEquals(128000, model["context_window"].asInt)
         assertEquals(128000, model["max_context_window"].asInt)
+        assertEquals("tokens", model["truncation_policy"].asJsonObject["mode"].asString)
+        assertEquals(128000, model["truncation_policy"].asJsonObject["limit"].asInt)
         assertTrue(model["base_instructions"].asString.isNotBlank())
         assertEquals("list", model["visibility"].asString)
         assertEquals(false, model["supports_parallel_tool_calls"].asBoolean)
@@ -807,11 +792,89 @@ class AgentConfigAdaptersTest {
     }
 
     @Test
+    fun customAgentKeepsItsOwnEnvironmentWithoutASharedProvider() {
+        val profile = AcpAgentProfile(
+            id = "user-agent",
+            name = "My ACP Agent",
+            command = "/workspace/my agent/bin/acp",
+            arguments = listOf("--config", "/workspace/my agent/config.json"),
+            environment = mapOf(
+                "OPENAI_API_KEY" to "user-test-key",
+                "OPENAI_BASE_URL" to "https://user.example/v1",
+                "ANTHROPIC_MODEL" to "user-model",
+                "CUSTOM_OPTION" to "spaces 中文 = 'quotes' \$literal",
+                "EMPTY_OPTION" to "",
+            ),
+        )
+        // Exercise the persisted profile representation, not just a fresh map.
+        val restored = Gson().fromJson(Gson().toJson(profile), AcpAgentProfile::class.java)
+        val mapping = AgentConfigAdapterRegistry.map(
+            AgentProviderMappingInput(
+                agentId = restored.id,
+                provider = null,
+                model = null,
+                harnessAdapter = AcpHarnessAdapters.forProfile(restored),
+            ),
+        )
+
+        assertEquals(profile.command, restored.command)
+        assertEquals(profile.arguments, restored.arguments)
+        assertEquals(
+            profile.environment,
+            mergeAcpLaunchEnvironment(
+                profile = restored,
+                providerEnvironment = mapping.environment,
+            ),
+        )
+    }
+
+    @Test
+    fun customAgentLaunchesDoNotInheritTheSharedProviderOrPreviousEdits() {
+        val first = AcpAgentProfile(
+            id = "user-agent",
+            name = "My ACP Agent",
+            command = "my-agent-acp",
+            environment = mapOf(
+                "OPENAI_API_KEY" to "first-test-key",
+                "CUSTOM_OPTION" to "first",
+            ),
+        )
+        val edited = first.copy(environment = mapOf("OPENAI_API_KEY" to "edited-test-key"))
+        val cleared = first.copy(environment = emptyMap())
+        for (sharedProvider in listOf(null, provider, provider.copy(apiKey = "changed-key"))) {
+            for (profile in listOf(first, edited, cleared, first)) {
+                val mapping = AgentConfigAdapterRegistry.map(
+                    AgentProviderMappingInput(
+                        agentId = profile.id,
+                        provider = sharedProvider,
+                        model = "shared-model",
+                        harnessAdapter = AcpHarnessAdapters.forProfile(profile),
+                    ),
+                )
+                assertEquals(
+                    profile.environment,
+                    mergeAcpLaunchEnvironment(profile, mapping.environment),
+                )
+            }
+        }
+        assertEquals("first-test-key", first.environment["OPENAI_API_KEY"])
+    }
+
+    @Test
     fun providerMappingCannotBeShadowedByStaleProfileEnvironment() {
         val merged = mergeAcpLaunchEnvironment(
-            profileEnvironment = mapOf(
-                "ANTHROPIC_BASE_URL" to "https://old.example.com/anthropic",
-                "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC" to "1",
+            profile = AcpAgentProfile(
+                id = "shared-provider-agent",
+                name = "Shared Provider Agent",
+                command = "agent-acp",
+                officialRuntime = AcpOfficialRuntime(
+                    discoveryCommand = "agent-acp",
+                    usesSharedProvider = true,
+                ),
+                environment = mapOf(
+                    "ANTHROPIC_BASE_URL" to "https://old.example.com/anthropic",
+                    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC" to "1",
+                ),
             ),
             providerEnvironment = mapOf(
                 "ANTHROPIC_BASE_URL" to "https://api.minimaxi.com/anthropic",
@@ -827,12 +890,21 @@ class AgentConfigAdaptersTest {
     @Test
     fun staleProviderEnvironmentIsRemovedWhenCurrentProviderIsAbsent() {
         val merged = mergeAcpLaunchEnvironment(
-            profileEnvironment = mapOf(
-                "ANTHROPIC_BASE_URL" to "https://old.example.com/anthropic",
-                "ANTHROPIC_API_KEY" to "old-key",
-                "OPENAI_BASE_URL" to "https://old.example.com/v1",
-                "OMNIBOT_PROVIDER_HEADER_0" to "old-header",
-                "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC" to "1",
+            profile = AcpAgentProfile(
+                id = "shared-provider-agent",
+                name = "Shared Provider Agent",
+                command = "agent-acp",
+                officialRuntime = AcpOfficialRuntime(
+                    discoveryCommand = "agent-acp",
+                    usesSharedProvider = true,
+                ),
+                environment = mapOf(
+                    "ANTHROPIC_BASE_URL" to "https://old.example.com/anthropic",
+                    "ANTHROPIC_API_KEY" to "old-key",
+                    "OPENAI_BASE_URL" to "https://old.example.com/v1",
+                    "OMNIBOT_PROVIDER_HEADER_0" to "old-header",
+                    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC" to "1",
+                ),
             ),
             providerEnvironment = emptyMap(),
         )

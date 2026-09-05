@@ -12,10 +12,6 @@ import java.util.Date
 import java.util.Locale
 import java.util.UUID
 
-internal const val MAX_AGENT_ATTACHMENT_BYTES = 20L * 1024L * 1024L
-internal const val MAX_AGENT_ATTACHMENT_COUNT = 8
-internal const val MAX_AGENT_ATTACHMENT_BATCH_BYTES = 64L * 1024L * 1024L
-
 internal class AgentAttachmentPreparationException(message: String) :
     IllegalArgumentException(message)
 
@@ -23,12 +19,10 @@ internal fun readAgentAttachmentBytes(file: File): ByteArray {
     if (!file.exists() || !file.isFile) {
         throw AgentAttachmentPreparationException("附件文件不可读：${file.name}")
     }
-    if (file.length() > MAX_AGENT_ATTACHMENT_BYTES) {
-        throw AgentAttachmentPreparationException(
-            "附件过大，最大支持 ${MAX_AGENT_ATTACHMENT_BYTES / (1024L * 1024L)} MB：${file.name}"
-        )
-    }
-    val output = ByteArrayOutputStream(file.length().coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
+    // Do not impose an application-defined attachment quota here. The byte
+    // array still naturally fails if the process cannot allocate it, and the
+    // downstream ACP/Provider transport remains the owner of its limits.
+    val output = ByteArrayOutputStream()
     file.inputStream().use { input ->
         copyAttachmentStream(input, output)
     }
@@ -42,11 +36,6 @@ private fun copyAttachmentStream(input: InputStream, output: java.io.OutputStrea
         val count = input.read(buffer)
         if (count < 0) break
         total += count
-        if (total > MAX_AGENT_ATTACHMENT_BYTES) {
-            throw AgentAttachmentPreparationException(
-                "附件过大，最大支持 ${MAX_AGENT_ATTACHMENT_BYTES / (1024L * 1024L)} MB"
-            )
-        }
         output.write(buffer, 0, count)
     }
     return total
@@ -63,31 +52,18 @@ internal object AgentWorkspaceAttachmentSupport {
         if (rawAttachments.isEmpty()) {
             return emptyList()
         }
-        if (rawAttachments.size > MAX_AGENT_ATTACHMENT_COUNT) {
-            throw AgentAttachmentPreparationException(
-                "附件数量过多，最多支持 $MAX_AGENT_ATTACHMENT_COUNT 个"
-            )
-        }
         val workspaceManager = AgentWorkspaceManager(context)
         workspaceManager.ensureRuntimeDirectories()
         val batchDirectory = createAttachmentBatchDirectory(workspaceManager, taskId)
             ?: throw AgentAttachmentPreparationException("无法创建附件工作区")
         return try {
-            var totalBytes = 0L
             val prepared = rawAttachments.map { attachment ->
-                val prepared = prepareSingleAttachment(
+                prepareSingleAttachment(
                     context = context,
                     workspaceManager = workspaceManager,
                     batchDirectory = batchDirectory,
                     rawAttachment = attachment
                 )
-                totalBytes += preparedAttachmentBytes(prepared)
-                if (totalBytes > MAX_AGENT_ATTACHMENT_BATCH_BYTES) {
-                    throw AgentAttachmentPreparationException(
-                        "附件总大小超过 ${MAX_AGENT_ATTACHMENT_BATCH_BYTES / (1024L * 1024L)} MB"
-                    )
-                }
-                prepared
             }
             if (batchDirectory.listFiles().isNullOrEmpty()) {
                 runCatching { batchDirectory.delete() }
@@ -311,19 +287,6 @@ internal object AgentWorkspaceAttachmentSupport {
         return dir
     }
 
-    private fun preparedAttachmentBytes(attachment: Map<String, Any?>): Long {
-        val path = attachment["path"]?.toString()?.trim().orEmpty()
-        val pathBytes = path.takeIf { it.isNotEmpty() }?.let(::File)
-            ?.takeIf { it.isFile }
-            ?.length()
-        if (pathBytes != null) return pathBytes
-        return when (val rawSize = attachment["size"] ?: attachment["sizeBytes"]) {
-            is Number -> rawSize.toLong().coerceAtLeast(0L)
-            is String -> rawSize.trim().toLongOrNull()?.coerceAtLeast(0L) ?: 0L
-            else -> 0L
-        }
-    }
-
     private fun buildPreparedAttachment(
         workspaceManager: AgentWorkspaceManager,
         target: File,
@@ -389,12 +352,6 @@ internal object AgentWorkspaceAttachmentSupport {
         }
         val mimeType = meta.substringBefore(';').trim().ifEmpty {
             "application/octet-stream"
-        }
-        val maxEncodedLength = (MAX_AGENT_ATTACHMENT_BYTES * 4L / 3L) + 4L
-        if (payload.length.toLong() > maxEncodedLength) {
-            throw AgentAttachmentPreparationException(
-                "附件过大，最大支持 ${MAX_AGENT_ATTACHMENT_BYTES / (1024L * 1024L)} MB"
-            )
         }
         val bytes = runCatching { Base64.decode(payload, Base64.DEFAULT) }.getOrNull()
             ?: return null

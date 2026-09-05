@@ -698,8 +698,12 @@ class ModelProviderConfigService {
         cacheProfileSnapshot?.sourceType == _kOfficialSourceType &&
         normalizedCapability.isNotEmpty &&
         normalizedCapability != 'text';
+    // Explicit credential/header overrides are previews, not the saved
+    // Provider identity. The settings page saves first when refreshing.
     if (targetProfileId != null &&
         cacheProfileSnapshot != null &&
+        apiKey == null &&
+        customHeaders == null &&
         !isNonTextCapabilityScopedOfficialRequest) {
       try {
         final latestProfile = await _findProfileById(targetProfileId);
@@ -998,7 +1002,9 @@ class ModelProviderConfigService {
         providerName: profile.name,
         capability: 'text',
       );
-      return visibleModels(<ProviderModelOption>[...fetched, ...cached]);
+      // A successful response is the current catalog, including an empty
+      // response. Only a failed refresh may reuse the previous document.
+      return visibleModels(fetched);
     } catch (_) {
       // Keep only the catalog verified for this exact Provider revision. A
       // credential/endpoint edit must not resurrect an older document merely
