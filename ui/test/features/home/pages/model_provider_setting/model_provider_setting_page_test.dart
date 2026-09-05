@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ui/features/home/pages/model_provider_setting/model_provider_setting_page.dart';
 import 'package:ui/services/model_provider_config_service.dart';
@@ -123,6 +124,265 @@ void main() {
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(assistCoreChannel, null);
     ModelsDevCatalogService.resetForTesting();
+  });
+
+  for (final fieldLabel in ['API Key', 'Base URL']) {
+    testWidgets(
+      'refresh persists the $fieldLabel draft before caching models',
+      (tester) async {
+        tester.view.physicalSize = const Size(1080, 2200);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        var profile = Map<String, dynamic>.from(
+          (profilePayload()['profiles'] as List).single as Map,
+        )..['revision'] = 7;
+        final operations = <String>[];
+        Map<dynamic, dynamic>? fetchArgs;
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        messenger.setMockMethodCallHandler(assistCoreChannel, (call) async {
+          switch (call.method) {
+            case 'listModelProviderProfiles':
+              return {
+                'profiles': [profile],
+                'editingProfileId': profile['id'],
+              };
+            case 'saveModelProviderProfile':
+              operations.add('save');
+              profile = {
+                ...profile,
+                ...savedProfileResponse(
+                  Map<dynamic, dynamic>.from(call.arguments as Map),
+                ),
+                'revision': (profile['revision'] as int) + 1,
+              };
+              return profile;
+            case 'fetchProviderModels':
+              operations.add('fetch');
+              fetchArgs = Map<dynamic, dynamic>.from(call.arguments as Map);
+              return [
+                {'id': 'gpt-4o', 'displayName': 'gpt-4o'},
+              ];
+          }
+          return null;
+        });
+        Future<void> openPage() async {
+          await tester.pumpWidget(
+            MaterialApp(
+              theme: AppTheme.lightTheme,
+              home: const ModelProviderSettingPage(),
+            ),
+          );
+          await tester.pumpAndSettle();
+        }
+
+        await openPage();
+        final field = find.byWidgetPredicate(
+          (widget) =>
+              widget is TextField && widget.decoration?.labelText == fieldLabel,
+        );
+        await tester.enterText(
+          field,
+          fieldLabel == 'API Key'
+              ? 'updated-test-key'
+              : 'https://updated.example/v1',
+        );
+        await tester.tap(find.byIcon(LucideIcons.arrowBigDown));
+        await tester.pumpAndSettle();
+
+        expect(operations, ['save', 'fetch']);
+        expect(fetchArgs?['expectedProfileRevision'], 8);
+        expect(fetchArgs?.containsKey('apiKey'), isFalse);
+        expect(fetchArgs?.containsKey('customHeaders'), isFalse);
+        expect(
+          find.byKey(const ValueKey('provider-model-gpt-4o')),
+          findsOneWidget,
+        );
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pumpAndSettle();
+        await openPage();
+        expect(
+          find.byKey(const ValueKey('provider-model-gpt-4o')),
+          findsOneWidget,
+        );
+        final cached = await ModelProviderConfigService.getCachedFetchedModels(
+          profileId: profile['id'] as String,
+          apiBase: profile['baseUrl'] as String,
+          profileRevision: 8,
+        );
+        expect(cached.single.id, 'gpt-4o');
+        expect(operations, ['save', 'fetch']);
+      },
+    );
+  }
+
+  testWidgets('failed draft save does not fetch or replace the saved catalog', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1080, 2200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final payload = profilePayload();
+    (payload['profiles'] as List).single['revision'] = 7;
+    var fetchCalls = 0;
+    var saveCalls = 0;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(assistCoreChannel, (call) async {
+          switch (call.method) {
+            case 'listModelProviderProfiles':
+              return payload;
+            case 'saveModelProviderProfile':
+              saveCalls++;
+              throw PlatformException(code: 'SAVE_FAILED');
+            case 'fetchProviderModels':
+              fetchCalls++;
+              return [
+                {'id': 'unexpected-model'},
+              ];
+          }
+          return null;
+        });
+    await ModelProviderConfigService.saveCachedFetchedModels(
+      profileId: 'provider-1',
+      apiBase: 'https://api.openai.com/v1',
+      profileRevision: 7,
+      models: const [ProviderModelOption(id: 'gpt-4o', displayName: 'gpt-4o')],
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.lightTheme,
+        home: const ModelProviderSettingPage(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is TextField && widget.decoration?.labelText == 'API Key',
+      ),
+      'unsaved-key',
+    );
+    await tester.tap(find.byIcon(LucideIcons.arrowBigDown));
+    await tester.pumpAndSettle();
+    expect(saveCalls, 1);
+    expect(fetchCalls, 0);
+    expect(
+      (await ModelProviderConfigService.getCachedFetchedModels(
+        profileId: 'provider-1',
+        apiBase: 'https://api.openai.com/v1',
+        profileRevision: 7,
+      )).single.id,
+      'gpt-4o',
+    );
+    // The failed operation releases the existing refresh button.
+    await tester.tap(find.byIcon(LucideIcons.arrowBigDown));
+    await tester.pumpAndSettle();
+    expect(saveCalls, 2);
+    expect(fetchCalls, 0);
+  });
+
+  testWidgets('late refresh cannot display models for a changed draft', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1080, 2200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final response = Completer<List<Map<String, dynamic>>>();
+    var fetchCalls = 0;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(assistCoreChannel, (call) async {
+          switch (call.method) {
+            case 'listModelProviderProfiles':
+              return profilePayload();
+            case 'fetchProviderModels':
+              fetchCalls++;
+              return response.future;
+            case 'saveModelProviderProfile':
+              return savedProfileResponse(
+                Map<dynamic, dynamic>.from(call.arguments as Map),
+              );
+          }
+          return null;
+        });
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.lightTheme,
+        home: const ModelProviderSettingPage(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(LucideIcons.arrowBigDown));
+    await tester.pump();
+    expect(fetchCalls, 1);
+    await tester.enterText(
+      find.byWidgetPredicate(
+        (widget) =>
+            widget is TextField && widget.decoration?.labelText == 'API Key',
+      ),
+      'new-draft-key',
+    );
+    response.complete([
+      {'id': 'gpt-4o', 'displayName': 'gpt-4o'},
+    ]);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('provider-model-gpt-4o')), findsNothing);
+  });
+
+  testWidgets('deleted fetched model stays deleted after reopening provider', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1080, 2200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final payload = profilePayload();
+    (payload['profiles'] as List).single['revision'] = 7;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(assistCoreChannel, (call) async {
+          if (call.method == 'listModelProviderProfiles') return payload;
+          throw StateError('Unexpected call: ${call.method}');
+        });
+    await ModelProviderConfigService.saveCachedFetchedModels(
+      profileId: 'provider-1',
+      apiBase: 'https://api.openai.com/v1',
+      profileRevision: 7,
+      models: const [ProviderModelOption(id: 'gpt-4o', displayName: 'gpt-4o')],
+    );
+    Future<void> openPage() async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.lightTheme,
+          home: const ModelProviderSettingPage(),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    await openPage();
+    final row = find.byKey(const ValueKey('provider-model-gpt-4o'));
+    await tester.drag(row, const Offset(-250, 0));
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.descendant(of: row, matching: find.byIcon(LucideIcons.trash2)),
+    );
+    await tester.pumpAndSettle();
+    expect(row, findsNothing);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+    await openPage();
+    expect(row, findsNothing);
+    expect(
+      await ModelProviderConfigService.getCachedFetchedModels(
+        profileId: 'provider-1',
+        apiBase: 'https://api.openai.com/v1',
+        profileRevision: 7,
+      ),
+      isEmpty,
+    );
   });
 
   testWidgets(

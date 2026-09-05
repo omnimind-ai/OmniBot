@@ -472,3 +472,24 @@ flutter test test/features/home/pages/command_overlay/chat_bot_sheet_acp_test.da
 不继续扩展功能、不重做前端布局。此次提交汇集本分支已有 ACP 兼容边界整理、内容完整性、配置与对话功能修复及持久化回归集；历史审计加归档声明，避免旧建议与现状混读。最终验证结果、可重复命令和未覆盖项统一记录在 [0.6.1 PR 汇总](pr-0.6.1-acp-ux.zh-CN.md)。创建 PR 不代表真机升级和全部外部 Harness 已完成验收。
 
 用户随后连接手机并要求安装；本次 debug APK 已覆盖安装到 vivo V2502A，包管理器确认从 0.6.0.3（10）升级至 0.6.1（11），未卸载或清空数据。此前各节“未连接手机／未安装”的记载保留为历史时点，不再代表本次收尾安装状态；真实对话、升级数据恢复和 Harness 兼容性仍待单独验收。
+
+### 7.9 2026-09-05：模型提供商缓存的用户路径修复
+
+用户安装后报告“模型提供商缓存有问题”。没有清空用户缓存掩盖故障，也没有增加缓存框架；先在现有 Flutter service／真实设置页面复现以下行为，再修复原入口：
+
+1. 成功刷新仍把旧缓存拼进返回列表，服务端已删除的模型继续显示；空列表也无法清空旧远端目录。现在成功结果替换远端目录，失败才保留同一 Provider revision 的缓存；用户手动添加的模型不因此删除。
+2. 临时 API Key／请求头的模型查询，被误存成正式 Provider revision 的目录。现在这类显式覆盖参数仅用于预览结果，不覆盖已保存配置的缓存。
+3. 页面修改 API Key／Base URL 后直接刷新，先拉模型、后由离开页面的自动保存使缓存失效。组件测试先得到 `['fetch']` 而非 `['save', 'fetch']`。现在点击刷新先完成原有草稿保存，再通过保存后的 profile 获取模型；保存失败不请求模型，返回后用原有 profile ID／revision 和草稿变化判断是否仍可投影结果。
+4. 滑动删除远端模型时漏传 `profileRevision`，缓存存储拒绝无版本写入，但 UI 已报告删除成功；重开页面模型复现。现在写入使用当前已保存 profile 的 base URL 和 revision，实际删除与重开结果一致。
+
+新增 9 项持久化回归：service 4 项（刷新替换／空列表／临时 Key／临时 headers），页面 5 项（Key 与地址草稿分别保存刷新重开／保存失败可重试且不拉模型／草稿变化后的迟到结果／删除后重开）。同时修正旧 Provider 测试夹具：初始化存储、明确 `refresh: true`、同版本失败回退使用同一 revision；不放宽正式缓存身份检查。
+
+```bash
+cd ui
+flutter test test/services/model_provider_config_service_test.dart \
+  test/services/model_provider_cache_lifecycle_test.dart \
+  test/features/home/pages/model_provider_setting/model_provider_setting_page_test.dart \
+  --reporter expanded
+```
+
+上述定向集 46 项通过，并全部纳入 `scripts/test-agent-runtime.sh --offline`。生产修改仅在现有 Provider service 和设置页事件处理，没有前端布局变化，没有 Agent 生命周期变化。组件测试使用真实 UI、service 和 SharedPreferences 测试存储，原生配置／网络响应为 MethodChannel 替身；不能据此宣称每个真实模型供应商和 Android 重启持久化均已验证。最终 APK 与安装记录见 PR 汇总。

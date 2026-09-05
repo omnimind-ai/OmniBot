@@ -35,6 +35,10 @@ void main() {
     'cn.com.omnimind.bot/AssistCoreEvent',
   );
 
+  setUp(() async {
+    SharedPreferences.setMockInitialValues({});
+    await StorageService.init();
+  });
   tearDown(ModelsDevCatalogService.resetForTesting);
 
   test('provider payload exposes API key for the settings editor', () {
@@ -626,7 +630,9 @@ void main() {
         () => messenger.setMockMethodCallHandler(assistCoreChannel, null),
       );
 
-      final groups = await ModelProviderConfigService.loadChatModelGroups();
+      final groups = await ModelProviderConfigService.loadChatModelGroups(
+        refresh: true,
+      );
 
       expect(groups, hasLength(1));
       expect(groups.single.models.map((model) => model.id), <String>[
@@ -657,7 +663,7 @@ void main() {
       await ModelProviderConfigService.saveCachedFetchedModels(
         profileId: 'provider-1',
         apiBase: 'https://provider.example/v1',
-        profileRevision: 6,
+        profileRevision: 7,
         models: const [
           ProviderModelOption(
             id: 'provider-model-a',
@@ -696,7 +702,9 @@ void main() {
         () => messenger.setMockMethodCallHandler(assistCoreChannel, null),
       );
 
-      final groups = await ModelProviderConfigService.loadChatModelGroups();
+      final groups = await ModelProviderConfigService.loadChatModelGroups(
+        refresh: true,
+      );
 
       expect(groups.single.models.map((model) => model.id), <String>[
         'provider-model-a',

@@ -41,6 +41,16 @@ ACP Kotlin SDK 本次仍为 **0.30.1**，不能描述为“已换成全新官方
 
 不新增页面体系、导航设计或视觉改版。前端变化限于现有聊天状态／输入恢复、历史与工具详情完整性、自定义配置保留和说明，以及删除已失效的 Runtime Settings JSON 编辑器、自动补轮与重复目录逻辑。上下文设置保留用户输入的阈值，不额外强制应用自定最大值。`docs/harness-engineering.html` 是静态说明文档，不是接入应用的新页面或插件 App surface。
 
+### 5. 安装反馈：模型提供商缓存修复
+
+- 成功刷新以新远端目录替换旧缓存，包括合法空列表；不再重新混入服务端已移除的模型，手动添加项保持独立。
+- 临时 API Key／headers 查询不污染已保存配置的模型缓存。
+- 设置页点击刷新先保存有效草稿，再按保存后的 Provider revision 获取模型；离开并重开页面不再因后续自动保存丢掉刚获取的模型列表。
+- 保存失败不继续拉模型；刷新返回时已切换 profile、修改 revision 或草稿，则不把迟到结果显示在新配置下。
+- 删除远端模型传递现有 profile 的 base URL 和 revision，修复“页面删除成功，重开又出现”。
+
+仅调整现有 service 与页面事件处理，无布局变化、新缓存框架或 Agent 生命周期。新增 9 项真实 service／组件路径回归，连同原有 Provider 测试共 46 项通过并加入统一运行器；原生存储和网络使用测试替身。
+
 ## 持久化验证
 
 统一入口：
@@ -54,7 +64,7 @@ scripts/test-agent-runtime.sh --offline
 | 验证层 | 结果 | 证据边界 |
 | --- | --- | --- |
 | Android/JVM 定向回归 | 484 项，44 suites，零失败／错误／跳过 | 实际产品方法、协议处理与执行资源；Android/进程外部依赖含替身 |
-| Flutter 页面／服务回归 | 409 项通过 | 真实组件交互、协调器、reducer；原生进程与数据库通道含替身 |
+| Flutter 页面／服务回归 | 455 项通过 | 真实组件交互、协调器、reducer；原生进程与数据库通道含替身 |
 | Node 契约／Provider 脚本测试 | 52 项通过 | 包含源码契约与模拟 HTTP，不是 52 次真实模型对话 |
 | WebChat | 12 项通过，typecheck/build 通过 | 消息合并、导航、文件请求；未做浏览器视觉验收 |
 
@@ -74,6 +84,8 @@ git diff --check
 
 APK 构建与 `git diff --check` 均通过。`--live` 真实 Provider smoke 本次没有运行。
 
+Provider 修复的 5 个 Dart 文件另行定向分析：本机 `flutter analyze` 因旧 Flutter 入口查找不存在的 `analysis_server.dart.snapshot` 而退出，未作为通过项。用同一 SDK 的官方 `dart analyze --no-fatal-warnings <file>` 完成替代检查，无错误／警告，页面有一条括号风格 info；没有修改 SDK，也不提交工具崩溃日志。
+
 ### 手机覆盖安装
 
 2026-09-05 在连接的 vivo V2502A 上执行 `adb install -r`，返回 `Success`；包管理器确认 `cn.com.omnimind.bot` 从 `versionName=0.6.0.3 / versionCode=10` 更新为 `0.6.1 / 11`。未卸载、未清空数据，未据安装成功宣称历史数据完整性或真实对话已验收。
@@ -86,7 +98,7 @@ adb -s <serial> install -r app/build/outputs/apk/developStandard/debug/app-devel
 adb -s <serial> shell dumpsys package cn.com.omnimind.bot
 ```
 
-本次安装 APK 的 SHA-256：`d6b8ed8c924fd3b1a3707cc2e25491208e2ab601f449b982c4d4da5b6c8b9f6a`。APK 本身不提交 Git。
+首次成功安装 APK 的 SHA-256：`d6b8ed8c924fd3b1a3707cc2e25491208e2ab601f449b982c4d4da5b6c8b9f6a`。随后加入 Provider 缓存修复的 APK 重新构建并再次覆盖安装成功，SHA-256 为 `23225a2c717d3369c07a4981f60161e8f7530e8b9e130354af4dca94f79d6fdf`。第二次安装曾等待手机系统确认，随后同一次 `adb install -r` 返回 `Success`；不是以首次安装结果冒充修复版安装证据。APK 本身不提交 Git。
 
 ## 合并前仍需验证
 
@@ -100,7 +112,7 @@ adb -s <serial> shell dumpsys package cn.com.omnimind.bot
 
 ## 提交与文档
 
-保留分支原有两个 ACP 兼容边界提交；累计实现与相互依赖测试合并为一个功能提交，文档归档与交付记录单独提交，避免机械按前后端拆出不可编译的中间版本。没有修改 `.github/`、`AGENTS.md`、签名配置或提交本地密钥、构建产物、设备日志。
+保留分支原有两个 ACP 兼容边界提交；累计实现与相互依赖测试合并为一个功能提交，文档归档与交付记录单独提交，随后用户报告的 Provider 缓存修复单独提交，避免机械按前后端拆出不可编译的中间版本。没有修改 `.github/`、`AGENTS.md`、签名配置或提交本地密钥、构建产物、设备日志。
 
 - [当前实现与逐次修复记录](acp-runtime-custom-logic-inventory.zh-CN_副本.md)：含问题来源、先红后绿证据、验证边界及长期产品要求。
 - [修改前审计快照](acp-runtime-custom-logic-inventory.zh-CN.md)、[阶段性策略审计](acp-runtime-policy-audit.zh-CN.md)：明确标为历史归档，不再作为恢复旧策略的依据。

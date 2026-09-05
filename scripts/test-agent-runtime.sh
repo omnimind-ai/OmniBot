@@ -131,6 +131,9 @@ if [[ "$RUN_FLUTTER" == "1" ]]; then
       test/agent_tool_summary_card_test.dart \\
       test/agent_tool_transcript_test.dart \\
       test/features/home/pages/chat/chat_architecture_test.dart \\
+      test/services/model_provider_config_service_test.dart \\
+      test/services/model_provider_cache_lifecycle_test.dart \\
+      test/features/home/pages/model_provider_setting/model_provider_setting_page_test.dart \\
       test/features/home/pages/agent/agent_mode_setting_page_test.dart \\
       test/features/home/pages/agent/agent_config_page_test.dart \\
       test/features/home/pages/command_overlay/chat_bot_sheet_acp_test.dart \\
