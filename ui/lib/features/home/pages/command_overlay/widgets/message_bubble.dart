@@ -1310,26 +1310,16 @@ class MessageBubble extends StatelessWidget {
   Widget? _buildTurnUsageFooter(BuildContext context) {
     final usage = message.turnUsage;
     if (usage == null || usage.isEmpty) return null;
-    final ctx = _readIntValue(usage['ctx']);
     final input = _readIntValue(usage['in']);
     final output = _readIntValue(usage['out']);
     final cache = _readIntValue(usage['cache']);
     final endedAt = _readIntValue(usage['endedAt']);
     final durationMs = _readIntValue(usage['durationMs']);
-    final hasUsage =
-        ctx != null || input != null || output != null || cache != null;
+    final hasUsage = input != null || output != null || cache != null;
     if (!hasUsage && endedAt == null) return null;
     final textColor = _resolvedAiSecondaryTextColor(
       context,
     ).withValues(alpha: 0.72);
-    Widget label(String text) => Text(
-      text,
-      style: TextStyle(
-        fontSize: 11 * _chatTextScale,
-        color: textColor,
-        height: 1.1,
-      ),
-    );
     final ended = endedAt == null
         ? null
         : DateTime.fromMillisecondsSinceEpoch(endedAt).toLocal();
@@ -1340,46 +1330,45 @@ class MessageBubble extends StatelessWidget {
         : seconds < 60
         ? '${(durationMs! / 1000).toStringAsFixed(1)}s'
         : '${seconds ~/ 60}m ${seconds % 60}s';
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        color: Theme.of(
-          context,
-        ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.32),
-        borderRadius: BorderRadius.circular(12),
-      ),
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
       child: Wrap(
         spacing: 9,
         runSpacing: 6,
         crossAxisAlignment: WrapCrossAlignment.center,
         children: [
-          if (hasUsage) ...[
-            label('ctx:${_formatUsageValue(ctx)}'),
+          if (input != null)
             _buildTurnUsageMetric(
               icon: Icons.arrow_downward_rounded,
               value: input,
               color: textColor,
             ),
+          if (output != null)
             _buildTurnUsageMetric(
               icon: Icons.arrow_upward_rounded,
               value: output,
               color: textColor,
             ),
+          if (cache != null)
             _buildTurnUsageMetric(
               icon: LucideIcons.databaseZap,
               value: cache,
               color: textColor,
             ),
-          ],
           if (ended != null && duration != null && durationMs! >= 0)
-            label(
-              '${LegacyTextLocalizer.isEnglish ? "Elapsed" : "用时"} $duration',
+            _buildTurnUsageMetric(
+              icon: LucideIcons.timer,
+              text: duration,
+              color: textColor,
             ),
           if (ended != null)
             Tooltip(
               message: ended.toString(),
-              child: label(
-                '${LegacyTextLocalizer.isEnglish ? "Ended" : "结束于"} ${two(ended.hour)}:${two(ended.minute)}:${two(ended.second)}',
+              child: _buildTurnUsageMetric(
+                icon: LucideIcons.circleCheck,
+                text:
+                    '${two(ended.hour)}:${two(ended.minute)}:${two(ended.second)}',
+                color: textColor,
               ),
             ),
         ],
@@ -1389,7 +1378,8 @@ class MessageBubble extends StatelessWidget {
 
   Widget _buildTurnUsageMetric({
     required IconData icon,
-    required int? value,
+    int? value,
+    String? text,
     required Color color,
   }) {
     return Row(
@@ -1398,7 +1388,7 @@ class MessageBubble extends StatelessWidget {
         Icon(icon, size: 12, color: color),
         const SizedBox(width: 3),
         Text(
-          _formatUsageValue(value),
+          text ?? _formatUsageValue(value),
           style: TextStyle(
             fontSize: 11 * _chatTextScale,
             color: color,

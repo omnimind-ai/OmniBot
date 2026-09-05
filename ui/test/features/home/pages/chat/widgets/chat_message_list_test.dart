@@ -664,7 +664,8 @@ void main() {
         controller.offset,
         closeTo(controller.position.maxScrollExtent, 0.5),
       );
-      expect(find.text('ctx:33.6k'), findsOneWidget);
+      expect(find.text('ctx:33.6k'), findsNothing);
+      expect(find.text('348'), findsOneWidget);
 
       // A short user scroll disables automatic following. A subsequent
       // layout/programmatic correction can put the list exactly back on the
@@ -703,7 +704,8 @@ void main() {
         controller.offset,
         closeTo(controller.position.maxScrollExtent, 0.5),
       );
-      expect(find.text('ctx:33.6k'), findsOneWidget);
+      expect(find.text('ctx:33.6k'), findsNothing);
+      expect(find.text('348'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );

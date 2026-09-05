@@ -15,7 +15,7 @@ void main() {
             user: 2,
             content: {'text': '完成'},
             turnUsage: {
-              if (withUsage) 'ctx': 120,
+              if (withUsage) ...{'ctx': 120, 'in': 80, 'out': 40, 'cache': 0},
               'durationMs': 65400,
               'endedAt': DateTime(2026, 9, 6, 14, 5, 9).millisecondsSinceEpoch,
             },
@@ -36,7 +36,12 @@ void main() {
         await tester.pump();
         expect(find.textContaining('1m 5s'), findsOneWidget);
         expect(find.textContaining('14:05:09'), findsOneWidget);
-        expect(find.text('ctx:120'), withUsage ? findsOneWidget : findsNothing);
+        expect(find.textContaining('ctx:'), findsNothing);
+        expect(find.text('80'), withUsage ? findsOneWidget : findsNothing);
+        expect(find.text('40'), withUsage ? findsOneWidget : findsNothing);
+        expect(find.text('0'), withUsage ? findsOneWidget : findsNothing);
+        expect(find.textContaining('用时'), findsNothing);
+        expect(find.textContaining('结束于'), findsNothing);
         expect(tester.takeException(), isNull);
       },
     );
@@ -58,7 +63,7 @@ void main() {
         ),
       ),
     );
-    expect(find.text('ctx:120'), findsOneWidget);
+    expect(find.text('ctx:120'), findsNothing);
     expect(
       find
           .byType(Tooltip)
