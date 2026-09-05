@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ui/l10n/legacy_text_localizer.dart';
 import 'package:go_router/go_router.dart';
 import 'package:ui/features/task/pages/execution_history/omniflow_execution_center_page.dart';
 import 'package:ui/l10n/generated/app_localizations.dart';
@@ -8,6 +9,8 @@ import 'package:ui/models/conversation_model.dart';
 import 'package:ui/models/conversation_thread_target.dart';
 
 void main() {
+  setUp(() => LegacyTextLocalizer.setResolvedLocale(const Locale('zh')));
+  tearDown(LegacyTextLocalizer.clearResolvedLocale);
   TestWidgetsFlutterBinding.ensureInitialized();
   const pluginChannel = MethodChannel('cn.com.omnimind.bot/PluginPlatform');
   const assistChannel = MethodChannel('cn.com.omnimind.bot/AssistCoreEvent');
@@ -390,12 +393,12 @@ void main() {
     expect(prompt, contains('get_function'));
     expect(prompt, contains('save_function'));
     expect(prompt, contains('enhance=true'));
-    expect(prompt, contains('source_run_id='));
+    expect(prompt, contains('run_id=run-1'));
     expect(prompt, contains('由 OmniFlow 内置的官方增强流程'));
     expect(prompt, contains('不要调用 list_run_logs/get_run_log/get_function'));
     expect(prompt, isNot(contains('"source_run_id":"run-1"')));
     expect(prompt, contains('function_id: function.demo'));
-    expect(prompt, contains('不要执行它'));
+    expect(prompt, contains('不要执行 Function'));
   });
 
   testWidgets('opens the requested Function directly', (tester) async {
@@ -469,9 +472,11 @@ void main() {
     expect(find.text('2 次 VLM 调用'), findsOneWidget);
     expect(find.text('成功'), findsOneWidget);
     expect(find.byKey(const ValueKey('run-log-open-run-1')), findsOneWidget);
-    await tester.tap(find.text('注册为复用指令'));
+    // This fixture already links run-1 to function.demo; open it without
+    // registering the same run a second time.
+    await tester.tap(find.byKey(const ValueKey('run-log-function-run-1')));
     await tester.pumpAndSettle();
-    expect(toolCalls.any((call) => call['name'] == 'save_function'), isTrue);
+    expect(toolCalls.any((call) => call['name'] == 'save_function'), isFalse);
     expect(find.byKey(const ValueKey('function-detail-sheet')), findsOneWidget);
     expect(
       find.byKey(const ValueKey('function-detail-enhance')),
@@ -557,6 +562,13 @@ void main() {
     'registration uses the saved Function immediately when detail reload fails',
     (tester) async {
       toolResponseOverride = (name, call) {
+        if (name == 'list_functions') {
+          return <String, Object?>{
+            'success': true,
+            'count': 0,
+            'functions': <Object?>[],
+          };
+        }
         if (name == 'save_function') {
           return <String, Object?>{
             'success': true,

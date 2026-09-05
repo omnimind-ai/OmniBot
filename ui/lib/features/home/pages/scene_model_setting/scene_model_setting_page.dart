@@ -238,6 +238,9 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
         profiles: profilesPayload.profiles,
         providerModelsByProfileId: enriched,
       );
+      // Opening model settings is an explicit catalog inspection. Keep cached
+      // content usable while refreshing; ordinary ACP startup stays offline.
+      unawaited(_refreshProviderModelsInBackground());
     } catch (_) {
       if (!mounted) return;
       showToast(context.l10n.sceneModelLoadFailed, type: ToastType.error);

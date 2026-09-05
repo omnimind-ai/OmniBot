@@ -408,7 +408,9 @@ class _OnboardingChoicePageState extends State<OnboardingChoicePage> {
           '先使用同一个通用模型也没有问题，之后可在“场景模型”设置中调整。',
           'Using one general model for now is fine. You can refine these roles later.',
         ),
-        scenes: sceneDefinitions.take(3).toList(growable: false),
+        scenes: sceneDefinitions
+            .where((scene) => !scene.id.startsWith('scene.memory.'))
+            .toList(growable: false),
       ),
       TutorialPage.memoryScenes => OnboardingSceneModelsPage(
         controller: _provider,
@@ -419,7 +421,9 @@ class _OnboardingChoicePageState extends State<OnboardingChoicePage> {
           '嵌入模型负责检索，整理模型负责归纳长期记忆。',
           'The embedding model powers retrieval, while the rollup model consolidates long-term memory.',
         ),
-        scenes: sceneDefinitions.skip(3).toList(growable: false),
+        scenes: sceneDefinitions
+            .where((scene) => scene.id.startsWith('scene.memory.'))
+            .toList(growable: false),
         showError: true,
       ),
       TutorialPage.completion => const OnboardingCompletionPage(),

@@ -15,8 +15,16 @@ function sourcePath(relativePath) {
 
 test("Xiaowan session startup uses the Provider cache and restores session-owned selection", async () => {
   const content = await source("app/src/main/java/cn/com/omnimind/bot/agent/XiaowanAcpConnection.kt");
-  assert.doesNotMatch(content, /fetchProviderModels|refreshAndGetModels/);
-  assert.match(content, /ModelProviderConfigStore\.cachedModels/);
+  const startup = content.slice(
+    content.indexOf("private suspend fun loadXiaowanModels()"),
+    content.indexOf("private fun hasUsableSharedProviderBinding"),
+  );
+  assert.match(startup, /ModelProviderConfigStore\.cachedModels/);
+  assert.doesNotMatch(startup, /fetchProviderModels|refreshAndGetModels/);
+  const refresh = content.slice(content.indexOf("suspend fun refreshModels()"), content.indexOf("override val configOptions"));
+  assert.match(refresh, /refreshAndGetModels/);
+  assert.match(refresh, /fetchProviderModels/);
+  assert.match(refresh, /sessionConfig\.replaceModels/);
   assert.match(content, /profileStore\.sessionConfiguration\(sessionId\.value\)/);
   assert.match(content, /saveSessionConfiguration\(sessionId\.value/);
 });
