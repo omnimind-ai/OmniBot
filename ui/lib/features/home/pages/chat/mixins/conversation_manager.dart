@@ -370,7 +370,10 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
         savedMessages = pagedResult.messages;
         setState(() {
           hasMoreMessages = pagedResult.hasMore;
-          messageOffset = 50;
+          // The history provider is allowed to return a short page. Advance
+          // from what was actually received so a partial response cannot
+          // create a gap before the next page.
+          messageOffset = savedMessages.length;
           messages.clear();
           messages.addAll(savedMessages);
         });

@@ -1,8 +1,6 @@
 part of 'chat_page.dart';
 
 const int _kDefaultContextTokenThreshold = 128000;
-const int _kMinContextTokenThreshold = 10000;
-const int _kMaxContextTokenThreshold = 1000000;
 const double _kChatMessageBottomSafeSpacing = 12.0;
 const double _kSlashCommandDrawerRadius = 18.0;
 const double _kSlashCommandDrawerHandleWidth = 36.0;

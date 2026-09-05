@@ -154,11 +154,15 @@ extension _ChatPageUserMessageActions on _ChatPageStateBase {
   }
 
   bool _canRetryUserMessage(ChatMessageModel message) {
-    return _isLatestUserMessage(message);
+    // A retry creates a new ACP prompt.  While the current prompt is still
+    // active, session/cancel is only a notification: its acknowledgement is
+    // not the current turn's terminal response.  Do not remove or replace
+    // visible items before that official terminal transition arrives.
+    return !_isAiResponding && _isLatestUserMessage(message);
   }
 
   bool _canEditUserMessage(ChatMessageModel message) {
-    return _isLatestUserMessage(message);
+    return !_isAiResponding && _isLatestUserMessage(message);
   }
 
   bool _isLatestUserMessage(ChatMessageModel message) {
@@ -427,10 +431,12 @@ extension _ChatPageUserMessageActions on _ChatPageStateBase {
 
   Future<void> _saveAndResendEditedUserMessage(ChatMessageModel message) async {
     if (_editingUserMessageId != message.id) return;
-    if (!_isLatestUserMessage(message)) {
+    if (!_canEditUserMessage(message)) {
       _stopUserMessageEditing();
       showToast(
-        'Only the latest user message can be edited',
+        _isAiResponding
+            ? 'Wait for the current response to finish before editing'
+            : 'Only the latest user message can be edited',
         type: ToastType.warning,
       );
       return;
@@ -446,7 +452,7 @@ extension _ChatPageUserMessageActions on _ChatPageStateBase {
       return;
     }
 
-    await _clearRetriedMessageRound(message);
+    if (!await _clearRetriedMessageRound(message)) return;
     if (!mounted) return;
 
     await _retryUserMessageText(editedText, attachments: attachments);
@@ -464,20 +470,25 @@ extension _ChatPageUserMessageActions on _ChatPageStateBase {
     );
   }
 
-  Future<void> _clearRetriedMessageRound(
+  Future<bool> _clearRetriedMessageRound(
     ChatMessageModel message, {
     bool preserveUserMessage = false,
   }) async {
     if (_isAiResponding) {
-      _onCancelTask();
-      if (!mounted) return;
+      showToast(
+        LegacyTextLocalizer.isEnglish
+            ? 'Wait for the current response to finish first'
+            : '请先等待当前回复结束',
+        type: ToastType.warning,
+      );
+      return false;
     }
 
     final removeCount = _retryMessageRoundLength(
       message,
       preserveUserMessage: preserveUserMessage,
     );
-    if (removeCount <= 0) return;
+    if (removeCount <= 0) return false;
 
     final shouldClearEditState = _editingUserMessageId == message.id;
     setState(() {
@@ -492,9 +503,9 @@ extension _ChatPageUserMessageActions on _ChatPageStateBase {
     }
 
     final conversationId = _currentConversationId;
-    if (conversationId == null) return;
+    if (conversationId == null) return true;
     if (isEphemeralConversation(conversationId, activeConversationModeValue)) {
-      return;
+      return true;
     }
 
     await _runtimeCoordinator.persistConversationMessageSnapshot(
@@ -503,6 +514,7 @@ extension _ChatPageUserMessageActions on _ChatPageStateBase {
       messages: List<ChatMessageModel>.from(_messages),
       conversation: _currentConversation,
     );
+    return true;
   }
 
   Future<void> _copyUserMessageText(String text) async {
@@ -531,8 +543,10 @@ extension _ChatPageUserMessageActions on _ChatPageStateBase {
     if (!_canRetryUserMessage(message)) {
       showToast(
         LegacyTextLocalizer.isEnglish
-            ? 'Only the latest user message can be retried'
-            : '只有最新一条用户消息支持重试',
+            ? (_isAiResponding
+                  ? 'Wait for the current response to finish first'
+                  : 'Only the latest user message can be retried')
+            : (_isAiResponding ? '请先等待当前回复结束' : '只有最新一条用户消息支持重试'),
         type: ToastType.warning,
       );
       return;
@@ -551,7 +565,9 @@ extension _ChatPageUserMessageActions on _ChatPageStateBase {
       if (!mounted) return;
     }
 
-    await _clearRetriedMessageRound(message, preserveUserMessage: true);
+    if (!await _clearRetriedMessageRound(message, preserveUserMessage: true)) {
+      return;
+    }
     if (!mounted) return;
 
     await _retryUserMessageText(
@@ -587,50 +603,29 @@ extension _ChatPageUserMessageActions on _ChatPageStateBase {
       return;
     }
 
-    final messageIndex = _messages.indexWhere((item) => item.id == message.id);
-    final previousMessage = messageIndex == -1 ? null : _messages[messageIndex];
-    _pendingManualAgentRetryTaskIds.add(taskId);
-    if (previousMessage != null && mounted) {
-      setState(() {
-        _messages[messageIndex] = _buildPendingManualRetryMessage(
-          previousMessage,
-          taskId: taskId,
-        );
-      });
-    }
-
     final userMessage = _agentPromptForFailedTurn(message);
-    final success = await _tryAgentFlow(
-      taskId,
-      '',
-      promptText: userMessage?.text,
-      attachmentsOverride: userMessage == null
-          ? const []
-          : _extractRetryAttachments(userMessage),
-      requestIdOverride: _buildManualRetryRequestId(taskId),
-    );
-    _pendingManualAgentRetryTaskIds.remove(taskId);
-    if (!mounted) {
-      return;
-    }
-    if (!success) {
-      if (previousMessage != null) {
-        final restoreIndex = _messages.indexWhere(
-          (item) => item.id == previousMessage.id,
-        );
-        if (restoreIndex != -1) {
-          setState(() {
-            _messages[restoreIndex] = previousMessage;
-          });
-        }
-      }
+    if (userMessage == null) {
       showToast(
         LegacyTextLocalizer.isEnglish
-            ? 'Retry failed. Please try sending the message again.'
-            : '重试失败，请重新发送消息',
-        type: ToastType.error,
+            ? 'The original user message is unavailable for retry'
+            : '找不到原始用户消息，无法重试',
+        type: ToastType.warning,
       );
       return;
+    }
+    _pendingManualAgentRetryTaskIds.add(taskId);
+    try {
+      // Retrying is an explicit user action, so it follows the ordinary send
+      // path and receives a fresh ACP turn id. Keep the original user and
+      // failed-assistant items intact rather than replacing either with a
+      // local "retrying" presentation.
+      await _retryUserMessageText(
+        userMessage.text ?? '',
+        attachments: _extractRetryAttachments(userMessage),
+        retainedUserMessageId: userMessage.id,
+      );
+    } finally {
+      _pendingManualAgentRetryTaskIds.remove(taskId);
     }
   }
 
@@ -676,30 +671,5 @@ extension _ChatPageUserMessageActions on _ChatPageStateBase {
       return streamTaskId;
     }
     return null;
-  }
-
-  ChatMessageModel _buildPendingManualRetryMessage(
-    ChatMessageModel message, {
-    required String taskId,
-  }) {
-    final content = Map<String, dynamic>.from(message.content ?? const {});
-    // Manual retry replays the original user prompt from a clean assistant
-    // generation. Keeping the failed text here makes the next ACP delta look
-    // like it was appended to the old error/partial answer.
-    content['text'] = '';
-    content.remove('linkPreviews');
-    content['agentTaskId'] = taskId;
-    content['agentRetrying'] = true;
-    content['agentRetryStatusText'] = LegacyTextLocalizer.isEnglish
-        ? 'Retrying connection...'
-        : '连接中断，正在重试…';
-    content['agentRetryCount'] = 0;
-    content['agentMaxRetries'] =
-        (content['agentMaxRetries'] as num?)?.toInt() ?? 3;
-    content['agentRetryDelayMs'] = 0;
-    content.remove('agentRetryReason');
-    content.remove('agentRetryable');
-    content.remove('agentErrorText');
-    return message.copyWith(content: content, isError: false);
   }
 }

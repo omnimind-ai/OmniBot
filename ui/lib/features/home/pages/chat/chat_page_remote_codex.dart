@@ -6,113 +6,19 @@ extension _ChatPageRemoteCodexSupport on _ChatPageStateBase {
     if (normalizedThreadId.isEmpty) {
       return;
     }
-    if (_remoteCodexSessionSyncThreadId == normalizedThreadId &&
-        _remoteCodexSessionSyncTimer != null) {
+    // A session snapshot is for initial history hydration only. Live state is
+    // owned by the ACP event subscription; polling thread/read here used to
+    // race those updates and repeatedly rewrite the visible turn.
+    if (_remoteCodexSessionSyncThreadId == normalizedThreadId) {
       return;
     }
     _remoteCodexSessionSyncThreadId = normalizedThreadId;
-    _remoteCodexSessionSyncSignature = '';
-    _remoteCodexSessionSyncTimer?.cancel();
-    _remoteCodexSessionSyncTimer = Timer.periodic(
-      const Duration(seconds: 2),
-      (_) => unawaited(_syncRemoteCodexSessionSnapshot()),
-    );
     unawaited(_syncRemoteCodexSessionSnapshot());
   }
 
   void _stopRemoteCodexSessionSync() {
-    _remoteCodexSessionSyncTimer?.cancel();
-    _remoteCodexSessionSyncTimer = null;
     _remoteCodexSessionSyncInFlight = false;
     _remoteCodexSessionSyncThreadId = null;
-    _remoteCodexSessionSyncSignature = '';
-    _remoteCodexActivityThreadId = null;
-    _remoteCodexActivityContentSignature = '';
-    _remoteCodexLastContentChangeAtMs = null;
-  }
-
-  bool _inferRemoteCodexSnapshotActive({
-    required String threadId,
-    required Map<String, dynamic> response,
-    required _AgentThreadActivityState activity,
-    required bool previousActive,
-    required bool assumeActive,
-    required String? directActiveTurnId,
-  }) {
-    if (!_isRemoteCodexConfigured()) {
-      return false;
-    }
-
-    final nowMs = DateTime.now().millisecondsSinceEpoch;
-    if (_remoteCodexActivityThreadId != threadId) {
-      _remoteCodexActivityThreadId = threadId;
-      _remoteCodexActivityContentSignature = '';
-      _remoteCodexLastContentChangeAtMs = null;
-    }
-
-    final contentSignature = _remoteCodexThreadContentSignature(response);
-    final firstObservation = _remoteCodexActivityContentSignature.isEmpty;
-    final contentChanged =
-        contentSignature.isNotEmpty &&
-        contentSignature != _remoteCodexActivityContentSignature;
-    if (contentSignature.isNotEmpty && contentChanged) {
-      _remoteCodexActivityContentSignature = contentSignature;
-      _remoteCodexLastContentChangeAtMs = nowMs;
-    }
-
-    if (directActiveTurnId != null || activity.active) {
-      _remoteCodexLastContentChangeAtMs = nowMs;
-      return true;
-    }
-
-    final looksExternallyActive = _remoteCodexLatestTurnLooksExternallyActive(
-      response,
-    );
-    if (activity.known && !activity.active) {
-      // Caller hint wins over Kotlin's authoritative-but-stale active=false:
-      // when the user opens a session that the remote codex had already been
-      // working on before this client connected, Kotlin's activeTurnsByThreadId
-      // is empty so it injects active=false even though codex is in fact still
-      // streaming. Trust assumeActive (sourced from the sessions list's
-      // session.active flag) for this initial observation.
-      if (assumeActive) {
-        _remoteCodexLastContentChangeAtMs ??= nowMs;
-        return true;
-      }
-      if (!firstObservation && contentChanged && looksExternallyActive) {
-        _remoteCodexLastContentChangeAtMs = nowMs;
-        return true;
-      }
-      final lastChangeAt = _remoteCodexLastContentChangeAtMs;
-      if (previousActive && looksExternallyActive && lastChangeAt != null) {
-        final ageMs = nowMs - lastChangeAt;
-        if (ageMs <= _remoteCodexExternalActiveGrace.inMilliseconds) {
-          return true;
-        }
-      }
-      _remoteCodexLastContentChangeAtMs = null;
-      return false;
-    }
-
-    if (assumeActive) {
-      _remoteCodexLastContentChangeAtMs ??= nowMs;
-      return true;
-    }
-
-    if (!firstObservation && contentChanged && looksExternallyActive) {
-      _remoteCodexLastContentChangeAtMs = nowMs;
-      return true;
-    }
-
-    final lastChangeAt = _remoteCodexLastContentChangeAtMs;
-    if (previousActive && lastChangeAt != null) {
-      final ageMs = nowMs - lastChangeAt;
-      if (ageMs <= _remoteCodexExternalActiveGrace.inMilliseconds) {
-        return true;
-      }
-    }
-
-    return false;
   }
 
   Future<void> _syncRemoteCodexSessionSnapshot() async {
@@ -138,9 +44,13 @@ extension _ChatPageRemoteCodexSupport on _ChatPageStateBase {
       _applyRemoteCodexThreadSnapshot(
         response: response,
         fallbackThreadId: threadId,
-        fromPoll: true,
       );
     } catch (error) {
+      if (_remoteCodexSessionSyncThreadId == threadId) {
+        // Allow the next explicit session open/reconnect to retry hydration;
+        // there is intentionally no background polling fallback.
+        _remoteCodexSessionSyncThreadId = null;
+      }
       debugPrint('Remote Agent session sync failed: $error');
     } finally {
       if (_remoteCodexSessionSyncThreadId == threadId) {
@@ -173,8 +83,6 @@ extension _ChatPageRemoteCodexSupport on _ChatPageStateBase {
     List<ChatMessageModel>? fallbackMessages,
     ConversationModel? fallbackConversation,
     AgentRuntimeStatus? status,
-    bool fromPoll = false,
-    bool assumeActive = false,
   }) {
     final resolvedThreadId =
         _asAgentString(response['threadId']) ??
@@ -189,90 +97,24 @@ extension _ChatPageRemoteCodexSupport on _ChatPageStateBase {
       conversationId: runtimeId,
       mode: kChatRuntimeModeAgent,
     );
-    final activity = _remoteCodexThreadActivityFromResponse(response);
     final previousActive = runtime?.isAiResponding ?? false;
-    final directActiveTurnId = _remoteCodexActiveTurnIdFromThreadResponse(
-      response,
-    );
-    final inferredRemoteActive = _inferRemoteCodexSnapshotActive(
-      threadId: resolvedThreadId,
-      response: response,
-      activity: activity,
-      previousActive: previousActive,
-      assumeActive: assumeActive,
-      directActiveTurnId: directActiveTurnId,
-    );
-    final snapshotIsAiResponding =
-        directActiveTurnId != null || activity.active || inferredRemoteActive;
-    // The snapshot makes a definitive "no active turn" statement only when
-    // BOTH Kotlin's bookkeeping AND the response payload agree: Kotlin
-    // injects active=false (activeTurnsByThreadId dropped this thread after
-    // turn/completed, thread/closed, status/changed inactive, or a terminal
-    // error), AND no turn in the response still looks externally active.
-    //
-    // The looksExternallyActive guard matters for the cold-open path: if a
-    // user opens a session that the remote codex was already working on,
-    // Kotlin never saw turn/started so it injects active=false — yet the
-    // response itself can still surface an in-progress latest turn. Without
-    // this guard, the snapshot would wrongfully cancel out the assumeActive
-    // hint (and later, the reducer's runtime active set by push events).
-    final snapshotKnowsInactive =
-        directActiveTurnId == null &&
-        activity.known &&
-        !activity.active &&
-        !_remoteCodexLatestTurnLooksExternallyActive(response);
-    if (snapshotKnowsInactive && runtime != null) {
-      // `thread/read` is allowed to close a missed push lifecycle only after
-      // Kotlin's active-turn registry and the remote payload agree that the
-      // thread is idle. The coordinator still requires session/turn identity
-      // when either side provides it, so an older poll cannot close a newer
-      // prompt.
-      final currentTaskId =
-          runtime.activeRunId ??
-          runtime.currentDispatchTurnId ??
-          runtime.lastAgentTurnId;
-      if (currentTaskId != null && currentTaskId.trim().isNotEmpty) {
-        _runtimeCoordinator.finishTaskFromAuthoritativeSnapshot(
-          taskId: currentTaskId.trim(),
-          conversationId: runtimeId,
-          mode: kChatRuntimeModeAgent,
-          sessionId: resolvedThreadId,
-          turnId: _remoteCodexLatestTurnIdFromThreadResponse(response),
-        );
-      }
-    }
-    // Otherwise floor against the reducer's runtime state. Snapshot polling
-    // runs every 2s and would otherwise downgrade isAiResponding between
-    // reasoning deltas when codex doesn't surface a "running" status in
-    // thread/read.
-    final isAiResponding =
-        snapshotIsAiResponding || (previousActive && !snapshotKnowsInactive);
+    // Floor the one-time hydration result against the reducer's runtime state.
+    // The event reducer is the live lifecycle owner; a history snapshot must
+    // not demote an already admitted ACP turn.
+    final isAiResponding = previousActive;
     final activeTurnId = isAiResponding
-        ? (directActiveTurnId ??
-              _remoteCodexLatestTurnIdFromThreadResponse(response) ??
-              runtime?.currentDispatchTurnId ??
+        ? (runtime?.currentDispatchTurnId ??
               runtime?.lastAgentTurnId ??
               _activeAgentTurnId)
         : null;
-    final activeTaskId = isAiResponding
-        ? (activeTurnId ??
-              runtime?.currentDispatchTurnId ??
-              runtime?.lastAgentTurnId ??
-              'remote-agent-$resolvedThreadId')
-        : null;
-    // `activeTaskId` is the provider's ACP turn identity used by the
-    // snapshot adapter to decide which historical turn is still active. It
-    // is not the local render/ownership identity. When a remote session is
-    // restored without an existing local runtime, create a deterministic
-    // local namespace for this turn; when push streaming already owns the
-    // runtime, preserve its existing local run id. Passing the ACP turn id
-    // into replaceConversationSnapshot would make polling a second lifecycle
-    // owner and would let a later provider id rename the visible run.
     final runtimeTaskId = isAiResponding
-        ? (previousActive && runtime?.activeRunId?.trim().isNotEmpty == true
+        ? (runtime?.activeRunId?.trim().isNotEmpty == true
               ? runtime!.activeRunId!.trim()
-              : 'remote-run:$resolvedThreadId:${activeTurnId ?? 'active'}')
+              : runtime?.currentDispatchTurnId ?? runtime?.lastAgentTurnId)
         : null;
+    // A snapshot may carry no local task identity. Do not invent one: the
+    // runtime coordinator already owns the admitted turn identity.
+    final activeTaskId = runtimeTaskId;
     final hasTurns = _remoteCodexThreadResponseHasTurns(response);
     final existingMessages = List<ChatMessageModel>.from(
       resolveVisibleChatMessages(
@@ -305,33 +147,17 @@ extension _ChatPageRemoteCodexSupport on _ChatPageStateBase {
                   response: response,
                 ))
             .copyWith(messageCount: messages.length);
-    final signature = _remoteCodexSnapshotSignature(
-      threadId: resolvedThreadId,
-      messages: messages,
-      conversation: conversation,
-      isAiResponding: isAiResponding,
-      activeTaskId: activeTaskId,
-    );
-    if (fromPoll && signature == _remoteCodexSessionSyncSignature) {
-      return;
-    }
-    _remoteCodexSessionSyncSignature = signature;
-
     if (!mounted) {
       return;
     }
-    // Detect reducer push-driven streaming. When push events have populated
-    // currentAiMessages / currentThinkingMessages on the runtime, the 2s poll
-    // must not overwrite isAiResponding / dispatch ids / streaming buffers —
-    // otherwise the timeline flips to isActive=false for one frame between
-    // each tick and the codex run group visibly collapses-then-expands while
-    // codex is still outputting (the symptom the user reported).
+    // Preserve reducer-driven streaming state when the one-time hydration
+    // races an ACP event that arrived while session/load was in flight.
     final hasLivePushStreaming =
         runtime != null &&
         (runtime.currentAiMessages.isNotEmpty ||
             runtime.currentThinkingMessages.isNotEmpty ||
             runtime.messages.any(_isPendingAgentRequestMessage));
-    final preserveLiveStreamingState = fromPoll && hasLivePushStreaming;
+    final preserveLiveStreamingState = hasLivePushStreaming;
     setState(() {
       _activeRemoteCodexRuntimeId = runtimeId;
       _activeAgentThreadId = resolvedThreadId;

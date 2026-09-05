@@ -551,6 +551,73 @@ void main() {
     expect(nativeMessages['chat_only:5'], hasLength(3));
   });
 
+  test(
+    'legacy paged fallback keeps every history page when native paging is unavailable',
+    () async {
+      final allMessages = List<ChatMessageModel>.generate(
+        123,
+        (index) => ChatMessageModel.userMessage(
+          'persisted message ${index + 1}',
+          id: 'persisted-${index + 1}',
+        ),
+      );
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        ConversationHistoryService.conversationMessagesKey(
+          7,
+          mode: ConversationMode.agent,
+        ),
+        jsonEncode(allMessages.map((message) => message.toJson()).toList()),
+      );
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        final args = Map<String, dynamic>.from(
+          (call.arguments as Map?) ?? const {},
+        );
+        final conversationId = (args['conversationId'] as num?)?.toInt() ?? 0;
+        final mode = ConversationMode.fromStorageValue(args['mode'] as String?);
+        final key = threadKey(conversationId, mode);
+        switch (call.method) {
+          case 'getConversationMessagesPaged':
+            return null;
+          case 'getConversationMessages':
+            return nativeMessages[key] ?? <Map<String, dynamic>>[];
+          case 'replaceConversationMessages':
+            nativeMessages[key] = normalizeMessageList(args['messages']);
+            return 'SUCCESS';
+          default:
+            return 'SUCCESS';
+        }
+      });
+
+      final first = await ConversationHistoryService.getConversationMessagesPaged(
+        7,
+        mode: ConversationMode.agent,
+        limit: 50,
+      );
+      final second = await ConversationHistoryService.getConversationMessagesPaged(
+        7,
+        mode: ConversationMode.agent,
+        limit: 50,
+        offset: first.messages.length,
+      );
+      final third = await ConversationHistoryService.getConversationMessagesPaged(
+        7,
+        mode: ConversationMode.agent,
+        limit: 50,
+        offset: first.messages.length + second.messages.length,
+      );
+
+      expect(first.hasMore, isTrue);
+      expect(second.hasMore, isTrue);
+      expect(third.hasMore, isFalse);
+      expect(
+        [...first.messages, ...second.messages, ...third.messages]
+            .map((message) => message.text),
+        unorderedEquals(allMessages.map((message) => message.text)),
+      );
+    },
+  );
+
   test('merges partial native history with richer legacy snapshot', () async {
     final prefs = await SharedPreferences.getInstance();
     nativeMessages['agent:6'] = <Map<String, dynamic>>[

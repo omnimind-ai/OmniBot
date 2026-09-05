@@ -68,11 +68,11 @@ internal data class AcpPage<T>(
  */
 internal fun <T> paginateAcpItems(
     items: List<T>,
-    limit: Int,
+    limit: Int?,
     cursor: String?,
     identity: (T) -> String,
 ): AcpPage<T> {
-    val safeLimit = limit.coerceIn(1, 200)
+    require(limit == null || limit > 0) { "ACP session list limit must be positive." }
     val fingerprint = items.joinToString("\u001f", transform = identity)
         .toByteArray(StandardCharsets.UTF_8)
         .let { bytes ->
@@ -100,9 +100,11 @@ internal fun <T> paginateAcpItems(
             require(it in 0..items.size) { "Invalid ACP session list cursor." }
         } ?: throw IllegalArgumentException("Invalid ACP session list cursor.")
     }
-    val page = items.drop(offset).take(safeLimit)
+    val page = items.drop(offset).let { remaining ->
+        limit?.let(remaining::take) ?: remaining
+    }
     val nextOffset = offset + page.size
-    val nextCursor = if (nextOffset < items.size) {
+    val nextCursor = if (limit != null && nextOffset < items.size) {
         Base64.getUrlEncoder().withoutPadding().encodeToString(
             "acp-list-v1|$fingerprint|$nextOffset".toByteArray(StandardCharsets.UTF_8),
         )

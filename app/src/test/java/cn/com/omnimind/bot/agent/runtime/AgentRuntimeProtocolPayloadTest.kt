@@ -15,6 +15,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AgentRuntimeProtocolPayloadTest {
+    private fun officialCatalogAgents(): List<AcpAgentProfile> =
+        AcpAgentCatalog.parse(File("src/main/assets/acp/agents.json").readText()).agents
+
+    private fun deepSeekInstallScript(): String =
+        File("src/main/assets/acp/install/deepseek-harness.sh").readText()
+
     @Test
     fun reasoningEffortUsesTheAdvertisedOfficialAcpConfigOption() {
         val configId = resolveAdvertisedReasoningEffortConfigId(
@@ -265,6 +271,29 @@ class AgentRuntimeProtocolPayloadTest {
     }
 
     @Test
+    fun sessionScopedUpdateUsesOnlyItsActivePromptReservationWhenWireTurnIdIsAbsent() {
+        assertEquals(
+            "reserved-session-turn",
+            resolveObservedTurnId(
+                explicitTurnId = null,
+                activeEventTurnId = null,
+                hostActiveTurnId = null,
+                disconnectedTurnId = null,
+                implicitTurnId = "reserved-session-turn",
+            ),
+        )
+        assertNull(
+            resolveObservedTurnId(
+                explicitTurnId = null,
+                activeEventTurnId = null,
+                hostActiveTurnId = null,
+                disconnectedTurnId = null,
+                implicitTurnId = null,
+            ),
+        )
+    }
+
+    @Test
     fun legacyTaskAndRunIdsAreAcceptedOnlyAsTurnCompatibilityAliases() {
         assertEquals(
             "legacy-task-1",
@@ -357,6 +386,23 @@ class AgentRuntimeProtocolPayloadTest {
         } catch (error: IllegalArgumentException) {
             assertTrue(error.message.orEmpty().contains("changed"))
         }
+    }
+
+    @Test
+    fun omittedAppSessionListLimitReturnsEverySessionWithoutAHostCap() {
+        val sessions = (1..201).map { index ->
+            mapOf<String, Any?>("id" to "session-$index")
+        }
+
+        val page = paginateAcpItems(
+            items = sessions,
+            limit = null,
+            cursor = null,
+            identity = { it["id"].toString() },
+        )
+
+        assertEquals(201, page.items.size)
+        assertNull(page.nextCursor)
     }
 
     @Test
@@ -487,14 +533,14 @@ class AgentRuntimeProtocolPayloadTest {
     fun managedAcpCatalogIncludesSupportedAgentsWithoutGemini() {
         assertEquals(
             listOf("小万", "Kimi Code", "Claude Code", "Codex", "OpenCode", "DeepSeek Harness"),
-            AcpAgentProfileStore.OFFICIAL_AGENTS.map { it.name }
+            officialCatalogAgents().map { it.name }
         )
-        assertTrue(AcpAgentProfileStore.OFFICIAL_AGENTS.all { it.builtIn })
+        assertTrue(officialCatalogAgents().all { it.builtIn })
         assertEquals(
-            AcpAgentProfileStore.OFFICIAL_AGENTS.size,
-            AcpAgentProfileStore.OFFICIAL_AGENTS.map { it.id }.toSet().size
+            officialCatalogAgents().size,
+            officialCatalogAgents().map { it.id }.toSet().size
         )
-        val codex = AcpAgentProfileStore.OFFICIAL_AGENTS.first {
+        val codex = officialCatalogAgents().first {
             it.id == AcpAgentProfileStore.CODEX_AGENT_ID
         }
         assertEquals(
@@ -505,14 +551,16 @@ class AgentRuntimeProtocolPayloadTest {
             "@openai/codex@latest",
             AcpAgentProfileStore.officialRuntime(codex)?.managedAdapterPackage
         )
+        val codexRuntime = requireNotNull(AcpAgentProfileStore.officialRuntime(codex))
+        assertTrue(codexRuntime.managedAdapterPackage in codexRuntime.managedAdapterPackages)
+        val bridgePackage = codexRuntime.managedAdapterPackages.single {
+            it.startsWith("@agentclientprotocol/codex-acp@")
+        }
         assertEquals(
-            listOf(
-                "@openai/codex@latest",
-                "@agentclientprotocol/codex-acp@1.1.7"
-            ),
-            AcpAgentProfileStore.officialRuntime(codex)?.managedAdapterPackages
+            "codex-acp-${bridgePackage.substringAfterLast('@')}",
+            codexRuntime.preparationRevision,
         )
-        val xiaowan = AcpAgentProfileStore.OFFICIAL_AGENTS.first {
+        val xiaowan = officialCatalogAgents().first {
             it.id == AcpAgentProfileStore.XIAOWAN_AGENT_ID
         }
         assertEquals("omnibot-xiaowan-acp", xiaowan.command)
@@ -521,7 +569,7 @@ class AgentRuntimeProtocolPayloadTest {
             AcpAgentProfileStore.officialRuntime(xiaowan)?.discoveryCommand
         )
         assertNull(AcpAgentProfileStore.officialRuntime(xiaowan)?.managedAdapterPackage)
-        val kimi = AcpAgentProfileStore.OFFICIAL_AGENTS.first {
+        val kimi = officialCatalogAgents().first {
             it.id == AcpAgentProfileStore.KIMI_CODE_AGENT_ID
         }
         assertEquals("kimi", kimi.command)
@@ -531,10 +579,10 @@ class AgentRuntimeProtocolPayloadTest {
         assertEquals(KIMI_CODE_NPM_PACKAGE_SPEC, kimiRuntime?.managedAdapterPackage)
         assertEquals("kimi", kimiRuntime?.terminalPackageId)
         assertEquals(
-            AcpHarnessProviderConfigKind.KIMI_CODE,
-            kimiRuntime?.harnessAdapter?.providerConfigKind,
+            "kimi-code",
+            kimiRuntime?.harnessAdapter?.configAdapterId,
         )
-        val deepSeek = AcpAgentProfileStore.OFFICIAL_AGENTS.first {
+        val deepSeek = officialCatalogAgents().first {
             it.id == AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID
         }
         assertEquals("dsh-acp-android", deepSeek.command)
@@ -566,23 +614,23 @@ class AgentRuntimeProtocolPayloadTest {
         assertTrue(MANAGED_NATIVE_BUILD_PREREQUISITES_COMMAND.contains("apk fix --no-cache"))
         assertTrue(MANAGED_NATIVE_BUILD_PREREQUISITES_COMMAND.contains("apk fix --no-cache --upgrade"))
         assertTrue(MANAGED_NATIVE_BUILD_PREREQUISITES_COMMAND.contains("build-essential python3"))
-        assertTrue(DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("dsh plugin --profile acp add -w"))
-        assertTrue(DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("profiles/acp/package.json"))
-        assertTrue(DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("pnpm@$DEEPSEEK_HARNESS_PNPM_VERSION"))
-        assertTrue(DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("PNPM_CONFIG_PACKAGE_IMPORT_METHOD=copy"))
-        assertTrue(DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("PROFILE_LAYOUT_MARKER"))
+        assertTrue(deepSeekInstallScript().contains("dsh plugin --profile acp add -w"))
+        assertTrue(deepSeekInstallScript().contains("profiles/acp/package.json"))
+        assertTrue(deepSeekInstallScript().contains("pnpm@11.22.0"))
+        assertTrue(deepSeekInstallScript().contains("PNPM_CONFIG_PACKAGE_IMPORT_METHOD=copy"))
+        assertTrue(deepSeekInstallScript().contains("PROFILE_LAYOUT_MARKER"))
         assertTrue(
-            DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains(
+            deepSeekInstallScript().contains(
                 "timeout 30 dsh-acp-android --profile acp --dump-config"
             )
         )
         assertTrue(
-            DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains(
+            deepSeekInstallScript().contains(
                 "pnpm config set --location=project packageImportMethod copy"
             )
         )
         assertTrue(
-            DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("DSH_HOME=\"/root/.dsh/omnibot-acp\"")
+            deepSeekInstallScript().contains("DSH_HOME=\"/root/.dsh/omnibot-acp\"")
         )
     }
 
@@ -674,16 +722,16 @@ class AgentRuntimeProtocolPayloadTest {
     }
 
     @Test
-    fun deepSeekHarnessDefaultReasoningEffortKeepsSimpleTurnsResponsive() {
+    fun deepSeekHarnessDoesNotInventReasoningDefaults() {
         val environment = DeepSeekHarnessConfig(
             baseUrl = "https://gateway.example/v1",
             model = "deepseek-custom",
             apiKey = "sk-test"
         ).toEnvironment()
 
-        assertEquals("high", environment["DSH_REASONING_EFFORT"])
-        assertEquals("high", environment["DSH_PI_AI_REASONING_EFFORT"])
-        assertEquals("enabled", environment["DSH_THINKING"])
+        assertNull(environment["DSH_REASONING_EFFORT"])
+        assertNull(environment["DSH_PI_AI_REASONING_EFFORT"])
+        assertNull(environment["DSH_THINKING"])
     }
 
     @Test
@@ -704,7 +752,7 @@ class AgentRuntimeProtocolPayloadTest {
     }
 
     @Test
-    fun sharedAgentProviderIsTheDefaultCredentialSourceForAllAcpModes() {
+    fun sharedAgentProviderSyncsTheActiveDeepSeekHarness() {
         val provider = ModelProviderProfile(
             id = "deepseek-provider",
             name = "DeepSeek",
@@ -724,22 +772,6 @@ class AgentRuntimeProtocolPayloadTest {
         assertEquals(provider.baseUrl, dsh.baseUrl)
         assertEquals(provider.apiKey, dsh.apiKey)
         assertEquals("glm-5.1", dsh.model)
-        assertEquals(
-            provider.apiKey,
-            buildSharedAgentProviderEnvironment("claude-code-acp", credentials)["ANTHROPIC_AUTH_TOKEN"]
-        )
-        assertEquals(
-            "https://api.deepseek.com/v1",
-            buildSharedAgentProviderEnvironment("opencode-acp", credentials)["OPENAI_BASE_URL"]
-        )
-        assertEquals(
-            provider.apiKey,
-            buildSharedAgentProviderEnvironment("codex-acp", credentials)["OPENAI_API_KEY"]
-        )
-        assertEquals(
-            "https://api.deepseek.com/v1",
-            buildSharedAgentProviderEnvironment("codex-acp", credentials)["OPENAI_BASE_URL"]
-        )
     }
 
     @Test
@@ -838,7 +870,7 @@ class AgentRuntimeProtocolPayloadTest {
         assertEquals(
             "kimi",
             managedAgentTerminalPackageId(
-                AcpAgentProfileStore.OFFICIAL_AGENTS.first {
+                officialCatalogAgents().first {
                     it.id == AcpAgentProfileStore.KIMI_CODE_AGENT_ID
                 }
             )
@@ -846,31 +878,31 @@ class AgentRuntimeProtocolPayloadTest {
         assertEquals(
             "deepseek_harness",
             managedAgentTerminalPackageId(
-                AcpAgentProfileStore.OFFICIAL_AGENTS.first {
+                officialCatalogAgents().first {
                     it.id == AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID
                 }
             )
         )
         assertEquals(
             "codex",
-            managedAgentTerminalPackageId(AcpAgentProfileStore.OFFICIAL_AGENTS.first {
+            managedAgentTerminalPackageId(officialCatalogAgents().first {
                 it.id == AcpAgentProfileStore.CODEX_AGENT_ID
             })
         )
         assertEquals(
             "claude_code",
-            managedAgentTerminalPackageId(AcpAgentProfileStore.OFFICIAL_AGENTS.first {
+            managedAgentTerminalPackageId(officialCatalogAgents().first {
                 it.id == "claude-code-acp"
             })
         )
         assertEquals(
             "opencode",
-            managedAgentTerminalPackageId(AcpAgentProfileStore.OFFICIAL_AGENTS.first {
+            managedAgentTerminalPackageId(officialCatalogAgents().first {
                 it.id == "opencode-acp"
             })
         )
         assertNull(
-            managedAgentTerminalPackageId(AcpAgentProfileStore.OFFICIAL_AGENTS.first {
+            managedAgentTerminalPackageId(officialCatalogAgents().first {
                 it.id == AcpAgentProfileStore.XIAOWAN_AGENT_ID
             })
         )
@@ -887,7 +919,6 @@ class AgentRuntimeProtocolPayloadTest {
         )
 
         val codexServers = buildLocalAgentAcpMcpServers(
-            harnessAdapter = AcpHarnessAdapters.standard,
             supportsHttp = true,
             state = state
         )
@@ -899,14 +930,12 @@ class AgentRuntimeProtocolPayloadTest {
 
         assertTrue(
             buildLocalAgentAcpMcpServers(
-                harnessAdapter = AcpHarnessAdapters.deepSeekHarness,
                 supportsHttp = false,
                 state = state
             ).isEmpty()
         )
         assertTrue(
             buildLocalAgentAcpMcpServers(
-                harnessAdapter = AcpHarnessAdapters.standard,
                 supportsHttp = false,
                 state = state
             ).isEmpty()
@@ -916,7 +945,6 @@ class AgentRuntimeProtocolPayloadTest {
     @Test
     fun deepSeekHarnessMcpConnectionUsesOfficialSessionDeclaration() {
         val servers = buildLocalAgentAcpMcpServers(
-            harnessAdapter = AcpHarnessAdapters.deepSeekHarness,
             supportsHttp = true,
             state = McpServerState(
                 enabled = true,
@@ -929,11 +957,6 @@ class AgentRuntimeProtocolPayloadTest {
         val server = servers.single() as McpServer.Http
         assertEquals("http://127.0.0.1:9001/mcp", server.url)
         assertEquals("Bearer local-secret", server.headers.single().value)
-        assertTrue(
-            AcpHarnessAdapters.deepSeekHarness.mcpEnvironment(
-                McpServerState(false, false, null, 0, "")
-            ).isEmpty()
-        )
     }
 
     @Test

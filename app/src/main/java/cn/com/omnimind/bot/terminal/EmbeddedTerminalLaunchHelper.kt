@@ -70,7 +70,8 @@ object EmbeddedTerminalLaunchHelper {
 
         val commands = EnvironmentSetupLogic.buildInstallCommands(
             selectedPackageIds = selectedPackageIds,
-            sourceManager = SourceManager(context)
+            sourceManager = SourceManager(context),
+            context = context,
         )
         if (commands.isEmpty()) {
             return

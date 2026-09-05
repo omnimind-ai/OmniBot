@@ -574,8 +574,8 @@ class MemoryCenterPageState extends State<MemoryCenterPage>
 
   Future<void> _loadShortMemories() async {
     try {
-      final items = await workspace_memory
-          .WorkspaceMemoryService.getShortMemories(days: 14, limit: 300);
+      final items =
+          await workspace_memory.WorkspaceMemoryService.getShortMemories();
       final cards = items.map((item) {
         final text = _normalizeShortMemoryText(item.content);
         final isTruncated = text.length > 26;

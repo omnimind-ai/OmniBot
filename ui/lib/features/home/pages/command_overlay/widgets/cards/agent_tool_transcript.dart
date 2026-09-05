@@ -43,7 +43,7 @@ class AgentToolTranscript {
 
 AgentToolTranscript buildAgentToolTranscript(
   Map<String, dynamic> cardData, {
-  int maxOutputLines = 28,
+  int? maxOutputLines,
   int maxPreviewLines = 2,
   int maxPreviewChars = 220,
 }) {
@@ -330,7 +330,7 @@ String _buildTerminalOutputText(Map<String, dynamic> cardData) {
 
 String _buildStructuredOutputText(
   Map<String, dynamic> cardData, {
-  required int maxOutputLines,
+  required int? maxOutputLines,
 }) {
   final status = (cardData['status'] ?? '').toString().trim();
   final summary = (cardData['summary'] ?? '').toString().trim();
@@ -338,7 +338,9 @@ String _buildStructuredOutputText(
   final previewMap = _decodeJsonMap(
     (cardData['resultPreviewJson'] ?? '').toString(),
   );
-  final rawMap = _decodeJsonMap((cardData['rawResultJson'] ?? '').toString());
+  final previewResult = (cardData['resultPreviewJson'] ?? '').toString();
+  final rawResult = (cardData['rawResultJson'] ?? '').toString();
+  final rawMap = _decodeJsonMap(rawResult);
   final lines = <String>[];
 
   if (status == 'running') {
@@ -349,18 +351,32 @@ String _buildStructuredOutputText(
     _appendUniqueLine(lines, summary);
   }
 
-  final structuredPreview = _buildStructuredLines(
-    previewMap,
+  // A compact preview may legitimately be a presentation-oriented subset, but
+  // the detail sheet and copy action must expose the complete persisted result.
+  final detailMap = maxOutputLines == null && rawMap.isNotEmpty
+      ? rawMap
+      : previewMap;
+  final structuredResult = _buildStructuredLines(
+    detailMap,
     maxLines: maxOutputLines,
   );
-  if (structuredPreview.isNotEmpty) {
-    lines.addAll(structuredPreview.where((line) => !lines.contains(line)));
+  if (structuredResult.isNotEmpty) {
+    lines.addAll(structuredResult.where((line) => !lines.contains(line)));
   } else {
     final structuredRaw = _buildStructuredLines(
       rawMap,
       maxLines: maxOutputLines,
     );
     lines.addAll(structuredRaw.where((line) => !lines.contains(line)));
+  }
+
+  // A valid tool result can be a JSON array or scalar rather than an object.
+  // The detail/copy path must still show the complete canonical payload.
+  if (lines.isEmpty) {
+    final detailResult = maxOutputLines == null && rawResult.trim().isNotEmpty
+        ? rawResult
+        : previewResult;
+    _appendUniqueLine(lines, _formatCompleteResultPayload(detailResult));
   }
 
   if (lines.isEmpty) {
@@ -373,6 +389,18 @@ String _buildStructuredOutputText(
 
   final normalized = lines.join('\n').trim();
   return _trimStructuredOutput(normalized, maxLines: maxOutputLines);
+}
+
+String _formatCompleteResultPayload(String value) {
+  final normalized = value.trimRight();
+  if (normalized.isEmpty) {
+    return '';
+  }
+  try {
+    return const JsonEncoder.withIndent('  ').convert(jsonDecode(normalized));
+  } catch (_) {
+    return normalized;
+  }
 }
 
 String _buildPreviewText(
@@ -440,15 +468,16 @@ List<String> _formatCliArguments(String key, dynamic value) {
 
 List<String> _buildStructuredLines(
   Map<String, dynamic> source, {
-  required int maxLines,
+  required int? maxLines,
 }) {
-  if (source.isEmpty || maxLines <= 0) {
+  if (source.isEmpty) {
     return const <String>[];
   }
 
   final lines = <String>[];
+  final compactValues = maxLines != null;
 
-  bool canAdd() => lines.length < maxLines;
+  bool canAdd() => maxLines == null || lines.length < maxLines;
 
   void addLine(String line) {
     final normalized = line.trimRight();
@@ -467,7 +496,7 @@ List<String> _buildStructuredLines(
       final normalizedMap = value.map(
         (key, nested) => MapEntry(key.toString(), nested),
       );
-      final summary = _summarizeMap(normalizedMap);
+      final summary = compactValues ? _summarizeMap(normalizedMap) : null;
       if (summary != null && summary.isNotEmpty) {
         addLine(label.isEmpty ? summary : '$label: $summary');
         return;
@@ -490,8 +519,10 @@ List<String> _buildStructuredLines(
       if (value.isEmpty) {
         return;
       }
-      if (_canInlineScalarList(value)) {
-        addLine('$label: ${value.map(_formatInlineValue).join(', ')}');
+      if (_canInlineScalarList(value) || !compactValues) {
+        addLine(
+          '$label: ${value.map((item) => _formatInlineValue(item, compact: compactValues)).join(', ')}',
+        );
         return;
       }
       final itemLimit = math.min(value.length, depth <= 1 ? 5 : 3);
@@ -501,14 +532,14 @@ List<String> _buildStructuredLines(
           final normalizedMap = item.map(
             (key, nested) => MapEntry(key.toString(), nested),
           );
-          final summary = _summarizeMap(normalizedMap);
+          final summary = compactValues ? _summarizeMap(normalizedMap) : null;
           if (summary != null && summary.isNotEmpty) {
             addLine('$label[$index]: $summary');
           } else {
             appendValue('$label[$index]', normalizedMap, depth + 1);
           }
         } else {
-          final formatted = _formatScalarLine(item);
+          final formatted = _formatScalarLine(item, compact: compactValues);
           if (formatted != null) {
             addLine('$label[$index]: $formatted');
           }
@@ -523,7 +554,7 @@ List<String> _buildStructuredLines(
       return;
     }
 
-    final formatted = _formatScalarLine(value);
+    final formatted = _formatScalarLine(value, compact: compactValues);
     if (formatted != null) {
       addLine(label.isEmpty ? formatted : '$label: $formatted');
     }
@@ -623,19 +654,19 @@ String? _summarizeMap(Map<String, dynamic> value) {
 
 String _trimStructuredOutput(
   String value, {
-  required int maxLines,
-  int maxChars = 6000,
+  required int? maxLines,
+  int? maxChars,
 }) {
   if (value.isEmpty) {
     return value;
   }
   var candidate = value;
-  if (candidate.length > maxChars) {
+  if (maxChars != null && candidate.length > maxChars) {
     candidate = candidate.substring(0, maxChars).trimRight();
     candidate = '$candidate\n...[truncated]';
   }
   final lines = candidate.split('\n');
-  if (lines.length > maxLines) {
+  if (maxLines != null && lines.length > maxLines) {
     candidate = [...lines.take(maxLines), '...[truncated]'].join('\n');
   }
   return candidate.trimRight();
@@ -649,14 +680,14 @@ bool _canInlineScalarList(List<dynamic> value) {
   return rendered.length <= 120;
 }
 
-String _formatInlineValue(dynamic value) {
+String _formatInlineValue(dynamic value, {bool compact = true}) {
   if (value == null) {
     return 'null';
   }
-  return _truncateInline(value.toString());
+  return compact ? _truncateInline(value.toString()) : value.toString();
 }
 
-String? _formatScalarLine(dynamic value) {
+String? _formatScalarLine(dynamic value, {bool compact = true}) {
   if (value == null) {
     return null;
   }
@@ -667,7 +698,7 @@ String? _formatScalarLine(dynamic value) {
   if (normalized.isEmpty) {
     return null;
   }
-  return _truncateInline(normalized);
+  return compact ? _truncateInline(normalized) : normalized;
 }
 
 String _truncateInline(String value, {int maxLength = 140}) {
@@ -977,7 +1008,6 @@ class _AgentToolDetailContent extends StatelessWidget {
   Widget build(BuildContext context) {
     final transcript = buildAgentToolTranscript(
       cardData,
-      maxOutputLines: 80,
       maxPreviewLines: 4,
       maxPreviewChars: 420,
     );

@@ -62,7 +62,7 @@ extension _ChatRuntimeThinkingSupport on ChatConversationRuntimeCoordinator {
     ChatConversationRuntimeState runtime, {
     required String markerId,
     required String status,
-    String trigger = 'auto',
+    String trigger = 'manual',
     int? latestPromptTokens,
     int? promptTokenThreshold,
   }) {

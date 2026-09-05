@@ -4,7 +4,6 @@ import cn.com.omnimind.bot.agent.AgentCallback
 import cn.com.omnimind.bot.agent.AgentExecutionEnvironment
 import cn.com.omnimind.bot.agent.AgentToolExecutionHandle
 import cn.com.omnimind.bot.agent.AgentToolRegistry
-import cn.com.omnimind.bot.agent.AgentToolVisibilitySelector
 import cn.com.omnimind.bot.agent.ToolExecutionResult
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
@@ -20,7 +19,7 @@ class ToolSearchHandler(
     private val helper: SharedHelper,
 ) : ToolHandler {
     companion object {
-        const val NAME = AgentToolVisibilitySelector.TOOL_SEARCH_NAME
+        const val NAME = "tools_search"
     }
 
     override val toolNames: Set<String> = setOf(NAME)

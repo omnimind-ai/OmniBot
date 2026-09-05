@@ -256,6 +256,28 @@ void main() {
     );
   });
 
+  test('retains all ACP extension updates for a long-lived conversation', () {
+    for (var index = 0; index < 700; index += 1) {
+      reducer.reduce(
+        runtime: runtime,
+        event: {
+          'method': 'session/update',
+          'params': {
+            'sessionId': 'session-long-extension-history',
+            'update': {
+              'sessionUpdate': 'vendor_progress',
+              'rawUpdate': {'sequence': index},
+            },
+          },
+        },
+      );
+    }
+
+    expect(runtime.acpExtensionUpdates, hasLength(700));
+    expect(runtime.acpExtensionUpdates.first['rawUpdate']['sequence'], 0);
+    expect(runtime.acpExtensionUpdates.last['rawUpdate']['sequence'], 699);
+  });
+
   test('maps agent message deltas into assistant text', () {
     final result = reducer.reduce(
       runtime: runtime,
@@ -2159,6 +2181,8 @@ void main() {
     reducer.reduce(runtime: runtime, event: base);
 
     expect(runtime.messages, isEmpty);
+    expect(runtime.isAiResponding, isFalse);
+    expect(runtime.currentDispatchTurnId, isNull);
 
     reducer.reduce(
       runtime: runtime,
@@ -2346,7 +2370,7 @@ void main() {
     },
   );
 
-  test('projects ACP context compaction into the shared marker card', () {
+  test('ignores private automatic compaction presentation metadata', () {
     const base = <String, dynamic>{
       'method': 'session/update',
       'turnId': 'turn-compaction',
@@ -2371,10 +2395,8 @@ void main() {
     };
     reducer.reduce(runtime: runtime, event: base);
 
-    final activeMarker = runtime.messages.single;
-    expect(activeMarker.cardData?['type'], 'context_compaction_marker');
-    expect(activeMarker.cardData?['status'], 'compressing');
-    expect(runtime.isContextCompressing, isTrue);
+    expect(runtime.messages, isEmpty);
+    expect(runtime.isContextCompressing, isFalse);
 
     reducer.reduce(
       runtime: runtime,
@@ -2396,8 +2418,7 @@ void main() {
       },
     );
 
-    expect(runtime.messages, hasLength(1));
-    expect(runtime.messages.single.cardData?['status'], 'completed');
+    expect(runtime.messages, isEmpty);
     expect(runtime.isContextCompressing, isFalse);
   });
 
@@ -3829,6 +3850,31 @@ void main() {
     expect(cardData['status'], 'running');
   });
 
+  test('keeps a large terminal output delta intact in its tool card', () {
+    final output = List<String>.generate(
+      700,
+      (index) => 'line-$index ${'x' * 180}',
+    ).join('\n');
+    expect(output.length, greaterThan(128 * 1024));
+
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'method': 'command/exec/outputDelta',
+          'params': {
+            'processId': 'proc-large-output',
+            'stream': 'stdout',
+            'deltaBase64': base64Encode(utf8.encode(output)),
+          },
+        },
+      },
+    );
+
+    expect(runtime.messages, hasLength(1));
+    expect(runtime.messages.single.cardData?['terminalOutput'], output);
+  });
+
   test('late standalone process output stays with its original run', () {
     runtime
       ..isAiResponding = true
@@ -4629,6 +4675,50 @@ diff --git a/lib/main.dart b/lib/main.dart
     expect(cardData['summary'], contains('All tests passed'));
   });
 
+  test(
+    'hydrates the complete remote tool output behind its compact summary',
+    () {
+      final completeOutput =
+          'first remote fact\n' +
+          List<String>.filled(256, 'middle remote fact').join('\n') +
+          '\ntail remote fact must survive';
+      final messages = remoteCodexMessagesFromThreadResponseForTesting({
+        'thread': {
+          'id': 'thread-1',
+          'turns': [
+            {
+              'id': 'turn-1',
+              'items': [
+                {
+                  'type': 'function_call',
+                  'name': 'exec_command',
+                  'call_id': 'raw-cmd-long-output',
+                  'arguments': '{"cmd":"inspect"}',
+                },
+                {
+                  'type': 'function_call_output',
+                  'call_id': 'raw-cmd-long-output',
+                  'output': completeOutput,
+                },
+              ],
+            },
+          ],
+        },
+      });
+
+      final cardData = messages.single.cardData!;
+      expect(
+        cardData['summary'],
+        isNot(contains('tail remote fact must survive')),
+      );
+      expect(cardData['rawResultJson'], contains('first remote fact'));
+      expect(
+        cardData['rawResultJson'],
+        contains('tail remote fact must survive'),
+      );
+    },
+  );
+
   test('hydrates codex user image blocks as message attachments', () {
     final messages = remoteCodexMessagesFromThreadResponseForTesting({
       'thread': {
@@ -5004,31 +5094,6 @@ diff --git a/lib/main.dart b/lib/main.dart
       expect(messages.first.streamMeta?['isFinal'], isFalse);
     },
   );
-
-  test('detects stale-normalized remote active turn shape', () {
-    final looksActive = remoteCodexLatestTurnLooksExternallyActiveForTesting({
-      'thread': {
-        'id': 'thread-1',
-        'status': {'type': 'idle'},
-        'turns': [
-          {
-            'id': 'turn-1',
-            'status': 'interrupted',
-            'completedAt': null,
-            'items': [
-              {
-                'id': 'reasoning-1',
-                'type': 'reasoning',
-                'summary': ['still writing'],
-              },
-            ],
-          },
-        ],
-      },
-    });
-
-    expect(looksActive, isTrue);
-  });
 
   test('marks thread idle from object status payload', () {
     reducer.reduce(

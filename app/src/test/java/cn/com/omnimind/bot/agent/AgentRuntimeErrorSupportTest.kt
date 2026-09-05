@@ -148,14 +148,14 @@ class AgentRuntimeErrorSupportTest {
     }
 
     @Test
-    fun `diagnostic messages redact credentials and stay bounded`() {
+    fun `diagnostic messages redact credentials without truncating the provider detail`() {
         val error = IllegalStateException(
             "request failed Bearer abc.def token=secret-value " + "x".repeat(500)
         )
 
         val diagnostic = AgentRuntimeErrorSupport.safeDiagnosticMessage(error)
 
-        assertTrue(diagnostic.length <= 300)
+        assertTrue(diagnostic.length > 300)
         assertTrue(!diagnostic.contains("abc.def"))
         assertTrue(!diagnostic.contains("secret-value"))
     }

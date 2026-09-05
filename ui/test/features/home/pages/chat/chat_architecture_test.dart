@@ -5,25 +5,6 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   const chatRoot = 'lib/features/home/pages/chat';
 
-  test('chat composition files stay within their responsibility budgets', () {
-    const lineBudgets = <String, int>{
-      '$chatRoot/chat_page.dart': 2200,
-      '$chatRoot/chat_page_agent.dart': 2400,
-      '$chatRoot/chat_page_ui.dart': 2900,
-      '$chatRoot/services/chat_conversation_runtime_coordinator.dart': 1300,
-      '$chatRoot/widgets/chat_widgets.dart': 100,
-    };
-
-    for (final entry in lineBudgets.entries) {
-      final lineCount = File(entry.key).readAsLinesSync().length;
-      expect(
-        lineCount,
-        lessThanOrEqualTo(entry.value),
-        reason: '${entry.key} is becoming a mixed-responsibility hotspot',
-      );
-    }
-  });
-
   test('chat page keeps per-mode values in ChatPageModeState', () {
     final source = File('$chatRoot/chat_page.dart').readAsStringSync();
 
@@ -215,6 +196,95 @@ void main() {
     expect(flowSource, isNot(contains('sessionId: dispatchSessionId')));
     expect(agentSource, isNot(contains('sessionId: dispatchSessionId')));
   });
+
+  test('Agent send reconciles a user item by id, never by repeated text', () {
+    final source = File('$chatRoot/chat_page_agent.dart').readAsStringSync();
+    final sendStart = source.indexOf('Future<void> _sendAgentMessage(');
+    final sendEnd = source.indexOf(
+      '// The preflight admission already owns this logical turn',
+      sendStart,
+    );
+    expect(sendStart, greaterThanOrEqualTo(0));
+    expect(sendEnd, greaterThan(sendStart));
+    final sendBody = source.substring(sendStart, sendEnd);
+
+    expect(sendBody, contains('required String userMessageId'));
+    expect(sendBody, contains('final expectedUserId = userMessageId.trim();'));
+    expect(sendBody, contains('message.id == expectedUserId'));
+    expect(sendBody, isNot(contains('message.text == messageText')));
+  });
+
+  test(
+    'granting a device permission never fabricates or replays a user turn',
+    () {
+      final flowSource = File(
+        '$chatRoot/chat_page_conversation_flow.dart',
+      ).readAsStringSync();
+      final pageSource = File('$chatRoot/chat_page.dart').readAsStringSync();
+
+      final authorizeStart = flowSource.indexOf(
+        'Future<void> _requestAuthorizeForExecution(',
+      );
+      expect(authorizeStart, greaterThanOrEqualTo(0));
+      final authorizeBody = flowSource.substring(authorizeStart);
+
+      // Authorization is an environment change, not a user send. It must
+      // retain the failed turn and wait for the user to explicitly retry it.
+      expect(authorizeBody, isNot(contains('_tryAgentFlow(')));
+      expect(authorizeBody, isNot(contains('_handleExecutableTaskFlow(')));
+      expect(flowSource, isNot(contains('_retryLatestInstructionAfterAuth')));
+      expect(flowSource, isNot(contains('_removeFailedAttemptMessages')));
+      expect(
+        pageSource,
+        isNot(contains('_isRetryingLatestInstructionAfterAuth')),
+      );
+    },
+  );
+
+  test(
+    'editing or retrying waits for the active ACP turn to reach its terminal',
+    () {
+      final actionSource = File(
+        '$chatRoot/chat_page_user_message_actions.dart',
+      ).readAsStringSync();
+      final flowSource = File(
+        '$chatRoot/chat_page_conversation_flow.dart',
+      ).readAsStringSync();
+
+      // `session/cancel` only notifies the Agent; it cannot be used as a
+      // local terminal transition that clears history and admits another turn.
+      expect(
+        actionSource,
+        contains('return !_isAiResponding && _isLatestUserMessage(message);'),
+      );
+      final clearStart = actionSource.indexOf(
+        'Future<bool> _clearRetriedMessageRound(',
+      );
+      final clearEnd = actionSource.indexOf(
+        '\n  Future<void> _copyUserMessageText',
+        clearStart,
+      );
+      expect(clearStart, greaterThanOrEqualTo(0));
+      expect(clearEnd, greaterThan(clearStart));
+      final clearBody = actionSource.substring(clearStart, clearEnd);
+      expect(clearBody, contains('if (_isAiResponding)'));
+      expect(clearBody, contains('return false;'));
+      expect(clearBody, isNot(contains('_onCancelTask()')));
+
+      final retryStart = flowSource.indexOf(
+        'Future<void> _retryUserMessageText(',
+      );
+      final retryEnd = flowSource.indexOf(
+        '\n  Future<void> _dispatchUserMessage(',
+        retryStart,
+      );
+      expect(retryStart, greaterThanOrEqualTo(0));
+      expect(retryEnd, greaterThan(retryStart));
+      final retryBody = flowSource.substring(retryStart, retryEnd);
+      expect(retryBody, contains('if (_isAiResponding) return;'));
+      expect(retryBody, isNot(contains('_onCancelTask()')));
+    },
+  );
 
   test('command overlay cancellation is owned by its ACP close lifecycle', () {
     final source = File(

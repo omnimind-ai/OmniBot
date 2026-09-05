@@ -1,32 +1,16 @@
 package cn.com.omnimind.bot.agent
 
 import android.util.Base64
-import cn.com.omnimind.baselib.util.ImageCompressor
 import cn.com.omnimind.baselib.util.OmniLog
 import java.io.File
 import java.util.Locale
 
 internal object AgentImageAttachmentSupport {
     private const val TAG = "AgentImageAttachmentSupport"
-    private const val MODEL_SCALE = 0.75f
-    private const val MODEL_QUALITY = 92
-    private const val PREVIEW_SCALE = 0.35f
-    private const val PREVIEW_QUALITY = 80
-    private const val NO_BYPASS_THRESHOLD = 0L
-
     internal data class PreparedAttachments(
         val runtimeAttachments: List<Map<String, Any?>>,
         val modelAttachments: List<Map<String, Any?>>,
         val historyAttachments: List<Map<String, Any?>>
-    )
-
-    internal data class ResolvedImageData(
-        val dataUrl: String,
-        val mimeType: String,
-        val originalWidth: Int,
-        val originalHeight: Int,
-        val compressedWidth: Int,
-        val compressedHeight: Int
     )
 
     internal data class FileReadImageResult(
@@ -37,11 +21,6 @@ internal object AgentImageAttachmentSupport {
     internal interface Backend {
         fun readFileAsDataUrl(file: File, mimeTypeHint: String?): String?
 
-        fun compressDataUrl(
-            dataUrl: String,
-            scale: Float,
-            quality: Int
-        ): ResolvedImageData?
     }
 
     private object RealBackend : Backend {
@@ -61,31 +40,6 @@ internal object AgentImageAttachmentSupport {
             }.getOrNull()
         }
 
-        override fun compressDataUrl(
-            dataUrl: String,
-            scale: Float,
-            quality: Int
-        ): ResolvedImageData? {
-            return runCatching {
-                val result = ImageCompressor.compressBase64Image(
-                    base64String = dataUrl,
-                    scale = scale,
-                    quality = quality,
-                    bypassThreshold = NO_BYPASS_THRESHOLD
-                )
-                val normalizedDataUrl = normalizeImageDataUrl(result.base64)
-                ResolvedImageData(
-                    dataUrl = normalizedDataUrl,
-                    mimeType = extractMimeType(normalizedDataUrl),
-                    originalWidth = result.originalWidth,
-                    originalHeight = result.originalHeight,
-                    compressedWidth = result.compressedWidth,
-                    compressedHeight = result.compressedHeight
-                )
-            }.onFailure { error ->
-                OmniLog.w(TAG, "compress image dataUrl failed: ${error.message}")
-            }.getOrNull()
-        }
     }
 
     @Volatile
@@ -146,14 +100,6 @@ internal object AgentImageAttachmentSupport {
             val file = File(path)
             val dataUrl = backend.readFileAsDataUrl(file, mimeTypeFromAttachment(attachment))
             if (!dataUrl.isNullOrBlank()) {
-                val compressed = backend.compressDataUrl(
-                    dataUrl = dataUrl,
-                    scale = MODEL_SCALE,
-                    quality = MODEL_QUALITY
-                )
-                if (compressed != null) {
-                    return normalizeImageDataUrl(compressed.dataUrl)
-                }
                 return normalizeImageDataUrl(dataUrl)
             }
         }
@@ -178,26 +124,17 @@ internal object AgentImageAttachmentSupport {
         sizeBytes: Long
     ): FileReadImageResult? {
         val dataUrl = backend.readFileAsDataUrl(file, mimeTypeHint) ?: return null
-        val compressed = backend.compressDataUrl(
-            dataUrl = dataUrl,
-            scale = MODEL_SCALE,
-            quality = MODEL_QUALITY
-        ) ?: return null
         val payload = linkedMapOf<String, Any?>(
             "path" to shellPath,
             "androidPath" to file.absolutePath,
             "uri" to uri,
             "size" to sizeBytes,
             "mimeType" to normalizeImageMimeType(mimeTypeHint, file.name),
-            "kind" to "image",
-            "width" to compressed.originalWidth,
-            "height" to compressed.originalHeight,
-            "previewWidth" to compressed.compressedWidth,
-            "previewHeight" to compressed.compressedHeight
+            "kind" to "image"
         )
         return FileReadImageResult(
             payload = payload,
-            imageDataUrl = normalizeImageDataUrl(compressed.dataUrl)
+            imageDataUrl = normalizeImageDataUrl(dataUrl)
         )
     }
 
@@ -252,41 +189,9 @@ internal object AgentImageAttachmentSupport {
         }
 
         if (!sourceDataUrl.isNullOrBlank()) {
-            val modelImage = backend.compressDataUrl(
-                dataUrl = sourceDataUrl,
-                scale = MODEL_SCALE,
-                quality = MODEL_QUALITY
-            )
-            val historyImage = backend.compressDataUrl(
-                dataUrl = sourceDataUrl,
-                scale = PREVIEW_SCALE,
-                quality = PREVIEW_QUALITY
-            )
-            if (modelImage != null || historyImage != null) {
-                val modelAttachment = LinkedHashMap(base)
-                val historyAttachment = LinkedHashMap(base)
-                val resolvedMimeType = modelImage?.mimeType
-                    ?: historyImage?.mimeType
-                    ?: mimeType
-                if (resolvedMimeType.isNotBlank()) {
-                    modelAttachment["mimeType"] = resolvedMimeType
-                    historyAttachment["mimeType"] = resolvedMimeType
-                }
-                modelImage?.let {
-                    modelAttachment["dataUrl"] = normalizeImageDataUrl(it.dataUrl)
-                    modelAttachment["width"] = it.originalWidth
-                    modelAttachment["height"] = it.originalHeight
-                }
-                historyImage?.let {
-                    historyAttachment["dataUrl"] = normalizeImageDataUrl(it.dataUrl)
-                    historyAttachment["width"] = it.originalWidth
-                    historyAttachment["height"] = it.originalHeight
-                }
-                return modelAttachment to historyAttachment
-            }
-            val fallbackModelAttachment = LinkedHashMap(base)
-            fallbackModelAttachment["dataUrl"] = normalizeImageDataUrl(sourceDataUrl)
-            return fallbackModelAttachment to LinkedHashMap(base)
+            val modelAttachment = LinkedHashMap(base)
+            modelAttachment["dataUrl"] = normalizeImageDataUrl(sourceDataUrl)
+            return modelAttachment to LinkedHashMap(modelAttachment)
         }
 
         return base to base

@@ -7,7 +7,6 @@ const String _kAgentPermissionModePreferenceKey = 'permission_mode';
 const String _kAgentPreferenceStoragePrefix = 'chat_agent_command_preference';
 const String _kLegacyAgentPreferenceStoragePrefix =
     'chat_codex_command_preference';
-const Duration _remoteCodexExternalActiveGrace = Duration(seconds: 6);
 const List<String> _kAgentModelListResponseKeys = <String>[
   'models',
   'modelOptions',
@@ -198,21 +197,6 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     AgentRuntimeStatus status;
     try {
       status = await AgentRuntimeService.status();
-      if (!status.ready && !status.remoteEnabled) {
-        final catalog = await AgentRuntimeService.listAgents();
-        final selected = catalog.selectedAgent;
-        if (selected?.managedAdapter == true) {
-          final prepared = await AgentRuntimeService.prepareAgent(selected!.id);
-          if (prepared['ok'] == true) {
-            status = await AgentRuntimeService.status();
-          } else {
-            throw StateError(
-              prepared['error']?.toString() ??
-                  'Failed to prepare the selected ACP Agent.',
-            );
-          }
-        }
-      }
       if (status.ready && !status.connected) {
         status = await AgentRuntimeService.connect();
         unawaited(AgentRuntimeService.listSessions());
@@ -552,7 +536,6 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         fallbackRuntimeId: runtimeId,
         fallbackConversation: conversation,
         status: status,
-        assumeActive: target.agentSessionActive == true,
       );
       this._startRemoteCodexSessionSync(resolvedThreadId);
       _rememberRuntimeUiSnapshot(ChatPageMode.agent);
@@ -1534,6 +1517,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     await _sendAgentMessage(
       messageIds.aiMessageId,
       actualText,
+      userMessageId: messageIds.userMessageId,
       attachments: attachments,
       collaborationModeOverride: collaborationModeOverride,
     );
@@ -1873,6 +1857,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
   Future<void> _sendAgentMessage(
     String aiMessageId,
     String messageText, {
+    required String userMessageId,
     List<Map<String, dynamic>> attachments = const [],
     String? modelOverride,
     String? collaborationModeOverride,
@@ -2010,23 +1995,13 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       // before ACP emits its live user echo, so both paths converge on one
       // visible conversation message.
       final currentMessages = List<ChatMessageModel>.from(_messages);
-      final expectedUserId = aiMessageId.endsWith('-ai')
-          ? '${aiMessageId.substring(0, aiMessageId.length - 3)}-user'
-          : null;
+      final expectedUserId = userMessageId.trim();
       ChatMessageModel? submittedUser;
       for (final message in dispatchMessages) {
         if (message.user != 1) continue;
-        if (expectedUserId != null && message.id == expectedUserId) {
+        if (message.id == expectedUserId) {
           submittedUser = message;
           break;
-        }
-      }
-      if (submittedUser == null && messageText.trim().isNotEmpty) {
-        for (final message in dispatchMessages) {
-          if (message.user == 1 && message.text == messageText) {
-            submittedUser = message;
-            break;
-          }
         }
       }
       if (submittedUser != null &&
@@ -2148,6 +2123,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       }
       final responseTurnId = _asAgentString(response['turnId']);
       _runtimeCoordinator.applyAcpPromptResponse(
+        taskId: aiMessageId,
         conversationId: resolvedConversationId,
         mode: dispatchModeKey,
         sessionId: _asAgentString(response['sessionId']) ?? acpSessionId,
@@ -2217,6 +2193,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       }
       if (activeRuntime?.isAiResponding == true) {
         _runtimeCoordinator.applyAcpPromptResponse(
+          taskId: aiMessageId,
           conversationId: resolvedConversationId,
           mode: dispatchModeKey,
           sessionId: activeRuntime?.activeAcpSessionId ?? _activeAgentThreadId,

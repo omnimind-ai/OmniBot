@@ -228,7 +228,7 @@ class SystemToolHandler(
                             startAt = args["startAt"]?.jsonPrimitive?.contentOrNull?.trim(),
                             endAt = args["endAt"]?.jsonPrimitive?.contentOrNull?.trim(),
                             query = args["query"]?.jsonPrimitive?.contentOrNull?.trim(),
-                            limit = calendarToolService.normalizeListLimit(args["limit"]?.jsonPrimitive?.intOrNull)
+                            limit = resolveCalendarListLimit(args["limit"]?.jsonPrimitive?.intOrNull)
                         )
                     )
                     val payloadJson = helper.encodeLocalizedPayload(payload)

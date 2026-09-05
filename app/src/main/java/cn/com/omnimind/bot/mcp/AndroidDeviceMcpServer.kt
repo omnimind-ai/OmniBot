@@ -369,14 +369,17 @@ internal object AndroidDeviceMcpServer {
         }
         "context_apps_query" -> {
             val query = arguments["query"]?.toString()?.trim().orEmpty()
-            val limit = (arguments["limit"] as? Number)?.toInt()?.coerceIn(1, 100) ?: 20
+            val requestedLimit = (arguments["limit"] as? Number)?.toInt()
+            require(requestedLimit == null || requestedLimit > 0) {
+                "limit must be positive when provided"
+            }
             val items = AgentRuntimeContextRepository(context).queryInstalledApps(
                 query = query.ifBlank { null },
-                limit = limit,
+                limit = requestedLimit ?: Int.MAX_VALUE,
             )
             mapOf(
                 "query" to query,
-                "limit" to limit,
+                "limit" to requestedLimit,
                 "count" to items.size,
                 "items" to items.map { item ->
                     mapOf("appName" to item.appName, "packageName" to item.packageName)
@@ -387,8 +390,12 @@ internal object AndroidDeviceMcpServer {
         "schedule_task_create" -> WorkspaceScheduledTaskScheduler(context).upsertTask(arguments)
         "schedule_task_list" -> {
             val tasks = WorkspaceScheduledTaskScheduler(context).listTasks()
-            val limit = (arguments["limit"] as? Number)?.toInt()?.coerceIn(1, 100) ?: 100
-            mapOf("count" to minOf(limit, tasks.size), "items" to tasks.take(limit))
+            val requestedLimit = (arguments["limit"] as? Number)?.toInt()
+            require(requestedLimit == null || requestedLimit > 0) {
+                "limit must be positive when provided"
+            }
+            val items = requestedLimit?.let(tasks::take) ?: tasks
+            mapOf("count" to items.size, "items" to items)
         }
         "schedule_task_update" -> WorkspaceScheduledTaskScheduler(context).updateTask(arguments)
         "schedule_task_delete" -> mapOf(

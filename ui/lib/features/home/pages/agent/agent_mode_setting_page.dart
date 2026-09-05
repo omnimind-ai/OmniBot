@@ -147,84 +147,12 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
       setState(() {
         _loading = false;
         _refreshing = false;
-        // Keep the built-in catalog visible when the native health probe is
-        // temporarily unavailable.  A probe error must not turn the whole
-        // Agent page into a blank/error-only screen.
-        _catalog = _catalog ?? _fallbackCatalog();
+        // The native ACP catalog is the only source of truth. Keep an
+        // already loaded catalog on transient errors, but never invent a
+        // second list in Dart.
         _error = error.toString();
       });
     }
-  }
-
-  AcpAgentCatalog _fallbackCatalog() {
-    const agents = <AcpAgentProfile>[
-      AcpAgentProfile(
-        id: 'xiaowan-acp',
-        name: '小万',
-        command: 'omnibot-xiaowan-acp',
-        description: '小万内置能力通过官方 ACP Agent 接口提供',
-        builtIn: true,
-        source: 'official',
-        status: 'unchecked',
-      ),
-      AcpAgentProfile(
-        id: 'kimi-code-acp',
-        name: 'Kimi Code',
-        command: 'kimi',
-        description: 'Kimi Code through its official ACP interface',
-        arguments: <String>['acp'],
-        builtIn: true,
-        source: 'official',
-        status: 'unchecked',
-        managedAdapter: true,
-      ),
-      AcpAgentProfile(
-        id: 'claude-code-acp',
-        name: 'Claude Code',
-        command: 'claude-agent-acp',
-        description: 'Claude Code through the ACP adapter',
-        builtIn: true,
-        source: 'official',
-        status: 'unchecked',
-        managedAdapter: true,
-      ),
-      AcpAgentProfile(
-        id: 'codex-acp',
-        name: 'Codex',
-        command: 'codex-acp',
-        description: 'OpenAI Codex through its managed ACP adapter',
-        builtIn: true,
-        source: 'official',
-        status: 'unchecked',
-        managedAdapter: true,
-      ),
-      AcpAgentProfile(
-        id: 'opencode-acp',
-        name: 'OpenCode',
-        command: 'opencode',
-        description: 'OpenCode ACP server',
-        arguments: <String>['acp'],
-        builtIn: true,
-        source: 'official',
-        status: 'unchecked',
-        managedAdapter: true,
-      ),
-      AcpAgentProfile(
-        id: 'deepseek-harness-acp',
-        name: 'DeepSeek Harness',
-        // Keep the fallback catalog identical to the native official
-        // profile. `dsh` is only the discovery command; the Android ACP
-        // launcher is `dsh-acp-android`.
-        command: 'dsh-acp-android',
-        description: 'DeepSeek Harness official ACP profile',
-        arguments: <String>['--profile', 'acp'],
-        builtIn: true,
-        source: 'official',
-        status: 'unchecked',
-        managedAdapter: true,
-      ),
-    ];
-    return AcpAgentCatalog(selectedAgentId: 'xiaowan-acp', agents: agents);
   }
 
   Future<void> _loadRemoteBridge() async {
@@ -475,8 +403,8 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
                   SettingsSectionTitle(
                     label: _text('托管 Agent', 'Managed Agents'),
                     subtitle: _text(
-                      '预置 Agent 始终显示；状态来自命令检测与 ACP initialize。所有 Agent 默认复用这里的统一 Provider 和模型，适配器只负责映射到官方配置。',
-                      'Built-in Agents always remain visible. Status comes from command detection and ACP initialize. All Agents reuse the shared Provider and model by default; adapters only map them to each official configuration surface.',
+                      '预置 Agent 默认使用统一 Provider 和模型；自定义 Agent 使用自己的启动环境与配置。状态来自命令检测与 ACP initialize。',
+                      'Built-in Agents use the shared Provider and model by default. Custom Agents use their own launch environment and configuration. Status comes from command detection and ACP initialize.',
                     ),
                   ),
                   _buildSharedModelSummary(card),

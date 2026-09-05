@@ -3,12 +3,14 @@ package cn.com.omnimind.bot.agent
 import cn.com.omnimind.baselib.account.AiAccessMode
 import cn.com.omnimind.baselib.account.AiRequestAccess
 import cn.com.omnimind.bot.media.PlatformMediaGatewayExecutor
+import com.google.gson.JsonParser
 import java.util.ArrayDeque
 import kotlinx.coroutines.runBlocking
 import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
+import okio.Buffer
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -49,6 +51,37 @@ class PlatformEmbeddingGatewayTest {
         assertEquals("https://model.example.com/v1/embeddings", requests[0].url.toString())
         assertEquals("Bearer jwt-one", requests[0].header("Authorization"))
         assertEquals("Bearer jwt-two", requests[1].header("Authorization"))
+    }
+
+    @Test
+    fun `official embedding forwards a long memory without host truncation`() = runBlocking {
+        val requests = mutableListOf<Request>()
+        val executor = PlatformMediaGatewayExecutor(
+            executeRequest = { request ->
+                requests += request
+                response(request, 200, """{"data":[{"embedding":[0.1]}]}""")
+            },
+            accessProvider = {
+                AiRequestAccess(
+                    mode = AiAccessMode.PLATFORM,
+                    platformGatewayUrl = "https://model.example.com",
+                    bearerToken = "jwt",
+                )
+            },
+        )
+        val memory = "memory-" + "x".repeat(16 * 1024)
+
+        PlatformEmbeddingGateway(executor).embed("text-embedding-v4", memory)
+
+        val body = Buffer().use { buffer ->
+            requireNotNull(requests.single().body).writeTo(buffer)
+            buffer.readUtf8()
+        }
+        val forwarded = JsonParser.parseString(body)
+            .asJsonObject
+            .getAsJsonArray("input")[0]
+            .asString
+        assertEquals(memory, forwarded)
     }
 
     private fun response(request: Request, code: Int, body: String): Response =

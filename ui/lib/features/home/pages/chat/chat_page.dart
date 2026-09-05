@@ -248,7 +248,6 @@ abstract class _ChatPageStateBase extends State<ChatPage>
       ComposerKeyboardMetricsTracker();
   ChatPageModeState _modeState(ChatPageMode mode) => _modeStates[mode.index];
   bool _isAwaitingAuthorizeResult = false;
-  bool _isRetryingLatestInstructionAfterAuth = false;
   bool _suppressNextOutsideTapKeyboardHide = false;
   static const String _openClawWaitingHint = '等待龙虾烹饪';
   static const String _openClawWaitingStatusKey = 'openclaw_waiting';
@@ -273,13 +272,8 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   StreamSubscription<Map<String, dynamic>>? _omniLinkEventSubscription;
   final Set<String> _pendingManualAgentRetryTaskIds = <String>{};
   bool _pendingAgentInputResponseInFlight = false;
-  Timer? _remoteCodexSessionSyncTimer;
   bool _remoteCodexSessionSyncInFlight = false;
   String? _remoteCodexSessionSyncThreadId;
-  String _remoteCodexSessionSyncSignature = '';
-  String? _remoteCodexActivityThreadId;
-  String _remoteCodexActivityContentSignature = '';
-  int? _remoteCodexLastContentChangeAtMs;
   AgentRuntimeStatus _agentRuntimeStatus = AgentRuntimeStatus.disconnected;
   AcpAgentCatalog? _agentCatalog;
   bool _isAgentCatalogLoading = false;
@@ -1914,6 +1908,7 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   Future<void> _sendAgentMessage(
     String aiMessageId,
     String messageText, {
+    required String userMessageId,
     List<Map<String, dynamic>> attachments = const [],
     String? modelOverride,
     String? collaborationModeOverride,
@@ -2137,8 +2132,6 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     String? requestIdOverride,
   });
 
-  String _buildManualRetryRequestId(String taskId);
-
   Future<List<Map<String, dynamic>>> _latestUserAttachments();
 
   void _onCancelTask();
@@ -2156,10 +2149,6 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   Future<void> _requestAuthorizeForExecution(
     List<String> requiredPermissionIds,
   );
-
-  Future<void> _retryLatestInstructionAfterAuth();
-
-  void _removeFailedAttemptMessages();
 
   Widget _buildSlashCommandPanel();
 

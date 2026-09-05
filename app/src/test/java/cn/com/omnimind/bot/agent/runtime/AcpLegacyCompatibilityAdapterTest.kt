@@ -2,7 +2,7 @@ package cn.com.omnimind.bot.agent.runtime
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
+import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class AcpLegacyCompatibilityAdapterTest {
@@ -32,15 +32,13 @@ class AcpLegacyCompatibilityAdapterTest {
     }
 
     @Test
-    fun `steering remains an explicit compatibility operation`() {
-        val request = AcpLegacyCompatibilityAdapter.adapt(
-            AcpLegacyCompatibilityAdapter.TURN_STEER,
-            mapOf("turnId" to "turn-1"),
-        )
-
-        assertEquals(AcpLegacyCompatibilityAdapter.TURN_STEER, request.method)
-        assertEquals(AcpLegacyCompatibilityAdapter.TURN_STEER, request.legacyMethod)
-        assertTrue(AcpLegacyCompatibilityAdapter.isLegacyMethod(request.method))
+    fun `steering is rejected because ACP has no equivalent`() {
+        assertThrows(UnsupportedOperationException::class.java) {
+            AcpLegacyCompatibilityAdapter.adapt(
+                AcpLegacyCompatibilityAdapter.TURN_STEER,
+                mapOf("turnId" to "turn-1"),
+            )
+        }
     }
 
     @Test
@@ -52,6 +50,6 @@ class AcpLegacyCompatibilityAdapterTest {
 
         assertEquals("session/prompt", request.method)
         assertNull(request.legacyMethod)
-        assertTrue(!AcpLegacyCompatibilityAdapter.isLegacyMethod(request.method))
+        assertEquals(false, AcpLegacyCompatibilityAdapter.isLegacyMethod(request.method))
     }
 }

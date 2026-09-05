@@ -499,7 +499,7 @@ private class XiaowanStdioMcpConnection(
     }
 }
 
-private fun remoteMcpCallResult(result: JsonElement): RemoteMcpCallResult {
+internal fun remoteMcpCallResult(result: JsonElement): RemoteMcpCallResult {
     val raw = result.toString()
     val resultObject = result as? JsonObject
     val content = resultObject?.get("content") as? JsonArray
@@ -511,10 +511,10 @@ private fun remoteMcpCallResult(result: JsonElement): RemoteMcpCallResult {
         }
         ?.joinToString("\n")
         ?.takeIf(String::isNotBlank)
-        ?: raw.take(600)
+        ?: raw
     return RemoteMcpCallResult(
         summaryText = summary,
-        previewJson = if (raw.length <= 1200) raw else raw.take(1200) + "...",
+        previewJson = raw,
         rawResultJson = raw,
         success = (resultObject?.get("isError") as? JsonPrimitive)?.contentOrNull != "true",
     )

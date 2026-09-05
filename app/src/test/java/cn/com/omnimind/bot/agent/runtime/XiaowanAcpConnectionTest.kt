@@ -5,6 +5,9 @@ import cn.com.omnimind.bot.mcp.RemoteMcpToolDescriptor
 import com.agentclientprotocol.model.ContentBlock
 import com.agentclientprotocol.model.SessionUpdate
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -85,6 +88,30 @@ class XiaowanAcpConnectionTest {
         }
         assertEquals(2, contentUpdates.size)
         assertNotEquals(contentUpdates[0].content, contentUpdates[1].content)
+    }
+
+    @Test
+    fun `stdio MCP result keeps complete text in summary preview and raw projection`() {
+        val longText = "long MCP fact|".repeat(512)
+        val result = remoteMcpCallResult(
+            buildJsonObject {
+                put(
+                    "content",
+                    buildJsonArray {
+                        add(
+                            buildJsonObject {
+                                put("type", JsonPrimitive("text"))
+                                put("text", JsonPrimitive(longText))
+                            }
+                        )
+                    }
+                )
+            }
+        )
+
+        assertEquals(longText, result.summaryText)
+        assertTrue(result.previewJson.contains(longText))
+        assertTrue(result.rawResultJson.contains(longText))
     }
 
     private fun fakeMcpConnection(

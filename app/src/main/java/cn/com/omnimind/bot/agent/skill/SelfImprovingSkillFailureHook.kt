@@ -55,10 +55,6 @@ object SelfImprovingSkillFailureHook {
         skillLoader: SkillLoader
     ): ResolvedSkillContext? {
         val entry = installedSkills.firstOrNull { it.id == SKILL_ID } ?: return null
-        val compatibility = SkillCompatibilityChecker.evaluate(entry)
-        if (!compatibility.available) {
-            return null
-        }
         return skillLoader.load(entry, "失败后自动读取")
     }
 

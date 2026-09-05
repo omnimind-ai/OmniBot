@@ -152,10 +152,7 @@ class SharedHelper(
         "已写入当日短期记忆。" to "Short-term memory for today has been written.",
         "正在沉淀长期记忆" to "Writing long-term memory",
         "已写入长期记忆" to "Long-term memory written",
-        "检测到重复，已跳过" to "Duplicate detected; skipped",
         "已沉淀一条长期记忆。" to "One long-term memory entry has been stored.",
-        "长期记忆已存在同类条目，跳过写入。" to
-            "A similar long-term memory entry already exists, so writing was skipped.",
         "正在整理当日记忆" to "Rolling up daily memory",
         "记忆整理完成" to "Memory rollup completed",
         "tasks 不能为空" to "`tasks` cannot be empty",
@@ -496,12 +493,6 @@ class SharedHelper(
         return raw.mapNotNull { item ->
             (item as? JsonPrimitive)?.intOrNull
         }
-    }
-
-    fun parseContextQueryLimit(rawLimit: Int?, configuredLimit: Int?): Int {
-        return rawLimit?.takeIf { it > 0 }
-            ?: configuredLimit?.takeIf { it > 0 }
-            ?: Int.MAX_VALUE
     }
 
     fun parseEnvironmentMap(raw: JsonObject?): Map<String, String> {

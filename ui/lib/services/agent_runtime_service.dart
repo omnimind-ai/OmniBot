@@ -553,14 +553,9 @@ class AcpAgentCatalog {
 }
 
 String _agentCatalogIdentity(AcpAgentProfile agent) {
-  final normalizedName = agent.name.trim().toLowerCase().replaceAll(
-    RegExp(r'[\s_-]+'),
-    '',
-  );
   if (agent.id == 'xiaowan-acp' ||
-      agent.command.toLowerCase() == 'omnibot-xiaowan-acp' ||
-      normalizedName == '小万bot' ||
-      normalizedName == 'xiaowanbot') {
+      agent.id.toLowerCase() == 'legacy-xiaowan-bot' ||
+      agent.id.toLowerCase() == 'legacy-xiaowan-command') {
     return 'xiaowan-acp';
   }
   return 'id:${agent.id}';
@@ -937,7 +932,7 @@ class AgentRuntimeService {
     String? reasoningEffort,
     String? permissionMode,
     String? content,
-    Map<String, dynamic>? runtimeSettings,
+    int? expectedRevision,
   }) {
     return _invokeMap('agent/config/write', {
       'agentId': agentId.trim(),
@@ -947,7 +942,19 @@ class AgentRuntimeService {
       if (reasoningEffort != null) 'reasoningEffort': reasoningEffort,
       if (permissionMode != null) 'permissionMode': permissionMode,
       if (content != null) 'content': content,
-      if (runtimeSettings != null) 'runtimeSettings': runtimeSettings,
+      if (expectedRevision != null) 'expectedRevision': expectedRevision,
+    });
+  }
+
+  static Future<Map<String, dynamic>> rollbackAgentConfig(
+    String agentId, {
+    required int targetRevision,
+    int? expectedRevision,
+  }) {
+    return _invokeMap('agent/config/rollback', {
+      'agentId': agentId.trim(),
+      'targetRevision': targetRevision,
+      if (expectedRevision != null) 'expectedRevision': expectedRevision,
     });
   }
 
@@ -1077,13 +1084,13 @@ class AgentRuntimeService {
   }
 
   static Future<Map<String, dynamic>> listSessions({
-    int limit = 50,
+    int? limit,
     String? cursor,
     String? cwd,
     List<String> additionalDirectories = const <String>[],
   }) {
     return _invokeMap('session/list', {
-      'limit': limit,
+      if (limit != null) 'limit': limit,
       if (cursor != null && cursor.trim().isNotEmpty) 'cursor': cursor.trim(),
       if (cwd != null && cwd.trim().isNotEmpty) 'cwd': cwd.trim(),
       if (additionalDirectories.isNotEmpty)
@@ -1389,7 +1396,7 @@ class AgentRuntimeService {
   }
 
   static Future<Map<String, dynamic>> listModels() {
-    return _invokeMap('model/list', {'limit': 100});
+    return _invokeMap('model/list');
   }
 
   static Future<Map<String, dynamic>> listModelsForStatus(

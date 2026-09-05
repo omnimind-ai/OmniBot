@@ -1688,31 +1688,12 @@ object EmbeddedTerminalRuntime {
         return filtered.trim('\n')
     }
 
-    fun trimTerminalOutput(
-        text: String,
-        maxLines: Int = 600,
-        maxChars: Int = 64 * 1024
-    ): String {
-        if (text.isEmpty()) {
-            return text
-        }
-
-        var candidate = if (text.length > maxChars) text.takeLast(maxChars) else text
-        val lines = candidate.split('\n')
-        if (lines.size > maxLines) {
-            candidate = lines.takeLast(maxLines).joinToString("\n")
-        }
-
-        val wasTrimmed = candidate.length < text.length || lines.size > maxLines
-        if (!wasTrimmed) {
-            return candidate
-        }
-
-        val notice = "[更早输出已省略]\n"
-        val body = candidate.removePrefix(notice)
-        val remaining = (maxChars - notice.length).coerceAtLeast(0)
-        return notice + body.takeLast(remaining)
-    }
+    /**
+     * Terminal output is already bounded by the underlying process/transport.
+     * Do not apply a second application-defined character or line quota here:
+     * tool results and persisted transcripts must retain the actual output.
+     */
+    fun trimTerminalOutput(text: String): String = text
 
     private suspend fun emitEnvironmentProgress(
         onProgress: suspend (EnvironmentProgress) -> Unit,

@@ -224,6 +224,34 @@ class RemoteMcpClientInteropTest {
     }
 
     @Test
+    fun `remote MCP preserves a large result in the user-visible summary and preview`() = runBlocking {
+        val completeText = "remote-result:" + "x".repeat(2_400) + ":tail-must-survive"
+        enqueueLegacyProbeFailure()
+        enqueueLegacyInitialize("legacy-session-large-result")
+        enqueueJson(
+            """{
+              "jsonrpc":"2.0","id":"list","result":{
+                "tools":[{"name":"echo","inputSchema":{"type":"object"}}]
+              }
+            }""".trimIndent()
+        )
+        enqueueJson(
+            """{
+              "jsonrpc":"2.0","id":"call","result":{
+                "content":[{"type":"text","text":"$completeText"}],"isError":false
+              }
+            }""".trimIndent()
+        )
+
+        RemoteMcpClient.listTools(config)
+        val result = RemoteMcpClient.callTool(config, "echo", emptyMap())
+
+        assertEquals(completeText, result.summaryText)
+        assertTrue(result.previewJson.contains(completeText))
+        assertTrue(result.rawResultJson.contains(completeText))
+    }
+
+    @Test
     fun `legacy server version rejection falls back from modern discovery`() = runBlocking {
         listOf(-32600, -32602).forEach { rejectionCode ->
             val attemptConfig = config.copy(id = "${config.id}-$rejectionCode")

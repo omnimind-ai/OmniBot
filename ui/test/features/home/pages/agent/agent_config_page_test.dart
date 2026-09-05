@@ -70,6 +70,77 @@ void main() {
         .setMockMethodCallHandler(assistCoreChannel, null);
   });
 
+  testWidgets('custom Agent launch edits survive saving and reopening', (
+    tester,
+  ) async {
+    var stored = <String, dynamic>{
+      'id': 'my-acp-agent',
+      'name': 'My ACP Agent',
+      'command': 'my-agent',
+      'arguments': <String>[],
+      'environment': <String, String>{'OLD_OPTION': 'remove me'},
+      'enabled': true,
+      'builtIn': false,
+      'source': 'custom',
+    };
+    final runtimeCalls = <String>[];
+    final providerCalls = <String>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(agentRuntimeChannel, (call) async {
+          runtimeCalls.add(call.method);
+          if (call.method == 'agent/list') return _catalog(stored);
+          if (call.method == 'agent/save') {
+            final args = Map<String, dynamic>.from(call.arguments as Map);
+            stored = Map<String, dynamic>.from(args['agent'] as Map);
+            return <String, dynamic>{'catalog': _catalog(stored)};
+          }
+          return null;
+        });
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(assistCoreChannel, (call) async {
+          providerCalls.add(call.method);
+          return null;
+        });
+
+    await _pumpPage(tester, 'my-acp-agent');
+    expect(find.textContaining('保存不会中断当前对话'), findsOneWidget);
+    const command = '/workspace/my agent/bin/acp';
+    const arguments = '--config\n/workspace/my agent/settings.json';
+    const environment =
+        'OPENAI_API_KEY=user-test-key\n'
+        'OPENAI_BASE_URL=https://user.example/v1\n'
+        'CUSTOM_OPTION=  中文 = \'quotes\' \$literal  \n'
+        'EMPTY_OPTION=';
+    final fields = find.byType(TextField);
+    expect(fields, findsNWidgets(3));
+    await tester.enterText(fields.at(0), command);
+    await tester.enterText(fields.at(1), arguments);
+    await tester.enterText(fields.at(2), environment);
+    await tester.ensureVisible(find.byKey(const Key('agent-config-save')));
+    await tester.tap(find.byKey(const Key('agent-config-save')));
+    await tester.pumpAndSettle();
+
+    expect(stored['command'], command);
+    expect(stored['arguments'], arguments.split('\n'));
+    expect(stored['environment'], <String, String>{
+      'OPENAI_API_KEY': 'user-test-key',
+      'OPENAI_BASE_URL': 'https://user.example/v1',
+      'CUSTOM_OPTION': '  中文 = \'quotes\' \$literal  ',
+      'EMPTY_OPTION': '',
+    });
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await _pumpPage(tester, 'my-acp-agent');
+    expect(tester.widget<TextField>(fields.at(0)).controller!.text, command);
+    expect(tester.widget<TextField>(fields.at(1)).controller!.text, arguments);
+    expect(
+      tester.widget<TextField>(fields.at(2)).controller!.text,
+      environment,
+    );
+    expect(providerCalls, isEmpty);
+    expect(runtimeCalls, <String>['agent/list', 'agent/save', 'agent/list']);
+  });
+
   testWidgets('shared Provider selector saves the Agent scene binding', (
     tester,
   ) async {

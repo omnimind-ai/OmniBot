@@ -19,29 +19,6 @@ import okhttp3.sse.EventSource
 import okhttp3.sse.EventSourceListener
 import java.util.concurrent.atomic.AtomicBoolean
 
-interface AgentContextCompactionController {
-    suspend fun resolvePromptTokenThreshold(conversationId: Long?): Int
-
-    suspend fun compactIfNeeded(
-        conversationId: Long?,
-        conversationMode: String,
-        promptTokens: Int?,
-        messages: List<ChatCompletionMessage>,
-        contextTokens: Int? = null,
-        promptTokenThresholdOverride: Int? = null,
-        callback: AgentCallback? = null
-    ): List<ChatCompletionMessage>
-
-    suspend fun compactForOverflow(
-        conversationId: Long?,
-        conversationMode: String,
-        latestPromptTokens: Int?,
-        messages: List<ChatCompletionMessage>,
-        promptTokenThresholdOverride: Int? = null,
-        callback: AgentCallback? = null
-    ): List<ChatCompletionMessage>?
-}
-
 open class AgentConversationContextCompactor(
     private val historyRepository: AgentConversationHistoryRepository,
     private val modelScene: String = DEFAULT_AGENT_MODEL_SCENE,
@@ -54,7 +31,7 @@ open class AgentConversationContextCompactor(
         encodeDefaults = true
         explicitNulls = false
     }
-) : AgentContextCompactionController {
+) {
     data class CompactionOutcome(
         val compacted: Boolean,
         val summary: String? = null,
@@ -63,12 +40,8 @@ open class AgentConversationContextCompactor(
     )
 
     companion object {
-        const val DEFAULT_PROMPT_TOKEN_THRESHOLD = 128_000
         const val DEFAULT_AGENT_MODEL_SCENE = "scene.dispatch.model"
         private const val TAG = "AgentConversationContextCompactor"
-        private const val MAX_AUTO_COMPACTION_RESERVE_TOKENS = 16_384
-        private const val MIN_AUTO_COMPACTION_RESERVE_TOKENS = 2_048
-        private const val AUTO_COMPACTION_RESERVE_DIVISOR = 8
         private val EPHEMERAL_CACHE_CONTROL = mapOf("type" to "ephemeral")
         private const val COMPACTION_REQUEST_PROMPT = """
 You are a context compaction engine. Your summary will REPLACE the original messages in the conversation context window — the agent will rely on it to continue working. Write the summary in the same language the user used in the conversation.
@@ -132,7 +105,7 @@ Do NOT continue the conversation or answer questions inside it. Do NOT translate
             )
             existingSummary?.trim()?.takeIf { it.isNotEmpty() }?.let { summary ->
                 requestMessages += toTransportMessage(
-                    AgentConversationHistorySupport.buildContextSummaryUserMessage(summary)
+                    AgentConversationHistorySupport.buildContextSummaryAssistantMessage(summary)
                 )
             }
             requestMessages += messagesToCompact.map(::toTransportMessage)
@@ -141,45 +114,6 @@ Do NOT continue the conversation or answer questions inside it. Do NOT translate
                 "content" to FINAL_USER_PROMPT
             )
             return requestMessages
-        }
-
-        internal fun resolveAutoCompactionTrigger(contextCapacityTokens: Int): Int {
-            val capacity = contextCapacityTokens.coerceAtLeast(1)
-            if (capacity == 1) return 1
-            val adaptiveReserve = (capacity / AUTO_COMPACTION_RESERVE_DIVISOR)
-                .coerceAtLeast(MIN_AUTO_COMPACTION_RESERVE_TOKENS)
-                .coerceAtMost(MAX_AUTO_COMPACTION_RESERVE_TOKENS)
-            val reserve = adaptiveReserve.coerceAtMost((capacity / 2).coerceAtLeast(1))
-            return (capacity - reserve).coerceAtLeast(1)
-        }
-
-        internal fun resolveEffectiveContextCapacity(
-            storedThreshold: Int?,
-            modelContextLimit: Int?
-        ): Int {
-            val stored = storedThreshold?.takeIf { it > 0 }
-            val modelLimit = modelContextLimit?.takeIf { it > 0 }
-            return when {
-                stored != null && modelLimit != null -> minOf(stored, modelLimit)
-                stored != null -> stored
-                modelLimit != null -> modelLimit
-                else -> DEFAULT_PROMPT_TOKEN_THRESHOLD
-            }
-        }
-
-        internal fun resolveReportedContextTokens(
-            promptTokens: Int?,
-            completionTokens: Int?,
-            totalTokens: Int?
-        ): Int? {
-            val reportedTotal = totalTokens?.takeIf { it >= 0 }
-            val promptAndCompletion = promptTokens?.takeIf { it >= 0 }?.let { prompt ->
-                val completion = completionTokens?.coerceAtLeast(0) ?: 0
-                (prompt.toLong() + completion.toLong())
-                    .coerceAtMost(Int.MAX_VALUE.toLong())
-                    .toInt()
-            }
-            return listOfNotNull(reportedTotal, promptAndCompletion).maxOrNull()
         }
 
         private fun buildTextContentBlocks(
@@ -243,158 +177,6 @@ Do NOT continue the conversation or answer questions inside it. Do NOT translate
                     key to (jsonElementToTransportValue(value) ?: "")
                 }
             }
-        }
-    }
-
-    private fun resolveModelContextThreshold(): Int? {
-        return modelOverride?.contextLimit
-            ?.coerceAtLeast(1)
-    }
-
-    open override suspend fun resolvePromptTokenThreshold(conversationId: Long?): Int {
-        val modelContextLimit = resolveModelContextThreshold()
-        if (conversationId == null || conversationId <= 0L) {
-            return resolveEffectiveContextCapacity(
-                storedThreshold = null,
-                modelContextLimit = modelContextLimit
-            )
-        }
-        val conversation = historyRepository.getConversation(conversationId)
-        return resolveEffectiveContextCapacity(
-            storedThreshold = conversation?.promptTokenThreshold,
-            modelContextLimit = modelContextLimit
-        )
-    }
-
-    open override suspend fun compactIfNeeded(
-        conversationId: Long?,
-        conversationMode: String,
-        promptTokens: Int?,
-        messages: List<ChatCompletionMessage>,
-        contextTokens: Int?,
-        promptTokenThresholdOverride: Int?,
-        callback: AgentCallback?
-    ): List<ChatCompletionMessage> {
-        if (conversationId == null || conversationId <= 0L) {
-            return messages
-        }
-        val normalizedPromptTokens = promptTokens ?: return messages
-        val promptTokenThreshold = promptTokenThresholdOverride?.coerceAtLeast(1)
-            ?: resolvePromptTokenThreshold(conversationId)
-        val autoCompactionTrigger = resolveAutoCompactionTrigger(promptTokenThreshold)
-        val normalizedContextTokens = contextTokens
-            ?.coerceAtLeast(normalizedPromptTokens)
-            ?: normalizedPromptTokens
-        historyRepository.updatePromptTokenUsage(
-            conversationId = conversationId,
-            promptTokens = normalizedPromptTokens,
-            threshold = promptTokenThreshold
-        )
-        if (normalizedContextTokens <= autoCompactionTrigger) {
-            return messages
-        }
-        val candidate = historyRepository.getContextCompactionCandidate(
-            conversationId = conversationId,
-            conversationMode = conversationMode
-        ) ?: return messages
-        val runtimeWindow = AgentConversationHistorySupport.buildRuntimeCompactionWindow(messages)
-            ?: return messages
-
-        OmniLog.i(
-            TAG,
-            "conversation=$conversationId auto_compaction context=$normalizedContextTokens " +
-                "trigger=$autoCompactionTrigger capacity=$promptTokenThreshold"
-        )
-        return compactRuntimeWindow(
-            conversationId = conversationId,
-            candidate = candidate,
-            runtimeWindow = runtimeWindow,
-            originalMessages = messages,
-            latestPromptTokens = normalizedPromptTokens,
-            promptTokenThreshold = promptTokenThreshold,
-            callback = callback
-        ) ?: messages
-    }
-
-    open override suspend fun compactForOverflow(
-        conversationId: Long?,
-        conversationMode: String,
-        latestPromptTokens: Int?,
-        messages: List<ChatCompletionMessage>,
-        promptTokenThresholdOverride: Int?,
-        callback: AgentCallback?
-    ): List<ChatCompletionMessage>? {
-        if (conversationId == null || conversationId <= 0L) {
-            return null
-        }
-        val promptTokenThreshold = promptTokenThresholdOverride?.coerceAtLeast(1)
-            ?: resolvePromptTokenThreshold(conversationId)
-        val candidate = historyRepository.getContextCompactionCandidate(
-            conversationId = conversationId,
-            conversationMode = conversationMode
-        ) ?: return null
-        val runtimeWindow = AgentConversationHistorySupport.buildRuntimeCompactionWindow(messages)
-            ?: return null
-        OmniLog.w(TAG, "conversation=$conversationId forcing compaction after context overflow")
-        return compactRuntimeWindow(
-            conversationId = conversationId,
-            candidate = candidate,
-            runtimeWindow = runtimeWindow,
-            originalMessages = messages,
-            latestPromptTokens = latestPromptTokens?.coerceAtLeast(0)
-                ?: promptTokenThreshold,
-            promptTokenThreshold = promptTokenThreshold,
-            callback = callback
-        )
-    }
-
-    private suspend fun compactRuntimeWindow(
-        conversationId: Long,
-        candidate: AgentConversationHistoryRepository.ContextCompactionCandidate,
-        runtimeWindow: AgentConversationHistorySupport.RuntimeCompactionWindow,
-        originalMessages: List<ChatCompletionMessage>,
-        latestPromptTokens: Int,
-        promptTokenThreshold: Int,
-        callback: AgentCallback?
-    ): List<ChatCompletionMessage>? {
-
-        callback?.onContextCompactionStateChanged(
-            isCompacting = true,
-            latestPromptTokens = latestPromptTokens,
-            promptTokenThreshold = promptTokenThreshold
-        )
-        try {
-            return runCatching {
-                val outcome = compactAndPersist(
-                    conversationId = conversationId,
-                    existingSummary = runtimeWindow.existingSummary
-                        ?: candidate.conversation.contextSummary,
-                    messagesToCompact = runtimeWindow.messagesToCompact,
-                    cutoffEntryDbId = candidate.cutoffEntryDbId
-                )
-                val summary = outcome.summary.orEmpty()
-                if (!outcome.compacted || summary.isBlank()) {
-                    OmniLog.w(TAG, "conversation=$conversationId compaction returned blank summary")
-                    null
-                } else {
-                    AgentConversationHistorySupport.rebuildMessagesWithCompactedSummary(
-                        messages = originalMessages,
-                        summary = summary
-                    )
-                }
-            }.getOrElse { error ->
-                OmniLog.w(
-                    TAG,
-                    "conversation=$conversationId compaction failed: ${error.message}"
-                )
-                null
-            }
-        } finally {
-            callback?.onContextCompactionStateChanged(
-                isCompacting = false,
-                latestPromptTokens = latestPromptTokens,
-                promptTokenThreshold = promptTokenThreshold
-            )
         }
     }
 

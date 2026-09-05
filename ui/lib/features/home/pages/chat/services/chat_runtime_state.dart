@@ -109,11 +109,9 @@ class ChatConversationRuntimeState {
   /// than once; dedupe only the explicit host id, never message text.
   final Set<String> processedAcpEventIds = <String>{};
   final Set<String> completedAgentTurnIds = <String>{};
-  static const int _maxProcessedAcpEventIds = 512;
-  static const int _maxAcpTurnHistory = 256;
 
   /// Events that reached the ACP projection without enough identity to be
-  /// safely attached to a turn.  Keep a bounded, metadata-only trail instead
+  /// safely attached to a turn. Keep a metadata-only trail instead
   /// of guessing the current run (which can merge a late Harness event into a
   /// newer Xiaowan turn).  The payload deliberately excludes text/tool args.
   final List<Map<String, dynamic>> acpCompatibilityDiagnostics =
@@ -122,7 +120,7 @@ class ChatConversationRuntimeState {
 
   /// Session ids observed by this runtime. ACP session-scoped notifications
   /// can arrive after a turn has become idle and therefore after
-  /// [activeAcpSessionId] has been cleared. Retaining the bounded identity
+  /// [activeAcpSessionId] has been cleared. Retaining the identity
   /// lets the host route a background conversation's event without falling
   /// back to whichever conversation happens to be visible.
   final Set<String> knownAcpSessionIds = <String>{};
@@ -159,9 +157,7 @@ class ChatConversationRuntimeState {
   Map<String, dynamic> acpSessionInfo = <String, dynamic>{};
 
   /// Preserve extension updates that the current UI does not understand yet.
-  /// This is intentionally bounded and session-scoped: an extension must not
-  /// disappear at the Kotlin/Flutter seam, but an arbitrary provider payload
-  /// must not create an unbounded chat history entry either.
+  /// They remain session-scoped and are cleared with this conversation runtime.
   final List<Map<String, dynamic>> acpExtensionUpdates =
       <Map<String, dynamic>>[];
   int agentNextEntrySequence = 0;
@@ -373,11 +369,7 @@ class ChatConversationRuntimeState {
   bool rememberProcessedAcpEventId(String eventId) {
     final normalized = eventId.trim();
     if (normalized.isEmpty) return true;
-    final added = processedAcpEventIds.add(normalized);
-    while (processedAcpEventIds.length > _maxProcessedAcpEventIds) {
-      processedAcpEventIds.remove(processedAcpEventIds.first);
-    }
-    return added;
+    return processedAcpEventIds.add(normalized);
   }
 
   bool hasProcessedAcpEventId(String eventId) {
@@ -389,16 +381,10 @@ class ChatConversationRuntimeState {
     final normalized = turnId.trim();
     if (normalized.isEmpty) return;
     completedAcpTurnIds.add(normalized);
-    while (completedAcpTurnIds.length > _maxAcpTurnHistory) {
-      completedAcpTurnIds.remove(completedAcpTurnIds.first);
-    }
   }
 
   void _rememberAcpTurnRun(String key, String runId) {
     acpTurnToRunIds[key] = runId;
-    while (acpTurnToRunIds.length > _maxAcpTurnHistory * 2) {
-      acpTurnToRunIds.remove(acpTurnToRunIds.keys.first);
-    }
   }
 
   bool rememberAcpCompatibilityDiagnostic({
@@ -425,9 +411,6 @@ class ChatConversationRuntimeState {
     acpCompatibilityWarningShown =
         acpCompatibilityWarningShown || shouldWarnUser;
     acpCompatibilityDiagnostics.add(entry);
-    while (acpCompatibilityDiagnostics.length > 64) {
-      acpCompatibilityDiagnostics.removeAt(0);
-    }
     debugPrint(
       '[ACP compatibility] quarantined $method: $reason'
       '${sessionId == null ? '' : ' session=$sessionId'}'
@@ -450,9 +433,6 @@ class ChatConversationRuntimeState {
       return existing;
     }
     standaloneProcessRunIds[normalizedProcessId] = normalizedFallback;
-    while (standaloneProcessRunIds.length > 128) {
-      standaloneProcessRunIds.remove(standaloneProcessRunIds.keys.first);
-    }
     return normalizedFallback;
   }
 
@@ -501,9 +481,6 @@ class ChatConversationRuntimeState {
     }
     if (incomingSessionId.isNotEmpty) {
       knownAcpSessionIds.add(incomingSessionId);
-      while (knownAcpSessionIds.length > 32) {
-        knownAcpSessionIds.remove(knownAcpSessionIds.first);
-      }
     }
     // A completed turn remains fenced even after its session becomes idle.
     // Without this check, a delayed event from the previous Harness can be

@@ -59,9 +59,6 @@ class _PendingPersistenceRequest {
   final bool persistMessages;
 }
 
-const int _maxTerminalOutputChars = 64 * 1024;
-const int _maxTerminalOutputLines = 600;
-
 class ChatConversationRuntimeCoordinator extends ChangeNotifier {
   ChatConversationRuntimeCoordinator._();
 
@@ -360,9 +357,6 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     }
     runtime.activeAcpSessionId = normalizedSessionId;
     runtime.knownAcpSessionIds.add(normalizedSessionId);
-    while (runtime.knownAcpSessionIds.length > 32) {
-      runtime.knownAcpSessionIds.remove(runtime.knownAcpSessionIds.first);
-    }
     runtime.retiredAcpSessionIds.remove(normalizedSessionId);
     notifyListeners();
     return true;
@@ -560,9 +554,6 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     final normalized = turnId.trim();
     if (normalized.isEmpty) return;
     runtime.completedAgentTurnIds.add(normalized);
-    while (runtime.completedAgentTurnIds.length > 128) {
-      runtime.completedAgentTurnIds.remove(runtime.completedAgentTurnIds.first);
-    }
   }
 
   AgentReduceResult applyAgentEvent({
@@ -697,6 +688,7 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
   /// boundary; host code must not synthesize a private `turn/*` event merely
   /// because a MethodChannel result is not an EventChannel notification.
   AgentReduceResult applyAcpPromptResponse({
+    required String taskId,
     required int conversationId,
     required String? sessionId,
     String? turnId,
@@ -706,6 +698,16 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     ConversationModel? conversation,
   }) {
     ensureInitialized();
+    // The awaited prompt result belongs to the request that sent it, even
+    // when ACP supplies no wire turnId. Never lend a later request's active
+    // identity to an old response or transport failure.
+    if (!isTaskActive(
+      taskId: taskId,
+      conversationId: conversationId,
+      mode: mode,
+    )) {
+      return const AgentReduceResult(handled: false, affectsActiveTurn: false);
+    }
     final runtime = ensureRuntime(
       conversationId: conversationId,
       mode: mode,
@@ -719,17 +721,7 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
       stopReason: stopReason,
       error: error,
     );
-    final taskId = runtime.resolveAcpEventRunId(
-      sessionId: sessionId,
-      turnId: result.turnId,
-      fallback: runtime.activeRunId ?? runtime.currentDispatchTurnId,
-    );
-    if (taskId != null) {
-      final binding = _taskBindings[taskId];
-      if (binding?.conversationId == conversationId && binding?.mode == mode) {
-        _taskBindings.remove(taskId);
-      }
-    }
+    _taskBindings.remove(taskId);
     if (result.handled) {
       notifyListeners();
       if (!isEphemeralRuntime(conversationId: conversationId, mode: mode)) {
@@ -1122,9 +1114,6 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
         runtime.activeAcpSessionId!.trim(),
     };
     runtime.retiredAcpSessionIds.addAll(sessionsToRetire);
-    while (runtime.retiredAcpSessionIds.length > 64) {
-      runtime.retiredAcpSessionIds.remove(runtime.retiredAcpSessionIds.first);
-    }
     runtime.allowRetiredAcpSessionReactivation = false;
     runtime.currentDispatchTurnId = null;
     runtime.activeRunId = null;
@@ -1264,7 +1253,7 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     required int conversationId,
     required String mode,
     String? taskId,
-    String trigger = 'auto',
+    String trigger = 'manual',
     int? latestPromptTokens,
     int? promptTokenThreshold,
   }) {

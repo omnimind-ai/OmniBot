@@ -5,7 +5,6 @@ import cn.com.omnimind.assists.controller.http.HttpController
 import cn.com.omnimind.baselib.i18n.AppLocaleManager
 import cn.com.omnimind.baselib.llm.ChatCompletionMessage
 import cn.com.omnimind.bot.agent.workspace.memory.LongTermMemoryIndex
-import cn.com.omnimind.bot.agent.workspace.memory.TurnMemoryLoadTracker
 import cn.com.omnimind.bot.agent.tool.AgentCapabilityModule
 import cn.com.omnimind.bot.agent.tool.AgentToolHandlerModule
 import cn.com.omnimind.bot.plugin.OmniPluginHost
@@ -179,7 +178,6 @@ class OmniAgentExecutor(
         conversationMode: String,
         modelOverride: AgentModelOverride?,
         reasoningEffort: String?,
-        runtimeSettings: AgentRuntimeSettings = AgentRuntimeSettings(),
         terminalEnvironment: Map<String, String>,
         callback: AgentCallback,
         runControl: AgentRunControl = NoOpAgentRunControl,
@@ -208,13 +206,11 @@ class OmniAgentExecutor(
                     soul = memoryService.readSoul().trim(),
                     longTermMemory = "",
                     todayShortMemory = "",
-                    longTermIndexSummary = ""
                 )
             }.getOrNull()
             val ltmIndex = runCatching {
                 LongTermMemoryIndex(workspaceManager)
             }.getOrNull()
-            val memoryLoadTracker = TurnMemoryLoadTracker()
             val skillIndexService = SkillIndexService(context, workspaceManager)
             val skillLoader = SkillLoader(workspaceManager)
             val installedSkills = skillIndexService.listInstalledSkills()
@@ -227,10 +223,6 @@ class OmniAgentExecutor(
                     )
                 }
                 .sortedBy { it.id.lowercase() }
-            val failureLearningSkill = SelfImprovingSkillFailureHook.resolveInstalledSkill(
-                installedSkills = installedSkills,
-                skillLoader = skillLoader
-            )
             // Pi-style progressive disclosure: skill bodies are loaded through
             // skills_read and become replayable tool results instead of a volatile
             // leading message that invalidates the full conversation prefix.
@@ -256,10 +248,6 @@ class OmniAgentExecutor(
                 capabilityToolDefinitions = sessionCapabilityModules.flatMap {
                     it.toolDefinitions
                 },
-                userMessage = userMessage,
-                toolRoutingMode = AgentToolRoutingMode.fromSkillFrontmatter(
-                    resolvedSkills.map(ResolvedSkillContext::frontmatter),
-                ),
             )
             val initialMessages = buildInitialMessages(
                 promptSeed = historyRepository.buildPromptSeed(
@@ -285,7 +273,6 @@ class OmniAgentExecutor(
                 scope = scope,
                 json = json,
                 modelOverride = modelOverride,
-                runtimeSettings = runtimeSettings,
             )
             val toolImageContinuationPolicy = runCatching {
                 AgentToolImageContinuationPolicyResolver.resolve(
@@ -300,14 +287,6 @@ class OmniAgentExecutor(
                     )
                 )
             }.getOrDefault(AgentToolImageContinuationPolicy.DEFAULT)
-            val contextCompactor = AgentConversationContextCompactor(
-                historyRepository = historyRepository,
-                modelScene = agentModelScene,
-                modelOverride = modelOverride,
-                reasoningEffort = reasoningEffort,
-                promptCacheKey = promptCacheKey,
-                json = json
-            )
             val eventAdapter = AgentEventAdapter(json)
             // Break the SubagentDispatcher ↔ AgentToolRouter cycle: hand the
             // dispatcher a lazy reference to the router that we'll populate
@@ -358,25 +337,21 @@ class OmniAgentExecutor(
                     initialMessages = initialMessages,
                     conversationId = conversationId,
                     promptCacheKey = promptCacheKey,
-                    contextCompactor = contextCompactor,
                     executionEnv = DefaultAgentExecutionEnvironment(
                         agentRunId = agentRunId,
                         userMessage = userMessage,
                         runtimeContextRepository = runtimeContextRepository,
                         workspaceDescriptor = workspaceDescriptor,
                         resolvedSkills = resolvedSkills,
-                        failureLearningSkill = failureLearningSkill,
                         workspaceManager = workspaceManager,
                         workspaceMemoryService = memoryService,
                         conversationMode = conversationMode,
                         reasoningEffort = reasoningEffort,
-                        runtimeSettings = runtimeSettings,
                         modelProviderProfileId = modelOverride?.providerProfileId,
                         terminalEnvironment = terminalEnvironment,
                         runControl = runControl,
                         permissionRequester = permissionRequester,
-                        longTermMemoryIndex = ltmIndex,
-                        turnMemoryLoadTracker = memoryLoadTracker
+                        longTermMemoryIndex = ltmIndex
                     )
                 )
             )

@@ -69,7 +69,8 @@ class TerminalActivity : ComponentActivity() {
 
         val commands = EnvironmentSetupLogic.buildInstallCommands(
             selectedPackageIds = selectedPackageIds,
-            sourceManager = SourceManager(this)
+            sourceManager = SourceManager(this),
+            context = this,
         )
         if (commands.isEmpty()) {
             return

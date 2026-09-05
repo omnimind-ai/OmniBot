@@ -113,8 +113,6 @@ import java.util.ArrayDeque
 import kotlin.collections.mapOf
 import kotlin.coroutines.resume
 
-private const val MAX_PERSISTED_THINKING_CHARS = 16 * 1024
-private const val THINKING_TRUNCATION_NOTICE = "[Earlier reasoning omitted]\n"
 
 internal fun resolveDirectAgentModelOverride(
     raw: Map<String, Any?>?,
@@ -2075,8 +2073,8 @@ class AssistsCoreManager(private val context: Context) {
     }
 
     fun getWorkspaceShortMemories(call: MethodCall, result: MethodChannel.Result) {
-        val days = (call.argument<Int>("days") ?: 14).coerceIn(1, 90)
-        val limit = (call.argument<Int>("limit") ?: 240).coerceIn(1, 1000)
+        val days = call.argument<Int>("days")
+        val limit = call.argument<Int>("limit")
         workJob.launch {
             try {
                 val service = WorkspaceMemoryService(context)

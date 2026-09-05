@@ -58,8 +58,8 @@ internal object AgentRuntimeErrorSupport {
         }
     }
 
-    /** Keep native diagnostics useful without returning credentials to Dart or logs. */
-    fun safeDiagnosticMessage(error: Throwable, maxLength: Int = 300): String {
+    /** Preserve the complete provider diagnostic while removing credentials. */
+    fun safeDiagnosticMessage(error: Throwable): String {
         val raw = generateSequence(error) { it.cause }
             .mapNotNull { it.message?.trim()?.takeIf(String::isNotEmpty) }
             .distinct()
@@ -77,7 +77,7 @@ internal object AgentRuntimeErrorSupport {
                 ),
                 "\\$1=***"
             )
-        return redacted.take(maxLength)
+        return redacted
     }
 
     private fun isProviderNotBound(error: Throwable): Boolean =

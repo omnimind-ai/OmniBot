@@ -4,7 +4,6 @@ import cn.com.omnimind.baselib.llm.DeepSeekProvider
 import cn.com.omnimind.baselib.llm.OpenAiWireApi
 import cn.com.omnimind.baselib.llm.ProviderCustomHeaderUtils
 import cn.com.omnimind.bot.agent.runtime.AgentProviderCredentials
-import cn.com.omnimind.bot.agent.runtime.DEEPSEEK_HARNESS_NODE_ENTRYPOINT
 import cn.com.omnimind.bot.agent.runtime.KIMI_CODE_NATIVE_HEALTH_COMMAND
 import cn.com.omnimind.bot.agent.runtime.KIMI_CODE_NPM_INSTALL_COMMAND
 import cn.com.omnimind.bot.agent.runtime.buildKimiCodeEnvironment
@@ -15,6 +14,9 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+
+private const val DEEPSEEK_HARNESS_NODE_ENTRYPOINT =
+    "/root/.npm-global/lib/node_modules/@deepseek-ai/dsh/lib/bin.js"
 
 internal const val DEEPSEEK_HARNESS_WEB_HOME = "/root/.dsh/omnibot-web"
 internal const val DEEPSEEK_HARNESS_WEB_PATCH_PATH =

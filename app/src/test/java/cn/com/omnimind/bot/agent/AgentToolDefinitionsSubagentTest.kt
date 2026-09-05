@@ -12,7 +12,7 @@ import org.junit.Test
 class AgentToolDefinitionsSubagentTest {
 
     @Test
-    fun `subagent schema exposes expert profile selection`() {
+    fun `subagent schema makes delegation explicit and profile guidance optional`() {
         val function = subagentFunction(PromptLocale.ZH_CN)
         val parameters = function["parameters"] as JsonObject
         val properties = parameters["properties"] as JsonObject
@@ -38,6 +38,14 @@ class AgentToolDefinitionsSubagentTest {
             function["description"]?.jsonPrimitive?.contentOrNull
                 ?.contains("隔离上下文") == true
         )
+        assertTrue(
+            function["description"]?.jsonPrimitive?.contentOrNull
+                ?.contains("用户明确要求分派或并行") == true
+        )
+        assertTrue(
+            profile["description"]?.jsonPrimitive?.contentOrNull
+                ?.contains("继承当前 harness 已提供的能力") == true
+        )
     }
 
     @Test
@@ -61,7 +69,7 @@ class AgentToolDefinitionsSubagentTest {
         )
         assertTrue(
             profile["description"]?.jsonPrimitive?.contentOrNull
-                ?.contains("read-only research") == true
+                ?.contains("inherits the capabilities provided by the current harness") == true
         )
     }
 

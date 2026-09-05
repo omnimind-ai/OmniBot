@@ -655,9 +655,10 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
     final messageText = text.trim();
     if (messageText.isEmpty && attachments.isEmpty) return;
 
-    if (_isAiResponding) {
-      _onCancelTask();
-    }
+    // A manual retry is a fresh user send, not a request to replace a live
+    // prompt.  ACP cancellation is asynchronous and the active turn remains
+    // authoritative until its official PromptResponse arrives.
+    if (_isAiResponding) return;
 
     await _dispatchUserMessage(
       messageText,
@@ -732,6 +733,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       await _sendAgentMessage(
         messageIds.aiMessageId,
         messageText,
+        userMessageId: messageIds.userMessageId,
         attachments: attachments,
       );
       return;
@@ -1013,6 +1015,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
           _asAgentString(response['promptId']) ??
           _asAgentString(response['turnId']);
       _runtimeCoordinator.applyAcpPromptResponse(
+        taskId: aiMessageId,
         conversationId: resolvedConversationId,
         mode: dispatchModeKey,
         sessionId: responseSessionId ?? acpSessionId,
@@ -1048,6 +1051,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       );
       if (runtime?.isAiResponding == true) {
         _runtimeCoordinator.applyAcpPromptResponse(
+          taskId: aiMessageId,
           conversationId: resolvedConversationId,
           mode: dispatchModeKey,
           sessionId: runtime?.activeAcpSessionId ?? _normalAcpSessionId,
@@ -1222,6 +1226,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
           _asAgentString(response['promptId']) ??
           _asAgentString(response['turnId']);
       _runtimeCoordinator.applyAcpPromptResponse(
+        taskId: aiMessageId,
         conversationId: resolvedConversationId,
         mode: dispatchModeKey,
         sessionId: responseSessionId ?? acpSessionId,
@@ -1260,6 +1265,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
             );
       if (runtime?.isAiResponding == true) {
         _runtimeCoordinator.applyAcpPromptResponse(
+          taskId: aiMessageId,
           conversationId: conversationId!,
           mode: dispatchModeKey,
           sessionId: runtime?.activeAcpSessionId ?? _normalAcpSessionId,
@@ -1288,13 +1294,6 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
     // Keep it stable for the original request so transport retries can return
     // the same ACP turn rather than executing the prompt and its tools twice.
     return taskId;
-  }
-
-  String _buildManualRetryRequestId(String taskId) {
-    // Manual retry/continue is a new provider generation. It intentionally
-    // cannot reuse the original request id because ACP request idempotency
-    // would otherwise replay the old failed turn without running anything.
-    return '$taskId-manual-${DateTime.now().microsecondsSinceEpoch}';
   }
 
   @override
@@ -1644,7 +1643,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
 
     _isAwaitingAuthorizeResult = true;
     try {
-      final result = await GoRouterManager.pushForResult<bool>(
+      await GoRouterManager.pushForResult<bool>(
         '/home/authorize',
         extra: AuthorizePageArgs(
           requiredPermissionIds: requiredPermissionIds.isEmpty
@@ -1652,99 +1651,12 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
               : requiredPermissionIds,
         ),
       );
-      if (result == true && mounted) {
-        await _retryLatestInstructionAfterAuth();
-      }
+      // Granting a device permission changes only that permission. It is not
+      // a new user prompt, and must not delete/recreate the visible turn or
+      // silently replay its actions. The retained user message provides the
+      // explicit retry affordance if the user wants to continue.
     } finally {
       _isAwaitingAuthorizeResult = false;
     }
-  }
-
-  @override
-  Future<void> _retryLatestInstructionAfterAuth() async {
-    if (_isRetryingLatestInstructionAfterAuth ||
-        _activeConversationMode == ChatPageMode.openclaw) {
-      return;
-    }
-
-    // Save user text and attachments before cleanup
-    final savedUserText = latestUserUtterance().trim();
-    final savedAttachments = await _latestUserAttachments();
-    if (savedUserText.isEmpty && savedAttachments.isEmpty) return;
-
-    _isRetryingLatestInstructionAfterAuth = true;
-    final timestamp = DateTime.now().millisecondsSinceEpoch.toString();
-    final aiMessageId = '$timestamp-ai';
-    final userMessageId = '$timestamp-user';
-
-    try {
-      // Remove ALL messages from the failed attempt (AI responses + user message)
-      if (mounted) {
-        setState(() {
-          _removeFailedAttemptMessages();
-          _isAiResponding = true;
-        });
-      }
-
-      // Sync cleaned state to Kotlin-side DB so old entries
-      // (user message, permission error, thinking cards) are replaced
-      final conversationId = _currentConversationId;
-      if (conversationId != null) {
-        await _runtimeCoordinator.persistConversationMessageSnapshot(
-          conversationId: conversationId,
-          mode: _modeKey(_activeMode),
-          messages: List<ChatMessageModel>.from(_messages),
-          conversation: _currentConversation,
-        );
-      }
-
-      // Re-add user message for display and latestUserUtterance()
-      if (mounted) {
-        setState(() {
-          final content = <String, dynamic>{
-            'text': savedUserText,
-            'id': userMessageId,
-          };
-          if (savedAttachments.isNotEmpty) {
-            content['attachments'] = savedAttachments;
-          }
-          _messages.insert(
-            0,
-            ChatMessageModel(
-              id: userMessageId,
-              type: 1,
-              user: 1,
-              content: content,
-              createAt: DateTime.fromMillisecondsSinceEpoch(
-                int.parse(timestamp),
-              ),
-            ),
-          );
-        });
-      }
-
-      final handled = await _handleExecutableTaskFlow(
-        aiMessageId,
-        userMessageId,
-      );
-      if (!handled && mounted && _currentDispatchTurnId == aiMessageId) {
-        handleAgentError('统一 Agent 启动失败，请检查模型提供商与场景模型配置。');
-      }
-    } finally {
-      _isRetryingLatestInstructionAfterAuth = false;
-    }
-  }
-
-  /// Remove all messages from the latest failed attempt,
-  /// including AI responses, cards, AND the user message that triggered it.
-  @override
-  void _removeFailedAttemptMessages() {
-    var removeCount = 0;
-    for (final message in _messages) {
-      removeCount += 1;
-      if (message.user == 1) break;
-    }
-    if (removeCount <= 0) return;
-    _messages.removeRange(0, removeCount);
   }
 }

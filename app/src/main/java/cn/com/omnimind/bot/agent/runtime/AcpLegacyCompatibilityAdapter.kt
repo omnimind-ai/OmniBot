@@ -67,9 +67,11 @@ internal object AcpLegacyCompatibilityAdapter {
         TURN_START -> Request("session/prompt", args, method)
         TURN_INTERRUPT -> Request("session/cancel", args, method)
         // ACP has no equivalent for steering an already admitted prompt.
-        // Keep this as an explicit compatibility-only operation until the
-        // official ACP protocol exposes the capability.
-        TURN_STEER -> Request(method, args, method)
+        // Fail at the compatibility boundary instead of creating a private
+        // second Turn lifecycle in the runtime manager.
+        TURN_STEER -> throw UnsupportedOperationException(
+            "ACP does not define turn/steer; send a new session/prompt instead.",
+        )
         else -> Request(method, args)
     }
 

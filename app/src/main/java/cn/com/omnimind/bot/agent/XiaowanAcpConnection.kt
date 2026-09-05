@@ -19,8 +19,6 @@ import cn.com.omnimind.bot.agent.AgentConversationModePolicy
 import cn.com.omnimind.bot.agent.AgentModelOverride
 import cn.com.omnimind.bot.agent.AgentResult
 import cn.com.omnimind.bot.agent.AgentRuntimeContextRepository
-import cn.com.omnimind.bot.agent.AgentRuntimeSettingsStore
-import cn.com.omnimind.bot.agent.AgentRuntimeSettings
 import cn.com.omnimind.bot.agent.AgentScheduleToolBridge
 import cn.com.omnimind.bot.agent.NoOpAgentRunControl
 import cn.com.omnimind.bot.agent.OmniAgentExecutor
@@ -775,17 +773,6 @@ private class XiaowanAgentSession(
                 ?.content
         )
         val terminalEnvironment = xiaowanTerminalEnvironmentFromMeta(_meta)
-        val runtimeSettings = (_meta as? JsonObject)
-            ?.get("runtimeSettings")
-            ?.let { element ->
-                runCatching {
-                    AgentRuntimeSettings.fromJson(element.toString())
-                }.getOrNull()
-            }
-            ?: AgentRuntimeSettingsStore.read(
-                context,
-                AcpAgentProfileStore.XIAOWAN_AGENT_ID,
-            )
         val result = executor.processUserMessage(
             userMessage = text,
             conversationHistory = emptyList(),
@@ -795,7 +782,6 @@ private class XiaowanAgentSession(
             conversationMode = conversationMode,
             modelOverride = selectedModelOverride(),
             reasoningEffort = reasoningEffort,
-            runtimeSettings = runtimeSettings,
             terminalEnvironment = terminalEnvironment,
             callback = streamBridge,
             runControl = NoOpAgentRunControl,
@@ -1612,43 +1598,6 @@ internal class XiaowanAcpEventBridge(
         }
     }
 
-    override suspend fun onRetrying(
-        retryCount: Int,
-        maxRetries: Int,
-        retryDelayMs: Long,
-        message: String,
-        retryReason: String?,
-    ) {
-        callbackMutex.withLock {
-            // A retry restarts the provider generation inside the same Agent
-            // round. Do not let the next cumulative reasoning snapshot reopen
-            // the failed attempt's visible card; the shared ACP reducer uses
-            // this boundary to render retry -> reasoning as a new segment.
-            if (thoughtSnapshot.isNotEmpty()) {
-                reasoningSegmentPending = true
-            }
-            generationId = UUID.randomUUID().toString()
-            val retryMeta = acpPresentationMeta(
-                "retry" to mapOf(
-                    "count" to retryCount,
-                    "maxRetries" to maxRetries,
-                    "delayMs" to retryDelayMs,
-                    "message" to message,
-                    "reason" to retryReason,
-                    "generationId" to generationId,
-                )
-            )
-            emitAssistantStatus(retryMeta)
-            if (assistantSnapshot.isNotEmpty()) {
-                // The retry metadata belongs to the failed assistant attempt.
-                // Future chunks must use a fresh message id so partial output
-                // cannot be silently extended by the retry generation.
-                assistantSnapshot = ""
-                assistantMessageId = MessageId(UUID.randomUUID().toString())
-            }
-        }
-    }
-
     override suspend fun onPromptTokenUsageChanged(
         latestPromptTokens: Int,
         promptTokenThreshold: Int?,
@@ -1663,22 +1612,9 @@ internal class XiaowanAcpEventBridge(
         latestPromptTokens: Int?,
         promptTokenThreshold: Int?,
     ) {
-        callbackMutex.withLock {
-            emitUpdate(
-                SessionUpdate.AgentThoughtChunk(
-                    content = ContentBlock.Text(""),
-                    messageId = thoughtMessageId,
-                    _meta = acpPresentationMeta(
-                        "compaction" to mapOf(
-                            "status" to if (isCompacting) "compressing" else "completed",
-                            "trigger" to "auto",
-                            "latestPromptTokens" to latestPromptTokens,
-                            "promptTokenThreshold" to promptTokenThreshold,
-                        )
-                    ),
-                )
-            )
-        }
+        // Automatic compaction is not an ACP session or turn state. Manual
+        // `/compact` owns its own UI marker, so do not synthesize a private
+        // presentation update for this internal callback.
     }
 
     override suspend fun onClarifyRequired(question: String, missingFields: List<String>?) {

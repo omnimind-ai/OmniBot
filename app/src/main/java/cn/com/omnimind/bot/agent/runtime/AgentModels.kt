@@ -275,17 +275,6 @@ interface AgentCallback {
     }
 
     /**
-     * 当前轮次的流请求发生了可重试失败，正在等待自动重试。
-     */
-    suspend fun onRetrying(
-        retryCount: Int,
-        maxRetries: Int,
-        retryDelayMs: Long,
-        message: String,
-        retryReason: String?
-    ) = Unit
-
-    /**
      * 主模型一轮调用结束后的 prompt token 统计更新
      */
     suspend fun onPromptTokenUsageChanged(

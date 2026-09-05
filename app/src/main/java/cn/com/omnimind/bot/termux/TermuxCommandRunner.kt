@@ -161,17 +161,8 @@ object TermuxCommandRunner {
         return EmbeddedTerminalRuntime.isSupportedDevice()
     }
 
-    fun trimTerminalOutput(
-        text: String,
-        maxLines: Int = 600,
-        maxChars: Int = 64 * 1024
-    ): String {
-        return EmbeddedTerminalRuntime.trimTerminalOutput(
-            text = text,
-            maxLines = maxLines,
-            maxChars = maxChars
-        )
-    }
+    fun trimTerminalOutput(text: String): String =
+        EmbeddedTerminalRuntime.trimTerminalOutput(text)
 
     fun sanitizeTerminalNoise(text: String): String {
         return EmbeddedTerminalRuntime.sanitizeTerminalNoise(text)

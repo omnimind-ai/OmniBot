@@ -103,4 +103,23 @@ class AgentRuntimeContextQueryTest {
         assertTrue(handoff!!.contains("user: 之前的问题"))
         assertFalse(handoff.contains("user: 当前问题"))
     }
+
+    @Test
+    fun `handoff keeps complete persisted context beyond the former character cap`() {
+        val oldestFact = "oldest-fact-" + "a".repeat(100_000)
+        val newestFact = "newest-fact-" + "z".repeat(10_000)
+
+        val handoff = AgentHandoffContext.format(
+            conversationId = 42L,
+            messages = listOf(
+                ChatCompletionMessage("user", JsonPrimitive(oldestFact)),
+                ChatCompletionMessage("assistant", JsonPrimitive(newestFact))
+            )
+        )
+
+        assertTrue(handoff!!.contains(oldestFact))
+        assertTrue(handoff.contains(newestFact))
+        assertFalse(handoff.contains("Older context was omitted"))
+    }
+
 }

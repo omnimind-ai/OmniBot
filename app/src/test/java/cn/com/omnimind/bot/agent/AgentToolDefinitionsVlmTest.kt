@@ -38,10 +38,8 @@ class AgentToolDefinitionsVlmTest {
     }
 
     @Test
-    fun `direct agent catalog uses common native tool names`() {
-        val definitions = AgentToolDefinitions.modelFacingTools(
-            AgentToolDefinitions.staticTools(PromptLocale.EN_US)
-        )
+    fun `direct agent catalog keeps harness tool names unchanged`() {
+        val definitions = AgentToolDefinitions.staticTools(PromptLocale.EN_US)
         val names = definitions.mapNotNull {
             (it["function"] as? JsonObject)
                 ?.get("name")
@@ -49,19 +47,40 @@ class AgentToolDefinitionsVlmTest {
                 ?.contentOrNull
         }
 
-        assertTrue(setOf("read", "write", "edit", "bash", "glob", "grep", "webfetch")
+        assertTrue(setOf(
+            "file_read", "file_write", "file_edit", "terminal_execute",
+            "file_list", "file_search", "browser_use"
+        )
             .all(names::contains))
-        assertTrue("file_read" !in names)
-        assertTrue("terminal_execute" !in names)
-        assertTrue("browser_use" !in names)
-        assertTrue("read" in AgentToolDefinitions.reservedToolNames())
+        assertTrue("file_read" in AgentToolDefinitions.reservedToolNames())
 
-        val bashDescription = definitions
+        val terminalDescription = definitions
             .mapNotNull { it["function"] as? JsonObject }
-            .single { it["name"]?.jsonPrimitive?.contentOrNull == "bash" }
+            .single { it["name"]?.jsonPrimitive?.contentOrNull == "terminal_execute" }
             .getValue("description")
             .jsonPrimitive
             .content
-        assertTrue("terminal_execute" !in bashDescription)
+        assertTrue(terminalDescription.isNotBlank())
+    }
+
+    @Test
+    fun `runtime tool catalogs omit private tool scheduling rules`() {
+        val runtimeDefinitions = AgentToolDefinitions.staticTools(PromptLocale.EN_US) +
+            AgentToolDefinitions.memoryTools(PromptLocale.EN_US) +
+            AgentToolDefinitions.subagentTools(PromptLocale.EN_US)
+        fun hasPrivateSchedulingRule(definition: JsonObject): Boolean =
+            (definition["function"] as? JsonObject)?.get("postToolRule") != null
+
+        assertTrue(
+            "runtime catalogs must rely on ACP prompt turns, not per-tool scheduling",
+            runtimeDefinitions.none(::hasPrivateSchedulingRule)
+        )
+        val scheduleDescription = runtimeDefinitions
+            .mapNotNull { it["function"] as? JsonObject }
+            .single { it["name"]?.jsonPrimitive?.contentOrNull == "schedule_task_create" }
+            .getValue("description")
+            .jsonPrimitive
+            .content
+        assertTrue("Wait for the tool result" !in scheduleDescription)
     }
 }

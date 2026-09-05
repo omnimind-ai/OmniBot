@@ -21,11 +21,9 @@ internal class PlatformEmbeddingGateway(
         val requestJson = GSON.toJson(
             mapOf(
                 "model" to normalizedModel,
-                "input" to listOf(input.take(MAX_INPUT_CHARS)),
+                "input" to listOf(input),
             )
         )
-        PlatformMediaProtocol.requirePlatformJsonRequestWithinLimit(requestJson)
-
         return executor.execute { credentials ->
             Request.Builder()
                 .url(PlatformMediaProtocol.endpoint(credentials, "/v1/embeddings"))
@@ -60,7 +58,6 @@ internal class PlatformEmbeddingGateway(
     private data class EmbeddingItem(val embedding: List<Double> = emptyList())
 
     private companion object {
-        const val MAX_INPUT_CHARS = 8_000
         const val MAX_VECTOR_DIMENSIONS = 8_192
         const val MAX_RESPONSE_BYTES = 2L * 1024L * 1024L
         val GSON = Gson()

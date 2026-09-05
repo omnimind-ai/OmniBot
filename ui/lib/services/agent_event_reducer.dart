@@ -1673,7 +1673,10 @@ class AgentEventReducer {
     }
     final retry = _asStringMap(presentation['retry']);
     if (retry != null) {
-      _touchActiveTurn(runtime, parentTaskId);
+      // Retry is optional adapter presentation metadata.  It can annotate
+      // output from an already-admitted prompt, but it must not resurrect or
+      // create an ACP turn; official session updates and PromptResponse own
+      // that lifecycle.
       if (_hasAgentMessage(runtime, entryId)) {
         _upsertAcpRetryPresentation(runtime, entryId: entryId, retry: retry);
       } else {
@@ -1721,15 +1724,6 @@ class AgentEventReducer {
           value: clarification,
         );
       }
-    }
-    final compaction = _asStringMap(presentation['compaction']);
-    if (compaction != null) {
-      _touchActiveTurn(runtime, parentTaskId);
-      _upsertAcpContextCompactionCard(
-        runtime,
-        taskId: parentTaskId,
-        compaction: compaction,
-      );
     }
   }
 
@@ -1996,64 +1990,6 @@ class AgentEventReducer {
       content['agentClarificationMissingFields'] = missingFields;
     }
     runtime.messages[index] = existing.copyWith(content: content);
-  }
-
-  void _upsertAcpContextCompactionCard(
-    ChatConversationRuntimeState runtime, {
-    required String taskId,
-    required Map<String, dynamic> compaction,
-  }) {
-    final status = (_extractText(compaction['status']) ?? 'completed').trim();
-    final markerId =
-        runtime.activeContextCompactionMarkerId ??
-        '$taskId-context-compaction-${runtime.agentNextEntrySequence++}';
-    runtime.activeContextCompactionMarkerId = status == 'compressing'
-        ? markerId
-        : null;
-    runtime.isContextCompressing = status == 'compressing';
-    final index = runtime.messages.indexWhere(
-      (message) => message.id == markerId,
-    );
-    final existing = index == -1 ? null : runtime.messages[index];
-    final existingCardData = existing?.cardData ?? const <String, dynamic>{};
-    final startTime =
-        _asInt(existingCardData['startTime']) ??
-        DateTime.now().millisecondsSinceEpoch;
-    final cardData = <String, dynamic>{
-      'type': 'context_compaction_marker',
-      'status': status,
-      'label': _acpContextCompactionLabel(status),
-      'trigger': _extractText(compaction['trigger']) ?? 'auto',
-      'startTime': startTime,
-      'endTime': status == 'compressing'
-          ? null
-          : DateTime.now().millisecondsSinceEpoch,
-      'latestPromptTokens': _asInt(compaction['latestPromptTokens']),
-      'promptTokenThreshold': _asInt(compaction['promptTokenThreshold']),
-    };
-    final message = ChatMessageModel(
-      id: markerId,
-      type: 2,
-      user: 3,
-      content: {'cardData': cardData, 'id': markerId},
-      createAt: DateTime.fromMillisecondsSinceEpoch(startTime),
-    );
-    if (index == -1) {
-      runtime.messages.insert(0, message);
-    } else {
-      runtime.messages[index] = existing!.copyWith(
-        content: {'cardData': cardData, 'id': markerId},
-      );
-    }
-  }
-
-  String _acpContextCompactionLabel(String status) {
-    return switch (status) {
-      'compressing' => '正在压缩',
-      'noop' => '无需压缩',
-      'failed' => '压缩失败',
-      _ => '已压缩',
-    };
   }
 
   void _touchActiveTurn(
@@ -3724,11 +3660,6 @@ class AgentEventReducer {
       }
       if (ownerTaskId != taskId) {
         runtime.completedAgentTurnIds.add(ownerTaskId);
-      }
-      if (runtime.completedAgentTurnIds.length > 128) {
-        runtime.completedAgentTurnIds.remove(
-          runtime.completedAgentTurnIds.first,
-        );
       }
     }
   }
@@ -6184,9 +6115,6 @@ void _rememberAcpExtensionUpdate(
   Map<String, dynamic> update,
 ) {
   runtime.acpExtensionUpdates.add(Map<String, dynamic>.from(update));
-  if (runtime.acpExtensionUpdates.length > 64) {
-    runtime.acpExtensionUpdates.removeAt(0);
-  }
 }
 
 /// Retain extension namespaces even when they do not have a Card projector
@@ -7369,15 +7297,5 @@ String _accountSummary(Map<String, dynamic> params) {
 }
 
 String _trimTerminalOutput(String value) {
-  const maxChars = 64 * 1024;
-  const maxLines = 600;
-  var text = value;
-  if (text.length > maxChars) {
-    text = text.substring(text.length - maxChars);
-  }
-  final lines = text.split('\n');
-  if (lines.length > maxLines) {
-    text = lines.sublist(lines.length - maxLines).join('\n');
-  }
-  return text;
+  return value;
 }

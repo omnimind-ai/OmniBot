@@ -25,7 +25,6 @@ class AgentRuntimeMcpTest {
     @Test
     fun standardAcpAgentReceivesOfficialHttpMcpDeclaration() {
         val servers = buildLocalAgentAcpMcpServers(
-            harnessAdapter = AcpHarnessAdapters.standard,
             supportsHttp = true,
             state = runningState,
         )
@@ -43,13 +42,11 @@ class AgentRuntimeMcpTest {
     @Test
     fun deepSeekHarnessUsesOfficialSessionMcpDeclaration() {
         val servers = buildLocalAgentAcpMcpServers(
-            harnessAdapter = AcpHarnessAdapters.deepSeekHarness,
             supportsHttp = true,
             state = runningState,
         )
         assertEquals(1, servers.size)
         assertEquals("omnibot", (servers.single() as McpServer.Http).name)
-        assertTrue(AcpHarnessAdapters.deepSeekHarness.mcpEnvironment(runningState).isEmpty())
     }
 
     @Test
@@ -132,7 +129,6 @@ class AgentRuntimeMcpTest {
 
         try {
             buildLocalAgentAcpMcpServers(
-                harnessAdapter = AcpHarnessAdapters.standard,
                 supportsHttp = true,
                 state = stopped,
             )

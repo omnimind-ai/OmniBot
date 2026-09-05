@@ -137,6 +137,111 @@ void main() {
       expect(key.currentState!.loadedSnapshots.single, [persistedMessage]);
     },
   );
+
+  testWidgets(
+    'a conversation with more than one visible page remains fully reachable',
+    (tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final allMessages = List<Map<String, dynamic>>.generate(
+        51,
+        (index) => _assistantMessageJson(
+          id: 'assistant-${index + 1}',
+          text: 'persisted reply ${index + 1}',
+        ),
+      );
+      final pageOffsets = <int>[];
+
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        switch (call.method) {
+          case 'getConversations':
+            return <Map<String, dynamic>>[
+              _conversationJson(id: 1, title: 'long thread'),
+            ];
+          case 'getConversationMessagesPaged':
+            final args = Map<dynamic, dynamic>.from(call.arguments as Map);
+            final offset = (args['offset'] as num).toInt();
+            final limit = (args['limit'] as num).toInt();
+            pageOffsets.add(offset);
+            final end = (offset + limit).clamp(0, allMessages.length).toInt();
+            return <String, dynamic>{
+              'messages': allMessages.sublist(offset, end),
+              'hasMore': end < allMessages.length,
+            };
+          default:
+            return 'SUCCESS';
+        }
+      });
+
+      final key = GlobalKey<_ConversationManagerHarnessState>();
+      await tester.pumpWidget(
+        MaterialApp(home: _ConversationManagerHarness(key)),
+      );
+
+      await key.currentState!.loadConversation(1);
+      expect(key.currentState!.messages, hasLength(50));
+      expect(key.currentState!.hasMoreMessages, isTrue);
+
+      await key.currentState!.loadMoreMessages();
+      expect(pageOffsets, [0, 50]);
+      expect(key.currentState!.messages, hasLength(51));
+      expect(key.currentState!.messages.last.text, 'persisted reply 51');
+      expect(key.currentState!.hasMoreMessages, isFalse);
+    },
+  );
+
+  testWidgets(
+    'a short history page advances by received messages without skipping a gap',
+    (tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final allMessages = List<Map<String, dynamic>>.generate(
+        68,
+        (index) => _assistantMessageJson(
+          id: 'assistant-${index + 1}',
+          text: 'persisted reply ${index + 1}',
+        ),
+      );
+      final pageOffsets = <int>[];
+
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        switch (call.method) {
+          case 'getConversations':
+            return <Map<String, dynamic>>[
+              _conversationJson(id: 1, title: 'short page thread'),
+            ];
+          case 'getConversationMessagesPaged':
+            final args = Map<dynamic, dynamic>.from(call.arguments as Map);
+            final offset = (args['offset'] as num).toInt();
+            pageOffsets.add(offset);
+            final end = (offset + 17).clamp(0, allMessages.length).toInt();
+            return <String, dynamic>{
+              'messages': allMessages.sublist(offset, end),
+              'hasMore': end < allMessages.length,
+            };
+          default:
+            return 'SUCCESS';
+        }
+      });
+
+      final key = GlobalKey<_ConversationManagerHarnessState>();
+      await tester.pumpWidget(
+        MaterialApp(home: _ConversationManagerHarness(key)),
+      );
+
+      await key.currentState!.loadConversation(1);
+      while (key.currentState!.hasMoreMessages) {
+        await key.currentState!.loadMoreMessages();
+      }
+
+      expect(pageOffsets, [0, 17, 34, 51]);
+      expect(key.currentState!.messages, hasLength(allMessages.length));
+      expect(
+        key.currentState!.messages.map((message) => message.text),
+        allMessages
+            .map((message) => (message['content'] as Map)['text'])
+            .cast<String>(),
+      );
+    },
+  );
 }
 
 class _ConversationManagerHarness extends StatefulWidget {
