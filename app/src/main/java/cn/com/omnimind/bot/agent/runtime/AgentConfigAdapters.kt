@@ -376,8 +376,11 @@ internal fun buildCodexModelCatalogJson(
                 add("apply_patch_tool_type", JsonNull.INSTANCE)
                 addProperty("web_search_tool_type", "text")
                 add("truncation_policy", JsonObject().apply {
-                    addProperty("mode", "bytes")
-                    addProperty("limit", 10000)
+                    // Required official Codex model metadata. Use the configured
+                    // context capacity instead of a separate 10 KB host ceiling.
+                    // Codex's tool_output_token_limit remains an explicit override.
+                    addProperty("mode", "tokens")
+                    addProperty("limit", contextWindow)
                 })
                 addProperty("supports_image_detail_original", false)
                 addProperty("context_window", contextWindow)

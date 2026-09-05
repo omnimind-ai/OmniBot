@@ -69,6 +69,7 @@ if [[ "$RUN_GRADLE" == "1" ]]; then
       -Dkotlin.compiler.execution.strategy=in-process \
       :app:testDevelopStandardDebugUnitTest \
       --tests 'cn.com.omnimind.bot.agent.AgentOrchestratorTest' \
+      --tests 'cn.com.omnimind.bot.agent.AgentEventAdapterTest' \
       --tests 'cn.com.omnimind.bot.agent.AgentConversationModePolicyTest' \
       --tests 'cn.com.omnimind.bot.agent.AgentSystemPromptTest' \
       --tests 'cn.com.omnimind.bot.agent.AgentLlmStreamAccumulatorTest' \
@@ -99,6 +100,8 @@ if [[ "$RUN_GRADLE" == "1" ]]; then
       --tests 'cn.com.omnimind.bot.agent.runtime.LocalAcpRuntimeTest' \
       --tests 'cn.com.omnimind.bot.agent.runtime.LocalAcpRuntimeConfigTest' \
       --tests 'cn.com.omnimind.bot.agent.runtime.AcpAgentProfileStoreTest' \
+      --tests 'cn.com.omnimind.bot.agent.runtime.XiaowanSessionConfigTest' \
+      --tests 'cn.com.omnimind.bot.agent.runtime.XiaowanAcpConnectionTest' \
       --tests 'cn.com.omnimind.bot.agent.runtime.RemoteCodexBridgeConnectionTest' \
       --tests 'cn.com.omnimind.bot.agent.runtime.AgentRuntimeProtocolPayloadTest' \
       --tests 'cn.com.omnimind.bot.agent.runtime.XiaowanAcpPresentationBridgeTest' \
@@ -129,6 +132,9 @@ if [[ "$RUN_FLUTTER" == "1" ]]; then
   run_step "Flutter Agent UI/service tests" bash -c \
     "cd '$ROOT_DIR/ui' && '$FLUTTER_BIN' test \\
       test/agent_tool_summary_card_test.dart \\
+      test/office_preview_service_test.dart \\
+      test/widgets/streaming_text_test.dart \\
+      test/widgets/omnibot_markdown_body_math_test.dart \\
       test/agent_tool_transcript_test.dart \\
       test/features/home/pages/chat/chat_architecture_test.dart \\
       test/services/model_provider_config_service_test.dart \\

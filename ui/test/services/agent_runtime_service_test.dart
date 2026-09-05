@@ -943,6 +943,22 @@ void main() {
     expect(message, isNot(contains('{"error"')));
   });
 
+  test(
+    'provider abort reports an interrupted response without claiming a retry',
+    () {
+      final message = formatAgentRuntimeErrorForUser(
+        PlatformException(
+          code: 'AGENT_RUNTIME_CALL_FAILED',
+          message: 'Software caused connection abort',
+          details: {'failureKind': 'provider_stream_interrupted'},
+        ),
+      );
+      expect(message, contains('连接中断'));
+      expect(message, contains('未完成的工具调用不会执行'));
+      expect(message, isNot(contains('已自动重试')));
+    },
+  );
+
   test('incomplete tool calls are mapped to an actionable user error', () {
     final message = formatAgentRuntimeErrorForUser(
       PlatformException(

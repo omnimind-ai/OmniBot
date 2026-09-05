@@ -13,6 +13,45 @@ function sourcePath(relativePath) {
   return path.join(repositoryRoot, relativePath);
 }
 
+test("Xiaowan session startup uses the Provider cache and restores session-owned selection", async () => {
+  const content = await source("app/src/main/java/cn/com/omnimind/bot/agent/XiaowanAcpConnection.kt");
+  assert.doesNotMatch(content, /fetchProviderModels|refreshAndGetModels/);
+  assert.match(content, /ModelProviderConfigStore\.cachedModels/);
+  assert.match(content, /profileStore\.sessionConfiguration\(sessionId\.value\)/);
+  assert.match(content, /saveSessionConfiguration\(sessionId\.value/);
+});
+
+test("request forwarding and prompt completion do not invent variants or tool outcomes", async () => {
+  const llm = await source("app/src/main/java/cn/com/omnimind/bot/agent/llm/AgentLlmClient.kt");
+  const reducer = await source("ui/lib/services/agent_event_reducer.dart");
+  assert.doesNotMatch(llm, /modelCandidates|StreamRequestVariant|buildRequestVariants/);
+  assert.doesNotMatch(reducer, /_markUnfinishedToolCardsInterruptedForTask|_markToolCardsCompleteForTask/);
+});
+
+test("file skill and terminal tools never apply application character truncation", async () => {
+  for (const file of ["FileToolHandler", "SkillsToolHandler", "TerminalToolHandler", "PrivilegedToolHandler", "SharedHelper"]) {
+    const content = await source(`app/src/main/java/cn/com/omnimind/bot/agent/tool/handlers/${file}.kt`);
+    assert.doesNotMatch(content, /maxChars|truncateText|truncateTerminalTail/, file);
+  }
+});
+
+test("tool envelopes and user configuration have no host size policy", async () => {
+  const adapter = await source("app/src/main/java/cn/com/omnimind/bot/agent/runtime/AgentEventAdapter.kt");
+  const manager = await source("app/src/main/java/cn/com/omnimind/bot/agent/runtime/AgentRuntimeManager.kt");
+  assert.doesNotMatch(adapter, /compactToolResultContent|outputTruncated|headTail/);
+  assert.doesNotMatch(manager, /requireAgentConfigSize|MAX_AGENT_CONFIG_FILE_CHARS/);
+});
+
+test("Office previews do not discard document content", async () => {
+  const content = await source("ui/lib/services/office_preview_service.dart");
+  assert.doesNotMatch(content, /_maxDoc|_maxWorkbook|_maxCell|_maxSlide|_truncateText/);
+});
+
+test("orchestrator does not wrap transport failure in a second terminal path", async () => {
+  const content = await source("app/src/main/java/cn/com/omnimind/bot/agent/runtime/AgentOrchestrator.kt");
+  assert.doesNotMatch(content, /TerminalTurnRequestFailure|var terminalError|streamTurnWithTransportPolicy/);
+});
+
 async function source(relativePath) {
   return readFile(sourcePath(relativePath), "utf8");
 }

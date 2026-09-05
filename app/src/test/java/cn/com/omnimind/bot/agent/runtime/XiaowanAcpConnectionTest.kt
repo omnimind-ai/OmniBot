@@ -61,15 +61,6 @@ class XiaowanAcpConnectionTest {
     }
 
     @Test
-    fun `xiaowan adapter uses canonical reasoning aliases and provider levels`() {
-        assertEquals("none", normalizeXiaowanReasoningEffort("no"))
-        assertEquals("medium", normalizeXiaowanReasoningEffort("MEDIUM"))
-        assertEquals("high", normalizeXiaowanReasoningEffort("xhigh"))
-        assertEquals("high", normalizeXiaowanReasoningEffort("max"))
-        assertNull(normalizeXiaowanReasoningEffort("provider-specific-level"))
-    }
-
-    @Test
     fun `explicit reasoning rounds use separate ACP thought messages`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
         val bridge = XiaowanAcpEventBridge { updates += it }

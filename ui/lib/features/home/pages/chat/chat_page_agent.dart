@@ -1817,21 +1817,6 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     if (eventMode == ChatPageMode.agent && isVisibleConversation) {
       _syncAgentCollaborationModeFromServer(result.collaborationMode);
     }
-    if (eventMode == ChatPageMode.agent &&
-        isVisibleConversation &&
-        result.handled &&
-        result.affectsActiveTurn &&
-        result.method == 'turn/completed') {
-      final completedTurnId = result.turnId;
-      final completedPlanTurn =
-          completedTurnId != null && _agentPlanTurnIds.remove(completedTurnId);
-      if (completedPlanTurn ||
-          (completedTurnId == null &&
-              _isAgentPlanMode(_activeAgentCollaborationMode))) {
-        _autoDeactivateAgentPlanModeAfterTurn();
-      }
-      _activeAgentTurnId = null;
-    }
     if (eventMode == ChatPageMode.agent && isVisibleConversation) {
       final runtime = _runtimeCoordinator.runtimeFor(
         conversationId: conversationId,
@@ -2135,10 +2120,8 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       );
       if (isDispatchTargetCurrent()) {
         _activeAgentThreadId = resolvedThreadId ?? acpSessionId;
-        _activeAgentTurnId = responseTurnId;
-        if (turnUsesPlanMode && _activeAgentTurnId != null) {
-          _agentPlanTurnIds.add(_activeAgentTurnId!);
-        }
+        _activeAgentTurnId = null;
+        if (turnUsesPlanMode) _autoDeactivateAgentPlanModeAfterTurn();
       }
       final localConversationId = _asAgentInt(response['conversationId']);
       if (isDispatchTargetCurrent() &&
@@ -2176,38 +2159,15 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         conversationId: resolvedConversationId,
         mode: dispatchModeKey,
       );
-      final shouldShowError =
-          isDispatchTargetCurrent() &&
-          _runtimeCoordinator.isTaskActive(
-            taskId: aiMessageId,
-            conversationId: resolvedConversationId,
-            mode: dispatchModeKey,
-          );
-      if (shouldShowError) {
-        if (activeRuntime?.isAiResponding != true) {
-          handleAgentError(
-            '${dispatchAgentId == _kXiaowanAcpAgentId ? '小万' : _activeAcpAgentDisplayName} 启动失败: '
-            '${formatAgentRuntimeErrorForUser(error)}',
-          );
-        }
-      }
-      if (activeRuntime?.isAiResponding == true) {
-        _runtimeCoordinator.applyAcpPromptResponse(
-          taskId: aiMessageId,
-          conversationId: resolvedConversationId,
-          mode: dispatchModeKey,
-          sessionId: activeRuntime?.activeAcpSessionId ?? _activeAgentThreadId,
-          turnId: activeRuntime?.activeAcpTurnId,
-          stopReason: 'error',
-          error: formatAgentRuntimeErrorForUser(error),
-        );
-      } else {
-        _runtimeCoordinator.unregisterTask(
-          aiMessageId,
-          conversationId: resolvedConversationId,
-          mode: dispatchModeKey,
-        );
-      }
+      _runtimeCoordinator.applyAcpPromptResponse(
+        taskId: aiMessageId,
+        conversationId: resolvedConversationId,
+        mode: dispatchModeKey,
+        sessionId: activeRuntime?.activeAcpSessionId,
+        turnId: activeRuntime?.activeAcpTurnId,
+        stopReason: 'error',
+        error: formatAgentRuntimeErrorForUser(error),
+      );
     }
   }
 

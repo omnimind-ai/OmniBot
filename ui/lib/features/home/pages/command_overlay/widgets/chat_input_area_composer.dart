@@ -199,6 +199,10 @@ mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
         ),
         const SizedBox(width: 4),
       ],
+      if (widget.runtimeConfigButton != null) ...[
+        widget.runtimeConfigButton!,
+        const SizedBox(width: 4),
+      ],
       if (_shouldShowAgentRunSettingsSelector) ...[
         _buildAgentRunSettingsButton(compact: false),
         const SizedBox(width: 4),
@@ -556,6 +560,10 @@ mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
             tooltipMessage: widget.contextUsageTooltipMessage,
             onLongPress: widget.onLongPressContextUsageRing,
           ),
+          const SizedBox(width: 4),
+        ],
+        if (widget.runtimeConfigButton != null) ...[
+          widget.runtimeConfigButton!,
           const SizedBox(width: 4),
         ],
         if (_shouldShowAgentRunSettingsSelector) ...[

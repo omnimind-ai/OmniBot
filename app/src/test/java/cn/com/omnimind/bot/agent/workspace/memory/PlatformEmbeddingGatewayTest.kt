@@ -16,6 +16,23 @@ import org.junit.Test
 
 class PlatformEmbeddingGatewayTest {
     @Test
+    fun `embedding dimensions and response size belong to the provider`() = runBlocking {
+        val dimensions = 8_193
+        val body = """{"padding":"${"x".repeat(2 * 1024 * 1024)}","data":[{"embedding":[${List(dimensions) { "0.1" }.joinToString(",")}]}]}"""
+        val executor = PlatformMediaGatewayExecutor(
+            executeRequest = { request -> response(request, 200, body) },
+            accessProvider = {
+                AiRequestAccess(
+                    mode = AiAccessMode.PLATFORM,
+                    platformGatewayUrl = "https://model.example.com",
+                    bearerToken = "jwt",
+                )
+            },
+        )
+        assertEquals(List(dimensions) { 0.1 }, PlatformEmbeddingGateway(executor).embed("custom", "memory"))
+    }
+
+    @Test
     fun `official embedding uses JWT endpoint and refreshes once on 401`() = runBlocking {
         val codes = ArrayDeque(listOf(401, 200))
         var token = "jwt-one"

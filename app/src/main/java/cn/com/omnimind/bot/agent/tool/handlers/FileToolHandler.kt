@@ -222,7 +222,6 @@ class FileToolHandler(
             )
             require(file.exists()) { "文件不存在：${file.absolutePath}" }
             require(file.isFile) { "目标不是文件：${file.absolutePath}" }
-            val maxChars = args["maxChars"]?.jsonPrimitive?.intOrNull?.takeIf { it > 0 }
             val offset = args["offset"]?.jsonPrimitive?.intOrNull?.coerceAtLeast(0) ?: 0
             val lineStart = args["lineStart"]?.jsonPrimitive?.intOrNull?.coerceAtLeast(1)
             val lineCount = args["lineCount"]?.jsonPrimitive?.intOrNull?.coerceAtLeast(1)
@@ -262,7 +261,7 @@ class FileToolHandler(
                     "path" to shellPath,
                     "androidPath" to file.absolutePath,
                     "uri" to artifact.uri,
-                    "content" to (maxChars?.let { helper.truncateText(sliced, it) } ?: sliced),
+                    "content" to sliced,
                     "size" to file.length(),
                     "mimeType" to mimeType
                 )

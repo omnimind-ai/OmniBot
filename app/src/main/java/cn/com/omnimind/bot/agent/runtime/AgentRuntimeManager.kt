@@ -1207,12 +1207,7 @@ class AgentRuntimeManager private constructor(
                 error is CancellationException -> "cancelled"
                 else -> "error"
             }
-            // A remote bridge can fail the request without emitting the
-            // normal ACP turn/failed notification (for example a request
-            // timeout or a JSON-RPC transport error). The Flutter reducer
-            // otherwise keeps the turn in "thinking" forever. Claim and
-            // close the host lifecycle before returning the owning request
-            // error; the caller projects that official terminal boundary.
+            // Only the owning session/prompt request reports terminal failure.
             val detail = error.message?.trim()
                 ?.takeIf { it.isNotEmpty() }
                 ?: error.javaClass.simpleName
@@ -1225,7 +1220,6 @@ class AgentRuntimeManager private constructor(
             throw error
         } finally {
             remotePromptExecutions.remove(sessionId, execution)
-            clearActiveTurn(sessionId, turnId, terminalStatus = terminalStatus)
         }
     }
 
@@ -1355,10 +1349,6 @@ class AgentRuntimeManager private constructor(
         args: Map<String, Any?>
     ): Map<String, Any?> {
         val threadId = resolveThreadId(args)
-        // The response is a snapshot, not a lock. Only let it mutate the
-        // ownership it observed when the request was sent; a newer turn may
-        // have been admitted while the server was replying.
-        val observedTurnId = remoteTurnOwnership.activeTurnId(threadId)
         val params = linkedMapOf<String, Any?>("threadId" to threadId)
         if (method == "thread/read") {
             (args["includeHistory"] ?: args["includeTurns"])?.let {
@@ -1368,9 +1358,6 @@ class AgentRuntimeManager private constructor(
         val response = request(method, params) as Map<String, Any?>
         if (shouldSyncLocalThreadBindings() && (method == "thread/read" || method == "thread/resume")) {
             syncThreadListResponse(response)
-        }
-        if (method == "thread/read" || method == "thread/resume") {
-            syncActiveTurnSnapshot(threadId, response, observedTurnId)
         }
         val activeTurnId = remoteTurnOwnership.activeTurnId(threadId)
         return response.withLocalIds(
@@ -1594,7 +1581,6 @@ class AgentRuntimeManager private constructor(
             ) ?: throw UnsupportedOperationException(
                 "Harness does not expose a writable configuration surface."
             )
-            requireAgentConfigSize(content)
             writeTerminalTextFile(
                 path = harnessConfigPath,
                 content = content,
@@ -1644,7 +1630,6 @@ class AgentRuntimeManager private constructor(
             )
         }
         writes.forEach { write ->
-            requireAgentConfigSize(write.content)
             writeTerminalTextFile(
                 path = write.path,
                 content = write.content,
@@ -1672,7 +1657,6 @@ class AgentRuntimeManager private constructor(
         val snapshot = acpAgentProfileStore.configSnapshot(agentId, targetRevision)
         require(snapshot.isNotEmpty()) { "Agent config revision has no files." }
         snapshot.forEach { (path, content) ->
-            requireAgentConfigSize(content)
             writeTerminalTextFile(
                 path = path,
                 content = content,
@@ -1970,24 +1954,6 @@ class AgentRuntimeManager private constructor(
             ?.also { sessionConversationIds[normalized] = it }
     }
 
-    private fun syncActiveTurnSnapshot(
-        threadId: String,
-        response: Map<String, Any?>,
-        observedTurnId: String?,
-    ) {
-        val active = remoteCodexThreadActivity(response)
-        val activeTurnId = extractActiveTurnId(response)
-        if (active == true && !activeTurnId.isNullOrBlank()) {
-            val currentTurnId = remoteTurnOwnership.activeTurnId(threadId)
-            if (currentTurnId == null || currentTurnId == activeTurnId) {
-                admitRemoteTurn(threadId, activeTurnId)
-            }
-            return
-        }
-        if (active == false && observedTurnId != null) {
-            clearActiveTurn(threadId, expectedTurnId = observedTurnId)
-        }
-    }
 
     private suspend fun request(method: String, params: Any?): Any {
         val response = ensureConnectedSession().sendRequest(method, params)
@@ -2800,49 +2766,6 @@ class AgentRuntimeManager private constructor(
                 protocolEventType == "task_started" ||
                 protocolEventType == "turn_started")) {
             admitRemoteTurn(threadId, turnId)
-        }
-        if (!threadId.isNullOrBlank() && method == "thread/status/changed") {
-            val active = remoteCodexThreadActivity(publicMessage)
-            if (active == true && !turnId.isNullOrBlank()) {
-                admitRemoteTurn(threadId, turnId)
-            } else if (active == false && remotePromptExecutions[threadId] == null) {
-                // An in-flight ACP session/prompt owns its terminal boundary.
-                // A session-level idle notification can race the official
-                // prompt response and carries no stop reason, so it must not
-                // preempt that response. Legacy turn requests have no ACP
-                // prompt execution resource and may still use this fallback.
-                clearActiveTurn(threadId)
-            }
-        }
-        if (!threadId.isNullOrBlank() &&
-            (method == "turn/completed" ||
-                protocolEventType == "task_complete" ||
-                protocolEventType == "turn_complete" ||
-                protocolEventType == "turn_aborted")) {
-            clearActiveTurn(
-                threadId,
-                turnId,
-                terminalStatus = terminalStatusFromAcpParams(
-                    params,
-                    fallback = if (protocolEventType == "turn_aborted") {
-                        "cancelled"
-                    } else {
-                        "completed"
-                    }
-                ),
-            )
-        }
-        if (!threadId.isNullOrBlank() &&
-            (method == "error" || method == "turn/failed") &&
-            params["willRetry"] != true) {
-            // codex app-server emits top-level `error` notifications when a
-            // turn fails terminally (no follow-up turn/completed will come).
-            // Clear the active turn so subsequent thread/read responses
-            // surface active=false to the Flutter side.
-            clearActiveTurn(threadId, turnId, terminalStatus = "error")
-        }
-        if (!threadId.isNullOrBlank() && method == "thread/closed") {
-            clearActiveTurn(threadId, terminalStatus = "cancelled")
         }
 
         val eventAgentId = if (sourceAgentId == null) {
@@ -4342,12 +4265,6 @@ internal fun extractOpenAiApiKey(source: String): String? {
     }.getOrNull()
 }
 
-private fun requireAgentConfigSize(content: String) {
-    require(content.length <= MAX_AGENT_CONFIG_FILE_CHARS) {
-        "Agent configuration is too large."
-    }
-}
-
 private fun Map<String, Any?>.stringValue(key: String): String? {
     return this[key]?.toString()?.trim()?.takeIf { it.isNotEmpty() }
 }
@@ -4377,7 +4294,6 @@ internal const val CLAUDE_SETTINGS_JSON_DISPLAY_PATH = "~/.claude/settings.json"
 internal const val OPENCODE_CONFIG_JSON_DISPLAY_PATH = "~/.config/opencode/opencode.json"
 private const val AGENT_CONFIG_START_MARKER = "__OMNI_AGENT_CONFIG_START__"
 private const val AGENT_CONFIG_END_MARKER = "__OMNI_AGENT_CONFIG_END__"
-private const val MAX_AGENT_CONFIG_FILE_CHARS = 1_048_576
 internal const val DEFAULT_EMPTY_JSON_FILE = "{\n}\n"
 
 private fun Map<String, Any?>.mapValue(key: String): Map<String, Any?> {

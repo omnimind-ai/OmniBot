@@ -4,6 +4,7 @@ import android.content.Context
 import com.google.gson.Gson
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -11,6 +12,35 @@ import org.junit.rules.TemporaryFolder
 class AcpAgentProfileStoreTest {
     @get:Rule
     val directory = TemporaryFolder()
+
+    @Test
+    fun `session model survives reopening stays isolated and is removed on delete`() {
+        val first = AcpAgentProfileStore(acpProfileStoreTestContext(directory.root))
+        val values = mapOf("providerProfileId" to "provider-a", "model" to "model-b")
+        first.saveSessionConfiguration("session-a", values)
+        val reopened = AcpAgentProfileStore(acpProfileStoreTestContext(directory.root))
+        assertEquals(values, reopened.sessionConfiguration("session-a"))
+        assertEquals(emptyMap<String, String>(), reopened.sessionConfiguration("session-b"))
+        reopened.unbindSession("session-a")
+        assertEquals(emptyMap<String, String>(),
+            AcpAgentProfileStore(acpProfileStoreTestContext(directory.root)).sessionConfiguration("session-a"))
+    }
+
+    @Test
+    fun `session catalog reads provider cache without accepting obsolete credentials`() {
+        val context = acpProfileStoreTestContext(directory.root)
+        val profile = cn.com.omnimind.baselib.llm.ModelProviderProfile(
+            id = "provider-a", name = "Provider A", baseUrl = "https://example.com/v1", revision = 2,
+        )
+        context.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE).edit()
+            .putString("flutter.cached_provider_models_with_base_v2",
+                """{"provider-a":{"apiBase":"https://example.com/v1","profileRevision":2,"models":[{"id":"model-b","displayName":"Model B"}]}}""")
+            .commit()
+        val store = cn.com.omnimind.baselib.llm.ModelProviderConfigStore
+        assertEquals(listOf("model-b"), store.cachedModels(context, profile).map { it.id })
+        assertTrue(store.cachedModels(context, profile.copy(revision = 3)).isEmpty())
+        assertTrue(store.cachedModels(context, profile.copy(baseUrl = "https://other.example/v1")).isEmpty())
+    }
 
     @Test
     fun `custom command containing xiaowan survives saving and reopening`() =

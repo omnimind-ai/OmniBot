@@ -857,9 +857,7 @@ class _InlineToolCallCardState extends State<_InlineToolCallCard> {
         ? _resolveInlineFilePath(cardData, diffSummary)
         : '';
     final fileName = isFileTool ? _lastPathSegment(filePath) : '';
-    final trailingLabel = isFileTool
-        ? ''
-        : _inlineToolTrailingLabel(cardData, status: status);
+    final trailingLabel = _inlineToolTrailingLabel(cardData, status: status);
     final useLightProfile =
         !context.isDarkTheme && widget.visualProfile.usesLightText;
     final titleColor = context.isDarkTheme

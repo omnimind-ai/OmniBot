@@ -159,6 +159,7 @@ class ChatInputArea extends StatefulWidget {
   final String? contextUsageTooltipMessage;
   final VoidCallback? onLongPressContextUsageRing;
   final ChatModelPickerSettings? modelPickerSettings;
+  final Widget? runtimeConfigButton;
   final AgentRunSettings? agentRunSettings;
   final AgentRunSettingsChanged? onAgentRunSettingsChanged;
   final FutureOr<void> Function()? onAgentRunSettingsOpened;
@@ -198,6 +199,7 @@ class ChatInputArea extends StatefulWidget {
     this.contextUsageTooltipMessage,
     this.onLongPressContextUsageRing,
     this.modelPickerSettings,
+    this.runtimeConfigButton,
     this.agentRunSettings,
     this.onAgentRunSettingsChanged,
     this.onAgentRunSettingsOpened,

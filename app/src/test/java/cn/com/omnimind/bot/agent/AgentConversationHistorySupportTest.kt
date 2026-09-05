@@ -19,6 +19,20 @@ import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
 
 class AgentConversationHistorySupportTest {
+    @Test
+    fun `turn failure display card is never replayed as a model tool call`() {
+        val status = AgentConversationEntry(
+            id = 1, conversationId = 5, conversationMode = "agent",
+            entryId = "turn-agent-status",
+            entryType = AgentConversationHistoryRepository.ENTRY_TYPE_TOOL_EVENT,
+            status = "error",
+            summary = "Invalid model",
+            payloadJson = """{"toolType":"status","toolName":"turn/failed","argsJson":"{}"}""",
+            createdAt = 1, updatedAt = 1,
+        )
+        assertTrue(AgentConversationHistorySupport.buildPromptRelevantMessages(listOf(status)).isEmpty())
+    }
+
     private val gson = Gson()
     private val canonicalJson = Json {
         ignoreUnknownKeys = true

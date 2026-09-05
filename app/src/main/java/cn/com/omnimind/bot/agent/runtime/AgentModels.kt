@@ -184,6 +184,9 @@ interface AgentCallback {
      * Agent 思考内容更新
      */
     suspend fun onThinkingUpdate(thinking: String)
+
+    /** Provider input snapshot, projected as an official ACP pending tool call; not execution. */
+    suspend fun onToolCallInput(toolCall: AssistantToolCall, toolType: String?) = Unit
     
     /**
      * 工具调用开始

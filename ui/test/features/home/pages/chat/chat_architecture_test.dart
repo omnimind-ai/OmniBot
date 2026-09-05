@@ -5,6 +5,71 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   const chatRoot = 'lib/features/home/pages/chat';
 
+  test('only the prompt response completes the shared reducer', () {
+    final reducer = File(
+      'lib/services/agent_event_reducer.dart',
+    ).readAsStringSync();
+    final response = reducer
+        .split('AgentReduceResult reducePromptResponse(')
+        .last
+        .split('AgentReduceResult reduce(')
+        .first;
+    expect(response, contains('_completeTurn('));
+    // One call plus the method declaration; notifications cannot end a request.
+    expect(
+      RegExp(
+        r'^\s*(?:void )?_completeTurn\(',
+        multiLine: true,
+      ).allMatches(reducer),
+      hasLength(2),
+    );
+    final coordinator = File(
+      '$chatRoot/services/chat_conversation_runtime_coordinator.dart',
+    ).readAsStringSync();
+    expect(coordinator, isNot(contains('_isTerminalAcpBindingEvent')));
+    final page = File('$chatRoot/chat_page.dart').readAsStringSync();
+    final errors = page
+        .split('void handleAgentError(')
+        .last
+        .split('void interruptActiveToolCard(')
+        .first;
+    expect(errors, contains('applyAcpPromptResponse('));
+    expect(errors, isNot(contains('unregisterTask(')));
+    expect(errors, isNot(contains('messages.insert(')));
+  });
+
+  test('remote notifications and snapshots do not decide prompt termination', () {
+    final native = File(
+      '../app/src/main/java/cn/com/omnimind/bot/agent/runtime/AgentRuntimeManager.kt',
+    ).readAsStringSync();
+    final notification = native
+        .split('val protocolEventType = if (method == "codex/event")')
+        .last
+        .split('val eventAgentId =')
+        .first;
+    expect(notification, isNot(contains('clearActiveTurn(')));
+    expect(native, isNot(contains('syncActiveTurnSnapshot(')));
+  });
+
+  test(
+    'normal chat delegates failures without inserting a second error message',
+    () {
+      final source = File(
+        '$chatRoot/chat_page_conversation_flow.dart',
+      ).readAsStringSync();
+      final send = source
+          .split('Future<void> _sendPureChatMessage(')
+          .last
+          .split('Future<bool> _handleExecutableTaskFlow(')
+          .first;
+      final handler = send.substring(send.lastIndexOf('} catch (error) {'));
+      expect(handler, contains('_runtimeCoordinator.applyAcpPromptResponse('));
+      expect(handler, isNot(contains('_messages.insert(')));
+      expect(handler, isNot(contains('ChatMessageModel(')));
+      expect(handler, isNot(contains('isAiResponding')));
+    },
+  );
+
   test('chat page keeps per-mode values in ChatPageModeState', () {
     final source = File('$chatRoot/chat_page.dart').readAsStringSync();
 

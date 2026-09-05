@@ -212,6 +212,18 @@ internal class AcpAgentProfileStore(context: Context) {
             ?.takeUnless { it in catalog.retiredAgentIds }
     }
 
+    /** Embedded Agent settings share the existing session owner and deletion path. */
+    fun sessionConfiguration(sessionId: String): Map<String, String> {
+        val raw = preferences.getString("session_config:$sessionId", null) ?: return emptyMap()
+        return gson.fromJson(raw, object : TypeToken<Map<String, String>>() {}.type)
+    }
+
+    fun saveSessionConfiguration(sessionId: String, values: Map<String, String>) {
+        check(preferences.edit().putString("session_config:$sessionId", gson.toJson(values)).commit()) {
+            "Failed to persist ACP session configuration."
+        }
+    }
+
     /**
      * Remove the durable owner of an ACP session after `session/delete`.
      *
@@ -225,6 +237,7 @@ internal class AcpAgentProfileStore(context: Context) {
         val normalizedSessionId = sessionId.trim()
         if (normalizedSessionId.isEmpty()) return
         val bindings = sessionBindings().toMutableMap()
+        preferences.edit().remove("session_config:$normalizedSessionId").apply()
         if (bindings.remove(normalizedSessionId) != null) {
             preferences.edit()
                 .putString(KEY_SESSION_BINDINGS, gson.toJson(bindings))

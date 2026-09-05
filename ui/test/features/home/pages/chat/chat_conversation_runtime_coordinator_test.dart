@@ -60,6 +60,17 @@ void main() {
     String agentName = '小万',
     bool hostAssignedTurn = false,
   }) {
+    if (method == 'turn/started' &&
+        coordinator
+                .runtimeFor(conversationId: conversationId, mode: mode)
+                ?.currentDispatchTurnId ==
+            null) {
+      coordinator.beginAcpTurn(
+        taskId: turnId,
+        conversationId: conversationId,
+        mode: mode,
+      );
+    }
     coordinator.applyAgentEvent(
       conversationId: conversationId,
       mode: mode,
@@ -73,6 +84,27 @@ void main() {
         conversationId: conversationId,
         hostAssignedTurn: hostAssignedTurn,
       ),
+    );
+  }
+
+  void completePrompt(
+    int conversationId, {
+    required String turnId,
+    String? sessionId,
+    String mode = kChatRuntimeModeAgent,
+    Map<String, dynamic> params = const {},
+  }) {
+    final runtime = coordinator.runtimeFor(
+      conversationId: conversationId,
+      mode: mode,
+    )!;
+    coordinator.applyAcpPromptResponse(
+      taskId: runtime.activeRunId ?? runtime.currentDispatchTurnId ?? turnId,
+      conversationId: conversationId,
+      mode: mode,
+      sessionId: sessionId ?? runtime.activeAcpSessionId,
+      turnId: turnId,
+      stopReason: params['stopReason'] as String? ?? 'end_turn',
     );
   }
 
@@ -724,9 +756,8 @@ void main() {
       turnId: 'turn-xiaowan-old',
       sessionId: 'session-xiaowan-old',
     );
-    applyAcp(
+    completePrompt(
       conversationId,
-      'turn/completed',
       turnId: 'turn-xiaowan-old',
       sessionId: 'session-xiaowan-old',
     );
@@ -771,7 +802,7 @@ void main() {
   });
 
   test(
-    'marks a stale terminal event as handled but not current-turn-owned',
+    'ignores a stale private terminal event without claiming the current turn',
     () {
       const conversationId = 45;
       applyAcp(
@@ -795,7 +826,7 @@ void main() {
         mode: kChatRuntimeModeAgent,
       )!;
 
-      expect(result.handled, isTrue);
+      expect(result.handled, isFalse);
       expect(result.affectsActiveTurn, isFalse);
       expect(runtime.activeAcpTurnId, 'turn-current');
       expect(runtime.isAiResponding, isTrue);
@@ -872,6 +903,16 @@ void main() {
   test('keeps ACP turns isolated by conversation and finalizes them', () {
     const firstConversation = 2101;
     const secondConversation = 2102;
+    coordinator.beginAcpTurn(
+      taskId: 'turn-first',
+      conversationId: firstConversation,
+      mode: kChatRuntimeModeAgent,
+    );
+    coordinator.beginAcpTurn(
+      taskId: 'turn-second',
+      conversationId: secondConversation,
+      mode: kChatRuntimeModeAgent,
+    );
     applyAcp(
       firstConversation,
       'session/update',
@@ -896,9 +937,8 @@ void main() {
         },
       },
     );
-    applyAcp(
+    completePrompt(
       firstConversation,
-      'turn/completed',
       turnId: 'turn-first',
       params: <String, dynamic>{'status': 'completed'},
     );
@@ -1033,9 +1073,8 @@ void main() {
           },
         },
       );
-      applyAcp(
+      completePrompt(
         conversationId,
-        'turn/completed',
         turnId: firstTurn,
         sessionId: firstSession,
         params: const <String, dynamic>{
@@ -1092,9 +1131,8 @@ void main() {
           },
         },
       );
-      applyAcp(
+      completePrompt(
         conversationId,
-        'turn/completed',
         turnId: secondTurn,
         sessionId: secondSession,
       );
@@ -1292,6 +1330,112 @@ void main() {
           },
         );
       }
+    }
+  }
+
+  for (final legacyMethod in [
+    'state_change',
+    'state_update',
+    'thread/status/changed',
+    'turn/completed',
+    'turn/failed',
+    'thread/closed',
+    'error',
+    'legacy:completed',
+    'legacy:error',
+  ]) {
+    for (final stopReason in ['end_turn', 'cancelled', 'error']) {
+      test(
+        'legacy status cannot terminate the owning prompt: $legacyMethod $stopReason',
+        () {
+          const conversationId = 2110;
+          const taskId = 'status-request';
+          const sessionId = 'status-session';
+          coordinator.beginAcpTurn(
+            taskId: taskId,
+            conversationId: conversationId,
+            mode: kChatRuntimeModeAgent,
+          );
+          coordinator.bindAcpSession(
+            taskId: taskId,
+            conversationId: conversationId,
+            mode: kChatRuntimeModeAgent,
+            sessionId: sessionId,
+          );
+          final runtime = coordinator.runtimeFor(
+            conversationId: conversationId,
+            mode: kChatRuntimeModeAgent,
+          )!;
+          for (final status in ['running', 'idle', 'failed', 'cancelled']) {
+            coordinator.applyAgentEvent(
+              conversationId: conversationId,
+              mode: kChatRuntimeModeAgent,
+              event: {
+                if (legacyMethod.startsWith('legacy:')) ...{
+                  'kind': legacyMethod.split(':').last,
+                  'taskId': taskId,
+                  'error': 'legacy stream failure',
+                } else
+                  'method': legacyMethod.startsWith('state_')
+                      ? 'session/update'
+                      : legacyMethod,
+                'params': {
+                  'sessionId': sessionId,
+                  if (!legacyMethod.startsWith('state_')) ...{
+                    'status': status,
+                    'willRetry': status == 'running',
+                    'error': 'legacy status failure',
+                  } else
+                    'update': {
+                      'sessionUpdate': legacyMethod,
+                      'state': status,
+                      'stopReason': 'error',
+                      'error': 'legacy status failure',
+                    },
+                },
+              },
+            );
+            expect(runtime.isAiResponding, isTrue, reason: status);
+            expect(runtime.messages, isEmpty, reason: status);
+            expect(
+              coordinator.isTaskActive(
+                taskId: taskId,
+                conversationId: conversationId,
+                mode: kChatRuntimeModeAgent,
+              ),
+              isTrue,
+              reason: status,
+            );
+          }
+          final result = coordinator.applyAcpPromptResponse(
+            taskId: taskId,
+            conversationId: conversationId,
+            sessionId: sessionId,
+            stopReason: stopReason,
+            error: stopReason == 'error' ? 'real provider failure' : null,
+          );
+          expect(result.handled, isTrue);
+          expect(runtime.isAiResponding, isFalse);
+          final failures = runtime.messages.where(
+            (message) => message.cardData?['title'] == '本轮执行失败',
+          );
+          expect(failures, hasLength(stopReason == 'error' ? 1 : 0));
+          final messageCount = runtime.messages.length;
+          expect(
+            coordinator
+                .applyAcpPromptResponse(
+                  taskId: taskId,
+                  conversationId: conversationId,
+                  sessionId: sessionId,
+                  stopReason: 'error',
+                  error: 'late duplicate failure',
+                )
+                .handled,
+            isFalse,
+          );
+          expect(runtime.messages, hasLength(messageCount));
+        },
+      );
     }
   }
 
@@ -1558,12 +1702,7 @@ void main() {
           },
         },
       );
-      applyAcp(
-        conversationId,
-        'turn/completed',
-        turnId: turnId,
-        sessionId: sessionId,
-      );
+      completePrompt(conversationId, turnId: turnId, sessionId: sessionId);
       applyAcp(
         conversationId,
         'session/update',
@@ -1703,6 +1842,11 @@ void main() {
   test('routes normal chat chunks through the ACP stream', () {
     const conversationId = 2301;
     const turnId = 'turn-normal';
+    coordinator.beginAcpTurn(
+      taskId: turnId,
+      conversationId: conversationId,
+      mode: kChatRuntimeModeNormal,
+    );
     final runtime = coordinator.ensureRuntime(
       conversationId: conversationId,
       mode: kChatRuntimeModeNormal,
@@ -1720,9 +1864,8 @@ void main() {
         },
       },
     );
-    applyAcp(
+    completePrompt(
       conversationId,
-      'turn/completed',
       turnId: turnId,
       mode: kChatRuntimeModeNormal,
       params: <String, dynamic>{'status': 'completed'},
@@ -1929,12 +2072,7 @@ void main() {
       isTrue,
     );
 
-    applyAcp(
-      conversationId,
-      'turn/completed',
-      turnId: turnId,
-      sessionId: sessionId,
-    );
+    completePrompt(conversationId, turnId: turnId, sessionId: sessionId);
 
     final runtime = coordinator.runtimeFor(
       conversationId: conversationId,

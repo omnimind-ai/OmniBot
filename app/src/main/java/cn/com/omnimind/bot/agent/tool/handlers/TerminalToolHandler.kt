@@ -65,8 +65,7 @@ class TerminalToolHandler(
     )
 
     data class TerminalSessionReadArgs(
-        val sessionId: String,
-        val maxChars: Int?
+        val sessionId: String
     )
 
     data class DirectTerminalSessionSnapshot(
@@ -402,12 +401,7 @@ class TerminalToolHandler(
             }
             val readResult = EmbeddedTerminalRuntime.readSession(helper.context, sessionId)
             val artifact = persistTerminalSessionTranscript(workspace, sessionId, readResult.transcript, toolName)
-            val content = parsedArgs.maxChars?.let { maxChars ->
-                helper.truncateTerminalTail(
-                    EmbeddedTerminalRuntime.sanitizeTerminalNoise(readResult.transcript),
-                    maxChars
-                )
-            } ?: EmbeddedTerminalRuntime.trimTerminalOutput(
+            val content = EmbeddedTerminalRuntime.trimTerminalOutput(
                 EmbeddedTerminalRuntime.sanitizeTerminalNoise(readResult.transcript)
             )
             val payload = linkedMapOf<String, Any?>(
@@ -1033,8 +1027,7 @@ class TerminalToolHandler(
         val sessionId = args["sessionId"]?.jsonPrimitive?.content?.trim().orEmpty()
         require(sessionId.isNotEmpty()) { "缺少 sessionId" }
         return TerminalSessionReadArgs(
-            sessionId = sessionId,
-            maxChars = args["maxChars"]?.jsonPrimitive?.intOrNull?.takeIf { it > 0 }
+            sessionId = sessionId
         )
     }
 }

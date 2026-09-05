@@ -493,3 +493,111 @@ flutter test test/services/model_provider_config_service_test.dart \
 ```
 
 上述定向集 46 项通过，并全部纳入 `scripts/test-agent-runtime.sh --offline`。生产修改仅在现有 Provider service 和设置页事件处理，没有前端布局变化，没有 Agent 生命周期变化。组件测试使用真实 UI、service 和 SharedPreferences 测试存储，原生配置／网络响应为 MethodChannel 替身；不能据此宣称每个真实模型供应商和 Android 重启持久化均已验证。最终 APK 与安装记录见 PR 汇总。
+
+### 7.10 2026-09-05：工具工作卡反映实际输入和结果
+
+用户报告小万制作 HTML 时看不到工作卡，以及报错后的显示与实际不一致。本次只修复已有 Provider → ACP → shared reducer → 工具卡的投影，不新增 Agent、状态机、协议、自动重放或页面退出后的执行策略。
+
+- 小万原先只在模型完整返回后、开始执行工具时上报工作卡。现在沿现有回调链转交 Provider 已有 ID／名称的工具输入，使用官方 `tool_call(status=pending)` 和同 ID 的 `tool_call_update`。输入不完整时不执行；真实执行才上报 `in_progress`，真实工具结果决定 `completed`／`failed`。展示复用已有 300ms 更新节奏，不截断输入或限制模型生成。
+- 前端不再将所有 `pending` 解释成等待批准。普通 pending 显示“准备中”，实际批准请求仍由原有 ACP permission request 卡负责。移除文件卡隐藏状态标签的特殊分支；没有 HTML 专用分支。
+- 流式 `rawInput` 尚非完整 JSON 时，原先显示整个事件封装、后续可能保留旧参数；现在原样显示输入字符串，同卡更新，完整 JSON 和工具结果继续走现有解析器。
+- 移除 shared reducer 在 prompt 结束时替未完成工具补“成功”的推断。已收到的成功／失败结果保持不变；未收到工具结果的卡片使用已有“中断”展示，不声称文件已写入，不产生新的工具终止协议事件。官方 prompt 响应／错误／取消仍是唯一所属执行边界。
+
+持久化回归已在原有测试文件中维护，统一入口仍为 `scripts/test-agent-runtime.sh --offline`：
+
+1. `AgentOrchestratorTest`：真实 Http client、累积器、orchestrator、ACP bridge 串联，SSE 尚未结束就断言 pending 卡出现；部分输入不执行；正常完成仅执行一次；断流／取消不执行、不重放。
+2. `AgentLlmStreamAccumulatorTest`／`XiaowanAcpPresentationBridgeTest`：并行输入保持原始 ID、不捏造无 ID 卡片、同卡稀疏更新、工具失败、完成后重放不复活；现有 Responses 名称恢复测试也检查流式名称。
+3. `agent_event_reducer_test.dart`／`agent_tool_summary_card_test.dart`：输入逐次更新与消息序列化恢复；官方结束／取消／报错不把未完成工具改成成功；文件卡准备状态可见且不误称正在写入或等待确认。
+
+上述关键场景均先复现红测再修复。最终本地集合：JVM 491、Flutter 461、Node 52、WebChat 12 项通过，WebChat typecheck/build 通过。SSE 和工具执行端是确定性替身；消息序列化恢复不等同于真机数据库／进程恢复。手机未连接，尚未验证实际 ANR、真实 Provider 报错频率及离开页面后继续执行，不将自动测试通过表述为这些问题均已解决。
+
+### 7.11 2026-09-05：内容完整性与高额度配置（替代机械删除一切上限）
+
+最新用户决定：必须有上限时尽量配置较高额度，优先使用官方能力；已经消除的内容丢失不恢复。不是把模型容量写成无限，也不是删除用户主动选择的读取范围、操作系统权限、有效数据校验或官方 ACP 请求参数。
+
+本次实际修改：
+
+- Office 预览原先只保留 Word 24 段／每段 240 字符、Excel 3 表／20 行／8 列／每格 48 字符、PPT 8 页／每页 8 行／每行 160 字符。删除这些解析器内的内容丢弃逻辑；真实 ZIP 文档功能测试验证全部段落、单元格和末页内容，不改变页面布局。
+- `file_read`、`skills_read`、普通与 Shizuku 终端读取不再宣传或应用自定义 `maxChars` 截断，旧调用即使携带该字段也不会截短正文。文件显式行范围／偏移仍是查询语义。删除无人使用的 SharedHelper 截断函数。
+- 删除 `AgentEventAdapter.compactToolResultContent` 及头尾省略／offload 封装，orchestrator 直接使用完整工具结果。此前默认分支虽已不截断，但仍留有能重新启用的旧实现。
+- 删除 Agent 用户配置文件约 100 万字符的本地拒绝条件；不改变配置归属或用户编辑入口。
+- 平台 embedding 不再额外限制响应 2 MiB、向量 8,192 维。保留非空、有限数值检查；不修改 memory API 或已有记忆数据。真实响应解析测试覆盖超过旧额度的响应和 8,193 维向量。
+- Codex 自定义模型目录仍按官方必填 `truncation_policy` 生成，不删除必填字段。由固定 `bytes / 10000` 改为 `tokens / contextWindow`；额度跟随 ProviderModelOption.contextLimit，缺失时沿用已有 272,000-token 回退值。128,000-token 模型对应同等工具输出额度。该回退不代表未知 Provider 真的支持 272,000 token，应按实际模型配置容量。用户可使用官方 `tool_output_token_limit` 显式覆盖，适配层不新建限制协议。参见 [官方配置参考](https://learn.chatgpt.com/docs/config-file/config-reference) 与 [官方模型目录类型](https://github.com/openai/codex/blob/main/codex-rs/protocol/src/openai_models.rs)。提高额度可能更快占满上下文，不保证工具结果和整个历史都能同时进入单次模型请求。
+- 删除 orchestrator 的 `TerminalTurnRequestFailure` 重复错误包装和第二个终止分支。原始异常由既有外层错误路径返回，ACP 所属请求仍负责结束；取消和输出后禁止重放的规则不变。
+
+持久化检测入口：
+
+```bash
+node scripts/audit-agent-capability-limits.mjs
+node scripts/audit-agent-capability-limits.mjs --json
+bash scripts/test-agent-runtime.sh --offline
+```
+
+扫描器直接遍历 app、assists、baselib、ReTerminal、ui/lib、webchat/src，不受 Git 对 runtime/ 的忽略规则影响；扫描结果是待审阅候选，不能将正则匹配数量当作已确认限制或已完成人工验证。本轮扫描得到 1,515 处候选，包括协议判断、超时、UI 排版、哈希截取和废弃实现。
+
+尚未处理完的审阅项，不能宣称“所有能力限制已取消”：语音输入／音频响应大小策略；旧 SandboxPluginPool 中的包大小／文件数／查询配额及其是否仍有可达入口；历史工具压缩的私有死代码；WebChat 显式 maxChars 参数；错误展示的 400 字符省略；Harness 自身的技能目录额度和模型固有容量。按最新决定，应先确认所有者与可达性，再优先调高官方或用户配置，而非批量删除 require、timeout、权限检查或 UI maxLines。
+
+本次验证结果：统一脚本的 Node 56 项与 JVM 494 项（45 个测试类）通过；Office Flutter 6 项通过；`git diff --check` 通过。Codex 目录测试先因旧 bytes 策略失败，修改后通过；embedding 越界响应测试先失败后通过。未运行真实 Provider、真机安装或本轮完整 Flutter/WebChat 回归，未声称手机上的已安装版本已经变化。
+
+### 7.12 2026-09-05：删除审阅发现的六处额外策略
+
+本节修正 7.10 中“将未完成工具统一显示中断”的决定；不再把请求结束推断成工具终止结果。
+
+1. 小万配置不再写死推理档位，也不默认关闭思考。当前 Provider 模型目录只有 reasoning 布尔能力，没有具体档位，故不伪造 thought_level 选项；模型请求不填 reasoning override，由 Provider 使用自身默认值。外部 ACP Harness 实际声明的 configOptions 仍完整展示。删除无运行时调用、会把 max/xhigh 降成 high 的旧 normalizeXiaowanReasoningEffort。
+2. 模型选择通过已有 AcpAgentProfileStore 按 sessionId 持久化，附带 Provider identity。load/resume 初始化时读取同 session 配置，不把另一个 Provider 的选择带过去；session/delete 的既有解绑路径同时清理配置。先确认配置合法并持久化成功，再更新内存值；没有配置重放、自动重开或新增生命周期。
+3. 创建、恢复和 initialize 不再调用 /models。ModelProviderConfigStore 只读 Provider 编辑器已有缓存，核对 profileId、规范化地址和 revision；不匹配则不采用旧目录。已绑定模型仍可启动，目录刷新由原有 Provider 设置入口负责。没有增加另一份模型缓存。
+4. shared reducer 删除请求结束时批量改写工具卡状态的函数。保留最近一次真实工具状态及结果；请求结束仍由原有 prompt response 路径投影，不替工具补 success/interrupted。显式用户取消路径与真实工具终止更新不在此批量改写范围内。
+5. 不完整工具调用错误不再固定声称“已自动重试一次”。实际重试仍仅由既有 HTTP 层在允许的条件下负责，错误文案不替它编造经过。
+6. HttpAgentLlmClient 删除单元素模型候选循环、单元素请求变体循环、仅重抛异常的包装与 StreamRequestVariant。直接解析一次配置路由、编码一次请求并调用既有传输；保留 Responses 官方函数名兼容及真实传输重试。原变体函数测试替换为实际 HttpAgentLlmClient 请求捕获测试，逐字段比较真实发送内容且断言只发送一次。
+
+维护入口仍为 `bash scripts/test-agent-runtime.sh --offline`。新增／调整用例覆盖：默认不伪造推理能力、配置存储重开和会话隔离／删除、Provider 目录版本失效、真实请求字段与次数、未完成工具在正常结束／错误／取消后的结果不被伪造、无重试时的错误文案。配置持久化测试使用可重开的 SharedPreferences 测试实现；不等同于真机杀进程验收。
+
+本次执行 `bash scripts/test-agent-runtime.sh --offline --skip-webchat`：JVM 504 项（47 个测试类）、Flutter 468 项、Node 58 项通过，`git diff --check` 通过。未运行真实 Provider 请求、WebChat 验收、APK 安装或真机进程恢复；未将单元测试替身表述为这些端到端场景已验证。
+
+### 7.13 2026-09-05：移除旧状态裁决与重复错误消息
+
+按现有 Conversation → ACP Session → 请求 → Item 所有权向下收敛，本次只处理两项，不新增生命周期、重试或错误去重层：
+
+- 删除 reducer 的 `state_change` / `state_update` 投影、附带 usage 兼容读取，以及 `thread/started` / `thread/status/changed` 对请求启动、结束、失败的裁决；删除 coordinator 对 thread status 的任务解绑判断及不再使用的状态解析函数。未投影的 update 不再被当作需要请求归属的内容；既有未知更新处理不启动或结束请求。标准 usage/config/title 更新仍走原入口。
+- 普通聊天 catch 只调用已有 `applyAcpPromptResponse`，删除页面的 `isAiResponding` 裁决、额外 unregister 分支和“抱歉，发送消息失败”消息插入。请求所有者已有的任务身份校验继续忽略取消／结束后的迟到异常；后台请求的失败仍归原会话。没有新增错误消息去重机制。
+- 此次删除范围不等同于所有旧事件兼容全部移除；其他旧 item/turn 输入仍待独立审阅，不以本次修改扩大范围。
+
+持久化回归：`chat_conversation_runtime_coordinator_test.dart` 新增 9 个组合（3 种旧状态入口 × 正常结束／取消／失败），验证旧 running/idle/failed/cancelled 不影响当前请求与任务绑定，真实结果仍结束请求且重复结果不新增消息；`chat_architecture_test.dart` 增加页面不再插入第二份错误的源代码约束。两类检查修改前共 10 项失败，修改后通过。旧 reducer 测试改为验证状态不能启动请求、idle 不结束正在输出的思考内容。
+
+可重复执行（在 ui 目录，Flutter 不在 PATH 时使用本机绝对路径）：
+
+```bash
+flutter test test/features/home/pages/chat/chat_conversation_runtime_coordinator_test.dart test/features/home/pages/chat/chat_architecture_test.dart test/services/agent_event_reducer_test.dart test/services/agent_runtime_service_test.dart test/features/home/pages/chat/conversation_manager_lifecycle_test.dart
+```
+
+上述 331 项通过，且这些测试文件已被 `scripts/test-agent-runtime.sh` 收录。额外 Node 契约 41/42 通过：Provider 缓存测试仍以全文件禁止 `refreshAndGetModels`，与当前配置刷新实现冲突，本次未修改该配置路径或放宽该测试。`flutter analyze` 因本机缺少 analysis-server snapshot 启动失败；直接 Dart 分析器可运行。未运行真机、真实 Provider 请求或 APK 安装；本次不宣称完整验收通过。
+
+### 7.14 2026-09-05：终态决定权归现有 ACP 请求所有者
+
+本节继续 7.13，不新建协议、reducer、生命周期类或错误去重层。当前请求终态从其 `session/prompt` 返回值／所属请求异常，以及既有显式 ACP 取消路径进入 coordinator 的 `applyAcpPromptResponse`，再由 `reducePromptResponse` 投影。reducer 的 `_completeTurn` 仅剩这一处调用。
+
+已删除：
+
+- Flutter 对 `turn/completed`、`turn/failed`、`thread/closed`、通用 `error/willRetry` 的完成／失败裁决；旧 `kind:completed/error` 不再转换成这些私有终态。旧终态也不再触发“缺少 turnId”的兼容警告。保留旧内容读取，不赋予它结束当前请求的权限。
+- coordinator 按通知解绑任务的分支，以及根据缺失 id 猜测可以结束本地请求的兼容函数。
+- Agent 发送 catch、另一条普通聊天 Agent flow catch、`handleAgentError` 中页面自行插入错误消息、解绑和按 `isAiResponding` 决定如何结束的路径。没有活动请求的准备错误只显示 toast，不改一组生命周期标志。已拥有请求的错误交给现有 coordinator 校验所属任务。
+- 远端 Kotlin 通知中按 thread status、turn complete/failed、error 或 thread closed 清理请求的分支；读取 thread 快照时同步／清理活动请求的函数；prompt finally 的重复终态清理。真实返回／异常路径继续释放资源，连接关闭仍走已有请求取消与断连清理。
+- 页面监听私有完成事件收尾 Plan 模式的分支及对应 id 集合；既有收尾行为改在 awaited prompt response 返回后执行。
+
+验证：扩展已有 coordinator 矩阵至 9 种旧输入 × 3 种真实请求结果，共 27 组，覆盖旧 running/idle/failed/cancelled、willRetry、旧 kind:error/completed 不抢占当前请求，真实失败单条展示，重复结果无副作用。初次扩展的 12 个旧终态用例在修改前失败，修改后通过。其他内容、历史、会话隔离测试的完成步骤改用真正的 `reducePromptResponse` / `applyAcpPromptResponse`，而非在测试内复活旧完成通知。新增源码约束保证 reducer 只有一个完成调用点，页面不插第二份错误，远端通知与快照不清理当前请求。
+
+持久化用例均已包含在 `scripts/test-agent-runtime.sh` 现有测试入口。本次定向执行 8 个 Flutter 测试文件共 385 项通过（7.13 的 5 个文件，加 `chat_bot_sheet_acp_test.dart`、`agent_tool_summary_card_test.dart`、`agent_tool_transcript_test.dart`）；Android `LocalAcpRuntimeTest` 30 项、`RemoteCodexAppServerSessionTest` 3 项通过，Gradle 构建成功；Dart 直接分析无 error，仍有 warning/info；`git diff --check` 通过。Node 契约仍是 41/42，原 Provider 缓存断言冲突未处理，不宣称全仓检查通过。未安装手机、未执行真实 Provider 对话，不能声称手机上的失败频率已经下降。
+
+范围说明：此次统一的是当前请求的终态决定权，并非宣布所有旧 item 字段、远端管理接口、历史导入实现均已移除；这些剩余兼容不能重新获得当前 ACP 请求的终态裁决权。
+
+### 7.15 2026-09-05：实时 Markdown 不再等待请求结束
+
+根因在展示侧，不是 ACP 缺少生命周期：`StreamingText` 在 `isFinal:false` 时把表格替换为等宽 `Text` 预览，并按 `markdownRenderedLength` 拆分 Markdown 前缀和尾部、隐藏部分表格候选内容。表格预览策略可追溯到 2026-07-03 的 `eb1a3967e3f30572e91699d8d6b36f00eb09ebc6`，不是本次终态统一新引入的逻辑；旧测试甚至要求输出尚未结束时不存在 `Table`。
+
+本次删除上述预览、拆分和尾部隐藏分支，当前完整文本直接交给已有 `OmnibotMarkdownBody`。复用所安装 `flutter_markdown 0.7.7+1` 的 `didUpdateWidget` 数据变化重新解析机制，不增加解析器、依赖、流协议或完成判断。合法表头与分隔行到达后即可形成表格，后续行继续更新；尚不构成表格的内容保留普通文本展示，不以“疑似重复”或“尚未完成”为由隐藏。旧 `markdownRenderedLength` 参数暂保留以兼容现有调用，但不再控制 Markdown 拆分或等待。
+
+边界依据：[ACP Prompt Turn](https://agentclientprotocol.com/protocol/v1/prompt-turn) 的内容更新与请求完成分工、[GFM 表格语法](https://github.github.com/gfm/#tables-extension-)以及当前安装的 [flutter_markdown](https://pub.dev/packages/flutter_markdown) 更新实现。ACP 负责执行状态，Markdown 组件负责当前文本的布局；请求结束不是表格渲染条件。保留已有公式、资源链接、选择复制和 Markdown 扩展，不宣称已删除所有自定义 Markdown 语法。该包已停止维护，但依赖迁移不混入此次修复。
+
+持久化验证：先把旧预览测试改成“请求未结束即存在真实 Table”，修改生产代码前失败，修改后通过。新增逐步输入表头／分隔行／两行数据／后续正文、列表和代码块的场景，覆盖旧偏移 null、0、8；验证最终态前后及文本替换、200 行表格末行不丢失。两条要求隐藏不完整原文的旧测试改为要求保留内容。新增用例及既有公式、选择复制测试共 37 项通过；会话 coordinator、reducer、overlay、工具摘要卡和工具记录共 313 项通过。相关渲染测试已接入 `scripts/test-agent-runtime.sh`，直接 Dart 分析两个修改文件无问题，脚本语法与 `git diff --check` 通过。
+
+可重复执行渲染回归：在 `ui` 目录执行 `flutter test test/widgets/streaming_text_test.dart test/widgets/omnibot_markdown_body_math_test.dart`。此次没有执行全仓验收、真实 Provider 对话、手机性能测试或安装；200 行用例仅验证组件树保留内容，不代表任意长度下的帧率保证。仍采用现有组件全快照重新解析，不添加私有节流或截断规则。

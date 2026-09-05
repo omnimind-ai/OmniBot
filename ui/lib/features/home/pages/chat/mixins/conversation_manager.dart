@@ -680,8 +680,9 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
     bool markComplete = false,
     int? lifecycleToken,
     bool rethrowOnFailure = false,
+    bool allowEmpty = false,
   }) async {
-    if (messages.isEmpty) return;
+    if (messages.isEmpty && !allowEmpty) return;
     final token = lifecycleToken ?? captureConversationLifecycleToken();
 
     // 立即捕获状态，防止异步操作期间上下文切换导致的脏读

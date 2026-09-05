@@ -20,6 +20,32 @@ void main() {
     messenger.setMockMethodCallHandler(channel, null);
   });
 
+  testWidgets(
+    'explicit draft reservation creates an identity without a fake message',
+    (tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      var creates = 0;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'createConversation') {
+          creates++;
+          return 901;
+        }
+        return 'SUCCESS';
+      });
+      final key = GlobalKey<_ConversationManagerHarnessState>();
+      await tester.pumpWidget(
+        MaterialApp(home: _ConversationManagerHarness(key)),
+      );
+      await key.currentState!.persistConversationSnapshot();
+      expect(creates, 0);
+      await key.currentState!.persistConversationSnapshot(allowEmpty: true);
+      expect(key.currentState!.currentConversationId, 901);
+      expect(key.currentState!.messages, isEmpty);
+      await key.currentState!.persistConversationSnapshot(allowEmpty: true);
+      expect(creates, 1);
+    },
+  );
+
   testWidgets('stale loadConversation result does not overwrite new thread', (
     tester,
   ) async {

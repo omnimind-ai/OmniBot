@@ -135,9 +135,11 @@ String formatAgentRuntimeErrorForUser(Object? error) {
     case 'provider_unavailable':
       return '统一 Agent Provider 不可用或凭据不完整，请检查 Provider 配置。';
     case 'provider_model_unavailable':
-      return '统一 Agent 模型当前不可用，请刷新模型列表后重新选择。';
+      return '服务商拒绝了当前模型。本轮已停止，请重新选择可用模型后重试。';
     case 'provider_tls_certificate_failure':
       return 'Provider HTTPS 证书校验失败，请检查设备时间和证书链。';
+    case 'provider_stream_interrupted':
+      return '模型响应期间连接中断。本轮已停止，请检查网络后重试；未完成的工具调用不会执行。';
     case 'provider_stream_idle_timeout':
       return 'Provider 长时间没有返回新的流式更新，请检查接口地址、模型和网络后重试。';
     case 'provider_tool_call_incomplete':
@@ -1070,6 +1072,7 @@ class AgentRuntimeService {
     int? conversationId,
     String? agentId,
     bool includeHistory = true,
+    bool refreshConfig = false,
     String? conversationMode,
   }) {
     return _invokeMap('session/load', {
@@ -1078,6 +1081,7 @@ class AgentRuntimeService {
       if (agentId != null && agentId.trim().isNotEmpty)
         'agentId': agentId.trim(),
       'includeHistory': includeHistory,
+      if (refreshConfig) 'refreshConfig': true,
       if (conversationMode != null && conversationMode.trim().isNotEmpty)
         'conversationMode': conversationMode.trim(),
     });

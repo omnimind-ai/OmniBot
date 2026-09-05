@@ -327,7 +327,13 @@ internal object AgentConversationHistorySupport {
                 }
 
                 AgentConversationHistoryRepository.ENTRY_TYPE_TOOL_EVENT -> {
-                    val canonicalAssistantJson = readMap(entry.payloadJson)
+                    val payload = readMap(entry.payloadJson)
+                    // Lifecycle display cards belong to Conversation history, not
+                    // the provider's assistant/tool message protocol.
+                    if (payload["toolType"]?.toString() == "status") {
+                        return@forEachIndexed
+                    }
+                    val canonicalAssistantJson = payload
                         .get("modelAssistantMessageJson")
                         ?.toString()
                         ?.takeIf { it.isNotBlank() }

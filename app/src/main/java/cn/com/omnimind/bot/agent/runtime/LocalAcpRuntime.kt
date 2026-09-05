@@ -2104,6 +2104,15 @@ internal class LocalAcpRuntime(
                 )
             }
             sessions[threadId]?.let {
+                if (args["refreshConfig"] == true && activeAgentId() == AcpAgentProfileStore.XIAOWAN_AGENT_ID) {
+                    check(turnOwnership.activeTurnId(threadId) == null) { "本轮结束后可刷新模型列表" }
+                    val cwd = sessionCwds[threadId] ?: "/workspace"
+                    val refreshed = requireClient().loadSession(
+                        SessionId(threadId), sessionCreationParameters(cwd, args), operationsFactory()
+                    )
+                    registerSession(refreshed, cwd)
+                    return@withLock sessionPayload(refreshed, bindingRepository.getBindingByThreadId(threadId)?.conversationId)
+                }
                 Log.i(
                     TAG,
                     "ACP session/load restored in-memory session=${compactId(threadId)}"

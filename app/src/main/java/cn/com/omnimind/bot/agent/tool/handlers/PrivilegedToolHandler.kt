@@ -56,8 +56,7 @@ class PrivilegedToolHandler(
     )
 
     data class PrivilegedSessionReadArgs(
-        val sessionId: String,
-        val maxChars: Int?
+        val sessionId: String
     )
 
     data class PrivilegedSessionStopArgs(
@@ -313,7 +312,7 @@ class PrivilegedToolHandler(
             val shizukuManager = ShizukuCapabilityManager.get(helper.context)
             val status = shizukuManager.getStatus()
             if (!status.isGranted()) { return helper.permissionRequiredResult(callback, listOf("Shizuku 权限")) }
-            val result = shizukuManager.readPrivilegedSession(sessionId = parsed.sessionId, maxChars = parsed.maxChars)
+            val result = shizukuManager.readPrivilegedSession(sessionId = parsed.sessionId)
             if (result.code == "session_not_found") { forgetOwnedPrivilegedSession(parsed.sessionId) }
             val transcript = result.transcript.ifBlank { result.output }
             val artifacts = mutableListOf<ArtifactRef>()
@@ -398,7 +397,6 @@ class PrivilegedToolHandler(
         require(sessionId.isNotEmpty()) { "缺少 sessionId" }
         return PrivilegedSessionReadArgs(
             sessionId = sessionId,
-            maxChars = args["maxChars"]?.jsonPrimitive?.intOrNull?.takeIf { it > 0 },
         )
     }
 

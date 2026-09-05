@@ -618,32 +618,10 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
         : activeAcpTurnBefore.isEmpty
         ? runtime.isAiResponding && dispatchTurnBefore.isNotEmpty
         : activeAcpTurnBefore == eventTurnId;
-    // Resolve the local render identity before reduction. The reducer may
-    // clear the active ACP fields on a terminal event, but the binding still
-    // needs to be retired using the same session/turn identity.
-    final eventTaskId = runtime.resolveAcpEventRunId(
-      sessionId: eventSessionId,
-      turnId: eventTurnId,
-      fallback:
-          runtime.activeRunId ??
-          runtime.currentDispatchTurnId ??
-          runtime.lastAgentTurnId,
-    );
     final result = _agentEventReducer
         .reduce(runtime: runtime, event: event)
         .copyWith(affectsActiveTurn: affectsActiveTurn);
     if (result.handled) {
-      if (_isTerminalAcpBindingEvent(result.method, event) &&
-          eventTaskId != null) {
-        final binding = _taskBindings[eventTaskId];
-        if (binding?.conversationId == conversationId &&
-            binding?.mode == mode) {
-          // The ACP terminal event has already performed runtime cleanup.
-          // Remove only this task's binding; calling unregisterTask here would
-          // reinterpret the same terminal event and could clear a newer turn.
-          _taskBindings.remove(eventTaskId);
-        }
-      }
       _annotateAgentMessages(runtime, event, result);
       _notifyAcpVoicePlayback(runtime, event, result);
       if (presentation?['compaction'] is Map) {
@@ -734,42 +712,6 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
       }
     }
     return result;
-  }
-
-  bool _isTerminalAcpBindingEvent(String? method, Map<String, dynamic> event) {
-    switch (method) {
-      case 'turn/completed':
-      case 'turn/failed':
-      case 'thread/closed':
-        return true;
-      case 'thread/status/changed':
-        final params = _eventParams(event);
-        final status = (params['status'] ?? params['state'])
-            ?.toString()
-            .trim()
-            .toLowerCase();
-        return status == 'completed' ||
-            status == 'complete' ||
-            status == 'failed' ||
-            status == 'error' ||
-            status == 'cancelled' ||
-            status == 'canceled' ||
-            status == 'inactive' ||
-            status == 'closed';
-      case 'error':
-        return _eventParams(event)['willRetry'] != true;
-      default:
-        return false;
-    }
-  }
-
-  Map<String, dynamic> _eventParams(Map<String, dynamic> event) {
-    final params = event['params'];
-    if (params is Map<String, dynamic>) return params;
-    if (params is Map) {
-      return params.map((key, value) => MapEntry(key.toString(), value));
-    }
-    return event;
   }
 
   /// Keeps ACP assistant text on the same shared voice path that the former

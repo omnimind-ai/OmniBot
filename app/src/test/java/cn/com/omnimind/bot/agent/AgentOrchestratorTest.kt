@@ -21,6 +21,92 @@ import org.junit.Test
 import java.util.Locale
 
 class AgentOrchestratorTest {
+    @Test
+    fun htmlToolCardIsVisibleBeforeArgumentsFinishStreaming() = assertHtmlToolStream("success")
+
+    @Test
+    fun failedHtmlInputDoesNotExecuteOrReplayTheTool() = assertHtmlToolStream("error")
+
+    @Test
+    fun cancelledHtmlInputDoesNotExecuteOrReplayTheTool() = assertHtmlToolStream("cancelled")
+
+    private fun assertHtmlToolStream(outcome: String) = runBlocking {
+        val updates = mutableListOf<com.agentclientprotocol.model.SessionUpdate>()
+        val visible = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val bridge = cn.com.omnimind.bot.agent.runtime.XiaowanAcpEventBridge {
+            updates += it
+            if (it is com.agentclientprotocol.model.SessionUpdate.ToolCall) visible.complete(Unit)
+        }
+        val executor = FakeToolExecutor(
+            results = mapOf("file_write" to listOf(successfulContextResult("file_write")))
+        )
+        var requests = 0
+        var visibleBeforeEnd = false
+        val client = HttpAgentLlmClient(
+            scope = this,
+            modelOverride = AgentModelOverride(
+                providerProfileId = "test-provider",
+                apiBase = "https://example.invalid/v1", apiKey = "test-key", modelId = "test-model"
+            ),
+            streamRequestOp = { _, _, listener, _, _, _, _, _, _, _ ->
+                val source = object : okhttp3.sse.EventSource {
+                    override fun request() = okhttp3.Request.Builder().url("https://example.invalid/v1").build()
+                    override fun cancel() = Unit
+                }
+                requests++
+                if (requests == 1) {
+                    listener.onEvent(source, null, "message",
+                        """{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"html-1","function":{"name":"file_write","arguments":"{\"path\":\"/workspace/index.html\",\"content\":\"<html>"}}]}}]}""")
+                    visibleBeforeEnd = kotlinx.coroutines.withTimeoutOrNull(1000) { visible.await(); true } ?: false
+                    assertTrue("The HTML tool card must exist while input is still streaming", visibleBeforeEnd)
+                    assertTrue("Partial JSON must never execute", executor.executeCalls.isEmpty())
+                    val card = updates.filterIsInstance<com.agentclientprotocol.model.SessionUpdate.ToolCall>().single()
+                    assertEquals(com.agentclientprotocol.model.ToolCallStatus.PENDING, card.status)
+                    if (outcome == "cancelled") throw CancellationException("user cancelled")
+                    if (outcome == "error") {
+                        listener.onFailure(source, java.io.IOException("connection reset"), null)
+                        return@HttpAgentLlmClient source
+                    }
+                    listener.onEvent(source, null, "message",
+                        """{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"hello</html>\"}"}}]},"finish_reason":"tool_calls"}]}""")
+                } else {
+                    listener.onEvent(source, null, "message",
+                        """{"choices":[{"delta":{"content":"HTML 已创建"},"finish_reason":"stop"}]}""")
+                }
+                listener.onEvent(source, null, "message", "[DONE]")
+                source
+            },
+            maxTransientStreamRetries = 2,
+            transientStreamRetryDelayMs = 0,
+        )
+        val result = createOrchestrator(client, executor).run(
+            AgentOrchestrator.Input(
+                callback = bridge,
+                initialMessages = initialMessages("制作一个 HTML 页面"),
+                executionEnv = FakeExecutionEnvironment("制作一个 HTML 页面")
+            )
+        )
+        assertTrue("No work card appeared before the provider finished the input", visibleBeforeEnd)
+        if (outcome != "success") {
+            assertTrue(result is AgentResult.Error)
+            assertEquals(1, requests)
+            assertTrue(executor.executeCalls.isEmpty())
+            assertTrue(updates.filterIsInstance<com.agentclientprotocol.model.SessionUpdate.ToolCallUpdate>().none {
+                it.status == com.agentclientprotocol.model.ToolCallStatus.IN_PROGRESS ||
+                    it.status == com.agentclientprotocol.model.ToolCallStatus.COMPLETED
+            })
+            return@runBlocking
+        }
+        assertTrue(result is AgentResult.Success)
+        assertEquals(listOf("file_write"), executor.executeCalls)
+        assertEquals("<html>hello</html>", executor.executeArguments.single()["content"]?.jsonPrimitive?.content)
+        assertEquals(1, updates.filterIsInstance<com.agentclientprotocol.model.SessionUpdate.ToolCall>().size)
+        val changes = updates.filterIsInstance<com.agentclientprotocol.model.SessionUpdate.ToolCallUpdate>()
+        assertTrue(changes.all { it.toolCallId.value == "html-1" })
+        assertTrue(changes.any { it.status == com.agentclientprotocol.model.ToolCallStatus.IN_PROGRESS })
+        assertEquals(com.agentclientprotocol.model.ToolCallStatus.COMPLETED, changes.last().status)
+    }
+
     private lateinit var originalLocale: Locale
     private val eventJson = Json {
         ignoreUnknownKeys = true
@@ -1648,15 +1734,10 @@ class AgentOrchestratorTest {
 
     @Test
     fun `surfaces transient http 500 without replaying the logical turn`() = runBlocking {
+        val originalFailure = AgentStreamRequestException(500, "internal server error", null)
         val llmClient = FakeLlmClient(
             turns = listOf(assistantTurn(content = "服务恢复后已完成。")),
-            failures = listOf(
-                AgentStreamRequestException(
-                    statusCode = 500,
-                    reason = "internal server error",
-                    responseBody = null
-                )
-            )
+            failures = listOf(originalFailure)
         )
         val callback = RecordingCallback()
 
@@ -1671,6 +1752,7 @@ class AgentOrchestratorTest {
         assertTrue(result is AgentResult.Error)
         assertEquals(1, llmClient.requests.size)
         assertEquals("HTTP 500: internal server error", callback.errors.single())
+        org.junit.Assert.assertSame(originalFailure, (result as AgentResult.Error).exception)
         assertTrue(callback.lastErrorRetryable)
     }
 
@@ -1846,7 +1928,7 @@ class AgentOrchestratorTest {
     }
 
     private fun createOrchestrator(
-        llmClient: FakeLlmClient,
+        llmClient: AgentLlmClient,
         toolExecutor: FakeToolExecutor,
         availableToolNames: Set<String> = emptySet(),
         toolImageContinuationPolicy: AgentToolImageContinuationPolicy =
@@ -1948,7 +2030,8 @@ class AgentOrchestratorTest {
         override suspend fun streamTurn(
             request: ChatCompletionRequest,
             onReasoningUpdate: (suspend (String) -> Unit)?,
-            onContentUpdate: (suspend (String) -> Unit)?
+            onContentUpdate: (suspend (String) -> Unit)?,
+            onToolCallInput: (suspend (AssistantToolCall) -> Unit)?,
         ): ChatCompletionTurn {
             requests += request
             failuresByRequest[requests.size]?.let { throw it }

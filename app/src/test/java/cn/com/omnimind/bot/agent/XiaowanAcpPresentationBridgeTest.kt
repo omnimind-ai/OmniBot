@@ -29,6 +29,33 @@ import kotlinx.serialization.json.JsonElement
 
 class XiaowanAcpPresentationBridgeTest {
     @Test
+    fun `streamed tool input updates one official card without claiming execution`() = runBlocking {
+        val updates = mutableListOf<SessionUpdate>()
+        val bridge = XiaowanAcpEventBridge { updates += it }
+        val call = cn.com.omnimind.bot.agent.AssistantToolCall(
+            id = "html-stream",
+            function = cn.com.omnimind.bot.agent.AssistantToolCallFunction("file_write", "{\"content\":\"<html>"),
+        )
+        bridge.onToolCallInput(call, "file")
+        bridge.onToolCallInput(call.copy(function = call.function.copy(arguments = "{\"content\":\"<html>body")), "file")
+        assertEquals(ToolCallStatus.PENDING, (updates.first() as SessionUpdate.ToolCall).status)
+        val inputUpdate = updates.last() as SessionUpdate.ToolCallUpdate
+        assertEquals(null, inputUpdate.status)
+        assertEquals("{\"content\":\"<html>body", inputUpdate.rawInput?.jsonPrimitive?.content)
+        val args = JsonObject(mapOf("content" to JsonPrimitive("<html>body</html>")))
+        bridge.onToolCallStart(call.id, "file_write", args, "file")
+        bridge.onToolCallStart(call.id, "file_write", args, "file")
+        bridge.onToolCallComplete(call.id, "file_write", ToolExecutionResult.Error("file_write", "Permission denied"))
+        val size = updates.size
+        bridge.onToolCallInput(call, "file")
+        bridge.onToolCallStart(call.id, "file_write", args, "file")
+        assertEquals(size, updates.size)
+        assertEquals(1, updates.filterIsInstance<SessionUpdate.ToolCall>().size)
+        assertEquals(ToolCallStatus.FAILED, (updates.last() as SessionUpdate.ToolCallUpdate).status)
+        assertTrue(updates.filterIsInstance<SessionUpdate.ToolCallUpdate>().all { it.toolCallId.value == call.id })
+    }
+
+    @Test
     fun `image prompt keeps a readable path and enables inline provider input`() {
         val prompt = buildXiaowanPromptParts(
             listOf(

@@ -47,6 +47,33 @@ class HttpAgentLlmClientTest {
     }
 
     @Test
+    fun `does not replay partial tool arguments after http2 reset`() = runBlocking {
+        val scope = CoroutineScope(Job() + Dispatchers.Default)
+        var attempts = 0
+        try {
+            val client = HttpAgentLlmClient(
+                scope = scope,
+                modelOverride = testOverride(),
+                streamRequestOp = { _, _, listener, _, _, _, _, _, _, _ ->
+                    attempts++
+                    val source = dummyEventSource()
+                    listener.onOpen(source, okResponse())
+                    listener.onEvent(source, null, "message",
+                        """{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"write_file","arguments":"{"}}]}}]}""")
+                    listener.onFailure(source, java.io.IOException("stream was reset: CANCEL"), okResponse())
+                    source
+                },
+                maxTransientStreamRetries = 2,
+                transientStreamRetryDelayMs = 0,
+                json = json,
+            )
+            val error = runCatching { client.streamTurn(simpleRequest()) }.exceptionOrNull()
+            assertTrue(error is AgentStreamRequestException)
+            assertEquals(1, attempts)
+        } finally { scope.cancel() }
+    }
+
+    @Test
     fun `platform image input uses catalog vision model`() = runBlocking {
         val scope = CoroutineScope(Job() + Dispatchers.Default)
         val requestedModels = mutableListOf<String>()
@@ -782,121 +809,38 @@ class HttpAgentLlmClientTest {
     }
 
     @Test
-    fun `shared request boundary preserves every caller-selected field`() {
+    fun `actual transport preserves caller fields without request variants`() = runBlocking {
         val scope = CoroutineScope(Job() + Dispatchers.Default)
+        val requests = mutableListOf<String>()
         try {
-            val client = HttpAgentLlmClient(scope = scope, modelOverride = testOverride())
+            val client = HttpAgentLlmClient(
+                scope = scope,
+                modelOverride = testOverride(),
+                streamRequestOp = { _, body, listener, _, _, _, _, _, _, _ ->
+                    requests += body
+                    val source = dummyEventSource()
+                    listener.onOpen(source, okResponse())
+                    listener.onEvent(source, null, "message",
+                        """{"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}""")
+                    listener.onEvent(source, null, "message", "[DONE]")
+                    source
+                },
+                json = json,
+            )
             val request = simpleRequest().copy(
-                messages = listOf(
-                    cn.com.omnimind.baselib.llm.ChatCompletionMessage(
-                        role = "system",
-                        content = JsonPrimitive("Choose one tool"),
-                    ),
-                    cn.com.omnimind.baselib.llm.ChatCompletionMessage(
-                        role = "user",
-                        content = JsonArray(
-                            listOf(
-                                JsonObject(
-                                    mapOf(
-                                        "type" to JsonPrimitive("text"),
-                                        "text" to JsonPrimitive("Current screen"),
-                                    )
-                                )
-                            )
-                        ),
-                    ),
-                ),
-                tools = listOf(
-                    ChatCompletionTool(
-                        function = ChatCompletionFunction(name = "click"),
-                    ),
-                ),
+                messages = listOf(ChatCompletionMessage(role = "system", content = JsonPrimitive("Choose one tool"))),
+                tools = listOf(ChatCompletionTool(function = ChatCompletionFunction(name = "click"))),
+                functions = listOf(ChatCompletionFunction(name = "click")),
+                functionCall = JsonPrimitive("auto"),
                 toolChoice = JsonPrimitive("required"),
                 parallelToolCalls = false,
                 streamOptions = ChatCompletionStreamOptions(),
             )
-
-            val variants = client.buildRequestVariants(
-                request = request,
-                routeInfo = routeInfo(
-                    requestedModel = "scene.vlm.operation.primary",
-                    resolvedModel = "GLM-5.1",
-                    protocolType = "openai_compatible",
-                    requiresReasoningEcho = false,
-                    apiBase = "https://llmapi.paratera.com/v1/chat/completions",
-                ),
-            )
-
-            assertEquals(listOf("default"), variants.map { it.name })
-            assertEquals(request, variants.single().request)
-            val systemText = variants.first().request.messages.first().content
-                ?.jsonPrimitive
-                ?.content
-            assertEquals("Choose one tool", systemText)
-        } finally {
-            scope.cancel()
-        }
-    }
-
-    @Test
-    fun `provider route has one exact streaming request`() {
-        val scope = CoroutineScope(Job() + Dispatchers.Default)
-        try {
-            val client = HttpAgentLlmClient(scope = scope, modelOverride = testOverride())
-            val request = simpleRequest().copy(
-                streamOptions = ChatCompletionStreamOptions(),
-            )
-
-            val variants = client.buildRequestVariants(
-                request = request,
-                routeInfo = routeInfo(
-                    requestedModel = "scene.dispatch.model",
-                    resolvedModel = "GLM-5.1",
-                    protocolType = "openai_compatible",
-                    requiresReasoningEcho = false,
-                    apiBase = "https://llmapi.paratera.com/v1/chat/completions",
-                ),
-            )
-
-            assertEquals(listOf("default"), variants.map { it.name })
-            assertEquals(true, variants.first().request.streamOptions?.includeUsage)
-        } finally {
-            scope.cancel()
-        }
-    }
-
-    @Test
-    fun `shared request boundary does not strip caller-provided function fields`() {
-        val scope = CoroutineScope(Job() + Dispatchers.Default)
-        try {
-            val client = HttpAgentLlmClient(scope = scope, modelOverride = testOverride())
-            val request = simpleRequest().copy(
-                functions = listOf(ChatCompletionFunction(name = "click")),
-                functionCall = JsonPrimitive("auto"),
-                tools = listOf(
-                    ChatCompletionTool(
-                        function = ChatCompletionFunction(name = "click"),
-                    ),
-                ),
-                toolChoice = JsonPrimitive("auto"),
-            )
-
-            val variants = client.buildRequestVariants(
-                request = request,
-                routeInfo = routeInfo(
-                    requestedModel = "custom-model",
-                    resolvedModel = "custom-model",
-                    protocolType = "openai_compatible",
-                    requiresReasoningEcho = false,
-                    apiBase = "https://example.com/v1/chat/completions",
-                ),
-            )
-
-            assertEquals(listOf("default"), variants.map { it.name })
-            assertEquals(request, variants.single().request)
-        } finally {
-            scope.cancel()
-        }
+            client.streamTurn(request)
+            assertEquals(1, requests.size)
+            assertEquals(json.parseToJsonElement(json.encodeToString(ChatCompletionRequest.serializer(), request)),
+                json.parseToJsonElement(requests.single()))
+        } finally { scope.cancel() }
     }
 
     @Test
@@ -1049,6 +993,9 @@ class HttpAgentLlmClientTest {
 
             val turn = client.streamTurn(request)
 
+            val streamedNames = mutableListOf<String>()
+            client.streamTurn(request, onToolCallInput = { streamedNames += it.function.name })
+            assertEquals(listOf("agent.status"), streamedNames)
             assertTrue(sentWireName.matches(Regex("^[a-zA-Z0-9_-]+$")))
             assertTrue(sentWireName.length <= 64)
             assertEquals("agent.status", turn.message.toolCalls?.single()?.function?.name)

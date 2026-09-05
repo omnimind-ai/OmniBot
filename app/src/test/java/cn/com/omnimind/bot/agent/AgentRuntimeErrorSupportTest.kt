@@ -9,6 +9,28 @@ import org.junit.Test
 
 class AgentRuntimeErrorSupportTest {
     @Test
+    fun `incomplete call diagnostic never invents a retry`() {
+        val message = AgentRuntimeErrorSupport.userFacingMessage(AgentIncompleteToolCallException(0)).orEmpty()
+        assertTrue(message.contains("不完整"))
+        assertTrue(!message.contains("已自动重试"))
+    }
+
+    @Test
+    fun `upstream invalid model failure explains model selection without a cache refresh`() {
+        val error = IllegalStateException("chat completion stream request failed(404): NotFoundError: OpenAIException - Invalid model.Error happened to model=GLM-5")
+        assertEquals("provider_model_unavailable", AgentRuntimeErrorSupport.failureKind(error))
+        assertTrue(AgentRuntimeErrorSupport.userFacingMessage(error).orEmpty().contains("重新选择"))
+        assertTrue(!AgentRuntimeErrorSupport.userFacingMessage(error).orEmpty().contains("刷新"))
+    }
+
+    @Test
+    fun `provider connection abort identifies an interrupted response`() {
+        val error = AgentStreamRequestException(200, "Software caused connection abort", null)
+        assertEquals("provider_stream_interrupted", AgentRuntimeErrorSupport.failureKind(error))
+        assertTrue(AgentRuntimeErrorSupport.userFacingMessage(error).orEmpty().contains("连接中断"))
+    }
+
+    @Test
     fun `certificate chain failures explain the device clock and preserve tls`() {
         val handshake = SSLHandshakeException("handshake failed").apply {
             initCause(

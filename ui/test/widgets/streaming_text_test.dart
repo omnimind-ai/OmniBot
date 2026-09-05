@@ -383,56 +383,139 @@ void main() {
     expect(find.textContaining('后续说明'), findsOneWidget);
   });
 
-  testWidgets(
-    'StreamingText uses stable preview for unfinished markdown tables',
-    (tester) async {
-      const tableText =
-          '表格如下：\n\n'
-          '| 名称 | 状态 |\n'
-          '| --- | --- |\n'
-          '| A | 通过 |';
+  for (final legacyOffset in <int?>[null, 0, 8]) {
+    testWidgets(
+      'live Markdown updates every table row regardless of old offset $legacyOffset',
+      (tester) async {
+        const snapshots = [
+          '# 结果\n\n| 名称 | 状态 |',
+          '# 结果\n\n| 名称 | 状态 |\n| --- | --- |',
+          '# 结果\n\n| 名称 | 状态 |\n| --- | --- |\n| A | 通过 |',
+          '# 结果\n\n| 名称 | 状态 |\n| --- | --- |\n| A | 通过 |\n| B | 处理中 |',
+          '# 结果\n\n| 名称 | 状态 |\n| --- | --- |\n| A | 通过 |\n| B | 处理中 |\n\n后续说明\n\n- 第一项\n\n```dart\nprint(1);\n```',
+        ];
+        Future<void> render(String text, {bool isFinal = false}) async {
+          await tester.pumpWidget(
+            MaterialApp(
+              home: Scaffold(
+                body: SingleChildScrollView(
+                  child: StreamingText(
+                    fullText: text,
+                    enableMarkdown: true,
+                    selectable: true,
+                    isFinal: isFinal,
+                    markdownRenderedLength: legacyOffset,
+                    style: const TextStyle(fontSize: 14),
+                  ),
+                ),
+              ),
+            ),
+          );
+          await tester.pump();
+          expect(tester.takeException(), isNull);
+        }
 
-      await tester.pumpWidget(
-        const MaterialApp(
-          home: Scaffold(
-            body: StreamingText(
+        for (var index = 0; index < snapshots.length; index++) {
+          await render(snapshots[index]);
+          expect(
+            find.byType(Table),
+            index == 0 ? findsNothing : findsOneWidget,
+          );
+          if (index >= 2) expect(find.text('A'), findsOneWidget);
+          if (index >= 3) expect(find.text('B'), findsOneWidget);
+        }
+        expect(find.textContaining('后续说明', findRichText: true), findsWidgets);
+        expect(find.textContaining('第一项', findRichText: true), findsWidgets);
+        expect(
+          find.textContaining('print(1);', findRichText: true),
+          findsWidgets,
+        );
+        // Completion/cancellation changes execution state, not visible table data.
+        await render(snapshots.last, isFinal: true);
+        expect(find.text('A'), findsOneWidget);
+        expect(find.text('B'), findsOneWidget);
+        await render('| 新表 | 数值 |\n| --- | --- |\n| 新行 | 42 |');
+        expect(find.text('新行'), findsOneWidget);
+        expect(find.text('A'), findsNothing);
+      },
+    );
+  }
+
+  testWidgets('a long live table keeps its last row visible in the widget tree', (
+    tester,
+  ) async {
+    final text =
+        '| 序号 | 内容 |\n| --- | --- |\n${List.generate(200, (index) => '| $index | 行-$index |').join('\n')}';
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: SingleChildScrollView(
+            child: StreamingText(
+              fullText: text,
               enableMarkdown: true,
-              selectable: true,
               isFinal: false,
-              fullText: tableText,
-              style: TextStyle(fontSize: 14),
+              style: const TextStyle(fontSize: 14),
             ),
           ),
         ),
-      );
-      await tester.pump();
+      ),
+    );
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+    expect(find.byType(Table), findsOneWidget);
+    expect(find.text('行-199'), findsOneWidget);
+  });
 
-      expect(tester.takeException(), isNull);
-      expect(find.byType(Table), findsNothing);
-      expect(find.byType(SelectionArea), findsOneWidget);
-      expect(find.byType(SelectionContainer), findsWidgets);
-      expect(find.textContaining('| A | 通过 |'), findsOneWidget);
+  testWidgets('StreamingText renders real tables before the prompt finishes', (
+    tester,
+  ) async {
+    const tableText =
+        '表格如下：\n\n'
+        '| 名称 | 状态 |\n'
+        '| --- | --- |\n'
+        '| A | 通过 |';
 
-      await tester.pumpWidget(
-        const MaterialApp(
-          home: Scaffold(
-            body: StreamingText(
-              enableMarkdown: true,
-              selectable: true,
-              isFinal: true,
-              fullText: tableText,
-              style: TextStyle(fontSize: 14),
-            ),
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: StreamingText(
+            enableMarkdown: true,
+            selectable: true,
+            isFinal: false,
+            fullText: tableText,
+            style: TextStyle(fontSize: 14),
           ),
         ),
-      );
-      await tester.pump();
+      ),
+    );
+    await tester.pump();
 
-      expect(tester.takeException(), isNull);
-      expect(find.byType(Table), findsOneWidget);
-      expect(find.text('A'), findsOneWidget);
-    },
-  );
+    expect(tester.takeException(), isNull);
+    expect(find.byType(Table), findsOneWidget);
+    expect(find.byType(SelectionArea), findsOneWidget);
+    expect(find.byType(SelectionContainer), findsWidgets);
+    expect(find.text('A'), findsOneWidget);
+    expect(find.textContaining('| A | 通过 |'), findsNothing);
+
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: StreamingText(
+            enableMarkdown: true,
+            selectable: true,
+            isFinal: true,
+            fullText: tableText,
+            style: TextStyle(fontSize: 14),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(tester.takeException(), isNull);
+    expect(find.byType(Table), findsOneWidget);
+    expect(find.text('A'), findsOneWidget);
+  });
 
   testWidgets(
     'StreamingText switches between plain markdown and table safely',
@@ -520,7 +603,7 @@ void main() {
   });
 
   testWidgets(
-    'StreamingText keeps table fast-path tails inside selectable markdown',
+    'StreamingText preserves selectable complete and incomplete Markdown',
     (tester) async {
       const prefix = '表格如下：\n\n';
       const fullText =
@@ -572,8 +655,8 @@ void main() {
       await tester.pump();
 
       expect(tester.takeException(), isNull);
-      expect(find.textContaining('| 序号 |'), findsNothing);
-      expect(find.textContaining('|:---'), findsNothing);
+      expect(find.textContaining('| 序号 |'), findsOneWidget);
+      expect(find.textContaining('|:---'), findsOneWidget);
 
       await tester.pumpWidget(
         const MaterialApp(
@@ -716,7 +799,7 @@ void main() {
   });
 
   testWidgets(
-    'StreamingText hides dangling duplicated table snapshots in full markdown path',
+    'StreamingText preserves incomplete content after a rendered table',
     (tester) async {
       const fullText =
           '好的，以下是一个示例表格：\n\n'
@@ -744,8 +827,8 @@ void main() {
       expect(tester.takeException(), isNull);
       expect(find.byType(Table), findsOneWidget);
       expect(find.byType(SelectionArea), findsOneWidget);
-      expect(find.textContaining('| 序号 |'), findsNothing);
-      expect(find.textContaining('|:---'), findsNothing);
+      expect(find.textContaining('| 序号 |'), findsOneWidget);
+      expect(find.textContaining('|:---'), findsOneWidget);
     },
   );
 }

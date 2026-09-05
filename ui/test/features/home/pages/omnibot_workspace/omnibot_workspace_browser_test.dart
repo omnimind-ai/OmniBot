@@ -26,6 +26,19 @@ class _SvgTestAssetBundle extends CachingAssetBundle {
   }
 }
 
+Future<void> _settleDirectory(WidgetTester tester) async {
+  for (var i = 0; i < 100; i++) {
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 10)),
+    );
+    await tester.pump();
+    if (find.text('正在加载工作区…').evaluate().isEmpty &&
+        find.text('Loading workspace…').evaluate().isEmpty)
+      return;
+  }
+  fail('Directory loading did not finish');
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -73,7 +86,7 @@ void main() {
       ),
     );
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 200));
+    await _settleDirectory(tester);
 
     expect(find.text('工作区'), findsNothing);
     expect(find.text('/workspace'), findsOneWidget);
@@ -81,7 +94,7 @@ void main() {
 
     await tester.tap(find.text('docs'));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 200));
+    await _settleDirectory(tester);
 
     expect(find.text('/workspace'), findsOneWidget);
     expect(find.text('note.md'), findsOneWidget);
@@ -100,7 +113,7 @@ void main() {
 
     await tester.tap(find.text('/workspace'));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 200));
+    await _settleDirectory(tester);
 
     expect(find.text('root.txt'), findsOneWidget);
     expect(
@@ -133,11 +146,11 @@ void main() {
       ),
     );
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 200));
+    await _settleDirectory(tester);
 
     await tester.tap(find.text('docs'));
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 200));
+    await _settleDirectory(tester);
 
     await tester.tap(find.text('note.md'));
     await tester.pump();
@@ -156,7 +169,7 @@ void main() {
     );
     await editButton.onPressed();
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 200));
+    await _settleDirectory(tester);
 
     expect(find.byType(TextField), findsOneWidget);
 

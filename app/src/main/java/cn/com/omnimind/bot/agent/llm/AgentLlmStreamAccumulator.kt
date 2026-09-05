@@ -226,6 +226,17 @@ class AgentLlmStreamAccumulator(
 
     fun currentContent(): String = AgentTextSanitizer.sanitizeUtf16(contentBuffer.toString())
 
+    /** Partial input is display-only. Never invent an identity or parse it for execution. */
+    fun currentToolCalls(): List<AssistantToolCall> = toolCallBuilders.values.mapNotNull { builder ->
+        val id = builder.id?.takeIf(String::isNotBlank) ?: return@mapNotNull null
+        val name = builder.name?.takeIf(String::isNotBlank) ?: return@mapNotNull null
+        AssistantToolCall(
+            id = id,
+            type = builder.type ?: "function",
+            function = AssistantToolCallFunction(name = name, arguments = builder.arguments.toString()),
+        )
+    }
+
     fun hasDoneSignal(): Boolean = seenDoneSignal
 
     fun currentFinishReason(): String? = finishReason

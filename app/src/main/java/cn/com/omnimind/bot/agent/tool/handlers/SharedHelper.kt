@@ -423,16 +423,6 @@ class SharedHelper(
         ensureRunActive()
     }
 
-    fun truncateText(text: String, limit: Int): String {
-        if (text.length <= limit) return text
-        return text.take(limit) + "\n...[truncated]"
-    }
-
-    fun truncateTerminalTail(text: String, limit: Int): String {
-        if (text.length <= limit) return text
-        return "...[earlier output truncated]\n" + text.takeLast(limit)
-    }
-
     fun firstUsefulLine(text: String): String? {
         return text.lineSequence()
             .map { it.trim() }

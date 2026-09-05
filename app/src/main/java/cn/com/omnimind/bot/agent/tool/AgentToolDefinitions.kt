@@ -915,10 +915,6 @@ object AgentToolDefinitions {
                             put("type", "string")
                             put("description", text("`android_privileged_session_start` 返回的 sessionId。", "The sessionId returned by `android_privileged_session_start`."))
                         }
-                        putJsonObject("maxChars") {
-                            put("type", "integer")
-                            put("description", text("可选：最多返回多少字符。省略时返回执行环境允许的内容。", "Optional maximum number of characters to return. When omitted, return what the execution environment permits."))
-                        }
                     }
                     putJsonArray("required") {
                         add("sessionId")
@@ -1046,10 +1042,6 @@ object AgentToolDefinitions {
                     putJsonObject("sessionId") {
                         put("type", "string")
                         put("description", "{{OMNIBOT_TERMINAL_DISTRIBUTION}} session id。")
-                    }
-                    putJsonObject("maxChars") {
-                        put("type", "integer")
-                        put("description", "可选：最多返回多少字符。省略时返回执行环境允许的内容。")
                     }
                 }
                 putJsonArray("required") {
@@ -1228,10 +1220,6 @@ object AgentToolDefinitions {
                     putJsonObject("path") {
                         put("type", "string")
                         put("description", "文件路径，可使用相对 workspace 路径或 omnibot:// uri。")
-                    }
-                    putJsonObject("maxChars") {
-                        put("type", "integer")
-                        put("description", "可选：最多读取字符数。省略时返回执行环境允许的内容。")
                     }
                     putJsonObject("offset") {
                         put("type", "integer")
@@ -1555,10 +1543,6 @@ object AgentToolDefinitions {
                     putJsonObject("skillId") {
                         put("type", "string")
                         put("description", "skill 的 id、名称、SKILL.md 路径或 skill 根目录路径。建议先用 skills_list 查看。")
-                    }
-                    putJsonObject("maxChars") {
-                        put("type", "integer")
-                        put("description", "可选：最多返回多少字符的正文。省略时返回执行环境允许的内容。")
                     }
                 }
                 putJsonArray("required") {

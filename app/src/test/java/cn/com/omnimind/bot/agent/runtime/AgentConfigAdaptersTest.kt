@@ -572,6 +572,8 @@ class AgentConfigAdaptersTest {
         assertEquals("deepseek-v4-pro", model["slug"].asString)
         assertEquals(128000, model["context_window"].asInt)
         assertEquals(128000, model["max_context_window"].asInt)
+        assertEquals("tokens", model["truncation_policy"].asJsonObject["mode"].asString)
+        assertEquals(128000, model["truncation_policy"].asJsonObject["limit"].asInt)
         assertTrue(model["base_instructions"].asString.isNotBlank())
         assertEquals("list", model["visibility"].asString)
         assertEquals(false, model["supports_parallel_tool_calls"].asBoolean)

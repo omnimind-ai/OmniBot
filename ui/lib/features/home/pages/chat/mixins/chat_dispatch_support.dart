@@ -9,7 +9,6 @@ const String kChatContextStorageKey = 'chat_context_for_summary';
 /// 聊天调度支持 Mixin
 /// 负责处理可执行任务、发送消息等功能
 mixin ChatDispatchSupport<T extends StatefulWidget> on State<T> {
-
   // ===================== 抽象属性/方法（需要在主类中实现）=====================
 
   List<ChatMessageModel> get messages;
@@ -42,6 +41,7 @@ mixin ChatDispatchSupport<T extends StatefulWidget> on State<T> {
     bool generateSummary,
     bool markComplete,
     bool rethrowOnFailure = false,
+    bool allowEmpty = false,
   });
 
   // ===================== 上下文保存 =====================

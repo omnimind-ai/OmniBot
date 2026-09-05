@@ -112,6 +112,12 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
   late final Directory _rootDirectory;
   late Directory _directory;
   List<FileSystemEntity> _entries = const [];
+  final Map<String, WorkspaceMountEntry> _mountEntries = {};
+  final Set<String> _directoryLikePaths = <String>{};
+  bool _directoryExists = true;
+  bool _isLoadingDirectory = true;
+  String? _directoryLoadError;
+  int _directoryLoadGeneration = 0;
   final Set<String> _expandedDirectoryPaths = <String>{};
   final Map<String, List<FileSystemEntity>> _directoryChildrenCache =
       <String, List<FileSystemEntity>>{};
@@ -159,68 +165,120 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
     });
   }
 
-  void _refresh() {
-    final exists = _directory.existsSync();
-    final nextEntries = exists
-        ? _sortedEntriesFor(_directory)
-        : const <FileSystemEntity>[];
-    final nextExpandedPaths = <String>{};
-    final nextChildrenCache = <String, List<FileSystemEntity>>{};
-
-    for (final path in _expandedDirectoryPaths) {
-      if (!_isDescendantOfCurrentDirectory(path)) continue;
-      final dir = Directory(path);
-      if (!dir.existsSync()) continue;
-      nextExpandedPaths.add(path);
-      nextChildrenCache[path] = _sortedEntriesFor(dir);
-    }
-
-    final previousCanGoUp = canGoUp;
-    final selectedFileMetadata = _selectedFileMetadata;
-    final nextSelectedFileMetadata = selectedFileMetadata == null
-        ? null
-        : OmnibotResourceService.describePath(
-            selectedFileMetadata.path,
-            uri: selectedFileMetadata.uri,
-            shellPath: selectedFileMetadata.shellPath,
-            title: selectedFileMetadata.title,
-            previewKind: selectedFileMetadata.previewKind,
-            mimeType: selectedFileMetadata.mimeType,
-          );
-    final nextSelectedEntryPaths = _selectedEntryPaths.where((path) {
-      final normalized = _normalizePath(path);
-      return _isDescendantOfCurrentDirectory(normalized) &&
-          FileSystemEntity.typeSync(normalized) !=
-              FileSystemEntityType.notFound;
-    }).toSet();
-    final nextExcludedEntryPaths = _excludedEntryPaths.where((path) {
-      final normalized = _normalizePath(path);
-      return _isDescendantOfCurrentDirectory(normalized) &&
-          FileSystemEntity.typeSync(normalized) !=
-              FileSystemEntityType.notFound;
-    }).toSet();
-
+  Future<void> _refresh() async {
+    final generation = ++_directoryLoadGeneration;
+    final directory = _directory;
+    final expandedPaths = _expandedDirectoryPaths.toList();
+    bool isCurrent() =>
+        mounted &&
+        generation == _directoryLoadGeneration &&
+        directory.path == _directory.path;
     setState(() {
-      _entries = nextEntries;
-      _expandedDirectoryPaths
-        ..clear()
-        ..addAll(nextExpandedPaths);
-      _directoryChildrenCache
-        ..clear()
-        ..addAll(nextChildrenCache);
-      _selectedEntryPaths
-        ..clear()
-        ..addAll(nextSelectedEntryPaths);
-      _excludedEntryPaths
-        ..clear()
-        ..addAll(nextExcludedEntryPaths);
-      _selectedFileMetadata = nextSelectedFileMetadata?.exists == true
-          ? nextSelectedFileMetadata
-          : null;
+      _isLoadingDirectory = true;
+      _directoryLoadError = null;
     });
-    if (previousCanGoUp != canGoUp) {
-      _notifyCanGoUpChanged();
+    try {
+      final exists = await directory.exists();
+      final root = exists
+          ? await _readSortedEntries(directory)
+          : (entries: <FileSystemEntity>[], directories: <String>{});
+      final nextEntries = root.entries;
+      final mounts = <String, WorkspaceMountEntry>{};
+      for (final entry in nextEntries.whereType<Link>()) {
+        final mount = await WorkspaceMountService.describeMountEntry(
+          entry.path,
+          rootPath: _rootDirectory.path,
+        );
+        if (mount != null) mounts[entry.path] = mount;
+      }
+      final directoryPaths = {...root.directories};
+      final nextChildrenCache = <String, List<FileSystemEntity>>{};
+      for (final path in expandedPaths) {
+        if (!isCurrent()) return;
+        if (!_isDescendantOfCurrentDirectory(path)) continue;
+        final child = Directory(path);
+        if (await child.exists()) {
+          final loaded = await _readSortedEntries(child);
+          nextChildrenCache[path] = loaded.entries;
+          directoryPaths.addAll(loaded.directories);
+        }
+      }
+      if (!isCurrent()) return;
+      final previousCanGoUp = canGoUp;
+      final selectedPaths = <String>{};
+      final excludedPaths = <String>{};
+      for (final pair in [
+        (_selectedEntryPaths.toList(), selectedPaths),
+        (_excludedEntryPaths.toList(), excludedPaths),
+      ]) {
+        for (final path in pair.$1) {
+          if (_isDescendantOfCurrentDirectory(path) &&
+              await FileSystemEntity.type(path) !=
+                  FileSystemEntityType.notFound) {
+            pair.$2.add(path);
+          }
+        }
+      }
+      if (!isCurrent()) return;
+      final selected = _selectedFileMetadata;
+      final selectedExists =
+          selected != null && await File(selected.path).exists();
+      if (!isCurrent()) return;
+      setState(() {
+        _directoryExists = exists;
+        _isLoadingDirectory = false;
+        _entries = nextEntries;
+        _mountEntries
+          ..clear()
+          ..addAll(mounts);
+        _directoryLikePaths
+          ..clear()
+          ..addAll(directoryPaths);
+        _expandedDirectoryPaths
+          ..clear()
+          ..addAll(nextChildrenCache.keys);
+        _directoryChildrenCache
+          ..clear()
+          ..addAll(nextChildrenCache);
+        _selectedEntryPaths
+          ..clear()
+          ..addAll(selectedPaths);
+        _excludedEntryPaths
+          ..clear()
+          ..addAll(excludedPaths);
+        if (!selectedExists) _selectedFileMetadata = null;
+      });
+      if (previousCanGoUp != canGoUp) _notifyCanGoUpChanged();
+    } on FileSystemException catch (error) {
+      if (!isCurrent()) return;
+      setState(() {
+        _isLoadingDirectory = false;
+        _directoryLoadError = error.message;
+      });
     }
+  }
+
+  Future<({List<FileSystemEntity> entries, Set<String> directories})>
+  _readSortedEntries(Directory directory) async {
+    final entries = await directory.list(followLinks: false).toList();
+    final directoryPaths = <String>{};
+    for (final entry in entries) {
+      if (entry is Directory ||
+          (entry is Link &&
+              await FileSystemEntity.type(entry.path) ==
+                  FileSystemEntityType.directory)) {
+        directoryPaths.add(entry.path);
+      }
+    }
+    entries.sort((a, b) {
+      final typeOrder = (directoryPaths.contains(a.path) ? 0 : 1).compareTo(
+        directoryPaths.contains(b.path) ? 0 : 1,
+      );
+      return typeOrder != 0
+          ? typeOrder
+          : a.path.toLowerCase().compareTo(b.path.toLowerCase());
+    });
+    return (entries: entries, directories: directoryPaths);
   }
 
   bool get _isPreviewingFile =>
@@ -238,6 +296,7 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
   void _openDirectory(Directory directory) {
     setState(() {
       _directory = directory;
+      _entries = const [];
       _expandedDirectoryPaths.clear();
       _directoryChildrenCache.clear();
       _selectedEntryPaths.clear();
@@ -738,7 +797,16 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
   }
 
   List<FileSystemEntity> _sortedEntriesFor(Directory directory) {
-    return directory.listSync(followLinks: false).toList()..sort((a, b) {
+    final entries = directory.listSync(followLinks: false).toList();
+    for (final entry in entries.whereType<Link>()) {
+      if (FileSystemEntity.typeSync(entry.path) ==
+          FileSystemEntityType.directory) {
+        _directoryLikePaths.add(entry.path);
+      } else {
+        _directoryLikePaths.remove(entry.path);
+      }
+    }
+    return entries..sort((a, b) {
       final aIsDirectoryLike = _isDirectoryLikeEntry(a);
       final bIsDirectoryLike = _isDirectoryLikeEntry(b);
       if (aIsDirectoryLike && !bIsDirectoryLike) return -1;
@@ -754,15 +822,11 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
     if (entry is! Link) {
       return false;
     }
-    return FileSystemEntity.typeSync(entry.path) ==
-        FileSystemEntityType.directory;
+    return _directoryLikePaths.contains(entry.path);
   }
 
   WorkspaceMountEntry? _workspaceMountEntryFor(FileSystemEntity entry) {
-    return WorkspaceMountService.describeMountEntrySync(
-      entry.path,
-      rootPath: _rootDirectory.path,
-    );
+    return _mountEntries[entry.path];
   }
 
   bool _isWorkspaceMountRootPath(String path) {
@@ -809,7 +873,7 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
 
   @override
   Widget build(BuildContext context) {
-    final exists = _directory.existsSync();
+    final exists = _directoryExists;
     final currentShellPath = _currentShellPath();
     final canGoUpDirectory = _directory.path != _rootDirectory.path;
     final showParentEntry = canGoUpDirectory && !widget.showBreadcrumbHeader;
@@ -818,8 +882,18 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
     final body = _isPreviewingFile
         ? _buildInlineFilePreview()
         : RefreshIndicator(
-            onRefresh: () async => _refresh(),
-            child: !exists
+            onRefresh: _refresh,
+            child: _isLoadingDirectory && _entries.isEmpty
+                ? _buildStatusList(
+                    message: _isEnglish ? 'Loading workspace…' : '正在加载工作区…',
+                  )
+                : _directoryLoadError != null
+                ? _buildStatusList(
+                    message: _isEnglish
+                        ? 'Unable to read directory. Pull to retry.'
+                        : '无法读取目录，请下拉重试。',
+                  )
+                : !exists
                 ? _buildStatusList(
                     message:
                         Localizations.localeOf(context).languageCode == 'en'
@@ -1830,7 +1904,10 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
             height: _itemHeight,
             child: Padding(
               // 背景整宽拉通,层级只靠内容左缩进体现,展开父子间不再出现背景缺口。
-              padding: EdgeInsets.only(left: 12 + depth * _indentStep, right: 12),
+              padding: EdgeInsets.only(
+                left: 12 + depth * _indentStep,
+                right: 12,
+              ),
               child: Row(
                 children: [
                   leading,

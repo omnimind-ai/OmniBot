@@ -41,11 +41,6 @@ class AgentOrchestrator(
      */
     private val ownsToolRouter: Boolean = true
 ) {
-    private class TerminalTurnRequestFailure(
-        val errorMessage: String,
-        cause: Throwable
-    ) : RuntimeException(errorMessage, cause)
-
     data class Input(
         val callback: AgentCallback,
         val initialMessages: List<ChatCompletionMessage>,
@@ -155,7 +150,6 @@ class AgentOrchestrator(
         var lastDecodeTokensPerSecond: Double? = null
         var completedModelRounds = 0
         var terminated = false
-        var terminalError: AgentResult.Error? = null
 
         try {
             roundLoop@ while (true) {
@@ -185,43 +179,36 @@ class AgentOrchestrator(
                     "off",
                     "disabled",
                 )
-                val turn = try {
-                    streamTurnWithTransportPolicy(
-                        callback = callback,
-                        request = ChatCompletionRequest(
-                            messages = requestMessages,
-                            model = model,
-                            maxCompletionTokens = null,
-                            stream = true,
-                            streamOptions = ChatCompletionStreamOptions(includeUsage = true),
-                            enableThinking = if (disableThinking) false else null,
-                            reasoningEffort = if (disableThinking) null else input.executionEnv.reasoningEffort,
-                            thinking = if (disableThinking) {
-                                cn.com.omnimind.baselib.llm.ChatCompletionThinking(type = "disabled")
-                            } else {
-                                null
-                            },
-                            promptCacheKey = input.promptCacheKey,
-                            tools = toolRegistry.toolsForModel,
-                            // These optional controls belong to the active
-                            // Harness/Provider. The shared loop supplies the
-                            // tool surface and preserves all tool results,
-                            // without overriding the provider's own defaults.
-                            toolChoice = null,
-                            // The configured Harness/Provider owns whether
-                            // independent tool calls may run in parallel.
-                            // Omitting this optional OpenAI-compatible field
-                            // keeps the shared ACP loop free of a local policy.
-                            parallelToolCalls = null
-                        ),
-                        assistantContentPrefix = assistantContentPrefix
-                    )
-                } catch (e: TerminalTurnRequestFailure) {
-                    callback.onError(e.errorMessage, true)
-                    terminalError = AgentResult.Error(e.errorMessage, e)
-                    terminated = true
-                    break@roundLoop
-                }
+                val turn = streamTurn(
+                    callback = callback,
+                    request = ChatCompletionRequest(
+                        messages = requestMessages,
+                        model = model,
+                        maxCompletionTokens = null,
+                        stream = true,
+                        streamOptions = ChatCompletionStreamOptions(includeUsage = true),
+                        enableThinking = if (disableThinking) false else null,
+                        reasoningEffort = if (disableThinking) null else input.executionEnv.reasoningEffort,
+                        thinking = if (disableThinking) {
+                            cn.com.omnimind.baselib.llm.ChatCompletionThinking(type = "disabled")
+                        } else {
+                            null
+                        },
+                        promptCacheKey = input.promptCacheKey,
+                        tools = toolRegistry.toolsForModel,
+                        // These optional controls belong to the active
+                        // Harness/Provider. The shared loop supplies the
+                        // tool surface and preserves all tool results,
+                        // without overriding the provider's own defaults.
+                        toolChoice = null,
+                        // The configured Harness/Provider owns whether
+                        // independent tool calls may run in parallel.
+                        // Omitting this optional OpenAI-compatible field
+                        // keeps the shared ACP loop free of a local policy.
+                        parallelToolCalls = null
+                    ),
+                    assistantContentPrefix = assistantContentPrefix
+                )
                 val turnUsage = resolveTurnUsage(turn)
                 lastTurnUsage = turnUsage
                 lastFinishReason = turn.finishReason
@@ -481,8 +468,6 @@ class AgentOrchestrator(
             }
         }
 
-        terminalError?.let { return it }
-
         if (!hasUserFacingOutput) {
             val fallbackMessage = lastAssistantContent.ifBlank {
                 t(
@@ -526,43 +511,37 @@ class AgentOrchestrator(
         return finalResult
     }
 
-    private suspend fun streamTurnWithTransportPolicy(
+    private suspend fun streamTurn(
         callback: AgentCallback,
         request: ChatCompletionRequest,
         assistantContentPrefix: String
     ): ChatCompletionTurn {
-        try {
-            // AgentLlmClient is the sole owner of transport retries. Retrying
-            // this method would replay the complete logical round, including
-            // streamed reasoning and tool intent, and can produce duplicate
-            // thoughts/cards. A failed turn is surfaced to the UI instead.
-            return llmClient.streamTurn(
-                request = request,
-                onReasoningUpdate = { reasoning ->
-                    if (reasoning.isNotBlank()) {
-                        callback.onThinkingUpdate(normalizeThinkingText(reasoning))
-                    }
-                },
-                onContentUpdate = { content ->
-                    if (content.isNotBlank()) {
-                        callback.onChatMessage(
-                            combineContinuationContent(
-                                prefix = assistantContentPrefix,
-                                content = content
-                            ),
-                            false
-                        )
-                    }
+        // AgentLlmClient is the sole owner of transport retries. Retrying
+        // this method would replay the complete logical round, including
+        // streamed reasoning and tool intent, and can produce duplicate
+        // thoughts/cards. A failed turn is surfaced to the UI instead.
+        return llmClient.streamTurn(
+            request = request,
+            onReasoningUpdate = { reasoning ->
+                if (reasoning.isNotBlank()) {
+                    callback.onThinkingUpdate(normalizeThinkingText(reasoning))
                 }
-            )
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            throw TerminalTurnRequestFailure(
-                errorMessage = terminalFailureMessage(e),
-                cause = e
-            )
-        }
+            },
+            onToolCallInput = { call ->
+                callback.onToolCallInput(call, toolRegistry.runtimeDescriptor(call.function.name).toolType)
+            },
+            onContentUpdate = { content ->
+                if (content.isNotBlank()) {
+                    callback.onChatMessage(
+                        combineContinuationContent(
+                            prefix = assistantContentPrefix,
+                            content = content
+                        ),
+                        false
+                    )
+                }
+            }
+        )
     }
 
     private suspend fun executeSingleTool(
@@ -620,15 +599,10 @@ class AgentOrchestrator(
         descriptor: AgentToolRegistry.RuntimeToolDescriptor,
         result: ToolExecutionResult,
     ) {
-        val rawTextContent = eventAdapter.toolResultContent(
+        val textContent = eventAdapter.toolResultContent(
             descriptor = descriptor,
             result = result,
             extras = emptyMap()
-        )
-        val textContent = eventAdapter.compactToolResultContent(
-            rawContent = rawTextContent,
-            offloadArtifact = null,
-            maxChars = null,
         )
         val imageDataUrl = (result as? ToolExecutionResult.ContextResult)
             ?.imageDataUrl

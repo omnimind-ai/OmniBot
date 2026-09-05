@@ -8,6 +8,16 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AgentLlmStreamAccumulatorTest {
+    @Test
+    fun `partial parallel inputs retain provider ids and exact content without invented cards`() {
+        val accumulator = AgentLlmStreamAccumulator(json = Json)
+        accumulator.consume("""{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"a","function":{"name":"file_write","arguments":"{"}},{"index":1,"function":{"name":"file_write","arguments":"{"}},{"index":2,"id":"unnamed","function":{"arguments":"{"}}]}}]}""")
+        assertEquals(listOf("a"), accumulator.currentToolCalls().map { it.id })
+        accumulator.consume("""{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"content\":\"<html>"}},{"index":1,"id":"b","function":{"arguments":"\"path\":"}}]}}]}""")
+        assertEquals(listOf("a", "b"), accumulator.currentToolCalls().map { it.id })
+        assertEquals(listOf("{\"content\":\"<html>", "{\"path\":"), accumulator.currentToolCalls().map { it.function.arguments })
+    }
+
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true

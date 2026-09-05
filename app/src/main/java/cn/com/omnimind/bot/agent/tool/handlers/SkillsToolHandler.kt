@@ -115,7 +115,6 @@ class SkillsToolHandler(
             helper.requireWorkspaceStorageAccess(callback)?.let { return it }
             val skillId = args["skillId"]?.jsonPrimitive?.content?.trim().orEmpty()
             require(skillId.isNotEmpty()) { "缺少 skillId" }
-            val maxChars = args["maxChars"]?.jsonPrimitive?.intOrNull?.takeIf { it > 0 }
             val entry = skillIndexService.findInstalledSkill(skillId) ?: throw IllegalArgumentException("未找到 skill：$skillId")
             val resolved = skillLoader.load(entry, "agent 主动读取 skill") ?: throw IllegalStateException("读取 SKILL.md 失败：${entry.shellSkillFilePath}")
             val skillFile = File(entry.skillFilePath)
@@ -130,9 +129,7 @@ class SkillsToolHandler(
                 "references" to resolved.loadedReferences,
                 "metadata" to resolved.metadata.mapValues { (_, value) -> resolveDistributionText(value) },
                 "frontmatter" to resolved.frontmatter.mapValues { (_, value) -> resolveDistributionText(value) },
-                "bodyMarkdown" to (maxChars?.let {
-                    helper.truncateText(resolveDistributionText(resolved.bodyMarkdown), it)
-                } ?: resolveDistributionText(resolved.bodyMarkdown)),
+                "bodyMarkdown" to resolveDistributionText(resolved.bodyMarkdown),
                 "uri" to artifact.uri
             )
             ToolExecutionResult.ContextResult(

@@ -8,6 +8,16 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AgentToolDefinitionsUnboundedParametersTest {
+    @Test
+    fun `tools do not advertise application character truncation`() {
+        for (locale in listOf(PromptLocale.ZH_CN, PromptLocale.EN_US)) {
+            for (tool in AgentToolDefinitions.staticTools(locale)) {
+                val function = tool["function"] as JsonObject
+                val properties = (function["parameters"] as? JsonObject)?.get("properties") as? JsonObject
+                assertFalse("${function["name"]} exposes maxChars", properties?.containsKey("maxChars") == true)
+            }
+        }
+    }
 
     @Test
     fun `app query does not advertise a host result cap`() {

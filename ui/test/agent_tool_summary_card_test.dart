@@ -13,6 +13,30 @@ import 'package:ui/services/app_background_service.dart';
 import 'package:ui/widgets/image_preview_overlay.dart';
 
 void main() {
+  testWidgets(
+    'streaming HTML input is pending, not executing or awaiting approval',
+    (tester) async {
+      final card = <String, dynamic>{
+        'type': 'agent_tool_summary',
+        'status': 'pending',
+        'toolName': 'file_write',
+        'toolTitle': '写入文件',
+        'toolType': 'file',
+        'argsJson': '{"path":"/workspace/index.html","content":"<html>',
+      };
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(body: AgentToolSummaryCard(cardData: card)),
+        ),
+      );
+      expect(isAgentToolAwaitingConfirmation(card), isFalse);
+      expect(find.text(resolveAgentToolStatusLabel(card)), findsOneWidget);
+      expect(find.textContaining('等待确认'), findsNothing);
+      expect(find.textContaining('正在写入'), findsNothing);
+      expect(find.text('成功'), findsNothing);
+    },
+  );
+
   setUp(() {
     LegacyTextLocalizer.setResolvedLocale(const Locale('zh'));
   });
