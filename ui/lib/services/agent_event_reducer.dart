@@ -3459,6 +3459,30 @@ class AgentEventReducer {
       );
       _cancelThinkingCardsForTask(runtime, ownerTaskId);
     }
+    // Display metadata belongs to the existing prompt completion owner, not
+    // a timer or an item-completed notification. Persist it with the last reply.
+    final startedAt = runtime.agentEntryStartTimes.remove(
+      'prompt:$ownerTaskId',
+    );
+    // Messages are stored newest first. The first matching reply is the
+    // final prose, while the last may be folded into the earlier process.
+    final replyIndex = runtime.messages.indexWhere(
+      (message) =>
+          message.type == 1 &&
+          message.user == 2 &&
+          message.streamMeta?['parentTaskId'] == ownerTaskId,
+    );
+    if (startedAt != null && replyIndex >= 0) {
+      final endedAt = DateTime.now().millisecondsSinceEpoch;
+      final reply = runtime.messages[replyIndex];
+      runtime.messages[replyIndex] = reply.copyWith(
+        turnUsage: {
+          ...?reply.turnUsage,
+          'endedAt': endedAt,
+          if (endedAt >= startedAt) 'durationMs': endedAt - startedAt,
+        },
+      );
+    }
     runtime.isAiResponding = false;
     runtime.isExecutingTask = false;
     runtime.isCheckingExecutableTask = false;

@@ -320,6 +320,8 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     runtime.persistenceGeneration += 1;
     runtime.isAiResponding = true;
     runtime.currentDispatchTurnId = taskId;
+    runtime.agentEntryStartTimes['prompt:$taskId'] =
+        DateTime.now().millisecondsSinceEpoch;
     runtime.activeRunId = taskId;
     runtime.lastAgentTurnId = taskId;
     runtime.currentThinkingStage = ThinkingStage.thinking.value;

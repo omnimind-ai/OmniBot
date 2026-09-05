@@ -1676,6 +1676,106 @@ void main() {
   );
 
   test(
+    'prompt timing belongs to the final visible reply in a multi-message turn',
+    () {
+      const conversationId = 2210;
+      const turnId = 'multi-reply';
+      applyAcp(conversationId, 'turn/started', turnId: turnId);
+      final runtime = coordinator.runtimeFor(
+        conversationId: conversationId,
+        mode: kChatRuntimeModeAgent,
+      )!;
+      runtime.agentEntryStartTimes['prompt:$turnId'] =
+          DateTime.now().millisecondsSinceEpoch - 65000;
+      for (final entry in [('progress', '我先检查一下'), ('answer', '最终结果')]) {
+        applyAcp(
+          conversationId,
+          'session/update',
+          turnId: turnId,
+          params: {
+            'update': {
+              'sessionUpdate': 'agent_message_chunk',
+              'messageId': entry.$1,
+              'content': {'type': 'text', 'text': entry.$2},
+            },
+          },
+        );
+      }
+      coordinator.applyAcpPromptResponse(
+        taskId: turnId,
+        conversationId: conversationId,
+        mode: kChatRuntimeModeAgent,
+        stopReason: 'end_turn',
+        sessionId: null,
+      );
+      final replies = runtime.messages
+          .where((message) => message.type == 1 && message.user == 2)
+          .toList();
+      expect(replies, hasLength(2));
+      final answer = replies.singleWhere((message) => message.text == '最终结果');
+      final progress = replies.singleWhere(
+        (message) => message.text == '我先检查一下',
+      );
+      expect(answer.turnUsage?['durationMs'], greaterThanOrEqualTo(65000));
+      expect(answer.turnUsage?['endedAt'], isA<int>());
+      expect(progress.turnUsage?['endedAt'], isNull);
+    },
+  );
+
+  for (final reason in ['end_turn', 'cancelled', 'error']) {
+    test('prompt timing is finalized once and isolated: $reason', () {
+      const conversationId = 2209;
+      const turnId = 'timed-request';
+      applyAcp(conversationId, 'turn/started', turnId: turnId);
+      final runtime = coordinator.runtimeFor(
+        conversationId: conversationId,
+        mode: kChatRuntimeModeAgent,
+      )!;
+      runtime.agentEntryStartTimes['prompt:$turnId'] =
+          DateTime.now().millisecondsSinceEpoch - 65000;
+      applyAcp(
+        conversationId,
+        'session/update',
+        turnId: turnId,
+        params: {
+          'update': {
+            'sessionUpdate': 'agent_message_chunk',
+            'content': {'type': 'text', 'text': '已有结果'},
+          },
+        },
+      );
+      expect(runtime.messages.where((m) => m.user == 2).last.turnUsage, isNull);
+      coordinator.applyAcpPromptResponse(
+        taskId: turnId,
+        conversationId: conversationId,
+        mode: kChatRuntimeModeAgent,
+        stopReason: reason,
+        sessionId: null,
+      );
+      final reply = runtime.messages
+          .where((m) => m.type == 1 && m.user == 2)
+          .last;
+      expect(reply.turnUsage?['durationMs'], greaterThanOrEqualTo(65000));
+      expect(reply.turnUsage?['endedAt'], isA<int>());
+      final restored = ChatMessageModel.fromJson(reply.toJson());
+      expect(restored.turnUsage, reply.turnUsage);
+      applyAcp(conversationId, 'turn/started', turnId: 'next-request');
+      coordinator.applyAcpPromptResponse(
+        taskId: turnId,
+        conversationId: conversationId,
+        mode: kChatRuntimeModeAgent,
+        stopReason: reason,
+        sessionId: null,
+      );
+      expect(
+        runtime.messages.singleWhere((m) => m.id == reply.id).turnUsage,
+        restored.turnUsage,
+      );
+      expect(runtime.currentDispatchTurnId, 'next-request');
+    });
+  }
+
+  test(
     'accepts final ACP turn usage after the turn completion fence',
     () async {
       const conversationId = 2202;
@@ -1738,7 +1838,9 @@ void main() {
       final answer = runtime.messages.singleWhere(
         (message) => message.id == '$turnId-$messageId-agent-message',
       );
-      expect(answer.turnUsage, const <String, dynamic>{
+      expect(answer.turnUsage, <String, dynamic>{
+        'endedAt': isA<int>(),
+        'durationMs': isNonNegative,
         'ctx': 16076,
         'in': 16076,
         'out': 1470,
