@@ -399,6 +399,7 @@ dependencies {
     implementation(libs.ktor.server.call.logging)
     implementation(libs.mcp.kotlin.sdk.server)
     testImplementation(libs.junit)
+    testImplementation(libs.ktor.server.test.host)
     testImplementation("org.mockito:mockito-core:5.20.0")
     testImplementation(libs.okhttp.mockwebserver)
     debugImplementation(libs.androidx.ui.tooling)
