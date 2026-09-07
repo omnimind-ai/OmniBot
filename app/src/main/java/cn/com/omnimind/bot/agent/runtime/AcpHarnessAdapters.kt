@@ -51,7 +51,17 @@ internal interface AcpHarnessAdapter {
         rawConfig: String,
     ): Map<String, String>? = null
 
+    /** Official adapter metadata extensions; no additional session lifecycle. */
+    fun clientCapabilityMeta(base: JsonObject): JsonObject = base
+
+    /** Failure declared by the adapter on this owning ACP PromptResponse. */
+    fun promptFailure(meta: JsonObject?): String? = null
+
     fun normalizeStdioLine(line: String): String = line
+
+    /** Resolve a Provider model only against values advertised by this session. */
+    fun resolveModelValue(model: String, available: List<String>): String? =
+        model.takeIf { it in available }
 
     /**
      * Whether this Harness may receive the host MCP declaration for the
@@ -71,6 +81,30 @@ internal object AcpHarnessAdapters {
     val codex: AcpHarnessAdapter = object : AcpHarnessAdapter {
         override val configAdapterId = "codex"
 
+        // codex-acp 1.10.0 AirExtension / CodexEventHandler: without this
+        // negotiated capability it emits transport errors as assistant text.
+        override fun clientCapabilityMeta(base: JsonObject): JsonObject = buildJsonObject {
+            base.forEach { (key, value) -> put(key, value) }
+            put("jetbrains", buildJsonObject {
+                put("air", buildJsonObject {
+                    put("version", 1)
+                    put("capabilities", buildJsonArray { add(JsonPrimitive("sessionFailure")) })
+                })
+            })
+        }
+
+        override fun promptFailure(meta: JsonObject?): String? {
+            val jetbrains = meta?.get("jetbrains") as? JsonObject ?: return null
+            val air = jetbrains["air"] as? JsonObject ?: return null
+            val version = (air["version"] as? JsonPrimitive)?.contentOrNull?.toIntOrNull()
+                ?: return null
+            if (version < 1) return null
+            val failure = air["sessionFailure"] as? JsonObject ?: return null
+            if ((failure["severity"] as? JsonPrimitive)?.contentOrNull != "error") return null
+            return (failure["title"] as? JsonPrimitive)?.contentOrNull
+                ?.takeIf { it.isNotBlank() } ?: "Assistant request failed."
+        }
+
         override fun supportsSessionMcp(provider: AgentProviderCredentials?): Boolean {
             // Codex currently groups MCP tools into the Responses-only
             // `type=namespace` container. Custom Responses-compatible
@@ -85,6 +119,13 @@ internal object AcpHarnessAdapters {
 
     val claudeCode: AcpHarnessAdapter = object : AcpHarnessAdapter {
         override val configAdapterId = "claude-code"
+
+        // Claude's terminal_output extension sends Bash stdout in _meta, not
+        // standard tool content. We do not render that extension. Let the
+        // official adapter emit its standard text fallback instead; the ACP
+        // terminal capability and host terminal execution remain available.
+        override fun clientCapabilityMeta(base: JsonObject): JsonObject =
+            JsonObject(base - "terminal_output")
     }
 
     val kimiCode: AcpHarnessAdapter = object : AcpHarnessAdapter {
@@ -93,9 +134,19 @@ internal object AcpHarnessAdapters {
 
     val openCode: AcpHarnessAdapter = object : AcpHarnessAdapter {
         override val configAdapterId = "open-code"
+        override fun resolveModelValue(model: String, available: List<String>): String? =
+            super.resolveModelValue(model, available)
+                ?: "omnibot/$model".takeIf { it in available }
     }
 
     val deepSeekHarness: AcpHarnessAdapter = object : AcpHarnessAdapter {
+        override fun resolveModelValue(model: String, available: List<String>): String? =
+            super.resolveModelValue(model, available) ?: available.filter { value ->
+                runCatching {
+                    val tuple = JsonParser.parseString(value).asJsonArray
+                    tuple.size() == 2 && tuple[1].asString == model
+                }.getOrDefault(false)
+            }.singleOrNull()
         // DSH ACP 0.4.x documents per-session `mcpServers` (stdio and
         // streamable HTTP). The shared runtime keeps that declaration on the
         // official session/new request, where DSH owns discovery and tool
@@ -224,7 +275,7 @@ internal const val DEEPSEEK_HARNESS_CONFIG_HOME = "/root/.dsh/omnibot-acp"
 internal const val DEEPSEEK_HARNESS_CONFIG_PATH =
     "$DEEPSEEK_HARNESS_CONFIG_HOME/config.json"
 internal const val DEEPSEEK_HARNESS_SETTINGS_PATH =
-    "$DEEPSEEK_HARNESS_CONFIG_HOME/settings.yaml"
+    "$DEEPSEEK_HARNESS_CONFIG_HOME/omnibot-dispatch.patch.yml"
 internal const val DEEPSEEK_HARNESS_CONFIG_DISPLAY_PATH =
     "~/.dsh/omnibot-acp/config.json"
 internal const val ACP_FILESYSTEM_COMPAT_PATH =

@@ -96,6 +96,15 @@ extension ChatRuntimeSnapshotSupport on ChatConversationRuntimeCoordinator {
       notifyListeners();
       return;
     }
+    // Page projection refreshes must not discard the admitted prompt's clock.
+    // Only the matching live request may retain it; a restored snapshot cannot
+    // manufacture timing for another request.
+    final preservedPromptTimingKey =
+        hasBoundLiveTask &&
+            currentDispatchTurnId != null &&
+            currentDispatchTurnId == runtime.currentDispatchTurnId
+        ? 'prompt:$currentDispatchTurnId'
+        : null;
     // Text maps are projection buffers, not lifecycle evidence. A partial
     // stream can survive a transport failure after ACP has already ended the
     // turn; using it here would resurrect a completed run during polling or
@@ -167,7 +176,9 @@ extension ChatRuntimeSnapshotSupport on ChatConversationRuntimeCoordinator {
     runtime.browserSessionSnapshot = browserSessionSnapshot;
     runtime._streamingTextBatches.clear();
     runtime.agentEntrySequences.clear();
-    runtime.agentEntryStartTimes.clear();
+    runtime.agentEntryStartTimes.removeWhere(
+      (key, _) => key != preservedPromptTimingKey,
+    );
     _pruneAgentReplayDeltaOffsets(runtime, normalizedMessages);
     runtime.agentNextEntrySequence = 0;
     notifyListeners();

@@ -37,9 +37,9 @@ class ComposerKeyboardMetrics {
 ///    at or above it, so the floor only engages on degraded signals and on
 ///    unfocused dismissals (where it pins the composer exactly at rest for
 ///    the whole hide animation).
-/// 3. Settle debounce: when the inset rises right after settling, the lift
-///    is deferred by one frame so single-frame inset blips are swallowed. A
-///    real keyboard open only loses its first sub-perceptual frame (~2dp).
+/// 3. Settle debounce: only residual insets within the resting navigation
+///    inset may be deferred. A full keyboard height must apply immediately:
+///    the platform need not emit intermediate animation frames.
 /// 4. Continuous landing: while the keyboard is closing, the total is
 ///    capped at `max(rest, inset + clearance)`. The raw formulas would hold
 ///    the composer clearance-height above rest for the last stretch of the
@@ -133,7 +133,7 @@ class ComposerKeyboardMetricsTracker {
       _closing = false;
       _lastEngagedInset = null;
     } else if (_settled) {
-      if (!_liftDeferredOnce) {
+      if (!_liftDeferredOnce && inset <= restAnchor) {
         _liftDeferredOnce = true;
         effectiveInset = 0.0;
         deferred = true;

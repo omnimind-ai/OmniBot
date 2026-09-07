@@ -1656,6 +1656,10 @@ class AssistsCoreManager(private val context: Context) {
                             expectedProfileBaseUrl
                         )
                 ) { "provider profile changed" }
+                if (!useProvidedApiKey && !useProvidedCustomHeaders &&
+                    ModelProviderConfigStore.sameCanonicalEndpoint(apiBase, profile.baseUrl)) {
+                    ModelProviderConfigStore.rememberModels(context, profile, models)
+                }
                 withContext(Dispatchers.Main) {
                     result.success(models.map { it.toMap() })
                 }
@@ -1793,13 +1797,19 @@ class AssistsCoreManager(private val context: Context) {
 
         workJob.launch {
             try {
+                val previousProviderId = SceneModelBindingStore.getBinding(sceneId)
+                    ?.providerProfileId
                 SceneModelBindingStore.saveBinding(sceneId, providerProfileId, modelId)
                 if (sceneId == SceneOperationConfigStore.SCENE_ID) {
                     SceneOperationConfigStore.saveConfig(
                         SceneOperationConfig(useOfficialService = false)
                     )
                 }
-                if (sceneId == "scene.dispatch.model") {
+                // A model selection is session configuration, not a change of
+                // credentials or endpoint. Preserve the live ACP session that
+                // has just accepted session/set_config_option for this model.
+                if (sceneId == "scene.dispatch.model" &&
+                    previousProviderId != providerProfileId) {
                     AgentRuntimeManager.getIfInitialized()
                         ?.invalidateSharedProviderRuntime()
                 }
@@ -2099,6 +2109,28 @@ class AssistsCoreManager(private val context: Context) {
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     result.error("GET_WORKSPACE_SHORT_MEMORY_ERROR", e.message, null)
+                }
+            }
+        }
+    }
+
+    fun deleteWorkspaceShortMemories(call: MethodCall, result: MethodChannel.Result) {
+        workJob.launch {
+            try {
+                val items = call.argument<List<Map<String, Any?>>>("items").orEmpty().map { item ->
+                    cn.com.omnimind.bot.agent.WorkspaceShortMemoryEntry(
+                        id = item["id"] as? String ?: "",
+                        date = item["date"] as? String ?: "",
+                        time = item["time"] as? String ?: "",
+                        content = item["content"] as? String ?: "",
+                        timestampMillis = 0
+                    )
+                }
+                val deleted = WorkspaceMemoryService(context).deleteShortMemoryEntries(items)
+                withContext(Dispatchers.Main) { result.success(mapOf("deletedCount" to deleted)) }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    result.error("DELETE_SHORT_MEMORY_ERROR", "删除失败，请刷新记忆列表后重试", null)
                 }
             }
         }

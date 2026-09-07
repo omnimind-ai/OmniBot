@@ -1,3 +1,4 @@
+import 'package:ui/widgets/conversation_model_selector.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -167,20 +168,7 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
       final persistedBinding = bindings
           .where((item) => item.sceneId == 'scene.dispatch.model')
           .firstOrNull;
-      final persistedModels = persistedBinding == null
-          ? const <ProviderModelOption>[]
-          : models[persistedBinding.providerProfileId] ??
-                const <ProviderModelOption>[];
-      final binding =
-          persistedBinding != null &&
-              (persistedModels.isEmpty ||
-                  persistedModels.any(
-                    (item) =>
-                        item.id.trim().toLowerCase() ==
-                        persistedBinding.modelId.trim().toLowerCase(),
-                  ))
-          ? persistedBinding
-          : null;
+      final binding = persistedBinding;
       if (!mounted) return;
       setState(() {
         _providerProfiles = profilesPayload.profiles;
@@ -199,105 +187,31 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
 
   Future<void> _selectSharedModel() async {
     if (_sharedModelSaving || _sharedModelLoading) return;
-    final selection = await showModalBottomSheet<_SharedModelSelection>(
+    final selection = await showModalBottomSheet<ConversationModelSelection>(
       context: context,
       isScrollControlled: true,
-      builder: (sheetContext) {
-        final expanded = <String>{
-          if (_sharedModelBinding != null)
-            _sharedModelBinding!.providerProfileId,
-        };
-        if (expanded.isEmpty && _providerProfiles.isNotEmpty) {
-          expanded.add(_providerProfiles.first.id);
-        }
-        return StatefulBuilder(
-          builder: (context, setSheetState) {
-            return SafeArea(
-              child: SizedBox(
-                height: MediaQuery.sizeOf(context).height * 0.7,
-                child: ListView(
-                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
-                  children: [
-                    ListTile(
-                      title: Text(
-                        _text(
-                          '选择 Agent Provider / 模型',
-                          'Select Agent Provider / model',
-                        ),
-                      ),
-                      subtitle: Text(
-                        _text(
-                          '所有 ACP 默认继承这里的选择。',
-                          'All ACP Agents inherit this selection by default.',
-                        ),
-                      ),
-                    ),
-                    for (final profile in _providerProfiles)
-                      ExpansionTile(
-                        initiallyExpanded: expanded.contains(profile.id),
-                        onExpansionChanged: (value) {
-                          setSheetState(() {
-                            if (value) {
-                              expanded.add(profile.id);
-                            } else {
-                              expanded.remove(profile.id);
-                            }
-                          });
-                        },
-                        title: Text(profile.name),
-                        subtitle: Text(
-                          profile.configured
-                              ? _text(
-                                  '选择该 Provider 的模型',
-                                  'Choose a model from this Provider',
-                                )
-                              : _text('未配置', 'Not configured'),
-                        ),
-                        children: [
-                          for (final model
-                              in (_providerModels[profile.id] ?? const []))
-                            ListTile(
-                              title: Text(model.id),
-                              trailing:
-                                  _sharedModelBinding?.providerProfileId ==
-                                          profile.id &&
-                                      _sharedModelBinding?.modelId == model.id
-                                  ? const Icon(LucideIcons.check)
-                                  : null,
-                              onTap: () => Navigator.of(sheetContext).pop(
-                                _SharedModelSelection(
-                                  providerProfileId: profile.id,
-                                  modelId: model.id,
-                                ),
-                              ),
-                            ),
-                          if ((_providerModels[profile.id] ?? const []).isEmpty)
-                            ListTile(
-                              title: Text(
-                                _text(
-                                  '没有可用模型，请先检查 Provider 配置。',
-                                  'No models available. Check this Provider first.',
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                    if (_providerProfiles.isEmpty)
-                      ListTile(
-                        title: Text(
-                          _text('没有可用 Provider。', 'No Provider is available.'),
-                        ),
-                      ),
-                  ],
+      builder: (sheetContext) => SafeArea(
+        child: ConversationModelSelectorContent(
+          width: MediaQuery.sizeOf(sheetContext).width,
+          maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.7,
+          loadLiveProviders: true,
+          currentSelection: _sharedModelBinding == null
+              ? null
+              : ConversationModelSelection(
+                  providerProfileId: _sharedModelBinding!.providerProfileId,
+                  modelId: _sharedModelBinding!.modelId,
                 ),
-              ),
-            );
-          },
-        );
-      },
+          onSelect: (value) => Navigator.of(sheetContext).pop(value),
+        ),
+      ),
     );
     if (selection == null) return;
-    await _saveSharedModel(selection);
+    await _saveSharedModel(
+      _SharedModelSelection(
+        providerProfileId: selection.providerProfileId,
+        modelId: selection.modelId,
+      ),
+    );
   }
 
   Future<void> _saveSharedModel(_SharedModelSelection selection) async {
@@ -819,7 +733,6 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
       ],
     );
   }
-
 }
 
 class _SharedModelSelection {

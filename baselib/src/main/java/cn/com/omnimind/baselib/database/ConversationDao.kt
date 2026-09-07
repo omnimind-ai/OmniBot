@@ -11,6 +11,23 @@ interface ConversationDao {
     @Update
     suspend fun update(conversation: Conversation)
 
+    @Transaction
+    suspend fun updatePreservingCheckpoint(conversation: Conversation) {
+        val current = getById(conversation.id)
+        val updated = if (current != null &&
+            current.contextSummaryUpdatedAt > conversation.contextSummaryUpdatedAt) {
+            conversation.copy(
+                contextSummary = current.contextSummary,
+                contextSummaryCutoffEntryDbId = current.contextSummaryCutoffEntryDbId,
+                contextSummaryUpdatedAt = current.contextSummaryUpdatedAt,
+            )
+        } else conversation
+        update(updated)
+    }
+
+    @Query("UPDATE conversations SET contextSummary = NULL, contextSummaryCutoffEntryDbId = NULL, contextSummaryUpdatedAt = 0 WHERE id = :id")
+    suspend fun clearContextCheckpoint(id: Long)
+
     @Delete
     suspend fun delete(conversation: Conversation)
 

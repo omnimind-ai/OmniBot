@@ -3,6 +3,32 @@ import 'package:ui/features/home/pages/chat/utils/agent_run_timeline.dart';
 import 'package:ui/models/chat_message_model.dart';
 
 void main() {
+  test('cancelled tool-only turn remains visible after reload', () {
+    final tool = ChatMessageModel.cardMessage(
+      const {'type': 'agent_tool_summary', 'toolType': 'workspace', 'status': 'success'},
+      id: 'tool', streamMeta: const {'parentTaskId': 'cancel-only', 'seq': 1, 'stopReason': 'cancelled'});
+    final restored = ChatMessageModel.fromJson(tool.toJson());
+    expect(buildAgentRunTimelineEntries([restored]).single.group!.status, AgentRunStatus.cancelled);
+  });
+
+  test('terminal failure is visible and survives serialization without treating tool errors as failed turns', () {
+    final failure = ChatMessageModel.cardMessage(
+      const {'type': 'agent_tool_summary', 'toolType': 'status', 'status': 'error'},
+      id: 'failure', streamMeta: const {'parentTaskId': 'run', 'kind': 'error', 'seq': 2},
+    );
+    final partial = ChatMessageModel(id: 'partial', type: 1, user: 2,
+      content: const {'text': 'partial'}, streamMeta: const {'parentTaskId': 'run', 'seq': 1});
+    for (final message in [failure, ChatMessageModel.fromJson(failure.toJson())]) {
+      final group = buildAgentRunTimelineEntries([message, partial]).single.group!;
+      expect(group.status, AgentRunStatus.failed);
+      expect(group.visibleMessagesOldestFirst.map((m) => m.id), ['partial', 'failure']);
+    }
+    final toolError = ChatMessageModel.cardMessage(
+      const {'type': 'agent_tool_summary', 'toolType': 'workspace', 'status': 'error'},
+      id: 'tool', streamMeta: const {'parentTaskId': 'run', 'kind': 'tool_completed', 'seq': 2});
+    expect(buildAgentRunTimelineEntries([toolError, partial]).single.group!.status, AgentRunStatus.finished);
+  });
+
   test('groups by canonical runId before legacy parentTaskId', () {
     final message = ChatMessageModel(
       id: 'run-1-text',

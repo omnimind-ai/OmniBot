@@ -1,5 +1,7 @@
 package cn.com.omnimind.baselib.database
 
+import androidx.room.withTransaction
+
 import android.content.Context
 import androidx.room.Room
 import androidx.room.migration.Migration
@@ -264,6 +266,20 @@ object DatabaseHelper {
 
     private val MIGRATION_15_16 = object : Migration(15, 16) {
         override fun migrate(database: SupportSQLiteDatabase) {
+            // Some early 10 -> 11 upgrade paths created this table without
+            // isLocal. Preserve those records as the historical default (0)
+            // before the existing migration removes local-only usage rows.
+            val hasLocalFlag = database.query("PRAGMA table_info(`token_usage_records`)").use { cursor ->
+                val nameIndex = cursor.getColumnIndexOrThrow("name")
+                var found = false
+                while (cursor.moveToNext()) {
+                    if (cursor.getString(nameIndex) == "isLocal") found = true
+                }
+                found
+            }
+            if (!hasLocalFlag) {
+                database.execSQL("ALTER TABLE token_usage_records ADD COLUMN isLocal INTEGER NOT NULL DEFAULT 0")
+            }
             database.execSQL(
                 """
                 CREATE TABLE IF NOT EXISTS `token_usage_records_new` (
@@ -377,6 +393,9 @@ object DatabaseHelper {
 
     }
 
+    suspend fun <T> withTransaction(block: suspend () -> T): T =
+        getDatabase().withTransaction(block)
+
     fun getDatabase(): AppDatabase {
         return database ?: throw IllegalStateException("Database not initialized")
     }
@@ -457,7 +476,11 @@ object DatabaseHelper {
     }
 
     suspend fun updateConversation(conversation: Conversation) {
-        getDatabase().conversationDao().update(conversation)
+        getDatabase().conversationDao().updatePreservingCheckpoint(conversation)
+    }
+
+    suspend fun clearConversationContextCheckpoint(id: Long) {
+        getDatabase().conversationDao().clearContextCheckpoint(id)
     }
 
     suspend fun deleteConversation(conversation: Conversation) {

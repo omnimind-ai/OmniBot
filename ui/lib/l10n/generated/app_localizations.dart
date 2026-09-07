@@ -98,6 +98,36 @@ abstract class AppLocalizations {
     Locale('zh'),
   ];
 
+  /// No description provided for @memoryShortRetention.
+  ///
+  /// In zh, this message translates to:
+  /// **'短期记忆持续保存在本地，不会自动过期。长按条目可删除单条或多选删除。'**
+  String get memoryShortRetention;
+
+  /// No description provided for @memoryShortDeleteConfirm.
+  ///
+  /// In zh, this message translates to:
+  /// **'删除短期记忆？'**
+  String get memoryShortDeleteConfirm;
+
+  /// No description provided for @memoryShortDeleteScope.
+  ///
+  /// In zh, this message translates to:
+  /// **'仅删除选中的短期原文及其检索索引，不可撤销。不会删除聊天记录、随手记原件或已提炼的长期记忆，也不会清空当前对话上下文。'**
+  String get memoryShortDeleteScope;
+
+  /// No description provided for @memoryShortDeleteFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'删除未完成，列表已刷新，请重新选择后重试。'**
+  String get memoryShortDeleteFailed;
+
+  /// No description provided for @memoryShortDeleted.
+  ///
+  /// In zh, this message translates to:
+  /// **'短期记忆已删除'**
+  String get memoryShortDeleted;
+
   /// No description provided for @appName.
   ///
   /// In zh, this message translates to:

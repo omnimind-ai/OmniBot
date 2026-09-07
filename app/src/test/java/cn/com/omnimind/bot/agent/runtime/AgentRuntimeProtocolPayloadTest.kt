@@ -556,9 +556,12 @@ class AgentRuntimeProtocolPayloadTest {
         val bridgePackage = codexRuntime.managedAdapterPackages.single {
             it.startsWith("@agentclientprotocol/codex-acp@")
         }
-        assertEquals(
-            "codex-acp-${bridgePackage.substringAfterLast('@')}",
-            codexRuntime.preparationRevision,
+        val bridgeRevision = "codex-acp-${bridgePackage.substringAfterLast('@')}"
+        // The package version anchors readiness; a host preparation fix may
+        // append a revision so already-installed devices rerun that fix.
+        assertTrue(
+            codexRuntime.preparationRevision == bridgeRevision ||
+                codexRuntime.preparationRevision?.startsWith("$bridgeRevision-") == true,
         )
         val xiaowan = officialCatalogAgents().first {
             it.id == AcpAgentProfileStore.XIAOWAN_AGENT_ID
@@ -586,52 +589,20 @@ class AgentRuntimeProtocolPayloadTest {
             it.id == AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID
         }
         assertEquals("dsh-acp-android", deepSeek.command)
-        assertEquals(listOf("--profile", "acp"), deepSeek.arguments)
+        assertEquals(listOf("--profile", "acp", "--patch", DEEPSEEK_HARNESS_SETTINGS_PATH), deepSeek.arguments)
         val deepSeekRuntime = AcpAgentProfileStore.officialRuntime(deepSeek)
         assertEquals("dsh", deepSeekRuntime?.discoveryCommand)
-        assertTrue(
-            deepSeekRuntime?.managedAdapterPackages.orEmpty().contains(
-                "@openma/deepseek-harness-acp@latest"
-            )
-        )
-        assertTrue(
-            deepSeekRuntime?.managedAdapterPackages.orEmpty().contains(
-                "@deepseek-ai/dsh@next"
-            )
-        )
-        assertEquals(2, deepSeekRuntime?.managedAdapterPackages?.size)
-        assertTrue(deepSeekRuntime?.managedAdapterPackages.orEmpty().contains("@deepseek-ai/dsh@next"))
+        assertEquals(listOf("@deepseek-ai/dsh@0.1.2-rc.1"), deepSeekRuntime?.managedAdapterPackages)
         assertTrue(deepSeekRuntime?.requiresNativeBuildTools == true)
-        assertTrue(
-            deepSeekRuntime?.managedAdapterHealthCommand.orEmpty()
-                .contains("command -v dsh")
-        )
-        assertTrue(
-            deepSeekRuntime?.managedAdapterHealthCommand.orEmpty()
-                .contains("command -v dsh-acp-android")
-        )
-        assertTrue(MANAGED_NATIVE_BUILD_PREREQUISITES_COMMAND.contains("omnibot_apk_add 'build-base' 'python3'"))
-        assertTrue(MANAGED_NATIVE_BUILD_PREREQUISITES_COMMAND.contains("apk fix --no-cache"))
-        assertTrue(MANAGED_NATIVE_BUILD_PREREQUISITES_COMMAND.contains("apk fix --no-cache --upgrade"))
-        assertTrue(MANAGED_NATIVE_BUILD_PREREQUISITES_COMMAND.contains("build-essential python3"))
-        assertTrue(deepSeekInstallScript().contains("dsh plugin --profile acp add -w"))
-        assertTrue(deepSeekInstallScript().contains("profiles/acp/package.json"))
-        assertTrue(deepSeekInstallScript().contains("pnpm@11.22.0"))
-        assertTrue(deepSeekInstallScript().contains("PNPM_CONFIG_PACKAGE_IMPORT_METHOD=copy"))
-        assertTrue(deepSeekInstallScript().contains("PROFILE_LAYOUT_MARKER"))
-        assertTrue(
-            deepSeekInstallScript().contains(
-                "timeout 30 dsh-acp-android --profile acp --dump-config"
-            )
-        )
-        assertTrue(
-            deepSeekInstallScript().contains(
-                "pnpm config set --location=project packageImportMethod copy"
-            )
-        )
-        assertTrue(
-            deepSeekInstallScript().contains("DSH_HOME=\"/root/.dsh/omnibot-acp\"")
-        )
+        assertTrue(deepSeekRuntime?.managedAdapterHealthCommand.orEmpty().contains("command -v dsh-acp-android"))
+        // Official DSH now ships the ACP profile; do not reinstall the removed third-party plugin.
+        val installer = deepSeekInstallScript()
+        assertTrue(installer.contains("@deepseek-ai/dsh-acp-app/cordis.patch.yml"))
+        assertTrue(installer.contains("dsh-acp-android --profile acp --help"))
+        assertTrue(installer.contains("profiles/acp/package.json"))
+        assertTrue(installer.contains("profiles/acp/cordis.patch.yml"))
+        assertFalse(installer.contains("@openma/deepseek-harness-acp"))
+
     }
 
     @Test
@@ -861,8 +832,10 @@ class AgentRuntimeProtocolPayloadTest {
                 existingConfig = "",
             )
         assertEquals(1, dshWrites.size)
-        assertEquals("/root/.dsh/omnibot-acp/settings.yaml", dshWrites.single().path)
-        assertTrue(dshWrites.single().content.contains("id: 'glm-5.1'"))
+        assertEquals(DEEPSEEK_HARNESS_SETTINGS_PATH, dshWrites.single().path)
+        assertTrue(dshWrites.single().content.contains("\"model\":\"glm-5.1\""))
+        assertTrue(dshWrites.single().content.contains("- id: acp"))
+        assertFalse(dshWrites.single().content.contains("sk-shared"))
     }
 
     @Test

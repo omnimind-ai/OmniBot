@@ -313,7 +313,7 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
 
     providerConfigured = false;
-    await ModelProviderConfigService.saveCachedFetchedModels(
+    await seedManualModels(
       profileId: 'provider-1',
       apiBase: 'https://example.com/v1',
       profileRevision: providerRevision,
@@ -357,7 +357,7 @@ void main() {
     tester,
   ) async {
     providerFetchError = StateError('offline');
-    await ModelProviderConfigService.saveCachedFetchedModels(
+    await seedManualModels(
       profileId: 'provider-1',
       apiBase: providerBaseUrl,
       profileRevision: providerRevision,
@@ -714,3 +714,13 @@ void main() {
     expect(find.text('已自动保存。'), findsOneWidget);
   });
 }
+
+Future<void> seedManualModels({
+  required String profileId,
+  required String apiBase,
+  int? profileRevision,
+  required List<ProviderModelOption> models,
+}) => ModelProviderConfigService.saveManualModelIds(
+  profileId: profileId,
+  ids: models.map((m) => m.id).toList(),
+);

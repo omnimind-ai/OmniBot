@@ -235,6 +235,7 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
   Future<void> _applyConversationThreadTarget(
     ConversationThreadTarget target, {
     bool syncPage = true,
+    bool preserveComposer = false,
     int? requestId,
   }) async {
     final activeRequestId = requestId ?? _beginConversationTargetRequest();
@@ -247,8 +248,14 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     );
     if (isStaleRequest()) return;
     final targetMode = _pageModeForConversationMode(effectiveTarget.mode);
+    // Capture after initialization so input typed during the switch survives
+    // the existing conversation reset below (including its attachment reset).
+    final composerValue = preserveComposer ? _messageController.value : null;
+    final composerAttachments = preserveComposer
+        ? List<ChatInputAttachment>.of(_pendingAttachments)
+        : null;
     _storeDraftForActiveConversationMode();
-    if (effectiveTarget.isNewConversation) {
+    if (effectiveTarget.isNewConversation && !preserveComposer) {
       _modeState(targetMode).draftMessage = '';
       _modeState(targetMode).pendingAttachments.clear();
     }
@@ -268,6 +275,10 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     // The previous conversation remains persisted in history and is not
     // implicitly inherited by the new Harness.
     _resetLocalConversationState(targetMode);
+    if (composerValue != null) {
+      _modeState(targetMode).draftMessage = composerValue.text;
+      _modeState(targetMode).pendingAttachments.addAll(composerAttachments!);
+    }
     _restoreLocalAgentThreadIdFromTarget(effectiveTarget);
     if (_shouldSyncExistingLocalAgentTarget(effectiveTarget)) {
       unawaited(

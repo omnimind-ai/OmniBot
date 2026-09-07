@@ -546,9 +546,19 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
     // A Harness switch changes both the native ACP adapter and the visible
     // conversation runtime. Let a user submit queue behind that atomic
     // transition instead of registering it against the old target.
+    final queuedDuringSwitch =
+        waitForBootstrap && _harnessSwitchSendBarrier.isActive;
+    final submittedText = queuedDuringSwitch
+        ? (text ?? _messageController.text)
+        : null;
+    final submittedAttachments = queuedDuringSwitch
+        ? List<ChatInputAttachment>.of(_pendingAttachments)
+        : null;
     if (waitForBootstrap) {
-      await _harnessSwitchSendBarrier.waitUntilIdle();
-      if (!mounted) return;
+      final switched = await _harnessSwitchSendBarrier.waitUntilIdle();
+      // A failed switch must not deliver the queued prompt to the old Agent.
+      // The preserved composer remains editable for the user to send later.
+      if (!mounted || !switched) return;
     }
     // Acquire the per-target submit lock immediately after the transition
     // barrier. Two queued UI submit paths wake in the same microtask turn, so
@@ -569,8 +579,10 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       if (waitForBootstrap && bootstrapFuture != null) {
         await bootstrapFuture;
       }
-      final messageText = (text ?? _messageController.text).trim();
-      final hasAttachments = _pendingAttachments.isNotEmpty;
+      final messageText =
+          (submittedText ?? text ?? _messageController.text).trim();
+      final inputAttachments = submittedAttachments ?? _pendingAttachments;
+      final hasAttachments = inputAttachments.isNotEmpty;
       if ((messageText.isEmpty && !hasAttachments) || _isAiResponding) return;
       if (!hasAttachments &&
           ManualRecordingFlowController.isCommand(messageText)) {
@@ -579,17 +591,27 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       }
       if (!await _ensureNormalChatModelConfigurationForSend()) return;
 
-      final attachments = _pendingAttachments
+      final attachments = inputAttachments
           .map((item) => item.toMap())
           .toList();
       if (attachments.isNotEmpty && mounted) {
-        setState(() => _pendingAttachments.clear());
+        setState(() {
+          if (submittedAttachments == null) {
+            _pendingAttachments.clear();
+          } else {
+            _pendingAttachments.removeWhere(submittedAttachments.contains);
+          }
+        });
       }
 
       await _dispatchUserMessage(
         messageText,
         attachments: attachments,
         runSlashCommand: true,
+        restoreInputValue: queuedDuringSwitch &&
+                _messageController.text != submittedText
+            ? _messageController.value
+            : null,
       );
     } finally {
       _sendMessageInFlightTargetIds.remove(sendTargetId);

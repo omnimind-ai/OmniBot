@@ -135,7 +135,7 @@ class SubagentDispatcher(
                 profileId = profile.id,
                 summary = "SubAgent #${taskIndex + 1} 开始：${normalizeSubagentProgressText(spec.instruction)}"
             )
-            val harnessCatalog = inheritedSubagentCatalog(parentCatalogProvider())
+            val harnessCatalog = inheritedSubagentCatalog(parentCatalogProvider(), profile)
             val systemMessage = ChatCompletionMessage(
                 role = "system",
                 content = JsonPrimitive(profile.systemPrompt)
@@ -157,6 +157,7 @@ class SubagentDispatcher(
                 modelProviderProfileId = parentEnv.modelProviderProfileId,
                 terminalEnvironment = parentEnv.terminalEnvironment,
                 runControl = NoOpAgentRunControl,
+                permissionRequester = parentEnv.permissionRequester,
                 longTermMemoryIndex = parentEnv.longTermMemoryIndex
             )
             val silentCallback = ReportingSubagentCallback(
@@ -280,8 +281,11 @@ class SubagentDispatcher(
 
 }
 
-/** A child works against the exact capability catalog negotiated by its parent harness. */
-internal fun inheritedSubagentCatalog(parent: AgentToolCatalog): AgentToolCatalog = parent
+/** Role permissions narrow the parent catalog; they never add capabilities or execution budgets. */
+internal fun inheritedSubagentCatalog(
+    parent: AgentToolCatalog,
+    profile: SubagentProfile = SubagentProfileRegistry.general,
+): AgentToolCatalog = if (profile.id == "general") parent else SubagentToolCatalogView(parent, profile.id)
 
 /**
  * Callback that swallows subagent streaming output (we don't want subagent

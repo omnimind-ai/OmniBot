@@ -164,6 +164,25 @@ object ModelProviderConfigStore {
             ?.filter { !it.id.isNullOrBlank() }.orEmpty()
     }.getOrDefault(emptyList())
 
+    /** Latest successful discovery, used only to construct offline launch config.
+     * Explicit refresh always calls the Provider; this is never a network cache.
+     */
+    @Synchronized
+    fun rememberModels(context: Context, profile: ModelProviderProfile, models: List<ProviderModelOption>) {
+        if (getProfile(profile.id) != profile) return
+        val preferences = context.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
+        val key = "flutter.cached_provider_models_with_base_v2"
+        val catalogs = runCatching {
+            JsonParser.parseString(preferences.getString(key, null)).asJsonObject
+        }.getOrNull() ?: com.google.gson.JsonObject()
+        catalogs.add(profile.id, Gson().toJsonTree(mapOf(
+            "apiBase" to normalizeBaseUrl(profile.baseUrl).orEmpty(),
+            "profileRevision" to profile.revision,
+            "models" to models.filter { it.id.isNotBlank() }.distinctBy { it.id },
+        )))
+        preferences.edit().putString(key, catalogs.toString()).apply()
+    }
+
     fun getEditingProfileId(): String {
         val profiles = listProfiles()
         val mmkv = MMKV.defaultMMKV()

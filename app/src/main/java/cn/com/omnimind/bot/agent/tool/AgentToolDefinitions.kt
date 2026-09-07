@@ -435,8 +435,8 @@ object AgentToolDefinitions {
             "List of subtasks to delegate. Each item must contain a self-contained instruction; profileId is optional task guidance.",
         "子任务的完整、自足指令，不要依赖主会话中未写入此处的上下文。" to
             "Complete, self-contained instructions for the subtask. Do not rely on main-conversation context that is not included here.",
-        "可选任务提示：general、explorer、memory-curator 或 planner。所有 profile 都继承当前 harness 已提供的能力。" to
-            "Optional task guidance: general, explorer, memory-curator, or planner. Every profile inherits the capabilities provided by the current harness.",
+        "角色：general 继承父级能力；explorer 读取与观察；memory-curator 整理记忆；planner 只生成计划、不执行工具。角色权限不设置运行轮数或 Token 预算。" to
+            "Role: general inherits parent capabilities; explorer reads and observes; memory-curator manages memory; planner creates plans without executing tools. Role permissions impose no round or token budgets.",
         "子任务省略 profileId 时使用的可选任务提示，默认 general。" to
             "Optional task guidance used when a subtask omits profileId. Defaults to general.",
         "并发度，可选；省略时按本次子任务数并行执行。" to
@@ -2135,7 +2135,7 @@ object AgentToolDefinitions {
                                     }
                                     put(
                                         "description",
-                                        "可选任务提示：general、explorer、memory-curator 或 planner。所有 profile 都继承当前 harness 已提供的能力。"
+                                        "角色：general 继承父级能力；explorer 读取与观察；memory-curator 整理记忆；planner 只生成计划、不执行工具。角色权限不设置运行轮数或 Token 预算。"
                                     )
                                 }
                             }

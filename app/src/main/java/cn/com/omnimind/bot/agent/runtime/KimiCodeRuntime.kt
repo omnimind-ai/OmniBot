@@ -2,6 +2,7 @@ package cn.com.omnimind.bot.agent.runtime
 
 import cn.com.omnimind.baselib.llm.DeepSeekProvider
 import cn.com.omnimind.baselib.llm.OpenAiWireApi
+import cn.com.omnimind.baselib.llm.ProviderModelOption
 import java.net.URI
 
 internal const val KIMI_CODE_NPM_PACKAGE_SPEC = "@moonshot-ai/kimi-code@latest"
@@ -16,6 +17,7 @@ internal const val KIMI_CODE_NATIVE_HEALTH_COMMAND =
         "node -e 'const [major, minor] = process.versions.node.split(\".\").map(Number); " +
         "if (major < 22 || (major === 22 && minor < 19)) process.exit(1)'"
 internal const val KIMI_CODE_HOME = "/root/.kimi-code/omnibot"
+internal const val KIMI_CODE_CONFIG_PATH = "$KIMI_CODE_HOME/config.toml"
 
 /**
  * Build Kimi Code's documented in-memory Provider override. The same process
@@ -27,9 +29,6 @@ internal fun buildKimiCodeEnvironment(
     model: String,
     reasoningEffort: String? = null,
 ): Map<String, String> {
-    require(!OpenAiWireApi.isResponses(provider.wireApi)) {
-        "Kimi Code's KIMI_MODEL_* channel does not support the OpenAI Responses wire API."
-    }
     val providerType = resolveKimiProviderType(provider)
     val effort = reasoningEffort?.trim()?.lowercase()?.takeIf(String::isNotEmpty)
     require(effort == null || effort in KIMI_REASONING_EFFORTS) {
@@ -37,6 +36,9 @@ internal fun buildKimiCodeEnvironment(
     }
     return linkedMapOf<String, String>().apply {
         putAll(kimiCodeBaseEnvironment())
+        // The official env-model channel excludes openai_responses. Its
+        // ordinary config.toml provider supports it without wire conversion.
+        if (providerType != "anthropic" && OpenAiWireApi.isResponses(provider.wireApi)) return@apply
         put("KIMI_MODEL_NAME", model)
         put("KIMI_MODEL_API_KEY", provider.apiKey)
         put(
@@ -65,6 +67,57 @@ internal fun buildKimiCodeEnvironment(
             )
         }
     }
+}
+
+/** OOB owns this config under its existing Kimi home; the user's ~/.kimi-code is untouched. */
+internal fun buildKimiCodeManagedFiles(
+    provider: AgentProviderCredentials,
+    model: String,
+    reasoningEffort: String? = null,
+    providerModels: List<ProviderModelOption>? = null,
+): Map<String, String> {
+    // The Web entry retains its documented environment model. ACP uses the
+    // official catalog so session/set_config_option can select every entry.
+    if (providerModels == null &&
+        (provider.protocolType == "anthropic" || !OpenAiWireApi.isResponses(provider.wireApi))) return emptyMap()
+    buildKimiCodeEnvironment(provider, model, reasoningEffort)
+    val providerType = if (provider.protocolType != "anthropic" && OpenAiWireApi.isResponses(provider.wireApi)) {
+        "openai_responses"
+    } else resolveKimiProviderType(provider)
+    val models = (providerModels.orEmpty() + ProviderModelOption(id = model))
+        .filter { it.id.isNotBlank() }.distinctBy { it.id }
+    val config = buildString {
+        appendLine("# Managed by OpenOmniBot from the selected Provider catalog.")
+        appendLine("default_model = ${tomlString(if (providerModels == null) "omnibot" else model)}")
+        reasoningEffort?.trim()?.lowercase()?.takeIf(String::isNotEmpty)?.let {
+            appendLine("[thinking]")
+            appendLine("effort = ${tomlString(it)}")
+        }
+        appendLine("[providers.omnibot]")
+        appendLine("type = ${tomlString(providerType)}")
+        appendLine("base_url = ${tomlString(if (providerType == "anthropic") provider.baseUrl else normalizeKimiCodeBaseUrl(provider.baseUrl))}")
+        appendLine("api_key = ${tomlString(provider.apiKey)}")
+        if (provider.customHeaders.isNotEmpty()) {
+            appendLine("[providers.omnibot.custom_headers]")
+            provider.customHeaders.forEach { (name, value) ->
+                appendLine("${tomlString(name)} = ${tomlString(value)}")
+            }
+        }
+        models.forEach { entry ->
+            appendLine("[models.${tomlString(if (providerModels == null) "omnibot" else entry.id)}]")
+            appendLine("provider = \"omnibot\"")
+            appendLine("model = ${tomlString(entry.id)}")
+            appendLine("display_name = ${tomlString(entry.displayName)}")
+            appendLine("max_context_size = ${entry.contextLimit?.takeIf { it > 0 } ?: 262144}")
+            val capabilities = buildList {
+                if (entry.reasoning != false) add("thinking")
+                if (kimiCodeVisionInputSupport(provider, entry.id) != false &&
+                    (entry.inputModalities.isEmpty() || "image" in entry.inputModalities)) add("image_in")
+            }
+            appendLine("capabilities = [${capabilities.joinToString(", ", transform = ::tomlString)}]")
+        }
+    }
+    return mapOf(KIMI_CODE_CONFIG_PATH to config)
 }
 
 internal fun kimiCodeBaseEnvironment(): Map<String, String> = linkedMapOf(

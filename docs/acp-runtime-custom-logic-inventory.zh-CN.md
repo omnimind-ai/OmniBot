@@ -139,7 +139,7 @@ Conversation
 | `AgentLlmClient.kt` | Provider 拒绝 thinking 后切换参数、拒绝 image 后去掉图片、模型不支持时切换候选模型、reasoning leak 后换 variant | 这些是兼容策略，不是 ACP；每个 fallback 都应有 Provider capability 依据。若官方 SDK/Provider 已负责，应删除本地 fallback。 |
 | `AgentLlmClient.kt`、`AgentTurnTimingPolicy.kt` | `PROVIDER_STREAM_IDLE_TIMEOUT_MS = 90_000` 及 idle watchdog | 不是 Agent turn 完成判定，但仍是宿主 watchdog。应下沉给 Provider transport 或设为明确的 transport capability；不能叫 ACP 超时。 |
 | `AgentLlmStreamAccumulator.kt` | `<think>` 标签识别、reasoning leak 检测、首段 buffer 900 字符/6 chunks、日志 preview 500 | 供应商输出兼容和展示优化；不属于通用 ACP。应按 Provider adapter 拆分，删除与官方 stream 已重复的判断。 |
-| `AgentConversationContextCompactor.kt` | 用户显式 `/compact` 的历史整理提示 | 不再有默认 token threshold、reserve 或自动 compact；该入口不参与正常 Agent prompt loop。 |
+| `AgentConversationContextCompactor.kt` | 小万内部上下文压缩和用户显式 `/compact` | 2026-09-06 按用户要求局部恢复容量判断、预留余量与每轮自动压缩。它属于小万现有 prompt 内部的上下文管理，不创建 ACP turn、不重放请求；外部 Harness 仍管理各自上下文。 |
 | `AgentOrchestrator.kt` | Provider 溢出直接结束当前 prompt；截断 tool call 回传错误 | 不再识别 overflow 后替换历史或重试，也不再有无进展 fingerprint。保留的 tool-call 配对必须不重放副作用。 |
 
 ### 4.3 当前明确存在的风险
@@ -202,7 +202,7 @@ Conversation
 - 省略 terminal timeout 时强行注入 30 秒。
 - `AgentToolVisibilitySelector`、skill frontmatter `tool-routing` 及其恒等的工具目录选择路径。
 - 直接 Agent 的 `file_read -> read`、`terminal_execute -> bash` 等模型工具别名和描述重写。
-- 子 Agent profile 的工具白名单、递归/shell/privileged/file-delete 黑名单及专用 Catalog view。
+- 子 Agent 旧的统一黑名单和预算不恢复；2026-09-06 已恢复专职角色工具权限视图，并传递父 ACP 审批入口。安全权限不能作为运行预算一起删除。
 - `subagent_dispatch` schema 中“主动分派”的模型指令；分派现在只在用户明确要求时发生。
 
 这些确实是我们自己的运行策略，不是 ACP 限制。官方 ACP 定义 prompt turn、tool call、update 和 cancellation，但没有要求宿主必须设置 16 轮、工具字符数或模型完成 token 上限。参见官方 [Prompt Turn](https://agentclientprotocol.com/protocol/v1/prompt-turn)、[Tool Calls](https://agentclientprotocol.com/protocol/v1/tool-calls)、[Request Cancellation](https://agentclientprotocol.com/rfds/request-cancellation)。
@@ -217,7 +217,7 @@ Conversation
 | `AgentOrchestrator.kt` | skill completion pending 时再次要求完成工具 | 产品级 skill 策略 | 不属于 ACP；建议移入 skill runtime，并让 skill 明确声明 completion contract。 |
 | `AgentToolConcurrencyPolicy.kt` | 文件/查询/记忆/skills 只读工具并行；终端/权限/写操作串行；browser 只有 get_text/screenshot 可并行 | 我们自己的并发策略 | 不应由静态 whitelist 决定所有工具；改为 tool capability 的 `concurrency`/side-effect 声明，或由官方 MCP/tool server 管理。 |
 | `SubagentToolHandler.kt`、`SubagentDispatcher.kt` | 显式 concurrency 或本次 task 数；Semaphore | 执行请求参数 | 已移除默认 2 和 1–6 上限。省略时并行度等于本次任务数；只拒绝非正参数。 |
-| `SubagentProfile.kt` | general/explorer/memory-curator/planner 的可选任务提示 | 产品提示 | 不再拥有工具权限；子 Agent 直接继承父 harness 已协商的目录。 |
+| `SubagentProfile.kt` | general/explorer/memory-curator/planner 的可选任务提示 | 产品提示 | 2026-09-06 修正：通用角色继承父目录；专职角色通过父目录视图在现有参数校验入口落实权限，不恢复轮数/Token 预算。 |
 | `AgentConversationModePolicy.kt` | `normal`、`agent`、`subagent`、`chat_only`；仅 chat_only 为空工具目录 | 用户选择的产品模式 | Agent-capable mode 不再以模式名过滤工具；能力完全由 active harness catalog 表达。 |
 
 ### 6.3 工具输入 schema 里仍然存在的默认值/上限
@@ -302,7 +302,7 @@ ACP Item / artifact 原文
 | 记忆 | `WorkspaceMemoryService.kt`、`MemoryToolHandler.kt`、`MemoryIndex.kt`、`PlatformEmbeddingGateway.kt` | embedding/rollup 开关；rollup 每次最多 8 个候选；memory 查询的 `limit` 可选、省略时不设宿主静态上限；embedding input 8,000、vector 8,192、response 2 MiB；自动夜间 rollup | 保留 memory 功能但独立；配置归到 typed `MemoryConfig`，embedding/rollup 的 Provider 解析归 Provider。不要放进 ACP Agent profile。 |
 | 技能 | `AgentSkillRuntime.kt` | builtin/official/user 三来源；GitHub/CNB 固定仓库；registry 文件；退休 `hatch-pet`；skill id regex；安装/删除状态 | 技能目录应是外部/资产 catalog；固定仓库 URL 不应散落 Kotlin。技能生命周期不等于 ACP turn。 |
 | 技能自诊断 | `SelfImprovingSkillFailureHook.kt` | 自动写 `ERRORS.md`、失败摘要、引导和历史条目限制 | 若长期规则允许自改进，保留为 skill domain；从 Agent 主循环移出，不让它改变 ACP 完成状态。 |
-| 子 Agent | `SubagentProfile.kt`、`SubagentDispatcher.kt`、`SubagentToolHandler.kt` | 固定 persona/profile；并发由请求参数或本次 task 数决定 | profile 仅提供任务提示；子 Agent 直接继承父 harness 的能力目录，不维护第二份工具白名单或 Catalog adapter。 |
+| 子 Agent | `SubagentProfile.kt`、`SubagentDispatcher.kt`、`SubagentToolHandler.kt` | 固定 persona/profile；并发由请求参数或本次 task 数决定 | 通用角色继承父目录，专职角色保留职责对应的权限范围；复用原工具参数校验和父 ACP 审批入口，不增设业务生命周期或运行预算。 |
 | 计划任务 | `WorkspaceScheduledTaskScheduler.kt` | Native SharedPreferences 与 FlutterSharedPreferences 双写/迁移；scheduled task mode；时间解析和 fallback | 合并成一个 Task scheduler store；不要并入 ACP config。任务触发后再创建 canonical conversation/turn。 |
 | 任务生命周期 | `TaskRuntimeSettings.kt`、`TaskRuntime.kt` | foreground service lease、wake lock、防休眠、完成通知、active task count | Android 生命周期必要逻辑；不属于 Agent turn；可统一 Task domain 存储，但不能删除为“Agent 限制”。 |
 | 闹钟 | `AgentAlarmToolService.kt` | MMKV 音效/精确闹钟记录；预提醒 5 分钟；snooze 默认 5 分钟 | 领域行为；迁入 Alarm store，不能和 ACP profile 混合。 |
@@ -457,3 +457,5 @@ AcpAgentConfigAudit（审计）
 - 文档中的“建议删除”不是已执行结果。
 - 需要用户审阅并确认优先级后，下一轮才能按 P0/P1/P2 逐项出删除方案和影响面。
 - 适配器不会因为“自定义”三个字被删除；只有违反 canonical ACP lifecycle、重复实现官方能力或承载无必要产品策略的部分，才进入删除/下沉候选。
+
+安全保护审查补充（2026-09-06）：上文删除清单是历史记录，不能作为继续删除权限、自动压缩或存储保护的依据。用户明确要求保留安全保护，只移除主动运行限制。具体修复和验证见 removal-audit-49b7b5205-2026-09-06.md。

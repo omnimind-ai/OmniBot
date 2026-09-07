@@ -770,7 +770,8 @@ internal class LocalAcpRuntime(
                         // hints and are ignored by Harnesses that do not use
                         // them; terminal_output also enables native tool
                         // output through the standard terminal callbacks.
-                        _meta = ACP_CLIENT_CAPABILITY_META
+                        _meta = AcpHarnessAdapters.forProfile(profile)
+                            .clientCapabilityMeta(ACP_CLIENT_CAPABILITY_META)
                     ),
                     implementation = Implementation(
                         name = "omnibot-app",
@@ -802,9 +803,8 @@ internal class LocalAcpRuntime(
                     installed = true,
                     checkedAt = System.currentTimeMillis(),
                     capabilities = capabilitiesPayload(initialized),
-                    preparationRevision = AcpAgentProfileStore
-                            .officialRuntime(profile)
-                            ?.preparationRevision
+                    // Initialization proves readiness, not installation of a new package.
+                    preparationRevision = profileStore.health(profile.id).preparationRevision
                 )
             )
             processExitWatcher?.cancel()
@@ -840,9 +840,22 @@ internal class LocalAcpRuntime(
                 }
             }
         } catch (error: Throwable) {
-            if (error is CancellationException) throw error
-            nextProtocol.close()
             val diagnostics = nextConnection.diagnosticSummary()
+            // Until initialize succeeds these resources belong to this
+            // attempt, not disconnectLocked(). Cancellation must release
+            // them as well, in a context where pipe cleanup can suspend.
+            withContext(kotlinx.coroutines.NonCancellable) {
+                try {
+                    nextProtocol.close()
+                } finally {
+                    nextConnection.close()
+                }
+            }
+            if (error is CancellationException &&
+                (!coroutineContext.isActive || error !is TimeoutCancellationException)
+            ) {
+                throw error
+            }
             Log.e(
                 TAG,
                 "ACP initialize failed for ${profile.id}: " +
@@ -850,7 +863,6 @@ internal class LocalAcpRuntime(
                     if (diagnostics.isBlank()) "" else "; $diagnostics",
                 error
             )
-            nextConnection.close()
             val failure = if (
                 error is TimeoutCancellationException &&
                 diagnostics.isNotBlank()
@@ -1563,49 +1575,12 @@ internal class LocalAcpRuntime(
     }
 
     private suspend fun selectAgent(id: String): Map<String, Any?> {
-        cancelPendingConnectAttempts()
-        val previous = profileStore.selected()
-        val selected = profileStore.select(id)
-        // Selecting the already-active Harness is a UI refresh, not a
-        // provider switch. Reusing the live ACP transport keeps repeated
-        // taps on the top-right selector effectively free and, more
-        // importantly, preserves an in-flight session instead of restarting
-        // its process.
-        if (activeProfile?.id == selected.id && isConnected) {
-            return agentsPayload(
-                refreshAvailability = false,
-                includeRuntimeStatus = true,
-            )
-        }
-        // A provider switch is a process boundary.  Do not rely on the
-        // in-memory `isConnected` flag here: after an app restart or a
-        // partially failed handshake the old ACP process may still be alive
-        // even though the client state is incomplete.  Closing unconditionally
-        // prevents the next prompt from being sent to the previous agent.
-        if (activeProfile?.id != selected.id || connection != null) {
-            Log.i(TAG, "Switching ACP agent to ${selected.id}; closing previous process")
-            disconnect()
-        }
-        // Selection may start an already prepared ACP process. Installing or
-        // repairing a managed Harness is deliberately separate: it is the
-        // explicit `agent/prepare` settings action, never a chat transition.
-        return try {
-            connect(profile = selected)
-            agentsPayload(
-                refreshAvailability = false,
-                includeRuntimeStatus = true,
-            )
-        } catch (error: Throwable) {
-            if (previous.id != selected.id) {
-                profileStore.select(previous.id)
-                Log.w(
-                    TAG,
-                    "ACP switch to ${selected.id} failed; restored ${previous.id}",
-                    error
-                )
-            }
-            throw error
-        }
+        // Selection is configuration, not ACP initialization. The user must
+        // be able to choose a Harness before configuring a compatible model.
+        // Existing conversations/processes keep their own session ownership;
+        // session/new, session/load and prompt admission connect when needed.
+        profileStore.select(id)
+        return agentsPayload(refreshAvailability = false, includeRuntimeStatus = true)
     }
 
     private suspend fun saveAgent(args: Map<String, Any?>): Map<String, Any?> {
@@ -2104,12 +2079,18 @@ internal class LocalAcpRuntime(
                 )
             }
             sessions[threadId]?.let {
-                if (args["refreshConfig"] == true && activeAgentId() == AcpAgentProfileStore.XIAOWAN_AGENT_ID) {
+                if (args["refreshConfig"] == true &&
+                    requireAgentInfo().capabilities.loadSession) {
                     check(turnOwnership.activeTurnId(threadId) == null) { "本轮结束后可刷新模型列表" }
                     val cwd = sessionCwds[threadId] ?: "/workspace"
-                    val refreshed = requireClient().loadSession(
-                        SessionId(threadId), sessionCreationParameters(cwd, args), operationsFactory()
-                    )
+                    val refreshed = try {
+                        replaySuppressedThreads.add(threadId)
+                        requireClient().loadSession(
+                            SessionId(threadId), sessionCreationParameters(cwd, args), operationsFactory()
+                        )
+                    } finally {
+                        replaySuppressedThreads.remove(threadId)
+                    }
                     registerSession(refreshed, cwd)
                     return@withLock sessionPayload(refreshed, bindingRepository.getBindingByThreadId(threadId)?.conversationId)
                 }
@@ -2416,7 +2397,9 @@ internal class LocalAcpRuntime(
             else -> null
         }
         if (option == null && configId == "model" && session.modelsSupported) {
-            val value = rawValue.toString()
+            val value = AcpHarnessAdapters.forProfile(activeProfile ?: profileStore.selected())
+                .resolveModelValue(rawValue.toString(), session.availableModels.map { it.modelId.value })
+                ?: throw IllegalArgumentException("Invalid ACP model selection.")
             val model = session.availableModels.firstOrNull {
                 it.modelId.value == value
             } ?: throw IllegalArgumentException(
@@ -2481,16 +2464,24 @@ internal class LocalAcpRuntime(
         val appliedValue: Any? = when (option) {
             is SessionConfigOption.Select -> {
                 val requestedValue = rawValue.toString()
-                val value = if (configId == "mode") {
+                val value = (if (configId == "mode") {
                     resolveAcpSessionModeId(
                         option.flatOptions().map { it.value.value },
                         requestedValue
                     )
+                } else if (option.category == SessionConfigOptionCategory.MODEL) {
+                    AcpHarnessAdapters.forProfile(activeProfile ?: profileStore.selected())
+                        .resolveModelValue(requestedValue, option.flatOptions().map { it.value.value })
+                        // The Agent owns validation. Its catalog can change after
+                        // this client snapshot (for example after Provider refresh).
+                        // Preserve known wire aliases, then let set_config_option
+                        // accept or reject the requested model authoritatively.
+                        ?: requestedValue
                 } else {
                     requestedValue.takeIf {
                         option.flatOptions().any { it.value.value == requestedValue }
                     }
-                } ?: throw IllegalArgumentException(
+                }) ?: throw IllegalArgumentException(
                     "Invalid value '$requestedValue' for ACP config option '$configId'."
                 )
                 if (option.currentValue.value != value) {
@@ -2638,6 +2629,8 @@ internal class LocalAcpRuntime(
             )
             throw error
         }
+        val promptHarnessAdapter = activeProfile?.let(AcpHarnessAdapters::forProfile)
+            ?: AcpHarnessAdapters.standard
         val activeConnection = connection
             ?: run {
                 val error = IllegalStateException("ACP agent connection is not available.")
@@ -2712,6 +2705,12 @@ internal class LocalAcpRuntime(
                         is Event.PromptResponseEvent -> {
                             promptResponseReceived = true
                             stopReason = event.response.stopReason.name.lowercase()
+                            promptHarnessAdapter.promptFailure(event.response._meta as? JsonObject)?.let {
+                                // Normalize the owning response's explicit failure;
+                                // the same canonical prompt completion handles it.
+                                stopReason = "error"
+                                failure = IllegalStateException(it)
+                            }
                             event.response.toAcpTurnUsageUpdate(
                                 lastAssistantMessageIds[turnIdentity]
                             )?.let { usageUpdate ->
@@ -3314,6 +3313,9 @@ internal class LocalAcpRuntime(
                             option.flatOptions().map { it.value.value },
                             requestedValue
                         )
+                    } else if (option.category == SessionConfigOptionCategory.MODEL) {
+                        AcpHarnessAdapters.forProfile(activeProfile ?: profileStore.selected())
+                            .resolveModelValue(requestedValue, option.flatOptions().map { it.value.value })
                     } else {
                         requestedValue.takeIf {
                             option.flatOptions().any { it.value.value == requestedValue }
@@ -3685,6 +3687,20 @@ internal class LocalAcpRuntime(
             notification: SessionUpdate,
             _meta: JsonElement?
         ) {
+            if (notification is SessionUpdate.AvailableCommandsUpdate) {
+                // postInitialize may notify before session/new or resume has
+                // finished registering the SDK session and durable binding.
+                // Reuse their lock so the host can prove ownership before
+                // forwarding these turn-independent commands to the UI.
+                // Do not block the SDK receive loop: it still needs to read
+                // the session/new response that releases this lock.
+                scope.launch(start = CoroutineStart.UNDISPATCHED) {
+                    sessionMutex.withLock {
+                        handleSessionUpdate(threadId, null, notification)
+                    }
+                }
+                return
+            }
             handleSessionUpdate(
                 threadId = threadId,
                 turnId = turnOwnership.activeTurnId(threadId),

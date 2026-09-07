@@ -46,7 +46,8 @@ class AgentOrchestrator(
         val initialMessages: List<ChatCompletionMessage>,
         val executionEnv: AgentExecutionEnvironment,
         val conversationId: Long? = null,
-        val promptCacheKey: String? = null
+        val promptCacheKey: String? = null,
+        val contextCompactor: AgentContextCompactionController? = null,
     )
 
     private val json = Json {
@@ -243,8 +244,24 @@ class AgentOrchestrator(
                 latestPromptTokens?.let { promptTokens ->
                     callback.onPromptTokenUsageChanged(
                         latestPromptTokens = promptTokens,
-                        promptTokenThreshold = null
+                        promptTokenThreshold = input.contextCompactor?.resolvePromptTokenThreshold(input.conversationId)
                     )
+                }
+
+                // Context maintenance stays inside Xiaowan's existing prompt.
+                // It neither resends a completed request nor creates a new ACP turn.
+                input.contextCompactor?.let { compactor ->
+                    val compacted = compactor.compactIfNeeded(
+                        conversationId = input.conversationId,
+                        conversationMode = input.executionEnv.conversationMode,
+                        promptTokens = latestPromptTokens,
+                        messages = memory.snapshot(),
+                        contextTokens = AgentConversationContextCompactor.resolveReportedContextTokens(
+                            turnUsage.promptTokens, turnUsage.completionTokens, turnUsage.totalTokens,
+                        ),
+                        callback = callback,
+                    )
+                    memory.replaceAll(compacted)
                 }
 
                 if (toolCalls.isEmpty()) {
@@ -317,6 +334,12 @@ class AgentOrchestrator(
                         break@parsePhase
                     }
                     val validationError = runCatching {
+                        // A syntactically valid JSON prefix is not proof that the
+                        // Provider finished the arguments before its output cap.
+                        require(lastFinishReason?.trim()?.lowercase() !in setOf("length", "max_tokens", "max_output_tokens")) {
+                            t("本工具调用未执行：模型输出达到长度上限，参数可能被截断。",
+                                "Tool not executed: model output reached its length limit; arguments may be incomplete.")
+                        }
                         toolRegistry.validateArguments(toolCall.function.name, parsedArgs)
                     }.exceptionOrNull()
                     if (validationError != null) {

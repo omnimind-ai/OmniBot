@@ -2,8 +2,8 @@ package cn.com.omnimind.bot.agent
 
 /**
  * A subagent profile defines optional task guidance for a spawned subagent.
- * It does not define a second tool policy: every child receives exactly the
- * capabilities that its parent harness has already exposed.
+ * Specialist permissions are enforced through a view of the parent catalog.
+ * Profiles impose no round, token, duration, or output-size budget.
  */
 data class SubagentProfile(
     val id: String,

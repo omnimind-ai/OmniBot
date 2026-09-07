@@ -53,6 +53,9 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
       key: ValueKey('acp-config-$generation'),
       isRunning: _isAiResponding,
       onVisibilityChanged: _onPopupVisibilityChanged,
+      configureModel: _usesSharedProviderModel(agentId)
+          ? _openConversationModelSelector
+          : null,
       load: () => read(),
       refresh: () => read(refreshConfig: true),
       write: (sessionId, configId, value) async {
@@ -1490,22 +1493,11 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
                           _activeMode == ChatPageMode.openclaw
                           ? null
                           : this._handleContextUsageRingLongPress,
-                      modelPickerSettings: _activeMode == ChatPageMode.openclaw
-                          ? ChatModelPickerSettings(
-                              modelId:
-                                  _activeDispatchSceneSelection?.modelId ?? '',
-                              hasSelectableModels: _hasSelectableProviderModels,
-                              anchorKey: _firstUseTourModelAnchorKey,
-                              onPointerDown: () {
-                                _suppressNextOutsideTapKeyboardHide = true;
-                              },
-                              onOpen: (anchorContext) =>
-                                  _openConversationModelSelector(anchorContext),
-                            )
-                          : null,
-                      runtimeConfigButton: _activeMode == ChatPageMode.openclaw
-                          ? null
-                          : _buildAcpConfigButton(),
+                      modelPickerSettings: null,
+                      runtimeConfigButton: KeyedSubtree(
+                        key: _firstUseTourModelAnchorKey,
+                        child: _buildAcpConfigButton(),
+                      ),
                       agentRunSettings: null,
                       onAgentRunSettingsOpened: null,
                       onAgentRunSettingsChanged: null,

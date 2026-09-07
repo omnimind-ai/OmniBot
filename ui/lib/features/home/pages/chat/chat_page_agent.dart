@@ -90,7 +90,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       // Older builds let normal-chat model selection live only in Flutter
       // state. Agent/Harness startup now has one durable binding, so migrate
       // that state on first Agent entry: use the configured editing Provider
-      // and its first verified/cached model, then persist the canonical
+      // and its first user-configured model, then persist the canonical
       // scene.dispatch.model binding before ACP connect.
       profile = profilesPayload.profiles
           .where((item) => item.id == profilesPayload.editingProfileId)
@@ -104,18 +104,11 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     }
 
     // The Provider settings surface owns catalog discovery. Keep Agent entry
-    // cache-only: fetching /models here duplicated configuration work and
+    // configuration-only: fetching /models here duplicated configuration work and
     // made entering Agent mode wait on the Provider again.
     final providerOptions = <ProviderModelOption>[
       ...?_modelOptionsByProfileId[profile.id],
     ];
-    final cachedOptions =
-        await ModelProviderConfigService.getCachedFetchedModels(
-          profileId: profile.id,
-          apiBase: profile.baseUrl,
-          profileRevision: profile.revision,
-        );
-    providerOptions.addAll(cachedOptions);
     final storedOptions =
         await ModelProviderConfigService.getStoredModelOptionsForProfile(
           profile.id,
@@ -258,6 +251,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     final selectsRemote = normalized == _kRemoteCodexModeAgentId;
     final observedTargetRequestId = _conversationTargetRequestId;
     final switchGeneration = _harnessSwitchSendBarrier.begin();
+    var switchSucceeded = false;
     // Invalidate every status/catalog refresh already in flight. Only the
     // ACP response produced by this switch may become the next global
     // runtime snapshot.
@@ -268,11 +262,6 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       _isAcpAgentSwitching = true;
     });
     try {
-      if (!selectsRemote &&
-          _usesSharedProviderModel(normalized) &&
-          !await _ensureSharedProviderModelReadyForSwitch()) {
-        return;
-      }
       if (!mounted ||
           !_harnessSwitchSendBarrier.isCurrent(switchGeneration) ||
           observedTargetRequestId != _conversationTargetRequestId) {
@@ -285,13 +274,15 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       final runtimeActiveAgentId =
           _agentRuntimeStatus.activeAgentId?.trim() ?? '';
       final sameVisibleAgent =
-          _activeMode == ChatPageMode.agent && normalized == _activeAcpAgentId;
+          _activeMode == ChatPageMode.agent &&
+          normalized == _committedAcpAgentId;
       final sameRuntimeAgent = selectsRemote
           ? _agentRuntimeStatus.connected &&
                 (_agentRuntimeStatus.runtime == 'remote' ||
                     _agentRuntimeStatus.remoteEnabled)
           : _agentRuntimeStatus.connected && runtimeActiveAgentId == normalized;
       if (sameVisibleAgent && sameRuntimeAgent) {
+        switchSucceeded = true;
         return;
       }
 
@@ -318,10 +309,17 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         if (selected) {
           await _applyConversationThreadTarget(
             target,
+            preserveComposer: true,
             requestId: switchTargetRequestId,
           );
+          switchSucceeded = _isConversationTargetRequestCurrent(
+            switchTargetRequestId,
+          );
         } else {
-          await _applyConversationThreadTarget(previousTarget);
+          await _applyConversationThreadTarget(
+            previousTarget,
+            preserveComposer: true,
+          );
         }
       });
     } finally {
@@ -336,70 +334,11 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
           _isAcpAgentSwitching = false;
         });
       }
-      _harnessSwitchSendBarrier.finish(switchGeneration);
-    }
-  }
-
-  /// A local ACP adapter is only an execution harness. Its Provider and model
-  /// come from the shared Agent scene binding. Check that binding before
-  /// stopping the currently visible harness; otherwise a missing Provider
-  /// model causes a needless process teardown followed by a rollback to the
-  /// previous Agent, which looks like a broken mode switch to the user.
-  Future<bool> _ensureSharedProviderModelReadyForSwitch() async {
-    // A connected ACP runtime already passed this exact Provider/model
-    // validation during its last launch. Re-reading three settings channels
-    // on every selector tap only adds latency (and can briefly block the
-    // popup while another Harness is starting). The native ACP boundary still
-    // validates the binding when it prepares a genuinely new process.
-    if (_agentRuntimeStatus.ready && _agentRuntimeStatus.connected) {
-      return true;
-    }
-    try {
-      final results = await Future.wait<dynamic>([
-        SceneModelConfigService.getSceneCatalog(),
-        SceneModelConfigService.getSceneModelBindings(),
-        ModelProviderConfigService.listProfiles(),
-      ]);
-      final catalog = results[0] as List<SceneCatalogItem>;
-      final bindings = results[1] as List<SceneModelBindingEntry>;
-      final profiles = results[2] as ModelProviderProfilesPayload;
-      final dispatchScene = catalog
-          .where((item) => item.sceneId == 'scene.dispatch.model')
-          .firstOrNull;
-      final persistedBinding = bindings
-          .where((item) => item.sceneId == 'scene.dispatch.model')
-          .firstOrNull;
-      final selection = resolveSharedAgentProviderSelection(
-        effectiveProviderProfileId: dispatchScene?.effectiveProviderProfileId,
-        effectiveModel: dispatchScene?.effectiveModel,
-        boundProviderProfileId:
-            persistedBinding?.providerProfileId ??
-            dispatchScene?.boundProviderProfileId,
-        boundModel: persistedBinding?.modelId ?? dispatchScene?.overrideModel,
+      _harnessSwitchSendBarrier.finish(
+        switchGeneration,
+        succeeded: switchSucceeded,
       );
-      final configuredProviderIds = profiles.profiles
-          .where((profile) => profile.configured)
-          .map((profile) => profile.id)
-          .toSet();
-      if (isSharedAgentProviderSelectionReady(
-        selection: selection,
-        configuredProviderIds: configuredProviderIds,
-      )) {
-        return true;
-      }
-    } catch (error) {
-      debugPrint('[Agent] failed to resolve shared Provider model: $error');
     }
-
-    if (mounted) {
-      _showSnackBar(
-        LegacyTextLocalizer.isEnglish
-            ? 'Select a verified Provider model before switching Agent.'
-            : '请先选择已验证的 Provider 模型，再切换 Agent。',
-      );
-      GoRouterManager.push('/home/agent_mode_setting');
-    }
-    return false;
   }
 
   Future<void> _leaveAgentMode() async {
@@ -436,9 +375,10 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       config = await AgentRuntimeService.readRemoteBridgeConfig();
     } catch (error) {
       showToast(
-        LegacyTextLocalizer.isEnglish
-            ? 'Failed to read Agent config: $error'
-            : '读取 Agent 配置失败：$error',
+        formatAgentRuntimeErrorForUser(
+          error,
+          english: LegacyTextLocalizer.isEnglish,
+        ),
         type: ToastType.error,
       );
       return;
@@ -489,9 +429,10 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     } catch (error) {
       if (!mounted) return;
       showToast(
-        LegacyTextLocalizer.isEnglish
-            ? 'Failed to switch workspace: $error'
-            : '切换工作目录失败：$error',
+        formatAgentRuntimeErrorForUser(
+          error,
+          english: LegacyTextLocalizer.isEnglish,
+        ),
         type: ToastType.error,
       );
     }
@@ -542,9 +483,10 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     } catch (error) {
       if (!_isConversationTargetRequestCurrent(targetRequestId)) return;
       showToast(
-        LegacyTextLocalizer.isEnglish
-            ? 'Failed to load Agent session: $error'
-            : '加载 Agent session 失败：$error',
+        formatAgentRuntimeErrorForUser(
+          error,
+          english: LegacyTextLocalizer.isEnglish,
+        ),
         type: ToastType.error,
       );
     }
@@ -830,7 +772,10 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         return;
       }
       setState(() {
-        _agentModelListError = error.toString();
+        _agentModelListError = formatAgentRuntimeErrorForUser(
+          error,
+          english: LegacyTextLocalizer.isEnglish,
+        );
       });
     } finally {
       if (mounted && requestId == _agentModelListRequestId) {
@@ -888,7 +833,9 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       if (!mounted) return;
       setState(() {
         _isAgentCollaborationModeListLoading = false;
-        _agentCollaborationModeListError = error.toString();
+        _agentCollaborationModeListError = formatAgentRuntimeErrorForUser(
+          error,
+        );
       });
     }
   }
@@ -936,9 +883,10 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     } catch (error) {
       if (mounted) {
         showToast(
-          LegacyTextLocalizer.isEnglish
-              ? 'Failed to change Agent model: $error'
-              : '修改 Agent 模型失败：$error',
+          formatAgentRuntimeErrorForUser(
+            error,
+            english: LegacyTextLocalizer.isEnglish,
+          ),
           type: ToastType.error,
         );
       }
@@ -982,15 +930,10 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         );
       }
       final catalog = await AgentRuntimeService.selectAgent(normalized);
-      // Native agent/select initializes the ACP process before returning and
-      // includes that live status in the same response. Reuse it so a normal
-      // switch does not pay an extra status probe/connect IPC round-trip.
-      // Keep compatibility with an older native build during hot reload or
-      // an in-place APK update that has not restarted the Flutter engine.
-      var status = catalog.runtimeStatus ?? await AgentRuntimeService.status();
-      if (status.ready && !status.connected) {
-        status = await AgentRuntimeService.connect();
-      }
+      // Choose the assistant first. Model configuration/session admission
+      // owns initialization; a failed connection must not undo selection.
+      final status =
+          catalog.runtimeStatus ?? await AgentRuntimeService.status();
       if (!mounted) return false;
       setState(() {
         _agentCatalog = catalog;
@@ -1024,9 +967,13 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       }
       if (!mounted) return false;
       showToast(
-        LegacyTextLocalizer.isEnglish
-            ? 'Failed to switch ACP agent: $error'
-            : '切换 ACP Agent 失败：$error',
+        formatAgentRuntimeErrorForUser(
+          error,
+          english: LegacyTextLocalizer.isEnglish,
+          fallback: LegacyTextLocalizer.isEnglish
+              ? 'Could not switch assistants. Please try again.'
+              : '未能切换助手，请重试。',
+        ),
         type: ToastType.error,
       );
       return false;
@@ -1087,9 +1034,10 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     } catch (error) {
       if (!mounted) return false;
       showToast(
-        LegacyTextLocalizer.isEnglish
-            ? 'Failed to switch to Remote Agent: $error'
-            : '切换到远程 Agent 失败：$error',
+        formatAgentRuntimeErrorForUser(
+          error,
+          english: LegacyTextLocalizer.isEnglish,
+        ),
         type: ToastType.error,
       );
       return false;
@@ -1111,9 +1059,10 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     } catch (error) {
       if (mounted) {
         showToast(
-          LegacyTextLocalizer.isEnglish
-              ? 'Failed to change reasoning effort: $error'
-              : '修改思考强度失败：$error',
+          formatAgentRuntimeErrorForUser(
+            error,
+            english: LegacyTextLocalizer.isEnglish,
+          ),
           type: ToastType.error,
         );
       }

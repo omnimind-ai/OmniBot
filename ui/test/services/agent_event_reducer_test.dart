@@ -6528,7 +6528,7 @@ diff --git a/lib/main.dart b/lib/main.dart
     );
     expect(
       statusCard.cardData?['summary'],
-      'Invalid JSON data: tools[8].type is unsupported',
+      '助手暂时无法完成操作，请重试。',
     );
     expect(statusCard.cardData?['summary'], isNot(contains('{"error"')));
   });

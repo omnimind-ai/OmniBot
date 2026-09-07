@@ -66,4 +66,80 @@ void main() {
 
     expect(find.text('opus-6'), findsOneWidget);
   });
+
+  testWidgets('one search result stays a separate accessible model button', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    ConversationModelSelection? selected;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ConversationModelSelectorContent(
+            width: 320,
+            maxHeight: 360,
+            profiles: const [officialProfile],
+            providerModelsByProfileId: const {
+              'official': [
+                ProviderModelOption(id: 'GLM-5.2', displayName: 'GLM-5.2'),
+              ],
+            },
+            onSelect: (value) => selected = value,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'GLM-5.2');
+    await tester.pumpAndSettle();
+    final model = find.bySemanticsLabel(RegExp(r'^GLM-5\.2$'));
+    expect(model, findsOneWidget);
+    await tester.tap(model);
+    expect(selected?.providerProfileId, 'official');
+      expect(selected?.modelId, 'GLM-5.2');
+      semantics.dispose();
+  });
+
+  testWidgets('current connection is reachable before other connections', (
+    tester,
+  ) async {
+    const other = ModelProviderProfileSummary(
+      id: 'other',
+      name: 'Other connection',
+      baseUrl: 'https://example.invalid',
+      apiKey: '',
+      customHeaders: {},
+      sourceType: 'custom',
+      readOnly: false,
+      ready: true,
+      statusText: '',
+      configured: true,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: ConversationModelSelectorContent(
+            width: 320,
+            maxHeight: 360,
+            profiles: const [other, officialProfile],
+            currentSelection: const ConversationModelSelection(
+              providerProfileId: 'official',
+              modelId: 'model',
+            ),
+            providerModelsByProfileId: const {
+              'official': [
+                ProviderModelOption(id: 'model', displayName: 'Selected model'),
+              ],
+            },
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      tester.getTopLeft(find.text('OmniBot 官方 AI')).dy,
+      lessThan(tester.getTopLeft(find.text('Other connection')).dy),
+    );
+    expect(find.text('Selected model').hitTestable(), findsOneWidget);
+  });
 }

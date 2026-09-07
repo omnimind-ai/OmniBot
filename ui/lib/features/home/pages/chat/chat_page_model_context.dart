@@ -5,10 +5,14 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
   Future<void> _loadNormalChatModelContext() =>
       _loadNormalChatModelContextInternal();
 
-  Future<void> _loadNormalChatModelContextInternal() async {
+  Future<void> _loadNormalChatModelContextInternal({
+    bool refreshModels = false,
+  }) async {
     try {
       final results = await Future.wait<dynamic>([
-        ModelProviderConfigService.loadChatModelGroups(refresh: false),
+        refreshModels
+            ? ModelProviderConfigService.refreshChatModelGroups()
+            : ModelProviderConfigService.loadChatModelGroups(refresh: false),
         SceneModelConfigService.getSceneCatalog(),
       ]);
       if (!mounted) return;
@@ -38,44 +42,6 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
     }
   }
 
-  Future<void> _refreshOfficialChatProviderModelsForSelector() async {
-    try {
-      final group =
-          await ModelProviderConfigService.refreshOfficialChatModelGroup();
-      if (!mounted || group == null) {
-        return;
-      }
-      final profiles = List<ModelProviderProfileSummary>.from(
-        _modelProviderProfiles,
-      );
-      final profileIndex = profiles.indexWhere(
-        (profile) => profile.id == group.profile.id,
-      );
-      if (profileIndex >= 0) {
-        profiles[profileIndex] = group.profile;
-      } else {
-        profiles.add(group.profile);
-      }
-      final next = <String, List<ProviderModelOption>>{
-        for (final entry in _modelOptionsByProfileId.entries)
-          entry.key: List<ProviderModelOption>.from(entry.value),
-        group.profile.id: List<ProviderModelOption>.from(group.models),
-      };
-      setState(() {
-        _modelProviderProfiles = profiles;
-        _modelOptionsByProfileId = _mergeChatModelOptions(
-          profiles: profiles,
-          source: next,
-          sceneCatalog: _sceneCatalog,
-          overrideSelection: _activeConversationModelOverrideSelection,
-        );
-      });
-    } catch (_) {
-      // Keep the already-loaded cache available while offline. The next
-      // explicit selector opening will retry the official catalog refresh.
-    }
-  }
-
   @override
   Future<void> _syncInvalidNormalConversationOverrideIfNeeded() async {
     if (_modelProviderProfiles.isEmpty) {
@@ -90,12 +56,7 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
           !configuredProfileIds.contains(selection.providerProfileId)) {
         return false;
       }
-      return (_modelOptionsByProfileId[selection.providerProfileId] ??
-                  const <ProviderModelOption>[])
-              .isEmpty ||
-          (_modelOptionsByProfileId[selection.providerProfileId] ??
-                  const <ProviderModelOption>[])
-              .any((item) => item.id == selection.modelId);
+      return true; // A catalog response cannot invalidate user configuration.
     }
 
     final persisted = _conversationModelOverride;
@@ -513,31 +474,6 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
           _openClawPanelExpanded = false;
         });
       }
-      final activeSelection = _activeDispatchSceneSelection;
-      // Refresh the scene binding at the point of use, then independently
-      // force-refresh the configured official profile. The active Provider may
-      // be BYOK, while the selector still shows the official group.
-      await _loadNormalChatModelContextInternal();
-      await _refreshOfficialChatProviderModelsForSelector();
-      final refreshedSelection =
-          _activeDispatchSceneSelection ?? activeSelection;
-      final refreshedProviderModels = refreshedSelection == null
-          ? const <ProviderModelOption>[]
-          : (_modelOptionsByProfileId[refreshedSelection.providerProfileId] ??
-                const <ProviderModelOption>[]);
-      if (refreshedSelection != null && refreshedProviderModels.length <= 1) {
-        await _loadCachedProviderModelsForChatSelector(refreshedSelection);
-      }
-      final selectorProfiles = _modelProviderProfiles;
-      final selectorOptions = _modelOptionsByProfileId;
-      final hasSelectorModels = selectorProfiles.any((profile) {
-        return profile.configured &&
-            (selectorOptions[profile.id] ?? const <ProviderModelOption>[])
-                .isNotEmpty;
-      });
-      if (!hasSelectorModels) {
-        return;
-      }
       if (!mounted || !anchorContext.mounted) {
         return;
       }
@@ -577,9 +513,20 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
         builder: (handle) => ConversationModelSelectorContent(
           width: popupWidth,
           maxHeight: popupMaxHeight,
-          profiles: selectorProfiles,
-          providerModelsByProfileId: selectorOptions,
+          loadLiveProviders: true,
           currentSelection: currentSelection,
+          footer: TextButton.icon(
+            onPressed: () async {
+              await handle.dismiss();
+              if (!mounted) return;
+              await GoRouterManager.pushForResult<void>(
+                '/home/model_provider_setting',
+              );
+              if (mounted) await _loadNormalChatModelContext();
+            },
+            icon: const Icon(Icons.settings_outlined, size: 16),
+            label: Text(LegacyTextLocalizer.localize('配置模型连接')),
+          ),
           // 软键盘"确定"提交搜索时:先打开 popup 的"一次性键盘隐藏豁免",再 unfocus
           // —— 这样 IME 塌陷不会被 DismissOverlayOnKeyboardHide 当作"用户想关 popup"
           // 误关掉,搜索结果列表得以保留。
@@ -621,46 +568,6 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
     }
   }
 
-  Future<void> _loadCachedProviderModelsForChatSelector(
-    _ChatModelOverrideSelection selection,
-  ) async {
-    final profile = _modelProviderProfiles
-        .where((item) => item.id == selection.providerProfileId)
-        .firstOrNull;
-    if (profile == null) {
-      return;
-    }
-    final cached = await ModelProviderConfigService.getCachedFetchedModels(
-      profileId: profile.id,
-      apiBase: profile.baseUrl,
-      profileRevision: profile.revision,
-    );
-    if (cached.isEmpty) {
-      return;
-    }
-    final hidden = await ModelProviderConfigService.getHiddenChatModelIds(
-      profileId: profile.id,
-    );
-    final models = ModelProviderConfigService.filterChatModelOptions(
-      models: ModelProviderConfigService.mergeModelOptions(
-        remoteModels: cached,
-        manualModelIds: const <String>[],
-      ),
-      hiddenModelIds: hidden,
-    );
-    if (!mounted || models.isEmpty) {
-      return;
-    }
-    setState(() {
-      final next = <String, List<ProviderModelOption>>{
-        for (final entry in _modelOptionsByProfileId.entries)
-          entry.key: List<ProviderModelOption>.from(entry.value),
-      };
-      next[profile.id] = models;
-      _modelOptionsByProfileId = next;
-    });
-  }
-
   @override
   Future<void> _applyDispatchSceneModelSelection({
     required String providerProfileId,
@@ -683,13 +590,37 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
       return;
     }
     final selectionSerial = ++_dispatchSceneModelSelectionSerial;
+    final targetGeneration = _conversationTargetRequestId;
+    final selectionMode = _activeMode;
     try {
+      final sessionId = _activeAgentThreadId?.trim();
+      final updateExistingSession =
+          _activeMode == ChatPageMode.agent &&
+          sessionId != null && sessionId.isNotEmpty &&
+          currentSelection?.providerProfileId == providerProfileId;
+      if (updateExistingSession) {
+        // Model changes within the same connection belong to the existing
+        // ACP session. Disconnecting here invalidates an empty session before
+        // its first prompt and leaves the composer holding that stale id.
+        await AgentRuntimeService.setSessionConfigOption(
+          sessionId: sessionId,
+          conversationId: _currentConversationId,
+          agentId: _activeAcpAgentId,
+          configId: 'model',
+          value: modelId,
+        );
+      }
       await SceneModelConfigService.saveSceneModelBinding(
         sceneId: sceneId,
         providerProfileId: providerProfileId,
         modelId: modelId,
       );
-      if (_activeMode == ChatPageMode.agent) {
+      if (!mounted || selectionSerial != _dispatchSceneModelSelectionSerial ||
+          targetGeneration != _conversationTargetRequestId) return;
+      if (selectionMode == ChatPageMode.agent) {
+        _activeAgentModelId = modelId;
+      }
+      if (selectionMode == ChatPageMode.agent && !updateExistingSession) {
         await AgentRuntimeService.disconnect();
       }
       await _loadNormalChatModelContext();

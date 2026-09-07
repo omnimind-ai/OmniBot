@@ -44,6 +44,9 @@ object DeepSeekProvider {
     ): ProviderRequestCapabilities {
         val normalizedProtocol = normalizeProtocolType(protocolType)
         return ProviderRequestCapabilities(
+            // OpenAI-compatible does not imply support for optional OpenAI fields.
+            supportsChatPromptCacheKey = normalizedProtocol == "openai_compatible" &&
+                OfficialProviderUrlMatcher.matchesHttpsHostWithOptionalV1(apiBase, "api.openai.com"),
             supportsExplicitAutoToolChoice = !(
                 normalizedProtocol != "anthropic" &&
                     isOfficialBaseUrl(apiBase) &&

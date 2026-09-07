@@ -9,6 +9,24 @@ class AppLocalizationsEn extends AppLocalizations {
   AppLocalizationsEn([String locale = 'en']) : super(locale);
 
   @override
+  String get memoryShortRetention =>
+      'Short-term memories stay on this device without automatic expiry. Long-press an entry to delete it or select several to delete.';
+
+  @override
+  String get memoryShortDeleteConfirm => 'Delete short-term memories?';
+
+  @override
+  String get memoryShortDeleteScope =>
+      'Permanently deletes only the selected short-term entries and their search index. Chat history, original quick notes, extracted long-term memories, and the current conversation context are preserved.';
+
+  @override
+  String get memoryShortDeleteFailed =>
+      'Deletion was not completed. The list has been refreshed; select the entries again and retry.';
+
+  @override
+  String get memoryShortDeleted => 'Short-term memories deleted';
+
+  @override
   String get appName => 'Omnibot';
 
   @override

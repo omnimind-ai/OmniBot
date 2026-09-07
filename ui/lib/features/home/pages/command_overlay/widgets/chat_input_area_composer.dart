@@ -199,7 +199,7 @@ mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
         ),
         const SizedBox(width: 4),
       ],
-      if (widget.runtimeConfigButton != null) ...[
+      if (widget.runtimeConfigButton != null && !_shouldShowModelPicker) ...[
         widget.runtimeConfigButton!,
         const SizedBox(width: 4),
       ],
@@ -384,6 +384,13 @@ mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
       opacity: canTap ? 1 : 0.38,
       child: IconButton(
         key: const ValueKey('chat-input-send-or-stop-button'),
+        tooltip: action == ChatComposerPrimaryAction.cancel
+            ? (Localizations.localeOf(context).languageCode == 'en'
+                  ? 'Stop'
+                  : '停止')
+            : (Localizations.localeOf(context).languageCode == 'en'
+                  ? 'Send'
+                  : '发送'),
         padding: EdgeInsets.zero,
         iconSize: 20,
         icon: AnimatedSwitcher(
@@ -562,7 +569,7 @@ mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
           ),
           const SizedBox(width: 4),
         ],
-        if (widget.runtimeConfigButton != null) ...[
+        if (widget.runtimeConfigButton != null && !_shouldShowModelPicker) ...[
           widget.runtimeConfigButton!,
           const SizedBox(width: 4),
         ],
