@@ -142,6 +142,9 @@ class AssistsCoreChannel {
                 "getWorkspaceShortMemories" -> {
                     assistsCoreManager!!.getWorkspaceShortMemories(call, result)
                 }
+                "deleteWorkspaceShortMemories" -> {
+                    assistsCoreManager!!.deleteWorkspaceShortMemories(call, result)
+                }
                 "listQuickLogs" -> {
                     assistsCoreManager!!.listQuickLogs(call, result)
                 }

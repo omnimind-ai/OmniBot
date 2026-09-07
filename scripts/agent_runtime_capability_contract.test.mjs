@@ -13,6 +13,28 @@ function sourcePath(relativePath) {
   return path.join(repositoryRoot, relativePath);
 }
 
+test("setup inventory and package installation share the installation budget", async () => {
+  const content = await source("app/src/main/java/cn/com/omnimind/bot/terminal/EmbeddedTerminalSetupManager.kt");
+  const inventory = content.slice(content.indexOf("suspend fun getPackageInventory("),
+    content.indexOf("suspend fun installPackages("));
+  assert.match(inventory, /timeoutMs = SETUP_COMMAND_TIMEOUT_MS/);
+  assert.doesNotMatch(inventory, /timeoutMs = 30_000/);
+  const install = content.slice(content.indexOf("suspend fun installPackages("),
+    content.indexOf('onProgress("status", "正在验证所选开发工具")'));
+  assert.match(install, /timeoutMs = SETUP_COMMAND_TIMEOUT_MS/);
+});
+
+test("editing Harness configuration never restarts active sessions or reuses a stale launch snapshot", async () => {
+  const content = await source("app/src/main/java/cn/com/omnimind/bot/agent/runtime/AgentRuntimeManager.kt");
+  const writes = content.slice(content.indexOf("private suspend fun writeAgentConfig("),
+    content.indexOf("private fun validateExpectedConfigRevision("));
+  assert.doesNotMatch(writes, /\.disconnect\(|clearActiveTurnsForAgent\(/);
+  assert.doesNotMatch(writes, /resolveCurrentProviderModelIds\(/);
+  assert.doesNotMatch(content, /acpLaunchEnvironmentCache/);
+  assert.match(writes, /validateExpectedConfigRevision/);
+  assert.match(writes, /recordAgentConfigRevision/);
+});
+
 test("Xiaowan session startup uses the Provider cache and restores session-owned selection", async () => {
   const content = await source("app/src/main/java/cn/com/omnimind/bot/agent/XiaowanAcpConnection.kt");
   const startup = content.slice(
@@ -20,10 +42,14 @@ test("Xiaowan session startup uses the Provider cache and restores session-owned
     content.indexOf("private fun hasUsableSharedProviderBinding"),
   );
   assert.match(startup, /ModelProviderConfigStore\.cachedModels/);
-  assert.doesNotMatch(startup, /fetchProviderModels|refreshAndGetModels/);
+  assert.doesNotMatch(startup, /fetchProviderModels|fetchAgentProviderModels|refreshAndGetModels/);
   const refresh = content.slice(content.indexOf("suspend fun refreshModels()"), content.indexOf("override val configOptions"));
-  assert.match(refresh, /refreshAndGetModels/);
-  assert.match(refresh, /fetchProviderModels/);
+  assert.match(refresh, /fetchAgentProviderModels\(\s*providerProfile, forceRefresh = true/);
+  const manager = await source("app/src/main/java/cn/com/omnimind/bot/agent/runtime/AgentRuntimeManager.kt");
+  const fetch = manager.slice(manager.indexOf("internal suspend fun fetchAgentProviderModels("),
+    manager.indexOf("internal fun shouldRouteLocalAcpRequest("));
+  assert.match(fetch, /if \(forceRefresh\) PlatformAiProvisioner\.refreshAndGetModels\(\)/);
+  assert.match(fetch, /HttpController\.fetchProviderModels\(/);
   assert.match(refresh, /sessionConfig\.replaceModels/);
   assert.match(content, /profileStore\.sessionConfiguration\(sessionId\.value\)/);
   assert.match(content, /saveSessionConfiguration\(sessionId\.value/);
@@ -88,7 +114,7 @@ test("the active harness, not a conversation-mode policy, supplies Agent tools",
   assert.match(modePolicy, /if \(isChatOnlyMode\(conversationMode\)\) \{\s*return emptyList\(\)\s*\}/);
   assert.match(modePolicy, /return definitions/);
   assert.doesNotMatch(modePolicy, /allowedTools|progressive|toolSearch/i);
-  assert.match(dispatcher, /val harnessCatalog = inheritedSubagentCatalog\(parentCatalogProvider\(\)\)/);
+  assert.match(dispatcher, /val harnessCatalog = inheritedSubagentCatalog\(parentCatalogProvider\(\), profile\)/);
   assert.match(dispatcher, /toolRegistry = harnessCatalog/);
   assert.doesNotMatch(contracts, /usesProgressiveDiscovery|exposeToolNames/);
   assert.match(registry, /get\(\) = allToolsByName\.values\.toList\(\)/);
@@ -384,7 +410,7 @@ test("managed Harness installation is explicit and never runs from chat launch",
   );
 
   assert.doesNotMatch(launchEnvironment, /ensureManagedAcpAdapter\(/);
-  assert.match(agentDispatch, /if \(method == "agent\/prepare"\) \{\s*ensureManagedAcpAdapter\(targetProfile\)/);
+  assert.match(agentDispatch, /if \(method == "agent\/prepare"\) \{\s*ensureManagedAcpAdapter\(targetProfile, force = canonicalArgs\["force"\] == true\)/);
   assert.doesNotMatch(chatEntry, /prepareAgent\(/);
 });
 
@@ -400,7 +426,12 @@ test("official ACP bridge upgrades remain declarative and require an explicit pr
     const match = spec.match(/^@agentclientprotocol\/([^@]+)@(\d+\.\d+\.\d+(?:-[\w.-]+)?)$/);
     assert.ok(match, `Bridge package must declare its installed version: ${spec}`);
     const [, name, version] = match;
-    assert.equal(runtime.preparationRevision, `${name}-${version}`);
+    if (name === 'codex-acp') {
+      assert.equal(runtime.preparationRevision, `${name}-${version}-message-completion-1`);
+      assert.equal(runtime.managedInstallCommandAsset, 'acp/install-codex.sh');
+      const installer = await source(`app/src/main/assets/${runtime.managedInstallCommandAsset}`);
+      assert.ok(installer.includes(spec), 'Installer must install the catalog-pinned bridge');
+    } else assert.equal(runtime.preparationRevision, `${name}-${version}`);
     assert.equal(runtime.managedInstallCommand, undefined);
   }
 });
@@ -572,4 +603,24 @@ test("the local ACP connection terminates prompts with PromptResponse, not priva
   assert.match(connection, /PromptResponse\(stopReason = StopReason\.CANCELLED\)/);
   assert.doesNotMatch(connection, /AgentStreamEvent|acp\/presentation|codex\/event/);
   assert.doesNotMatch(connection, /turn\/(?:started|completed|failed|cancelled)/);
+});
+
+
+test("explicit managed preparation can retry old failures and must own the install gate", async () => {
+  const source = await readFile(new URL("../app/src/main/java/cn/com/omnimind/bot/agent/runtime/AgentRuntimeManager.kt", import.meta.url), "utf8");
+  const prepare = source.slice(source.indexOf("private suspend fun ensureManagedAcpAdapter(profile:"), source.indexOf("private suspend fun ensureManagedAcpAdapterLocked"));
+  const install = source.slice(source.indexOf("private suspend fun ensureManagedAcpAdapterLocked"), source.indexOf("private suspend fun isTerminalCommandAvailable"));
+  assert.match(prepare, /managedAcpPreparationGate.run\(profile.id\)/);
+  assert.doesNotMatch(prepare, /if \(managedAcpPreparationGate.isBusy\)/);
+  assert.doesNotMatch(install, /previousPreparationFailure/);
+});
+
+ test("explicit reinstall bypasses health reuse; handshake cannot upgrade installed revision", async () => {
+  const manager = await readFile(new URL("../app/src/main/java/cn/com/omnimind/bot/agent/runtime/AgentRuntimeManager.kt", import.meta.url), "utf8");
+  const local = await readFile(new URL("../app/src/main/java/cn/com/omnimind/bot/agent/runtime/LocalAcpRuntime.kt", import.meta.url), "utf8");
+  assert.match(manager, /if \(!force && shouldReuseManagedAcpPreparation\(/);
+  assert.match(manager, /if \(!force && !shouldPrepareManagedAcpAdapter\(/);
+  const initialization = local.slice(local.indexOf("agentInfo = initialized"), local.indexOf("processExitWatcher?.cancel()", local.indexOf("agentInfo = initialized")));
+  assert.match(initialization, /preparationRevision = profileStore.health\(profile.id\).preparationRevision/);
+  assert.doesNotMatch(initialization, /officialRuntime/);
 });

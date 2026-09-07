@@ -16,6 +16,16 @@ class XiaowanSessionConfigTest {
         assertNull(config().requestEffort)
     }
 
+    @Test fun `changing model preserves the explicit session thinking choice`() {
+        for (effort in listOf("none", "high", "default")) {
+            val config = config()
+            config.set("reasoning_effort", SessionConfigOptionValue.StringValue(effort))
+            config.set("model", SessionConfigOptionValue.StringValue("model-b"))
+            assertEquals(effort, config.effort)
+            assertEquals(effort.takeUnless { it == "default" }, config.requestEffort)
+        }
+    }
+
     @Test fun `official configuration uses declared values and session isolation`() {
         val a = config()
         val b = config()
@@ -33,7 +43,7 @@ class XiaowanSessionConfigTest {
         assertEquals("high", config.requestEffort)
         assertEquals("model-a", config.model)
         config.set("model", SessionConfigOptionValue.StringValue("new-model"))
-        assertNull(config.requestEffort)
+        assertEquals("high", config.requestEffort)
         assertTrue(runCatching { config.set("model", SessionConfigOptionValue.StringValue("model-b")) }.isFailure)
     }
 

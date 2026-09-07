@@ -590,6 +590,47 @@ flutter test test/features/home/pages/chat/chat_conversation_runtime_coordinator
 
 范围说明：此次统一的是当前请求的终态决定权，并非宣布所有旧 item 字段、远端管理接口、历史导入实现均已移除；这些剩余兼容不能重新获得当前 ACP 请求的终态裁决权。
 
+### 7.19 2026-09-06：刷新期间参数读写竞态与持久化交互回归
+
+- 复现路径：打开模型目录 → 请求尚未返回 → 返回参数页 → 修改布尔开关。原实现只有模型行检查 `_loading`，开关和 `_save` 没有检查，允许刷新和保存同时更新同一个配置快照。现在统一复用面板已有 `_loading`；不新增会话、重试或生命周期。
+- `acp_config_button_test.dart` 新增慢刷新返回后的禁止写入与恢复、首次加载失败后的显式重新加载、离开页面后的迟到成功／失败响应测试。竞态测试修复前失败、修复后通过；整份文件 12 项通过。首次加载重新加载本来就可用，本轮没有另加重试入口或自动重试。
+- 将配置面板测试纳入 `scripts/test-agent-runtime.sh`，避免只单独运行后遗漏于长期回归。Adapter、配置管理和 Profile 持久化三个 JVM 测试类共 53 项通过；协议契约 43 项通过；debug APK 构建成功。以上属于本地自动化，不等同于手机或真实外部 Harness 验收。
+- 扩展回归命令 `bash scripts/test-agent-runtime.sh --offline --skip-gradle` 通过：Flutter 554 项、Node 59 项、WebChat 12 项，以及 WebChat typecheck/build。JVM 使用上列三个定向测试类，未声称全量 Android 测试通过；离线运行没有调用真实 Provider。
+- 未解决项必须保留：`LocalAcpRuntime.resumeThread` 对已有会话的 `refreshConfig` 目前只对小万调用加载刷新；其他 Harness 返回内存中的会话配置。因此不能把本轮 UI 修复描述为“所有 Harness 实时刷新已修好”。后续需按协商能力验证官方配置更新／会话加载行为，不能凭空添加通用刷新 RPC，也不能偷偷重启进程。
+- 用户手机“首次刷新直接报错”尚未取得设备日志，不能认定与本轮竞态同源。USB 与无线 ADB 均未发现设备，尚未覆盖安装及实机复现；恢复连接后使用 `adb install -r`，保留用户配置和历史。
+
+### 7.18 2026-09-06：可编辑配置不再打断 Agent 或沿用旧启动快照
+
+实现方向：复用已有自定义 ACP profile 的 command／arguments／environment，以及 Harness 自己的 JSON／TOML／启动脚本，不增加热加载插件框架、配置 DSL 或私有 Agent 协议。用户可将自定义 profile 指向 workspace 内的启动脚本，此后 Agent 可用现有文件／终端工具修改脚本及官方配置文件；profile 初始选择仍通过现有 Agent 设置完成，未新增 Agent 自管理工具。自定义脚本必须实际启动一个 ACP 兼容进程；不得在 stdout 输出非协议日志。自行管理 Provider 的 profile 不应被描述为自动继承共享 Provider。
+
+本次修改的是所有内置配置写入器共用的宿主路径：
+
+- agent/config/write 与 rollback 保存配置、检查 expectedRevision、记录既有审计／加密快照后，不再主动 disconnect 或清理当前请求。正在运行的进程继续使用自己的启动快照；配置何时由 Harness 热加载取决于它本身，宿主不承诺下一条消息立即应用。
+- 删除跨进程的 acpLaunchEnvironmentCache，下一次正常启动重新读取文件，Agent 直接修改文件后不再被旧环境快照遮蔽。没有文件监听器、轮询或自动重启。直接文件编辑不自动获得宿主 API 的 revision／审计记录。
+- 配置写入只读取已有 Provider 目录缓存，不额外发起 /models 网络查询，避免保存配置被无关目录请求阻塞。
+- 修正 7.17：OpenCode 的 enabled_providers 只在缺失时提供共享 Provider 默认值，保留用户／Agent 明确指定的列表以及 permission 配置；不强行覆盖用户策略。
+
+必要的配置 revision 校验、私有文件权限（umask 077／chmod 600）、路径校验、审计与加密快照保留。官方格式转换器仍有内置实现，本次没有宣称已把所有 Adapter 实现外置；外部 Harness 运行中 Provider 热刷新与首次通用“错误”的根因仍未全部验证。
+
+持久化验证：现有 Node 契约加入“不因配置写入／回滚终止请求、不缓存旧启动环境、不在配置保存时请求模型目录”的源码约束，修改前失败、修改后通过；这是源码约束，不冒充真实进程测试。AgentConfigAdaptersTest 增加真实配置生成函数对用户 Provider 选择和权限字段的保留验证；既有多 Adapter 格式和 profile 持久化测试继续执行。
+
+### 7.17 2026-09-06：模型空目录点击与 OpenCode Provider 映射
+
+用户报告 OpenCode 等 Harness 显示自身 Provider、首次刷新错误且第二次才出现。此次已锁定并修复两个可复现问题，不把它们等同于该通用错误的完整根因：
+
+- AcpConfigPanel 原先只有 options 非空才允许展开，因此模型目录为空时连刷新也无法触发。模型 select 允许空目录点击，继续调用现有 refresh 并用其返回 configOptions 原位更新，没有自动重试或新缓存。
+- prepareLocalAcpLaunch 原先把 Provider 目录固定为空，OpenCode 写入器又只写默认模型。启动改为读取已有、匹配 Provider revision 的缓存，缓存缺失仍可按绑定模型启动，不把网络目录查询变成启动条件。目录内容加入既有启动环境缓存键，避免同 Provider 换目录后沿用旧生成结果；OpenCode 写入当前目录的模型，通过官方 enabled_providers 指定该适配器所映射的 omnibot Provider，不在 Flutter 伪造选项。保留现有配置中的模型细节、headers 等设置。
+
+参考：[OpenCode enabled_providers](https://opencode.ai/docs/config/#enabled-providers)。此字段控制该 Harness 的 Provider 选择，不是工具或 Agent 能力限制；用户自行配置且不经过共享 Provider 映射的 Harness 不应据此套用别的 Provider。
+
+回归先红后绿：acp_config_button_test 新增空目录首次点击取回模型场景，8 项通过；AgentConfigAdaptersTest 新增实际 launchConfigWrites 输出目录验证，36 项通过。没有真机连接，尚未取得“第一次显示错误”的具体异常；未证明其他 Harness 的配置热更新，也未通过关闭／重开会话来制造刷新成功。当前外部 Harness 的在途 Provider 热刷新仍需按它实际支持的官方能力独立验证，不能宣称该问题全部解决。测试留在已有持久化测试文件中。
+
+### 7.16 2026-09-06：回复末尾显示用时与结束时间
+
+在现有 ctx 底栏增加用时和本地结束时间，窄屏使用 Wrap 换行，结束时间 Tooltip 提供完整日期。计量口径是宿主 beginAcpTurn 接受发送到所属 prompt 真正结束的墙钟时间，包含准备、工具和等待用户输入，不是模型纯生成耗时。复用 runtime 的时间记录容器，在唯一完成入口把 durationMs／endedAt 写入本次最后一条文本回复的 turnUsage，沿已有消息序列化和历史保存恢复；无新增定时器、协议或生命周期。取消／失败统一标注“结束于”，不暗示成功。没有开始记录、没有文本回复或旧历史缺失字段时不推算补写；时钟倒退不显示负用时。
+
+持久化测试：新增 message_bubble_timing_test，覆盖有／无 ctx、窄屏和序列化恢复、旧历史不伪造日期；coordinator 覆盖成功／取消／失败、迟到终态不改新请求、迟到 usage 合并及实际历史写入字段保留。三类定向测试（含 reducer）共 285 项通过，展示组件及新组件测试 Dart 分析无问题。新测试已接入 scripts/test-agent-runtime.sh。本次不是全仓测试或真机验收，不覆盖已知 PR 全量失败项。
+
 ### 7.15 2026-09-05：实时 Markdown 不再等待请求结束
 
 根因在展示侧，不是 ACP 缺少生命周期：`StreamingText` 在 `isFinal:false` 时把表格替换为等宽 `Text` 预览，并按 `markdownRenderedLength` 拆分 Markdown 前缀和尾部、隐藏部分表格候选内容。表格预览策略可追溯到 2026-07-03 的 `eb1a3967e3f30572e91699d8d6b36f00eb09ebc6`，不是本次终态统一新引入的逻辑；旧测试甚至要求输出尚未结束时不存在 `Table`。

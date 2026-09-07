@@ -9,6 +9,22 @@ class AppLocalizationsZh extends AppLocalizations {
   AppLocalizationsZh([String locale = 'zh']) : super(locale);
 
   @override
+  String get memoryShortRetention => '短期记忆持续保存在本地，不会自动过期。长按条目可删除单条或多选删除。';
+
+  @override
+  String get memoryShortDeleteConfirm => '删除短期记忆？';
+
+  @override
+  String get memoryShortDeleteScope =>
+      '仅删除选中的短期原文及其检索索引，不可撤销。不会删除聊天记录、随手记原件或已提炼的长期记忆，也不会清空当前对话上下文。';
+
+  @override
+  String get memoryShortDeleteFailed => '删除未完成，列表已刷新，请重新选择后重试。';
+
+  @override
+  String get memoryShortDeleted => '短期记忆已删除';
+
+  @override
   String get appName => '小万';
 
   @override

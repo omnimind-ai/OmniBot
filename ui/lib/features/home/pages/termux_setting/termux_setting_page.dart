@@ -36,7 +36,7 @@ class _EnvironmentViewModel {
   });
 
   final _EnvironmentDefinition definition;
-  final bool ready;
+  final bool? ready;
   final String? version;
 }
 
@@ -150,6 +150,8 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
   bool _isMountsBusy = false;
   bool _hasInitializedSelection = false;
   String? _detectError;
+  int _inventoryRequest = 0;
+  int _distributionRequest = 0;
   String? _autoStartError;
   String? _mountsError;
   Map<String, EmbeddedTerminalSetupInventoryItem> _inventory =
@@ -172,7 +174,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
           final item = _inventory[definition.id];
           return _EnvironmentViewModel(
             definition: definition,
-            ready: item?.ready == true,
+            ready: item?.ready,
             version: item?.version,
           );
         })
@@ -183,13 +185,18 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
     return _items
         .where(
           (item) =>
-              !item.ready && _selectedPackageIds.contains(item.definition.id),
+              item.ready == false &&
+              _selectedPackageIds.contains(item.definition.id),
         )
         .length;
   }
 
   bool get _canStartSetup =>
-      !_isDetecting && !_isDistributionLoading && _selectedLostCount > 0;
+      !_isDetecting &&
+      !_isDistributionLoading &&
+      !_isDistributionSwitching &&
+      _detectError == null &&
+      _selectedLostCount > 0;
 
   bool get _isDarkTheme => context.isDarkTheme;
   bool get _isEnglish => Localizations.localeOf(context).languageCode == 'en';
@@ -344,9 +351,12 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
   Future<void> _loadDistributionAndInventory({
     bool selectMissingByDefault = false,
   }) async {
+    if (_isDistributionSwitching) return;
+    final request = ++_distributionRequest;
+    ++_inventoryRequest;
     try {
       final distribution = await getEmbeddedTerminalDistribution();
-      if (!mounted) return;
+      if (!mounted || request != _distributionRequest) return;
       final changed = distribution != _selectedDistribution;
       setState(() {
         _selectedDistribution = distribution;
@@ -358,7 +368,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
         }
       });
     } catch (_) {
-      if (!mounted) return;
+      if (!mounted || request != _distributionRequest) return;
       setState(() {
         _isDistributionLoading = false;
       });
@@ -375,6 +385,8 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
       return;
     }
     final previous = _selectedDistribution;
+    ++_distributionRequest;
+    ++_inventoryRequest;
     setState(() {
       _selectedDistribution = distribution;
       _isDistributionSwitching = true;
@@ -437,10 +449,17 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
   }
 
   Future<void> _refreshInventory({bool selectMissingByDefault = false}) async {
+    final request = ++_inventoryRequest;
+    final distribution = _selectedDistribution;
+    bool isCurrent() =>
+        mounted &&
+        request == _inventoryRequest &&
+        distribution == _selectedDistribution;
     if (mounted) {
       setState(() {
         _isDetecting = true;
         _detectError = null;
+        _inventory = const {};
       });
     }
     try {
@@ -451,8 +470,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
           selectMissingByDefault || !_hasInitializedSelection;
       for (final definition in _environmentDefinitions) {
         final item = inventory.packages[definition.id];
-        final ready = item?.ready == true;
-        if (ready) {
+        if (item?.ready != false) {
           continue;
         }
         if (_selectedPackageIds.contains(definition.id) ||
@@ -461,7 +479,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
           nextSelected.add(definition.id);
         }
       }
-      if (!mounted) {
+      if (!isCurrent()) {
         return;
       }
       setState(() {
@@ -471,27 +489,23 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
         _isDetecting = false;
       });
     } on PlatformException catch (e) {
-      if (!mounted) {
+      if (!isCurrent()) {
         return;
       }
       setState(() {
         _inventory = const <String, EmbeddedTerminalSetupInventoryItem>{};
-        _selectedPackageIds = _environmentDefinitions
-            .map((definition) => definition.id)
-            .toSet();
+        _selectedPackageIds = <String>{};
         _hasInitializedSelection = true;
         _isDetecting = false;
         _detectError = e.message ?? context.l10n.alpineDetectFailed;
       });
     } catch (_) {
-      if (!mounted) {
+      if (!isCurrent()) {
         return;
       }
       setState(() {
         _inventory = const <String, EmbeddedTerminalSetupInventoryItem>{};
-        _selectedPackageIds = _environmentDefinitions
-            .map((definition) => definition.id)
-            .toSet();
+        _selectedPackageIds = <String>{};
         _hasInitializedSelection = true;
         _isDetecting = false;
         _detectError = context.l10n.alpineDetectFailed;
@@ -862,6 +876,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
         bottom: false,
         child: RefreshIndicator(
           onRefresh: () async {
+            if (_isDistributionSwitching || _isDistributionLoading) return;
             await _refreshInventory();
             await _refreshAutoStartTasks();
           },
@@ -1019,7 +1034,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
   }
 
   Widget _buildIntroCard() {
-    final readyCount = _items.where((item) => item.ready).length;
+    final readyCount = _items.where((item) => item.ready == true).length;
     return _buildSectionCard(
       title: context.l10n.alpineEnvConfig,
       child: Column(
@@ -1028,6 +1043,11 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
           Text(
             _isDetecting
                 ? context.l10n.alpineDetectingDesc
+                : _detectError != null ||
+                      _items.any((item) => item.ready == null)
+                ? (_isEnglish
+                      ? 'Detection incomplete. Refresh to confirm component status.'
+                      : '检测未完成，请重新检测以确认组件状态。')
                 : context.l10n.alpineReadyCount(readyCount, _items.length),
             style: TextStyle(
               color: _secondaryTextColor,
@@ -1466,10 +1486,14 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
   }
 
   Widget _buildEnvironmentTile(_EnvironmentViewModel item) {
+    final ready = item.ready == true;
+    final unknown = item.ready == null;
     final selected = _selectedPackageIds.contains(item.definition.id);
     final versionText = item.version?.trim().isNotEmpty == true
         ? item.version!.trim()
-        : (item.ready
+        : (unknown
+              ? (_isEnglish ? 'Not confirmed' : '未确认')
+              : ready
               ? context.l10n.alpineVersionDetected
               : context.l10n.alpineVersionNotFound);
 
@@ -1478,7 +1502,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
       children: [
         Padding(
           padding: const EdgeInsets.only(top: 2),
-          child: item.ready
+          child: ready
               ? const Icon(
                   LucideIcons.squareCheckBig,
                   color: Color(0xFF16A34A),
@@ -1487,7 +1511,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
               : Checkbox(
                   value: selected,
                   activeColor: const Color(0xFF2563EB),
-                  onChanged: _isDetecting
+                  onChanged: _isDetecting || unknown || _isDistributionSwitching
                       ? null
                       : (value) => _togglePackage(item.definition.id, value),
                 ),
@@ -1531,14 +1555,18 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
                 )
               else
                 _buildLegendTag(
-                  label: item.ready ? 'ready' : 'lost',
-                  backgroundColor: item.ready
+                  label: unknown
+                      ? (_isEnglish ? 'Detection failed' : '检测失败')
+                      : ready
+                      ? 'ready'
+                      : 'lost',
+                  backgroundColor: ready
                       ? const Color(0xFFE8F7EE)
                       : const Color(0xFFEAF2FF),
-                  foregroundColor: item.ready
+                  foregroundColor: ready
                       ? const Color(0xFF17803D)
                       : const Color(0xFF2563EB),
-                  darkBackgroundColor: item.ready
+                  darkBackgroundColor: ready
                       ? Color.lerp(
                           context.omniPalette.surfaceSecondary,
                           const Color(0xFF72A778),
@@ -1549,7 +1577,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
                           const Color(0xFF79808A),
                           0.16,
                         ),
-                  darkForegroundColor: item.ready
+                  darkForegroundColor: ready
                       ? const Color(0xFFD6E7D6)
                       : const Color(0xFFD7DADF),
                 ),

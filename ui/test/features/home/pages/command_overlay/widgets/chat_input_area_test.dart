@@ -585,6 +585,24 @@ void main() {
     refreshCompleter.complete();
   });
 
+  for (final large in [false, true]) {
+    testWidgets('session settings is the single chat model entry (large=$large)', (tester) async {
+      var opened = false;
+      await tester.pumpWidget(_buildTestApp(
+        contextUsageRatio: null, useLargeComposerStyle: large,
+        runtimeConfigButton: IconButton(
+          key: const ValueKey('combined-model-panel'),
+          onPressed: () => opened = true, icon: const Icon(Icons.tune)),
+      ));
+      await tester.pump();
+      expect(find.byKey(const ValueKey('chat-input-model-picker-button')), findsNothing);
+      expect(find.byKey(const ValueKey('combined-model-panel')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('combined-model-panel')));
+      await tester.pump();
+      expect(opened, isTrue);
+    });
+  }
+
   testWidgets('normal chat model picker renders inside input actions', (
     tester,
   ) async {
@@ -913,6 +931,7 @@ void main() {
       const ValueKey('chat-input-send-or-stop-button'),
     );
     expect(tester.widget<IconButton>(sendButton).onPressed, isNotNull);
+    expect(tester.widget<IconButton>(sendButton).tooltip, 'Send');
 
     await tester.tap(sendButton);
     await tester.pump();
@@ -1163,6 +1182,7 @@ Widget _buildTestApp({
   AgentRunSettings? agentRunSettings,
   AgentRunSettingsChanged? onAgentRunSettingsChanged,
   ChatModelPickerSettings? modelPickerSettings,
+  Widget? runtimeConfigButton,
   String initialText = '',
   FocusNode? focusNode,
   bool hasExternalSendPayload = false,
@@ -1184,6 +1204,7 @@ Widget _buildTestApp({
           onLongPressContextUsageRing: onLongPressContextUsageRing,
           onTriggerSlashCommand: onTriggerSlashCommand,
           modelPickerSettings: modelPickerSettings,
+          runtimeConfigButton: runtimeConfigButton,
           agentRunSettings: agentRunSettings,
           onAgentRunSettingsChanged: onAgentRunSettingsChanged,
           agentPermissionMode: agentPermissionMode,

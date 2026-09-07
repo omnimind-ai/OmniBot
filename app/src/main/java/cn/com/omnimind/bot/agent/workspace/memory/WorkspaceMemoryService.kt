@@ -357,6 +357,33 @@ class WorkspaceMemoryService(
         }
     }
 
+    fun deleteShortMemoryEntries(expected: List<WorkspaceShortMemoryEntry>): Int {
+        ensureInitialized()
+        require(expected.isNotEmpty()) { "No memories selected" }
+        return synchronized(memoryWriteLock()) {
+            // Resolve all targets against unchanged snapshots before rewriting any day.
+            val plans = expected.groupBy { it.date }.map { (dateText, requested) ->
+                val date = LocalDate.parse(dateText, DateTimeFormatter.ISO_LOCAL_DATE)
+                val file = workspaceManager.dailyShortMemoryFile(date)
+                require(file.isFile) { "Memory changed; reload before deleting" }
+                val content = file.readText()
+                val entries = parseDailyShortMemoryEntries(date, content)
+                val indexes = selectShortMemoryIndexes(entries, requested)
+                val updated = removeShortMemoryBlocks(content, indexes) { line ->
+                    parseDailyShortMemoryEntries(date, line).isNotEmpty()
+                }
+                Triple(file, updated, indexes.size)
+            }
+            plans.forEach { (file, content, _) -> file.writeText(content) }
+            // Remove affected derived chunks immediately; the existing search path
+            // rebuilds them from the remaining source text on its next query.
+            val sources = plans.map { ".omnibot/memory/short-memories/${it.first.name}" }.toSet()
+            val indexFile = File(workspaceManager.memoryIndexDirectory(), "index.json")
+            if (indexFile.exists()) saveIndex(indexFile, loadIndex(indexFile).filterNot { it.source in sources })
+            plans.sumOf { it.third }
+        }
+    }
+
     fun appendQuickLogMemory(
         logId: String,
         content: String,
@@ -1383,8 +1410,14 @@ class WorkspaceMemoryService(
                 embeddingDimensions = embedding.size.takeIf { it > 0 },
             )
         }
-        saveIndex(indexFile, next)
-        return next
+        return synchronized(memoryWriteLock()) {
+            // Embeddings can finish after a deletion. Never persist removed source
+            // chunks again when an in-flight index refresh completes.
+            val currentIds = collectChunks().map { it.id }.toSet()
+            val current = next.filter { it.id in currentIds }
+            saveIndex(indexFile, current)
+            current
+        }
     }
 
     private fun loadIndex(indexFile: File): List<MemoryIndexEntry> {
@@ -1480,16 +1513,11 @@ class WorkspaceMemoryService(
     }
 
     private fun tokenize(text: String): List<String> {
-        return text.lowercase(Locale.getDefault())
-            .split(Regex("[^\\p{L}\\p{N}]+"))
-            .map { it.trim() }
-            .filter { it.length >= 2 }
+        return tokenizeMemoryText(text)
     }
 
     private fun normalizeText(text: String): String {
-        return text.lowercase(Locale.getDefault())
-            .replace(Regex("\\s+"), "")
-            .trim()
+        return normalizeMemoryText(text)
     }
 
     private fun stableChunkId(source: String, date: String?, text: String): String {

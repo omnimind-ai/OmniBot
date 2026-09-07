@@ -1,0 +1,21 @@
+{
+  "name": "Xiaowan user journey: switch Provider and then switch model in the same session",
+  "preconditions": "Chinese chat page, idle Xiaowan conversation, empty composer. A configured real Provider must offer GLM-5.1 and GLM-5.2.",
+  "steps": [
+    {"action": "expect", "text": "模型与参数", "timeoutMs": 30000},
+    {"action": "tap", "label": "模型与参数"},
+    {"action": "expect", "text": "模型", "timeoutMs": 60000},
+    {"action": "tap", "label": "模型"},
+    {"action": "search", "hint": "搜索模型 ID", "text": "GLM-5.2"},
+    {"action": "tap", "label": "GLM-5.2"},
+    {"action": "send", "marker": "XIAOWAN_GLM52_UI_OK"},
+    {"action": "reply", "text": "XIAOWAN_GLM52_UI_OK", "timeoutMs": 180000},
+    {"action": "tap", "label": "模型与参数"},
+    {"action": "expect", "text": "GLM-5.2", "timeoutMs": 30000},
+    {"action": "tap", "label": "模型"},
+    {"action": "search", "hint": "搜索模型 ID", "text": "GLM-5.1"},
+    {"action": "tap", "label": "GLM-5.1"},
+    {"action": "send", "marker": "XIAOWAN_GLM51_UI_OK"},
+    {"action": "reply", "text": "XIAOWAN_GLM51_UI_OK", "timeoutMs": 180000}
+  ]
+}

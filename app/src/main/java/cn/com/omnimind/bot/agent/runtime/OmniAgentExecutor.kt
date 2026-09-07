@@ -337,6 +337,13 @@ class OmniAgentExecutor(
                     initialMessages = initialMessages,
                     conversationId = conversationId,
                     promptCacheKey = promptCacheKey,
+                    contextCompactor = AgentConversationContextCompactor(
+                        historyRepository = historyRepository,
+                        modelScene = agentModelScene,
+                        modelOverride = modelOverride,
+                        reasoningEffort = reasoningEffort,
+                        promptCacheKey = promptCacheKey,
+                    ),
                     executionEnv = DefaultAgentExecutionEnvironment(
                         agentRunId = agentRunId,
                         userMessage = userMessage,

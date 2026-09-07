@@ -120,6 +120,7 @@ private val PROVIDER_OWNED_ENVIRONMENT_KEYS = setOf(
     "ANTHROPIC_MODEL",
     "ANTHROPIC_SMALL_FAST_MODEL",
     "DEEPSEEK_API_KEY",
+    "OMNIBOT_DSH_API_KEY",
     "DEEPSEEK_BASE_URL",
     "DSH_MODEL",
     "KIMI_CODE_HOME",
@@ -212,8 +213,10 @@ internal object AgentConfigAdapterRegistry {
     }
 
     private fun adapterFor(input: AgentProviderMappingInput): AgentConfigAdapter? {
-        return input.harnessAdapter.configAdapterId
-            ?.let(adaptersById::get)
+        val id = input.harnessAdapter.configAdapterId ?: return null
+        return requireNotNull(adaptersById[id]) {
+            "No configuration adapter is registered for Harness adapter '$id'."
+        }
     }
 }
 
@@ -327,11 +330,13 @@ internal fun buildCodexModelCatalogJson(
             val contextWindow = providerModel.contextLimit
                 ?.takeIf { it > 0 }
                 ?: CODEX_DEFAULT_CONTEXT_WINDOW
-            // The Provider /models response does not expose Codex's concrete
-            // effort list. Codex 1.1.x otherwise falls back to `none`, which
-            // the shared gateway rejects. Keep the adapter's default explicit
-            // and conservative; it does not change the Provider model ID.
-            val reasoningLevels = listOf("medium")
+            // Follow Codex models-manager/model_info.rs: unknown model metadata
+            // has no declared reasoning levels or default. A successful request
+            // to one gateway is not a capability declaration for every model.
+            val reasoningLevels = providerModel.supportedReasoningLevels.orEmpty()
+                .filter(String::isNotBlank).distinct()
+            val defaultReasoningLevel = providerModel.defaultReasoningLevel
+                ?.takeIf { it in reasoningLevels }
             val inputModalities = resolveCodexInputModalities(
                 providerModel = providerModel,
                 provider = provider,
@@ -346,7 +351,11 @@ internal fun buildCodexModelCatalogJson(
                     add("default_reasoning_level", JsonNull.INSTANCE)
                     add("supported_reasoning_levels", JsonArray())
                 } else {
-                    addProperty("default_reasoning_level", "medium")
+                    if (defaultReasoningLevel == null) {
+                        add("default_reasoning_level", JsonNull.INSTANCE)
+                    } else {
+                        addProperty("default_reasoning_level", defaultReasoningLevel)
+                    }
                     add("supported_reasoning_levels", JsonArray().apply {
                         reasoningLevels.forEach { effort ->
                             add(JsonObject().apply {
@@ -558,6 +567,8 @@ internal fun normalizeOpenCodeBaseUrl(baseUrl: String): String {
     listOf(
         "/v1/chat/completions",
         "/chat/completions",
+        "/v1/messages",
+        "/messages",
         "/v1/responses",
         "/responses"
     ).firstOrNull { normalized.endsWith(it, ignoreCase = true) }?.let {
@@ -577,13 +588,18 @@ internal fun normalizeOpenCodeBaseUrl(baseUrl: String): String {
  * official endpoints; a generic proxy URL must remain untouched because the
  * host cannot infer its protocol contract.
  */
+/** Anthropic clients that append /v1/messages require the service root. */
+internal fun normalizeAnthropicServiceRoot(baseUrl: String): String {
+    val normalized = baseUrl.trim().trimEnd('/')
+    val suffix = listOf("/v1/messages", "/messages", "/v1")
+        .firstOrNull { normalized.endsWith(it, ignoreCase = true) }
+    return if (suffix == null) normalized else normalized.dropLast(suffix.length).trimEnd('/')
+}
+
 internal fun normalizeClaudeCodeBaseUrl(baseUrl: String): String {
     var normalized = baseUrl.trim().trimEnd('/')
     listOf(
-        "/chat/completions",
-        "/v1/chat/completions",
-        "/responses",
-        "/v1/responses",
+        "/v1/chat/completions", "/chat/completions", "/v1/responses", "/responses",
     ).firstOrNull { normalized.endsWith(it, ignoreCase = true) }?.let {
         normalized = normalized.dropLast(it.length).trimEnd('/')
     }
@@ -619,7 +635,7 @@ internal fun normalizeClaudeCodeBaseUrl(baseUrl: String): String {
             }
         }
     }
-    if (!isAlibabaModelStudio) return normalized
+    if (!isAlibabaModelStudio) return normalizeAnthropicServiceRoot(normalized)
 
     val openAiPath = when {
         normalized.endsWith("/compatible-mode/v1", ignoreCase = true) ->

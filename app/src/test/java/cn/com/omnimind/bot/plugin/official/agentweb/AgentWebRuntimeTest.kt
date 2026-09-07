@@ -255,13 +255,19 @@ class AgentWebRuntimeTest {
         )
     }
 
-    @Test(expected = IllegalArgumentException::class)
-    fun `Kimi rejects the unsupported Responses environment wire`() {
-        buildAgentWebLaunchConfiguration(
+    @Test
+    fun `Kimi Responses uses official config instead of unsupported environment wire`() {
+        val configuration = buildAgentWebLaunchConfiguration(
             service = AgentWebService.KIMI,
             provider = provider(wireApi = "responses"),
             model = "gpt-5",
+            reasoningEffort = "high",
         )
+        assertFalse(configuration.environment.containsKey("KIMI_MODEL_NAME"))
+        val config = configuration.managedFiles.values.single()
+        assertTrue(config.contains("type = \"openai_responses\""))
+        assertTrue(config.contains("model = \"gpt-5\""))
+        assertTrue(config.contains("effort = \"high\""))
     }
 
     @Test(expected = IllegalArgumentException::class)

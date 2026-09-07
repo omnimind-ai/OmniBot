@@ -67,7 +67,6 @@ import org.json.JSONArray
 object HttpController {
     private const val TAG = "HttpController"
     private const val RESPONSE_LOG_CHUNK_SIZE = 3500
-    private const val PROVIDER_MODELS_TIMEOUT_SECONDS = 4L
     private const val ROUTE_CUSTOM_OPENAI_COMPAT = "custom_openai_compat"
     private const val ANTHROPIC_EPHEMERAL_CACHE_TYPE = "ephemeral"
     private const val ANTHROPIC_MAX_CACHE_BREAKPOINTS = 4
@@ -1597,6 +1596,14 @@ object HttpController {
                             directKeys = listOf("reasoning", "thinking"),
                             nestedValueKeys = listOf("reasoning", "thinking")
                         ),
+                        supportedReasoningLevels =
+                            (itemObj["supported_reasoning_levels"] as? KxJsonArray)
+                                ?.mapNotNull { level ->
+                                    ((level as? KxJsonObject)?.get("effort") as? JsonPrimitive)
+                                        ?.contentOrNull?.takeIf { it.isNotBlank() }
+                                }?.distinct().orEmpty(),
+                        defaultReasoningLevel =
+                            (itemObj["default_reasoning_level"] as? JsonPrimitive)?.contentOrNull,
                         toolCall = parseProviderModelBoolean(
                             itemObj = itemObj,
                             directKeys = listOf("toolCall", "tool_call", "tools"),
@@ -2643,16 +2650,34 @@ object HttpController {
 
     // ---- end Anthropic protocol helpers ----
 
-    private fun openAIStreamClient(forceHttp1: Boolean = false): OkHttpClient {
-        return OkHttpClient.Builder()
-            .apply {
-                if (forceHttp1) protocols(listOf(Protocol.HTTP_1_1))
-            }
+    // A client owns its connection pool. Creating one per prompt forces every
+    // turn and tool continuation through DNS/TCP/TLS again. Keep request auth
+    // on Request, and share only the transport across Provider calls.
+    private val openAIStreamingClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
             .connectTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
             .readTimeout(0, java.util.concurrent.TimeUnit.SECONDS)
             .writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
             .build()
     }
+
+    private val openAIHttp1StreamingClient: OkHttpClient by lazy {
+        openAIStreamingClient.newBuilder()
+            .protocols(listOf(Protocol.HTTP_1_1))
+            .build()
+    }
+
+    // Catalogs are finite responses, unlike inference streams. Share transport
+    // pools without caching model data or applying a fresh client's implicit
+    // ten-second read deadline to a user-requested refresh.
+    private val providerModelsClient: OkHttpClient by lazy {
+        openAIStreamingClient.newBuilder()
+            .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+    }
+
+    private fun openAIStreamClient(forceHttp1: Boolean = false): OkHttpClient =
+        if (forceHttp1) openAIHttp1StreamingClient else openAIStreamingClient
 
     private fun createChatRequestFromText(
         resolved: ResolvedSceneRequest,
@@ -2955,7 +2980,18 @@ object HttpController {
         } else {
             baseBody
         }
-        return stripAnthropicOnlyFieldsForOpenAiCompatible(protocolReadyBody)
+        val supportedBody = if (
+            DeepSeekProvider.requestCapabilities(protocolType, apiBase, resolvedModel)
+                .supportsChatPromptCacheKey
+        ) {
+            protocolReadyBody
+        } else {
+            // Keep the local cache/usage identity intact; omit only the optional
+            // upstream field, not matching keys inside tool arguments or messages.
+            val payload = completionJson.parseToJsonElement(protocolReadyBody) as KxJsonObject
+            KxJsonObject(payload - "prompt_cache_key").toString()
+        }
+        return stripAnthropicOnlyFieldsForOpenAiCompatible(supportedBody)
     }
 
     private fun buildOpenAIResponsesRequestBody(
@@ -4094,34 +4130,15 @@ object HttpController {
             "[provider models protocol=$protocolType]",
             request.headers.toMultimap().mapValues { it.value.joinToString(",") }
         )
-        // This endpoint is used while creating a local ACP session when the
-        // shared scene model binding has not been created yet. Keep the
-        // blocking OkHttp call itself bounded; a coroutine timeout alone
-        // cannot interrupt execute() while it is waiting on the socket.
-        val response = OkHttpClient.Builder()
-            .callTimeout(
-                PROVIDER_MODELS_TIMEOUT_SECONDS,
-                java.util.concurrent.TimeUnit.SECONDS,
-            )
-            .connectTimeout(
-                PROVIDER_MODELS_TIMEOUT_SECONDS,
-                java.util.concurrent.TimeUnit.SECONDS,
-            )
-            .readTimeout(
-                PROVIDER_MODELS_TIMEOUT_SECONDS,
-                java.util.concurrent.TimeUnit.SECONDS,
-            )
-            .build()
-            .newCall(request)
-            .execute()
-        val responseBody = response.body?.string()
-        if (!response.isSuccessful) {
-            throw IllegalStateException(
-                "获取模型列表失败 (${response.code})：${extractAvailabilityMessage(responseBody)}"
-            )
+        providerModelsClient.newCall(request).execute().use { response ->
+            val responseBody = response.body?.string()
+            if (!response.isSuccessful) {
+                throw IllegalStateException(
+                    "获取模型列表失败 (${response.code})：${extractAvailabilityMessage(responseBody)}"
+                )
+            }
+            parseProviderModelsResponse(responseBody)
         }
-
-        parseProviderModelsResponse(responseBody)
     }
 
     private suspend fun checkAnthropicModelAvailability(

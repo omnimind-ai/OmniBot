@@ -164,6 +164,27 @@ class WorkspaceMemoryService {
         .toList();
   }
 
+  static Future<int> deleteShortMemories(
+    List<WorkspaceShortMemoryItem> items,
+  ) async {
+    final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
+      'deleteWorkspaceShortMemories',
+      {
+        'items': items
+            .map(
+              (item) => {
+                'id': item.id,
+                'date': item.date,
+                'time': item.time,
+                'content': item.content,
+              },
+            )
+            .toList(),
+      },
+    );
+    return (result?['deletedCount'] as num?)?.toInt() ?? 0;
+  }
+
   static Future<WorkspaceMemoryEmbeddingConfig> getEmbeddingConfig() async {
     final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
       'getWorkspaceMemoryEmbeddingConfig',

@@ -358,6 +358,53 @@ class HttpControllerResponsesTest {
     }
 
     @Test
+    fun `chat cache key is omitted for unknown providers without changing tool payloads`() {
+        val method = HttpController::class.java.getDeclaredMethod(
+            "buildOpenAICompatibleRequestBody", String::class.java, String::class.java,
+            Boolean::class.javaPrimitiveType, String::class.java, String::class.java,
+        ).apply { isAccessible = true }
+        val bases = listOf(
+            "https://provider.example.com/v1", "http://localhost:18766/v1",
+            "https://api.deepseek.com", "https://api.openai.com.proxy.example/v1",
+            "https://proxy.example/api.openai.com", "", null,
+        )
+        for (base in bases) for (stream in listOf(true, false)) {
+            val input = """{"model":"old","stream":$stream,
+                "prompt_cache_key":"local-conversation-42",
+                "messages":[{"role":"user","content":"analyze tools"}],
+                "tools":[{"type":"function","function":{"name":"read_file",
+                  "parameters":{"type":"object","properties":{"prompt_cache_key":{"type":"string"}}}}}],
+                "tool_choice":"auto"}"""
+            val root = json.parseToJsonElement(method.invoke(
+                HttpController, input, "selected-model", true, "openai_compatible", base,
+            ) as String).jsonObject
+            assertFalse("cache key leaked to $base", root.containsKey("prompt_cache_key"))
+            assertEquals("selected-model", root["model"]?.jsonPrimitive?.content)
+            assertEquals(stream.toString(), root["stream"]?.jsonPrimitive?.content)
+            val original = json.parseToJsonElement(input).jsonObject
+            assertEquals(original["messages"], root["messages"])
+            assertEquals(original["tools"], root["tools"])
+            assertEquals(original["tool_choice"], root["tool_choice"])
+        }
+    }
+
+    @Test
+    fun `official openai chat preserves explicit cache key`() {
+        val method = HttpController::class.java.getDeclaredMethod(
+            "buildOpenAICompatibleRequestBody", String::class.java, String::class.java,
+            Boolean::class.javaPrimitiveType, String::class.java, String::class.java,
+        ).apply { isAccessible = true }
+        for (base in listOf("https://api.openai.com", "https://api.openai.com/v1/")) {
+            val root = json.parseToJsonElement(method.invoke(
+                HttpController,
+                """{"model":"old","messages":[],"prompt_cache_key":"local-conversation-42"}""",
+                "selected-model", true, "openai_compatible", base,
+            ) as String).jsonObject
+            assertEquals("local-conversation-42", root["prompt_cache_key"]?.jsonPrimitive?.content)
+        }
+    }
+
+    @Test
     fun `responses request normalizes ACP tool names consistently across history catalog and choice`() {
         val method = HttpController::class.java.getDeclaredMethod(
             "buildOpenAIResponsesRequestBody",

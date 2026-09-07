@@ -214,14 +214,14 @@ class EmbeddedTerminalSetupInventoryItem {
     required this.version,
   });
 
-  final bool ready;
+  final bool? ready;
   final String? version;
 
   factory EmbeddedTerminalSetupInventoryItem.fromMap(
     Map<dynamic, dynamic>? map,
   ) {
     return EmbeddedTerminalSetupInventoryItem(
-      ready: map?['ready'] == true,
+      ready: map?['ready'] is bool ? map!['ready'] as bool : null,
       version: (map?['version'] as String?)?.trim(),
     );
   }

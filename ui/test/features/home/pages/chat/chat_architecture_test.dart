@@ -5,6 +5,59 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   const chatRoot = 'lib/features/home/pages/chat';
 
+  test('rollback identity never uses the optimistic Harness label', () {
+    final page = File('$chatRoot/chat_page.dart').readAsStringSync();
+    final committed = page
+        .split('String? get _committedAcpAgentId {')
+        .last
+        .split('String get _activeAcpAgentDisplayName')
+        .first;
+    expect(committed, isNot(contains('_optimisticAcpAgentId')));
+    expect(committed, contains('_resolvedThreadTarget?.agentId'));
+    final target = page
+        .split('ConversationThreadTarget get _threadTargetForMode {')
+        .last
+        .split('ConversationThreadTarget? get _visibleThreadTarget')
+        .first;
+    expect(target, contains('_committedAcpAgentId'));
+    expect(target, isNot(contains('_activeAcpAgentId')));
+    final switching = File('$chatRoot/chat_page_agent.dart').readAsStringSync();
+    expect(switching, contains('normalized == _committedAcpAgentId'));
+    expect(
+      switching,
+      contains('previousTarget,\n            preserveComposer: true'),
+    );
+  });
+
+  test(
+    'Harness switching preserves composer and captures queued input before waiting',
+    () {
+      final lifecycle = File(
+        '$chatRoot/chat_page_lifecycle.dart',
+      ).readAsStringSync();
+      expect(
+        lifecycle,
+        contains('effectiveTarget.isNewConversation && !preserveComposer'),
+      );
+      expect(lifecycle.indexOf('_resetLocalConversationState(targetMode);'),
+          lessThan(lifecycle.indexOf('draftMessage = composerValue.text')));
+      final flow = File(
+        '$chatRoot/chat_page_conversation_flow.dart',
+      ).readAsStringSync();
+      expect(
+        flow.indexOf('final submittedText ='),
+        lessThan(
+          flow.indexOf('await _harnessSwitchSendBarrier.waitUntilIdle()'),
+        ),
+      );
+      expect(flow, contains('if (!mounted || !switched) return;'));
+      expect(
+        flow,
+        contains('submittedText ?? text ?? _messageController.text'),
+      );
+    },
+  );
+
   test('only the prompt response completes the shared reducer', () {
     final reducer = File(
       'lib/services/agent_event_reducer.dart',

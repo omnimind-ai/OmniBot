@@ -149,7 +149,9 @@ class _AgentRunGroupMessageState extends State<AgentRunGroupMessage>
   @override
   Widget build(BuildContext context) {
     final primaryVisibleMessageId =
-        widget.group.visibleMessagesOldestFirst.lastOrNull?.id;
+        widget.group.visibleMessagesOldestFirst
+            .where((message) => !isAgentTurnFailureMessage(message))
+            .lastOrNull?.id;
     final hasFoldableHistory = widget.group.segmentsOldestFirst.any(
       (segment) =>
           segment.isProcess || segment.message.id != primaryVisibleMessageId,
@@ -202,6 +204,8 @@ class _AgentRunGroupMessageState extends State<AgentRunGroupMessage>
               segment.messages,
               firstThinkingMessageId,
             )
+          else if (isAgentTurnFailureMessage(segment.message))
+            _buildVisibleMessageBubble(segment.message)
           else if (isAgentPlanMessage(segment.message))
             // ACP plans are mutable state snapshots. Do not put them behind
             // the completed-run fold; the same card id is refreshed for each
@@ -657,7 +661,11 @@ class _LegacyAgentRunSummaryHeader extends StatelessWidget {
     // computed from the message timestamps inside this group (first
     // candidate message → last candidate message). If we can't derive
     // a duration (single instant), we just show "已处理".
-    final baseLabel = isEnglish ? 'Processed' : '已处理';
+    final baseLabel = group.status == AgentRunStatus.failed
+        ? (isEnglish ? 'Failed' : '执行失败')
+        : group.status == AgentRunStatus.cancelled
+        ? (isEnglish ? 'Cancelled' : '已取消')
+        : (isEnglish ? 'Processed' : '已处理');
     final elapsedLabel = _agentRunElapsedLabel(group);
     final label = elapsedLabel.isEmpty
         ? baseLabel

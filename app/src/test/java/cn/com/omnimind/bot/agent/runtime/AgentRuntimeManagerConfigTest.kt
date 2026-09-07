@@ -10,6 +10,22 @@ import org.junit.Test
 
 class AgentRuntimeManagerConfigTest {
     @Test
+    fun `only commands from the currently bound owned session admit without a turn`() {
+        fun admits(session: String? = "current", bound: String? = "current",
+                   update: String = "available_commands_update", owns: Boolean = true,
+                   turn: String? = null, method: String = "session/update") =
+            admitsBoundAcpCommands(method, update, session, bound, turn, owns)
+        assertEquals(true, admits())
+        assertEquals(false, admits(session = "old"))
+        assertEquals(false, admits(bound = null))
+        assertEquals(false, admits(session = null, bound = null))
+        assertEquals(false, admits(owns = false))
+        assertEquals(false, admits(turn = "arbitrary-turn"))
+        assertEquals(false, admits(update = "agent_message_chunk"))
+        assertEquals(false, admits(method = "other"))
+    }
+
+    @Test
     fun `official provider binding resolves when it is absent from persisted profiles`() {
         val officialProfile = ModelProviderProfile(
             id = OmniOfficialProvider.PROFILE_ID,

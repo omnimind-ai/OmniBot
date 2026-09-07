@@ -19,7 +19,7 @@ import org.junit.Test
 
 class ManagedAcpAdapterPreparationTest {
     private companion object {
-        const val DEEPSEEK_HARNESS_PREPARATION_REVISION = "deepseek-dsh-profile-reset-v13"
+        const val DEEPSEEK_HARNESS_PREPARATION_REVISION = "deepseek-official-acp-0.1.2-rc.1"
     }
     @Test
     fun `a healthy installed DSH adapter is reused during agent switching`() {

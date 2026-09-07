@@ -1,3 +1,4 @@
+import 'widgets/acp_config_button.dart';
 // ignore_for_file: unused_element, unused_element_parameter
 
 import 'dart:async';
@@ -79,7 +80,6 @@ import 'mixins/conversation_manager.dart';
 import 'chat_page_models.dart';
 import 'tool_activity_utils.dart';
 import 'widgets/chat_widgets.dart';
-import 'widgets/acp_config_button.dart';
 import 'widgets/chat_browser_overlay.dart';
 import 'widgets/chat_message_anchor_bar.dart';
 import 'widgets/pet_overlay_permission_sheet.dart';
@@ -428,6 +428,12 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     if (optimisticAgentId.isNotEmpty) {
       return optimisticAgentId;
     }
+    return _committedAcpAgentId;
+  }
+
+  // Optimistic chrome is not a Conversation/Session identity. In particular,
+  // failed switching must restore the owner from before the pending selection.
+  String? get _committedAcpAgentId {
     if (_activeMode == ChatPageMode.normal &&
         activeConversationModeValue == ConversationMode.normal) {
       return _kXiaowanAcpAgentId;
@@ -779,7 +785,7 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     return ConversationThreadTarget.existing(
       conversationId: conversationId,
       mode: conversationMode,
-      agentId: _activeMode == ChatPageMode.agent ? _activeAcpAgentId : null,
+      agentId: _activeMode == ChatPageMode.agent ? _committedAcpAgentId : null,
       agentSessionId: localAgentThreadId == null || localAgentThreadId.isEmpty
           ? null
           : localAgentThreadId,
@@ -1780,6 +1786,7 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   Future<void> _applyConversationThreadTarget(
     ConversationThreadTarget target, {
     bool syncPage = true,
+    bool preserveComposer = false,
     int? requestId,
   });
 
@@ -1933,6 +1940,8 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   _ActiveModelMentionToken? _parseActiveModelMentionToken(
     TextEditingValue value,
   );
+
+  bool _usesSharedProviderModel(String? agentId);
 
   Future<void> _openConversationModelSelector(BuildContext anchorContext);
 

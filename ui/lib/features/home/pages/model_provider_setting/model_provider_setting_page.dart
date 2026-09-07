@@ -6,6 +6,7 @@ import 'package:ui/l10n/l10n.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:ui/services/builtin_official_provider_catalog.dart';
+import 'package:ui/services/agent_runtime_service.dart';
 import 'package:ui/services/model_provider_config_service.dart';
 import 'package:ui/services/model_vendor_catalog.dart';
 import 'package:ui/theme/app_colors.dart';
@@ -178,6 +179,7 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
 
   bool _isLoading = true;
   bool _isFetchingModels = false;
+  String? _modelFetchError;
   bool _obscureApiKey = true;
   bool _isSyncingControllers = false;
   bool _isSavingProfile = false;
@@ -734,6 +736,7 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
       _hiddenChatModelIds = hiddenChatModelIds.toSet();
       _manualModels = manualModels;
       _remoteModels = remoteModels;
+      _modelFetchError = null;
       _selectedSourceType = current.sourceType;
       _selectedProtocolType = current.protocolType;
       _selectedWireApi = _normalizeWireApiForProtocol(
@@ -760,16 +763,13 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
     ModelProviderProfileSummary profile, {
     bool enrichMetadata = true,
   }) async {
-    final cached = await ModelProviderConfigService.getCachedFetchedModels(
-      profileId: profile.id,
-      apiBase: profile.baseUrl,
-      profileRevision: profile.revision,
-    );
-    // Opening or switching the Provider editor is read-only. The persisted
-    // catalog is the Provider document; network discovery belongs only to
-    // save/verify or the explicit "refresh models" action.
-    if (!enrichMetadata) return cached;
-    return _enrichModelsForProfile(profile, cached);
+    if (!profile.configured) return const [];
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _currentProfile?.id == profile.id) {
+        unawaited(_fetchModelsLocalized(silentError: false));
+      }
+    });
+    return const [];
   }
 
   Future<List<ProviderModelOption>> _loadManualModelsForProfile(
@@ -1144,7 +1144,18 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
       return;
     }
 
-    setState(() => _isFetchingModels = true);
+    if (_isFetchingModels) return;
+    var requestedRevision = current.revision;
+    setState(() {
+      _isFetchingModels = true;
+      _modelFetchError = null;
+      _remoteModels = [];
+    });
+    _scheduleMetadataRefresh(
+      profile: current,
+      manualModels: _manualModels,
+      remoteModels: _remoteModels,
+    );
     try {
       // Discovery must describe the saved Provider revision. Otherwise a
       // later autosave invalidates the just-fetched list on page exit.
@@ -1152,6 +1163,7 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
       if (!mounted) return;
       final savedProfile = _currentProfile;
       if (savedProfile == null || savedProfile.id != current.id) return;
+      requestedRevision = savedProfile.revision;
       final models = await ModelProviderConfigService.fetchModels(
         profileId: savedProfile.id,
         providerName: savedProfile.name,
@@ -1159,11 +1171,17 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
       if (!mounted ||
           _currentProfile?.id != savedProfile.id ||
           _currentProfile?.revision != savedProfile.revision ||
-          _shouldAutoSaveDraft)
+          _shouldAutoSaveDraft) {
         return;
+      }
       setState(() {
         _remoteModels = models;
       });
+      _scheduleMetadataRefresh(
+        profile: savedProfile,
+        manualModels: _manualModels,
+        remoteModels: _remoteModels,
+      );
       if (!silentError) {
         final message = models.isEmpty
             ? context.l10n.modelsNoAvailableModels
@@ -1173,15 +1191,23 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
           type: models.isEmpty ? ToastType.warning : ToastType.success,
         );
       }
-    } catch (_) {
-      if (!mounted || silentError) return;
-      showToast(
-        _headerText(
+    } catch (error) {
+      if (!mounted ||
+          _currentProfile?.id != current.id ||
+          _currentProfile?.revision != requestedRevision ||
+          _shouldAutoSaveDraft) {
+        return;
+      }
+      final message = formatAgentRuntimeErrorForUser(
+        error,
+        english: Localizations.localeOf(context).languageCode != 'zh',
+        fallback: _headerText(
           '模型列表刷新失败，请检查配置后重试',
           'Failed to refresh models. Check the configuration and try again.',
         ),
-        type: ToastType.error,
       );
+      setState(() => _modelFetchError = message);
+      if (!silentError) showToast(message, type: ToastType.error);
     } finally {
       if (mounted) {
         setState(() => _isFetchingModels = false);
@@ -1329,12 +1355,6 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
         ModelProviderConfigService.saveManualModelIds(
           profileId: current.id,
           ids: _manualModelIds,
-        ),
-        ModelProviderConfigService.saveCachedFetchedModels(
-          profileId: current.id,
-          apiBase: current.baseUrl,
-          profileRevision: current.revision,
-          models: _remoteModels,
         ),
       ]);
 
@@ -3213,7 +3233,8 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
                                         ),
                                         const SizedBox(height: 10),
                                         Text(
-                                          context.l10n.modelAddPrompt,
+                                          _modelFetchError ?? context.l10n.modelAddPrompt,
+                                          textAlign: TextAlign.center,
                                           style: TextStyle(
                                             color: _secondaryTextColor,
                                             fontSize: 14,
@@ -3221,6 +3242,13 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
                                             fontFamily: 'PingFang SC',
                                           ),
                                         ),
+                                        if (_modelFetchError != null) ...[
+                                          const SizedBox(height: 8),
+                                          TextButton(
+                                            onPressed: _isFetchingModels ? null : _fetchModelsLocalized,
+                                            child: Text(_headerText('重试', 'Retry')),
+                                          ),
+                                        ],
                                       ],
                                     ),
                                   ),

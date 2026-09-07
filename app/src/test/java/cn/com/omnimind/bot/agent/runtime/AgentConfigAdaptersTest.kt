@@ -11,6 +11,254 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AgentConfigAdaptersTest {
+    @Test
+    fun harnessModelSelectionUsesAdvertisedValuesWithoutLosingModelNamespace() {
+        assertEquals("omnibot/org/model", AcpHarnessAdapters.openCode.resolveModelValue(
+            "org/model", listOf("omnibot/org/model")))
+        assertEquals(null, AcpHarnessAdapters.openCode.resolveModelValue("model", listOf("other/model")))
+        assertEquals("[\"provider\",\"org/model\"]", AcpHarnessAdapters.deepSeekHarness.resolveModelValue(
+            "org/model", listOf("[\"provider\",\"org/model\"]")))
+        assertEquals(null, AcpHarnessAdapters.deepSeekHarness.resolveModelValue(
+            "model", listOf("[\"a\",\"model\"]", "[\"b\",\"model\"]")))
+        assertEquals(null, AcpHarnessAdapters.claudeCode.resolveModelValue("model", listOf("other")))
+        assertEquals("model", AcpHarnessAdapters.codex.resolveModelValue("model", listOf("model")))
+    }
+    @Test
+    fun codexNegotiatesOfficialFailureMetadataWithoutChangingOtherHarnesses() {
+        val base = kotlinx.serialization.json.buildJsonObject {
+            put("terminal_output", kotlinx.serialization.json.JsonPrimitive(true))
+        }
+        val meta = AcpHarnessAdapters.codex.clientCapabilityMeta(base)
+        assertEquals(base["terminal_output"], meta["terminal_output"])
+        assertTrue(meta.toString().contains("sessionFailure"))
+        assertEquals(base, AcpHarnessAdapters.kimiCode.clientCapabilityMeta(base))
+    }
+
+    @Test
+    fun claudeUsesOfficialTextOutputWithoutAdvertisingUnrenderedTerminalExtension() {
+        val base = ACP_CLIENT_CAPABILITY_META
+        val meta = AcpHarnessAdapters.claudeCode.clientCapabilityMeta(base)
+        assertFalse(meta.containsKey("terminal_output"))
+        assertEquals(kotlinx.serialization.json.JsonObject(base - "terminal_output"), meta)
+        assertEquals("true", base["terminal_output"].toString())
+        assertEquals(meta, AcpHarnessAdapters.claudeCode.clientCapabilityMeta(meta))
+    }
+
+    @Test
+    fun codexUsesOnlyOwningResponseFailureNotWarningsOrChatText() {
+        fun meta(severity: String, title: String) =
+            kotlinx.serialization.json.Json.parseToJsonElement(
+                """{"jetbrains":{"air":{"version":1,"sessionFailure":{"severity":"$severity","title":"$title"}}}}"""
+            ) as kotlinx.serialization.json.JsonObject
+        val failure = meta("error", "Request timed out")
+        assertEquals("Request timed out", AcpHarnessAdapters.codex.promptFailure(failure))
+        assertEquals(null, AcpHarnessAdapters.standard.promptFailure(failure))
+        assertEquals(null, AcpHarnessAdapters.codex.promptFailure(meta("warning", "Retrying")))
+        assertEquals(null, AcpHarnessAdapters.codex.promptFailure(null))
+        assertEquals("Assistant request failed.", AcpHarnessAdapters.codex.promptFailure(meta("error", "")))
+    }
+
+    @Test
+    fun openCodeReceivesDeclaredCapabilitiesWithoutInventingReasoningLevels() {
+        val root = JsonParser.parseString(buildOpenCodeConfigJson(
+            model = "omnibot/model-a", baseUrl = "https://fixture.invalid/v1",
+            providerModels = listOf(ProviderModelOption(id = "model-a", reasoning = true,
+                toolCall = true, temperature = false, contextLimit = 32000, outputLimit = 4000)),
+        )).asJsonObject
+        val model = root.getAsJsonObject("provider").getAsJsonObject("omnibot")
+            .getAsJsonObject("models").getAsJsonObject("model-a")
+        assertTrue(model["reasoning"].asBoolean)
+        assertTrue(model["tool_call"].asBoolean)
+        assertFalse(model["temperature"].asBoolean)
+        assertEquals(32000, model.getAsJsonObject("limit")["context"].asInt)
+        assertEquals(4000, model.getAsJsonObject("limit")["output"].asInt)
+        assertFalse(model.has("variants"))
+    }
+
+    @Test
+    fun claudeSdkReceivesRootWithoutDuplicatingV1Messages() {
+        for (suffix in listOf("", "/v1", "/v1/", "/v1/messages", "/messages", "/v1/chat/completions")) {
+            assertEquals("https://gateway.example/anthropic",
+                normalizeClaudeCodeBaseUrl("https://gateway.example/anthropic$suffix"))
+        }
+    }
+
+    @Test
+    fun openCodeCatalogRefreshRemovesStaleManagedModelsAndKeepsUserSettings() {
+        val root = JsonParser.parseString(buildOpenCodeConfigJson(
+            model = "omnibot/current", baseUrl = "https://gateway.example/v1",
+            providerModels = listOf(ProviderModelOption(id = "current")),
+            existingConfigJson = """{"provider":{"omnibot":{"models":{"stale":{},"current":{"options":{"temperature":0.3}}}},"custom":{"models":{"mine":{}}}}}""",
+        )).asJsonObject
+        val providers = root["provider"].asJsonObject
+        val models = providers["omnibot"].asJsonObject["models"].asJsonObject
+        assertEquals(setOf("current"), models.keySet())
+        assertEquals(0.3, models["current"].asJsonObject["options"].asJsonObject["temperature"].asDouble, 0.0)
+        assertTrue(providers["custom"].asJsonObject["models"].asJsonObject.has("mine"))
+    }
+
+    @Test
+    fun kimiAnthropicProtocolWinsOverStaleOpenAiWireSetting() {
+        val input = AgentProviderMappingInput(
+            agentId = "kimi-code-acp", harnessAdapter = AcpHarnessAdapters.kimiCode,
+            provider = AgentProviderCredentials("https://gateway.example/anthropic", "test-key",
+                protocolType = "anthropic", wireApi = "responses"), model = "org/model-a",
+        )
+        val mapping = AgentConfigAdapterRegistry.map(input)
+        assertFalse(mapping.environment.containsKey("KIMI_MODEL_NAME"))
+        val content = AgentConfigAdapterRegistry.launchConfigWrites(input, mapping, emptyList(), "").single().content
+        assertTrue(content.contains("type = \"anthropic\""))
+        assertTrue(content.contains("model = \"org/model-a\""))
+    }
+
+    @Test
+    fun kimiCatalogPreservesProviderIdsMetadataAndCurrentBinding() {
+        val config = buildKimiCodeManagedFiles(
+            AgentProviderCredentials("https://gateway.example/v1", "test-key", wireApi = "chat_completions"),
+            "current", providerModels = listOf(
+                ProviderModelOption(id = "org/model.a", displayName = "Model A", contextLimit = 64000),
+                ProviderModelOption(id = "org/model.a"),
+                ProviderModelOption(id = "model-b", reasoning = false, inputModalities = listOf("text")),
+            ),
+        ).getValue(KIMI_CODE_CONFIG_PATH)
+        assertTrue(config.contains("[models.\"org/model.a\"]"))
+        assertEquals(1, Regex("display_name = \"Model A\"").findAll(config).count())
+        assertTrue(config.contains("max_context_size = 64000"))
+        assertTrue(config.contains("capabilities = []"))
+        assertTrue(config.contains("default_model = \"current\""))
+        assertTrue(config.contains("[models.\"current\"]"))
+    }
+
+    @Test
+    fun codexRejectsAnthropicConfigurationInsteadOfInventingResponsesSupport() {
+        val failure = runCatching {
+            AgentConfigAdapterRegistry.map(AgentProviderMappingInput(
+                agentId = "codex-acp", harnessAdapter = AcpHarnessAdapters.codex,
+                provider = AgentProviderCredentials("https://gateway.example/anthropic", "test-key",
+                    protocolType = "anthropic"), model = "model-a",
+            ))
+        }.exceptionOrNull()
+        assertTrue(failure is IllegalArgumentException)
+        assertTrue(failure!!.message!!.contains("Responses"))
+        assertFalse(failure.message!!.contains("test-key"))
+    }
+
+    @Test
+    fun openCodeUsesTheConfiguredWireAcrossProtocolSwitches() {
+        var saved = "{}"
+        val cases = listOf(
+            Triple("openai_compatible", "chat_completions", "@ai-sdk/openai-compatible"),
+            Triple("openai_compatible", "responses", "@ai-sdk/openai"),
+            Triple("anthropic", "chat_completions", "@ai-sdk/anthropic"),
+            Triple("openai_compatible", "chat_completions", "@ai-sdk/openai-compatible"),
+        )
+        for ((protocol, wire, npm) in cases) {
+            val input = AgentProviderMappingInput(
+                agentId = "opencode-acp",
+                provider = AgentProviderCredentials("https://gateway.example/v1", "test-secret",
+                    protocolType = protocol, wireApi = wire),
+                model = "org/model-a", harnessAdapter = AcpHarnessAdapters.openCode,
+            )
+            saved = AgentConfigAdapterRegistry.launchConfigWrites(
+                input, AgentConfigAdapterRegistry.map(input),
+                listOf(ProviderModelOption(id = "org/model-a")), saved,
+            ).single().content
+            val root = JsonParser.parseString(saved).asJsonObject
+            val provider = root["provider"].asJsonObject["omnibot"].asJsonObject
+            assertEquals(npm, provider["npm"].asString)
+            assertEquals("omnibot/org/model-a", root["model"].asString)
+            assertTrue(provider["models"].asJsonObject.has("org/model-a"))
+            assertFalse(saved.contains("test-secret"))
+        }
+    }
+
+    @Test
+    fun openCodePreservesRawNamespacedModelIds() {
+        val root = JsonParser.parseString(buildOpenCodeConfigJson(
+            model = "org/model-a", baseUrl = "https://gateway.example/v1",
+        )).asJsonObject
+        val models = root["provider"].asJsonObject["omnibot"].asJsonObject["models"].asJsonObject
+        assertTrue(models.has("org/model-a"))
+        assertFalse(models.has("model-a"))
+    }
+
+    @Test
+    fun openCodeAnthropicEndpointIsNormalizedOnce() {
+        for (suffix in listOf("", "/v1", "/v1/messages", "/messages")) {
+            assertEquals("https://gateway.example/anthropic/v1",
+                normalizeOpenCodeBaseUrl("https://gateway.example/anthropic$suffix"))
+        }
+    }
+
+    @Test
+    fun kimiProtocolSwitchReplacesOfficialCatalogWithoutEnvironmentOverride() {
+        val input = AgentProviderMappingInput(
+            agentId = "kimi-code",
+            provider = AgentProviderCredentials("https://gateway.example/v1/responses", "key\"quoted",
+                wireApi = "responses", customHeaders = mapOf("X-Route" to "mobile")),
+            model = "dispatch-model", harnessAdapter = AcpHarnessAdapters.kimiCode,
+        )
+        val mapping = AgentConfigAdapterRegistry.map(input)
+        assertFalse(mapping.environment.containsKey("KIMI_MODEL_NAME"))
+        val write = AgentConfigAdapterRegistry.launchConfigWrites(input, mapping, emptyList(), "").single()
+        assertEquals(KIMI_CODE_CONFIG_PATH, write.path)
+        assertTrue(write.content.contains("type = \"openai_responses\""))
+        assertTrue(write.content.contains("base_url = \"https://gateway.example/v1\""))
+        assertTrue(write.content.contains("model = \"dispatch-model\""))
+        assertTrue(write.content.contains("api_key = \"key\\\"quoted\""))
+        assertTrue(write.content.contains("\"X-Route\" = \"mobile\""))
+        val chat = input.copy(provider = input.provider!!.copy(wireApi = "chat_completions"), model = "other-model")
+        val chatMapping = AgentConfigAdapterRegistry.map(chat)
+        assertFalse(chatMapping.environment.containsKey("KIMI_MODEL_NAME"))
+        val chatConfig = AgentConfigAdapterRegistry.launchConfigWrites(chat, chatMapping, emptyList(), write.content).single().content
+        assertTrue(chatConfig.contains("type = \"openai\""))
+        assertTrue(chatConfig.contains("model = \"other-model\""))
+        assertFalse(chatConfig.contains("dispatch-model"))
+    }
+
+    @Test
+    fun deepSeekAcpUsesOfficialProviderPatchWithoutPersistingCredentials() {
+        val input = AgentProviderMappingInput(
+            agentId = "deepseek-harness-acp",
+            provider = AgentProviderCredentials("https://gateway.example/v1", "secret-key",
+                customHeaders = mapOf("X-Route" to "mobile")),
+            model = "model-b", harnessAdapter = AcpHarnessAdapters.deepSeekHarness,
+        )
+        val mapping = AgentConfigAdapterRegistry.map(input)
+        val patch = AgentConfigAdapterRegistry.launchConfigWrites(
+            input, mapping, emptyList(), "",
+        ).single().content
+        assertTrue(patch.contains("- id: llm-pi-ai"))
+        assertTrue(patch.contains("- id: acp"))
+        assertTrue(patch.contains("\"model\":\"model-b\""))
+        assertTrue(patch.contains("\"X-Route\":\"mobile\""))
+        assertFalse(patch.contains("secret-key"))
+        assertEquals("secret-key", mapping.environment["OMNIBOT_DSH_API_KEY"])
+    }
+    @Test
+    fun openCodeMappingPreservesExplicitProviderSelection() {
+        val config = JsonParser.parseString(buildOpenCodeConfigJson(
+            model = "omnibot/model-a", baseUrl = "https://example.test/v1",
+            existingConfigJson = """{"enabled_providers":["omnibot","custom"],"permission":{"bash":"ask"}}""",
+        )).asJsonObject
+        assertEquals(listOf("omnibot", "custom"), config.getAsJsonArray("enabled_providers").map { it.asString })
+        assertEquals("ask", config.getAsJsonObject("permission")["bash"].asString)
+    }
+    @Test
+    fun openCodeLaunchIncludesTheSharedProviderCatalog() {
+        val input = AgentProviderMappingInput(
+            agentId = "opencode-acp", provider = AgentProviderCredentials("https://example.test/v1", "test-key"),
+            model = "model-a", harnessAdapter = AcpHarnessAdapters.openCode,
+        )
+        val write = AgentConfigAdapterRegistry.launchConfigWrites(
+            input = input, mapping = AgentConfigAdapterRegistry.map(input),
+            providerModels = listOf(ProviderModelOption(id = "model-a"), ProviderModelOption(id = "model-b")),
+            existingConfig = "{}",
+        ).single()
+        val config = JsonParser.parseString(write.content).asJsonObject
+        assertTrue(config.getAsJsonObject("provider").getAsJsonObject("omnibot")
+            .getAsJsonObject("models").has("model-b"))
+    }
     private val provider = AgentProviderCredentials(
         baseUrl = "https://llmapi.paratera.com/v1",
         apiKey = "secret",
@@ -101,10 +349,8 @@ class AgentConfigAdaptersTest {
                 harnessAdapter = AcpHarnessAdapters.kimiCode,
             ),
         )
-        assertEquals(provider.apiKey, kimi.environment["KIMI_MODEL_API_KEY"])
-        assertEquals(provider.baseUrl, kimi.environment["KIMI_MODEL_BASE_URL"])
-        assertEquals(model, kimi.environment["KIMI_MODEL_NAME"])
-        assertEquals("openai", kimi.environment["KIMI_MODEL_PROVIDER_TYPE"])
+        assertFalse(kimi.environment.containsKey("KIMI_MODEL_NAME"))
+        assertFalse(kimi.environment.containsKey("KIMI_MODEL_API_KEY"))
         assertEquals(KIMI_CODE_HOME, kimi.environment["KIMI_CODE_HOME"])
 
         val claude = AgentConfigAdapterRegistry.map(
@@ -256,10 +502,15 @@ class AgentConfigAdaptersTest {
                 harnessAdapter = AcpHarnessAdapters.kimiCode,
             ),
         )
-        assertEquals(
-            "X-Trace-Id: trace-1\nX-Region: cn",
-            kimi.environment["KIMI_CODE_CUSTOM_HEADERS"],
-        )
+        val kimiConfig = AgentConfigAdapterRegistry.launchConfigWrites(
+            AgentProviderMappingInput(
+                agentId = AcpAgentProfileStore.KIMI_CODE_AGENT_ID,
+                provider = configuredProvider, model = "model-a", harnessAdapter = AcpHarnessAdapters.kimiCode,
+            ), kimi, emptyList(), "",
+        ).single().content
+        assertTrue(kimiConfig.contains("\"X-Trace-Id\" = \"trace-1\""))
+        assertTrue(kimiConfig.contains("\"X-Region\" = \"cn\""))
+        assertFalse(kimiConfig.contains("must-be-dropped"))
 
         val openCode = AgentConfigAdapterRegistry.map(
             AgentProviderMappingInput(
@@ -581,9 +832,9 @@ class AgentConfigAdaptersTest {
             listOf("text", "image"),
             model["input_modalities"].asJsonArray.map { it.asString },
         )
-        assertEquals("medium", model["default_reasoning_level"].asString)
+        assertTrue(model["default_reasoning_level"]?.isJsonNull != false)
         assertEquals(
-            listOf("medium"),
+            emptyList<String>(),
             model["supported_reasoning_levels"].asJsonArray.map {
                 it.asJsonObject["effort"].asString
             },
@@ -658,13 +909,25 @@ class AgentConfigAdaptersTest {
         ).asJsonObject
         val model = catalog.getAsJsonArray("models").single().asJsonObject
 
-        assertEquals("medium", model["default_reasoning_level"].asString)
+        assertTrue(model["default_reasoning_level"]?.isJsonNull != false)
         assertEquals(
-            listOf("medium"),
+            emptyList<String>(),
             model["supported_reasoning_levels"].asJsonArray.map {
                 it.asJsonObject["effort"].asString
             },
         )
+    }
+
+    @Test
+    fun codexCatalogPreservesDeclaredEffortsAndDefaultWithoutAddingLevels() {
+        val catalog = JsonParser.parseString(buildCodexModelCatalogJson(listOf(
+            ProviderModelOption(id = "custom", supportedReasoningLevels = listOf("low", "high"),
+                defaultReasoningLevel = "high"),
+        ))).asJsonObject
+        val model = catalog.getAsJsonArray("models").single().asJsonObject
+        assertEquals("high", model["default_reasoning_level"].asString)
+        assertEquals(listOf("low", "high"), model["supported_reasoning_levels"].asJsonArray
+            .map { it.asJsonObject["effort"].asString })
     }
 
     @Test
@@ -767,28 +1030,53 @@ class AgentConfigAdaptersTest {
     }
 
     @Test
-    fun claudeCodeLeavesUnknownProviderEndpointUntouched() {
+    fun claudeCodeNormalizesSdkSuffixWithoutGuessingAnAnthropicEndpoint() {
         assertEquals(
-            "https://llmapi.paratera.com/v1",
+            "https://llmapi.paratera.com",
             normalizeClaudeCodeBaseUrl("https://llmapi.paratera.com/v1")
         )
     }
 
     @Test
-    fun claudeCodeRejectsOpenAiOnlyEndpointBeforeLaunch() {
-        val failure = runCatching {
-            AgentConfigAdapterRegistry.map(
+    fun claudeCodeMapsSharedProviderWithoutRejectingItsOpenAiLabel() {
+        for (baseUrl in listOf("https://llmapi.paratera.com", "https://llmapi.paratera.com/v1")) {
+            val selected = provider.copy(baseUrl = baseUrl,
+                customHeaders = mapOf("X-Test-Tenant" to "selected-tenant"))
+            val mapping = AgentConfigAdapterRegistry.map(
                 AgentProviderMappingInput(
                     agentId = CLAUDE_CODE_AGENT_ID,
-                    provider = provider,
+                    provider = selected,
                     model = "GLM-5.1",
                     harnessAdapter = AcpHarnessAdapters.claudeCode,
                 )
             )
-        }.exceptionOrNull()
+            assertEquals("https://llmapi.paratera.com", mapping.environment["ANTHROPIC_BASE_URL"])
+            assertEquals(selected.apiKey, mapping.environment["ANTHROPIC_API_KEY"])
+            assertEquals(selected.apiKey, mapping.environment["ANTHROPIC_AUTH_TOKEN"])
+            assertEquals("GLM-5.1", mapping.environment["ANTHROPIC_MODEL"])
+            assertEquals("GLM-5.1", mapping.environment["ANTHROPIC_SMALL_FAST_MODEL"])
+            assertEquals("X-Test-Tenant: selected-tenant", mapping.environment["ANTHROPIC_CUSTOM_HEADERS"])
+            assertEquals(baseUrl, selected.baseUrl)
+            assertEquals(provider.protocolType, selected.protocolType)
+        }
+    }
 
-        assertTrue(failure is IllegalArgumentException)
-        assertTrue(failure?.message.orEmpty().contains("Anthropic-compatible"))
+    @Test
+    fun claudeCodeProviderSwitchDoesNotReusePreviousCredentialsOrHeaders() {
+        fun map(selected: AgentProviderCredentials, model: String) =
+            AgentConfigAdapterRegistry.map(AgentProviderMappingInput(
+                agentId = CLAUDE_CODE_AGENT_ID, provider = selected, model = model,
+                harnessAdapter = AcpHarnessAdapters.claudeCode,
+            )).environment
+        val first = map(provider.copy(customHeaders = mapOf("X-Tenant" to "first")), "first-model")
+        val second = map(provider.copy(baseUrl = "https://gateway.example/team/v1",
+            apiKey = "second-test-key", customHeaders = emptyMap()), "org/second-model")
+        assertEquals("https://gateway.example/team", second["ANTHROPIC_BASE_URL"])
+        assertEquals("second-test-key", second["ANTHROPIC_API_KEY"])
+        assertEquals("org/second-model", second["ANTHROPIC_MODEL"])
+        assertFalse(second.containsKey("ANTHROPIC_CUSTOM_HEADERS"))
+        assertEquals("first-model", first["ANTHROPIC_MODEL"])
+        assertEquals("X-Tenant: first", first["ANTHROPIC_CUSTOM_HEADERS"])
     }
 
     @Test

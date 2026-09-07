@@ -82,6 +82,26 @@ mark_rootfs_ready() {
 
 trap handle_termination HUP INT TERM
 
+mkdir -p "$PREFIX/local/bin" "$PREFIX/local/lib"
+
+install_runtime_file() {
+    src="$1"
+    dest="$2"
+    mode="$3"
+    [ -e "$src" ] || return 0
+    tmp="${dest}.$$"
+    rm -f "$tmp"
+    cp "$src" "$tmp" && chmod "$mode" "$tmp" && mv -f "$tmp" "$dest"
+}
+
+install_runtime_file "$PREFIX/files/proot" "$PREFIX/local/bin/proot" 755
+
+for sofile in "$PREFIX/files/"*.so.2; do
+    [ -e "$sofile" ] || continue
+    dest="$PREFIX/local/lib/$(basename "$sofile")"
+    install_runtime_file "$sofile" "$dest" 644
+done
+
 if [ -f "$ROOTFS_READY_MARKER" ]; then
     if ! rootfs_has_minimum_layout; then
         if ! clear_incomplete_rootfs; then
@@ -106,7 +126,11 @@ if [ ! -f "$ROOTFS_READY_MARKER" ]; then
         echo "Missing $TERMINAL_DISTRIBUTION rootfs archive: $ROOTFS_ARCHIVE" >&2
         exit 1
     fi
-    if ! run_child tar -xf "$ROOTFS_ARCHIVE" -C "$ROOTFS_DIR"; then
+    # Android app UIDs cannot create archive hardlinks. Use the bundled
+    # PRoot's official emulation while extracting immutable rootfs members;
+    # this does not change the separate interactive/ACP launch options.
+    if ! run_child "$LINKER" "$PREFIX/local/bin/proot" --link2symlink \
+        /system/bin/tar -xf "$ROOTFS_ARCHIVE" -C "$ROOTFS_DIR"; then
         echo "Failed to extract $TERMINAL_DISTRIBUTION rootfs." >&2
         exit 1
     fi
@@ -136,27 +160,6 @@ if [ -n "$OMNIBOT_MT_STORAGE_HOST" ] && [ -d "$OMNIBOT_MT_STORAGE_HOST" ]; then
     mkdir -p "$ROOTFS_DIR/mnt/mt" "$ROOTFS_DIR/mt"
 fi
 
-mkdir -p "$PREFIX/local/bin" "$PREFIX/local/lib"
-
-install_runtime_file() {
-    src="$1"
-    dest="$2"
-    mode="$3"
-    [ -e "$src" ] || return 0
-    tmp="${dest}.$$"
-    rm -f "$tmp"
-    cp "$src" "$tmp" && chmod "$mode" "$tmp" && mv -f "$tmp" "$dest"
-}
-
-install_runtime_file "$PREFIX/files/proot" "$PREFIX/local/bin/proot" 755
-
-for sofile in "$PREFIX/files/"*.so.2; do
-    [ -e "$sofile" ] || continue
-    dest="$PREFIX/local/lib/$(basename "$sofile")"
-    install_runtime_file "$sofile" "$dest" 644
-done
-
-
 ARGS="--kill-on-exit"
 ARGS="$ARGS -w /"
 
@@ -178,6 +181,11 @@ ARGS="$ARGS -b /dev"
 ARGS="$ARGS -b /data"
 ARGS="$ARGS -b /dev/urandom:/dev/random"
 ARGS="$ARGS -b /proc"
+# The host supplies DNS from Android's active network for both distributions.
+# Keep existing guest settings when no active resolver is available.
+if [ -n "${OMNIBOT_DNS_FILE:-}" ] && [ -s "$OMNIBOT_DNS_FILE" ]; then
+  ARGS="$ARGS -b $OMNIBOT_DNS_FILE:/etc/resolv.conf"
+fi
 ARGS="$ARGS -b $PREFIX"
 ARGS="$ARGS -b $PREFIX/local/stat:/proc/stat"
 ARGS="$ARGS -b $PREFIX/local/vmstat:/proc/vmstat"

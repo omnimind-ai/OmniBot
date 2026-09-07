@@ -147,6 +147,15 @@ internal class XiaowanAcpConnection(
                 conversationIdProvider = conversationIdProvider,
                 isXiaowanSession = isXiaowanSession,
                 deleteSessionCallback = deleteSession,
+                publishUpdate = { id, update ->
+                    serverProtocol.sendNotificationRaw(
+                        com.agentclientprotocol.model.AcpMethod.ClientMethods.V1.SessionUpdate,
+                        Json.encodeToJsonElement(
+                            com.agentclientprotocol.model.SessionNotification.serializer(),
+                            com.agentclientprotocol.model.SessionNotification(SessionId(id), update),
+                        ),
+                    )
+                },
                 requestPermission = { sessionId, toolCallId, title, detail ->
                     requestClientPermission(
                         protocol = serverProtocol,
@@ -273,6 +282,7 @@ private class XiaowanAgentSupport(
     private val conversationIdProvider: suspend (String) -> Long?,
     private val isXiaowanSession: suspend (String) -> Boolean,
     private val deleteSessionCallback: suspend (String) -> Unit,
+    private val publishUpdate: suspend (String, SessionUpdate) -> Unit,
     private val requestPermission: suspend (String, String, String, String) -> Boolean,
 ) : AgentSupport {
     private companion object {
@@ -355,6 +365,7 @@ private class XiaowanAgentSupport(
             sessionId = sessionId,
             requestPermission = requestPermission,
             mcpSession = mcpSession,
+            publishUpdate = publishUpdate,
             onClosed = { closedSessionId ->
                 activeSessions.remove(closedSessionId, session)
             },
@@ -634,6 +645,7 @@ private class XiaowanAgentSession(
     override val sessionId: SessionId,
     private val requestPermission: suspend (String, String, String, String) -> Boolean,
     private val mcpSession: XiaowanMcpSession,
+    private val publishUpdate: suspend (String, SessionUpdate) -> Unit,
     private val onClosed: (String) -> Unit,
 ) : AgentSession {
     private companion object {
@@ -678,6 +690,15 @@ private class XiaowanAgentSession(
         },
         sessionCapabilityModules = listOfNotNull(mcpSession.capabilityModule),
     )
+
+    override suspend fun postInitialize() {
+        publishUpdate(sessionId.value, SessionUpdate.AvailableCommandsUpdate(
+            listOf(com.agentclientprotocol.model.AvailableCommand(
+                name = "compact",
+                description = "Compress conversation context while preserving history",
+            )),
+        ))
+    }
 
     override suspend fun prompt(
         content: List<ContentBlock>,
@@ -755,10 +776,27 @@ private class XiaowanAgentSession(
                 "conversationMode=$conversationMode " +
                 "modeSource=${if (persistedConversationMode != null) "conversation" else "acp_meta_or_agent_default"}"
         )
-        // No Provider-declared reasoning enum is available. Do not invent one
-        // or override the model's own thinking default.
+        // The official session config owns this choice, including Xiaowan's
+        // initial setting. A prompt must not reset it to the model default.
         val reasoningEffort = sessionConfig.requestEffort
         val terminalEnvironment = xiaowanTerminalEnvironmentFromMeta(_meta)
+        if (text.trim() == "/compact" && promptParts.attachments.isEmpty()) {
+            require(conversationId != null) { "Compaction requires a persisted conversation" }
+            val outcome = cn.com.omnimind.bot.agent.AgentConversationContextCompactor(
+                historyRepository = cn.com.omnimind.bot.agent.AgentConversationHistoryRepository(context),
+                modelOverride = selectedModelOverride(),
+                reasoningEffort = reasoningEffort,
+            ).compactConversationContext(conversationId, conversationMode)
+            check(outcome.compacted || outcome.reason in setOf("no_candidate", "no_prompt_messages")) {
+                "Context compaction failed: ${outcome.reason}"
+            }
+            streamBridge.emitAssistantSnapshot(
+                if (outcome.compacted) "上下文已压缩，聊天记录已保留。"
+                else "当前暂无可压缩的上下文。",
+            )
+            send(Event.PromptResponseEvent(PromptResponse(stopReason = StopReason.END_TURN)))
+            return@launch
+        }
         val result = executor.processUserMessage(
             userMessage = text,
             conversationHistory = emptyList(),
@@ -885,15 +923,10 @@ private class XiaowanAgentSession(
     }
 
     suspend fun refreshModels() {
-        val catalog = if (cn.com.omnimind.baselib.llm.OmniOfficialProvider.isOfficialProfile(providerProfile.id)) {
-            PlatformAiProvisioner.refreshAndGetModels(null)
-        } else {
-            cn.com.omnimind.assists.controller.http.HttpController.fetchProviderModels(
-                apiBase = providerProfile.baseUrl, apiKey = providerProfile.apiKey,
-                customHeaders = providerProfile.customHeaders, protocolType = providerProfile.protocolType,
-                wireApi = providerProfile.wireApi,
-            )
-        }
+        val catalog = cn.com.omnimind.bot.agent.runtime.fetchAgentProviderModels(
+            providerProfile, forceRefresh = true,
+        )
+        ModelProviderConfigStore.rememberModels(context, providerProfile, catalog)
         availableModels = (catalog.map { ModelInfo(ModelId(it.id), it.displayName.ifBlank { it.id }) } +
             ModelInfo(ModelId(selectedModelId), selectedModelId)).distinctBy { it.modelId }
         sessionConfig.replaceModels(availableModels)
@@ -909,6 +942,14 @@ private class XiaowanAgentSession(
         _meta: JsonElement?,
     ): com.agentclientprotocol.model.SetSessionConfigOptionResponse {
         check(activePromptJob?.isActive != true) { "Session configuration can only change while idle" }
+        if (configId.value == "model" &&
+            value is com.agentclientprotocol.model.SessionConfigOptionValue.StringValue &&
+            availableModels.none { it.modelId.value == value.value }) {
+            // A live Provider picker may discover models added since this session
+            // started. Refresh its existing catalog before validating the choice;
+            // session/load is history replay and is not a model refresh API.
+            refreshModels()
+        }
         val updated = XiaowanSessionConfig(availableModels, selectedModelId)
         updated.set("reasoning_effort", com.agentclientprotocol.model.SessionConfigOptionValue.StringValue(sessionConfig.effort))
         updated.set(configId.value, value)

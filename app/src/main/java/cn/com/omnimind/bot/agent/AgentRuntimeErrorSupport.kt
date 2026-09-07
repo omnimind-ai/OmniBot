@@ -8,10 +8,12 @@ package cn.com.omnimind.bot.agent
 internal object AgentRuntimeErrorSupport {
     const val PROVIDER_TLS_CERTIFICATE_FAILURE = "provider_tls_certificate_failure"
     const val PROVIDER_NOT_BOUND = "provider_not_bound"
+    const val PROVIDER_AUTHENTICATION_FAILED = "provider_authentication_failed"
     const val PROVIDER_UNAVAILABLE = "provider_unavailable"
     const val PROVIDER_MODEL_UNAVAILABLE = "provider_model_unavailable"
     const val PROVIDER_STREAM_INTERRUPTED = "provider_stream_interrupted"
     const val PROVIDER_STREAM_IDLE_TIMEOUT = "provider_stream_idle_timeout"
+    const val PROVIDER_REQUEST_TIMEOUT = "provider_request_timeout"
     const val PROVIDER_TOOL_CALL_INCOMPLETE = "provider_tool_call_incomplete"
     const val HARNESS_PREPARATION_IN_PROGRESS = "harness_preparation_in_progress"
     const val HARNESS_PROFILE_MISSING = "harness_profile_missing"
@@ -23,6 +25,8 @@ internal object AgentRuntimeErrorSupport {
     fun userFacingMessage(error: Throwable): String? {
         return when {
             isCertificateValidationFailure(error) -> CERTIFICATE_ERROR_MESSAGE
+            isAuthenticationFailure(error) ->
+                "服务商身份验证失败，请检查所选 Provider 的密钥和认证请求头。"
             isProviderNotBound(error) ->
                 "Agent Provider / 模型还没有对齐到 Dispatch Model（scene.dispatch.model）。" +
                     "Harness 安装不依赖这个绑定；请检查默认 Provider 和模型后重试。"
@@ -32,6 +36,8 @@ internal object AgentRuntimeErrorSupport {
                 "服务商拒绝了当前模型。本轮已停止，请重新选择可用模型后重试。"
             isStreamIdleTimeout(error) ->
                 "Provider 连续一段时间没有返回新的流式更新。请检查接口地址、模型和网络后重试。"
+            isRequestTimeout(error) ->
+                "服务商请求超时，未能及时收到响应。请稍后重试；这不代表密钥错误或模型列表为空。"
             isStreamInterrupted(error) ->
                 "模型响应期间连接中断。本轮已停止，请检查网络后重试；未完成的工具调用不会执行。"
             isIncompleteToolCall(error) ->
@@ -50,9 +56,11 @@ internal object AgentRuntimeErrorSupport {
     fun failureKind(error: Throwable): String? {
         return when {
             isCertificateValidationFailure(error) -> PROVIDER_TLS_CERTIFICATE_FAILURE
+            isAuthenticationFailure(error) -> PROVIDER_AUTHENTICATION_FAILED
             isProviderNotBound(error) -> PROVIDER_NOT_BOUND
             isProviderModelUnavailable(error) -> PROVIDER_MODEL_UNAVAILABLE
             isStreamIdleTimeout(error) -> PROVIDER_STREAM_IDLE_TIMEOUT
+            isRequestTimeout(error) -> PROVIDER_REQUEST_TIMEOUT
             isProviderUnavailable(error) -> PROVIDER_UNAVAILABLE
             isStreamInterrupted(error) -> PROVIDER_STREAM_INTERRUPTED
             isIncompleteToolCall(error) -> PROVIDER_TOOL_CALL_INCOMPLETE
@@ -61,6 +69,9 @@ internal object AgentRuntimeErrorSupport {
             else -> null
         }
     }
+
+    private fun isRequestTimeout(error: Throwable): Boolean =
+        generateSequence(error) { it.cause }.any { it is java.net.SocketTimeoutException }
 
     /** Preserve the complete provider diagnostic while removing credentials. */
     fun safeDiagnosticMessage(error: Throwable): String {
@@ -83,6 +94,14 @@ internal object AgentRuntimeErrorSupport {
             )
         return redacted
     }
+
+    private fun isAuthenticationFailure(error: Throwable): Boolean =
+        errorMessages(error).any {
+            it.contains("authenticationerror") || it.contains("authentication_error") ||
+                it.contains("invalid api key") || it.contains("incorrect api key") ||
+                it.contains("身份验证失败") ||
+                Regex("(?:failed|失败)\\s*\\(401\\)").containsMatchIn(it)
+        }
 
     private fun isProviderNotBound(error: Throwable): Boolean =
         errorMessages(error).any {

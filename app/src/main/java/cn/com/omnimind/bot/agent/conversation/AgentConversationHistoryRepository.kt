@@ -307,7 +307,9 @@ class AgentConversationHistoryRepository(
         conversationId: Long,
         conversationMode: String,
         messages: List<Map<String, Any?>>
-    ) = withContext(Dispatchers.IO) {
+    ) = DatabaseHelper.withTransaction {
+        // Keep entry identities and their checkpoint in one atomic snapshot.
+        // Compaction must never observe the temporary delete/reinsert gap.
         val existingConversation = DatabaseHelper.getConversationById(conversationId)
         val effectiveConversationMode = resolveConversationMode(conversationId, conversationMode)
         val existingEntries = loadThreadEntriesAscSafePaged(
@@ -377,6 +379,7 @@ class AgentConversationHistoryRepository(
             }
             val insertedId = upsertEntry(
                 AgentConversationEntry(
+                    id = existingEntries.firstOrNull { it.entryId == entryId }?.id ?: 0,
                     conversationId = conversationId,
                     conversationMode = effectiveConversationMode,
                     entryId = entryId,
@@ -404,7 +407,7 @@ class AgentConversationHistoryRepository(
                     )
                 )
             }
-        } else {
+        } else if (preservedSummary != null) {
             resetContextSummary(conversationId)
         }
         refreshConversationMetadata(conversationId)
@@ -685,14 +688,7 @@ class AgentConversationHistoryRepository(
     }
 
     private suspend fun resetContextSummary(conversationId: Long) {
-        val conversation = DatabaseHelper.getConversationById(conversationId) ?: return
-        DatabaseHelper.updateConversation(
-            conversation.copy(
-                contextSummary = null,
-                contextSummaryCutoffEntryDbId = null,
-                contextSummaryUpdatedAt = 0
-            )
-        )
+        DatabaseHelper.clearConversationContextCheckpoint(conversationId)
     }
 
     private suspend fun normalizeInterruptedToolEntries(
