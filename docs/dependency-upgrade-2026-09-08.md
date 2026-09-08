@@ -93,16 +93,18 @@ assembly. Release signing and publishing are separate operations.
 - Flutter tests: 1173 passed.
 - Android app unit tests: 967 passed, no failures or skips.
 - Gradle help, build task-graph dry run and Debug APK assembly: passed.
-- Lint task completed. The report contains 10 errors, 293 warnings and 20 hints.
-  All 10 errors match the existing local main report exactly after path
-  normalization: 2 notification permission checks and 8 Compose resource lookup
-  findings. There are no new errors; this does **not** mean lint is error-free.
-  The existing non-aborting lint policy was not changed.
+- Lint follow-up: 0 errors, 293 warnings and 20 hints. Fixed both notification
+  permission findings by handling SecurityException after the existing permission
+  checks; rejected task notifications are not registered as active. QuickLog
+  uses LocalResources so strings update on configuration changes. No suppressions
+  or lint policy changes were added. Android unit tests were rerun: 967 passed.
 - Installed the Debug APK on an Android 16 device: versionCode 13,
   versionName 0.6.2.1, minSdk 29, targetSdk 36. Startup, existing history display,
   in-app back navigation and opening the system file picker were observed.
   File selection round-trip, gesture animation quality, floating windows,
   terminal interaction and large-screen rotation still need manual acceptance.
+- The APK/device observations above precede the lint follow-up; that follow-up
+  reran Android compilation, unit tests and lint.
 - Release R8 assembly, release signing and publishing were not performed.
 
 ## Official references
