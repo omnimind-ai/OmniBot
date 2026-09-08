@@ -56,12 +56,14 @@ class AcpConfigButton extends StatefulWidget {
     required this.write,
     required this.isRunning,
     this.onVisibilityChanged,
+    this.configureModel,
   });
   final Future<Map<String, dynamic>> Function() load;
   final Future<Map<String, dynamic>> Function()? refresh;
   final AcpConfigWriter write;
   final bool isRunning;
   final ValueChanged<bool>? onVisibilityChanged;
+  final Future<void> Function(BuildContext anchorContext)? configureModel;
 
   @override
   State<AcpConfigButton> createState() => _AcpConfigButtonState();
@@ -90,11 +92,21 @@ class _AcpConfigButtonState extends State<AcpConfigButton> {
       context: context,
       anchor: anchor,
       preferBelow: false,
+      transitionDuration: Duration.zero,
+      reverseTransitionDuration: Duration.zero,
       builder: (_) => AcpConfigPanel(
         load: widget.load,
         refresh: widget.refresh,
         write: widget.write,
         readOnly: widget.isRunning,
+        configureModel: widget.configureModel == null
+            ? null
+            : () async {
+                await _popup?.dismiss();
+                if (mounted && anchorContext.mounted) {
+                  await widget.configureModel!(anchorContext);
+                }
+              },
       ),
     );
     _popup = handle;
@@ -141,11 +153,13 @@ class AcpConfigPanel extends StatefulWidget {
     this.refresh,
     required this.write,
     this.readOnly = false,
+    this.configureModel,
   });
   final Future<Map<String, dynamic>> Function() load;
   final Future<Map<String, dynamic>> Function()? refresh;
   final AcpConfigWriter write;
   final bool readOnly;
+  final Future<void> Function()? configureModel;
   @override
   State<AcpConfigPanel> createState() => _AcpConfigPanelState();
 }
@@ -185,7 +199,7 @@ class _AcpConfigPanelState extends State<AcpConfigPanel> {
   }
 
   Future<void> _save(String id, Object value) async {
-    if (_saving || widget.readOnly || _sessionId == null) return;
+    if (_loading || _saving || widget.readOnly || _sessionId == null) return;
     setState(() {
       _saving = true;
       _error = null;
@@ -226,7 +240,8 @@ class _AcpConfigPanelState extends State<AcpConfigPanel> {
 
   Widget _option(Map<String, dynamic> option) {
     final id = option['id'].toString();
-    final enabled = !_saving && !widget.readOnly && _sessionId != null;
+    final enabled =
+        !_loading && !_saving && !widget.readOnly && _sessionId != null;
     final label = acpConfigLabel(option, english: _english);
     final value = option['currentValue'];
     final palette = context.omniPalette;
@@ -260,7 +275,9 @@ class _AcpConfigPanelState extends State<AcpConfigPanel> {
     final currentLabel = current == null
         ? value?.toString() ?? '—'
         : _valueLabel(option, current);
-    final expandable = option['type'] == 'select' && values.isNotEmpty;
+    final expandable =
+        option['type'] == 'select' &&
+        (values.isNotEmpty || option['category'] == 'model');
     final expanded = expandable && _expandedId == id;
     final isThought =
         option['category'] == 'thought_level' || id == 'reasoning_effort';
@@ -272,6 +289,11 @@ class _AcpConfigPanelState extends State<AcpConfigPanel> {
           borderRadius: BorderRadius.circular(12),
           onTap: !_loading && !_saving && expandable
               ? () {
+                  if (option['category'] == 'model' &&
+                      widget.configureModel != null) {
+                    if (!widget.readOnly) unawaited(widget.configureModel!());
+                    return;
+                  }
                   setState(() => _expandedId = expanded ? null : id);
                   if (!expanded && option['category'] == 'model')
                     unawaited(_load(refresh: true));
@@ -351,7 +373,7 @@ class _AcpConfigPanelState extends State<AcpConfigPanel> {
         selectedValue: selected['currentValue']?.toString(),
         modelRowKeyPrefix: 'acp-config-$_expandedId-value',
         showVendorIcons: selected['category'] == 'model',
-        showSearchField: selected['category'] == 'model' && choices.length > 5,
+        showSearchField: selected['category'] == 'model',
         emptyMatchesLabel: _loading
             ? (_english ? 'Loading models…' : '正在实时获取模型…')
             : null,
@@ -488,6 +510,38 @@ class _AcpConfigPanelState extends State<AcpConfigPanel> {
                     ),
                   _option(_options[i]),
                 ],
+                if (!_loading &&
+                    _error == null &&
+                    _options.isNotEmpty &&
+                    !_options.any(
+                      (option) =>
+                          option['category'] == 'thought_level' ||
+                          option['id'] == 'reasoning_effort',
+                    ))
+                  ListTile(
+                    key: const ValueKey('acp-reasoning-model-default'),
+                    dense: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12),
+                    leading: Icon(
+                      LucideIcons.brain,
+                      size: 16,
+                      color: palette.textSecondary,
+                    ),
+                    title: Text(
+                      _english ? 'Reasoning effort' : '思考强度',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: palette.textPrimary,
+                      ),
+                    ),
+                    trailing: Text(
+                      _english ? 'Model default' : '模型默认',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: palette.textSecondary,
+                      ),
+                    ),
+                  ),
                 if (_error != null)
                   Padding(
                     padding: const EdgeInsets.all(12),
@@ -498,6 +552,12 @@ class _AcpConfigPanelState extends State<AcpConfigPanel> {
                         color: Theme.of(context).colorScheme.error,
                       ),
                     ),
+                  ),
+                if ((_error != null || _options.isEmpty) &&
+                    widget.configureModel != null)
+                  TextButton(
+                    onPressed: widget.readOnly ? null : widget.configureModel,
+                    child: Text(_english ? 'Choose model' : '选择模型'),
                   ),
                 if (_error != null && _options.isEmpty)
                   TextButton(

@@ -1,0 +1,49 @@
+{
+  "name": "Xiaowan durable compaction checkpoint survives restart",
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_FILE_CONTEXT_CHECKPOINT"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_FILE_CONTEXT_CHECKPOINT_DONE",
+      "timeoutMs": 180000
+    },
+    {
+      "action": "compact"
+    },
+    {
+      "action": "reply",
+      "text": "上下文已压缩，聊天记录已保留。"
+    },
+    {
+      "action": "checkpoint",
+      "marker": "OOB_FILE_CONTEXT_CHECKPOINT"
+    },
+    {
+      "action": "restart"
+    },
+    {
+      "action": "reply",
+      "text": "上下文已压缩，聊天记录已保留。"
+    },
+    {
+      "action": "checkpoint",
+      "marker": "OOB_FILE_CONTEXT_CHECKPOINT"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_FILE_CONTEXT_AFTERCHECKPOINT"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_FILE_CONTEXT_AFTERCHECKPOINT_DONE",
+      "timeoutMs": 180000
+    },
+    {
+      "action": "checkpoint",
+      "marker": "OOB_FILE_CONTEXT_AFTERCHECKPOINT"
+    }
+  ]
+}

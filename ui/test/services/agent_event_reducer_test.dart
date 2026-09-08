@@ -26,6 +26,45 @@ void main() {
     runtime.dispose();
   });
 
+  test('compact Xiaowan result keeps file content through replay and history', () {
+    final body = '正文😀' * 16000;
+    final event = <String, dynamic>{
+      'method': 'session/update',
+      'turnId': 'compact-turn',
+      'params': {
+        'sessionId': 'compact-session',
+        'update': {
+          'sessionUpdate': 'tool_call_update',
+          'toolCallId': 'compact-read',
+          'kind': 'read',
+          'title': 'Read document',
+          'status': 'completed',
+          'rawInput': {'path': '/workspace/data.json'},
+          'rawOutput': {
+            'toolName': 'custom_document_tool',
+            'toolType': 'context',
+            'summary': 'Read document',
+            'success': true,
+            'result': {'content': body, 'hasMore': true, 'nextOffset': 64000},
+          },
+        },
+      },
+    };
+    reducer.reduce(runtime: runtime, event: event);
+    reducer.reduce(runtime: runtime, event: event);
+    final card = runtime.messages.single.cardData!;
+    expect(card['toolCallId'], 'compact-read');
+    expect(card['toolType'], 'workspace');
+    expect(card['status'], 'success');
+    final preview = jsonDecode(card['resultPreviewJson'] as String);
+    expect(preview['content'], body);
+    expect(preview['nextOffset'], 64000);
+    final restored = ChatMessageModel.fromJson(
+      jsonDecode(jsonEncode(runtime.messages.single.toJson())),
+    );
+    expect(restored.cardData!['resultPreviewJson'], card['resultPreviewJson']);
+  });
+
   test(
     'partial HTML input stays current on the same card and survives serialization',
     () {
@@ -6528,7 +6567,7 @@ diff --git a/lib/main.dart b/lib/main.dart
     );
     expect(
       statusCard.cardData?['summary'],
-      'Invalid JSON data: tools[8].type is unsupported',
+      '助手暂时无法完成操作，请重试。',
     );
     expect(statusCard.cardData?['summary'], isNot(contains('{"error"')));
   });

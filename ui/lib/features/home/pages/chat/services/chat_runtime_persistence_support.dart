@@ -8,6 +8,7 @@ extension ChatRuntimePersistenceSupport on ChatConversationRuntimeCoordinator {
     bool markComplete = false,
     bool persistMessages = false,
     bool allowEphemeralPersistence = false,
+    bool allowHistoryRemoval = false,
   }) async {
     _cancelPendingPersistence(conversationId: conversationId, mode: mode);
     if (isEphemeralRuntime(conversationId: conversationId, mode: mode) &&
@@ -31,6 +32,7 @@ extension ChatRuntimePersistenceSupport on ChatConversationRuntimeCoordinator {
             generateSummary: generateSummary,
             markComplete: markComplete,
             persistMessages: persistMessages,
+            allowHistoryRemoval: allowHistoryRemoval,
           ),
         );
     _persistenceTails[key] = operation;
@@ -58,6 +60,7 @@ extension ChatRuntimePersistenceSupport on ChatConversationRuntimeCoordinator {
     bool generateSummary = false,
     bool markComplete = false,
     bool persistMessages = false,
+    bool allowHistoryRemoval = false,
   }) async {
     final runtime =
         expectedRuntime ??
@@ -71,12 +74,10 @@ extension ChatRuntimePersistenceSupport on ChatConversationRuntimeCoordinator {
     }
     final persistenceGeneration = runtime.persistenceGeneration;
     _flushRuntimeStreamingText(runtime);
-    // `persistMessages: true` means this caller owns the complete durable
-    // snapshot. An empty list is therefore a valid clear operation; dropping
-    // it resurrects deleted history on the next reload. Callers that merely
-    // update conversation metadata keep the old guard by leaving the flag
-    // false.
-    if (runtime.messages.isEmpty && !persistMessages) return;
+    // Completion/disposal may observe an empty projection. It is not a user
+    // instruction to erase committed history. Only explicit replacement owns clear.
+    if (runtime.messages.isEmpty && !(persistMessages && allowHistoryRemoval))
+      return;
 
     final snapshotMessages = List<ChatMessageModel>.from(runtime.messages);
     final snapshotConversation = runtime.conversation;
@@ -146,6 +147,7 @@ extension ChatRuntimePersistenceSupport on ChatConversationRuntimeCoordinator {
         conversationId,
         snapshotMessages,
         mode: conversationMode,
+        allowHistoryRemoval: allowHistoryRemoval,
       );
     }
     // A page switch may dispose this runtime while the durable write is

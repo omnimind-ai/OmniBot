@@ -17,6 +17,10 @@ import kotlinx.coroutines.withContext
 class EmbeddedTerminalSetupManager(
     private val context: Context
 ) {
+    private companion object {
+        // Inventory can perform the first rootfs extraction as part of setup.
+        const val SETUP_COMMAND_TIMEOUT_MS = 15 * 60 * 1000L
+    }
     data class PackageDefinition(
         val id: String,
         val command: String,
@@ -36,7 +40,7 @@ class EmbeddedTerminalSetupManager(
     }
 
     data class PackageInventoryItem(
-        val ready: Boolean,
+        val ready: Boolean?,
         val version: String? = null
     ) {
         fun toMap(): Map<String, Any?> = mapOf(
@@ -74,8 +78,13 @@ class EmbeddedTerminalSetupManager(
             PackageDefinition(id = pkg.id, command = pkg.command, categoryId = pkg.categoryId)
         }
 
-    suspend fun getPackageInstallStatus(): Map<String, Boolean> = withContext(Dispatchers.IO) {
-        getPackageInventory().mapValues { it.value.ready }
+    suspend fun getPackageInstallStatus(
+        packageIds: List<String> = packageDefinitions.map { it.id }
+    ): Map<String, Boolean> = withContext(Dispatchers.IO) {
+        val inventory = getPackageInventory()
+        packageIds.associateWith { id ->
+            checkNotNull(inventory[id]?.ready) { "组件 $id 检测失败，请重新检测后安装。" }
+        }
     }
 
     suspend fun getPackageInventory(): Map<String, PackageInventoryItem> = withContext(Dispatchers.IO) {
@@ -84,7 +93,7 @@ class EmbeddedTerminalSetupManager(
             val result = manager.executeHiddenCommand(
                 command = EnvironmentSetupLogic.buildInventoryProbeCommand(packageIds),
                 executorKey = "embedded-terminal-setup-inventory",
-                timeoutMs = 30_000L
+                timeoutMs = SETUP_COMMAND_TIMEOUT_MS
             )
             val cleanedOutput = EmbeddedTerminalRuntime.trimTerminalOutput(
                 EmbeddedTerminalRuntime.sanitizeTerminalNoise(
@@ -98,9 +107,9 @@ class EmbeddedTerminalSetupManager(
                     .takeLast(1000)
                 throw IllegalStateException(
                     if (details.isNotBlank()) {
-                        "终端环境启动失败，无法读取环境配置：$details"
+                        "环境检测失败，无法确认组件状态：$details"
                     } else {
-                        "终端环境启动失败，无法读取环境配置。"
+                        "环境检测失败，无法确认组件状态。"
                     }
                 )
             }
@@ -108,7 +117,7 @@ class EmbeddedTerminalSetupManager(
             packageDefinitions.associate { pkg ->
                 val probe = parsed[pkg.id]
                 pkg.id to PackageInventoryItem(
-                    ready = probe?.ready == true,
+                    ready = probe?.ready,
                     version = probe?.version
                 )
             }
@@ -132,7 +141,7 @@ class EmbeddedTerminalSetupManager(
 
         try {
             onProgress("status", "正在检查所选开发工具")
-            val currentStatus = getPackageInstallStatus()
+            val currentStatus = getPackageInstallStatus(requestedIds)
             val installIds = requestedIds.filter { currentStatus[it] != true }
             if (installIds.isEmpty()) {
                 onProgress("status", "所选开发工具已就绪")
@@ -155,9 +164,9 @@ class EmbeddedTerminalSetupManager(
             val output = StringBuilder()
             val hiddenResult = withLocalTerminalManager { manager ->
                 manager.executeHiddenCommand(
-                    command = commandSequence.joinToString(separator = " && "),
+                    command = EnvironmentSetupLogic.buildInstallExecutionCommand(commandSequence),
                     executorKey = "embedded-terminal-setup",
-                    timeoutMs = 15 * 60 * 1000L,
+                    timeoutMs = SETUP_COMMAND_TIMEOUT_MS,
                     onOutputChunk = { chunk ->
                         val normalized = chunk.replace("\r\n", "\n").replace('\r', '\n')
                         if (normalized.isNotBlank()) {
@@ -187,7 +196,7 @@ class EmbeddedTerminalSetupManager(
             }
 
             onProgress("status", "正在验证所选开发工具")
-            val refreshedStatus = getPackageInstallStatus()
+            val refreshedStatus = getPackageInstallStatus(installIds)
             val remaining = installIds.filter { refreshedStatus[it] != true }
             if (remaining.isNotEmpty()) {
                 val diagnostics = buildPostInstallDiagnostics(remaining)
@@ -244,7 +253,7 @@ class EmbeddedTerminalSetupManager(
                     return@withLock currentSnapshot
                 }
 
-                val currentStatus = getPackageInstallStatus()
+                val currentStatus = getPackageInstallStatus(requestedIds)
                 val installIds = requestedIds.filter { currentStatus[it] != true }
                 if (installIds.isEmpty()) {
                     val snapshot = InstallSessionSnapshot(
@@ -295,7 +304,7 @@ class EmbeddedTerminalSetupManager(
                         withLocalTerminalManager { sessionManager ->
                             sessionManager.sendCommandToSession(
                                 sessionId = session.id,
-                                command = commandSequence.joinToString(separator = " && ")
+                                command = EnvironmentSetupLogic.buildInstallExecutionCommand(commandSequence)
                             )
                         }
                     }

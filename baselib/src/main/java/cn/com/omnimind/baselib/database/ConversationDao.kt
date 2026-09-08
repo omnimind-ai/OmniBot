@@ -11,6 +11,37 @@ interface ConversationDao {
     @Update
     suspend fun update(conversation: Conversation)
 
+    @Transaction
+    suspend fun updatePreservingCheckpoint(conversation: Conversation) {
+        val current = getById(conversation.id)
+        val updated = if (current != null) {
+            conversation.copy(
+                contextSummary = current.contextSummary,
+                contextSummaryCutoffEntryDbId = current.contextSummaryCutoffEntryDbId,
+                contextSummaryUpdatedAt = current.contextSummaryUpdatedAt,
+            )
+        } else conversation
+        // Generic history snapshots do not own the user setting or usage clock.
+        update(if (current == null) updated else updated.copy(
+            promptTokenThreshold = current.promptTokenThreshold,
+            latestPromptTokens = if (current.latestPromptTokensUpdatedAt > updated.latestPromptTokensUpdatedAt)
+                current.latestPromptTokens else updated.latestPromptTokens,
+            latestPromptTokensUpdatedAt = maxOf(current.latestPromptTokensUpdatedAt, updated.latestPromptTokensUpdatedAt),
+        ))
+    }
+
+    @Query("UPDATE conversations SET contextSummary = NULL, contextSummaryCutoffEntryDbId = NULL, contextSummaryUpdatedAt = contextSummaryUpdatedAt + 1 WHERE id = :id")
+    suspend fun clearContextCheckpoint(id: Long)
+
+    @Query("UPDATE conversations SET contextSummary = :summary, contextSummaryCutoffEntryDbId = :cutoff, contextSummaryUpdatedAt = MAX(contextSummaryUpdatedAt + 1, :at), updatedAt = MAX(updatedAt, :at) WHERE id = :id AND contextSummaryUpdatedAt = :expectedRevision")
+    suspend fun commitContextCheckpoint(id: Long, summary: String, cutoff: Long, expectedRevision: Long, at: Long): Int
+
+    @Query("UPDATE conversations SET promptTokenThreshold = :threshold, updatedAt = MAX(updatedAt, :at) WHERE id = :id")
+    suspend fun updatePromptThreshold(id: Long, threshold: Int, at: Long)
+
+    @Query("UPDATE conversations SET latestPromptTokens = :tokens, latestPromptTokensUpdatedAt = :at, updatedAt = MAX(updatedAt, :at) WHERE id = :id AND latestPromptTokensUpdatedAt <= :at")
+    suspend fun updatePromptUsage(id: Long, tokens: Int, at: Long)
+
     @Delete
     suspend fun delete(conversation: Conversation)
 

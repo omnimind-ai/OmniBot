@@ -157,7 +157,7 @@ class _ContextThresholdSheet extends StatefulWidget {
   });
 
   final int initialThreshold;
-  final int currentUsageTokens;
+  final int? currentUsageTokens;
   final Future<bool> Function(int threshold) onThresholdSaved;
 
   @override
@@ -393,9 +393,11 @@ class _ContextThresholdSheetState extends State<_ContextThresholdSheet> {
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
     final draftThreshold = _draftThreshold.round();
     final sliderMaximum = _sliderMaximum;
-    final usageRatio = widget.currentUsageTokens <= 0
-        ? 0.0
-        : widget.currentUsageTokens / draftThreshold;
+    final currentUsageTokens = widget.currentUsageTokens;
+    final usageRatio = currentUsageTokens == null
+        ? null
+        : currentUsageTokens / draftThreshold;
+    final noUsageData = LegacyTextLocalizer.isEnglish ? 'No data yet' : '暂无数据';
     final dividerColor = isDark
         ? palette.borderSubtle
         : palette.borderSubtle.withValues(alpha: 0.9);
@@ -513,7 +515,9 @@ class _ContextThresholdSheetState extends State<_ContextThresholdSheet> {
                             label: LegacyTextLocalizer.isEnglish
                                 ? 'Current context'
                                 : '当前上下文',
-                            value: _formatTokenCount(widget.currentUsageTokens),
+                            value: currentUsageTokens == null
+                                ? noUsageData
+                                : _formatTokenCount(currentUsageTokens),
                             accent: palette.textPrimary,
                           ),
                         ),
@@ -533,8 +537,12 @@ class _ContextThresholdSheetState extends State<_ContextThresholdSheet> {
                             label: LegacyTextLocalizer.isEnglish
                                 ? 'Usage'
                                 : '占用比例',
-                            value: _formatUsagePercent(usageRatio),
-                            accent: usageRatio >= 1
+                            value: usageRatio == null
+                                ? noUsageData
+                                : _formatUsagePercent(usageRatio),
+                            accent: usageRatio == null
+                                ? palette.textSecondary
+                                : usageRatio >= 1
                                 ? warningColor
                                 : successColor,
                           ),

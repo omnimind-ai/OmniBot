@@ -1,0 +1,11 @@
+{
+  "name": "Xiaowan bounded context across twenty file reads and restart",
+  "steps": [
+    {"action": "send", "marker": "OOB_FILE_CONTEXT_FIRST"},
+    {"action": "reply", "text": "OOB_FILE_CONTEXT_FIRST_DONE", "timeoutMs": 180000},
+    {"action": "restart"},
+    {"action": "reply", "text": "OOB_FILE_CONTEXT_FIRST_DONE"},
+    {"action": "send", "marker": "OOB_FILE_CONTEXT_REPEAT"},
+    {"action": "reply", "text": "OOB_FILE_CONTEXT_REPEAT_DONE", "timeoutMs": 180000}
+  ]
+}

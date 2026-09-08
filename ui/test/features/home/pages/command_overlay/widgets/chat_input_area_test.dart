@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:go_router/go_router.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:ui/features/home/pages/command_overlay/widgets/chat_input_area.dart';
 import 'package:ui/widgets/glass_popup.dart';
@@ -61,6 +62,54 @@ void main() {
       findsOneWidget,
     );
   });
+
+  for (final large in [false, true]) {
+    testWidgets(
+      'context threshold stays adjustable without usage, large=$large',
+      (tester) async {
+        var opened = 0;
+        await tester.pumpWidget(
+          _buildTestApp(
+            contextUsageRatio: null,
+            useLargeComposerStyle: large,
+            useRouter: true,
+            onLongPressContextUsageRing: () => opened++,
+          ),
+        );
+        await tester.pump();
+
+        final control = find.byKey(const ValueKey('chat-input-context-usage'));
+        expect(control, findsOneWidget);
+        expect(find.text('?'), findsOneWidget);
+        await tester.tap(control);
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(
+          find.text('No data yet\nLong press to adjust threshold'),
+          findsOneWidget,
+        );
+        await tester.pump(const Duration(seconds: 4));
+        await tester.longPress(control);
+        await tester.pump();
+        expect(opened, 1);
+
+        await tester.pumpWidget(
+          _buildTestApp(
+            contextUsageRatio: 0,
+            useLargeComposerStyle: large,
+            useRouter: true,
+            onLongPressContextUsageRing: () => opened++,
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(control, findsOneWidget);
+        expect(find.text('?'), findsNothing);
+        await tester.longPress(control);
+        await tester.pump();
+        expect(opened, 2);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 
   testWidgets('long pressing context usage ring triggers callback', (
     tester,
@@ -585,6 +634,38 @@ void main() {
     refreshCompleter.complete();
   });
 
+  for (final large in [false, true]) {
+    testWidgets(
+      'session settings is the single chat model entry (large=$large)',
+      (tester) async {
+        var opened = false;
+        await tester.pumpWidget(
+          _buildTestApp(
+            contextUsageRatio: null,
+            useLargeComposerStyle: large,
+            runtimeConfigButton: IconButton(
+              key: const ValueKey('combined-model-panel'),
+              onPressed: () => opened = true,
+              icon: const Icon(Icons.tune),
+            ),
+          ),
+        );
+        await tester.pump();
+        expect(
+          find.byKey(const ValueKey('chat-input-model-picker-button')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(const ValueKey('combined-model-panel')),
+          findsOneWidget,
+        );
+        await tester.tap(find.byKey(const ValueKey('combined-model-panel')));
+        await tester.pump();
+        expect(opened, isTrue);
+      },
+    );
+  }
+
   testWidgets('normal chat model picker renders inside input actions', (
     tester,
   ) async {
@@ -913,6 +994,7 @@ void main() {
       const ValueKey('chat-input-send-or-stop-button'),
     );
     expect(tester.widget<IconButton>(sendButton).onPressed, isNotNull);
+    expect(tester.widget<IconButton>(sendButton).tooltip, 'Send');
 
     await tester.tap(sendButton);
     await tester.pump();
@@ -1157,41 +1239,51 @@ Widget _buildTestApp({
   VoidCallback? onLongPressContextUsageRing,
   VoidCallback? onTriggerSlashCommand,
   bool useLargeComposerStyle = false,
+  bool useRouter = false,
   AgentPermissionMode? agentPermissionMode,
   List<AgentPermissionMode> agentPermissionModes = AgentPermissionMode.values,
   ValueChanged<AgentPermissionMode>? onAgentPermissionModeChanged,
   AgentRunSettings? agentRunSettings,
   AgentRunSettingsChanged? onAgentRunSettingsChanged,
   ChatModelPickerSettings? modelPickerSettings,
+  Widget? runtimeConfigButton,
   String initialText = '',
   FocusNode? focusNode,
   bool hasExternalSendPayload = false,
   VoidCallback? onSendMessage,
 }) {
+  final content = Scaffold(
+    body: ChatInputArea(
+      controller: TextEditingController(text: initialText),
+      focusNode: focusNode ?? FocusNode(),
+      isProcessing: false,
+      onSendMessage: onSendMessage ?? () {},
+      onCancelTask: () {},
+      useLargeComposerStyle: useLargeComposerStyle,
+      hasExternalSendPayload: hasExternalSendPayload,
+      contextUsageRatio: contextUsageRatio,
+      onLongPressContextUsageRing: onLongPressContextUsageRing,
+      onTriggerSlashCommand: onTriggerSlashCommand,
+      modelPickerSettings: modelPickerSettings,
+      runtimeConfigButton: runtimeConfigButton,
+      agentRunSettings: agentRunSettings,
+      onAgentRunSettingsChanged: onAgentRunSettingsChanged,
+      agentPermissionMode: agentPermissionMode,
+      agentPermissionModes: agentPermissionModes,
+      onAgentPermissionModeChanged: onAgentPermissionModeChanged,
+    ),
+  );
+  final router = useRouter
+      ? GoRouter(
+          routes: [GoRoute(path: '/', builder: (_, _) => content)],
+        )
+      : null;
+  if (router != null) addTearDown(router.dispose);
   return DefaultAssetBundle(
     bundle: _TestAssetBundle(),
-    child: MaterialApp(
-      home: Scaffold(
-        body: ChatInputArea(
-          controller: TextEditingController(text: initialText),
-          focusNode: focusNode ?? FocusNode(),
-          isProcessing: false,
-          onSendMessage: onSendMessage ?? () {},
-          onCancelTask: () {},
-          useLargeComposerStyle: useLargeComposerStyle,
-          hasExternalSendPayload: hasExternalSendPayload,
-          contextUsageRatio: contextUsageRatio,
-          onLongPressContextUsageRing: onLongPressContextUsageRing,
-          onTriggerSlashCommand: onTriggerSlashCommand,
-          modelPickerSettings: modelPickerSettings,
-          agentRunSettings: agentRunSettings,
-          onAgentRunSettingsChanged: onAgentRunSettingsChanged,
-          agentPermissionMode: agentPermissionMode,
-          agentPermissionModes: agentPermissionModes,
-          onAgentPermissionModeChanged: onAgentPermissionModeChanged,
-        ),
-      ),
-    ),
+    child: router == null
+        ? MaterialApp(home: content)
+        : MaterialApp.router(routerConfig: router),
   );
 }
 

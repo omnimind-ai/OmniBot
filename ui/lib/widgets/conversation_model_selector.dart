@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:ui/l10n/legacy_text_localizer.dart';
 import 'package:ui/services/model_provider_config_service.dart';
+import 'package:ui/services/agent_runtime_service.dart';
 import 'package:ui/services/model_vendor_catalog.dart';
 import 'package:ui/theme/theme_context.dart';
 import 'package:ui/widgets/omni_glass.dart';
@@ -55,6 +58,7 @@ class ConversationModelSelectorContent extends StatefulWidget {
     this.showSearchField = true,
     this.showProfileHeaders = true,
     this.allowProfileCollapse = true,
+    this.loadLiveProviders = false,
   });
 
   /// Session-declared choices use the same card without fabricating providers.
@@ -79,6 +83,7 @@ class ConversationModelSelectorContent extends StatefulWidget {
   final bool showSearchField;
   final bool showProfileHeaders;
   final bool allowProfileCollapse;
+  final bool loadLiveProviders;
 
   @override
   State<ConversationModelSelectorContent> createState() =>
@@ -95,6 +100,78 @@ class _ConversationModelSelectorContentState
   final ScrollController _listScrollController = ScrollController();
   final GlobalKey _selectedModelRowKey = GlobalKey();
   late final Set<String> _expandedProfileIds;
+  List<ModelProviderProfileSummary> _liveProfiles = [];
+  final Map<String, List<ProviderModelOption>> _liveModels = {};
+  final Set<String> _loadingProviders = {};
+  final Set<String> _failedProviders = {};
+  final Map<String, String> _providerErrors = {};
+  bool _loadingProfiles = false;
+  bool _profilesFailed = false;
+  List<ModelProviderProfileSummary> get _profiles =>
+      widget.loadLiveProviders ? _liveProfiles : widget.profiles;
+
+  Future<void> _loadProfiles() async {
+    setState(() {
+      _loadingProfiles = true;
+      _profilesFailed = false;
+    });
+    try {
+      final payload = await ModelProviderConfigService.listProfiles();
+      if (!mounted) return;
+      setState(() {
+        _liveProfiles = payload.profiles
+            .where((p) => p.configured && !p.needsPresetCredentials)
+            .toList();
+        _expandedProfileIds.addAll(_liveProfiles.map((p) => p.id));
+        _loadingProfiles = false;
+      });
+      for (final profile in _liveProfiles) {
+        unawaited(_loadProvider(profile));
+      }
+    } catch (_) {
+      if (mounted)
+        setState(() {
+          _loadingProfiles = false;
+          _profilesFailed = true;
+        });
+    }
+  }
+
+  Future<void> _loadProvider(ModelProviderProfileSummary profile) async {
+    if (profile.needsPresetCredentials) return;
+    if (_loadingProviders.contains(profile.id)) return;
+    setState(() {
+      _loadingProviders.add(profile.id);
+      _failedProviders.remove(profile.id);
+      _providerErrors.remove(profile.id);
+      _liveModels.remove(profile.id);
+    });
+    try {
+      final models = await ModelProviderConfigService.fetchChatModelsForProfile(
+        profile,
+      );
+      if (mounted) setState(() => _liveModels[profile.id] = models);
+    } catch (error) {
+      if (mounted) {
+        final manual =
+            await ModelProviderConfigService.getChatModelOptionsForProfile(
+              profile.id,
+              profile: profile,
+            );
+        if (mounted)
+          setState(() {
+            _failedProviders.add(profile.id);
+            _providerErrors[profile.id] = formatAgentRuntimeErrorForUser(
+              error,
+              english: Localizations.localeOf(context).languageCode == 'en',
+            );
+            _liveModels[profile.id] = manual;
+          });
+      }
+    } finally {
+      if (mounted) setState(() => _loadingProviders.remove(profile.id));
+    }
+  }
 
   bool get _hasSearchQuery =>
       widget.showSearchField && _searchController.text.trim().isNotEmpty;
@@ -112,6 +189,7 @@ class _ConversationModelSelectorContentState
     _searchController.addListener(() {
       setState(() {});
     });
+    if (widget.loadLiveProviders) unawaited(_loadProfiles());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         _autoScrollToSelectedModel();
@@ -186,7 +264,11 @@ class _ConversationModelSelectorContentState
 
   List<ProviderModelOption> _filteredModels(String profileId) {
     final query = _searchController.text.trim().toLowerCase();
-    final models = widget.providerModelsByProfileId[profileId] ?? const [];
+    final models =
+        (widget.loadLiveProviders
+            ? _liveModels[profileId]
+            : widget.providerModelsByProfileId[profileId]) ??
+        const <ProviderModelOption>[];
     if (query.isEmpty) {
       return models;
     }
@@ -198,15 +280,37 @@ class _ConversationModelSelectorContentState
   }
 
   List<ModelProviderProfileSummary> get _visibleProfiles {
-    final configuredProfiles = widget.profiles
-        .where((profile) => profile.configured)
+    final configuredProfiles = _profiles
+        .where(
+          (profile) => profile.configured && !profile.needsPresetCredentials,
+        )
         .toList();
+    final currentProviderId = widget.currentSelection?.providerProfileId;
+    if (currentProviderId != null) {
+      final index = configuredProfiles.indexWhere(
+        (p) => p.id == currentProviderId,
+      );
+      if (index > 0) {
+        configuredProfiles.insert(0, configuredProfiles.removeAt(index));
+      }
+    }
     if (!_hasSearchQuery) {
       return configuredProfiles;
     }
-    return configuredProfiles.where((profile) {
-      return _filteredModels(profile.id).isNotEmpty;
-    }).toList();
+    // Keep real search matches before loading/failed connections. A failed
+    // unrelated connection must not push the model the user found off screen.
+    final matches = configuredProfiles
+        .where((profile) => _filteredModels(profile.id).isNotEmpty)
+        .toList();
+    return [
+      ...matches,
+      ...configuredProfiles.where(
+        (profile) =>
+            !matches.contains(profile) &&
+            (_loadingProviders.contains(profile.id) ||
+                _failedProviders.contains(profile.id)),
+      ),
+    ];
   }
 
   bool _isExpanded(String profileId) {
@@ -333,7 +437,12 @@ class _ConversationModelSelectorContentState
                 ),
               ),
               Text(
-                '${models.length}',
+                widget.loadLiveProviders &&
+                        (profile.needsPresetCredentials ||
+                            _failedProviders.contains(profile.id) ||
+                            _loadingProviders.contains(profile.id))
+                    ? '—'
+                    : '${models.length}',
                 style: TextStyle(
                   fontSize: 11,
                   color: isDark
@@ -388,81 +497,86 @@ class _ConversationModelSelectorContentState
     return Padding(
       key: selected ? _selectedModelRowKey : null,
       padding: const EdgeInsets.fromLTRB(10, 2, 10, 2),
-      child: buildConversationModelIdTooltip(
-        modelId: model.id,
-        child: InkWell(
-          key: rowKeyPrefix == null
-              ? null
-              : ValueKey('$rowKeyPrefix-${model.id}'),
-          onTap: widget.options != null && widget.onSelectValue == null
-              ? null
-              : () {
-                  if (widget.options != null) {
-                    widget.onSelectValue?.call(model.id);
-                    return;
-                  }
-                  final selection = ConversationModelSelection(
-                    providerProfileId: profile!.id,
-                    modelId: model.id,
-                  );
-                  final onSelect = widget.onSelect;
-                  if (onSelect != null) {
-                    onSelect(selection);
-                  } else {
-                    Navigator.of(context).pop(selection);
-                  }
-                },
-          borderRadius: BorderRadius.circular(12),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(
-              color: selected
-                  ? (isDark
-                        ? Color.lerp(
-                            palette.surfaceSecondary.withValues(alpha: 0.48),
-                            palette.accentPrimary,
-                            0.18,
-                          )!
-                        : const Color(0xFF2C7FEB).withValues(alpha: 0.12))
-                  : Colors.transparent,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
-              children: [
-                if (widget.showVendorIcons) ...[
-                  ProviderVendorIcon(
-                    vendor: ModelVendorCatalog.resolve(
-                      model.id,
-                      ownedBy: model.ownedBy,
-                      providerId: model.modelsDevProviderId,
+      child: Semantics(
+        container: true,
+        button: true,
+        selected: selected,
+        child: buildConversationModelIdTooltip(
+          modelId: model.id,
+          child: InkWell(
+            key: rowKeyPrefix == null
+                ? null
+                : ValueKey('$rowKeyPrefix-${model.id}'),
+            onTap: widget.options != null && widget.onSelectValue == null
+                ? null
+                : () {
+                    if (widget.options != null) {
+                      widget.onSelectValue?.call(model.id);
+                      return;
+                    }
+                    final selection = ConversationModelSelection(
+                      providerProfileId: profile!.id,
+                      modelId: model.id,
+                    );
+                    final onSelect = widget.onSelect;
+                    if (onSelect != null) {
+                      onSelect(selection);
+                    } else {
+                      Navigator.of(context).pop(selection);
+                    }
+                  },
+            borderRadius: BorderRadius.circular(12),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: selected
+                    ? (isDark
+                          ? Color.lerp(
+                              palette.surfaceSecondary.withValues(alpha: 0.48),
+                              palette.accentPrimary,
+                              0.18,
+                            )!
+                          : const Color(0xFF2C7FEB).withValues(alpha: 0.12))
+                    : Colors.transparent,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  if (widget.showVendorIcons) ...[
+                    ProviderVendorIcon(
+                      vendor: ModelVendorCatalog.resolve(
+                        model.id,
+                        ownedBy: model.ownedBy,
+                        providerId: model.modelsDevProviderId,
+                      ),
+                      size: 14,
                     ),
-                    size: 14,
+                    const SizedBox(width: 6),
+                  ],
+                  Expanded(
+                    child: Text(
+                      displayName.isEmpty ? model.id : displayName,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: isDark
+                            ? palette.textPrimary
+                            : const Color(0xFF1F2937),
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
                   ),
-                  const SizedBox(width: 6),
-                ],
-                Expanded(
-                  child: Text(
-                    displayName.isEmpty ? model.id : displayName,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 13,
+                  if (selected)
+                    Icon(
+                      Icons.check_rounded,
+                      size: 15,
                       color: isDark
-                          ? palette.textPrimary
-                          : const Color(0xFF1F2937),
-                      fontWeight: FontWeight.w500,
+                          ? palette.accentPrimary
+                          : const Color(0xFF2C7FEB),
                     ),
-                  ),
-                ),
-                if (selected)
-                  Icon(
-                    Icons.check_rounded,
-                    size: 15,
-                    color: isDark
-                        ? palette.accentPrimary
-                        : const Color(0xFF2C7FEB),
-                  ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
@@ -493,8 +607,10 @@ class _ConversationModelSelectorContentState
         (mediaQuery.size.height - mediaQuery.viewInsets.bottom - 96)
             .clamp(220.0, widget.maxHeight)
             .toDouble();
-    final configuredProfiles = widget.profiles
-        .where((profile) => profile.configured)
+    final configuredProfiles = _profiles
+        .where(
+          (profile) => profile.configured && !profile.needsPresetCredentials,
+        )
         .toList();
     final visibleProfiles = _visibleProfiles;
     final query = _searchController.text.trim().toLowerCase();
@@ -520,7 +636,18 @@ class _ConversationModelSelectorContentState
               mainAxisSize: MainAxisSize.min,
               children: [
                 if (widget.header != null) widget.header!,
+                if (widget.loadLiveProviders)
+                  const Padding(
+                    padding: EdgeInsets.all(12),
+                    child: Text('服务商 / 模型'),
+                  ),
                 if (widget.showSearchField) _buildSearchRow(),
+                if (_loadingProfiles) const LinearProgressIndicator(),
+                if (_profilesFailed)
+                  TextButton(
+                    onPressed: _loadProfiles,
+                    child: const Text('服务商加载失败，重试'),
+                  ),
                 if (choices != null)
                   Flexible(
                     child: ListView(
@@ -537,7 +664,9 @@ class _ConversationModelSelectorContentState
                       ],
                     ),
                   )
-                else if (configuredProfiles.isEmpty)
+                else if (configuredProfiles.isEmpty &&
+                    !_loadingProfiles &&
+                    !_profilesFailed)
                   Padding(
                     padding: const EdgeInsets.all(16),
                     child: Text(
@@ -589,10 +718,23 @@ class _ConversationModelSelectorContentState
                             children: [
                               if (widget.showProfileHeaders)
                                 _buildProfileHeader(profile),
+                              if (_loadingProviders.contains(profile.id))
+                                const LinearProgressIndicator(),
+                              if (_failedProviders.contains(profile.id))
+                                TextButton(
+                                  onPressed: () => _loadProvider(profile),
+                                  child: const Text('模型加载失败，重试'),
+                                ),
+                              if (_failedProviders.contains(profile.id))
+                                _buildMutedMessage(_providerErrors[profile.id]),
                               if (expanded)
-                                if (models.isEmpty)
+                                if (models.isEmpty &&
+                                    !_failedProviders.contains(profile.id) &&
+                                    !_loadingProviders.contains(profile.id) &&
+                                    !(widget.loadLiveProviders &&
+                                        profile.needsPresetCredentials))
                                   _buildMutedMessage(widget.emptyModelsLabel)
-                                else
+                                else if (models.isNotEmpty)
                                   Column(
                                     children: models
                                         .map(

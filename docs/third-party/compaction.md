@@ -1,0 +1,10 @@
+# Kotlin context-maintenance ports
+
+These are source ports with Android host adaptations, not direct TypeScript package dependencies.
+
+- Pi / Mario Zechner, MIT: `badlogic/pi-mono@7d8ab31a477ecc07b36f56ffcae58c79307a68be`, `packages/coding-agent/src/core/compaction/compaction.ts`: last reported usage plus trailing estimates, backward recent-budget cut selection, cuts at complete user/assistant boundaries rather than tool results, split-turn summary/checkpoint behavior, summary output budget. License: `pi-compaction-LICENSE.txt`.
+- Google LLC, Apache-2.0: `google-gemini/gemini-cli@85aca163f6c73ac6ce380b5447359146b8adcae4`, `packages/core/src/context/chatCompressionService.ts`: reverse traversal of tool results, retain a recent output budget, preserve full over-budget output in a file and substitute a retrievable reference, validate compressed size. `packages/core/src/utils/tokenCalculation.ts`: ASCII/4 and non-ASCII*1.5 text estimate. License: `gemini-compaction-LICENSE.txt`.
+
+Host adaptations: ChatCompletionMessage data types; leading system messages and the exact latest user request remain in the model context; complete final tool groups can be summarized before the next request; image_url is counted as image rather than Base64 text; multilingual estimation is retained for large strings instead of reverting to ASCII/4; tools schema overhead is accounted separately. Existing workspace offloads provide durable readable paths. Offloaded older results use a retrievable reference without a tail excerpt: per-result excerpts accumulated past the shared budget when restoring 120 large results. Recent results retain the upstream shared budget. Existing ACP and Conversation owners persist only a proven canonical boundary. A lagging or ambiguous journal never advances the durable cutoff.
+
+The original Agent loop and retry controllers are not imported. No automatic replay is introduced. Kotlin regression tests cover the relevant behavior; the upstream TS test suite has not been executed within this Android project.

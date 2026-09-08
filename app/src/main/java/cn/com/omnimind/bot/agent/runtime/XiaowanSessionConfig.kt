@@ -37,7 +37,7 @@ internal class XiaowanSessionConfig(
             "Invalid value for ACP config option: $id"
         }
         when (id) {
-            "model" -> if (model != selected) { model = selected; effort = "default" }
+            "model" -> model = selected
             "reasoning_effort" -> effort = selected
         }
     }

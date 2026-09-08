@@ -56,6 +56,7 @@ void main() {
   }
 
   setUp(() {
+    ConversationHistoryService.resetWriteAcknowledgements();
     SharedPreferences.setMockInitialValues(<String, Object>{});
     nativeMessages = <String, List<Map<String, dynamic>>>{};
     messenger.setMockMethodCallHandler(channel, (call) async {
@@ -67,7 +68,19 @@ void main() {
       final key = threadKey(conversationId, mode);
       switch (call.method) {
         case 'replaceConversationMessages':
-          nativeMessages[key] = normalizeMessageList(args['messages']);
+          final incoming = normalizeMessageList(args['messages']);
+          if (args['allowHistoryRemoval'] == true) {
+            nativeMessages[key] = incoming;
+          } else {
+            final byId = {
+              for (final m in nativeMessages[key] ?? <Map<String, dynamic>>[])
+                m['id']: m,
+            };
+            for (final m in incoming) {
+              byId[m['id']] = m;
+            }
+            nativeMessages[key] = byId.values.toList();
+          }
           return 'SUCCESS';
         case 'getConversationMessages':
           return nativeMessages[key] ?? <Map<String, dynamic>>[];
@@ -93,6 +106,115 @@ void main() {
   tearDown(() async {
     messenger.setMockMethodCallHandler(channel, null);
   });
+
+  test(
+    'repeated snapshots send only changed messages and explicit removal stays explicit',
+    () async {
+      final writes = <Map<String, dynamic>>[];
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'replaceConversationMessages')
+          writes.add(Map<String, dynamic>.from(call.arguments));
+        return 'SUCCESS';
+      });
+      final old = ChatMessageModel(
+        id: 'old',
+        type: 1,
+        user: 1,
+        content: {'text': 'x' * 65536},
+      );
+      final reply = ChatMessageModel(
+        id: 'reply',
+        type: 1,
+        user: 2,
+        content: {'text': 'first'},
+      );
+      await ConversationHistoryService.saveConversationMessages(99112, [
+        old,
+        reply,
+      ]);
+      await ConversationHistoryService.saveConversationMessages(99112, [
+        old,
+        reply.copyWith(content: {'text': 'second'}),
+      ]);
+      expect((writes.last['messages'] as List).map((m) => m['id']), ['reply']);
+      expect(writes.last['allowHistoryRemoval'], false);
+      await ConversationHistoryService.saveConversationMessages(
+        99112,
+        [],
+        allowHistoryRemoval: true,
+      );
+      expect(writes.last['messages'], isEmpty);
+      expect(writes.last['allowHistoryRemoval'], true);
+    },
+  );
+
+  test(
+    'failed native writes are not acknowledged and clear invalidates acknowledgements',
+    () async {
+      var attempts = 0;
+      final writes = <List<dynamic>>[];
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'replaceConversationMessages') {
+          attempts++;
+          writes.add(List<dynamic>.from(call.arguments['messages']));
+          if (attempts == 1)
+            throw PlatformException(code: 'fixture-write-failed');
+        }
+        return 'SUCCESS';
+      });
+      final message = ChatMessageModel.userMessage(
+        'retain this',
+      ).copyWith(id: 'retained');
+      await expectLater(
+        ConversationHistoryService.saveConversationMessages(99113, [message]),
+        throwsStateError,
+      );
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getKeys().where((key) => key.contains('99113')), isEmpty);
+      await ConversationHistoryService.saveConversationMessages(99113, [
+        message,
+      ]);
+      expect(attempts, 2);
+      expect(writes.every((rows) => rows.length == 1), true);
+      await ConversationHistoryService.saveConversationMessages(99113, [
+        message,
+      ]);
+      expect(attempts, 2);
+      await ConversationHistoryService.clearConversationMessages(99113);
+      await ConversationHistoryService.saveConversationMessages(99113, [
+        message,
+      ]);
+      expect(attempts, 3);
+    },
+  );
+
+  test(
+    'clear shares the write queue so an earlier write cannot resurrect history',
+    () async {
+      final entered = Completer<void>();
+      final release = Completer<void>();
+      final operations = <String>[];
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'replaceConversationMessages') {
+          entered.complete();
+          await release.future;
+          operations.add('write');
+        }
+        if (call.method == 'clearConversationMessages') operations.add('clear');
+        return 'SUCCESS';
+      });
+      final write = ConversationHistoryService.saveConversationMessages(99114, [
+        ChatMessageModel.userMessage('old'),
+      ]);
+      await entered.future;
+      final clear = ConversationHistoryService.clearConversationMessages(99114);
+      await Future<void>.delayed(Duration.zero);
+      expect(operations, isEmpty);
+      release.complete();
+      await Future.wait([write, clear]);
+      expect(operations, ['write', 'clear']);
+    },
+  );
 
   test('stores current conversation ids independently per mode', () async {
     await ConversationHistoryService.saveCurrentConversationId(
@@ -523,9 +645,9 @@ void main() {
   test('paged load restores first page from legacy storage', () async {
     final prefs = await SharedPreferences.getInstance();
     final legacyMessages = <ChatMessageModel>[
-      ChatMessageModel.userMessage('newest'),
-      ChatMessageModel.userMessage('middle'),
-      ChatMessageModel.userMessage('oldest'),
+      ChatMessageModel.userMessage('newest').copyWith(id: 'legacy-newest'),
+      ChatMessageModel.userMessage('middle').copyWith(id: 'legacy-middle'),
+      ChatMessageModel.userMessage('oldest').copyWith(id: 'legacy-oldest'),
     ];
     await prefs.setString(
       ConversationHistoryService.conversationMessagesKey(
@@ -589,30 +711,36 @@ void main() {
         }
       });
 
-      final first = await ConversationHistoryService.getConversationMessagesPaged(
-        7,
-        mode: ConversationMode.agent,
-        limit: 50,
-      );
-      final second = await ConversationHistoryService.getConversationMessagesPaged(
-        7,
-        mode: ConversationMode.agent,
-        limit: 50,
-        offset: first.messages.length,
-      );
-      final third = await ConversationHistoryService.getConversationMessagesPaged(
-        7,
-        mode: ConversationMode.agent,
-        limit: 50,
-        offset: first.messages.length + second.messages.length,
-      );
+      final first =
+          await ConversationHistoryService.getConversationMessagesPaged(
+            7,
+            mode: ConversationMode.agent,
+            limit: 50,
+          );
+      final second =
+          await ConversationHistoryService.getConversationMessagesPaged(
+            7,
+            mode: ConversationMode.agent,
+            limit: 50,
+            offset: first.messages.length,
+          );
+      final third =
+          await ConversationHistoryService.getConversationMessagesPaged(
+            7,
+            mode: ConversationMode.agent,
+            limit: 50,
+            offset: first.messages.length + second.messages.length,
+          );
 
       expect(first.hasMore, isTrue);
       expect(second.hasMore, isTrue);
       expect(third.hasMore, isFalse);
       expect(
-        [...first.messages, ...second.messages, ...third.messages]
-            .map((message) => message.text),
+        [
+          ...first.messages,
+          ...second.messages,
+          ...third.messages,
+        ].map((message) => message.text),
         unorderedEquals(allMessages.map((message) => message.text)),
       );
     },

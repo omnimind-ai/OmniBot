@@ -118,6 +118,7 @@ class AgentEventReducer {
       acpTurnId: normalizedTurnId,
       appendCancelIfEmpty: isCancelled,
       cancelled: isCancelled,
+      promptStopReason: reason.isEmpty ? null : reason,
     );
     return AgentReduceResult(
       handled: true,
@@ -3402,6 +3403,7 @@ class AgentEventReducer {
     // assistant message or a session notification cannot imply it.
     bool appendCancelIfEmpty = false,
     bool cancelled = false,
+    String? promptStopReason,
   }) {
     final wasActive = runtime.activeAgentTurnIds.contains(taskId);
     // The UI primes a local render task before ACP has emitted its official
@@ -3482,6 +3484,20 @@ class AgentEventReducer {
           if (endedAt >= startedAt) 'durationMs': endedAt - startedAt,
         },
       );
+    }
+    // Persist the owning PromptResponse with its existing items. A finished
+    // transport is not proof of successful completion, especially after cancel.
+    if (promptStopReason != null) {
+      for (var index = 0; index < runtime.messages.length; index++) {
+        final message = runtime.messages[index];
+        if (message.user != 1 &&
+            message.streamMeta?['parentTaskId'] == ownerTaskId) {
+          runtime.messages[index] = message.copyWith(streamMeta: {
+            ...?message.streamMeta,
+            'stopReason': promptStopReason,
+          });
+        }
+      }
     }
     runtime.isAiResponding = false;
     runtime.isExecutingTask = false;

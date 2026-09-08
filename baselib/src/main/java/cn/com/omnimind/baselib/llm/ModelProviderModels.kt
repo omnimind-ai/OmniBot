@@ -41,6 +41,7 @@ data class ModelProviderProfile(
  * the shared Agent client and one upstream model endpoint.
  */
 data class ProviderRequestCapabilities(
+    val supportsChatPromptCacheKey: Boolean = false,
     val supportsExplicitAutoToolChoice: Boolean = true,
     val requiresReasoningContentForToolCalls: Boolean = false,
     val requiresAnthropicThinkingReplay: Boolean = false,
@@ -73,6 +74,8 @@ data class ProviderModelOption(
     val group: String? = null,
     val attachment: Boolean? = null,
     val reasoning: Boolean? = null,
+    val supportedReasoningLevels: List<String> = emptyList(),
+    val defaultReasoningLevel: String? = null,
     val toolCall: Boolean? = null,
     val structuredOutput: Boolean? = null,
     val temperature: Boolean? = null

@@ -5,10 +5,35 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertSame
 import org.junit.Test
 import java.io.File
 
 class AgentImageAttachmentSupportTest {
+    @Test
+    fun `streamed image encoding retains original bytes including padding across buffers`() {
+        val file = File.createTempFile("image-encoding-", ".png")
+        try {
+            for (size in listOf(1, 2, 3, 8191, 8192, 8193, 24001)) {
+                val original = ByteArray(size) { (it * 47).toByte() }
+                file.writeBytes(original)
+                assertEquals(
+                    "data:image/png;base64," + java.util.Base64.getEncoder().encodeToString(original),
+                    AgentImageAttachmentSupport.readImageDataUrl(file, "image/png")
+                )
+            }
+        } finally { file.delete() }
+    }
+
+    @Test
+    fun `already normalized image is shared across attachment projections`() {
+        val dataUrl = "data:image/png;base64," + "abcd".repeat(100_000)
+        val prepared = AgentImageAttachmentSupport.prepareAttachments(listOf(mapOf("dataUrl" to dataUrl)))
+        assertSame(dataUrl, prepared.modelAttachments.single()["dataUrl"])
+        assertSame(dataUrl, prepared.historyAttachments.single()["dataUrl"])
+        assertSame(dataUrl, prepared.runtimeAttachments.single()["dataUrl"])
+    }
+
     @After
     fun tearDown() {
         AgentImageAttachmentSupport.resetBackendForTests()

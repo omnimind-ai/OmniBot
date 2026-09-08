@@ -1,0 +1,34 @@
+{
+  "name": "Xiaowan long-term and daily memory survive restart",
+  "steps": [
+    {
+      "action": "expect",
+      "text": "Send"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_MEMORY_WRITE"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_MEMORY_WRITE_DONE",
+      "timeoutMs": 180000
+    },
+    {
+      "action": "restart"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_MEMORY_WRITE_DONE"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_MEMORY_RECALL"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_MEMORY_RECALL_DONE",
+      "timeoutMs": 180000
+    }
+  ]
+}

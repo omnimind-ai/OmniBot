@@ -3,6 +3,8 @@ package cn.com.omnimind.bot.agent.runtime
 import cn.com.omnimind.baselib.llm.ProviderModelOption
 import cn.com.omnimind.baselib.llm.OpenAiWireApi
 import com.google.gson.JsonParser
+import cn.com.omnimind.bot.plugin.official.agentweb.DEEPSEEK_HARNESS_API_KEY_ENV
+import cn.com.omnimind.bot.plugin.official.agentweb.buildDeepSeekProviderPatch
 
 internal object DeepSeekHarnessConfigAdapter : AgentConfigAdapter {
     override fun map(input: AgentProviderMappingInput): AgentProviderMapping {
@@ -12,7 +14,7 @@ internal object DeepSeekHarnessConfigAdapter : AgentConfigAdapter {
             sharedModel = input.model
         )
         return AgentProviderMapping(
-            environment = config.toEnvironment(),
+            environment = config.toEnvironment() + mapOf(DEEPSEEK_HARNESS_API_KEY_ENV to config.apiKey),
             deepSeekConfig = config
         )
     }
@@ -24,20 +26,18 @@ internal object DeepSeekHarnessConfigAdapter : AgentConfigAdapter {
         existingConfig: String,
     ): List<AgentConfigWrite> {
         val model = input.model?.trim()?.takeIf { it.isNotEmpty() } ?: return emptyList()
+        val provider = input.provider ?: return emptyList()
         return listOf(
             AgentConfigWrite(
                 path = DEEPSEEK_HARNESS_SETTINGS_PATH,
-                content = buildDeepSeekHarnessSettingsYaml(model),
+                content = buildDeepSeekProviderPatch(
+                    provider, model, mapping.deepSeekConfig?.reasoningEffort, acp = true,
+                    providerModelIds = providerModels.map { it.id },
+                ),
                 executorKey = "deepseek-agent-settings-write",
             )
         )
     }
-}
-
-private fun buildDeepSeekHarnessSettingsYaml(model: String): String = buildString {
-    appendLine("llm-deepseek:")
-    appendLine("  models:")
-    appendLine("    - id: '${model.replace("'", "''")}'")
 }
 
 internal object CodexConfigAdapter : AgentConfigAdapter {
@@ -123,6 +123,9 @@ internal object CodexConfigAdapter : AgentConfigAdapter {
 
     override fun map(input: AgentProviderMappingInput): AgentProviderMapping {
         val provider = input.provider
+        require(provider?.protocolType != "anthropic") {
+            "Codex requires an OpenAI Responses-compatible endpoint; the current Provider is configured as Anthropic."
+        }
         val headerBindings = provider?.let { buildAcpHeaderBindings(it.customHeaders) }
         val environment = if (provider == null) {
             mapOf("CODEX_HOME" to AgentRuntimeDefaults.CODEX_HOME)
@@ -185,6 +188,23 @@ internal object CodexConfigAdapter : AgentConfigAdapter {
 }
 
 internal object ClaudeCodeConfigAdapter : AgentConfigAdapter {
+    override fun launchConfigWrites(
+        input: AgentProviderMappingInput,
+        mapping: AgentProviderMapping,
+        providerModels: List<ProviderModelOption>,
+        existingConfig: String,
+    ): List<AgentConfigWrite> {
+        val model = input.model ?: return emptyList()
+        val settings = if (existingConfig.isBlank()) com.google.gson.JsonObject()
+            else JsonParser.parseString(existingConfig).asJsonObject
+        settings.add("availableModels", com.google.gson.Gson().toJsonTree(
+            (providerModels.map { it.id } + model).filter { it.isNotBlank() }.distinct(),
+        ))
+        return listOf(AgentConfigWrite(
+            CLAUDE_SETTINGS_CONFIG_PATH, settings.toString(), "claude-model-catalog-write",
+        ))
+    }
+
     override suspend fun readConfig(
         input: AgentProviderMappingInput,
         access: AgentConfigFileAccess,
@@ -205,15 +225,12 @@ internal object ClaudeCodeConfigAdapter : AgentConfigAdapter {
         val customHeaders = provider.customHeaders
             .entries
             .joinToString("\n") { (name, value) -> "$name: $value" }
-        require(
-            provider.protocolType.equals("anthropic", ignoreCase = true) ||
-                isAnthropicCompatibleBaseUrl(anthropicBaseUrl)
-        ) {
-            "Claude Code requires an Anthropic-compatible Provider endpoint. " +
-                "Configure the Provider protocol as Anthropic or use its /anthropic endpoint; " +
-                "the current endpoint is OpenAI-compatible: ${provider.baseUrl}"
-        }
+        // A shared gateway may expose Messages alongside its configured OpenAI
+        // route. Pass the selected credentials/model to Claude; the actual
+        // request owns compatibility errors, not the Provider's protocol label.
         return AgentProviderMapping(
+            launchConfigPath = CLAUDE_SETTINGS_CONFIG_PATH,
+            launchConfigExecutorKey = "claude-model-catalog-read",
             environment = buildMap {
                 put("ANTHROPIC_BASE_URL", anthropicBaseUrl)
                 put("ANTHROPIC_API_KEY", provider.apiKey)
@@ -264,17 +281,22 @@ private fun isAnthropicCompatibleBaseUrl(value: String): Boolean {
 }
 
 internal object KimiCodeConfigAdapter : AgentConfigAdapter {
-    override fun map(input: AgentProviderMappingInput): AgentProviderMapping {
-        val provider = input.provider
-        val model = input.model
-        return AgentProviderMapping(
-            environment = if (provider != null && model != null) {
-                buildKimiCodeEnvironment(provider = provider, model = model)
-            } else {
-                kimiCodeBaseEnvironment()
-            },
-        )
+    override fun launchConfigWrites(
+        input: AgentProviderMappingInput,
+        mapping: AgentProviderMapping,
+        providerModels: List<ProviderModelOption>,
+        existingConfig: String,
+    ): List<AgentConfigWrite> {
+        val provider = input.provider ?: return emptyList()
+        val model = input.model ?: return emptyList()
+        return buildKimiCodeManagedFiles(provider, model, providerModels = providerModels).map { (path, content) ->
+            AgentConfigWrite(path, content, "kimi-agent-config-write")
+        }
     }
+
+    override fun map(input: AgentProviderMappingInput): AgentProviderMapping =
+        AgentProviderMapping(environment = kimiCodeBaseEnvironment())
+
 }
 
 internal object OpenCodeConfigAdapter : AgentConfigAdapter {
@@ -323,6 +345,9 @@ internal object OpenCodeConfigAdapter : AgentConfigAdapter {
                     baseUrl = mapping.openCodeBaseUrl ?: provider.baseUrl,
                     existingConfigJson = existingConfig,
                     customHeaders = provider.customHeaders,
+                    providerModels = providerModels,
+                    protocolType = provider.protocolType,
+                    wireApi = provider.wireApi,
                 ),
                 executorKey = "opencode-agent-config-write",
             )

@@ -12,6 +12,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
 import java.util.Base64
@@ -222,55 +223,52 @@ class FileToolHandler(
             )
             require(file.exists()) { "文件不存在：${file.absolutePath}" }
             require(file.isFile) { "目标不是文件：${file.absolutePath}" }
-            val offset = args["offset"]?.jsonPrimitive?.intOrNull?.coerceAtLeast(0) ?: 0
+            val offset = args["offset"]?.jsonPrimitive?.longOrNull?.coerceAtLeast(0) ?: 0L
             val lineStart = args["lineStart"]?.jsonPrimitive?.intOrNull?.coerceAtLeast(1)
             val lineCount = args["lineCount"]?.jsonPrimitive?.intOrNull?.coerceAtLeast(1)
             val artifact = workspaceManager.buildArtifactForFile(file, toolName)
             val shellPath = workspaceManager.shellPathForAndroid(file) ?: file.absolutePath
             val mimeType = workspaceManager.guessMimeType(file)
             val imageReadResult = if (isImageFile(file, mimeType)) {
-                AgentImageAttachmentSupport.buildFileReadImageResult(
+                checkNotNull(AgentImageAttachmentSupport.buildFileReadImageResult(
                     file = file,
                     shellPath = shellPath,
                     mimeTypeHint = mimeType,
                     uri = artifact.uri,
                     sizeBytes = file.length()
-                )
+                )) { "图片读取失败：${file.name}" }
             } else {
                 null
             }
             val payload = if (imageReadResult != null) {
                 imageReadResult.payload
             } else {
-                val content = file.readText()
-                val sliced = when {
-                    lineStart != null -> {
-                        val lines = content.lines()
-                        val from = (lineStart - 1).coerceAtMost(lines.size)
-                        val until = if (lineCount != null) {
-                            (from + lineCount).coerceAtMost(lines.size)
-                        } else {
-                            lines.size
-                        }
-                        lines.subList(from, until).joinToString("\n")
-                    }
-                    offset > 0 -> content.drop(offset)
-                    else -> content
-                }
-                linkedMapOf<String, Any?>(
+                val metadata = linkedMapOf<String, Any?>(
                     "path" to shellPath,
                     "androidPath" to file.absolutePath,
                     "uri" to artifact.uri,
-                    "content" to sliced,
                     "size" to file.length(),
                     "mimeType" to mimeType
                 )
+                if (AgentFileReadSupport.isBinary(file, mimeType)) {
+                    metadata["kind"] = "binary"
+                    metadata["contentAvailable"] = false
+                    metadata["message"] = "二进制文件未作为文本解码。原文件可通过附件预览或打开；如需内容，请使用相应解析工具提取文本。"
+                } else {
+                    val page = AgentFileReadSupport.read(file, offset, lineStart, lineCount)
+                    metadata.putAll(page.toPayload())
+                    if (page.nextOffset != null) {
+                        metadata["continuation"] = "使用 file_read(path, offset=nextOffset) 继续读取，不要同时传入 lineStart；原文件保持完整。"
+                    }
+                }
+                metadata
             }
+            val encodedPayload = helper.encodeLocalizedPayload(payload)
             ToolExecutionResult.ContextResult(
                 toolName = toolName,
                 summaryText = helper.localized("已读取文件：${file.name}"),
-                previewJson = helper.encodeLocalizedPayload(payload),
-                rawResultJson = helper.encodeLocalizedPayload(payload),
+                previewJson = encodedPayload,
+                rawResultJson = encodedPayload,
                 success = true,
                 imageDataUrl = imageReadResult?.imageDataUrl,
                 artifacts = listOf(artifact),

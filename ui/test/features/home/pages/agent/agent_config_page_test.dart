@@ -196,7 +196,7 @@ void main() {
           return null;
         });
 
-    await ModelProviderConfigService.saveCachedFetchedModels(
+    await seedManualModels(
       profileId: 'provider-1',
       apiBase: 'https://api.deepseek.com',
       profileRevision: 1,
@@ -481,3 +481,13 @@ Map<String, dynamic> _agent(String id, String name) {
     'status': 'online',
   };
 }
+
+Future<void> seedManualModels({
+  required String profileId,
+  required String apiBase,
+  int? profileRevision,
+  required List<ProviderModelOption> models,
+}) => ModelProviderConfigService.saveManualModelIds(
+  profileId: profileId,
+  ids: models.map((m) => m.id).toList(),
+);

@@ -1,6 +1,8 @@
 import 'package:dotted_border/dotted_border.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ui/services/agent_event_reducer.dart';
+import 'package:ui/features/home/pages/chat/services/chat_conversation_runtime_coordinator.dart';
 import 'package:ui/features/home/pages/command_overlay/widgets/cards/deep_thinking_card.dart';
 import 'package:ui/features/home/pages/chat/chat_page_models.dart';
 import 'package:ui/features/home/pages/chat/widgets/chat_empty_greeting.dart';
@@ -12,6 +14,70 @@ import 'package:ui/widgets/agent_avatar.dart';
 import 'package:ui/widgets/streaming_text.dart';
 
 void main() {
+  testWidgets('Claude Code ACP answers survive completion and history reload', (tester) async {
+    final runtime = ChatConversationRuntimeState(conversationId: 63, mode: 'agent');
+    addTearDown(runtime.dispose);
+    const reducer = AgentEventReducer();
+    for (final entry in {'first': 'CC_FIRST_ANSWER', 'followup': 'CC_FOLLOWUP_ANSWER'}.entries) {
+      final event = <String, dynamic>{
+        'eventId': 'cc-${entry.key}-text',
+        'method': 'session/update',
+        'turnId': entry.key,
+        'params': {
+          'sessionId': 'cc-durable-session',
+          'update': {
+            'sessionUpdate': 'agent_message_chunk',
+            'messageId': 'cc-${entry.key}',
+            'content': {'type': 'text', 'text': entry.value},
+          },
+        },
+      };
+      reducer.reduce(runtime: runtime, event: event);
+      // A redelivered host notification must not duplicate the visible answer.
+      reducer.reduce(runtime: runtime, event: event);
+      reducer.reducePromptResponse(runtime: runtime, sessionId: 'cc-durable-session',
+        turnId: entry.key, stopReason: 'end_turn');
+    }
+    for (final messages in [runtime.messages,
+      runtime.messages.map((m) => ChatMessageModel.fromJson(m.toJson())).toList()]) {
+      await tester.pumpWidget(const SizedBox());
+      final controller = ScrollController();
+      await tester.pumpWidget(_buildLocalizedApp(child: ChatMessageList(
+        messages: messages, scrollController: controller, onBeforeTaskExecute: () async {},
+      )));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('CC_FIRST_ANSWER', findRichText: true), findsOneWidget);
+      expect(find.textContaining('CC_FOLLOWUP_ANSWER', findRichText: true), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+      controller.dispose();
+    }
+  });
+
+  testWidgets('terminal failure stays visible with partial answer after history reload', (tester) async {
+    final messages = <ChatMessageModel>[
+      ChatMessageModel.cardMessage(
+        const {'type': 'agent_tool_summary', 'uiStyle': 'agent_tool',
+          'toolType': 'status', 'status': 'error', 'toolTitle': '本轮执行失败',
+          'summary': 'STREAM_CLOSED_TEST', 'cardId': 'failure-card'},
+        id: 'failure-card',
+        streamMeta: const {'parentTaskId': 'failed-run', 'kind': 'error', 'seq': 2, 'isFinal': true},
+      ),
+      ChatMessageModel(id: 'partial', type: 1, user: 2,
+        content: const {'text': 'PARTIAL_ANSWER_TEST'},
+        streamMeta: const {'parentTaskId': 'failed-run', 'kind': 'text_snapshot', 'seq': 1, 'isFinal': true}),
+    ];
+    for (final snapshot in [messages, messages.map((m) => ChatMessageModel.fromJson(m.toJson())).toList()]) {
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpWidget(_buildLocalizedApp(child: ChatMessageList(
+        messages: snapshot, scrollController: ScrollController(), onBeforeTaskExecute: () async {},
+      )));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('PARTIAL_ANSWER_TEST', findRichText: true), findsOneWidget);
+      expect(find.textContaining('本轮执行失败'), findsWidgets);
+      expect(find.textContaining('已处理'), findsNothing);
+    }
+  });
+
   testWidgets('empty chat state offsets with bottom overlay inset', (
     tester,
   ) async {

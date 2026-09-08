@@ -119,9 +119,11 @@ internal fun resolveAgentProviderApiKey(
 
 internal suspend fun fetchAgentProviderModels(
     profile: ModelProviderProfile,
+    forceRefresh: Boolean = false,
 ): List<ProviderModelOption> {
     return if (OmniOfficialProvider.isOfficialProfile(profile.id)) {
-        PlatformAiProvisioner.ensureReadyAndGetModels()
+        if (forceRefresh) PlatformAiProvisioner.refreshAndGetModels()
+        else PlatformAiProvisioner.ensureReadyAndGetModels()
     } else {
         HttpController.fetchProviderModels(
             apiBase = profile.baseUrl,
@@ -434,12 +436,6 @@ class AgentRuntimeManager private constructor(
     // ACP process can even start. Keep the write as a one-time initialization.
     @Volatile
     private var acpFilesystemCompatReady = false
-    // Launch environments are deterministic for a given Harness/provider/
-    // model tuple. Keep them in memory so switching back to an already
-    // prepared Harness does not re-read two terminal config files or probe
-    // the MCP server before the ACP process can start.
-    private val acpLaunchEnvironmentCache =
-        ConcurrentHashMap<String, Map<String, String>>()
     @Volatile
     private var eventListener: ((Map<String, Any?>) -> Unit)? = null
     private val eventDispatchLock = Any()
@@ -674,7 +670,6 @@ class AgentRuntimeManager private constructor(
             // Provider credentials and the dispatch model are launch inputs.
             // Do not let a later reconnect reuse an environment assembled
             // from the previous Provider binding.
-            acpLaunchEnvironmentCache.clear()
             activeProfiles.forEach { profile ->
                 localRuntimeFor(profile.id).disconnect()
                 clearActiveTurnsForAgent(profile.id)
@@ -711,13 +706,19 @@ class AgentRuntimeManager private constructor(
 
     suspend fun handleMethod(method: String, args: Map<String, Any?>): Any? {
         val compatibilityRequest = AcpLegacyCompatibilityAdapter.adapt(method, args)
-        return AcpLegacyCompatibilityAdapter.adaptResponse(
+        return try { AcpLegacyCompatibilityAdapter.adaptResponse(
             compatibilityRequest,
             handleCanonicalMethod(
                 compatibilityRequest.method,
                 compatibilityRequest.args,
             ),
-        )
+        ) } catch (error: Throwable) {
+            if (error !is kotlinx.coroutines.CancellationException) {
+                Log.e("AgentRuntimeManager", "ACP request failed method=${compatibilityRequest.method} " +
+                    "type=${error.javaClass.simpleName} at=${error.stackTrace.take(5).joinToString()}")
+            }
+            throw error
+        }
     }
 
     /**
@@ -770,21 +771,15 @@ class AgentRuntimeManager private constructor(
             ) {
                 invalidateLocalProbeCache()
             }
-            if (method == "agent/save" || method == "agent/delete") {
-                // Profile command/arguments/environment edits (and delete /
-                // recreate with the same custom id) invalidate the launch
-                // fast path even while the runtime is disconnected.
-                acpLaunchEnvironmentCache.clear()
-            }
             // Installation is an explicit settings action.  A normal
             // agent/select or session launch may connect an already installed
             // Harness, but must never start npm, a native build, or a package
             // bootstrap behind the chat UI.
             if (method == "agent/prepare") {
-                ensureManagedAcpAdapter(targetProfile)
+                ensureManagedAcpAdapter(targetProfile, force = canonicalArgs["force"] == true)
             }
             val response = targetLocalRuntime.handleMethod(method, canonicalArgs)
-            if (method == "agent/select" && targetLocalRuntime.isConnected) {
+            if (method == "agent/select") {
                 activeRuntime = AgentRuntimeKind.LOCAL
                 activeLocalDistributionId = TerminalDistribution.selected().id
             }
@@ -1591,8 +1586,6 @@ class AgentRuntimeManager private constructor(
                 operation = "write",
                 paths = listOf(harnessConfigPath),
             )
-            localRuntimeFor(profile.id).disconnect()
-            clearActiveTurnsForAgent(profile.id)
             return readAgentConfig(mapOf("agentId" to profile.id))
         }
         val providerProfile = currentAgentProviderProfile()
@@ -1610,10 +1603,9 @@ class AgentRuntimeManager private constructor(
                 protocolType = providerProfile?.protocolType ?: "openai_compatible",
             )
         }
-        val providerModels = resolveCurrentProviderModelIds(providerProfile)
-            ?.takeIf { it.authoritative }
-            ?.models
-            .orEmpty()
+        val providerModels = providerProfile?.let {
+            ModelProviderConfigStore.cachedModels(appContext, it)
+        }.orEmpty()
         val writes = AgentConfigAdapterRegistry.directConfigWrites(
             input = AgentProviderMappingInput(
                 agentId = profile.id,
@@ -1641,8 +1633,6 @@ class AgentRuntimeManager private constructor(
             operation = "write",
             paths = writes.map(AgentConfigWrite::path),
         )
-        localRuntimeFor(profile.id).disconnect()
-        clearActiveTurnsForAgent(profile.id)
         return readAgentConfig(mapOf("agentId" to profile.id))
     }
 
@@ -1668,8 +1658,6 @@ class AgentRuntimeManager private constructor(
             operation = "rollback",
             paths = snapshot.keys.toList(),
         )
-        localRuntimeFor(profile.id).disconnect()
-        clearActiveTurnsForAgent(profile.id)
         return readAgentConfig(mapOf("agentId" to profile.id))
     }
 
@@ -1759,9 +1747,6 @@ class AgentRuntimeManager private constructor(
             chmod 600 ${shellQuote(path)}
         """.trimIndent()
         executeAgentConfigCommand(command, executorKey)
-        // Explicit config publication invalidates the in-memory launch fast
-        // path. Persisted Harness files remain untouched.
-        acpLaunchEnvironmentCache.clear()
     }
 
     private suspend fun executeAgentConfigCommand(
@@ -1975,7 +1960,8 @@ class AgentRuntimeManager private constructor(
     }
 
     private suspend fun prepareLocalAcpLaunch(
-        profile: AcpAgentProfile
+        profile: AcpAgentProfile,
+        providerModelsOverride: List<ProviderModelOption>? = null,
     ): Map<String, String> {
         val usesSharedProvider = AcpAgentProfileStore
             .officialRuntime(profile)
@@ -2002,7 +1988,9 @@ class AgentRuntimeManager private constructor(
         // and let the Provider settings/scene selector create it through an
         // explicit user action. Never turn Agent startup into a network
         // discovery request.
-        val providerModels = emptyList<ProviderModelOption>()
+        val providerModels = providerModelsOverride ?: if (usesSharedProvider && sharedProviderProfile != null) {
+            ModelProviderConfigStore.cachedModels(appContext, sharedProviderProfile)
+        } else emptyList()
         val resolvedModel = if (usesSharedProvider) {
             val model = resolveAcpLaunchModelForDispatch(
                 providerModelIds = providerModels.map(ProviderModelOption::id),
@@ -2036,18 +2024,7 @@ class AgentRuntimeManager private constructor(
             providerModels
         }
         val harnessAdapter = AcpHarnessAdapters.forProfile(profile)
-        val launchCacheKey = buildString {
-            append(profile.id)
-            append('|')
-            append(resolvedModel.orEmpty())
-            append('|')
-            // Credentials are never logged; the hash only invalidates the
-            // in-memory environment when a Provider/API key changes.
-            append(sharedProvider?.hashCode() ?: 0)
-        }
-        acpLaunchEnvironmentCache[launchCacheKey]?.let { cachedEnvironment ->
-            return cachedEnvironment
-        }
+        // Re-read editable files at process launch; the running process keeps its snapshot.
         val existingHarnessConfig = harnessAdapter.launchConfigPath?.let { path ->
             readTerminalTextFile(
                 path = path,
@@ -2118,7 +2095,6 @@ class AgentRuntimeManager private constructor(
         }
         val launchEnvironment =
             if (launchConfigWrites.isNotEmpty()) mapping.environment else harnessEnvironment
-        acpLaunchEnvironmentCache[launchCacheKey] = launchEnvironment.toMap()
         return launchEnvironment
     }
 
@@ -2195,17 +2171,18 @@ class AgentRuntimeManager private constructor(
     }
 
     private suspend fun listAuthoritativeProviderModels(): Map<String, Any?> {
-        // The ACP model/list surface is a projection of the active Dispatch
-        // document. It must not become a hidden Provider /models refresh:
-        // catalog discovery is owned by Provider settings and explicit
-        // refresh actions, while ACP startup only needs the selected model.
+        // Passive reads project the same latest Provider discovery used by
+        // launch config. Explicit model-card refresh owns network discovery.
+        val models = currentAgentProviderProfile()?.let {
+            ModelProviderConfigStore.cachedModels(appContext, it)
+        }.orEmpty()
         return buildAuthoritativeProviderModelPayload(
-            providerModelIds = null,
+            providerModelIds = models.map { it.id },
             boundModel = currentAgentBoundModel(),
         )
     }
 
-    private suspend fun ensureManagedAcpAdapter(profile: AcpAgentProfile) {
+    private suspend fun ensureManagedAcpAdapter(profile: AcpAgentProfile, force: Boolean = false) {
         val runtime = AcpAgentProfileStore.officialRuntime(profile)
             ?: return
         if (runtime.managedAdapterPackage == null) {
@@ -2216,7 +2193,7 @@ class AgentRuntimeManager private constructor(
         // particular, do not make an already-healthy Harness wait for an
         // unrelated Harness (for example DeepSeek) to finish installing.
         val previousHealth = acpAgentProfileStore.health(profile.id)
-        if (shouldReuseManagedAcpPreparation(
+        if (!force && shouldReuseManagedAcpPreparation(
                 healthStatus = previousHealth.status,
                 installed = previousHealth.installed,
                 preparationRevision = previousHealth.preparationRevision,
@@ -2225,32 +2202,15 @@ class AgentRuntimeManager private constructor(
             return
         }
 
-        // Health is persisted, so a freshly restarted app can have an
-        // `unchecked` record even though another Harness is already fully
-        // installed. Probe the requested command without entering the
-        // installer gate; switching to an installed Harness stays independent
-        // from a concurrent DeepSeek installation.
-        if (managedAcpPreparationGate.isBusy) {
-            // Never make an unrelated foreground switch wait on a terminal
-            // readiness probe while another Harness is installing. A healthy
-            // target is already covered by the persisted online/installed
-            // fast path above; for an unknown target, the normal launch
-            // command check will fail quickly with a clear install message.
-            // The old probe could consume 5 seconds on every tap and made all
-            // Harnesses appear as slow as DeepSeek.
-            return
-        }
-
-        // tryLock is intentional.  `agent/prepare` may spend minutes in npm
-        // or node-gyp.  `agent/select` must return a bounded preparation error
-        // instead of waiting on that job and making every other Harness look
-        // frozen.
+        // Only the explicit agent/prepare action enters this method. If another
+        // installation owns the gate, report that state instead of continuing
+        // into initialization as though this installation had completed.
         managedAcpPreparationGate.run(profile.id) {
-            ensureManagedAcpAdapterLocked(profile)
+            ensureManagedAcpAdapterLocked(profile, force)
         }
     }
 
-    private suspend fun ensureManagedAcpAdapterLocked(profile: AcpAgentProfile) {
+    private suspend fun ensureManagedAcpAdapterLocked(profile: AcpAgentProfile, force: Boolean) {
         val runtime = AcpAgentProfileStore.officialRuntime(profile) ?: return
         val packageName = runtime.managedAdapterPackage ?: return
         val previousHealth = acpAgentProfileStore.health(profile.id)
@@ -2260,7 +2220,7 @@ class AgentRuntimeManager private constructor(
         // explicit Agent check resets this health to `unchecked`; a missing
         // command will still be caught by LocalAcpRuntime.requireLaunchCommand
         // and invalidate the health on the next connect.
-        if (shouldReuseManagedAcpPreparation(
+        if (!force && shouldReuseManagedAcpPreparation(
                 healthStatus = previousHealth.status,
                 installed = previousHealth.installed,
                 preparationRevision = previousHealth.preparationRevision,
@@ -2323,7 +2283,7 @@ class AgentRuntimeManager private constructor(
         // Installation/update is an explicit preparation boundary. A normal
         // Agent switch must reuse a healthy installed adapter; otherwise every
         // switch would rerun the complete DSH npm/native installation.
-        if (!shouldPrepareManagedAcpAdapter(
+        if (!force && !shouldPrepareManagedAcpAdapter(
                 agentId = profile.id,
                 commandAvailable = commandAvailable,
                 allPackagesReady = allPackagesReady,
@@ -2334,15 +2294,8 @@ class AgentRuntimeManager private constructor(
         ) {
             return
         }
-        val previousPreparationFailure = previousHealth.error
-            ?.trim()
-            ?.startsWith("Failed to prepare", ignoreCase = true) == true
-        if (previousPreparationFailure) {
-            throw IllegalStateException(
-                "${previousHealth.error}. Open Agent settings and retry the official " +
-                    "${profile.name} installation."
-            )
-        }
+        // This is an explicit user retry. A previous failure must not prevent
+        // the installer from trying again after network/environment repairs.
         if (!isTerminalCommandAvailable("npm", MANAGED_ACP_PROBE_TIMEOUT_MS)) {
             val terminalPackageId = managedAgentTerminalPackageId(profile)
             if (terminalPackageId == null) {
@@ -2392,6 +2345,14 @@ class AgentRuntimeManager private constructor(
                 }
             )
         }
+        // Only a successful explicit installer proves the installed revision.
+        acpAgentProfileStore.saveHealth(
+            profile.id,
+            acpAgentProfileStore.health(profile.id).copy(
+                installed = true,
+                preparationRevision = runtime.preparationRevision,
+            ),
+        )
     }
 
     private suspend fun areManagedNpmPackagesInstalled(
@@ -2535,6 +2496,19 @@ class AgentRuntimeManager private constructor(
         val targetRuntime = localRuntimeFor(targetProfile.id)
         if (!targetRuntime.isConnected) {
             connectLocalAcp(profile = targetProfile, runtime = targetRuntime)
+        }
+        if (method == "session/load" && args["refreshConfig"] == true &&
+            AcpAgentProfileStore.usesSharedProvider(targetProfile) &&
+            AcpHarnessAdapters.forProfile(targetProfile).configAdapterId != null) {
+            // Explicit model-card refresh owns discovery. Startup and prompts
+            // still use the saved binding and never require a /models request.
+            check(!targetRuntime.hasActiveTurns()) { "本轮结束后可刷新模型列表" }
+            val provider = checkNotNull(currentAgentProviderProfile()) { "请先配置模型提供商" }
+            val models = fetchAgentProviderModels(provider, forceRefresh = true)
+            check(currentAgentProviderProfile() == provider) { "模型配置已更改，请重新打开模型列表" }
+            check(!targetRuntime.hasActiveTurns()) { "本轮结束后可刷新模型列表" }
+            ModelProviderConfigStore.rememberModels(appContext, provider, models)
+            prepareLocalAcpLaunch(targetProfile, providerModelsOverride = models)
         }
         if (conversationId != null) {
             if (normalConversation && conversationAgentId != targetProfile.id) {
@@ -2804,6 +2778,23 @@ class AgentRuntimeManager private constructor(
             projectedConversationId = projectedConversationId,
         )
 
+        // Commands are session metadata, including before the first prompt.
+        // Only the host's current durable binding can admit their session;
+        // a provider-supplied session id alone must never replace the owner.
+        val boundCommandSession = if (sourceAgentId != null &&
+            eventConversationId != null && method == "session/update" &&
+            params.mapValue("update").stringValue("sessionUpdate") == "available_commands_update"
+        ) bindingRepository.getBindingByConversationId(eventConversationId)?.threadId else null
+        val hostAssignedCommandSession = admitsBoundAcpCommands(
+            method = method,
+            updateType = params.mapValue("update").stringValue("sessionUpdate"),
+            sessionId = threadId,
+            boundSessionId = boundCommandSession,
+            turnId = turnId,
+            sourceOwnsSession = sourceAgentId != null && threadId != null &&
+                localEventRuntime.ownsSession(threadId),
+        )
+
         // Deliver to Flutter FIRST. The completion side effects below only run
         // for the terminal event, so anything that throws in them used to drop
         // exactly that one event while every other event sailed through —
@@ -2818,7 +2809,7 @@ class AgentRuntimeManager private constructor(
                 "conversationId" to eventConversationId,
                 "agentId" to eventAgentId,
                 "agentName" to eventAgentName,
-                "allowImplicitTurnAdmission" to hostAssignedTurn,
+                "allowImplicitTurnAdmission" to (hostAssignedTurn || hostAssignedCommandSession),
                 "replay" to message["replay"],
                 "params" to params,
                 "message" to publicMessage
@@ -3991,13 +3982,21 @@ internal fun buildOpenCodeConfigJson(
     baseUrl: String,
     existingConfigJson: String = "",
     customHeaders: Map<String, String> = emptyMap(),
+    providerModels: List<ProviderModelOption> = emptyList(),
+    protocolType: String = "openai_compatible",
+    wireApi: String = OpenAiWireApi.CHAT_COMPLETIONS,
 ): String {
-    val providerModel = model.substringAfter("/", model)
+    val providerModel = model.removePrefix("$OPEN_CODE_PROVIDER_ID/")
     val root = runCatching {
         JsonParser.parseString(existingConfigJson).takeIf { it.isJsonObject }?.asJsonObject
     }.getOrNull() ?: com.google.gson.JsonObject()
     root.addProperty("\$schema", "https://opencode.ai/config.json")
     root.addProperty("model", model)
+    // This adapter maps the user's shared Provider, not OpenCode's built-in
+    // catalog. Use OpenCode's own provider-selection configuration.
+    if (!root.has("enabled_providers")) {
+        root.add("enabled_providers", com.google.gson.JsonArray().apply { add(OPEN_CODE_PROVIDER_ID) })
+    }
 
     val providers = root.getAsJsonObject("provider") ?: com.google.gson.JsonObject().also {
         root.add("provider", it)
@@ -4006,7 +4005,11 @@ internal fun buildOpenCodeConfigJson(
         ?: com.google.gson.JsonObject().also {
             providers.add(OPEN_CODE_PROVIDER_ID, it)
         }
-    provider.addProperty("npm", "@ai-sdk/openai-compatible")
+    provider.addProperty("npm", when {
+        protocolType.equals("anthropic", ignoreCase = true) -> "@ai-sdk/anthropic"
+        OpenAiWireApi.isResponses(wireApi) -> "@ai-sdk/openai"
+        else -> "@ai-sdk/openai-compatible"
+    })
     provider.addProperty("name", "OmniBot Provider")
     val options = provider.getAsJsonObject("options") ?: com.google.gson.JsonObject().also {
         provider.add("options", it)
@@ -4036,11 +4039,31 @@ internal fun buildOpenCodeConfigJson(
     val models = provider.getAsJsonObject("models") ?: com.google.gson.JsonObject().also {
         provider.add("models", it)
     }
-    val modelConfig = models.getAsJsonObject(providerModel)
-        ?: com.google.gson.JsonObject().also {
-            models.add(providerModel, it)
+    val availableModels = (providerModels + ProviderModelOption(id = providerModel))
+        .distinctBy { it.id }.filter { it.id.isNotBlank() }
+    if (providerModels.isNotEmpty()) {
+        // Replace only the managed Provider catalog; retain settings for models
+        // still present and leave unrelated user providers untouched.
+        val availableIds = availableModels.map { it.id }.toSet()
+        models.keySet().toList().filterNot { it in availableIds }.forEach(models::remove)
+    }
+    availableModels.forEach { entry ->
+            val modelConfig = models.getAsJsonObject(entry.id)
+                ?: com.google.gson.JsonObject().also { models.add(entry.id, it) }
+            modelConfig.addProperty("name", entry.displayName.ifBlank { entry.id })
+            // Forward declared capabilities. Let OpenCode own its supported variants;
+            // never infer reasoning levels or token limits from a model name.
+            entry.reasoning?.let { modelConfig.addProperty("reasoning", it) }
+            entry.toolCall?.let { modelConfig.addProperty("tool_call", it) }
+            entry.temperature?.let { modelConfig.addProperty("temperature", it) }
+            entry.attachment?.let { modelConfig.addProperty("attachment", it) }
+            if (entry.contextLimit != null || entry.outputLimit != null) {
+                val limits = modelConfig.getAsJsonObject("limit") ?: com.google.gson.JsonObject()
+                entry.contextLimit?.let { limits.addProperty("context", it) }
+                entry.outputLimit?.let { limits.addProperty("output", it) }
+                modelConfig.add("limit", limits)
+            }
         }
-    modelConfig.addProperty("name", providerModel)
 
     return GsonBuilder().setPrettyPrinting().create().toJson(root) + "\n"
 }
@@ -4118,7 +4141,7 @@ private fun shellQuote(value: String): String {
     return "'" + value.replace("'", "'\"'\"'") + "'"
 }
 
-private fun tomlString(value: String): String {
+internal fun tomlString(value: String): String {
     return buildString {
         append('"')
         value.forEach { char ->
@@ -4539,6 +4562,18 @@ internal fun resolveObservedTurnId(
     )
 }).map { it?.trim() }
     .firstOrNull { !it.isNullOrEmpty() }
+
+/** A command catalog may establish its host-bound session, never a prompt turn. */
+internal fun admitsBoundAcpCommands(
+    method: String,
+    updateType: String?,
+    sessionId: String?,
+    boundSessionId: String?,
+    turnId: String?,
+    sourceOwnsSession: Boolean,
+): Boolean = method == "session/update" &&
+    updateType == "available_commands_update" && turnId.isNullOrBlank() &&
+    sourceOwnsSession && !sessionId.isNullOrBlank() && sessionId == boundSessionId
 
 /**
  * Conversation attribution is host-owned. A remote ACP notification does not

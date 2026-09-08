@@ -19,6 +19,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.double
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -537,7 +538,6 @@ class XiaowanAcpPresentationBridgeTest {
         bridge.onComplete(
             AgentResult.Success(
                 response = AgentFinalResponse(content = "已完成"),
-                executedTools = emptyList(),
                 latestPromptTokens = 100,
                 promptTokenThreshold = 128000,
                 completionTokens = 20,
@@ -562,7 +562,6 @@ class XiaowanAcpPresentationBridgeTest {
     fun `ACP prompt response does not count cached input twice`() {
         val success = AgentResult.Success(
             response = AgentFinalResponse(content = "已完成"),
-            executedTools = emptyList(),
             latestPromptTokens = 2_057,
             completionTokens = 5,
             cachedTokens = 2_048,
@@ -601,7 +600,6 @@ class XiaowanAcpPresentationBridgeTest {
         bridge.onComplete(
             AgentResult.Success(
                 response = AgentFinalResponse(content = "已完成"),
-                executedTools = emptyList(),
                 completionTokens = 20,
             )
         )
@@ -635,7 +633,6 @@ class XiaowanAcpPresentationBridgeTest {
         bridge.onComplete(
             AgentResult.Success(
                 response = AgentFinalResponse(content = ""),
-                executedTools = emptyList(),
                 outputKind = "none",
                 hasUserVisibleOutput = false,
             )
@@ -749,7 +746,7 @@ class XiaowanAcpPresentationBridgeTest {
         assertEquals("Command completed", rawOutput["summary"]?.jsonPrimitive?.content)
         assertEquals("hello", rawOutput["terminalOutput"]?.jsonPrimitive?.content)
         assertEquals("shell-1", rawOutput["terminalSessionId"]?.jsonPrimitive?.content)
-        assertEquals("{\"exitCode\":0}", rawOutput["previewJson"]?.jsonPrimitive?.content)
+        assertEquals(null, rawOutput["previewJson"])
         assertEquals("{\"stdout\":\"hello\"}", rawOutput["rawResultJson"]?.jsonPrimitive?.content)
         assertEquals("0", (rawOutput["result"] as JsonObject)["exitCode"]?.jsonPrimitive?.content)
     }
@@ -779,7 +776,8 @@ class XiaowanAcpPresentationBridgeTest {
         assertEquals(rawResult, rawOutput["rawResultJson"]?.jsonPrimitive?.content)
         assertEquals(
             stdout,
-            (rawOutput["rawResult"] as JsonObject)["stdout"]?.jsonPrimitive?.content,
+            Json.parseToJsonElement(rawOutput["rawResultJson"]!!.jsonPrimitive.content)
+                .jsonObject["stdout"]?.jsonPrimitive?.content,
         )
         assertEquals(stdout, rawOutput["terminalOutput"]?.jsonPrimitive?.content)
     }

@@ -14,8 +14,7 @@ extension _ChatRuntimeMessageSupport on ChatConversationRuntimeCoordinator {
     final now = DateTime.now().millisecondsSinceEpoch;
     runtime.conversation = conversation.copyWith(
       latestPromptTokens: latestPromptTokens ?? conversation.latestPromptTokens,
-      promptTokenThreshold:
-          promptTokenThreshold ?? conversation.promptTokenThreshold,
+      // Usage/capacity observations never write the user-owned setting.
       latestPromptTokensUpdatedAt: latestPromptTokens != null
           ? now
           : conversation.latestPromptTokensUpdatedAt,

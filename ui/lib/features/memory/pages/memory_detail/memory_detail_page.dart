@@ -108,7 +108,7 @@ class MemoryDetailPage extends StatelessWidget {
     switch (action) {
       case RecordMenuAction.delete:
         final res = await onDelete(vm.id);
-        if (res) {
+        if (res && context.mounted) {
           Navigator.pop(context); // 返回记忆中心
         }
         break;

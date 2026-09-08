@@ -44,7 +44,7 @@ class AgentToolDefinitionsSubagentTest {
         )
         assertTrue(
             profile["description"]?.jsonPrimitive?.contentOrNull
-                ?.contains("继承当前 harness 已提供的能力") == true
+                ?.contains("planner 只生成计划、不执行工具") == true
         )
     }
 
@@ -69,7 +69,7 @@ class AgentToolDefinitionsSubagentTest {
         )
         assertTrue(
             profile["description"]?.jsonPrimitive?.contentOrNull
-                ?.contains("inherits the capabilities provided by the current harness") == true
+                ?.contains("planner creates plans without executing tools") == true
         )
     }
 

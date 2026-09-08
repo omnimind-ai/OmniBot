@@ -32,6 +32,9 @@ import cn.com.omnimind.baselib.llm.ReasoningEffort
 import cn.com.omnimind.baselib.llm.SceneModelBindingStore
 import cn.com.omnimind.baselib.llm.SceneOperationConfigStore
 import cn.com.omnimind.baselib.llm.contentText
+import cn.com.omnimind.baselib.llm.encodeRequestToString
+import cn.com.omnimind.baselib.llm.toStreamingRequestBody
+import cn.com.omnimind.baselib.llm.requestLogJson
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
@@ -39,6 +42,8 @@ import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.decodeFromJsonElement
+import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.JsonArray as KxJsonArray
 import kotlinx.serialization.json.JsonObject as KxJsonObject
@@ -67,7 +72,6 @@ import org.json.JSONArray
 object HttpController {
     private const val TAG = "HttpController"
     private const val RESPONSE_LOG_CHUNK_SIZE = 3500
-    private const val PROVIDER_MODELS_TIMEOUT_SECONDS = 4L
     private const val ROUTE_CUSTOM_OPENAI_COMPAT = "custom_openai_compat"
     private const val ANTHROPIC_EPHEMERAL_CACHE_TYPE = "ephemeral"
     private const val ANTHROPIC_MAX_CACHE_BREAKPOINTS = 4
@@ -1597,6 +1601,14 @@ object HttpController {
                             directKeys = listOf("reasoning", "thinking"),
                             nestedValueKeys = listOf("reasoning", "thinking")
                         ),
+                        supportedReasoningLevels =
+                            (itemObj["supported_reasoning_levels"] as? KxJsonArray)
+                                ?.mapNotNull { level ->
+                                    ((level as? KxJsonObject)?.get("effort") as? JsonPrimitive)
+                                        ?.contentOrNull?.takeIf { it.isNotBlank() }
+                                }?.distinct().orEmpty(),
+                        defaultReasoningLevel =
+                            (itemObj["default_reasoning_level"] as? JsonPrimitive)?.contentOrNull,
                         toolCall = parseProviderModelBoolean(
                             itemObj = itemObj,
                             directKeys = listOf("toolCall", "tool_call", "tools"),
@@ -2643,16 +2655,34 @@ object HttpController {
 
     // ---- end Anthropic protocol helpers ----
 
-    private fun openAIStreamClient(forceHttp1: Boolean = false): OkHttpClient {
-        return OkHttpClient.Builder()
-            .apply {
-                if (forceHttp1) protocols(listOf(Protocol.HTTP_1_1))
-            }
+    // A client owns its connection pool. Creating one per prompt forces every
+    // turn and tool continuation through DNS/TCP/TLS again. Keep request auth
+    // on Request, and share only the transport across Provider calls.
+    private val openAIStreamingClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
             .connectTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
             .readTimeout(0, java.util.concurrent.TimeUnit.SECONDS)
             .writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
             .build()
     }
+
+    private val openAIHttp1StreamingClient: OkHttpClient by lazy {
+        openAIStreamingClient.newBuilder()
+            .protocols(listOf(Protocol.HTTP_1_1))
+            .build()
+    }
+
+    // Catalogs are finite responses, unlike inference streams. Share transport
+    // pools without caching model data or applying a fresh client's implicit
+    // ten-second read deadline to a user-requested refresh.
+    private val providerModelsClient: OkHttpClient by lazy {
+        openAIStreamingClient.newBuilder()
+            .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+    }
+
+    private fun openAIStreamClient(forceHttp1: Boolean = false): OkHttpClient =
+        if (forceHttp1) openAIHttp1StreamingClient else openAIStreamingClient
 
     private fun createChatRequestFromText(
         resolved: ResolvedSceneRequest,
@@ -2868,6 +2898,14 @@ object HttpController {
         val root = runCatching {
             completionJson.parseToJsonElement(requestBodyJson) as? KxJsonObject
         }.getOrNull() ?: return requestBodyJson
+        return completionJson.encodeRequestToString(buildRequestPayloadWithResolvedModel(root, resolvedModel, mirrorLegacyTokenFields))
+    }
+
+    private fun buildRequestPayloadWithResolvedModel(
+        root: KxJsonObject,
+        resolvedModel: String,
+        mirrorLegacyTokenFields: Boolean,
+    ): KxJsonObject {
         val payload = root.toMutableMap()
         if (resolvedModel.isNotEmpty()) {
             payload["model"] = JsonPrimitive(resolvedModel)
@@ -2893,7 +2931,7 @@ object HttpController {
             payload.remove("max_tokens")
         }
 
-        return normalizeOpenAiChatCallIds(KxJsonObject(payload).toString())
+        return normalizeOpenAiChatCallIds(KxJsonObject(payload))
     }
 
     /**
@@ -2902,14 +2940,20 @@ object HttpController {
      * local ACP history and tool routing continue to use the original IDs.
      */
     private fun normalizeOpenAiChatCallIds(requestBodyJson: String): String {
-        val request = runCatching {
-            completionJson.decodeFromString<ChatCompletionRequest>(requestBodyJson)
-        }.getOrNull() ?: return requestBodyJson
-        val plan = OpenAiResponsesCallIdCodec.planFor(request.messages)
         val root = runCatching {
             completionJson.parseToJsonElement(requestBodyJson) as? KxJsonObject
         }.getOrNull() ?: return requestBodyJson
-        val messages = root["messages"] as? KxJsonArray ?: return requestBodyJson
+        return completionJson.encodeRequestToString(normalizeOpenAiChatCallIds(root))
+    }
+
+    private fun normalizeOpenAiChatCallIds(root: KxJsonObject): KxJsonObject {
+        // Decode the existing tree: serializing and parsing it again duplicates
+        // every inline image while only tool-call identifiers need changing.
+        val request = runCatching {
+            completionJson.decodeFromJsonElement<ChatCompletionRequest>(root)
+        }.getOrNull() ?: return root
+        val plan = OpenAiResponsesCallIdCodec.planFor(request.messages)
+        val messages = root["messages"] as? KxJsonArray ?: return root
         val normalizedMessages = KxJsonArray(messages.map { rawMessage ->
             val message = rawMessage as? KxJsonObject ?: return@map rawMessage
             val normalized = message.toMutableMap()
@@ -2935,7 +2979,7 @@ object HttpController {
             }
             KxJsonObject(normalized)
         })
-        return KxJsonObject(root + ("messages" to normalizedMessages)).toString()
+        return KxJsonObject(root + ("messages" to normalizedMessages))
     }
 
     private fun buildOpenAICompatibleRequestBody(
@@ -2945,17 +2989,27 @@ object HttpController {
         protocolType: String,
         apiBase: String?
     ): String {
-        val baseBody = buildRequestBodyWithResolvedModel(
-            requestBodyJson = requestBodyJson,
-            resolvedModel = resolvedModel,
-            mirrorLegacyTokenFields = mirrorLegacyTokenFields
-        )
-        val protocolReadyBody = if (DeepSeekProvider.shouldUseOfficialAdapter(protocolType, apiBase)) {
-            applyOfficialDeepSeekThinkingMode(baseBody)
-        } else {
-            baseBody
-        }
-        return stripAnthropicOnlyFieldsForOpenAiCompatible(protocolReadyBody)
+        val root = completionJson.parseToJsonElement(requestBodyJson) as KxJsonObject
+        return completionJson.encodeRequestToString(buildOpenAICompatibleRequestPayload(
+            root, resolvedModel, mirrorLegacyTokenFields, protocolType, apiBase
+        ))
+    }
+
+    private fun buildOpenAICompatibleRequestPayload(
+        root: KxJsonObject,
+        resolvedModel: String,
+        mirrorLegacyTokenFields: Boolean,
+        protocolType: String,
+        apiBase: String?,
+    ): KxJsonObject {
+        val base = buildRequestPayloadWithResolvedModel(root, resolvedModel, mirrorLegacyTokenFields)
+        val protocolReady = if (DeepSeekProvider.shouldUseOfficialAdapter(protocolType, apiBase)) {
+            applyOfficialDeepSeekThinkingMode(base)
+        } else base
+        val supported = if (DeepSeekProvider.requestCapabilities(protocolType, apiBase, resolvedModel)
+                .supportsChatPromptCacheKey) protocolReady
+            else KxJsonObject(protocolReady - "prompt_cache_key")
+        return stripAnthropicOnlyFields(supported) as KxJsonObject
     }
 
     private fun buildOpenAIResponsesRequestBody(
@@ -2972,7 +3026,17 @@ object HttpController {
         resolvedModel: String,
         providerCapabilities: ProviderRequestCapabilities,
     ): String {
-        val decodedRequest = completionJson.decodeFromString<ChatCompletionRequest>(requestBodyJson)
+        return completionJson.encodeRequestToString(buildOpenAIResponsesRequestPayload(
+            completionJson.parseToJsonElement(requestBodyJson) as KxJsonObject, resolvedModel, providerCapabilities
+        ))
+    }
+
+    private fun buildOpenAIResponsesRequestPayload(
+        root: KxJsonObject,
+        resolvedModel: String,
+        providerCapabilities: ProviderRequestCapabilities,
+    ): KxJsonObject {
+        val decodedRequest = completionJson.decodeFromJsonElement<ChatCompletionRequest>(root)
             .copy(model = resolvedModel)
         val parsedRequest = OpenAiResponsesFunctionNameCodec
             .planFor(decodedRequest)
@@ -2999,9 +3063,7 @@ object HttpController {
                 providerCapabilities.supportsResponsesPromptCacheKey
             }
         )
-        return stripAnthropicOnlyFieldsForOpenAiCompatible(
-            completionJson.encodeToString(payload)
-        )
+        return stripAnthropicOnlyFields(completionJson.encodeToJsonElement(payload)) as KxJsonObject
     }
 
     private fun buildResponsesInputItems(messages: List<ChatCompletionMessage>): List<JsonElement> {
@@ -3248,6 +3310,10 @@ object HttpController {
         val payload = runCatching {
             completionJson.parseToJsonElement(requestBodyJson) as? KxJsonObject
         }.getOrNull() ?: return requestBodyJson
+        return completionJson.encodeRequestToString(applyOfficialDeepSeekThinkingMode(payload))
+    }
+
+    private fun applyOfficialDeepSeekThinkingMode(payload: KxJsonObject): KxJsonObject {
         val explicitThinkingType = (payload["thinking"] as? KxJsonObject)
             ?.get("type")
             .let { it as? JsonPrimitive }
@@ -3298,14 +3364,14 @@ object HttpController {
         // prompt_cache_key is an OpenAI extension and DeepSeek's official API
         // rejects unsupported top-level request fields.
         updated.remove("prompt_cache_key")
-        return KxJsonObject(updated).toString()
+        return KxJsonObject(updated)
     }
 
     private fun stripAnthropicOnlyFieldsForOpenAiCompatible(requestBodyJson: String): String {
         val payload = runCatching {
             completionJson.parseToJsonElement(requestBodyJson)
         }.getOrNull() ?: return requestBodyJson
-        return stripAnthropicOnlyFields(payload).toString()
+        return completionJson.encodeRequestToString(stripAnthropicOnlyFields(payload))
     }
 
     private fun stripAnthropicOnlyFields(payload: JsonElement): JsonElement {
@@ -3427,11 +3493,20 @@ object HttpController {
         requestBodyJson: String,
         event: EventSourceListener,
         forceHttp1: Boolean = false
+    ): EventSource = postOpenAIChatCompletionsStreamRequest(
+        resolved, completionJson.parseToJsonElement(requestBodyJson) as KxJsonObject, event, forceHttp1
+    )
+
+    private suspend fun postOpenAIChatCompletionsStreamRequest(
+        resolved: ResolvedSceneRequest,
+        requestBody: KxJsonObject,
+        event: EventSourceListener,
+        forceHttp1: Boolean = false
     ): EventSource = withContext(Dispatchers.IO) {
         if (resolved.protocolType == "anthropic") {
             // Parse the incoming OpenAI JSON back into a request and convert to Anthropic format
             val parsedRequest = runCatching {
-                val json = completionJson.decodeFromString<ChatCompletionRequest>(requestBodyJson)
+                val json = completionJson.decodeFromJsonElement<ChatCompletionRequest>(requestBody)
                 json.copy(model = resolved.resolvedModel, stream = true)
             }.getOrElse {
                 return@withContext buildDummyFailureEventSource(event, "Failed to parse request for Anthropic conversion")
@@ -3442,15 +3517,15 @@ object HttpController {
                 anthropicJson,
                 event,
                 forceHttp1,
-                conversationId = conversationIdFromRequestJson(requestBodyJson)
+                conversationId = conversationIdFromPromptCacheKey((requestBody["prompt_cache_key"] as? JsonPrimitive)?.contentOrNull)
             )
         }
         val base = normalizeApiBase(resolved.apiBase ?: "")
             ?: throw IllegalArgumentException("Invalid apiBase")
         val normalizedWireApi = OpenAiWireApi.normalize(resolved.wireApi)
-        val preparedRequestJson = if (OpenAiWireApi.isResponses(normalizedWireApi)) {
-            buildOpenAIResponsesRequestBody(
-                requestBodyJson = requestBodyJson,
+        val preparedRequest = if (OpenAiWireApi.isResponses(normalizedWireApi)) {
+            buildOpenAIResponsesRequestPayload(
+                root = requestBody,
                 resolvedModel = resolved.resolvedModel,
                 providerCapabilities = DeepSeekProvider.requestCapabilities(
                     protocolType = resolved.protocolType,
@@ -3459,19 +3534,19 @@ object HttpController {
                 ),
             )
         } else {
-            buildOpenAICompatibleRequestBody(
-                requestBodyJson = requestBodyJson,
+            buildOpenAICompatibleRequestPayload(
+                root = requestBody,
                 resolvedModel = resolved.resolvedModel,
                 mirrorLegacyTokenFields = false,
                 protocolType = resolved.protocolType,
                 apiBase = base
             )
         }
-        val requestBody = preparedRequestJson.toRequestBody("application/json".toMediaType())
+        val httpBody = completionJson.toStreamingRequestBody(preparedRequest)
         val url = buildOpenAIInferenceUrl(base, normalizedWireApi)
         val request = buildOpenAIRequestBuilder(
             url = url,
-            requestBody = requestBody,
+            requestBody = httpBody,
             apiKey = resolved.apiKey,
             customHeaders = resolved.customHeaders
         )
@@ -3505,8 +3580,8 @@ object HttpController {
                     protocolType = resolved.protocolType,
                     url = url,
                     stream = true,
-                    requestJson = preparedRequestJson,
-                    conversationId = conversationIdFromRequestJson(requestBodyJson)
+                    requestJson = completionJson.requestLogJson(preparedRequest),
+                    conversationId = conversationIdFromPromptCacheKey((requestBody["prompt_cache_key"] as? JsonPrimitive)?.contentOrNull)
                 )
             )
         )
@@ -3593,7 +3668,8 @@ object HttpController {
         explicitProtocolType: String? = null,
         explicitWireApi: String? = null,
         reasoningEffort: String? = null,
-        promptCacheKey: String? = null
+        promptCacheKey: String? = null,
+        maxCompletionTokens: Int? = null
     ): EventSource {
         val resolved = resolveSceneRequest(
             modelOrScene = model,
@@ -3612,7 +3688,10 @@ object HttpController {
                 enableThinking = enableThinking,
                 reasoningEffort = reasoningEffort,
                 promptCacheKey = promptCacheKey
-            ),
+            ).let { request ->
+                if (maxCompletionTokens == null) request
+                else request.copy(maxCompletionTokens = maxCompletionTokens, maxTokens = null)
+            },
             apiBase = resolved.apiBase,
             apiKey = resolved.apiKey,
             customHeaders = resolved.customHeaders,
@@ -3654,6 +3733,36 @@ object HttpController {
         return postOpenAIChatCompletionsStreamRequest(
             resolved = resolved,
             requestBodyJson = requestBodyJson,
+            event = event,
+            forceHttp1 = forceHttp1
+        )
+    }
+
+    suspend fun postChatCompletionsStreamRequest(
+        model: String,
+        requestBody: KxJsonObject,
+        event: EventSourceListener,
+        explicitApiBase: String? = null,
+        explicitApiKey: String? = null,
+        explicitCustomHeaders: Map<String, String>? = null,
+        explicitModel: String? = null,
+        explicitProtocolType: String? = null,
+        explicitWireApi: String? = null,
+        forceHttp1: Boolean = false
+    ): EventSource {
+        val resolved = resolveSceneRequest(
+            modelOrScene = model,
+            explicitApiBase = explicitApiBase,
+            explicitApiKey = explicitApiKey,
+            explicitCustomHeaders = explicitCustomHeaders,
+            explicitModel = explicitModel,
+            explicitProtocolType = explicitProtocolType,
+            explicitWireApi = explicitWireApi
+        )
+        logSceneProfile(resolved)
+        return postOpenAIChatCompletionsStreamRequest(
+            resolved = resolved,
+            requestBody = requestBody,
             event = event,
             forceHttp1 = forceHttp1
         )
@@ -4094,34 +4203,15 @@ object HttpController {
             "[provider models protocol=$protocolType]",
             request.headers.toMultimap().mapValues { it.value.joinToString(",") }
         )
-        // This endpoint is used while creating a local ACP session when the
-        // shared scene model binding has not been created yet. Keep the
-        // blocking OkHttp call itself bounded; a coroutine timeout alone
-        // cannot interrupt execute() while it is waiting on the socket.
-        val response = OkHttpClient.Builder()
-            .callTimeout(
-                PROVIDER_MODELS_TIMEOUT_SECONDS,
-                java.util.concurrent.TimeUnit.SECONDS,
-            )
-            .connectTimeout(
-                PROVIDER_MODELS_TIMEOUT_SECONDS,
-                java.util.concurrent.TimeUnit.SECONDS,
-            )
-            .readTimeout(
-                PROVIDER_MODELS_TIMEOUT_SECONDS,
-                java.util.concurrent.TimeUnit.SECONDS,
-            )
-            .build()
-            .newCall(request)
-            .execute()
-        val responseBody = response.body?.string()
-        if (!response.isSuccessful) {
-            throw IllegalStateException(
-                "获取模型列表失败 (${response.code})：${extractAvailabilityMessage(responseBody)}"
-            )
+        providerModelsClient.newCall(request).execute().use { response ->
+            val responseBody = response.body?.string()
+            if (!response.isSuccessful) {
+                throw IllegalStateException(
+                    "获取模型列表失败 (${response.code})：${extractAvailabilityMessage(responseBody)}"
+                )
+            }
+            parseProviderModelsResponse(responseBody)
         }
-
-        parseProviderModelsResponse(responseBody)
     }
 
     private suspend fun checkAnthropicModelAvailability(

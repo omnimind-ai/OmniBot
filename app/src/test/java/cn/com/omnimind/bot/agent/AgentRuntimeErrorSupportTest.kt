@@ -9,6 +9,21 @@ import org.junit.Test
 
 class AgentRuntimeErrorSupportTest {
     @Test
+    fun requestTimeoutDoesNotClaimMissingCredentialsOrEmptyModels() {
+        val error = IllegalStateException("model fetch failed", java.net.SocketTimeoutException("timeout"))
+        assertEquals("provider_request_timeout", AgentRuntimeErrorSupport.failureKind(error))
+        assertTrue(AgentRuntimeErrorSupport.userFacingMessage(error)!!.contains("服务商请求超时"))
+    }
+    @Test
+    fun authenticationFailureIsNotReportedAsMissingModel() {
+        for (message in listOf("获取模型列表失败 (401)：Invalid API Key",
+            "AuthenticationError: OpenAIException 身份验证失败。Error happened to model=GLM-4.5-Air")) {
+            val error = IllegalStateException(message)
+            assertEquals("provider_authentication_failed", AgentRuntimeErrorSupport.failureKind(error))
+            assertTrue(AgentRuntimeErrorSupport.userFacingMessage(error)!!.contains("身份验证失败"))
+        }
+    }
+    @Test
     fun `incomplete call diagnostic never invents a retry`() {
         val message = AgentRuntimeErrorSupport.userFacingMessage(AgentIncompleteToolCallException(0)).orEmpty()
         assertTrue(message.contains("不完整"))

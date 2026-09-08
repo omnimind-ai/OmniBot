@@ -238,8 +238,7 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
         profiles: profilesPayload.profiles,
         providerModelsByProfileId: enriched,
       );
-      // Opening model settings is an explicit catalog inspection. Keep cached
-      // content usable while refreshing; ordinary ACP startup stays offline.
+      // Show saved bindings and manual IDs while querying the remote catalogs.
       unawaited(_refreshProviderModelsInBackground());
     } catch (_) {
       if (!mounted) return;
@@ -405,8 +404,18 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
             manualModelIds: manualModelIds,
           );
         } catch (_) {
-          // Keep the last cached list. Background refresh must not interrupt
-          // scene settings with dialogs or transient network error toasts.
+          nextModels[profile.id] =
+              await ModelProviderConfigService.getStoredModelOptionsForProfile(
+                profile.id,
+                profile: profile,
+                enrichMetadata: false,
+              );
+          if (_isProviderRefreshActive(refreshGeneration)) {
+            showToast(
+              '${profile.name}：模型列表加载失败，请重新打开重试',
+              type: ToastType.error,
+            );
+          }
         }
       }
       await Future.wait(capabilityRefreshes.values);
@@ -425,7 +434,9 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
         providerModelsByProfileId: merged,
       );
     } catch (_) {
-      // Initial cached content remains usable when background refresh fails.
+      if (_isProviderRefreshActive(refreshGeneration)) {
+        showToast(context.l10n.sceneModelLoadFailed, type: ToastType.error);
+      }
     } finally {
       if (refreshGeneration == _providerRefreshGeneration) {
         _isRefreshingModels = false;
@@ -461,7 +472,7 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
           capability: capability,
         );
       } catch (_) {
-        // Preserve the last capability-specific official list.
+        capabilityModels[profile.id] = const [];
       }
     }
     if (!_isProviderRefreshActive(refreshGeneration)) return;
@@ -492,6 +503,7 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage> {
       profileId: snapshot.id,
       providerName: snapshot.name,
       capability: capability,
+      forceRefresh: true,
     );
     if (!_isProviderRefreshActive(refreshGeneration)) return const [];
     final latestPayload = await ModelProviderConfigService.listProfiles();

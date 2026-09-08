@@ -117,6 +117,11 @@ class MemoryCenterPageState extends State<MemoryCenterPage>
   // 选择模式状态
   bool _isSelectionMode = false;
   Set<int> _selectedCardIds = {};
+  final Map<int, workspace_memory.WorkspaceShortMemoryItem> _shortMemoryItems =
+      {};
+  int _nextShortMemoryCardId = 0;
+  int _shortMemoryLoadGeneration = 0;
+  bool _isShortMemoryDeleting = false;
 
   // LLM 生成的记忆建议
   String? _memorySuggestion;
@@ -573,10 +578,15 @@ class MemoryCenterPageState extends State<MemoryCenterPage>
   }
 
   Future<void> _loadShortMemories() async {
+    final generation = ++_shortMemoryLoadGeneration;
     try {
       final items =
           await workspace_memory.WorkspaceMemoryService.getShortMemories();
+      if (!mounted || generation != _shortMemoryLoadGeneration) return;
+      final entries = <int, workspace_memory.WorkspaceShortMemoryItem>{};
       final cards = items.map((item) {
+        final cardId = ++_nextShortMemoryCardId;
+        entries[cardId] = item;
         final text = _normalizeShortMemoryText(item.content);
         final isTruncated = text.length > 26;
         final title = isTruncated ? '${text.substring(0, 26)}...' : text;
@@ -584,7 +594,7 @@ class MemoryCenterPageState extends State<MemoryCenterPage>
             ? item.timestampMillis
             : DateTime.now().millisecondsSinceEpoch;
         return MemoryCardModel(
-          id: item.id.hashCode,
+          id: cardId,
           title: title,
           description: isTruncated ? text : null,
           createdAt: timestamp,
@@ -597,6 +607,10 @@ class MemoryCenterPageState extends State<MemoryCenterPage>
 
       _safeSetState(() {
         localMemoryCards = cards;
+        _shortMemoryItems
+          ..clear()
+          ..addAll(entries);
+        _selectedCardIds.clear();
         localMemoryTags = [
           AppTag(
             id: 'all',
@@ -627,7 +641,6 @@ class MemoryCenterPageState extends State<MemoryCenterPage>
     return text;
   }
 
-  // ignore: unused_element
   void _enterSelectionMode(MemoryCardModel vm) async {
     // 进入选择模式，选中当前卡片
     _safeSetState(() {
@@ -670,8 +683,9 @@ class MemoryCenterPageState extends State<MemoryCenterPage>
 
   Future<void> _batchDeleteSelectedCards() async {
     if (_selectedCardIds.isEmpty) return;
-    _exitSelectionMode();
-    await _deleteShortMemoryUnsupported(0);
+    if (await _deleteShortMemories(_selectedCardIds.toList()) && mounted) {
+      _exitSelectionMode();
+    }
   }
 
   @override
@@ -1066,6 +1080,13 @@ class MemoryCenterPageState extends State<MemoryCenterPage>
       header: Column(
         children: [
           const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 0, 18, 12),
+            child: Text(
+              context.l10n.memoryShortRetention,
+              style: TextStyle(color: context.omniPalette.textSecondary),
+            ),
+          ),
           if (hasLocalMemories)
             Padding(
               padding: const EdgeInsets.fromLTRB(18, 0, 18, 8),
@@ -1097,11 +1118,11 @@ class MemoryCenterPageState extends State<MemoryCenterPage>
       emptyState: _buildLocalMemoryPlaceholder(),
       onRefresh: () => _loadData(silent: true, forceMem0Refresh: true),
       onEdit: _editShortMemoryUnsupported,
-      onDelete: _deleteShortMemoryUnsupported,
+      onDelete: (id) => _deleteShortMemories([id]),
       isSelectionMode: _isSelectionMode,
       selectedCardIds: _selectedCardIds,
       onToggleSelection: _toggleCardSelection,
-      onLongPress: (_) {},
+      onLongPress: _enterSelectionMode,
     );
   }
 
@@ -1615,9 +1636,44 @@ class MemoryCenterPageState extends State<MemoryCenterPage>
     showToast(context.l10n.memoryEditDisabled, type: ToastType.warning);
   }
 
-  Future<bool> _deleteShortMemoryUnsupported(int cardId) async {
-    showToast(context.l10n.memoryDeleteDisabled, type: ToastType.warning);
-    return false;
+  Future<bool> _deleteShortMemories(List<int> cardIds) async {
+    if (_isShortMemoryDeleting || cardIds.isEmpty) return false;
+    final items = cardIds.map((id) => _shortMemoryItems[id]).toList();
+    if (items.any((item) => item == null)) {
+      await _loadShortMemories();
+      if (!mounted) return false;
+      showToast(context.l10n.memoryShortDeleteFailed, type: ToastType.warning);
+      return false;
+    }
+    _isShortMemoryDeleting = true;
+    try {
+      final confirmed = await AppDialog.confirm(
+        context,
+        title: context.l10n.memoryShortDeleteConfirm,
+        content:
+            '${context.l10n.memoryShortDeleteScope}\n\n${items.length == 1 ? _clipMem0Memory(items.single!.content, maxLength: 120) : context.l10n.memorySelectedCount(items.length)}',
+        confirmText: context.trLegacy('删除'),
+        confirmButtonColor: AppColors.alertRed,
+      );
+      if (confirmed != true || !mounted) return false;
+      final count =
+          await workspace_memory.WorkspaceMemoryService.deleteShortMemories(
+            items.cast<workspace_memory.WorkspaceShortMemoryItem>(),
+          );
+      await _loadShortMemories();
+      if (!mounted) return false;
+      if (count != items.length) throw StateError('Incomplete deletion');
+      showToast(context.l10n.memoryShortDeleted, type: ToastType.success);
+      return true;
+    } catch (_) {
+      await _loadShortMemories();
+      if (mounted) {
+        showToast(context.l10n.memoryShortDeleteFailed, type: ToastType.error);
+      }
+      return false;
+    } finally {
+      _isShortMemoryDeleting = false;
+    }
   }
 
   String _clipMem0Memory(String memory, {int maxLength = 36}) {

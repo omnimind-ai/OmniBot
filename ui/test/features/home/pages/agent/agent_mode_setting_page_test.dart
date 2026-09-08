@@ -67,6 +67,155 @@ void main() {
         .setMockMethodCallHandler(pluginPlatformChannel, null);
   });
 
+  testWidgets('installer exceptions remain in a readable result sheet', (
+    tester,
+  ) async {
+    var calls = 0;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(agentRuntimeChannel, (call) async {
+          if (call.method == 'agent/list') {
+            return {
+              'selectedAgentId': 'codex-acp',
+              'agents': [
+                _agent(
+                  'codex-acp',
+                  'Codex',
+                  'codex-acp',
+                  'online',
+                  managedAdapter: true,
+                ),
+              ],
+            };
+          }
+          if (call.method == 'agent/prepare') {
+            calls++;
+            expect((call.arguments as Map)['force'], isTrue);
+            throw PlatformException(
+              code: 'INSTALL_FAILED',
+              message: 'DEPTH_ZERO_SELF_SIGNED_CERT',
+            );
+          }
+          return null;
+        });
+    await tester.pumpWidget(
+      MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        locale: const Locale('zh'),
+        home: const AgentModeSettingPage(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('agent-check-codex-acp')));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(seconds: 10));
+    expect(find.byType(SettingsDetailSheet), findsOneWidget);
+    expect(find.text('安装未完成'), findsOneWidget);
+    expect(find.textContaining('网络是否需要登录'), findsOneWidget);
+    expect(find.textContaining('SELF_SIGNED_CERT'), findsNothing);
+    expect(calls, 1);
+  });
+
+  for (final entry in <String, String>{
+    'Dispatch Model Provider is not configured.': '请先在模型设置中选择一个可用模型，再启动助手。',
+    'Dispatch Model Provider has no usable credentials.':
+        '模型连接验证失败，请在模型设置中检查接口地址和密钥。',
+    'Claude Code requires an Anthropic-compatible Provider endpoint.':
+        '当前模型连接不适用于这个助手，请更换模型连接或助手。',
+    'Harness preparation is already running for codex-acp.':
+        '已有助手正在安装，请等待完成后再试。',
+  }.entries) {
+    testWidgets(
+      'assistant error offers an action without internal details: ${entry.key}',
+      (tester) async {
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(agentRuntimeChannel, (call) async {
+              if (call.method != 'agent/list') return null;
+              return <String, dynamic>{
+                'selectedAgentId': 'codex-acp',
+                'agents': [
+                  _agent(
+                    'codex-acp',
+                    'Codex',
+                    'codex-acp',
+                    'offline',
+                    lastCheckError: entry.key,
+                  ),
+                ],
+              };
+            });
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: AppTheme.lightTheme,
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            locale: const Locale('zh'),
+            home: const AgentModeSettingPage(),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(find.text(entry.key), findsNothing);
+        expect(find.text(entry.value), findsOneWidget);
+      },
+    );
+  }
+
+  testWidgets(
+    'installed initialization errors are not mislabeled Dispatch waiting and retry runs again',
+    (tester) async {
+      var attempts = 0;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(agentRuntimeChannel, (call) async {
+            if (call.method == 'agent/list')
+              return <String, dynamic>{
+                'selectedAgentId': 'codex-acp',
+                'agents': [
+                  _agent(
+                    'codex-acp',
+                    'Codex',
+                    'codex-acp',
+                    'missing',
+                    managedAdapter: true,
+                  ),
+                ],
+              };
+            if (call.method == 'agent/prepare') {
+              expect((call.arguments as Map)['force'], isTrue);
+              attempts++;
+              return <String, dynamic>{
+                'ok': attempts > 1,
+                'agent': {'installed': true},
+                'error': 'ACP process exited unexpectedly',
+                'capabilities': <String, dynamic>{},
+              };
+            }
+            return null;
+          });
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.lightTheme,
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          locale: const Locale('zh'),
+          home: const AgentModeSettingPage(),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('agent-check-codex-acp')));
+      await tester.pumpAndSettle();
+      expect(find.text('安装已完成，但助手未能启动'), findsOneWidget);
+      expect(find.textContaining('等待 Dispatch'), findsNothing);
+      expect(find.text('ACP process exited unexpectedly'), findsNothing);
+      expect(find.text('助手未能启动，请重试；若仍失败，可重新安装。'), findsOneWidget);
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('agent-check-codex-acp')));
+      await tester.pumpAndSettle();
+      expect(attempts, 2);
+      expect(find.text('助手安装成功'), findsOneWidget);
+    },
+  );
+
   testWidgets('shows the managed ACP Agent catalog without Gemini', (
     tester,
   ) async {
@@ -91,9 +240,11 @@ void main() {
     expect(find.text('Gemini CLI'), findsNothing);
     expect(find.text('OpenCode'), findsOneWidget);
     expect(find.text('DeepSeek Harness'), findsOneWidget);
+    expect(find.textContaining('DeepSeek Harness ACP Agent'), findsNothing);
+    expect(find.textContaining('ACP initialize'), findsNothing);
     expect(find.text('可用'), findsWidgets);
     expect(find.text('未安装'), findsOneWidget);
-    expect(find.text('初始化失败'), findsOneWidget);
+    expect(find.text('启动失败'), findsOneWidget);
     expect(find.text('全部 4'), findsOneWidget);
     expect(find.text('预置 Agent'), findsOneWidget);
     expect(find.text('官方 Agent'), findsNothing);
@@ -102,10 +253,11 @@ void main() {
     expect(find.byType(PopupMenuButton<String>), findsNothing);
     expect(find.text('初始化检测'), findsNothing);
     expect(find.text('重新检测'), findsNWidgets(2));
-    expect(find.text('安装官方 Harness'), findsOneWidget);
-    expect(find.text('配置'), findsNWidgets(3));
-    expect(find.text('安装'), findsOneWidget);
-    // 3 Agent 配置入口 + 1 安装入口 + 1 远程 PC Bridge 入口。
+    expect(find.text('重新安装'), findsOneWidget);
+    expect(find.text('配置'), findsNWidgets(4));
+    expect(find.text('安装'), findsNothing);
+    // All assistants retain configuration access, including failed startup.
+    // Installation stays on the separate action button.
     expect(find.byIcon(LucideIcons.chevronRight), findsNWidgets(5));
     expect(
       tester
@@ -177,9 +329,9 @@ void main() {
     expect(resultSheet, findsOneWidget);
     expect(find.byType(SettingsDetailSheet), findsOneWidget);
     expect(find.byType(AlertDialog), findsNothing);
-    expect(find.text('Agent 检测成功'), findsOneWidget);
-    expect(find.textContaining('prompt: true'), findsOneWidget);
-    expect(find.textContaining('read'), findsOneWidget);
+    expect(find.text('助手检查通过'), findsOneWidget);
+    expect(find.textContaining('prompt: true'), findsNothing);
+    expect(find.text('助手已准备好，可以开始对话。'), findsOneWidget);
     expect(find.text('完成'), findsNothing);
     expect(tester.getSize(resultSheet).width, 640);
 
@@ -273,6 +425,7 @@ void main() {
                 preparationCalls += 1;
                 expect(call.arguments, <String, Object?>{
                   'agentId': 'deepseek-harness-acp',
+                  'force': true,
                 });
                 return preparation.future;
             }

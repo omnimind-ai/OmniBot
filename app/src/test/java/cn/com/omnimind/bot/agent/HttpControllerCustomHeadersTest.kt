@@ -18,6 +18,21 @@ import org.junit.Test
 class HttpControllerCustomHeadersTest {
 
     @Test
+    fun `explicit model refresh accepts a slow successful first response`() = runBlocking {
+        serveSingleJsonResponse(
+            body = """{"data":[{"id":"slow-provider-model"}]}""",
+            responseDelayMillis = 12_000,
+        ) { port ->
+            val models = HttpController.fetchProviderModels(
+                apiBase = "http://127.0.0.1:$port",
+                apiKey = "test-key",
+            )
+            assertEquals(listOf("slow-provider-model"), models.map { it.id })
+        }
+        Unit
+    }
+
+    @Test
     fun `fetchProviderModels applies custom headers to openai compatible requests`() = runBlocking {
         val requestLines = serveSingleJsonResponse(
             """
@@ -94,6 +109,7 @@ class HttpControllerCustomHeadersTest {
 
     private fun serveSingleJsonResponse(
         body: String,
+        responseDelayMillis: Long = 0,
         block: suspend (port: Int) -> Unit
     ): List<String> {
         val requestLines = mutableListOf<String>()
@@ -112,6 +128,7 @@ class HttpControllerCustomHeadersTest {
                         }
                         requestLines += line
                     }
+                    Thread.sleep(responseDelayMillis)
                     val bodyBytes = body.toByteArray(StandardCharsets.UTF_8)
                     val writer = BufferedWriter(
                         OutputStreamWriter(client.getOutputStream(), StandardCharsets.UTF_8)

@@ -21,6 +21,7 @@ environment:
   sdk: ^3.9.2
 
 dependencies:
+  crypto: 3.0.7
   flutter:
     sdk: flutter
   flutter_localizations:

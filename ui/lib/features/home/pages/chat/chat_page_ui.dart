@@ -53,6 +53,9 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
       key: ValueKey('acp-config-$generation'),
       isRunning: _isAiResponding,
       onVisibilityChanged: _onPopupVisibilityChanged,
+      configureModel: _usesSharedProviderModel(agentId)
+          ? _openConversationModelSelector
+          : null,
       load: () => read(),
       refresh: () => read(refreshConfig: true),
       write: (sessionId, configId, value) async {
@@ -1490,22 +1493,11 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
                           _activeMode == ChatPageMode.openclaw
                           ? null
                           : this._handleContextUsageRingLongPress,
-                      modelPickerSettings: _activeMode == ChatPageMode.openclaw
-                          ? ChatModelPickerSettings(
-                              modelId:
-                                  _activeDispatchSceneSelection?.modelId ?? '',
-                              hasSelectableModels: _hasSelectableProviderModels,
-                              anchorKey: _firstUseTourModelAnchorKey,
-                              onPointerDown: () {
-                                _suppressNextOutsideTapKeyboardHide = true;
-                              },
-                              onOpen: (anchorContext) =>
-                                  _openConversationModelSelector(anchorContext),
-                            )
-                          : null,
-                      runtimeConfigButton: _activeMode == ChatPageMode.openclaw
-                          ? null
-                          : _buildAcpConfigButton(),
+                      modelPickerSettings: null,
+                      runtimeConfigButton: KeyedSubtree(
+                        key: _firstUseTourModelAnchorKey,
+                        child: _buildAcpConfigButton(),
+                      ),
                       agentRunSettings: null,
                       onAgentRunSettingsOpened: null,
                       onAgentRunSettingsChanged: null,
@@ -2209,14 +2201,14 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
     }
     if (conversation.promptTokenThreshold <= 0) {
       return LegacyTextLocalizer.isEnglish
-          ? 'No context threshold set for this conversation'
-          : '当前对话还没有可用的上下文阈值';
+          ? 'No context threshold set\nLong press to adjust threshold'
+          : '上下文阈值未设置\n长按可调整阈值';
     }
     if (conversation.latestPromptTokensUpdatedAt <= 0 &&
         conversation.latestPromptTokens <= 0) {
       return LegacyTextLocalizer.isEnglish
-          ? 'No context token statistics yet\nLong press to adjust threshold'
-          : '当前对话还没有上下文 token 统计\n长按可调整阈值';
+          ? 'No context usage data yet\nLong press to adjust threshold'
+          : '上下文用量暂无数据\n长按可调整阈值';
     }
 
     final usedTokens = conversation.latestPromptTokens;

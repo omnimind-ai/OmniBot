@@ -228,8 +228,10 @@ class AgentSystemPromptTest {
         )
 
         assertTrue(prompt.contains("SOUL_STAYS_STABLE"))
+        assertTrue(prompt.contains("Before answering about prior work, decisions, preferences, or pending tasks"))
+        assertTrue(!prompt.contains("Use a listed memory capability only when"))
         assertTrue(!prompt.contains("tools_search"))
-        assertTrue(prompt.contains("memory capability"))
+        assertTrue(prompt.contains("memory write or modification capabilities"))
         assertTrue(!prompt.contains("skills_read"))
         assertTrue(!prompt.contains("memory_search"))
         assertTrue(!prompt.contains("memory_load"))

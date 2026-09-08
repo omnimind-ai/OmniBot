@@ -34,7 +34,7 @@ export function buildChatCompletionRequest(model, prompt = DEFAULT_PROMPT) {
     model: String(model).trim(),
     messages: [{ role: "user", content: String(prompt) }],
     stream: false,
-    max_tokens: 8,
+    max_tokens: 1024,
   };
 }
 
@@ -72,10 +72,7 @@ function completionSucceeded(payload) {
   if (typeof message?.content === "string" && message.content.trim().length > 0) {
     return true;
   }
-  // Reasoning-first models may spend a deliberately tiny smoke budget on
-  // reasoning and return content=null while still returning a valid assistant
-  // message and finish reason. That is a successful transport/API check.
-  return message?.role === "assistant" && typeof choice?.finish_reason === "string";
+  return false;
 }
 
 export async function runProviderSmoke({

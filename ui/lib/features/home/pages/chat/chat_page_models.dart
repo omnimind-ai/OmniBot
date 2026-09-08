@@ -79,7 +79,7 @@ class ConversationModelSelectorOpeningGuard {
 /// the new conversation target has been installed. Waiting here prevents the
 /// prompt from being registered against the previous conversation runtime.
 class HarnessSwitchSendBarrier {
-  Completer<void>? _pending;
+  Completer<bool>? _pending;
   Future<void> _serializedTail = Future<void>.value();
   int _generation = 0;
 
@@ -87,7 +87,7 @@ class HarnessSwitchSendBarrier {
 
   int begin() {
     _generation += 1;
-    _pending ??= Completer<void>();
+    _pending ??= Completer<bool>();
     return _generation;
   }
 
@@ -119,21 +119,22 @@ class HarnessSwitchSendBarrier {
     }
   }
 
-  Future<void> waitUntilIdle() async {
+  Future<bool> waitUntilIdle() async {
     final pending = _pending;
     if (pending != null) {
-      await pending.future;
+      return await pending.future;
     }
+    return true;
   }
 
-  void finish(int generation) {
+  void finish(int generation, {bool succeeded = true}) {
     if (!isCurrent(generation)) {
       return;
     }
     final pending = _pending;
     _pending = null;
     if (pending != null && !pending.isCompleted) {
-      pending.complete();
+      pending.complete(succeeded);
     }
   }
 }

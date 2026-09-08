@@ -147,6 +147,15 @@ internal class XiaowanAcpConnection(
                 conversationIdProvider = conversationIdProvider,
                 isXiaowanSession = isXiaowanSession,
                 deleteSessionCallback = deleteSession,
+                publishUpdate = { id, update ->
+                    serverProtocol.sendNotificationRaw(
+                        com.agentclientprotocol.model.AcpMethod.ClientMethods.V1.SessionUpdate,
+                        Json.encodeToJsonElement(
+                            com.agentclientprotocol.model.SessionNotification.serializer(),
+                            com.agentclientprotocol.model.SessionNotification(SessionId(id), update),
+                        ),
+                    )
+                },
                 requestPermission = { sessionId, toolCallId, title, detail ->
                     requestClientPermission(
                         protocol = serverProtocol,
@@ -273,6 +282,7 @@ private class XiaowanAgentSupport(
     private val conversationIdProvider: suspend (String) -> Long?,
     private val isXiaowanSession: suspend (String) -> Boolean,
     private val deleteSessionCallback: suspend (String) -> Unit,
+    private val publishUpdate: suspend (String, SessionUpdate) -> Unit,
     private val requestPermission: suspend (String, String, String, String) -> Boolean,
 ) : AgentSupport {
     private companion object {
@@ -355,6 +365,7 @@ private class XiaowanAgentSupport(
             sessionId = sessionId,
             requestPermission = requestPermission,
             mcpSession = mcpSession,
+            publishUpdate = publishUpdate,
             onClosed = { closedSessionId ->
                 activeSessions.remove(closedSessionId, session)
             },
@@ -634,6 +645,7 @@ private class XiaowanAgentSession(
     override val sessionId: SessionId,
     private val requestPermission: suspend (String, String, String, String) -> Boolean,
     private val mcpSession: XiaowanMcpSession,
+    private val publishUpdate: suspend (String, SessionUpdate) -> Unit,
     private val onClosed: (String) -> Unit,
 ) : AgentSession {
     private companion object {
@@ -678,6 +690,15 @@ private class XiaowanAgentSession(
         },
         sessionCapabilityModules = listOfNotNull(mcpSession.capabilityModule),
     )
+
+    override suspend fun postInitialize() {
+        publishUpdate(sessionId.value, SessionUpdate.AvailableCommandsUpdate(
+            listOf(com.agentclientprotocol.model.AvailableCommand(
+                name = "compact",
+                description = "Compress conversation context while preserving history",
+            )),
+        ))
+    }
 
     override suspend fun prompt(
         content: List<ContentBlock>,
@@ -755,10 +776,30 @@ private class XiaowanAgentSession(
                 "conversationMode=$conversationMode " +
                 "modeSource=${if (persistedConversationMode != null) "conversation" else "acp_meta_or_agent_default"}"
         )
-        // No Provider-declared reasoning enum is available. Do not invent one
-        // or override the model's own thinking default.
+        // The official session config owns this choice, including Xiaowan's
+        // initial setting. A prompt must not reset it to the model default.
         val reasoningEffort = sessionConfig.requestEffort
         val terminalEnvironment = xiaowanTerminalEnvironmentFromMeta(_meta)
+        if (text.trim() == "/compact" && promptParts.attachments.isEmpty()) {
+            require(conversationId != null) { "Compaction requires a persisted conversation" }
+            val outcome = cn.com.omnimind.bot.agent.AgentConversationContextCompactor(
+                historyRepository = cn.com.omnimind.bot.agent.AgentConversationHistoryRepository(context),
+                modelOverride = selectedModelOverride(),
+                reasoningEffort = reasoningEffort,
+                offloadToolOutput = { output ->
+                    cn.com.omnimind.bot.agent.AgentWorkspaceManager(context).writeOffload(sessionId.value, "txt", output).workspacePath
+                },
+            ).compactConversationContext(conversationId, conversationMode)
+            check(outcome.compacted || outcome.reason in setOf("no_candidate", "no_prompt_messages")) {
+                "Context compaction failed: ${outcome.reason}"
+            }
+            streamBridge.emitAssistantSnapshot(
+                if (outcome.compacted) "上下文已压缩，聊天记录已保留。"
+                else "当前暂无可压缩的上下文。",
+            )
+            send(Event.PromptResponseEvent(PromptResponse(stopReason = StopReason.END_TURN)))
+            return@launch
+        }
         val result = executor.processUserMessage(
             userMessage = text,
             conversationHistory = emptyList(),
@@ -885,15 +926,10 @@ private class XiaowanAgentSession(
     }
 
     suspend fun refreshModels() {
-        val catalog = if (cn.com.omnimind.baselib.llm.OmniOfficialProvider.isOfficialProfile(providerProfile.id)) {
-            PlatformAiProvisioner.refreshAndGetModels(null)
-        } else {
-            cn.com.omnimind.assists.controller.http.HttpController.fetchProviderModels(
-                apiBase = providerProfile.baseUrl, apiKey = providerProfile.apiKey,
-                customHeaders = providerProfile.customHeaders, protocolType = providerProfile.protocolType,
-                wireApi = providerProfile.wireApi,
-            )
-        }
+        val catalog = cn.com.omnimind.bot.agent.runtime.fetchAgentProviderModels(
+            providerProfile, forceRefresh = true,
+        )
+        ModelProviderConfigStore.rememberModels(context, providerProfile, catalog)
         availableModels = (catalog.map { ModelInfo(ModelId(it.id), it.displayName.ifBlank { it.id }) } +
             ModelInfo(ModelId(selectedModelId), selectedModelId)).distinctBy { it.modelId }
         sessionConfig.replaceModels(availableModels)
@@ -909,6 +945,14 @@ private class XiaowanAgentSession(
         _meta: JsonElement?,
     ): com.agentclientprotocol.model.SetSessionConfigOptionResponse {
         check(activePromptJob?.isActive != true) { "Session configuration can only change while idle" }
+        if (configId.value == "model" &&
+            value is com.agentclientprotocol.model.SessionConfigOptionValue.StringValue &&
+            availableModels.none { it.modelId.value == value.value }) {
+            // A live Provider picker may discover models added since this session
+            // started. Refresh its existing catalog before validating the choice;
+            // session/load is history replay and is not a model refresh API.
+            refreshModels()
+        }
         val updated = XiaowanSessionConfig(availableModels, selectedModelId)
         updated.set("reasoning_effort", com.agentclientprotocol.model.SessionConfigOptionValue.StringValue(sessionConfig.effort))
         updated.set(configId.value, value)
@@ -2139,7 +2183,7 @@ private fun String.containsAny(vararg values: String): Boolean = values.any { va
  * means every Harness can feed the same frontend card projection without a
  * Xiaowan-only event or widget path.
  */
-private fun toolResultAcpPayload(result: ToolExecutionResult): JsonObject {
+internal fun toolResultAcpPayload(result: ToolExecutionResult): JsonObject {
     val payload = linkedMapOf<String, Any?>(
         "summary" to toolResultText(result),
         "success" to toolResultSucceeded(result),
@@ -2147,6 +2191,13 @@ private fun toolResultAcpPayload(result: ToolExecutionResult): JsonObject {
         "workspaceId" to result.workspaceId,
         "actions" to result.actions.map { it.toPayload() },
     )
+    // The shared reducer already accepts `result`. Keep one structured
+    // preview and preserve raw output only when it contains different data.
+    // Do not stringify the same body into aliases that history serializes again.
+    fun putContent(preview: String, raw: String? = null) {
+        payload["result"] = jsonElementFromJsonText(preview)
+        if (raw != null && raw != preview) payload["rawResultJson"] = raw
+    }
     when (result) {
         is ToolExecutionResult.ChatMessage -> {
             payload["toolType"] = "message"
@@ -2177,34 +2228,24 @@ private fun toolResultAcpPayload(result: ToolExecutionResult): JsonObject {
         is ToolExecutionResult.ScheduleResult -> {
             payload["toolType"] = "schedule"
             payload["toolName"] = result.toolName
-            payload["previewJson"] = result.previewJson
-            payload["result"] = jsonElementFromJsonText(result.previewJson)
+            putContent(result.previewJson)
             payload["taskId"] = result.taskId
         }
         is ToolExecutionResult.McpResult -> {
             payload["toolType"] = "mcp"
             payload["toolName"] = result.toolName
             payload["serverName"] = result.serverName
-            payload["previewJson"] = result.previewJson
-            payload["rawResultJson"] = result.rawResultJson
-            payload["result"] = jsonElementFromJsonText(result.previewJson)
-            payload["rawResult"] = jsonElementFromJsonText(result.rawResultJson)
+            putContent(result.previewJson, result.rawResultJson)
         }
         is ToolExecutionResult.MemoryResult -> {
             payload["toolType"] = "memory"
             payload["toolName"] = result.toolName
-            payload["previewJson"] = result.previewJson
-            payload["rawResultJson"] = result.rawResultJson
-            payload["result"] = jsonElementFromJsonText(result.previewJson)
-            payload["rawResult"] = jsonElementFromJsonText(result.rawResultJson)
+            putContent(result.previewJson, result.rawResultJson)
         }
         is ToolExecutionResult.TerminalResult -> {
             payload["toolType"] = "terminal"
             payload["toolName"] = result.toolName
-            payload["previewJson"] = result.previewJson
-            payload["rawResultJson"] = result.rawResultJson
-            payload["result"] = jsonElementFromJsonText(result.previewJson)
-            payload["rawResult"] = jsonElementFromJsonText(result.rawResultJson)
+            putContent(result.previewJson, result.rawResultJson)
             payload["timedOut"] = result.timedOut
             payload["terminalOutput"] = result.terminalOutput
             payload["terminalSessionId"] = result.terminalSessionId
@@ -2213,10 +2254,7 @@ private fun toolResultAcpPayload(result: ToolExecutionResult): JsonObject {
         is ToolExecutionResult.Interrupted -> {
             payload["toolType"] = "terminal"
             payload["toolName"] = result.toolName
-            payload["previewJson"] = result.previewJson
-            payload["rawResultJson"] = result.rawResultJson
-            payload["result"] = jsonElementFromJsonText(result.previewJson)
-            payload["rawResult"] = jsonElementFromJsonText(result.rawResultJson)
+            putContent(result.previewJson, result.rawResultJson)
             payload["terminalOutput"] = result.terminalOutput
             payload["terminalSessionId"] = result.terminalSessionId
             payload["terminalStreamState"] = result.terminalStreamState
@@ -2226,11 +2264,22 @@ private fun toolResultAcpPayload(result: ToolExecutionResult): JsonObject {
         is ToolExecutionResult.ContextResult -> {
             payload["toolType"] = "context"
             payload["toolName"] = result.toolName
-            payload["previewJson"] = result.previewJson
-            payload["rawResultJson"] = result.rawResultJson
-            payload["result"] = jsonElementFromJsonText(result.previewJson)
-            payload["rawResult"] = jsonElementFromJsonText(result.rawResultJson)
-            payload["imageDataUrl"] = result.imageDataUrl
+            putContent(result.previewJson, result.rawResultJson)
+            val localImage = result.artifacts.singleOrNull()?.takeIf {
+                result.toolName == "file_read" && it.mimeType.startsWith("image/") &&
+                    it.androidPath.isNotBlank()
+            }
+            if (localImage != null) {
+                // The original is already a workspace artifact. Passing its
+                // base64 through rawOutput duplicates it in Flutter card/raw
+                // history JSON and again in the MethodChannel checkpoint,
+                // which can kill Android's main thread while decoding it.
+                // Only presentation uses the file reference; the model's tool
+                // continuation still receives result.imageDataUrl unchanged.
+                payload["imageUrl"] = localImage.androidPath
+            } else {
+                payload["imageDataUrl"] = result.imageDataUrl
+            }
         }
     }
     return jsonObjectFromMap(payload)

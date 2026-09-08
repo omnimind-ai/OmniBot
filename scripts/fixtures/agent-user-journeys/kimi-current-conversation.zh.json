@@ -1,0 +1,15 @@
+{
+  "name": "Kimi existing conversation: visible reply, follow-up and restart",
+  "preconditions": "Chinese UI, Kimi conversation selected, empty draft, configured live API. Retain existing history. Run in a dedicated acceptance conversation.",
+  "steps": [
+    {"action": "expect", "text": "模型与参数", "timeoutMs": 30000},
+    {"action": "send", "marker": "KIMI_DEVICE_VISIBLE_A"},
+    {"action": "reply", "text": "KIMI_DEVICE_VISIBLE_A", "timeoutMs": 180000},
+    {"action": "send", "marker": "KIMI_DEVICE_VISIBLE_B"},
+    {"action": "reply", "text": "KIMI_DEVICE_VISIBLE_B", "timeoutMs": 180000},
+    {"action": "restart"},
+    {"action": "expect", "text": "KIMI_DEVICE_VISIBLE_B", "timeoutMs": 60000},
+    {"action": "send", "marker": "KIMI_DEVICE_RESTART_OK"},
+    {"action": "reply", "text": "KIMI_DEVICE_RESTART_OK", "timeoutMs": 180000}
+  ]
+}

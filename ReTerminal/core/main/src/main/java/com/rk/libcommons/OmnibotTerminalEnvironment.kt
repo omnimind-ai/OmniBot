@@ -1,6 +1,9 @@
 package com.rk.libcommons
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.util.AtomicFile
+import java.net.InetAddress
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -25,11 +28,44 @@ object OmnibotTerminalEnvironment {
         val userVariables = loadUserVariables(appContext)
         return linkedMapOf<String, String>().apply {
             putAll(buildDefaultStorageEnvironment())
+            activeResolverFile(appContext)?.let { put("OMNIBOT_DNS_FILE", it.absolutePath) }
             putAll(userVariables)
             val envFile = ensureUserEnvFile(appContext, userVariables)
             put("OMNIBOT_USER_ENV_FILE", envFile.absolutePath)
         }
     }
+
+    // Use the phone's selected network (including its VPN), not a fixed public
+    // resolver. Both interactive terminals and hidden Harness launches reuse
+    // this existing environment boundary; no polling or parallel lifecycle.
+    private fun activeResolverFile(context: Context): File? = runCatching {
+        val connectivity = context.getSystemService(ConnectivityManager::class.java)
+            ?: return@runCatching null
+        val network = connectivity.activeNetwork ?: return@runCatching null
+        val addresses = connectivity.getLinkProperties(network)?.dnsServers.orEmpty()
+        val content = buildResolverConfig(addresses)
+        if (content.isEmpty()) return@runCatching null
+        val file = File(context.filesDir.parentFile, "local/omnibot-resolv.conf")
+        file.parentFile?.mkdirs()
+        synchronized(this) {
+            if (!file.exists() || file.readText() != content) {
+                val atomic = AtomicFile(file)
+                val output = atomic.startWrite()
+                try {
+                    output.write(content.toByteArray(Charsets.UTF_8))
+                    atomic.finishWrite(output)
+                } catch (error: Throwable) {
+                    atomic.failWrite(output)
+                    throw error
+                }
+            }
+        }
+        file
+    }.getOrNull()
+
+    internal fun buildResolverConfig(addresses: List<InetAddress>): String =
+        addresses.mapNotNull { it.hostAddress }.distinct().take(3)
+            .joinToString(separator = "", transform = { "nameserver $it\n" })
 
     fun loadUserVariables(context: Context): Map<String, String> {
         val appContext = context.applicationContext

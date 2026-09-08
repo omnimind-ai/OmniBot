@@ -12,6 +12,8 @@ import 'package:ui/services/models_dev_catalog_service.dart';
 import 'package:ui/services/storage_service.dart';
 import 'package:ui/theme/app_theme.dart';
 
+final _discoveryModels = <String, List<ProviderModelOption>>{};
+
 const _modelsDevCatalogJson = '''
 {
   "openai": {
@@ -103,6 +105,7 @@ void main() {
   }
 
   setUp(() async {
+    _discoveryModels.clear();
     SharedPreferences.setMockInitialValues({});
     await StorageService.init();
     ModelsDevCatalogService.setCatalogForTesting(
@@ -114,6 +117,10 @@ void main() {
       switch (call.method) {
         case 'listModelProviderProfiles':
           return profilePayload();
+        case 'fetchProviderModels':
+          return (_discoveryModels[(call.arguments as Map)['profileId']] ?? [])
+              .map((model) => model.toMap())
+              .toList();
       }
       return null;
     });
@@ -128,7 +135,7 @@ void main() {
 
   for (final fieldLabel in ['API Key', 'Base URL']) {
     testWidgets(
-      'refresh persists the $fieldLabel draft before caching models',
+      'refresh persists the $fieldLabel draft and reopening queries again',
       (tester) async {
         tester.view.physicalSize = const Size(1080, 2200);
         tester.view.devicePixelRatio = 1;
@@ -178,6 +185,7 @@ void main() {
         }
 
         await openPage();
+        operations.clear();
         final field = find.byWidgetPredicate(
           (widget) =>
               widget is TextField && widget.decoration?.labelText == fieldLabel,
@@ -207,81 +215,47 @@ void main() {
           find.byKey(const ValueKey('provider-model-gpt-4o')),
           findsOneWidget,
         );
-        final cached = await ModelProviderConfigService.getCachedFetchedModels(
-          profileId: profile['id'] as String,
-          apiBase: profile['baseUrl'] as String,
-          profileRevision: 8,
-        );
-        expect(cached.single.id, 'gpt-4o');
-        expect(operations, ['save', 'fetch']);
+        expect(operations, ['save', 'fetch', 'fetch']);
       },
     );
   }
 
-  testWidgets('failed draft save does not fetch or replace the saved catalog', (
-    tester,
-  ) async {
+  testWidgets('model discovery TLS failure stays visible and explicit retry recovers', (tester) async {
     tester.view.physicalSize = const Size(1080, 2200);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    final payload = profilePayload();
-    (payload['profiles'] as List).single['revision'] = 7;
-    var fetchCalls = 0;
-    var saveCalls = 0;
+    var calls = 0;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(assistCoreChannel, (call) async {
-          switch (call.method) {
-            case 'listModelProviderProfiles':
-              return payload;
-            case 'saveModelProviderProfile':
-              saveCalls++;
-              throw PlatformException(code: 'SAVE_FAILED');
-            case 'fetchProviderModels':
-              fetchCalls++;
-              return [
-                {'id': 'unexpected-model'},
-              ];
-          }
-          return null;
-        });
-    await ModelProviderConfigService.saveCachedFetchedModels(
-      profileId: 'provider-1',
-      apiBase: 'https://api.openai.com/v1',
-      profileRevision: 7,
-      models: const [ProviderModelOption(id: 'gpt-4o', displayName: 'gpt-4o')],
-    );
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: AppTheme.lightTheme,
-        home: const ModelProviderSettingPage(),
-      ),
-    );
+      if (call.method == 'listModelProviderProfiles') return profilePayload();
+      if (call.method == 'fetchProviderModels') {
+        calls++;
+        if (calls == 1) {
+          throw PlatformException(
+            code: 'FETCH_PROVIDER_MODELS_ERROR',
+            message: 'Trust anchor for private-server not found',
+            details: {'failureKind': 'provider_tls_certificate_failure'},
+          );
+        }
+        return [{'id': 'gpt-4o', 'displayName': 'gpt-4o'}];
+      }
+      return null;
+    });
+    await tester.pumpWidget(MaterialApp(
+      theme: AppTheme.lightTheme,
+      home: const ModelProviderSettingPage(),
+    ));
     await tester.pumpAndSettle();
-    await tester.enterText(
-      find.byWidgetPredicate(
-        (widget) =>
-            widget is TextField && widget.decoration?.labelText == 'API Key',
-      ),
-      'unsaved-key',
-    );
-    await tester.tap(find.byIcon(LucideIcons.arrowBigDown));
+    await tester.pump(const Duration(seconds: 10));
+    expect(calls, 1);
+    expect(find.textContaining('Check whether your network requires sign-in'), findsOneWidget);
+    expect(find.textContaining('private-server'), findsNothing);
+    await tester.tap(find.text('Retry'));
     await tester.pumpAndSettle();
-    expect(saveCalls, 1);
-    expect(fetchCalls, 0);
-    expect(
-      (await ModelProviderConfigService.getCachedFetchedModels(
-        profileId: 'provider-1',
-        apiBase: 'https://api.openai.com/v1',
-        profileRevision: 7,
-      )).single.id,
-      'gpt-4o',
-    );
-    // The failed operation releases the existing refresh button.
-    await tester.tap(find.byIcon(LucideIcons.arrowBigDown));
-    await tester.pumpAndSettle();
-    expect(saveCalls, 2);
-    expect(fetchCalls, 0);
+    expect(calls, 2);
+    expect(find.byKey(const ValueKey('provider-model-gpt-4o')), findsOneWidget);
+    expect(find.textContaining('Check whether your network requires sign-in'), findsNothing);
   });
 
   testWidgets('late refresh cannot display models for a changed draft', (
@@ -314,8 +288,8 @@ void main() {
         home: const ModelProviderSettingPage(),
       ),
     );
-    await tester.pumpAndSettle();
-    await tester.tap(find.byIcon(LucideIcons.arrowBigDown));
+    await tester.pump();
+    await tester.pump();
     await tester.pump();
     expect(fetchCalls, 1);
     await tester.enterText(
@@ -330,59 +304,6 @@ void main() {
     ]);
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('provider-model-gpt-4o')), findsNothing);
-  });
-
-  testWidgets('deleted fetched model stays deleted after reopening provider', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(1080, 2200);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    final payload = profilePayload();
-    (payload['profiles'] as List).single['revision'] = 7;
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(assistCoreChannel, (call) async {
-          if (call.method == 'listModelProviderProfiles') return payload;
-          throw StateError('Unexpected call: ${call.method}');
-        });
-    await ModelProviderConfigService.saveCachedFetchedModels(
-      profileId: 'provider-1',
-      apiBase: 'https://api.openai.com/v1',
-      profileRevision: 7,
-      models: const [ProviderModelOption(id: 'gpt-4o', displayName: 'gpt-4o')],
-    );
-    Future<void> openPage() async {
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: AppTheme.lightTheme,
-          home: const ModelProviderSettingPage(),
-        ),
-      );
-      await tester.pumpAndSettle();
-    }
-
-    await openPage();
-    final row = find.byKey(const ValueKey('provider-model-gpt-4o'));
-    await tester.drag(row, const Offset(-250, 0));
-    await tester.pumpAndSettle();
-    await tester.tap(
-      find.descendant(of: row, matching: find.byIcon(LucideIcons.trash2)),
-    );
-    await tester.pumpAndSettle();
-    expect(row, findsNothing);
-    await tester.pumpWidget(const SizedBox.shrink());
-    await tester.pumpAndSettle();
-    await openPage();
-    expect(row, findsNothing);
-    expect(
-      await ModelProviderConfigService.getCachedFetchedModels(
-        profileId: 'provider-1',
-        apiBase: 'https://api.openai.com/v1',
-        profileRevision: 7,
-      ),
-      isEmpty,
-    );
   });
 
   testWidgets(
@@ -973,7 +894,7 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     addTearDown(tester.view.resetPhysicalSize);
 
-    await ModelProviderConfigService.saveCachedFetchedModels(
+    await seedManualModels(
       profileId: 'provider-1',
       apiBase: 'https://api.openai.com/v1',
       models: const [
@@ -1134,7 +1055,7 @@ void main() {
       addTearDown(tester.view.resetDevicePixelRatio);
       addTearDown(tester.view.resetPhysicalSize);
 
-      await ModelProviderConfigService.saveCachedFetchedModels(
+      await seedManualModels(
         profileId: 'provider-1',
         apiBase: 'https://api.openai.com/v1',
         models: const [
@@ -1198,4 +1119,13 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+}
+
+Future<void> seedManualModels({
+  required String profileId,
+  required String apiBase,
+  int? profileRevision,
+  required List<ProviderModelOption> models,
+}) async {
+  _discoveryModels[profileId] = models;
 }

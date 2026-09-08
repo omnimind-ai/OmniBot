@@ -150,7 +150,7 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
         // The native ACP catalog is the only source of truth. Keep an
         // already loaded catalog on transient errors, but never invent a
         // second list in Dart.
-        _error = error.toString();
+        _error = formatAgentRuntimeErrorForUser(error, english: _english);
       });
     }
   }
@@ -223,7 +223,10 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
     if (!prepare) setState(() => _busyAgentId = agent.id);
     try {
       final result = prepare
-          ? await AgentRuntimeService.prepareAgentInBackground(agent.id)
+          ? await AgentRuntimeService.prepareAgentInBackground(
+              agent.id,
+              force: true,
+            )
           : await AgentRuntimeService.testAgent(agent.id);
       if (!mounted) return;
       await _load();
@@ -232,68 +235,77 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
       final installed =
           result['agent'] is Map &&
           (result['agent'] as Map)['installed'] == true;
-      final providerConfigurationPending = prepare && !ok && installed;
+      final initializationFailed = prepare && !ok && installed;
       final title = prepare
           ? (ok
-                ? _text('Harness 安装成功', 'Harness installation succeeded')
-                : providerConfigurationPending
+                ? _text('助手安装成功', 'Assistant installed')
+                : initializationFailed
                 ? _text(
-                    'Harness 已准备，等待 Dispatch Model 配置',
-                    'Harness is ready; Dispatch Model configuration is pending',
+                    '安装已完成，但助手未能启动',
+                    'Installed, but the assistant could not start',
                   )
-                : _text('Harness 安装失败', 'Harness installation failed'))
+                : _text('助手安装失败', 'Assistant installation failed'))
           : (ok
-                ? _text('Agent 检测成功', 'Agent check succeeded')
-                : _text('Agent 检测失败', 'Agent check failed'));
-      await showSettingsDetailSheet<void>(
-        context: context,
-        builder: (sheetContext) => SettingsDetailSheet(
-          key: ValueKey('agent-check-result-${agent.id}'),
-          title: title,
-          body: Semantics(
-            container: true,
-            liveRegion: true,
-            label: title,
-            child: SelectableText(
-              ok
-                  ? _formatCapabilities(result['capabilities'])
-                  : (result['error']?.toString() ??
-                        _text('未知错误', 'Unknown error')),
-            ),
-          ),
-        ),
+                ? _text('助手检查通过', 'Assistant is ready')
+                : _text('助手暂时无法启动', 'Assistant could not start'));
+      await _showActionResult(
+        agent,
+        title,
+        ok
+            ? _text('助手已准备好，可以开始对话。', 'The assistant is ready to chat.')
+            : _actionError(
+                result['error'],
+                installation: prepare && !installed,
+              ),
       );
     } catch (error) {
       if (!mounted) return;
-      showToast(error.toString(), type: ToastType.error);
+      await _showActionResult(
+        agent,
+        prepare
+            ? _text('安装未完成', 'Installation did not finish')
+            : _text('助手暂时无法启动', 'Assistant could not start'),
+        _actionError(error, installation: prepare),
+      );
     } finally {
       if (!prepare && mounted) setState(() => _busyAgentId = null);
     }
   }
 
-  String _formatCapabilities(dynamic value, {String indent = ''}) {
-    if (value is Map) {
-      return value.entries
-          .map((entry) {
-            final nested = entry.value;
-            if (nested is Map || nested is List) {
-              return '$indent${entry.key}:\n'
-                  '${_formatCapabilities(nested, indent: '$indent  ')}';
-            }
-            return '$indent${entry.key}: $nested';
-          })
-          .join('\n');
-    }
-    if (value is List) {
-      return value
-          .map(
-            (item) =>
-                '$indent- '
-                '${_formatCapabilities(item, indent: '$indent  ').trim()}',
-          )
-          .join('\n');
-    }
-    return '$indent$value';
+  Future<void> _showActionResult(
+    AcpAgentProfile agent,
+    String title,
+    String message,
+  ) async {
+    await showSettingsDetailSheet<void>(
+      context: context,
+      builder: (sheetContext) => SettingsDetailSheet(
+        key: ValueKey('agent-check-result-${agent.id}'),
+        title: title,
+        body: Semantics(
+          container: true,
+          liveRegion: true,
+          label: title,
+          child: SelectableText(message),
+        ),
+      ),
+    );
+  }
+
+  String _actionError(Object? error, {bool installation = false}) {
+    return formatAgentRuntimeErrorForUser(
+      error,
+      english: _english,
+      fallback: installation
+          ? _text(
+              '安装未完成，请检查网络后重新安装。',
+              'Installation did not finish. Check your connection and try again.',
+            )
+          : _text(
+              '助手未能启动，请重试；若仍失败，可重新安装。',
+              'The assistant could not start. Try again, or reinstall if the problem continues.',
+            ),
+    );
   }
 
   Future<void> _addCustomAgent() async {
@@ -311,7 +323,10 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
       });
     } catch (error) {
       if (!mounted) return;
-      showToast(error.toString(), type: ToastType.error);
+      showToast(
+        formatAgentRuntimeErrorForUser(error, english: _english),
+        type: ToastType.error,
+      );
     }
   }
 
@@ -403,8 +418,8 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
                   SettingsSectionTitle(
                     label: _text('托管 Agent', 'Managed Agents'),
                     subtitle: _text(
-                      '预置 Agent 默认使用统一 Provider 和模型；自定义 Agent 使用自己的启动环境与配置。状态来自命令检测与 ACP initialize。',
-                      'Built-in Agents use the shared Provider and model by default. Custom Agents use their own launch environment and configuration. Status comes from command detection and ACP initialize.',
+                      '选择助手并配置模型。安装完成后，可返回聊天页使用；启动失败时可修改配置或重新安装。',
+                      'Choose an assistant and configure its model. Once installed, return to chat to use it. If it cannot start, update its configuration or reinstall it.',
                     ),
                   ),
                   _buildSharedModelSummary(card),
@@ -546,7 +561,7 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              '${_text('统一 Provider / 模型：', 'Shared Provider / model: ')}$label',
+              '${_text('默认模型：', 'Default model: ')}$label',
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
@@ -639,22 +654,12 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
         agent.enabled && (agent.status != 'missing' || agent.managedAdapter);
     final preparing = _preparingAgentIds.contains(agent.id);
     final busy = agent.id == _busyAgentId || preparing;
-    final needsManagedPreparation =
-        agent.managedAdapter &&
-        (agent.status == 'unchecked' || agent.status == 'missing') &&
-        (agent.lastCheckError?.contains('will be prepared') == true ||
-            agent.lastCheckError?.contains('未初始化') == true ||
-            agent.status == 'missing');
-    final isDeepSeekHarness = agent.id == 'deepseek-harness-acp';
-    final testLabel = needsManagedPreparation && isDeepSeekHarness
-        ? _text('安装官方 Harness', 'Install official Harness')
-        : needsManagedPreparation
-        ? _text('准备并初始化', 'Prepare & initialize')
-        : agent.status == 'unchecked'
-        ? _text('检测', 'Check')
+    final testLabel = agent.managedAdapter
+        ? agent.installed == true
+              ? _text('重新安装', 'Reinstall')
+              : _text('安装', 'Install')
         : _text('重新检测', 'Check again');
-    final installEntry = agent.managedAdapter && agent.status != 'online';
-    final action = needsManagedPreparation ? _prepare : _test;
+    final action = agent.managedAdapter ? _prepare : _test;
     final capabilitySubtitle = _capabilitySubtitle(agent);
     return _FlatTile(
       tileKey: Key('agent-config-${agent.id}'),
@@ -672,24 +677,27 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
           : status.label,
       subtitle:
           capabilitySubtitle ??
-          (agent.description.isNotEmpty
+          (agent.managedAdapter || agent.id == 'xiaowan-acp'
+              ? null
+              : agent.description.isNotEmpty
               ? agent.description
               : ([agent.command, ...agent.arguments]).join(' ')),
       subtitleMonospace:
           capabilitySubtitle == null && agent.description.isEmpty,
-      errorText: hasError && !preparing ? agent.lastCheckError : null,
+      errorText: hasError && !preparing
+          ? _actionError(
+              agent.lastCheckError,
+              installation: agent.installed == false,
+            )
+          : null,
       actionLabel: canTest ? testLabel : null,
       actionKey: Key('agent-check-${agent.id}'),
       onAction: canTest ? () => action(agent) : null,
-      navigationLabel: installEntry
-          ? _text('安装', 'Install')
-          : _text('配置', 'Configure'),
+      navigationLabel: _text('配置', 'Configure'),
       navigationKey: Key('agent-navigation-${agent.id}'),
       busy: busy,
       onTap: preparing
           ? () {}
-          : installEntry
-          ? () => _prepare(agent)
           : () => _openAgentConfig(agent),
     );
   }
@@ -733,16 +741,16 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
     if (!authoring && !install) return null;
     if (_english) {
       return authoring && install
-          ? 'Plugins: create and install through the Harness'
+          ? 'Plugins: create and install through the assistant'
           : authoring
-          ? 'Plugins: create through the Harness'
-          : 'Plugins: install through the Harness';
+          ? 'Plugins: create through the assistant'
+          : 'Plugins: install through the assistant';
     }
     return authoring && install
-        ? '插件：可创建，并由 Harness 安装'
+        ? '插件：可通过助手创建和安装'
         : authoring
-        ? '插件：可通过 Harness 创建'
-        : '插件：可通过 Harness 安装';
+        ? '插件：可通过助手创建'
+        : '插件：可通过助手安装';
   }
 }
 
@@ -1128,7 +1136,7 @@ Map<String, String> _parseEnvironment(String source) {
       color: const Color(0xFF98A2B3),
     ),
     'offline' => (
-      label: english ? 'Initialization failed' : '初始化失败',
+      label: english ? 'Could not start' : '启动失败',
       color: const Color(0xFFE05252),
     ),
     _ => (label: english ? 'Unchecked' : '未检测', color: const Color(0xFFE3A52B)),

@@ -1,0 +1,11 @@
+{
+  "name": "Live model picker: search, select GLM-5.2, send and display answer",
+  "preconditions": "Chinese UI. Existing configured live Provider. Open the model picker before running this segment; empty composer and search field.",
+  "steps": [
+    {"action": "search", "hint": "搜索模型 ID", "text": "GLM-5.2"},
+    {"action": "expect", "text": "GLM-5.2", "timeoutMs": 60000},
+    {"action": "tap", "label": "GLM-5.2"},
+    {"action": "send", "marker": "MODEL_GLM52_DEVICE_OK"},
+    {"action": "reply", "text": "MODEL_GLM52_DEVICE_OK", "timeoutMs": 180000}
+  ]
+}

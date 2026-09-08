@@ -122,8 +122,8 @@ class OnboardingEnvironmentProgressPage extends StatelessWidget {
                       failed
                           ? onbTr(
                               context,
-                              '你的选择已经保留，可以检查网络后重试。',
-                              'Your choices are preserved. Check your connection and try again.',
+                              '你的选择已经保留，请根据上方错误处理后重试。',
+                              'Your choices are preserved. Resolve the error above and try again.',
                             )
                           : success
                           ? onbTr(

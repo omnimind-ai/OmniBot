@@ -12,6 +12,7 @@ import com.agentclientprotocol.model.ToolCallId
 import com.agentclientprotocol.model.ToolCallContent
 import com.agentclientprotocol.model.ToolCallStatus
 import com.agentclientprotocol.model.Usage
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
@@ -25,6 +26,51 @@ import org.junit.Test
  * agents, so its official envelope is a contract worth pinning down.
  */
 class AcpSessionUpdateMapperTest {
+
+    @Test
+    fun codexPlanVariantsAndRemovalDecodeWithoutLosingIdentity() {
+        val decoder = Json { ignoreUnknownKeys = true }
+        for (body in listOf(
+            """{"sessionUpdate":"plan_update","plan":{"type":"items","planId":"plan-items","entries":[]}}""",
+            """{"sessionUpdate":"plan_update","plan":{"type":"file","planId":"plan-file","uri":"file:///workspace/plan.md"}}""",
+            """{"sessionUpdate":"plan_removed","planId":"plan-removed"}""",
+        )) {
+            val line = """{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s","update":$body}}"""
+            val normalized = AcpHarnessAdapters.codex.normalizeStdioLine(line)
+            assertEquals(normalized, AcpHarnessAdapters.codex.normalizeStdioLine(normalized))
+            val params = (Json.parseToJsonElement(normalized) as JsonObject)["params"] as JsonObject
+            val update = decoder.decodeFromJsonElement(SessionUpdate.serializer(), params.getValue("update"))
+            val mapped = update.toAcpSessionNotification("s")!!.update
+            val id = (mapped["plan"] as? Map<*, *>)?.get("id") ?: mapped["id"]
+            assertTrue(id.toString().startsWith("plan-"))
+        }
+    }
+
+    @Test
+    fun codexPlanCompatibilityDoesNotRewriteOtherPayloadsOrCanonicalIds() {
+        val lines = listOf(
+            "not-json planId",
+            """{"method":"session/update","params":{"update":{"sessionUpdate":"tool_call","rawInput":{"planId":"private-tool-field"}}}}""",
+            """{"method":"other","params":{"update":{"sessionUpdate":"plan_removed","planId":"p"}}}""",
+            """{"method":"session/update","params":{"update":{"sessionUpdate":"plan_removed","planId":"p","id":"canonical"}}}""",
+        )
+        lines.forEach { assertEquals(it, AcpHarnessAdapters.codex.normalizeStdioLine(it)) }
+    }
+
+    @Test
+    fun codexPlanWireReachesTypedSessionUpdate() {
+        // Exact codex-acp 1.10.0 plan snapshot shape; process through the
+        // production compatibility boundary before the installed SDK decoder.
+        val line = """{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"session-plan","update":{"sessionUpdate":"plan_update","plan":{"type":"markdown","planId":"plan-1","content":"# Plan\n1. inspect"}}}}"""
+        val normalized = AcpHarnessAdapters.codex.normalizeStdioLine(line)
+        val envelope = Json.parseToJsonElement(normalized) as JsonObject
+        val params = envelope["params"] as JsonObject
+        val decoder = Json { ignoreUnknownKeys = true }
+        val update = decoder.decodeFromJsonElement(SessionUpdate.serializer(), params.getValue("update"))
+        val plan = update.toAcpSessionNotification("session-plan")?.update?.get("plan") as Map<*, *>
+        assertEquals("plan-1", plan["id"])
+        assertEquals("# Plan\n1. inspect", plan["content"])
+    }
 
     @Test
     fun promptResponseUsageBecomesSharedTurnUsagePresentation() {
