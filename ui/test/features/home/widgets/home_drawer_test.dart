@@ -99,6 +99,57 @@ void main() {
         .setMockMethodCallHandler(pluginChannel, null);
   });
 
+  testWidgets('large conversation list builds only viewport rows', (
+    tester,
+  ) async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    nativeConversations = List.generate(
+      300,
+      (index) => <String, Object?>{
+        'id': 10000 + index,
+        'title': 'Performance conversation $index',
+        'mode': ConversationMode.agent.storageValue,
+        'status': 0,
+        'messageCount': 0,
+        'createdAt': now - index,
+        'updatedAt': now - index,
+      },
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DefaultAssetBundle(
+          bundle: _SvgTestAssetBundle(),
+          child: _buildProviderScope(
+            child: const Scaffold(
+              body: SizedBox(width: 360, height: 720, child: HomeDrawer()),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Performance conversation 0'), findsOneWidget);
+    expect(find.byType(ConversationSlidable).evaluate().length, lessThan(30));
+    expect(find.text('Performance conversation 299'), findsNothing);
+    await tester.scrollUntilVisible(
+      find.text('Performance conversation 299'),
+      500,
+      scrollable: find
+          .descendant(
+            of: find.byType(CustomScrollView),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+      maxScrolls: 100,
+    );
+    await tester.pumpAndSettle();
+    expect(
+      find.text('Performance conversation 299').hitTestable(),
+      findsOneWidget,
+    );
+    expect(find.byType(ConversationSlidable).evaluate().length, lessThan(30));
+  });
+
   testWidgets('shows and invokes declarative Agent Web quick actions', (
     tester,
   ) async {
@@ -831,7 +882,7 @@ void main() {
     // 列表可以滚动到定时任务区块下方的历史会话。
     await tester.dragUntilVisible(
       find.text('普通会话'),
-      find.byType(ListView),
+      find.byType(CustomScrollView),
       const Offset(0, -160),
     );
     await tester.ensureVisible(find.text('普通会话'));

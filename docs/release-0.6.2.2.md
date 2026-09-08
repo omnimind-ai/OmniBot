@@ -4,6 +4,8 @@ Android versionName：0.6.2.2；versionCode：14。准备进入现有四段版�
 
 ## 更新内容
 
+- 修复首页对话列表整组构建全部历史行的问题，改为按可见范围构建；300 条历史的首屏挂载回归由 300 行降至少于 30 行，完整历史仍可滚动访问。设备帧率改善待真机测量。
+
 - 小万在每次模型请求前维护上下文预算，覆盖当前任务增长；修复摘要输入预算、工具 schema 固定开销及服务商超限错误识别。允许的超限恢复在同一任务内最多执行一次，已开始输出的失败请求不重放。
 - 大工具结果与长历史采用有界读取和完整文件引用，减少历史恢复、请求构造及界面持久化中的大数据复制；保留当次原图输入和原始历史。
 - 自动摘要等待对应已完成工具记录提交后保存检查点；修复异步历史加载覆盖实时回复、快照清空任务身份和内部服务异常后等待不结束的问题。
@@ -26,6 +28,8 @@ Android versionName：0.6.2.2；versionCode：14。准备进入现有四段版�
 2026-09-08 获取的 `origin/main` 为 `45d606b07`，已是 `codex/integrate-local-fixes` 的祖先，合并检查返回 `Already up to date`。保留全部整合提交，包括 `01fd832f6` 和 `8496e2adb`。未强制覆盖本地与远端指向不同的旧标签。
 
 ## 本次执行入口
+
+后续列表修复后的最新候选包 SHA-256 为 `20d43f96dbedf90156afde229a3a295f757acff23ea6e10380580bbe581fccbe`，全量 Flutter 1187 项通过；模拟器列表打开、重开和重启入口检查通过。该结果更新下方早先候选包的状态，不代表新的完整 40 步设备验收，详见 [列表修复记录](testing/drawer-lazy-2026-09-08.md)。
 
 ```sh
 ./gradlew --no-daemon --no-parallel :app:testDevelopStandardDebugUnitTest :app:assembleDevelopStandardDebug -Ptarget=lib/main_standard.dart
