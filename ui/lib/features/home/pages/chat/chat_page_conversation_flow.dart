@@ -302,20 +302,14 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
   @override
   Future<void> _pickAttachments() async {
     try {
-      final result = await FilePicker.platform.pickFiles(
-        allowMultiple: true,
-        type: FileType.any,
-      );
-      if (result == null || result.files.isEmpty || !mounted) return;
+      final files = await FilePicker.pickFiles(type: FileType.any);
+      if (files.isEmpty || !mounted) return;
 
       setState(() {
-        for (final file in result.files) {
-          // Android file_picker can return a readable content URI in
-          // `identifier` while `path` is null (cloud/document providers).
-          // Keep that official provider identifier as the attachment source;
-          // the native ACP boundary materializes it into the workspace.
-          final path = file.path ?? file.identifier;
-          if (path == null || path.isEmpty) continue;
+        for (final file in files) {
+          final metadata = pickedAttachmentMetadata(file);
+          if (metadata == null) continue;
+          final path = metadata.path;
           final exists = _pendingAttachments.any((item) => item.path == path);
           if (exists) continue;
           final displayName = (file.name.trim().isNotEmpty)
@@ -329,7 +323,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
               id: '${path}_${DateTime.now().microsecondsSinceEpoch}',
               name: displayName,
               path: path,
-              size: file.size > 0 ? file.size : null,
+              size: metadata.size,
               mimeType: mimeType,
               isImage: isImage,
             ),
@@ -579,8 +573,8 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       if (waitForBootstrap && bootstrapFuture != null) {
         await bootstrapFuture;
       }
-      final messageText =
-          (submittedText ?? text ?? _messageController.text).trim();
+      final messageText = (submittedText ?? text ?? _messageController.text)
+          .trim();
       final inputAttachments = submittedAttachments ?? _pendingAttachments;
       final hasAttachments = inputAttachments.isNotEmpty;
       if ((messageText.isEmpty && !hasAttachments) || _isAiResponding) return;
@@ -591,9 +585,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       }
       if (!await _ensureNormalChatModelConfigurationForSend()) return;
 
-      final attachments = inputAttachments
-          .map((item) => item.toMap())
-          .toList();
+      final attachments = inputAttachments.map((item) => item.toMap()).toList();
       if (attachments.isNotEmpty && mounted) {
         setState(() {
           if (submittedAttachments == null) {
@@ -608,8 +600,8 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
         messageText,
         attachments: attachments,
         runSlashCommand: true,
-        restoreInputValue: queuedDuringSwitch &&
-                _messageController.text != submittedText
+        restoreInputValue:
+            queuedDuringSwitch && _messageController.text != submittedText
             ? _messageController.value
             : null,
       );
@@ -1369,14 +1361,14 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
     final agentTurnId =
         runtimeIdentity?.normalizedTurnId ?? _activeAgentTurnId?.trim();
     final normalSessionId =
-        _runtimeForMode(
-          ChatPageMode.normal,
-        )?.activeRunIdentity?.normalizedSessionId ??
+        _runtimeForMode(ChatPageMode.normal)
+            ?.activeRunIdentity
+            ?.normalizedSessionId ??
         _normalAcpSessionId?.trim();
     final normalTurnId =
-        _runtimeForMode(
-          ChatPageMode.normal,
-        )?.activeRunIdentity?.normalizedTurnId ??
+        _runtimeForMode(ChatPageMode.normal)
+            ?.activeRunIdentity
+            ?.normalizedTurnId ??
         _normalAcpTurnId?.trim();
     interruptActiveToolCard();
     if (_activeConversationMode == ChatPageMode.normal &&
@@ -1430,9 +1422,8 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
           runtimeIdentity?.normalizedSessionId ?? _activeAgentThreadId?.trim();
       final agentTurnId =
           runtimeIdentity?.normalizedTurnId ?? _activeAgentTurnId?.trim();
-      final normalIdentity = _runtimeForMode(
-        ChatPageMode.normal,
-      )?.activeRunIdentity;
+      final normalIdentity = _runtimeForMode(ChatPageMode.normal)
+          ?.activeRunIdentity;
       final normalSessionId =
           normalIdentity?.normalizedSessionId ?? _normalAcpSessionId?.trim();
       final normalTurnId =

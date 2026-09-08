@@ -145,4 +145,3 @@ ktfmt = { id = "com.ncorti.ktfmt.gradle", version.ref = "ktfmt" }
 publish = { id = "com.vanniktech.maven.publish.base", version = "0.34.0" }
 baselineprofile = { id = "androidx.baselineprofile", version.ref = "baselineprofile" }
 benchmark = { id = "androidx.benchmark", version.ref = "benchmark" }
-

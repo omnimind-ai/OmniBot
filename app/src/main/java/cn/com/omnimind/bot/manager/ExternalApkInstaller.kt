@@ -362,7 +362,12 @@ object ExternalApkInstaller {
             if (!canNotify()) {
                 return
             }
-            notificationManager.notify(DOWNLOAD_NOTIFICATION_ID, builder.build())
+            try {
+                notificationManager.notify(DOWNLOAD_NOTIFICATION_ID, builder.build())
+            } catch (e: SecurityException) {
+                // Permission can be revoked after canNotify() succeeds.
+                OmniLog.w(TAG, "Download notification permission unavailable: " + e.message)
+            }
         }
 
         private fun canNotify(): Boolean {

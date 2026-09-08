@@ -258,15 +258,10 @@ class AgentBrowserSessionService {
   }
 
   static Future<ChatBrowserSessionSnapshot?> importUserscriptFile() async {
-    final result = await FilePicker.platform.pickFiles(
-      allowMultiple: false,
+    final file = await FilePicker.pickFile(
       type: FileType.custom,
       allowedExtensions: const <String>['js'],
-      withData: true,
     );
-    final file = result == null || result.files.isEmpty
-        ? null
-        : result.files.first;
     if (file == null) {
       return null;
     }
@@ -275,12 +270,13 @@ class AgentBrowserSessionService {
       throw const FormatException('Selected file is not a JavaScript file');
     }
     String source;
-    if (file.bytes != null) {
-      source = String.fromCharCodes(file.bytes!);
-    } else if (file.path != null) {
+    try {
+      source = String.fromCharCodes(await file.readAsBytes());
+    } catch (_) {
+      if (file.path == null) {
+        throw const FileSystemException('Unable to read userscript file');
+      }
       source = await File(file.path!).readAsString();
-    } else {
-      throw const FileSystemException('Unable to read userscript file');
     }
     return importUserscriptSource(source: source, sourceName: name);
   }
