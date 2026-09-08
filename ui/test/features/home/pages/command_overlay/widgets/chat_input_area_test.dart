@@ -80,11 +80,11 @@ void main() {
 
         final control = find.byKey(const ValueKey('chat-input-context-usage'));
         expect(control, findsOneWidget);
-        expect(find.text('?'), findsOneWidget);
+        expect(find.text('?'), findsNothing);
         await tester.tap(control);
         await tester.pump(const Duration(milliseconds: 300));
         expect(
-          find.text('No data yet\nLong press to adjust threshold'),
+          find.text('0%\nLong press to adjust threshold'),
           findsOneWidget,
         );
         await tester.pump(const Duration(seconds: 4));

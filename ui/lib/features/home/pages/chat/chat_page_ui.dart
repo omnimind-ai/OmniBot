@@ -2206,13 +2206,6 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
           ? 'No context threshold set\nLong press to adjust threshold'
           : '上下文阈值未设置\n长按可调整阈值';
     }
-    if (conversation.latestPromptTokensUpdatedAt <= 0 &&
-        conversation.latestPromptTokens <= 0) {
-      return LegacyTextLocalizer.isEnglish
-          ? 'No context usage data yet\nLong press to adjust threshold'
-          : '上下文用量暂无数据\n长按可调整阈值';
-    }
-
     final usedTokens = conversation.latestPromptTokens;
     final thresholdTokens = conversation.promptTokenThreshold;
     return '${_formatTokenCount(usedTokens)} / '

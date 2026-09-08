@@ -129,27 +129,15 @@ class _ContextUsageRingButtonState extends State<_ContextUsageRingButton> {
     final ring = SizedBox(
       width: 22,
       height: 22,
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          _ContextUsageRing(ratio: hasUsage ? widget.ratio! : 0),
-          if (!hasUsage)
-            Text(
-              '?',
-              style: TextStyle(
-                fontSize: 11,
-                height: 1,
-                color: context.omniPalette.textSecondary,
-              ),
-            ),
-        ],
+      child: Center(
+        child: _ContextUsageRing(ratio: hasUsage ? widget.ratio! : 0),
       ),
     );
     final suppliedTooltip = widget.tooltipMessage?.trim() ?? '';
     final tooltip = suppliedTooltip.isNotEmpty
         ? suppliedTooltip
         : !hasUsage
-        ? (english ? 'No data yet' : '暂无数据') +
+        ? '0%' +
               (widget.onLongPress == null
                   ? ''
                   : english
