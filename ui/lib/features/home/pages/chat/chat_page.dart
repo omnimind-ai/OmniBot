@@ -1829,6 +1829,8 @@ abstract class _ChatPageStateBase extends State<ChatPage>
 
   Future<void> _loadAgentModelOptions({bool force = false});
 
+  Map<String, dynamic>? _availableAcpCommandForText(String text);
+
   Future<void> _loadAgentCollaborationModes({bool force = false});
 
   Future<void> _selectAgentModel(String modelId, {bool clearComposer = true});

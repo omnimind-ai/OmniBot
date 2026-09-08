@@ -1,0 +1,42 @@
+{
+  "name": "Automatic summary within one task and checkpoint recovery",
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_FILE_CONTEXT_SUMMARY_FIRST"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_FILE_CONTEXT_SUMMARY_FIRST_DONE",
+      "timeoutMs": 180000
+    },
+    {
+      "action": "checkpoint",
+      "marker": "OOB_FILE_CONTEXT_SUMMARY_FIRST"
+    },
+    {
+      "action": "restart"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_FILE_CONTEXT_SUMMARY_FIRST_DONE"
+    },
+    {
+      "action": "checkpoint",
+      "marker": "OOB_FILE_CONTEXT_SUMMARY_FIRST"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_FILE_CONTEXT_SUMMARY_REPEAT"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_FILE_CONTEXT_SUMMARY_REPEAT_DONE",
+      "timeoutMs": 180000
+    },
+    {
+      "action": "checkpoint",
+      "marker": "OOB_FILE_CONTEXT_SUMMARY_REPEAT"
+    }
+  ]
+}

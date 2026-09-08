@@ -2,6 +2,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ui/features/home/pages/chat/utils/agent_slash_commands.dart';
 
 void main() {
+  test('Plan shortcut requires an exact advertised value', () {
+    expect(advertisedPlanMode(const []), isNull);
+    expect(advertisedPlanMode(['default', 'explain', 'planning_disabled']), isNull);
+    expect(advertisedPlanMode(['default', 'Plan']), 'Plan');
+  });
+
   test('routes codex model command intents', () {
     expect(
       resolveAgentSlashSubmitIntent('/model').kind,

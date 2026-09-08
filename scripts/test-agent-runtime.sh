@@ -168,7 +168,7 @@ if [[ "$RUN_FLUTTER" == "1" ]]; then
       test/features/home/pages/chat/composer_lift_chain_test.dart \\
       test/features/home/pages/chat/composer_lift_intent_tracker_test.dart \\
       test/services/model_provider_config_service_test.dart \\
-      test/services/model_provider_cache_lifecycle_test.dart \\
+      test/services/model_provider_live_discovery_test.dart \\
       test/features/home/pages/model_provider_setting/model_provider_setting_page_test.dart \\
       test/features/home/pages/agent/agent_mode_setting_page_test.dart \\
       test/features/home/pages/agent/agent_config_page_test.dart \\

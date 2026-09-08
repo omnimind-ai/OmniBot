@@ -1,0 +1,111 @@
+{
+  "name": "User budget survives model selection and restart",
+  "serial": "emulator-5560",
+  "runId": "1788856856439",
+  "kind": "emulator-user-interface",
+  "passed": true,
+  "steps": [
+    {
+      "index": 1,
+      "action": "long-press",
+      "passed": true,
+      "elapsedMs": 4169
+    },
+    {
+      "index": 2,
+      "action": "tap",
+      "passed": true,
+      "elapsedMs": 2918
+    },
+    {
+      "index": 3,
+      "action": "expect",
+      "passed": true,
+      "elapsedMs": 2662
+    },
+    {
+      "index": 4,
+      "action": "tap",
+      "passed": true,
+      "elapsedMs": 2732
+    },
+    {
+      "index": 5,
+      "action": "expect",
+      "passed": true,
+      "elapsedMs": 2877
+    },
+    {
+      "index": 6,
+      "action": "tap",
+      "passed": true,
+      "elapsedMs": 2913
+    },
+    {
+      "index": 7,
+      "action": "tap",
+      "passed": true,
+      "elapsedMs": 2856
+    },
+    {
+      "index": 8,
+      "action": "tap",
+      "passed": true,
+      "elapsedMs": 2906
+    },
+    {
+      "index": 9,
+      "action": "tap",
+      "passed": true,
+      "elapsedMs": 3934
+    },
+    {
+      "index": 10,
+      "action": "long-press",
+      "passed": true,
+      "elapsedMs": 3577
+    },
+    {
+      "index": 11,
+      "action": "expect",
+      "passed": true,
+      "elapsedMs": 2648
+    },
+    {
+      "index": 12,
+      "action": "tap",
+      "passed": true,
+      "elapsedMs": 2840
+    },
+    {
+      "index": 13,
+      "action": "restart",
+      "passed": true,
+      "elapsedMs": 2726
+    },
+    {
+      "index": 14,
+      "action": "long-press",
+      "passed": true,
+      "elapsedMs": 6687
+    },
+    {
+      "index": 15,
+      "action": "expect",
+      "passed": true,
+      "elapsedMs": 3099
+    },
+    {
+      "index": 16,
+      "action": "tap",
+      "passed": true,
+      "elapsedMs": 2889
+    },
+    {
+      "index": 17,
+      "action": "tap",
+      "passed": true,
+      "elapsedMs": 2995
+    }
+  ]
+}

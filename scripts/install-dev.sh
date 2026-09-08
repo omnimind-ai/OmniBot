@@ -4,7 +4,6 @@
 #   bash scripts/install-dev.sh              # build + install to USB device
 #   bash scripts/install-dev.sh --skip-build # install already-built APK
 #   bash scripts/install-dev.sh --device <serial>
-#   bash scripts/install-dev.sh --device <serial> --hot-project scripts/sandbox-demos/basketball-career
 #   bash scripts/install-dev.sh --local-sources --allow-dirty-runtime
 set -euo pipefail
 
@@ -651,8 +650,8 @@ if is_truthy "$ADB_PROVIDER_PROXY"; then
 fi
 
 if [[ -n "$HOT_PROJECT" ]]; then
-  exec bash "$ROOT_DIR/scripts/publish-vibe-project.sh" \
-    --device "$DEVICE_SERIAL" "$HOT_PROJECT"
+  echo "The standalone App publisher was removed; use MCP/plugin tools." >&2
+  exit 1
 fi
 
 # ── 2. Build ───────────────────────────────────────────────────────────────────

@@ -1,0 +1,119 @@
+{
+  "name": "Plan command changes the official Codex session mode",
+  "serial": "emulator-5560",
+  "runId": "1788856586161",
+  "kind": "emulator-user-interface",
+  "passed": true,
+  "steps": [
+    {
+      "index": 1,
+      "action": "tap",
+      "passed": true,
+      "elapsedMs": 3022
+    },
+    {
+      "index": 2,
+      "action": "expect",
+      "passed": true,
+      "elapsedMs": 3304
+    },
+    {
+      "index": 3,
+      "action": "tap",
+      "passed": true,
+      "elapsedMs": 3614
+    },
+    {
+      "index": 4,
+      "action": "expect",
+      "passed": true,
+      "elapsedMs": 3006
+    },
+    {
+      "index": 5,
+      "action": "clear-command-draft",
+      "passed": true,
+      "elapsedMs": 5408
+    },
+    {
+      "index": 6,
+      "action": "send",
+      "marker": "OOB_CODEX_PLAN_SHORTCUT_1788856586161",
+      "passed": true,
+      "elapsedMs": 19927
+    },
+    {
+      "index": 7,
+      "action": "expect",
+      "passed": true,
+      "elapsedMs": 3105
+    },
+    {
+      "index": 8,
+      "action": "expect",
+      "passed": true,
+      "elapsedMs": 3181
+    },
+    {
+      "index": 9,
+      "action": "tap",
+      "passed": true,
+      "elapsedMs": 3909
+    },
+    {
+      "index": 10,
+      "action": "expect",
+      "passed": true,
+      "elapsedMs": 3002
+    },
+    {
+      "index": 11,
+      "action": "tap",
+      "passed": true,
+      "elapsedMs": 3007
+    },
+    {
+      "index": 12,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 3187
+    },
+    {
+      "index": 13,
+      "action": "tap",
+      "passed": true,
+      "elapsedMs": 3056
+    },
+    {
+      "index": 14,
+      "action": "tap",
+      "passed": true,
+      "elapsedMs": 3651
+    },
+    {
+      "index": 15,
+      "action": "expect",
+      "passed": true,
+      "elapsedMs": 3194
+    },
+    {
+      "index": 16,
+      "action": "clear-command-draft",
+      "passed": true,
+      "elapsedMs": 5420
+    },
+    {
+      "index": 17,
+      "action": "send",
+      "marker": "OOB_CODEX_DEFAULT_SHORTCUT_1788856586161",
+      "passed": true,
+      "elapsedMs": 17567
+    },
+    {
+      "index": 18,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 3173
+    }
+  ]
+}

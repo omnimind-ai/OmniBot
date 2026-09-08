@@ -1,0 +1,45 @@
+{
+  "name": "Xiaowan commands follow advertised capabilities",
+  "serial": "emulator-5560",
+  "runId": "1788856984609",
+  "kind": "emulator-user-interface",
+  "passed": true,
+  "steps": [
+    {
+      "index": 1,
+      "action": "tap",
+      "passed": true,
+      "elapsedMs": 3245
+    },
+    {
+      "index": 2,
+      "action": "expect",
+      "passed": true,
+      "elapsedMs": 3458
+    },
+    {
+      "index": 3,
+      "action": "expect",
+      "passed": true,
+      "elapsedMs": 2833
+    },
+    {
+      "index": 4,
+      "action": "assertAbsent",
+      "passed": true,
+      "elapsedMs": 2975
+    },
+    {
+      "index": 5,
+      "action": "assertAbsent",
+      "passed": true,
+      "elapsedMs": 2687
+    },
+    {
+      "index": 6,
+      "action": "clear-command-draft",
+      "passed": true,
+      "elapsedMs": 5001
+    }
+  ]
+}

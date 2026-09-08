@@ -1762,6 +1762,38 @@ void main() {
     );
   });
 
+  test(
+    'continuous updates cannot postpone durable history indefinitely',
+    () async {
+      const conversationId = 99112;
+      final runtime = coordinator.ensureRuntime(
+        conversationId: conversationId,
+        mode: kChatRuntimeModeAgent,
+      );
+      runtime.messages.add(
+        ChatMessageModel.userMessage('long running synthetic task'),
+      );
+      for (var index = 0; index < 5; index++) {
+        coordinator.schedulePersistRuntimeConversation(
+          conversationId: conversationId,
+          mode: kChatRuntimeModeAgent,
+          persistMessages: index == 2,
+        );
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+      // Commit during continuous output; preserve flags merged into the batch.
+      expect(
+        recordedMethodCalls.where(
+          (call) => call.method == 'replaceConversationMessages',
+        ),
+        isNotEmpty,
+      );
+      await coordinator.flushPendingPersistence(
+        conversationId: conversationId, mode: kChatRuntimeModeAgent,
+      );
+    },
+  );
+
   test('persists ACP runtime messages back to native history', () async {
     const conversationId = 2201;
     final runtime = coordinator.ensureRuntime(

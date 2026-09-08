@@ -1,0 +1,11 @@
+{
+  "marker": "OOB_LIVE_RECOVERY_1788855564352",
+  "phase": "recovery",
+  "passed": true,
+  "toolCalls": 6,
+  "tools": [
+    "file_list",
+    "file_read",
+    "terminal_execute"
+  ]
+}

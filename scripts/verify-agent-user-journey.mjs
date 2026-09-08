@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import {uiXmlField as field} from './agent-ui-xml.mjs';
 // Execute a maintained UI journey on an isolated Android emulator.
 // Every action uses current accessibility bounds. No ACP calls, DB writes,
 // synthetic replies, retrying sends, or coordinate fallbacks count as UI acceptance.
@@ -36,8 +37,7 @@ const out = resolve(outputPath);
 mkdirSync(out, {recursive: true, mode: 0o700});
 const adb = (...args) => execFileSync(process.env.ADB || 'adb', ['-s', serial, ...args],
   {timeout: 30000, maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe']});
-const field = (node, key) => (node.match(new RegExp(`${key}="([^"]*)"`))?.[1] || '')
-  .replaceAll('&#10;', '\n').replaceAll('&quot;', '"').replaceAll('&amp;', '&');
+
 function snapshot() {
   assert.match(adb('shell', 'uiautomator', 'dump', '/data/local/tmp/oob-user-journey.xml').toString(),
     /dumped to:/, 'Fresh accessibility snapshot unavailable');
@@ -57,6 +57,13 @@ try {
     if (step.action === 'tap' || step.action === 'long-press') {
       execFileSync(process.execPath, [resolve(scripts, 'tap-agent-device-control.mjs'), serial, step.label, '', ...(step.action === 'long-press' ? ['long-press'] : [])],
         {timeout: 40000, stdio: ['ignore', 'pipe', 'pipe']});
+    } else if (step.action === 'clear-command-draft') {
+      const inputs = snapshot().filter(n => field(n,'class') === 'android.widget.EditText');
+      assert.equal(inputs.length,1);
+      assert.equal(field(inputs[0],'text'), '/', 'Only the command-menu slash may be cleared');
+      assert.equal(field(inputs[0],'focused'),'true');
+      adb('shell','input','keyevent','67');
+      assert(snapshot().some(n => field(n,'class') === 'android.widget.EditText' && field(n,'text') === ''));
     } else if (step.action === 'search') {
       assert(/^[A-Za-z0-9._-]+$/.test(step.text), 'Search only accepts a non-private model ID');
       const inputs = snapshot().filter(n => field(n, 'class') === 'android.widget.EditText' &&
@@ -77,6 +84,9 @@ try {
     } else if (step.action === 'compact') {
       execFileSync(process.execPath, [resolve(scripts, 'send-agent-test-message.mjs'), serial, '/compact'],
         {timeout: 90000, stdio: ['ignore', 'pipe', 'pipe']});
+    } else if (step.action === 'live-task') {
+      const verified = JSON.parse(execFileSync('python3', [resolve(scripts, 'assert-xiaowan-live-task.py'), serial, step.marker, step.phase], {encoding: 'utf8', timeout: 60000}));
+      writeFileSync(resolve(out, `${index}-live-task.json`), JSON.stringify(verified, null, 2));
     } else if (step.action === 'checkpoint') {
       const checkpoint = JSON.parse(execFileSync('python3', [resolve(scripts, 'assert-agent-context-checkpoint.py'), serial, step.marker], {encoding: 'utf8', timeout: 30000}));
       if (checkpoints.has(step.marker)) assert.deepEqual(checkpoint, checkpoints.get(step.marker), 'Checkpoint changed across restart');
@@ -84,7 +94,8 @@ try {
       writeFileSync(resolve(out, `${index}-checkpoint.json`), JSON.stringify(checkpoint, null, 2));
     } else if (step.action === 'send') {
       execFileSync(process.execPath, [resolve(scripts, 'send-agent-test-message.mjs'), serial, step.marker],
-        {timeout: 90000, stdio: ['ignore', 'pipe', 'pipe']});
+        {timeout: step.timeoutMs || 90000, stdio: ['ignore', 'pipe', 'pipe'],
+          env: {...process.env, ...(step.scenario ? {OOB_USER_SCENARIO_FILE: resolve(scripts, 'fixtures', 'user-scenarios', step.scenario)} : {})}});
     } else if (step.action === 'expect' || step.action === 'reply') {
       const deadline = Date.now() + (step.timeoutMs || 120000);
       let found = false;

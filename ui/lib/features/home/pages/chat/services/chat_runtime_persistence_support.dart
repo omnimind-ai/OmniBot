@@ -183,24 +183,30 @@ extension ChatRuntimePersistenceSupport on ChatConversationRuntimeCoordinator {
       return;
     }
     final previous = _pendingPersistence[key];
-    previous?.timer.cancel();
+    // Continuous ACP chunks must not keep moving the journal write into the
+    // future. Merge this batch into its original timer; urgent writes may
+    // advance it. The existing ordered persistence tail remains the owner.
+    if (delay == Duration.zero) previous?.timer.cancel();
     final nextGenerateSummary =
         generateSummary || (previous?.generateSummary ?? false);
     final nextMarkComplete = markComplete || (previous?.markComplete ?? false);
     final nextPersistMessages =
         persistMessages || (previous?.persistMessages ?? false);
-    final timer = Timer(delay, () {
-      _pendingPersistence.remove(key);
-      unawaited(
-        persistRuntimeConversation(
-          conversationId: conversationId,
-          mode: mode,
-          generateSummary: nextGenerateSummary,
-          markComplete: nextMarkComplete,
-          persistMessages: nextPersistMessages,
-        ),
-      );
-    });
+    final timer =
+        (delay != Duration.zero ? previous?.timer : null) ??
+        Timer(delay, () {
+          final request = _pendingPersistence.remove(key);
+          if (request == null) return;
+          unawaited(
+            persistRuntimeConversation(
+              conversationId: conversationId,
+              mode: mode,
+              generateSummary: request.generateSummary,
+              markComplete: request.markComplete,
+              persistMessages: request.persistMessages,
+            ),
+          );
+        });
     _pendingPersistence[key] = _PendingPersistenceRequest(
       conversationId: conversationId,
       mode: mode,

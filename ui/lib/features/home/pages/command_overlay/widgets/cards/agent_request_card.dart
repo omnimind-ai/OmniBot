@@ -69,9 +69,12 @@ class _AgentRequestNoticeState extends State<AgentRequestNotice> {
           'ignored',
           'cancelled',
           'failed',
+          'expired',
         }.contains(cardStatus);
     final unavailable =
-        requestId == null || requestId.toString().trim().isEmpty;
+        widget.cardData['interactionUnavailable'] == true ||
+        requestId == null ||
+        requestId.toString().trim().isEmpty;
 
     return Container(
       width: double.infinity,
@@ -186,6 +189,15 @@ class _AgentRequestNoticeState extends State<AgentRequestNotice> {
         agentId: _requestAgentId(widget.cardData),
         conversationId: _requestConversationId(widget.cardData),
       );
+      // Persist only after the owning ACP request acknowledges the response.
+      // A history-write failure must never resubmit a consumed request.
+      try {
+        await _persistAgentRequestResponse(
+          widget.cardData,
+          accepted ? 'accepted' : 'declined',
+          const [],
+        );
+      } catch (_) {}
       if (!mounted) return;
       setState(() {
         _status = accepted ? 'accepted' : 'declined';
@@ -362,8 +374,10 @@ class _AgentRequestCardState extends State<AgentRequestCard> {
         : (_localStatus ?? cardStatus);
     final interactionUnavailable =
         widget.cardData['interactionUnavailable'] == true;
-    final interactionUnavailableReason =
-        widget.cardData['interactionUnavailableReason']?.toString().trim();
+    final interactionUnavailableReason = widget
+        .cardData['interactionUnavailableReason']
+        ?.toString()
+        .trim();
     final isPending =
         status == 'pending' && !_isSubmitting && !interactionUnavailable;
     final options = _resolveRequestOptions(widget.cardData);
@@ -803,42 +817,44 @@ class _AgentRequestCardState extends State<AgentRequestCard> {
     );
   }
 
-  Future<void> _persistResponseStatus(
-    String status,
-    List<String> answers,
-  ) async {
-    final nextCardData = Map<String, dynamic>.from(widget.cardData)
-      ..['status'] = status
-      ..['submittedAnswers'] = answers;
-    widget.cardData['status'] = status;
-    widget.cardData['submittedAnswers'] = answers;
+  Future<void> _persistResponseStatus(String status, List<String> answers) =>
+      _persistAgentRequestResponse(widget.cardData, status, answers);
+}
 
-    final conversationId = _asInt(widget.cardData['conversationId']);
-    final cardId = (widget.cardData['cardId'] ?? widget.cardData['id'] ?? '')
-        .toString()
-        .trim();
-    if (conversationId != null && cardId.isNotEmpty) {
-      await ConversationHistoryService.upsertConversationUiCard(
-        conversationId,
-        entryId: cardId,
-        cardData: nextCardData,
-        createdAtMillis: _asInt(widget.cardData['startTime']),
-        mode: ConversationMode.agent,
-      );
-    }
-    try {
-      final identity = _requestStorageIdentity(widget.cardData);
-      await StorageService.setString(
-        _requestStorageKey(widget.cardData),
-        jsonEncode(<String, dynamic>{
-          'identity': identity,
-          'status': status,
-          'answers': answers,
-        }),
-      );
-    } catch (_) {
-      return;
-    }
+Future<void> _persistAgentRequestResponse(
+  Map<String, dynamic> cardData,
+  String status,
+  List<String> answers,
+) async {
+  final nextCardData = Map<String, dynamic>.from(cardData)
+    ..['status'] = status
+    ..['submittedAnswers'] = answers;
+  cardData['status'] = status;
+  cardData['submittedAnswers'] = answers;
+
+  final conversationId = _asInt(cardData['conversationId']);
+  final cardId = (cardData['cardId'] ?? cardData['id'] ?? '').toString().trim();
+  if (conversationId != null && cardId.isNotEmpty) {
+    await ConversationHistoryService.upsertConversationUiCard(
+      conversationId,
+      entryId: cardId,
+      cardData: nextCardData,
+      createdAtMillis: _asInt(cardData['startTime']),
+      mode: ConversationMode.agent,
+    );
+  }
+  try {
+    final identity = _requestStorageIdentity(cardData);
+    await StorageService.setString(
+      _requestStorageKey(cardData),
+      jsonEncode(<String, dynamic>{
+        'identity': identity,
+        'status': status,
+        'answers': answers,
+      }),
+    );
+  } catch (_) {
+    return;
   }
 }
 

@@ -1,6 +1,7 @@
 // Local deterministic provider; see docs/testing/file-read-memory-2026-09-07.md.
 // OOB_FILE_TEST_DIR=/tmp/oob-file-repro node scripts/fixtures/file-read-provider.mjs
 import http from 'node:http';
+import {respondXiaowanFailure} from './xiaowan-failure-scenarios.mjs';
 import {createHash} from 'node:crypto';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
@@ -35,7 +36,9 @@ http.createServer(async (request, response) => {
     const chunks = [];
     for await (const chunk of request) chunks.push(chunk);
     const raw = Buffer.concat(chunks);
-    const messages = JSON.parse(raw).messages;
+    const body = JSON.parse(raw);
+    if (respondXiaowanFailure(request, response, body)) return;
+    const messages = body.messages;
     const textContent = message => typeof message?.content === 'string' ? message.content
       : (message?.content || []).filter(part => part.type === 'text').map(part => part.text).join('\n');
     const checkpointCount = marker => Math.max(0, ...messages.map(message => {
@@ -48,6 +51,7 @@ http.createServer(async (request, response) => {
       const marker = textContent(prefix[userIndex]).match(/OOB_FILE_CONTEXT(?:_[A-Z0-9]+)*/)?.[0]
         || JSON.stringify(prefix).match(/File checkpoint for (OOB_FILE_CONTEXT[A-Z0-9_]+);/)?.[1];
       assert(marker, 'Summary fixture requires an identifiable file task');
+      assert(JSON.stringify(messages).length <= 1048566, 'Summary request exceeds the same provider limit');
       const completed = checkpointCount(marker) + prefix.slice(userIndex + 1).filter(message => message.role === 'tool').length;
       console.log(JSON.stringify({marker, summary: true, completedReads: completed, requestChars: JSON.stringify(messages).length}));
       response.writeHead(200, {'content-type': 'text/event-stream'});
@@ -172,6 +176,11 @@ http.createServer(async (request, response) => {
     }
     const delta = done ? {content: `${marker}_DONE`} : {tool_calls: [{index: 0,
       id: `file_call_${marker}_${id}`, type: 'function', function: {name: 'file_read', arguments: JSON.stringify(args)}}]};
+    // Exercise automatic summarization, not only offloading: completed assistant
+    // progress also grows within the same user task. Deterministic, bounded data.
+    if (kind === 'CONTEXT' && marker.includes('_SUMMARY_') && !done) {
+      delta.content = 'Synthetic completed progress. '.repeat(500);
+    }
     response.writeHead(200, {'content-type': 'text/event-stream'});
     response.end(`data: ${JSON.stringify({choices: [{index: 0, delta, finish_reason: done ? 'stop' : 'tool_calls'}]})}\n\ndata: [DONE]\n\n`);
   } catch (error) {
