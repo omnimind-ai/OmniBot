@@ -25,6 +25,10 @@ Android versionName：0.6.2.2；versionCode：14。准备进入现有四段版�
 
 ## 集成基线
 
+2026-09-09 实际重新获取并合并 `origin/main`（45d606b07），生成合并提交 `cccea05e2`，无文本冲突；以该合并事实为准，下方 09-08 的祖先判断不作为本次验证依据。引入主线 Flutter/AGP 依赖升级及更新服务社区二维码等变更，保留 0.6.2.2（14）和本分支修复。
+
+合并后 80 项 Node、7 项 Python 及更新 Worker 19 项测试通过。`flutter pub get --enforce-lockfile` 实际失败：本机 Dart 3.9.2，合并后要求 ^3.13.0；主线指定 Flutter 3.47.2。当前 Android SDK 也尚无主线所需 API 37 平台。合并后的 Flutter/Android 构建和设备回归尚未重新完成，不能沿用合并前的 APK/hash 与测试结果作为新候选验收；需先准备兼容工具链。
+
 2026-09-08 获取的 `origin/main` 为 `45d606b07`，已是 `codex/integrate-local-fixes` 的祖先，合并检查返回 `Already up to date`。保留全部整合提交，包括 `01fd832f6` 和 `8496e2adb`。未强制覆盖本地与远端指向不同的旧标签。
 
 ## 本次执行入口
