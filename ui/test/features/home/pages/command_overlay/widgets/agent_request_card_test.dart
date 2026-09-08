@@ -32,6 +32,74 @@ void main() {
     messenger.setMockMethodCallHandler(assistCoreChannel, null);
   });
 
+  testWidgets('compact historical requests cannot offer expired actions', (
+    tester,
+  ) async {
+    for (final extra in <Map<String, dynamic>>[
+      {'status': 'expired'},
+      {'status': 'pending', 'interactionUnavailable': true},
+    ]) {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: AgentRequestNotice(
+              cardData: {
+                'type': 'agent_request',
+                'requestKind': 'approval',
+                'requestId': 'old-request',
+                'title': 'Implement this plan?',
+                ...extra,
+              },
+            ),
+          ),
+        ),
+      );
+      expect(find.text('允许'), findsNothing);
+      expect(find.text('拒绝'), findsNothing);
+    }
+  });
+
+  testWidgets('compact acknowledged approval persists beyond widget disposal', (
+    tester,
+  ) async {
+    final calls = <MethodCall>[];
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(
+      agentRuntimeChannel,
+      (call) async => {'ok': true},
+    );
+    messenger.setMockMethodCallHandler(assistCoreChannel, (call) async {
+      calls.add(call);
+      return null;
+    });
+    final card = <String, dynamic>{
+      ..._requestCardData(),
+      'requestKind': 'approval',
+      'status': 'pending',
+    };
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: AgentRequestNotice(cardData: card)),
+      ),
+    );
+    await tester.tap(find.text('拒绝'));
+    await tester.pumpAndSettle();
+    expect(card['status'], 'declined');
+    expect(
+      calls.where((c) => c.method == 'upsertConversationUiCard'),
+      isNotEmpty,
+    );
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(body: AgentRequestNotice(cardData: Map.of(card))),
+      ),
+    );
+    expect(find.text('允许'), findsNothing);
+    expect(find.text('拒绝'), findsNothing);
+  });
+
   testWidgets('renders requestUserInput options and submits selection', (
     tester,
   ) async {

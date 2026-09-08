@@ -44,10 +44,27 @@ assert.equal(field(input(snapshot()), 'focused'), 'true', 'Composer did not gain
 for (const character of `Reply ${marker}`) {
   adb('shell', 'input', 'text', character === ' ' ? '%s' : character);
 }
+// Dismiss the IME/selection surface before the ONE send tap. Re-read bounds
+// and verify the draft afterwards; never replay a submitted prompt.
+adb('shell', 'input', 'keyevent', '4');
 const ready = snapshot();
 assert.equal(field(input(ready), 'text'), `Reply ${marker}`, 'Draft mismatch; not sending');
 const send = ready.filter(n => ['Send', '发送'].includes(field(n, 'content-desc')) &&
   field(n, 'clickable') === 'true' && field(n, 'enabled') === 'true');
 assert.equal(send.length, 1, 'Expected one enabled semantic Send control; draft retained');
 tap(send[0]);
+// A tap is not proof of admission: keyboard/selection overlays can consume it.
+// Observe the composer clearing, but never repeat the send automatically.
+let accepted = false;
+const deadline = Date.now() + 15000;
+do {
+  try {
+    accepted = field(input(snapshot()), 'text') === '';
+    if (accepted) break;
+  } catch {
+    // Only repeat fresh observations during UI transitions.
+  }
+  await new Promise(resolve => setTimeout(resolve, 500));
+} while (Date.now() < deadline);
+assert(accepted, 'Send was tapped but composer did not clear; inspect UI before any further action');
 console.log(JSON.stringify({serial, marker, sendDispatched: true, replyVerified: false}));

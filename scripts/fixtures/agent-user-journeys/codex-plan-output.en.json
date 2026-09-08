@@ -1,0 +1,32 @@
+{
+  "name":"Codex Plan review, restart and Default output",
+  "steps":[
+    {"action":"tap","label":"Agent permissions"},
+    {"action":"tap","label":"Read only"},
+    {"action":"tap","label":"Model & settings"},
+    {"action":"expect","text":"Collaboration mode","timeoutMs":30000},
+    {"action":"tap","label":"Collaboration mode"},
+    {"action":"tap","label":"Plan"},
+    {"action":"tap","label":"Model & settings"},
+    {"action":"send","marker":"OOB_CODEX_PLAN_PERSIST"},
+    {"action":"expect","text":"Implement this plan?","timeoutMs":60000},
+    {"action":"expect","text":"OOB_CODEX_PLAN_PERSIST_DONE"},
+    {"action":"tap","label":"拒绝"},
+    {"action":"expect","text":"Processed","timeoutMs":30000},
+    {"action":"tap","label":"Processed"},
+    {"action":"reply","text":"OOB_CODEX_PLAN_PERSIST_DONE"},
+    {"action":"restart"},
+    {"action":"expect","text":"Processed","timeoutMs":30000},
+    {"action":"tap","label":"Processed"},
+    {"action":"reply","text":"OOB_CODEX_PLAN_PERSIST_DONE"},
+    {"action":"tap","label":"Model & settings"},
+    {"action":"expect","text":"Collaboration mode","timeoutMs":30000},
+    {"action":"tap","label":"Collaboration mode"},
+    {"action":"tap","label":"Default"},
+    {"action":"tap","label":"Model & settings"},
+    {"action":"send","marker":"OOB_CODEX_DEFAULT_PERSIST"},
+    {"action":"reply","text":"OOB_CODEX_DEFAULT_PERSIST_DONE","timeoutMs":60000},
+    {"action":"restart"},
+    {"action":"reply","text":"OOB_CODEX_DEFAULT_PERSIST_DONE","timeoutMs":30000}
+  ]
+}

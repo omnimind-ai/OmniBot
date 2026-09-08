@@ -1,0 +1,9 @@
+{"marker": "OOB_CODEX_PLAN_PERSIST_1788840072616", "plan": true, "model": "gpt-4o", "path": "/v1/responses", "priorTestUserCount": 1}
+{"marker": "OOB_CODEX_PLAN_PERSIST_1788840072616", "plan": true, "model": "gpt-5.6-luna", "path": "/v1/responses", "priorTestUserCount": 1}
+{"marker": "OOB_CODEX_DEFAULT_PERSIST_1788840072616", "plan": false, "model": "gpt-4o", "path": "/v1/responses", "priorTestUserCount": 2}
+{"marker": "OOB_CODEX_DEFAULT_PERSIST_1788840072616", "plan": false, "model": "gpt-5.6-luna", "path": "/v1/responses", "priorTestUserCount": 1}
+{"marker": "OOB_CODEX_HOLD_CANCEL_1788840384549", "plan": false, "model": "gpt-4o", "path": "/v1/responses", "priorTestUserCount": 3}
+{"marker": "OOB_CODEX_HOLD_CANCEL_1788840384549", "cancelled": true}
+{"marker": "OOB_CODEX_DEFAULT_RECOVERY_1788840384549", "plan": false, "model": "gpt-4o", "path": "/v1/responses", "priorTestUserCount": 4}
+{"marker": "OOB_CODEX_DEFAULT_RECOVERY_1788840384549", "plan": false, "model": "gpt-5.6-luna", "path": "/v1/responses", "priorTestUserCount": 1}
+{"marker": "OOB_CODEX_DEFAULT_FOLLOWUP_1788840384549", "plan": false, "model": "gpt-4o", "path": "/v1/responses", "priorTestUserCount": 5}

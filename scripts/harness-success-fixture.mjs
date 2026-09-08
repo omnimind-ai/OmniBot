@@ -15,7 +15,7 @@ export function respondHarnessSuccess(req, res, body, {completedTextOnly = false
     event('message_stop',{});res.end();return;
   }
   if (path.endsWith('/responses')) {
-    const part={type:'output_text',text:'OK',annotations:[],logprobs:[]};
+    const part={type:'output_text',text:reply,annotations:[],logprobs:[]};
     const item={id:'msg_fixture',type:'message',role:'assistant',status:'completed',content:[part]};
     const response={id:'resp_fixture',object:'response',created_at:1,model,status:'completed',output:[item],usage:{input_tokens:5,output_tokens:1,total_tokens:6}};
     if (!body.stream) {res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify(response));return;}
@@ -24,8 +24,8 @@ export function respondHarnessSuccess(req, res, body, {completedTextOnly = false
     event('response.created',{response:{...response,status:'in_progress',output:[]}});
     event('response.output_item.added',{output_index:0,item:{...item,status:'in_progress',content:[]}});
     event('response.content_part.added',{item_id:item.id,output_index:0,content_index:0,part:{...part,text:''}});
-    if (!completedTextOnly) event('response.output_text.delta',{item_id:item.id,output_index:0,content_index:0,delta:partialText ? 'O' : 'OK'});
-    event('response.output_text.done',{item_id:item.id,output_index:0,content_index:0,text:'OK'});
+    if (!completedTextOnly) event('response.output_text.delta',{item_id:item.id,output_index:0,content_index:0,delta:partialText ? reply.slice(0,1) : reply});
+    event('response.output_text.done',{item_id:item.id,output_index:0,content_index:0,text:reply});
     event('response.content_part.done',{item_id:item.id,output_index:0,content_index:0,part});
     event('response.output_item.done',{output_index:0,item});
     event('response.completed',{response});res.end();return;
