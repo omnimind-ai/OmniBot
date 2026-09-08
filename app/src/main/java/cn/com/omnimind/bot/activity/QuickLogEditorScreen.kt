@@ -40,6 +40,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
@@ -107,6 +108,7 @@ object QuickLogEditorScreen {
             )
         }
         val context = LocalContext.current
+        val resources = LocalResources.current
         val widgetSettings = remember { quickLogService.getWidgetSettings() }
         val editorColors = remember(widgetSettings) { QuickLogEditorColors.from(widgetSettings) }
         val focusRequester = remember { FocusRequester() }
@@ -148,7 +150,7 @@ object QuickLogEditorScreen {
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = context.getString(
+                            text = resources.getString(
                                 if (isEditMode) {
                                     R.string.quick_log_edit_task
                                 } else {
@@ -162,7 +164,7 @@ object QuickLogEditorScreen {
                         )
                         TextButton(onClick = { activity.finish() }) {
                             Text(
-                                activity.getString(R.string.quick_log_cancel),
+                                resources.getString(R.string.quick_log_cancel),
                                 color = editorColors.secondaryText,
                                 fontSize = 14.sp
                             )
@@ -190,7 +192,7 @@ object QuickLogEditorScreen {
                             decorationBox = { innerTextField ->
                                 if (content.text.isBlank()) {
                                     Text(
-                                        text = context.getString(R.string.quick_log_entry_hint),
+                                        text = resources.getString(R.string.quick_log_entry_hint),
                                         color = editorColors.placeholderText,
                                         fontSize = 16.sp,
                                         lineHeight = 20.sp
@@ -208,7 +210,7 @@ object QuickLogEditorScreen {
                                     if (normalized.isBlank()) {
                                         Toast.makeText(
                                             context,
-                                            context.getString(R.string.quick_log_content_required),
+                                            resources.getString(R.string.quick_log_content_required),
                                             Toast.LENGTH_SHORT
                                         ).show()
                                         return@launch
@@ -236,7 +238,7 @@ object QuickLogEditorScreen {
                                     }.onFailure {
                                         Toast.makeText(
                                             context,
-                                            context.getString(
+                                            resources.getString(
                                                 if (isEditMode) {
                                                     R.string.quick_log_update_failed
                                                 } else {
@@ -251,7 +253,7 @@ object QuickLogEditorScreen {
                                     }
                                     Toast.makeText(
                                         context,
-                                        context.getString(
+                                        resources.getString(
                                             if (isEditMode) {
                                                 R.string.quick_log_update_success
                                             } else {
@@ -278,7 +280,7 @@ object QuickLogEditorScreen {
                                     .onSuccess { deleted ->
                                         Toast.makeText(
                                             context,
-                                            context.getString(
+                                            resources.getString(
                                                 if (deleted) {
                                                     R.string.quick_log_delete_success
                                                 } else {
@@ -292,14 +294,14 @@ object QuickLogEditorScreen {
                                     .onFailure {
                                         Toast.makeText(
                                             context,
-                                            context.getString(R.string.quick_log_delete_failed),
+                                            resources.getString(R.string.quick_log_delete_failed),
                                             Toast.LENGTH_SHORT
                                         ).show()
                                     }
                             }
                         ) {
                             Text(
-                                context.getString(R.string.quick_log_delete_task),
+                                resources.getString(R.string.quick_log_delete_task),
                                 color = editorColors.danger
                             )
                         }

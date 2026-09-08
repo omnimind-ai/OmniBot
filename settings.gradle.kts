@@ -38,6 +38,8 @@ apply(from = File(filePath))
 
 include(":baselib")
 include(":uikit")
+include(":core")
+project(":core").projectDir = File(settingsDir, "ReTerminal/core")
 include(":core:main")
 project(":core:main").projectDir = File(settingsDir, "ReTerminal/core/main")
 include(":core:components")

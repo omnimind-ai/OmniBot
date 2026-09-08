@@ -280,10 +280,16 @@ object TaskRuntimeSettings {
                 }
             }
             .build()
-        NotificationManagerCompat.from(context).notify(
-            notificationId,
-            notification
-        )
+        try {
+            NotificationManagerCompat.from(context).notify(
+                notificationId,
+                notification
+            )
+        } catch (e: SecurityException) {
+            // Do not track a notification that was rejected after the permission check.
+            OmniLog.w(TAG, "Task completion notification permission unavailable: " + e.message)
+            return
+        }
         registerActiveNotification(
             context,
             ActiveNotificationEntry(

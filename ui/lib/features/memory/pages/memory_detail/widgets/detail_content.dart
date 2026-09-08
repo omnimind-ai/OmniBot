@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:ui/utils/ui.dart';
-import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:intl/intl.dart';
 import 'package:ui/features/memory/pages/memory_center/widgets/tag_chip.dart';

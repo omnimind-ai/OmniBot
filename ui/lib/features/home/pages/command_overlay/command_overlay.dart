@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:ui/utils/picked_attachment_metadata.dart';
 import 'package:flutter/material.dart';
 import 'package:ui/l10n/legacy_text_localizer.dart';
 import 'package:ui/services/assists_core_service.dart';
@@ -458,19 +459,14 @@ class _CommandOverlayState extends State<CommandOverlay> {
       if (hiddenForPicker) {
         await Future<void>.delayed(const Duration(milliseconds: 80));
       }
-      final result = await FilePicker.platform.pickFiles(
-        allowMultiple: true,
-        type: FileType.any,
-      );
-      if (result == null || result.files.isEmpty || !mounted) return;
+      final files = await FilePicker.pickFiles(type: FileType.any);
+      if (files.isEmpty || !mounted) return;
 
       setState(() {
-        for (final file in result.files) {
-          // Android file_picker can return a readable content URI in
-          // `identifier` while `path` is null (cloud/document providers).
-          // Keep that identifier so the ACP boundary can materialize it.
-          final path = file.path ?? file.identifier;
-          if (path == null || path.isEmpty) continue;
+        for (final file in files) {
+          final metadata = pickedAttachmentMetadata(file);
+          if (metadata == null) continue;
+          final path = metadata.path;
           final exists = _pendingAttachments.any((item) => item.path == path);
           if (exists) continue;
           final displayName = file.name.trim().isNotEmpty
@@ -483,7 +479,7 @@ class _CommandOverlayState extends State<CommandOverlay> {
               id: '${path}_${DateTime.now().microsecondsSinceEpoch}',
               name: displayName,
               path: path,
-              size: file.size > 0 ? file.size : null,
+              size: metadata.size,
               mimeType: mimeType,
               isImage: _isImageFilePath(path, mimeType: mimeType),
             ),

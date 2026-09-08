@@ -39,7 +39,7 @@ fun buildConfigString(value: String): String = "\"${value.replace("\\", "\\\\").
 android {
     namespace = "com.rk.terminal"
     android.buildFeatures.buildConfig = true
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         minSdk = 24
@@ -54,8 +54,8 @@ android {
 
     sourceSets {
         getByName("main") {
-            jniLibs.srcDir(layout.buildDirectory.dir("generated/jniLibs/embeddedTerminalRuntime"))
-            assets.srcDir(layout.buildDirectory.dir("generated/assets/embeddedTerminalRuntime"))
+            jniLibs.srcDir(layout.buildDirectory.dir("generated/jniLibs/embeddedTerminalRuntime").get().asFile)
+            assets.srcDir(layout.buildDirectory.dir("generated/assets/embeddedTerminalRuntime").get().asFile)
         }
     }
 
@@ -195,9 +195,9 @@ fun unpackDebData(debFile: File, targetDir: File) {
     extractDebMember(debFile, "data.tar.xz", dataArchive)
     targetDir.deleteRecursively()
     targetDir.mkdirs()
-    exec {
+    providers.exec {
         commandLine("tar", "-xJf", dataArchive.absolutePath, "-C", targetDir.absolutePath)
-    }
+    }.result.get().assertNormalExitValue()
 }
 
 fun copyRuntimeFile(source: File, target: File, executable: Boolean) {
