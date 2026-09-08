@@ -735,10 +735,16 @@ class _ChatAppBarModeShortcutButtonState
 
   Widget _buildClosedIcon(Color color) {
     final activeAgentId = widget.activeAcpAgentId?.trim() ?? '';
+    final isXiaowanSelected =
+        !widget.isPureChatSelected &&
+        AgentBrandIcon.normalizeAgentId(activeAgentId) == 'xiaowan-acp';
     // The selector is an identity control, not a progress indicator. Always
     // keep a stable brand/fallback icon visible; DeepSeek's longer native ACP
     // startup must never turn every Harness tap into a global spinner.
-    if (!widget.isPureChatSelected && activeAgentId.isNotEmpty) {
+    // Xiaowan uses the same fixed mark as its mode-menu row.
+    if (!widget.isPureChatSelected &&
+        activeAgentId.isNotEmpty &&
+        !isXiaowanSelected) {
       return AgentBrandIcon(
         key: ValueKey('chat-app-bar-active-agent-icon-$activeAgentId'),
         agentId: activeAgentId,
@@ -751,7 +757,7 @@ class _ChatAppBarModeShortcutButtonState
     // when switching Harnesses.
     const iconSize = 22.0;
     return SvgPicture.asset(
-      _closedIconAsset(),
+      isXiaowanSelected ? _kChatAppBarAgentIconAsset : _closedIconAsset(),
       width: iconSize,
       height: iconSize,
       colorFilter: ColorFilter.mode(color, BlendMode.srcIn),
