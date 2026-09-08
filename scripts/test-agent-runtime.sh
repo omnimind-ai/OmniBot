@@ -71,6 +71,7 @@ run_step() {
 
 run_step "Node protocol/provider tests" \
   node --test \
+    scripts/agent-ui-xml.test.mjs \
     scripts/agent-provider-observer.test.mjs \
     scripts/install-dev-shell.test.mjs \
     scripts/skill-install-shell.test.mjs \
@@ -78,6 +79,9 @@ run_step "Node protocol/provider tests" \
     scripts/agent_memory_unbounded.test.mjs \
     scripts/agent_runtime_capability_contract.test.mjs \
     scripts/sync_models_dev_catalog.test.mjs
+
+run_step "Turn-scoped journal verifier tests" \
+  python3 -m unittest discover -s scripts -p test_agent_turn_outcome.py
 
 if [[ "$RUN_GRADLE" == "1" ]]; then
   run_step "Android Agent/ACP JVM tests" \

@@ -84,6 +84,9 @@ try {
     } else if (step.action === 'compact') {
       execFileSync(process.execPath, [resolve(scripts, 'send-agent-test-message.mjs'), serial, '/compact'],
         {timeout: 90000, stdio: ['ignore', 'pipe', 'pipe']});
+    } else if (step.action === 'turn-outcome') {
+      const verified = JSON.parse(execFileSync('python3', [resolve(scripts, 'assert-agent-turn-outcome.py'), serial, step.marker, step.expected, ...(step.summary ? [step.summary] : [])], {encoding: 'utf8', timeout: 60000}));
+      writeFileSync(resolve(out, `${index}-turn-outcome.json`), JSON.stringify(verified, null, 2));
     } else if (step.action === 'live-task') {
       const verified = JSON.parse(execFileSync('python3', [resolve(scripts, 'assert-xiaowan-live-task.py'), serial, step.marker, step.phase], {encoding: 'utf8', timeout: 60000}));
       writeFileSync(resolve(out, `${index}-live-task.json`), JSON.stringify(verified, null, 2));

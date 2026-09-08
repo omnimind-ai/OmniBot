@@ -11,6 +11,11 @@
       "timeoutMs": 60000
     },
     {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_UNKNOWN",
+      "expected": "recovered"
+    },
+    {
       "action": "send",
       "marker": "OOB_FAILURE_ARGS"
     },
@@ -18,6 +23,11 @@
       "action": "reply",
       "text": "OOB_FAILURE_ARGS_RECOVERED",
       "timeoutMs": 60000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_ARGS",
+      "expected": "recovered"
     },
     {
       "action": "send",
@@ -29,6 +39,11 @@
       "timeoutMs": 60000
     },
     {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_MISSING",
+      "expected": "recovered"
+    },
+    {
       "action": "send",
       "marker": "OOB_FAILURE_EXIT"
     },
@@ -36,6 +51,11 @@
       "action": "reply",
       "text": "OOB_FAILURE_EXIT_RECOVERED",
       "timeoutMs": 90000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_EXIT",
+      "expected": "recovered"
     },
     {
       "action": "send",
@@ -47,11 +67,21 @@
       "timeoutMs": 90000
     },
     {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_TIMEOUT",
+      "expected": "recovered"
+    },
+    {
       "action": "restart"
     },
     {
       "action": "reply",
       "text": "OOB_FAILURE_TIMEOUT_RECOVERED"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_TIMEOUT",
+      "expected": "recovered"
     }
   ]
 }
