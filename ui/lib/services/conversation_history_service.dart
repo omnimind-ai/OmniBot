@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -12,6 +14,13 @@ import 'package:ui/services/omnibot_resource_service.dart';
 
 /// 对话历史持久化服务
 class ConversationHistoryService {
+  // Acknowledged write digests only; never a history source or content cache.
+  // A fresh process submits its visible page once. Failed writes are not acknowledged.
+  static final Map<String, Map<String, Digest>> _acknowledgedWrites = {};
+
+  @visibleForTesting
+  static void resetWriteAcknowledgements() => _acknowledgedWrites.clear();
+
   static const MethodChannel _assistCore = MethodChannel(
     'cn.com.omnimind.bot/AssistCoreEvent',
   );
@@ -313,22 +322,34 @@ class ConversationHistoryService {
 
   /// 保存对话消息列表。
   ///
-  /// Native replacement is a destructive delete-and-rebuild operation. Keep
-  /// writes for one logical conversation ordered so an older stream snapshot
-  /// cannot finish after a newer one and roll the thread back.
+  /// Runtime snapshots merge by message identity. Only explicit user history
+  /// edits may remove missing entries; writes remain ordered per conversation.
   static Future<void> saveConversationMessages(
     int conversationId,
     List<ChatMessageModel> messages, {
     ConversationMode mode = ConversationMode.agent,
+    bool allowHistoryRemoval = false,
   }) {
     final key = '${mode.canonicalStorageValue}:$conversationId';
     final snapshot = List<ChatMessageModel>.from(messages);
+    return _enqueueConversationMessageWrite(
+      key,
+      () => _saveConversationMessages(
+        conversationId,
+        snapshot,
+        mode: mode,
+        allowHistoryRemoval: allowHistoryRemoval,
+      ),
+    );
+  }
+
+  static Future<void> _enqueueConversationMessageWrite(
+    String key,
+    Future<void> Function() write,
+  ) {
     final previous =
         _conversationMessageWriteQueues[key] ?? Future<void>.value();
-    final next = _runConversationMessageWrite(
-      previous,
-      () => _saveConversationMessages(conversationId, snapshot, mode: mode),
-    );
+    final next = _runConversationMessageWrite(previous, write);
     _conversationMessageWriteQueues[key] = next;
     return next.whenComplete(() {
       if (identical(_conversationMessageWriteQueues[key], next)) {
@@ -354,35 +375,55 @@ class ConversationHistoryService {
     int conversationId,
     List<ChatMessageModel> messages, {
     required ConversationMode mode,
+    bool allowHistoryRemoval = false,
   }) async {
+    final key = '${mode.canonicalStorageValue}:$conversationId';
     final jsonList = messages.map((m) => m.toJson()).toList();
+    final previous = _acknowledgedWrites[key] ?? const <String, Digest>{};
+    final next = <String, Digest>{};
+    final changed = <Map<String, dynamic>>[];
+    for (final row in jsonList) {
+      final id = row['id']?.toString();
+      if (id == null || id.isEmpty) {
+        changed.add(row);
+        continue;
+      }
+      final digest = sha256.convert(utf8.encode(jsonEncode(row)));
+      next[id] = digest;
+      if (allowHistoryRemoval || previous[id] != digest) changed.add(row);
+    }
+    if (changed.isEmpty && !allowHistoryRemoval) return;
     final stored = await _replaceNativeConversationMessages(
       conversationId,
-      jsonList,
+      allowHistoryRemoval ? jsonList : changed,
       mode: mode,
+      allowHistoryRemoval: allowHistoryRemoval,
     );
     if (stored) {
+      _acknowledgedWrites[key] = allowHistoryRemoval
+          ? next
+          : {...previous, ...next};
       await _clearLegacyConversationMessages(conversationId, mode: mode);
       return;
     }
 
-    await _writeLegacyConversationMessages(
-      conversationId,
-      jsonList,
-      mode: mode,
-    );
+    // Legacy storage is an import source, not a competing destination for
+    // failed live writes. Surface failure so admission/flush retains its owner.
+    throw StateError('Native conversation persistence failed');
   }
 
   static Future<bool> _replaceNativeConversationMessages(
     int conversationId,
     List<Map<String, dynamic>> jsonList, {
     required ConversationMode mode,
+    bool allowHistoryRemoval = false,
   }) async {
     try {
       await _assistCore.invokeMethod('replaceConversationMessages', {
         'conversationId': conversationId,
         'mode': mode.canonicalStorageValue,
         'messages': jsonList,
+        'allowHistoryRemoval': allowHistoryRemoval,
       });
       return true;
     } on PlatformException catch (e) {
@@ -696,21 +737,6 @@ class ConversationHistoryService {
     );
   }
 
-  static Future<void> _writeLegacyConversationMessages(
-    int conversationId,
-    List<Map<String, dynamic>> jsonList, {
-    required ConversationMode mode,
-  }) async {
-    final prefs = await _optionalSharedPreferences(operation: '写入旧版对话历史兜底');
-    if (prefs == null) {
-      return;
-    }
-    await prefs.setString(
-      conversationMessagesKey(conversationId, mode: mode),
-      jsonEncode(jsonList),
-    );
-  }
-
   static Future<void> _clearLegacyConversationMessages(
     int conversationId, {
     required ConversationMode mode,
@@ -783,18 +809,24 @@ class ConversationHistoryService {
   static Future<void> clearConversationMessages(
     int conversationId, {
     ConversationMode mode = ConversationMode.agent,
-  }) async {
-    try {
-      await _assistCore.invokeMethod('clearConversationMessages', {
-        'conversationId': conversationId,
-        'mode': mode.canonicalStorageValue,
-      });
-    } on PlatformException catch (e) {
-      debugPrint('清理对话历史失败: ${e.message}');
-    } catch (e) {
-      debugPrint('清理对话历史异常: $e');
-    }
-    await _clearLegacyConversationMessages(conversationId, mode: mode);
+  }) {
+    final key = '${mode.canonicalStorageValue}:$conversationId';
+    return _enqueueConversationMessageWrite(key, () async {
+      _acknowledgedWrites.remove(
+        '${mode.canonicalStorageValue}:$conversationId',
+      );
+      try {
+        await _assistCore.invokeMethod('clearConversationMessages', {
+          'conversationId': conversationId,
+          'mode': mode.canonicalStorageValue,
+        });
+      } on PlatformException catch (e) {
+        debugPrint('清理对话历史失败: ${e.message}');
+      } catch (e) {
+        debugPrint('清理对话历史异常: $e');
+      }
+      await _clearLegacyConversationMessages(conversationId, mode: mode);
+    });
   }
 }
 

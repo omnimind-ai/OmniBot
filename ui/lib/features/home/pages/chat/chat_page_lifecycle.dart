@@ -469,14 +469,6 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
       return;
     }
 
-    final runtime = _runtimeCoordinator.runtimeFor(
-      conversationId: conversationId,
-      mode: _modeKey(mode),
-    );
-    final inMemoryConversation = runtime?.conversation;
-    final inMemoryMessages = runtime == null || runtime.messages.isEmpty
-        ? null
-        : List<ChatMessageModel>.from(runtime.messages);
     final conversations = await ConversationService.getAllConversations(
       includeArchived: true,
     );
@@ -495,9 +487,17 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
       conversation = null;
     }
 
-    final resolvedConversation = inMemoryConversation ?? conversation;
-    final resolvedMessages =
-        inMemoryMessages ??
+    // The metadata read may overlap the current ACP turn. Select the current
+    // runtime only after I/O, rather than projecting an earlier message list.
+    var runtime = _runtimeCoordinator.runtimeFor(
+      conversationId: conversationId,
+      mode: _modeKey(mode),
+    );
+    var resolvedConversation = runtime?.conversation ?? conversation;
+    var resolvedMessages =
+        (runtime?.messages.isNotEmpty == true
+            ? List<ChatMessageModel>.from(runtime!.messages)
+            : null) ??
         await ConversationHistoryService.getConversationMessages(
           conversationId,
           mode: _conversationModeForPageMode(mode),
@@ -505,6 +505,15 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
         );
     if (!mounted || !isConversationLifecycleTokenCurrent(lifecycleToken)) {
       return;
+    }
+
+    runtime = _runtimeCoordinator.runtimeFor(
+      conversationId: conversationId,
+      mode: _modeKey(mode),
+    );
+    if (runtime?.messages.isNotEmpty == true) {
+      resolvedMessages = List<ChatMessageModel>.from(runtime!.messages);
+      resolvedConversation = runtime.conversation ?? resolvedConversation;
     }
 
     _modeState(mode).currentConversationId = conversationId;

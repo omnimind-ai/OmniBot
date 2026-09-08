@@ -20,7 +20,11 @@ extension _ChatPageUserMessageActions on _ChatPageStateBase {
       backgroundColor: Colors.transparent,
       builder: (_) => _ContextThresholdSheet(
         initialThreshold: conversation.promptTokenThreshold,
-        currentUsageTokens: conversation.latestPromptTokens,
+        currentUsageTokens:
+            conversation.latestPromptTokensUpdatedAt > 0 ||
+                conversation.latestPromptTokens > 0
+            ? conversation.latestPromptTokens
+            : null,
         onThresholdSaved: (nextThreshold) async {
           final trackedConversation = _modeState(
             conversationMode,
@@ -45,16 +49,6 @@ extension _ChatPageUserMessageActions on _ChatPageStateBase {
               );
           if (!mounted || !success) {
             return success;
-          }
-
-          final modelId =
-              _activeConversationModelOverrideSelection?.modelId ??
-              _activeDispatchSceneSelection?.modelId;
-          if (modelId != null && modelId.isNotEmpty) {
-            await StorageService.setManualModelContextThreshold(
-              modelId,
-              nextThreshold,
-            );
           }
 
           final updatedConversation = latestConversation.copyWith(
@@ -509,6 +503,7 @@ extension _ChatPageUserMessageActions on _ChatPageStateBase {
     }
 
     await _runtimeCoordinator.persistConversationMessageSnapshot(
+      allowHistoryRemoval: true,
       conversationId: conversationId,
       mode: _modeKey(_activeMode),
       messages: List<ChatMessageModel>.from(_messages),

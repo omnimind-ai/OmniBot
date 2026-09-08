@@ -56,25 +56,33 @@ class _AgentRequestNoticeState extends State<AgentRequestNotice> {
         : presentation.title;
     final detail = presentation.detail;
     final requestId = widget.cardData['requestId'];
-    final cardStatus = widget.cardData['status']
-        ?.toString()
-        .trim()
-        .toLowerCase();
-    final pending =
-        _status == null &&
-        !const <String>{
-          'submitted',
-          'accepted',
-          'declined',
-          'ignored',
-          'cancelled',
-          'failed',
-          'expired',
-        }.contains(cardStatus);
+    final status = _status ?? _cardStatus(widget.cardData);
+    final pending = status == 'pending';
+    // Render the saved outcome even when a historical request has no live id.
+    // This is presentation only: never reconstruct or resend an ACP request.
+    final outcomeLabel = switch (status) {
+      'accepted' => '已允许',
+      'declined' => '已拒绝',
+      'submitted' => '已提交',
+      'ignored' => '已忽略',
+      'cancelled' => '已取消',
+      'failed' => '处理失败',
+      'expired' => '已过期',
+      _ => null,
+    };
     final unavailable =
         widget.cardData['interactionUnavailable'] == true ||
         requestId == null ||
         requestId.toString().trim().isEmpty;
+
+    final statusLabel =
+        outcomeLabel ??
+        (unavailable
+            ? (widget.cardData['interactionUnavailableReason'] ==
+                      'session_ended'
+                  ? '历史请求，无法继续操作'
+                  : '该请求当前无法操作')
+            : null);
 
     return Container(
       width: double.infinity,
@@ -121,7 +129,7 @@ class _AgentRequestNoticeState extends State<AgentRequestNotice> {
                     ),
                   ),
                 ],
-                if (kind == 'user_input' && pending) ...[
+                if (kind == 'user_input' && pending && !unavailable) ...[
                   const SizedBox(height: 2),
                   Text(
                     '请直接在下方输入回复',
@@ -157,12 +165,10 @@ class _AgentRequestNoticeState extends State<AgentRequestNotice> {
                     ],
                   ),
                 ],
-                if (_status != null || unavailable) ...[
+                if (statusLabel != null) ...[
                   const SizedBox(height: 2),
                   Text(
-                    unavailable
-                        ? '请求缺少 requestId，已跳过交互'
-                        : (_status == 'accepted' ? '已允许' : '已拒绝'),
+                    statusLabel,
                     style: TextStyle(
                       color: palette.textSecondary,
                       fontSize: 12,

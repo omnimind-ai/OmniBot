@@ -39,7 +39,7 @@ class ScheduledTaskSchedulerService {
       _setupNativeCallbacks();
 
       final tasks =
-          await ScheduledTaskStorageService.getEnabledScheduledTasks();
+          await ScheduledTaskStorageService.loadScheduledTasks();
       if (_useNativeAlarmScheduler) {
         await AssistsMessageService.syncWorkspaceScheduledTasks(
           tasks.map((task) => task.toJson()).toList(),
@@ -49,7 +49,7 @@ class ScheduledTaskSchedulerService {
         );
         return;
       }
-      for (final task in tasks) {
+      for (final task in tasks.where((task) => task.isEnabled)) {
         scheduleTask(task);
       }
       print(

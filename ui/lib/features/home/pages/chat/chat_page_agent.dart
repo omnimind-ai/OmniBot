@@ -499,10 +499,6 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       _kAgentReasoningEffortPreferenceKey,
       conversationId: conversationId,
     );
-    final collaborationMode = _readAgentPreference(
-      _kAgentCollaborationModePreferenceKey,
-      conversationId: conversationId,
-    );
     final permissionMode = _parseAgentPermissionMode(
       _readAgentPreference(
         _kAgentPermissionModePreferenceKey,
@@ -513,7 +509,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     setState(() {
       _activeAgentModelId = null;
       _activeAgentReasoningEffort = _normalizeAgentReasoningEffort(effort);
-      _activeAgentCollaborationMode = collaborationMode;
+      _activeAgentCollaborationMode = null;
       // Permission is an app-owned ACP policy. A Harness may report its own
       // default mode (usually `agent`/on-request), but that must not silently
       // replace the app's canonical default or a per-conversation choice.
@@ -815,28 +811,52 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       _isAgentCollaborationModeListLoading = true;
       _agentCollaborationModeListError = null;
     });
+    final generation = _conversationTargetRequestId;
+    final agentId = _activeAcpAgentId;
     try {
-      final response = await AgentRuntimeService.listCollaborationModes();
-      final modes = _extractAgentOptionIds(response, const <String>[
-        'collaborationModes',
-        'modes',
-        'items',
-        'data',
-      ]);
-      if (!mounted) return;
+      await _ensureActiveConversationReadyForStreaming();
+      if (!mounted || generation != _conversationTargetRequestId) return;
+      final response = await AgentRuntimeService.readSession(
+        conversationId: _currentConversationId,
+        agentId: agentId,
+        conversationMode: _modeKey(_activeMode),
+        includeHistory: false,
+      );
+      if (!mounted || generation != _conversationTargetRequestId) return;
+      final option = acpConfigOptions(
+        response,
+      ).where((option) => option['id'] == 'collaboration_mode').firstOrNull;
+      final choices = <Map>[];
+      for (final entry
+          in (option?['options'] as List? ?? const []).whereType<Map>()) {
+        if (entry['options'] is List) {
+          choices.addAll((entry['options'] as List).whereType<Map>());
+        } else {
+          choices.add(entry);
+        }
+      }
+      final modes = choices
+          .map((entry) => entry['value']?.toString() ?? '')
+          .where((value) => value.isNotEmpty)
+          .toList();
       setState(() {
+        _activeAgentThreadId = (response['sessionId'] ?? response['threadId'])
+            ?.toString();
         _agentCollaborationModes = modes;
-        _isAgentCollaborationModeListLoading = false;
+        _activeAgentCollaborationMode = option?['currentValue']?.toString();
         _agentCollaborationModeListError = null;
       });
     } catch (error) {
-      if (!mounted) return;
+      if (!mounted || generation != _conversationTargetRequestId) return;
       setState(() {
-        _isAgentCollaborationModeListLoading = false;
         _agentCollaborationModeListError = formatAgentRuntimeErrorForUser(
           error,
         );
       });
+    } finally {
+      if (mounted) {
+        setState(() => _isAgentCollaborationModeListLoading = false);
+      }
     }
   }
 
@@ -1144,9 +1164,24 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     bool persistOnly = false,
     bool dismissPanel = true,
   }) async {
-    await _loadAgentCollaborationModes();
+    if (_isAgentCollaborationModeListLoading) return;
+    final generation = _conversationTargetRequestId;
+    await _loadAgentCollaborationModes(force: true);
     final planMode = _resolveAgentPlanMode(_agentCollaborationModes);
-    if (!mounted) return;
+    if (!mounted || generation != _conversationTargetRequestId) return;
+    if (planMode == null) {
+      _showSnackBar(
+        LegacyTextLocalizer.isEnglish
+            ? 'This Agent does not advertise Plan mode'
+            : '当前 Agent 未提供 Plan 模式',
+      );
+      return;
+    }
+    await _setAgentConfigOption(
+      configId: 'collaboration_mode',
+      value: planMode,
+    );
+    if (!mounted || generation != _conversationTargetRequestId) return;
     setState(() {
       _activeAgentCollaborationMode = planMode;
     });
@@ -1162,7 +1197,18 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
 
   @override
   Future<void> _deactivateAgentPlanMode({bool dismissPanel = true}) async {
-    if (!mounted) return;
+    if (_isAgentCollaborationModeListLoading) return;
+    final generation = _conversationTargetRequestId;
+    await _loadAgentCollaborationModes(force: true);
+    final defaultMode = _agentCollaborationModes
+        .where((mode) => mode.toLowerCase() == 'default')
+        .firstOrNull;
+    if (defaultMode == null || !mounted || generation != _conversationTargetRequestId) return;
+    await _setAgentConfigOption(
+      configId: 'collaboration_mode',
+      value: defaultMode,
+    );
+    if (!mounted || generation != _conversationTargetRequestId) return;
     setState(() {
       _activeAgentCollaborationMode = null;
     });
@@ -1198,14 +1244,6 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       return;
     }
     if (_activeAgentCollaborationMode == null) {
-      return;
-    }
-    _activeAgentCollaborationMode = null;
-    unawaited(_clearAgentPreference(_kAgentCollaborationModePreferenceKey));
-  }
-
-  void _autoDeactivateAgentPlanModeAfterTurn() {
-    if (!_isAgentPlanMode(_activeAgentCollaborationMode)) {
       return;
     }
     _activeAgentCollaborationMode = null;
@@ -1302,9 +1340,10 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         await _toggleAgentPlanMode();
         return true;
       case AgentSlashSubmitKind.startPlan:
+        await _activateAgentPlanMode(persistOnly: true);
+        if (!_isAgentPlanMode(_activeAgentCollaborationMode)) return true;
         _messageController.clear();
         _hideSlashCommandPanel();
-        await _activateAgentPlanMode(persistOnly: true);
         await _startAgentTurnCommand(
           displayText: trimmed,
           actualText: intent.value ?? '',
@@ -1335,6 +1374,12 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
 
   @override
   Future<void> _startAgentReviewCommand() async {
+    if (_availableAcpCommandForText('/review') == null) {
+      _showSnackBar(LegacyTextLocalizer.isEnglish
+          ? 'This Agent does not advertise /review'
+          : '当前 Agent 未提供 /review 命令');
+      return;
+    }
     if (_isAiResponding) {
       return;
     }
@@ -1997,7 +2042,6 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       return;
     }
 
-    final turnUsesPlanMode = _isAgentPlanMode(dispatchCollaborationMode);
     try {
       final turnModel = selectAgentRequestModel(
         status: status,
@@ -2070,7 +2114,6 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       if (isDispatchTargetCurrent()) {
         _activeAgentThreadId = resolvedThreadId ?? acpSessionId;
         _activeAgentTurnId = null;
-        if (turnUsesPlanMode) _autoDeactivateAgentPlanModeAfterTurn();
       }
       final localConversationId = _asAgentInt(response['conversationId']);
       if (isDispatchTargetCurrent() &&

@@ -782,19 +782,16 @@ class AgentConversationHistorySupportTest {
         assertEquals("Claude Code", cardData["agentName"])
         assertEquals("agent.terminal_execute", cardData["toolName"])
         assertEquals(true, cardData["isHistorical"])
-        assertEquals("full", cardData["historyRenderMode"])
+        assertEquals("preview", cardData["historyRenderMode"])
         assertEquals("", cardData["terminalOutputDelta"])
-        assertEquals(false, cardData["payloadCompacted"])
-        assertTrue((cardData["argsJson"] as String).length > 2 * 1024)
-        assertTrue((cardData["argsJson"] as String).length > longScript.length)
-        assertTrue((cardData["rawResultJson"] as String).length > longRaw.length)
-        assertTrue((cardData["rawResultJson"] as String).contains(longRaw))
-        assertEquals(longTerminal, cardData["terminalOutput"])
-        assertEquals(20, (cardData["artifacts"] as List<*>).size)
-        assertTrue(
-            ((cardData["artifacts"] as List<*>).last() as Map<*, *>)
-                .get("content").toString().contains("x".repeat(2000))
-        )
+        assertEquals(true, cardData["payloadCompacted"])
+        assertTrue((cardData["argsJson"] as String).length <= 2 * 1024)
+        assertTrue((cardData["rawResultJson"] as String).length <= 2 * 1024)
+        assertTrue((cardData["terminalOutput"] as String).length <= 8 * 1024)
+        assertTrue((payload["rawResultJson"] as String).contains(longRaw))
+        assertEquals(longTerminal, payload["terminalOutput"])
+        assertEquals(20, (payload["artifacts"] as List<*>).size)
+
     }
 
     @Test

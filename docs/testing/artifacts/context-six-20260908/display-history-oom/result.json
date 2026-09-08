@@ -1,0 +1,23 @@
+{
+  "name": "Xiaowan same-task automatic summary and durable restart",
+  "serial": "emulator-5560",
+  "runId": "1788870360090",
+  "kind": "emulator-user-interface",
+  "passed": false,
+  "steps": [
+    {
+      "index": 1,
+      "action": "send",
+      "marker": "OOB_FILE_CONTEXT_SUMMARY_LONG_1788870360090",
+      "passed": true,
+      "elapsedMs": 12630
+    },
+    {
+      "index": 2,
+      "passed": false,
+      "errorType": "AssertionError",
+      "code": "ERR_ASSERTION",
+      "assertionSite": "at file:///Users/wuzewen/Projects/Omni/OpenOmniBot-integration/scripts/verify-agent-user-journey.mjs:138:7"
+    }
+  ]
+}

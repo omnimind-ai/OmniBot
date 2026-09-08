@@ -954,6 +954,26 @@ void main() {
     );
   });
 
+  test('ACP provider HTTP failures retain actionable categories without payloads', () {
+    const cases = {
+      '401': '验证失败',
+      '429): insufficient_quota': '额度不足',
+      '429): 平台额度不足，请充值或切换 BYOK': '额度不足',
+      '429': '请求频率',
+      '503': '暂时不可用',
+      '400': '拒绝了本次请求',
+    };
+    for (final entry in cases.entries) {
+      final raw = 'chat completion stream request failed(${entry.key}): secret';
+      final message = formatAgentRuntimeErrorForUser(raw);
+      expect(message, contains(entry.value));
+      expect(message, isNot(contains('secret')));
+      expect(formatAgentRuntimeErrorForUser(message), message);
+    }
+    expect(formatAgentRuntimeErrorForUser('command exit 401'),
+        '助手暂时无法完成操作，请重试。');
+  });
+
   test('error projection is idempotent and can change language', () {
     final raw = PlatformException(code: 'FAILED', message: 'Request timed out');
     final once = formatAgentRuntimeErrorForUser(raw);

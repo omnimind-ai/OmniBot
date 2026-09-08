@@ -88,6 +88,165 @@ class AgentOrchestratorTest {
     }
 
     @Test
+    fun inputLengthOverflowIsPreventedBeforeSendingLargeToolContinuation() = runBlocking {
+        val raw = JsonObject(mapOf("content" to JsonPrimitive("x".repeat(1119534)))).toString()
+        for (withBudget in listOf(false, true)) {
+            val llm = FakeLlmClient(listOf(
+                assistantTurn(toolCalls = listOf(toolCall("file_read"))),
+                assistantTurn(content = "done"),
+            ), checkRequest = { request ->
+                val length = request.messages.sumOf { it.contentText().length }
+                if (length > 1048566) throw AgentStreamRequestException(400,
+                    "Input length $length exceeds the maximum length 1048566", null)
+            })
+            val tools = FakeToolExecutor(mapOf("file_read" to listOf(successfulContextResult("file_read").copy(
+                previewJson = raw, rawResultJson = raw,
+            ))))
+            val saved = mutableListOf<String>()
+            val repo = org.mockito.Mockito.mock(AgentConversationHistoryRepository::class.java)
+            val controller = AgentConversationContextCompactor(repo, offloadToolOutput = {
+                saved += it
+                "/workspace/offloads/large-result.txt"
+            })
+            val result = createOrchestrator(llm, tools).run(AgentOrchestrator.Input(
+                callback = RecordingCallback(), initialMessages = initialMessages("inspect a large file"),
+                executionEnv = FakeExecutionEnvironment("inspect a large file"),
+                contextCompactor = controller.takeIf { withBudget },
+            ))
+            if (withBudget) {
+                assertTrue(result is AgentResult.Success)
+                assertEquals(1, saved.size)
+                assertTrue(saved.single().contains("x".repeat(1119534)))
+                assertTrue(llm.requests.last().messages.last().contentText().contains("large-result.txt"))
+            } else assertTrue(result is AgentResult.Error)
+            assertEquals(listOf("file_read"), tools.executeCalls)
+            assertEquals(2, llm.requests.size)
+        }
+    }
+
+    @Test
+    fun providerPromptLengthRejectionTriggersOneCanonicalPreOutputCompactionRecovery() = runBlocking {
+        val raw = JsonObject(mapOf("content" to JsonPrimitive("x".repeat(1119534)))).toString()
+        var rejected = false
+        val llm = FakeLlmClient(
+            listOf(
+                assistantTurn(toolCalls = listOf(toolCall("file_read"))),
+                assistantTurn(content = "done"),
+            ),
+            checkRequest = { request ->
+                val length = request.messages.sumOf { it.contentText().length }
+                if (!rejected && length > 1_000_000) {
+                    rejected = true
+                    throw AgentStreamRequestException(
+                        400,
+                        "Prompt exceeds max length",
+                        "Input length $length exceeds the maximum length 1048566",
+                        responseStarted = false,
+                    )
+                }
+            }
+        )
+        val tools = FakeToolExecutor(mapOf("file_read" to listOf(successfulContextResult("file_read").copy(
+            previewJson = raw,
+            rawResultJson = raw,
+        ))))
+        val offloaded = mutableListOf<String>()
+        val compactor = AgentConversationContextCompactor(
+            org.mockito.Mockito.mock(AgentConversationHistoryRepository::class.java),
+            modelOverride = AgentModelOverride(providerProfileId = "test", apiBase = "https://example.invalid/v1",
+                apiKey = "fixture", modelId = "test", contextLimit = 1_048_576),
+            offloadToolOutput = { offloaded += it; "/workspace/offloads/large-result.txt" },
+        )
+
+        val result = createOrchestrator(llm, tools).run(
+            AgentOrchestrator.Input(
+                callback = RecordingCallback(),
+                initialMessages = initialMessages("inspect a large file"),
+                executionEnv = FakeExecutionEnvironment("inspect a large file"),
+                contextCompactor = compactor,
+            )
+        )
+
+        assertTrue(result is AgentResult.Success)
+        assertTrue(rejected)
+        assertTrue(offloaded.single().contains("x".repeat(1119534)))
+        assertEquals(listOf("file_read"), tools.executeCalls)
+        assertEquals(3, llm.requests.size)
+    }
+
+    @Test
+    fun completedTurnDoesNotRetainRawToolResultsInItsResponse() {
+        fun execute(): Pair<AgentResult, java.lang.ref.WeakReference<ToolExecutionResult>> = runBlocking {
+            val body = JsonObject(mapOf("content" to JsonPrimitive("x".repeat(500_000)))).toString()
+            val toolResult = successfulContextResult("file_read").copy(previewJson = body, rawResultJson = body)
+            val weak = java.lang.ref.WeakReference<ToolExecutionResult>(toolResult)
+            val llm = FakeLlmClient(listOf(assistantTurn(toolCalls = listOf(toolCall("file_read"))), assistantTurn(content = "done")))
+            val response = createOrchestrator(llm, FakeToolExecutor(mapOf("file_read" to listOf(toolResult)))).run(
+                AgentOrchestrator.Input(callback = RecordingCallback(), initialMessages = initialMessages("read"),
+                    executionEnv = FakeExecutionEnvironment("read")))
+            response to weak
+        }
+        val (response, tool) = execute()
+        repeat(10) { System.gc(); Thread.sleep(20) }
+        assertTrue(response is AgentResult.Success)
+        assertTrue("Final response retained raw tool results", tool.get() == null)
+    }
+
+    @Test
+    fun overflowRecoveryIsBoundedAndNeverReplaysStartedResponses() = runBlocking {
+        for (started in listOf(false, true)) {
+            var summaries = 0
+            val compactor = object : AgentConversationContextCompactor(
+                org.mockito.Mockito.mock(AgentConversationHistoryRepository::class.java)) {
+                override suspend fun requestCompactedSummary(messages: List<Map<String, Any>>, maxOutputTokens: Int): String {
+                    summaries++
+                    return "Old work complete."
+                }
+            }
+            val llm = FakeLlmClient(emptyList(), checkRequest = {
+                throw AgentStreamRequestException(400, "Prompt exceeds max length", null, responseStarted = started)
+            })
+            val callback = RecordingCallback()
+            val tools = FakeToolExecutor()
+            val history = initialMessages("old") + listOf(
+                ChatCompletionMessage(role = "assistant", content = JsonPrimitive("previous answer")),
+                ChatCompletionMessage(role = "user", content = JsonPrimitive("continue")))
+            val result = createOrchestrator(llm, tools).run(AgentOrchestrator.Input(
+                callback = callback, initialMessages = history,
+                executionEnv = FakeExecutionEnvironment("continue"), contextCompactor = compactor))
+            assertTrue(result is AgentResult.Error)
+            assertEquals(if (started) 1 else 2, llm.requests.size)
+            assertEquals(if (started) 0 else 1, summaries)
+            assertEquals(1, callback.errors.size)
+            assertTrue(tools.executeCalls.isEmpty())
+            assertEquals("continue", llm.requests.last().messages.last().contentText())
+        }
+    }
+
+    @Test
+    fun compactedInitialHistoryIsReleasedWhileInputOwnerRemainsAlive() = runBlocking {
+        val llm = FakeLlmClient(listOf(assistantTurn(content = "done")))
+        val controller = object : AgentContextCompactionController {
+            override suspend fun resolvePromptTokenThreshold(conversationId: Long?) = 128000
+            override suspend fun compactIfNeeded(conversationId: Long?, conversationMode: String,
+                promptTokens: Int?, messages: List<ChatCompletionMessage>, contextTokens: Int?,
+                promptTokenThresholdOverride: Int?, callback: AgentCallback?, requestOverheadTokens: Int, force: Boolean) =
+                listOf(ChatCompletionMessage(role = "user", content = JsonPrimitive("continue from checkpoint")))
+        }
+        fun restoredInput(): Pair<AgentOrchestrator.Input, java.lang.ref.WeakReference<ChatCompletionMessage>> {
+            val old = ChatCompletionMessage(role = "tool", toolCallId = "old", content = JsonPrimitive("x".repeat(4_000_000)))
+            return AgentOrchestrator.Input(callback = RecordingCallback(), initialMessages = listOf(old),
+                executionEnv = FakeExecutionEnvironment("continue"), conversationId = 42,
+                contextCompactor = controller) to java.lang.ref.WeakReference(old)
+        }
+        val (input, old) = restoredInput()
+        assertTrue(createOrchestrator(llm, FakeToolExecutor(emptyMap())).run(input) is AgentResult.Success)
+        repeat(10) { System.gc(); Thread.sleep(20) }
+        assertEquals(42L, input.conversationId)
+        assertTrue("Compacted content is still retained by the input owner", old.get() == null)
+    }
+
+    @Test
     fun automaticCompactionChangesNextRequestWithoutReplayingToolsOrUserTurns() = runBlocking {
         val llm = FakeLlmClient(listOf(
             assistantTurn(toolCalls = listOf(toolCall("file_read")), promptTokens = 120000, completionTokens = 100),
@@ -103,9 +262,9 @@ class AgentOrchestratorTest {
             override suspend fun resolvePromptTokenThreshold(conversationId: Long?) = 128000
             override suspend fun compactIfNeeded(conversationId: Long?, conversationMode: String,
                 promptTokens: Int?, messages: List<ChatCompletionMessage>, contextTokens: Int?,
-                promptTokenThresholdOverride: Int?, callback: AgentCallback?): List<ChatCompletionMessage> {
+                promptTokenThresholdOverride: Int?, callback: AgentCallback?, requestOverheadTokens: Int, force: Boolean): List<ChatCompletionMessage> {
                 if ((contextTokens ?: 0) <= 112000) return messages
-                assertEquals(120100, contextTokens)
+                assertTrue(contextTokens!! > 120100) // Includes the newly appended tool result.
                 compactions++
                 return AgentConversationHistorySupport.rebuildMessagesWithCompactedSummary(messages, "saved checkpoint")
             }
@@ -134,7 +293,7 @@ class AgentOrchestratorTest {
             override suspend fun resolvePromptTokenThreshold(conversationId: Long?) = 128000
             override suspend fun compactIfNeeded(conversationId: Long?, conversationMode: String,
                 promptTokens: Int?, messages: List<ChatCompletionMessage>, contextTokens: Int?,
-                promptTokenThresholdOverride: Int?, callback: AgentCallback?): List<ChatCompletionMessage> {
+                promptTokenThresholdOverride: Int?, callback: AgentCallback?, requestOverheadTokens: Int, force: Boolean): List<ChatCompletionMessage> {
                 throw CancellationException("user cancelled")
             }
         }
@@ -142,7 +301,7 @@ class AgentOrchestratorTest {
             callback = RecordingCallback(), initialMessages = initialMessages("cancel"),
             executionEnv = FakeExecutionEnvironment("cancel"), contextCompactor = controller,
         )) }
-        assertEquals(1, llm.requests.size)
+        assertEquals(0, llm.requests.size)
         assertTrue(tools.executeCalls.isEmpty())
     }
 
@@ -2163,6 +2322,7 @@ class AgentOrchestratorTest {
         reasoningUpdates: List<List<String>> = emptyList(),
         failures: List<Throwable> = emptyList(),
         private val failuresByRequest: Map<Int, Throwable> = emptyMap(),
+        private val checkRequest: (ChatCompletionRequest) -> Unit = {},
     ) : AgentLlmClient {
         private val queuedTurns = ArrayDeque(turns)
         private val queuedReasoningUpdates = ArrayDeque(
@@ -2178,6 +2338,7 @@ class AgentOrchestratorTest {
             onToolCallInput: (suspend (AssistantToolCall) -> Unit)?,
         ): ChatCompletionTurn {
             requests += request
+            checkRequest(request)
             failuresByRequest[requests.size]?.let { throw it }
             if (queuedFailures.isNotEmpty()) {
                 throw queuedFailures.removeFirst()

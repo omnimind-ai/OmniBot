@@ -59,6 +59,88 @@ void main() {
     }
   });
 
+  testWidgets(
+    'restored compact request shows its outcome without wire diagnostics',
+    (tester) async {
+      for (final status in ['accepted', 'declined', 'submitted', 'expired']) {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: AgentRequestNotice(
+                key: ValueKey(status),
+                cardData: {
+                  'requestKind': 'approval',
+                  'title': 'Implement this plan?',
+                  'status': status,
+                  'interactionUnavailable': true,
+                },
+              ),
+            ),
+          ),
+        );
+        expect(find.textContaining('requestId'), findsNothing);
+        expect(find.byType(TextButton), findsNothing);
+        expect(
+          find.text(switch (status) {
+            'accepted' => '已允许',
+            'declined' => '已拒绝',
+            'submitted' => '已提交',
+            _ => '已过期',
+          }),
+          findsOneWidget,
+        );
+      }
+    },
+  );
+
+  testWidgets(
+    'unavailable compact input does not invite a reply or invent an outcome',
+    (tester) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: AgentRequestNotice(
+              cardData: {
+                'requestKind': 'user_input',
+                'status': 'pending',
+                'title': 'Implement this plan?',
+                'interactionUnavailable': true,
+                'interactionUnavailableReason': 'session_ended',
+              },
+            ),
+          ),
+        ),
+      );
+      expect(find.textContaining('requestId'), findsNothing);
+      expect(find.text('请直接在下方输入回复'), findsNothing);
+      expect(find.text('历史请求，无法继续操作'), findsOneWidget);
+      expect(find.text('已允许'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'missing request identity is unavailable, not an assumed historical outcome',
+    (tester) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: AgentRequestNotice(
+              cardData: {
+                'requestKind': 'approval',
+                'status': 'pending',
+                'title': 'Permission',
+              },
+            ),
+          ),
+        ),
+      );
+      expect(find.text('该请求当前无法操作'), findsOneWidget);
+      expect(find.byType(TextButton), findsNothing);
+      expect(find.text('已允许'), findsNothing);
+      expect(find.textContaining('历史'), findsNothing);
+    },
+  );
+
   testWidgets('compact acknowledged approval persists beyond widget disposal', (
     tester,
   ) async {

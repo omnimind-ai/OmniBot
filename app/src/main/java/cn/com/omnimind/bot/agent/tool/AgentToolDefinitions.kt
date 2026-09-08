@@ -1213,7 +1213,7 @@ object AgentToolDefinitions {
             put("name", "file_read")
             put("displayName", "读取文件")
             put("toolType", "workspace")
-            put("description", "读取 workspace 或 Omnibot 白名单目录中的文件内容。自动支持图片/截图，图片会返回元数据与可视预览。")
+            put("description", "读取 workspace 或 Omnibot 白名单目录中的文件。文本每次返回最多 65536 个字符；hasMore=true 时用 nextOffset 作为 offset 继续，不要同时传 lineStart，原文件不截断。图片返回元数据与可视预览；PDF、音视频、压缩包等二进制文件返回文件信息，请用相应解析工具提取内容。")
             putJsonObject("parameters") {
                 put("type", "object")
                 putJsonObject("properties") {
@@ -1593,6 +1593,7 @@ object AgentToolDefinitions {
                 }
                 putJsonArray("required") {
                     add("title")
+                    add("subagentPrompt")
                     add("targetKind")
                     add("scheduleType")
                     add("repeatDaily")

@@ -71,6 +71,10 @@ run_step() {
 
 run_step "Node protocol/provider tests" \
   node --test \
+    scripts/agent-ui-xml.test.mjs \
+    scripts/verify-xiaowan-context-suite.test.mjs \
+    scripts/fixtures/xiaowan-session-scenarios.test.mjs \
+    scripts/fixtures/xiaowan-schedule-scenarios.test.mjs \
     scripts/agent-provider-observer.test.mjs \
     scripts/install-dev-shell.test.mjs \
     scripts/skill-install-shell.test.mjs \
@@ -79,12 +83,16 @@ run_step "Node protocol/provider tests" \
     scripts/agent_runtime_capability_contract.test.mjs \
     scripts/sync_models_dev_catalog.test.mjs
 
+run_step "Turn-scoped journal verifier tests" \
+  python3 -m unittest discover -s scripts -p test_agent_turn_outcome.py
+
 if [[ "$RUN_GRADLE" == "1" ]]; then
   run_step "Android Agent/ACP JVM tests" \
     ./gradlew --no-daemon --no-parallel \
       -Dkotlin.incremental=false \
       -Dkotlin.compiler.execution.strategy=in-process \
       :app:testDevelopStandardDebugUnitTest \
+      --tests 'cn.com.omnimind.bot.agent.WorkspaceScheduledTaskContractTest' \
       --tests 'cn.com.omnimind.bot.agent.AgentOrchestratorTest' \
       --tests 'cn.com.omnimind.bot.agent.AgentEventAdapterTest' \
       --tests 'cn.com.omnimind.bot.agent.AgentConversationModePolicyTest' \
@@ -174,6 +182,7 @@ if [[ "$RUN_FLUTTER" == "1" ]]; then
       test/features/home/pages/agent/agent_config_page_test.dart \\
       test/features/home/pages/command_overlay/chat_bot_sheet_acp_test.dart \\
       test/features/home/pages/command_overlay/widgets/chat_input_area_test.dart \\
+      test/services/scheduled_task_scheduler_service_test.dart \\
       test/services/agent_runtime_service_test.dart \\
       test/services/workspace_memory_service_test.dart \\
       test/features/memory/services/mem0_memory_service_test.dart \\

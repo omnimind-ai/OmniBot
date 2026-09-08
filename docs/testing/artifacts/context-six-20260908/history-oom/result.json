@@ -1,0 +1,23 @@
+{
+  "name": "Xiaowan file reads and history on isolated emulator",
+  "serial": "emulator-5560",
+  "runId": "1788867810366",
+  "kind": "emulator-user-interface",
+  "passed": false,
+  "steps": [
+    {
+      "index": 1,
+      "action": "send",
+      "marker": "OOB_FILE_HTML_FIRST_1788867810366",
+      "passed": true,
+      "elapsedMs": 12569
+    },
+    {
+      "index": 2,
+      "passed": false,
+      "errorType": "AssertionError",
+      "code": "ERR_ASSERTION",
+      "assertionSite": "at file:///Users/wuzewen/Projects/Omni/OpenOmniBot-integration/scripts/verify-agent-user-journey.mjs:131:7"
+    }
+  ]
+}

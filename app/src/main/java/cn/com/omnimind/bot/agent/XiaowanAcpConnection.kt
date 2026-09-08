@@ -136,6 +136,12 @@ internal class XiaowanAcpConnection(
                 SupervisorJob(parentJob) +
                 CoroutineExceptionHandler { _, error ->
                     Log.e(TAG, "Loopback ACP server failed", error)
+                    // Use the same connection-exit owner as external ACP
+                    // processes; logging alone leaves session/prompt pending.
+                    exitSignal.complete(1)
+                    clientTransport.close()
+                    serverTransport.close()
+                    serverProtocolScope.cancel()
                 }
         )
         serverProtocol = Protocol(serverProtocolScope, serverTransport)
@@ -192,7 +198,7 @@ internal class XiaowanAcpConnection(
     }
 
     override fun exitDescription(exitCode: Int?): String =
-        "Built-in Xiaowan ACP Agent closed before initialize completed"
+        "Built-in Xiaowan ACP connection closed (code=$exitCode)"
 
     override suspend fun close() {
         if (::agentSupport.isInitialized) agentSupport.closeAllSessions()
@@ -786,6 +792,9 @@ private class XiaowanAgentSession(
                 historyRepository = cn.com.omnimind.bot.agent.AgentConversationHistoryRepository(context),
                 modelOverride = selectedModelOverride(),
                 reasoningEffort = reasoningEffort,
+                offloadToolOutput = { output ->
+                    cn.com.omnimind.bot.agent.AgentWorkspaceManager(context).writeOffload(sessionId.value, "txt", output).workspacePath
+                },
             ).compactConversationContext(conversationId, conversationMode)
             check(outcome.compacted || outcome.reason in setOf("no_candidate", "no_prompt_messages")) {
                 "Context compaction failed: ${outcome.reason}"
@@ -2180,7 +2189,7 @@ private fun String.containsAny(vararg values: String): Boolean = values.any { va
  * means every Harness can feed the same frontend card projection without a
  * Xiaowan-only event or widget path.
  */
-private fun toolResultAcpPayload(result: ToolExecutionResult): JsonObject {
+internal fun toolResultAcpPayload(result: ToolExecutionResult): JsonObject {
     val payload = linkedMapOf<String, Any?>(
         "summary" to toolResultText(result),
         "success" to toolResultSucceeded(result),
@@ -2188,6 +2197,13 @@ private fun toolResultAcpPayload(result: ToolExecutionResult): JsonObject {
         "workspaceId" to result.workspaceId,
         "actions" to result.actions.map { it.toPayload() },
     )
+    // The shared reducer already accepts `result`. Keep one structured
+    // preview and preserve raw output only when it contains different data.
+    // Do not stringify the same body into aliases that history serializes again.
+    fun putContent(preview: String, raw: String? = null) {
+        payload["result"] = jsonElementFromJsonText(preview)
+        if (raw != null && raw != preview) payload["rawResultJson"] = raw
+    }
     when (result) {
         is ToolExecutionResult.ChatMessage -> {
             payload["toolType"] = "message"
@@ -2218,34 +2234,24 @@ private fun toolResultAcpPayload(result: ToolExecutionResult): JsonObject {
         is ToolExecutionResult.ScheduleResult -> {
             payload["toolType"] = "schedule"
             payload["toolName"] = result.toolName
-            payload["previewJson"] = result.previewJson
-            payload["result"] = jsonElementFromJsonText(result.previewJson)
+            putContent(result.previewJson)
             payload["taskId"] = result.taskId
         }
         is ToolExecutionResult.McpResult -> {
             payload["toolType"] = "mcp"
             payload["toolName"] = result.toolName
             payload["serverName"] = result.serverName
-            payload["previewJson"] = result.previewJson
-            payload["rawResultJson"] = result.rawResultJson
-            payload["result"] = jsonElementFromJsonText(result.previewJson)
-            payload["rawResult"] = jsonElementFromJsonText(result.rawResultJson)
+            putContent(result.previewJson, result.rawResultJson)
         }
         is ToolExecutionResult.MemoryResult -> {
             payload["toolType"] = "memory"
             payload["toolName"] = result.toolName
-            payload["previewJson"] = result.previewJson
-            payload["rawResultJson"] = result.rawResultJson
-            payload["result"] = jsonElementFromJsonText(result.previewJson)
-            payload["rawResult"] = jsonElementFromJsonText(result.rawResultJson)
+            putContent(result.previewJson, result.rawResultJson)
         }
         is ToolExecutionResult.TerminalResult -> {
             payload["toolType"] = "terminal"
             payload["toolName"] = result.toolName
-            payload["previewJson"] = result.previewJson
-            payload["rawResultJson"] = result.rawResultJson
-            payload["result"] = jsonElementFromJsonText(result.previewJson)
-            payload["rawResult"] = jsonElementFromJsonText(result.rawResultJson)
+            putContent(result.previewJson, result.rawResultJson)
             payload["timedOut"] = result.timedOut
             payload["terminalOutput"] = result.terminalOutput
             payload["terminalSessionId"] = result.terminalSessionId
@@ -2254,10 +2260,7 @@ private fun toolResultAcpPayload(result: ToolExecutionResult): JsonObject {
         is ToolExecutionResult.Interrupted -> {
             payload["toolType"] = "terminal"
             payload["toolName"] = result.toolName
-            payload["previewJson"] = result.previewJson
-            payload["rawResultJson"] = result.rawResultJson
-            payload["result"] = jsonElementFromJsonText(result.previewJson)
-            payload["rawResult"] = jsonElementFromJsonText(result.rawResultJson)
+            putContent(result.previewJson, result.rawResultJson)
             payload["terminalOutput"] = result.terminalOutput
             payload["terminalSessionId"] = result.terminalSessionId
             payload["terminalStreamState"] = result.terminalStreamState
@@ -2267,11 +2270,22 @@ private fun toolResultAcpPayload(result: ToolExecutionResult): JsonObject {
         is ToolExecutionResult.ContextResult -> {
             payload["toolType"] = "context"
             payload["toolName"] = result.toolName
-            payload["previewJson"] = result.previewJson
-            payload["rawResultJson"] = result.rawResultJson
-            payload["result"] = jsonElementFromJsonText(result.previewJson)
-            payload["rawResult"] = jsonElementFromJsonText(result.rawResultJson)
-            payload["imageDataUrl"] = result.imageDataUrl
+            putContent(result.previewJson, result.rawResultJson)
+            val localImage = result.artifacts.singleOrNull()?.takeIf {
+                result.toolName == "file_read" && it.mimeType.startsWith("image/") &&
+                    it.androidPath.isNotBlank()
+            }
+            if (localImage != null) {
+                // The original is already a workspace artifact. Passing its
+                // base64 through rawOutput duplicates it in Flutter card/raw
+                // history JSON and again in the MethodChannel checkpoint,
+                // which can kill Android's main thread while decoding it.
+                // Only presentation uses the file reference; the model's tool
+                // continuation still receives result.imageDataUrl unchanged.
+                payload["imageUrl"] = localImage.androidPath
+            } else {
+                payload["imageDataUrl"] = result.imageDataUrl
+            }
         }
     }
     return jsonObjectFromMap(payload)

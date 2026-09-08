@@ -1,0 +1,53 @@
+{
+  "name": "Xiaowan long-term and daily memory survive restart",
+  "serial": "emulator-5560",
+  "runId": "1788856749029",
+  "kind": "emulator-user-interface",
+  "passed": true,
+  "steps": [
+    {
+      "index": 1,
+      "action": "expect",
+      "passed": true,
+      "elapsedMs": 2694
+    },
+    {
+      "index": 2,
+      "action": "send",
+      "marker": "OOB_MEMORY_WRITE_1788856749029",
+      "passed": true,
+      "elapsedMs": 14821
+    },
+    {
+      "index": 3,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 2668
+    },
+    {
+      "index": 4,
+      "action": "restart",
+      "passed": true,
+      "elapsedMs": 2839
+    },
+    {
+      "index": 5,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 6198
+    },
+    {
+      "index": 6,
+      "action": "send",
+      "marker": "OOB_MEMORY_RECALL_1788856749029",
+      "passed": true,
+      "elapsedMs": 17888
+    },
+    {
+      "index": 7,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 2626
+    }
+  ]
+}

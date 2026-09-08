@@ -1,0 +1,65 @@
+{
+  "apkSha256": "580f93ba9bdfe4fd2d73f6dd441e18e23b5f029c45941252ffe2485f24973d5e",
+  "version": "0.6.2.1",
+  "versionCode": 13,
+  "device": "emulator-5560",
+  "avd": "OobCleanInstall20260907",
+  "physicalDeviceAcceptance": "pending",
+  "nativeTests": 169,
+  "nativeFailures": 0,
+  "nativeSuites": [
+    {
+      "name": "cn.com.omnimind.bot.agent.AgentHistoryToolOutputProjectionTest",
+      "tests": 4,
+      "failures": 0
+    },
+    {
+      "name": "cn.com.omnimind.bot.agent.AgentConversationContextCompactorTest",
+      "tests": 18,
+      "failures": 0
+    },
+    {
+      "name": "cn.com.omnimind.bot.agent.AgentConversationHistorySupportTest",
+      "tests": 39,
+      "failures": 0
+    },
+    {
+      "name": "cn.com.omnimind.bot.agent.ToolImageAcpPayloadTest",
+      "tests": 2,
+      "failures": 0
+    },
+    {
+      "name": "cn.com.omnimind.bot.agent.AgentEventAdapterTest",
+      "tests": 1,
+      "failures": 0
+    },
+    {
+      "name": "cn.com.omnimind.bot.agent.AgentOrchestratorTest",
+      "tests": 64,
+      "failures": 0
+    },
+    {
+      "name": "cn.com.omnimind.bot.agent.runtime.LocalAcpRuntimeTest",
+      "tests": 30,
+      "failures": 0
+    },
+    {
+      "name": "cn.com.omnimind.bot.agent.AgentContextBudgetTest",
+      "tests": 4,
+      "failures": 0
+    },
+    {
+      "name": "cn.com.omnimind.bot.agent.runtime.XiaowanAcpConnectionTest",
+      "tests": 5,
+      "failures": 0
+    },
+    {
+      "name": "cn.com.omnimind.bot.agent.AgentContextOverflowTest",
+      "tests": 2,
+      "failures": 0
+    }
+  ],
+  "flutterTests": 320,
+  "flutterFailures": 0,
+  "build": "passed"
+}

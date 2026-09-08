@@ -1,4 +1,17 @@
 set -eu
+# DSH's bash tool spawns bash by name; Alpine's BusyBox sh is insufficient.
+# Check this even when the npm package and ACP profile are already installed.
+if ! command -v bash >/dev/null 2>&1; then
+  if command -v apk >/dev/null 2>&1; then
+    apk add --no-cache bash
+  elif command -v apt-get >/dev/null 2>&1; then
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends bash
+  else
+    printf '%s\n' 'DeepSeek Harness requires bash; no supported package manager found' >&2
+    exit 1
+  fi
+fi
+bash --noprofile --norc -c ':'
 export PATH="/root/.npm-global/bin:$PATH"
 export DSH_HOME="/root/.dsh/omnibot-acp"
 DSH_PACKAGE_ROOT="/root/.npm-global/lib/node_modules/@deepseek-ai/dsh"

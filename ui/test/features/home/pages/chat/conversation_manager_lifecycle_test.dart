@@ -164,6 +164,48 @@ void main() {
     },
   );
 
+  testWidgets('metadata refresh cannot reinstall a pre-completion runtime snapshot', (tester) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final metadata = Completer<List<Map<String, dynamic>>>();
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'getConversations') return metadata.future;
+      throw StateError('Populated runtime must not reload history: ${call.method}');
+    });
+    final key = GlobalKey<_ConversationManagerHarnessState>();
+    await tester.pumpWidget(MaterialApp(home: _ConversationManagerHarness(key)));
+    final user = ChatMessageModel.userMessage('continue', id: 'current-user');
+    final answer = ChatMessageModel.assistantMessage('finished', id: 'current-answer');
+    key.currentState!.seedInMemoryConversation(1, [user]);
+    final loading = key.currentState!.loadConversation(1);
+    await tester.pump();
+    // The same ACP turn completes while the metadata request is in flight.
+    key.currentState!.seedInMemoryConversation(1, [user, answer]);
+    metadata.complete([_conversationJson(id: 1, title: 'existing thread')]);
+    await loading;
+    expect(key.currentState!.loadedSnapshots.single, [user, answer]);
+  });
+
+  testWidgets('history read cannot overwrite a runtime admitted while awaiting the page', (tester) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final page = Completer<Map<String, dynamic>>();
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'getConversations') return [_conversationJson(id: 1, title: 'existing thread')];
+      if (call.method == 'getConversationMessagesPaged') return page.future;
+      return 'SUCCESS';
+    });
+    final key = GlobalKey<_ConversationManagerHarnessState>();
+    await tester.pumpWidget(MaterialApp(home: _ConversationManagerHarness(key)));
+    final loading = key.currentState!.loadConversation(1);
+    await tester.pump();
+    final user = ChatMessageModel.userMessage('current request', id: 'current-user');
+    final answer = ChatMessageModel.assistantMessage('completed', id: 'current-answer');
+    key.currentState!.seedInMemoryConversation(1, [user, answer]);
+    page.complete({'messages': <Map<String, dynamic>>[], 'hasMore': false});
+    await loading;
+    expect(key.currentState!.loadedSnapshots.single, [user, answer]);
+    expect(key.currentState!.messages, [user, answer]);
+  });
+
   testWidgets(
     'a conversation with more than one visible page remains fully reachable',
     (tester) async {

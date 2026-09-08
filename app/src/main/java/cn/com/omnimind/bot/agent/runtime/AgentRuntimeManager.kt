@@ -237,7 +237,7 @@ class AgentRuntimeManager private constructor(
     }
     private val xiaowanScheduleToolBridge = object : AgentScheduleToolBridge {
         override suspend fun createTask(arguments: Map<String, Any?>): Map<String, Any?> =
-            scheduledTaskScheduler.upsertTask(arguments)
+            scheduledTaskScheduler.createTask(arguments)
 
         override suspend fun listTasks(): List<Map<String, Any?>> =
             scheduledTaskScheduler.listTasks()
@@ -245,13 +245,16 @@ class AgentRuntimeManager private constructor(
         override suspend fun updateTask(arguments: Map<String, Any?>): Map<String, Any?> =
             scheduledTaskScheduler.updateTask(arguments)
 
-        override suspend fun deleteTask(arguments: Map<String, Any?>): Map<String, Any?> =
-            mapOf(
-                "deleted" to scheduledTaskScheduler.deleteTask(
-                    arguments["taskId"]?.toString()
-                        ?: arguments["id"]?.toString().orEmpty()
-                )
+        override suspend fun deleteTask(arguments: Map<String, Any?>): Map<String, Any?> {
+            val deleted = scheduledTaskScheduler.deleteTask(
+                arguments["taskId"]?.toString() ?: arguments["id"]?.toString().orEmpty()
             )
+            return mapOf(
+                "deleted" to deleted,
+                "success" to deleted,
+                "summary" to if (deleted) "定时任务已删除" else "未找到要删除的定时任务"
+            )
+        }
     }
     // Local ACP profiles are separate executables, so each profile needs its
     // own transport and session registry. Instances are created lazily: using

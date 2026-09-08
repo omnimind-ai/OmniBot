@@ -1,0 +1,86 @@
+{
+  "name": "Failed tools are returned to the same Agent turn for recovery",
+  "serial": "emulator-5560",
+  "runId": "1788852822476",
+  "kind": "emulator-user-interface",
+  "passed": true,
+  "steps": [
+    {
+      "index": 1,
+      "action": "send",
+      "marker": "OOB_FAILURE_UNKNOWN_1788852822476",
+      "passed": true,
+      "elapsedMs": 18121
+    },
+    {
+      "index": 2,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 3033
+    },
+    {
+      "index": 3,
+      "action": "send",
+      "marker": "OOB_FAILURE_ARGS_1788852822476",
+      "passed": true,
+      "elapsedMs": 18418
+    },
+    {
+      "index": 4,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 2724
+    },
+    {
+      "index": 5,
+      "action": "send",
+      "marker": "OOB_FAILURE_MISSING_1788852822476",
+      "passed": true,
+      "elapsedMs": 19662
+    },
+    {
+      "index": 6,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 2678
+    },
+    {
+      "index": 7,
+      "action": "send",
+      "marker": "OOB_FAILURE_EXIT_1788852822476",
+      "passed": true,
+      "elapsedMs": 18230
+    },
+    {
+      "index": 8,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 4094
+    },
+    {
+      "index": 9,
+      "action": "send",
+      "marker": "OOB_FAILURE_TIMEOUT_1788852822476",
+      "passed": true,
+      "elapsedMs": 21416
+    },
+    {
+      "index": 10,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 3447
+    },
+    {
+      "index": 11,
+      "action": "restart",
+      "passed": true,
+      "elapsedMs": 2956
+    },
+    {
+      "index": 12,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 8450
+    }
+  ]
+}

@@ -3,7 +3,7 @@
 // The supplied label matches the first line of the accessibility label.
 import {execFileSync} from 'node:child_process';
 import assert from 'node:assert/strict';
-const [serial, label, parentLabel] = process.argv.slice(2);
+const [serial, label, parentLabel, gesture] = process.argv.slice(2);
 assert((/^emulator-\d+$/.test(serial || '') ||
   (process.env.OOB_ALLOW_PHYSICAL_DEVICE === '1' && /^[A-Za-z0-9._:-]+$/.test(serial || ''))) && label,
   'Explicit device and label required; physical devices require OOB_ALLOW_PHYSICAL_DEVICE=1');
@@ -31,5 +31,11 @@ const matches = nodes
 assert.equal(matches.length, 1, 'Expected one enabled visible matching control');
 const b = boundsOf(matches[0][0]);
 assert(b.length === 4 && b[2] > b[0] && b[3] > b[1]);
-adb('shell', 'input', 'tap', String(Math.round((b[0]+b[2])/2)), String(Math.round((b[1]+b[3])/2)));
+const x = String(Math.round((b[0]+b[2])/2));
+const y = String(Math.round((b[1]+b[3])/2));
+assert(!gesture || gesture === 'long-press', 'Unsupported gesture');
+if (gesture === 'long-press') {
+  assert(matches[0][0].includes('long-clickable="true"'), 'Control does not support long press');
+  adb('shell', 'input', 'swipe', x, y, x, y, '900');
+} else adb('shell', 'input', 'tap', x, y);
 console.log(JSON.stringify({serial, control: label, tapped: true}));

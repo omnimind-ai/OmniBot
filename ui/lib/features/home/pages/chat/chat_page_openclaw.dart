@@ -20,6 +20,9 @@ mixin _ChatPageOpenClawMixin on _ChatPageStateBase {
     }
     _requestComposerFocus();
     _handleSlashCommandInput();
+    if (_activeMode == ChatPageMode.agent) {
+      unawaited(_loadAgentCollaborationModes(force: true));
+    }
   }
 
   @override

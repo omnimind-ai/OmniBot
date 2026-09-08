@@ -5,6 +5,19 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   const chatRoot = 'lib/features/home/pages/chat';
 
+  test('model refresh and user budgets have separate write owners', () {
+    final models = File(
+      '$chatRoot/chat_page_model_context.dart',
+    ).readAsStringSync();
+    final actions = File(
+      '$chatRoot/chat_page_user_message_actions.dart',
+    ).readAsStringSync();
+    expect(models, isNot(contains('updateConversationPromptTokenThreshold')));
+    expect(models, isNot(contains('getManualModelContextThreshold')));
+    expect(actions, contains('updateConversationPromptTokenThreshold'));
+    expect(actions, isNot(contains('setManualModelContextThreshold')));
+  });
+
   test('rollback identity never uses the optimistic Harness label', () {
     final page = File('$chatRoot/chat_page.dart').readAsStringSync();
     final committed = page
@@ -39,8 +52,10 @@ void main() {
         lifecycle,
         contains('effectiveTarget.isNewConversation && !preserveComposer'),
       );
-      expect(lifecycle.indexOf('_resetLocalConversationState(targetMode);'),
-          lessThan(lifecycle.indexOf('draftMessage = composerValue.text')));
+      expect(
+        lifecycle.indexOf('_resetLocalConversationState(targetMode);'),
+        lessThan(lifecycle.indexOf('draftMessage = composerValue.text')),
+      );
       final flow = File(
         '$chatRoot/chat_page_conversation_flow.dart',
       ).readAsStringSync();

@@ -36,3 +36,23 @@ read and normalized before optional forward migration.
 A change of conversation target or mode. It invalidates asynchronous work from
 the previous target; late loads, updates, and persistence completions must not
 mutate the new target.
+
+## Model request context
+
+A bounded, derived view of conversation history prepared by Xiaowan before each
+model call. Compaction changes this view and its durable checkpoint; it does not
+replace the user's complete history or create a new ACP turn. Complete files and
+large tool outputs remain retrievable through the existing workspace artifacts.
+UI pages are partial projections: routine persistence merges message identities.
+Only explicit user history edits may remove records missing from a submitted view.
+
+## Context budget ownership
+
+The Provider owns model capacity. The Conversation owns the user's selected
+context budget. Usage reports are observations, not configuration writes.
+Refreshing model metadata or receiving usage must not overwrite the user's
+setting. Request preparation respects the smaller applicable capacity/budget and
+reserves output space; both ordinary and summary requests obey this boundary.
+A missing, interrupted, truncated or over-budget summary never advances a durable
+checkpoint. A UI repaint, partial page, or empty runtime is never a clear-history
+instruction.

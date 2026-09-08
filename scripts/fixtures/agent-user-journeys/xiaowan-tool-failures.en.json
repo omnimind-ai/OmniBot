@@ -1,0 +1,87 @@
+{
+  "name": "Failed tools are returned to the same Agent turn for recovery",
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_FAILURE_UNKNOWN"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_FAILURE_UNKNOWN_RECOVERED",
+      "timeoutMs": 60000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_UNKNOWN",
+      "expected": "recovered"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_FAILURE_ARGS"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_FAILURE_ARGS_RECOVERED",
+      "timeoutMs": 60000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_ARGS",
+      "expected": "recovered"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_FAILURE_MISSING"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_FAILURE_MISSING_RECOVERED",
+      "timeoutMs": 60000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_MISSING",
+      "expected": "recovered"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_FAILURE_EXIT"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_FAILURE_EXIT_RECOVERED",
+      "timeoutMs": 90000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_EXIT",
+      "expected": "recovered"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_FAILURE_TIMEOUT"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_FAILURE_TIMEOUT_RECOVERED",
+      "timeoutMs": 90000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_TIMEOUT",
+      "expected": "recovered"
+    },
+    {
+      "action": "restart"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_FAILURE_TIMEOUT_RECOVERED"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_TIMEOUT",
+      "expected": "recovered"
+    }
+  ]
+}

@@ -37,7 +37,8 @@ class SubagentDispatcher(
     private val eventAdapter: AgentEventAdapter,
     private val model: String,
     private val toolImageContinuationPolicy: AgentToolImageContinuationPolicy =
-        AgentToolImageContinuationPolicy.DEFAULT
+        AgentToolImageContinuationPolicy.DEFAULT,
+    private val contextCompactorFactory: (() -> AgentContextCompactionController)? = null
 ) {
 
     data class SubagentTaskSpec(
@@ -182,6 +183,7 @@ class SubagentDispatcher(
                     initialMessages = listOf(systemMessage, userMessage),
                     executionEnv = subEnv,
                     conversationId = null,
+                    contextCompactor = contextCompactorFactory?.invoke(),
                 )
             )
             when (result) {

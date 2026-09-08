@@ -1,0 +1,125 @@
+{
+  "name": "Provider error categories persist with exact task identity",
+  "serial": "emulator-5560",
+  "runId": "1788857803123",
+  "kind": "emulator-user-interface",
+  "passed": true,
+  "steps": [
+    {
+      "index": 1,
+      "action": "send",
+      "marker": "OOB_FAILURE_AUTH_1788857803123",
+      "passed": true,
+      "elapsedMs": 18929
+    },
+    {
+      "index": 2,
+      "action": "expect",
+      "passed": true,
+      "elapsedMs": 2872
+    },
+    {
+      "index": 3,
+      "action": "expect",
+      "passed": true,
+      "elapsedMs": 2987
+    },
+    {
+      "index": 4,
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_AUTH_1788857803123",
+      "passed": true,
+      "elapsedMs": 15496
+    },
+    {
+      "index": 5,
+      "action": "send",
+      "marker": "OOB_FAILURE_QUOTA_1788857803123",
+      "passed": true,
+      "elapsedMs": 15811
+    },
+    {
+      "index": 6,
+      "action": "expect",
+      "passed": true,
+      "elapsedMs": 2726
+    },
+    {
+      "index": 7,
+      "action": "expect",
+      "passed": true,
+      "elapsedMs": 2846
+    },
+    {
+      "index": 8,
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_QUOTA_1788857803123",
+      "passed": true,
+      "elapsedMs": 16898
+    },
+    {
+      "index": 9,
+      "action": "send",
+      "marker": "OOB_FAILURE_RATE_1788857803123",
+      "passed": true,
+      "elapsedMs": 15822
+    },
+    {
+      "index": 10,
+      "action": "expect",
+      "passed": true,
+      "elapsedMs": 2792
+    },
+    {
+      "index": 11,
+      "action": "expect",
+      "passed": true,
+      "elapsedMs": 2596
+    },
+    {
+      "index": 12,
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_RATE_1788857803123",
+      "passed": true,
+      "elapsedMs": 13165
+    },
+    {
+      "index": 13,
+      "action": "send",
+      "marker": "OOB_FAILURE_SERVER_1788857803123",
+      "passed": true,
+      "elapsedMs": 15296
+    },
+    {
+      "index": 14,
+      "action": "expect",
+      "passed": true,
+      "elapsedMs": 2938
+    },
+    {
+      "index": 15,
+      "action": "expect",
+      "passed": true,
+      "elapsedMs": 2708
+    },
+    {
+      "index": 16,
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_SERVER_1788857803123",
+      "passed": true,
+      "elapsedMs": 14665
+    },
+    {
+      "index": 17,
+      "action": "restart",
+      "passed": true,
+      "elapsedMs": 2861
+    },
+    {
+      "index": 18,
+      "action": "expect",
+      "passed": true,
+      "elapsedMs": 5942
+    }
+  ]
+}

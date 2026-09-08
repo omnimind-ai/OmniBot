@@ -36,7 +36,6 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
         );
       });
       await _syncInvalidNormalConversationOverrideIfNeeded();
-      await _syncActiveNormalConversationPromptTokenThreshold();
     } catch (e) {
       debugPrint('加载聊天模型上下文失败: $e');
     }
@@ -148,10 +147,6 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
       );
     });
     await _syncInvalidNormalConversationOverrideIfNeeded();
-    await _syncActiveNormalConversationPromptTokenThreshold(
-      selection: nextSelection,
-      conversationId: conversationId,
-    );
   }
 
   @override
@@ -202,10 +197,6 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
         overrideSelection: nextSelection,
       );
     });
-    await _syncActiveNormalConversationPromptTokenThreshold(
-      selection: nextSelection,
-      conversationId: conversationId,
-    );
   }
 
   @override
@@ -286,10 +277,6 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
         );
       });
     }
-    await _syncActiveNormalConversationPromptTokenThreshold(
-      selection: selection,
-      conversationId: normalConversationId,
-    );
 
     final switchedLabel = displayAsMentionChip ? '@$modelId' : modelId;
     showToast(
@@ -362,7 +349,6 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
       LegacyTextLocalizer.localize('已恢复场景默认模型'),
       type: ToastType.success,
     );
-    await _syncActiveNormalConversationPromptTokenThreshold();
   }
 
   @override
@@ -596,7 +582,8 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
       final sessionId = _activeAgentThreadId?.trim();
       final updateExistingSession =
           _activeMode == ChatPageMode.agent &&
-          sessionId != null && sessionId.isNotEmpty &&
+          sessionId != null &&
+          sessionId.isNotEmpty &&
           currentSelection?.providerProfileId == providerProfileId;
       if (updateExistingSession) {
         // Model changes within the same connection belong to the existing
@@ -615,8 +602,10 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
         providerProfileId: providerProfileId,
         modelId: modelId,
       );
-      if (!mounted || selectionSerial != _dispatchSceneModelSelectionSerial ||
-          targetGeneration != _conversationTargetRequestId) return;
+      if (!mounted ||
+          selectionSerial != _dispatchSceneModelSelectionSerial ||
+          targetGeneration != _conversationTargetRequestId)
+        return;
       if (selectionMode == ChatPageMode.agent) {
         _activeAgentModelId = modelId;
       }
@@ -661,158 +650,6 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
           ),
         );
       },
-    );
-  }
-
-  _ChatModelOverrideSelection? _effectiveNormalModelSelection(
-    _ChatModelOverrideSelection? explicitSelection,
-  ) {
-    if (explicitSelection != null) {
-      return explicitSelection;
-    }
-    if (_showConversationModelMentionChip) {
-      final override = _activeConversationModelOverrideSelection;
-      if (override != null) {
-        return override;
-      }
-    }
-    return _activeDispatchSceneSelection;
-  }
-
-  ProviderModelOption? _findProviderModelOption(
-    _ChatModelOverrideSelection selection,
-  ) {
-    final models =
-        _modelOptionsByProfileId[selection.providerProfileId] ??
-        const <ProviderModelOption>[];
-    for (final model in models) {
-      if (model.id == selection.modelId) {
-        return model;
-      }
-    }
-    return null;
-  }
-
-  ModelProviderProfileSummary? _findProviderProfile(String profileId) {
-    for (final profile in _modelProviderProfiles) {
-      if (profile.id == profileId) {
-        return profile;
-      }
-    }
-    return null;
-  }
-
-  Future<ProviderModelOption?> _resolveProviderModelOption(
-    _ChatModelOverrideSelection selection,
-  ) async {
-    final existing = _findProviderModelOption(selection);
-    if (existing == null) {
-      return null;
-    }
-    if ((existing?.contextLimit ?? 0) > 0) {
-      final manualThreshold = StorageService.getManualModelContextThreshold(
-        selection.modelId,
-      );
-      if (manualThreshold != null &&
-          manualThreshold > 0 &&
-          manualThreshold != existing!.contextLimit) {
-        return existing.copyWith(contextLimit: manualThreshold);
-      }
-      return existing;
-    }
-    final profile = _findProviderProfile(selection.providerProfileId);
-    if (profile == null) {
-      return existing;
-    }
-    final enriched = await ModelProviderConfigService.enrichModelsForProfile(
-      profileId: profile.id,
-      providerName: profile.name,
-      apiBase: profile.baseUrl,
-      models: [existing],
-    );
-    if (enriched.isEmpty) {
-      return existing;
-    }
-    var resolved = enriched.first;
-    final manualThreshold = StorageService.getManualModelContextThreshold(
-      selection.modelId,
-    );
-    if (manualThreshold != null && manualThreshold > 0) {
-      resolved = resolved.copyWith(contextLimit: manualThreshold);
-    }
-    if (!mounted || (resolved.contextLimit ?? 0) <= 0) {
-      return resolved;
-    }
-    setState(() {
-      final next = <String, List<ProviderModelOption>>{
-        for (final entry in _modelOptionsByProfileId.entries)
-          entry.key: List<ProviderModelOption>.from(entry.value),
-      };
-      final bucket = next.putIfAbsent(
-        selection.providerProfileId,
-        () => <ProviderModelOption>[],
-      );
-      final index = bucket.indexWhere((item) => item.id == selection.modelId);
-      if (index >= 0) {
-        bucket[index] = resolved;
-      }
-      _modelOptionsByProfileId = next;
-    });
-    return resolved;
-  }
-
-  Future<void> _syncActiveNormalConversationPromptTokenThreshold({
-    _ChatModelOverrideSelection? selection,
-    int? conversationId,
-  }) async {
-    final targetConversationId =
-        conversationId ?? _modeState(ChatPageMode.normal).currentConversationId;
-    if (targetConversationId == null || targetConversationId <= 0) {
-      return;
-    }
-    final effectiveSelection = _effectiveNormalModelSelection(selection);
-    if (effectiveSelection == null) {
-      return;
-    }
-    final model = await _resolveProviderModelOption(effectiveSelection);
-    final contextLimit = model?.contextLimit;
-    if (contextLimit == null || contextLimit <= 0) {
-      return;
-    }
-    final currentConversation =
-        _runtimeForMode(ChatPageMode.normal)?.conversation ??
-        _modeState(ChatPageMode.normal).currentConversation;
-    if (currentConversation?.promptTokenThreshold == contextLimit) {
-      return;
-    }
-    final updated =
-        await ConversationService.updateConversationPromptTokenThreshold(
-          conversationId: targetConversationId,
-          promptTokenThreshold: contextLimit,
-        );
-    if (!updated || !mounted) {
-      return;
-    }
-    final baseConversation = currentConversation;
-    if (baseConversation == null) {
-      return;
-    }
-    final nextConversation = baseConversation.copyWith(
-      promptTokenThreshold: contextLimit,
-    );
-    setState(() {
-      if (_modeState(ChatPageMode.normal).currentConversation?.id ==
-          targetConversationId) {
-        _modeState(ChatPageMode.normal).currentConversation = nextConversation;
-      }
-      final runtime = _runtimeForMode(ChatPageMode.normal);
-      if (runtime?.conversation?.id == targetConversationId) {
-        runtime!.conversation = nextConversation;
-      }
-    });
-    _syncRuntimeSnapshotForMode(
-      ChatPageMode.normal,
-      conversation: nextConversation,
     );
   }
 }

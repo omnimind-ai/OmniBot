@@ -368,20 +368,21 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
                         ? '1 model'
                         : '${_agentModelOptions.length} models')),
       ),
-      _buildAgentCommandCard(
-        cardId: 'slash-command-agent-review',
-        toolTitle: '/review',
-        displayName: '/review',
-        toolTypeLabel: LegacyTextLocalizer.isEnglish ? 'Review' : '审查',
-        status: 'running',
-        statusLabel: LegacyTextLocalizer.isEnglish ? 'Command' : '命令',
-        summary: LegacyTextLocalizer.isEnglish
-            ? 'Review changes in the current workspace'
-            : '审查当前工作区改动',
-        progress: LegacyTextLocalizer.isEnglish
-            ? 'Runs an Agent review on the active thread'
-            : '在当前线程中启动 Agent review',
-      ),
+      if (_availableAcpCommandForText('/review') != null)
+        _buildAgentCommandCard(
+          cardId: 'slash-command-agent-review',
+          toolTitle: '/review',
+          displayName: '/review',
+          toolTypeLabel: LegacyTextLocalizer.isEnglish ? 'Review' : '审查',
+          status: 'running',
+          statusLabel: LegacyTextLocalizer.isEnglish ? 'Command' : '命令',
+          summary: LegacyTextLocalizer.isEnglish
+              ? 'Review changes in the current workspace'
+              : '审查当前工作区改动',
+          progress: LegacyTextLocalizer.isEnglish
+              ? 'Runs an Agent review on the active thread'
+              : '在当前线程中启动 Agent review',
+        ),
       _buildAgentCommandCard(
         cardId: 'slash-command-agent-init',
         toolTitle: '/init',
@@ -393,39 +394,40 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
             ? 'Generate or update AGENTS.md'
             : '生成或更新 AGENTS.md',
         progress: LegacyTextLocalizer.isEnglish
-            ? 'Creates $_activeAcpAgentDisplayName initialization guidance'
-            : '生成 $_activeAcpAgentDisplayName 初始化指引',
+            ? 'Prompt shortcut: asks the Agent to write workspace guidance'
+            : '提示词快捷操作：请求 Agent 编写工作区指引',
       ),
-      _buildAgentCommandCard(
-        cardId: 'slash-command-agent-plan',
-        toolTitle: '/plan',
-        displayName: '/plan',
-        toolTypeLabel: LegacyTextLocalizer.isEnglish ? 'Plan' : '计划',
-        status: planModeEnabled ? 'success' : 'running',
-        statusLabel: planModeEnabled
-            ? (LegacyTextLocalizer.isEnglish ? 'Selected' : '已选')
-            : (LegacyTextLocalizer.isEnglish ? 'Off' : '关闭'),
-        summary: planModeEnabled
-            ? (LegacyTextLocalizer.isEnglish
-                  ? 'Plan mode is active'
-                  : '当前已启用 Plan 模式')
-            : (LegacyTextLocalizer.isEnglish
-                  ? 'Plan mode is off'
-                  : '当前未启用 Plan 模式'),
-        progress: _agentCollaborationModeListError != null
-            ? _agentCollaborationModeListError!
-            : _isAgentCollaborationModeListLoading
-            ? (LegacyTextLocalizer.isEnglish ? 'Loading modes' : '加载模式中')
-            : (_agentCollaborationModes.isEmpty
-                  ? (LegacyTextLocalizer.isEnglish
-                        ? 'Tap to load modes'
-                        : '点击加载模式')
-                  : (_agentCollaborationModes.length == 1
-                        ? '1 mode'
-                        : '${_agentCollaborationModes.length} modes')),
-        isToggle: true,
-        toggleValue: planModeEnabled,
-      ),
+      if (_resolveAgentPlanMode(_agentCollaborationModes) != null)
+        _buildAgentCommandCard(
+          cardId: 'slash-command-agent-plan',
+          toolTitle: '/plan',
+          displayName: '/plan',
+          toolTypeLabel: LegacyTextLocalizer.isEnglish ? 'Plan' : '计划',
+          status: planModeEnabled ? 'success' : 'running',
+          statusLabel: planModeEnabled
+              ? (LegacyTextLocalizer.isEnglish ? 'Selected' : '已选')
+              : (LegacyTextLocalizer.isEnglish ? 'Off' : '关闭'),
+          summary: planModeEnabled
+              ? (LegacyTextLocalizer.isEnglish
+                    ? 'Plan mode is active'
+                    : '当前已启用 Plan 模式')
+              : (LegacyTextLocalizer.isEnglish
+                    ? 'Plan mode is off'
+                    : '当前未启用 Plan 模式'),
+          progress: _agentCollaborationModeListError != null
+              ? _agentCollaborationModeListError!
+              : _isAgentCollaborationModeListLoading
+              ? (LegacyTextLocalizer.isEnglish ? 'Loading modes' : '加载模式中')
+              : (_agentCollaborationModes.isEmpty
+                    ? (LegacyTextLocalizer.isEnglish
+                          ? 'Tap to load modes'
+                          : '点击加载模式')
+                    : (_agentCollaborationModes.length == 1
+                          ? '1 mode'
+                          : '${_agentCollaborationModes.length} modes')),
+          isToggle: true,
+          toggleValue: planModeEnabled,
+        ),
     ];
     commands.addAll(_buildAgentAcpCommandCards());
     if (query.isEmpty) {
@@ -2201,16 +2203,9 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
     }
     if (conversation.promptTokenThreshold <= 0) {
       return LegacyTextLocalizer.isEnglish
-          ? 'No context threshold set for this conversation'
-          : '当前对话还没有可用的上下文阈值';
+          ? 'No context threshold set\nLong press to adjust threshold'
+          : '上下文阈值未设置\n长按可调整阈值';
     }
-    if (conversation.latestPromptTokensUpdatedAt <= 0 &&
-        conversation.latestPromptTokens <= 0) {
-      return LegacyTextLocalizer.isEnglish
-          ? 'No context token statistics yet\nLong press to adjust threshold'
-          : '当前对话还没有上下文 token 统计\n长按可调整阈值';
-    }
-
     final usedTokens = conversation.latestPromptTokens;
     final thresholdTokens = conversation.promptTokenThreshold;
     return '${_formatTokenCount(usedTokens)} / '

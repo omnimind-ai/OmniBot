@@ -81,8 +81,9 @@ internal object AcpHarnessAdapters {
     val codex: AcpHarnessAdapter = object : AcpHarnessAdapter {
         override val configAdapterId = "codex"
 
-        // codex-acp 1.10.0 uses planId; acp-kotlin 0.30.1 requires id.
-        // Normalize the unstable extension before SDK decoding.
+        // codex-acp 1.10.0's unstable plan extension calls the identity
+        // planId; acp-kotlin 0.30.1 requires id. Normalize only this wire
+        // boundary, before SDK decoding; retain the original plan identity.
         override fun normalizeStdioLine(line: String): String = normalizeCodexPlanIdentity(line)
 
         // codex-acp 1.10.0 AirExtension / CodexEventHandler: without this
