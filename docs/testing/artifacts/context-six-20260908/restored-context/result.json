@@ -1,0 +1,120 @@
+{
+  "name": "Xiaowan bounded context across twenty file reads and restart",
+  "serial": "emulator-5560",
+  "runId": "1788869532535",
+  "kind": "emulator-user-interface",
+  "passed": true,
+  "steps": [
+    {
+      "index": 1,
+      "action": "send",
+      "marker": "OOB_FILE_CONTEXT_FIRST_1788869532535",
+      "passed": true,
+      "elapsedMs": 12460
+    },
+    {
+      "index": 2,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 20666
+    },
+    {
+      "index": 3,
+      "action": "turn-outcome",
+      "marker": "OOB_FILE_CONTEXT_FIRST_1788869532535",
+      "passed": true,
+      "elapsedMs": 9515
+    },
+    {
+      "index": 4,
+      "action": "restart",
+      "passed": true,
+      "elapsedMs": 2480
+    },
+    {
+      "index": 5,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 5966
+    },
+    {
+      "index": 6,
+      "action": "turn-outcome",
+      "marker": "OOB_FILE_CONTEXT_FIRST_1788869532535",
+      "passed": true,
+      "elapsedMs": 8051
+    },
+    {
+      "index": 7,
+      "action": "send",
+      "marker": "OOB_FILE_CONTEXT_REPEAT_1788869532535",
+      "passed": true,
+      "elapsedMs": 12003
+    },
+    {
+      "index": 8,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 32738
+    },
+    {
+      "index": 9,
+      "action": "turn-outcome",
+      "marker": "OOB_FILE_CONTEXT_REPEAT_1788869532535",
+      "passed": true,
+      "elapsedMs": 26855
+    },
+    {
+      "index": 10,
+      "action": "send",
+      "marker": "OOB_FILE_CONTEXT_THIRD_1788869532535",
+      "passed": true,
+      "elapsedMs": 14577
+    },
+    {
+      "index": 11,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 31133
+    },
+    {
+      "index": 12,
+      "action": "turn-outcome",
+      "marker": "OOB_FILE_CONTEXT_THIRD_1788869532535",
+      "passed": true,
+      "elapsedMs": 24050
+    },
+    {
+      "index": 13,
+      "action": "send",
+      "marker": "OOB_FILE_TEXT_AFTERCONTEXT_1788869532535",
+      "passed": true,
+      "elapsedMs": 12829
+    },
+    {
+      "index": 14,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 14816
+    },
+    {
+      "index": 15,
+      "action": "turn-outcome",
+      "marker": "OOB_FILE_TEXT_AFTERCONTEXT_1788869532535",
+      "passed": true,
+      "elapsedMs": 9765
+    },
+    {
+      "index": 16,
+      "action": "restart",
+      "passed": true,
+      "elapsedMs": 2338
+    },
+    {
+      "index": 17,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 5903
+    }
+  ]
+}

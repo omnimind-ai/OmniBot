@@ -34,7 +34,8 @@ interface AgentContextCompactionController {
         contextTokens: Int? = null,
         promptTokenThresholdOverride: Int? = null,
         callback: AgentCallback? = null,
-        requestOverheadTokens: Int = 0
+        requestOverheadTokens: Int = 0,
+        force: Boolean = false
     ): List<ChatCompletionMessage>
 
 }
@@ -286,7 +287,8 @@ Do NOT continue the conversation or answer questions inside it. Do NOT translate
         contextTokens: Int?,
         promptTokenThresholdOverride: Int?,
         callback: AgentCallback?,
-        requestOverheadTokens: Int
+        requestOverheadTokens: Int,
+        force: Boolean
     ): List<ChatCompletionMessage> {
         // A caller's preferred budget must never enlarge the model's capacity.
         val capacity = resolveEffectiveContextCapacity(
@@ -298,13 +300,13 @@ Do NOT continue the conversation or answer questions inside it. Do NOT translate
         if (conversationId != null && conversationId > 0 && promptTokens != null) {
             historyRepository.updatePromptTokenUsage(conversationId, promptTokens)
         }
-        if (estimated <= trigger) return messages
+        val messageBudget = trigger - requestOverheadTokens
+        check(messageBudget > 0) { "工具定义已超过上下文预算，请减少启用的工具。" }
+        if (!force && estimated <= trigger) return messages
 
         val checkpointRevision = conversationId?.takeIf { it > 0 }?.let {
             historyRepository.getConversation(it)?.contextSummaryUpdatedAt
         } ?: 0L
-        val messageBudget = trigger - requestOverheadTokens
-        check(messageBudget > 0) { "工具定义已超过上下文预算，请减少启用的工具。" }
         callback?.onContextCompactionStateChanged(true, promptTokens, capacity)
         try {
             // Gemini CLI chatCompressionService: budget recent tool outputs, keep
@@ -325,9 +327,9 @@ Do NOT continue the conversation or answer questions inside it. Do NOT translate
                 "压缩后上下文仍超过预算；原始历史已保留，未发送超限请求。"
             }
             if (conversationId != null && conversationId > 0) {
-                // Resolve a journal boundary only by canonical message identity, never
-                // text timing. If projection has not committed yet, retain full history;
-                // preflight will re-evaluate that history on the next load.
+                // Resolve the journal boundary only by canonical message identity.
+                // The repository awaits that completed group when ACP projection
+                // is still committing; a timeout must not claim a durable summary.
                 val latestUser = messages.indexOfLast { it.role == "user" }
                 val cutoff = if (cut == latestUser) {
                     historyRepository.getContextCompactionCandidate(conversationId, conversationMode)?.cutoffEntryDbId
@@ -365,7 +367,11 @@ Do NOT continue the conversation or answer questions inside it. Do NOT translate
     }
 
     private suspend fun summarizeWithinBudget(existingSummary: String?, messages: List<ChatCompletionMessage>, capacity: Int): String {
-        val bounded = boundToolOutputs(messages, minOf(50_000, capacity / 3).coerceAtLeast(1))
+        // The user's compaction trigger limits the continuing conversation, not
+        // the summarizer's model. A low trigger must not reject history that the
+        // configured summary model can still read safely.
+        val summaryCapacity = resolveModelContextThreshold() ?: capacity
+        val bounded = boundToolOutputs(messages, minOf(50_000, summaryCapacity / 3).coerceAtLeast(1))
         val request = buildCompactionRequestMessages(existingSummary, bounded)
         // Include summary instructions and prior checkpoint in the request budget.
         // Do not issue another known oversized request when the summary input cannot fit.
@@ -373,7 +379,7 @@ Do NOT continue the conversation or answer questions inside it. Do NOT translate
             AgentContextBudget.textTokens(COMPACTION_REQUEST_PROMPT) +
             AgentContextBudget.textTokens(existingSummary.orEmpty()) +
             AgentContextBudget.textTokens(FINAL_USER_PROMPT) + 32
-        check(inputTokens < resolveAutoCompactionTrigger(capacity)) {
+        check(inputTokens < resolveAutoCompactionTrigger(summaryCapacity)) {
             "待压缩内容仍超过摘要请求预算；原始历史已保留，请减小输入或使用更大上下文模型。"
         }
         return requestCompactedSummary(request, ((capacity - resolveAutoCompactionTrigger(capacity)) * 0.8).toInt().coerceAtLeast(1)).trim().also {

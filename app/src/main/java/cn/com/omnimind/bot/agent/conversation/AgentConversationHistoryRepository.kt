@@ -9,6 +9,11 @@ import cn.com.omnimind.baselib.llm.ChatCompletionMessage
 import com.google.gson.Gson
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 
 class AgentConversationHistoryRepository(
     @Suppress("UNUSED_PARAMETER")
@@ -72,7 +77,7 @@ class AgentConversationHistoryRepository(
                     ?: payload["modelToolResultMessageJson"]?.toString()?.let {
                         runCatching { codec.decodeFromString(ChatCompletionMessage.serializer(), it).toolCallId }.getOrNull()
                     }
-            val groups = entries.filter { it.entryType == ENTRY_TYPE_TOOL_EVENT && it.id > afterEntryId }
+            val groups = entries.filter { it.entryType == ENTRY_TYPE_TOOL_EVENT && it.id > afterEntryId && it.status != STATUS_RUNNING }
                 .map { entry -> entry to AgentConversationHistorySupport.readMap(entry.payloadJson) }
                 .filter { (entry, payload) -> "restored_${entry.entryId}" in required || resultId(payload) in required }
                 .groupBy { (_, payload) -> listOf(payload["sessionId"], payload["turnId"], payload["taskId"]) }
@@ -84,6 +89,15 @@ class AgentConversationHistoryRepository(
             }.singleOrNull()
 
         }
+
+        internal suspend fun awaitCompactionToolCutoff(
+            entries: Flow<List<AgentConversationEntry>>,
+            compactedMessages: List<ChatCompletionMessage>,
+            afterEntryId: Long,
+        ): Long = withTimeoutOrNull(30_000) {
+            entries.map { resolveCompactionToolCutoff(it, compactedMessages, afterEntryId) }
+                .filterNotNull().first()
+        } ?: error("工具历史尚未完成保存，未提交不完整的压缩检查点。")
 
         /**
          * Applies pagination after the compatibility reader has merged the
@@ -358,10 +372,9 @@ class AgentConversationHistoryRepository(
         val existingEntries = if (allowHistoryRemoval) {
             loadThreadEntriesAscSafePaged(conversationId, effectiveConversationMode)
         } else {
-            // A display page is a partial projection, never the complete history.
-            messages.mapNotNull { it["id"]?.toString() }.distinct().mapNotNull {
-                loadThreadEntryByIdSafe(conversationId, effectiveConversationMode, it)
-            }
+            // Reconcile one row at a time below. Retaining all raw tool bodies
+            // alongside their decoded maps defeats the bounded display projection.
+            emptyList()
         }
         val existingToolPayloads = existingEntries
             .filter { it.entryType == ENTRY_TYPE_TOOL_EVENT }
@@ -397,6 +410,8 @@ class AgentConversationHistoryRepository(
                 (message["user"] as? Number)?.toInt() == 1 -> ENTRY_TYPE_USER_MESSAGE
                 else -> ENTRY_TYPE_ASSISTANT_MESSAGE
             }
+            val existingEntry = existingEntries.firstOrNull { it.entryId == entryId }
+                ?: if (!allowHistoryRemoval) loadThreadEntryByIdSafe(conversationId, effectiveConversationMode, entryId) else null
             val status = when {
                 restoredToolPayload != null -> restoredToolPayload["status"]?.toString()?.trim()
                     ?.ifEmpty { null }
@@ -410,15 +425,19 @@ class AgentConversationHistoryRepository(
                 else -> extractSummaryFromMessagePayload(message)
             }
             val payloadJson = if (restoredToolPayload != null) {
-                val existingToolPayload = existingToolPayloads[entryId].orEmpty()
-                val replayPreservedPayload = preserveFullToolPayload(existingToolPayload, restoredToolPayload)
-                gson.toJson(replayPreservedPayload)
+                if (restoredToolPayload["payloadCompacted"] == true && existingEntry != null) {
+                    existingEntry.payloadJson
+                } else {
+                    val existingToolPayload = existingToolPayloads[entryId]
+                        ?: existingEntry?.let { AgentConversationHistorySupport.readMap(it.payloadJson) }.orEmpty()
+                    gson.toJson(preserveFullToolPayload(existingToolPayload, restoredToolPayload))
+                }
             } else {
                 gson.toJson(message)
             }
             val insertedId = upsertEntry(
                 AgentConversationEntry(
-                    id = existingEntries.firstOrNull { it.entryId == entryId }?.id ?: 0,
+                    id = existingEntry?.id ?: 0,
                     conversationId = conversationId,
                     conversationMode = effectiveConversationMode,
                     entryId = entryId,
@@ -454,13 +473,17 @@ class AgentConversationHistoryRepository(
         finalizeInterruptedEntries: Boolean = true
     ): List<Map<String, Any?>> = withContext(Dispatchers.IO) {
         val effectiveConversationMode = resolveConversationMode(conversationId, conversationMode)
-        val entries = loadThreadEntriesDescSafePaged(conversationId, effectiveConversationMode)
-        val displayEntries = if (finalizeInterruptedEntries) {
-            normalizeEntriesForDisplay(entries)
-        } else {
-            entries
+        val messagePayloads = mutableListOf<Map<String, Any?>>()
+        var offset = 0
+        while (true) {
+            val page = DatabaseHelper.getLogicalAgentConversationPage(
+                conversationId, conversationModeCandidates(effectiveConversationMode), SAFE_HISTORY_PAGE_SIZE, offset)
+            if (page.isEmpty()) break
+            val displayEntries = if (finalizeInterruptedEntries) normalizeEntriesForDisplay(page) else page
+            messagePayloads += displayEntries.mapNotNull(::entryToMessagePayload)
+            offset += page.size
+            if (page.size < SAFE_HISTORY_PAGE_SIZE) break
         }
-        val messagePayloads = displayEntries.mapNotNull { entry -> entryToMessagePayload(entry) }
         ConversationSnapshotOrdering.sortForDisplay(messagePayloads)
     }
 
@@ -528,9 +551,10 @@ class AgentConversationHistoryRepository(
         }
         val conversation = DatabaseHelper.getConversationById(conversationId)
         val effectiveConversationMode = resolveConversationMode(conversationId, conversationMode)
-        val normalizedEntries = normalizeInterruptedToolEntries(
+        val normalizedEntries = AgentConversationHistorySupport.normalizeInterruptedEntries(
             loadThreadEntriesAscSafePaged(conversationId, effectiveConversationMode,
-                if (conversation?.contextSummary.isNullOrBlank()) 0 else conversation?.contextSummaryCutoffEntryDbId ?: 0)
+                if (conversation?.contextSummary.isNullOrBlank()) 0 else conversation?.contextSummaryCutoffEntryDbId ?: 0,
+                promptProjection = newPromptProjection())
         )
         AgentConversationHistorySupport.buildPromptSeedFromEntries(
             entries = normalizedEntries,
@@ -545,8 +569,9 @@ class AgentConversationHistoryRepository(
     ): ContextCompactionCandidate? = withContext(Dispatchers.IO) {
         val conversation = DatabaseHelper.getConversationById(conversationId) ?: return@withContext null
         val effectiveConversationMode = resolveConversationMode(conversationId, conversationMode)
-        val normalizedEntries = normalizeInterruptedToolEntries(
-            loadThreadEntriesAscSafePaged(conversationId, effectiveConversationMode, conversation.contextSummaryCutoffEntryDbId ?: 0)
+        val normalizedEntries = AgentConversationHistorySupport.normalizeInterruptedEntries(
+            loadThreadEntriesAscSafePaged(conversationId, effectiveConversationMode, conversation.contextSummaryCutoffEntryDbId ?: 0,
+                promptProjection = newPromptProjection())
         )
         val selection = AgentConversationHistorySupport.selectEntriesToCompact(
             entries = normalizedEntries,
@@ -568,8 +593,26 @@ class AgentConversationHistoryRepository(
         compactedMessages: List<ChatCompletionMessage>
     ): Long? = withContext(Dispatchers.IO) {
         val conversation = getConversation(conversationId) ?: return@withContext null
-        val entries = loadThreadEntriesAscSafePaged(conversationId, resolveConversationMode(conversationId, conversationMode))
-        resolveCompactionToolCutoff(entries, compactedMessages, conversation.contextSummaryCutoffEntryDbId ?: 0)
+        val afterEntryId = conversation.contextSummaryCutoffEntryDbId ?: 0
+        val required = compactedMessages.lastOrNull { !it.toolCalls.isNullOrEmpty() }
+            ?.toolCalls.orEmpty().map { it.id }.toSet()
+        if (required.isEmpty() || compactedMessages.lastOrNull()?.role != "tool") return@withContext null
+        // ACP projection commits asynchronously. Wait for the actual journal
+        // identity instead of silently discarding a successful summary. Room
+        // invalidations wake this wait; no user turn or network request is replayed.
+        val entries = DatabaseHelper.observeAgentToolHeadersAfter(conversationId, afterEntryId).map { headers ->
+                val projection = newPromptProjection()
+                headers.filter { header ->
+                    !header.entryId.startsWith("tool:") || required.any { callId ->
+                        header.entryId == callId.removePrefix("restored_") ||
+                            header.entryId.contains(":$callId:")
+                    }
+                }.distinctBy { it.entryId }.mapNotNull { header ->
+                    loadThreadEntryByIdSafe(conversationId, header.conversationMode, header.entryId)
+                        ?.let(projection::project)
+                }
+            }
+        awaitCompactionToolCutoff(entries, compactedMessages, afterEntryId)
     }
 
     suspend fun updateContextSummary(
@@ -838,21 +881,39 @@ class AgentConversationHistoryRepository(
         return null
     }
 
+    private fun newPromptProjection() = AgentHistoryToolOutputProjection(offload = { entry ->
+        val workspace = AgentWorkspaceManager(context)
+        val file = java.io.File(workspace.offloadsDirectory("history-${entry.conversationId}"),
+            "${entry.id}-${entry.updatedAt}-prompt.json")
+        // Historical tools are immutable after completion, but write the actual
+        // snapshot even when a running row changed without changing its timestamp.
+        val temporary = java.io.File.createTempFile("history-", ".tmp", file.parentFile)
+        try {
+            temporary.writer().use { it.write(entry.payloadJson) }
+            check(temporary.renameTo(file)) { "Could not save complete history record" }
+        } finally {
+            temporary.delete()
+        }
+        workspace.buildArtifactForFile(file, "history", "完整工具记录").workspacePath
+    })
+
     private suspend fun loadThreadEntriesAscSafePaged(
         conversationId: Long,
         conversationMode: String,
-        afterEntryId: Long = 0
+        afterEntryId: Long = 0,
+        promptProjection: AgentHistoryToolOutputProjection? = null
     ): List<AgentConversationEntry> {
-        return loadThreadEntriesDescSafePaged(conversationId, conversationMode, afterEntryId).asReversed()
+        return loadThreadEntriesDescSafePaged(conversationId, conversationMode, afterEntryId, promptProjection).asReversed()
     }
 
     private suspend fun loadThreadEntriesDescSafePaged(
         conversationId: Long,
         conversationMode: String,
-        afterEntryId: Long = 0
+        afterEntryId: Long = 0,
+        promptProjection: AgentHistoryToolOutputProjection? = null
     ): List<AgentConversationEntry> {
         val entries = conversationModeCandidates(conversationMode).flatMap { storageMode ->
-            loadThreadEntriesDescSafePagedForMode(conversationId, storageMode, afterEntryId)
+            loadThreadEntriesDescSafePagedForMode(conversationId, storageMode, afterEntryId, promptProjection)
         }
         return entries
             // Canonical `agent` entries come first; an old `codex` row with
@@ -865,7 +926,8 @@ class AgentConversationHistoryRepository(
     private suspend fun loadThreadEntriesDescSafePagedForMode(
         conversationId: Long,
         conversationMode: String,
-        afterEntryId: Long = 0
+        afterEntryId: Long = 0,
+        promptProjection: AgentHistoryToolOutputProjection? = null
     ): List<AgentConversationEntry> {
         val entries = mutableListOf<AgentConversationEntry>()
         var offset = 0
@@ -878,7 +940,7 @@ class AgentConversationHistoryRepository(
                 afterEntryId = afterEntryId
             )
             if (page.isEmpty()) break
-            entries += page
+            entries += if (promptProjection == null) page else page.map(promptProjection::project)
             offset += page.size
             if (page.size < SAFE_HISTORY_PAGE_SIZE) break
         }

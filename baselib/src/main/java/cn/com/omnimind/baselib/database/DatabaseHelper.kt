@@ -479,6 +479,10 @@ object DatabaseHelper {
         getDatabase().conversationDao().updatePreservingCheckpoint(conversation)
     }
 
+    fun observeAgentToolHeadersAfter(conversationId: Long, afterEntryId: Long):
+        kotlinx.coroutines.flow.Flow<List<AgentConversationEntryHeader>> =
+        getDatabase().agentConversationEntryDao().observeToolHeadersAfter(conversationId, afterEntryId)
+
     suspend fun updateConversationPromptThreshold(id: Long, threshold: Int, at: Long = System.currentTimeMillis()) {
         getDatabase().conversationDao().updatePromptThreshold(id, threshold.coerceAtLeast(1), at)
     }

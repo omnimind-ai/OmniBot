@@ -136,6 +136,12 @@ internal class XiaowanAcpConnection(
                 SupervisorJob(parentJob) +
                 CoroutineExceptionHandler { _, error ->
                     Log.e(TAG, "Loopback ACP server failed", error)
+                    // Use the same connection-exit owner as external ACP
+                    // processes; logging alone leaves session/prompt pending.
+                    exitSignal.complete(1)
+                    clientTransport.close()
+                    serverTransport.close()
+                    serverProtocolScope.cancel()
                 }
         )
         serverProtocol = Protocol(serverProtocolScope, serverTransport)
@@ -192,7 +198,7 @@ internal class XiaowanAcpConnection(
     }
 
     override fun exitDescription(exitCode: Int?): String =
-        "Built-in Xiaowan ACP Agent closed before initialize completed"
+        "Built-in Xiaowan ACP connection closed (code=$exitCode)"
 
     override suspend fun close() {
         if (::agentSupport.isInitialized) agentSupport.closeAllSessions()

@@ -8,6 +8,7 @@ import {createHash} from 'node:crypto';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {join} from 'node:path';
+import {execFileSync} from 'node:child_process';
 
 const directory = process.env.OOB_FILE_TEST_DIR;
 if (!directory) throw Error('OOB_FILE_TEST_DIR is required');
@@ -17,6 +18,19 @@ const imagePath = process.env.OOB_FILE_TEST_IMAGE;
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const imageHash = imagePath ? hash(readFileSync(imagePath)) : null;
 const held = new Map();
+const offloadCache = new Map();
+function restoredToolOutput(text) {
+  const match = /^Earlier tool output saved in full to (.+)\. Read it with file_read if needed\.$/.exec(text);
+  if (!match) return text;
+  const path = match[1];
+  assert(/^\/workspace\/[A-Za-z0-9_/.-]+$/.test(path) && !path.split('/').includes('..'));
+  const serial = process.env.OOB_FILE_TEST_SERIAL;
+  assert(serial, 'OOB_FILE_TEST_SERIAL is required to verify offloaded results on the actual device');
+  if (!offloadCache.has(path)) offloadCache.set(path, execFileSync(process.env.ADB || 'adb',
+    ['-s', serial, 'exec-out', 'run-as', 'cn.com.omnimind.bot', 'cat', path.slice(1)],
+    {encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, timeout: 15000}));
+  return offloadCache.get(path);
+}
 const sse = (delta, finish = null) => `data: ${JSON.stringify({choices: [{index: 0, delta, finish_reason: finish}]})}\n\n`;
 let sequence = 0;
 
@@ -113,22 +127,17 @@ http.createServer(async (request, response) => {
       const text = typeof message.content === 'string' ? message.content
         : message.content.find(part => part.type === 'text')?.text;
       assert.equal(typeof text, 'string', 'Tool result must contain its text envelope');
-      if (kind === 'CONTEXT' && text.startsWith('Earlier tool output saved in full to ')) {
-        assert(text.includes('Read it with file_read if needed.'));
-        return {offloaded: true};
-      }
-      const outer = JSON.parse(text);
+      const outer = JSON.parse(restoredToolOutput(text));
       assert.equal(outer.success, true);
       assert(outer.previewJson === undefined || outer.previewJson !== outer.rawResultJson,
         'Identical preview must not duplicate the model tool result');
-      return JSON.parse(outer.rawResultJson);
+      return {...JSON.parse(outer.rawResultJson), offloaded: text.startsWith('Earlier tool output saved in full to ')};
     });
     const previouslyCompleted = kind === 'CONTEXT' ? checkpointCount(marker) : 0;
     const count = previouslyCompleted + results.length;
     assert(count <= (kind === 'CONTEXT' ? 20 : kind === 'HTML' ? 3 : 1), 'Duplicate result');
     for (const [index, page] of results.entries()) {
       if (['HTML', 'CANCEL', 'HOLD', 'CONTEXT'].includes(kind)) {
-        if (kind === 'CONTEXT' && page.offloaded) continue;
         const offset = kind === 'CONTEXT' ? (previouslyCompleted + index) * 65536 : [0, 65536, html.length - 128][index];
         assert.equal(page.offset, offset);
         assert.equal(page.content, html.slice(offset, offset + 65536));

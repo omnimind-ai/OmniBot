@@ -1,5 +1,15 @@
 # 对话驱动的长期回归测试索引
 
+## 2026-09-08：六项长上下文反馈复核
+
+以 `context-six-audit-2026-09-08.md` 为本轮证据，纠正此前“最终回复丢失”的未证实判断。
+新增可执行回归：`AgentContextOverflowTest`、`AgentConversationContextCompactorTest` 的低阈值/摘要模型容量、不可压缩 schema、超大摘要输入、跨工具统一落盘；`AgentOrchestratorTest` 使用生产压缩器验证真实报错文字、最多一次恢复及已开始输出不重放。
+进一步复测发现历史已完成而页面仍旧的独立竞态：`conversation_manager_lifecycle_test.dart` 固定 metadata/history 等待期间当前 runtime 增加消息的场景。加载路径必须在 I/O 后读取当前 owner，不能安装 I/O 前的副本。保留本轮一次失败的 UI 记录，不把持久化成功冒充实时显示通过。
+`xiaowan-context-overflow.en.json` 增加 `turn-outcome`，在可见回复、重启恢复、继续任务之间检查唯一用户输入、session/turn 身份及唯一 `end_turn`。
+连续复测捕获会话 15 在压缩前恢复工具历史时 OOM：新增 `AgentHistoryToolOutputProjectionTest` 逐页处理 120 个大结果、完整 offload、调用/检查点身份、共享预算、落盘失败回归。`XiaowanAcpConnectionTest` 注入实际 server scope 致命错误，验证既有 connection exit 结束等待。上下文 journey 增加第三长任务和其后普通消息；fixture 用 ADB 读取实际 offload 原文校验，不能跳过内容检查。原始 OOM 和中间失败证据都保留。
+`xiaowan-context-summary.en.json` 专门增长同一任务的助手内容，确认实际发出摘要请求。第一次 20 次读取完成但检查点断言失败：原查找在 ACP 异步投影落盘前返回 null，丢弃摘要的持久化机会。增加 Room 完成记录屏障及 `checkpoint awaits committed tool identity instead of dropping a summary during projection lag`，并要求检查点跨重启保持一致；最终状态见本轮报告，不用仅落盘工具结果的测试代替摘要验收。
+状态：相关 JVM 测试与模拟器回归通过；原服务商长度单位仍未知，待真机验证。下方旧审计记录保留时间背景，不代表这些风险均已证实。
+
 每次工作对话将用户的实际需求、故障与验收条件加入此索引，并链接既有可执行测试及证据。清单不等于已实现测试；模拟器通过不等于真机验收。原始聊天记录不作为可公开测试数据，样本应脱敏。
 
 ## 2026-09-07：小万读取文件与长上下文
@@ -12,7 +22,7 @@
 | FILE-002 | 大 HTML/文本分段读取，边界和末页准确，不全量撑爆内存 | 同一 UI journey；`file-read-memory-2026-09-07.md` | 模拟器验证通过；待真机验证 |
 | FILE-003 | 工具结果重复字段不反复进入模型请求；重启后原始内容仍可查看 | `XiaowanToolResultPayloadTest`、`AgentEventAdapterTest`；`xiaowan-tool-result-dedup-2026-09-07.md` | 本地与模拟器验证通过；待真机验证 |
 | LIFE-001 | 读取后取消，继续发送；重启恢复完成和取消状态；并行会话不串结果 | `xiaowan-emulator-acceptance-2026-09-07.md` 和其 artifacts 中各 journey/result | 模拟器验证含人工补测；不是全自动通过；待真机验证 |
-| CTX-001 | 用户报告输入 1,119,534 超过服务上限 1,048,566；首次恢复即超限也应在发送前处理 | `AgentOrchestratorTest.providerPromptLengthRejectionTriggersOneCanonicalPreOutputCompactionRecovery`；`xiaowan-long-context-audit-2026-09-07.md` | 本地受控服务端拒绝已复现；同一 ACP turn 强制压缩后恢复；原服务长度单位和真机仍待验证 |
+| CTX-001 | 用户报告输入 1,119,534 超过服务上限 1,048,566；首次恢复即超限也应在发送前处理 | `AgentOrchestratorTest.providerPromptLengthRejectionTriggersOneCanonicalPreOutputCompactionRecovery`；`xiaowan-long-context-audit-2026-09-07.md` | JVM 请求拒绝 fixture 配合生产压缩器验证单次恢复；不是原服务商网络复现；原服务长度单位和真机仍待验证 |
 | CTX-002 | 同一条用户任务中工具不断累积，能压缩已完成片段，保留任务及调用配对，不重放工具 | 同上；现有 `AgentOrchestratorTest` 尚不覆盖此边界 | 待实现回归用例；未修复 |
 | CTX-003 | 服务不返回 usage，或一次/并行工具结果突然增大，仍能在下一请求前维护预算 | 同上 | 待实现回归用例；未修复 |
 | CTX-004 | 摘要请求本身不超限；摘要失败、过长或取消，不错误提交检查点、不继续发送已知超限原文 | `AgentConversationContextCompactorTest` 有失败不提交及取消覆盖；其余见审计 | 部分已有测试；新增边界待实现；未修复 |

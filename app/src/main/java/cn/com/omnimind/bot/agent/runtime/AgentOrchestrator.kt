@@ -208,7 +208,7 @@ class AgentOrchestrator(
                         !contextOverflowRecoveryAttempted &&
                         !error.responseStarted &&
                         input.contextCompactor != null &&
-                        isContextOverflow(error)
+                        AgentContextOverflow.isOverflow(error)
                     ) {
                         contextOverflowRecoveryAttempted = true
                         val recovered = input.contextCompactor.compactIfNeeded(
@@ -216,10 +216,8 @@ class AgentOrchestrator(
                             conversationMode = input.executionEnv.conversationMode,
                             promptTokens = latestPromptTokens,
                             messages = memory.snapshot(),
-                            // Force the canonical compactor to inspect the
-                            // complete in-memory history when the provider's
-                            // unit differs from our estimate.
-                            contextTokens = Int.MAX_VALUE,
+                            // Provider rejection is a trigger, not token usage.
+                            force = true,
                             requestOverheadTokens = toolBudget,
                             callback = callback,
                         )
@@ -871,22 +869,6 @@ class AgentOrchestrator(
             return formatTurnFailureReason(error.statusCode, error.reason)
         }
         return AgentRuntimeErrorSupport.safeDiagnosticMessage(error)
-    }
-
-    private fun isContextOverflow(error: AgentStreamRequestException): Boolean {
-        val diagnostic = buildString {
-            append(error.reason)
-            append('\n')
-            append(error.responseBody.orEmpty())
-        }.lowercase()
-        if (error.statusCode !in setOf(400, 413)) return false
-        return diagnostic.contains("prompt exceeds") ||
-            diagnostic.contains("input length") ||
-            diagnostic.contains("context length") ||
-            diagnostic.contains("context window") ||
-            diagnostic.contains("maximum length") ||
-            diagnostic.contains("token limit") ||
-            diagnostic.contains("too many tokens")
     }
 
     private fun formatTurnFailureReason(statusCode: Int?, reason: String): String {

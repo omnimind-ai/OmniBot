@@ -150,29 +150,13 @@ class AgentOrchestratorTest {
             previewJson = raw,
             rawResultJson = raw,
         ))))
-        var forcedCompaction = false
-        val compactor = object : AgentContextCompactionController {
-            override suspend fun resolvePromptTokenThreshold(conversationId: Long?) = 1_048_576
-
-            override suspend fun compactIfNeeded(
-                conversationId: Long?,
-                conversationMode: String,
-                promptTokens: Int?,
-                messages: List<ChatCompletionMessage>,
-                contextTokens: Int?,
-                promptTokenThresholdOverride: Int?,
-                callback: AgentCallback?,
-                requestOverheadTokens: Int,
-            ): List<ChatCompletionMessage> {
-                if (contextTokens != Int.MAX_VALUE) return messages
-                forcedCompaction = true
-                return messages.map { message ->
-                    if (message.role == "tool") {
-                        message.copy(content = JsonPrimitive("Earlier tool output was offloaded."))
-                    } else message
-                }
-            }
-        }
+        val offloaded = mutableListOf<String>()
+        val compactor = AgentConversationContextCompactor(
+            org.mockito.Mockito.mock(AgentConversationHistoryRepository::class.java),
+            modelOverride = AgentModelOverride(providerProfileId = "test", apiBase = "https://example.invalid/v1",
+                apiKey = "fixture", modelId = "test", contextLimit = 1_048_576),
+            offloadToolOutput = { offloaded += it; "/workspace/offloads/large-result.txt" },
+        )
 
         val result = createOrchestrator(llm, tools).run(
             AgentOrchestrator.Input(
@@ -185,7 +169,7 @@ class AgentOrchestratorTest {
 
         assertTrue(result is AgentResult.Success)
         assertTrue(rejected)
-        assertTrue(forcedCompaction)
+        assertTrue(offloaded.single().contains("x".repeat(1119534)))
         assertEquals(listOf("file_read"), tools.executeCalls)
         assertEquals(3, llm.requests.size)
     }
@@ -209,13 +193,44 @@ class AgentOrchestratorTest {
     }
 
     @Test
+    fun overflowRecoveryIsBoundedAndNeverReplaysStartedResponses() = runBlocking {
+        for (started in listOf(false, true)) {
+            var summaries = 0
+            val compactor = object : AgentConversationContextCompactor(
+                org.mockito.Mockito.mock(AgentConversationHistoryRepository::class.java)) {
+                override suspend fun requestCompactedSummary(messages: List<Map<String, Any>>, maxOutputTokens: Int): String {
+                    summaries++
+                    return "Old work complete."
+                }
+            }
+            val llm = FakeLlmClient(emptyList(), checkRequest = {
+                throw AgentStreamRequestException(400, "Prompt exceeds max length", null, responseStarted = started)
+            })
+            val callback = RecordingCallback()
+            val tools = FakeToolExecutor()
+            val history = initialMessages("old") + listOf(
+                ChatCompletionMessage(role = "assistant", content = JsonPrimitive("previous answer")),
+                ChatCompletionMessage(role = "user", content = JsonPrimitive("continue")))
+            val result = createOrchestrator(llm, tools).run(AgentOrchestrator.Input(
+                callback = callback, initialMessages = history,
+                executionEnv = FakeExecutionEnvironment("continue"), contextCompactor = compactor))
+            assertTrue(result is AgentResult.Error)
+            assertEquals(if (started) 1 else 2, llm.requests.size)
+            assertEquals(if (started) 0 else 1, summaries)
+            assertEquals(1, callback.errors.size)
+            assertTrue(tools.executeCalls.isEmpty())
+            assertEquals("continue", llm.requests.last().messages.last().contentText())
+        }
+    }
+
+    @Test
     fun compactedInitialHistoryIsReleasedWhileInputOwnerRemainsAlive() = runBlocking {
         val llm = FakeLlmClient(listOf(assistantTurn(content = "done")))
         val controller = object : AgentContextCompactionController {
             override suspend fun resolvePromptTokenThreshold(conversationId: Long?) = 128000
             override suspend fun compactIfNeeded(conversationId: Long?, conversationMode: String,
                 promptTokens: Int?, messages: List<ChatCompletionMessage>, contextTokens: Int?,
-                promptTokenThresholdOverride: Int?, callback: AgentCallback?, requestOverheadTokens: Int) =
+                promptTokenThresholdOverride: Int?, callback: AgentCallback?, requestOverheadTokens: Int, force: Boolean) =
                 listOf(ChatCompletionMessage(role = "user", content = JsonPrimitive("continue from checkpoint")))
         }
         fun restoredInput(): Pair<AgentOrchestrator.Input, java.lang.ref.WeakReference<ChatCompletionMessage>> {
@@ -247,7 +262,7 @@ class AgentOrchestratorTest {
             override suspend fun resolvePromptTokenThreshold(conversationId: Long?) = 128000
             override suspend fun compactIfNeeded(conversationId: Long?, conversationMode: String,
                 promptTokens: Int?, messages: List<ChatCompletionMessage>, contextTokens: Int?,
-                promptTokenThresholdOverride: Int?, callback: AgentCallback?, requestOverheadTokens: Int): List<ChatCompletionMessage> {
+                promptTokenThresholdOverride: Int?, callback: AgentCallback?, requestOverheadTokens: Int, force: Boolean): List<ChatCompletionMessage> {
                 if ((contextTokens ?: 0) <= 112000) return messages
                 assertTrue(contextTokens!! > 120100) // Includes the newly appended tool result.
                 compactions++
@@ -278,7 +293,7 @@ class AgentOrchestratorTest {
             override suspend fun resolvePromptTokenThreshold(conversationId: Long?) = 128000
             override suspend fun compactIfNeeded(conversationId: Long?, conversationMode: String,
                 promptTokens: Int?, messages: List<ChatCompletionMessage>, contextTokens: Int?,
-                promptTokenThresholdOverride: Int?, callback: AgentCallback?, requestOverheadTokens: Int): List<ChatCompletionMessage> {
+                promptTokenThresholdOverride: Int?, callback: AgentCallback?, requestOverheadTokens: Int, force: Boolean): List<ChatCompletionMessage> {
                 throw CancellationException("user cancelled")
             }
         }

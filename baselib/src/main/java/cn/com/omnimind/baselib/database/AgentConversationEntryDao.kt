@@ -10,6 +10,17 @@ import java.io.ByteArrayOutputStream
 
 @Dao
 interface AgentConversationEntryDao {
+    @Query("""
+        SELECT id, conversationId, conversationMode, entryId, entryType, status,
+               '' AS summary, createdAt, updatedAt
+        FROM agent_conversation_entries
+        WHERE conversationId = :conversationId AND id > :afterEntryId
+          AND entryType = 'tool_event'
+        ORDER BY id ASC
+    """)
+    fun observeToolHeadersAfter(conversationId: Long, afterEntryId: Long):
+        kotlinx.coroutines.flow.Flow<List<AgentConversationEntryHeader>>
+
     companion object {
         const val CHUNKED_ENTRY_PROJECTION = """id, conversationId, conversationMode, entryId, entryType, status,
             CASE WHEN length(CAST(summary AS BLOB)) > 32768 THEN '' ELSE summary END AS summary,

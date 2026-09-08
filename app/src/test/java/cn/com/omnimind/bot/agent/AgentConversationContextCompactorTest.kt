@@ -13,6 +13,79 @@ import org.junit.Test
 import java.util.Locale
 
 class AgentConversationContextCompactorTest {
+    @Test
+    fun lowUserTriggerDoesNotBecomeSummaryModelCapacity() = kotlinx.coroutines.runBlocking {
+        val repo = org.mockito.Mockito.mock(AgentConversationHistoryRepository::class.java)
+        var summaries = 0
+        val compactor = object : AgentConversationContextCompactor(repo, modelOverride = AgentModelOverride(
+            providerProfileId = "test", apiBase = "https://example.invalid/v1", apiKey = "fixture",
+            modelId = "test", contextLimit = 128000)) {
+            override suspend fun requestCompactedSummary(messages: List<Map<String, Any>>, maxOutputTokens: Int): String {
+                summaries++
+                assertTrue(messages.toString().contains("past-answer"))
+                return "Earlier work completed; preserve the current request."
+            }
+        }
+        val history = listOf(ChatCompletionMessage(role = "user", content = JsonPrimitive("old request")),
+            ChatCompletionMessage(role = "assistant", content = JsonPrimitive("past-answer ".repeat(6000))),
+            ChatCompletionMessage(role = "user", content = JsonPrimitive("recent task")),
+            ChatCompletionMessage(role = "assistant", content = JsonPrimitive("r".repeat(25000))),
+            ChatCompletionMessage(role = "user", content = JsonPrimitive("continue exactly")))
+        val result = compactor.compactIfNeeded(null, "agent", null, history, null, 12000, null)
+        assertEquals(1, summaries)
+        assertTrue(AgentContextBudget.estimate(result) < 9952)
+        assertEquals(history.last(), result.last())
+        assertTrue((history[1].content as JsonPrimitive).content.length > 60000)
+    }
+
+    @Test
+    fun irreducibleSchemaAndOversizedSummaryInputFailBeforeSummaryNetworkRequest() = kotlinx.coroutines.runBlocking {
+        val repo = org.mockito.Mockito.mock(AgentConversationHistoryRepository::class.java)
+        var requests = 0
+        val compactor = object : AgentConversationContextCompactor(repo, modelOverride = AgentModelOverride(
+            providerProfileId = "test", apiBase = "https://example.invalid/v1", apiKey = "fixture",
+            modelId = "test", contextLimit = 12000)) {
+            override suspend fun requestCompactedSummary(messages: List<Map<String, Any>>, maxOutputTokens: Int): String {
+                requests++
+                error("No oversized request should reach the summarizer")
+            }
+        }
+        val tiny = listOf(ChatCompletionMessage(role = "user", content = JsonPrimitive("hello")))
+        val schemas = runCatching { compactor.compactIfNeeded(null, "agent", null, tiny,
+            contextTokens = 1, requestOverheadTokens = 12000) }.exceptionOrNull()
+        assertTrue(schemas?.message.orEmpty().contains("工具定义"))
+        val history = listOf(tiny.single(), ChatCompletionMessage(role = "assistant",
+            content = JsonPrimitive("中".repeat(20000))), tiny.single(),
+            ChatCompletionMessage(role = "assistant", content = JsonPrimitive("r".repeat(25000))),
+            tiny.single().copy(content = JsonPrimitive("continue")))
+        val oversized = runCatching { compactor.compactIfNeeded(null, "agent", null, history) }.exceptionOrNull()
+        assertTrue(oversized?.message.orEmpty().contains("摘要请求预算"))
+        assertEquals(0, requests)
+        assertTrue(org.mockito.Mockito.mockingDetails(repo).invocations.none { it.method.name == "updateContextSummary" })
+    }
+
+    @Test
+    fun aggregateToolBudgetDoesNotDependOnToolNamesOrFileExtensions() = kotlinx.coroutines.runBlocking {
+        for (name in listOf("file_read", "context_apps_query", "browser_use", "vlm_task", "plugin_custom_read")) {
+            val original = "<html>完整结果</html>".repeat(20000)
+            val offloads = mutableListOf<String>()
+            val compactor = AgentConversationContextCompactor(
+                org.mockito.Mockito.mock(AgentConversationHistoryRepository::class.java),
+                offloadToolOutput = { offloads += it; "/workspace/offloads/$name.txt" })
+            val call = cn.com.omnimind.baselib.llm.AssistantToolCall(id = "t1", type = "function",
+                function = cn.com.omnimind.baselib.llm.AssistantToolCallFunction(name = name, arguments = "{}"))
+            val history = listOf(ChatCompletionMessage(role = "user", content = JsonPrimitive("inspect")),
+                ChatCompletionMessage(role = "assistant", toolCalls = listOf(call)),
+                ChatCompletionMessage(role = "tool", toolCallId = call.id, content = JsonPrimitive(original)))
+            val result = compactor.compactIfNeeded(null, "agent", null, history)
+            assertEquals(listOf(original), offloads)
+            assertEquals(history[1], result[1])
+            assertEquals("t1", result.last().toolCallId)
+            assertTrue(result.last().content.toString().contains("/workspace/offloads/$name.txt"))
+            assertTrue(AgentContextBudget.estimate(result) < 112000)
+        }
+    }
+
     private lateinit var originalLocale: Locale
 
     @Before

@@ -26,7 +26,7 @@ for (const step of journey.steps) {
   if (markers.has(step.marker)) step.marker = markers.get(step.marker);
   if (typeof step.text === 'string') {
     for (const [original, unique] of markers) {
-      if (step.text === original || step.text.startsWith(original)) {
+      if (step.text === original || step.text.startsWith(original + '_')) {
         step.text = unique + step.text.slice(original.length);
         break;
       }
@@ -85,7 +85,19 @@ try {
       execFileSync(process.execPath, [resolve(scripts, 'send-agent-test-message.mjs'), serial, '/compact'],
         {timeout: 90000, stdio: ['ignore', 'pipe', 'pipe']});
     } else if (step.action === 'turn-outcome') {
-      const verified = JSON.parse(execFileSync('python3', [resolve(scripts, 'assert-agent-turn-outcome.py'), serial, step.marker, step.expected, ...(step.summary ? [step.summary] : [])], {encoding: 'utf8', timeout: 60000}));
+      // A visible final text chunk can precede PromptResponse and its durable
+      // commit. Observe that completion; never resend the logical user turn.
+      const deadline = Date.now() + 60000;
+      let verified;
+      while (!verified) {
+        try {
+          verified = JSON.parse(execFileSync('python3', [resolve(scripts, 'assert-agent-turn-outcome.py'), serial, step.marker, step.expected, ...(step.summary ? [step.summary] : [])],
+            {encoding: 'utf8', timeout: 60000, stdio: ['ignore', 'pipe', 'pipe']}));
+        } catch (error) {
+          if (Date.now() >= deadline || !/Missing canonical completion|Turn still loading/.test(String(error.stderr))) throw error;
+        }
+      }
+      assert(verified.passed, 'Canonical turn did not complete');
       writeFileSync(resolve(out, `${index}-turn-outcome.json`), JSON.stringify(verified, null, 2));
     } else if (step.action === 'live-task') {
       const verified = JSON.parse(execFileSync('python3', [resolve(scripts, 'assert-xiaowan-live-task.py'), serial, step.marker, step.phase], {encoding: 'utf8', timeout: 60000}));

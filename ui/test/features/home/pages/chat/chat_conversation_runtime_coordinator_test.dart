@@ -618,6 +618,7 @@ void main() {
       mode: kChatRuntimeModeAgent,
     );
     runtime.activeAcpSessionId = 'live-session';
+    runtime.activeAcpTurnId = 'official-live-turn';
     runtime.messages.add(
       ChatMessageModel.userMessage('正在执行的请求', id: 'live-user'),
     );
@@ -644,10 +645,31 @@ void main() {
     expect(runtime.currentDispatchTurnId, 'live-run');
     expect(runtime.activeRunId, 'live-run');
     expect(runtime.activeAcpSessionId, 'live-session');
+    expect(runtime.activeAcpTurnId, 'official-live-turn');
     expect(
       runtime.messages.map((message) => message.text),
       containsAll(<String>['正在执行的请求', '旧的历史快照']),
     );
+  });
+
+  test('a snapshot with running flags cannot clear the admitted ACP identity', () {
+    const conversationId = 20051;
+    final runtime = coordinator.ensureRuntime(conversationId: conversationId, mode: kChatRuntimeModeAgent);
+    coordinator.registerTask(taskId: 'host-run', conversationId: conversationId, mode: kChatRuntimeModeAgent);
+    coordinator.beginAcpTurn(taskId: 'host-run', conversationId: conversationId, mode: kChatRuntimeModeAgent);
+    runtime.activeAcpSessionId = 'official-session';
+    runtime.activeAcpTurnId = 'official-turn';
+    final latest = ChatMessageModel.assistantMessage('latest streamed output', id: 'item');
+    runtime.messages.add(latest);
+    coordinator.replaceConversationSnapshot(
+      conversationId: conversationId, mode: kChatRuntimeModeAgent,
+      messages: [ChatMessageModel.assistantMessage('stale output', id: 'item')],
+      isAiResponding: true, currentDispatchTurnId: 'host-run',
+    );
+    expect(runtime.activeAcpSessionId, 'official-session');
+    expect(runtime.activeAcpTurnId, 'official-turn');
+    expect(runtime.messages.single, same(latest));
+    expect(runtime.hasInFlightTask, isTrue);
   });
 
   test('an authoritative idle snapshot can finish only its matching turn', () {

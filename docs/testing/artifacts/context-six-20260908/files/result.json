@@ -1,0 +1,111 @@
+{
+  "name": "Xiaowan file reads and history on isolated emulator",
+  "serial": "emulator-5560",
+  "runId": "1788866836454",
+  "kind": "emulator-user-interface",
+  "passed": true,
+  "steps": [
+    {
+      "index": 1,
+      "action": "send",
+      "marker": "OOB_FILE_HTML_FIRST_1788866836454",
+      "passed": true,
+      "elapsedMs": 13405
+    },
+    {
+      "index": 2,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 2088
+    },
+    {
+      "index": 3,
+      "action": "send",
+      "marker": "OOB_FILE_HTML_REPEAT_1788866836454",
+      "passed": true,
+      "elapsedMs": 12482
+    },
+    {
+      "index": 4,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 2109
+    },
+    {
+      "index": 5,
+      "action": "send",
+      "marker": "OOB_FILE_IMAGE_LARGE_1788866836454",
+      "passed": true,
+      "elapsedMs": 11248
+    },
+    {
+      "index": 6,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 9009
+    },
+    {
+      "index": 7,
+      "action": "send",
+      "marker": "OOB_FILE_PDF_BINARY_1788866836454",
+      "passed": true,
+      "elapsedMs": 16025
+    },
+    {
+      "index": 8,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 6153
+    },
+    {
+      "index": 9,
+      "action": "send",
+      "marker": "OOB_FILE_CANCEL_STOP_1788866836454",
+      "passed": true,
+      "elapsedMs": 16147
+    },
+    {
+      "index": 10,
+      "action": "expect",
+      "passed": true,
+      "elapsedMs": 3882
+    },
+    {
+      "index": 11,
+      "action": "tap",
+      "passed": true,
+      "elapsedMs": 3039
+    },
+    {
+      "index": 12,
+      "action": "expect",
+      "passed": true,
+      "elapsedMs": 2267
+    },
+    {
+      "index": 13,
+      "action": "send",
+      "marker": "OOB_FILE_TEXT_RECOVER_1788866836454",
+      "passed": true,
+      "elapsedMs": 11922
+    },
+    {
+      "index": 14,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 2303
+    },
+    {
+      "index": 15,
+      "action": "restart",
+      "passed": true,
+      "elapsedMs": 2228
+    },
+    {
+      "index": 16,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 6067
+    }
+  ]
+}
