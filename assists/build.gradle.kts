@@ -8,7 +8,7 @@ plugins {
 
 android {
     namespace = "cn.com.omnimind.assists"
-    compileSdk = 35
+    compileSdk = 37
 
     defaultConfig {
         minSdk = 29

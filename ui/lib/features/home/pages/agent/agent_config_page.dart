@@ -1,4 +1,5 @@
 import 'package:ui/widgets/conversation_model_selector.dart';
+
 import 'dart:async';
 import 'dart:convert';
 
@@ -453,14 +454,16 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
                       label: _pageTitle,
                       subtitle: _pageSubtitle,
                     ),
-                    Container(
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: card,
+                    Material(
+                      color: card,
+                      shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: palette.borderSubtle),
+                        side: BorderSide(color: palette.borderSubtle),
                       ),
-                      child: _buildEditor(),
+                      child: Padding(
+                        padding: const EdgeInsets.all(14),
+                        child: _buildEditor(),
+                      ),
                     ),
                     if (_error != null) ...[
                       const SizedBox(height: 12),

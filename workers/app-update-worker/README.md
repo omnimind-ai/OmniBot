@@ -1,6 +1,6 @@
 # Omnibot App Update Worker
 
-Cloudflare Worker for public app update checks, a resilient models.dev catalog mirror, a replaceable community QR image, authenticated release metadata management, APK delivery through Cloudflare R2, a built-in admin console, and usage statistics via Workers Analytics Engine. Release metadata, model catalog snapshots, the QR image, and APK files are stored in R2; no KV namespace is required.
+Cloudflare Worker for public app update checks, a resilient models.dev catalog mirror, two independently replaceable community QR images, authenticated release metadata management, APK delivery through Cloudflare R2, a built-in admin console, and usage statistics via Workers Analytics Engine. Release metadata, model catalog snapshots, the QR images, and APK files are stored in R2; no KV namespace is required.
 
 ## Models.dev catalog mirror
 
@@ -67,7 +67,7 @@ curl --fail-with-body \
 
 - **版本管理** — create/edit releases, write the changelog shown in the app's update card, toggle stable/beta track and draft state, upload APKs straight from the browser (large files use R2 multipart upload automatically, SHA-256 is computed client-side), copy download links, delete releases/assets.
 - **云服务门禁** — set the minimum app version allowed to register, sign in, or use official cloud AI, plus the message shown to blocked users. Saving writes the policy to R2 and takes effect on the next update check; clearing the minimum disables the gate.
-- **社群二维码** — upload or replace the WeChat group QR image served at the permanent public URL. JPEG, PNG, and WebP files up to 5 MB are accepted.
+- **社群二维码** — independently preview, upload, replace, and copy the permanent public link for **微信群二维码 1** and **微信群二维码 2**. JPEG, PNG, and WebP files up to 5 MB each are accepted.
 - **数据统计** — daily update-check/download trends, unique devices, device model / app version / Android version distributions, per-asset download counts. Backed by Workers Analytics Engine.
 
 A changelog curated in the console survives CI republishes: the CI payload carries no `releaseNotes`, and the worker keeps existing notes when an upsert omits them.
@@ -87,10 +87,13 @@ A changelog curated in the console survives CI republishes: the CI payload carri
   - Supports `ETag` / `If-None-Match`; returns `503` until the first successful
     sync.
 - `GET|HEAD /community/wechat-qr`
-  - Permanent public image URL used by the repository README files.
+  - Permanent public URL for QR image 1, used by the repository README files.
   - Streams the current R2 image with its real content type, `ETag`, and
     `Cache-Control: no-cache` so GitHub's image proxy revalidates it after an
     admin replacement.
+- `GET|HEAD /community/wechat-qr-2`
+  - Permanent public URL for QR image 2, with the same content-type and cache
+    behavior. Each URL returns `404` until its own image is uploaded.
 - `GET /downloads/:tag/:asset`
   - Public APK download endpoint backed by R2. APK downloads are counted in Analytics Engine.
 - `GET /admin`
@@ -104,10 +107,11 @@ A changelog curated in the console survives CI republishes: the CI payload carri
 - `PUT /admin/cloud-service-policy`
   - Replaces the policy. Body: `{ "minimumVersion": "0.5.7", "message": "..." }`.
     `minimumVersion` is required; send an empty string to disable the gate.
-- `GET /admin/community/wechat-qr`
-  - Returns the current image metadata and permanent public URL.
-- `PUT /admin/community/wechat-qr`
-  - Replaces the current image. The request body is the raw JPEG, PNG, or WebP
+- `GET /admin/community/wechat-qr` · `GET /admin/community/wechat-qr-2`
+  - Returns the selected image's metadata and permanent public URL; requires
+    `Authorization: Bearer <ADMIN_TOKEN>`.
+- `PUT /admin/community/wechat-qr` · `PUT /admin/community/wechat-qr-2`
+  - Replaces only the selected image. The request body is the raw JPEG, PNG, or WebP
     file and requires `Authorization: Bearer <ADMIN_TOKEN>`.
 - `GET /admin/releases` · `GET /admin/releases/:tag`
   - Requires `Authorization: Bearer <ADMIN_TOKEN>`.
@@ -172,6 +176,21 @@ key. The Worker overwrites the request model and streams the upstream response.
 The Luna Responses route forwards a caller-provided Bearer key (used by the
 credentialed debug APK) and falls back to its server key; the Gelab route always
 uses its server-managed key.
+
+### Two permanent community QR links
+
+After deploying the Worker, open `/admin` → **社群二维码**. Each image has its
+own preview, file picker, upload/replace, refresh, and copy-link controls:
+
+| Image | Public path | R2 object key |
+|---|---|---|
+| 微信群二维码 1 | `/community/wechat-qr` | `metadata/community/wechat-qr` |
+| 微信群二维码 2 | `/community/wechat-qr-2` | `metadata/community/wechat-qr-2` |
+
+Both images reuse the existing `APP_UPDATE_BUCKET` binding and `ADMIN_TOKEN`.
+The original image, URL, and README references continue to work without a
+migration. Upload the second image to activate its URL; replacing either image
+leaves the other image and both public URLs unchanged.
 
 ### Cloud-service minimum version
 

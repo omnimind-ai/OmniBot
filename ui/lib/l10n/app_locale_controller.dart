@@ -1,6 +1,7 @@
 import 'dart:ui';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_riverpod/legacy.dart';
 import 'package:ui/l10n/app_language_mode.dart';
 import 'package:ui/l10n/legacy_text_localizer.dart';
 import 'package:ui/l10n/system_locale_controller.dart';
