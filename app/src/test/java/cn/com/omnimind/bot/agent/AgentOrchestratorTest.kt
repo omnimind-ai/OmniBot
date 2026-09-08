@@ -125,6 +125,72 @@ class AgentOrchestratorTest {
     }
 
     @Test
+    fun providerPromptLengthRejectionTriggersOneCanonicalPreOutputCompactionRecovery() = runBlocking {
+        val raw = JsonObject(mapOf("content" to JsonPrimitive("x".repeat(1119534)))).toString()
+        var rejected = false
+        val llm = FakeLlmClient(
+            listOf(
+                assistantTurn(toolCalls = listOf(toolCall("file_read"))),
+                assistantTurn(content = "done"),
+            ),
+            checkRequest = { request ->
+                val length = request.messages.sumOf { it.contentText().length }
+                if (!rejected && length > 1_000_000) {
+                    rejected = true
+                    throw AgentStreamRequestException(
+                        400,
+                        "Prompt exceeds max length",
+                        "Input length $length exceeds the maximum length 1048566",
+                        responseStarted = false,
+                    )
+                }
+            }
+        )
+        val tools = FakeToolExecutor(mapOf("file_read" to listOf(successfulContextResult("file_read").copy(
+            previewJson = raw,
+            rawResultJson = raw,
+        ))))
+        var forcedCompaction = false
+        val compactor = object : AgentContextCompactionController {
+            override suspend fun resolvePromptTokenThreshold(conversationId: Long?) = 1_048_576
+
+            override suspend fun compactIfNeeded(
+                conversationId: Long?,
+                conversationMode: String,
+                promptTokens: Int?,
+                messages: List<ChatCompletionMessage>,
+                contextTokens: Int?,
+                promptTokenThresholdOverride: Int?,
+                callback: AgentCallback?,
+                requestOverheadTokens: Int,
+            ): List<ChatCompletionMessage> {
+                if (contextTokens != Int.MAX_VALUE) return messages
+                forcedCompaction = true
+                return messages.map { message ->
+                    if (message.role == "tool") {
+                        message.copy(content = JsonPrimitive("Earlier tool output was offloaded."))
+                    } else message
+                }
+            }
+        }
+
+        val result = createOrchestrator(llm, tools).run(
+            AgentOrchestrator.Input(
+                callback = RecordingCallback(),
+                initialMessages = initialMessages("inspect a large file"),
+                executionEnv = FakeExecutionEnvironment("inspect a large file"),
+                contextCompactor = compactor,
+            )
+        )
+
+        assertTrue(result is AgentResult.Success)
+        assertTrue(rejected)
+        assertTrue(forcedCompaction)
+        assertEquals(listOf("file_read"), tools.executeCalls)
+        assertEquals(3, llm.requests.size)
+    }
+
+    @Test
     fun completedTurnDoesNotRetainRawToolResultsInItsResponse() {
         fun execute(): Pair<AgentResult, java.lang.ref.WeakReference<ToolExecutionResult>> = runBlocking {
             val body = JsonObject(mapOf("content" to JsonPrimitive("x".repeat(500_000)))).toString()

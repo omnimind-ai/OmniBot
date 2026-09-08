@@ -9,7 +9,7 @@ const shellQuote = value => "'" + value.replaceAll("'", "'\\''") + "'";
 const [serial, marker, expectedHarness] = process.argv.slice(2);
 const scenarioFile = process.env.OOB_USER_SCENARIO_FILE;
 const scenario = scenarioFile ? JSON.parse(readFileSync(scenarioFile, 'utf8')) : null;
-const userText = scenario ? `${scenario.prompt} End your final reply with ${marker}_DONE.`
+const userText = scenario ? `${scenario.prompt.replaceAll('{{MARKER}}', marker)} End your final reply with ${marker}_DONE.`
   : marker === '/compact' ? marker : `Reply ${marker}`;
 assert(!scenario || (typeof scenario.prompt === 'string' && scenario.prompt.length < 3000), 'Invalid bounded user scenario');
 assert((/^emulator-\d+$/.test(serial || '') ||

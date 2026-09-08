@@ -26,7 +26,7 @@ for (const step of journey.steps) {
   if (markers.has(step.marker)) step.marker = markers.get(step.marker);
   if (typeof step.text === 'string') {
     for (const [original, unique] of markers) {
-      if (step.text === original || step.text.startsWith(`${original}_`)) {
+      if (step.text === original || step.text.startsWith(original)) {
         step.text = unique + step.text.slice(original.length);
         break;
       }
@@ -128,6 +128,31 @@ try {
       const matching = snapshot().filter(n => label(n).split('\n')[0] === step.label &&
         field(n, 'enabled') === 'true' && field(n, 'clickable') === 'true');
       assert.equal(matching.length, 0, `Stale interactive control remains: ${step.label}`);
+    } else if (step.action === 'background') {
+      assert(!snapshot().some(n => /^(Stop|停止|停止生成)(\n|$)/.test(label(n))), 'Parent turn must be idle');
+      if (step.marker) {
+        assert(/^OOB_LIVE_SCHEDULE_[0-9]+$/.test(step.marker));
+        let exists = false;
+        try { adb('shell','run-as','cn.com.omnimind.bot','test','-e',`workspace/oob-live-scheduled/${step.marker}.txt`); exists = true; }
+        catch (error) { assert.equal(error.status, 1, 'Could not verify artifact absence'); }
+        assert(!exists, 'Artifact appeared before background acceptance began');
+      }
+      adb('shell', 'input', 'keyevent', '3');
+    } else if (step.action === 'scheduled-file') {
+      assert(/^OOB_LIVE_SCHEDULE_[0-9]+$/.test(step.marker));
+      const path = `workspace/oob-live-scheduled/${step.marker}.txt`;
+      const deadline = Date.now() + (step.timeoutMs || 180000);
+      let content;
+      do {
+        try { content = adb('shell','run-as','cn.com.omnimind.bot','cat',path).toString(); }
+        catch { /* Observe only; never trigger or resubmit the scheduled task. */ }
+        if (content?.trim() === `${step.marker}_FIRED`) break;
+        await new Promise(r => setTimeout(r, 1500));
+      } while (Date.now() < deadline);
+      assert.equal(content?.trim(), `${step.marker}_FIRED`, 'Scheduled artifact not produced before deadline');
+      writeFileSync(resolve(out, `${index}-scheduled-file.json`), JSON.stringify({marker:step.marker,content:content.trim(),passed:true}));
+    } else if (step.action === 'foreground') {
+      adb('shell', 'am', 'start', '-n', 'cn.com.omnimind.bot/.activity.LauncherActivity');
     } else if (step.action === 'restart') {
       assert(!snapshot().some(n => /^(Stop|停止|停止生成)(\n|$)/.test(label(n))),
         'Cannot restart during an active turn');

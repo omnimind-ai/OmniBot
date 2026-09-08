@@ -10,6 +10,7 @@
 - 使用 Gemini CLI 的多语言估算与旧工具结果预算策略：完整结果写入既有 workspace offload 文件，模型得到可通过 file_read 取回的路径和有界末尾摘录。原始 Conversation 内容不删、不覆盖。
 - `AgentOrchestrator` 在每次请求前维护上下文，包括首次历史、无 usage 和新增工具结果；工具 schema 开销单独计入预算。没有自动重放工具或 ACP turn。
 - `AgentConversationContextCompactor` 复核摘要输入和重建后的大小；摘要输出设置明确预算。失败、空摘要、截断或重建后仍过大时停止当前请求，不继续发送已知超限原文。
+- `AgentOrchestrator` 识别服务端明确的 `Prompt exceeds max length` / `Input length ... exceeds ...` 拒绝；若该请求尚未开始输出，则只在同一 ACP turn 内强制调用既有压缩器并重建一次请求。已经开始输出时不重放、不创建新 turn。
 - 既有 Conversation 检查点支持已完成工具组边界。只接受完整、唯一的 canonical tool/assistant 匹配；日志投影尚未提交或身份有歧义时不推进持久化 cutoff，原始历史保留，下一次加载由发送前检查重新维护上下文。
 - 小万子任务使用同一压缩器工厂，但 conversationId 为 null，不写父会话摘要；手动压缩也接入既有 offload 能力。
 
@@ -32,6 +33,7 @@
 新增用例覆盖：
 
 - 超过 1,048,566 的受控输入限制：不启用预算维护时复现 400；启用后继续成功，工具只执行一次。这个测试明确按文本长度建立限制，并不假定原服务也使用该单位。
+- 当本地 token 估算低于阈值但服务端按另一长度单位拒绝时，复现 `Prompt exceeds max length`；同一 turn 强制压缩后恢复，工具只执行一次；已开始输出的拒绝仍保持失败且不重放。
 - 无 usage、Unicode、图片不按 Base64 文本计数、整数溢出。
 - 单条长任务多次工具读取，保留最近调用/结果配对；未完成并行工具组不能被丢弃。
 - 完整大结果保存与可读取引用、不可缩减输入、摘要过长、失败与取消不提交错误检查点。

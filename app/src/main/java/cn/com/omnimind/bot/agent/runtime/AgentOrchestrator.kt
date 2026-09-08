@@ -124,6 +124,11 @@ class AgentOrchestrator(
         var terminated = false
         var usageMessageCount = 0
         var usageContextTokens: Int? = null
+        // A provider may reject a prompt even when the local token estimate is
+        // below the configured threshold (providers do not share one length
+        // unit).  Allow exactly one pre-output recovery through the canonical
+        // compactor; never replay a round after visible model output.
+        var contextOverflowRecoveryAttempted = false
         val toolBudget = AgentContextBudget.textTokens(json.encodeToString(toolRegistry.toolsForModel))
             .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
 
@@ -167,36 +172,67 @@ class AgentOrchestrator(
                     "off",
                     "disabled",
                 )
-                val turn = streamTurn(
-                    callback = callback,
-                    request = ChatCompletionRequest(
-                        messages = requestMessages,
-                        model = model,
-                        maxCompletionTokens = input.contextCompactor?.resolveOutputTokenBudget(input.conversationId),
-                        stream = true,
-                        streamOptions = ChatCompletionStreamOptions(includeUsage = true),
-                        enableThinking = if (disableThinking) false else null,
-                        reasoningEffort = if (disableThinking) null else input.executionEnv.reasoningEffort,
-                        thinking = if (disableThinking) {
-                            cn.com.omnimind.baselib.llm.ChatCompletionThinking(type = "disabled")
-                        } else {
-                            null
-                        },
-                        promptCacheKey = input.promptCacheKey,
-                        tools = toolRegistry.toolsForModel,
-                        // These optional controls belong to the active
-                        // Harness/Provider. The shared loop supplies the
-                        // tool surface and preserves all tool results,
-                        // without overriding the provider's own defaults.
-                        toolChoice = null,
-                        // The configured Harness/Provider owns whether
-                        // independent tool calls may run in parallel.
-                        // Omitting this optional OpenAI-compatible field
-                        // keeps the shared ACP loop free of a local policy.
-                        parallelToolCalls = null
-                    ),
-                    assistantContentPrefix = assistantContentPrefix
-                )
+                val turn = try {
+                    streamTurn(
+                        callback = callback,
+                        request = ChatCompletionRequest(
+                            messages = requestMessages,
+                            model = model,
+                            maxCompletionTokens = input.contextCompactor?.resolveOutputTokenBudget(input.conversationId),
+                            stream = true,
+                            streamOptions = ChatCompletionStreamOptions(includeUsage = true),
+                            enableThinking = if (disableThinking) false else null,
+                            reasoningEffort = if (disableThinking) null else input.executionEnv.reasoningEffort,
+                            thinking = if (disableThinking) {
+                                cn.com.omnimind.baselib.llm.ChatCompletionThinking(type = "disabled")
+                            } else {
+                                null
+                            },
+                            promptCacheKey = input.promptCacheKey,
+                            tools = toolRegistry.toolsForModel,
+                            // These optional controls belong to the active
+                            // Harness/Provider. The shared loop supplies the
+                            // tool surface and preserves all tool results,
+                            // without overriding the provider's own defaults.
+                            toolChoice = null,
+                            // The configured Harness/Provider owns whether
+                            // independent tool calls may run in parallel.
+                            // Omitting this optional OpenAI-compatible field
+                            // keeps the shared ACP loop free of a local policy.
+                            parallelToolCalls = null
+                        ),
+                        assistantContentPrefix = assistantContentPrefix
+                    )
+                } catch (error: AgentStreamRequestException) {
+                    if (
+                        !contextOverflowRecoveryAttempted &&
+                        !error.responseStarted &&
+                        input.contextCompactor != null &&
+                        isContextOverflow(error)
+                    ) {
+                        contextOverflowRecoveryAttempted = true
+                        val recovered = input.contextCompactor.compactIfNeeded(
+                            conversationId = input.conversationId,
+                            conversationMode = input.executionEnv.conversationMode,
+                            promptTokens = latestPromptTokens,
+                            messages = memory.snapshot(),
+                            // Force the canonical compactor to inspect the
+                            // complete in-memory history when the provider's
+                            // unit differs from our estimate.
+                            contextTokens = Int.MAX_VALUE,
+                            requestOverheadTokens = toolBudget,
+                            callback = callback,
+                        )
+                        check(recovered != memory.snapshot()) {
+                            "Provider rejected the prompt as too large, but no safe compaction boundary was available."
+                        }
+                        memory.replaceAll(recovered)
+                        usageContextTokens = null
+                        usageMessageCount = 0
+                        continue@roundLoop
+                    }
+                    throw error
+                }
                 val turnUsage = resolveTurnUsage(turn)
                 lastTurnUsage = turnUsage
                 lastFinishReason = turn.finishReason
@@ -835,6 +871,22 @@ class AgentOrchestrator(
             return formatTurnFailureReason(error.statusCode, error.reason)
         }
         return AgentRuntimeErrorSupport.safeDiagnosticMessage(error)
+    }
+
+    private fun isContextOverflow(error: AgentStreamRequestException): Boolean {
+        val diagnostic = buildString {
+            append(error.reason)
+            append('\n')
+            append(error.responseBody.orEmpty())
+        }.lowercase()
+        if (error.statusCode !in setOf(400, 413)) return false
+        return diagnostic.contains("prompt exceeds") ||
+            diagnostic.contains("input length") ||
+            diagnostic.contains("context length") ||
+            diagnostic.contains("context window") ||
+            diagnostic.contains("maximum length") ||
+            diagnostic.contains("token limit") ||
+            diagnostic.contains("too many tokens")
     }
 
     private fun formatTurnFailureReason(statusCode: Int?, reason: String): String {
