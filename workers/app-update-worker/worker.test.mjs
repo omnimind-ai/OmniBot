@@ -191,7 +191,7 @@ test("admin console exposes cloud-service policy controls", async () => {
   assert.doesNotThrow(() => new Function(script));
 });
 
-test("admin console exposes community QR replacement controls", async () => {
+test("admin console exposes independent replacement controls for both community QR images", async () => {
   const response = await worker.fetch(
     new Request("https://updates.example/admin"),
     testEnv(new MemoryR2Bucket()),
@@ -200,90 +200,210 @@ test("admin console exposes community QR replacement controls", async () => {
 
   assert.equal(response.status, 200);
   assert.match(html, /id="nav-community-qr"/);
-  assert.match(html, /id="community-qr-input"/);
-  assert.match(html, /id="community-qr-upload"/);
-  assert.match(html, /\/admin\/community\/wechat-qr/);
+  for (const suffix of ["", "-2"]) {
+    for (const control of ["status", "preview", "input", "upload", "refresh", "copy"]) {
+      assert.ok(html.includes(`id="community-qr${suffix}-${control}"`));
+    }
+    assert.ok(html.includes(`'/admin/community/wechat-qr${suffix}'`));
+    assert.ok(html.includes(`'/community/wechat-qr${suffix}'`));
+  }
   const script = html.split("<script>")[1]?.split("</script>")[0] || "";
   assert.doesNotThrow(() => new Function(script));
 });
 
-test("authenticated QR upload replaces the image behind one public URL", async () => {
+for (const qrName of ["wechat-qr", "wechat-qr-2"]) {
+  test(`authenticated QR upload replaces the image behind ${qrName}`, async () => {
+    const bucket = new MemoryR2Bucket();
+    const env = testEnv(bucket);
+    const adminUrl = `https://updates.example/admin/community/${qrName}`;
+    const publicUrl = `https://updates.example/community/${qrName}`;
+
+    const missing = await worker.fetch(new Request(publicUrl), env);
+    assert.equal(missing.status, 404);
+    const unauthorized = await worker.fetch(new Request(adminUrl), env);
+    assert.equal(unauthorized.status, 401);
+    const unauthorizedUpload = await worker.fetch(
+      new Request(adminUrl, { method: "PUT", body: new Uint8Array([0xff, 0xd8, 0xff]) }),
+      env,
+    );
+    assert.equal(unauthorizedUpload.status, 401);
+    assert.equal(bucket.objects.size, 0);
+
+    const emptyStatus = await worker.fetch(
+      new Request(adminUrl, { headers: { authorization: "Bearer test-token" } }),
+      env,
+    );
+    assert.equal(emptyStatus.status, 200);
+    assert.deepEqual((await emptyStatus.json()).image, { configured: false, publicUrl });
+
+    const invalid = await worker.fetch(
+      new Request(adminUrl, {
+        method: "PUT",
+        headers: {
+          authorization: "Bearer test-token",
+          "content-type": "image/png",
+        },
+        body: new Uint8Array([1, 2, 3]),
+      }),
+      env,
+    );
+    assert.equal(invalid.status, 415);
+
+    const png = new Uint8Array([
+      0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4,
+    ]);
+    const uploaded = await worker.fetch(
+      new Request(adminUrl, {
+        method: "PUT",
+        headers: {
+          authorization: "Bearer test-token",
+          "content-type": "image/png",
+        },
+        body: png,
+      }),
+      env,
+    );
+    assert.equal(uploaded.status, 200);
+    const uploadedPayload = await uploaded.json();
+    assert.equal(uploadedPayload.image.configured, true);
+    assert.equal(uploadedPayload.image.publicUrl, publicUrl);
+    assert.equal(uploadedPayload.image.contentType, "image/png");
+    assert.equal(uploadedPayload.image.size, png.byteLength);
+
+    const publicImage = await worker.fetch(new Request(publicUrl), env);
+    assert.equal(publicImage.status, 200);
+    assert.equal(publicImage.headers.get("content-type"), "image/png");
+    assert.match(publicImage.headers.get("cache-control"), /no-cache/);
+    assert.equal(publicImage.headers.get("access-control-allow-origin"), "*");
+    assert.equal(publicImage.headers.get("cross-origin-resource-policy"), "cross-origin");
+    assert.deepEqual(new Uint8Array(await publicImage.arrayBuffer()), png);
+    const etag = publicImage.headers.get("etag");
+    assert.ok(etag);
+
+    const head = await worker.fetch(new Request(publicUrl, { method: "HEAD" }), env);
+    assert.equal(head.status, 200);
+    assert.equal(head.headers.get("content-type"), "image/png");
+    assert.equal(head.headers.get("etag"), etag);
+    assert.equal(await head.text(), "");
+
+    const notModified = await worker.fetch(
+      new Request(publicUrl, { headers: { "if-none-match": `W/${etag}` } }),
+      env,
+    );
+    assert.equal(notModified.status, 304);
+
+    const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 5, 6, 7]);
+    const replaced = await worker.fetch(
+      new Request(adminUrl, {
+        method: "PUT",
+        headers: {
+          authorization: "Bearer test-token",
+          "content-type": "image/jpeg",
+        },
+        body: jpeg,
+      }),
+      env,
+    );
+    assert.equal(replaced.status, 200);
+    assert.equal((await replaced.json()).image.publicUrl, publicUrl);
+
+    const replacement = await worker.fetch(
+      new Request(publicUrl, { headers: { "if-none-match": etag } }),
+      env,
+    );
+    assert.equal(replacement.status, 200);
+    assert.notEqual(replacement.headers.get("etag"), etag);
+    assert.equal(replacement.headers.get("content-type"), "image/jpeg");
+    assert.deepEqual(new Uint8Array(await replacement.arrayBuffer()), jpeg);
+  });
+}
+
+test("both QR images coexist and replacements preserve the other image and legacy R2 data", async () => {
   const bucket = new MemoryR2Bucket();
   const env = testEnv(bucket);
-  const adminUrl = "https://updates.example/admin/community/wechat-qr";
-  const publicUrl = "https://updates.example/community/wechat-qr";
+  const origin = "https://updates.example";
+  const headers = { authorization: "Bearer test-token", "content-type": "image/jpeg" };
+  const first = new Uint8Array([0xff, 0xd8, 0xff, 1]);
+  const second = new Uint8Array([0xff, 0xd8, 0xff, 2, 3]);
+  await bucket.put("metadata/community/wechat-qr", first, {
+    httpMetadata: { contentType: "image/jpeg" },
+    customMetadata: { uploadedAt: "1700000000000" },
+  });
+  const legacyObject = await bucket.head("metadata/community/wechat-qr");
 
-  const missing = await worker.fetch(new Request(publicUrl), env);
-  assert.equal(missing.status, 404);
-  const unauthorized = await worker.fetch(new Request(adminUrl), env);
-  assert.equal(unauthorized.status, 401);
+  const missingSecond = await worker.fetch(new Request(`${origin}/community/wechat-qr-2`), env);
+  assert.equal(missingSecond.status, 404);
+  const legacyResponse = await worker.fetch(new Request(`${origin}/community/wechat-qr`), env);
+  assert.deepEqual(new Uint8Array(await legacyResponse.arrayBuffer()), first);
 
-  const invalid = await worker.fetch(
-    new Request(adminUrl, {
-      method: "PUT",
-      headers: {
-        authorization: "Bearer test-token",
-        "content-type": "image/png",
-      },
-      body: new Uint8Array([1, 2, 3]),
-    }),
-    env,
-  );
-  assert.equal(invalid.status, 415);
-
-  const png = new Uint8Array([
-    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3, 4,
-  ]);
   const uploaded = await worker.fetch(
-    new Request(adminUrl, {
-      method: "PUT",
-      headers: {
-        authorization: "Bearer test-token",
-        "content-type": "image/png",
-      },
-      body: png,
-    }),
+    new Request(`${origin}/admin/community/wechat-qr-2`, { method: "PUT", headers, body: second }),
     env,
   );
   assert.equal(uploaded.status, 200);
-  const uploadedPayload = await uploaded.json();
-  assert.equal(uploadedPayload.image.configured, true);
-  assert.equal(uploadedPayload.image.publicUrl, publicUrl);
-  assert.equal(uploadedPayload.image.contentType, "image/png");
-  assert.equal(uploadedPayload.image.size, png.byteLength);
+  assert.equal(await bucket.head("metadata/community/wechat-qr"), legacyObject);
+  assert.equal(bucket.objects.size, 2);
 
-  const publicImage = await worker.fetch(new Request(publicUrl), env);
-  assert.equal(publicImage.status, 200);
-  assert.equal(publicImage.headers.get("content-type"), "image/png");
-  assert.match(publicImage.headers.get("cache-control"), /no-cache/);
-  assert.deepEqual(new Uint8Array(await publicImage.arrayBuffer()), png);
-  const etag = publicImage.headers.get("etag");
-  assert.ok(etag);
+  // Replace each slot while checking both public bytes and stored metadata.
+  const expected = { "wechat-qr": first, "wechat-qr-2": second };
+  for (const qrName of Object.keys(expected)) {
+    const otherName = qrName === "wechat-qr" ? "wechat-qr-2" : "wechat-qr";
+    const otherObject = await bucket.head(`metadata/community/${otherName}`);
+    const replacement = new Uint8Array([...expected[qrName], 4, 5]);
+    const replaced = await worker.fetch(
+      new Request(`${origin}/admin/community/${qrName}`, { method: "PUT", headers, body: replacement }),
+      env,
+    );
+    assert.equal(replaced.status, 200);
+    expected[qrName] = replacement;
+    assert.equal(await bucket.head(`metadata/community/${otherName}`), otherObject);
+    for (const [name, bytes] of Object.entries(expected)) {
+      const image = await worker.fetch(new Request(`${origin}/community/${name}`), env);
+      assert.equal(image.status, 200);
+      assert.deepEqual(new Uint8Array(await image.arrayBuffer()), bytes);
+      const status = await worker.fetch(new Request(`${origin}/admin/community/${name}`, { headers }), env);
+      assert.equal(status.status, 200);
+      const metadata = (await status.json()).image;
+      assert.equal(metadata.configured, true);
+      assert.equal(metadata.publicUrl, `${origin}/community/${name}`);
+      assert.equal(metadata.size, bytes.byteLength);
+      assert.equal(metadata.etag, image.headers.get("etag"));
+    }
+  }
+});
 
-  const notModified = await worker.fetch(
-    new Request(publicUrl, { headers: { "if-none-match": `W/${etag}` } }),
-    env,
-  );
-  assert.equal(notModified.status, 304);
-
-  const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 5, 6, 7]);
-  const replaced = await worker.fetch(
-    new Request(adminUrl, {
+test("QR upload validation and unknown routes cannot overwrite either image", async () => {
+  const bucket = new MemoryR2Bucket();
+  const env = testEnv(bucket);
+  const origin = "https://updates.example";
+  const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 1]);
+  for (const qrName of ["wechat-qr", "wechat-qr-2"]) {
+    await bucket.put(`metadata/community/${qrName}`, jpeg);
+    for (const { contentType, body, status } of [
+      { contentType: "image/jpeg", body: new Uint8Array(), status: 400 },
+      { contentType: "image/png", body: jpeg, status: 415 },
+      { contentType: "image/jpeg", body: new Uint8Array(5 * 1024 * 1024 + 1), status: 413 },
+    ]) {
+      const response = await worker.fetch(new Request(`${origin}/admin/community/${qrName}`, {
+        method: "PUT",
+        headers: { authorization: "Bearer test-token", "content-type": contentType },
+        body,
+      }), env);
+      assert.equal(response.status, status);
+      assert.deepEqual((await bucket.get(`metadata/community/${qrName}`)).value, jpeg);
+    }
+  }
+  for (const qrName of ["wechat-qr-3", "wechat-qr-2/extra"]) {
+    const read = await worker.fetch(new Request(`${origin}/community/${qrName}`), env);
+    assert.equal(read.status, 404);
+    const write = await worker.fetch(new Request(`${origin}/admin/community/${qrName}`, {
       method: "PUT",
-      headers: {
-        authorization: "Bearer test-token",
-        "content-type": "image/jpeg",
-      },
+      headers: { authorization: "Bearer test-token", "content-type": "image/jpeg" },
       body: jpeg,
-    }),
-    env,
-  );
-  assert.equal(replaced.status, 200);
-  assert.equal((await replaced.json()).image.publicUrl, publicUrl);
-
-  const replacement = await worker.fetch(new Request(publicUrl), env);
-  assert.equal(replacement.headers.get("content-type"), "image/jpeg");
-  assert.deepEqual(new Uint8Array(await replacement.arrayBuffer()), jpeg);
+    }), env);
+    assert.equal(write.status, 404);
+  }
+  assert.equal(bucket.objects.size, 2);
 });
 
 test("admin UI policy is authenticated, stored in R2, and applied to update checks", async () => {

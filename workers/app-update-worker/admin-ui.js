@@ -443,24 +443,44 @@ code { background: var(--accent-soft); border-radius: 5px; padding: 1px 6px; fon
       </div>
     </section>
 
-    <!-- Community QR code -->
+    <!-- Community QR codes -->
     <section id="page-community-qr" class="hidden">
       <div class="card">
         <div class="card-head">
           <div>
-            <div class="card-title">微信群二维码</div>
+            <div class="card-title">微信群二维码 1</div>
             <div class="card-caption">README 始终引用同一个公开地址;上传新图片即可原位替换</div>
           </div>
         </div>
         <div class="card-body qr-form">
           <div id="community-qr-status" class="config-hint">正在读取当前图片…</div>
-          <img id="community-qr-preview" class="qr-preview hidden" alt="当前微信群二维码预览">
+          <img id="community-qr-preview" class="qr-preview hidden" alt="微信群二维码 1 预览">
           <label class="field-label" for="community-qr-input">选择新二维码图片</label>
           <input id="community-qr-input" class="text-input" type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp">
           <div class="qr-actions">
             <button id="community-qr-upload" class="btn btn-primary">上传并替换</button>
             <button id="community-qr-refresh" class="btn">重新读取</button>
             <button id="community-qr-copy" class="btn">复制公开链接</button>
+            <span class="filter-note">支持 JPEG、PNG、WebP,最大 5 MB</span>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-head">
+          <div>
+            <div class="card-title">微信群二维码 2</div>
+            <div class="card-caption">使用第二个独立公开地址;上传和替换仅影响这张二维码</div>
+          </div>
+        </div>
+        <div class="card-body qr-form">
+          <div id="community-qr-2-status" class="config-hint">正在读取当前图片…</div>
+          <img id="community-qr-2-preview" class="qr-preview hidden" alt="微信群二维码 2 预览">
+          <label class="field-label" for="community-qr-2-input">选择新二维码图片</label>
+          <input id="community-qr-2-input" class="text-input" type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp">
+          <div class="qr-actions">
+            <button id="community-qr-2-upload" class="btn btn-primary">上传并替换</button>
+            <button id="community-qr-2-refresh" class="btn">重新读取</button>
+            <button id="community-qr-2-copy" class="btn">复制公开链接</button>
             <span class="filter-note">支持 JPEG、PNG、WebP,最大 5 MB</span>
           </div>
         </div>
@@ -538,7 +558,7 @@ code { background: var(--accent-soft); border-radius: 5px; padding: 1px 6px; fon
     analyticsConfigured: true,
     releases: [],
     cloudServicePolicy: null,
-    communityQr: null,
+    communityQr: {},
     analytics: {},          // metric -> rows
     tableMode: {},          // chart id -> boolean
     editor: null,           // { isNew, original, assets }
@@ -743,25 +763,39 @@ code { background: var(--accent-soft); border-radius: 5px; padding: 1px 6px; fon
     }).then(function () { $('cloud-policy-save').disabled = false; });
   });
 
-  // ---------- community QR code ----------
-  function loadCommunityQr() {
-    $('community-qr-refresh').disabled = true;
-    return api('/admin/community/wechat-qr').then(function (payload) {
-      state.communityQr = payload.image || null;
-      renderCommunityQr();
-    }).catch(function (error) {
-      if (error.message !== 'unauthorized') {
-        $('community-qr-status').textContent = '读取失败:' + error.message;
-        toast('读取社群二维码失败:' + error.message, true);
-      }
-    }).then(function () { $('community-qr-refresh').disabled = false; });
+  // ---------- community QR codes ----------
+  var communityQrSlots = [
+    { id: 'community-qr', label: '微信群二维码 1', adminPath: '/admin/community/wechat-qr', publicPath: '/community/wechat-qr' },
+    { id: 'community-qr-2', label: '微信群二维码 2', adminPath: '/admin/community/wechat-qr-2', publicPath: '/community/wechat-qr-2' }
+  ];
+
+  function setCommunityQrBusy(slot, busy) {
+    slot.busy = busy;
+    $(slot.id + '-refresh').disabled = busy;
+    $(slot.id + '-upload').disabled = busy;
+    $(slot.id + '-input').disabled = busy;
   }
 
-  function renderCommunityQr() {
-    var image = state.communityQr || {};
-    var preview = $('community-qr-preview');
+  function loadCommunityQr(slot) {
+    if (!slot) return Promise.all(communityQrSlots.map(function (item) { return loadCommunityQr(item); }));
+    if (slot.busy) return Promise.resolve();
+    setCommunityQrBusy(slot, true);
+    return api(slot.adminPath).then(function (payload) {
+      state.communityQr[slot.id] = payload.image || null;
+      renderCommunityQr(slot);
+    }).catch(function (error) {
+      if (error.message !== 'unauthorized') {
+        $(slot.id + '-status').textContent = '读取失败:' + error.message;
+        toast('读取' + slot.label + '失败:' + error.message, true);
+      }
+    }).then(function () { setCommunityQrBusy(slot, false); });
+  }
+
+  function renderCommunityQr(slot) {
+    var image = state.communityQr[slot.id] || {};
+    var preview = $(slot.id + '-preview');
     if (!image.configured) {
-      $('community-qr-status').textContent = '尚未上传二维码;公开地址将在首次上传后可用';
+      $(slot.id + '-status').textContent = '尚未上传二维码;公开地址将在首次上传后可用: ' + location.origin + slot.publicPath;
       preview.classList.add('hidden');
       preview.removeAttribute('src');
       return;
@@ -770,38 +804,40 @@ code { background: var(--accent-soft); border-radius: 5px; padding: 1px 6px; fon
     if (image.contentType) details.push(image.contentType);
     if (image.size) details.push(fmtBytes(image.size));
     if (image.uploadedAt) details.push('更新于 ' + fmtDate(image.uploadedAt));
-    $('community-qr-status').textContent = '当前公开地址: ' + image.publicUrl + (details.length ? ' · ' + details.join(' · ') : '');
+    $(slot.id + '-status').textContent = '当前公开地址: ' + image.publicUrl + (details.length ? ' · ' + details.join(' · ') : '');
     preview.src = image.publicUrl + '?preview=' + encodeURIComponent(image.etag || String(Date.now()));
     preview.classList.remove('hidden');
   }
 
-  $('community-qr-refresh').addEventListener('click', function () { loadCommunityQr(); });
-  $('community-qr-copy').addEventListener('click', function () {
-    var publicUrl = state.communityQr && state.communityQr.publicUrl
-      ? state.communityQr.publicUrl
-      : location.origin + '/community/wechat-qr';
-    navigator.clipboard.writeText(publicUrl).then(function () { toast('二维码公开链接已复制'); });
-  });
-  $('community-qr-upload').addEventListener('click', function () {
-    var file = $('community-qr-input').files[0];
-    if (!file) { toast('请先选择二维码图片', true); return; }
-    if (file.size > 5 * 1024 * 1024) { toast('图片不能超过 5 MB', true); return; }
-    var allowed = ['image/jpeg', 'image/png', 'image/webp'];
-    if (allowed.indexOf(file.type) < 0) { toast('仅支持 JPEG、PNG 或 WebP 图片', true); return; }
+  communityQrSlots.forEach(function (slot) {
+    $(slot.id + '-refresh').addEventListener('click', function () { loadCommunityQr(slot); });
+    $(slot.id + '-copy').addEventListener('click', function () {
+      var image = state.communityQr[slot.id];
+      var publicUrl = image && image.publicUrl ? image.publicUrl : location.origin + slot.publicPath;
+      navigator.clipboard.writeText(publicUrl).then(function () { toast(slot.label + '公开链接已复制'); });
+    });
+    $(slot.id + '-upload').addEventListener('click', function () {
+      if (slot.busy) return;
+      var file = $(slot.id + '-input').files[0];
+      if (!file) { toast('请先选择二维码图片', true); return; }
+      if (file.size > 5 * 1024 * 1024) { toast('图片不能超过 5 MB', true); return; }
+      var allowed = ['image/jpeg', 'image/png', 'image/webp'];
+      if (allowed.indexOf(file.type) < 0) { toast('仅支持 JPEG、PNG 或 WebP 图片', true); return; }
 
-    $('community-qr-upload').disabled = true;
-    api('/admin/community/wechat-qr', {
-      method: 'PUT',
-      headers: { 'content-type': file.type },
-      body: file
-    }).then(function (payload) {
-      state.communityQr = payload.image || null;
-      $('community-qr-input').value = '';
-      renderCommunityQr();
-      toast('微信群二维码已替换');
-    }).catch(function (error) {
-      toast('上传二维码失败:' + error.message, true);
-    }).then(function () { $('community-qr-upload').disabled = false; });
+      setCommunityQrBusy(slot, true);
+      api(slot.adminPath, {
+        method: 'PUT',
+        headers: { 'content-type': file.type },
+        body: file
+      }).then(function (payload) {
+        state.communityQr[slot.id] = payload.image || null;
+        $(slot.id + '-input').value = '';
+        renderCommunityQr(slot);
+        toast(slot.label + '已替换');
+      }).catch(function (error) {
+        toast('上传' + slot.label + '失败:' + error.message, true);
+      }).then(function () { setCommunityQrBusy(slot, false); });
+    });
   });
 
   // ---------- analytics ----------

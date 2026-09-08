@@ -9,10 +9,19 @@ const DEFAULT_MODELS_DEV_R2_PREFIX = "metadata/models-dev";
 const MODELS_DEV_PUBLIC_PATH = "/catalog/models-dev/api.json";
 const ADMIN_MODELS_DEV_PATH = "/admin/models-dev";
 const ADMIN_CLOUD_SERVICE_POLICY_PATH = "/admin/cloud-service-policy";
-const COMMUNITY_WECHAT_QR_PUBLIC_PATH = "/community/wechat-qr";
-const ADMIN_COMMUNITY_WECHAT_QR_PATH = "/admin/community/wechat-qr";
+const COMMUNITY_QR_IMAGES = [
+  {
+    publicPath: "/community/wechat-qr",
+    adminPath: "/admin/community/wechat-qr",
+    objectKey: "metadata/community/wechat-qr",
+  },
+  {
+    publicPath: "/community/wechat-qr-2",
+    adminPath: "/admin/community/wechat-qr-2",
+    objectKey: "metadata/community/wechat-qr-2",
+  },
+];
 const CLOUD_SERVICE_POLICY_OBJECT_KEY = "metadata/config/cloud-service-policy.json";
-const COMMUNITY_WECHAT_QR_OBJECT_KEY = "metadata/community/wechat-qr";
 const DOWNLOAD_ROUTE_PREFIX = "/downloads/";
 const ADMIN_RELEASE_ROUTE_PREFIX = "/admin/releases/";
 const ADMIN_ANALYTICS_ROUTE_PREFIX = "/admin/analytics/";
@@ -58,13 +67,13 @@ const worker = {
             VLM_RESPONSES_PATH,
             VLM_CHAT_COMPLETIONS_PATH,
             MODELS_DEV_PUBLIC_PATH,
-            COMMUNITY_WECHAT_QR_PUBLIC_PATH,
+            ...COMMUNITY_QR_IMAGES.map((image) => image.publicPath),
             "/downloads/:tag/:asset",
             "/admin",
             "/admin/api/session",
             ADMIN_MODELS_DEV_PATH,
             ADMIN_CLOUD_SERVICE_POLICY_PATH,
-            ADMIN_COMMUNITY_WECHAT_QR_PATH,
+            ...COMMUNITY_QR_IMAGES.map((image) => image.adminPath),
             "/admin/releases",
             "/admin/releases/:tag",
             "/admin/releases/:tag/assets/:asset",
@@ -91,11 +100,12 @@ const worker = {
         return await handleModelsDevCatalog(request, env);
       }
 
+      const publicQr = COMMUNITY_QR_IMAGES.find((image) => image.publicPath === pathname);
       if (
         (request.method === "GET" || request.method === "HEAD") &&
-        pathname === COMMUNITY_WECHAT_QR_PUBLIC_PATH
+        publicQr
       ) {
-        return await handleCommunityWechatQr(request, env);
+        return await handleCommunityQr(request, env, publicQr);
       }
 
       if (request.method === "GET" && pathname === "/admin") {
@@ -122,14 +132,15 @@ const worker = {
           : await handlePutCloudServicePolicy(request, env);
       }
 
+      const adminQr = COMMUNITY_QR_IMAGES.find((image) => image.adminPath === pathname);
       if (
-        pathname === ADMIN_COMMUNITY_WECHAT_QR_PATH &&
+        adminQr &&
         (request.method === "GET" || request.method === "PUT")
       ) {
         requireAdmin(request, env);
         return request.method === "GET"
-          ? await handleGetCommunityWechatQr(request, env)
-          : await handlePutCommunityWechatQr(request, env);
+          ? await handleGetCommunityQr(request, env, adminQr)
+          : await handlePutCommunityQr(request, env, adminQr);
       }
 
       if (request.method === "GET" && pathname.startsWith(ADMIN_ANALYTICS_ROUTE_PREFIX)) {
@@ -206,17 +217,17 @@ function adminPage() {
   });
 }
 
-async function handleCommunityWechatQr(request, env) {
+async function handleCommunityQr(request, env, image) {
   const bucket = requireBucket(env);
   const object = request.method === "HEAD"
-    ? await bucket.head(COMMUNITY_WECHAT_QR_OBJECT_KEY)
-    : await bucket.get(COMMUNITY_WECHAT_QR_OBJECT_KEY);
+    ? await bucket.head(image.objectKey)
+    : await bucket.get(image.objectKey);
   if (!object) {
     return json({ ok: false, error: "WeChat group QR code has not been uploaded" }, 404);
   }
 
   const etag = quoteEtag(object.etag);
-  const headers = communityWechatQrHeaders(object, etag);
+  const headers = communityQrHeaders(object, etag);
   if (etag && requestEtagMatches(request.headers.get("if-none-match"), etag)) {
     return new Response(null, { status: 304, headers });
   }
@@ -226,15 +237,15 @@ async function handleCommunityWechatQr(request, env) {
   });
 }
 
-async function handleGetCommunityWechatQr(request, env) {
-  const object = await requireBucket(env).head(COMMUNITY_WECHAT_QR_OBJECT_KEY);
+async function handleGetCommunityQr(request, env, image) {
+  const object = await requireBucket(env).head(image.objectKey);
   return json({
     ok: true,
-    image: communityWechatQrStatus(object, new URL(request.url)),
+    image: communityQrStatus(object, new URL(request.url), image),
   });
 }
 
-async function handlePutCommunityWechatQr(request, env) {
+async function handlePutCommunityQr(request, env, image) {
   const declaredSize = normalizeSize(request.headers.get("content-length"));
   if (declaredSize > MAX_COMMUNITY_QR_BYTES) {
     throw httpError(413, "QR image must be 5 MB or smaller");
@@ -266,7 +277,7 @@ async function handlePutCommunityWechatQr(request, env) {
 
   const bucket = requireBucket(env);
   const uploadedAt = Date.now();
-  const uploaded = await bucket.put(COMMUNITY_WECHAT_QR_OBJECT_KEY, bytes, {
+  const uploaded = await bucket.put(image.objectKey, bytes, {
     httpMetadata: {
       contentType,
       cacheControl: "public, no-cache, max-age=0, must-revalidate",
@@ -275,10 +286,10 @@ async function handlePutCommunityWechatQr(request, env) {
       uploadedAt: String(uploadedAt),
     },
   });
-  const object = uploaded || await bucket.head(COMMUNITY_WECHAT_QR_OBJECT_KEY);
+  const object = uploaded || await bucket.head(image.objectKey);
   return json({
     ok: true,
-    image: communityWechatQrStatus(object, new URL(request.url), {
+    image: communityQrStatus(object, new URL(request.url), image, {
       contentType,
       size: bytes.byteLength,
       uploadedAt,
@@ -286,17 +297,17 @@ async function handlePutCommunityWechatQr(request, env) {
   });
 }
 
-function communityWechatQrStatus(object, url, fallback = {}) {
+function communityQrStatus(object, url, image, fallback = {}) {
   if (!object) {
     return {
       configured: false,
-      publicUrl: `${url.origin}${COMMUNITY_WECHAT_QR_PUBLIC_PATH}`,
+      publicUrl: `${url.origin}${image.publicPath}`,
     };
   }
   const metadata = object.customMetadata || {};
   return {
     configured: true,
-    publicUrl: `${url.origin}${COMMUNITY_WECHAT_QR_PUBLIC_PATH}`,
+    publicUrl: `${url.origin}${image.publicPath}`,
     contentType: stringValue(object.httpMetadata?.contentType) || fallback.contentType || "image/jpeg",
     size: normalizeSize(object.size) || fallback.size || 0,
     etag: quoteEtag(object.etag),
@@ -304,7 +315,7 @@ function communityWechatQrStatus(object, url, fallback = {}) {
   };
 }
 
-function communityWechatQrHeaders(object, etag) {
+function communityQrHeaders(object, etag) {
   const headers = new Headers({
     "content-type": stringValue(object.httpMetadata?.contentType) || "image/jpeg",
     "cache-control": "public, no-cache, max-age=0, must-revalidate",
