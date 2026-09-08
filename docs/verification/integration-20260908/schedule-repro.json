@@ -1,0 +1,22 @@
+{
+  "name": "Reproduce scheduler contract mismatch before fix",
+  "serial": "emulator-5560",
+  "runId": "1788858741230",
+  "kind": "emulator-user-interface",
+  "passed": true,
+  "steps": [
+    {
+      "index": 1,
+      "action": "send",
+      "marker": "OOB_SCHEDULE_REPRO_1788858741230",
+      "passed": true,
+      "elapsedMs": 18679
+    },
+    {
+      "index": 2,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 2805
+    }
+  ]
+}

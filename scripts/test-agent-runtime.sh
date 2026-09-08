@@ -73,6 +73,7 @@ run_step "Node protocol/provider tests" \
   node --test \
     scripts/agent-ui-xml.test.mjs \
     scripts/fixtures/xiaowan-session-scenarios.test.mjs \
+    scripts/fixtures/xiaowan-schedule-scenarios.test.mjs \
     scripts/agent-provider-observer.test.mjs \
     scripts/install-dev-shell.test.mjs \
     scripts/skill-install-shell.test.mjs \
@@ -90,6 +91,7 @@ if [[ "$RUN_GRADLE" == "1" ]]; then
       -Dkotlin.incremental=false \
       -Dkotlin.compiler.execution.strategy=in-process \
       :app:testDevelopStandardDebugUnitTest \
+      --tests 'cn.com.omnimind.bot.agent.WorkspaceScheduledTaskContractTest' \
       --tests 'cn.com.omnimind.bot.agent.AgentOrchestratorTest' \
       --tests 'cn.com.omnimind.bot.agent.AgentEventAdapterTest' \
       --tests 'cn.com.omnimind.bot.agent.AgentConversationModePolicyTest' \
@@ -179,6 +181,7 @@ if [[ "$RUN_FLUTTER" == "1" ]]; then
       test/features/home/pages/agent/agent_config_page_test.dart \\
       test/features/home/pages/command_overlay/chat_bot_sheet_acp_test.dart \\
       test/features/home/pages/command_overlay/widgets/chat_input_area_test.dart \\
+      test/services/scheduled_task_scheduler_service_test.dart \\
       test/services/agent_runtime_service_test.dart \\
       test/services/workspace_memory_service_test.dart \\
       test/features/memory/services/mem0_memory_service_test.dart \\

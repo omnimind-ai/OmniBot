@@ -155,23 +155,23 @@
     },
     {
       "name": "schedule_task_create",
-      "deviceEvidence": null,
-      "deviceStatus": "not executed in this integration run"
+      "deviceEvidence": "schedule-complete.json / schedule-turn-outcomes.json",
+      "deviceStatus": "disabled-task CRUD, restart and missing-ID recovery passed; scheduled background firing not verified"
     },
     {
       "name": "schedule_task_delete",
-      "deviceEvidence": null,
-      "deviceStatus": "not executed in this integration run"
+      "deviceEvidence": "schedule-complete.json / schedule-turn-outcomes.json",
+      "deviceStatus": "disabled-task CRUD, restart and missing-ID recovery passed; scheduled background firing not verified"
     },
     {
       "name": "schedule_task_list",
-      "deviceEvidence": null,
-      "deviceStatus": "not executed in this integration run"
+      "deviceEvidence": "schedule-complete.json / schedule-turn-outcomes.json",
+      "deviceStatus": "disabled-task CRUD, restart and missing-ID recovery passed; scheduled background firing not verified"
     },
     {
       "name": "schedule_task_update",
-      "deviceEvidence": null,
-      "deviceStatus": "not executed in this integration run"
+      "deviceEvidence": "schedule-complete.json / schedule-turn-outcomes.json",
+      "deviceStatus": "disabled-task CRUD, restart and missing-ID recovery passed; scheduled background firing not verified"
     },
     {
       "name": "skills_list",

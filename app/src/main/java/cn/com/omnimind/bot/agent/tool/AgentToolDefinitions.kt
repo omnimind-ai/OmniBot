@@ -1593,6 +1593,7 @@ object AgentToolDefinitions {
                 }
                 putJsonArray("required") {
                     add("title")
+                    add("subagentPrompt")
                     add("targetKind")
                     add("scheduleType")
                     add("repeatDaily")

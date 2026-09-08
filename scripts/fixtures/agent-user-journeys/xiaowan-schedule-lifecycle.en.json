@@ -1,0 +1,31 @@
+{
+  "name": "Disabled schedule create restart update delete recovery",
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_SCHEDULE_CREATE"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_SCHEDULE_CREATE_DONE"
+    },
+    {
+      "action": "restart"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_SCHEDULE_CLEAN"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_SCHEDULE_CLEAN_DONE"
+    },
+    {
+      "action": "restart"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_SCHEDULE_CLEAN_DONE"
+    }
+  ]
+}

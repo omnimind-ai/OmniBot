@@ -1,0 +1,53 @@
+{
+  "name": "Disabled schedule create restart update delete recovery",
+  "serial": "emulator-5560",
+  "runId": "1788859323181",
+  "kind": "emulator-user-interface",
+  "passed": true,
+  "steps": [
+    {
+      "index": 1,
+      "action": "send",
+      "marker": "OOB_SCHEDULE_CREATE_1788859323181",
+      "passed": true,
+      "elapsedMs": 21882
+    },
+    {
+      "index": 2,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 2746
+    },
+    {
+      "index": 3,
+      "action": "restart",
+      "passed": true,
+      "elapsedMs": 2547
+    },
+    {
+      "index": 4,
+      "action": "send",
+      "marker": "OOB_SCHEDULE_CLEAN_1788859323181",
+      "passed": true,
+      "elapsedMs": 22689
+    },
+    {
+      "index": 5,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 2769
+    },
+    {
+      "index": 6,
+      "action": "restart",
+      "passed": true,
+      "elapsedMs": 3575
+    },
+    {
+      "index": 7,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 5235
+    }
+  ]
+}

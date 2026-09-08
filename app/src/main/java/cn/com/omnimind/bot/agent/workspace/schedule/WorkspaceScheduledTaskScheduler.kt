@@ -54,7 +54,8 @@ class WorkspaceScheduledTaskScheduler(
         val parentConversationId: String? = null,
         val parentConversationMode: String? = null,
         val subagentPrompt: String? = null,
-        val notificationEnabled: Boolean = true
+        val notificationEnabled: Boolean = true,
+        val createdAt: Long = 0
     )
 
     private val appContext = context.applicationContext
@@ -65,6 +66,14 @@ class WorkspaceScheduledTaskScheduler(
             context = appContext,
             manager = AgentRuntimeManager.getInstance(appContext)
         )
+    }
+
+    /** Model-facing creation owns the new identity; sync/import retains upsert. */
+    fun createTask(rawTask: Map<String, Any?>): Map<String, Any?> {
+        return upsertTask(rawTask + mapOf(
+            "taskId" to java.util.UUID.randomUUID().toString(),
+            "createdAt" to System.currentTimeMillis()
+        ))
     }
 
     fun upsertTask(rawTask: Map<String, Any?>): Map<String, Any?> {
@@ -115,6 +124,10 @@ class WorkspaceScheduledTaskScheduler(
     }
 
     fun updateTask(rawTask: Map<String, Any?>): Map<String, Any?> {
+        val taskId = rawTask["taskId"]?.toString()?.trim()?.ifEmpty { null }
+            ?: rawTask["id"]?.toString()?.trim().orEmpty()
+        require(taskId.isNotEmpty()) { "taskId is empty" }
+        require(loadTaskMapMutable().containsKey(taskId)) { "Scheduled task not found: $taskId" }
         return upsertTask(rawTask)
     }
 
@@ -226,6 +239,7 @@ class WorkspaceScheduledTaskScheduler(
     private fun taskPayload(task: StoredTask): Map<String, Any?> = linkedMapOf(
         "taskId" to task.taskId,
         "title" to task.title,
+        "createdAt" to task.createdAt,
         "targetKind" to task.targetKind,
         "scheduleType" to task.scheduleType,
         "fixedTime" to task.fixedTime,
@@ -351,7 +365,8 @@ class WorkspaceScheduledTaskScheduler(
             parentConversationId = parentConversationId,
             parentConversationMode = parentConversationMode,
             subagentPrompt = subagentPrompt,
-            notificationEnabled = notificationEnabled
+            notificationEnabled = notificationEnabled,
+            createdAt = toLong(rawTask["createdAt"]) ?: existing?.createdAt ?: 0
         )
     }
 
@@ -435,6 +450,7 @@ class WorkspaceScheduledTaskScheduler(
         }
         payload["id"] = task.taskId
         payload["title"] = task.title
+        payload["createdAt"] = task.createdAt
         payload["targetKind"] = task.targetKind
         payload["type"] = if (task.scheduleType == "countdown") "countdown" else "fixedTime"
         payload["fixedTime"] = task.fixedTime
