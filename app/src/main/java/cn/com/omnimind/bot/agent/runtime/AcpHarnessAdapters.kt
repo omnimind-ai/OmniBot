@@ -81,6 +81,10 @@ internal object AcpHarnessAdapters {
     val codex: AcpHarnessAdapter = object : AcpHarnessAdapter {
         override val configAdapterId = "codex"
 
+        // codex-acp 1.10.0 uses planId; acp-kotlin 0.30.1 requires id.
+        // Normalize the unstable extension before SDK decoding.
+        override fun normalizeStdioLine(line: String): String = normalizeCodexPlanIdentity(line)
+
         // codex-acp 1.10.0 AirExtension / CodexEventHandler: without this
         // negotiated capability it emits transport errors as assistant text.
         override fun clientCapabilityMeta(base: JsonObject): JsonObject = buildJsonObject {
@@ -413,3 +417,26 @@ internal fun buildDeepSeekHarnessConfigJson(config: DeepSeekHarnessConfig): Stri
 
 private fun Map<String, Any?>.agentConfigStringValue(key: String): String? =
     this[key]?.toString()?.trim()?.takeIf { it.isNotEmpty() }
+
+private fun normalizeCodexPlanIdentity(line: String): String {
+    if (!line.contains("planId")) return line
+    val root = runCatching { Json.parseToJsonElement(line) as? JsonObject }.getOrNull()
+        ?: return line
+    if ((root["method"] as? JsonPrimitive)?.contentOrNull != "session/update") return line
+    val params = root["params"] as? JsonObject ?: return line
+    val update = params["update"] as? JsonObject ?: return line
+    val kind = (update["sessionUpdate"] as? JsonPrimitive)?.contentOrNull
+    val target = when (kind) {
+        "plan_update" -> update["plan"] as? JsonObject ?: return line
+        "plan_removed" -> update
+        else -> return line
+    }
+    if (target["id"] != null) return line
+    val id = target["planId"] as? JsonPrimitive ?: return line
+    if (!id.isString) return line
+    val normalized = JsonObject(target + ("id" to id))
+    val normalizedUpdate = if (kind == "plan_update") {
+        JsonObject(update + ("plan" to normalized))
+    } else normalized
+    return JsonObject(root + ("params" to JsonObject(params + ("update" to normalizedUpdate)))).toString()
+}

@@ -22,12 +22,19 @@ const markers = new Map(journey.steps.filter(s => s.action === 'send')
   .map(s => [s.marker, `${s.marker}_${runId}`]));
 for (const step of journey.steps) {
   if (markers.has(step.marker)) step.marker = markers.get(step.marker);
-  if (markers.has(step.text)) step.text = markers.get(step.text);
+  if (typeof step.text === 'string') {
+    for (const [original, unique] of markers) {
+      if (step.text === original || step.text.startsWith(`${original}_`)) {
+        step.text = unique + step.text.slice(original.length);
+        break;
+      }
+    }
+  }
 }
 const out = resolve(outputPath);
 mkdirSync(out, {recursive: true, mode: 0o700});
 const adb = (...args) => execFileSync(process.env.ADB || 'adb', ['-s', serial, ...args],
-  {timeout: 30000, stdio: ['ignore', 'pipe', 'pipe']});
+  {timeout: 30000, maxBuffer: 32 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe']});
 const field = (node, key) => (node.match(new RegExp(`${key}="([^"]*)"`))?.[1] || '')
   .replaceAll('&#10;', '\n').replaceAll('&quot;', '"').replaceAll('&amp;', '&');
 function snapshot() {
@@ -94,6 +101,10 @@ try {
         await new Promise(r => setTimeout(r, 750));
       } while (Date.now() < deadline);
       assert(found, `Expected visible result did not appear before deadline (${snapshotFailures} unavailable snapshots)`);
+    } else if (step.action === 'assertAbsent') {
+      const matching = snapshot().filter(n => label(n).split('\n')[0] === step.label &&
+        field(n, 'enabled') === 'true' && field(n, 'clickable') === 'true');
+      assert.equal(matching.length, 0, `Stale interactive control remains: ${step.label}`);
     } else if (step.action === 'restart') {
       assert(!snapshot().some(n => /^(Stop|停止|停止生成)(\n|$)/.test(label(n))),
         'Cannot restart during an active turn');
@@ -110,6 +121,8 @@ try {
   report.passed = true;
 } catch (error) {
   report.steps.push({index, passed: false, errorType: error.name,
+    code: error.code, status: error.status, signal: error.signal,
+    detail: error.stderr?.toString().slice(0, 2000),
     assertionSite: error.stack?.split('\n').find(line => line.includes('verify-agent-user-journey.mjs:'))?.trim()});
   process.exitCode = 1;
 } finally {

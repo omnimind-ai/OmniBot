@@ -1,0 +1,173 @@
+{
+  "name": "Codex Plan review, restart and Default output",
+  "serial": "emulator-5560",
+  "runId": "1788840072616",
+  "kind": "emulator-user-interface",
+  "passed": true,
+  "steps": [
+    {
+      "index": 1,
+      "action": "tap",
+      "passed": true,
+      "elapsedMs": 2837
+    },
+    {
+      "index": 2,
+      "action": "tap",
+      "passed": true,
+      "elapsedMs": 2836
+    },
+    {
+      "index": 3,
+      "action": "tap",
+      "passed": true,
+      "elapsedMs": 2673
+    },
+    {
+      "index": 4,
+      "action": "expect",
+      "passed": true,
+      "elapsedMs": 2898
+    },
+    {
+      "index": 5,
+      "action": "tap",
+      "passed": true,
+      "elapsedMs": 3051
+    },
+    {
+      "index": 6,
+      "action": "tap",
+      "passed": true,
+      "elapsedMs": 3021
+    },
+    {
+      "index": 7,
+      "action": "tap",
+      "passed": true,
+      "elapsedMs": 2783
+    },
+    {
+      "index": 8,
+      "action": "send",
+      "marker": "OOB_CODEX_PLAN_PERSIST_1788840072616",
+      "passed": true,
+      "elapsedMs": 17173
+    },
+    {
+      "index": 9,
+      "action": "expect",
+      "passed": true,
+      "elapsedMs": 6876
+    },
+    {
+      "index": 10,
+      "action": "expect",
+      "passed": true,
+      "elapsedMs": 4205
+    },
+    {
+      "index": 11,
+      "action": "tap",
+      "passed": true,
+      "elapsedMs": 3869
+    },
+    {
+      "index": 12,
+      "action": "expect",
+      "passed": true,
+      "elapsedMs": 2635
+    },
+    {
+      "index": 13,
+      "action": "tap",
+      "passed": true,
+      "elapsedMs": 2811
+    },
+    {
+      "index": 14,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 2714
+    },
+    {
+      "index": 15,
+      "action": "restart",
+      "passed": true,
+      "elapsedMs": 2606
+    },
+    {
+      "index": 16,
+      "action": "expect",
+      "passed": true,
+      "elapsedMs": 5888
+    },
+    {
+      "index": 17,
+      "action": "tap",
+      "passed": true,
+      "elapsedMs": 3433
+    },
+    {
+      "index": 18,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 2706
+    },
+    {
+      "index": 19,
+      "action": "tap",
+      "passed": true,
+      "elapsedMs": 2910
+    },
+    {
+      "index": 20,
+      "action": "expect",
+      "passed": true,
+      "elapsedMs": 2883
+    },
+    {
+      "index": 21,
+      "action": "tap",
+      "passed": true,
+      "elapsedMs": 2813
+    },
+    {
+      "index": 22,
+      "action": "tap",
+      "passed": true,
+      "elapsedMs": 2644
+    },
+    {
+      "index": 23,
+      "action": "tap",
+      "passed": true,
+      "elapsedMs": 2771
+    },
+    {
+      "index": 24,
+      "action": "send",
+      "marker": "OOB_CODEX_DEFAULT_PERSIST_1788840072616",
+      "passed": true,
+      "elapsedMs": 18522
+    },
+    {
+      "index": 25,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 2921
+    },
+    {
+      "index": 26,
+      "action": "restart",
+      "passed": true,
+      "elapsedMs": 2710
+    },
+    {
+      "index": 27,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 6428
+    }
+  ]
+}

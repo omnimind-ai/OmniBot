@@ -1,0 +1,9 @@
+{
+  "name":"Resolved Codex plan approval stays resolved after restart",
+  "steps":[
+    {"action":"restart"},
+    {"action":"expect","text":"Implement this plan?","timeoutMs":30000},
+    {"action":"assertAbsent","label":"允许"},
+    {"action":"assertAbsent","label":"拒绝"}
+  ]
+}
