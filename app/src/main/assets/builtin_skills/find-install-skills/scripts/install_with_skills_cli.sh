@@ -49,6 +49,7 @@ done
 
 # Handle owner/repo@skill format
 case "$SOURCE" in
+  git@github.com:*) ;;
   *@*)
     REPO_PART="${SOURCE%%@*}"
     AT_SKILL="${SOURCE#*@}"
@@ -106,10 +107,13 @@ fi
 # --- Discover skill directories (folders containing SKILL.md) ---
 
 found_count=0
-install_list=""
+install_list="$TMP_BASE/install-list"
+: > "$install_list"
+mkdir -p "$TMP_BASE/planned-ids"
 
 # Search up to 3 levels deep for SKILL.md files
-for skill_md in $(find "$CLONE_DIR" -maxdepth 4 -name "SKILL.md" -type f 2>/dev/null); do
+find "$CLONE_DIR" -maxdepth 4 -name "SKILL.md" -type f > "$TMP_BASE/discovered-skills"
+while IFS= read -r skill_md; do
   skill_dir="$(dirname "$skill_md")"
   skill_id="$(basename "$skill_dir")"
 
@@ -131,9 +135,13 @@ for skill_md in $(find "$CLONE_DIR" -maxdepth 4 -name "SKILL.md" -type f 2>/dev/
     exit 4
   fi
 
+  if ! mkdir "$TMP_BASE/planned-ids/$skill_id"; then
+    echo "Duplicate skill id: $skill_id" >&2
+    exit 4
+  fi
   found_count=$((found_count + 1))
-  install_list="$install_list $skill_dir|$skill_id"
-done
+  printf '%s\n' "$skill_dir" >> "$install_list"
+done < "$TMP_BASE/discovered-skills"
 
 if [ "$found_count" -eq 0 ]; then
   if [ -n "$SKILL_FILTER" ]; then
@@ -148,15 +156,17 @@ fi
 
 copied_count=0
 
-for entry in $install_list; do
-  skill_dir="${entry%%|*}"
-  skill_id="${entry##*|}"
+while IFS= read -r skill_dir; do
+  skill_id="$(basename "$skill_dir")"
+  if [ "$skill_dir" = "$CLONE_DIR" ]; then
+    skill_id="$(basename "$REPO_URL")"
+  fi
   target_dir="$TARGET_ROOT/$skill_id"
 
   cp -R "$skill_dir" "$target_dir"
   copied_count=$((copied_count + 1))
   echo "Installed $skill_id -> $target_dir"
-done
+done < "$install_list"
 
 if [ "$copied_count" -ne "$found_count" ]; then
   echo "Copied $copied_count skills, expected $found_count" >&2

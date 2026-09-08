@@ -13,6 +13,28 @@ void main() {
     messenger.setMockMethodCallHandler(channel, null);
   });
 
+  test(
+    'explicit reinstall reaches the installer with force, ordinary preparation does not',
+    () async {
+      final calls = <MethodCall>[];
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        calls.add(call);
+        return <String, dynamic>{'ok': true};
+      });
+      await AgentRuntimeService.prepareAgent('codex-acp');
+      await AgentRuntimeService.prepareAgentInBackground(
+        'codex-acp',
+        force: true,
+      );
+      expect(calls.map((call) => call.method), [
+        'agent/prepare',
+        'agent/prepare',
+      ]);
+      expect(calls.first.arguments, {'agentId': 'codex-acp'});
+      expect(calls.last.arguments, {'agentId': 'codex-acp', 'force': true});
+    },
+  );
+
   test('accepts the local ACP cancellation acknowledgement', () {
     expect(
       isAgentCancellationSuccessful(<String, dynamic>{'ok': true}),
@@ -44,6 +66,60 @@ void main() {
     expect(capturedCall?.method, 'initialize');
     expect(capturedCall?.arguments, {'agentId': 'xiaowan-acp'});
   });
+
+  test(
+    'listSessions leaves page size to the active ACP harness by default',
+    () async {
+      MethodCall? capturedCall;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        capturedCall = call;
+        return <String, dynamic>{'sessions': <Map<String, dynamic>>[]};
+      });
+
+      await AgentRuntimeService.listSessions();
+
+      expect(capturedCall?.method, 'session/list');
+      expect(capturedCall?.arguments, isEmpty);
+    },
+  );
+
+  test('ensureSession reserves a session before a new prompt', () async {
+    final calls = <MethodCall>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      return <String, dynamic>{'sessionId': 'session-created'};
+    });
+
+    final sessionId = await AgentRuntimeService.ensureSession(
+      conversationId: 42,
+      model: 'model-1',
+      conversationMode: 'agent',
+    );
+
+    expect(sessionId, 'session-created');
+    expect(calls.map((call) => call.method), ['session/new']);
+    expect((calls.single.arguments as Map)['conversationId'], 42);
+    expect((calls.single.arguments as Map)['model'], 'model-1');
+  });
+
+  test(
+    'ensureSession reuses an existing official session without a call',
+    () async {
+      var callCount = 0;
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        callCount += 1;
+        return <String, dynamic>{'sessionId': 'unexpected'};
+      });
+
+      final sessionId = await AgentRuntimeService.ensureSession(
+        sessionId: '  session-existing  ',
+        conversationId: 42,
+      );
+
+      expect(sessionId, 'session-existing');
+      expect(callCount, 0);
+    },
+  );
 
   test('request cancellation is not encoded as session cancellation', () async {
     MethodCall? capturedCall;
@@ -252,26 +328,29 @@ void main() {
     },
   );
 
-  test('lists codex models, collaboration modes, and config', () async {
-    final calls = <MethodCall>[];
-    messenger.setMockMethodCallHandler(channel, (call) async {
-      calls.add(call);
-      return <String, dynamic>{'ok': true};
-    });
+  test(
+    'lists the complete harness model catalog, collaboration modes, and config',
+    () async {
+      final calls = <MethodCall>[];
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        calls.add(call);
+        return <String, dynamic>{'ok': true};
+      });
 
-    await AgentRuntimeService.listModels();
-    await AgentRuntimeService.listCollaborationModes();
-    await AgentRuntimeService.readConfig();
-    await AgentRuntimeService.listLoadedSessions();
+      await AgentRuntimeService.listModels();
+      await AgentRuntimeService.listCollaborationModes();
+      await AgentRuntimeService.readConfig();
+      await AgentRuntimeService.listLoadedSessions();
 
-    expect(calls.map((call) => call.method), [
-      'model/list',
-      'collaborationMode/list',
-      'config/read',
-      'session/list',
-    ]);
-    expect(calls.first.arguments, {'limit': 100});
-  });
+      expect(calls.map((call) => call.method), [
+        'model/list',
+        'collaborationMode/list',
+        'config/read',
+        'session/list',
+      ]);
+      expect(calls.first.arguments, isEmpty);
+    },
+  );
 
   test('sets a Harness-owned ACP config option', () async {
     MethodCall? capturedCall;
@@ -382,6 +461,28 @@ void main() {
       'xhigh',
       'max',
     ]);
+    expect(extractAcpReasoningEffortConfigId(response), 'reasoning_effort');
+  });
+
+  test('ACP reasoning config id follows the Agent declaration', () {
+    expect(
+      extractAcpReasoningEffortConfigId(<String, dynamic>{
+        'result': <String, dynamic>{
+          'configOptions': <Map<String, dynamic>>[
+            <String, dynamic>{
+              'id': 'effort',
+              'category': 'thought_level',
+              'type': 'select',
+              'options': <Map<String, dynamic>>[
+                <String, dynamic>{'value': 'default'},
+                <String, dynamic>{'value': 'high'},
+              ],
+            },
+          ],
+        },
+      }),
+      'effort',
+    );
   });
 
   test('ACP model extraction supports category-only config responses', () {
@@ -751,6 +852,42 @@ void main() {
     expect(catalog.selectedAgent?.name, '小万');
   });
 
+  for (final custom in <Map<String, dynamic>>[
+    {'id': 'user-adapter', 'name': '小万', 'command': 'my-acp'},
+    {'id': 'user-adapter', 'name': '小万 Bot', 'command': 'my-bot-acp'},
+    {'id': 'user-adapter', 'name': 'Xiaowan_Bot', 'command': 'my-other-acp'},
+    {
+      'id': 'user-adapter',
+      'name': 'My Agent',
+      'command': '/workspace/xiaowan-next/acp',
+    },
+    {
+      'id': 'user-adapter',
+      'name': 'My configuration',
+      'command': 'omnibot-xiaowan-acp',
+    },
+  ]) {
+    test('custom ACP profile remains selectable: ${custom['command']}', () {
+      final catalog = AcpAgentCatalog.fromMap(<String, dynamic>{
+        'selectedAgentId': custom['id'],
+        'agents': <Map<String, dynamic>>[
+          {
+            'id': 'xiaowan-acp',
+            'name': '小万',
+            'command': 'omnibot-xiaowan-acp',
+            'builtIn': true,
+          },
+          custom,
+        ],
+      });
+      expect(catalog.agents.map((agent) => agent.id), [
+        'xiaowan-acp',
+        'user-adapter',
+      ]);
+      expect(catalog.selectedAgent?.id, 'user-adapter');
+    });
+  }
+
   test('local Agent requests use the selected ACP model', () {
     final model = selectAgentRequestModel(
       status: const AgentRuntimeStatus(
@@ -817,16 +954,100 @@ void main() {
     );
   });
 
+  test('error projection is idempotent and can change language', () {
+    final raw = PlatformException(code: 'FAILED', message: 'Request timed out');
+    final once = formatAgentRuntimeErrorForUser(raw);
+    expect(formatAgentRuntimeErrorForUser(once), once);
+    final english = formatAgentRuntimeErrorForUser(once, english: true);
+    expect(english, contains('timed out'));
+    expect(formatAgentRuntimeErrorForUser(english), once);
+  });
+
+  test('installer certificate failure gives a network sign-in action', () {
+    final message = formatAgentRuntimeErrorForUser(
+      'Failed to prepare adapter: npm error DEPTH_ZERO_SELF_SIGNED_CERT',
+    );
+    expect(message, contains('网络是否需要登录'));
+    expect(message, isNot(contains('SELF_SIGNED_CERT')));
+    expect(message, isNot(contains('关闭')));
+  });
+
+  test('structured Codex transport failure hides the endpoint', () {
+    final message = formatAgentRuntimeErrorForUser(
+      'stream disconnected before completion: error sending request for url (https://private.invalid/v1/responses)',
+    );
+    expect(message, contains('连接已中断'));
+    expect(message, isNot(contains('private.invalid')));
+    expect(message, isNot(contains('responses')));
+  });
+
+  test('unknown native payloads never reach user-facing text', () {
+    for (final error in <Object?>[
+      null,
+      'PlatformException(ACP_ERROR, stack /root/secret https://private.invalid?token=secret)',
+      '{"error":{"message":"internal token=secret"}}',
+      PlatformException(
+        code: 'INTERNAL',
+        message: 'secret',
+        details: {'token': 'secret'},
+      ),
+    ]) {
+      expect(formatAgentRuntimeErrorForUser(error), '助手暂时无法完成操作，请重试。');
+      expect(
+        formatAgentRuntimeErrorForUser(error, english: true),
+        'The assistant could not complete this action. Please try again.',
+      );
+    }
+  });
+
+  test('real assistant timeout is actionable without raw exception', () {
+    final error = PlatformException(
+      code: 'AGENT_RUNTIME_CALL_FAILED',
+      message: 'Internal error: Request timed out',
+    );
+    expect(formatAgentRuntimeErrorForUser(error), contains('等待回复超时'));
+    expect(formatAgentRuntimeErrorForUser(error), isNot(contains('Internal')));
+  });
+
+  test(
+    'Claude protocol mismatch explains configuration without guessing an endpoint',
+    () {
+      final message = formatAgentRuntimeErrorForUser(
+        'Failed to initialize ACP agent Claude Code: Claude Code requires an Anthropic-compatible Provider endpoint.',
+      );
+      expect(message, contains('请更换模型连接或助手'));
+      expect(message, isNot(contains('OpenAI')));
+      expect(message, isNot(contains('/anthropic')));
+      expect(message, isNot(contains('断联')));
+    },
+  );
+
   test('namespace tool incompatibility has an actionable error', () {
     final message = formatAgentRuntimeErrorForUser(
       '{"error":{"message":"tools[8].type: unknown variant namespace, '
       'expected one of function, web_search_preview, code_interpreter, mcp"}}',
     );
 
-    expect(message, contains('Responses Provider'));
-    expect(message, contains('MCP'));
+    expect(message, contains('不支持这个助手的工具'));
+    expect(message, isNot(contains('MCP')));
     expect(message, isNot(contains('{"error"')));
   });
+
+  test(
+    'provider abort reports an interrupted response without claiming a retry',
+    () {
+      final message = formatAgentRuntimeErrorForUser(
+        PlatformException(
+          code: 'AGENT_RUNTIME_CALL_FAILED',
+          message: 'Software caused connection abort',
+          details: {'failureKind': 'provider_stream_interrupted'},
+        ),
+      );
+      expect(message, contains('连接已中断'));
+      expect(message, contains('未完成的工具调用不会执行'));
+      expect(message, isNot(contains('已自动重试')));
+    },
+  );
 
   test('incomplete tool calls are mapped to an actionable user error', () {
     final message = formatAgentRuntimeErrorForUser(
@@ -843,6 +1064,37 @@ void main() {
     expect(message, isNot(contains('missing function.name')));
   });
 
+  test(
+    'provider stream idle timeout is mapped to an actionable user error',
+    () {
+      final message = formatAgentRuntimeErrorForUser(
+        PlatformException(
+          code: 'AGENT_RUNTIME_CALL_FAILED',
+          message: 'chat completion stream idle timeout after 90000ms',
+          details: <String, dynamic>{
+            'failureKind': 'provider_stream_idle_timeout',
+          },
+        ),
+      );
+
+      expect(message, contains('等待回复超时'));
+      expect(message, isNot(contains('90000ms')));
+    },
+  );
+
+  test('model fetch timeout is shown instead of generic configuration failure', () {
+    final message = formatAgentRuntimeErrorForUser(
+      PlatformException(
+        code: 'FETCH_PROVIDER_MODELS_ERROR',
+        message: '服务商请求超时',
+        details: <String, dynamic>{'failureKind': 'provider_request_timeout'},
+      ),
+      fallback: '模型列表刷新失败，请检查配置后重试',
+    );
+    expect(message, contains('等待回复超时'));
+    expect(message, isNot(contains('检查配置')));
+  });
+
   test('Harness preparation contention is actionable and non-blocking', () {
     final message = formatAgentRuntimeErrorForUser(
       PlatformException(
@@ -854,7 +1106,7 @@ void main() {
       ),
     );
 
-    expect(message, contains('当前切换不会等待'));
+    expect(message, contains('请等待完成后再试'));
     expect(message, isNot(contains('Harness preparation is already running')));
   });
 

@@ -2,6 +2,7 @@ package cn.com.omnimind.bot.agent
 
 import cn.com.omnimind.baselib.database.AgentConversationEntry
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class AgentConversationHistoryRepositoryTest {
@@ -21,6 +22,38 @@ class AgentConversationHistoryRepositoryTest {
         assertEquals(listOf("normal-user", "assistant", "tool"), snapshot.map { it.entryId })
         assertEquals("agent", snapshot[1].conversationMode)
         assertEquals(3, snapshot.size)
+    }
+
+    @Test
+    fun `paged merged history advances beyond duplicate compatibility rows`() {
+        val canonical = (1..100).map { index ->
+            entry(
+                entryId = "shared-$index",
+                mode = "agent",
+                type = "assistant_message",
+                createdAt = 1_000L - index,
+                id = index.toLong(),
+            )
+        }
+        val legacyCopies = canonical.map { entry ->
+            entry.copy(conversationMode = "normal", id = entry.id + 1_000L)
+        }
+        val legacyOnly = entry(
+            entryId = "legacy-only",
+            mode = "normal",
+            type = "user_message",
+            createdAt = 1L,
+            id = 2_000L,
+        )
+
+        val (page, hasMore) = AgentConversationHistoryRepository.pageConversationEntries(
+            entries = canonical + legacyCopies + legacyOnly,
+            limit = 50,
+            offset = 100,
+        )
+
+        assertEquals(listOf("legacy-only"), page.map { it.entryId })
+        assertFalse(hasMore)
     }
 
     private fun entry(

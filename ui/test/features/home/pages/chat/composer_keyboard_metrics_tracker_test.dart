@@ -381,6 +381,27 @@ void main() {
     expect(identical(first, second), isTrue);
   });
 
+  test('a keyboard opening without intermediate frames cannot hide composer', () {
+    final tracker = primedTracker();
+    // IME metrics may jump directly to the final height. No later different
+    // sample is guaranteed, even when unrelated page rebuilds occur.
+    for (var frame = 0; frame < 3; frame++) {
+      const sample = _Sample(300, 16, 0, true);
+      final metrics = tracker.update(
+        shouldLiftComposerForKeyboard: sample.lift,
+        bottomInset: sample.inset,
+        viewPaddingBottom: sample.viewPadding,
+        safeAreaBottomPadding: sample.padding,
+      );
+      expect(
+        _screenBottomDistance(sample, metrics),
+        greaterThanOrEqualTo(300),
+        reason:
+            'Composer must clear a fully open keyboard, including frame $frame',
+      );
+    }
+  });
+
   test('latch refreshes at rest so a legitimately smaller nav inset is '
       'adopted', () {
     final tracker = primedTracker();

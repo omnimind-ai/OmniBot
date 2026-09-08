@@ -1,13 +1,130 @@
 package cn.com.omnimind.baselib.account
 
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.time.Instant
 
 class AccountRepositoryTest {
+    @Test
+    fun foregroundRefreshRotatesAnExpiringAccessToken() = runBlocking {
+        val store = FakeTokenStore(
+            session("expiring-access", "old-refresh").tokens.copy(
+                accessExpiresAt = "2026-08-31T12:00:20Z",
+            )
+        )
+        val remote = FakeAccountRemote().apply {
+            refreshHandler = { refreshToken ->
+                assertEquals("old-refresh", refreshToken)
+                session("fresh-access", "rotated-refresh")
+            }
+        }
+        val repository = AccountRepository(remote, store)
+
+        assertTrue(
+            repository.refreshSessionIfNeeded(
+                now = Instant.parse("2026-08-31T12:00:00Z"),
+            )
+        )
+        assertEquals("fresh-access", store.tokens?.accessToken)
+        assertEquals("rotated-refresh", store.tokens?.refreshToken)
+    }
+
+    @Test
+    fun foregroundRefreshDoesNotRotateAHealthyAccessToken() = runBlocking {
+        val store = FakeTokenStore(
+            session("healthy-access", "refresh").tokens.copy(
+                accessExpiresAt = "2026-08-31T13:00:00Z",
+            )
+        )
+        val remote = FakeAccountRemote().apply {
+            refreshHandler = { error("a healthy foreground session must not refresh") }
+        }
+        val repository = AccountRepository(remote, store)
+
+        assertFalse(
+            repository.refreshSessionIfNeeded(
+                now = Instant.parse("2026-08-31T12:00:00Z"),
+            )
+        )
+        assertEquals("healthy-access", store.tokens?.accessToken)
+    }
+
+    @Test
+    fun foregroundRefreshKeepsTheSessionWhenTheNetworkTemporarilyFails() = runBlocking {
+        val store = FakeTokenStore(
+            session("expiring-access", "refresh").tokens.copy(
+                accessExpiresAt = "2026-08-31T12:00:20Z",
+            )
+        )
+        val remote = FakeAccountRemote().apply {
+            refreshHandler = { throw AccountException("network unavailable") }
+        }
+        val repository = AccountRepository(remote, store)
+
+        val error = runCatching {
+            repository.refreshSessionIfNeeded(
+                now = Instant.parse("2026-08-31T12:00:00Z"),
+            )
+        }.exceptionOrNull()
+
+        assertTrue(error is AccountException)
+        assertEquals("expiring-access", store.tokens?.accessToken)
+        assertEquals("refresh", store.tokens?.refreshToken)
+    }
+
+    @Test
+    fun secureStorageReadFailureIsNotCollapsedIntoSignedOut() {
+        val repository = AccountRepository(
+            remote = FakeAccountRemote(),
+            tokenStore = object : AccountTokenStore {
+                override fun read(): AccountTokens? = throw AccountCredentialStorageException()
+                override fun write(tokens: AccountTokens): Boolean = false
+                override fun clear(): Boolean = true
+            },
+        )
+
+        val error = runCatching { repository.isSignedIn() }.exceptionOrNull()
+
+        assertTrue(error is AccountCredentialStorageException)
+    }
+
+    @Test
+    fun concurrentUnauthorizedRequestsShareOneRotatedSession() = runBlocking {
+        val store = FakeTokenStore(session("expired-access", "old-refresh").tokens)
+        val refreshStarted = CompletableDeferred<Unit>()
+        val releaseRefresh = CompletableDeferred<Unit>()
+        val remote = FakeAccountRemote().apply {
+            getSettingsHandler = { accessToken ->
+                if (accessToken == "expired-access") {
+                    throw AccountApiException(401, "invalid_access_token", "expired")
+                }
+                aiSettings(AiAccessMode.PLATFORM)
+            }
+            refreshHandler = {
+                refreshStarted.complete(Unit)
+                releaseRefresh.await()
+                session("fresh-access", "rotated-refresh")
+            }
+        }
+        val repository = AccountRepository(remote, store)
+
+        val first = async { repository.getAiSettings() }
+        val second = async { repository.getAiSettings() }
+        refreshStarted.await()
+        releaseRefresh.complete(Unit)
+
+        assertEquals(AiAccessMode.PLATFORM, first.await().mode)
+        assertEquals(AiAccessMode.PLATFORM, second.await().mode)
+        assertEquals(1, remote.refreshTokens.size)
+        assertEquals("fresh-access", store.tokens?.accessToken)
+    }
+
     @Test
     fun loginStoresBothTokens() = runBlocking {
         val store = FakeTokenStore()

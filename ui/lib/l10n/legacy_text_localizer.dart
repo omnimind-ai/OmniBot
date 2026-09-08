@@ -213,6 +213,7 @@ class LegacyTextLocalizer {
     '今天': 'Today',
     '昨天': 'Yesterday',
     '执行中': 'Executing',
+    '准备中': 'Pending',
     '执行成功': 'Succeeded',
     '执行失败': 'Failed',
     '已取消': 'Cancelled',

@@ -1,7 +1,6 @@
 package cn.com.omnimind.bot.agent
 
 import cn.com.omnimind.baselib.database.AgentConversationEntry
-import cn.com.omnimind.baselib.database.AgentConversationEntryRecord
 import cn.com.omnimind.baselib.llm.AssistantToolCall
 import cn.com.omnimind.baselib.llm.AssistantToolCallFunction
 import cn.com.omnimind.baselib.llm.ChatCompletionMessage
@@ -37,11 +36,6 @@ internal object AgentConversationHistorySupport {
         val messagesToCompact: List<ChatCompletionMessage>
     )
 
-    data class MaterializedEntry(
-        val entry: AgentConversationEntry,
-        val needsRepair: Boolean
-    )
-
     private const val MAX_TOOL_SUMMARY_CHARS = 240
     private const val MAX_TOOL_PREVIEW_CHARS = 800
     private const val MAX_TOOL_TERMINAL_CHARS = 1200
@@ -62,8 +56,10 @@ internal object AgentConversationHistorySupport {
 如果总结与压缩点之后的新消息冲突，应以后续原始消息为准。
 
 """
-    private const val CONTEXT_SUMMARY_USER_PREFIX =
+    private const val LEGACY_CONTEXT_SUMMARY_USER_PREFIX =
         "<context-summary> The following is a summary of the earlier conversation that was compacted to save context space."
+    private const val CONTEXT_SUMMARY_ASSISTANT_PREFIX =
+        "<context-summary> Earlier conversation context, retained as an assistant history checkpoint."
 
     private val gson = Gson()
     private val canonicalMessageJson = kotlinx.serialization.json.Json {
@@ -263,83 +259,11 @@ internal object AgentConversationHistorySupport {
         ).trim().takeIf { it.isNotBlank() }
     }
 
-    fun materializeRecord(record: AgentConversationEntryRecord): MaterializedEntry {
-        val normalizedSummary = normalizeStoredSummary(record.summary, record.entryType)
-        val baseEntry = record.toEntry().copy(summary = normalizedSummary)
-        if (!record.payloadTruncated && !record.summaryTruncated) {
-            return MaterializedEntry(baseEntry, false)
-        }
-        if (!record.payloadTruncated) {
-            return MaterializedEntry(
-                prepareEntryForStorage(baseEntry),
-                true
-            )
-        }
-        val recoveredEntry = when (record.entryType) {
-            AgentConversationHistoryRepository.ENTRY_TYPE_TOOL_EVENT -> {
-                buildStorageSafeGenericToolEntry(
-                    entry = baseEntry.copy(payloadJson = ""),
-                    originalPayloadLength = record.payloadOriginalLength
-                )
-            }
-
-            AgentConversationHistoryRepository.ENTRY_TYPE_UI_CARD -> {
-                buildRecoveredUiCardEntry(
-                    entry = baseEntry.copy(payloadJson = ""),
-                    originalPayloadLength = record.payloadOriginalLength
-                )
-            }
-
-            AgentConversationHistoryRepository.ENTRY_TYPE_USER_MESSAGE,
-            AgentConversationHistoryRepository.ENTRY_TYPE_ASSISTANT_MESSAGE -> {
-                buildRecoveredTextEntry(
-                    entry = baseEntry.copy(payloadJson = ""),
-                    originalPayloadLength = record.payloadOriginalLength
-                )
-            }
-
-            else -> baseEntry.copy(payloadJson = "")
-        }
-        return MaterializedEntry(recoveredEntry, true)
-    }
-
     fun prepareEntryForStorage(entry: AgentConversationEntry): AgentConversationEntry {
-        val normalizedSummary = normalizeStoredSummary(entry.summary, entry.entryType)
-        val normalizedEntry = entry.copy(summary = normalizedSummary)
-        return when (entry.entryType) {
-            AgentConversationHistoryRepository.ENTRY_TYPE_TOOL_EVENT -> {
-                if (entry.payloadJson.length <= MAX_STORAGE_ENTRY_PAYLOAD_CHARS &&
-                    normalizedSummary.length <= MAX_STORAGE_SUMMARY_CHARS
-                ) {
-                    normalizedEntry
-                } else {
-                    buildStorageSafeToolEntry(normalizedEntry)
-                }
-            }
-
-            AgentConversationHistoryRepository.ENTRY_TYPE_UI_CARD -> {
-                if (entry.payloadJson.length <= MAX_STORAGE_ENTRY_PAYLOAD_CHARS &&
-                    normalizedSummary.length <= MAX_STORAGE_SUMMARY_CHARS
-                ) {
-                    normalizedEntry
-                } else {
-                    buildStorageSafeUiCardEntry(normalizedEntry)
-                }
-            }
-
-            AgentConversationHistoryRepository.ENTRY_TYPE_USER_MESSAGE,
-            AgentConversationHistoryRepository.ENTRY_TYPE_ASSISTANT_MESSAGE -> {
-                if (entry.payloadJson.length <= MAX_STORAGE_ENTRY_PAYLOAD_CHARS &&
-                    normalizedSummary.length <= MAX_STORAGE_SUMMARY_CHARS
-                ) {
-                    normalizedEntry
-                } else {
-                    buildStorageSafeTextEntry(normalizedEntry)
-                }
-            }
-
-            else -> normalizedEntry
-        }
+        // Room stores the canonical ACP item. Do not replace an oversized
+        // payload with a summary or an omitted placeholder; if the storage
+        // backend cannot persist it, surface that backend error to the owner.
+        return entry
     }
 
     fun buildPromptSeedFromEntries(
@@ -349,7 +273,7 @@ internal object AgentConversationHistorySupport {
     ): AgentConversationHistoryRepository.PromptSeed {
         val historyMessages = mutableListOf<ChatCompletionMessage>()
         contextSummary?.trim()?.takeIf { it.isNotEmpty() }?.let { summary ->
-            historyMessages += buildContextSummaryUserMessage(summary)
+            historyMessages += buildContextSummaryAssistantMessage(summary)
         }
         historyMessages += buildPromptRelevantMessages(
             entries = entries,
@@ -403,7 +327,13 @@ internal object AgentConversationHistorySupport {
                 }
 
                 AgentConversationHistoryRepository.ENTRY_TYPE_TOOL_EVENT -> {
-                    val canonicalAssistantJson = readMap(entry.payloadJson)
+                    val payload = readMap(entry.payloadJson)
+                    // Lifecycle display cards belong to Conversation history, not
+                    // the provider's assistant/tool message protocol.
+                    if (payload["toolType"]?.toString() == "status") {
+                        return@forEachIndexed
+                    }
+                    val canonicalAssistantJson = payload
                         .get("modelAssistantMessageJson")
                         ?.toString()
                         ?.takeIf { it.isNotBlank() }
@@ -472,29 +402,30 @@ internal object AgentConversationHistorySupport {
         return parseBoolean(payload["interruptedTurn"], default = false)
     }
 
-    fun buildContextSummaryUserMessage(summary: String): ChatCompletionMessage {
+    fun buildContextSummaryAssistantMessage(summary: String): ChatCompletionMessage {
         val normalizedSummary = AgentTextSanitizer.sanitizeUtf16(summary).trim()
         val content = if (normalizedSummary.isEmpty()) {
-            CONTEXT_SUMMARY_USER_PREFIX
+            CONTEXT_SUMMARY_ASSISTANT_PREFIX
         } else {
-            "$CONTEXT_SUMMARY_USER_PREFIX\n\n$normalizedSummary"
+            "$CONTEXT_SUMMARY_ASSISTANT_PREFIX\n\n$normalizedSummary"
         }
         return ChatCompletionMessage(
-            role = "user",
+            role = "assistant",
             content = JsonPrimitive(content)
         )
-    }
-
-    fun buildContextSummarySystemMessage(summary: String): ChatCompletionMessage {
-        return buildContextSummaryUserMessage(summary)
     }
 
     fun extractContextSummaryText(message: ChatCompletionMessage): String? {
         val content = message.content as? JsonPrimitive ?: return null
         return when {
+            message.role == "assistant" &&
+                content.content.startsWith(CONTEXT_SUMMARY_ASSISTANT_PREFIX) -> {
+                content.content.removePrefix(CONTEXT_SUMMARY_ASSISTANT_PREFIX).trim()
+            }
+
             message.role == "user" &&
-                content.content.startsWith(CONTEXT_SUMMARY_USER_PREFIX) -> {
-                content.content.removePrefix(CONTEXT_SUMMARY_USER_PREFIX).trim()
+                content.content.startsWith(LEGACY_CONTEXT_SUMMARY_USER_PREFIX) -> {
+                content.content.removePrefix(LEGACY_CONTEXT_SUMMARY_USER_PREFIX).trim()
             }
 
             message.role == "system" &&
@@ -508,8 +439,10 @@ internal object AgentConversationHistorySupport {
 
     fun isContextSummaryMessage(message: ChatCompletionMessage): Boolean {
         val content = message.content as? JsonPrimitive ?: return false
-        return (message.role == "user" &&
-            content.content.startsWith(CONTEXT_SUMMARY_USER_PREFIX)) ||
+        return (message.role == "assistant" &&
+            content.content.startsWith(CONTEXT_SUMMARY_ASSISTANT_PREFIX)) ||
+            (message.role == "user" &&
+                content.content.startsWith(LEGACY_CONTEXT_SUMMARY_USER_PREFIX)) ||
             (message.role == "system" &&
                 content.content.startsWith(LEGACY_CONTEXT_SUMMARY_SYSTEM_PREFIX))
     }
@@ -599,11 +532,11 @@ internal object AgentConversationHistorySupport {
             message.role == "user" && !isContextSummaryMessage(message)
         }
         if (latestUserIndex == -1) {
-            return preservedSystemMessages + buildContextSummaryUserMessage(summary)
+            return preservedSystemMessages + buildContextSummaryAssistantMessage(summary)
         }
         val rebuilt = mutableListOf<ChatCompletionMessage>()
         rebuilt += preservedSystemMessages
-        rebuilt += buildContextSummaryUserMessage(summary)
+        rebuilt += buildContextSummaryAssistantMessage(summary)
         rebuilt += messages.subList(latestUserIndex, messages.size)
         return rebuilt
     }
@@ -861,13 +794,11 @@ internal object AgentConversationHistorySupport {
                 payload["success"],
                 default = status == AgentConversationHistoryRepository.STATUS_SUCCESS
             ),
-            "summary" to trimText(
-                payload["summary"]?.toString()?.trim().orEmpty().ifEmpty { entry.summary.trim() },
-                MAX_TOOL_SUMMARY_CHARS
-            )
+            "summary" to payload["summary"]?.toString()?.trim().orEmpty()
+                .ifEmpty { entry.summary.trim() }
         )
         payload["progress"]?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.let {
-            content["progress"] = trimText(it, MAX_TOOL_SUMMARY_CHARS)
+            content["progress"] = it
         }
         payload["serverName"]?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.let {
             content["serverName"] = it
@@ -876,11 +807,11 @@ internal object AgentConversationHistorySupport {
             content["interruptedBy"] = it
         }
         payload["interruptionReason"]?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.let {
-            content["interruptionReason"] = trimText(it, MAX_TOOL_SUMMARY_CHARS)
+            content["interruptionReason"] = it
         }
         listOf("message", "question", "taskId", "goal").forEach { key ->
             preview[key]?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.let { value ->
-                content[key] = trimText(value, MAX_TOOL_PREVIEW_CHARS)
+                content[key] = value
             }
         }
         listOf("missing", "missingFields").forEach { key ->
@@ -890,10 +821,13 @@ internal object AgentConversationHistorySupport {
             }
         }
         payload["resultPreviewJson"]?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.let { raw ->
-            content["previewJson"] = trimText(raw, MAX_TOOL_PREVIEW_CHARS)
+            content["previewJson"] = raw
         }
         payload["terminalOutput"]?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.let { raw ->
-            content["terminalOutput"] = trimText(raw, MAX_TOOL_TERMINAL_CHARS)
+            content["terminalOutput"] = raw
+        }
+        payload["rawResultJson"]?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.let { raw ->
+            content["rawResultJson"] = raw
         }
         payload["terminalStreamState"]?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.let {
             content["terminalStreamState"] = it
@@ -930,28 +864,17 @@ internal object AgentConversationHistorySupport {
         val argsJson = payload["argsJson"]?.toString().orEmpty()
         val resultPreviewJson = payload["resultPreviewJson"]?.toString().orEmpty()
         val rawResultJson = payload["rawResultJson"]?.toString().orEmpty()
-        val safeArgsJson = compactJsonText(argsJson, MAX_DISPLAY_TOOL_JSON_CHARS)
-        val safeResultPreviewJson = compactJsonText(
-            resultPreviewJson,
-            MAX_DISPLAY_TOOL_JSON_CHARS
-        )
-        val safeRawResultJson = compactJsonText(rawResultJson, MAX_DISPLAY_TOOL_JSON_CHARS)
-        val safeTerminalOutput = trimTailText(
-            terminalOutput,
-            MAX_DISPLAY_TOOL_TERMINAL_CHARS
-        )
-        val safeReasoningContent = trimText(
-            readReasoningContent(payload).orEmpty(),
-            MAX_STORAGE_MESSAGE_TEXT_CHARS
-        ).trim().takeIf { it.isNotBlank() }
-        val payloadCompacted =
-            safeArgsJson.length < AgentTextSanitizer.sanitizeUtf16(argsJson).trim().length ||
-                safeResultPreviewJson.length <
-                AgentTextSanitizer.sanitizeUtf16(resultPreviewJson).trim().length ||
-                safeRawResultJson.length <
-                AgentTextSanitizer.sanitizeUtf16(rawResultJson).trim().length ||
-                safeTerminalOutput.length <
-                AgentTextSanitizer.sanitizeUtf16(terminalOutput).trim().length
+        // These values are the user-visible projection of the canonical tool
+        // item. Keep their complete content; only labels/summaries below may
+        // use presentation shortening.
+        val safeArgsJson = AgentTextSanitizer.sanitizeUtf16(argsJson).trim()
+        val safeResultPreviewJson = AgentTextSanitizer.sanitizeUtf16(resultPreviewJson).trim()
+        val safeRawResultJson = AgentTextSanitizer.sanitizeUtf16(rawResultJson).trim()
+        val safeTerminalOutput = AgentTextSanitizer.sanitizeUtf16(terminalOutput).trim()
+        val safeReasoningContent = readReasoningContent(payload)
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+        val payloadCompacted = false
 
         return linkedMapOf<String, Any?>(
             "type" to "agent_tool_summary",
@@ -960,25 +883,13 @@ internal object AgentConversationHistorySupport {
             "agentName" to payload["agentName"]?.toString()?.trim()?.takeIf { it.isNotEmpty() },
             "taskId" to payload["taskId"],
             "cardId" to payload["cardId"]?.toString().orEmpty().ifEmpty { messageId },
-            "toolName" to trimText(
-                canonicalAgentToolName(payload["toolName"]?.toString().orEmpty()),
-                MAX_DISPLAY_INLINE_CHARS
-            ),
-            "displayName" to trimText(
-                payload["displayName"]?.toString().orEmpty(),
-                MAX_DISPLAY_INLINE_CHARS
-            ),
-            "toolTitle" to trimText(
-                payload["toolTitle"]?.toString().orEmpty(),
-                MAX_DISPLAY_INLINE_CHARS
-            ),
+            "toolName" to canonicalAgentToolName(payload["toolName"]?.toString().orEmpty()),
+            "displayName" to payload["displayName"]?.toString().orEmpty(),
+            "toolTitle" to payload["toolTitle"]?.toString().orEmpty(),
             "toolType" to toolType,
-            "serverName" to compactDisplayScalar(payload["serverName"]),
+            "serverName" to payload["serverName"],
             "status" to status,
-            "summary" to trimText(
-                payload["summary"]?.toString().orEmpty().ifEmpty { entry.summary },
-                MAX_TOOL_SUMMARY_CHARS
-            ),
+            "summary" to payload["summary"]?.toString().orEmpty().ifEmpty { entry.summary },
             "question" to clarificationQuestion.takeIf { it.isNotBlank() },
             "missingFields" to (
                 payload["missingFields"] ?:
@@ -986,37 +897,22 @@ internal object AgentConversationHistorySupport {
                     rawResultPayload["missingFields"]
             ),
             "reasoning_content" to safeReasoningContent,
-            "progress" to trimText(
-                payload["progress"]?.toString().orEmpty(),
-                MAX_TOOL_SUMMARY_CHARS
-            ),
-            "subagentStatusText" to trimText(
-                payload["subagentStatusText"]?.toString().orEmpty(),
-                MAX_TOOL_SUMMARY_CHARS
-            ),
-            "subagentEvents" to compactDisplayList(payload["subagentEvents"]),
+            "progress" to payload["progress"]?.toString().orEmpty(),
+            "subagentStatusText" to payload["subagentStatusText"]?.toString().orEmpty(),
+            "subagentEvents" to toListOfStringAnyMap(payload["subagentEvents"]),
             "argsJson" to safeArgsJson,
             "resultPreviewJson" to safeResultPreviewJson,
             "rawResultJson" to safeRawResultJson,
             "terminalOutput" to safeTerminalOutput,
             "terminalOutputDelta" to "",
-            "terminalSessionId" to compactDisplayScalar(payload["terminalSessionId"]),
-            "terminalStreamState" to trimText(
-                payload["terminalStreamState"]?.toString().orEmpty(),
-                MAX_DISPLAY_INLINE_CHARS
-            ),
-            "interruptedBy" to trimText(
-                payload["interruptedBy"]?.toString().orEmpty(),
-                MAX_DISPLAY_INLINE_CHARS
-            ),
-            "interruptionReason" to trimText(
-                payload["interruptionReason"]?.toString().orEmpty(),
-                MAX_TOOL_SUMMARY_CHARS
-            ),
+            "terminalSessionId" to payload["terminalSessionId"],
+            "terminalStreamState" to payload["terminalStreamState"]?.toString().orEmpty(),
+            "interruptedBy" to payload["interruptedBy"]?.toString().orEmpty(),
+            "interruptionReason" to payload["interruptionReason"]?.toString().orEmpty(),
             "timedOut" to parseBoolean(payload["timedOut"], default = false),
-            "workspaceId" to compactDisplayScalar(payload["workspaceId"]),
-            "artifacts" to compactDisplayList(payload["artifacts"]),
-            "actions" to compactDisplayList(payload["actions"]),
+            "workspaceId" to payload["workspaceId"],
+            "artifacts" to toListOfStringAnyMap(payload["artifacts"]),
+            "actions" to toListOfStringAnyMap(payload["actions"]),
             "success" to (
                 payload["success"]
                     ?: (status == AgentConversationHistoryRepository.STATUS_SUCCESS)
@@ -1024,7 +920,7 @@ internal object AgentConversationHistorySupport {
             "showScheduleAction" to (toolType == "schedule"),
             "showAlarmAction" to (toolType == "alarm"),
             "isHistorical" to true,
-            "historyRenderMode" to "compact",
+            "historyRenderMode" to "full",
             "payloadCompacted" to payloadCompacted,
             "argsJsonOriginalLength" to originalLengthIfCompacted(argsJson, safeArgsJson),
             "resultPreviewJsonOriginalLength" to originalLengthIfCompacted(
@@ -1052,11 +948,7 @@ internal object AgentConversationHistorySupport {
         val contentId = content["id"]?.toString()?.trim().orEmpty()
             .ifEmpty { messageId }
         val cardData = toStringAnyMap(content["cardData"])
-        val safeCardData = buildDisplaySafeUiCardData(
-            entry = entry,
-            cardData = cardData,
-            originalPayloadLength = entry.payloadJson.length
-        )
+        val safeCardData = buildDisplaySafeUiCardData(cardData)
         val safeContent = linkedMapOf<String, Any?>(
             "cardData" to safeCardData,
             "id" to contentId
@@ -1080,27 +972,7 @@ internal object AgentConversationHistorySupport {
     }
 
     fun compactDisplayStreamMeta(value: Any?): Map<String, Any?>? {
-        val raw = toStringAnyMap(value)
-        if (raw.isEmpty()) return null
-        val safe = linkedMapOf<String, Any?>()
-        listOf(
-            "seq",
-            "entrySeq",
-            "roundIndex",
-            "kind",
-            "parentTaskId",
-            "entryId",
-            "isFinal",
-            "source",
-            "agentId",
-            "agentName",
-            PENDING_SNAPSHOT_ACK
-        ).forEach { key ->
-            raw[key]?.let { candidate ->
-                safe[key] = compactDisplayScalar(candidate)
-            }
-        }
-        return safe.takeIf { it.isNotEmpty() }
+        return toStringAnyMap(value).takeIf { it.isNotEmpty() }
     }
 
     fun restoreToolPayloadFromUiMessage(
@@ -1276,100 +1148,42 @@ internal object AgentConversationHistorySupport {
         }
     }
 
-    private fun buildDisplaySafeUiCardData(
-        entry: AgentConversationEntry,
-        cardData: Map<String, Any?>,
-        originalPayloadLength: Int
-    ): Map<String, Any?> {
+    private fun buildDisplaySafeUiCardData(cardData: Map<String, Any?>): Map<String, Any?> {
         val type = cardData["type"]?.toString()?.trim().orEmpty()
         if (type.isEmpty()) {
-            return buildHistoryOmittedCardData(
-                originalType = "",
-                originalPayloadLength = originalPayloadLength,
-                summary = entry.summary.ifBlank { "历史过程卡片已折叠" }
-            )
+            return emptyMap()
         }
 
-        if (type == "deep_thinking") {
-            return buildDisplaySafeDeepThinkingCardData(
-                entry = entry,
-                cardData = cardData,
-                originalPayloadLength = originalPayloadLength
-            )
-        }
-
-        val compact = toStringAnyMap(compactDisplayValue(cardData, depth = 0))
-        val withHistoryMeta = linkedMapOf<String, Any?>().apply {
-            putAll(compact)
+        // A historical card is the same canonical item after process restart.
+        // Only its active presentation state changes; none of its content,
+        // nested fields, or item lists are application-truncated.
+        return linkedMapOf<String, Any?>().apply {
+            putAll(cardData)
             put("type", type)
-            put("isHistorical", true)
-            put("historyRenderMode", "compact")
-        }
-        if (gson.toJson(withHistoryMeta).length <= MAX_DISPLAY_CARD_JSON_CHARS) {
-            return withHistoryMeta
-        }
-
-        return buildHistoryOmittedCardData(
-            originalType = type,
-            originalPayloadLength = originalPayloadLength,
-            summary = cardData["summary"]?.toString()?.trim().orEmpty()
-                .ifEmpty { entry.summary.ifBlank { "历史过程卡片已折叠" } }
-        )
-    }
-
-    private fun buildDisplaySafeDeepThinkingCardData(
-        entry: AgentConversationEntry,
-        cardData: Map<String, Any?>,
-        originalPayloadLength: Int
-    ): Map<String, Any?> {
-        val thinking = cardData["thinkingContent"]?.toString().orEmpty()
-        val safeThinking = trimTailText(thinking, MAX_DISPLAY_THINKING_CHARS)
-        val rawStage = parseInt(cardData["stage"]) ?: 4
-        val displayStage = if (rawStage == 5) 5 else 4
-        val originalThinkingLength = AgentTextSanitizer.sanitizeUtf16(thinking).trim().length
-        val safeThinkingLength = AgentTextSanitizer.sanitizeUtf16(safeThinking).trim().length
-
-        return linkedMapOf<String, Any?>(
-            "type" to "deep_thinking",
-            "taskID" to (
-                cardData["taskID"]?.toString()?.trim()?.takeIf { it.isNotEmpty() }
-                    ?: extractTaskIdFromEntryId(entry.entryId)
-                ),
-            "cardId" to cardData["cardId"]?.toString()?.trim().orEmpty()
-                .ifEmpty { entry.entryId },
-            "thinkingContent" to safeThinking,
-            "thinkingContentTruncated" to (
-                parseBoolean(cardData["thinkingContentTruncated"], default = false) ||
-                    safeThinkingLength < originalThinkingLength
-                ),
-            "thinkingOriginalLength" to (
-                parseInt(cardData["thinkingOriginalLength"]) ?: originalThinkingLength
-                ),
-            "thinkingTruncateMode" to if (safeThinkingLength < originalThinkingLength) {
-                "head_omitted"
-            } else {
-                cardData["thinkingTruncateMode"]?.toString()?.trim().orEmpty()
-                    .ifEmpty { "none" }
-            },
-            "stage" to displayStage,
-            "isLoading" to false,
-            "startTime" to parseLong(cardData["startTime"]),
-            "endTime" to (
-                parseLong(cardData["endTime"])
-                    ?: maxOf(entry.createdAt, entry.updatedAt)
-                ),
-            "isExecutable" to parseBoolean(cardData["isExecutable"], default = false),
-            "isCollapsible" to true,
-            "isHistorical" to true,
-            "historyRenderMode" to "compact",
-            "payloadCompacted" to (
-                safeThinkingLength < originalThinkingLength ||
-                    originalPayloadLength > MAX_DISPLAY_CARD_JSON_CHARS
-                ),
-            "originalPayloadLength" to originalPayloadLength.takeIf {
-                it > MAX_DISPLAY_CARD_JSON_CHARS
+            put("isLoading", false)
+            if (type == "deep_thinking") {
+                if (parseInt(cardData["stage"]) != 5) {
+                    put("stage", 4)
+                }
+                put(
+                    "thinkingContentTruncated",
+                    parseBoolean(cardData["thinkingContentTruncated"], default = false)
+                )
+                put(
+                    "thinkingOriginalLength",
+                    parseInt(cardData["thinkingOriginalLength"])
+                        ?: cardData["thinkingContent"]?.toString().orEmpty().length
+                )
+                put(
+                    "thinkingTruncateMode",
+                    cardData["thinkingTruncateMode"]?.toString()?.trim().orEmpty()
+                        .ifEmpty { "none" }
+                )
+                put("isCollapsible", parseBoolean(cardData["isCollapsible"], default = true))
             }
-        ).filterValues { value -> value != null }
+            put("isHistorical", true)
+            put("historyRenderMode", "full")
+        }.filterValues { value -> value != null }
     }
 
     private fun buildHistoryOmittedCardData(

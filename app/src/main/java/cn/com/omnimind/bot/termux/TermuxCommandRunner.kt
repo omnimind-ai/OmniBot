@@ -11,13 +11,12 @@ data class TermuxCommandSpec(
     val executionMode: String = EXECUTION_MODE_TERMUX,
     val prootDistro: String? = null,
     val workingDirectory: String? = null,
-    val timeoutSeconds: Int = DEFAULT_TIMEOUT_SECONDS,
+    val timeoutSeconds: Int? = null,
     val environment: Map<String, String> = emptyMap()
 ) {
     companion object {
         const val EXECUTION_MODE_TERMUX = "termux"
         const val EXECUTION_MODE_PROOT = "proot"
-        const val DEFAULT_TIMEOUT_SECONDS = 60
     }
 }
 
@@ -162,17 +161,8 @@ object TermuxCommandRunner {
         return EmbeddedTerminalRuntime.isSupportedDevice()
     }
 
-    fun trimTerminalOutput(
-        text: String,
-        maxLines: Int = 600,
-        maxChars: Int = 64 * 1024
-    ): String {
-        return EmbeddedTerminalRuntime.trimTerminalOutput(
-            text = text,
-            maxLines = maxLines,
-            maxChars = maxChars
-        )
-    }
+    fun trimTerminalOutput(text: String): String =
+        EmbeddedTerminalRuntime.trimTerminalOutput(text)
 
     fun sanitizeTerminalNoise(text: String): String {
         return EmbeddedTerminalRuntime.sanitizeTerminalNoise(text)
@@ -186,11 +176,7 @@ object TermuxCommandRunner {
             ?.let { TerminalDistribution.fromId(it).id }
             ?: TerminalDistribution.selected().id
         return spec.copy(
-            executionMode = if (executionMode.isBlank()) {
-                TermuxCommandSpec.EXECUTION_MODE_PROOT
-            } else {
-                executionMode
-            },
+            executionMode = executionMode,
             prootDistro = prootDistro
         )
     }

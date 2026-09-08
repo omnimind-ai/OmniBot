@@ -86,6 +86,44 @@ class WorkspaceMountService {
     );
   }
 
+  static Future<WorkspaceMountEntry?> describeMountEntry(
+    String entryPath, {
+    required String rootPath,
+  }) async {
+    final normalizedRoot = _normalizePath(rootPath);
+    final normalizedEntryPath = _normalizePath(entryPath);
+    final parentPath = _normalizePath(File(normalizedEntryPath).parent.path);
+    if (parentPath != normalizedRoot) {
+      return null;
+    }
+    if (await FileSystemEntity.type(normalizedEntryPath, followLinks: false) !=
+        FileSystemEntityType.link) {
+      return null;
+    }
+    final String rawTarget;
+    try {
+      rawTarget = await Link(normalizedEntryPath).target();
+    } on FileSystemException {
+      return null;
+    }
+    if (rawTarget.trim().isEmpty) {
+      return null;
+    }
+    final resolvedTarget = _resolveLinkTargetPath(
+      linkPath: normalizedEntryPath,
+      rawTarget: rawTarget,
+    );
+    final sourceType = await FileSystemEntity.type(resolvedTarget);
+    return WorkspaceMountEntry(
+      alias: _basename(normalizedEntryPath),
+      linkPath: normalizedEntryPath,
+      sourcePath: resolvedTarget,
+      shellPath: '/workspace/${_basename(normalizedEntryPath)}',
+      sourceExists: sourceType != FileSystemEntityType.notFound,
+      sourceIsDirectory: sourceType == FileSystemEntityType.directory,
+    );
+  }
+
   static Future<WorkspaceMountEntry> mountDirectory({
     required String sourcePath,
     required String alias,

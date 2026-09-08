@@ -24,6 +24,66 @@ class OmniVlmReadiness {
   }
 }
 
+class OmniPluginActionItem {
+  const OmniPluginActionItem({
+    required this.id,
+    required this.pluginId,
+    required this.displayName,
+    required this.description,
+    required this.presentation,
+  });
+
+  final String id;
+  final String pluginId;
+  final String displayName;
+  final String description;
+  final Map<String, dynamic> presentation;
+
+  factory OmniPluginActionItem.fromMap(Map<dynamic, dynamic> raw) {
+    return OmniPluginActionItem(
+      id: (raw['id'] ?? '').toString(),
+      pluginId: (raw['pluginId'] ?? '').toString(),
+      displayName: (raw['displayName'] ?? '').toString(),
+      description: (raw['description'] ?? '').toString(),
+      presentation: Map<String, dynamic>.from(
+        (raw['presentation'] as Map?) ?? const <String, dynamic>{},
+      ),
+    );
+  }
+
+  bool supportsPlacement(String placement) {
+    final normalized = placement.trim();
+    if (normalized.isEmpty) return false;
+    if (presentation['placement']?.toString().trim() == normalized) {
+      return true;
+    }
+    final placements = presentation['placements'];
+    return placements is Iterable &&
+        placements.any((value) => value?.toString().trim() == normalized);
+  }
+
+  String localizedPresentationValue(
+    String key, {
+    required bool english,
+    required String fallback,
+  }) {
+    final value = presentation[key];
+    if (value is Map) {
+      final localized = value[english ? 'en' : 'zh']?.toString().trim() ?? '';
+      if (localized.isNotEmpty) return localized;
+      final englishValue = value['en']?.toString().trim() ?? '';
+      if (englishValue.isNotEmpty) return englishValue;
+      final chineseValue = value['zh']?.toString().trim() ?? '';
+      if (chineseValue.isNotEmpty) return chineseValue;
+    }
+    final text = value?.toString().trim() ?? '';
+    return text.isEmpty ? fallback : text;
+  }
+
+  int get quickLaunchOrder =>
+      int.tryParse(presentation['quickLaunchOrder']?.toString() ?? '') ?? 0;
+}
+
 class OmniPluginService {
   static const MethodChannel _channel = MethodChannel(
     'cn.com.omnimind.bot/PluginPlatform',
@@ -62,6 +122,34 @@ class OmniPluginService {
       'pluginId': pluginId,
       'enabled': enabled,
     });
+  }
+
+  static Future<List<OmniPluginActionItem>> listActions() async {
+    final raw = await _channel.invokeListMethod<dynamic>('listActions');
+    return raw
+            ?.whereType<Map>()
+            .map(OmniPluginActionItem.fromMap)
+            .where(
+              (action) => action.id.isNotEmpty && action.pluginId.isNotEmpty,
+            )
+            .toList(growable: false) ??
+        const <OmniPluginActionItem>[];
+  }
+
+  static Future<Map<String, dynamic>> invokeAction(
+    String pluginId,
+    String actionId, [
+    Map<String, dynamic> arguments = const <String, dynamic>{},
+  ]) async {
+    final raw = await _channel.invokeMapMethod<dynamic, dynamic>(
+      'invokeAction',
+      <String, Object?>{
+        'pluginId': pluginId,
+        'actionId': actionId,
+        'arguments': arguments,
+      },
+    );
+    return Map<String, dynamic>.from(raw ?? const <dynamic, dynamic>{});
   }
 
   static Future<OmniVlmReadiness> getVlmReadiness() async {

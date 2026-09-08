@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:ui/core/router/go_router_manager.dart';
 import 'package:ui/services/agent_runtime_service.dart';
+import 'package:ui/services/agent_web_action_presenter.dart';
+import 'package:ui/services/omni_plugin_service.dart';
 import 'package:ui/services/scene_model_config_service.dart';
 import 'package:ui/services/storage_service.dart';
 import 'package:ui/theme/theme_context.dart';
@@ -31,6 +33,8 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
   bool _refreshing = false;
   String? _error;
   String? _busyAgentId;
+  String? _busyPluginActionKey;
+  List<OmniPluginActionItem> _pluginActions = const <OmniPluginActionItem>[];
   int _catalogRequestId = 0;
   late Set<String> _preparingAgentIds;
   StreamSubscription<Set<String>>? _preparationSubscription;
@@ -59,6 +63,7 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
     // immediate; users can request the full terminal/proot probe with the
     // refresh action without blocking this page.
     unawaited(_load());
+    unawaited(_loadPluginActions());
     unawaited(_loadSharedModel());
     unawaited(_loadRemoteBridge());
   }
@@ -106,6 +111,21 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
     }
   }
 
+  Future<void> _loadPluginActions() async {
+    try {
+      final actions = await OmniPluginService.listActions();
+      if (!mounted) return;
+      setState(() {
+        _pluginActions = actions
+            .where((action) => action.supportsPlacement('agent_settings'))
+            .toList(growable: false);
+      });
+    } catch (_) {
+      // Agent configuration remains available if the optional action catalog
+      // cannot be read during app startup.
+    }
+  }
+
   Future<void> _load({bool refresh = false}) async {
     final requestId = ++_catalogRequestId;
     if (refresh) {
@@ -127,73 +147,12 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
       setState(() {
         _loading = false;
         _refreshing = false;
-        // Keep the built-in catalog visible when the native health probe is
-        // temporarily unavailable.  A probe error must not turn the whole
-        // Agent page into a blank/error-only screen.
-        _catalog = _catalog ?? _fallbackCatalog();
-        _error = error.toString();
+        // The native ACP catalog is the only source of truth. Keep an
+        // already loaded catalog on transient errors, but never invent a
+        // second list in Dart.
+        _error = formatAgentRuntimeErrorForUser(error, english: _english);
       });
     }
-  }
-
-  AcpAgentCatalog _fallbackCatalog() {
-    const agents = <AcpAgentProfile>[
-      AcpAgentProfile(
-        id: 'xiaowan-acp',
-        name: '小万',
-        command: 'omnibot-xiaowan-acp',
-        description: '小万内置能力通过官方 ACP Agent 接口提供',
-        builtIn: true,
-        source: 'official',
-        status: 'unchecked',
-      ),
-      AcpAgentProfile(
-        id: 'codex-acp',
-        name: 'Codex',
-        command: 'codex-acp',
-        description: 'OpenAI Codex through its managed ACP adapter',
-        builtIn: true,
-        source: 'official',
-        status: 'unchecked',
-        managedAdapter: true,
-      ),
-      AcpAgentProfile(
-        id: 'claude-code-acp',
-        name: 'Claude Code',
-        command: 'claude-agent-acp',
-        description: 'Claude Code through the ACP adapter',
-        builtIn: true,
-        source: 'official',
-        status: 'unchecked',
-        managedAdapter: true,
-      ),
-      AcpAgentProfile(
-        id: 'opencode-acp',
-        name: 'OpenCode',
-        command: 'opencode',
-        description: 'OpenCode ACP server',
-        arguments: <String>['acp'],
-        builtIn: true,
-        source: 'official',
-        status: 'unchecked',
-        managedAdapter: true,
-      ),
-      AcpAgentProfile(
-        id: 'deepseek-harness-acp',
-        name: 'DeepSeek Harness',
-        // Keep the fallback catalog identical to the native official
-        // profile. `dsh` is only the discovery command; the Android ACP
-        // launcher is `dsh-acp-android`.
-        command: 'dsh-acp-android',
-        description: 'DeepSeek Harness official ACP profile',
-        arguments: <String>['--profile', 'acp'],
-        builtIn: true,
-        source: 'official',
-        status: 'unchecked',
-        managedAdapter: true,
-      ),
-    ];
-    return AcpAgentCatalog(selectedAgentId: 'xiaowan-acp', agents: agents);
   }
 
   Future<void> _loadRemoteBridge() async {
@@ -264,7 +223,10 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
     if (!prepare) setState(() => _busyAgentId = agent.id);
     try {
       final result = prepare
-          ? await AgentRuntimeService.prepareAgentInBackground(agent.id)
+          ? await AgentRuntimeService.prepareAgentInBackground(
+              agent.id,
+              force: true,
+            )
           : await AgentRuntimeService.testAgent(agent.id);
       if (!mounted) return;
       await _load();
@@ -273,68 +235,77 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
       final installed =
           result['agent'] is Map &&
           (result['agent'] as Map)['installed'] == true;
-      final providerConfigurationPending = prepare && !ok && installed;
+      final initializationFailed = prepare && !ok && installed;
       final title = prepare
           ? (ok
-                ? _text('Harness 安装成功', 'Harness installation succeeded')
-                : providerConfigurationPending
+                ? _text('助手安装成功', 'Assistant installed')
+                : initializationFailed
                 ? _text(
-                    'Harness 已准备，等待 Dispatch Model 配置',
-                    'Harness is ready; Dispatch Model configuration is pending',
+                    '安装已完成，但助手未能启动',
+                    'Installed, but the assistant could not start',
                   )
-                : _text('Harness 安装失败', 'Harness installation failed'))
+                : _text('助手安装失败', 'Assistant installation failed'))
           : (ok
-                ? _text('Agent 检测成功', 'Agent check succeeded')
-                : _text('Agent 检测失败', 'Agent check failed'));
-      await showSettingsDetailSheet<void>(
-        context: context,
-        builder: (sheetContext) => SettingsDetailSheet(
-          key: ValueKey('agent-check-result-${agent.id}'),
-          title: title,
-          body: Semantics(
-            container: true,
-            liveRegion: true,
-            label: title,
-            child: SelectableText(
-              ok
-                  ? _formatCapabilities(result['capabilities'])
-                  : (result['error']?.toString() ??
-                        _text('未知错误', 'Unknown error')),
-            ),
-          ),
-        ),
+                ? _text('助手检查通过', 'Assistant is ready')
+                : _text('助手暂时无法启动', 'Assistant could not start'));
+      await _showActionResult(
+        agent,
+        title,
+        ok
+            ? _text('助手已准备好，可以开始对话。', 'The assistant is ready to chat.')
+            : _actionError(
+                result['error'],
+                installation: prepare && !installed,
+              ),
       );
     } catch (error) {
       if (!mounted) return;
-      showToast(error.toString(), type: ToastType.error);
+      await _showActionResult(
+        agent,
+        prepare
+            ? _text('安装未完成', 'Installation did not finish')
+            : _text('助手暂时无法启动', 'Assistant could not start'),
+        _actionError(error, installation: prepare),
+      );
     } finally {
       if (!prepare && mounted) setState(() => _busyAgentId = null);
     }
   }
 
-  String _formatCapabilities(dynamic value, {String indent = ''}) {
-    if (value is Map) {
-      return value.entries
-          .map((entry) {
-            final nested = entry.value;
-            if (nested is Map || nested is List) {
-              return '$indent${entry.key}:\n'
-                  '${_formatCapabilities(nested, indent: '$indent  ')}';
-            }
-            return '$indent${entry.key}: $nested';
-          })
-          .join('\n');
-    }
-    if (value is List) {
-      return value
-          .map(
-            (item) =>
-                '$indent- '
-                '${_formatCapabilities(item, indent: '$indent  ').trim()}',
-          )
-          .join('\n');
-    }
-    return '$indent$value';
+  Future<void> _showActionResult(
+    AcpAgentProfile agent,
+    String title,
+    String message,
+  ) async {
+    await showSettingsDetailSheet<void>(
+      context: context,
+      builder: (sheetContext) => SettingsDetailSheet(
+        key: ValueKey('agent-check-result-${agent.id}'),
+        title: title,
+        body: Semantics(
+          container: true,
+          liveRegion: true,
+          label: title,
+          child: SelectableText(message),
+        ),
+      ),
+    );
+  }
+
+  String _actionError(Object? error, {bool installation = false}) {
+    return formatAgentRuntimeErrorForUser(
+      error,
+      english: _english,
+      fallback: installation
+          ? _text(
+              '安装未完成，请检查网络后重新安装。',
+              'Installation did not finish. Check your connection and try again.',
+            )
+          : _text(
+              '助手未能启动，请重试；若仍失败，可重新安装。',
+              'The assistant could not start. Try again, or reinstall if the problem continues.',
+            ),
+    );
   }
 
   Future<void> _addCustomAgent() async {
@@ -352,7 +323,10 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
       });
     } catch (error) {
       if (!mounted) return;
-      showToast(error.toString(), type: ToastType.error);
+      showToast(
+        formatAgentRuntimeErrorForUser(error, english: _english),
+        type: ToastType.error,
+      );
     }
   }
 
@@ -362,6 +336,22 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
     );
     if (changed == true && mounted) {
       await _load();
+    }
+  }
+
+  String _pluginActionKey(OmniPluginActionItem action) =>
+      '${action.pluginId}/${action.id}';
+
+  Future<void> _invokePluginAction(OmniPluginActionItem action) async {
+    final key = _pluginActionKey(action);
+    if (_busyPluginActionKey != null) return;
+    setState(() => _busyPluginActionKey = key);
+    try {
+      await AgentWebActionPresenter.invoke(action, english: _english);
+    } finally {
+      if (mounted && _busyPluginActionKey == key) {
+        setState(() => _busyPluginActionKey = null);
+      }
     }
   }
 
@@ -428,8 +418,8 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
                   SettingsSectionTitle(
                     label: _text('托管 Agent', 'Managed Agents'),
                     subtitle: _text(
-                      '预置 Agent 始终显示；状态来自命令检测与 ACP initialize。所有 Agent 默认复用这里的统一 Provider 和模型，适配器只负责映射到官方配置。',
-                      'Built-in Agents always remain visible. Status comes from command detection and ACP initialize. All Agents reuse the shared Provider and model by default; adapters only map them to each official configuration surface.',
+                      '选择助手并配置模型。安装完成后，可返回聊天页使用；启动失败时可修改配置或重新安装。',
+                      'Choose an assistant and configure its model. Once installed, return to chat to use it. If it cannot start, update its configuration or reinstall it.',
                     ),
                   ),
                   _buildSharedModelSummary(card),
@@ -509,6 +499,16 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
                       ],
                     ),
                   ],
+                  if (_pluginActions.isNotEmpty) ...[
+                    const SizedBox(height: 24),
+                    _buildSectionLabel(
+                      _text('本地 Web 界面', 'Local Web interfaces'),
+                    ),
+                    for (var i = 0; i < _pluginActions.length; i++) ...[
+                      _buildPluginActionTile(_pluginActions[i]),
+                      if (i < _pluginActions.length - 1) _buildRowDivider(),
+                    ],
+                  ],
                   // 远程 PC Bridge：全局共享配置入口（仅配置远程 ACP 连接）。
                   const SizedBox(height: 24),
                   _buildSectionLabel(_text('远程运行', 'Remote runtime')),
@@ -561,7 +561,7 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              '${_text('统一 Provider / 模型：', 'Shared Provider / model: ')}$label',
+              '${_text('默认模型：', 'Default model: ')}$label',
               maxLines: 2,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
@@ -654,22 +654,12 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
         agent.enabled && (agent.status != 'missing' || agent.managedAdapter);
     final preparing = _preparingAgentIds.contains(agent.id);
     final busy = agent.id == _busyAgentId || preparing;
-    final needsManagedPreparation =
-        agent.managedAdapter &&
-        (agent.status == 'unchecked' || agent.status == 'missing') &&
-        (agent.lastCheckError?.contains('will be prepared') == true ||
-            agent.lastCheckError?.contains('未初始化') == true ||
-            agent.status == 'missing');
-    final isDeepSeekHarness = agent.id == 'deepseek-harness-acp';
-    final testLabel = needsManagedPreparation && isDeepSeekHarness
-        ? _text('安装官方 Harness', 'Install official Harness')
-        : needsManagedPreparation
-        ? _text('准备并初始化', 'Prepare & initialize')
-        : agent.status == 'unchecked'
-        ? _text('检测', 'Check')
+    final testLabel = agent.managedAdapter
+        ? agent.installed == true
+              ? _text('重新安装', 'Reinstall')
+              : _text('安装', 'Install')
         : _text('重新检测', 'Check again');
-    final installEntry = agent.managedAdapter && agent.status != 'online';
-    final action = needsManagedPreparation ? _prepare : _test;
+    final action = agent.managedAdapter ? _prepare : _test;
     final capabilitySubtitle = _capabilitySubtitle(agent);
     return _FlatTile(
       tileKey: Key('agent-config-${agent.id}'),
@@ -687,25 +677,56 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
           : status.label,
       subtitle:
           capabilitySubtitle ??
-          (agent.description.isNotEmpty
+          (agent.managedAdapter || agent.id == 'xiaowan-acp'
+              ? null
+              : agent.description.isNotEmpty
               ? agent.description
               : ([agent.command, ...agent.arguments]).join(' ')),
       subtitleMonospace:
           capabilitySubtitle == null && agent.description.isEmpty,
-      errorText: hasError && !preparing ? agent.lastCheckError : null,
+      errorText: hasError && !preparing
+          ? _actionError(
+              agent.lastCheckError,
+              installation: agent.installed == false,
+            )
+          : null,
       actionLabel: canTest ? testLabel : null,
       actionKey: Key('agent-check-${agent.id}'),
       onAction: canTest ? () => action(agent) : null,
-      navigationLabel: installEntry
-          ? _text('安装', 'Install')
-          : _text('配置', 'Configure'),
+      navigationLabel: _text('配置', 'Configure'),
       navigationKey: Key('agent-navigation-${agent.id}'),
       busy: busy,
       onTap: preparing
           ? () {}
-          : installEntry
-          ? () => _prepare(agent)
           : () => _openAgentConfig(agent),
+    );
+  }
+
+  Widget _buildPluginActionTile(OmniPluginActionItem action) {
+    final palette = context.omniPalette;
+    final key = _pluginActionKey(action);
+    final busy = _busyPluginActionKey == key;
+    final disabled = _busyPluginActionKey != null;
+    final label = action.localizedPresentationValue(
+      'label',
+      english: _english,
+      fallback: action.displayName,
+    );
+    final description = action.localizedPresentationValue(
+      'description',
+      english: _english,
+      fallback: action.description,
+    );
+    return _FlatTile(
+      tileKey: Key('plugin-action-$key'),
+      leading: Icon(LucideIcons.globe2, size: 18, color: palette.accentPrimary),
+      title: label,
+      subtitle: description,
+      actionLabel: _text('打开', 'Open'),
+      actionKey: Key('plugin-action-button-$key'),
+      onAction: disabled ? null : () => _invokePluginAction(action),
+      busy: busy,
+      onTap: disabled ? null : () => _invokePluginAction(action),
     );
   }
 
@@ -720,16 +741,16 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage> {
     if (!authoring && !install) return null;
     if (_english) {
       return authoring && install
-          ? 'Plugins: create and install through the Harness'
+          ? 'Plugins: create and install through the assistant'
           : authoring
-          ? 'Plugins: create through the Harness'
-          : 'Plugins: install through the Harness';
+          ? 'Plugins: create through the assistant'
+          : 'Plugins: install through the assistant';
     }
     return authoring && install
-        ? '插件：可创建，并由 Harness 安装'
+        ? '插件：可通过助手创建和安装'
         : authoring
-        ? '插件：可通过 Harness 创建'
-        : '插件：可通过 Harness 安装';
+        ? '插件：可通过助手创建'
+        : '插件：可通过助手安装';
   }
 }
 
@@ -872,7 +893,7 @@ class _FlatTile extends StatelessWidget {
 
   final Widget leading;
   final String title;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
   final Key? tileKey;
   final Color? statusColor;
   final String? statusLabel;
@@ -1067,7 +1088,7 @@ class _FlatTile extends StatelessWidget {
                           ),
                         ),
                       )
-                    else
+                    else if (!busy && actionLabel == null)
                       Icon(
                         LucideIcons.chevronRight,
                         size: 18,
@@ -1115,7 +1136,7 @@ Map<String, String> _parseEnvironment(String source) {
       color: const Color(0xFF98A2B3),
     ),
     'offline' => (
-      label: english ? 'Initialization failed' : '初始化失败',
+      label: english ? 'Could not start' : '启动失败',
       color: const Color(0xFFE05252),
     ),
     _ => (label: english ? 'Unchecked' : '未检测', color: const Color(0xFFE3A52B)),

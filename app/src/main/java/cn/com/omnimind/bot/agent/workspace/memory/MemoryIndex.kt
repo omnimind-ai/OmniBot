@@ -26,7 +26,7 @@ data class LongTermMemoryEntry(
 class LongTermMemoryIndex(
     private val workspaceManager: AgentWorkspaceManager
 ) {
-    fun list(limit: Int = 200): List<LongTermMemoryEntry> {
+    fun list(limit: Int? = null): List<LongTermMemoryEntry> {
         val file = runCatching { workspaceManager.longTermMemoryMarkdownFile() }
             .getOrNull() ?: return emptyList()
         if (!file.exists()) return emptyList()
@@ -49,38 +49,14 @@ class LongTermMemoryIndex(
                     tokens = estimateTokens(body)
                 )
             )
-            if (entries.size >= limit) break
+            if (limit != null && entries.size >= limit) break
         }
         return entries
     }
 
     fun get(slug: String): LongTermMemoryEntry? {
         if (slug.isBlank()) return null
-        return list(limit = Int.MAX_VALUE).firstOrNull { it.slug == slug }
-    }
-
-    /**
-     * Render a short summary suitable for injection into the system prompt:
-     * `- [slug] title (NN tok)` per line. Lets the LLM see WHAT's available
-     * without spending tokens on the full body — it can `memory_load(slug)`
-     * any entry it needs.
-     */
-    fun summaryForPrompt(
-        maxEntries: Int = 80,
-        maxCharsPerEntry: Int = 120
-    ): String {
-        val entries = list(limit = maxEntries)
-        if (entries.isEmpty()) return ""
-        return buildString {
-            for (entry in entries) {
-                val titleTruncated = if (entry.title.length > maxCharsPerEntry) {
-                    entry.title.take(maxCharsPerEntry) + "…"
-                } else {
-                    entry.title
-                }
-                appendLine("- [${entry.slug}] $titleTruncated")
-            }
-        }.trim()
+        return list().firstOrNull { it.slug == slug }
     }
 
     companion object {

@@ -1,7 +1,6 @@
 package cn.com.omnimind.bot.agent
 
 import cn.com.omnimind.baselib.llm.ChatCompletionMessage
-import cn.com.omnimind.bot.agent.workspace.memory.TurnMemoryLoadTracker
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
@@ -16,19 +15,18 @@ import kotlinx.serialization.json.JsonPrimitive
  * Spawns and supervises real subagents.
  *
  * Each task gets:
- *  - its own AgentOrchestrator instance with a filtered tool catalog
- *    ([SubagentToolCatalogView]) so it can only use tools allowed by its profile
- *  - its own [TurnMemoryLoadTracker] so subagent loads don't leak into the
- *    parent's same-turn dedup
- *  - hard caps on rounds (per profile, default 12) and output tokens (4096)
+ *  - its own AgentOrchestrator instance using the parent harness's existing
+ *    tool catalog
+ *  - the parent runtime owns lifecycle and cancellation; no implicit round or token cap
  *
  * Parent cancellation propagates naturally through structured concurrency:
  * if the parent's tool call is cancelled, [supervisorScope] tears down every
  * in-flight subagent's coroutine.
  *
  * NOTE: We deliberately reuse the parent's existing [AgentToolExecutor]
- * router rather than constructing a new one — the router is stateless per
- * call, so this saves resources. The lazy provider is required because
+ * router rather than constructing a new one. The router may own terminal,
+ * browser, or plugin resources, so child orchestrators are explicitly
+ * non-owners and must never dispose it. The lazy provider is required because
  * SubagentToolHandler → SubagentDispatcher → router is a construction-time
  * cycle that we break with deferred lookup.
  */
@@ -44,8 +42,7 @@ class SubagentDispatcher(
 
     data class SubagentTaskSpec(
         val profileId: String,
-        val instruction: String,
-        val budgetRounds: Int? = null
+        val instruction: String
     )
 
     data class SubagentRunResult(
@@ -92,7 +89,8 @@ class SubagentDispatcher(
         progressReporter: (suspend (SubagentProgressEvent) -> Unit)? = null
     ): List<SubagentRunResult> {
         if (tasks.isEmpty()) return emptyList()
-        val limit = concurrency.coerceIn(1, 6)
+        require(concurrency > 0) { "concurrency must be positive" }
+        val limit = concurrency
         val progressSequence = AtomicLong(0)
         emitProgress(
             progressReporter,
@@ -135,12 +133,9 @@ class SubagentDispatcher(
                 taskIndex = taskIndex,
                 subagentId = subagentId,
                 profileId = profile.id,
-                summary = "SubAgent #${taskIndex + 1} 开始：${compactProgressText(spec.instruction)}"
+                summary = "SubAgent #${taskIndex + 1} 开始：${normalizeSubagentProgressText(spec.instruction)}"
             )
-            val filteredCatalog = SubagentToolCatalogView(
-                parent = parentCatalogProvider(),
-                allowed = profile.allowedTools
-            )
+            val harnessCatalog = inheritedSubagentCatalog(parentCatalogProvider(), profile)
             val systemMessage = ChatCompletionMessage(
                 role = "system",
                 content = JsonPrimitive(profile.systemPrompt)
@@ -155,7 +150,6 @@ class SubagentDispatcher(
                 runtimeContextRepository = parentEnv.runtimeContextRepository,
                 workspaceDescriptor = parentEnv.workspaceDescriptor,
                 resolvedSkills = emptyList(),
-                failureLearningSkill = null,
                 workspaceManager = parentEnv.workspaceManager,
                 workspaceMemoryService = parentEnv.workspaceMemoryService,
                 conversationMode = parentEnv.conversationMode,
@@ -163,8 +157,8 @@ class SubagentDispatcher(
                 modelProviderProfileId = parentEnv.modelProviderProfileId,
                 terminalEnvironment = parentEnv.terminalEnvironment,
                 runControl = NoOpAgentRunControl,
-                longTermMemoryIndex = parentEnv.longTermMemoryIndex,
-                turnMemoryLoadTracker = TurnMemoryLoadTracker()
+                permissionRequester = parentEnv.permissionRequester,
+                longTermMemoryIndex = parentEnv.longTermMemoryIndex
             )
             val silentCallback = ReportingSubagentCallback(
                 taskIndex = taskIndex,
@@ -175,11 +169,12 @@ class SubagentDispatcher(
             )
             val orchestrator = AgentOrchestrator(
                 llmClient = llmClient,
-                toolRegistry = filteredCatalog,
+                toolRegistry = harnessCatalog,
                 toolRouter = toolExecutorProvider(),
                 eventAdapter = eventAdapter,
                 model = model,
-                toolImageContinuationPolicy = toolImageContinuationPolicy
+                toolImageContinuationPolicy = toolImageContinuationPolicy,
+                ownsToolRouter = false
             )
             val result = orchestrator.run(
                 AgentOrchestrator.Input(
@@ -187,11 +182,6 @@ class SubagentDispatcher(
                     initialMessages = listOf(systemMessage, userMessage),
                     executionEnv = subEnv,
                     conversationId = null,
-                    contextCompactor = null,
-                    maxModelRounds = spec.budgetRounds
-                        ?.coerceIn(1, profile.maxRounds)
-                        ?: profile.maxRounds,
-                    maxCompletionTokens = profile.maxOutputTokens
                 )
             )
             when (result) {
@@ -204,7 +194,7 @@ class SubagentDispatcher(
                         subagentId = subagentId,
                         profileId = profile.id,
                         status = "completed",
-                        summary = "SubAgent #${taskIndex + 1} 得到结果：${compactProgressText(result.response.content)}"
+                        summary = "SubAgent #${taskIndex + 1} 得到结果：${normalizeSubagentProgressText(result.response.content)}"
                     )
                     SubagentRunResult(
                         subagentId = subagentId,
@@ -224,7 +214,7 @@ class SubagentDispatcher(
                         subagentId = subagentId,
                         profileId = profile.id,
                         status = "failed",
-                        summary = "SubAgent #${taskIndex + 1} 失败：${compactProgressText(result.message)}"
+                        summary = "SubAgent #${taskIndex + 1} 失败：${normalizeSubagentProgressText(result.message)}"
                     )
                     SubagentRunResult(
                         subagentId = subagentId,
@@ -248,7 +238,7 @@ class SubagentDispatcher(
                 subagentId = subagentId,
                 profileId = profile.id,
                 status = "failed",
-                summary = "SubAgent #${taskIndex + 1} 失败：${compactProgressText(e.message ?: "subagent execution failed")}"
+                summary = "SubAgent #${taskIndex + 1} 失败：${normalizeSubagentProgressText(e.message ?: "subagent execution failed")}"
             )
             SubagentRunResult(
                 subagentId = subagentId,
@@ -289,14 +279,13 @@ class SubagentDispatcher(
         )
     }
 
-    private fun compactProgressText(text: String, limit: Int = 160): String {
-        val normalized = text
-            .replace(Regex("\\s+"), " ")
-            .trim()
-        if (normalized.length <= limit) return normalized
-        return normalized.take(limit).trimEnd() + "..."
-    }
 }
+
+/** Role permissions narrow the parent catalog; they never add capabilities or execution budgets. */
+internal fun inheritedSubagentCatalog(
+    parent: AgentToolCatalog,
+    profile: SubagentProfile = SubagentProfileRegistry.general,
+): AgentToolCatalog = if (profile.id == "general") parent else SubagentToolCatalogView(parent, profile.id)
 
 /**
  * Callback that swallows subagent streaming output (we don't want subagent
@@ -376,7 +365,7 @@ private class ReportingSubagentCallback(
     }
 
     override suspend fun onChatMessage(message: String) {
-        val text = compactProgressText(message)
+        val text = normalizeSubagentProgressText(message)
         if (text.isNotEmpty()) {
             emit(kind = "message", summary = "SubAgent #${taskIndex + 1} 输出：$text")
         }
@@ -414,14 +403,10 @@ private class ReportingSubagentCallback(
             .map { it.trim() }
             .filter { it.isNotEmpty() }
         val candidate = lines.lastOrNull().orEmpty()
-        return compactProgressText(candidate)
-    }
-
-    private fun compactProgressText(text: String, limit: Int = 160): String {
-        val normalized = text
-            .replace(Regex("\\s+"), " ")
-            .trim()
-        if (normalized.length <= limit) return normalized
-        return normalized.take(limit).trimEnd() + "..."
+        return normalizeSubagentProgressText(candidate)
     }
 }
+
+internal fun normalizeSubagentProgressText(text: String): String = text
+    .replace(Regex("\\s+"), " ")
+    .trim()

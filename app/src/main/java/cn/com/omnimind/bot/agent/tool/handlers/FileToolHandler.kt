@@ -180,11 +180,23 @@ class FileToolHandler(
         toolHandle: AgentToolExecutionHandle
     ): ToolExecutionResult {
         return when (toolCall.function.name) {
-            "file_read", "read" -> executeFileRead(args, env.workspaceDescriptor, callback)
+            "file_read", "read" -> executeFileRead(
+                args,
+                env.workspaceDescriptor,
+                callback,
+            )
             "file_write", "write" -> executeFileWrite(args, env.workspaceDescriptor, callback)
             "file_edit", "edit" -> executeFileEdit(args, env.workspaceDescriptor, callback)
-            "file_list", "glob" -> executeFileList(args, env.workspaceDescriptor, callback)
-            "file_search", "grep" -> executeFileSearch(args, env.workspaceDescriptor, callback)
+            "file_list", "glob" -> executeFileList(
+                args,
+                env.workspaceDescriptor,
+                callback,
+            )
+            "file_search", "grep" -> executeFileSearch(
+                args,
+                env.workspaceDescriptor,
+                callback,
+            )
             "file_stat" -> executeFileStat(args, env.workspaceDescriptor, callback)
             "file_move" -> executeFileMove(args, env.workspaceDescriptor, callback)
             else -> ToolExecutionResult.Error(toolCall.function.name, "Unknown file tool")
@@ -210,9 +222,6 @@ class FileToolHandler(
             )
             require(file.exists()) { "文件不存在：${file.absolutePath}" }
             require(file.isFile) { "目标不是文件：${file.absolutePath}" }
-            val maxChars = args["maxChars"]?.jsonPrimitive?.intOrNull
-                ?.coerceIn(128, 64_000)
-                ?: SharedHelper.DEFAULT_FILE_READ_MAX_CHARS
             val offset = args["offset"]?.jsonPrimitive?.intOrNull?.coerceAtLeast(0) ?: 0
             val lineStart = args["lineStart"]?.jsonPrimitive?.intOrNull?.coerceAtLeast(1)
             val lineCount = args["lineCount"]?.jsonPrimitive?.intOrNull?.coerceAtLeast(1)
@@ -252,7 +261,7 @@ class FileToolHandler(
                     "path" to shellPath,
                     "androidPath" to file.absolutePath,
                     "uri" to artifact.uri,
-                    "content" to helper.truncateText(sliced, maxChars),
+                    "content" to sliced,
                     "size" to file.length(),
                     "mimeType" to mimeType
                 )
@@ -419,12 +428,17 @@ class FileToolHandler(
             }
             require(directory.exists() && directory.isDirectory) { "目录不存在：${directory.absolutePath}" }
             val recursive = args["recursive"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
-            val maxDepth = args["maxDepth"]?.jsonPrimitive?.intOrNull?.coerceIn(1, 6) ?: 2
-            val limit = args["limit"]?.jsonPrimitive?.intOrNull?.coerceIn(1, 1000) ?: SharedHelper.DEFAULT_FILE_LIST_LIMIT
+            val maxDepth = args["maxDepth"]?.jsonPrimitive?.intOrNull?.takeIf { it > 0 }
+            val limit = args["limit"]?.jsonPrimitive?.intOrNull?.takeIf { it > 0 }
             val files = if (recursive) {
-                directory.walkTopDown().maxDepth(maxDepth).drop(1).take(limit).toList()
+                val walked = directory.walkTopDown()
+                val depthLimited = if (maxDepth != null) walked.maxDepth(maxDepth) else walked
+                val result = if (limit != null) depthLimited.take(limit) else depthLimited
+                result.drop(1).toList()
             } else {
-                directory.listFiles()?.sortedBy { it.name.lowercase() }?.take(limit) ?: emptyList()
+                val entries = directory.listFiles()?.sortedBy { it.name.lowercase() }
+                    ?: emptyList()
+                if (limit != null) entries.take(limit) else entries
             }
             val payload = linkedMapOf<String, Any?>(
                 "path" to (workspaceManager.shellPathForAndroid(directory) ?: directory.absolutePath),
@@ -478,11 +492,11 @@ class FileToolHandler(
             }
             require(directory.exists() && directory.isDirectory) { "目录不存在：${directory.absolutePath}" }
             val caseSensitive = args["caseSensitive"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
-            val maxResults = args["maxResults"]?.jsonPrimitive?.intOrNull?.coerceIn(1, 200) ?: SharedHelper.DEFAULT_FILE_SEARCH_LIMIT
+            val maxResults = args["maxResults"]?.jsonPrimitive?.intOrNull?.takeIf { it > 0 }
             val searchNeedle = if (caseSensitive) query else query.lowercase()
             val results = mutableListOf<Map<String, Any?>>()
             directory.walkTopDown().forEach { file ->
-                if (results.size >= maxResults) return@forEach
+                if (maxResults != null && results.size >= maxResults) return@forEach
                 if (!file.isFile) return@forEach
                 val normalizedName = if (caseSensitive) file.name else file.name.lowercase()
                 if (normalizedName.contains(searchNeedle)) {
@@ -496,19 +510,25 @@ class FileToolHandler(
                     )
                     return@forEach
                 }
-                if (file.length() > 512 * 1024) return@forEach
-                val text = runCatching { file.readText() }.getOrNull() ?: return@forEach
-                val haystack = if (caseSensitive) text else text.lowercase()
+                val matchingLine = runCatching {
+                    file.bufferedReader().useLines { lines ->
+                        lines.firstOrNull { line ->
+                            val haystack = if (caseSensitive) line else line.lowercase()
+                            haystack.contains(searchNeedle)
+                        }
+                    }
+                }.getOrNull() ?: return@forEach
+                val haystack = if (caseSensitive) matchingLine else matchingLine.lowercase()
                 val index = haystack.indexOf(searchNeedle)
                 if (index >= 0) {
                     val start = (index - 40).coerceAtLeast(0)
-                    val end = (index + query.length + 120).coerceAtMost(text.length)
+                    val end = (index + query.length + 120).coerceAtMost(matchingLine.length)
                     results.add(
                         mapOf(
                             "path" to (workspaceManager.shellPathForAndroid(file) ?: file.absolutePath),
                             "androidPath" to file.absolutePath,
                             "matchType" to "content",
-                            "snippet" to text.substring(start, end)
+                            "snippet" to matchingLine.substring(start, end)
                         )
                     )
                 }

@@ -3,27 +3,29 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:ui/l10n/l10n.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:ui/core/router/go_router_manager.dart';
 import 'package:ui/features/home/pages/chat/chat_page_models.dart';
+import 'package:ui/features/home/pages/chat/services/chat_conversation_runtime_coordinator.dart';
 import 'package:ui/features/home/widgets/conversation_slidable.dart';
 import 'package:ui/features/home/widgets/home_drawer_search_field.dart';
+import 'package:ui/l10n/l10n.dart';
 import 'package:ui/l10n/legacy_text_localizer.dart';
 import 'package:ui/models/chat_message_model.dart';
 import 'package:ui/models/conversation_model.dart';
 import 'package:ui/models/conversation_thread_target.dart';
 import 'package:ui/models/scheduled_task.dart';
+import 'package:ui/services/agent_web_action_presenter.dart';
 import 'package:ui/services/assists_core_service.dart';
 import 'package:ui/services/conversation_history_service.dart';
 import 'package:ui/services/conversation_service.dart';
+import 'package:ui/services/omni_plugin_service.dart';
 import 'package:ui/services/omnibot_resource_service.dart';
 import 'package:ui/services/scheduled_task_storage_service.dart';
 import 'package:ui/services/storage_service.dart';
-import 'package:ui/features/home/pages/chat/services/chat_conversation_runtime_coordinator.dart';
 import 'package:ui/theme/app_colors.dart';
 import 'package:ui/theme/theme_context.dart';
 import 'package:ui/utils/cache_util.dart';
@@ -179,6 +181,8 @@ class HomeDrawerState extends ConsumerState<HomeDrawer> {
   StreamSubscription<List<ScheduledTask>>? _scheduledTasksChangedSubscription;
   final ChatConversationRuntimeCoordinator _runtimeCoordinator =
       ChatConversationRuntimeCoordinator.instance;
+  List<OmniPluginActionItem> _webQuickActions = const <OmniPluginActionItem>[];
+  String? _busyWebQuickActionKey;
 
   @override
   void initState() {
@@ -204,6 +208,7 @@ class HomeDrawerState extends ConsumerState<HomeDrawer> {
         .scheduledTasksChangedStream
         .listen(_handleScheduledTasksChanged);
     _loadConversations();
+    unawaited(_loadWebQuickActions());
   }
 
   @override
@@ -250,6 +255,55 @@ class HomeDrawerState extends ConsumerState<HomeDrawer> {
 
   void reloadConversations() {
     _loadConversations();
+    unawaited(_loadWebQuickActions());
+  }
+
+  Future<void> _loadWebQuickActions() async {
+    try {
+      final actions = await OmniPluginService.listActions();
+      if (!mounted) return;
+      final quickActions =
+          actions
+              .where(
+                (action) =>
+                    action.supportsPlacement('home_drawer_quick_launch') &&
+                    (action.presentation['agentId']
+                            ?.toString()
+                            .trim()
+                            .isNotEmpty ??
+                        false),
+              )
+              .toList(growable: false)
+            ..sort((left, right) {
+              final order = left.quickLaunchOrder.compareTo(
+                right.quickLaunchOrder,
+              );
+              return order != 0
+                  ? order
+                  : left.displayName.compareTo(right.displayName);
+            });
+      setState(() => _webQuickActions = quickActions);
+    } catch (error) {
+      debugPrint('[HomeDrawer] failed to load Web quick actions: $error');
+      if (mounted && _webQuickActions.isNotEmpty) {
+        setState(() => _webQuickActions = const <OmniPluginActionItem>[]);
+      }
+    }
+  }
+
+  Future<void> _invokeWebQuickAction(OmniPluginActionItem action) async {
+    if (_busyWebQuickActionKey != null) return;
+    final key = '${action.pluginId}/${action.id}';
+    final english = Localizations.localeOf(context).languageCode == 'en';
+    setState(() => _busyWebQuickActionKey = key);
+    _maybeCloseDrawer();
+    try {
+      await AgentWebActionPresenter.invoke(action, english: english);
+    } finally {
+      if (mounted && _busyWebQuickActionKey == key) {
+        setState(() => _busyWebQuickActionKey = null);
+      }
+    }
   }
 
   void unfocusSearch() {
@@ -267,6 +321,7 @@ class HomeDrawerState extends ConsumerState<HomeDrawer> {
           children: [
             const SizedBox(height: 16),
             Expanded(child: _buildConversationSection()),
+            if (_webQuickActions.isNotEmpty) _buildWebQuickLaunchBar(),
             _buildFooterShortcutBar(),
             // Aligns this row's bottom edge with the chat composer's bottom
             // edge (both sit this far above the shared SafeArea bottom).

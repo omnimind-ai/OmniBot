@@ -34,7 +34,7 @@ export function buildChatCompletionRequest(model, prompt = DEFAULT_PROMPT) {
     model: String(model).trim(),
     messages: [{ role: "user", content: String(prompt) }],
     stream: false,
-    max_tokens: 8,
+    max_tokens: 1024,
   };
 }
 
@@ -72,10 +72,7 @@ function completionSucceeded(payload) {
   if (typeof message?.content === "string" && message.content.trim().length > 0) {
     return true;
   }
-  // Reasoning-first models may spend a deliberately tiny smoke budget on
-  // reasoning and return content=null while still returning a valid assistant
-  // message and finish reason. That is a successful transport/API check.
-  return message?.role === "assistant" && typeof choice?.finish_reason === "string";
+  return false;
 }
 
 export async function runProviderSmoke({
@@ -131,18 +128,26 @@ export async function runProviderSmoke({
   };
 }
 
-export async function runProviderSmokeFromEnvironment(env = process.env) {
+export function providerSmokeConfigFromEnvironment(env = process.env) {
   const apiKey = String(
     env.OMNIBOT_TEST_API_KEY || env.LLMTHU_API_KEY || env.OPENAI_API_KEY || "",
   ).trim();
   const baseUrl = String(
-    env.OMNIBOT_TEST_BASE_URL || env.LLMTHU_API_BASE_URL || "https://llmapi.paratera.com",
+    env.OMNIBOT_TEST_BASE_URL ||
+      env.LLMTHU_API_BASE ||
+      env.LLMTHU_API_BASE_URL ||
+      "https://llmapi.paratera.com",
   ).trim();
   const model = String(
     env.OMNIBOT_TEST_MODEL || env.LLMTHU_MODEL || "GLM-5.1",
   ).trim();
-  const timeoutMs = Number(env.OMNIBOT_TEST_TIMEOUT_MS || 30_000);
-  const signal = AbortSignal.timeout(Number.isFinite(timeoutMs) ? timeoutMs : 30_000);
+  const timeoutMs = Number(env.OMNIBOT_TEST_TIMEOUT_MS || 120_000);
+  return { apiKey, baseUrl, model, timeoutMs };
+}
+
+export async function runProviderSmokeFromEnvironment(env = process.env) {
+  const { apiKey, baseUrl, model, timeoutMs } = providerSmokeConfigFromEnvironment(env);
+  const signal = AbortSignal.timeout(Number.isFinite(timeoutMs) ? timeoutMs : 120_000);
   const result = await runProviderSmoke({
     baseUrl,
     apiKey,

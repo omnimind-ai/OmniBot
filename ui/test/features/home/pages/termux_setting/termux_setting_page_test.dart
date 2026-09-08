@@ -24,6 +24,7 @@ void main() {
   late Completer<void> switchHandlerDone;
   late bool switchShouldFail;
   late bool cancelCalled;
+  late Future<Map<String, dynamic>> Function() readInventory;
 
   setUp(() async {
     workspaceDirectory = await Directory.systemTemp.createTemp(
@@ -40,6 +41,7 @@ void main() {
     switchHandlerDone = Completer<void>();
     switchShouldFail = false;
     cancelCalled = false;
+    readInventory = () async => {'packages': <String, dynamic>{}};
 
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
@@ -52,7 +54,7 @@ void main() {
         case 'getEmbeddedTerminalDistribution':
           return 'alpine';
         case 'getEmbeddedTerminalSetupInventory':
-          return <String, dynamic>{'packages': <String, dynamic>{}};
+          return readInventory();
         case 'getEmbeddedTerminalAutoStartTasks':
           return <String, dynamic>{'tasks': <dynamic>[]};
         case 'switchEmbeddedTerminalDistribution':
@@ -125,6 +127,122 @@ void main() {
     switchGate.complete();
     await tester.runAsync(() => switchHandlerDone.future);
     await tester.pump();
+  });
+
+  testWidgets('检测异常不显示全部缺失且不勾选安装', (tester) async {
+    readInventory = () async =>
+        throw PlatformException(code: 'PROBE_FAILED', message: 'probe failed');
+    await pumpTestPage(tester);
+    expect(find.text('probe failed'), findsOneWidget);
+    expect(find.text('检测未完成，请重新检测以确认组件状态。'), findsOneWidget);
+    final boxes = tester.widgetList<Checkbox>(find.byType(Checkbox));
+    expect(boxes, isNotEmpty);
+    expect(
+      boxes.every((box) => box.value == false && box.onChanged == null),
+      isTrue,
+    );
+  });
+
+  testWidgets('仅明确缺失项可选，检测失败项不可安装', (tester) async {
+    readInventory = () async => {
+      'packages': {
+        'nodejs': {'ready': false, 'version': null},
+        'npm': {'ready': null, 'version': null},
+        'git': {'ready': true, 'version': 'git-test'},
+      },
+    };
+    await pumpTestPage(tester);
+    final boxes = tester.widgetList<Checkbox>(find.byType(Checkbox)).toList();
+    expect(boxes.where((box) => box.value == true).length, 1);
+    expect(boxes.where((box) => box.onChanged != null).length, 1);
+    expect(find.text('git-test'), findsOneWidget);
+  });
+
+  for (final failOld in [false, true]) {
+    testWidgets('切换发行版后忽略旧检测${failOld ? '异常' : '成功'}', (tester) async {
+      final old = Completer<Map<String, dynamic>>();
+      var calls = 0;
+      readInventory = () async {
+        if (calls++ == 0) return old.future;
+        return {
+          'packages': {
+            'nodejs': {'ready': true, 'version': 'ubuntu-current'},
+          },
+        };
+      };
+      await pumpTestPage(tester);
+      await tester.tap(find.text('Ubuntu'));
+      switchGate.complete();
+      await tester.runAsync(() async {
+        await switchHandlerDone.future;
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('ubuntu-current'), findsOneWidget);
+      if (failOld) {
+        old.completeError(
+          PlatformException(code: 'OLD', message: 'stale-error'),
+        );
+      } else {
+        old.complete({
+          'packages': {
+            'nodejs': {'ready': true, 'version': 'alpine-stale'},
+          },
+        });
+      }
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('ubuntu-current'), findsOneWidget);
+      expect(find.text('alpine-stale'), findsNothing);
+      expect(find.text('stale-error'), findsNothing);
+    });
+  }
+
+  testWidgets('失败后刷新可恢复且不保留旧错误', (tester) async {
+    readInventory = () async =>
+        throw PlatformException(code: 'FAIL', message: 'initial-error');
+    await pumpTestPage(tester);
+    expect(find.text('initial-error'), findsOneWidget);
+    readInventory = () async => {
+      'packages': {
+        'nodejs': {'ready': true, 'version': 'recovered'},
+      },
+    };
+    final refresh = tester.widget<RefreshIndicator>(
+      find.byType(RefreshIndicator),
+    );
+    await tester.runAsync(refresh.onRefresh);
+    await tester.pump();
+    expect(find.text('initial-error'), findsNothing);
+    expect(find.text('recovered'), findsOneWidget);
+  });
+
+  testWidgets('同一发行版重复刷新只采用最后一次请求', (tester) async {
+    final old = Completer<Map<String, dynamic>>();
+    var calls = 0;
+    readInventory = () async => calls++ == 0
+        ? old.future
+        : {
+            'packages': {
+              'nodejs': {'ready': true, 'version': 'latest'},
+            },
+          };
+    await pumpTestPage(tester);
+    final refresh = tester.widget<RefreshIndicator>(
+      find.byType(RefreshIndicator),
+    );
+    await tester.runAsync(refresh.onRefresh);
+    await tester.pump();
+    expect(find.text('latest'), findsOneWidget);
+    old.complete({
+      'packages': {
+        'nodejs': {'ready': false, 'version': 'obsolete'},
+      },
+    });
+    await tester.pump();
+    expect(find.text('latest'), findsOneWidget);
+    expect(find.text('obsolete'), findsNothing);
   });
 
   testWidgets('Ubuntu 准备失败时回滚原发行版', (tester) async {

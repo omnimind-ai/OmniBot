@@ -1,7 +1,9 @@
 package com.ai.assistance.operit.terminal.setup
 
-import cn.com.omnimind.bot.agent.runtime.DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND
-import cn.com.omnimind.bot.agent.runtime.DEEPSEEK_HARNESS_NATIVE_HEALTH_COMMAND
+import android.content.Context
+import cn.com.omnimind.bot.agent.runtime.AcpAgentCatalog
+import cn.com.omnimind.bot.agent.runtime.KIMI_CODE_NATIVE_HEALTH_COMMAND
+import cn.com.omnimind.bot.agent.runtime.KIMI_CODE_NPM_INSTALL_COMMAND
 import com.ai.assistance.operit.terminal.utils.SourceManager
 import com.rk.terminal.runtime.UbuntuRepositoryManager
 import com.rk.terminal.ui.screens.settings.WorkingMode
@@ -14,15 +16,19 @@ object EnvironmentSetupLogic {
     )
 
     private val DEEPSEEK_HARNESS_PACKAGE_FILES =
-        "test -f '/root/.dsh/omnibot-acp/profiles/acp/package.json' && " +
-            "test -f '/root/.dsh/omnibot-acp/profiles/acp/node_modules/@openma/deepseek-harness-acp/package.json'"
+        "test -f \"${'$'}DSH_HOME/profiles/acp/package.json\" && " +
+            "test -f \"${'$'}DSH_HOME/profiles/acp/cordis.patch.yml\" && " +
+            "node -e \"const fs=require('fs'); const profile=JSON.parse(fs.readFileSync(process.env.DSH_HOME + '/profiles/acp/package.json','utf8')); const bundles=profile?.dsh?.profile?.bundles; if (!Array.isArray(bundles) || !bundles.includes('@deepseek-ai/dsh-acp-app')) process.exit(1)\" >/dev/null 2>&1 && " +
+            "test -f '/root/.npm-global/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-acp-app/cordis.patch.yml'"
     private val DEEPSEEK_HARNESS_CHECK_COMMAND =
-        "PATH=\"/root/.npm-global/bin:${'$'}PATH\"; export PATH; " +
+            "DSH_HOME=\"/root/.dsh/omnibot-acp\"; export DSH_HOME; " +
+            "PATH=\"/root/.npm-global/bin:${'$'}PATH\"; export PATH; " +
             "command -v dsh >/dev/null 2>&1 && " +
             DEEPSEEK_HARNESS_PACKAGE_FILES + " && " +
-            DEEPSEEK_HARNESS_NATIVE_HEALTH_COMMAND
+            "command -v dsh-acp-android >/dev/null 2>&1"
     private const val DEEPSEEK_HARNESS_VERSION_COMMAND =
         "node -p \"require('/root/.npm-global/lib/node_modules/@deepseek-ai/dsh/package.json').version\""
+    private const val KIMI_CODE_VERSION_COMMAND = "kimi --version"
 
     val packageDefinitions: List<PackageDefinition> = listOf(
         PackageDefinition("nodejs", "node --version", "dev"),
@@ -39,13 +45,14 @@ object EnvironmentSetupLogic {
         PackageDefinition("claude_code", "command -v claude-agent-acp", "ai"),
         PackageDefinition("opencode", "opencode --version", "ai"),
         PackageDefinition("deepseek_harness", DEEPSEEK_HARNESS_CHECK_COMMAND, "ai"),
+        PackageDefinition("kimi", KIMI_CODE_NATIVE_HEALTH_COMMAND, "ai"),
         PackageDefinition("ssh_client", "ssh -V 2>&1", "ssh"),
         PackageDefinition("sshpass", "sshpass -V 2>&1", "ssh"),
         PackageDefinition("openssh_server", "sshd -V 2>&1", "ssh")
     )
 
     data class PackageProbeResult(
-        val ready: Boolean,
+        val ready: Boolean?,
         val version: String?
     )
 
@@ -78,6 +85,7 @@ object EnvironmentSetupLogic {
             "linux-headers",
             "util-linux-dev"
         ),
+        "kimi" to listOf("nodejs", "npm", "git", "bash", "curl", "ripgrep"),
         "python" to listOf("python3"),
         "pip" to listOf("py3-pip"),
         "uv" to listOf("python3", "py3-pip"),
@@ -107,6 +115,7 @@ object EnvironmentSetupLogic {
             "build-essential",
             "python3"
         ),
+        "kimi" to listOf("nodejs", "git", "bash", "curl", "ripgrep"),
         "python" to listOf("python3"),
         "pip" to listOf("python3-pip"),
         "uv" to listOf("python3", "python3-pip"),
@@ -117,19 +126,22 @@ object EnvironmentSetupLogic {
 
     fun buildInstallCommands(
         selectedPackageIds: List<String>,
-        sourceManager: SourceManager
+        sourceManager: SourceManager,
+        context: Context? = null,
     ): List<String> {
         return buildInstallCommands(
             selectedPackageIds = selectedPackageIds,
             repositorySetupCommand = sourceManager.buildRepositorySetupCommand(),
-            workingMode = sourceManager.distributionWorkingMode
+            workingMode = sourceManager.distributionWorkingMode,
+            harnessInstallCommands = context?.let(::catalogInstallCommands).orEmpty(),
         )
     }
 
     internal fun buildInstallCommands(
         selectedPackageIds: List<String>,
         repositorySetupCommand: String,
-        workingMode: Int = WorkingMode.ALPINE
+        workingMode: Int = WorkingMode.ALPINE,
+        harnessInstallCommands: Map<String, String> = emptyMap(),
     ): List<String> {
         val requested = selectedPackageIds
             .map(::canonicalPackageId)
@@ -192,22 +204,23 @@ object EnvironmentSetupLogic {
             commands += "ln -sf /root/.npm-global/bin/claude-agent-acp /usr/local/bin/claude-agent-acp || true"
         }
         if ("opencode" in requested) {
-            commands += "npm install -g --no-audit --no-fund opencode-ai@latest"
-            // Android reports `process.platform=android`, so opencode-ai's
-            // optional Linux binary is skipped by npm even though the
-            // embedded Alpine runtime needs the arm64-musl vendor binary.
-            // Install that official platform package explicitly and publish
-            // its real executable instead of accepting a broken .exe shim.
-            commands += "if [ ! -x /root/.npm-global/lib/node_modules/opencode-linux-arm64-musl/bin/opencode ]; then " +
-                "rm -rf /root/.npm-global/lib/node_modules/opencode-linux-arm64-musl " +
-                "&& npm install -g --force --no-audit --no-fund --prefer-online opencode-linux-arm64-musl@latest; fi"
-            commands += "ln -sf /root/.npm-global/lib/node_modules/opencode-linux-arm64-musl/bin/opencode /root/.npm-global/bin/opencode"
+            commands += harnessInstallCommands["opencode"]
+                ?: throw IllegalStateException(
+                    "The ACP Harness catalog is required to install OpenCode."
+                )
             commands += "ln -sf /root/.npm-global/bin/opencode /usr/local/bin/opencode || true"
-            commands += "test -x /root/.npm-global/bin/opencode && /root/.npm-global/bin/opencode --version >/dev/null 2>&1"
         }
+
         if ("deepseek_harness" in requested) {
-            commands += DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND
+            commands += harnessInstallCommands["deepseek_harness"]
+                ?: throw IllegalStateException(
+                    "The ACP Harness catalog is required to install DeepSeek Harness."
+                )
             commands += "ln -sf /root/.npm-global/bin/dsh /usr/local/bin/dsh || true"
+        }
+        if ("kimi" in requested) {
+            commands += KIMI_CODE_NPM_INSTALL_COMMAND
+            commands += "ln -sf /root/.npm-global/bin/kimi /usr/local/bin/kimi || true"
         }
         if ("openssh_server" in requested) {
             commands += "mkdir -p /var/run/sshd /etc/ssh"
@@ -215,6 +228,21 @@ object EnvironmentSetupLogic {
         }
 
         return commands
+    }
+
+    private fun catalogInstallCommands(context: Context): Map<String, String> =
+        AcpAgentCatalog.load(context).agents.mapNotNull { profile ->
+            val packageId = profile.officialRuntime?.terminalPackageId ?: return@mapNotNull null
+            val command = profile.officialRuntime?.managedInstallCommand
+                ?: return@mapNotNull null
+            packageId to command
+        }.toMap()
+
+    // A fresh shell keeps errexit effective even when the caller checks the
+    // result with `if`/`&&`. Preserve exports across steps in this same shell.
+    internal fun buildInstallExecutionCommand(commands: List<String>): String {
+        val script = commands.joinToString("\n").ifBlank { ":" }
+        return "/bin/sh -e -c '" + script.replace("'", "'\"'\"'") + "'"
     }
 
     internal fun buildSetupScript(
@@ -228,12 +256,7 @@ object EnvironmentSetupLogic {
             appendLine("#!/bin/sh")
             appendLine("""printf '\033[34;1m[*]\033[0m 开始配置 $distributionName 开发环境\n'""")
             appendLine("run_setup() {")
-            appendLine("  set -e")
-            commands.forEach { command ->
-                appendLine("  $command")
-                appendLine("  setup_status=${'$'}?")
-                appendLine("  [ \"${'$'}setup_status\" -eq 0 ] || return \"${'$'}setup_status\"")
-            }
+            appendLine("  ${buildInstallExecutionCommand(commands)}")
             appendLine("}")
             if (validationChecks.isNotEmpty()) {
                 appendLine("run_validate() {")
@@ -334,6 +357,11 @@ object EnvironmentSetupLogic {
                     commandCheck = DEEPSEEK_HARNESS_CHECK_COMMAND,
                     versionCommand = DEEPSEEK_HARNESS_VERSION_COMMAND
                 )
+                "kimi" -> buildProbeSnippet(
+                    packageId = packageId,
+                    commandCheck = KIMI_CODE_NATIVE_HEALTH_COMMAND,
+                    versionCommand = KIMI_CODE_VERSION_COMMAND,
+                )
                 "ssh_client" -> buildProbeSnippet(
                     packageId = packageId,
                     commandCheck = "command -v ssh >/dev/null 2>&1",
@@ -357,16 +385,21 @@ object EnvironmentSetupLogic {
     fun parseInventoryProbeOutput(output: String): Map<String, PackageProbeResult> {
         return output
             .lineSequence()
-            .map { it.trim() }
+            .map { it.trimEnd('\r') }
             .filter { it.startsWith("__OMNI_ENV__\t") }
             .mapNotNull { line ->
                 val parts = line.split('\t', limit = 4)
-                if (parts.size < 4) {
+                if (parts.size < 3) {
                     return@mapNotNull null
                 }
                 val packageId = canonicalPackageId(parts[1])
-                val ready = parts[2] == "READY"
-                val version = parts[3].trim().ifBlank { null }
+                val ready = when (parts[2]) {
+                    "READY" -> true
+                    "MISSING" -> false
+                    "ERROR" -> null
+                    else -> return@mapNotNull null
+                }
+                val version = parts.getOrNull(3)?.trim()?.ifBlank { null }
                 packageId to PackageProbeResult(
                     ready = ready,
                     version = version
@@ -389,6 +422,7 @@ object EnvironmentSetupLogic {
             "claude_code" -> "PATH=\"/root/.npm-global/bin:${'$'}PATH\"; export PATH; command -v claude-agent-acp"
             "opencode" -> "PATH=\"/root/.npm-global/bin:${'$'}PATH\"; export PATH; command -v opencode && opencode --version"
             "deepseek_harness" -> DEEPSEEK_HARNESS_CHECK_COMMAND
+            "kimi" -> KIMI_CODE_NATIVE_HEALTH_COMMAND
             "ripgrep" -> "command -v rg"
             "tmux" -> "command -v tmux"
             "xz" -> "command -v xz"
@@ -415,6 +449,7 @@ object EnvironmentSetupLogic {
             "ssh_server" -> "openssh_server"
             "claude", "claude-code" -> "claude_code"
             "dsh", "deepseek-harness", "deepseek_harness_acp" -> "deepseek_harness"
+            "kimi-code", "kimi_code" -> "kimi"
             else -> packageId.trim()
         }
     }
@@ -486,6 +521,9 @@ object EnvironmentSetupLogic {
         if ("deepseek_harness" in requested) {
             add("DeepSeek Harness", DEEPSEEK_HARNESS_CHECK_COMMAND)
         }
+        if ("kimi" in requested) {
+            add("Kimi Code", KIMI_CODE_NATIVE_HEALTH_COMMAND)
+        }
         if ("ssh_client" in requested) {
             add("SSH client", "ssh -V >/dev/null 2>&1")
         }
@@ -514,23 +552,30 @@ object EnvironmentSetupLogic {
         versionCommand: String
     ): String {
         return """
+            (
             if $commandCheck; then
-              version="${'$'}($versionCommand | head -n 1 | tr '\r' ' ')"
+              if ! version="${'$'}($versionCommand 2>&1)"; then
+                printf '__OMNI_ENV__\t%s\tERROR\t\n' '$packageId'
+                exit 0
+              fi
+              version="${'$'}(printf '%s\n' "${'$'}version" | head -n 1 | tr '\r' ' ')"
               printf '__OMNI_ENV__\t%s\tREADY\t%s\n' '$packageId' "${'$'}version"
             else
               printf '__OMNI_ENV__\t%s\tMISSING\t\n' '$packageId'
             fi
+            ) || printf '__OMNI_ENV__\t%s\tERROR\t\n' '$packageId'
         """.trimIndent()
     }
 
     private fun buildMissingProbeSnippet(packageId: String): String {
-        return "printf '__OMNI_ENV__\\t%s\\tMISSING\\t\\n' '$packageId'"
+        return "printf '__OMNI_ENV__\t%s\tMISSING\t\n' '$packageId'"
     }
 
     private val NPM_AGENT_PACKAGE_IDS = setOf(
         "codex",
         "claude_code",
         "opencode",
-        "deepseek_harness"
+        "deepseek_harness",
+        "kimi",
     )
 }

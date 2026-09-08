@@ -2,9 +2,11 @@ package cn.com.omnimind.bot.agent
 
 import cn.com.omnimind.baselib.i18n.PromptLocale
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -24,23 +26,20 @@ class AgentToolDefinitionsMusicTest {
     }
 
     @Test
-    fun `english browser tool metadata is localized`() {
+    fun `english browser tool metadata is localized without a static tab cap`() {
         val browserTool = AgentToolDefinitions.staticTools(PromptLocale.EN_US)
             .first { ((it["function"] as JsonObject)["name"]?.jsonPrimitive?.contentOrNull) == "browser_use" }
         val function = browserTool["function"] as JsonObject
         val parameters = function["parameters"] as JsonObject
         val properties = parameters["properties"] as JsonObject
-        val toolTitle = properties["tool_title"] as JsonObject
+        val required = parameters["required"] as JsonArray
 
         assertEquals("Browser Action", function["displayName"]?.jsonPrimitive?.contentOrNull)
-        assertTrue(
-            function["description"]?.jsonPrimitive?.contentOrNull
-                ?.contains("off-screen browser with up to 3 tabs") == true
-        )
-        assertEquals(
-            "A concise title describing what this tool call is doing. It is shown to the user, should stay short, and should use the same language as the user.",
-            toolTitle["description"]?.jsonPrimitive?.contentOrNull
-        )
+        val description = function["description"]?.jsonPrimitive?.contentOrNull.orEmpty()
+        assertTrue(description.contains("Control an off-screen browser."))
+        assertFalse(description.contains("up to 3 tabs"))
+        assertTrue("tool_title" !in properties)
+        assertEquals(listOf("action"), required.map { it.jsonPrimitive.contentOrNull })
     }
 
     @Test

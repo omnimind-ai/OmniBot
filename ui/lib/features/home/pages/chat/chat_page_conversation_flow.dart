@@ -1,5 +1,76 @@
 part of 'chat_page.dart';
 
+/// Reserves the official ACP session for one already-admitted local run.
+///
+/// This is a stateless application helper shared by every new ChatPage prompt
+/// path. It performs no local lifecycle transitions: the coordinator owns the
+/// run, while ACP owns the session and turn. If the run loses ownership while
+/// `session/new` is in flight, a newly-created session is closed and no prompt
+/// is sent.
+Future<String?> _prepareAcpSessionForTurn({
+  required ChatConversationRuntimeCoordinator runtimeCoordinator,
+  required String taskId,
+  required int conversationId,
+  required String mode,
+  required String? existingSessionId,
+  required bool Function() isTargetCurrent,
+  String? model,
+  String? effort,
+  String? collaborationMode,
+  String? conversationMode,
+}) async {
+  bool ownsTurn() =>
+      isTargetCurrent() &&
+      runtimeCoordinator.isTaskActive(
+        taskId: taskId,
+        conversationId: conversationId,
+        mode: mode,
+      );
+  if (!ownsTurn()) return null;
+
+  final hadExistingSession = existingSessionId?.trim().isNotEmpty == true;
+  final sessionId = await AgentRuntimeService.ensureSession(
+    sessionId: existingSessionId,
+    conversationId: conversationId,
+    model: model,
+    effort: effort,
+    collaborationMode: collaborationMode,
+    conversationMode: conversationMode,
+  );
+  if (!ownsTurn()) {
+    if (!hadExistingSession) {
+      try {
+        await AgentRuntimeService.closeSession(
+          sessionId: sessionId,
+          conversationId: conversationId,
+        );
+      } catch (error) {
+        debugPrint('ACP abandoned session close failed: $error');
+      }
+    }
+    return null;
+  }
+  if (!runtimeCoordinator.bindAcpSession(
+    taskId: taskId,
+    conversationId: conversationId,
+    mode: mode,
+    sessionId: sessionId,
+  )) {
+    if (!hadExistingSession) {
+      try {
+        await AgentRuntimeService.closeSession(
+          sessionId: sessionId,
+          conversationId: conversationId,
+        );
+      } catch (error) {
+        debugPrint('ACP unowned session close failed: $error');
+      }
+    }
+    return null;
+  }
+  return sessionId;
+}
+
 mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
   void _persistDeepThinkingCardIfNeeded(ChatMessageModel message) {
     final conversationId = _currentConversationId;
@@ -47,34 +118,56 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
           runtime?.conversation ??
           _modeState(mode).currentConversation,
       isAiResponding:
-          runtime?.isAiResponding ?? (_modeState(mode).isAiResponding),
+          runtime?.isAiResponding ??
+          (mode == ChatPageMode.agent
+              ? false
+              : _modeState(mode).isAiResponding),
       isContextCompressing:
           runtime?.isContextCompressing ??
-          (_modeState(mode).isContextCompressing),
+          (mode == ChatPageMode.agent
+              ? false
+              : _modeState(mode).isContextCompressing),
       isCheckingExecutableTask:
           runtime?.isCheckingExecutableTask ??
-          (_modeState(mode).isCheckingExecutableTask),
+          (mode == ChatPageMode.agent
+              ? false
+              : _modeState(mode).isCheckingExecutableTask),
       currentAiMessages: Map<String, String>.from(
-        runtime?.currentAiMessages ?? _modeState(mode).currentAiMessages,
+        runtime?.currentAiMessages ??
+            (mode == ChatPageMode.agent
+                ? const <String, String>{}
+                : _modeState(mode).currentAiMessages),
       ),
       currentThinkingMessages: Map<String, String>.from(
         runtime?.currentThinkingMessages ?? const <String, String>{},
       ),
       deepThinkingContent:
           runtime?.deepThinkingContent ??
-          (_modeState(mode).deepThinkingContent),
+          (mode == ChatPageMode.agent
+              ? ''
+              : _modeState(mode).deepThinkingContent),
       isDeepThinking:
-          runtime?.isDeepThinking ?? (_modeState(mode).isDeepThinking),
+          runtime?.isDeepThinking ??
+          (mode == ChatPageMode.agent
+              ? false
+              : _modeState(mode).isDeepThinking),
       currentDispatchTurnId:
           runtime?.currentDispatchTurnId ??
-          _modeState(mode).currentDispatchTurnId,
+          (mode == ChatPageMode.agent
+              ? null
+              : _modeState(mode).currentDispatchTurnId),
       currentThinkingStage:
           runtime?.currentThinkingStage ??
-          (_modeState(mode).currentThinkingStage),
+          (mode == ChatPageMode.agent
+              ? ThinkingStage.thinking.value
+              : _modeState(mode).currentThinkingStage),
       isInputAreaVisible:
           runtime?.isInputAreaVisible ?? (_modeState(mode).isInputAreaVisible),
       isExecutingTask:
-          runtime?.isExecutingTask ?? (_modeState(mode).isExecutingTask),
+          runtime?.isExecutingTask ??
+          (mode == ChatPageMode.agent
+              ? false
+              : _modeState(mode).isExecutingTask),
       lastAgentTurnId: runtime?.lastAgentTurnId,
       activeToolCardId: runtime?.activeToolCardId,
       activeThinkingCardId: runtime?.activeThinkingCardId,
@@ -103,23 +196,13 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
         generateSummary: false,
         markComplete: false,
         rethrowOnFailure: true,
+        allowEmpty: true,
       );
     }
     if (_currentConversationId == null) {
       throw StateError('conversationId is not ready');
     }
     _syncRuntimeSnapshotForMode(_activeMode);
-  }
-
-  @override
-  void _registerActiveTaskBinding(String taskId) {
-    final conversationId = _currentConversationId;
-    if (conversationId == null) return;
-    _runtimeCoordinator.registerTask(
-      taskId: taskId,
-      conversationId: conversationId,
-      mode: _modeKey(_activeMode),
-    );
   }
 
   @override
@@ -219,22 +302,14 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
   @override
   Future<void> _pickAttachments() async {
     try {
-      final files = await FilePicker.pickFiles(
-        allowMultiple: true,
-        type: FileType.any,
-      );
+      final files = await FilePicker.pickFiles(type: FileType.any);
       if (files.isEmpty || !mounted) return;
 
-      final fileSizes = <String, int>{};
-      for (final file in files) {
-        final path = file.path;
-        if (path == null || path.isEmpty) continue;
-        fileSizes[path] = await file.length();
-      }
       setState(() {
         for (final file in files) {
-          final path = file.path;
-          if (path == null || path.isEmpty) continue;
+          final metadata = pickedAttachmentMetadata(file);
+          if (metadata == null) continue;
+          final path = metadata.path;
           final exists = _pendingAttachments.any((item) => item.path == path);
           if (exists) continue;
           final displayName = (file.name.trim().isNotEmpty)
@@ -243,13 +318,12 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
           final extension = (file.extension ?? '').toLowerCase();
           final mimeType = _mimeTypeFromExtension(path, extension: extension);
           final isImage = _isImageFilePath(path, mimeType: mimeType);
-          final fileSize = fileSizes[path] ?? 0;
           _pendingAttachments.add(
             ChatInputAttachment(
               id: '${path}_${DateTime.now().microsecondsSinceEpoch}',
               name: displayName,
               path: path,
-              size: fileSize > 0 ? fileSize : null,
+              size: metadata.size,
               mimeType: mimeType,
               isImage: isImage,
             ),
@@ -466,9 +540,19 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
     // A Harness switch changes both the native ACP adapter and the visible
     // conversation runtime. Let a user submit queue behind that atomic
     // transition instead of registering it against the old target.
+    final queuedDuringSwitch =
+        waitForBootstrap && _harnessSwitchSendBarrier.isActive;
+    final submittedText = queuedDuringSwitch
+        ? (text ?? _messageController.text)
+        : null;
+    final submittedAttachments = queuedDuringSwitch
+        ? List<ChatInputAttachment>.of(_pendingAttachments)
+        : null;
     if (waitForBootstrap) {
-      await _harnessSwitchSendBarrier.waitUntilIdle();
-      if (!mounted) return;
+      final switched = await _harnessSwitchSendBarrier.waitUntilIdle();
+      // A failed switch must not deliver the queued prompt to the old Agent.
+      // The preserved composer remains editable for the user to send later.
+      if (!mounted || !switched) return;
     }
     // Acquire the per-target submit lock immediately after the transition
     // barrier. Two queued UI submit paths wake in the same microtask turn, so
@@ -489,8 +573,10 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       if (waitForBootstrap && bootstrapFuture != null) {
         await bootstrapFuture;
       }
-      final messageText = (text ?? _messageController.text).trim();
-      final hasAttachments = _pendingAttachments.isNotEmpty;
+      final messageText = (submittedText ?? text ?? _messageController.text)
+          .trim();
+      final inputAttachments = submittedAttachments ?? _pendingAttachments;
+      final hasAttachments = inputAttachments.isNotEmpty;
       if ((messageText.isEmpty && !hasAttachments) || _isAiResponding) return;
       if (!hasAttachments &&
           ManualRecordingFlowController.isCommand(messageText)) {
@@ -499,17 +585,25 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       }
       if (!await _ensureNormalChatModelConfigurationForSend()) return;
 
-      final attachments = _pendingAttachments
-          .map((item) => item.toMap())
-          .toList();
+      final attachments = inputAttachments.map((item) => item.toMap()).toList();
       if (attachments.isNotEmpty && mounted) {
-        setState(() => _pendingAttachments.clear());
+        setState(() {
+          if (submittedAttachments == null) {
+            _pendingAttachments.clear();
+          } else {
+            _pendingAttachments.removeWhere(submittedAttachments.contains);
+          }
+        });
       }
 
       await _dispatchUserMessage(
         messageText,
         attachments: attachments,
         runSlashCommand: true,
+        restoreInputValue:
+            queuedDuringSwitch && _messageController.text != submittedText
+            ? _messageController.value
+            : null,
       );
     } finally {
       _sendMessageInFlightTargetIds.remove(sendTargetId);
@@ -576,9 +670,10 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
     final messageText = text.trim();
     if (messageText.isEmpty && attachments.isEmpty) return;
 
-    if (_isAiResponding) {
-      _onCancelTask();
-    }
+    // A manual retry is a fresh user send, not a request to replace a live
+    // prompt.  ACP cancellation is asynchronous and the active turn remains
+    // authoritative until its official PromptResponse arrives.
+    if (_isAiResponding) return;
 
     await _dispatchUserMessage(
       messageText,
@@ -653,6 +748,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       await _sendAgentMessage(
         messageIds.aiMessageId,
         messageText,
+        userMessageId: messageIds.userMessageId,
         attachments: attachments,
       );
       return;
@@ -776,10 +872,11 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
     final conversationId = _currentConversationId;
     if (conversationId != null &&
         !isEphemeralConversation(conversationId, activeConversationModeValue)) {
-      await ConversationHistoryService.saveConversationMessages(
-        conversationId,
-        List<ChatMessageModel>.from(_messages),
-        mode: activeConversationModeValue,
+      await _runtimeCoordinator.persistConversationMessageSnapshot(
+        conversationId: conversationId,
+        mode: _modeKey(_activeMode),
+        messages: List<ChatMessageModel>.from(_messages),
+        conversation: _currentConversation,
       );
     }
   }
@@ -863,22 +960,51 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       }
       return;
     }
-    final dispatchMessages = List<ChatMessageModel>.from(_messages);
     final userMessage = latestUserUtterance();
     final userAttachments = await _latestUserAttachments();
     if (!isDispatchTargetCurrent()) return;
 
     final resolvedConversationId = conversationId;
-    _runtimeCoordinator.registerTask(
+    _runtimeCoordinator.beginAcpTurn(
       taskId: aiMessageId,
       conversationId: resolvedConversationId,
       mode: dispatchModeKey,
     );
     try {
-      final reusableSessionId = dispatchSessionId;
+      // Admission persistence belongs before the transport starts. The
+      // snapshot is only the durable user-input boundary; after this point
+      // the ACP runtime coordinator owns all newer turn snapshots. Saving
+      // this same pre-turn list after promptSession returns can overwrite
+      // assistant/tool items that arrived through session/update.
+      await _runtimeCoordinator.persistRuntimeConversation(
+        conversationId: resolvedConversationId,
+        mode: dispatchModeKey,
+        persistMessages: true,
+      );
+      final acpSessionId = await _prepareAcpSessionForTurn(
+        runtimeCoordinator: _runtimeCoordinator,
+        taskId: aiMessageId,
+        conversationId: resolvedConversationId,
+        mode: dispatchModeKey,
+        existingSessionId: dispatchSessionId,
+        isTargetCurrent: isDispatchTargetCurrent,
+        model: dispatchSelection?.modelId,
+        effort: dispatchReasoningEffort,
+        conversationMode: dispatchConversationMode.storageValue,
+      );
+      if (acpSessionId == null) {
+        _runtimeCoordinator.unregisterTask(
+          aiMessageId,
+          conversationId: resolvedConversationId,
+          mode: dispatchModeKey,
+        );
+        return;
+      }
+      _normalAcpSessionId = acpSessionId;
+      _normalAcpSessionConversationId = resolvedConversationId;
       final response = await AgentRuntimeService.promptSession(
         conversationId: resolvedConversationId,
-        sessionId: reusableSessionId,
+        sessionId: acpSessionId,
         requestId: _buildPromptRequestId(aiMessageId),
         // Pure chat is an ACP turn with tools disabled, not a provider-only
         // transport. It deliberately has no Harness identity: otherwise a
@@ -903,47 +1029,45 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       final responseTurnId =
           _asAgentString(response['promptId']) ??
           _asAgentString(response['turnId']);
+      _runtimeCoordinator.applyAcpPromptResponse(
+        taskId: aiMessageId,
+        conversationId: resolvedConversationId,
+        mode: dispatchModeKey,
+        sessionId: responseSessionId ?? acpSessionId,
+        turnId: responseTurnId,
+        stopReason:
+            _asAgentString(response['stopReason']) ??
+            _asAgentString(response['status']),
+        error: _asAgentString(response['error']),
+      );
       if (isDispatchTargetCurrent()) {
-        _normalAcpSessionId = responseSessionId ?? dispatchSessionId;
+        _normalAcpSessionId = responseSessionId ?? acpSessionId;
         if (_normalAcpSessionId != null) {
           _normalAcpSessionConversationId = resolvedConversationId;
         }
         _normalAcpTurnId = responseTurnId;
       }
-      if ((responseSessionId ?? dispatchSessionId) == null) {
-        throw StateError('ACP did not return a session id');
-      }
-      await ConversationHistoryService.saveConversationMessages(
-        resolvedConversationId,
-        dispatchMessages,
-        mode: dispatchConversationMode,
-      );
     } catch (error) {
       _runtimeCoordinator.clearPureChatThinking(
         taskId: aiMessageId,
         conversationId: resolvedConversationId,
         mode: dispatchModeKey,
       );
-      _runtimeCoordinator.unregisterTask(aiMessageId);
-      if (!isDispatchTargetCurrent()) return;
-      final errorId = DateTime.now().millisecondsSinceEpoch.toString();
-      setState(() {
-        _isAiResponding = false;
-        _isContextCompressing = false;
-        removeLatestLoadingIfExists();
-        _messages.insert(
-          0,
-          ChatMessageModel(
-            id: errorId,
-            type: 1,
-            user: 2,
-            content: {
-              'text': '抱歉，发送消息失败：${formatAgentRuntimeErrorForUser(error)}',
-              'id': errorId,
-            },
-          ),
-        );
-      });
+      final runtime = _runtimeCoordinator.runtimeFor(
+        conversationId: resolvedConversationId,
+        mode: dispatchModeKey,
+      );
+      // The request owner handles failure once, including background requests
+      // and late errors after cancellation. The page does not infer lifecycle.
+      _runtimeCoordinator.applyAcpPromptResponse(
+        taskId: aiMessageId,
+        conversationId: resolvedConversationId,
+        mode: dispatchModeKey,
+        sessionId: runtime?.activeAcpSessionId ?? dispatchSessionId,
+        turnId: runtime?.activeAcpTurnId,
+        stopReason: 'error',
+        error: formatAgentRuntimeErrorForUser(error),
+      );
     }
   }
 
@@ -952,11 +1076,16 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
     String aiMessageId,
     String userMessageId,
   ) async {
-    _isCheckingExecutableTask = true;
+    // The Agent runtime is admitted and owned by the coordinator. A page
+    // preflight flag has no task identity and can be cleared by an older
+    // async flow after a newer ACP turn has started. Keep this presentation
+    // hint only for the legacy/non-Agent path.
+    final isLegacyDispatch = _activeMode != ChatPageMode.agent;
+    if (isLegacyDispatch) _isCheckingExecutableTask = true;
     try {
       return await _tryAgentFlow(aiMessageId, userMessageId);
     } finally {
-      _isCheckingExecutableTask = false;
+      if (isLegacyDispatch) _isCheckingExecutableTask = false;
     }
   }
 
@@ -995,19 +1124,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
 
     var conversationId = dispatchConversationId;
     try {
-      if (isDispatchTargetCurrent()) {
-        _currentDispatchTurnId = aiMessageId;
-        _deepThinkingContent = '';
-        _isDeepThinking = false;
-        _currentThinkingStage = 1;
-      }
-      if (conversationId != null) {
-        _runtimeCoordinator.registerTask(
-          taskId: aiMessageId,
-          conversationId: conversationId,
-          mode: dispatchModeKey,
-        );
-      } else {
+      if (conversationId == null) {
         if (!isDispatchTargetCurrent()) return false;
         await _ensureActiveConversationReadyForStreaming();
         if (!isDispatchTargetCurrent()) return false;
@@ -1017,25 +1134,54 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
         throw StateError('conversationId is not ready');
       }
       final resolvedConversationId = conversationId;
-      if (isDispatchTargetCurrent()) {
-        // Conversation bootstrap may have installed an empty/stale runtime
-        // projection after the host inserted the user message. Preserve the
-        // complete dispatch snapshot before the ACP turn starts.
-        _syncRuntimeSnapshotForMode(dispatchMode, messages: dispatchMessages);
-      }
-      _runtimeCoordinator.registerTask(
-        taskId: aiMessageId,
-        conversationId: resolvedConversationId,
-        mode: dispatchModeKey,
-      );
+      // The coordinator is the single admission boundary. Begin before the
+      // page snapshot so snapshot replacement observes the live binding and
+      // cannot demote this logical turn back to an idle projection.
       _runtimeCoordinator.beginAcpTurn(
         taskId: aiMessageId,
         conversationId: resolvedConversationId,
         mode: dispatchModeKey,
       );
+      if (isDispatchTargetCurrent()) {
+        // Conversation bootstrap may have installed an empty/stale runtime
+        // projection after the host inserted the user message. Preserve the
+        // complete dispatch snapshot after admission and before transport
+        // starts.
+        _syncRuntimeSnapshotForMode(dispatchMode, messages: dispatchMessages);
+      }
+      // Persist only the admission snapshot before ACP transport begins.
+      // session/update and terminal persistence are the sole owners of newer
+      // assistant/tool snapshots; a post-prompt write of dispatchMessages
+      // would be an older generation capable of rolling the conversation back.
+      await _runtimeCoordinator.persistRuntimeConversation(
+        conversationId: resolvedConversationId,
+        mode: dispatchModeKey,
+        persistMessages: true,
+      );
+      final acpSessionId = await _prepareAcpSessionForTurn(
+        runtimeCoordinator: _runtimeCoordinator,
+        taskId: aiMessageId,
+        conversationId: resolvedConversationId,
+        mode: dispatchModeKey,
+        existingSessionId: dispatchSessionId,
+        isTargetCurrent: isDispatchTargetCurrent,
+        model: dispatchSelection?.modelId,
+        effort: dispatchReasoningEffort,
+        conversationMode: dispatchConversationMode.storageValue,
+      );
+      if (acpSessionId == null) {
+        _runtimeCoordinator.unregisterTask(
+          aiMessageId,
+          conversationId: resolvedConversationId,
+          mode: dispatchModeKey,
+        );
+        return false;
+      }
+      _normalAcpSessionId = acpSessionId;
+      _normalAcpSessionConversationId = resolvedConversationId;
       final response = await AgentRuntimeService.promptSession(
         conversationId: resolvedConversationId,
-        sessionId: dispatchSessionId,
+        sessionId: acpSessionId,
         // A normal transport retry keeps the request id so ACP can safely
         // deduplicate an in-flight request. Manual retry/continue actions
         // must provide a fresh id; otherwise LocalAcpRuntime's idempotency
@@ -1061,27 +1207,43 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       final responseTurnId =
           _asAgentString(response['promptId']) ??
           _asAgentString(response['turnId']);
+      _runtimeCoordinator.applyAcpPromptResponse(
+        taskId: aiMessageId,
+        conversationId: resolvedConversationId,
+        mode: dispatchModeKey,
+        sessionId: responseSessionId ?? acpSessionId,
+        turnId: responseTurnId,
+        stopReason:
+            _asAgentString(response['stopReason']) ??
+            _asAgentString(response['status']),
+        error: _asAgentString(response['error']),
+      );
       if (isDispatchTargetCurrent()) {
-        _normalAcpSessionId = responseSessionId ?? dispatchSessionId;
+        _normalAcpSessionId = responseSessionId ?? acpSessionId;
         if (_normalAcpSessionId != null) {
           _normalAcpSessionConversationId = resolvedConversationId;
         }
         _normalAcpTurnId = responseTurnId;
       }
-      if ((responseSessionId ?? dispatchSessionId) == null) {
-        throw StateError('ACP did not return a session id');
-      }
-      await ConversationHistoryService.saveConversationMessages(
-        resolvedConversationId,
-        dispatchMessages,
-        mode: dispatchConversationMode,
-      );
       return true;
     } catch (e) {
-      // The task id is globally unique, but its runtime binding is not the
-      // currently visible conversation after a switch. Always clean the old
-      // binding; only the current target may receive visible error state.
-      _runtimeCoordinator.unregisterTask(aiMessageId);
+      if (conversationId != null) {
+        final runtime = _runtimeCoordinator.runtimeFor(
+          conversationId: conversationId!,
+          mode: dispatchModeKey,
+        );
+        _runtimeCoordinator.applyAcpPromptResponse(
+          taskId: aiMessageId,
+          conversationId: conversationId!,
+          mode: dispatchModeKey,
+          sessionId: runtime?.activeAcpSessionId,
+          turnId: runtime?.activeAcpTurnId,
+          stopReason: 'error',
+          error: formatAgentRuntimeErrorForUser(e),
+        );
+      } else if (isDispatchTargetCurrent()) {
+        showToast(formatAgentRuntimeErrorForUser(e), type: ToastType.error);
+      }
       debugPrint('Agent flow error: $e');
       return false;
     }
@@ -1092,13 +1254,6 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
     // Keep it stable for the original request so transport retries can return
     // the same ACP turn rather than executing the prompt and its tools twice.
     return taskId;
-  }
-
-  String _buildManualRetryRequestId(String taskId) {
-    // Manual retry/continue is a new provider generation. It intentionally
-    // cannot reuse the original request id because ACP request idempotency
-    // would otherwise replay the old failed turn without running anything.
-    return '$taskId-manual-${DateTime.now().microsecondsSinceEpoch}';
   }
 
   @override
@@ -1112,13 +1267,11 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
           .map((item) => item.map((k, v) => MapEntry(k.toString(), v)))
           .where(_attachmentShouldSendToModel)
           .toList();
-      for (final item in normalized) {
-        if (!_isImageAttachmentMap(item)) continue;
-        final dataUrl = await _resolveImageDataUrl(item);
-        if (dataUrl.isNotEmpty) {
-          item['dataUrl'] = dataUrl;
-        }
-      }
+      // Keep the ACP attachment as a resource reference. Reading the whole
+      // image into Dart and expanding it to Base64 here duplicates the
+      // attachment representation and can exhaust memory before the Native
+      // ACP adapter applies its size limits. The adapter owns the one
+      // materialization step for both file and content:// resources.
       return normalized;
     }
     return const [];
@@ -1140,101 +1293,31 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
   }
 
   @override
-  bool _isImageAttachmentMap(Map<String, dynamic> item) {
-    final explicitFlag = item['isImage'];
-    if (explicitFlag is bool && explicitFlag) return true;
-    final mimeType = (item['mimeType'] as String? ?? '').toLowerCase();
-    if (mimeType.startsWith('image/')) return true;
-    final path = (item['path'] as String? ?? '').toLowerCase();
-    final url = (item['url'] as String? ?? '').toLowerCase();
-    return path.endsWith('.png') ||
-        path.endsWith('.jpg') ||
-        path.endsWith('.jpeg') ||
-        path.endsWith('.webp') ||
-        path.endsWith('.gif') ||
-        path.endsWith('.bmp') ||
-        path.endsWith('.heic') ||
-        path.endsWith('.heif') ||
-        url.endsWith('.png') ||
-        url.endsWith('.jpg') ||
-        url.endsWith('.jpeg') ||
-        url.endsWith('.webp') ||
-        url.endsWith('.gif');
-  }
-
-  @override
-  Future<String> _resolveImageDataUrl(Map<String, dynamic> item) async {
-    final existingDataUrl = (item['dataUrl'] as String? ?? '').trim();
-    if (existingDataUrl.startsWith('data:')) {
-      return existingDataUrl;
-    }
-
-    final existingUrl = (item['url'] as String? ?? '').trim();
-    if (existingUrl.startsWith('data:')) {
-      return existingUrl;
-    }
-    if (existingUrl.startsWith('http://') ||
-        existingUrl.startsWith('https://')) {
-      return existingUrl;
-    }
-
-    final path = (item['path'] as String? ?? '').trim();
-    if (path.isEmpty) return '';
-    final file = File(path);
-    if (!await file.exists()) return '';
-    try {
-      final bytes = await file.readAsBytes();
-      if (bytes.isEmpty) return '';
-      final mimeType = ((item['mimeType'] as String?) ?? '')
-          .trim()
-          .toLowerCase();
-      final resolvedMime = mimeType.startsWith('image/')
-          ? mimeType
-          : _mimeTypeFromExtension(path) ?? 'image/png';
-      return 'data:$resolvedMime;base64,${base64Encode(bytes)}';
-    } catch (_) {
-      return '';
-    }
-  }
-
-  @override
   void _onCancelTask() {
     try {
       if (_activeConversationMode == ChatPageMode.agent) {
+        // ACP owns the terminal transition. Do not unregister the task or
+        // manufacture a cancelled message here: doing so makes the event
+        // reducer reject the real turn/completed notification and leaves the
+        // native turn running behind a reset Flutter projection.
+        interruptActiveToolCard();
         unawaited(_interruptAgentTurn());
-        final taskId =
-            _currentDispatchTurnId ?? _activeRuntime?.lastAgentTurnId;
-        if (taskId != null) {
-          _runtimeCoordinator.unregisterTask(taskId);
-          _upsertCancelledAgentRunMessage(taskId);
-          _collapseAgentRunTrace(taskId);
-        }
-        setState(() {
-          _isAiResponding = false;
-          _isContextCompressing = false;
-          _isCheckingExecutableTask = false;
-          _isExecutingTask = false;
-          _isInputAreaVisible = true;
-          _currentDispatchTurnId = null;
-          _messages.removeWhere((msg) => msg.isLoading);
-        });
         return;
       }
       if (_activeConversationMode == ChatPageMode.normal &&
           activeConversationModeValue != ConversationMode.chatOnly &&
           (_currentDispatchTurnId != null || _normalAcpTurnId != null)) {
+        // Keep the host reservation alive until the official cancel result.
+        // The shared reducer then finalizes cards, history, and the spinner
+        // exactly once.
+        interruptActiveToolCard();
         unawaited(
-          AgentRuntimeService.cancelPrompt(
-            conversationId: _currentConversationId,
+          cancelAcpPromptForMode(
+            mode: ChatPageMode.normal,
             sessionId: _normalAcpSessionId,
-            promptId: _normalAcpTurnId,
+            turnId: _normalAcpTurnId,
           ),
         );
-        final taskId = _currentDispatchTurnId;
-        if (taskId != null) {
-          _runtimeCoordinator.unregisterTask(taskId);
-        }
-        resetDispatchState();
         return;
       }
       if (_currentDispatchTurnId != null ||
@@ -1244,10 +1327,10 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
         _cancelDispatchTask();
       } else {
         unawaited(
-          AgentRuntimeService.cancelPrompt(
-            conversationId: _currentConversationId,
+          cancelAcpPromptForMode(
+            mode: ChatPageMode.normal,
             sessionId: _normalAcpSessionId,
-            promptId: _normalAcpTurnId,
+            turnId: _normalAcpTurnId,
           ),
         );
       }
@@ -1272,24 +1355,46 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
   @override
   void _cancelDispatchTask() {
     final taskId = _currentDispatchTurnId ?? _activeRuntime?.lastAgentTurnId;
+    final runtimeIdentity = _activeRuntime?.activeRunIdentity;
+    final agentSessionId =
+        runtimeIdentity?.normalizedSessionId ?? _activeAgentThreadId?.trim();
+    final agentTurnId =
+        runtimeIdentity?.normalizedTurnId ?? _activeAgentTurnId?.trim();
+    final normalSessionId =
+        _runtimeForMode(ChatPageMode.normal)
+            ?.activeRunIdentity
+            ?.normalizedSessionId ??
+        _normalAcpSessionId?.trim();
+    final normalTurnId =
+        _runtimeForMode(ChatPageMode.normal)
+            ?.activeRunIdentity
+            ?.normalizedTurnId ??
+        _normalAcpTurnId?.trim();
     interruptActiveToolCard();
     if (_activeConversationMode == ChatPageMode.normal &&
         activeConversationModeValue != ConversationMode.chatOnly) {
       unawaited(
-        AgentRuntimeService.cancelPrompt(
-          conversationId: _currentConversationId,
-          sessionId: _normalAcpSessionId,
-          promptId: _normalAcpTurnId,
+        cancelAcpPromptForMode(
+          mode: ChatPageMode.normal,
+          sessionId: normalSessionId,
+          turnId: normalTurnId,
         ),
       );
+      return;
+    }
+    if (_activeConversationMode == ChatPageMode.agent) {
+      // The official ACP cancel result is the only authority allowed to end a
+      // new Agent turn. This method is also used by card-level stop actions.
+      unawaited(_interruptAgentTurn());
+      return;
     }
     if (!(_activeConversationMode == ChatPageMode.normal &&
         activeConversationModeValue != ConversationMode.chatOnly)) {
       unawaited(
-        AgentRuntimeService.cancelPrompt(
-          conversationId: _currentConversationId,
-          sessionId: _activeAgentThreadId,
-          promptId: _activeAgentTurnId,
+        cancelAcpPromptForMode(
+          mode: _activeConversationMode,
+          sessionId: agentSessionId,
+          turnId: agentTurnId,
         ),
       );
     }
@@ -1297,47 +1402,87 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       _updateThinkingCardToCancelled(taskId);
       _upsertCancelledAgentRunMessage(taskId);
       _collapseAgentRunTrace(taskId);
-      _runtimeCoordinator.unregisterTask(taskId);
+      _runtimeCoordinator.unregisterTask(
+        taskId,
+        conversationId: _currentConversationId,
+        mode: _modeKey(_activeConversationMode),
+      );
     }
-    clearAgentStreamSessionState();
-    resetDispatchState();
+    if (_activeConversationMode != ChatPageMode.agent) {
+      clearAgentStreamSessionState();
+      resetDispatchState();
+    }
   }
 
   @override
   void _onCancelTaskFromCard(String taskId) {
     try {
+      final runtimeIdentity = _activeRuntime?.activeRunIdentity;
+      final agentSessionId =
+          runtimeIdentity?.normalizedSessionId ?? _activeAgentThreadId?.trim();
+      final agentTurnId =
+          runtimeIdentity?.normalizedTurnId ?? _activeAgentTurnId?.trim();
+      final normalIdentity = _runtimeForMode(ChatPageMode.normal)
+          ?.activeRunIdentity;
+      final normalSessionId =
+          normalIdentity?.normalizedSessionId ?? _normalAcpSessionId?.trim();
+      final normalTurnId =
+          normalIdentity?.normalizedTurnId ?? _normalAcpTurnId?.trim();
+      final isAcpMode =
+          _activeConversationMode == ChatPageMode.agent ||
+          (_activeConversationMode == ChatPageMode.normal &&
+              activeConversationModeValue != ConversationMode.chatOnly);
+      final activeConversationId = _currentConversationId;
+      if (isAcpMode &&
+          (activeConversationId == null ||
+              !_runtimeCoordinator.isTaskActive(
+                taskId: taskId,
+                conversationId: activeConversationId,
+                mode: _modeKey(_activeConversationMode),
+              ))) {
+        // A card from an older turn must not cancel the currently active ACP
+        // turn. Its terminal event is already fenced by the shared runtime.
+        return;
+      }
       interruptActiveToolCard();
       if (_activeConversationMode == ChatPageMode.normal &&
           activeConversationModeValue != ConversationMode.chatOnly) {
         unawaited(
-          AgentRuntimeService.cancelPrompt(
-            conversationId: _currentConversationId,
-            sessionId: _normalAcpSessionId,
-            promptId: _normalAcpTurnId,
+          cancelAcpPromptForMode(
+            mode: ChatPageMode.normal,
+            sessionId: normalSessionId,
+            turnId: normalTurnId,
           ),
         );
+        return;
+      }
+      if (_activeConversationMode == ChatPageMode.agent) {
+        unawaited(_interruptAgentTurn());
+        return;
       }
       if (!(_activeConversationMode == ChatPageMode.normal &&
           activeConversationModeValue != ConversationMode.chatOnly)) {
         unawaited(
-          AgentRuntimeService.cancelPrompt(
-            conversationId: _currentConversationId,
-            sessionId: _activeAgentThreadId,
-            promptId: _activeAgentTurnId,
+          cancelAcpPromptForMode(
+            mode: _activeConversationMode,
+            sessionId: agentSessionId,
+            turnId: agentTurnId,
           ),
         );
       }
-      _runtimeCoordinator.unregisterTask(taskId);
+      _runtimeCoordinator.unregisterTask(
+        taskId,
+        conversationId: _currentConversationId,
+        mode: _modeKey(_activeConversationMode),
+      );
       _updateThinkingCardToCancelled(taskId);
       _upsertCancelledAgentRunMessage(taskId);
       _collapseAgentRunTrace(taskId);
-      clearAgentStreamSessionState();
-      resetDispatchState();
+      if (_activeConversationMode != ChatPageMode.agent) {
+        clearAgentStreamSessionState();
+        resetDispatchState();
+      }
       setState(() {
-        _isAiResponding = false;
-        _isContextCompressing = false;
-        _isExecutingTask = false;
-        _isInputAreaVisible = true;
         _messages.removeWhere(
           (msg) => msg.isLoading || _isOpenClawWaitingCardMessage(msg),
         );
@@ -1457,7 +1602,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
 
     _isAwaitingAuthorizeResult = true;
     try {
-      final result = await GoRouterManager.pushForResult<bool>(
+      await GoRouterManager.pushForResult<bool>(
         '/home/authorize',
         extra: AuthorizePageArgs(
           requiredPermissionIds: requiredPermissionIds.isEmpty
@@ -1465,98 +1610,12 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
               : requiredPermissionIds,
         ),
       );
-      if (result == true && mounted) {
-        await _retryLatestInstructionAfterAuth();
-      }
+      // Granting a device permission changes only that permission. It is not
+      // a new user prompt, and must not delete/recreate the visible turn or
+      // silently replay its actions. The retained user message provides the
+      // explicit retry affordance if the user wants to continue.
     } finally {
       _isAwaitingAuthorizeResult = false;
     }
-  }
-
-  @override
-  Future<void> _retryLatestInstructionAfterAuth() async {
-    if (_isRetryingLatestInstructionAfterAuth ||
-        _activeConversationMode == ChatPageMode.openclaw) {
-      return;
-    }
-
-    // Save user text and attachments before cleanup
-    final savedUserText = latestUserUtterance().trim();
-    final savedAttachments = await _latestUserAttachments();
-    if (savedUserText.isEmpty && savedAttachments.isEmpty) return;
-
-    _isRetryingLatestInstructionAfterAuth = true;
-    final timestamp = DateTime.now().millisecondsSinceEpoch.toString();
-    final aiMessageId = '$timestamp-ai';
-    final userMessageId = '$timestamp-user';
-
-    try {
-      // Remove ALL messages from the failed attempt (AI responses + user message)
-      if (mounted) {
-        setState(() {
-          _removeFailedAttemptMessages();
-          _isAiResponding = true;
-        });
-      }
-
-      // Sync cleaned state to Kotlin-side DB so old entries
-      // (user message, permission error, thinking cards) are replaced
-      final conversationId = _currentConversationId;
-      if (conversationId != null) {
-        await ConversationHistoryService.saveConversationMessages(
-          conversationId,
-          _messages,
-          mode: activeConversationModeValue,
-        );
-      }
-
-      // Re-add user message for display and latestUserUtterance()
-      if (mounted) {
-        setState(() {
-          final content = <String, dynamic>{
-            'text': savedUserText,
-            'id': userMessageId,
-          };
-          if (savedAttachments.isNotEmpty) {
-            content['attachments'] = savedAttachments;
-          }
-          _messages.insert(
-            0,
-            ChatMessageModel(
-              id: userMessageId,
-              type: 1,
-              user: 1,
-              content: content,
-              createAt: DateTime.fromMillisecondsSinceEpoch(
-                int.parse(timestamp),
-              ),
-            ),
-          );
-        });
-      }
-
-      final handled = await _handleExecutableTaskFlow(
-        aiMessageId,
-        userMessageId,
-      );
-      if (!handled && mounted && _currentDispatchTurnId == aiMessageId) {
-        handleAgentError('统一 Agent 启动失败，请检查模型提供商与场景模型配置。');
-      }
-    } finally {
-      _isRetryingLatestInstructionAfterAuth = false;
-    }
-  }
-
-  /// Remove all messages from the latest failed attempt,
-  /// including AI responses, cards, AND the user message that triggered it.
-  @override
-  void _removeFailedAttemptMessages() {
-    var removeCount = 0;
-    for (final message in _messages) {
-      removeCount += 1;
-      if (message.user == 1) break;
-    }
-    if (removeCount <= 0) return;
-    _messages.removeRange(0, removeCount);
   }
 }

@@ -183,7 +183,6 @@ class BrowserHostStore(
     private val clock: () -> Long = { System.currentTimeMillis() }
 ) {
     companion object {
-        private const val MAX_HISTORY_ENTRIES = 500
         private const val KEY_BOOKMARKS = "bookmarks_json"
         private const val KEY_HISTORY = "history_json"
         private const val KEY_DOWNLOADS = "downloads_json"
@@ -341,7 +340,7 @@ class BrowserHostStore(
                     visitedAt = now
                 )
             )
-            addAll(current.filterNot { it.url == normalized }.take(MAX_HISTORY_ENTRIES - 1))
+            addAll(current.filterNot { it.url == normalized })
         }
         writeList(KEY_HISTORY, updated)
     }

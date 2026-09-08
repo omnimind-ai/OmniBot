@@ -6,6 +6,7 @@ import cn.com.omnimind.baselib.shizuku.PrivilegedActionPolicy
 import cn.com.omnimind.baselib.shizuku.ShizukuBackend
 import cn.com.omnimind.baselib.shizuku.ShizukuCapabilityManager
 import cn.com.omnimind.baselib.util.OmniLog
+import cn.com.omnimind.bot.agent.tool.AgentCapabilityToolDefinition
 import cn.com.omnimind.bot.plugin.OmniPluginToolDefinition
 import com.rk.terminal.runtime.TerminalDistribution
 import kotlinx.serialization.json.JsonArray
@@ -25,8 +26,7 @@ class AgentToolRegistry(
     private val conversationMode: String = AgentConversationModePolicy.AGENT_MODE,
     terminalDistribution: TerminalDistribution.Spec = TerminalDistribution.alpine,
     pluginToolDefinitions: List<OmniPluginToolDefinition> = emptyList(),
-    userMessage: String? = null,
-    toolRoutingMode: AgentToolRoutingMode = AgentToolRoutingMode.DEFAULT,
+    capabilityToolDefinitions: List<AgentCapabilityToolDefinition> = emptyList(),
     // Keep the visual-operation entry visible so the Agent can explain how
     // to enable it. VlmToolHandler gates execution until OmniFlow is enabled.
     includeVlmTool: Boolean = true,
@@ -42,10 +42,8 @@ class AgentToolRegistry(
     private val toolSchemas = linkedMapOf<String, JsonObject>()
     private val runtimeDescriptors = linkedMapOf<String, RuntimeToolDescriptor>()
     private val allToolsByName = linkedMapOf<String, ChatCompletionTool>()
-    private val exposedToolNames = linkedSetOf<String>()
-    override val usesProgressiveDiscovery: Boolean = userMessage != null
     override val toolsForModel: List<ChatCompletionTool>
-        get() = exposedToolNames.mapNotNull { allToolsByName[it] }
+        get() = allToolsByName.values.toList()
 
     init {
         val locale = AppLocaleManager.resolvePromptLocale(context)
@@ -102,7 +100,7 @@ class AgentToolRegistry(
         }
         runtimeDefinitions.addAll(AgentToolDefinitions.memoryTools(locale))
         runtimeDefinitions.addAll(AgentToolDefinitions.subagentTools(locale))
-        if (pluginToolDefinitions.isNotEmpty()) {
+        if (pluginToolDefinitions.isNotEmpty() || capabilityToolDefinitions.isNotEmpty()) {
             val occupiedNames = runtimeDefinitions.mapNotNullTo(linkedSetOf()) { definition ->
                 (definition["function"] as? JsonObject)
                     ?.get("name")
@@ -132,6 +130,29 @@ class AgentToolRegistry(
                     terminalDistribution
                 )
             }
+            capabilityToolDefinitions.forEach { capabilityTool ->
+                require(capabilityTool.name !in occupiedNames) {
+                    "Capability tool conflicts with an existing tool: ${capabilityTool.name}"
+                }
+                occupiedNames += capabilityTool.name
+                runtimeDefinitions += AgentToolDefinitions.decorateToolDefinition(
+                    buildJsonObject {
+                        put("type", JsonPrimitive("function"))
+                        put("function", buildJsonObject {
+                            put("name", JsonPrimitive(capabilityTool.name))
+                            put("displayName", JsonPrimitive(capabilityTool.displayName))
+                            put("toolType", JsonPrimitive(capabilityTool.toolType))
+                            capabilityTool.serverName?.let {
+                                put("serverName", JsonPrimitive(it))
+                            }
+                            put("description", JsonPrimitive(capabilityTool.description))
+                            put("parameters", capabilityTool.parameters)
+                        })
+                    },
+                    locale,
+                    terminalDistribution
+                )
+            }
         }
         val conversationDefinitions = AgentConversationModePolicy
             .filterToolDefinitionsForConversationMode(runtimeDefinitions, conversationMode)
@@ -142,64 +163,15 @@ class AgentToolRegistry(
                     ?.lowercase()
                     .orEmpty()
             }
-        val modelConversationDefinitions = if (userMessage != null) {
-            AgentToolDefinitions.modelFacingTools(conversationDefinitions)
-        } else {
-            conversationDefinitions
-        }
-        val selectedToolNames = userMessage?.let { message ->
-            AgentToolVisibilitySelector.select(
-                userMessage = message,
-                routingMode = toolRoutingMode,
-                candidates = modelConversationDefinitions.mapNotNull { definition ->
-                    val function = definition["function"] as? JsonObject
-                        ?: return@mapNotNull null
-                    val name = function["name"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
-                    if (name.isBlank()) return@mapNotNull null
-                    val toolType = function["toolType"]?.jsonPrimitive?.contentOrNull?.trim()
-                        .orEmpty()
-                    AgentToolVisibilitySelector.ToolCandidate(
-                        name = name,
-                        displayName = function["displayName"]?.jsonPrimitive?.contentOrNull
-                            .orEmpty(),
-                        description = function["description"]?.jsonPrimitive?.contentOrNull
-                            .orEmpty(),
-                        owner = function["serverName"]?.jsonPrimitive?.contentOrNull,
-                        dynamic = toolType == "plugin" || toolType == "mcp",
-                    )
-                },
-            )
-        }
-        val initialToolNames = if (selectedToolNames == null) {
-            modelConversationDefinitions
-                .mapNotNull { definition ->
-                    (definition["function"] as? JsonObject)
-                        ?.get("name")
-                        ?.jsonPrimitive
-                        ?.contentOrNull
-                        ?.trim()
-                }
-                .toSet()
-        } else {
-            selectedToolNames
-        }
-
-        modelConversationDefinitions.forEach { definition ->
+        conversationDefinitions.forEach { definition ->
             registerModelDefinition(definition)
         }
-
-        exposedToolNames += if (selectedToolNames == null) {
-            allToolsByName.keys
-        } else {
-            initialToolNames
-        }.filter { it in allToolsByName }
 
         // Debug dump: full registered tool list to verify which ones the LLM actually receives.
         OmniLog.i(
             tag,
-            "registered_tools count=${toolsForModel.size} " +
+                "registered_tools count=${toolsForModel.size} " +
                 "conversationMode=$conversationMode " +
-                "toolRoutingMode=$toolRoutingMode " +
                 "subagent_present=${"subagent_dispatch" in runtimeDescriptors.keys} " +
                 "memory_load_present=${"memory_load" in runtimeDescriptors.keys} " +
                 "names=[${runtimeDescriptors.keys.joinToString(",")}]"
@@ -247,7 +219,7 @@ class AgentToolRegistry(
         )
     }
 
-    override fun searchTools(query: String, limit: Int): List<AgentToolSearchEntry> {
+    override fun searchTools(query: String, limit: Int?): List<AgentToolSearchEntry> {
         val normalizedTerms = query
             .trim()
             .lowercase()
@@ -256,7 +228,6 @@ class AgentToolRegistry(
             .filter(String::isNotBlank)
         val scored = runtimeDescriptors.values
             .asSequence()
-            .filter { it.name != AgentToolVisibilitySelector.TOOL_SEARCH_NAME }
             .mapNotNull { descriptor ->
                 val tool = allToolsByName[descriptor.name] ?: return@mapNotNull null
                 val haystack = buildString {
@@ -284,17 +255,10 @@ class AgentToolRegistry(
             }
             .sortedWith(compareByDescending<Pair<AgentToolSearchEntry, Int>> { it.second }
                 .thenBy { it.first.name.lowercase() })
-            .take(limit.coerceIn(1, 50))
-            .map { it.first }
-            .toList()
-        return scored
-    }
-
-    override fun exposeToolNames(names: Set<String>) {
-        names.forEach { name ->
-            if (name in allToolsByName) {
-                exposedToolNames += name
-            }
+        return if (limit == null) {
+            scored.map { it.first }.toList()
+        } else {
+            scored.take(limit.coerceAtLeast(1)).map { it.first }.toList()
         }
     }
 

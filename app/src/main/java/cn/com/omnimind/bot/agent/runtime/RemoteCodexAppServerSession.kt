@@ -8,12 +8,16 @@ import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
+import java.util.UUID
 
 internal class RemoteCodexAppServerSession(
     private val scope: CoroutineScope,
@@ -21,6 +25,8 @@ internal class RemoteCodexAppServerSession(
     private val connectionFactory: () -> RemoteCodexAppServerConnection
 ) {
     private val gson = Gson()
+    /** Identity of this app-server transport instance, not an ACP session id. */
+    internal val connectionToken: String = UUID.randomUUID().toString()
     private val writeMutex = Mutex()
     private val pending = ConcurrentHashMap<Long, CompletableDeferred<Map<String, Any?>>>()
     private val nextId = AtomicLong(1L)
@@ -103,7 +109,25 @@ internal class RemoteCodexAppServerSession(
             }
         } catch (error: Throwable) {
             pending.remove(id)
+            if (error is TimeoutCancellationException || error is CancellationException) {
+                cancelInFlightRequest(currentConnection, id)
+            }
             throw error
+        }
+    }
+
+    private suspend fun cancelInFlightRequest(
+        requestConnection: RemoteCodexAppServerConnection,
+        requestId: Long,
+    ) {
+        withContext(NonCancellable) {
+            if (connection !== requestConnection || !requestConnection.isRunning) return@withContext
+            runCatching {
+                sendNotification(
+                    "$/cancel_request",
+                    mapOf("requestId" to requestId),
+                )
+            }
         }
     }
 
@@ -154,6 +178,7 @@ internal class RemoteCodexAppServerSession(
         onServerMessage(
             mapOf(
                 "method" to "codex/disconnected",
+                "_remoteConnectionToken" to connectionToken,
                 "params" to mapOf("exitCode" to exitCode),
             )
         )

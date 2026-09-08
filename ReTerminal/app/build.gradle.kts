@@ -17,7 +17,7 @@ plugins {
 
 android {
     namespace = "com.rk.application"
-    compileSdk = 37
+    compileSdk = 36
 
 
     dependenciesInfo {

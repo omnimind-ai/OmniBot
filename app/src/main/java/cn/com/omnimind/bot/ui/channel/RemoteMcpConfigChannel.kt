@@ -1,6 +1,9 @@
 package cn.com.omnimind.bot.ui.channel
 
+import android.content.Context
 import cn.com.omnimind.baselib.util.OmniLog
+import cn.com.omnimind.bot.App
+import cn.com.omnimind.bot.agent.runtime.AgentRuntimeManager
 import cn.com.omnimind.bot.mcp.RemoteMcpConfigStore
 import cn.com.omnimind.bot.mcp.RemoteMcpDiscoveryRegistry
 import cn.com.omnimind.bot.mcp.RemoteMcpServerConfig
@@ -15,8 +18,11 @@ class RemoteMcpConfigChannel {
     private val channelName = "cn.com.omnimind.bot/RemoteMcpConfig"
     private val scope = CoroutineScope(Dispatchers.IO)
     private var channel: MethodChannel? = null
+    private var appContext: Context? = null
 
-    fun onCreate() = Unit
+    fun onCreate(context: Context) {
+        appContext = context.applicationContext
+    }
 
     fun setChannel(flutterEngine: FlutterEngine) {
         channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, channelName)
@@ -31,21 +37,22 @@ class RemoteMcpConfigChannel {
                             val raw = call.arguments<Map<String, Any?>>() ?: emptyMap()
                             val saved = RemoteMcpConfigStore.upsertServer(RemoteMcpServerConfig.fromMap(raw))
                             RemoteMcpDiscoveryRegistry.invalidate(saved.id)
+                            invalidateAcpMcpSessions()
                             respondSuccess(result, saved.toMap())
                         }
                         "deleteServer" -> {
                             val serverId = call.argument<String>("id").orEmpty()
                             RemoteMcpConfigStore.deleteServer(serverId)
                             RemoteMcpDiscoveryRegistry.invalidate(serverId)
+                            invalidateAcpMcpSessions()
                             respondSuccess(result, true)
                         }
                         "setServerEnabled" -> {
                             val serverId = call.argument<String>("id").orEmpty()
                             val enabled = call.argument<Boolean>("enabled") == true
                             val updated = RemoteMcpConfigStore.setServerEnabled(serverId, enabled)
-                            if (!enabled) {
-                                RemoteMcpDiscoveryRegistry.invalidate(serverId)
-                            }
+                            RemoteMcpDiscoveryRegistry.invalidate(serverId)
+                            invalidateAcpMcpSessions()
                             respondSuccess(result, updated?.toMap())
                         }
                         "refreshServerTools" -> {
@@ -64,7 +71,7 @@ class RemoteMcpConfigChannel {
                         else -> withContext(Dispatchers.Main) { result.notImplemented() }
                     }
                 } catch (t: Throwable) {
-                    OmniLog.e("[RemoteMcpConfigChannel]", "channel error: ${t.message}")
+                    OmniLog.e("[RemoteMcpConfigChannel]", "channel error: ${t.message}", t)
                     withContext(Dispatchers.Main) {
                         result.error("REMOTE_MCP_ERROR", t.message, null)
                     }
@@ -76,11 +83,17 @@ class RemoteMcpConfigChannel {
     fun clear() {
         channel?.setMethodCallHandler(null)
         channel = null
+        appContext = null
     }
 
     private suspend fun respondSuccess(result: MethodChannel.Result, value: Any?) {
         withContext(Dispatchers.Main) {
             result.success(value)
         }
+    }
+
+    private suspend fun invalidateAcpMcpSessions() {
+        val context = appContext ?: App.instance.applicationContext
+        AgentRuntimeManager.getInstance(context).invalidateMcpConfiguration()
     }
 }

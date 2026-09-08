@@ -1,0 +1,54 @@
+{
+  "harness": "codex",
+  "protocol": "openai_compatible",
+  "wire": "chat_completions",
+  "environment": {
+    "CODEX_HOME": "/root/.codex",
+    "OPENAI_BASE_URL": "https://fixture.invalid/v1",
+    "OPENAI_API_KEY": "fixture-key"
+  },
+  "files": [
+    {
+      "path": "/root/.codex/config.toml",
+      "content": "model_provider = \"omnimind\"\nmodel = \"org/test-model\"\ndisable_response_storage = true\nmodel_catalog_json = \"/root/.codex/provider-model-catalog.json\"\n\n[model_providers.omnimind]\nname = \"omnimind\"\nbase_url = \"https://fixture.invalid/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n\n",
+      "executorKey": "codex-agent-config-write"
+    },
+    {
+      "path": "/root/.codex/auth.json",
+      "content": "{\n  \"OPENAI_API_KEY\": \"fixture-key\"\n}\n",
+      "executorKey": "codex-agent-config-write"
+    },
+    {
+      "path": "/root/.codex/provider-model-catalog.json",
+      "content": "{\n  \"models\": [\n    {\n      \"slug\": \"org/test-model\",\n      \"display_name\": \"org/test-model\",\n      \"base_instructions\": \"You are a coding agent. Follow the user\\u0027s instructions, inspect the workspace, and make safe, precise changes.\",\n      \"supported_reasoning_levels\": [],\n      \"shell_type\": \"default\",\n      \"visibility\": \"list\",\n      \"supported_in_api\": true,\n      \"priority\": 99,\n      \"additional_speed_tiers\": [],\n      \"service_tiers\": [],\n      \"include_skills_usage_instructions\": false,\n      \"include_plugin_usage_instructions\": false,\n      \"include_apps_usage_instructions\": false,\n      \"supports_reasoning_summary_parameter\": false,\n      \"support_verbosity\": false,\n      \"web_search_tool_type\": \"text\",\n      \"truncation_policy\": {\n        \"mode\": \"tokens\",\n        \"limit\": 272000\n      },\n      \"supports_image_detail_original\": false,\n      \"context_window\": 272000,\n      \"max_context_window\": 272000,\n      \"effective_context_window_percent\": 95,\n      \"experimental_supported_tools\": [],\n      \"input_modalities\": [\n        \"text\",\n        \"image\"\n      ],\n      \"supports_search_tool\": false,\n      \"supports_parallel_tool_calls\": false,\n      \"use_responses_lite\": false,\n      \"node_repl_auto_review_required\": false,\n      \"node_repl_disabled\": false\n    },\n    {\n      \"slug\": \"org/second-model\",\n      \"display_name\": \"org/second-model\",\n      \"base_instructions\": \"You are a coding agent. Follow the user\\u0027s instructions, inspect the workspace, and make safe, precise changes.\",\n      \"supported_reasoning_levels\": [],\n      \"shell_type\": \"default\",\n      \"visibility\": \"list\",\n      \"supported_in_api\": true,\n      \"priority\": 99,\n      \"additional_speed_tiers\": [],\n      \"service_tiers\": [],\n      \"include_skills_usage_instructions\": false,\n      \"include_plugin_usage_instructions\": false,\n      \"include_apps_usage_instructions\": false,\n      \"supports_reasoning_summary_parameter\": false,\n      \"support_verbosity\": false,\n      \"web_search_tool_type\": \"text\",\n      \"truncation_policy\": {\n        \"mode\": \"tokens\",\n        \"limit\": 272000\n      },\n      \"supports_image_detail_original\": false,\n      \"context_window\": 272000,\n      \"max_context_window\": 272000,\n      \"effective_context_window_percent\": 95,\n      \"experimental_supported_tools\": [],\n      \"input_modalities\": [\n        \"text\",\n        \"image\"\n      ],\n      \"supports_search_tool\": false,\n      \"supports_parallel_tool_calls\": false,\n      \"use_responses_lite\": false,\n      \"node_repl_auto_review_required\": false,\n      \"node_repl_disabled\": false\n    }\n  ]\n}\n",
+      "executorKey": "codex-agent-config-write"
+    }
+  ],
+  "refreshFiles": [
+    {
+      "path": "/root/.codex/config.toml",
+      "content": "model_provider = \"omnimind\"\nmodel = \"org/test-model\"\ndisable_response_storage = true\nmodel_catalog_json = \"/root/.codex/provider-model-catalog.json\"\n\n[model_providers.omnimind]\nname = \"omnimind\"\nbase_url = \"https://fixture.invalid/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = true\n\n",
+      "executorKey": "codex-agent-config-write"
+    },
+    {
+      "path": "/root/.codex/auth.json",
+      "content": "{\n  \"OPENAI_API_KEY\": \"fixture-key\"\n}\n",
+      "executorKey": "codex-agent-config-write"
+    },
+    {
+      "path": "/root/.codex/provider-model-catalog.json",
+      "content": "{\n  \"models\": [\n    {\n      \"slug\": \"org/test-model\",\n      \"display_name\": \"org/test-model\",\n      \"base_instructions\": \"You are a coding agent. Follow the user\\u0027s instructions, inspect the workspace, and make safe, precise changes.\",\n      \"supported_reasoning_levels\": [],\n      \"shell_type\": \"default\",\n      \"visibility\": \"list\",\n      \"supported_in_api\": true,\n      \"priority\": 99,\n      \"additional_speed_tiers\": [],\n      \"service_tiers\": [],\n      \"include_skills_usage_instructions\": false,\n      \"include_plugin_usage_instructions\": false,\n      \"include_apps_usage_instructions\": false,\n      \"supports_reasoning_summary_parameter\": false,\n      \"support_verbosity\": false,\n      \"web_search_tool_type\": \"text\",\n      \"truncation_policy\": {\n        \"mode\": \"tokens\",\n        \"limit\": 272000\n      },\n      \"supports_image_detail_original\": false,\n      \"context_window\": 272000,\n      \"max_context_window\": 272000,\n      \"effective_context_window_percent\": 95,\n      \"experimental_supported_tools\": [],\n      \"input_modalities\": [\n        \"text\",\n        \"image\"\n      ],\n      \"supports_search_tool\": false,\n      \"supports_parallel_tool_calls\": false,\n      \"use_responses_lite\": false,\n      \"node_repl_auto_review_required\": false,\n      \"node_repl_disabled\": false\n    },\n    {\n      \"slug\": \"org/second-model\",\n      \"display_name\": \"org/second-model\",\n      \"base_instructions\": \"You are a coding agent. Follow the user\\u0027s instructions, inspect the workspace, and make safe, precise changes.\",\n      \"supported_reasoning_levels\": [],\n      \"shell_type\": \"default\",\n      \"visibility\": \"list\",\n      \"supported_in_api\": true,\n      \"priority\": 99,\n      \"additional_speed_tiers\": [],\n      \"service_tiers\": [],\n      \"include_skills_usage_instructions\": false,\n      \"include_plugin_usage_instructions\": false,\n      \"include_apps_usage_instructions\": false,\n      \"supports_reasoning_summary_parameter\": false,\n      \"support_verbosity\": false,\n      \"web_search_tool_type\": \"text\",\n      \"truncation_policy\": {\n        \"mode\": \"tokens\",\n        \"limit\": 272000\n      },\n      \"supports_image_detail_original\": false,\n      \"context_window\": 272000,\n      \"max_context_window\": 272000,\n      \"effective_context_window_percent\": 95,\n      \"experimental_supported_tools\": [],\n      \"input_modalities\": [\n        \"text\",\n        \"image\"\n      ],\n      \"supports_search_tool\": false,\n      \"supports_parallel_tool_calls\": false,\n      \"use_responses_lite\": false,\n      \"node_repl_auto_review_required\": false,\n      \"node_repl_disabled\": false\n    },\n    {\n      \"slug\": \"org/new-model\",\n      \"display_name\": \"org/new-model\",\n      \"base_instructions\": \"You are a coding agent. Follow the user\\u0027s instructions, inspect the workspace, and make safe, precise changes.\",\n      \"supported_reasoning_levels\": [],\n      \"shell_type\": \"default\",\n      \"visibility\": \"list\",\n      \"supported_in_api\": true,\n      \"priority\": 99,\n      \"additional_speed_tiers\": [],\n      \"service_tiers\": [],\n      \"include_skills_usage_instructions\": false,\n      \"include_plugin_usage_instructions\": false,\n      \"include_apps_usage_instructions\": false,\n      \"supports_reasoning_summary_parameter\": false,\n      \"support_verbosity\": false,\n      \"web_search_tool_type\": \"text\",\n      \"truncation_policy\": {\n        \"mode\": \"tokens\",\n        \"limit\": 272000\n      },\n      \"supports_image_detail_original\": false,\n      \"context_window\": 272000,\n      \"max_context_window\": 272000,\n      \"effective_context_window_percent\": 95,\n      \"experimental_supported_tools\": [],\n      \"input_modalities\": [\n        \"text\",\n        \"image\"\n      ],\n      \"supports_search_tool\": false,\n      \"supports_parallel_tool_calls\": false,\n      \"use_responses_lite\": false,\n      \"node_repl_auto_review_required\": false,\n      \"node_repl_disabled\": false\n    }\n  ]\n}\n",
+      "executorKey": "codex-agent-config-write"
+    }
+  ],
+  "clientCapabilityMeta": {
+    "jetbrains": {
+      "air": {
+        "version": 1.0,
+        "capabilities": [
+          "sessionFailure"
+        ]
+      }
+    }
+  }
+}

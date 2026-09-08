@@ -91,8 +91,7 @@ class SandboxPluginBridgeRuntime private constructor(
         val request = XiaowanChatCompletionRequestFactory.create(
             prompt = prompt,
             system = system,
-            maxTokens = (params["maxTokens"] as? Number)?.toInt()
-                ?: XiaowanChatCompletionRequestFactory.DEFAULT_MAX_TOKENS,
+            maxTokens = (params["maxTokens"] as? Number)?.toInt(),
             temperature = (params["temperature"] as? Number)?.toDouble()
                 ?: XiaowanChatCompletionRequestFactory.DEFAULT_TEMPERATURE,
             reasoningEffort = params["reasoningEffort"]?.toString()

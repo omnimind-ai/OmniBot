@@ -1,62 +1,58 @@
 package cn.com.omnimind.bot.agent
 
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.jsonPrimitive
 
-/**
- * A filtered view over an existing [AgentToolCatalog] that only exposes
- * tools allowed by the active [SubagentProfile]. Any attempt to access a
- * tool outside the whitelist throws [IllegalStateException], preventing
- * a subagent from escalating beyond its declared scope.
- */
-class SubagentToolCatalogView(
+/** Enforces specialist permissions at the existing pre-execution validation boundary. */
+internal class SubagentToolCatalogView(
     private val parent: AgentToolCatalog,
-    private val allowed: Set<String>
+    private val profileId: String,
 ) : AgentToolCatalog {
-    override val usesProgressiveDiscovery: Boolean = parent.usesProgressiveDiscovery
-
-    override val toolsForModel: List<ChatCompletionTool> by lazy {
-        parent.toolsForModel.filter { tool ->
-            isAllowed(tool.function.name)
-        }
+    private val readable = mapOf(
+        "file_read" to "workspace", "file_list" to "workspace",
+        "file_search" to "workspace", "file_stat" to "workspace",
+        "memory_search" to "memory", "memory_load" to "memory",
+        "skills_list" to "skill", "skills_read" to "skill",
+        "context_apps_query" to "builtin", "context_time_now" to "builtin",
+        "browser_use" to "browser",
+    )
+    private val memoryTools = mapOf(
+        "memory_write_daily" to "memory", "memory_upsert_longterm" to "memory",
+        "memory_rollup_day" to "memory",
+    )
+    private fun allowed(name: String): Boolean {
+        val expectedType = when (profileId) {
+            "explorer" -> readable[name]
+            "memory-curator" -> (readable.filterValues { it == "workspace" || it == "memory" } + memoryTools)[name]
+            else -> null
+        } ?: return false
+        val descriptor = parent.runtimeDescriptor(name)
+        return descriptor.toolType == expectedType && descriptor.serverName == null &&
+            parent.toolsForModel.any { it.function.name == name }
     }
 
-    override fun runtimeDescriptor(toolName: String): AgentToolRegistry.RuntimeToolDescriptor {
-        ensureAllowed(toolName)
-        return parent.runtimeDescriptor(toolName)
-    }
+    override val toolsForModel: List<ChatCompletionTool>
+        get() = parent.toolsForModel.filter { allowed(it.function.name) }
+
+    // Metadata is needed to project rejected calls and pair their error results.
+    override fun runtimeDescriptor(toolName: String) = parent.runtimeDescriptor(toolName)
 
     override fun validateArguments(toolName: String, arguments: JsonObject) {
-        ensureAllowed(toolName)
+        require(allowed(toolName)) { "Tool '$toolName' is outside the $profileId role permissions" }
+        if (profileId == "explorer" && toolName == "browser_use") {
+            val action = arguments["action"]?.jsonPrimitive?.contentOrNull
+            require(action in setOf("navigate", "screenshot", "get_text", "get_page_info",
+                "find_elements", "get_readable", "get_backbone", "list_tabs", "scroll",
+                "go_back", "go_forward", "wait_for_selector")) {
+                "Browser action '$action' is outside explorer observation permissions"
+            }
+        }
         parent.validateArguments(toolName, arguments)
     }
 
-    override fun searchTools(query: String, limit: Int): List<AgentToolSearchEntry> {
-        return parent.searchTools(query, limit).filter { isAllowed(it.name) }
-    }
-
-    override fun exposeToolNames(names: Set<String>) {
-        parent.exposeToolNames(names.filterTo(linkedSetOf(), ::isAllowed))
-    }
-
-    /**
-     * Profiles use the stable internal names, while direct Agent catalogs may
-     * expose common Harness names such as `read` or `bash`. Resolve both forms
-     * and reject an alias occupied by a plugin/MCP tool.
-     */
-    private fun isAllowed(toolName: String): Boolean {
-        if (toolName in allowed) return true
-        return allowed.any { sourceName ->
-            AgentToolDefinitions.modelFacingNameFor(sourceName) == toolName &&
-                parent.runtimeDescriptor(toolName).toolType ==
-                    parent.runtimeDescriptor(sourceName).toolType
+    override fun searchTools(query: String, limit: Int?): List<AgentToolSearchEntry> =
+        parent.searchTools(query, null).filter { allowed(it.name) }.let { matches ->
+            if (limit == null) matches else matches.take(limit.coerceAtLeast(0))
         }
-    }
-
-    private fun ensureAllowed(toolName: String) {
-        if (!isAllowed(toolName)) {
-            throw IllegalStateException(
-                "tool '$toolName' is not allowed for this subagent (whitelist=${allowed.size})"
-            )
-        }
-    }
 }

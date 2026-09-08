@@ -2,6 +2,7 @@
 
 package cn.com.omnimind.bot.agent.runtime
 
+import cn.com.omnimind.bot.agent.AgentWorkspaceAttachmentSupport
 import android.util.Log
 import android.content.Context
 import cn.com.omnimind.baselib.llm.ChatCompletionMessage
@@ -22,7 +23,6 @@ import cn.com.omnimind.bot.agent.NoOpAgentRunControl
 import cn.com.omnimind.bot.agent.OmniAgentExecutor
 import cn.com.omnimind.bot.agent.ToolExecutionResult
 import cn.com.omnimind.bot.agent.resolveAgentPermissionIds
-import cn.com.omnimind.bot.plugin.sandbox.XiaowanChatCompletionRequestFactory
 import com.agentclientprotocol.agent.Agent
 import com.agentclientprotocol.agent.AgentInfo
 import com.agentclientprotocol.agent.AgentSession
@@ -32,10 +32,12 @@ import com.agentclientprotocol.common.Event
 import com.agentclientprotocol.common.SessionCreationParameters
 import com.agentclientprotocol.model.AgentCapabilities
 import com.agentclientprotocol.model.ContentBlock
+import com.agentclientprotocol.model.CloseSessionResponse
 import com.agentclientprotocol.model.DeleteSessionResponse
 import com.agentclientprotocol.model.EmbeddedResourceResource
 import com.agentclientprotocol.model.Implementation
 import com.agentclientprotocol.model.MessageId
+import com.agentclientprotocol.model.McpCapabilities
 import com.agentclientprotocol.model.ModelId
 import com.agentclientprotocol.model.ModelInfo
 import com.agentclientprotocol.model.PromptResponse
@@ -43,7 +45,6 @@ import com.agentclientprotocol.model.PromptCapabilities
 import com.agentclientprotocol.model.SessionCapabilities
 import com.agentclientprotocol.model.SessionCloseCapabilities
 import com.agentclientprotocol.model.SessionDeleteCapabilities
-import com.agentclientprotocol.model.SessionForkCapabilities
 import com.agentclientprotocol.model.SessionInfo
 import com.agentclientprotocol.model.SessionListCapabilities
 import com.agentclientprotocol.model.SessionResumeCapabilities
@@ -71,8 +72,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.channelFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonNull
@@ -87,6 +90,8 @@ import java.util.UUID
 import java.time.Instant
 import java.nio.charset.StandardCharsets
 import java.util.Base64
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.coroutineContext
 
 /**
@@ -102,10 +107,13 @@ internal class XiaowanAcpConnection(
     private val isXiaowanSession: suspend (String) -> Boolean = { true },
     private val deleteSession: suspend (String) -> Unit = {},
 ) : AcpRuntimeConnection {
+    override val materializesPromptAttachments: Boolean = true
+
     private lateinit var clientTransport: LoopbackTransport
     private lateinit var serverTransport: LoopbackTransport
     private lateinit var serverProtocol: Protocol
     private lateinit var serverProtocolScope: CoroutineScope
+    private lateinit var agentSupport: XiaowanAgentSupport
 
     override val exitSignal = CompletableDeferred<Int?>()
     override val isRunning: Boolean
@@ -131,9 +139,7 @@ internal class XiaowanAcpConnection(
                 }
         )
         serverProtocol = Protocol(serverProtocolScope, serverTransport)
-        Agent(
-            serverProtocol,
-            XiaowanAgentSupport(
+        agentSupport = XiaowanAgentSupport(
                 context = context,
                 scope = scope,
                 scheduleToolBridge = scheduleToolBridge,
@@ -141,6 +147,15 @@ internal class XiaowanAcpConnection(
                 conversationIdProvider = conversationIdProvider,
                 isXiaowanSession = isXiaowanSession,
                 deleteSessionCallback = deleteSession,
+                publishUpdate = { id, update ->
+                    serverProtocol.sendNotificationRaw(
+                        com.agentclientprotocol.model.AcpMethod.ClientMethods.V1.SessionUpdate,
+                        Json.encodeToJsonElement(
+                            com.agentclientprotocol.model.SessionNotification.serializer(),
+                            com.agentclientprotocol.model.SessionNotification(SessionId(id), update),
+                        ),
+                    )
+                },
                 requestPermission = { sessionId, toolCallId, title, detail ->
                     requestClientPermission(
                         protocol = serverProtocol,
@@ -151,7 +166,7 @@ internal class XiaowanAcpConnection(
                     )
                 },
             )
-        )
+        Agent(serverProtocol, agentSupport)
         return clientTransport
     }
 
@@ -180,6 +195,7 @@ internal class XiaowanAcpConnection(
         "Built-in Xiaowan ACP Agent closed before initialize completed"
 
     override suspend fun close() {
+        if (::agentSupport.isInitialized) agentSupport.closeAllSessions()
         if (::serverProtocol.isInitialized) serverProtocol.close()
         if (::serverProtocolScope.isInitialized) serverProtocolScope.cancel()
         if (::clientTransport.isInitialized) clientTransport.close()
@@ -266,14 +282,15 @@ private class XiaowanAgentSupport(
     private val conversationIdProvider: suspend (String) -> Long?,
     private val isXiaowanSession: suspend (String) -> Boolean,
     private val deleteSessionCallback: suspend (String) -> Unit,
+    private val publishUpdate: suspend (String, SessionUpdate) -> Unit,
     private val requestPermission: suspend (String, String, String, String) -> Boolean,
 ) : AgentSupport {
     private companion object {
         private const val TAG = "XiaowanAcpConnection"
     }
 
-    @Volatile
-    private var cachedModels: XiaowanModels? = null
+    private val activeSessions = ConcurrentHashMap<String, XiaowanAgentSession>()
+    private val profileStore = AcpAgentProfileStore(context)
 
     override suspend fun initialize(clientInfo: ClientInfo): AgentInfo {
         // Provider/model resolution is owned by Dispatch Model. A persisted
@@ -291,29 +308,7 @@ private class XiaowanAgentSupport(
         }
         return AgentInfo(
                 protocolVersion = 1,
-                capabilities = AgentCapabilities(
-                    loadSession = true,
-                    promptCapabilities = PromptCapabilities(
-                    // The shared Chat Completions executor currently accepts
-                    // image parts and workspace file references, but it does
-                    // not send ACP audio blocks to an audio-capable model.
-                    // Advertising audio here made clients believe Xiaowan
-                    // could transcribe/play prompt audio, while the adapter
-                    // silently reduced it to a workspace attachment. Keep
-                    // the capability truthful until an audio input route is
-                    // implemented end-to-end.
-                    audio = false,
-                    image = true,
-                    embeddedContext = true,
-                ),
-                sessionCapabilities = SessionCapabilities(
-                    list = SessionListCapabilities(),
-                    fork = SessionForkCapabilities(),
-                    resume = SessionResumeCapabilities(),
-                    delete = SessionDeleteCapabilities(),
-                    close = SessionCloseCapabilities(),
-                )
-            ),
+                capabilities = xiaowanAgentCapabilities(),
             authMethods = emptyList(),
             implementation = Implementation(
                 name = "xiaowan",
@@ -328,11 +323,15 @@ private class XiaowanAgentSupport(
         sessionParameters: SessionCreationParameters,
     ): AgentSession {
         validateXiaowanSessionParameters(sessionParameters)
-        return createXiaowanSession(SessionId(UUID.randomUUID().toString()))
+        return createXiaowanSession(
+            sessionId = SessionId(UUID.randomUUID().toString()),
+            sessionParameters = sessionParameters,
+        )
     }
 
     private suspend fun createXiaowanSession(
         sessionId: SessionId,
+        sessionParameters: SessionCreationParameters,
         requirePersistedSession: Boolean = false,
     ): AgentSession {
         if (requirePersistedSession) {
@@ -342,17 +341,41 @@ private class XiaowanAgentSupport(
             }
         }
         val models = loadXiaowanModels()
-        return XiaowanAgentSession(
+        val saved = profileStore.sessionConfiguration(sessionId.value)
+        val selectedModel = saved["model"]
+            ?.takeIf { saved["providerProfileId"] == models.providerProfileId }
+            ?: models.configuredModelId
+        val mcpSession = XiaowanMcpSession.open(
+            context = context,
+            scope = scope,
+            sessionId = sessionId.value,
+            cwd = sessionParameters.cwd,
+            servers = sessionParameters.mcpServers,
+        )
+        lateinit var session: XiaowanAgentSession
+        session = XiaowanAgentSession(
             context = context,
             scope = scope,
             scheduleToolBridge = scheduleToolBridge,
             conversationIdProvider = conversationIdProvider,
-            availableModels = models.available,
-            configuredModelId = models.configuredModelId,
+            availableModels = (models.available + ModelInfo(ModelId(selectedModel), selectedModel))
+                .distinctBy { it.modelId },
+            configuredModelId = selectedModel,
             providerProfile = models.providerProfile,
             sessionId = sessionId,
             requestPermission = requestPermission,
+            mcpSession = mcpSession,
+            publishUpdate = publishUpdate,
+            onClosed = { closedSessionId ->
+                activeSessions.remove(closedSessionId, session)
+            },
         )
+        saved["reasoning_effort"]?.let { effort ->
+            runCatching { session.setConfigOption(com.agentclientprotocol.model.SessionConfigId("reasoning_effort"), com.agentclientprotocol.model.SessionConfigOptionValue.StringValue(effort), JsonNull) }
+        }
+        activeSessions.remove(sessionId.value)?.close(JsonNull)
+        activeSessions[sessionId.value] = session
+        return session
     }
 
     override suspend fun listSessions(
@@ -392,10 +415,12 @@ private class XiaowanAgentSupport(
         sessionId: SessionId,
         _meta: JsonElement?
     ): DeleteSessionResponse {
-        require(isXiaowanSession(sessionId.value)) {
-            "Xiaowan ACP session does not exist: ${sessionId.value}"
+        activeSessions.remove(sessionId.value)?.close(JsonNull)
+        if (isXiaowanSession(sessionId.value)) {
+            deleteSessionCallback(sessionId.value)
         }
-        deleteSessionCallback(sessionId.value)
+        // ACP deletion is intentionally idempotent: deleting an unknown or
+        // already-deleted session succeeds without fabricating history.
         return DeleteSessionResponse(JsonNull)
     }
 
@@ -404,7 +429,15 @@ private class XiaowanAgentSupport(
         sessionParameters: SessionCreationParameters
     ): AgentSession {
         validateXiaowanSessionParameters(sessionParameters)
-        return createXiaowanSession(sessionId, requirePersistedSession = true)
+        activeSessions[sessionId.value]?.let { existing ->
+            existing.refreshModels()
+            return existing
+        }
+        return createXiaowanSession(
+            sessionId = sessionId,
+            sessionParameters = sessionParameters,
+            requirePersistedSession = true,
+        )
     }
 
     override suspend fun resumeSession(
@@ -412,7 +445,11 @@ private class XiaowanAgentSupport(
         sessionParameters: SessionCreationParameters
     ): AgentSession {
         validateXiaowanSessionParameters(sessionParameters)
-        return createXiaowanSession(sessionId, requirePersistedSession = true)
+        return createXiaowanSession(
+            sessionId = sessionId,
+            sessionParameters = sessionParameters,
+            requirePersistedSession = true,
+        )
     }
 
     override suspend fun forkSession(
@@ -420,7 +457,18 @@ private class XiaowanAgentSupport(
         sessionParameters: SessionCreationParameters
     ): AgentSession {
         validateXiaowanSessionParameters(sessionParameters)
-        return createXiaowanSession(SessionId(UUID.randomUUID().toString()))
+        return createXiaowanSession(
+            sessionId = SessionId(UUID.randomUUID().toString()),
+            sessionParameters = sessionParameters,
+        )
+    }
+
+    suspend fun closeAllSessions() {
+        val sessions = activeSessions.values.toList()
+        activeSessions.clear()
+        sessions.forEach { session ->
+            runCatching { session.close(JsonNull) }
+        }
     }
 
     private fun validateXiaowanSessionParameters(parameters: SessionCreationParameters) {
@@ -464,32 +512,11 @@ private class XiaowanAgentSupport(
         ) ?: throw IllegalStateException(
             "Dispatch Model Provider is not configured. Configure the default Provider and retry."
         )
-        cachedModels?.let { cached ->
-            if (canReuseXiaowanModels(usableBinding, profile, cached)) {
-                Log.i(TAG, "ACP timing agent=xiaowan stage=model_ready source=connection_cache")
-                return cached
-            }
-            cachedModels = null
-        }
         val startedAtNanos = System.nanoTime()
-        // A durable Dispatch binding is already the user's selected model
-        // and is sufficient to complete ACP initialize. /models is catalog
-        // metadata, not a session prerequisite; querying it here made every
-        // Xiaowan launch wait on a slow or unavailable Provider even though
-        // the selected model was known.
-        Log.i(
-            TAG,
-            "ACP timing agent=xiaowan stage=model_catalog " +
-                "source=durable_binding elapsedMs=${elapsedMillis(startedAtNanos)}"
-        )
-        val catalog = emptyList<ProviderModelOption>()
+        val catalog = ModelProviderConfigStore.cachedModels(context, profile)
         val boundModels = buildXiaowanModelsFromBinding(usableBinding, catalog)
-        // The bound model is the complete ACP startup document. The full
-        // Provider catalog remains available in the Provider editor and can
-        // be refreshed there without delaying this session handshake.
         boundModels?.let {
             val resolved = it.copy(providerProfile = profile.toSessionSnapshot())
-            cachedModels = resolved
             Log.i(
                 TAG,
                 "ACP timing agent=xiaowan stage=model_ready source=binding " +
@@ -612,11 +639,14 @@ private class XiaowanAgentSession(
     scope: CoroutineScope,
     private val scheduleToolBridge: AgentScheduleToolBridge,
     private val conversationIdProvider: suspend (String) -> Long?,
-    override val availableModels: List<ModelInfo>,
+    override var availableModels: List<ModelInfo>,
     private val configuredModelId: String,
     private val providerProfile: ModelProviderProfile,
     override val sessionId: SessionId,
     private val requestPermission: suspend (String, String, String, String) -> Boolean,
+    private val mcpSession: XiaowanMcpSession,
+    private val publishUpdate: suspend (String, SessionUpdate) -> Unit,
+    private val onClosed: (String) -> Unit,
 ) : AgentSession {
     private companion object {
         private const val TAG = "XiaowanAcpConnection"
@@ -626,7 +656,9 @@ private class XiaowanAgentSession(
     private val promptMutex = Mutex()
     @Volatile
     private var activePromptJob: Job? = null
-    private var selectedModelId: String = configuredModelId
+    private val closed = AtomicBoolean(false)
+    private val sessionConfig = XiaowanSessionConfig(availableModels, configuredModelId)
+    private val selectedModelId: String get() = sessionConfig.model
     private val executor = OmniAgentExecutor(
         context = context,
         scope = scope,
@@ -656,28 +688,51 @@ private class XiaowanAgentSession(
                 )
             }
         },
+        sessionCapabilityModules = listOfNotNull(mcpSession.capabilityModule),
     )
+
+    override suspend fun postInitialize() {
+        publishUpdate(sessionId.value, SessionUpdate.AvailableCommandsUpdate(
+            listOf(com.agentclientprotocol.model.AvailableCommand(
+                name = "compact",
+                description = "Compress conversation context while preserving history",
+            )),
+        ))
+    }
 
     override suspend fun prompt(
         content: List<ContentBlock>,
         _meta: JsonElement?,
     ): Flow<Event> = channelFlow {
-        val promptJob = coroutineContext[Job]
+        check(!closed.get()) { "Xiaowan ACP session is closed: ${sessionId.value}" }
+        var promptJob: Job? = null
         try {
             promptMutex.withLock {
-        // The cancellation handle belongs to the prompt that owns the
-        // session mutex. Assigning it before acquiring the mutex lets a
-        // queued second prompt overwrite the first prompt's handle; a stop
-        // request would then cancel the waiter instead of the running turn.
-        activePromptJob = promptJob
-        val promptParts = buildXiaowanPromptParts(content)
+        // Keep the flow producer alive while the prompt worker is cancelled.
+        // The ACP session/cancel callback must be able to receive the official
+        // PromptResponse(CANCELLED) instead of cancelling this channelFlow
+        // producer and leaking JobCancellationException into the dispatcher.
+        val worker = launch {
+            try {
+        val rawPromptParts = buildXiaowanPromptParts(content)
+        // ACP owns the prompt boundary. Materialize image content here so the
+        // Agent always has a stable workspace path, while the provider policy
+        // can still receive the inline image when the route supports it. The
+        // shared HTTP client removes an unsupported image only on a definitive
+        // pre-output 400, preserving the same turn for workspace fallback.
+        val promptParts = rawPromptParts.copy(
+            attachments = AgentWorkspaceAttachmentSupport.prepareAttachmentsForRuntime(
+                context = context,
+                taskId = "acp-${sessionId.value}-${UUID.randomUUID()}",
+                rawAttachments = rawPromptParts.attachments,
+            )
+        )
         val text = promptParts.text
         require(text.isNotEmpty() || promptParts.attachments.isNotEmpty()) {
             "Xiaowan ACP prompt is empty"
         }
         val conversationId = conversationIdProvider(sessionId.value)
         val streamBridge = XiaowanAcpEventBridge(
-            canContinue = conversationId != null,
         ) { update ->
             // AgentCallback can arrive from provider/tool worker coroutines.
             // `flow { emit(...) }` is not thread-safe and drops the whole turn
@@ -721,13 +776,27 @@ private class XiaowanAgentSession(
                 "conversationMode=$conversationMode " +
                 "modeSource=${if (persistedConversationMode != null) "conversation" else "acp_meta_or_agent_default"}"
         )
-        val reasoningEffort = normalizeXiaowanReasoningEffort(
-            (_meta as? JsonObject)
-                ?.get("reasoningEffort")
-                ?.jsonPrimitive
-                ?.content
-        )
+        // The official session config owns this choice, including Xiaowan's
+        // initial setting. A prompt must not reset it to the model default.
+        val reasoningEffort = sessionConfig.requestEffort
         val terminalEnvironment = xiaowanTerminalEnvironmentFromMeta(_meta)
+        if (text.trim() == "/compact" && promptParts.attachments.isEmpty()) {
+            require(conversationId != null) { "Compaction requires a persisted conversation" }
+            val outcome = cn.com.omnimind.bot.agent.AgentConversationContextCompactor(
+                historyRepository = cn.com.omnimind.bot.agent.AgentConversationHistoryRepository(context),
+                modelOverride = selectedModelOverride(),
+                reasoningEffort = reasoningEffort,
+            ).compactConversationContext(conversationId, conversationMode)
+            check(outcome.compacted || outcome.reason in setOf("no_candidate", "no_prompt_messages")) {
+                "Context compaction failed: ${outcome.reason}"
+            }
+            streamBridge.emitAssistantSnapshot(
+                if (outcome.compacted) "上下文已压缩，聊天记录已保留。"
+                else "当前暂无可压缩的上下文。",
+            )
+            send(Event.PromptResponseEvent(PromptResponse(stopReason = StopReason.END_TURN)))
+            return@launch
+        }
         val result = executor.processUserMessage(
             userMessage = text,
             conversationHistory = emptyList(),
@@ -746,6 +815,14 @@ private class XiaowanAgentSession(
             },
             historyMessagesOverride = messages.toList().takeIf { conversationId == null },
         )
+        if (result is AgentResult.Error && result.exception is CancellationException) {
+            send(
+                Event.PromptResponseEvent(
+                    PromptResponse(stopReason = StopReason.CANCELLED)
+                )
+            )
+            return@launch
+        }
         val answer = when (result) {
             is AgentResult.Success -> {
                 val response = result.response.content
@@ -779,7 +856,25 @@ private class XiaowanAgentSession(
                 )
             )
         )
+            } catch (_: CancellationException) {
+                // Cancellation is the official ACP prompt terminal. Keep the
+                // flow alive long enough to deliver it to the ClientSession.
+                runCatching {
+                    send(
+                        Event.PromptResponseEvent(
+                            PromptResponse(stopReason = StopReason.CANCELLED)
+                        )
+                    )
+                }
+            }
         }
+        // The cancellation handle belongs to the prompt that owns the
+        // session mutex. It points at the worker, not the channelFlow producer,
+        // so cancelling a turn cannot abort the ACP protocol dispatcher.
+        promptJob = worker
+        activePromptJob = worker
+        worker.join()
+            }
         } finally {
             if (activePromptJob === promptJob) {
                 activePromptJob = null
@@ -788,7 +883,22 @@ private class XiaowanAgentSession(
     }
 
     override suspend fun cancel() {
-        activePromptJob?.cancel(CancellationException("ACP session turn cancelled"))
+        // session/cancel is handled by the ACP protocol dispatcher. Cancel the
+        // prompt job without injecting a custom exception into that dispatcher:
+        // the prompt collector observes normal coroutine cancellation and
+        // projects the official cancel result through the existing lifecycle.
+        // Propagating a CancellationException from this callback can abort the
+        // Android process while the JSON-RPC request is being handled.
+        activePromptJob?.cancelAndJoin()
+    }
+
+    override suspend fun close(_meta: JsonElement?): CloseSessionResponse {
+        if (closed.compareAndSet(false, true)) {
+            cancel()
+            mcpSession.close()
+            onClosed(sessionId.value)
+        }
+        return CloseSessionResponse(JsonNull)
     }
 
     /**
@@ -807,8 +917,49 @@ private class XiaowanAgentSession(
         require(availableModels.any { it.modelId == modelId }) {
             "Model is not available from the configured Provider: ${modelId.value}"
         }
-        selectedModelId = modelId.value
+        setConfigOption(com.agentclientprotocol.model.SessionConfigId("model"),
+            com.agentclientprotocol.model.SessionConfigOptionValue.StringValue(modelId.value), _meta)
         return SetSessionModelResponse(JsonNull)
+    }
+
+    suspend fun refreshModels() {
+        val catalog = cn.com.omnimind.bot.agent.runtime.fetchAgentProviderModels(
+            providerProfile, forceRefresh = true,
+        )
+        ModelProviderConfigStore.rememberModels(context, providerProfile, catalog)
+        availableModels = (catalog.map { ModelInfo(ModelId(it.id), it.displayName.ifBlank { it.id }) } +
+            ModelInfo(ModelId(selectedModelId), selectedModelId)).distinctBy { it.modelId }
+        sessionConfig.replaceModels(availableModels)
+        Log.i(TAG, "ACP model catalog refreshed count=${availableModels.size}")
+    }
+
+    override val configOptions: List<com.agentclientprotocol.model.SessionConfigOption>
+        get() = sessionConfig.options
+
+    override suspend fun setConfigOption(
+        configId: com.agentclientprotocol.model.SessionConfigId,
+        value: com.agentclientprotocol.model.SessionConfigOptionValue,
+        _meta: JsonElement?,
+    ): com.agentclientprotocol.model.SetSessionConfigOptionResponse {
+        check(activePromptJob?.isActive != true) { "Session configuration can only change while idle" }
+        if (configId.value == "model" &&
+            value is com.agentclientprotocol.model.SessionConfigOptionValue.StringValue &&
+            availableModels.none { it.modelId.value == value.value }) {
+            // A live Provider picker may discover models added since this session
+            // started. Refresh its existing catalog before validating the choice;
+            // session/load is history replay and is not a model refresh API.
+            refreshModels()
+        }
+        val updated = XiaowanSessionConfig(availableModels, selectedModelId)
+        updated.set("reasoning_effort", com.agentclientprotocol.model.SessionConfigOptionValue.StringValue(sessionConfig.effort))
+        updated.set(configId.value, value)
+        AcpAgentProfileStore(context).saveSessionConfiguration(sessionId.value, mapOf(
+            "providerProfileId" to providerProfile.id,
+            "model" to updated.model,
+            "reasoning_effort" to updated.effort,
+        ))
+        sessionConfig.set(configId.value, value)
+        return com.agentclientprotocol.model.SetSessionConfigOptionResponse(configOptions)
     }
 
     private fun selectedModelOverride(): cn.com.omnimind.bot.agent.AgentModelOverride? {
@@ -857,26 +1008,33 @@ internal fun AgentResult.Success.toAcpUsage(): Usage? {
     )
 }
 
-/**
- * Maps the shared ACP vocabulary at the Xiaowan adapter boundary. Keeping
- * this pure makes the provider-facing contract testable without constructing
- * an Android Agent session.
- */
-internal fun normalizeXiaowanReasoningEffort(value: String?): String? {
-    return when (value?.trim()?.lowercase()) {
-        // The Provider's default may enable deep thinking even for a
-        // one-word greeting. ACP effort is optional, so Xiaowan follows
-        // its request factory and keeps thinking opt-in rather than
-        // turning every ordinary Agent turn into a long deliberation.
-        null, "" -> XiaowanChatCompletionRequestFactory.DEFAULT_REASONING_EFFORT
-        "no", "none", "off" -> "none"
-        "min", "minimal", "minimum", "low" -> "low"
-        "med", "medium" -> "medium"
-        "high", "extra_high", "extra-high", "very_high", "very-high",
-        "x-high", "x high", "xhigh", "max" -> "high"
-        else -> null
-    }
-}
+internal fun xiaowanAgentCapabilities(): AgentCapabilities = AgentCapabilities(
+    // ACP v1 session/load requires history replay before its response settles.
+    // Xiaowan restores durable context through resume but does not yet provide
+    // that replay boundary, so load must not be advertised.
+    loadSession = false,
+    promptCapabilities = PromptCapabilities(
+        // The shared executor accepts image and workspace resources, but it
+        // has no ACP audio route.
+        audio = false,
+        image = true,
+        embeddedContext = true,
+    ),
+    mcpCapabilities = McpCapabilities(
+        http = true,
+        sse = true,
+    ),
+    sessionCapabilities = SessionCapabilities(
+        list = SessionListCapabilities(),
+        // The local app can copy its Conversation after a fork, but the Agent
+        // itself does not clone context for arbitrary ACP clients yet.
+        fork = null,
+        resume = SessionResumeCapabilities(),
+        delete = SessionDeleteCapabilities(),
+        close = SessionCloseCapabilities(),
+    ),
+)
+
 
 internal data class XiaowanPromptParts(
     val text: String,
@@ -904,9 +1062,20 @@ internal fun buildXiaowanPromptParts(content: List<ContentBlock>): XiaowanPrompt
                     put("fileName", "image")
                     put("mimeType", mimeType)
                     put("isImage", true)
+                    // All image forms are materialized by the ACP prompt
+                    // boundary before the provider request. This includes
+                    // data-only images: AgentWorkspaceAttachmentSupport can
+                    // persist their dataUrl and expose a stable read path.
+                    // Keep the inline visual input enabled because the ACP
+                    // capability advertised by Xiaowan is image=true.
                     put("sendToModel", true)
                     if (data.isNotEmpty()) put("dataUrl", dataUrl)
-                    if (uri.isNotEmpty()) put("url", uri)
+                    if (uri.isNotEmpty()) {
+                        put("url", uri)
+                        // Let AgentWorkspaceAttachmentSupport resolve both
+                        // file:// and content:// URIs into the app workspace.
+                        put("path", uri)
+                    }
                 }
             }
             is ContentBlock.Audio -> {
@@ -930,11 +1099,26 @@ internal fun buildXiaowanPromptParts(content: List<ContentBlock>): XiaowanPrompt
                     put("fileName", block.name)
                     put("mimeType", block.mimeType ?: "application/octet-stream")
                     put("isImage", isImage)
-                    put("sendToModel", isImage)
-                    put("path", if (uri.startsWith("file://")) localPath else uri)
-                    put("promptPath", uri)
-                    put("workspacePath", uri)
-                    if (!uri.startsWith("file://")) put("url", uri)
+                    if (isImage) {
+                        // Resource links follow the same provider-independent
+                        // image path as ContentBlock.Image. Do not pre-fill
+                        // promptPath/workspacePath, otherwise the runtime
+                        // preparation step would return before copying a
+                        // content:// or file:// source into workspace.
+                        put("sendToModel", true)
+                        put("path", if (uri.startsWith("file://")) localPath else uri)
+                        if (!uri.startsWith("file://")) put("url", uri)
+                    } else {
+                        // Keep the official resource reference as the source
+                        // of truth. Do not mark it as an already prepared
+                        // prompt/workspace path: those fields bypass the
+                        // single Android resource materialization boundary
+                        // and leave content:// attachments unreadable by the
+                        // terminal.
+                        put("sendToModel", false)
+                        put("path", if (uri.startsWith("file://")) localPath else uri)
+                        if (!uri.startsWith("file://")) put("url", uri)
+                    }
                     block.size?.let { put("size", it) }
                 }
             }
@@ -955,7 +1139,7 @@ internal fun buildXiaowanPromptParts(content: List<ContentBlock>): XiaowanPrompt
                             put("isImage", true)
                             put("sendToModel", true)
                             put("dataUrl", "data:$mimeType;base64,${resource.blob}")
-                            put("promptPath", uri)
+                            if (uri.isNotBlank()) put("path", uri)
                         }
                     } else {
                         // ACP embeddedContext is not image-only. Preserve
@@ -986,7 +1170,11 @@ internal fun buildXiaowanPromptParts(content: List<ContentBlock>): XiaowanPrompt
                                 put("isImage", false)
                                 put("sendToModel", false)
                                 put("dataUrl", "data:$mimeType;base64,${resource.blob}")
-                                put("promptPath", uri.ifBlank { "embedded:$mimeType" })
+                                // Do not expose a synthetic path. The ACP
+                                // attachment preparation boundary must
+                                // materialize this blob into workspace first;
+                                // `embedded:<mime>` is not readable by a
+                                // provider or a tool.
                             }
                         }
                     }
@@ -1023,7 +1211,6 @@ internal fun xiaowanTerminalEnvironmentFromMeta(
 }
 
 internal class XiaowanAcpEventBridge(
-    private val canContinue: Boolean = false,
     private val emitUpdate: suspend (SessionUpdate) -> Unit,
 ) : AgentCallback {
     private val callbackMutex = Mutex()
@@ -1159,6 +1346,39 @@ internal class XiaowanAcpEventBridge(
         }
     }
 
+    override suspend fun onToolCallInput(
+        toolCall: cn.com.omnimind.bot.agent.AssistantToolCall,
+        toolType: String?,
+    ) {
+        callbackMutex.withLock {
+            val id = toolCall.id
+            val name = toolCall.function.name
+            if (id.isBlank() || name.isBlank() || startedToolCallIds.contains(id)) return@withLock
+            val first = seenToolCallIds.add(id)
+            if (!first && !toolTypesById.containsKey(id)) return@withLock // terminal replay
+            val input = JsonPrimitive(toolCall.function.arguments)
+            if (first) {
+                reasoningSegmentPending = true
+                toolIdsByName.getOrPut(name) { ArrayDeque() }.addLast(id)
+                toolTypesById[id] = toolType
+                emitUpdate(SessionUpdate.ToolCall(
+                    toolCallId = ToolCallId(id),
+                    title = xiaowanToolTitle(name),
+                    kind = xiaowanToolKind(name, toolType),
+                    status = ToolCallStatus.PENDING,
+                    rawInput = input,
+                ))
+            } else {
+                emitUpdate(SessionUpdate.ToolCallUpdate(
+                    toolCallId = ToolCallId(id),
+                    title = xiaowanToolTitle(name),
+                    kind = xiaowanToolKind(name, toolType),
+                    rawInput = input,
+                ))
+            }
+        }
+    }
+
     override suspend fun onToolCallStart(
         toolName: String,
         arguments: kotlinx.serialization.json.JsonObject,
@@ -1203,16 +1423,26 @@ internal class XiaowanAcpEventBridge(
         // Keep a per-turn tombstone as well as the active set. The active set
         // is removed after a terminal update, but a replayed start after
         // completion must remain a no-op too.
-        if (!seenToolCallIds.add(toolCallId) || !startedToolCallIds.add(toolCallId)) {
-            return
-        }
+        val first = seenToolCallIds.add(toolCallId)
+        if (!first && !toolTypesById.containsKey(toolCallId)) return
+        if (!startedToolCallIds.add(toolCallId)) return
         // ACP keeps the event order, so the next reasoning update belongs to
         // a new visible segment after this tool call. Delay allocating the
         // new message id until that reasoning actually arrives; otherwise a
         // tool-only round would leave an empty thought card in the timeline.
         reasoningSegmentPending = true
-        toolIdsByName.getOrPut(toolName) { ArrayDeque() }.addLast(toolCallId)
+        if (first) toolIdsByName.getOrPut(toolName) { ArrayDeque() }.addLast(toolCallId)
         toolTypesById[toolCallId] = toolType
+        if (!first) {
+            emitUpdate(SessionUpdate.ToolCallUpdate(
+                toolCallId = ToolCallId(toolCallId),
+                title = xiaowanToolTitle(toolName),
+                kind = xiaowanToolKind(toolName, toolType),
+                status = ToolCallStatus.IN_PROGRESS,
+                rawInput = arguments,
+            ))
+            return
+        }
         emitUpdate(
             SessionUpdate.ToolCall(
                 toolCallId = ToolCallId(toolCallId),
@@ -1385,11 +1615,7 @@ internal class XiaowanAcpEventBridge(
                 toolCallId = ToolCallId(resolvedToolCallId),
                 title = xiaowanToolTitle(toolName),
                 kind = xiaowanToolKind(toolName, toolTypesById[resolvedToolCallId]),
-                status = if (result is ToolExecutionResult.Clarify) {
-                    // ACP's standard pending state covers a tool waiting for
-                    // approval/input. Do not encode that state in rawOutput.
-                    ToolCallStatus.PENDING
-                } else if (toolResultSucceeded(result)) {
+                status = if (toolResultSucceeded(result)) {
                     ToolCallStatus.COMPLETED
                 } else {
                     ToolCallStatus.FAILED
@@ -1457,43 +1683,6 @@ internal class XiaowanAcpEventBridge(
         }
     }
 
-    override suspend fun onRetrying(
-        retryCount: Int,
-        maxRetries: Int,
-        retryDelayMs: Long,
-        message: String,
-        retryReason: String?,
-    ) {
-        callbackMutex.withLock {
-            // A retry restarts the provider generation inside the same Agent
-            // round. Do not let the next cumulative reasoning snapshot reopen
-            // the failed attempt's visible card; the shared ACP reducer uses
-            // this boundary to render retry -> reasoning as a new segment.
-            if (thoughtSnapshot.isNotEmpty()) {
-                reasoningSegmentPending = true
-            }
-            generationId = UUID.randomUUID().toString()
-            val retryMeta = acpPresentationMeta(
-                "retry" to mapOf(
-                    "count" to retryCount,
-                    "maxRetries" to maxRetries,
-                    "delayMs" to retryDelayMs,
-                    "message" to message,
-                    "reason" to retryReason,
-                    "generationId" to generationId,
-                )
-            )
-            emitAssistantStatus(retryMeta)
-            if (assistantSnapshot.isNotEmpty()) {
-                // The retry metadata belongs to the failed assistant attempt.
-                // Future chunks must use a fresh message id so partial output
-                // cannot be silently extended by the retry generation.
-                assistantSnapshot = ""
-                assistantMessageId = MessageId(UUID.randomUUID().toString())
-            }
-        }
-    }
-
     override suspend fun onPromptTokenUsageChanged(
         latestPromptTokens: Int,
         promptTokenThreshold: Int?,
@@ -1508,22 +1697,9 @@ internal class XiaowanAcpEventBridge(
         latestPromptTokens: Int?,
         promptTokenThreshold: Int?,
     ) {
-        callbackMutex.withLock {
-            emitUpdate(
-                SessionUpdate.AgentThoughtChunk(
-                    content = ContentBlock.Text(""),
-                    messageId = thoughtMessageId,
-                    _meta = acpPresentationMeta(
-                        "compaction" to mapOf(
-                            "status" to if (isCompacting) "compressing" else "completed",
-                            "trigger" to "auto",
-                            "latestPromptTokens" to latestPromptTokens,
-                            "promptTokenThreshold" to promptTokenThreshold,
-                        )
-                    ),
-                )
-            )
-        }
+        // Automatic compaction is not an ACP session or turn state. Manual
+        // `/compact` owns its own UI marker, so do not synthesize a private
+        // presentation update for this internal callback.
     }
 
     override suspend fun onClarifyRequired(question: String, missingFields: List<String>?) {
@@ -1589,27 +1765,19 @@ internal class XiaowanAcpEventBridge(
     }
     override suspend fun onError(error: String, retryable: Boolean) {
         callbackMutex.withLock {
-            // Preserve the old Xiaowan behavior on the ACP path: a failed
-            // turn with visible partial output remains one assistant entry
-            // and exposes the Continue action through shared recovery
-            // metadata. Do not create a second error bubble or throw away the
-            // partial Markdown stream.
-            val hasPartialOutput = assistantSnapshot.isNotBlank()
-            val continueable = canContinue && hasPartialOutput
+            // Preserve partial output as failed output. ACP has no
+            // client-side approximate-resume operation: a new prompt is a new
+            // turn, so partial text must not create a Continue action.
             val recoveryMeta = acpPresentationMeta(
                 "recovery" to mapOf(
                     "error" to error,
                     "retryable" to retryable,
-                    "continueable" to continueable,
-                    "continueResumeMode" to if (continueable) "approximate" else null,
                     "willRetry" to false,
-                    "persistAsError" to !hasPartialOutput,
-                    "retryCount" to if (retryable) 3 else 0,
-                    "maxRetries" to 3,
+                    "persistAsError" to true,
                     "errorText" to error,
                 )
             )
-            if (hasPartialOutput) {
+            if (assistantSnapshot.isNotBlank()) {
                 emitAssistantStatus(recoveryMeta)
             } else {
                 emitAssistantNotice(error, recoveryMeta)
@@ -1702,8 +1870,8 @@ private fun toolResultSucceeded(result: ToolExecutionResult): Boolean = when (re
     is ToolExecutionResult.McpResult -> result.success
     is ToolExecutionResult.MemoryResult -> result.success
     is ToolExecutionResult.ContextResult -> result.success
-    is ToolExecutionResult.ChatMessage,
-    is ToolExecutionResult.Clarify -> true
+    is ToolExecutionResult.ChatMessage -> true
+    is ToolExecutionResult.Clarify -> false
 }
 
 private fun toolResultText(result: ToolExecutionResult): String = when (result) {

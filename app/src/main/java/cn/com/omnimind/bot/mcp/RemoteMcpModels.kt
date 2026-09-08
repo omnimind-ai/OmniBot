@@ -9,7 +9,25 @@ enum class RemoteMcpHealth(val value: String) {
 
     companion object {
         fun fromValue(value: String?): RemoteMcpHealth {
-            return entries.firstOrNull { it.value == value } ?: UNKNOWN
+            return entries.firstOrNull {
+                it.value.equals(value, ignoreCase = true) ||
+                    it.name.equals(value, ignoreCase = true)
+            } ?: UNKNOWN
+        }
+    }
+}
+
+enum class RemoteMcpTransport(val value: String) {
+    AUTO("auto"),
+    HTTP("http"),
+    SSE("sse");
+
+    companion object {
+        fun fromValue(value: String?): RemoteMcpTransport {
+            return entries.firstOrNull {
+                it.value.equals(value, ignoreCase = true) ||
+                    it.name.equals(value, ignoreCase = true)
+            } ?: AUTO
         }
     }
 }
@@ -19,6 +37,10 @@ data class RemoteMcpServerConfig(
     val name: String,
     val endpointUrl: String,
     val bearerToken: String = "",
+    /** ACP session declarations may carry arbitrary HTTP headers. */
+    val headers: Map<String, String> = emptyMap(),
+    /** Explicit for ACP `sse`; AUTO preserves URL-based legacy discovery. */
+    val transport: RemoteMcpTransport = RemoteMcpTransport.AUTO,
     val enabled: Boolean = true,
     val lastHealth: RemoteMcpHealth = RemoteMcpHealth.UNKNOWN,
     val lastError: String? = null,
@@ -31,6 +53,8 @@ data class RemoteMcpServerConfig(
             "name" to name,
             "endpointUrl" to endpointUrl,
             "bearerToken" to bearerToken,
+            "headers" to headers,
+            "transport" to transport.value,
             "enabled" to enabled,
             "lastHealth" to lastHealth.value,
             "lastError" to lastError,
@@ -56,6 +80,16 @@ data class RemoteMcpServerConfig(
                 name = raw["name"]?.toString()?.trim().orEmpty(),
                 endpointUrl = raw["endpointUrl"]?.toString()?.trim().orEmpty(),
                 bearerToken = raw["bearerToken"]?.toString() ?: "",
+                headers = (raw["headers"] as? Map<*, *>)
+                    ?.entries
+                    ?.mapNotNull { (key, value) ->
+                        val name = key?.toString()?.trim().orEmpty()
+                        val headerValue = value?.toString() ?: return@mapNotNull null
+                        name.takeIf(String::isNotEmpty)?.let { it to headerValue }
+                    }
+                    ?.toMap()
+                    .orEmpty(),
+                transport = RemoteMcpTransport.fromValue(raw["transport"]?.toString()),
                 enabled = raw["enabled"] != false,
                 lastHealth = RemoteMcpHealth.fromValue(raw["lastHealth"]?.toString()),
                 lastError = raw["lastError"]?.toString()?.takeIf { it.isNotBlank() },

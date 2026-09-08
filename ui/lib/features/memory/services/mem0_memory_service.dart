@@ -7,11 +7,17 @@ import 'package:ui/services/workspace_memory_service.dart';
 class Mem0MemoryService {
   static Future<Mem0MemorySnapshot> getMemories({
     bool forceRefresh = false,
-    int limit = 24,
+    int? limit,
   }) async {
     try {
       final content = await WorkspaceMemoryService.getLongMemory();
-      final items = _parseItems(content).take(limit).toList();
+      final parsedItems = _parseItems(content);
+      // The memory screen is a view over the persisted workspace file.  Do
+      // not silently hide older entries; a caller that truly needs a page may
+      // request one explicitly.
+      final items = limit == null
+          ? parsedItems
+          : parsedItems.take(limit).toList();
       return Mem0MemorySnapshot(
         configured: true,
         items: items,
@@ -21,8 +27,8 @@ class Mem0MemoryService {
         isStale: false,
         infoMessage: items.isEmpty
             ? (LegacyTextLocalizer.isEnglish
-                ? 'Workspace long-term memory is empty'
-                : 'workspace 长期记忆为空')
+                  ? 'Workspace long-term memory is empty'
+                  : 'workspace 长期记忆为空')
             : null,
       );
     } catch (e) {
@@ -40,9 +46,11 @@ class Mem0MemoryService {
   }) async {
     final trimmed = memory.trim();
     if (trimmed.isEmpty) {
-      throw Exception(LegacyTextLocalizer.isEnglish
-          ? 'Memory content cannot be empty'
-          : '记忆内容不能为空');
+      throw Exception(
+        LegacyTextLocalizer.isEnglish
+            ? 'Memory content cannot be empty'
+            : '记忆内容不能为空',
+      );
     }
     final content = await WorkspaceMemoryService.getLongMemory();
     final lines = content.split('\n');
@@ -58,16 +66,18 @@ class Mem0MemoryService {
   }) async {
     final trimmed = memory.trim();
     if (trimmed.isEmpty) {
-      throw Exception(LegacyTextLocalizer.isEnglish
-          ? 'Memory content cannot be empty'
-          : '记忆内容不能为空');
+      throw Exception(
+        LegacyTextLocalizer.isEnglish
+            ? 'Memory content cannot be empty'
+            : '记忆内容不能为空',
+      );
     }
     final content = await WorkspaceMemoryService.getLongMemory();
     final updated = _replaceById(content, memoryId, trimmed);
     if (updated == null) {
-      throw Exception(LegacyTextLocalizer.isEnglish
-          ? 'Memory not found'
-          : '未找到对应记忆');
+      throw Exception(
+        LegacyTextLocalizer.isEnglish ? 'Memory not found' : '未找到对应记忆',
+      );
     }
     await WorkspaceMemoryService.saveLongMemory(updated);
   }
@@ -76,9 +86,9 @@ class Mem0MemoryService {
     final content = await WorkspaceMemoryService.getLongMemory();
     final deleted = _deleteById(content, memoryId);
     if (deleted == null) {
-      throw Exception(LegacyTextLocalizer.isEnglish
-          ? 'Memory not found'
-          : '未找到对应记忆');
+      throw Exception(
+        LegacyTextLocalizer.isEnglish ? 'Memory not found' : '未找到对应记忆',
+      );
     }
     await WorkspaceMemoryService.saveLongMemory(deleted);
   }
@@ -112,11 +122,14 @@ class Mem0MemoryService {
 
   static String _memoryId(int index, String memory) {
     final raw = base64Url.encode(utf8.encode('$index|$memory'));
-    final cleaned = raw.replaceAll('=', '');
-    return cleaned.length > 16 ? cleaned.substring(0, 16) : cleaned;
+    return raw.replaceAll('=', '');
   }
 
-  static String? _replaceById(String content, String memoryId, String nextMemory) {
+  static String? _replaceById(
+    String content,
+    String memoryId,
+    String nextMemory,
+  ) {
     final lines = content.split('\n');
     final bulletIndexes = <int>[];
     final bulletValues = <String>[];

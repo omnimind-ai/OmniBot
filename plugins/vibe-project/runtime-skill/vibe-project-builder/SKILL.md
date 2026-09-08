@@ -118,7 +118,6 @@ Skill to a concrete implementation:
         "config": {
           "instruction": "Create a seven-day plan from the supplied goal and constraints. Return concise Markdown.",
           "reasoning_effort": "none",
-          "max_tokens": 800,
           "temperature": 0.4
         }
       }

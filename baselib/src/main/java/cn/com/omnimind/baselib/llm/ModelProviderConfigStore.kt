@@ -148,6 +148,41 @@ object ModelProviderConfigStore {
         return appendOfficialPlatformProfile(created)
     }
 
+    /** Read the Provider editor's existing catalog; never refresh on session startup. */
+    fun cachedModels(context: Context, profile: ModelProviderProfile): List<ProviderModelOption> = runCatching {
+        val raw = context.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
+            .getString("flutter.cached_provider_models_with_base_v2", null)
+            ?: return@runCatching emptyList()
+        val bucket = JsonParser.parseString(raw).asJsonObject[profile.id]?.asJsonObject
+            ?: return@runCatching emptyList()
+        val base = bucket["apiBase"]?.asString.orEmpty()
+        val revision = bucket["profileRevision"]?.asLong ?: 0L
+        if (base != normalizeBaseUrl(profile.baseUrl).orEmpty() || revision != profile.revision) {
+            return@runCatching emptyList()
+        }
+        bucket["models"]?.asJsonArray?.map { Gson().fromJson(it, ProviderModelOption::class.java) }
+            ?.filter { !it.id.isNullOrBlank() }.orEmpty()
+    }.getOrDefault(emptyList())
+
+    /** Latest successful discovery, used only to construct offline launch config.
+     * Explicit refresh always calls the Provider; this is never a network cache.
+     */
+    @Synchronized
+    fun rememberModels(context: Context, profile: ModelProviderProfile, models: List<ProviderModelOption>) {
+        if (getProfile(profile.id) != profile) return
+        val preferences = context.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
+        val key = "flutter.cached_provider_models_with_base_v2"
+        val catalogs = runCatching {
+            JsonParser.parseString(preferences.getString(key, null)).asJsonObject
+        }.getOrNull() ?: com.google.gson.JsonObject()
+        catalogs.add(profile.id, Gson().toJsonTree(mapOf(
+            "apiBase" to normalizeBaseUrl(profile.baseUrl).orEmpty(),
+            "profileRevision" to profile.revision,
+            "models" to models.filter { it.id.isNotBlank() }.distinctBy { it.id },
+        )))
+        preferences.edit().putString(key, catalogs.toString()).apply()
+    }
+
     fun getEditingProfileId(): String {
         val profiles = listProfiles()
         val mmkv = MMKV.defaultMMKV()

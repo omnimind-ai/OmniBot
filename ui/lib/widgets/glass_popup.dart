@@ -114,7 +114,8 @@ class GlassPopupOverlayContentState extends State<GlassPopupOverlayContent>
         preferBelow: widget.preferBelow,
         verticalGap: widget.verticalGap,
         screenPadding: widget.screenPadding,
-        mediaPadding: mediaQuery.padding,
+        // Root overlays keep full-screen coordinates when the IME opens.
+        mediaPadding: mediaQuery.padding + mediaQuery.viewInsets,
         textDirection: Directionality.of(context),
         explicitUnfoldAlignment: widget.unfoldAlignment,
         horizontalPlacement: widget.horizontalPlacement,
@@ -284,7 +285,8 @@ class GlassPopupRoute<T> extends PopupRoute<T> {
         preferBelow: preferBelow,
         verticalGap: verticalGap,
         screenPadding: screenPadding,
-        mediaPadding: mediaQuery.padding,
+        // Root overlays keep full-screen coordinates when the IME opens.
+        mediaPadding: mediaQuery.padding + mediaQuery.viewInsets,
         textDirection: Directionality.of(context),
         explicitUnfoldAlignment: explicitUnfoldAlignment,
         horizontalPlacement: horizontalPlacement,

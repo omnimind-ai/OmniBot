@@ -1,7 +1,6 @@
 package cn.com.omnimind.bot.agent
 
 import cn.com.omnimind.assists.controller.http.HttpController
-import java.util.Locale
 
 data class AgentToolImageContinuationPolicy(
     val supportsToolImageContinuation: Boolean,
@@ -23,38 +22,12 @@ object AgentToolImageContinuationPolicyResolver {
         }
         val routeLabel = buildRouteLabel(routeInfo)
         return AgentToolImageContinuationPolicy(
-            supportsToolImageContinuation = !isKnownIncompatibleRoute(routeInfo),
+            // The resolved Provider capability is the only source of truth.
+            // Model/vendor-name guesses made this adapter disagree with the
+            // actual route and silently removed valid image continuations.
+            supportsToolImageContinuation = routeInfo.providerCapabilities.supportsVisionInput != false,
             routeLabel = routeLabel
         )
-    }
-
-    // TODO(issue321): replace this route heuristic with provider capability flags once
-    // Mimo becomes a first-class builtin provider profile.
-    private fun isKnownIncompatibleRoute(
-        routeInfo: HttpController.ChatCompletionRouteInfo
-    ): Boolean {
-        return candidateTokens(routeInfo).any { token ->
-            token.contains("xiaomi") ||
-                token.startsWith("mimo-") ||
-                token.contains("/mimo")
-        }
-    }
-
-    private fun candidateTokens(
-        routeInfo: HttpController.ChatCompletionRouteInfo
-    ): List<String> {
-        return listOfNotNull(
-            routeInfo.requestedModel,
-            routeInfo.resolvedModel,
-            routeInfo.providerProfileId,
-            routeInfo.providerProfileName,
-            routeInfo.routeTag,
-            routeInfo.apiBase
-        ).mapNotNull { value ->
-            value.trim()
-                .lowercase(Locale.ROOT)
-                .takeIf { it.isNotEmpty() }
-        }
     }
 
     private fun buildRouteLabel(

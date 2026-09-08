@@ -216,8 +216,8 @@ object WebChatRoutes {
                 if (!McpServerManager.requireWebChatAuth(call)) return@get
                 val path = call.request.queryParameters["path"]
                 val recursive = call.request.queryParameters.boolean("recursive", false)
-                val maxDepth = call.request.queryParameters["maxDepth"]?.toIntOrNull() ?: 2
-                val limit = call.request.queryParameters["limit"]?.toIntOrNull() ?: 200
+                val maxDepth = call.request.queryParameters["maxDepth"]?.toIntOrNull()
+                val limit = call.request.queryParameters["limit"]?.toIntOrNull()
                 call.respondJson(
                     if (path.isNullOrBlank()) {
                         workspaceFileService.bootstrapPayload()
@@ -239,7 +239,7 @@ object WebChatRoutes {
                     call.respondJson(mapOf("error" to "MISSING_PATH"), HttpStatusCode.BadRequest)
                     return@get
                 }
-                val maxChars = call.request.queryParameters["maxChars"]?.toIntOrNull() ?: 64_000
+                val maxChars = call.request.queryParameters["maxChars"]?.toIntOrNull()
                 val offset = call.request.queryParameters["offset"]?.toIntOrNull() ?: 0
                 val lineStart = call.request.queryParameters["lineStart"]?.toIntOrNull()
                 val lineCount = call.request.queryParameters["lineCount"]?.toIntOrNull()

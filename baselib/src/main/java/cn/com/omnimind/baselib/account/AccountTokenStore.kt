@@ -21,28 +21,18 @@ interface AccountTokenStore {
 class EncryptedAccountTokenStore(context: Context) : AccountTokenStore {
     private val applicationContext = context.applicationContext
 
-    private val preferences: SharedPreferences? = try {
-        val masterKey = MasterKey.Builder(applicationContext)
-            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
-            .build()
-        EncryptedSharedPreferences.create(
-            applicationContext,
-            FILE_NAME,
-            masterKey,
-            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
-            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-        ).also { it.all }
-    } catch (_: Exception) {
-        null
-    }
-
-    @Volatile
-    private var storageUnavailable: Boolean = preferences == null
+    /**
+     * Keystore-backed preferences can fail transiently while the process is
+     * being restored or the user is switching away from the app. Do not make
+     * that one attempt a process-lifetime state. The next operation retries
+     * opening the same encrypted file.
+     */
+    private var preferences: SharedPreferences? = null
 
     @Synchronized
     override fun read(): AccountTokens? {
-        if (storageUnavailable) return null
-        val store = preferences ?: return failClosedRead()
+        val store = preferencesOrNull()
+            ?: throw AccountCredentialStorageException()
         return try {
             val accessToken = store.getString(KEY_ACCESS_TOKEN, null)
                 ?.takeIf { it.isNotBlank() }
@@ -62,15 +52,16 @@ class EncryptedAccountTokenStore(context: Context) : AccountTokenStore {
                 refreshToken = refreshToken,
                 refreshExpiresAt = refreshExpiresAt,
             )
-        } catch (_: Exception) {
-            failClosedRead()
+        } catch (error: Exception) {
+            preferences = null
+            throw AccountCredentialStorageException(cause = error)
         }
     }
 
     @Synchronized
     override fun write(tokens: AccountTokens): Boolean {
-        if (storageUnavailable || !tokens.hasAllFields()) return false
-        val store = preferences ?: return false
+        if (!tokens.hasAllFields()) return false
+        val store = preferencesOrNull() ?: return false
         val written = try {
             store.edit()
                 .putString(KEY_ACCESS_TOKEN, tokens.accessToken)
@@ -79,15 +70,15 @@ class EncryptedAccountTokenStore(context: Context) : AccountTokenStore {
                 .putString(KEY_REFRESH_EXPIRES_AT, tokens.refreshExpiresAt)
                 .commit() && read() == tokens
         } catch (_: Exception) {
+            preferences = null
             false
         }
-        if (!written) storageUnavailable = true
         return written
     }
 
     @Synchronized
     override fun clear(): Boolean {
-        val store = preferences ?: return false
+        val store = preferencesOrNull() ?: return false
         val cleared = try {
             store.edit().clear().commit() &&
                 listOf(
@@ -97,17 +88,35 @@ class EncryptedAccountTokenStore(context: Context) : AccountTokenStore {
                     KEY_REFRESH_EXPIRES_AT,
                 ).none(store::contains)
         } catch (_: Exception) {
+            preferences = null
             false
         }
-        // A verified clear can recover a preferences file containing only damaged
-        // account-token entries without touching any unrelated app data.
-        storageUnavailable = !cleared
         return cleared
     }
 
-    private fun failClosedRead(): AccountTokens? {
-        storageUnavailable = true
-        return null
+    private fun preferencesOrNull(): SharedPreferences? {
+        preferences?.let { return it }
+        return try {
+            val masterKey = MasterKey.Builder(applicationContext)
+                .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+                .build()
+            EncryptedSharedPreferences.create(
+                applicationContext,
+                FILE_NAME,
+                masterKey,
+                EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+                EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+            ).also {
+                // Force the encrypted file/key to be opened now, while still
+                // allowing a later lifecycle operation to retry after a
+                // transient Keystore failure.
+                it.all
+                preferences = it
+            }
+        } catch (_: Exception) {
+            preferences = null
+            null
+        }
     }
 
     companion object {

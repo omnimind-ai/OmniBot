@@ -35,6 +35,29 @@ data class ModelProviderProfile(
     fun isConfigured(): Boolean = baseUrl.isNotBlank()
 }
 
+/**
+ * Wire capabilities owned by the resolved Provider route. These are not ACP
+ * session capabilities: they describe the request/response contract between
+ * the shared Agent client and one upstream model endpoint.
+ */
+data class ProviderRequestCapabilities(
+    val supportsChatPromptCacheKey: Boolean = false,
+    val supportsExplicitAutoToolChoice: Boolean = true,
+    val requiresReasoningContentForToolCalls: Boolean = false,
+    val requiresAnthropicThinkingReplay: Boolean = false,
+    val supportsResponsesPromptCacheKey: Boolean = true,
+    val supportsResponsesParallelToolCalls: Boolean = true,
+    /**
+     * Whether this resolved route accepts image input.
+     *
+     * Null means the provider has not declared this fact. It is intentionally
+     * tri-state so unknown BYOK routes keep their existing behavior while a
+     * provider can explicitly reject image continuation before a request is
+     * built.
+     */
+    val supportsVisionInput: Boolean? = null,
+)
+
 data class ProviderModelOption(
     val id: String,
     val displayName: String = id,
@@ -51,6 +74,8 @@ data class ProviderModelOption(
     val group: String? = null,
     val attachment: Boolean? = null,
     val reasoning: Boolean? = null,
+    val supportedReasoningLevels: List<String> = emptyList(),
+    val defaultReasoningLevel: String? = null,
     val toolCall: Boolean? = null,
     val structuredOutput: Boolean? = null,
     val temperature: Boolean? = null

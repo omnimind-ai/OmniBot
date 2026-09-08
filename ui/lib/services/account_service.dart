@@ -11,6 +11,8 @@ class AccountSessionState {
     this.currentVersion = '',
     this.minimumVersion = '',
     this.cloudServiceUnavailableReason,
+    this.credentialStorageAvailable = true,
+    this.credentialStorageUnavailableReason,
   });
 
   final bool configured;
@@ -20,10 +22,14 @@ class AccountSessionState {
   final String currentVersion;
   final String minimumVersion;
   final String? cloudServiceUnavailableReason;
+  final bool credentialStorageAvailable;
+  final String? credentialStorageUnavailableReason;
 
   factory AccountSessionState.fromMap(Map<dynamic, dynamic> map) {
     final hasCloudPolicy = map.containsKey('cloudServiceAccessAllowed');
     final reason = map['cloudServiceUnavailableReason']?.toString().trim();
+    final credentialReason =
+        map['credentialStorageUnavailableReason']?.toString().trim();
     return AccountSessionState(
       configured: map['configured'] == true,
       signedIn: map['signedIn'] == true,
@@ -38,6 +44,13 @@ class AccountSessionState {
       cloudServiceUnavailableReason: reason == null || reason.isEmpty
           ? null
           : reason,
+      credentialStorageAvailable: map.containsKey('credentialStorageAvailable')
+          ? map['credentialStorageAvailable'] == true
+          : true,
+      credentialStorageUnavailableReason:
+          credentialReason == null || credentialReason.isEmpty
+          ? null
+          : credentialReason,
     );
   }
 }

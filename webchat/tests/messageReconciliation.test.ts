@@ -107,3 +107,58 @@ test("tool and assistant entries retain monotonic turn order", () => {
     ["run-2-user", "tool-1-codex-command", "item-2-codex-agent"],
   );
 });
+
+test("a two-turn conversation keeps each user request and reply distinct", () => {
+  const firstUser = message({
+    id: "run-10-user",
+    user: 1,
+    content: { text: "先检查项目" },
+    createAt: 10_000,
+  });
+  const firstReply = message({
+    id: "item-10-codex-agent",
+    content: { text: "项目检查完成" },
+    createAt: 10_001,
+    streamMeta: { parentTaskId: "turn-10", isFinal: true },
+  });
+  const secondUser = message({
+    id: "run-11-user",
+    user: 1,
+    content: { text: "再解释一下结果" },
+    createAt: 20_000,
+  });
+  const secondReplyChunk = message({
+    id: "item-11-codex-agent",
+    content: { text: "结果表示" },
+    createAt: 20_001,
+    streamMeta: { parentTaskId: "turn-11", seq: 1 },
+  });
+  const secondReplyFinal = message({
+    id: "item-11-codex-agent",
+    content: { text: "结果表示项目状态正常" },
+    createAt: 20_002,
+    streamMeta: { parentTaskId: "turn-11", seq: 2, isFinal: true },
+  });
+
+  const afterFirstTurn = reconcileCodexMessages(
+    [firstUser, firstReply],
+    [],
+  );
+  const afterSecondInput = reconcileCodexMessages(afterFirstTurn, [secondUser]);
+  const afterStreaming = reconcileCodexMessages(afterSecondInput, [secondReplyChunk]);
+  const result = reconcileCodexMessages(afterStreaming, [secondReplyFinal]);
+
+  assert.deepEqual(
+    result.map((item) => item.id),
+    [
+      "run-10-user",
+      "item-10-codex-agent",
+      "run-11-user",
+      "item-11-codex-agent",
+    ],
+  );
+  assert.deepEqual(
+    result.map((item) => item.content.text),
+    ["先检查项目", "项目检查完成", "再解释一下结果", "结果表示项目状态正常"],
+  );
+});

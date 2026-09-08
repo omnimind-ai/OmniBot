@@ -18,7 +18,8 @@ description: "A new Flutter module project."
 version: 1.0.0+1
 
 environment:
-  sdk: ^3.9.2
+  sdk: ^3.13.0
+  flutter: ">=3.47.2"
 
 dependencies:
   flutter:
@@ -56,7 +57,8 @@ dependencies:
   flutter_cache_manager: ^3.4.2
   dio: ^5.11.0
   path_provider: ^2.1.6
-  file_picker: ^12.1.2
+  file_picker: ^12.2.0
+  android_file_picker: ^1.1.0
   just_audio: ^0.10.6
   archive: ^4.2.0
   markdown: ^7.3.1
@@ -73,17 +75,6 @@ dev_dependencies:
   flutter_lints: ^6.0.0
   build_runner: ^2.16.0
   riverpod_generator: ^4.0.8
-
-dependency_overrides:
-  # These plugin versions retain Groovy build scripts that work with the
-  # embedded Flutter module while its AGP 9 migration is completed.
-  flutter_plugin_android_lifecycle: 2.0.33
-  image_picker_android: 0.8.13+14
-  path_provider_android: 2.2.22
-  shared_preferences_android: 2.4.21
-  url_launcher_android: 6.3.28
-  video_player_android: 2.9.4
-  webview_flutter_android: 4.10.13
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

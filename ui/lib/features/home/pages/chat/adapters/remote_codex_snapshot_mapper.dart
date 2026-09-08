@@ -1,43 +1,5 @@
 part of '../chat_page.dart';
 
-bool _remoteCodexLatestTurnLooksExternallyActive(
-  Map<String, dynamic> response,
-) {
-  final turns = _remoteCodexTurnsFromThreadResponse(response);
-  if (turns == null || turns.isEmpty) {
-    return false;
-  }
-  for (var index = turns.length - 1; index >= 0; index -= 1) {
-    final turn = _asAgentMap(turns[index]);
-    if (turn == null) {
-      continue;
-    }
-    final activity = _remoteCodexActivityFromValue(
-      turn['status'] ?? turn['state'],
-    );
-    if (activity?.active == true) {
-      return true;
-    }
-    final statusText = _remoteCodexStatusText(turn['status'] ?? turn['state']);
-    final normalizedStatus = statusText == null
-        ? null
-        : _normalizeAgentRuntimeStatus(statusText);
-    final completedAt =
-        _remoteCodexTimeValueMs(turn['completedAt'] ?? turn['completed_at']) ??
-        _remoteCodexTimeValueMs(turn['finishedAt'] ?? turn['finished_at']);
-    final hasError = turn['error'] != null;
-    final hasItems = _remoteCodexHistoricalItemsFromTurn(turn).isNotEmpty;
-    if (completedAt == null &&
-        !hasError &&
-        hasItems &&
-        (normalizedStatus == null || normalizedStatus == 'interrupted')) {
-      return true;
-    }
-    return false;
-  }
-  return false;
-}
-
 String _remoteCodexThreadContentSignature(Map<String, dynamic> response) {
   final thread = _asAgentMap(response['thread']) ?? response;
   final turns = _remoteCodexTurnsFromThreadResponse(response);
@@ -950,13 +912,6 @@ String? remoteCodexActiveTurnIdFromThreadResponseForTesting(
   Map<String, dynamic> response,
 ) {
   return _remoteCodexActiveTurnIdFromThreadResponse(response);
-}
-
-@visibleForTesting
-bool remoteCodexLatestTurnLooksExternallyActiveForTesting(
-  Map<String, dynamic> response,
-) {
-  return _remoteCodexLatestTurnLooksExternallyActive(response);
 }
 
 Map<String, dynamic>? _asAgentMap(dynamic value) {

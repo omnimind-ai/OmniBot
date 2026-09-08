@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/services.dart';
-import 'package:ui/features/home/pages/command_overlay/utils/error_message_formatter.dart';
 import 'package:ui/services/acp_capabilities.dart';
 
 enum CodexLoginType {
@@ -116,50 +115,144 @@ bool isAgentCancellationSuccessful(Map<String, dynamic> response) {
 /// errors carry a stable `failureKind` in PlatformException.details; use that
 /// instead of exposing adapter stack traces or waiting for a raw error string
 /// to render in the chat.
-String formatAgentRuntimeErrorForUser(Object? error) {
+const _agentUserErrors = <String, ({String zh, String en})>{
+  'modelRequired': (
+    zh: '请先在模型设置中选择一个可用模型，再启动助手。',
+    en: 'Choose an available model in model settings, then start the assistant.',
+  ),
+  'credentials': (
+    zh: '模型连接验证失败，请在模型设置中检查接口地址和密钥。',
+    en: 'Could not verify the model connection. Check its address and key in model settings.',
+  ),
+  'modelUnavailable': (
+    zh: '当前模型不可用，请在模型设置中重新选择。',
+    en: 'This model is unavailable. Choose another in model settings.',
+  ),
+  'certificate': (
+    zh: '连接验证失败，请检查网络是否需要登录，并确认设备时间正确。',
+    en: 'Could not verify the secure connection. Check whether your network requires sign-in and whether the device time is correct.',
+  ),
+  'interrupted': (
+    zh: '回复连接已中断，请检查网络后重试。未完成的工具调用不会执行。',
+    en: 'The reply was interrupted. Check your connection and try again. Incomplete tool calls will not run.',
+  ),
+  'timeout': (
+    zh: '等待回复超时，请检查网络后重试；若仍失败，请更换模型。',
+    en: 'The reply timed out. Check your connection and try again, or choose another model.',
+  ),
+  'incompleteTool': (
+    zh: '模型返回了不完整的工具调用，请重试；若仍失败，请更换模型。',
+    en: 'The model returned an incomplete tool call. Try again, or choose another model.',
+  ),
+  'installBusy': (
+    zh: '已有助手正在安装，请等待完成后再试。',
+    en: 'Another assistant is being installed. Try again when it finishes.',
+  ),
+  'incompatible': (
+    zh: '当前模型连接不适用于这个助手，请更换模型连接或助手。',
+    en: 'This model connection is incompatible with the assistant. Choose another connection or assistant.',
+  ),
+  'unsupportedTools': (
+    zh: '当前模型连接不支持这个助手的工具，请更换模型连接或助手。',
+    en: 'This model connection does not support the assistant’s tools. Choose another connection or assistant.',
+  ),
+  'notInstalled': (
+    zh: '助手尚未安装完成，请在助手设置中重新安装。',
+    en: 'The assistant is not fully installed. Reinstall it in assistant settings.',
+  ),
+  'unknown': (
+    zh: '助手暂时无法完成操作，请重试。',
+    en: 'The assistant could not complete this action. Please try again.',
+  ),
+};
+
+/// Presents actionable errors without exposing transport payloads or credentials.
+/// The owning runtime still determines failure/retry; this only formats it.
+String formatAgentRuntimeErrorForUser(
+  Object? error, {
+  bool english = false,
+  String? fallback,
+}) {
   String? failureKind;
-  String? rawMessage;
-  if (error is PlatformException) {
-    rawMessage = error.message;
-    final details = error.details;
-    if (details is Map) {
-      failureKind = details['failureKind']?.toString().trim();
+  final rawMessage = error is PlatformException
+      ? error.message
+      : error?.toString();
+  if (error is PlatformException && error.details is Map) {
+    failureKind = (error.details as Map)['failureKind']?.toString().trim();
+  }
+  final raw = rawMessage?.toLowerCase() ?? '';
+  String text(String key) {
+    final message = _agentUserErrors[key]!;
+    return english ? message.en : message.zh;
+  }
+
+  // Errors may already have been formatted before durable projection.
+  // Preserve only these exact app-owned messages, never arbitrary payloads.
+  for (final message in _agentUserErrors.values) {
+    if (rawMessage == message.zh || rawMessage == message.en) {
+      return english ? message.en : message.zh;
     }
-  } else if (error != null) {
-    rawMessage = error.toString();
   }
-
-  switch (failureKind) {
-    case 'provider_not_bound':
-      return '尚未绑定统一 Agent Provider / 模型，请在 Agent 设置中选择后重试。';
-    case 'provider_unavailable':
-      return '统一 Agent Provider 不可用或凭据不完整，请检查 Provider 配置。';
-    case 'provider_model_unavailable':
-      return '统一 Agent 模型当前不可用，请刷新模型列表后重新选择。';
-    case 'provider_tls_certificate_failure':
-      return 'Provider HTTPS 证书校验失败，请检查设备时间和证书链。';
-    case 'provider_tool_call_incomplete':
-      return 'Provider 返回了不完整的工具调用，缺少工具名称。已自动重试；请重试本轮，或检查 Provider 是否完整转发 tool_calls/function.name。';
-    case 'harness_preparation_in_progress':
-      return '另一个 Harness 正在安装或准备中，当前切换不会等待。请稍后重试，或先切换到已安装完成的 Harness。';
+  if (failureKind == 'provider_not_bound' ||
+      (raw.contains('dispatch model') &&
+          (raw.contains('not configured') ||
+              (raw.contains('no usable') && !raw.contains('credentials'))))) {
+    return text('modelRequired');
   }
-
-  final normalizedRaw = rawMessage?.toLowerCase() ?? '';
-  if (normalizedRaw.contains('unknown variant namespace') &&
-      normalizedRaw.contains('tools')) {
-    return '当前 Responses Provider 不支持 Codex 的 MCP 工具格式。请重试；'
-        '如仍失败，请改用支持 namespace tools 的 Provider。';
+  if (failureKind == 'provider_unavailable' ||
+      failureKind == 'provider_authentication_failed' ||
+      raw.contains('no usable credentials') ||
+      raw.contains('authentication') ||
+      raw.contains('unauthorized') ||
+      raw.contains('invalid api key')) {
+    return text('credentials');
   }
-  if (normalizedRaw.contains('missing function.name') ||
-      normalizedRaw.contains('missing function name')) {
-    return 'Provider 返回了不完整的工具调用，缺少工具名称。请重试本轮，或检查 Provider 是否完整转发 tool_calls/function.name。';
+  if (failureKind == 'provider_model_unavailable') {
+    return text('modelUnavailable');
   }
-  if (normalizedRaw.contains('harness preparation is already running') ||
-      normalizedRaw.contains('harness preparation in progress')) {
-    return '另一个 Harness 正在安装或准备中，当前切换不会等待。请稍后重试，或先切换到已安装完成的 Harness。';
+  if (failureKind == 'provider_tls_certificate_failure' ||
+      raw.contains('self_signed_cert') ||
+      raw.contains('certificate_verify_failed') ||
+      raw.contains('certificate verify failed')) {
+    return text('certificate');
   }
-
-  return formatErrorMessageForUser(rawMessage, fallback: 'Agent 执行失败，请重试。');
+  if (failureKind == 'provider_stream_interrupted' ||
+      raw.contains('stream disconnected') ||
+      raw.contains('connection reset') ||
+      raw.contains('error sending request for url')) {
+    return text('interrupted');
+  }
+  if (failureKind == 'provider_stream_idle_timeout' ||
+      failureKind == 'provider_request_timeout' ||
+      raw.contains('timed out') ||
+      raw.contains('timeout')) {
+    return text('timeout');
+  }
+  if (failureKind == 'provider_tool_call_incomplete' ||
+      raw.contains('missing function.name') ||
+      raw.contains('missing function name')) {
+    return text('incompleteTool');
+  }
+  if (failureKind == 'harness_preparation_in_progress' ||
+      raw.contains('harness preparation is already running') ||
+      raw.contains('harness preparation in progress')) {
+    return text('installBusy');
+  }
+  if (raw.contains('requires an anthropic-compatible') ||
+      raw.contains('requires an openai responses-compatible') ||
+      raw.contains('does not support the openai responses')) {
+    return text('incompatible');
+  }
+  if (raw.contains('unknown variant namespace') && raw.contains('tools')) {
+    return text('unsupportedTools');
+  }
+  if (raw.contains('not installed') ||
+      raw.contains('executable not found') ||
+      raw.contains('command not found')) {
+    return text('notInstalled');
+  }
+  // Unknown server errors are untrusted; never render the raw payload.
+  return fallback ?? text('unknown');
 }
 
 /// Extracts only model choices from an ACP model/config response.
@@ -184,6 +277,55 @@ List<String> extractAcpModelIds(Map<String, dynamic> response) {
     _collectAcpRootModelListFallback(response, rawItems);
   }
   return _uniqueAcpChoiceIds(rawItems);
+}
+
+/// Returns the Agent-owned ACP config id for thought/reasoning choices.
+///
+/// Codex currently uses `reasoning_effort`, while other ACP Agents may use a
+/// different id. Keep the id next to the values so a live
+/// `session/set_config_option` call does not guess a vendor field.
+String? extractAcpReasoningEffortConfigId(Map<String, dynamic> response) {
+  String? visit(Map<dynamic, dynamic> source) {
+    for (final entry in source.entries) {
+      final value = entry.value;
+      if (value is List) {
+        if (_normalizeAcpConfigKey(entry.key.toString()) == 'configoptions') {
+          for (final item in value) {
+            final option = _normalizeMap(item);
+            if (option == null) continue;
+            final id = option['id']?.toString().trim() ?? '';
+            final category = _normalizeAcpConfigKey(
+              option['category']?.toString() ?? '',
+            );
+            if (id.isNotEmpty &&
+                option['options'] is List &&
+                (category == 'thoughtlevel' ||
+                    id.toLowerCase() == 'reasoning_effort' ||
+                    id.toLowerCase() == 'reasoning-effort' ||
+                    id.toLowerCase() == 'effort')) {
+              return id;
+            }
+          }
+        }
+        for (final item in value) {
+          final nested = _normalizeMap(item);
+          if (nested != null) {
+            final found = visit(nested);
+            if (found != null) return found;
+          }
+        }
+      } else {
+        final nested = _normalizeMap(value);
+        if (nested != null) {
+          final found = visit(nested);
+          if (found != null) return found;
+        }
+      }
+    }
+    return null;
+  }
+
+  return visit(response);
 }
 
 /// Extracts only ACP thought-level/reasoning choices.
@@ -502,14 +644,9 @@ class AcpAgentCatalog {
 }
 
 String _agentCatalogIdentity(AcpAgentProfile agent) {
-  final normalizedName = agent.name.trim().toLowerCase().replaceAll(
-    RegExp(r'[\s_-]+'),
-    '',
-  );
   if (agent.id == 'xiaowan-acp' ||
-      agent.command.toLowerCase() == 'omnibot-xiaowan-acp' ||
-      normalizedName == '小万bot' ||
-      normalizedName == 'xiaowanbot') {
+      agent.id.toLowerCase() == 'legacy-xiaowan-bot' ||
+      agent.id.toLowerCase() == 'legacy-xiaowan-command') {
     return 'xiaowan-acp';
   }
   return 'id:${agent.id}';
@@ -838,16 +975,25 @@ class AgentRuntimeService {
     return _invokeMap('agent/test', {'agentId': agentId.trim()});
   }
 
-  static Future<Map<String, dynamic>> prepareAgent(String agentId) {
-    return _invokeMap('agent/prepare', {'agentId': agentId.trim()});
+  static Future<Map<String, dynamic>> prepareAgent(
+    String agentId, {
+    bool force = false,
+  }) {
+    return _invokeMap('agent/prepare', {
+      'agentId': agentId.trim(),
+      if (force) 'force': true,
+    });
   }
 
-  static Future<Map<String, dynamic>> prepareAgentInBackground(String agentId) {
+  static Future<Map<String, dynamic>> prepareAgentInBackground(
+    String agentId, {
+    bool force = false,
+  }) {
     final normalizedId = agentId.trim();
     final existing = _agentPreparationTasks[normalizedId];
     if (existing != null) return existing;
 
-    final task = prepareAgent(normalizedId);
+    final task = prepareAgent(normalizedId, force: force);
     _agentPreparationTasks[normalizedId] = task;
     _emitAgentPreparationState();
     unawaited(
@@ -886,6 +1032,7 @@ class AgentRuntimeService {
     String? reasoningEffort,
     String? permissionMode,
     String? content,
+    int? expectedRevision,
   }) {
     return _invokeMap('agent/config/write', {
       'agentId': agentId.trim(),
@@ -895,11 +1042,25 @@ class AgentRuntimeService {
       if (reasoningEffort != null) 'reasoningEffort': reasoningEffort,
       if (permissionMode != null) 'permissionMode': permissionMode,
       if (content != null) 'content': content,
+      if (expectedRevision != null) 'expectedRevision': expectedRevision,
     });
   }
 
-  // Canonical ACP application API. New code must use session/prompt names;
-  // the methods below keep the previous Dart surface working for old builds.
+  static Future<Map<String, dynamic>> rollbackAgentConfig(
+    String agentId, {
+    required int targetRevision,
+    int? expectedRevision,
+  }) {
+    return _invokeMap('agent/config/rollback', {
+      'agentId': agentId.trim(),
+      'targetRevision': targetRevision,
+      if (expectedRevision != null) 'expectedRevision': expectedRevision,
+    });
+  }
+
+  // Canonical ACP application API. New business code must use these
+  // session/* methods. Legacy thread/turn requests are accepted only by the
+  // native compatibility adapter and are not exposed as a Dart service API.
   static Future<Map<String, dynamic>> newSession({
     int? conversationId,
     String? cwd,
@@ -921,6 +1082,44 @@ class AgentRuntimeService {
       if (additionalDirectories.isNotEmpty)
         'additionalDirectories': additionalDirectories,
     });
+  }
+
+  /// Resolves the ACP session identity required by a prompt.
+  ///
+  /// A missing session is an application-level bootstrap case, not a second
+  /// protocol. Keep the bootstrap on the official `session/new` operation and
+  /// return only the stable identity that the caller must use for
+  /// `session/prompt`. Legacy callers may still call `promptSession` without
+  /// an id; new lifecycle code should resolve it here first.
+  static Future<String> ensureSession({
+    String? sessionId,
+    int? conversationId,
+    String? cwd,
+    String? model,
+    String? effort,
+    String? collaborationMode,
+    String? conversationMode,
+    List<String> additionalDirectories = const <String>[],
+  }) async {
+    final existing = sessionId?.trim() ?? '';
+    if (existing.isNotEmpty) return existing;
+
+    final response = await newSession(
+      conversationId: conversationId,
+      cwd: cwd,
+      model: model,
+      effort: effort,
+      collaborationMode: collaborationMode,
+      conversationMode: conversationMode,
+      additionalDirectories: additionalDirectories,
+    );
+    final resolved = (response['sessionId'] ?? response['threadId'])
+        ?.toString()
+        .trim();
+    if (resolved == null || resolved.isEmpty) {
+      throw StateError('ACP session/new did not return a session id');
+    }
+    return resolved;
   }
 
   static Future<Map<String, dynamic>> loadSession({
@@ -971,6 +1170,7 @@ class AgentRuntimeService {
     int? conversationId,
     String? agentId,
     bool includeHistory = true,
+    bool refreshConfig = false,
     String? conversationMode,
   }) {
     return _invokeMap('session/load', {
@@ -979,19 +1179,20 @@ class AgentRuntimeService {
       if (agentId != null && agentId.trim().isNotEmpty)
         'agentId': agentId.trim(),
       'includeHistory': includeHistory,
+      if (refreshConfig) 'refreshConfig': true,
       if (conversationMode != null && conversationMode.trim().isNotEmpty)
         'conversationMode': conversationMode.trim(),
     });
   }
 
   static Future<Map<String, dynamic>> listSessions({
-    int limit = 50,
+    int? limit,
     String? cursor,
     String? cwd,
     List<String> additionalDirectories = const <String>[],
   }) {
     return _invokeMap('session/list', {
-      'limit': limit,
+      if (limit != null) 'limit': limit,
       if (cursor != null && cursor.trim().isNotEmpty) 'cursor': cursor.trim(),
       if (cwd != null && cwd.trim().isNotEmpty) 'cwd': cwd.trim(),
       if (additionalDirectories.isNotEmpty)
@@ -1297,7 +1498,7 @@ class AgentRuntimeService {
   }
 
   static Future<Map<String, dynamic>> listModels() {
-    return _invokeMap('model/list', {'limit': 100});
+    return _invokeMap('model/list');
   }
 
   static Future<Map<String, dynamic>> listModelsForStatus(
@@ -1463,32 +1664,6 @@ class AgentRuntimeService {
       if (remoteCwd.trim().isNotEmpty) 'remoteCwd': remoteCwd.trim(),
       'path': path.trim(),
       'destinationPath': destinationPath.trim(),
-    });
-  }
-
-  static Future<Map<String, dynamic>> steerTurn({
-    String? threadId,
-    int? conversationId,
-    String? turnId,
-    required String text,
-  }) {
-    return _invokeMap('turn/steer', {
-      if (threadId != null) 'threadId': threadId,
-      if (conversationId != null) 'conversationId': conversationId,
-      if (turnId != null) 'turnId': turnId,
-      'text': text,
-    });
-  }
-
-  static Future<Map<String, dynamic>> interruptTurn({
-    String? threadId,
-    int? conversationId,
-    String? turnId,
-  }) {
-    return _invokeMap('session/cancel', {
-      if (threadId != null) 'threadId': threadId,
-      if (conversationId != null) 'conversationId': conversationId,
-      if (turnId != null) 'turnId': turnId,
     });
   }
 

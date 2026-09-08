@@ -4,9 +4,26 @@ import test from "node:test";
 import {
   buildChatCompletionRequest,
   extractModelIds,
+  providerSmokeConfigFromEnvironment,
   providerModelsUrl,
   runProviderSmoke,
 } from "./agent_provider_smoke.mjs";
+
+test("provider smoke reads the documented LLMTHU base variable", () => {
+  assert.deepEqual(
+    providerSmokeConfigFromEnvironment({
+      LLMTHU_API_KEY: "test-token",
+      LLMTHU_API_BASE: "https://provider.example/v1",
+      LLMTHU_MODEL: "model-a",
+    }),
+    {
+      apiKey: "test-token",
+      baseUrl: "https://provider.example/v1",
+      model: "model-a",
+      timeoutMs: 120_000,
+    },
+  );
+});
 
 test("providerModelsUrl normalizes OpenAI-compatible base URLs", () => {
   assert.equal(
@@ -34,7 +51,7 @@ test("chat completion request is short and does not leak credentials", () => {
     model: "glm-5.1",
     messages: [{ role: "user", content: "reply with OK" }],
     stream: false,
-    max_tokens: 8,
+    max_tokens: 1024,
   });
   assert.equal(JSON.stringify(request).includes("Bearer"), false);
 });
@@ -69,7 +86,7 @@ test("provider smoke verifies models and a short completion", async () => {
   assert.equal(calls[1].init.headers["content-type"], "application/json");
 });
 
-test("provider smoke accepts a valid reasoning-only assistant message", async () => {
+test("provider smoke rejects a reasoning-only assistant message without visible text", async () => {
   const result = await runProviderSmoke({
     baseUrl: "https://provider.example/v1",
     apiKey: "test-token",
@@ -87,5 +104,5 @@ test("provider smoke accepts a valid reasoning-only assistant message", async ()
     ),
   });
 
-  assert.equal(result.completionSucceeded, true);
+  assert.equal(result.completionSucceeded, false);
 });

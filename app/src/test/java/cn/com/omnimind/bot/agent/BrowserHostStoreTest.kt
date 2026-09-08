@@ -47,6 +47,29 @@ class BrowserHostStoreTest {
         store.setDesktopModeEnabled(false)
         assertFalse(store.getDesktopModeEnabled())
     }
+
+    @Test
+    fun browserHistoryRetainsVisitsBeyondTheFormerHostCap() {
+        var now = 0L
+        val store = BrowserHostStore(
+            workspaceId = "workspace",
+            keyValueStore = FakeBrowserHostKeyValueStore(),
+            clock = { ++now }
+        )
+
+        repeat(512) { index ->
+            store.recordVisit(
+                url = "https://example.com/page-$index",
+                title = "Page $index",
+                isReload = false
+            )
+        }
+
+        val history = store.listHistory()
+        assertEquals(512, history.size)
+        assertTrue(history.any { it.url == "https://example.com/page-0" })
+        assertTrue(history.any { it.url == "https://example.com/page-511" })
+    }
 }
 
 private class FakeBrowserHostKeyValueStore : BrowserHostKeyValueStore {

@@ -97,7 +97,13 @@ AgentToolCallInfo normalizeAgentToolCall(
     toolTitle: title,
     status: status,
     arguments: arguments,
-    argsJson: arguments.isEmpty ? '' : _safeJson(arguments),
+    // Official ACP rawInput can be an unfinished JSON string while streaming.
+    // Display it losslessly; parsing is not a prerequisite for a progress update.
+    argsJson: raw['rawInput'] is String
+        ? raw['rawInput'] as String
+        : arguments.isEmpty
+        ? ''
+        : _safeJson(arguments),
     resultPreviewJson: _resultPreviewJson(raw),
     rawResultJson: _safeJson(raw),
     terminalOutput: terminalOutput ?? '',

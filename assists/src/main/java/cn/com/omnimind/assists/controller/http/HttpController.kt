@@ -13,6 +13,7 @@ import cn.com.omnimind.baselib.llm.ChatCompletionProtocolMetadata
 import cn.com.omnimind.baselib.llm.ChatCompletionRequest
 import cn.com.omnimind.baselib.llm.ChatCompletionStreamOptions
 import cn.com.omnimind.baselib.llm.DeepSeekProvider
+import cn.com.omnimind.baselib.llm.ProviderRequestCapabilities
 import cn.com.omnimind.baselib.database.DatabaseHelper
 import cn.com.omnimind.baselib.database.TokenUsageRecord
 import cn.com.omnimind.baselib.llm.ModelProviderConfig
@@ -27,6 +28,7 @@ import cn.com.omnimind.baselib.llm.OmniOfficialProvider
 import cn.com.omnimind.baselib.llm.PlatformAiProvisioner
 import cn.com.omnimind.baselib.llm.ProviderModelOption
 import cn.com.omnimind.baselib.llm.ProviderCustomHeaderUtils
+import cn.com.omnimind.baselib.llm.ReasoningEffort
 import cn.com.omnimind.baselib.llm.SceneModelBindingStore
 import cn.com.omnimind.baselib.llm.SceneOperationConfigStore
 import cn.com.omnimind.baselib.llm.contentText
@@ -52,6 +54,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.ResponseBody.Companion.toResponseBody
 import okhttp3.sse.EventSource
 import okhttp3.sse.EventSourceListener
 import okhttp3.sse.EventSources
@@ -64,7 +67,6 @@ import org.json.JSONArray
 object HttpController {
     private const val TAG = "HttpController"
     private const val RESPONSE_LOG_CHUNK_SIZE = 3500
-    private const val PROVIDER_MODELS_TIMEOUT_SECONDS = 4L
     private const val ROUTE_CUSTOM_OPENAI_COMPAT = "custom_openai_compat"
     private const val ANTHROPIC_EPHEMERAL_CACHE_TYPE = "ephemeral"
     private const val ANTHROPIC_MAX_CACHE_BREAKPOINTS = 4
@@ -81,8 +83,7 @@ object HttpController {
         val overrideApplied: Boolean,
         val protocolType: String = "openai_compatible",
         val wireApi: String = OpenAiWireApi.CHAT_COMPLETIONS,
-        val requiresReasoningEcho: Boolean = false,
-        val requiresAnthropicThinkingReplay: Boolean = false
+        val providerCapabilities: ProviderRequestCapabilities = ProviderRequestCapabilities(),
     )
 
     private data class ResolvedSceneRequest(
@@ -621,6 +622,11 @@ object HttpController {
     }
 
     private fun ResolvedSceneRequest.toRouteInfo(): ChatCompletionRouteInfo {
+        val providerCapabilities = DeepSeekProvider.requestCapabilities(
+            protocolType = protocolType,
+            apiBase = apiBase,
+            model = resolvedModel,
+        )
         return ChatCompletionRouteInfo(
             requestedModel = requestedModel,
             resolvedModel = resolvedModel,
@@ -633,11 +639,7 @@ object HttpController {
             overrideApplied = overrideApplied,
             protocolType = protocolType,
             wireApi = wireApi,
-            requiresReasoningEcho = DeepSeekProvider.shouldUseOfficialAdapter(
-                protocolType = protocolType,
-                apiBase = apiBase
-            ),
-            requiresAnthropicThinkingReplay = DeepSeekProvider.normalizeProtocolType(protocolType) == "anthropic"
+            providerCapabilities = providerCapabilities,
         )
     }
 
@@ -1594,6 +1596,14 @@ object HttpController {
                             directKeys = listOf("reasoning", "thinking"),
                             nestedValueKeys = listOf("reasoning", "thinking")
                         ),
+                        supportedReasoningLevels =
+                            (itemObj["supported_reasoning_levels"] as? KxJsonArray)
+                                ?.mapNotNull { level ->
+                                    ((level as? KxJsonObject)?.get("effort") as? JsonPrimitive)
+                                        ?.contentOrNull?.takeIf { it.isNotBlank() }
+                                }?.distinct().orEmpty(),
+                        defaultReasoningLevel =
+                            (itemObj["default_reasoning_level"] as? JsonPrimitive)?.contentOrNull,
                         toolCall = parseProviderModelBoolean(
                             itemObj = itemObj,
                             directKeys = listOf("toolCall", "tool_call", "tools"),
@@ -1715,8 +1725,10 @@ object HttpController {
             private val toolCalls = linkedMapOf<String, ResponseToolCallState>()
             private val toolCallAliases = linkedMapOf<String, String>()
             private val assistantText = StringBuilder()
+            private val reasoningText = StringBuilder()
             private var nextToolIndex = 0
             private var sawToolCall = false
+            private var terminalFailureSignaled = false
 
             override fun onOpen(eventSource: EventSource, response: okhttp3.Response) {
                 outer.onOpen(eventSource, response)
@@ -1760,31 +1772,58 @@ object HttpController {
                     "response.content_part.added",
                     "response.content_part.done" -> {
                         val part = json.obj("part") ?: return
-                        if (part.string("type") != "output_text") return
-                        emitAssistantText(
+                        when (part.string("type")) {
+                            "output_text" -> emitAssistantText(
+                                eventSource = eventSource,
+                                id = id,
+                                type = type,
+                                incoming = part.string("text"),
+                                isSnapshot = true
+                            )
+                            "reasoning_text" -> emitReasoningText(
+                                eventSource = eventSource,
+                                id = id,
+                                type = type,
+                                incoming = part.string("text"),
+                                isSnapshot = true
+                            )
+                        }
+                    }
+                    "response.reasoning_text.delta",
+                    "response.reasoning_text.done",
+                    "response.reasoning_summary_text.delta",
+                    "response.reasoning.delta" -> {
+                        emitReasoningText(
                             eventSource = eventSource,
                             id = id,
                             type = type,
-                            incoming = part.string("text"),
-                            isSnapshot = true
+                            incoming = if (eventType.endsWith(".done")) {
+                                json.string("text")
+                            } else {
+                                json.string("delta")
+                            },
+                            isSnapshot = eventType.endsWith(".done")
                         )
-                    }
-                    "response.reasoning_summary_text.delta",
-                    "response.reasoning.delta" -> {
-                        val delta = json.string("delta")
-                        if (delta.isNotEmpty()) {
-                            outer.onEvent(
-                                eventSource,
-                                id,
-                                type,
-                                buildOpenAIChunk(buildSingleFieldDelta("reasoning_content", delta), null)
-                            )
-                        }
                     }
                     "response.output_item.added",
                     "response.output_item.done" -> {
                         val item = json.obj("item") ?: return
                         when (item.string("type")) {
+                            "reasoning" -> {
+                                val content = item.array("content") ?: return
+                                content.forEach { blockElement ->
+                                    val block = blockElement as? KxJsonObject ?: return@forEach
+                                    if (block.string("type") == "reasoning_text") {
+                                        emitReasoningText(
+                                            eventSource = eventSource,
+                                            id = id,
+                                            type = type,
+                                            incoming = block.string("text"),
+                                            isSnapshot = true
+                                        )
+                                    }
+                                }
+                            }
                             "function_call" -> {
                                 sawToolCall = true
                                 val state = getOrCreateResponsesToolCallState(item)
@@ -1860,6 +1899,42 @@ object HttpController {
                             )
                         )
                         outer.onEvent(eventSource, id, type, "[DONE]")
+                    }
+                    "response.incomplete",
+                    "response.failed" -> {
+                        if (terminalFailureSignaled) return
+                        terminalFailureSignaled = true
+                        val responseObj = json.obj("response") ?: json
+                        val detail = responseObj.obj("incomplete_details")
+                            ?.string("reason")
+                            ?.takeIf(String::isNotBlank)
+                            ?: responseObj.obj("error")
+                                ?.string("message")
+                                ?.takeIf(String::isNotBlank)
+                            ?: eventType
+                        val message = "DeepSeek Responses $eventType: $detail"
+                        val failureBody = buildJsonObject {
+                            put("error", buildJsonObject {
+                                put("type", eventType)
+                                put("message", message)
+                                put("raw_event", json.toString())
+                            })
+                        }.toString()
+                        // Responses has semantic terminal events instead of the
+                        // Chat Completions [DONE] marker. Do not drop an
+                        // incomplete/failed response and let onClosed turn a
+                        // partial text/tool-call into a successful ACP turn.
+                        outer.onFailure(
+                            eventSource,
+                            IllegalStateException(message),
+                            okhttp3.Response.Builder()
+                                .request(eventSource.request())
+                                .protocol(Protocol.HTTP_1_1)
+                                .code(422)
+                                .message(message)
+                                .body(failureBody.toResponseBody("application/json".toMediaType()))
+                                .build(),
+                        )
                     }
                     else -> {
                         if (json.containsKey("error")) {
@@ -2018,6 +2093,22 @@ object HttpController {
                 )
             }
 
+            private fun emitReasoningText(
+                eventSource: EventSource,
+                id: String?,
+                type: String?,
+                incoming: String,
+                isSnapshot: Boolean,
+            ) {
+                val emitted = updateReasoningText(incoming, isSnapshot) ?: return
+                outer.onEvent(
+                    eventSource,
+                    id,
+                    type,
+                    buildOpenAIChunk(buildSingleFieldDelta("reasoning_content", emitted), null)
+                )
+            }
+
             private fun updateAssistantText(
                 incoming: String,
                 isSnapshot: Boolean
@@ -2040,6 +2131,30 @@ object HttpController {
                 if (incoming != current) {
                     assistantText.setLength(0)
                     assistantText.append(incoming)
+                }
+                return emitted.ifEmpty { null }
+            }
+
+            private fun updateReasoningText(
+                incoming: String,
+                isSnapshot: Boolean,
+            ): String? {
+                if (incoming.isEmpty()) return null
+                if (!isSnapshot) {
+                    reasoningText.append(incoming)
+                    return incoming
+                }
+                val current = reasoningText.toString()
+                val emitted = when {
+                    current.isEmpty() -> incoming
+                    incoming == current -> ""
+                    incoming.startsWith(current) -> incoming.substring(current.length)
+                    current.startsWith(incoming) -> ""
+                    else -> incoming
+                }
+                if (incoming != current) {
+                    reasoningText.setLength(0)
+                    reasoningText.append(incoming)
                 }
                 return emitted.ifEmpty { null }
             }
@@ -2535,23 +2650,41 @@ object HttpController {
 
     // ---- end Anthropic protocol helpers ----
 
-    private fun openAIStreamClient(forceHttp1: Boolean = false): OkHttpClient {
-        return OkHttpClient.Builder()
-            .apply {
-                if (forceHttp1) protocols(listOf(Protocol.HTTP_1_1))
-            }
+    // A client owns its connection pool. Creating one per prompt forces every
+    // turn and tool continuation through DNS/TCP/TLS again. Keep request auth
+    // on Request, and share only the transport across Provider calls.
+    private val openAIStreamingClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
             .connectTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
             .readTimeout(0, java.util.concurrent.TimeUnit.SECONDS)
             .writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
             .build()
     }
 
+    private val openAIHttp1StreamingClient: OkHttpClient by lazy {
+        openAIStreamingClient.newBuilder()
+            .protocols(listOf(Protocol.HTTP_1_1))
+            .build()
+    }
+
+    // Catalogs are finite responses, unlike inference streams. Share transport
+    // pools without caching model data or applying a fresh client's implicit
+    // ten-second read deadline to a user-requested refresh.
+    private val providerModelsClient: OkHttpClient by lazy {
+        openAIStreamingClient.newBuilder()
+            .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
+    }
+
+    private fun openAIStreamClient(forceHttp1: Boolean = false): OkHttpClient =
+        if (forceHttp1) openAIHttp1StreamingClient else openAIStreamingClient
+
     private fun createChatRequestFromText(
         resolved: ResolvedSceneRequest,
         text: String,
         reasoningEffort: String? = null
     ): ChatCompletionRequest {
-        val disableThinking = reasoningEffort == "no"
+        val disableThinking = ReasoningEffort.normalize(reasoningEffort) == ReasoningEffort.NONE
         return ChatCompletionRequest(
             model = resolved.resolvedModel,
             messages = listOf(
@@ -2572,7 +2705,7 @@ object HttpController {
         reasoningEffort: String? = null,
         promptCacheKey: String? = null
     ): ChatCompletionRequest {
-        val disableThinking = reasoningEffort == "no"
+        val disableThinking = ReasoningEffort.normalize(reasoningEffort) == ReasoningEffort.NONE
         val chatMessages = messages.map { message ->
             ChatCompletionMessage(
                 role = message["role"]?.toString().orEmpty().ifBlank { "user" },
@@ -2847,12 +2980,33 @@ object HttpController {
         } else {
             baseBody
         }
-        return stripAnthropicOnlyFieldsForOpenAiCompatible(protocolReadyBody)
+        val supportedBody = if (
+            DeepSeekProvider.requestCapabilities(protocolType, apiBase, resolvedModel)
+                .supportsChatPromptCacheKey
+        ) {
+            protocolReadyBody
+        } else {
+            // Keep the local cache/usage identity intact; omit only the optional
+            // upstream field, not matching keys inside tool arguments or messages.
+            val payload = completionJson.parseToJsonElement(protocolReadyBody) as KxJsonObject
+            KxJsonObject(payload - "prompt_cache_key").toString()
+        }
+        return stripAnthropicOnlyFieldsForOpenAiCompatible(supportedBody)
     }
 
     private fun buildOpenAIResponsesRequestBody(
         requestBodyJson: String,
         resolvedModel: String
+    ): String = buildOpenAIResponsesRequestBody(
+        requestBodyJson = requestBodyJson,
+        resolvedModel = resolvedModel,
+        providerCapabilities = ProviderRequestCapabilities(),
+    )
+
+    private fun buildOpenAIResponsesRequestBody(
+        requestBodyJson: String,
+        resolvedModel: String,
+        providerCapabilities: ProviderRequestCapabilities,
     ): String {
         val decodedRequest = completionJson.decodeFromString<ChatCompletionRequest>(requestBodyJson)
             .copy(model = resolvedModel)
@@ -2873,9 +3027,13 @@ object HttpController {
             stream = parsedRequest.stream,
             tools = buildResponsesTools(parsedRequest),
             toolChoice = buildResponsesToolChoice(parsedRequest.toolChoice),
-            parallelToolCalls = parsedRequest.parallelToolCalls,
+            parallelToolCalls = parsedRequest.parallelToolCalls.takeIf {
+                providerCapabilities.supportsResponsesParallelToolCalls
+            },
             reasoning = buildResponsesReasoning(parsedRequest),
-            promptCacheKey = parsedRequest.promptCacheKey
+            promptCacheKey = parsedRequest.promptCacheKey.takeIf {
+                providerCapabilities.supportsResponsesPromptCacheKey
+            }
         )
         return stripAnthropicOnlyFieldsForOpenAiCompatible(
             completionJson.encodeToString(payload)
@@ -2926,7 +3084,7 @@ object HttpController {
                     items += buildJsonObject {
                         put("type", "function_call_output")
                         put("call_id", callId)
-                        put("output", message.contentText())
+                        put("output", buildResponsesToolOutput(message))
                     }
                     pendingFunctionCallIds -= callId
                     emittedFunctionCallOutputIds += callId
@@ -2935,13 +3093,16 @@ object HttpController {
                     appendMissingFunctionCallOutputs(
                         reason = "A later assistant message started before the result was persisted."
                     )
-                    val visibleText = buildList {
-                        message.reasoningContent?.trim()?.takeIf { it.isNotEmpty() }?.let { add(it) }
-                        message.contentText().trim().takeIf { it.isNotEmpty() }?.let { add(it) }
-                    }.joinToString(separator = "\n\n").trim()
-                    if (visibleText.isNotEmpty()) {
-                        items += buildResponsesMessageItem("assistant", visibleText)
-                    }
+                    message.reasoningContent
+                        ?.trim()
+                        ?.takeIf { it.isNotEmpty() }
+                        ?.let { reasoning ->
+                            // Responses keeps reasoning as its own input item.
+                            // Putting it into assistant output_text changes the
+                            // semantic role and breaks thinking/tool replay.
+                            items += buildResponsesReasoningItem(reasoning)
+                        }
+                    buildResponsesMessageItem(message, "assistant")?.let(items::add)
                     message.toolCalls.orEmpty().forEach { toolCall ->
                         val rawCallId = toolCall.id.trim().ifEmpty {
                             "tool_call_${fallbackFunctionCallIndex++}"
@@ -2960,10 +3121,8 @@ object HttpController {
                     appendMissingFunctionCallOutputs(
                         reason = "A later user message started before the result was persisted."
                     )
-                    val text = message.contentText()
-                    if (text.isNotBlank()) {
-                        items += buildResponsesMessageItem(message.role.ifBlank { "user" }, text)
-                    }
+                    buildResponsesMessageItem(message, message.role.ifBlank { "user" })
+                        ?.let(items::add)
                 }
             }
         }
@@ -2983,6 +3142,89 @@ object HttpController {
                     add(
                         buildJsonObject {
                             put("type", contentType)
+                            put("text", text)
+                        }
+                    )
+                }
+            )
+        }
+    }
+
+    private fun buildResponsesMessageItem(
+        message: ChatCompletionMessage,
+        role: String,
+    ): JsonElement? {
+        val parts = buildResponsesMessageContent(message.content, role)
+        if (parts.isEmpty()) return null
+        return buildJsonObject {
+            put("role", role)
+            put("content", buildJsonArray { parts.forEach(::add) })
+        }
+    }
+
+    private fun buildResponsesMessageContent(
+        content: JsonElement?,
+        role: String,
+    ): List<JsonElement> {
+        if (content is JsonPrimitive) {
+            return listOf(
+                buildJsonObject {
+                    put("type", if (role == "assistant") "output_text" else "input_text")
+                    put("text", content.contentOrNull.orEmpty())
+                }
+            )
+        }
+        val blocks = content as? KxJsonArray ?: return emptyList()
+        return blocks.mapNotNull { raw ->
+            val block = raw as? KxJsonObject ?: return@mapNotNull null
+            val type = block["type"]?.jsonPrimitive?.contentOrNull
+                ?.trim()?.lowercase().orEmpty()
+            when (type) {
+                "text", "input_text", "output_text" -> buildJsonObject {
+                    put("type", if (role == "assistant") "output_text" else "input_text")
+                    put("text", block["text"]?.jsonPrimitive?.contentOrNull.orEmpty())
+                }
+                "image_url", "input_image", "image" -> {
+                    // Responses only accepts input_image in user/developer
+                    // messages. Assistant images can make DeepSeek return 400.
+                    if (role != "user" && role != "developer") return@mapNotNull null
+                    val rawImage = block["image_url"] ?: block["url"] ?: block["imageUrl"]
+                    val imageUrl = when (rawImage) {
+                        is JsonPrimitive -> rawImage.contentOrNull.orEmpty()
+                        is KxJsonObject -> rawImage["url"]
+                            ?.jsonPrimitive?.contentOrNull.orEmpty()
+                        else -> ""
+                    }.trim()
+                    if (imageUrl.isEmpty()) return@mapNotNull null
+                    buildJsonObject {
+                        put("type", "input_image")
+                        put("image_url", imageUrl)
+                        block["detail"]?.let { put("detail", it) }
+                    }
+                }
+                else -> null
+            }
+        }.filter { part ->
+            part["type"]?.jsonPrimitive?.contentOrNull != "input_text" ||
+                part["text"]?.jsonPrimitive?.contentOrNull.orEmpty().isNotBlank()
+        }
+    }
+
+    private fun buildResponsesToolOutput(message: ChatCompletionMessage): JsonElement {
+        if (message.content !is KxJsonArray) return JsonPrimitive(message.contentText())
+        val parts = buildResponsesMessageContent(message.content, "user")
+        return if (parts.isEmpty()) JsonPrimitive(message.contentText()) else KxJsonArray(parts)
+    }
+
+    private fun buildResponsesReasoningItem(text: String): JsonElement {
+        return buildJsonObject {
+            put("type", "reasoning")
+            put(
+                "content",
+                buildJsonArray {
+                    add(
+                        buildJsonObject {
+                            put("type", "reasoning_text")
                             put("text", text)
                         }
                     )
@@ -3029,15 +3271,12 @@ object HttpController {
     }
 
     private fun buildResponsesReasoning(request: ChatCompletionRequest): JsonElement? {
-        if (request.enableThinking == false || request.thinking?.type == "disabled") {
-            return buildJsonObject { put("effort", "none") }
+        val effort = when {
+            request.enableThinking == false ||
+                request.thinking?.type.equals("disabled", ignoreCase = true) ->
+                ReasoningEffort.NONE
+            else -> ReasoningEffort.normalize(request.reasoningEffort) ?: return null
         }
-        val normalizedEffort = request.reasoningEffort?.trim()?.lowercase()
-        val effort = when (normalizedEffort) {
-            "none", "low", "medium", "high" -> normalizedEffort
-            "xhigh", "max" -> "high"
-            else -> null
-        } ?: return null
         return buildJsonObject { put("effort", effort) }
     }
 
@@ -3064,9 +3303,10 @@ object HttpController {
             .trim()
             .lowercase()
             .takeIf { it.isNotEmpty() }
+        val normalizedReasoningEffort = ReasoningEffort.normalize(rawReasoningEffort)
         val thinkingType = explicitThinkingType
             ?: when {
-                enableThinking == false || rawReasoningEffort == "no" -> "disabled"
+                enableThinking == false || normalizedReasoningEffort == ReasoningEffort.NONE -> "disabled"
                 else -> "enabled"
             }
 
@@ -3163,7 +3403,12 @@ object HttpController {
         val requestJson = if (OpenAiWireApi.isResponses(normalizedWireApi)) {
             buildOpenAIResponsesRequestBody(
                 requestBodyJson = completionJson.encodeToString(chatRequest.copy(stream = true)),
-                resolvedModel = chatRequest.model
+                resolvedModel = chatRequest.model,
+                providerCapabilities = DeepSeekProvider.requestCapabilities(
+                    protocolType = protocolType,
+                    apiBase = base,
+                    model = chatRequest.model,
+                ),
             )
         } else {
             buildOpenAICompatibleRequestBody(
@@ -3242,7 +3487,12 @@ object HttpController {
         val preparedRequestJson = if (OpenAiWireApi.isResponses(normalizedWireApi)) {
             buildOpenAIResponsesRequestBody(
                 requestBodyJson = requestBodyJson,
-                resolvedModel = resolved.resolvedModel
+                resolvedModel = resolved.resolvedModel,
+                providerCapabilities = DeepSeekProvider.requestCapabilities(
+                    protocolType = resolved.protocolType,
+                    apiBase = base,
+                    model = resolved.resolvedModel,
+                ),
             )
         } else {
             buildOpenAICompatibleRequestBody(
@@ -3611,10 +3861,15 @@ object HttpController {
             }
 
             val requestJson = if (OpenAiWireApi.isResponses(normalizedWireApi)) {
-                buildOpenAIResponsesRequestBody(
-                    requestBodyJson = completionJson.encodeToString(variant.request),
-                    resolvedModel = variant.request.model
-                )
+            buildOpenAIResponsesRequestBody(
+                requestBodyJson = completionJson.encodeToString(variant.request),
+                resolvedModel = variant.request.model,
+                providerCapabilities = DeepSeekProvider.requestCapabilities(
+                    protocolType = resolved.protocolType,
+                    apiBase = base,
+                    model = variant.request.model,
+                ),
+            )
             } else {
                 buildOpenAICompatibleRequestBody(
                     requestBodyJson = completionJson.encodeToString(variant.request),
@@ -3748,7 +4003,12 @@ object HttpController {
             val requestJson = if (OpenAiWireApi.isResponses(normalizedWireApi)) {
                 buildOpenAIResponsesRequestBody(
                     requestBodyJson = baseRequestJson.toString(),
-                    resolvedModel = normalizedModel
+                    resolvedModel = normalizedModel,
+                    providerCapabilities = DeepSeekProvider.requestCapabilities(
+                        protocolType = DeepSeekProvider.normalizeProtocolType(null),
+                        apiBase = normalizedApiBase,
+                        model = normalizedModel,
+                    ),
                 )
             } else {
                 buildOpenAICompatibleRequestBody(
@@ -3870,34 +4130,15 @@ object HttpController {
             "[provider models protocol=$protocolType]",
             request.headers.toMultimap().mapValues { it.value.joinToString(",") }
         )
-        // This endpoint is used while creating a local ACP session when the
-        // shared scene model binding has not been created yet. Keep the
-        // blocking OkHttp call itself bounded; a coroutine timeout alone
-        // cannot interrupt execute() while it is waiting on the socket.
-        val response = OkHttpClient.Builder()
-            .callTimeout(
-                PROVIDER_MODELS_TIMEOUT_SECONDS,
-                java.util.concurrent.TimeUnit.SECONDS,
-            )
-            .connectTimeout(
-                PROVIDER_MODELS_TIMEOUT_SECONDS,
-                java.util.concurrent.TimeUnit.SECONDS,
-            )
-            .readTimeout(
-                PROVIDER_MODELS_TIMEOUT_SECONDS,
-                java.util.concurrent.TimeUnit.SECONDS,
-            )
-            .build()
-            .newCall(request)
-            .execute()
-        val responseBody = response.body?.string()
-        if (!response.isSuccessful) {
-            throw IllegalStateException(
-                "获取模型列表失败 (${response.code})：${extractAvailabilityMessage(responseBody)}"
-            )
+        providerModelsClient.newCall(request).execute().use { response ->
+            val responseBody = response.body?.string()
+            if (!response.isSuccessful) {
+                throw IllegalStateException(
+                    "获取模型列表失败 (${response.code})：${extractAvailabilityMessage(responseBody)}"
+                )
+            }
+            parseProviderModelsResponse(responseBody)
         }
-
-        parseProviderModelsResponse(responseBody)
     }
 
     private suspend fun checkAnthropicModelAvailability(

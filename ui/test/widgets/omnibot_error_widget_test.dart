@@ -4,10 +4,17 @@ import 'package:ui/widgets/omnibot_error_widget.dart';
 
 void main() {
   testWidgets('global fallback replaces Flutter error widget', (tester) async {
+    final originalBuilder = ErrorWidget.builder;
+    addTearDown(() => ErrorWidget.builder = originalBuilder);
     installOmnibotErrorWidget();
-    final fallback = ErrorWidget.builder(
-      FlutterErrorDetails(exception: StateError('test rendering failure')),
-    );
+    late final Widget fallback;
+    try {
+      fallback = ErrorWidget.builder(
+        FlutterErrorDetails(exception: StateError('test rendering failure')),
+      );
+    } finally {
+      ErrorWidget.builder = originalBuilder;
+    }
 
     await tester.pumpWidget(MaterialApp(home: fallback));
 

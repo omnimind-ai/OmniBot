@@ -6,7 +6,7 @@ import 'package:ui/widgets/agent_avatar.dart';
 
 /// ACP Agent 品牌图标。
 ///
-/// 已知的内置 Agent（Codex / Claude Code / OpenCode / DeepSeek Harness）渲染各自来自 Lobe Icons
+/// 已知的内置 Agent（Kimi Code / DeepSeek Harness / Codex / Claude Code / OpenCode）渲染各自来自 Lobe Icons
 /// (https://icons.lobehub.com) 的原始品牌 SVG。小万沿用可编辑的 AgentAvatarService，
 /// 让头像选择器同时影响 ACP 顶部、运行头和旧兼容卡片；未识别的自定义 Agent
 /// 回退到默认机器人图标 [Icons.smart_toy_outlined]。
@@ -38,6 +38,10 @@ class AgentBrandIcon extends StatelessWidget {
     ),
     'codex-acp': _AgentBrand('assets/agents/codex.svg'),
     'codex-remote': _AgentBrand('assets/agents/codex.svg'),
+    'kimi-code-acp': _AgentBrand(
+      'assets/provider_icons/moonshot.svg',
+      brandColor: Color(0xFF1783FF),
+    ),
     'claude-code-acp': _AgentBrand(
       'assets/agents/claude_code.svg',
       brandColor: Color(0xFFD97757),
@@ -58,6 +62,7 @@ class AgentBrandIcon extends StatelessWidget {
     return switch (normalized) {
       'xiaowan' || 'xiaowan-acp' => 'xiaowan-acp',
       'codex' || 'codex-acp' || 'codex-remote' => 'codex-acp',
+      'kimi' || 'kimi-code' || 'kimi-code-acp' => 'kimi-code-acp',
       'claude' || 'claude-code' || 'claude-code-acp' => 'claude-code-acp',
       'opencode' || 'open-code' || 'opencode-acp' => 'opencode-acp',
       'deepseek' ||

@@ -48,6 +48,7 @@ import java.io.File
 import java.net.BindException
 import java.net.InetSocketAddress
 import java.net.ServerSocket
+import java.net.URI
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.UUID
@@ -124,7 +125,8 @@ object McpServerManager {
      * second private protocol or a second server lifecycle.
      */
     fun ensureRunning(context: Context): McpServerState {
-        currentState().takeIf { it.running }?.let { return it }
+        val currentHost = resolveLanIp() ?: LOOPBACK_HOST
+        if (isRunning && activeHost == currentHost) return currentState()
         val port = mmkv.decodeInt(PREF_PORT, DEFAULT_PORT).takeIf { it > 0 } ?: DEFAULT_PORT
         return startServer(context, port)
     }
@@ -294,9 +296,7 @@ object McpServerManager {
             val lanIp = resolveLanIp() ?: LOOPBACK_HOST
             if (isRunning) {
                 val currentPort = mmkv.decodeInt(PREF_PORT, DEFAULT_PORT).takeIf { it > 0 } ?: DEFAULT_PORT
-                if (currentPort == port) {
-                    activeHost = lanIp
-                    mmkv.encode(PREF_HOST, lanIp)
+                if (currentPort == port && activeHost == lanIp) {
                     return currentState()
                 }
                 stopServerLocked()
@@ -321,7 +321,7 @@ object McpServerManager {
                             .getOrNull()
                     }
                     ?: return@repeat
-                val engine = buildServer(context, resolvedPort)
+                val engine = buildServer(context, resolvedPort, lanIp)
                 try {
                     engine.start(wait = false)
                     server = engine
@@ -397,7 +397,8 @@ object McpServerManager {
 
     private fun buildServer(
         context: Context,
-        port: Int
+        port: Int,
+        lanHost: String,
     ): EmbeddedServer<CIOApplicationEngine, CIOApplicationEngine.Configuration> {
         val token = ensureToken()
         val appContext = context.applicationContext
@@ -406,6 +407,16 @@ object McpServerManager {
         val browserMirrorService = BrowserMirrorService(appContext)
         val agentRunService = AgentRunService(appContext)
         val webChatAvatarService = WebChatAvatarService(appContext)
+        val allowedMcpHosts = listOf(
+            lanHost,
+            LOOPBACK_HOST,
+            "localhost",
+            "[::1]",
+        ).distinct()
+        // The SDK parses allowedOrigins as URLs before comparing only their
+        // host component. Supplying bare hostnames would make server startup
+        // fail even though allowedHosts intentionally uses bare host values.
+        val allowedMcpOrigins = allowedMcpHosts.map { host -> "http://$host" }
 
         return embeddedServer(CIO, host = "0.0.0.0", port = port) {
             install(CallLogging)
@@ -424,6 +435,16 @@ object McpServerManager {
             }
             intercept(ApplicationCallPipeline.Plugins) {
                 if (call.request.path() == "/mcp") {
+                    if (!isAllowedMcpRequestAuthority(
+                            host = call.request.headers[HttpHeaders.Host].orEmpty(),
+                            origin = call.request.headers[HttpHeaders.Origin],
+                            allowedHosts = allowedMcpHosts,
+                        )
+                    ) {
+                        call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Invalid MCP origin"))
+                        finish()
+                        return@intercept
+                    }
                     val bearerToken = call.request.headers[HttpHeaders.Authorization]
                         ?.removePrefix("Bearer ")
                         ?.trim()
@@ -444,7 +465,9 @@ object McpServerManager {
             }
             mcpStreamableHttp(
                 path = "/mcp",
-                enableDnsRebindingProtection = false,
+                enableDnsRebindingProtection = true,
+                allowedHosts = allowedMcpHosts,
+                allowedOrigins = allowedMcpOrigins,
             ) {
                 // This endpoint is the narrow ACP bridge: it intentionally
                 // publishes only AndroidDeviceMcpServer tools.  OmniBot's
@@ -485,6 +508,49 @@ object McpServerManager {
         }
     }
 
+    internal fun isAllowedMcpRequestAuthority(
+        host: String,
+        origin: String?,
+        allowedHosts: List<String>,
+    ): Boolean {
+        val allowed = allowedHosts.mapNotNull(::extractMcpHost).toSet()
+        if (extractMcpHost(host) !in allowed) return false
+        if (origin.isNullOrBlank()) return true
+        if (origin.equals("null", ignoreCase = true)) return false
+        val originHost = runCatching { URI(origin).host }
+            .getOrNull()
+            ?.let(::extractMcpHost)
+            ?: return false
+        return originHost in allowed
+    }
+
+    private fun extractMcpHost(value: String): String? {
+        val raw = value.trim()
+        if (raw.isEmpty() || raw.any { it.isWhitespace() || it in "/@?#" }) return null
+        val host = if (raw.startsWith("[")) {
+            val closingBracket = raw.indexOf(']')
+            if (closingBracket <= 1) return null
+            val suffix = raw.substring(closingBracket + 1)
+            if (suffix.isNotEmpty() &&
+                (!suffix.startsWith(":") || suffix.drop(1).any { !it.isDigit() })
+            ) {
+                return null
+            }
+            raw.substring(1, closingBracket)
+        } else {
+            val colon = raw.indexOf(':')
+            if (colon < 0) {
+                raw
+            } else {
+                if (colon == 0 || raw.indexOf(':', colon + 1) >= 0) return null
+                val port = raw.substring(colon + 1)
+                if (port.any { !it.isDigit() }) return null
+                raw.substring(0, colon)
+            }
+        }
+        return host.lowercase().takeIf(String::isNotBlank)
+    }
+
     private fun stopServerLocked() {
         runCatching {
             server?.stop(500, 1_500)
@@ -507,19 +573,10 @@ object McpServerManager {
 
     private fun resolveAdvertisedHost(): String? {
         val currentHost = resolveLanIp()
-        if (currentHost != null && isRunning) {
-            synchronized(serverLock) {
-                if (isRunning && activeHost != currentHost) {
-                    activeHost = currentHost
-                    mmkv.encode(PREF_HOST, currentHost)
-                }
-            }
-        }
-        if (currentHost != null) return currentHost
         return if (isRunning) {
             activeHost ?: mmkv.decodeString(PREF_HOST)
         } else {
-            null
+            currentHost
         }
     }
 

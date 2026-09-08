@@ -1,3 +1,5 @@
+import 'package:ui/widgets/conversation_model_selector.dart';
+
 import 'dart:async';
 import 'dart:convert';
 
@@ -33,13 +35,14 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
   String _kind = '';
   String _configPath = '';
   String _authPath = '';
+  int _configRevision = 0;
   bool _loading = true;
   bool _saving = false;
   bool _obscureApiKey = true;
   bool _enabled = true;
   bool _changed = false;
-  String _reasoningEffort = 'max';
-  String _permissionMode = 'workspace-write';
+  String? _reasoningEffort;
+  String? _permissionMode;
   bool _sharedModelLoading = true;
   bool _sharedModelSaving = false;
   List<ModelProviderProfileSummary> _providerProfiles = const [];
@@ -128,6 +131,12 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
   }
 
   void _syncPayload(Map<String, dynamic> payload) {
+    _configRevision = switch (payload['revision']) {
+      int value => value,
+      num value => value.toInt(),
+      String value => int.tryParse(value) ?? 0,
+      _ => 0,
+    };
     _setText(_baseUrlController, payload['baseUrl']?.toString() ?? '');
     _setText(_modelController, payload['model']?.toString() ?? '');
     _setText(_apiKeyController, payload['apiKey']?.toString() ?? '');
@@ -135,16 +144,10 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
     _configPath =
         payload['configPath']?.toString() ?? payload['path']?.toString() ?? '';
     _authPath = payload['authPath']?.toString() ?? '';
-    _reasoningEffort = switch (payload['reasoningEffort']?.toString()) {
-      'off' => 'off',
-      'high' => 'high',
-      _ => 'max',
-    };
-    _permissionMode = switch (payload['permissionMode']?.toString()) {
-      'read-only' => 'read-only',
-      'danger-full-access' => 'danger-full-access',
-      _ => 'workspace-write',
-    };
+    _reasoningEffort = payload['reasoningEffort']?.toString().trim();
+    _permissionMode = payload['permissionMode']?.toString().trim();
+    if (_reasoningEffort?.isEmpty == true) _reasoningEffort = null;
+    if (_permissionMode?.isEmpty == true) _permissionMode = null;
   }
 
   Future<void> _loadSharedModelSelection() async {
@@ -166,20 +169,7 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
       final persistedBinding = bindings
           .where((item) => item.sceneId == 'scene.dispatch.model')
           .firstOrNull;
-      final persistedModels = persistedBinding == null
-          ? const <ProviderModelOption>[]
-          : models[persistedBinding.providerProfileId] ??
-                const <ProviderModelOption>[];
-      final binding =
-          persistedBinding != null &&
-              (persistedModels.isEmpty ||
-                  persistedModels.any(
-                    (item) =>
-                        item.id.trim().toLowerCase() ==
-                        persistedBinding.modelId.trim().toLowerCase(),
-                  ))
-          ? persistedBinding
-          : null;
+      final binding = persistedBinding;
       if (!mounted) return;
       setState(() {
         _providerProfiles = profilesPayload.profiles;
@@ -198,105 +188,31 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
 
   Future<void> _selectSharedModel() async {
     if (_sharedModelSaving || _sharedModelLoading) return;
-    final selection = await showModalBottomSheet<_SharedModelSelection>(
+    final selection = await showModalBottomSheet<ConversationModelSelection>(
       context: context,
       isScrollControlled: true,
-      builder: (sheetContext) {
-        final expanded = <String>{
-          if (_sharedModelBinding != null)
-            _sharedModelBinding!.providerProfileId,
-        };
-        if (expanded.isEmpty && _providerProfiles.isNotEmpty) {
-          expanded.add(_providerProfiles.first.id);
-        }
-        return StatefulBuilder(
-          builder: (context, setSheetState) {
-            return SafeArea(
-              child: SizedBox(
-                height: MediaQuery.sizeOf(context).height * 0.7,
-                child: ListView(
-                  padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
-                  children: [
-                    ListTile(
-                      title: Text(
-                        _text(
-                          '选择 Agent Provider / 模型',
-                          'Select Agent Provider / model',
-                        ),
-                      ),
-                      subtitle: Text(
-                        _text(
-                          '所有 ACP 默认继承这里的选择。',
-                          'All ACP Agents inherit this selection by default.',
-                        ),
-                      ),
-                    ),
-                    for (final profile in _providerProfiles)
-                      ExpansionTile(
-                        initiallyExpanded: expanded.contains(profile.id),
-                        onExpansionChanged: (value) {
-                          setSheetState(() {
-                            if (value) {
-                              expanded.add(profile.id);
-                            } else {
-                              expanded.remove(profile.id);
-                            }
-                          });
-                        },
-                        title: Text(profile.name),
-                        subtitle: Text(
-                          profile.configured
-                              ? _text(
-                                  '选择该 Provider 的模型',
-                                  'Choose a model from this Provider',
-                                )
-                              : _text('未配置', 'Not configured'),
-                        ),
-                        children: [
-                          for (final model
-                              in (_providerModels[profile.id] ?? const []))
-                            ListTile(
-                              title: Text(model.id),
-                              trailing:
-                                  _sharedModelBinding?.providerProfileId ==
-                                          profile.id &&
-                                      _sharedModelBinding?.modelId == model.id
-                                  ? const Icon(LucideIcons.check)
-                                  : null,
-                              onTap: () => Navigator.of(sheetContext).pop(
-                                _SharedModelSelection(
-                                  providerProfileId: profile.id,
-                                  modelId: model.id,
-                                ),
-                              ),
-                            ),
-                          if ((_providerModels[profile.id] ?? const []).isEmpty)
-                            ListTile(
-                              title: Text(
-                                _text(
-                                  '没有可用模型，请先检查 Provider 配置。',
-                                  'No models available. Check this Provider first.',
-                                ),
-                              ),
-                            ),
-                        ],
-                      ),
-                    if (_providerProfiles.isEmpty)
-                      ListTile(
-                        title: Text(
-                          _text('没有可用 Provider。', 'No Provider is available.'),
-                        ),
-                      ),
-                  ],
+      builder: (sheetContext) => SafeArea(
+        child: ConversationModelSelectorContent(
+          width: MediaQuery.sizeOf(sheetContext).width,
+          maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.7,
+          loadLiveProviders: true,
+          currentSelection: _sharedModelBinding == null
+              ? null
+              : ConversationModelSelection(
+                  providerProfileId: _sharedModelBinding!.providerProfileId,
+                  modelId: _sharedModelBinding!.modelId,
                 ),
-              ),
-            );
-          },
-        );
-      },
+          onSelect: (value) => Navigator.of(sheetContext).pop(value),
+        ),
+      ),
     );
     if (selection == null) return;
-    await _saveSharedModel(selection);
+    await _saveSharedModel(
+      _SharedModelSelection(
+        providerProfileId: selection.providerProfileId,
+        modelId: selection.modelId,
+      ),
+    );
   }
 
   Future<void> _saveSharedModel(_SharedModelSelection selection) async {
@@ -353,6 +269,12 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
     try {
       switch (_kind) {
         case 'codex':
+          final payload = await AgentRuntimeService.writeAgentConfig(
+            _agent!.id,
+            expectedRevision: _configRevision > 0 ? _configRevision : null,
+          );
+          if (!mounted) return;
+          _syncPayload(payload);
           break;
         case 'json':
           final content = _contentController.text;
@@ -365,6 +287,7 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
           final payload = await AgentRuntimeService.writeAgentConfig(
             _agent!.id,
             content: content,
+            expectedRevision: _configRevision > 0 ? _configRevision : null,
           );
           if (!mounted) return;
           _syncPayload(payload);
@@ -373,6 +296,7 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
           final payload = await AgentRuntimeService.writeAgentConfig(
             _agent!.id,
             content: _contentController.text,
+            expectedRevision: _configRevision > 0 ? _configRevision : null,
           );
           if (!mounted) return;
           _syncPayload(payload);
@@ -382,6 +306,7 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
             _agent!.id,
             reasoningEffort: _reasoningEffort,
             permissionMode: _permissionMode,
+            expectedRevision: _configRevision > 0 ? _configRevision : null,
           );
           if (!mounted) return;
           _syncPayload(payload);
@@ -529,14 +454,16 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
                       label: _pageTitle,
                       subtitle: _pageSubtitle,
                     ),
-                    Container(
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: card,
+                    Material(
+                      color: card,
+                      shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: palette.borderSubtle),
+                        side: BorderSide(color: palette.borderSubtle),
                       ),
-                      child: _buildEditor(),
+                      child: Padding(
+                        padding: const EdgeInsets.all(14),
+                        child: _buildEditor(),
+                      ),
                     ),
                     if (_error != null) ...[
                       const SizedBox(height: 12),
@@ -548,7 +475,7 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
                         ),
                       ),
                     ],
-                    if (_kind.isNotEmpty && _kind != 'codex') ...[
+                    if (_kind.isNotEmpty) ...[
                       const SizedBox(height: 18),
                       FilledButton.icon(
                         key: const Key('agent-config-save'),
@@ -605,8 +532,8 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
         'The shared Provider and model are used by default. This page only keeps the official DSH configuration entry. After installation, Check only verifies the current runtime state.',
       ),
       'profile' => _text(
-        '自定义 Agent 只管理 ACP 启动命令、参数与环境；Provider 和模型仍由统一 Agent 配置提供。',
-        'Custom Agents only manage the ACP launch command, arguments, and environment; the shared Agent Provider supplies credentials and model.',
+        '保存不会中断当前对话；启动命令、参数与环境变量在下次启动 Agent 进程时生效。Provider 和模型由该 Agent 自身的配置管理。',
+        'Saving does not interrupt the current conversation. Command, arguments, and environment changes apply when the Agent process next starts. Provider and model settings are managed by the Agent itself.',
       ),
       _ => '',
     };

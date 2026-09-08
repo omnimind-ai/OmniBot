@@ -1,9 +1,18 @@
 package cn.com.omnimind.bot.agent.runtime
 
 import android.content.Context
+import androidx.security.crypto.EncryptedSharedPreferences
+import androidx.security.crypto.MasterKey
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import java.util.UUID
+
+internal data class AcpAgentConfigAuditEntry(
+    val revision: Long,
+    val operation: String,
+    val paths: List<String>,
+    val createdAt: Long,
+)
 
 internal data class AcpAgentProfile(
     val id: String,
@@ -13,13 +22,14 @@ internal data class AcpAgentProfile(
     val arguments: List<String> = emptyList(),
     val environment: Map<String, String> = emptyMap(),
     val enabled: Boolean = true,
-    val builtIn: Boolean = false
+    val builtIn: Boolean = false,
+    @Transient val officialRuntime: AcpOfficialRuntime? = null,
 ) {
     fun toPayload(
         selected: Boolean = false,
         health: AcpAgentHealth = AcpAgentHealth()
     ): Map<String, Any?> {
-        val runtime = AcpAgentProfileStore.officialRuntime(this)
+        val runtime = officialRuntime
         return linkedMapOf(
             "id" to id,
             "name" to name,
@@ -106,6 +116,7 @@ internal data class AcpOfficialRuntime(
     val managedInstallScriptPath: String? = null,
     val managedInstallCommand: String? = null,
     val preparationRevision: String? = null,
+    val embedded: Boolean = false,
     /**
      * Capabilities known from the official Harness composition, before an
      * ACP initialize handshake has happened. These are intentionally kept
@@ -116,292 +127,40 @@ internal data class AcpOfficialRuntime(
     val declaredCapabilities: Map<String, Any?> = emptyMap(),
 )
 
-private val DEEPSEEK_HARNESS_DECLARED_CAPABILITIES: Map<String, Any?> = mapOf(
-    "plugin" to mapOf(
-        "supported" to true,
-        "authoring" to true,
-        "installViaHarness" to true,
-        "hostInstallApi" to false,
-        "source" to "DeepSeek Harness Cordis profile",
-    ),
-    "tools" to mapOf(
-        "fileRead" to true,
-        "fileWrite" to true,
-        "shell" to true,
-        "plan" to true,
-        "subagents" to true,
-        "skills" to true,
-    ),
-    "mcp" to mapOf(
-        "sessionServers" to true,
-        "source" to "Harness-owned MCP composition",
-    ),
-)
-
-internal const val DEEPSEEK_HARNESS_NPM_CHANNEL = "next"
-internal const val DEEPSEEK_HARNESS_PNPM_VERSION = "11.22.0"
-internal const val DEEPSEEK_HARNESS_PREPARATION_REVISION =
-    "deepseek-dsh-pnpm-copy-v11"
-private const val DEEPSEEK_HARNESS_NPM_PRIMARY_REGISTRY =
-    "https://registry.npmmirror.com"
-private const val DEEPSEEK_HARNESS_NPM_FALLBACK_REGISTRY =
-    "https://registry.npmjs.org"
-internal val DEEPSEEK_HARNESS_NPM_PACKAGE_NAMES = listOf(
-    // The adapter is installed into DSH's official `acp` profile. DSH owns
-    // the profile plugin graph, tools, commands, skills, and MCP composition.
-    "@deepseek-ai/dsh",
-    "@openma/deepseek-harness-acp",
-)
-internal val DEEPSEEK_HARNESS_NPM_PACKAGE_SPECS = listOf(
-    "@deepseek-ai/dsh@$DEEPSEEK_HARNESS_NPM_CHANNEL",
-    "@openma/deepseek-harness-acp@latest",
-)
-internal const val DEEPSEEK_HARNESS_INSTALL_SCRIPT_PATH =
-    "/root/.dsh/omnibot-acp/install-dsh-runtime.sh"
-internal const val DEEPSEEK_HARNESS_ACP_PATCH_PATH =
-    "/root/.dsh/omnibot-acp/omnibot-acp-headless.patch.yml"
-internal const val DEEPSEEK_HARNESS_NATIVE_HEALTH_COMMAND =
-        "DSH_HOME=/root/.dsh/omnibot-acp " +
-        "PATH=/root/.npm-global/bin:${'$'}PATH " +
-        "command -v dsh >/dev/null 2>&1 && " +
-        "command -v dsh-acp-android >/dev/null 2>&1 && " +
-        "command -v pnpm >/dev/null 2>&1 && " +
-        "test -f /root/.dsh/omnibot-acp/profiles/acp/package.json && " +
-        "test -f /root/.dsh/omnibot-acp/profiles/acp/node_modules/@openma/deepseek-harness-acp/package.json && " +
-        "test -f /root/.npm-global/lib/node_modules/@deepseek-ai/dsh/node_modules/node-pty/lib/utils.js && " +
-        // PRoot's link2symlink emulation can leave package files pointing at
-        // pnpm's extensionless content-addressed store. A direct adapter
-        // import may still pass while DSH's loader rejects that target during
-        // initialize, so fail health before the user attempts a prompt.
-        "if find /root/.dsh/omnibot-acp/profiles/acp/node_modules " +
-        "/root/.dsh/omnibot-acp/profiles/node_modules " +
-        "/root/.npm-global/lib/node_modules/@deepseek-ai/dsh/node_modules " +
-        "/root/.npm-global/lib/node_modules/@openma " +
-        "-type l -print 2>/dev/null | while IFS= read -r link; do " +
-        "target=\$(readlink \"\$link\"); case \"\$target\" in " +
-        "*/.local/share/pnpm/store/*|*/workspace/*|/workspace/*) exit 1;; esac; done; then :; else exit 1; fi && " +
-        // Do not invoke `dsh --help`/`--dump-config` from a health probe:
-        // both bootstrap the vendor ACP process under Android proot and can
-        // fail merely because the hidden probe has no /proc/self/fd handles.
-        // The profile graph and adapter package are the non-invasive health
-        // boundary; the real dsh ACP launch is validated by initialize.
-        "cd /root/.dsh/omnibot-acp/profiles/acp && " +
-        "node --input-type=module -e \"import fs from 'node:fs'; JSON.parse(fs.readFileSync('package.json')); await import('@openma/deepseek-harness-acp/plugin'); await import('@openma/deepseek-harness-acp/stdio');\" >/dev/null 2>&1"
-internal val DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND = """
-    set -eu
-    export PATH="/root/.npm-global/bin:${'$'}PATH"
-    export DSH_HOME="/root/.dsh/omnibot-acp"
-    # Android proot turns pnpm hard-links into symlinks to extensionless store
-    # blobs. Node then refuses the official ACP loader entries (for example
-    # `.0002`) before the Harness can answer initialize. Keep the vendor DSH
-    # workflow, but request copied, hoisted dependencies at install time.
-    export npm_config_node_linker=hoisted
-    export npm_config_package_import_method=copy
-    DSH_PACKAGE_ROOT="/root/.npm-global/lib/node_modules/@deepseek-ai/dsh"
-    mkdir -p "${'$'}DSH_HOME"
-    npm config set prefix /root/.npm-global
-    # Repair an already-installed Android pnpm tree before checking package
-    # completeness. Otherwise `require.resolve()` follows the broken .0001
-    # link chain, declares the whole DSH package incomplete, and starts a
-    # needless network reinstall on every Harness switch.
-    materialize_pnpm_link() {
-      link="${'$'}1"
-      target="${'$'}(readlink "${'$'}link" 2>/dev/null || true)"
-      case "${'$'}target" in
-        */.local/share/pnpm/store/*)
-          target_name="${'$'}{target##*/}"
-          target_dir="${'$'}{target%/*}"
-          store_bucket="${'$'}{target_dir##*/}"
-          store_prefix="/root/.local/share/pnpm/store/v11/files/${'$'}{store_bucket}/${'$'}target_name"
-          # The suffix is not always `.0002`; Android's link2symlink layer
-          # allocates `.0001`, `.0002`, `.0007`, etc. Pick the first regular
-          # content file and never follow another `.l2s` symlink.
-          for store_file in "${'$'}store_prefix".*; do
-            if [ -f "${'$'}store_file" ] && [ ! -L "${'$'}store_file" ]; then
-              cp -f "${'$'}store_file" "${'$'}link.materialized" 2>/dev/null || return 1
-              rm -f "${'$'}link"
-              mv -f "${'$'}link.materialized" "${'$'}link" 2>/dev/null || return 1
-              break
-            fi
-          done
-          ;;
-        */workspace/*|/workspace/*)
-          # Local plugins added with `dsh plugin ... add /workspace/<pkg>` are
-          # represented by pnpm as links back to the mounted workspace. The
-          # Cordis loader imports from the real plugin path, so Node walks out
-          # of the profile tree and cannot see peer dependencies such as
-          # @deepseek-ai/dsh-tools. Materialize the link inside the profile
-          # tree while keeping the vendor DSH workflow intact.
-          workspace_rel="${'$'}{target#*workspace/}"
-          workspace_source="/workspace/${'$'}workspace_rel"
-          if [ -e "${'$'}workspace_source" ]; then
-            if [ -d "${'$'}workspace_source" ]; then
-              cp -R "${'$'}workspace_source" "${'$'}link.materialized" 2>/dev/null || return 1
-            else
-              cp -f "${'$'}workspace_source" "${'$'}link.materialized" 2>/dev/null || return 1
-            fi
-            rm -f "${'$'}link"
-            mv -f "${'$'}link.materialized" "${'$'}link" 2>/dev/null || return 1
-          fi
-          ;;
-        *)
-          return 0
-          ;;
-      esac
-    }
-    materialize_pnpm_tree() {
-      node_root="${'$'}1"
-      [ -d "${'$'}node_root" ] || return 0
-      find "${'$'}node_root" -type l 2>/dev/null |
-        while IFS= read -r link; do
-          materialize_pnpm_link "${'$'}link" || exit 1
-        done
-    }
-    materialize_pnpm_tree "${'$'}DSH_PACKAGE_ROOT/node_modules"
-    materialize_pnpm_tree "/root/.npm-global/lib/node_modules/@openma"
-    materialize_pnpm_tree "${'$'}DSH_HOME/profiles/node_modules"
-    materialize_pnpm_tree "${'$'}DSH_HOME/profiles/acp/node_modules"
-    if ! command -v pnpm >/dev/null 2>&1; then
-      npm install -g --no-audit --no-fund pnpm@$DEEPSEEK_HARNESS_PNPM_VERSION
-    fi
-    # A previous Android npm run may leave a seemingly installed package with
-    # an incomplete dependency tree. Do not use a deep `require.resolve()` here:
-    # pnpm's Android link emulation makes that check follow the broken store
-    # chain before our profile health/materialization pass can repair it.
-    # The authoritative import check runs at the end of this script.
-    if [ ! -f "${'$'}DSH_PACKAGE_ROOT/package.json" ] || \
-        [ ! -f "${'$'}DSH_PACKAGE_ROOT/lib/bin.js" ] || \
-        { [ ! -f "${'$'}DSH_PACKAGE_ROOT/node_modules/node-pty/prebuilds/linux-arm64/pty.node" ] && \
-          [ ! -f "${'$'}DSH_PACKAGE_ROOT/node_modules/node-pty/build/Release/pty.node" ]; } || \
-        [ ! -d "${'$'}DSH_PACKAGE_ROOT/node_modules" ]; then
-      npm cache clean --force >/dev/null 2>&1 || true
-      rm -rf "${'$'}DSH_PACKAGE_ROOT" \
-        /root/.npm-global/lib/node_modules/@deepseek-ai/.dsh-* 2>/dev/null || true
-      npm install -g --no-audit --no-fund --prefer-offline \
-        --fetch-retries=5 --fetch-retry-factor=2 \
-        --fetch-retry-mintimeout=1000 --fetch-retry-maxtimeout=15000 \
-        --fetch-timeout=120000 --loglevel=notice \
-        --registry="${'$'}{OMNIBOT_NPM_REGISTRY:-$DEEPSEEK_HARNESS_NPM_PRIMARY_REGISTRY}" \
-        @deepseek-ai/dsh@$DEEPSEEK_HARNESS_NPM_CHANNEL
-    fi
-    # Some Android npm builds install the package but skip creating its bin
-    # shim. Recreate the vendor-declared executable from the installed package
-    # before invoking the official DSH plugin workflow; this is still the
-    # upstream CLI entrypoint, not a private ACP replacement.
-    if [ ! -x /root/.npm-global/bin/dsh ] && \
-        [ -f /root/.npm-global/lib/node_modules/@deepseek-ai/dsh/lib/bin.js ]; then
-      ln -sf /root/.npm-global/lib/node_modules/@deepseek-ai/dsh/lib/bin.js \
-        /root/.npm-global/bin/dsh
-    fi
-    test -x /root/.npm-global/bin/dsh
-    # DSH's HMR plugin requires a Node internal flag. NODE_OPTIONS rejects
-    # this flag, so publish a tiny launcher that passes it as a CLI argument
-    # while still executing the vendor's official lib/bin.js entrypoint.
-    # The ACP transport is headless. Keep the Web-only plugins installed in
-    # the shared DSH profile, but do not activate them in this process: they
-    # wait for webServer/webRuntime and make the ACP tree fail after a slow
-    # initialize. This overlay is launch-scoped and never deletes user data.
-    printf '%s\n' '# OmniBot ACP headless overlay' \
-      '- id: dsh-plugin-mgr' \
-      '  disabled: true' \
-      '- id: dsh-plugin-studio' \
-      '  disabled: true' \
-      '- id: uisfx' \
-      '  disabled: true' \
-      > "$DEEPSEEK_HARNESS_ACP_PATCH_PATH"
-    printf '%s\n' '#!/bin/sh' \
-      'exec node --expose-internals /root/.npm-global/lib/node_modules/@deepseek-ai/dsh/lib/bin.js --patch "$DEEPSEEK_HARNESS_ACP_PATCH_PATH" "${'$'}@"' \
-      > /root/.npm-global/bin/dsh-acp-android
-    chmod 755 /root/.npm-global/bin/dsh-acp-android
-    test -x /root/.npm-global/bin/dsh-acp-android
-    # The official node-pty package ships a glibc linux-arm64 prebuild. Try
-    # Alpine's glibc compatibility layer first; if it is still not loadable,
-    # preserve that vendor binary and rebuild the dependency from its upstream
-    # sources inside the target runtime. This keeps DSH's official CLI/plugin
-    # workflow while adapting only the platform-native PTY dependency.
-    apk add --no-cache gcompat >/dev/null 2>&1 || true
-    if ! node -e "require('${'$'}DSH_PACKAGE_ROOT/node_modules/node-pty')" >/dev/null 2>&1; then
-      PTY_ROOT="${'$'}DSH_PACKAGE_ROOT/node_modules/node-pty"
-      PTY_VENDOR="${'$'}PTY_ROOT/prebuilds/linux-arm64/pty.node"
-      PTY_VENDOR_COPY="${'$'}DSH_HOME/node-pty-linux-arm64.vendor.node"
-      if [ -f "${'$'}PTY_VENDOR" ]; then
-        cp -f "${'$'}PTY_VENDOR" "${'$'}PTY_VENDOR_COPY"
-      fi
-      apk add --no-cache build-base python3 linux-headers util-linux-dev >/dev/null
-      npm_config_build_from_source=true npm_config_nodedir= npm rebuild --prefix "${'$'}DSH_PACKAGE_ROOT/node_modules/node-pty" --build-from-source
-      # node-gyp may leave an absolute Android data-path symlink. Proot sees
-      # the Alpine root instead, so materialize the compiled addon as a regular
-      # file before the runtime loads it.
-      PTY_BUILD="${'$'}DSH_PACKAGE_ROOT/node_modules/node-pty/build/Release/pty.node"
-      if [ -L "${'$'}PTY_BUILD" ]; then
-        cp -Lf "${'$'}PTY_BUILD" "${'$'}PTY_BUILD.materialized"
-        mv -f "${'$'}PTY_BUILD.materialized" "${'$'}PTY_BUILD"
-      fi
-      if [ ! -f "${'$'}PTY_BUILD" ] && [ -f "${'$'}PTY_VENDOR_COPY" ]; then
-        mkdir -p "${'$'}PTY_ROOT/prebuilds/linux-arm64"
-        cp -f "${'$'}PTY_VENDOR_COPY" "${'$'}PTY_ROOT/prebuilds/linux-arm64/pty.node"
-      fi
-    fi
-    node -e "require('${'$'}DSH_PACKAGE_ROOT/node_modules/node-pty')" >/dev/null 2>&1
-    # Follow the vendor workflow: DSH creates/updates the ACP profile and
-    # owns its plugin dependency graph, patch layers, tools, and commands.
-    export npm_config_registry="${'$'}{OMNIBOT_NPM_REGISTRY:-$DEEPSEEK_HARNESS_NPM_PRIMARY_REGISTRY}"
-    if ! dsh plugin --profile acp add @openma/deepseek-harness-acp@latest; then
-      export npm_config_registry="$DEEPSEEK_HARNESS_NPM_FALLBACK_REGISTRY"
-      npm install -g --no-audit --no-fund --prefer-offline \
-        --fetch-retries=5 --fetch-retry-factor=2 \
-        --fetch-retry-mintimeout=1000 --fetch-retry-maxtimeout=15000 \
-        --fetch-timeout=120000 --loglevel=notice \
-        --registry="$DEEPSEEK_HARNESS_NPM_FALLBACK_REGISTRY" \
-        @deepseek-ai/dsh@$DEEPSEEK_HARNESS_NPM_CHANNEL
-      dsh plugin --profile acp add @openma/deepseek-harness-acp@latest
-    fi
-    # The ACP profile is persistent Harness state, not session state. Never
-    # remove dependencies from it during a reconnect or a normal Agent switch:
-    # user-installed DSH plugins, skills and commands must remain available to
-    # every later ACP session that uses this same profile. A broken or
-    # incompatible plugin must be reported by ACP initialize/health instead of
-    # being silently destroyed by the host.
-    # Android proot's link2symlink layer can turn pnpm's hard links inside the
-    # official profile into a two-hop absolute link chain:
-    # module.js -> .../.l2s.<hash>0001 -> .../.l2s.<hash>0001.0002
-    # Resolve the final pnpm store file explicitly; cp -L is unreliable here
-    # because the first hop points outside the mounted proot root.
-    for node_root in \
-      "${'$'}DSH_HOME/profiles/acp/node_modules" \
-      "${'$'}DSH_HOME/profiles/node_modules" \
-      "${'$'}DSH_PACKAGE_ROOT/node_modules" \
-      "/root/.npm-global/lib/node_modules/@openma"; do
-      [ -d "${'$'}node_root" ] || continue
-      find "${'$'}node_root" -type l 2>/dev/null |
-        while IFS= read -r link; do
-          materialize_pnpm_link "${'$'}link" || exit 1
-        done
-    done
-    test -f "${'$'}DSH_HOME/profiles/acp/package.json"
-    $DEEPSEEK_HARNESS_NATIVE_HEALTH_COMMAND
-""".trimIndent()
-
 /**
  * ACP Agent registry inspired by AionUi's managed-agent catalog:
  * official definitions always remain visible, while user overrides and
  * custom ACP commands are persisted separately from API credentials.
  */
 internal class AcpAgentProfileStore(context: Context) {
+    private val appContext = context.applicationContext
+    private val catalog = AcpAgentCatalog.load(appContext)
     private val preferences = context.applicationContext.getSharedPreferences(
         PREFERENCES_NAME,
         Context.MODE_PRIVATE
     )
     private val gson = Gson()
+    private val configHistoryPreferences by lazy {
+        val masterKey = MasterKey.Builder(appContext)
+            .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
+            .build()
+        EncryptedSharedPreferences.create(
+            appContext,
+            CONFIG_HISTORY_PREFERENCES_NAME,
+            masterKey,
+            EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
+            EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
+        )
+    }
 
     @Synchronized
     fun list(): List<AcpAgentProfile> {
         migrateLegacyXiaowanAliases()
         val stored = readStoredProfiles()
             .mapNotNull(::normalize)
-            .filterNot { it.id in RETIRED_AGENT_IDS }
+            .filterNot { it.id in catalog.retiredAgentIds }
         val storedById = stored.associateBy { it.id }
-        val official = OFFICIAL_AGENTS.map { definition ->
+        val official = catalog.agents.map { definition ->
             val override = storedById[definition.id] ?: return@map definition
             val migratedOfficialCommand =
                 definition.id == DEEPSEEK_HARNESS_AGENT_ID &&
@@ -410,11 +169,20 @@ internal class AcpAgentProfileStore(context: Context) {
                 command = if (migratedOfficialCommand) definition.command else override.command,
                 arguments = if (migratedOfficialCommand) definition.arguments else override.arguments,
                 environment = override.environment,
-                enabled = override.enabled
+                enabled = override.enabled,
+                officialRuntime = if (
+                    migratedOfficialCommand ||
+                    (override.command == definition.command &&
+                        override.arguments == definition.arguments)
+                ) {
+                    definition.officialRuntime
+                } else {
+                    null
+                },
             )
         }
         val custom = stored
-            .filterNot { it.id in OFFICIAL_AGENT_IDS }
+            .filterNot { it.id in catalog.officialIds }
             .map { it.copy(builtIn = false) }
         return official + custom
     }
@@ -441,7 +209,19 @@ internal class AcpAgentProfileStore(context: Context) {
         migrateLegacyXiaowanAliases()
         return sessionBindings()[sessionId.trim()]
             ?.takeIf(String::isNotBlank)
-            ?.takeUnless { it in RETIRED_AGENT_IDS }
+            ?.takeUnless { it in catalog.retiredAgentIds }
+    }
+
+    /** Embedded Agent settings share the existing session owner and deletion path. */
+    fun sessionConfiguration(sessionId: String): Map<String, String> {
+        val raw = preferences.getString("session_config:$sessionId", null) ?: return emptyMap()
+        return gson.fromJson(raw, object : TypeToken<Map<String, String>>() {}.type)
+    }
+
+    fun saveSessionConfiguration(sessionId: String, values: Map<String, String>) {
+        check(preferences.edit().putString("session_config:$sessionId", gson.toJson(values)).commit()) {
+            "Failed to persist ACP session configuration."
+        }
     }
 
     /**
@@ -457,6 +237,7 @@ internal class AcpAgentProfileStore(context: Context) {
         val normalizedSessionId = sessionId.trim()
         if (normalizedSessionId.isEmpty()) return
         val bindings = sessionBindings().toMutableMap()
+        preferences.edit().remove("session_config:$normalizedSessionId").apply()
         if (bindings.remove(normalizedSessionId) != null) {
             preferences.edit()
                 .putString(KEY_SESSION_BINDINGS, gson.toJson(bindings))
@@ -474,7 +255,7 @@ internal class AcpAgentProfileStore(context: Context) {
         val currentAgentId = bindings[key]
             ?.trim()
             ?.takeIf { it.isNotEmpty() }
-            ?.takeUnless { it in RETIRED_AGENT_IDS }
+            ?.takeUnless { it in catalog.retiredAgentIds }
         // Existing ownership is immutable. Harness switching creates a new
         // conversation; only retired aliases may be replaced by migration.
         if (currentAgentId != null) return
@@ -497,7 +278,7 @@ internal class AcpAgentProfileStore(context: Context) {
         migrateLegacyXiaowanAliases()
         return conversationBindings()[conversationId.toString()]
             ?.takeIf(String::isNotBlank)
-            ?.takeUnless { it in RETIRED_AGENT_IDS }
+            ?.takeUnless { it in catalog.retiredAgentIds }
     }
 
     @Synchronized
@@ -528,7 +309,7 @@ internal class AcpAgentProfileStore(context: Context) {
             ?: selected().id
         val requestedId = raw.id.trim()
         val targetId = requestedId.ifBlank { UUID.randomUUID().toString() }
-        val officialDefinition = OFFICIAL_AGENTS.firstOrNull { it.id == targetId }
+        val officialDefinition = catalog.definition(targetId)
         val candidate = if (officialDefinition != null) {
             officialDefinition.copy(
                 command = raw.command,
@@ -560,11 +341,11 @@ internal class AcpAgentProfileStore(context: Context) {
     fun delete(id: String) {
         val normalizedId = id.trim()
         require(normalizedId.isNotEmpty()) { "Agent id is required." }
-        require(normalizedId !in OFFICIAL_AGENT_IDS) {
+        require(normalizedId !in catalog.officialIds) {
             "Official ACP agents cannot be deleted."
         }
         val remaining = list().filterNot { it.builtIn || it.id == normalizedId }
-        val officialOverrides = readStoredProfiles().filter { it.id in OFFICIAL_AGENT_IDS }
+        val officialOverrides = readStoredProfiles().filter { it.id in catalog.officialIds }
         writeProfiles(officialOverrides + remaining)
         val remainingBindings = sessionBindings().filterValues { it != normalizedId }
         val remainingConversationBindings =
@@ -600,6 +381,72 @@ internal class AcpAgentProfileStore(context: Context) {
         }
     }
 
+    /**
+     * Agent configuration is versioned at the existing profile store
+     * boundary. Snapshots are encrypted; the regular audit payload contains
+     * paths and operation names only, never credentials or file contents.
+     */
+    @Synchronized
+    fun recordConfigRevision(
+        agentId: String,
+        operation: String,
+        files: Map<String, String>,
+    ): AcpAgentConfigAuditEntry {
+        require(agentId.isNotBlank()) { "Agent id is required." }
+        require(files.isNotEmpty()) { "At least one config file is required." }
+        val history = readConfigAudit(agentId).toMutableList()
+        val revision = (history.maxOfOrNull { it.revision } ?: 0L) + 1L
+        val entry = AcpAgentConfigAuditEntry(
+            revision = revision,
+            operation = operation.trim().ifEmpty { "write" },
+            paths = files.keys.map(String::trim).filter(String::isNotEmpty),
+            createdAt = System.currentTimeMillis(),
+        )
+        val snapshots = readConfigSnapshots(agentId).toMutableMap()
+        snapshots[revision.toString()] = files
+        configHistoryPreferences.edit()
+            .putString(configAuditKey(agentId), gson.toJson(history + entry))
+            .putString(configSnapshotsKey(agentId), gson.toJson(snapshots))
+            .commit()
+            .also { check(it) { "Failed to persist Agent config revision." } }
+        return entry
+    }
+
+    fun configRevision(agentId: String): Long =
+        readConfigAudit(agentId).maxOfOrNull { it.revision } ?: 0L
+
+    fun configAudit(agentId: String): List<AcpAgentConfigAuditEntry> =
+        readConfigAudit(agentId)
+
+    fun configSnapshot(agentId: String, revision: Long): Map<String, String> {
+        require(revision > 0L) { "Config revision must be positive." }
+        return readConfigSnapshots(agentId)[revision.toString()]
+            ?: throw IllegalArgumentException(
+                "Unknown Agent config revision $revision for $agentId."
+            )
+    }
+
+    private fun readConfigAudit(agentId: String): List<AcpAgentConfigAuditEntry> = runCatching {
+        val raw = configHistoryPreferences.getString(configAuditKey(agentId), null)
+            ?: return@runCatching emptyList()
+        gson.fromJson<List<AcpAgentConfigAuditEntry>>(
+            raw,
+            object : TypeToken<List<AcpAgentConfigAuditEntry>>() {}.type,
+        )
+    }.getOrNull().orEmpty()
+
+    private fun readConfigSnapshots(agentId: String): Map<String, Map<String, String>> = runCatching {
+        val raw = configHistoryPreferences.getString(configSnapshotsKey(agentId), null)
+            ?: return@runCatching emptyMap()
+        gson.fromJson<Map<String, Map<String, String>>>(
+            raw,
+            object : TypeToken<Map<String, Map<String, String>>>() {}.type,
+        )
+    }.getOrNull().orEmpty()
+
+    private fun configAuditKey(agentId: String) = "audit:$agentId"
+    private fun configSnapshotsKey(agentId: String) = "snapshots:$agentId"
+
     private fun readStoredProfiles(): List<AcpAgentProfile> = runCatching {
         val json = preferences.getString(KEY_PROFILES, null)
             ?: return@runCatching emptyList()
@@ -611,8 +458,8 @@ internal class AcpAgentProfileStore(context: Context) {
 
     /**
      * Older builds could persist the built-in Xiaowan command as a custom
-     * profile named "小万 Bot". Keep the official id as the only identity and
-     * migrate all persisted references to it during the first catalog read.
+     * profile with the legacy id. Migrate that known identity and its stored
+     * references, without guessing from user-editable names or commands.
      */
     @Synchronized
     private fun migrateLegacyXiaowanAliases() {
@@ -647,7 +494,7 @@ internal class AcpAgentProfileStore(context: Context) {
     }
 
     private fun hasOfficialOverride(profile: AcpAgentProfile): Boolean {
-        val definition = OFFICIAL_AGENTS.firstOrNull { it.id == profile.id } ?: return true
+        val definition = catalog.definition(profile.id) ?: return true
         return profile.command != definition.command ||
             profile.arguments != definition.arguments ||
             profile.environment.isNotEmpty() ||
@@ -701,149 +548,38 @@ internal class AcpAgentProfileStore(context: Context) {
                         ?.let { it to value }
                 }
                 .toMap(),
-            builtIn = id in OFFICIAL_AGENT_IDS
+            builtIn = id in catalog.officialIds,
+            officialRuntime = catalog.definition(id)?.officialRuntime,
         )
     }
 
     companion object {
         const val CODEX_AGENT_ID = "codex-acp"
         const val DEEPSEEK_HARNESS_AGENT_ID = "deepseek-harness-acp"
+        const val KIMI_CODE_AGENT_ID = "kimi-code-acp"
         const val XIAOWAN_AGENT_ID = "xiaowan-acp"
         const val DEFAULT_AGENT_ID = XIAOWAN_AGENT_ID
 
-        val OFFICIAL_AGENTS = listOf(
-            AcpAgentProfile(
-                id = XIAOWAN_AGENT_ID,
-                name = "小万",
-                description = "小万内置能力通过官方 ACP Agent 接口提供",
-                command = "omnibot-xiaowan-acp",
-                builtIn = true
-            ),
-            AcpAgentProfile(
-                id = CODEX_AGENT_ID,
-                name = "Codex",
-                description = "OpenAI Codex through its managed ACP adapter",
-                command = "codex-acp",
-                builtIn = true
-            ),
-            AcpAgentProfile(
-                id = "claude-code-acp",
-                name = "Claude Code",
-                description = "Claude Code through the ACP adapter",
-                command = "claude-agent-acp",
-                builtIn = true
-            ),
-            AcpAgentProfile(
-                id = "opencode-acp",
-                name = "OpenCode",
-                description = "OpenCode ACP server",
-                command = "opencode",
-                arguments = listOf("acp"),
-                builtIn = true
-            ),
-            AcpAgentProfile(
-                id = DEEPSEEK_HARNESS_AGENT_ID,
-                name = "DeepSeek Harness",
-                description = "DeepSeek Harness official ACP profile",
-                command = "dsh-acp-android",
-                arguments = listOf("--profile", "acp"),
-                builtIn = true
-            )
-        )
-        val CODEX_AGENT = OFFICIAL_AGENTS.first { it.id == CODEX_AGENT_ID }
-        private val OFFICIAL_AGENT_IDS = OFFICIAL_AGENTS.mapTo(linkedSetOf()) { it.id }
-        private val RETIRED_AGENT_IDS = setOf("gemini-cli-acp")
-        private val OFFICIAL_RUNTIMES = mapOf(
-            CODEX_AGENT_ID to AcpOfficialRuntime(
-                discoveryCommand = "codex",
-                managedAdapterPackage = "@openai/codex@latest",
-                managedAdapterPackages = listOf(
-                    "@openai/codex@latest",
-                    "@agentclientprotocol/codex-acp@1.1.7"
-                ),
-                terminalPackageId = "codex",
-                harnessAdapter = AcpHarnessAdapters.codex,
-                usesSharedProvider = true,
-            ),
-            "claude-code-acp" to AcpOfficialRuntime(
-                discoveryCommand = "claude",
-                managedAdapterPackage = "@anthropic-ai/claude-code@latest",
-                managedAdapterPackages = listOf(
-                    "@anthropic-ai/claude-code@latest",
-                    "@agentclientprotocol/claude-agent-acp@0.61.0"
-                ),
-                terminalPackageId = "claude_code",
-                harnessAdapter = AcpHarnessAdapters.claudeCode,
-                usesSharedProvider = true,
-            ),
-            "opencode-acp" to AcpOfficialRuntime(
-                discoveryCommand = "opencode",
-                managedAdapterPackage = "opencode-ai@latest",
-                terminalPackageId = "opencode",
-                managedInstallCommand =
-                    "npm install -g --no-audit --no-fund opencode-ai@latest && " +
-                        "if [ ! -x /root/.npm-global/lib/node_modules/opencode-linux-arm64-musl/bin/opencode ]; then " +
-                        "rm -rf /root/.npm-global/lib/node_modules/opencode-linux-arm64-musl && " +
-                        "npm install -g --force --no-audit --no-fund --prefer-online " +
-                        "opencode-linux-arm64-musl@latest; fi && " +
-                        "ln -sf /root/.npm-global/lib/node_modules/opencode-linux-arm64-musl/bin/opencode " +
-                        "/root/.npm-global/bin/opencode && " +
-                        "test -x /root/.npm-global/bin/opencode",
-                harnessAdapter = AcpHarnessAdapters.openCode,
-                usesSharedProvider = true,
-            ),
-            DEEPSEEK_HARNESS_AGENT_ID to AcpOfficialRuntime(
-                // The existing adapter composes the official `dsh` package
-                // in-process and exposes text plus reasoning deltas.
-                discoveryCommand = "dsh",
-                managedAdapterPackage = DEEPSEEK_HARNESS_NPM_PACKAGE_SPECS.last(),
-                managedAdapterPackages = DEEPSEEK_HARNESS_NPM_PACKAGE_SPECS,
-                requiresNativeBuildTools = true,
-                managedAdapterHealthCommand = DEEPSEEK_HARNESS_NATIVE_HEALTH_COMMAND,
-                harnessAdapter = AcpHarnessAdapters.deepSeekHarness,
-                terminalPackageId = "deepseek_harness",
-                managedInstallScriptPath = DEEPSEEK_HARNESS_INSTALL_SCRIPT_PATH,
-                managedInstallCommand = DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND,
-                preparationRevision = DEEPSEEK_HARNESS_PREPARATION_REVISION,
-                declaredCapabilities = DEEPSEEK_HARNESS_DECLARED_CAPABILITIES,
-                usesSharedProvider = true,
-            ),
-            XIAOWAN_AGENT_ID to AcpOfficialRuntime(
-                discoveryCommand = "omnibot-xiaowan-acp",
-                usesSharedProvider = true,
-            )
-        )
-
-        fun officialRuntime(profile: AcpAgentProfile): AcpOfficialRuntime? {
-            val definition = OFFICIAL_AGENTS.firstOrNull { it.id == profile.id }
-                ?: return null
-            if (
-                profile.command != definition.command ||
-                profile.arguments != definition.arguments
-            ) {
-                return null
-            }
-            return OFFICIAL_RUNTIMES[profile.id]
-        }
+        /**
+         * Compatibility accessor for callers that already have a resolved
+         * profile. The catalog owns the descriptor; this method does not
+         * contain an Agent list or a vendor lookup.
+         */
+        fun officialRuntime(profile: AcpAgentProfile): AcpOfficialRuntime? =
+            profile.officialRuntime
 
         fun usesSharedProvider(profile: AcpAgentProfile): Boolean =
-            officialRuntime(profile)?.usesSharedProvider == true
+            profile.officialRuntime?.usesSharedProvider == true
 
         internal fun isLegacyXiaowanAlias(profile: AcpAgentProfile): Boolean {
-            if (profile.id == XIAOWAN_AGENT_ID) return false
-            val normalizedName = profile.name
-                .trim()
-                .lowercase()
-                .replace(Regex("[\\s_-]+"), "")
+            // Names and commands are user configuration, not identity.
+            // Only the known persisted legacy id authorizes migration.
             return profile.id.equals("legacy-xiaowan-bot", ignoreCase = true) ||
-                profile.command.equals("omnibot-xiaowan-acp", ignoreCase = true) ||
-                profile.command.contains("xiaowan", ignoreCase = true) ||
-                normalizedName == "小万" ||
-                normalizedName == "小万bot" ||
-                normalizedName == "xiaowanbot"
+                profile.id.equals("legacy-xiaowan-command", ignoreCase = true)
         }
 
         private const val PREFERENCES_NAME = "acp_agent_profiles"
+        private const val CONFIG_HISTORY_PREFERENCES_NAME = "acp_agent_config_history"
         private const val KEY_PROFILES = "profiles"
         private const val KEY_SELECTED_PROFILE_ID = "selected_profile_id"
         private const val KEY_SESSION_BINDINGS = "session_bindings"

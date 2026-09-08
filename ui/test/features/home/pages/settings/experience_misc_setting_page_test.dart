@@ -75,7 +75,7 @@ void main() {
     );
   });
 
-  testWidgets('recent seven-day conversations switch defaults to enabled', (
+  testWidgets('recent seven-day conversations switch defaults to disabled', (
     tester,
   ) async {
     tester.view.devicePixelRatio = 1;
@@ -103,15 +103,15 @@ void main() {
       of: tile,
       matching: find.byType(FlutterSwitch),
     );
-    expect(tester.widget<FlutterSwitch>(toggle).value, isTrue);
+    expect(tester.widget<FlutterSwitch>(toggle).value, isFalse);
 
-    tester.widget<FlutterSwitch>(toggle).onToggle(false);
+    tester.widget<FlutterSwitch>(toggle).onToggle(true);
     await tester.pumpAndSettle();
 
     expect(
       StorageService.getBool(StorageService.kRecentConversationsOnlyEnabledKey),
-      isFalse,
+      isTrue,
     );
-    expect(tester.widget<FlutterSwitch>(toggle).value, isFalse);
+    expect(tester.widget<FlutterSwitch>(toggle).value, isTrue);
   });
 }

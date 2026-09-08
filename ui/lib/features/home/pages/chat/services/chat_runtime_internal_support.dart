@@ -40,37 +40,10 @@ extension _ChatRuntimeInternalSupport on ChatConversationRuntimeCoordinator {
   }
 
   String _trimTerminalOutput(String value) {
-    if (value.isEmpty) return value;
-
-    var candidate = value;
-    if (candidate.length > _maxTerminalOutputChars) {
-      candidate = candidate.substring(
-        candidate.length - _maxTerminalOutputChars,
-      );
-    }
-
-    final lines = candidate.split('\n');
-    if (lines.length > _maxTerminalOutputLines) {
-      candidate = lines
-          .sublist(lines.length - _maxTerminalOutputLines)
-          .join('\n');
-    }
-
-    final wasTrimmed =
-        candidate.length < value.length ||
-        lines.length > _maxTerminalOutputLines;
-    if (!wasTrimmed) {
-      return candidate;
-    }
-
-    final notice = _isEnglish
-        ? '[Only the most recent terminal output is shown]\n'
-        : '[只显示最近的部分终端输出]\n';
-    final body = candidate.startsWith(notice)
-        ? candidate.substring(notice.length)
-        : candidate;
-    final remaining = _maxTerminalOutputChars - notice.length;
-    return '$notice${body.substring(body.length > remaining ? body.length - remaining : 0)}';
+    // Keep the complete terminal result in the runtime projection. Any
+    // transport/provider failure is reported by its owner; the UI must not
+    // turn a successful tool result into a truncated one.
+    return value;
   }
 
   String? _normalizeReasoningContent(String? value) {

@@ -12,8 +12,6 @@ class AgentEventAdapter(
     private val json: Json
 ) {
     companion object {
-        internal const val MAX_MODEL_TOOL_RESULT_CHARS = 12 * 1024
-        private const val MODEL_TOOL_RESULT_PREVIEW_CHARS = 6 * 1024
     }
 
     fun mapOutputKind(result: ToolExecutionResult): AgentOutputKind {
@@ -178,75 +176,6 @@ class AgentEventAdapter(
         return json.encodeToString(mapToJsonElement(enriched))
     }
 
-    fun compactToolResultContent(
-        rawContent: String,
-        offloadArtifact: ArtifactRef?
-    ): String {
-        if (rawContent.length <= MAX_MODEL_TOOL_RESULT_CHARS) return rawContent
-        val original = runCatching {
-            json.parseToJsonElement(rawContent) as? JsonObject
-        }.getOrNull()
-        val preview = headTail(
-            value = rawContent,
-            maxChars = MODEL_TOOL_RESULT_PREVIEW_CHARS,
-            hasOffloadArtifact = offloadArtifact != null
-        )
-        val compact = linkedMapOf<String, Any?>()
-        listOf(
-            "toolName",
-            "displayName",
-            "toolType",
-            "serverName",
-            "success",
-            "status",
-            "summary",
-            "workspaceId"
-        ).forEach { key ->
-            original?.get(key)?.let { compact[key] = it }
-        }
-        compact["outputTruncated"] = true
-        compact["originalChars"] = rawContent.length
-        compact["headTail"] = preview
-        offloadArtifact?.let { artifact ->
-            compact["fullOutputArtifact"] = artifact.toPayload()
-        }
-        original?.get("artifacts")?.let { compact["artifacts"] = it }
-        original?.get("actions")?.let { compact["actions"] = it }
-        val encoded = json.encodeToString(mapToJsonElement(compact))
-        if (encoded.length <= MAX_MODEL_TOOL_RESULT_CHARS) return encoded
-
-        // A tool may put an unexpectedly large summary or artifact/action list
-        // in its envelope. Keep the model-facing contract strictly bounded even
-        // in that case; the complete envelope remains available in the offload.
-        val minimal = linkedMapOf<String, Any?>(
-            "toolName" to original?.get("toolName"),
-            "success" to original?.get("success"),
-            "outputTruncated" to true,
-            "originalChars" to rawContent.length,
-            "headTail" to preview
-        )
-        offloadArtifact?.let { artifact ->
-            minimal["fullOutputArtifact"] = artifact.toPayload()
-        }
-        return json.encodeToString(mapToJsonElement(minimal))
-    }
-
-    private fun headTail(
-        value: String,
-        maxChars: Int,
-        hasOffloadArtifact: Boolean
-    ): String {
-        if (value.length <= maxChars) return value
-        val marker = if (hasOffloadArtifact) {
-            "\n... [middle omitted; full output is in artifact] ...\n"
-        } else {
-            "\n... [middle omitted] ...\n"
-        }
-        val remaining = (maxChars - marker.length).coerceAtLeast(2)
-        val head = remaining / 2
-        val tail = remaining - head
-        return value.take(head) + marker + value.takeLast(tail)
-    }
 
     private fun mapToJsonElement(value: Any?): JsonElement {
         return when (value) {

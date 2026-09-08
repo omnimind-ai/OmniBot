@@ -32,14 +32,6 @@ interface AgentContextCompactionController {
         callback: AgentCallback? = null
     ): List<ChatCompletionMessage>
 
-    suspend fun compactForOverflow(
-        conversationId: Long?,
-        conversationMode: String,
-        latestPromptTokens: Int?,
-        messages: List<ChatCompletionMessage>,
-        promptTokenThresholdOverride: Int? = null,
-        callback: AgentCallback? = null
-    ): List<ChatCompletionMessage>?
 }
 
 open class AgentConversationContextCompactor(
@@ -64,11 +56,11 @@ open class AgentConversationContextCompactor(
 
     companion object {
         const val DEFAULT_PROMPT_TOKEN_THRESHOLD = 128_000
-        const val DEFAULT_AGENT_MODEL_SCENE = "scene.dispatch.model"
-        private const val TAG = "AgentConversationContextCompactor"
         private const val MAX_AUTO_COMPACTION_RESERVE_TOKENS = 16_384
         private const val MIN_AUTO_COMPACTION_RESERVE_TOKENS = 2_048
         private const val AUTO_COMPACTION_RESERVE_DIVISOR = 8
+        const val DEFAULT_AGENT_MODEL_SCENE = "scene.dispatch.model"
+        private const val TAG = "AgentConversationContextCompactor"
         private val EPHEMERAL_CACHE_CONTROL = mapOf("type" to "ephemeral")
         private const val COMPACTION_REQUEST_PROMPT = """
 You are a context compaction engine. Your summary will REPLACE the original messages in the conversation context window — the agent will rely on it to continue working. Write the summary in the same language the user used in the conversation.
@@ -132,7 +124,7 @@ Do NOT continue the conversation or answer questions inside it. Do NOT translate
             )
             existingSummary?.trim()?.takeIf { it.isNotEmpty() }?.let { summary ->
                 requestMessages += toTransportMessage(
-                    AgentConversationHistorySupport.buildContextSummaryUserMessage(summary)
+                    AgentConversationHistorySupport.buildContextSummaryAssistantMessage(summary)
                 )
             }
             requestMessages += messagesToCompact.map(::toTransportMessage)
@@ -316,38 +308,6 @@ Do NOT continue the conversation or answer questions inside it. Do NOT translate
         ) ?: messages
     }
 
-    open override suspend fun compactForOverflow(
-        conversationId: Long?,
-        conversationMode: String,
-        latestPromptTokens: Int?,
-        messages: List<ChatCompletionMessage>,
-        promptTokenThresholdOverride: Int?,
-        callback: AgentCallback?
-    ): List<ChatCompletionMessage>? {
-        if (conversationId == null || conversationId <= 0L) {
-            return null
-        }
-        val promptTokenThreshold = promptTokenThresholdOverride?.coerceAtLeast(1)
-            ?: resolvePromptTokenThreshold(conversationId)
-        val candidate = historyRepository.getContextCompactionCandidate(
-            conversationId = conversationId,
-            conversationMode = conversationMode
-        ) ?: return null
-        val runtimeWindow = AgentConversationHistorySupport.buildRuntimeCompactionWindow(messages)
-            ?: return null
-        OmniLog.w(TAG, "conversation=$conversationId forcing compaction after context overflow")
-        return compactRuntimeWindow(
-            conversationId = conversationId,
-            candidate = candidate,
-            runtimeWindow = runtimeWindow,
-            originalMessages = messages,
-            latestPromptTokens = latestPromptTokens?.coerceAtLeast(0)
-                ?: promptTokenThreshold,
-            promptTokenThreshold = promptTokenThreshold,
-            callback = callback
-        )
-    }
-
     private suspend fun compactRuntimeWindow(
         conversationId: Long,
         candidate: AgentConversationHistoryRepository.ContextCompactionCandidate,
@@ -383,6 +343,7 @@ Do NOT continue the conversation or answer questions inside it. Do NOT translate
                     )
                 }
             }.getOrElse { error ->
+                if (error is kotlinx.coroutines.CancellationException) throw error
                 OmniLog.w(
                     TAG,
                     "conversation=$conversationId compaction failed: ${error.message}"
@@ -461,7 +422,7 @@ Do NOT continue the conversation or answer questions inside it. Do NOT translate
         )
     }
 
-    private suspend fun requestCompactedSummary(
+    protected open suspend fun requestCompactedSummary(
         messages: List<Map<String, Any>>
     ): String = withContext(Dispatchers.IO) {
         val completed = AtomicBoolean(false)

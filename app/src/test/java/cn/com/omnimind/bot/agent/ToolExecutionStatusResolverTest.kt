@@ -24,9 +24,9 @@ class ToolExecutionStatusResolverTest {
     }
 
     @Test
-    fun `clarification stays in the standard pending lifecycle`() {
+    fun `clarification without an ACP request channel is terminal failure`() {
         assertEquals(
-            AgentConversationHistoryRepository.STATUS_RUNNING,
+            AgentConversationHistoryRepository.STATUS_ERROR,
             resolveToolExecutionStatus(
                 ToolExecutionResult.Clarify(
                     question = "确认执行高权限命令？",

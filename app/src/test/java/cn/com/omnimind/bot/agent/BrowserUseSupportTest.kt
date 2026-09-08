@@ -43,6 +43,23 @@ class BrowserUseSupportTest {
     }
 
     @Test
+    fun cookieFilterDoesNotBroadenAnUnmatchedRequest() {
+        // A non-empty filter with no match must fail before any cookie value
+        // can be written to the reusable shell environment file.
+        // `assertThrows` is not available in the project's current JUnit API.
+        try {
+            BrowserUseSupport.selectCookieNames(
+                names = listOf("session_id", "auth_token"),
+                keywords = listOf("missing"),
+                fuzzy = true
+            )
+            throw AssertionError("unmatched cookie filter should be rejected")
+        } catch (error: IllegalArgumentException) {
+            assertEquals("没有匹配的 Cookie，已拒绝扩大导出范围", error.message)
+        }
+    }
+
+    @Test
     fun sanitizeCookieEnvNameReplacesUnsupportedCharacters() {
         val envName = BrowserUseSupport.sanitizeCookieEnvName("cf.clearance-token")
         assertEquals("COOKIE_CF_CLEARANCE_TOKEN", envName)

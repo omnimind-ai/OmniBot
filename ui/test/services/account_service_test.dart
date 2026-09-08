@@ -25,6 +25,25 @@ void main() {
     expect(state.signedIn, isTrue);
   });
 
+  test('preserves secure-storage-unavailable as a distinct session state', () async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          expect(call.method, 'getSessionState');
+          return <String, Object?>{
+            'configured': true,
+            'signedIn': false,
+            'credentialStorageAvailable': false,
+            'credentialStorageUnavailableReason': 'temporary',
+          };
+        });
+
+    final state = await AccountService.getSessionState();
+
+    expect(state.signedIn, isFalse);
+    expect(state.credentialStorageAvailable, isFalse);
+    expect(state.credentialStorageUnavailableReason, 'temporary');
+  });
+
   test('reads a blocking cloud-service version policy', () async {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {

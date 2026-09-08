@@ -1,6 +1,8 @@
 import 'package:dotted_border/dotted_border.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ui/services/agent_event_reducer.dart';
+import 'package:ui/features/home/pages/chat/services/chat_conversation_runtime_coordinator.dart';
 import 'package:ui/features/home/pages/command_overlay/widgets/cards/deep_thinking_card.dart';
 import 'package:ui/features/home/pages/chat/chat_page_models.dart';
 import 'package:ui/features/home/pages/chat/widgets/chat_empty_greeting.dart';
@@ -12,6 +14,70 @@ import 'package:ui/widgets/agent_avatar.dart';
 import 'package:ui/widgets/streaming_text.dart';
 
 void main() {
+  testWidgets('Claude Code ACP answers survive completion and history reload', (tester) async {
+    final runtime = ChatConversationRuntimeState(conversationId: 63, mode: 'agent');
+    addTearDown(runtime.dispose);
+    const reducer = AgentEventReducer();
+    for (final entry in {'first': 'CC_FIRST_ANSWER', 'followup': 'CC_FOLLOWUP_ANSWER'}.entries) {
+      final event = <String, dynamic>{
+        'eventId': 'cc-${entry.key}-text',
+        'method': 'session/update',
+        'turnId': entry.key,
+        'params': {
+          'sessionId': 'cc-durable-session',
+          'update': {
+            'sessionUpdate': 'agent_message_chunk',
+            'messageId': 'cc-${entry.key}',
+            'content': {'type': 'text', 'text': entry.value},
+          },
+        },
+      };
+      reducer.reduce(runtime: runtime, event: event);
+      // A redelivered host notification must not duplicate the visible answer.
+      reducer.reduce(runtime: runtime, event: event);
+      reducer.reducePromptResponse(runtime: runtime, sessionId: 'cc-durable-session',
+        turnId: entry.key, stopReason: 'end_turn');
+    }
+    for (final messages in [runtime.messages,
+      runtime.messages.map((m) => ChatMessageModel.fromJson(m.toJson())).toList()]) {
+      await tester.pumpWidget(const SizedBox());
+      final controller = ScrollController();
+      await tester.pumpWidget(_buildLocalizedApp(child: ChatMessageList(
+        messages: messages, scrollController: controller, onBeforeTaskExecute: () async {},
+      )));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('CC_FIRST_ANSWER', findRichText: true), findsOneWidget);
+      expect(find.textContaining('CC_FOLLOWUP_ANSWER', findRichText: true), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+      controller.dispose();
+    }
+  });
+
+  testWidgets('terminal failure stays visible with partial answer after history reload', (tester) async {
+    final messages = <ChatMessageModel>[
+      ChatMessageModel.cardMessage(
+        const {'type': 'agent_tool_summary', 'uiStyle': 'agent_tool',
+          'toolType': 'status', 'status': 'error', 'toolTitle': '本轮执行失败',
+          'summary': 'STREAM_CLOSED_TEST', 'cardId': 'failure-card'},
+        id: 'failure-card',
+        streamMeta: const {'parentTaskId': 'failed-run', 'kind': 'error', 'seq': 2, 'isFinal': true},
+      ),
+      ChatMessageModel(id: 'partial', type: 1, user: 2,
+        content: const {'text': 'PARTIAL_ANSWER_TEST'},
+        streamMeta: const {'parentTaskId': 'failed-run', 'kind': 'text_snapshot', 'seq': 1, 'isFinal': true}),
+    ];
+    for (final snapshot in [messages, messages.map((m) => ChatMessageModel.fromJson(m.toJson())).toList()]) {
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpWidget(_buildLocalizedApp(child: ChatMessageList(
+        messages: snapshot, scrollController: ScrollController(), onBeforeTaskExecute: () async {},
+      )));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('PARTIAL_ANSWER_TEST', findRichText: true), findsOneWidget);
+      expect(find.textContaining('本轮执行失败'), findsWidgets);
+      expect(find.textContaining('已处理'), findsNothing);
+    }
+  });
+
   testWidgets('empty chat state offsets with bottom overlay inset', (
     tester,
   ) async {
@@ -664,7 +730,8 @@ void main() {
         controller.offset,
         closeTo(controller.position.maxScrollExtent, 0.5),
       );
-      expect(find.text('ctx:33.6k'), findsOneWidget);
+      expect(find.text('ctx:33.6k'), findsNothing);
+      expect(find.text('348'), findsOneWidget);
 
       // A short user scroll disables automatic following. A subsequent
       // layout/programmatic correction can put the list exactly back on the
@@ -703,7 +770,8 @@ void main() {
         controller.offset,
         closeTo(controller.position.maxScrollExtent, 0.5),
       );
-      expect(find.text('ctx:33.6k'), findsOneWidget);
+      expect(find.text('ctx:33.6k'), findsNothing);
+      expect(find.text('348'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );
@@ -796,7 +864,7 @@ void main() {
     // when the user expands the run.
     expect(find.text('已处理'), findsOneWidget);
     expect(find.text('已运行 1 条命令'), findsNothing);
-    expect(find.text('最终回答'), findsOneWidget);
+    expect(find.textContaining('最终回答', findRichText: true), findsOneWidget);
     expect(
       find.byKey(const ValueKey('agent-run-avatar-task-1')),
       findsOneWidget,
@@ -890,30 +958,36 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('第一段过程正文'), findsNothing);
-    expect(find.text('第二段过程正文'), findsNothing);
+    expect(find.textContaining('第一段过程正文', findRichText: true), findsNothing);
+    expect(find.textContaining('第二段过程正文', findRichText: true), findsNothing);
     expect(find.text('读取项目状态'), findsNothing);
-    expect(find.text('最终结论'), findsOneWidget);
+    expect(find.textContaining('最终结论', findRichText: true), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('agent-run-summary-task-fold')));
     await tester.pumpAndSettle();
 
-    expect(find.text('第一段过程正文'), findsOneWidget);
-    expect(find.text('第二段过程正文'), findsOneWidget);
+    expect(find.textContaining('第一段过程正文', findRichText: true), findsOneWidget);
+    expect(find.textContaining('第二段过程正文', findRichText: true), findsOneWidget);
     expect(find.text('读取项目状态'), findsOneWidget);
     expect(find.text('最后整理思路'), findsNothing);
-    expect(find.text('最终结论'), findsOneWidget);
+    expect(find.textContaining('最终结论', findRichText: true), findsOneWidget);
     expect(
-      tester.getTopLeft(find.text('第一段过程正文')).dy,
+      tester.getTopLeft(find.textContaining('第一段过程正文', findRichText: true)).dy,
       lessThan(tester.getTopLeft(find.text('读取项目状态')).dy),
     );
     expect(
       tester.getTopLeft(find.text('读取项目状态')).dy,
-      lessThan(tester.getTopLeft(find.text('第二段过程正文')).dy),
+      lessThan(
+        tester
+            .getTopLeft(find.textContaining('第二段过程正文', findRichText: true))
+            .dy,
+      ),
     );
     expect(
-      tester.getTopLeft(find.text('第二段过程正文')).dy,
-      lessThan(tester.getTopLeft(find.text('最终结论')).dy),
+      tester.getTopLeft(find.textContaining('第二段过程正文', findRichText: true)).dy,
+      lessThan(
+        tester.getTopLeft(find.textContaining('最终结论', findRichText: true)).dy,
+      ),
     );
   });
 
@@ -942,16 +1016,16 @@ void main() {
 
     final summary = find.byKey(const ValueKey('agent-run-summary-task-fold'));
     expect(summary, findsOneWidget);
-    expect(find.text('第一段过程正文'), findsNothing);
-    expect(find.text('第二段过程正文'), findsNothing);
-    expect(find.text('最终结论'), findsOneWidget);
+    expect(find.textContaining('第一段过程正文', findRichText: true), findsNothing);
+    expect(find.textContaining('第二段过程正文', findRichText: true), findsNothing);
+    expect(find.textContaining('最终结论', findRichText: true), findsOneWidget);
 
     await tester.tap(summary);
     await tester.pumpAndSettle();
 
-    expect(find.text('第一段过程正文'), findsOneWidget);
-    expect(find.text('第二段过程正文'), findsOneWidget);
-    expect(find.text('最终结论'), findsOneWidget);
+    expect(find.textContaining('第一段过程正文', findRichText: true), findsOneWidget);
+    expect(find.textContaining('第二段过程正文', findRichText: true), findsOneWidget);
+    expect(find.textContaining('最终结论', findRichText: true), findsOneWidget);
   });
 
   testWidgets('completed run does not replay unfinished historical prose', (
@@ -1299,6 +1373,55 @@ void main() {
   );
 
   testWidgets(
+    'ACP file write remains visible when the turn has no reasoning card',
+    (tester) async {
+      final controller = ScrollController();
+      final startedAt = DateTime.now().subtract(const Duration(seconds: 2));
+      const taskId = 'file-write-turn';
+
+      await tester.pumpWidget(
+        _buildLocalizedApp(
+          child: SizedBox(
+            width: 400,
+            height: 520,
+            child: ChatMessageList(
+              messages: <ChatMessageModel>[
+                ChatMessageModel.cardMessage(
+                  <String, dynamic>{
+                    'type': 'agent_tool_summary',
+                    'taskId': taskId,
+                    'runId': taskId,
+                    'status': 'running',
+                    'toolName': 'file_write',
+                    'toolTitle': '写入文件',
+                    'toolType': 'file',
+                    'filePath': 'notes/draft.md',
+                    'argsJson': '{"path":"notes/draft.md"}',
+                  },
+                  id: 'file-write-card',
+                  streamMeta: const <String, dynamic>{
+                    'parentTaskId': taskId,
+                    'kind': 'tool_started',
+                  },
+                ).copyWith(createAt: startedAt),
+              ],
+              activeAgentTurnIds: const <String>{taskId},
+              useAcpPresentation: true,
+              activeAcpAgentId: 'xiaowan-acp',
+              scrollController: controller,
+              onBeforeTaskExecute: () async {},
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+
+      expect(find.textContaining('正在写入文件：draft.md'), findsOneWidget);
+      expect(find.text('draft.md'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
     'active Claude response shows its brand icon before text and keeps it after folding',
     (tester) async {
       final controller = ScrollController();
@@ -1365,7 +1488,9 @@ void main() {
       expect(activeBrandIcon.agentId, 'claude-code-acp');
       expect(
         tester.getTopLeft(activeAvatar).dy,
-        lessThan(tester.getTopLeft(find.text('最终回答')).dy),
+        lessThan(
+          tester.getTopLeft(find.textContaining('最终回答', findRichText: true)).dy,
+        ),
       );
       expect(
         find.byKey(const ValueKey('agent-run-summary-task-1')),
@@ -1387,7 +1512,10 @@ void main() {
         findsOneWidget,
       );
       expect(find.textContaining('已处理'), findsOneWidget);
-      expect(find.text('工具完成后的正文'), findsOneWidget);
+      expect(
+        find.textContaining('工具完成后的正文', findRichText: true),
+        findsOneWidget,
+      );
     },
   );
 
@@ -1429,7 +1557,10 @@ void main() {
         ),
       );
       expect(genericBrandIcon.agentId, 'generic-agent');
-      expect(find.text('旧 Agent 纯文本回答'), findsOneWidget);
+      expect(
+        find.textContaining('旧 Agent 纯文本回答', findRichText: true),
+        findsOneWidget,
+      );
     },
   );
 
@@ -1722,7 +1853,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(expandedTaskIds, isEmpty);
-      expect(find.text('任务已取消'), findsOneWidget);
+      expect(find.textContaining('任务已取消', findRichText: true), findsOneWidget);
       expect(find.text('运行 git status'), findsNothing);
     },
   );
@@ -1831,7 +1962,10 @@ void main() {
       );
       expect(find.text('详细思考过程'), findsOneWidget);
       expect(find.text('运行 git status'), findsOneWidget);
-      expect(find.text('最终回答', skipOffstage: false), findsOneWidget);
+      expect(
+        find.textContaining('最终回答', skipOffstage: false, findRichText: true),
+        findsOneWidget,
+      );
 
       // Finishing one thinking/content stage collapses that thinking card, but
       // must not fold the whole run while the task is still active.
@@ -1847,7 +1981,10 @@ void main() {
       expect(find.byType(DeepThinkingCard), findsOneWidget);
       expect(find.text('详细思考过程'), findsNothing);
       expect(find.text('运行 git status'), findsOneWidget);
-      expect(find.text('最终回答', skipOffstage: false), findsOneWidget);
+      expect(
+        find.textContaining('最终回答', skipOffstage: false, findRichText: true),
+        findsOneWidget,
+      );
 
       setState(() {
         activeTaskIds = <String>{};
@@ -1862,7 +1999,10 @@ void main() {
       expect(find.byType(DeepThinkingCard), findsNothing);
       expect(find.text('详细思考过程'), findsNothing);
       expect(find.text('运行 git status'), findsNothing);
-      expect(find.text('最终回答', skipOffstage: false), findsOneWidget);
+      expect(
+        find.textContaining('最终回答', skipOffstage: false, findRichText: true),
+        findsOneWidget,
+      );
     },
   );
 
@@ -1901,17 +2041,31 @@ void main() {
       await tester.pump(const Duration(milliseconds: 32));
 
       expect(find.byType(DeepThinkingCard), findsNWidgets(2));
-      expect(find.text('我先检查工作区。'), findsOneWidget);
+      expect(
+        find.textContaining('我先检查工作区。', findRichText: true),
+        findsOneWidget,
+      );
       expect(find.text('读取 README.md'), findsOneWidget);
       expect(find.text('根据工具结果继续检查。'), findsOneWidget);
-      expect(find.text('检查完成，这是最终回答。'), findsOneWidget);
       expect(
-        tester.getTopLeft(find.text('我先检查工作区。')).dy,
+        find.textContaining('检查完成，这是最终回答。', findRichText: true),
+        findsOneWidget,
+      );
+      expect(
+        tester
+            .getTopLeft(find.textContaining('我先检查工作区。', findRichText: true))
+            .dy,
         lessThan(tester.getTopLeft(find.text('读取 README.md')).dy),
       );
       expect(
         tester.getTopLeft(find.text('读取 README.md')).dy,
-        lessThan(tester.getTopLeft(find.text('检查完成，这是最终回答。')).dy),
+        lessThan(
+          tester
+              .getTopLeft(
+                find.textContaining('检查完成，这是最终回答。', findRichText: true),
+              )
+              .dy,
+        ),
       );
 
       setState(() {
@@ -1945,7 +2099,10 @@ void main() {
       expect(processOpacity.opacity, greaterThan(0));
       expect(processOpacity.opacity, lessThan(1));
       expect(find.text('读取 README.md'), findsOneWidget);
-      expect(find.text('我先检查工作区。'), findsOneWidget);
+      expect(
+        find.textContaining('我先检查工作区。', findRichText: true),
+        findsOneWidget,
+      );
       final historicalTextOpacity = tester.widget<Opacity>(
         find
             .ancestor(
@@ -1970,8 +2127,11 @@ void main() {
         findsOneWidget,
       );
       expect(find.text('读取 README.md'), findsNothing);
-      expect(find.text('我先检查工作区。'), findsNothing);
-      expect(find.text('检查完成，这是最终回答。'), findsOneWidget);
+      expect(find.textContaining('我先检查工作区。', findRichText: true), findsNothing);
+      expect(
+        find.textContaining('检查完成，这是最终回答。', findRichText: true),
+        findsOneWidget,
+      );
 
       await tester.tap(
         find.byKey(const ValueKey('agent-run-summary-dsh-turn-1')),
@@ -1998,7 +2158,13 @@ void main() {
       );
       expect(
         tester.getTopLeft(find.text('读取 README.md')).dy,
-        lessThan(tester.getTopLeft(find.text('检查完成，这是最终回答。')).dy),
+        lessThan(
+          tester
+              .getTopLeft(
+                find.textContaining('检查完成，这是最终回答。', findRichText: true),
+              )
+              .dy,
+        ),
       );
 
       await tester.tap(firstThinkingHeader);

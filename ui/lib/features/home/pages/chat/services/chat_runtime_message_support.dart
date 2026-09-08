@@ -175,15 +175,10 @@ extension _ChatRuntimeMessageSupport on ChatConversationRuntimeCoordinator {
               ChatLinkPreview.fromJson(item).status !=
               ChatLinkPreview.statusLoading,
         )) {
-      unawaited(
-        ConversationHistoryService.saveConversationMessages(
-          runtime.conversationId,
-          List<ChatMessageModel>.from(runtime.messages),
-          mode: _conversationModeFromRuntimeMode(
-            runtime.mode,
-            conversation: runtime.conversation,
-          ),
-        ),
+      schedulePersistRuntimeConversation(
+        conversationId: runtime.conversationId,
+        mode: runtime.mode,
+        persistMessages: true,
       );
     }
 
@@ -250,20 +245,13 @@ extension _ChatRuntimeMessageSupport on ChatConversationRuntimeCoordinator {
     content['linkPreviews'] = updatedPreviews;
     runtime.messages[index] = message.copyWith(content: content);
     _notifyRuntimeListeners();
-    schedulePersistRuntimeConversation(
-      conversationId: conversationId,
-      mode: mode,
-    );
     if (isEphemeralRuntime(conversationId: conversationId, mode: mode)) {
       return;
     }
-    await ConversationHistoryService.saveConversationMessages(
-      conversationId,
-      List<ChatMessageModel>.from(runtime.messages),
-      mode: _conversationModeFromRuntimeMode(
-        mode,
-        conversation: runtime.conversation,
-      ),
+    await persistRuntimeConversation(
+      conversationId: conversationId,
+      mode: mode,
+      persistMessages: true,
     );
   }
 

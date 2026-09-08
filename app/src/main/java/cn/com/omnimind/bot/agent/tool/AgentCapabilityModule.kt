@@ -19,9 +19,29 @@ import cn.com.omnimind.bot.agent.tool.handlers.TerminalToolHandler
 import cn.com.omnimind.bot.agent.tool.handlers.ToolHandler
 import cn.com.omnimind.bot.agent.tool.handlers.VlmToolHandler
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.serialization.json.JsonObject
+
+data class AgentCapabilityToolDefinition(
+    val name: String,
+    val displayName: String,
+    val description: String,
+    val parameters: JsonObject,
+    val toolType: String,
+    val serverName: String? = null,
+)
 
 interface AgentCapabilityModule {
     val handlers: List<ToolHandler>
+
+    /**
+     * Model-facing definitions owned by the same lifecycle as [handlers].
+     *
+     * Session-scoped capabilities such as ACP-provided MCP servers must enter
+     * the canonical Agent catalog here. Keeping definitions and execution in
+     * one module prevents a stale definition from outliving its handler.
+     */
+    val toolDefinitions: List<AgentCapabilityToolDefinition>
+        get() = emptyList()
 }
 
 class AgentToolHandlerModule(

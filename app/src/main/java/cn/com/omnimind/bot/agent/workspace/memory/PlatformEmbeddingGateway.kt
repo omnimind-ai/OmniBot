@@ -21,11 +21,9 @@ internal class PlatformEmbeddingGateway(
         val requestJson = GSON.toJson(
             mapOf(
                 "model" to normalizedModel,
-                "input" to listOf(input.take(MAX_INPUT_CHARS)),
+                "input" to listOf(input),
             )
         )
-        PlatformMediaProtocol.requirePlatformJsonRequestWithinLimit(requestJson)
-
         return executor.execute { credentials ->
             Request.Builder()
                 .url(PlatformMediaProtocol.endpoint(credentials, "/v1/embeddings"))
@@ -34,7 +32,7 @@ internal class PlatformEmbeddingGateway(
                 .post(requestJson.toRequestBody(JSON_MEDIA_TYPE))
                 .build()
         }.use { response ->
-            val bytes = PlatformMediaProtocol.readBodyLimited(response, MAX_RESPONSE_BYTES)
+            val bytes = response.body?.bytes() ?: ByteArray(0)
             PlatformMediaProtocol.requireSuccessfulResponse(response.code, bytes)
             parseEmbedding(bytes)
         }
@@ -46,7 +44,7 @@ internal class PlatformEmbeddingGateway(
             EmbeddingResponse::class.java,
         ) ?: throw IllegalStateException("official embedding response is invalid")
         val vector = payload.data.firstOrNull()?.embedding.orEmpty()
-        if (vector.size !in 1..MAX_VECTOR_DIMENSIONS) {
+        if (vector.isEmpty()) {
             throw IllegalStateException("official embedding response has invalid dimensions")
         }
         if (vector.any { !it.isFinite() }) {
@@ -60,9 +58,6 @@ internal class PlatformEmbeddingGateway(
     private data class EmbeddingItem(val embedding: List<Double> = emptyList())
 
     private companion object {
-        const val MAX_INPUT_CHARS = 8_000
-        const val MAX_VECTOR_DIMENSIONS = 8_192
-        const val MAX_RESPONSE_BYTES = 2L * 1024L * 1024L
         val GSON = Gson()
         val JSON_MEDIA_TYPE = "application/json".toMediaType()
         val HTTP_CLIENT = OkHttpClient.Builder()

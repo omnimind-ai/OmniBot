@@ -24,8 +24,14 @@ class AgentToolDefinitionsPrivilegedTest {
         val properties = parameters["properties"] as JsonObject
         val action = properties["action"] as JsonObject
         val enumValues = action["enum"] as JsonArray
+        val arguments = properties["arguments"] as JsonObject
+        val argumentProperties = arguments["properties"] as JsonObject
 
         assertTrue(enumValues.any { it.jsonPrimitive.contentOrNull == "shell.exec" })
+        assertTrue("packageName" in argumentProperties)
+        assertTrue("activityName" in argumentProperties)
+        assertTrue("command" in argumentProperties)
+        assertEquals(false, arguments["additionalProperties"]?.toString()?.toBoolean())
         assertTrue(
             function["description"]?.jsonPrimitive?.contentOrNull?.contains("one-shot arbitrary shell") ==
                 true

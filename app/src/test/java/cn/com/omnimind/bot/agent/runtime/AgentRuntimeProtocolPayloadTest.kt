@@ -15,6 +15,39 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AgentRuntimeProtocolPayloadTest {
+    private fun officialCatalogAgents(): List<AcpAgentProfile> =
+        AcpAgentCatalog.parse(File("src/main/assets/acp/agents.json").readText()).agents
+
+    private fun deepSeekInstallScript(): String =
+        File("src/main/assets/acp/install/deepseek-harness.sh").readText()
+
+    @Test
+    fun reasoningEffortUsesTheAdvertisedOfficialAcpConfigOption() {
+        val configId = resolveAdvertisedReasoningEffortConfigId(
+            payload = mapOf(
+                "configOptions" to listOf(
+                    mapOf(
+                        "id" to "thinking_level",
+                        "category" to "thought_level",
+                        "options" to listOf(
+                            mapOf("value" to "low"),
+                            mapOf("value" to "high"),
+                        ),
+                    ),
+                ),
+            ),
+            requestedEffort = "high",
+        )
+
+        assertEquals("thinking_level", configId)
+        assertNull(
+            resolveAdvertisedReasoningEffortConfigId(
+                payload = mapOf("configOptions" to emptyList<Any>()),
+                requestedEffort = "high",
+            ),
+        )
+    }
+
     @Test
     fun acpExtensionRequestIsParsedWithoutChangingStandardMessages() {
         val request = parseAcpExtensionLine(
@@ -203,6 +236,64 @@ class AgentRuntimeProtocolPayloadTest {
     }
 
     @Test
+    fun explicitEventTurnIdWinsOverTheCurrentlyActiveHostTurn() {
+        assertEquals(
+            "late-old-turn",
+            resolveObservedTurnId(
+                explicitTurnId = " late-old-turn ",
+                activeEventTurnId = null,
+                hostActiveTurnId = "new-current-turn",
+                disconnectedTurnId = null,
+                implicitTurnId = null,
+            )
+        )
+        assertEquals(
+            "new-current-turn",
+            resolveObservedTurnId(
+                explicitTurnId = null,
+                activeEventTurnId = null,
+                hostActiveTurnId = "new-current-turn",
+                disconnectedTurnId = null,
+                implicitTurnId = "compat-turn",
+            )
+        )
+        assertEquals(
+            "new-current-turn",
+            resolveObservedTurnId(
+                explicitTurnId = "provider-turn",
+                activeEventTurnId = null,
+                hostActiveTurnId = "new-current-turn",
+                disconnectedTurnId = null,
+                implicitTurnId = null,
+                preferHostActiveTurn = true,
+            )
+        )
+    }
+
+    @Test
+    fun sessionScopedUpdateUsesOnlyItsActivePromptReservationWhenWireTurnIdIsAbsent() {
+        assertEquals(
+            "reserved-session-turn",
+            resolveObservedTurnId(
+                explicitTurnId = null,
+                activeEventTurnId = null,
+                hostActiveTurnId = null,
+                disconnectedTurnId = null,
+                implicitTurnId = "reserved-session-turn",
+            ),
+        )
+        assertNull(
+            resolveObservedTurnId(
+                explicitTurnId = null,
+                activeEventTurnId = null,
+                hostActiveTurnId = null,
+                disconnectedTurnId = null,
+                implicitTurnId = null,
+            ),
+        )
+    }
+
+    @Test
     fun legacyTaskAndRunIdsAreAcceptedOnlyAsTurnCompatibilityAliases() {
         assertEquals(
             "legacy-task-1",
@@ -295,6 +386,23 @@ class AgentRuntimeProtocolPayloadTest {
         } catch (error: IllegalArgumentException) {
             assertTrue(error.message.orEmpty().contains("changed"))
         }
+    }
+
+    @Test
+    fun omittedAppSessionListLimitReturnsEverySessionWithoutAHostCap() {
+        val sessions = (1..201).map { index ->
+            mapOf<String, Any?>("id" to "session-$index")
+        }
+
+        val page = paginateAcpItems(
+            items = sessions,
+            limit = null,
+            cursor = null,
+            identity = { it["id"].toString() },
+        )
+
+        assertEquals(201, page.items.size)
+        assertNull(page.nextCursor)
     }
 
     @Test
@@ -424,15 +532,15 @@ class AgentRuntimeProtocolPayloadTest {
     @Test
     fun managedAcpCatalogIncludesSupportedAgentsWithoutGemini() {
         assertEquals(
-            listOf("小万", "Codex", "Claude Code", "OpenCode", "DeepSeek Harness"),
-            AcpAgentProfileStore.OFFICIAL_AGENTS.map { it.name }
+            listOf("小万", "Kimi Code", "Claude Code", "Codex", "OpenCode", "DeepSeek Harness"),
+            officialCatalogAgents().map { it.name }
         )
-        assertTrue(AcpAgentProfileStore.OFFICIAL_AGENTS.all { it.builtIn })
+        assertTrue(officialCatalogAgents().all { it.builtIn })
         assertEquals(
-            AcpAgentProfileStore.OFFICIAL_AGENTS.size,
-            AcpAgentProfileStore.OFFICIAL_AGENTS.map { it.id }.toSet().size
+            officialCatalogAgents().size,
+            officialCatalogAgents().map { it.id }.toSet().size
         )
-        val codex = AcpAgentProfileStore.OFFICIAL_AGENTS.first {
+        val codex = officialCatalogAgents().first {
             it.id == AcpAgentProfileStore.CODEX_AGENT_ID
         }
         assertEquals(
@@ -443,14 +551,19 @@ class AgentRuntimeProtocolPayloadTest {
             "@openai/codex@latest",
             AcpAgentProfileStore.officialRuntime(codex)?.managedAdapterPackage
         )
-        assertEquals(
-            listOf(
-                "@openai/codex@latest",
-                "@agentclientprotocol/codex-acp@1.1.7"
-            ),
-            AcpAgentProfileStore.officialRuntime(codex)?.managedAdapterPackages
+        val codexRuntime = requireNotNull(AcpAgentProfileStore.officialRuntime(codex))
+        assertTrue(codexRuntime.managedAdapterPackage in codexRuntime.managedAdapterPackages)
+        val bridgePackage = codexRuntime.managedAdapterPackages.single {
+            it.startsWith("@agentclientprotocol/codex-acp@")
+        }
+        val bridgeRevision = "codex-acp-${bridgePackage.substringAfterLast('@')}"
+        // The package version anchors readiness; a host preparation fix may
+        // append a revision so already-installed devices rerun that fix.
+        assertTrue(
+            codexRuntime.preparationRevision == bridgeRevision ||
+                codexRuntime.preparationRevision?.startsWith("$bridgeRevision-") == true,
         )
-        val xiaowan = AcpAgentProfileStore.OFFICIAL_AGENTS.first {
+        val xiaowan = officialCatalogAgents().first {
             it.id == AcpAgentProfileStore.XIAOWAN_AGENT_ID
         }
         assertEquals("omnibot-xiaowan-acp", xiaowan.command)
@@ -459,44 +572,37 @@ class AgentRuntimeProtocolPayloadTest {
             AcpAgentProfileStore.officialRuntime(xiaowan)?.discoveryCommand
         )
         assertNull(AcpAgentProfileStore.officialRuntime(xiaowan)?.managedAdapterPackage)
-        val deepSeek = AcpAgentProfileStore.OFFICIAL_AGENTS.first {
+        val kimi = officialCatalogAgents().first {
+            it.id == AcpAgentProfileStore.KIMI_CODE_AGENT_ID
+        }
+        assertEquals("kimi", kimi.command)
+        assertEquals(listOf("acp"), kimi.arguments)
+        val kimiRuntime = AcpAgentProfileStore.officialRuntime(kimi)
+        assertEquals("kimi", kimiRuntime?.discoveryCommand)
+        assertEquals(KIMI_CODE_NPM_PACKAGE_SPEC, kimiRuntime?.managedAdapterPackage)
+        assertEquals("kimi", kimiRuntime?.terminalPackageId)
+        assertEquals(
+            "kimi-code",
+            kimiRuntime?.harnessAdapter?.configAdapterId,
+        )
+        val deepSeek = officialCatalogAgents().first {
             it.id == AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID
         }
         assertEquals("dsh-acp-android", deepSeek.command)
-        assertEquals(listOf("--profile", "acp"), deepSeek.arguments)
+        assertEquals(listOf("--profile", "acp", "--patch", DEEPSEEK_HARNESS_SETTINGS_PATH), deepSeek.arguments)
         val deepSeekRuntime = AcpAgentProfileStore.officialRuntime(deepSeek)
         assertEquals("dsh", deepSeekRuntime?.discoveryCommand)
-        assertTrue(
-            deepSeekRuntime?.managedAdapterPackages.orEmpty().contains(
-                "@openma/deepseek-harness-acp@latest"
-            )
-        )
-        assertTrue(
-            deepSeekRuntime?.managedAdapterPackages.orEmpty().contains(
-                "@deepseek-ai/dsh@next"
-            )
-        )
-        assertEquals(2, deepSeekRuntime?.managedAdapterPackages?.size)
-        assertTrue(deepSeekRuntime?.managedAdapterPackages.orEmpty().contains("@deepseek-ai/dsh@next"))
+        assertEquals(listOf("@deepseek-ai/dsh@0.1.2-rc.1"), deepSeekRuntime?.managedAdapterPackages)
         assertTrue(deepSeekRuntime?.requiresNativeBuildTools == true)
-        assertTrue(
-            deepSeekRuntime?.managedAdapterHealthCommand.orEmpty()
-                .contains("command -v dsh")
-        )
-        assertTrue(
-            deepSeekRuntime?.managedAdapterHealthCommand.orEmpty()
-                .contains("command -v dsh-acp-android")
-        )
-        assertTrue(MANAGED_NATIVE_BUILD_PREREQUISITES_COMMAND.contains("omnibot_apk_add 'build-base' 'python3'"))
-        assertTrue(MANAGED_NATIVE_BUILD_PREREQUISITES_COMMAND.contains("apk fix --no-cache"))
-        assertTrue(MANAGED_NATIVE_BUILD_PREREQUISITES_COMMAND.contains("apk fix --no-cache --upgrade"))
-        assertTrue(MANAGED_NATIVE_BUILD_PREREQUISITES_COMMAND.contains("build-essential python3"))
-        assertTrue(DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("dsh plugin --profile acp add"))
-        assertTrue(DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("profiles/acp/package.json"))
-        assertTrue(DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("pnpm@$DEEPSEEK_HARNESS_PNPM_VERSION"))
-        assertTrue(
-            DEEPSEEK_HARNESS_NPM_INSTALL_COMMAND.contains("DSH_HOME=\"/root/.dsh/omnibot-acp\"")
-        )
+        assertTrue(deepSeekRuntime?.managedAdapterHealthCommand.orEmpty().contains("command -v dsh-acp-android"))
+        // Official DSH now ships the ACP profile; do not reinstall the removed third-party plugin.
+        val installer = deepSeekInstallScript()
+        assertTrue(installer.contains("@deepseek-ai/dsh-acp-app/cordis.patch.yml"))
+        assertTrue(installer.contains("dsh-acp-android --profile acp --help"))
+        assertTrue(installer.contains("profiles/acp/package.json"))
+        assertTrue(installer.contains("profiles/acp/cordis.patch.yml"))
+        assertFalse(installer.contains("@openma/deepseek-harness-acp"))
+
     }
 
     @Test
@@ -587,16 +693,16 @@ class AgentRuntimeProtocolPayloadTest {
     }
 
     @Test
-    fun deepSeekHarnessDefaultReasoningEffortKeepsSimpleTurnsResponsive() {
+    fun deepSeekHarnessDoesNotInventReasoningDefaults() {
         val environment = DeepSeekHarnessConfig(
             baseUrl = "https://gateway.example/v1",
             model = "deepseek-custom",
             apiKey = "sk-test"
         ).toEnvironment()
 
-        assertEquals("high", environment["DSH_REASONING_EFFORT"])
-        assertEquals("high", environment["DSH_PI_AI_REASONING_EFFORT"])
-        assertEquals("enabled", environment["DSH_THINKING"])
+        assertNull(environment["DSH_REASONING_EFFORT"])
+        assertNull(environment["DSH_PI_AI_REASONING_EFFORT"])
+        assertNull(environment["DSH_THINKING"])
     }
 
     @Test
@@ -617,7 +723,7 @@ class AgentRuntimeProtocolPayloadTest {
     }
 
     @Test
-    fun sharedAgentProviderIsTheDefaultCredentialSourceForAllAcpModes() {
+    fun sharedAgentProviderSyncsTheActiveDeepSeekHarness() {
         val provider = ModelProviderProfile(
             id = "deepseek-provider",
             name = "DeepSeek",
@@ -637,22 +743,6 @@ class AgentRuntimeProtocolPayloadTest {
         assertEquals(provider.baseUrl, dsh.baseUrl)
         assertEquals(provider.apiKey, dsh.apiKey)
         assertEquals("glm-5.1", dsh.model)
-        assertEquals(
-            provider.apiKey,
-            buildSharedAgentProviderEnvironment("claude-code-acp", credentials)["ANTHROPIC_AUTH_TOKEN"]
-        )
-        assertEquals(
-            "https://api.deepseek.com/v1",
-            buildSharedAgentProviderEnvironment("opencode-acp", credentials)["OPENAI_BASE_URL"]
-        )
-        assertEquals(
-            provider.apiKey,
-            buildSharedAgentProviderEnvironment("codex-acp", credentials)["OPENAI_API_KEY"]
-        )
-        assertEquals(
-            "https://api.deepseek.com/v1",
-            buildSharedAgentProviderEnvironment("codex-acp", credentials)["OPENAI_BASE_URL"]
-        )
     }
 
     @Test
@@ -742,40 +832,50 @@ class AgentRuntimeProtocolPayloadTest {
                 existingConfig = "",
             )
         assertEquals(1, dshWrites.size)
-        assertEquals("/root/.dsh/omnibot-acp/settings.yaml", dshWrites.single().path)
-        assertTrue(dshWrites.single().content.contains("id: 'glm-5.1'"))
+        assertEquals(DEEPSEEK_HARNESS_SETTINGS_PATH, dshWrites.single().path)
+        assertTrue(dshWrites.single().content.contains("\"model\":\"glm-5.1\""))
+        assertTrue(dshWrites.single().content.contains("- id: acp"))
+        assertFalse(dshWrites.single().content.contains("sk-shared"))
     }
 
     @Test
     fun managedAgentInstallationUsesTheExistingOfficialTerminalSetupIds() {
         assertEquals(
+            "kimi",
+            managedAgentTerminalPackageId(
+                officialCatalogAgents().first {
+                    it.id == AcpAgentProfileStore.KIMI_CODE_AGENT_ID
+                }
+            )
+        )
+        assertEquals(
             "deepseek_harness",
             managedAgentTerminalPackageId(
-                AcpAgentProfileStore.OFFICIAL_AGENTS.first {
+                officialCatalogAgents().first {
                     it.id == AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID
                 }
             )
         )
         assertEquals(
             "codex",
-            managedAgentTerminalPackageId(AcpAgentProfileStore.OFFICIAL_AGENTS.first {
+            managedAgentTerminalPackageId(officialCatalogAgents().first {
                 it.id == AcpAgentProfileStore.CODEX_AGENT_ID
             })
         )
         assertEquals(
             "claude_code",
-            managedAgentTerminalPackageId(AcpAgentProfileStore.OFFICIAL_AGENTS.first {
+            managedAgentTerminalPackageId(officialCatalogAgents().first {
                 it.id == "claude-code-acp"
             })
         )
         assertEquals(
             "opencode",
-            managedAgentTerminalPackageId(AcpAgentProfileStore.OFFICIAL_AGENTS.first {
+            managedAgentTerminalPackageId(officialCatalogAgents().first {
                 it.id == "opencode-acp"
             })
         )
         assertNull(
-            managedAgentTerminalPackageId(AcpAgentProfileStore.OFFICIAL_AGENTS.first {
+            managedAgentTerminalPackageId(officialCatalogAgents().first {
                 it.id == AcpAgentProfileStore.XIAOWAN_AGENT_ID
             })
         )
@@ -792,7 +892,6 @@ class AgentRuntimeProtocolPayloadTest {
         )
 
         val codexServers = buildLocalAgentAcpMcpServers(
-            harnessAdapter = AcpHarnessAdapters.standard,
             supportsHttp = true,
             state = state
         )
@@ -804,14 +903,12 @@ class AgentRuntimeProtocolPayloadTest {
 
         assertTrue(
             buildLocalAgentAcpMcpServers(
-                harnessAdapter = AcpHarnessAdapters.deepSeekHarness,
                 supportsHttp = false,
                 state = state
             ).isEmpty()
         )
         assertTrue(
             buildLocalAgentAcpMcpServers(
-                harnessAdapter = AcpHarnessAdapters.standard,
                 supportsHttp = false,
                 state = state
             ).isEmpty()
@@ -821,7 +918,6 @@ class AgentRuntimeProtocolPayloadTest {
     @Test
     fun deepSeekHarnessMcpConnectionUsesOfficialSessionDeclaration() {
         val servers = buildLocalAgentAcpMcpServers(
-            harnessAdapter = AcpHarnessAdapters.deepSeekHarness,
             supportsHttp = true,
             state = McpServerState(
                 enabled = true,
@@ -834,11 +930,6 @@ class AgentRuntimeProtocolPayloadTest {
         val server = servers.single() as McpServer.Http
         assertEquals("http://127.0.0.1:9001/mcp", server.url)
         assertEquals("Bearer local-secret", server.headers.single().value)
-        assertTrue(
-            AcpHarnessAdapters.deepSeekHarness.mcpEnvironment(
-                McpServerState(false, false, null, 0, "")
-            ).isEmpty()
-        )
     }
 
     @Test
@@ -1256,21 +1347,21 @@ class AgentRuntimeProtocolPayloadTest {
     fun turnTerminalStatusPrefersTheAcpStopReason() {
         assertEquals(
             "end_turn",
-            resolveTurnTerminalStatus("END_TURN", cancelled = false, error = null)
+            resolveTurnTerminalStatus("END_TURN", promptResponseReceived = true, cancelled = false, error = null)
         )
         assertEquals(
             "max_tokens",
-            resolveTurnTerminalStatus("max_tokens", cancelled = false, error = null)
+            resolveTurnTerminalStatus("max_tokens", promptResponseReceived = true, cancelled = false, error = null)
         )
         assertEquals(
             "refusal",
-            resolveTurnTerminalStatus("REFUSAL", cancelled = false, error = null)
+            resolveTurnTerminalStatus("REFUSAL", promptResponseReceived = true, cancelled = false, error = null)
         )
         // A stop reason still wins once the agent has reported one, even if the
         // surrounding coroutine was torn down afterwards.
         assertEquals(
             "end_turn",
-            resolveTurnTerminalStatus("end_turn", cancelled = true, error = RuntimeException())
+            resolveTurnTerminalStatus("end_turn", promptResponseReceived = true, cancelled = true, error = RuntimeException())
         )
     }
 
@@ -1280,22 +1371,54 @@ class AgentRuntimeProtocolPayloadTest {
         // so cancellation has to outrank failure.
         assertEquals(
             "cancelled",
-            resolveTurnTerminalStatus(null, cancelled = true, error = RuntimeException("boom"))
+            resolveTurnTerminalStatus(null, promptResponseReceived = false, cancelled = true, error = RuntimeException("boom"))
         )
         assertEquals(
             "error",
-            resolveTurnTerminalStatus(null, cancelled = false, error = IllegalStateException())
+            resolveTurnTerminalStatus(null, promptResponseReceived = false, cancelled = false, error = IllegalStateException())
         )
         // The regression that stranded every codex-acp conversation: a prompt
         // flow that completes without ever emitting a prompt response must
         // still terminate the turn rather than leave it running forever.
         assertEquals(
-            "end_turn",
-            resolveTurnTerminalStatus(null, cancelled = false, error = null)
+            "error",
+            resolveTurnTerminalStatus(null, promptResponseReceived = false, cancelled = false, error = null)
         )
         assertEquals(
-            "end_turn",
-            resolveTurnTerminalStatus("   ", cancelled = false, error = null)
+            "error",
+            resolveTurnTerminalStatus("   ", promptResponseReceived = false, cancelled = false, error = null)
+        )
+    }
+
+    @Test
+    fun remotePromptUsesOfficialStopReasonForTerminalProjection() {
+        assertEquals(
+            "cancelled",
+            terminalStatusFromAcpParams(mapOf("stopReason" to "cancelled"))
+        )
+        assertEquals(
+            "error",
+            terminalStatusFromAcpParams(mapOf("status" to "failed"))
+        )
+        assertEquals(
+            "completed",
+            terminalStatusFromAcpParams(mapOf("stopReason" to "end_turn"))
+        )
+        assertEquals(
+            "cancelled",
+            terminalStatusFromAcpParams(emptyMap(), fallback = "cancelled")
+        )
+    }
+
+    @Test
+    fun remoteEventUsesTheHostSessionConversationBinding() {
+        assertEquals(
+            42L,
+            resolveAcpEventConversationId(
+                remoteEvent = true,
+                sessionConversationId = 42L,
+                projectedConversationId = null,
+            )
         )
     }
 

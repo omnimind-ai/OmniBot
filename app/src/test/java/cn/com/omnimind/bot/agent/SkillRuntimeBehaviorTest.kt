@@ -126,6 +126,29 @@ class SkillRuntimeBehaviorTest {
     }
 
     @Test
+    fun imageGenerationPromptCapacityIsOwnedByTheConfiguredProvider() {
+        val promptBeyondTheFormerHostLimit = "画一幅城市夜景。".repeat(12_000)
+
+        assertEquals(
+            promptBeyondTheFormerHostLimit,
+            ImageGenerationToolHandler.requireImageGenerationPrompt(
+                promptBeyondTheFormerHostLimit,
+            ),
+        )
+    }
+
+    @Test
+    fun imageGenerationDoesNotRejectAProviderImageByHostSize() {
+        val imageBeyondTheFormerHostLimit = ByteArray(20 * 1024 * 1024 + 1)
+        byteArrayOf(
+            0x89.toByte(), 0x50, 0x4E, 0x47,
+            0x0D, 0x0A, 0x1A, 0x0A,
+        ).copyInto(imageBeyondTheFormerHostLimit)
+
+        ImageGenerationToolHandler.requireSupportedImage(imageBeyondTheFormerHostLimit)
+    }
+
+    @Test
     fun imageGenerationEndpointSupportsBaseAndFullEndpointUrls() {
         assertEquals(
             "https://cloud.omnimind.com.cn/v1/images/generations",

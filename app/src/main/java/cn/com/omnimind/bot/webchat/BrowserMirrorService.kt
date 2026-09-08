@@ -32,7 +32,7 @@ class BrowserMirrorService(
         return payload
     }
 
-    private fun buildRequest(arguments: Map<String, Any?>): BrowserUseRequest {
+    internal fun buildRequest(arguments: Map<String, Any?>): BrowserUseRequest {
         val action = BrowserUseAction.fromWire(arguments["action"]?.toString())
             ?: throw IllegalArgumentException("缺少合法的 browser action")
         val request = BrowserUseRequest(
@@ -48,17 +48,15 @@ class BrowserMirrorService(
             script = arguments["script"]?.toString(),
             coordinateX = arguments.readInt("coordinate_x") ?: arguments.readInt("coordinateX"),
             coordinateY = arguments.readInt("coordinate_y") ?: arguments.readInt("coordinateY"),
-            amount = (arguments.readInt("amount") ?: 500).coerceIn(1, 20_000),
+            amount = arguments.readInt("amount"),
             keywords = arguments.readStringList("keywords"),
             itemSelector = arguments["item_selector"]?.toString() ?: arguments["itemSelector"]?.toString(),
             direction = arguments["direction"]?.toString(),
             tabId = arguments.readInt("tab_id") ?: arguments.readInt("tabId"),
             selector = arguments["selector"]?.toString(),
             fuzzy = arguments.readBoolean("fuzzy") ?: true,
-            maxDepth = (arguments.readInt("max_depth") ?: arguments.readInt("maxDepth") ?: 5)
-                .coerceIn(1, 8),
-            scrollCount = (arguments.readInt("scroll_count") ?: arguments.readInt("scrollCount") ?: 10)
-                .coerceIn(1, 20)
+            maxDepth = arguments.readInt("max_depth") ?: arguments.readInt("maxDepth"),
+            scrollCount = arguments.readInt("scroll_count") ?: arguments.readInt("scrollCount")
         )
         validateRequest(request)
         return request

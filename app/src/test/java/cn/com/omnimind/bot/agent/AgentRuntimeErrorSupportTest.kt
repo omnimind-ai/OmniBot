@@ -9,6 +9,43 @@ import org.junit.Test
 
 class AgentRuntimeErrorSupportTest {
     @Test
+    fun requestTimeoutDoesNotClaimMissingCredentialsOrEmptyModels() {
+        val error = IllegalStateException("model fetch failed", java.net.SocketTimeoutException("timeout"))
+        assertEquals("provider_request_timeout", AgentRuntimeErrorSupport.failureKind(error))
+        assertTrue(AgentRuntimeErrorSupport.userFacingMessage(error)!!.contains("服务商请求超时"))
+    }
+    @Test
+    fun authenticationFailureIsNotReportedAsMissingModel() {
+        for (message in listOf("获取模型列表失败 (401)：Invalid API Key",
+            "AuthenticationError: OpenAIException 身份验证失败。Error happened to model=GLM-4.5-Air")) {
+            val error = IllegalStateException(message)
+            assertEquals("provider_authentication_failed", AgentRuntimeErrorSupport.failureKind(error))
+            assertTrue(AgentRuntimeErrorSupport.userFacingMessage(error)!!.contains("身份验证失败"))
+        }
+    }
+    @Test
+    fun `incomplete call diagnostic never invents a retry`() {
+        val message = AgentRuntimeErrorSupport.userFacingMessage(AgentIncompleteToolCallException(0)).orEmpty()
+        assertTrue(message.contains("不完整"))
+        assertTrue(!message.contains("已自动重试"))
+    }
+
+    @Test
+    fun `upstream invalid model failure explains model selection without a cache refresh`() {
+        val error = IllegalStateException("chat completion stream request failed(404): NotFoundError: OpenAIException - Invalid model.Error happened to model=GLM-5")
+        assertEquals("provider_model_unavailable", AgentRuntimeErrorSupport.failureKind(error))
+        assertTrue(AgentRuntimeErrorSupport.userFacingMessage(error).orEmpty().contains("重新选择"))
+        assertTrue(!AgentRuntimeErrorSupport.userFacingMessage(error).orEmpty().contains("刷新"))
+    }
+
+    @Test
+    fun `provider connection abort identifies an interrupted response`() {
+        val error = AgentStreamRequestException(200, "Software caused connection abort", null)
+        assertEquals("provider_stream_interrupted", AgentRuntimeErrorSupport.failureKind(error))
+        assertTrue(AgentRuntimeErrorSupport.userFacingMessage(error).orEmpty().contains("连接中断"))
+    }
+
+    @Test
     fun `certificate chain failures explain the device clock and preserve tls`() {
         val handshake = SSLHandshakeException("handshake failed").apply {
             initCause(
@@ -35,6 +72,21 @@ class AgentRuntimeErrorSupportTest {
 
         assertNull(AgentRuntimeErrorSupport.userFacingMessage(error))
         assertNull(AgentRuntimeErrorSupport.failureKind(error))
+    }
+
+    @Test
+    fun `provider stream idle timeout maps to a recoverable provider message`() {
+        val error = AgentStreamIdleTimeoutException(90_000L)
+
+        assertEquals(
+            AgentRuntimeErrorSupport.PROVIDER_STREAM_IDLE_TIMEOUT,
+            AgentRuntimeErrorSupport.failureKind(error)
+        )
+        assertTrue(
+            AgentRuntimeErrorSupport.userFacingMessage(error)
+                .orEmpty()
+                .contains("没有返回新的流式更新")
+        )
     }
 
     @Test
@@ -133,14 +185,14 @@ class AgentRuntimeErrorSupportTest {
     }
 
     @Test
-    fun `diagnostic messages redact credentials and stay bounded`() {
+    fun `diagnostic messages redact credentials without truncating the provider detail`() {
         val error = IllegalStateException(
             "request failed Bearer abc.def token=secret-value " + "x".repeat(500)
         )
 
         val diagnostic = AgentRuntimeErrorSupport.safeDiagnosticMessage(error)
 
-        assertTrue(diagnostic.length <= 300)
+        assertTrue(diagnostic.length > 300)
         assertTrue(!diagnostic.contains("abc.def"))
         assertTrue(!diagnostic.contains("secret-value"))
     }

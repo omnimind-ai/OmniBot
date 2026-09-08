@@ -549,7 +549,7 @@ class _OmnibotInteractiveImageViewState
     }
 
     final fittedSize = applyBoxFit(
-      BoxFit.contain,
+      BoxFit.scaleDown,
       intrinsicSize,
       Size(maxWidth, maxHeight),
     ).destination;

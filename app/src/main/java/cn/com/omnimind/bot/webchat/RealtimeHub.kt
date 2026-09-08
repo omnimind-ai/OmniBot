@@ -3,7 +3,7 @@ package cn.com.omnimind.bot.webchat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -19,11 +19,16 @@ data class RealtimeEvent(
 
 object RealtimeHub {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private val events = MutableSharedFlow<RealtimeEvent>(
-        replay = 0,
-        extraBufferCapacity = 256,
-        onBufferOverflow = BufferOverflow.DROP_OLDEST
-    )
+    private val events = MutableSharedFlow<RealtimeEvent>()
+    private val pendingEvents = Channel<RealtimeEvent>(Channel.UNLIMITED)
+
+    init {
+        scope.launch {
+            for (event in pendingEvents) {
+                events.emit(event)
+            }
+        }
+    }
 
     fun stream(): SharedFlow<RealtimeEvent> = events.asSharedFlow()
 
@@ -44,10 +49,8 @@ object RealtimeHub {
             data = payload,
             timestamp = timestamp
         )
-        if (!events.tryEmit(wrapped)) {
-            scope.launch {
-                events.emit(wrapped)
-            }
+        check(pendingEvents.trySend(wrapped).isSuccess) {
+            "Realtime event queue is unavailable"
         }
     }
 }

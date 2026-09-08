@@ -98,11 +98,9 @@ class ImageGenerationToolHandler(
                 args["outputPath"]?.jsonPrimitive?.contentOrNull,
             )?.let { return it }
 
-            val prompt = args["prompt"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
-            require(prompt.isNotEmpty()) { "prompt cannot be empty" }
-            require(prompt.toByteArray(Charsets.UTF_8).size <= MAX_IMAGE_PROMPT_BYTES) {
-                "image prompt exceeds the 64 KB limit"
-            }
+            val prompt = requireImageGenerationPrompt(
+                args["prompt"]?.jsonPrimitive?.contentOrNull,
+            )
             val outputPath = args["outputPath"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
             require(outputPath.isNotEmpty()) { "outputPath cannot be empty" }
 
@@ -307,7 +305,7 @@ class ImageGenerationToolHandler(
         }
 
         response.use {
-            val bytes = PlatformMediaProtocol.readBodyLimited(it, MAX_IMAGE_JSON_BYTES)
+            val bytes = it.body?.bytes() ?: ByteArray(0)
             if (route.platform) {
                 PlatformMediaProtocol.requireSuccessfulResponse(it.code, bytes)
             } else if (!it.isSuccessful) {
@@ -416,7 +414,7 @@ class ImageGenerationToolHandler(
             if (!response.isSuccessful) {
                 throw IllegalStateException("image download failed (${response.code})")
             }
-            PlatformMediaProtocol.readBodyLimited(response, MAX_IMAGE_BYTES).also(::requireSupportedImage)
+            (response.body?.bytes() ?: ByteArray(0)).also(::requireSupportedImage)
         }
     }
 
@@ -451,9 +449,6 @@ class ImageGenerationToolHandler(
         private const val BUNDLED_IMAGE_PROVIDER_NAME = "Xiaowan Image Provider"
         internal const val DEFAULT_IMAGE_BASE_URL = "https://cloud.omnimind.com.cn"
         internal const val DEFAULT_IMAGE_MODEL = "gpt-image-2"
-        internal const val MAX_IMAGE_BYTES: Long = 20L * 1024L * 1024L
-        internal const val MAX_IMAGE_JSON_BYTES: Long = 32L * 1024L * 1024L
-        internal const val MAX_IMAGE_PROMPT_BYTES: Int = 64 * 1024
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
         private val SUPPORTED_OUTPUT_FORMATS = setOf("png", "webp", "jpeg")
         private val IMAGE_GENERATION_ENDPOINT_SUFFIXES = listOf(
@@ -465,6 +460,16 @@ class ImageGenerationToolHandler(
             profileApiKey: String,
             bundledApiKey: String,
         ): Boolean = bundledApiKey.isNotBlank() && profileApiKey.isBlank()
+
+        /**
+         * The configured image provider owns prompt capacity.  The runtime only
+         * normalizes the required tool argument, so a local policy cannot reject
+         * an otherwise valid provider request before it reaches the harness.
+         */
+        internal fun requireImageGenerationPrompt(rawPrompt: String?): String =
+            rawPrompt?.trim().orEmpty().also { prompt ->
+                require(prompt.isNotEmpty()) { "prompt cannot be empty" }
+            }
 
         internal fun resolveImageGenerationEndpoint(baseUrl: String, apiKey: String): String {
             require(apiKey.isNotBlank()) { "Image provider apiKey is empty" }
@@ -487,18 +492,11 @@ class ImageGenerationToolHandler(
         internal fun decodeBase64Image(encoded: String): ByteArray? {
             val normalized = encoded.substringAfter(',', encoded).filterNot(Char::isWhitespace)
             if (normalized.isBlank()) return null
-            val maximumEncodedLength = ((MAX_IMAGE_BYTES + 2L) / 3L) * 4L + 4L
-            if (normalized.length.toLong() > maximumEncodedLength) {
-                throw IllegalStateException("generated image exceeds the 20 MB limit")
-            }
             val padded = normalized + "=".repeat((4 - normalized.length % 4) % 4)
             val decoded = runCatching { Base64.getDecoder().decode(padded) }
                 .recoverCatching { Base64.getUrlDecoder().decode(padded) }
                 .getOrNull()
                 ?: return null
-            if (decoded.size.toLong() > MAX_IMAGE_BYTES) {
-                throw IllegalStateException("generated image exceeds the 20 MB limit")
-            }
             return decoded
         }
 
@@ -561,9 +559,6 @@ class ImageGenerationToolHandler(
 
         internal fun requireSupportedImage(bytes: ByteArray) {
             require(bytes.isNotEmpty()) { "image generation returned empty image data" }
-            require(bytes.size.toLong() <= MAX_IMAGE_BYTES) {
-                "generated image exceeds the 20 MB limit"
-            }
             val png = bytes.size >= 8 &&
                 bytes[0] == 0x89.toByte() && bytes[1] == 0x50.toByte() &&
                 bytes[2] == 0x4E.toByte() && bytes[3] == 0x47.toByte()

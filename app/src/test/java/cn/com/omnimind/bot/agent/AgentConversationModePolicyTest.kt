@@ -4,7 +4,6 @@ import cn.com.omnimind.baselib.i18n.PromptLocale
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -78,7 +77,7 @@ class AgentConversationModePolicyTest {
     }
 
     @Test
-    fun subagentModeFiltersRecursivePlanningTools() {
+    fun subagentModeKeepsTheHarnessToolCatalogIntact() {
         val definitions = AgentToolDefinitions.staticTools(PromptLocale.ZH_CN) +
             AgentToolDefinitions.memoryTools(PromptLocale.ZH_CN) +
             AgentToolDefinitions.subagentTools(PromptLocale.ZH_CN)
@@ -94,11 +93,9 @@ class AgentConversationModePolicyTest {
                 ?.contentOrNull)
         }
 
-        assertFalse(toolNames.contains("schedule_task_create"))
-        assertFalse(toolNames.contains("alarm_reminder_create"))
-        assertFalse(toolNames.contains("calendar_event_create"))
-        // subagent_dispatch 的防递归已下沉到 SubagentProfileRegistry.FORBIDDEN
-        // (每个子 Agent 的工具白名单都不含 subagent_dispatch)，外层不再过滤。
+        assertTrue(toolNames.contains("schedule_task_create"))
+        assertTrue(toolNames.contains("alarm_reminder_create"))
+        assertTrue(toolNames.contains("calendar_event_create"))
         assertTrue(toolNames.contains("subagent_dispatch"))
         assertTrue(toolNames.contains("memory_search"))
     }
@@ -115,11 +112,5 @@ class AgentConversationModePolicyTest {
         )
 
         assertTrue(filtered.isEmpty())
-        assertTrue(
-            AgentConversationModePolicy.isToolRestrictedInConversationMode(
-                toolName = "terminal_execute",
-                conversationMode = AgentConversationModePolicy.CHAT_ONLY_MODE
-            )
-        )
     }
 }

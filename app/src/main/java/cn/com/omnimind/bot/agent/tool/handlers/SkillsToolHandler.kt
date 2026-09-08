@@ -32,23 +32,33 @@ class SkillsToolHandler(
         toolHandle: AgentToolExecutionHandle
     ): ToolExecutionResult {
         return when (toolCall.function.name) {
-            "skills_list" -> executeSkillsList(args, env.workspaceDescriptor, callback)
-            "skills_read" -> executeSkillsRead(args, env.workspaceDescriptor, callback)
+            "skills_list" -> executeSkillsList(
+                args,
+                env.workspaceDescriptor,
+                callback,
+            )
+            "skills_read" -> executeSkillsRead(
+                args,
+                env.workspaceDescriptor,
+                callback,
+            )
             else -> ToolExecutionResult.Error(toolCall.function.name, "Unknown skills tool")
         }
     }
 
-    private suspend fun executeSkillsList(args: JsonObject, workspace: AgentWorkspaceDescriptor, callback: AgentCallback): ToolExecutionResult {
+    private suspend fun executeSkillsList(
+        args: JsonObject,
+        workspace: AgentWorkspaceDescriptor,
+        callback: AgentCallback,
+    ): ToolExecutionResult {
         val toolName = "skills_list"
         return try {
             helper.requireWorkspaceStorageAccess(callback)?.let { return it }
             val query = args["query"]?.jsonPrimitive?.contentOrNull?.trim().orEmpty()
-            val limit = args["limit"]?.jsonPrimitive?.intOrNull?.coerceIn(1, 200) ?: SharedHelper.DEFAULT_SKILLS_LIST_LIMIT
+            val limit = args["limit"]?.jsonPrimitive?.intOrNull?.takeIf { it > 0 }
             val normalizedQuery = query.lowercase()
             val entries = skillIndexService.listInstalledSkills()
                 .filter { entry ->
-                    val compatibility = SkillCompatibilityChecker.evaluate(entry)
-                    if (!compatibility.available) return@filter false
                     if (normalizedQuery.isBlank()) true
                     else listOf(
                         entry.id,
@@ -58,7 +68,7 @@ class SkillsToolHandler(
                         entry.shellRootPath
                     ).any { it.lowercase().contains(normalizedQuery) }
                 }
-                .take(limit)
+                .let { skills -> if (limit != null) skills.take(limit) else skills }
             val items = entries.map { entry ->
                 mapOf(
                     "id" to entry.id, "name" to entry.name,
@@ -95,16 +105,17 @@ class SkillsToolHandler(
         }
     }
 
-    private suspend fun executeSkillsRead(args: JsonObject, workspace: AgentWorkspaceDescriptor, callback: AgentCallback): ToolExecutionResult {
+    private suspend fun executeSkillsRead(
+        args: JsonObject,
+        workspace: AgentWorkspaceDescriptor,
+        callback: AgentCallback,
+    ): ToolExecutionResult {
         val toolName = "skills_read"
         return try {
             helper.requireWorkspaceStorageAccess(callback)?.let { return it }
             val skillId = args["skillId"]?.jsonPrimitive?.content?.trim().orEmpty()
             require(skillId.isNotEmpty()) { "缺少 skillId" }
-            val maxChars = args["maxChars"]?.jsonPrimitive?.intOrNull?.coerceIn(512, 64_000) ?: SharedHelper.DEFAULT_SKILL_READ_MAX_CHARS
             val entry = skillIndexService.findInstalledSkill(skillId) ?: throw IllegalArgumentException("未找到 skill：$skillId")
-            val compatibility = SkillCompatibilityChecker.evaluate(entry)
-            require(compatibility.available) { compatibility.reason ?: "当前环境不可用" }
             val resolved = skillLoader.load(entry, "agent 主动读取 skill") ?: throw IllegalStateException("读取 SKILL.md 失败：${entry.shellSkillFilePath}")
             val skillFile = File(entry.skillFilePath)
             val artifact = workspaceManager.buildArtifactForFile(skillFile, toolName)
@@ -118,7 +129,7 @@ class SkillsToolHandler(
                 "references" to resolved.loadedReferences,
                 "metadata" to resolved.metadata.mapValues { (_, value) -> resolveDistributionText(value) },
                 "frontmatter" to resolved.frontmatter.mapValues { (_, value) -> resolveDistributionText(value) },
-                "bodyMarkdown" to helper.truncateText(resolveDistributionText(resolved.bodyMarkdown), maxChars),
+                "bodyMarkdown" to resolveDistributionText(resolved.bodyMarkdown),
                 "uri" to artifact.uri
             )
             ToolExecutionResult.ContextResult(

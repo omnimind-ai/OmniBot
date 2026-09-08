@@ -64,7 +64,7 @@ internal object SandboxConnectorContract {
         },
         "xiaowanDefaults" to mapOf(
             "reasoning_effort" to XiaowanChatCompletionRequestFactory.DEFAULT_REASONING_EFFORT,
-            "max_tokens" to XiaowanChatCompletionRequestFactory.DEFAULT_MAX_TOKENS,
+            "max_tokens" to null,
             "temperature" to XiaowanChatCompletionRequestFactory.DEFAULT_TEMPERATURE,
         ),
         "dashboardBridge" to mapOf(
@@ -99,8 +99,6 @@ internal object SandboxProjectToolPolicy {
     const val XIAOWAN_INVOKE = "xiaowan.invoke"
 
     private const val PROJECT_ID_PREFIX = "local.project."
-    private const val MAX_TOOLS = 32
-    private const val MAX_CONNECTORS = 16
     private val toolName = Regex("^[a-z][a-z0-9_]{1,39}$")
     private val connectorId = Regex("^[a-z][a-z0-9_]{1,39}$")
 
@@ -114,12 +112,6 @@ internal object SandboxProjectToolPolicy {
             "Unsupported project toolkit schema: ${toolkit.schemaVersion}"
         }
         require(toolkit.tools.isNotEmpty()) { "Project toolkit must declare at least one tool" }
-        require(toolkit.tools.size <= MAX_TOOLS) {
-            "Project toolkit declares ${toolkit.tools.size} tools; the limit is $MAX_TOOLS"
-        }
-        require(toolkit.connectors.size <= MAX_CONNECTORS) {
-            "Project toolkit declares ${toolkit.connectors.size} connectors; the limit is $MAX_CONNECTORS"
-        }
         val duplicateConnector = toolkit.connectors.groupBy(SandboxProjectConnector::id)
             .entries.firstOrNull { it.value.size > 1 }
             ?.key
@@ -448,8 +440,8 @@ internal object SandboxProjectConnectorRegistry {
                 "Project tool ${tool.name} instruction exceeds $MAX_INSTRUCTION_CHARS characters"
             }
             config["max_tokens"]?.let { value ->
-                require(value.jsonPrimitive.intOrNull?.let { it in 32..4_096 } == true) {
-                    "Project tool ${tool.name} max_tokens must be an integer between 32 and 4096"
+                require(value.jsonPrimitive.intOrNull != null) {
+                    "Project tool ${tool.name} max_tokens must be an integer"
                 }
             }
             config["temperature"]?.let { value ->
@@ -717,8 +709,7 @@ internal object SandboxProjectConnectorRegistry {
         return XiaowanChatCompletionRequestFactory.create(
             prompt = prompt,
             system = system,
-            maxTokens = config["max_tokens"]?.jsonPrimitive?.intOrNull
-                ?: XiaowanChatCompletionRequestFactory.DEFAULT_MAX_TOKENS,
+            maxTokens = config["max_tokens"]?.jsonPrimitive?.intOrNull,
             temperature = config["temperature"]?.jsonPrimitive?.doubleOrNull
                 ?: XiaowanChatCompletionRequestFactory.DEFAULT_TEMPERATURE,
             reasoningEffort = reasoningEffort,

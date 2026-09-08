@@ -31,8 +31,8 @@ class WorkspaceFileService(
     fun list(
         path: String?,
         recursive: Boolean = false,
-        maxDepth: Int = 2,
-        limit: Int = 200
+        maxDepth: Int? = null,
+        limit: Int? = null
     ): Map<String, Any?> {
         val workspace = getWorkspaceDescriptor()
         val directory = if (path.isNullOrBlank()) {
@@ -46,18 +46,12 @@ class WorkspaceFileService(
         require(directory.exists() && directory.isDirectory) {
             "目录不存在：${directory.absolutePath}"
         }
-        val items = if (recursive) {
-            directory.walkTopDown()
-                .maxDepth(maxDepth.coerceIn(1, 6))
-                .drop(1)
-                .take(limit.coerceIn(1, 1000))
-                .toList()
-        } else {
-            directory.listFiles()
-                ?.sortedWith(compareBy<File> { !it.isDirectory }.thenBy { it.name.lowercase() })
-                ?.take(limit.coerceIn(1, 1000))
-                ?: emptyList()
-        }
+        val items = selectWorkspaceFiles(
+            directory = directory,
+            recursive = recursive,
+            maxDepth = maxDepth,
+            limit = limit
+        )
         return linkedMapOf(
             "path" to (workspaceManager.shellPathForAndroid(directory) ?: directory.absolutePath),
             "androidPath" to directory.absolutePath,
@@ -78,7 +72,7 @@ class WorkspaceFileService(
 
     fun readFile(
         path: String,
-        maxChars: Int = 64_000,
+        maxChars: Int? = null,
         offset: Int = 0,
         lineStart: Int? = null,
         lineCount: Int? = null
@@ -90,24 +84,17 @@ class WorkspaceFileService(
         )
         require(file.exists() && file.isFile) { "文件不存在：${file.absolutePath}" }
         val content = file.readText()
-        val sliced = when {
-            lineStart != null -> {
-                val lines = content.lines()
-                val from = (lineStart - 1).coerceAtLeast(0).coerceAtMost(lines.size)
-                val until = if (lineCount != null) {
-                    (from + lineCount.coerceAtLeast(1)).coerceAtMost(lines.size)
-                } else {
-                    lines.size
-                }
-                lines.subList(from, until).joinToString("\n")
-            }
-            offset > 0 -> content.drop(offset.coerceAtLeast(0))
-            else -> content
-        }
+        val renderedContent = sliceWorkspaceFileText(
+            content = content,
+            maxChars = maxChars,
+            offset = offset,
+            lineStart = lineStart,
+            lineCount = lineCount
+        )
         return linkedMapOf(
             "file" to filePayload(file, workspace),
-            "content" to if (sliced.length <= maxChars) sliced else sliced.take(maxChars),
-            "truncated" to (sliced.length > maxChars)
+            "content" to renderedContent.content,
+            "truncated" to renderedContent.truncated
         )
     }
 
@@ -240,4 +227,66 @@ class WorkspaceFileService(
             "retentionPolicy" to retentionPolicy
         )
     }
+}
+
+/**
+ * WebChat is a workspace viewer, not a second policy layer over the Agent
+ * filesystem. Limits are opt-in request parameters; omitting them returns the
+ * complete requested tree.
+ */
+internal fun selectWorkspaceFiles(
+    directory: File,
+    recursive: Boolean,
+    maxDepth: Int?,
+    limit: Int?,
+): List<File> {
+    val requestedDepth = maxDepth?.takeIf { it > 0 }
+    val requestedLimit = limit?.takeIf { it > 0 }
+    return if (recursive) {
+        val walk = requestedDepth?.let { directory.walkTopDown().maxDepth(it) }
+            ?: directory.walkTopDown()
+        val files = walk.drop(1)
+        (requestedLimit?.let(files::take) ?: files).toList()
+    } else {
+        val files = directory.listFiles()
+            ?.sortedWith(compareBy<File> { !it.isDirectory }.thenBy { it.name.lowercase() })
+            ?: emptyList()
+        requestedLimit?.let { files.take(it) } ?: files
+    }
+}
+
+internal data class WorkspaceFileTextSlice(
+    val content: String,
+    val truncated: Boolean,
+)
+
+internal fun sliceWorkspaceFileText(
+    content: String,
+    maxChars: Int?,
+    offset: Int,
+    lineStart: Int?,
+    lineCount: Int?,
+): WorkspaceFileTextSlice {
+    val sliced = when {
+        lineStart != null -> {
+            val lines = content.lines()
+            val from = (lineStart - 1).coerceAtLeast(0).coerceAtMost(lines.size)
+            val until = if (lineCount != null) {
+                (from + lineCount.coerceAtLeast(1)).coerceAtMost(lines.size)
+            } else {
+                lines.size
+            }
+            lines.subList(from, until).joinToString("\n")
+        }
+        offset > 0 -> content.drop(offset.coerceAtLeast(0))
+        else -> content
+    }
+    val rendered = maxChars
+        ?.takeIf { it > 0 }
+        ?.let { sliced.take(it) }
+        ?: sliced
+    return WorkspaceFileTextSlice(
+        content = rendered,
+        truncated = rendered.length < sliced.length
+    )
 }

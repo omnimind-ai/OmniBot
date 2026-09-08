@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -87,7 +86,7 @@ void main() {
           ),
         ),
       );
-      await tester.pumpAndSettle();
+      await _waitForImage(tester);
 
       final boundsSize = tester.getSize(find.byKey(boundsKey));
       expect(boundsSize.width, 320);
@@ -114,7 +113,7 @@ void main() {
         ),
       ),
     );
-    await tester.pumpAndSettle();
+    await _waitForImage(tester);
 
     final boundsSize = tester.getSize(find.byKey(boundsKey));
     expect(boundsSize.width, 200);
@@ -140,7 +139,7 @@ void main() {
         ),
       ),
     );
-    await tester.pumpAndSettle();
+    await _waitForImage(tester);
 
     final boundsSize = tester.getSize(find.byKey(boundsKey));
     expect(boundsSize.width, 400);
@@ -151,6 +150,9 @@ void main() {
     tester,
   ) async {
     const boundsKey = ValueKey('image-preview-share-bounds');
+    await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
+    final context = tester.element(find.byType(SizedBox).first);
+    await tester.runAsync(() => precacheImage(FileImage(imageFile), context));
 
     await tester.pumpWidget(
       MaterialApp(
@@ -167,9 +169,14 @@ void main() {
         ),
       ),
     );
-    await tester.pumpAndSettle();
+    await _waitForImage(tester);
 
     await tester.longPress(find.byKey(boundsKey));
+    await tester.runAsync(() async {
+      for (var i = 0; i < 100 && fileChannelCalls.isEmpty; i++) {
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+    });
     await tester.pumpAndSettle();
 
     expect(fileChannelCalls, hasLength(1));
@@ -204,4 +211,20 @@ Future<Uint8List> _createPngBytes({
   final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
   image.dispose();
   return byteData!.buffer.asUint8List();
+}
+
+Future<void> _waitForImage(WidgetTester tester) async {
+  final context = tester.element(find.byType(OmnibotInteractiveImageView));
+  final source = tester
+      .widget<OmnibotInteractiveImageView>(
+        find.byType(OmnibotInteractiveImageView),
+      )
+      .source;
+  final ImageProvider provider = switch (source) {
+    MemoryImageSource(:final bytes) => MemoryImage(bytes),
+    FileImageSource(:final path) => FileImage(File(path)),
+    NetworkImageSource(:final url) => NetworkImage(url),
+  };
+  await tester.runAsync(() => precacheImage(provider, context));
+  await tester.pumpAndSettle();
 }

@@ -1,5 +1,6 @@
 // ignore: unused_import
 import 'package:intl/intl.dart' as intl;
+
 import 'app_localizations.dart';
 
 // ignore_for_file: type=lint
@@ -7,6 +8,24 @@ import 'app_localizations.dart';
 /// The translations for English (`en`).
 class AppLocalizationsEn extends AppLocalizations {
   AppLocalizationsEn([String locale = 'en']) : super(locale);
+
+  @override
+  String get memoryShortRetention =>
+      'Short-term memories stay on this device without automatic expiry. Long-press an entry to delete it or select several to delete.';
+
+  @override
+  String get memoryShortDeleteConfirm => 'Delete short-term memories?';
+
+  @override
+  String get memoryShortDeleteScope =>
+      'Permanently deletes only the selected short-term entries and their search index. Chat history, original quick notes, extracted long-term memories, and the current conversation context are preserved.';
+
+  @override
+  String get memoryShortDeleteFailed =>
+      'Deletion was not completed. The list has been refreshed; select the entries again and retry.';
+
+  @override
+  String get memoryShortDeleted => 'Short-term memories deleted';
 
   @override
   String get appName => 'Omnibot';
@@ -1543,6 +1562,9 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get alpineDeepSeekHarness =>
       'DeepSeek Harness (dsh) official ACP runtime';
+
+  @override
+  String get alpineKimiCode => 'Kimi Code official CLI and local Web UI';
 
   @override
   String get alpineSshClient => 'SSH Client';

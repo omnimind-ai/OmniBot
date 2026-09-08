@@ -25,6 +25,7 @@ class AgentRunHeader extends StatefulWidget {
     required this.status,
     required this.startedAt,
     this.finishedAt,
+    this.activeToolLabel,
     this.expanded = false,
     this.onToggleExpanded,
   });
@@ -36,6 +37,10 @@ class AgentRunHeader extends StatefulWidget {
 
   /// When the turn ended. Null while it is running.
   final DateTime? finishedAt;
+
+  /// A display-only projection of the active ACP tool call. Null when the
+  /// turn is thinking or waiting for the next provider update.
+  final String? activeToolLabel;
 
   final bool expanded;
 
@@ -108,9 +113,11 @@ class _AgentRunHeaderState extends State<AgentRunHeader> {
     final running = widget.isRunning;
     final canToggleExpanded = !running && widget.onToggleExpanded != null;
     final label = running
-        ? (isEnglish
-              ? 'Processing ${_elapsedSeconds}s'
-              : '正在处理 ${_elapsedSeconds}s')
+        ? (widget.activeToolLabel?.trim().isNotEmpty == true
+              ? '${widget.activeToolLabel} · ${_elapsedSeconds}s'
+              : (isEnglish
+                    ? 'Processing ${_elapsedSeconds}s'
+                    : '正在处理 ${_elapsedSeconds}s'))
         : _finishedLabel(isEnglish);
     final labelColor = running
         ? palette.textTertiary
@@ -192,24 +199,30 @@ class _AgentRunHeaderState extends State<AgentRunHeader> {
       ],
     );
 
-    final content = Semantics(liveRegion: running, label: label, child: row);
+    final content = ExcludeSemantics(child: row);
 
     // Keep the same element tree across running -> finished. Swapping the
     // whole subtree from plain content to Material/InkWell recreates the
     // AnimatedSwitchers on the completion frame, which makes the header flash
     // instead of cross-fading while the process section folds.
-    return Padding(
-      padding: const EdgeInsets.only(top: 8, bottom: 4),
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-          onTap: running ? null : widget.onToggleExpanded,
-          borderRadius: BorderRadius.circular(10),
-          splashFactory: NoSplash.splashFactory,
-          overlayColor: const WidgetStatePropertyAll(Colors.transparent),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(2, 4, 2, 4),
-            child: content,
+    return Semantics(
+      container: true,
+      button: canToggleExpanded,
+      liveRegion: running,
+      label: label,
+      child: Padding(
+        padding: const EdgeInsets.only(top: 8, bottom: 4),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: running ? null : widget.onToggleExpanded,
+            borderRadius: BorderRadius.circular(10),
+            splashFactory: NoSplash.splashFactory,
+            overlayColor: const WidgetStatePropertyAll(Colors.transparent),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(2, 4, 2, 4),
+              child: content,
+            ),
           ),
         ),
       ),
@@ -217,7 +230,11 @@ class _AgentRunHeaderState extends State<AgentRunHeader> {
   }
 
   String _finishedLabel(bool isEnglish) {
-    final base = isEnglish ? 'Processed' : '已处理';
+    final base = widget.status == AgentRunStatus.failed
+        ? (isEnglish ? 'Failed' : '执行失败')
+        : widget.status == AgentRunStatus.cancelled
+        ? (isEnglish ? 'Cancelled' : '已取消')
+        : (isEnglish ? 'Processed' : '已处理');
     final elapsed = _formatElapsed(_elapsedSeconds);
     return elapsed.isEmpty ? base : '$base  $elapsed';
   }

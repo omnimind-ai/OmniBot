@@ -5,7 +5,7 @@ import cn.com.omnimind.assists.controller.http.HttpController
 import cn.com.omnimind.baselib.i18n.AppLocaleManager
 import cn.com.omnimind.baselib.llm.ChatCompletionMessage
 import cn.com.omnimind.bot.agent.workspace.memory.LongTermMemoryIndex
-import cn.com.omnimind.bot.agent.workspace.memory.TurnMemoryLoadTracker
+import cn.com.omnimind.bot.agent.tool.AgentCapabilityModule
 import cn.com.omnimind.bot.agent.tool.AgentToolHandlerModule
 import cn.com.omnimind.bot.plugin.OmniPluginHost
 import cn.com.omnimind.bot.plugin.OmniPluginSession
@@ -28,7 +28,8 @@ import java.util.UUID
 class OmniAgentExecutor(
     private val context: Context,
     private val scope: CoroutineScope,
-    private val scheduleToolBridge: AgentScheduleToolBridge
+    private val scheduleToolBridge: AgentScheduleToolBridge,
+    private val sessionCapabilityModules: List<AgentCapabilityModule> = emptyList(),
 ) {
     internal data class TimeContextSnapshot(
         val locale: cn.com.omnimind.baselib.i18n.PromptLocale,
@@ -38,29 +39,18 @@ class OmniAgentExecutor(
     )
 
     companion object {
-        /**
-         * Keep a clean native-tool baseline while MCP/plugin discovery is
-         * being measured. The capability implementations remain installed;
-         * this switch only prevents them from entering a normal Agent turn.
-         */
-        private const val EPHEMERAL_CACHE_TYPE = "ephemeral"
         internal const val TIME_CONTEXT_MIN_REFRESH_MILLIS = 60 * 60 * 1000L
         private val timeContextCacheLock = Any()
         @Volatile
         private var timeContextSnapshot: TimeContextSnapshot? = null
 
         internal fun buildCachedSystemPromptContent(prompt: String): JsonElement {
-            return buildJsonArray {
-                add(
-                    buildJsonObject {
-                        put("type", "text")
-                        put("text", prompt)
-                        put("cache_control", buildJsonObject {
-                            put("type", EPHEMERAL_CACHE_TYPE)
-                        })
-                    }
-                )
-            }
+            // ACP delegates provider wire-format ownership to the configured
+            // Provider. An OpenAI-compatible route must receive the standard
+            // string content shape; an unconditional Anthropic-style
+            // cache_control block turns the message into an array and breaks
+            // providers such as LiteLLM that expect strings.
+            return JsonPrimitive(prompt)
         }
 
         internal fun resolveTimeContextSnapshot(
@@ -216,13 +206,11 @@ class OmniAgentExecutor(
                     soul = memoryService.readSoul().trim(),
                     longTermMemory = "",
                     todayShortMemory = "",
-                    longTermIndexSummary = ""
                 )
             }.getOrNull()
             val ltmIndex = runCatching {
                 LongTermMemoryIndex(workspaceManager)
             }.getOrNull()
-            val memoryLoadTracker = TurnMemoryLoadTracker()
             val skillIndexService = SkillIndexService(context, workspaceManager)
             val skillLoader = SkillLoader(workspaceManager)
             val installedSkills = skillIndexService.listInstalledSkills()
@@ -235,10 +223,6 @@ class OmniAgentExecutor(
                     )
                 }
                 .sortedBy { it.id.lowercase() }
-            val failureLearningSkill = SelfImprovingSkillFailureHook.resolveInstalledSkill(
-                installedSkills = installedSkills,
-                skillLoader = skillLoader
-            )
             // Pi-style progressive disclosure: skill bodies are loaded through
             // skills_read and become replayable tool results instead of a volatile
             // leading message that invalidates the full conversation prefix.
@@ -261,10 +245,9 @@ class OmniAgentExecutor(
                 conversationMode = conversationMode,
                 terminalDistribution = terminalDistribution,
                 pluginToolDefinitions = activePluginSession?.toolDefinitions.orEmpty(),
-                userMessage = userMessage,
-                toolRoutingMode = AgentToolRoutingMode.fromSkillFrontmatter(
-                    resolvedSkills.map(ResolvedSkillContext::frontmatter),
-                ),
+                capabilityToolDefinitions = sessionCapabilityModules.flatMap {
+                    it.toolDefinitions
+                },
             )
             val initialMessages = buildInitialMessages(
                 promptSeed = historyRepository.buildPromptSeed(
@@ -289,7 +272,7 @@ class OmniAgentExecutor(
             val llmClient = HttpAgentLlmClient(
                 scope = scope,
                 json = json,
-                modelOverride = modelOverride
+                modelOverride = modelOverride,
             )
             val toolImageContinuationPolicy = runCatching {
                 AgentToolImageContinuationPolicyResolver.resolve(
@@ -304,14 +287,6 @@ class OmniAgentExecutor(
                     )
                 )
             }.getOrDefault(AgentToolImageContinuationPolicy.DEFAULT)
-            val contextCompactor = AgentConversationContextCompactor(
-                historyRepository = historyRepository,
-                modelScene = agentModelScene,
-                modelOverride = modelOverride,
-                reasoningEffort = reasoningEffort,
-                promptCacheKey = promptCacheKey,
-                json = json
-            )
             val eventAdapter = AgentEventAdapter(json)
             // Break the SubagentDispatcher ↔ AgentToolRouter cycle: hand the
             // dispatcher a lazy reference to the router that we'll populate
@@ -338,10 +313,11 @@ class OmniAgentExecutor(
                 subagentDispatcher = subagentDispatcher,
                 toolCatalog = toolRegistry,
                 terminalDistribution = terminalDistribution,
-                capabilityModules = if (activePluginSession != null) {
-                    listOf(AgentToolHandlerModule(activePluginSession.toolHandlers))
-                } else {
-                    emptyList()
+                capabilityModules = buildList {
+                    addAll(sessionCapabilityModules)
+                    if (activePluginSession != null) {
+                        add(AgentToolHandlerModule(activePluginSession.toolHandlers))
+                    }
                 }
             )
             pluginSession = null
@@ -361,14 +337,19 @@ class OmniAgentExecutor(
                     initialMessages = initialMessages,
                     conversationId = conversationId,
                     promptCacheKey = promptCacheKey,
-                    contextCompactor = contextCompactor,
+                    contextCompactor = AgentConversationContextCompactor(
+                        historyRepository = historyRepository,
+                        modelScene = agentModelScene,
+                        modelOverride = modelOverride,
+                        reasoningEffort = reasoningEffort,
+                        promptCacheKey = promptCacheKey,
+                    ),
                     executionEnv = DefaultAgentExecutionEnvironment(
                         agentRunId = agentRunId,
                         userMessage = userMessage,
                         runtimeContextRepository = runtimeContextRepository,
                         workspaceDescriptor = workspaceDescriptor,
                         resolvedSkills = resolvedSkills,
-                        failureLearningSkill = failureLearningSkill,
                         workspaceManager = workspaceManager,
                         workspaceMemoryService = memoryService,
                         conversationMode = conversationMode,
@@ -377,8 +358,7 @@ class OmniAgentExecutor(
                         terminalEnvironment = terminalEnvironment,
                         runControl = runControl,
                         permissionRequester = permissionRequester,
-                        longTermMemoryIndex = ltmIndex,
-                        turnMemoryLoadTracker = memoryLoadTracker
+                        longTermMemoryIndex = ltmIndex
                     )
                 )
             )

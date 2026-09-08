@@ -136,6 +136,19 @@ class ModelProviderCustomHeadersTest {
     }
 
     @Test
+    fun sanitizeCustomHeaders_rejectsLineBreaksForOfficialHarnessExport() {
+        val sanitized = ProviderCustomHeaderUtils.sanitizeCustomHeaders(
+            linkedMapOf(
+                "X-Bad-Name\nInjected" to "value",
+                "X-Bad-Value" to "safe\r\nInjected: yes",
+                "X-Good" to "value",
+            )
+        )
+
+        assertEquals(mapOf("X-Good" to "value"), sanitized)
+    }
+
+    @Test
     fun redactHeadersForLog_masksSensitiveHeaderValues() {
         val redacted = ProviderCustomHeaderUtils.redactHeadersForLog(
             linkedMapOf(

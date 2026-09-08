@@ -52,7 +52,10 @@ class SubagentToolHandler(
                 parseTaskSpec(element, defaultProfileId)
             }
             require(specs.isNotEmpty()) { "tasks 不能为空" }
-            val concurrency = args["concurrency"]?.jsonPrimitive?.intOrNull?.coerceIn(1, 6) ?: 2
+            val concurrency = resolveSubagentConcurrency(
+                requested = args["concurrency"]?.jsonPrimitive?.intOrNull,
+                taskCount = specs.size,
+            )
             val mergeInstruction = args["mergeInstruction"]?.jsonPrimitive?.contentOrNull?.trim()
 
             val results = dispatcher.dispatch(
@@ -129,15 +132,13 @@ class SubagentToolHandler(
                     return SubagentDispatcher.SubagentTaskSpec(
                         profileId = (element["profileId"]?.jsonPrimitive?.contentOrNull
                             ?.trim()?.ifEmpty { null }) ?: defaultProfileId,
-                        instruction = fallback,
-                        budgetRounds = element["budgetRounds"]?.jsonPrimitive?.intOrNull
+                        instruction = fallback
                     )
                 }
                 SubagentDispatcher.SubagentTaskSpec(
                     profileId = (element["profileId"]?.jsonPrimitive?.contentOrNull
                         ?.trim()?.ifEmpty { null }) ?: defaultProfileId,
-                    instruction = instruction,
-                    budgetRounds = element["budgetRounds"]?.jsonPrimitive?.intOrNull
+                    instruction = instruction
                 )
             }
             else -> null
@@ -155,4 +156,13 @@ class SubagentToolHandler(
             "error" to errorMessage
         )
     }
+}
+
+internal fun resolveSubagentConcurrency(requested: Int?, taskCount: Int): Int {
+    require(taskCount > 0) { "tasks 不能为空" }
+    if (requested != null) {
+        require(requested > 0) { "concurrency 必须大于 0" }
+        return requested
+    }
+    return taskCount
 }

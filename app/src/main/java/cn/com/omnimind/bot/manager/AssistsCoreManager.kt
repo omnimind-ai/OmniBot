@@ -23,6 +23,7 @@ import cn.com.omnimind.baselib.llm.AiRequestLogStore
 import cn.com.omnimind.baselib.llm.DeepSeekProvider
 import cn.com.omnimind.baselib.llm.ModelProviderConfig
 import cn.com.omnimind.baselib.llm.ModelProviderProfile
+import cn.com.omnimind.baselib.llm.ReasoningEffort
 import cn.com.omnimind.baselib.llm.ModelProviderConfigStore
 import cn.com.omnimind.baselib.llm.ModelSceneRegistry
 import cn.com.omnimind.baselib.llm.ProviderModelOption
@@ -112,8 +113,6 @@ import java.util.ArrayDeque
 import kotlin.collections.mapOf
 import kotlin.coroutines.resume
 
-private const val MAX_PERSISTED_THINKING_CHARS = 16 * 1024
-private const val THINKING_TRUNCATION_NOTICE = "[Earlier reasoning omitted]\n"
 
 internal fun resolveDirectAgentModelOverride(
     raw: Map<String, Any?>?,
@@ -143,11 +142,7 @@ internal fun resolveDirectAgentModelOverride(
 }
 
 internal fun normalizeReasoningEffort(raw: String?): String? {
-    val normalized = raw?.trim()?.lowercase().orEmpty()
-    return when (normalized) {
-        "no", "low", "high", "xhigh", "max" -> normalized
-        else -> null
-    }
+    return ReasoningEffort.normalize(raw)
 }
 
 internal fun resolveAgentReasoningEffort(
@@ -158,7 +153,7 @@ internal fun resolveAgentReasoningEffort(
     }.getOrNull()
 ): String? {
     if (!reasoningEffort.isNullOrBlank()) {
-        return reasoningEffort
+        return ReasoningEffort.normalize(reasoningEffort)
     }
     val useOfficialDeepSeekDefault = if (modelOverride != null) {
         DeepSeekProvider.shouldUseOfficialAdapter(
@@ -171,7 +166,7 @@ internal fun resolveAgentReasoningEffort(
             apiBase = fallbackProfile?.baseUrl
         )
     }
-    return if (useOfficialDeepSeekDefault) "max" else null
+    return if (useOfficialDeepSeekDefault) ReasoningEffort.MAX else null
 }
 
 internal data class AgentFinalErrorResolution(
@@ -1232,7 +1227,7 @@ class AssistsCoreManager(private val context: Context) {
                     )
                 )
             ),
-            maxCompletionTokens = 128,
+            maxCompletionTokens = null,
             temperature = 0.7,
             tools = listOf(
                 ChatCompletionTool(
@@ -1661,6 +1656,10 @@ class AssistsCoreManager(private val context: Context) {
                             expectedProfileBaseUrl
                         )
                 ) { "provider profile changed" }
+                if (!useProvidedApiKey && !useProvidedCustomHeaders &&
+                    ModelProviderConfigStore.sameCanonicalEndpoint(apiBase, profile.baseUrl)) {
+                    ModelProviderConfigStore.rememberModels(context, profile, models)
+                }
                 withContext(Dispatchers.Main) {
                     result.success(models.map { it.toMap() })
                 }
@@ -1798,13 +1797,19 @@ class AssistsCoreManager(private val context: Context) {
 
         workJob.launch {
             try {
+                val previousProviderId = SceneModelBindingStore.getBinding(sceneId)
+                    ?.providerProfileId
                 SceneModelBindingStore.saveBinding(sceneId, providerProfileId, modelId)
                 if (sceneId == SceneOperationConfigStore.SCENE_ID) {
                     SceneOperationConfigStore.saveConfig(
                         SceneOperationConfig(useOfficialService = false)
                     )
                 }
-                if (sceneId == "scene.dispatch.model") {
+                // A model selection is session configuration, not a change of
+                // credentials or endpoint. Preserve the live ACP session that
+                // has just accepted session/set_config_option for this model.
+                if (sceneId == "scene.dispatch.model" &&
+                    previousProviderId != providerProfileId) {
                     AgentRuntimeManager.getIfInitialized()
                         ?.invalidateSharedProviderRuntime()
                 }
@@ -2078,8 +2083,8 @@ class AssistsCoreManager(private val context: Context) {
     }
 
     fun getWorkspaceShortMemories(call: MethodCall, result: MethodChannel.Result) {
-        val days = (call.argument<Int>("days") ?: 14).coerceIn(1, 90)
-        val limit = (call.argument<Int>("limit") ?: 240).coerceIn(1, 1000)
+        val days = call.argument<Int>("days")
+        val limit = call.argument<Int>("limit")
         workJob.launch {
             try {
                 val service = WorkspaceMemoryService(context)
@@ -2104,6 +2109,28 @@ class AssistsCoreManager(private val context: Context) {
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
                     result.error("GET_WORKSPACE_SHORT_MEMORY_ERROR", e.message, null)
+                }
+            }
+        }
+    }
+
+    fun deleteWorkspaceShortMemories(call: MethodCall, result: MethodChannel.Result) {
+        workJob.launch {
+            try {
+                val items = call.argument<List<Map<String, Any?>>>("items").orEmpty().map { item ->
+                    cn.com.omnimind.bot.agent.WorkspaceShortMemoryEntry(
+                        id = item["id"] as? String ?: "",
+                        date = item["date"] as? String ?: "",
+                        time = item["time"] as? String ?: "",
+                        content = item["content"] as? String ?: "",
+                        timestampMillis = 0
+                    )
+                }
+                val deleted = WorkspaceMemoryService(context).deleteShortMemoryEntries(items)
+                withContext(Dispatchers.Main) { result.success(mapOf("deletedCount" to deleted)) }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    result.error("DELETE_SHORT_MEMORY_ERROR", "删除失败，请刷新记忆列表后重试", null)
                 }
             }
         }

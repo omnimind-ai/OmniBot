@@ -1,5 +1,8 @@
 package cn.com.omnimind.bot.media
 
+import cn.com.omnimind.baselib.account.AccountApiException
+import cn.com.omnimind.baselib.account.AccountCredentialStorageException
+import cn.com.omnimind.baselib.account.AccountNotAuthenticatedException
 import cn.com.omnimind.baselib.account.AiAccessMode
 import cn.com.omnimind.baselib.account.AiRequestAccess
 import cn.com.omnimind.baselib.account.OmniAccount
@@ -58,14 +61,39 @@ internal class PlatformMediaGatewayExecutor(
         } catch (error: CancellationException) {
             throw error
         } catch (error: Throwable) {
-            throw PlatformGatewayException(
+            throw refreshFailure(error)
+        }
+        return executeRequest(requestFactory(requireCredentials(accessProvider())))
+    }
+
+    private fun refreshFailure(error: Throwable): PlatformGatewayException {
+        val sessionIsInvalid = error is AccountNotAuthenticatedException ||
+            (error is AccountApiException && (
+                error.statusCode == 401 ||
+                    error.errorCode.equals("invalid_refresh_token", ignoreCase = true)
+                ))
+        if (sessionIsInvalid) {
+            return PlatformGatewayException(
                 statusCode = 401,
                 errorCode = "invalid_access_token",
                 message = "登录状态已失效，请重新登录",
                 cause = error,
             )
         }
-        return executeRequest(requestFactory(requireCredentials(accessProvider())))
+        if (error is AccountCredentialStorageException) {
+            return PlatformGatewayException(
+                statusCode = null,
+                errorCode = "account_credential_storage_unavailable",
+                message = "登录凭证暂时无法读取，请重启应用后重试",
+                cause = error,
+            )
+        }
+        return PlatformGatewayException(
+            statusCode = null,
+            errorCode = "account_refresh_failed",
+            message = "登录状态暂时无法验证，请检查网络后重试",
+            cause = error,
+        )
     }
 
     private fun requireCredentials(access: AiRequestAccess): PlatformGatewayCredentials {
@@ -98,13 +126,6 @@ internal class PlatformMediaGatewayExecutor(
 }
 
 internal object PlatformMediaProtocol {
-    /**
-     * New API accepts JSON bodies below 16 MiB. Keep a full 1 MiB below that
-     * boundary so headers, proxy framing, and small server-side wrappers cannot
-     * turn an accepted client payload into a 413 at the public gateway.
-     */
-    internal const val MAX_PLATFORM_JSON_UTF8_BYTES: Long = 15L * 1024L * 1024L
-
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true
@@ -156,17 +177,6 @@ internal object PlatformMediaProtocol {
         )
     }
 
-    fun requirePlatformJsonRequestWithinLimit(jsonBody: String) {
-        val utf8Bytes = jsonBody.toByteArray(Charsets.UTF_8).size.toLong()
-        if (utf8Bytes > MAX_PLATFORM_JSON_UTF8_BYTES) {
-            throw PlatformGatewayException(
-                statusCode = null,
-                errorCode = "request_too_large",
-                message = "官方 AI 请求内容过大，请减少历史消息或图片后重试（发送上限 15 MiB）",
-            )
-        }
-    }
-
     fun readBodyLimited(response: Response, maxBytes: Long): ByteArray {
         require(maxBytes > 0) { "maxBytes must be positive" }
         val body = response.body ?: return ByteArray(0)
@@ -197,6 +207,8 @@ internal object PlatformMediaProtocol {
         stableUserMessageForErrorCode(code)?.let { return it }
         return when (code?.lowercase()) {
             "invalid_access_token" -> "登录状态已失效，请重新登录"
+            "account_credential_storage_unavailable" -> "登录凭证暂时无法读取，请重启应用后重试"
+            "account_refresh_failed" -> "登录状态暂时无法验证，请检查网络后重试"
             "access_denied" -> "当前官方模型或接口不可用"
             else -> when (statusCode) {
                 401 -> "登录状态已失效，请重新登录"

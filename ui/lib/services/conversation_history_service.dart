@@ -510,18 +510,22 @@ class ConversationHistoryService {
     required int offset,
     int? expectedMessageCount,
   }) async {
-    if (offset != 0) {
-      return (messages: <ChatMessageModel>[], hasMore: false);
-    }
-    final legacyMessages = await _restoreLegacyConversationMessages(
+    // An older native runtime may not implement the paged method but can
+    // still provide the complete canonical snapshot. Read that existing
+    // history boundary instead of retaining a separate legacy-only cursor:
+    // migration is then safe before later pages are requested.
+    final persistedMessages = await readConversationHistory(
       conversationId,
       mode: mode,
       expectedMessageCount: expectedMessageCount,
     );
-    final pageSize = limit <= 0 ? legacyMessages.length : limit;
+    final start = offset.clamp(0, persistedMessages.length).toInt();
+    final end = limit <= 0
+        ? persistedMessages.length
+        : (start + limit).clamp(0, persistedMessages.length).toInt();
     return (
-      messages: legacyMessages.take(pageSize).toList(),
-      hasMore: legacyMessages.length > pageSize,
+      messages: persistedMessages.sublist(start, end),
+      hasMore: end < persistedMessages.length,
     );
   }
 

@@ -8,8 +8,12 @@ package cn.com.omnimind.bot.agent
 internal object AgentRuntimeErrorSupport {
     const val PROVIDER_TLS_CERTIFICATE_FAILURE = "provider_tls_certificate_failure"
     const val PROVIDER_NOT_BOUND = "provider_not_bound"
+    const val PROVIDER_AUTHENTICATION_FAILED = "provider_authentication_failed"
     const val PROVIDER_UNAVAILABLE = "provider_unavailable"
     const val PROVIDER_MODEL_UNAVAILABLE = "provider_model_unavailable"
+    const val PROVIDER_STREAM_INTERRUPTED = "provider_stream_interrupted"
+    const val PROVIDER_STREAM_IDLE_TIMEOUT = "provider_stream_idle_timeout"
+    const val PROVIDER_REQUEST_TIMEOUT = "provider_request_timeout"
     const val PROVIDER_TOOL_CALL_INCOMPLETE = "provider_tool_call_incomplete"
     const val HARNESS_PREPARATION_IN_PROGRESS = "harness_preparation_in_progress"
     const val HARNESS_PROFILE_MISSING = "harness_profile_missing"
@@ -21,15 +25,23 @@ internal object AgentRuntimeErrorSupport {
     fun userFacingMessage(error: Throwable): String? {
         return when {
             isCertificateValidationFailure(error) -> CERTIFICATE_ERROR_MESSAGE
+            isAuthenticationFailure(error) ->
+                "服务商身份验证失败，请检查所选 Provider 的密钥和认证请求头。"
             isProviderNotBound(error) ->
                 "Agent Provider / 模型还没有对齐到 Dispatch Model（scene.dispatch.model）。" +
                     "Harness 安装不依赖这个绑定；请检查默认 Provider 和模型后重试。"
             isProviderUnavailable(error) ->
                 "统一 Agent Provider 不可用或凭据不完整。请检查 Provider 配置后重试。"
             isProviderModelUnavailable(error) ->
-                "统一 Agent 模型当前不可用。请刷新 Provider 模型列表并重新选择模型。"
+                "服务商拒绝了当前模型。本轮已停止，请重新选择可用模型后重试。"
+            isStreamIdleTimeout(error) ->
+                "Provider 连续一段时间没有返回新的流式更新。请检查接口地址、模型和网络后重试。"
+            isRequestTimeout(error) ->
+                "服务商请求超时，未能及时收到响应。请稍后重试；这不代表密钥错误或模型列表为空。"
+            isStreamInterrupted(error) ->
+                "模型响应期间连接中断。本轮已停止，请检查网络后重试；未完成的工具调用不会执行。"
             isIncompleteToolCall(error) ->
-                "Provider 返回了不完整的工具调用。应用已自动重试一次，但响应仍缺少工具名称；" +
+                "Provider 返回了不完整的工具调用，响应缺少工具名称；" +
                     "请重试本轮。若持续出现，请检查 Provider 是否完整转发 tool_calls/function.name。"
             isHarnessPreparationInProgress(error) ->
                 "另一个 Harness 正在安装或准备中。当前切换不会等待它；请稍后重试，" +
@@ -44,9 +56,13 @@ internal object AgentRuntimeErrorSupport {
     fun failureKind(error: Throwable): String? {
         return when {
             isCertificateValidationFailure(error) -> PROVIDER_TLS_CERTIFICATE_FAILURE
+            isAuthenticationFailure(error) -> PROVIDER_AUTHENTICATION_FAILED
             isProviderNotBound(error) -> PROVIDER_NOT_BOUND
             isProviderModelUnavailable(error) -> PROVIDER_MODEL_UNAVAILABLE
+            isStreamIdleTimeout(error) -> PROVIDER_STREAM_IDLE_TIMEOUT
+            isRequestTimeout(error) -> PROVIDER_REQUEST_TIMEOUT
             isProviderUnavailable(error) -> PROVIDER_UNAVAILABLE
+            isStreamInterrupted(error) -> PROVIDER_STREAM_INTERRUPTED
             isIncompleteToolCall(error) -> PROVIDER_TOOL_CALL_INCOMPLETE
             isHarnessPreparationInProgress(error) -> HARNESS_PREPARATION_IN_PROGRESS
             isHarnessProfileMissing(error) -> HARNESS_PROFILE_MISSING
@@ -54,8 +70,11 @@ internal object AgentRuntimeErrorSupport {
         }
     }
 
-    /** Keep native diagnostics useful without returning credentials to Dart or logs. */
-    fun safeDiagnosticMessage(error: Throwable, maxLength: Int = 300): String {
+    private fun isRequestTimeout(error: Throwable): Boolean =
+        generateSequence(error) { it.cause }.any { it is java.net.SocketTimeoutException }
+
+    /** Preserve the complete provider diagnostic while removing credentials. */
+    fun safeDiagnosticMessage(error: Throwable): String {
         val raw = generateSequence(error) { it.cause }
             .mapNotNull { it.message?.trim()?.takeIf(String::isNotEmpty) }
             .distinct()
@@ -73,8 +92,16 @@ internal object AgentRuntimeErrorSupport {
                 ),
                 "\\$1=***"
             )
-        return redacted.take(maxLength)
+        return redacted
     }
+
+    private fun isAuthenticationFailure(error: Throwable): Boolean =
+        errorMessages(error).any {
+            it.contains("authenticationerror") || it.contains("authentication_error") ||
+                it.contains("invalid api key") || it.contains("incorrect api key") ||
+                it.contains("身份验证失败") ||
+                Regex("(?:failed|失败)\\s*\\(401\\)").containsMatchIn(it)
+        }
 
     private fun isProviderNotBound(error: Throwable): Boolean =
         errorMessages(error).any {
@@ -86,8 +113,10 @@ internal object AgentRuntimeErrorSupport {
 
     private fun isProviderModelUnavailable(error: Throwable): Boolean =
         errorMessages(error).any {
-            it.contains("bound agent model") &&
-                (it.contains("not available") || it.contains("no model"))
+            (it.contains("bound agent model") &&
+                (it.contains("not available") || it.contains("no model"))) ||
+                (it.contains("chat completion stream request failed(404)") &&
+                    (it.contains("invalid model") || it.contains("model_not_found")))
         }
 
     private fun isProviderUnavailable(error: Throwable): Boolean =
@@ -96,6 +125,22 @@ internal object AgentRuntimeErrorSupport {
                 (it.contains("unavailable") ||
                     it.contains("no usable credentials") ||
                     it.contains("not configured"))
+        }
+
+    private fun isStreamInterrupted(error: Throwable): Boolean =
+        generateSequence(error) { it.cause }.any { candidate ->
+            candidate is AgentStreamRequestException &&
+                (candidate.statusCode == null || candidate.statusCode in 200..299) &&
+                listOf("software caused connection abort", "connection reset", "stream was reset", "unexpected end of stream", "broken pipe")
+                    .any { candidate.reason.contains(it, ignoreCase = true) }
+        }
+
+    private fun isStreamIdleTimeout(error: Throwable): Boolean =
+        generateSequence(error) { it.cause }.any {
+            it.message.orEmpty().contains(
+                "chat completion stream idle timeout",
+                ignoreCase = true,
+            )
         }
 
     private fun errorMessages(error: Throwable): Sequence<String> =

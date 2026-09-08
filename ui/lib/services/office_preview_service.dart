@@ -36,16 +36,6 @@ class OmnibotOfficePreviewSection {
 }
 
 class OmnibotOfficePreviewService {
-  static const int _maxDocParagraphs = 24;
-  static const int _maxDocCharsPerParagraph = 240;
-  static const int _maxWorkbookSheets = 3;
-  static const int _maxWorkbookRows = 20;
-  static const int _maxWorkbookColumns = 8;
-  static const int _maxCellChars = 48;
-  static const int _maxSlides = 8;
-  static const int _maxSlideLines = 8;
-  static const int _maxSlideCharsPerLine = 160;
-
   static Future<OmnibotOfficePreviewData> loadPreview({
     required String path,
     required String previewKind,
@@ -57,59 +47,59 @@ class OmnibotOfficePreviewService {
         'office_word' => _parseWordPreview(archive),
         'office_sheet' => _parseWorkbookPreview(archive),
         'office_slide' => _parseSlidePreview(archive),
-        _ => throw StateError(LegacyTextLocalizer.isEnglish
-            ? 'This Office file type is not supported'
-            : '暂不支持该 Office 文件类型'),
+        _ => throw StateError(
+          LegacyTextLocalizer.isEnglish
+              ? 'This Office file type is not supported'
+              : '暂不支持该 Office 文件类型',
+        ),
       };
     } on XmlParserException catch (error) {
-      throw StateError(LegacyTextLocalizer.isEnglish
-          ? 'Failed to parse Office file structure: ${error.message}'
-          : 'Office 文件结构解析失败: ${error.message}');
+      throw StateError(
+        LegacyTextLocalizer.isEnglish
+            ? 'Failed to parse Office file structure: ${error.message}'
+            : 'Office 文件结构解析失败: ${error.message}',
+      );
     } on FormatException catch (error) {
-      throw StateError(LegacyTextLocalizer.isEnglish
-          ? 'Failed to parse Office file content: ${error.message}'
-          : 'Office 文件内容解析失败: ${error.message}');
+      throw StateError(
+        LegacyTextLocalizer.isEnglish
+            ? 'Failed to parse Office file content: ${error.message}'
+            : 'Office 文件内容解析失败: ${error.message}',
+      );
     } catch (error) {
       if (error is StateError) rethrow;
-      throw StateError(LegacyTextLocalizer.isEnglish
-          ? 'Office file preview failed: $error'
-          : 'Office 文件预览失败: $error');
+      throw StateError(
+        LegacyTextLocalizer.isEnglish
+            ? 'Office file preview failed: $error'
+            : 'Office 文件预览失败: $error',
+      );
     }
   }
 
   static OmnibotOfficePreviewData _parseWordPreview(Archive archive) {
     final document = _parseXmlEntry(archive, 'word/document.xml');
     final paragraphs = <String>[];
-    var truncated = false;
 
     for (final paragraph in _elementsByLocalName(document, 'p')) {
       final text = _normalizePreviewText(_collectParagraphText(paragraph));
       if (text.isEmpty) {
         continue;
       }
-      if (paragraphs.length >= _maxDocParagraphs) {
-        truncated = true;
-        break;
-      }
-      paragraphs.add(_truncateText(text, _maxDocCharsPerParagraph));
+      paragraphs.add(text);
     }
 
     if (paragraphs.isEmpty) {
-      throw StateError(LegacyTextLocalizer.isEnglish
-          ? 'No previewable Word text content found'
-          : '未找到可预览的 Word 文本内容');
+      throw StateError(
+        LegacyTextLocalizer.isEnglish
+            ? 'No previewable Word text content found'
+            : '未找到可预览的 Word 文本内容',
+      );
     }
 
     return OmnibotOfficePreviewData(
       kindLabel: LegacyTextLocalizer.isEnglish ? 'Word Preview' : 'Word 预览',
-      summary: truncated
-          ? (LegacyTextLocalizer.isEnglish
-              ? 'Showing first ${paragraphs.length} paragraphs'
-              : '展示前 ${paragraphs.length} 段正文')
-          : (LegacyTextLocalizer.isEnglish
-              ? 'Extracted ${paragraphs.length} paragraphs in total'
-              : '共提取 ${paragraphs.length} 段正文'),
-      truncated: truncated,
+      summary: (LegacyTextLocalizer.isEnglish
+          ? 'Extracted ${paragraphs.length} paragraphs in total'
+          : '共提取 ${paragraphs.length} 段正文'),
       sections: <OmnibotOfficePreviewSection>[
         OmnibotOfficePreviewSection(
           title: LegacyTextLocalizer.isEnglish ? 'Body' : '正文',
@@ -138,18 +128,13 @@ class OmnibotOfficePreviewService {
     }
 
     final sections = <OmnibotOfficePreviewSection>[];
-    var truncated = false;
 
     for (final sheet in _elementsByLocalName(workbook, 'sheet')) {
-      if (sections.length >= _maxWorkbookSheets) {
-        truncated = true;
-        break;
-      }
       final resolvedSheetName = _attributeValue(sheet, 'name');
       final sheetName = resolvedSheetName.isEmpty
           ? (LegacyTextLocalizer.isEnglish
-              ? 'Sheet ${sections.length + 1}'
-              : '工作表 ${sections.length + 1}')
+                ? 'Sheet ${sections.length + 1}'
+                : '工作表 ${sections.length + 1}')
           : resolvedSheetName;
       final relationId = _attributeValue(sheet, 'id');
       final target = relationshipTargets[relationId];
@@ -171,21 +156,18 @@ class OmnibotOfficePreviewService {
     }
 
     if (sections.isEmpty) {
-      throw StateError(LegacyTextLocalizer.isEnglish
-          ? 'No previewable Excel worksheet content found'
-          : '未找到可预览的 Excel 工作表内容');
+      throw StateError(
+        LegacyTextLocalizer.isEnglish
+            ? 'No previewable Excel worksheet content found'
+            : '未找到可预览的 Excel 工作表内容',
+      );
     }
 
     return OmnibotOfficePreviewData(
       kindLabel: LegacyTextLocalizer.isEnglish ? 'Excel Preview' : 'Excel 预览',
-      summary: truncated
-          ? (LegacyTextLocalizer.isEnglish
-              ? 'Showing first ${sections.length} worksheets, up to $_maxWorkbookRows rows each'
-              : '展示前 ${sections.length} 个工作表，每表最多 $_maxWorkbookRows 行')
-          : (LegacyTextLocalizer.isEnglish
-              ? 'Extracted ${sections.length} worksheets in total'
-              : '共提取 ${sections.length} 个工作表'),
-      truncated: truncated,
+      summary: (LegacyTextLocalizer.isEnglish
+          ? 'Extracted ${sections.length} worksheets in total'
+          : '共提取 ${sections.length} 个工作表'),
       sections: sections,
     );
   }
@@ -202,25 +184,20 @@ class OmnibotOfficePreviewService {
     }
     final sparseRows = <Map<int, String>>[];
     var maxColumnIndex = -1;
-    var truncated = false;
 
     for (final row in _elementsByLocalName(sheetDocument, 'row')) {
-      if (sparseRows.length >= _maxWorkbookRows) {
-        truncated = true;
-        break;
-      }
       final rowValues = <int, String>{};
       for (final cell in _directChildrenByLocalName(row, 'c')) {
         final reference = _attributeValue(cell, 'r');
         final columnIndex = _columnIndexFromCellReference(reference);
-        if (columnIndex < 0 || columnIndex >= _maxWorkbookColumns) {
+        if (columnIndex < 0) {
           continue;
         }
         final value = _extractSheetCellValue(cell, sharedStrings);
         if (value.isEmpty) {
           continue;
         }
-        rowValues[columnIndex] = _truncateText(value, _maxCellChars);
+        rowValues[columnIndex] = value;
         if (columnIndex > maxColumnIndex) {
           maxColumnIndex = columnIndex;
         }
@@ -244,7 +221,7 @@ class OmnibotOfficePreviewService {
       );
     }
 
-    final columnCount = (maxColumnIndex + 1).clamp(1, _maxWorkbookColumns);
+    final columnCount = maxColumnIndex + 1;
     final tableRows = sparseRows
         .map(
           (rowValues) => List<String>.generate(
@@ -256,13 +233,9 @@ class OmnibotOfficePreviewService {
 
     return OmnibotOfficePreviewSection(
       title: sheetName,
-      subtitle: truncated
-          ? (LegacyTextLocalizer.isEnglish
-              ? 'Showing first ${tableRows.length} rows'
-              : '展示前 ${tableRows.length} 行')
-          : (LegacyTextLocalizer.isEnglish
-              ? 'Extracted ${tableRows.length} rows in total'
-              : '共提取 ${tableRows.length} 行'),
+      subtitle: (LegacyTextLocalizer.isEnglish
+          ? 'Extracted ${tableRows.length} rows in total'
+          : '共提取 ${tableRows.length} 行'),
       tableRows: tableRows,
     );
   }
@@ -283,33 +256,25 @@ class OmnibotOfficePreviewService {
           );
 
     if (slideFiles.isEmpty) {
-      throw StateError(LegacyTextLocalizer.isEnglish
-          ? 'No previewable PowerPoint slides found'
-          : '未找到可预览的 PowerPoint 页面');
+      throw StateError(
+        LegacyTextLocalizer.isEnglish
+            ? 'No previewable PowerPoint slides found'
+            : '未找到可预览的 PowerPoint 页面',
+      );
     }
 
     final sections = <OmnibotOfficePreviewSection>[];
-    var truncated = false;
 
     for (final slideFile in slideFiles) {
-      if (sections.length >= _maxSlides) {
-        truncated = true;
-        break;
-      }
       final slideDocument = _parseXmlContent(slideFile.content as List<int>);
       final lines = <String>[];
-      var lineOverflow = false;
 
       for (final paragraph in _elementsByLocalName(slideDocument, 'p')) {
         final line = _normalizePreviewText(_collectParagraphText(paragraph));
         if (line.isEmpty) {
           continue;
         }
-        if (lines.length >= _maxSlideLines) {
-          lineOverflow = true;
-          break;
-        }
-        lines.add(_truncateText(line, _maxSlideCharsPerLine));
+        lines.add(line);
       }
 
       sections.add(
@@ -317,11 +282,6 @@ class OmnibotOfficePreviewService {
           title: LegacyTextLocalizer.isEnglish
               ? 'Slide ${sections.length + 1}'
               : '第 ${sections.length + 1} 页',
-          subtitle: lineOverflow
-              ? (LegacyTextLocalizer.isEnglish
-                  ? 'Showing first ${lines.length} lines'
-                  : '展示前 ${lines.length} 行文案')
-              : null,
           lines: lines.isEmpty
               ? <String>[
                   LegacyTextLocalizer.isEnglish
@@ -334,15 +294,12 @@ class OmnibotOfficePreviewService {
     }
 
     return OmnibotOfficePreviewData(
-      kindLabel: LegacyTextLocalizer.isEnglish ? 'PowerPoint Preview' : 'PowerPoint 预览',
-      summary: truncated
-          ? (LegacyTextLocalizer.isEnglish
-              ? 'Showing first ${sections.length} slides'
-              : '展示前 ${sections.length} 页幻灯片')
-          : (LegacyTextLocalizer.isEnglish
-              ? 'Extracted ${sections.length} slides in total'
-              : '共提取 ${sections.length} 页幻灯片'),
-      truncated: truncated,
+      kindLabel: LegacyTextLocalizer.isEnglish
+          ? 'PowerPoint Preview'
+          : 'PowerPoint 预览',
+      summary: (LegacyTextLocalizer.isEnglish
+          ? 'Extracted ${sections.length} slides in total'
+          : '共提取 ${sections.length} 页幻灯片'),
       sections: sections,
     );
   }
@@ -391,9 +348,9 @@ class OmnibotOfficePreviewService {
   static XmlDocument _parseXmlEntry(Archive archive, String path) {
     final document = _tryParseXmlEntry(archive, path);
     if (document == null) {
-      throw StateError(LegacyTextLocalizer.isEnglish
-          ? 'File missing: $path'
-          : '文件缺少 $path');
+      throw StateError(
+        LegacyTextLocalizer.isEnglish ? 'File missing: $path' : '文件缺少 $path',
+      );
     }
     return document;
   }
@@ -500,12 +457,5 @@ class OmnibotOfficePreviewService {
         .where((line) => line.isNotEmpty)
         .toList(growable: false);
     return normalizedLines.join('\n');
-  }
-
-  static String _truncateText(String value, int maxChars) {
-    if (value.length <= maxChars) {
-      return value;
-    }
-    return '${value.substring(0, maxChars - 1)}…';
   }
 }

@@ -64,13 +64,14 @@ class AssistsCoreManagerChatOnlyTest {
 
     @Test
     fun `normalizeReasoningEffort accepts supported values only`() {
-        assertEquals("no", normalizeReasoningEffort("no"))
-        assertEquals("no", normalizeReasoningEffort(" NO "))
+        assertEquals("none", normalizeReasoningEffort("no"))
+        assertEquals("none", normalizeReasoningEffort(" NONE "))
         assertEquals("low", normalizeReasoningEffort(" low "))
+        assertEquals("medium", normalizeReasoningEffort(" MEDIUM "))
         assertEquals("high", normalizeReasoningEffort("HIGH"))
         assertEquals("xhigh", normalizeReasoningEffort(" xhigh "))
         assertEquals("max", normalizeReasoningEffort("MAX"))
-        assertNull(normalizeReasoningEffort("medium"))
+        assertEquals("none", normalizeReasoningEffort("off"))
         assertNull(normalizeReasoningEffort(""))
     }
 
@@ -108,7 +109,7 @@ class AssistsCoreManagerChatOnlyTest {
             )
         )
         assertEquals("low", resolveAgentReasoningEffort("low", officialDeepSeekOverride))
-        assertEquals("no", resolveAgentReasoningEffort("no", officialDeepSeekOverride))
+        assertEquals("none", resolveAgentReasoningEffort("no", officialDeepSeekOverride))
         assertNull(
             resolveAgentReasoningEffort(
                 reasoningEffort = null,

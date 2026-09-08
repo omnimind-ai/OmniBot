@@ -698,36 +698,6 @@ class SkillLoader(
     }
 }
 
-object SkillCompatibilityChecker {
-    fun evaluate(entry: SkillIndexEntry): SkillCompatibilityResult {
-        val raw = buildString {
-            append(entry.compatibility.orEmpty())
-            if (entry.metadata.isNotEmpty()) {
-                append(' ')
-                append(entry.metadata.values.joinToString(" "))
-            }
-            append(' ')
-            append(entry.description)
-        }.lowercase()
-
-        return when {
-            raw.contains("apple-") || raw.contains("homekit") || raw.contains("healthkit") -> {
-                SkillCompatibilityResult(
-                    available = false,
-                    reason = "当前 Omnibot 不支持 Apple 专属运行时"
-                )
-            }
-            raw.contains("ios") && !raw.contains("android") -> {
-                SkillCompatibilityResult(
-                    available = false,
-                    reason = "当前 Skill 标注为 iOS 专属"
-                )
-            }
-            else -> SkillCompatibilityResult(available = true)
-        }
-    }
-}
-
 object SkillTriggerMatcher {
     fun resolveMatches(
         userMessage: String,

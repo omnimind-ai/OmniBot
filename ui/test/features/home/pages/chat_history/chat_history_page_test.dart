@@ -3,6 +3,10 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:ui/l10n/legacy_text_localizer.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:ui/services/storage_service.dart';
 import 'package:ui/features/home/pages/chat_history/chat_history_page.dart';
 import 'package:ui/models/conversation_model.dart';
 
@@ -27,13 +31,17 @@ class _SvgTestAssetBundle extends CachingAssetBundle {
 }
 
 void main() {
+  setUp(() => LegacyTextLocalizer.setResolvedLocale(const Locale('zh')));
+  tearDown(LegacyTextLocalizer.clearResolvedLocale);
   const assistCoreChannel = MethodChannel(
     'cn.com.omnimind.bot/AssistCoreEvent',
   );
 
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  setUp(() {
+  setUp(() async {
+    SharedPreferences.setMockInitialValues({});
+    await StorageService.init();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(assistCoreChannel, (call) async {
           switch (call.method) {
@@ -85,7 +93,9 @@ void main() {
       MaterialApp(
         home: DefaultAssetBundle(
           bundle: _SvgTestAssetBundle(),
-          child: const ChatHistoryPage(archivedOnly: true),
+          child: const ProviderScope(
+            child: ChatHistoryPage(archivedOnly: true),
+          ),
         ),
       ),
     );

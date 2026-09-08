@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:file_picker/file_picker.dart';
+import 'package:ui/utils/picked_attachment_metadata.dart';
 import 'package:flutter/material.dart';
 import 'package:ui/l10n/legacy_text_localizer.dart';
 import 'package:ui/services/assists_core_service.dart';
@@ -458,22 +459,14 @@ class _CommandOverlayState extends State<CommandOverlay> {
       if (hiddenForPicker) {
         await Future<void>.delayed(const Duration(milliseconds: 80));
       }
-      final files = await FilePicker.pickFiles(
-        allowMultiple: true,
-        type: FileType.any,
-      );
+      final files = await FilePicker.pickFiles(type: FileType.any);
       if (files.isEmpty || !mounted) return;
 
-      final fileSizes = <String, int>{};
-      for (final file in files) {
-        final path = file.path;
-        if (path == null || path.isEmpty) continue;
-        fileSizes[path] = await file.length();
-      }
       setState(() {
         for (final file in files) {
-          final path = file.path;
-          if (path == null || path.isEmpty) continue;
+          final metadata = pickedAttachmentMetadata(file);
+          if (metadata == null) continue;
+          final path = metadata.path;
           final exists = _pendingAttachments.any((item) => item.path == path);
           if (exists) continue;
           final displayName = file.name.trim().isNotEmpty
@@ -481,13 +474,12 @@ class _CommandOverlayState extends State<CommandOverlay> {
               : _fileNameFromPath(path);
           final extension = (file.extension ?? '').toLowerCase();
           final mimeType = _mimeTypeFromExtension(path, extension: extension);
-          final fileSize = fileSizes[path] ?? 0;
           _pendingAttachments.add(
             ChatInputAttachment(
               id: '${path}_${DateTime.now().microsecondsSinceEpoch}',
               name: displayName,
               path: path,
-              size: fileSize > 0 ? fileSize : null,
+              size: metadata.size,
               mimeType: mimeType,
               isImage: _isImageFilePath(path, mimeType: mimeType),
             ),

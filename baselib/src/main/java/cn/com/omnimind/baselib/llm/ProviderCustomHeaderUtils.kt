@@ -37,7 +37,13 @@ object ProviderCustomHeaderUtils {
                 return@forEach
             }
             val normalizedKey = normalizeHeaderName(key)
-            if (forbiddenHeaderNames.contains(normalizedKey)) {
+            // Header values are also exported to newline-delimited official
+            // Harness fields (for example ANTHROPIC_CUSTOM_HEADERS). Never
+            // let an editable Provider value inject another header line.
+            if (forbiddenHeaderNames.contains(normalizedKey) ||
+                key.any { it == '\r' || it == '\n' } ||
+                rawValue.any { it == '\r' || it == '\n' }
+            ) {
                 return@forEach
             }
             normalized.remove(normalizedKey)

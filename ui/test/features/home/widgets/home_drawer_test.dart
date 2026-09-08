@@ -61,6 +61,7 @@ void main() {
   const assistCoreChannel = MethodChannel(
     'cn.com.omnimind.bot/AssistCoreEvent',
   );
+  const pluginChannel = MethodChannel('cn.com.omnimind.bot/PluginPlatform');
   late List<Map<String, Object?>> nativeConversations;
 
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -84,11 +85,110 @@ void main() {
               return null;
           }
         });
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(pluginChannel, (call) async {
+          if (call.method == 'listActions') return <Object?>[];
+          return null;
+        });
   });
 
   tearDown(() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(assistCoreChannel, null);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(pluginChannel, null);
+  });
+
+  testWidgets('shows and invokes declarative Agent Web quick actions', (
+    tester,
+  ) async {
+    final calls = <MethodCall>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(pluginChannel, (call) async {
+          calls.add(call);
+          if (call.method == 'listActions') {
+            return <Map<String, Object?>>[
+              <String, Object?>{
+                'id': 'open_deepseek_harness_web',
+                'pluginId': 'com.omnimind.agent-web',
+                'displayName': 'DeepSeek Harness Web',
+                'description': 'Open DSH Web',
+                'presentation': <String, Object?>{
+                  'placements': <String>['home_drawer_quick_launch'],
+                  'agentId': 'deepseek-harness-acp',
+                  'quickLaunchOrder': 1,
+                  'label': <String, String>{
+                    'zh': 'DeepSeek Harness Web',
+                    'en': 'DeepSeek Harness Web',
+                  },
+                  'shortLabel': <String, String>{
+                    'zh': 'DSH Web',
+                    'en': 'DSH Web',
+                  },
+                },
+              },
+              <String, Object?>{
+                'id': 'open_kimi_web',
+                'pluginId': 'com.omnimind.agent-web',
+                'displayName': 'Kimi Code Web',
+                'description': 'Open Kimi Web',
+                'presentation': <String, Object?>{
+                  'placements': <String>['home_drawer_quick_launch'],
+                  'agentId': 'kimi-code-acp',
+                  'quickLaunchOrder': 0,
+                  'label': <String, String>{
+                    'zh': 'Kimi Code Web',
+                    'en': 'Kimi Code Web',
+                  },
+                  'shortLabel': <String, String>{
+                    'zh': 'Kimi Web',
+                    'en': 'Kimi Web',
+                  },
+                },
+              },
+            ];
+          }
+          if (call.method == 'invokeAction') {
+            return <String, Object?>{'code': 'OPENED'};
+          }
+          return null;
+        });
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DefaultAssetBundle(
+          bundle: _SvgTestAssetBundle(),
+          child: _buildProviderScope(
+            child: const Scaffold(
+              body: SizedBox(
+                width: 360,
+                height: 720,
+                child: HomeDrawer(embedded: true),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final kimi = find.byKey(const ValueKey('home-drawer-web-kimi-code-acp'));
+    final deepSeek = find.byKey(
+      const ValueKey('home-drawer-web-deepseek-harness-acp'),
+    );
+    expect(kimi, findsOneWidget);
+    expect(deepSeek, findsOneWidget);
+    expect(tester.getCenter(kimi).dx, lessThan(tester.getCenter(deepSeek).dx));
+
+    await tester.tap(kimi);
+    await tester.pumpAndSettle();
+
+    final invocation = calls.lastWhere((call) => call.method == 'invokeAction');
+    expect(invocation.arguments, <String, Object?>{
+      'pluginId': 'com.omnimind.agent-web',
+      'actionId': 'open_kimi_web',
+      'arguments': <String, dynamic>{},
+    });
   });
 
   testWidgets('embedded mode routes new conversation through callback', (

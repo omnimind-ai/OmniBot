@@ -235,6 +235,7 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
   Future<void> _applyConversationThreadTarget(
     ConversationThreadTarget target, {
     bool syncPage = true,
+    bool preserveComposer = false,
     int? requestId,
   }) async {
     final activeRequestId = requestId ?? _beginConversationTargetRequest();
@@ -247,8 +248,14 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     );
     if (isStaleRequest()) return;
     final targetMode = _pageModeForConversationMode(effectiveTarget.mode);
+    // Capture after initialization so input typed during the switch survives
+    // the existing conversation reset below (including its attachment reset).
+    final composerValue = preserveComposer ? _messageController.value : null;
+    final composerAttachments = preserveComposer
+        ? List<ChatInputAttachment>.of(_pendingAttachments)
+        : null;
     _storeDraftForActiveConversationMode();
-    if (effectiveTarget.isNewConversation) {
+    if (effectiveTarget.isNewConversation && !preserveComposer) {
       _modeState(targetMode).draftMessage = '';
       _modeState(targetMode).pendingAttachments.clear();
     }
@@ -268,6 +275,10 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     // The previous conversation remains persisted in history and is not
     // implicitly inherited by the new Harness.
     _resetLocalConversationState(targetMode);
+    if (composerValue != null) {
+      _modeState(targetMode).draftMessage = composerValue.text;
+      _modeState(targetMode).pendingAttachments.addAll(composerAttachments!);
+    }
     _restoreLocalAgentThreadIdFromTarget(effectiveTarget);
     if (_shouldSyncExistingLocalAgentTarget(effectiveTarget)) {
       unawaited(
@@ -675,7 +686,7 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     _openClawBaseUrlController.dispose();
     _openClawTokenController.dispose();
     _openClawUserIdController.dispose();
-    _stopRemoteCodexSessionSync();
+    this._stopRemoteCodexSessionSync();
     _agentEventSubscription?.cancel();
     _omniLinkEventSubscription?.cancel();
     super.dispose();
@@ -741,10 +752,11 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     if (conversationId != null &&
         !isEphemeralConversation(conversationId, activeConversationModeValue)) {
       unawaited(
-        ConversationHistoryService.saveConversationMessages(
-          conversationId,
-          List<ChatMessageModel>.from(_messages),
-          mode: activeConversationModeValue,
+        _runtimeCoordinator.persistConversationMessageSnapshot(
+          conversationId: conversationId,
+          mode: _modeKey(_activeMode),
+          messages: List<ChatMessageModel>.from(_messages),
+          conversation: _currentConversation,
         ),
       );
     }
@@ -791,9 +803,7 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     final lifecycleToken = captureConversationLifecycleToken();
     final conversationId = _currentConversationId;
     final runtime = _runtimeForMode(_activeMode);
-    final hasLiveTurn =
-        _modeState(_activeMode).isAiResponding ||
-        runtime?.hasInFlightTask == true;
+    final hasLiveTurn = runtime?.hasInFlightTask == true || _isAiResponding;
     // Conversation creation/update notifications are metadata-only from the
     // chat page's perspective while a turn is running. Loading the database
     // snapshot here can race the optimistic user-message persistence and
@@ -809,8 +819,8 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     // The task may have started while checkConversationExists was awaiting
     // the native conversation list. Re-check before installing any snapshot;
     // otherwise that late list event can still win the race.
-    if (_modeState(_activeMode).isAiResponding ||
-        _runtimeForMode(_activeMode)?.hasInFlightTask == true) {
+    if (_runtimeForMode(_activeMode)?.hasInFlightTask == true ||
+        _isAiResponding) {
       return;
     }
     await loadConversation(
@@ -850,9 +860,7 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
       return;
     }
     final runtime = _runtimeForMode(_activeMode);
-    final hasLiveTurn =
-        _modeState(_activeMode).isAiResponding ||
-        runtime?.hasInFlightTask == true;
+    final hasLiveTurn = runtime?.hasInFlightTask == true || _isAiResponding;
     // IM 等外部入口写入用户消息时，原生侧用 reason=external_user_message 通知前端：
     // 这条消息只在 DB 里、还没进入 runtime.messages，必须强制从 DB 重载，
     // 否则 agent 流事件先到时 hasInFlightTask=true 会让 in-memory 分支吞掉它。

@@ -5,9 +5,11 @@ import cn.com.omnimind.baselib.llm.SceneModelBindingEntry
 import cn.com.omnimind.bot.agent.ToolExecutionResult
 import cn.com.omnimind.bot.agent.AgentFinalResponse
 import cn.com.omnimind.bot.agent.AgentResult
+import cn.com.omnimind.bot.agent.runtime.buildXiaowanPromptParts
 import com.agentclientprotocol.model.MessageId
 import com.agentclientprotocol.model.PromptResponse
 import com.agentclientprotocol.model.ContentBlock
+import com.agentclientprotocol.model.EmbeddedResourceResource
 import com.agentclientprotocol.model.SessionUpdate
 import com.agentclientprotocol.model.StopReason
 import com.agentclientprotocol.model.ToolKind
@@ -26,6 +28,109 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 
 class XiaowanAcpPresentationBridgeTest {
+    @Test
+    fun `streamed tool input updates one official card without claiming execution`() = runBlocking {
+        val updates = mutableListOf<SessionUpdate>()
+        val bridge = XiaowanAcpEventBridge { updates += it }
+        val call = cn.com.omnimind.bot.agent.AssistantToolCall(
+            id = "html-stream",
+            function = cn.com.omnimind.bot.agent.AssistantToolCallFunction("file_write", "{\"content\":\"<html>"),
+        )
+        bridge.onToolCallInput(call, "file")
+        bridge.onToolCallInput(call.copy(function = call.function.copy(arguments = "{\"content\":\"<html>body")), "file")
+        assertEquals(ToolCallStatus.PENDING, (updates.first() as SessionUpdate.ToolCall).status)
+        val inputUpdate = updates.last() as SessionUpdate.ToolCallUpdate
+        assertEquals(null, inputUpdate.status)
+        assertEquals("{\"content\":\"<html>body", inputUpdate.rawInput?.jsonPrimitive?.content)
+        val args = JsonObject(mapOf("content" to JsonPrimitive("<html>body</html>")))
+        bridge.onToolCallStart(call.id, "file_write", args, "file")
+        bridge.onToolCallStart(call.id, "file_write", args, "file")
+        bridge.onToolCallComplete(call.id, "file_write", ToolExecutionResult.Error("file_write", "Permission denied"))
+        val size = updates.size
+        bridge.onToolCallInput(call, "file")
+        bridge.onToolCallStart(call.id, "file_write", args, "file")
+        assertEquals(size, updates.size)
+        assertEquals(1, updates.filterIsInstance<SessionUpdate.ToolCall>().size)
+        assertEquals(ToolCallStatus.FAILED, (updates.last() as SessionUpdate.ToolCallUpdate).status)
+        assertTrue(updates.filterIsInstance<SessionUpdate.ToolCallUpdate>().all { it.toolCallId.value == call.id })
+    }
+
+    @Test
+    fun `image prompt keeps a readable path and enables inline provider input`() {
+        val prompt = buildXiaowanPromptParts(
+            listOf(
+                ContentBlock.Image(
+                    data = "AAAA",
+                    mimeType = "image/png",
+                    uri = "file:///workspace/.omnibot/attachments/task/image.png",
+                )
+            )
+        )
+
+        assertEquals(
+            "file:///workspace/.omnibot/attachments/task/image.png",
+            prompt.attachments.single()["url"],
+        )
+        assertEquals(
+            "file:///workspace/.omnibot/attachments/task/image.png",
+            prompt.attachments.single()["path"],
+        )
+        assertEquals(true, prompt.attachments.single()["sendToModel"])
+    }
+
+    @Test
+    fun `resource link image enables inline provider input`() {
+        val prompt = buildXiaowanPromptParts(
+            listOf(
+                ContentBlock.ResourceLink(
+                    name = "photo.png",
+                    uri = "content://com.example.provider/photo",
+                    mimeType = "image/png",
+                    size = 12,
+                )
+            )
+        )
+
+        assertEquals(true, prompt.attachments.single()["sendToModel"])
+        assertEquals("content://com.example.provider/photo", prompt.attachments.single()["path"])
+    }
+
+    @Test
+    fun `embedded image enables inline provider input`() {
+        val prompt = buildXiaowanPromptParts(
+            listOf(
+                ContentBlock.Resource(
+                    EmbeddedResourceResource.BlobResourceContents(
+                        uri = "embedded://photo",
+                        mimeType = "image/png",
+                        blob = "AAAA",
+                    )
+                )
+            )
+        )
+
+        assertEquals(true, prompt.attachments.single()["sendToModel"])
+    }
+
+    @Test
+    fun `resource link remains raw until the single workspace adapter`() {
+        val prompt = buildXiaowanPromptParts(
+            listOf(
+                ContentBlock.ResourceLink(
+                    name = "notes.txt",
+                    uri = "content://com.example.provider/notes",
+                    mimeType = "text/plain",
+                    size = 12,
+                )
+            )
+        )
+
+        val attachment = prompt.attachments.single()
+        assertEquals("content://com.example.provider/notes", attachment["path"])
+        assertFalse(attachment.containsKey("promptPath"))
+        assertFalse(attachment.containsKey("workspacePath"))
+    }
+
     @Test
     fun `permission outcome requires an explicit allow option`() {
         val json = Json { ignoreUnknownKeys = true }
@@ -269,82 +374,6 @@ class XiaowanAcpPresentationBridgeTest {
     }
 
     @Test
-    fun `retry state is carried by the ACP assistant update`() = runBlocking {
-        val updates = mutableListOf<SessionUpdate>()
-        val bridge = XiaowanAcpEventBridge { updates += it }
-
-        bridge.onRetrying(
-            retryCount = 1,
-            maxRetries = 3,
-            retryDelayMs = 1000,
-            message = "请求失败，正在重试",
-            retryReason = "timeout",
-        )
-
-        val message = updates.filterIsInstance<SessionUpdate.AgentMessageChunk>().single()
-        val namespace = (message._meta as JsonObject)["cn.com.omnimind.agent"] as JsonObject
-        val retry = namespace["retry"] as JsonObject
-        assertEquals("1", retry["count"]?.jsonPrimitive?.content)
-        assertEquals("3", retry["maxRetries"]?.jsonPrimitive?.content)
-        assertEquals("1000", retry["delayMs"]?.jsonPrimitive?.content)
-        assertEquals("timeout", retry["reason"]?.jsonPrimitive?.content)
-    }
-
-    @Test
-    fun `retry starts a new reasoning segment instead of reusing the failed one`() = runBlocking {
-        val updates = mutableListOf<SessionUpdate>()
-        val bridge = XiaowanAcpEventBridge { updates += it }
-
-        bridge.onThinkingStart()
-        bridge.onThinkingUpdate("失败请求的思考")
-        bridge.onRetrying(
-            retryCount = 1,
-            maxRetries = 2,
-            retryDelayMs = 0,
-            message = "正在重试",
-            retryReason = "timeout",
-        )
-        bridge.onThinkingUpdate("成功重试的思考")
-
-        val thoughts = updates
-            .filterIsInstance<SessionUpdate.AgentThoughtChunk>()
-            .filter { (it.content as ContentBlock.Text).text.isNotEmpty() }
-        assertEquals(2, thoughts.size)
-        assertEquals(2, thoughts.map { it.messageId }.distinct().size)
-        val segments = thoughts.map { thought ->
-            val namespace = (thought._meta as JsonObject)["cn.com.omnimind.agent"] as JsonObject
-            (namespace["reasoning"] as JsonObject)["segmentIndex"]?.jsonPrimitive?.content?.toInt()
-        }
-        assertEquals(listOf(0, 1), segments)
-    }
-
-    @Test
-    fun `retry assigns a new generation id to the next reasoning segment`() = runBlocking {
-        val updates = mutableListOf<SessionUpdate>()
-        val bridge = XiaowanAcpEventBridge { updates += it }
-
-        bridge.onThinkingStart()
-        bridge.onThinkingUpdate("第一代思考")
-        bridge.onRetrying(
-            retryCount = 1,
-            maxRetries = 2,
-            retryDelayMs = 0,
-            message = "正在重试",
-            retryReason = "timeout",
-        )
-        bridge.onThinkingUpdate("第二代思考")
-
-        val thoughts = updates.filterIsInstance<SessionUpdate.AgentThoughtChunk>()
-            .filter { (it.content as ContentBlock.Text).text.isNotEmpty() }
-        val generationIds = thoughts.map { thought ->
-            val namespace = (thought._meta as JsonObject)["cn.com.omnimind.agent"] as JsonObject
-            ((namespace["reasoning"] as JsonObject)["generationId"] ?: error("missing generation"))
-                .jsonPrimitive.content
-        }
-        assertEquals(2, generationIds.distinct().size)
-    }
-
-    @Test
     fun `provider snapshot reset starts a new reasoning segment`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
         val bridge = XiaowanAcpEventBridge { updates += it }
@@ -384,36 +413,6 @@ class XiaowanAcpPresentationBridgeTest {
                 namespace?.containsKey("retry") == true
             }
         )
-    }
-
-    @Test
-    fun `retry separates partial assistant output from the next generation`() = runBlocking {
-        val updates = mutableListOf<SessionUpdate>()
-        val bridge = XiaowanAcpEventBridge { updates += it }
-
-        bridge.onChatMessage("失败请求的半截答案", isFinal = false)
-        bridge.onRetrying(
-            retryCount = 1,
-            maxRetries = 2,
-            retryDelayMs = 0,
-            message = "正在重试",
-            retryReason = "timeout",
-        )
-        bridge.onChatMessage("重试后的完整答案", isFinal = true)
-
-        val messages = updates.filterIsInstance<SessionUpdate.AgentMessageChunk>()
-        assertEquals(3, messages.size)
-        assertEquals(2, messages.map { it.messageId }.distinct().size)
-        assertEquals(
-            "失败请求的半截答案",
-            (messages[0].content as ContentBlock.Text).text,
-        )
-        assertEquals(
-            "重试后的完整答案",
-            (messages[2].content as ContentBlock.Text).text,
-        )
-        val retryNamespace = (messages[1]._meta as JsonObject)["cn.com.omnimind.agent"] as JsonObject
-        assertEquals("正在重试", (retryNamespace["retry"] as JsonObject)["message"]?.jsonPrimitive?.content)
     }
 
     @Test
@@ -480,13 +479,13 @@ class XiaowanAcpPresentationBridgeTest {
         val namespace = (message._meta as JsonObject)["cn.com.omnimind.agent"] as JsonObject
         val recovery = namespace["recovery"] as JsonObject
         assertEquals("true", recovery["retryable"]?.jsonPrimitive?.content)
-        assertEquals("false", recovery["continueable"]?.jsonPrimitive?.content)
+        assertEquals(null, recovery["continueable"])
     }
 
     @Test
-    fun `partial error keeps recovery on the existing ACP assistant message`() = runBlocking {
+    fun `partial error does not advertise approximate ACP continuation`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
-        val bridge = XiaowanAcpEventBridge(canContinue = true) { updates += it }
+        val bridge = XiaowanAcpEventBridge { updates += it }
 
         bridge.onChatMessage("半截答案", isFinal = false)
         bridge.onError("连接中断", retryable = true)
@@ -498,12 +497,9 @@ class XiaowanAcpPresentationBridgeTest {
         val namespace = (messages[1]._meta as JsonObject)["cn.com.omnimind.agent"] as JsonObject
         val recovery = namespace["recovery"] as JsonObject
         assertEquals("true", recovery["retryable"]?.jsonPrimitive?.content)
-        assertEquals("true", recovery["continueable"]?.jsonPrimitive?.content)
-        assertEquals("false", recovery["persistAsError"]?.jsonPrimitive?.content)
-        assertEquals(
-            "approximate",
-            recovery["continueResumeMode"]?.jsonPrimitive?.content,
-        )
+        assertEquals(null, recovery["continueable"])
+        assertEquals("true", recovery["persistAsError"]?.jsonPrimitive?.content)
+        assertEquals(null, recovery["continueResumeMode"])
     }
 
     @Test
@@ -519,7 +515,7 @@ class XiaowanAcpPresentationBridgeTest {
     }
 
     @Test
-    fun `context compaction is carried by an ACP thought update`() = runBlocking {
+    fun `automatic context compaction does not create a private ACP update`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
         val bridge = XiaowanAcpEventBridge { updates += it }
 
@@ -529,12 +525,7 @@ class XiaowanAcpPresentationBridgeTest {
             promptTokenThreshold = 128000,
         )
 
-        val thought = updates.filterIsInstance<SessionUpdate.AgentThoughtChunk>().single()
-        val namespace = (thought._meta as JsonObject)["cn.com.omnimind.agent"] as JsonObject
-        val compaction = namespace["compaction"] as JsonObject
-        assertEquals("compressing", compaction["status"]?.jsonPrimitive?.content)
-        assertEquals("126000", compaction["latestPromptTokens"]?.jsonPrimitive?.content)
-        assertEquals("128000", compaction["promptTokenThreshold"]?.jsonPrimitive?.content)
+        assertTrue(updates.isEmpty())
     }
 
     @Test
@@ -764,6 +755,36 @@ class XiaowanAcpPresentationBridgeTest {
     }
 
     @Test
+    fun `large tool result reaches the ACP update without a host truncation`() = runBlocking {
+        val updates = mutableListOf<SessionUpdate>()
+        val bridge = XiaowanAcpEventBridge { updates += it }
+        val stdout = "payload-" + "x".repeat(128 * 1024)
+        val rawResult = JsonObject(mapOf("stdout" to JsonPrimitive(stdout))).toString()
+
+        bridge.onToolCallStart("call-large-output", "terminal", JsonObject(emptyMap()))
+        bridge.onToolCallComplete(
+            "call-large-output",
+            "terminal",
+            ToolExecutionResult.TerminalResult(
+                toolName = "terminal",
+                summaryText = "Command completed",
+                previewJson = "{\"exitCode\":0}",
+                rawResultJson = rawResult,
+                terminalOutput = stdout,
+            ),
+        )
+
+        val completion = updates.filterIsInstance<SessionUpdate.ToolCallUpdate>().last()
+        val rawOutput = completion.rawOutput as JsonObject
+        assertEquals(rawResult, rawOutput["rawResultJson"]?.jsonPrimitive?.content)
+        assertEquals(
+            stdout,
+            (rawOutput["rawResult"] as JsonObject)["stdout"]?.jsonPrimitive?.content,
+        )
+        assertEquals(stdout, rawOutput["terminalOutput"]?.jsonPrimitive?.content)
+    }
+
+    @Test
     fun `permission tool result keeps the existing permission card payload`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
         val bridge = XiaowanAcpEventBridge { updates += it }
@@ -785,7 +806,7 @@ class XiaowanAcpPresentationBridgeTest {
     }
 
     @Test
-    fun `clarification tool result uses ACP pending status`() = runBlocking {
+    fun `clarification tool result is terminal failure without a request channel`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
         val bridge = XiaowanAcpEventBridge { updates += it }
 
@@ -800,7 +821,7 @@ class XiaowanAcpPresentationBridgeTest {
         )
 
         val completion = updates.filterIsInstance<SessionUpdate.ToolCallUpdate>().last()
-        assertEquals(ToolCallStatus.PENDING, completion.status)
+        assertEquals(ToolCallStatus.FAILED, completion.status)
         val rawOutput = completion.rawOutput as JsonObject
         assertEquals("确认执行高权限 shell 命令？", rawOutput["question"]?.jsonPrimitive?.content)
     }

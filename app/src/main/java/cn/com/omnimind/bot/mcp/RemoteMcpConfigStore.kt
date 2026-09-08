@@ -12,14 +12,12 @@ object RemoteMcpConfigStore {
     private val gson = Gson()
     private val mmkv: MMKV?
         get() = MMKV.defaultMMKV()
-    private val listType = object : TypeToken<List<RemoteMcpServerConfig>>() {}.type
+    private val persistedListType = object : TypeToken<List<Map<String, Any?>>>() {}.type
 
     fun listServers(): List<RemoteMcpServerConfig> {
         ensureMigrated()
         val saved = mmkv?.decodeString(GLOBAL_KEY) ?: return emptyList()
-        return runCatching {
-            gson.fromJson<List<RemoteMcpServerConfig>>(saved, listType) ?: emptyList()
-        }.getOrDefault(emptyList())
+        return decodeServersJson(saved)
     }
 
     fun getServer(serverId: String): RemoteMcpServerConfig? {
@@ -103,6 +101,20 @@ object RemoteMcpConfigStore {
 
     private fun saveServers(servers: List<RemoteMcpServerConfig>) {
         mmkv?.encode(GLOBAL_KEY, gson.toJson(servers))
+    }
+
+    /**
+     * Persisted entries predate some fields on [RemoteMcpServerConfig]. Gson
+     * allocates Kotlin classes without invoking their default constructor, so
+     * decoding directly into the data class can leave non-null fields null at
+     * runtime. Rebuild every entry through the compatibility boundary instead.
+     */
+    internal fun decodeServersJson(saved: String): List<RemoteMcpServerConfig> {
+        return runCatching {
+            val persisted = gson.fromJson<List<Map<String, Any?>>>(saved, persistedListType)
+                ?: emptyList()
+            persisted.map(RemoteMcpServerConfig::fromMap)
+        }.getOrDefault(emptyList())
     }
 
     private fun ensureMigrated() {

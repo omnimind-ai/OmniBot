@@ -21,6 +21,7 @@ class AgentReduceResult {
     this.requestId,
     this.collaborationMode,
     this.compatibilityWarning,
+    this.affectsActiveTurn = true,
   });
 
   final bool handled;
@@ -30,10 +31,102 @@ class AgentReduceResult {
   final Object? requestId;
   final String? collaborationMode;
   final String? compatibilityWarning;
+
+  /// Whether the event was allowed to mutate the currently active local turn.
+  ///
+  /// A stale event can still be [handled] so the shared reducer consumes it
+  /// without noisy logging, while being unrelated to the turn the page may
+  /// cancel or display. Keep that distinction explicit at the reducer seam.
+  final bool affectsActiveTurn;
+
+  AgentReduceResult copyWith({bool? affectsActiveTurn}) {
+    return AgentReduceResult(
+      handled: handled,
+      method: method,
+      threadId: threadId,
+      turnId: turnId,
+      requestId: requestId,
+      collaborationMode: collaborationMode,
+      compatibilityWarning: compatibilityWarning,
+      affectsActiveTurn: affectsActiveTurn ?? this.affectsActiveTurn,
+    );
+  }
 }
 
 class AgentEventReducer {
   const AgentEventReducer();
+
+  /// Projects the terminal result of the official ACP `session/prompt`
+  /// request. PromptResponse is a request result rather than a
+  /// `session/update` notification, so it must enter this same reducer
+  /// instead of being converted into a private `turn/*` event.
+  AgentReduceResult reducePromptResponse({
+    required ChatConversationRuntimeState runtime,
+    required String? sessionId,
+    String? turnId,
+    String? stopReason,
+    String? error,
+  }) {
+    final normalizedSessionId = sessionId?.trim();
+    final normalizedTurnId = turnId?.trim().isNotEmpty == true
+        ? turnId!.trim()
+        : runtime.activeAcpTurnId?.trim();
+    final reason = stopReason?.trim().toLowerCase() ?? '';
+    final isCancelled = reason == 'cancelled' || reason == 'canceled';
+    final isFailure =
+        error?.trim().isNotEmpty == true ||
+        reason == 'error' ||
+        reason == 'failed' ||
+        reason == 'failure' ||
+        reason == 'timeout';
+    final taskId =
+        runtime.resolveAcpEventRunId(
+          sessionId: normalizedSessionId,
+          turnId: normalizedTurnId,
+          fallback:
+              runtime.activeRunId ??
+              runtime.currentDispatchTurnId ??
+              runtime.lastAgentTurnId,
+        ) ??
+        runtime.currentDispatchTurnId ??
+        runtime.lastAgentTurnId ??
+        normalizedTurnId ??
+        'agent-${runtime.conversationId}';
+    if (isFailure) {
+      final detail = error?.trim().isNotEmpty == true
+          ? error!.trim()
+          : (stopReason?.trim().isNotEmpty == true
+                ? stopReason!.trim()
+                : 'ACP session/prompt failed.');
+      _recordTurnFailure(
+        runtime,
+        taskId: taskId,
+        detail: formatAgentRuntimeErrorForUser(detail),
+        params: <String, dynamic>{
+          if (normalizedSessionId != null && normalizedSessionId.isNotEmpty)
+            'sessionId': normalizedSessionId,
+          if (normalizedTurnId != null && normalizedTurnId.isNotEmpty)
+            'turnId': normalizedTurnId,
+          if (stopReason != null) 'stopReason': stopReason,
+          'error': detail,
+        },
+      );
+    }
+    _completeTurn(
+      runtime,
+      taskId,
+      acpTurnId: normalizedTurnId,
+      appendCancelIfEmpty: isCancelled,
+      cancelled: isCancelled,
+      promptStopReason: reason.isEmpty ? null : reason,
+    );
+    return AgentReduceResult(
+      handled: true,
+      method: 'session/prompt',
+      threadId: normalizedSessionId,
+      turnId: normalizedTurnId,
+    );
+  }
 
   AgentReduceResult reduce({
     required ChatConversationRuntimeState runtime,
@@ -42,10 +135,9 @@ class AgentEventReducer {
     // Old Harness payloads may still arrive through a host that has migrated
     // to the ACP EventChannel. Convert them at this one boundary; do not
     // reintroduce the removed private stream or a second reducer.
-    event = _normalizeLegacyAgentEvent(event);
+    event = _acpLegacyEventAdapter.normalize(event);
     final hostEventId = _firstString([event['eventId'], event['hostEventId']]);
-    if (hostEventId != null &&
-        !runtime.rememberProcessedAcpEventId(hostEventId)) {
+    if (hostEventId != null && runtime.hasProcessedAcpEventId(hostEventId)) {
       return AgentReduceResult(
         handled: true,
         method: _resolveAgentEventMethod(event: event, message: event),
@@ -53,6 +145,22 @@ class AgentEventReducer {
         turnId: acpEventTurnId(event),
       );
     }
+
+    // Do not mark an event processed until the complete projection returns.
+    // If a listener fails halfway through reduction, the runtime can replay
+    // the event instead of either duplicating a partial side effect or losing
+    // it behind an eagerly consumed id.
+    final result = _reduceNormalized(runtime: runtime, event: event);
+    if (hostEventId != null) {
+      runtime.rememberProcessedAcpEventId(hostEventId);
+    }
+    return result;
+  }
+
+  AgentReduceResult _reduceNormalized({
+    required ChatConversationRuntimeState runtime,
+    required Map<String, dynamic> event,
+  }) {
     final message = _asStringMap(event['message']) ?? event;
     final method = _resolveAgentEventMethod(event: event, message: message);
     if (method.isEmpty) {
@@ -120,8 +228,12 @@ class AgentEventReducer {
       final hasRawAcpUpdate = update?.containsKey('rawUpdate') == true;
       final renderableRawAcpUpdate =
           update != null && _isRenderableAcpRawUpdate(update);
+      final projected = _projectAcpSessionUpdate(
+        event: event,
+        params: _renderableAcpParams(params),
+      );
       final scopedUpdate =
-          sessionUpdate != null &&
+          projected != null &&
           (sessionUpdate != 'current_mode_update' &&
                   sessionUpdate != 'config_option_update' &&
                   // ACP usage is session-level state. It can legitimately arrive
@@ -133,14 +245,6 @@ class AgentEventReducer {
                   // must reach the host even when it arrives between turns.
                   sessionUpdate != 'session_info_update' &&
                   sessionUpdate != 'available_commands_update' &&
-                  // ACP v2 state changes are session-scoped lifecycle signals.
-                  // Running/idle notifications intentionally do not carry a
-                  // turn id, so they must be handled without guessing an owner
-                  // from a message or item id.
-                  sessionUpdate != 'state_change' &&
-                  // Keep the older draft spelling readable as well. Some ACP
-                  // agents shipped the draft name before state_change stabilized.
-                  sessionUpdate != 'state_update' &&
                   // User messages can be replayed by session/load without belonging
                   // to a prompt turn. Live echoes are ignored by the projector.
                   sessionUpdate != 'user_message_chunk' &&
@@ -157,6 +261,12 @@ class AgentEventReducer {
         event['task_id'],
         event['runId'],
         event['run_id'],
+        message['turnId'],
+        message['turn_id'],
+        message['taskId'],
+        message['task_id'],
+        message['runId'],
+        message['run_id'],
         params['turnId'],
         params['turn_id'],
         params['taskId'],
@@ -168,7 +278,9 @@ class AgentEventReducer {
         update?['taskId'],
         update?['task_id'],
       ]);
-      if (scopedUpdate && updateTurnId == null) {
+      final hasHostTurnReservation =
+          updateTurnId == null && _canUseHostTurnReservation(runtime, event);
+      if (scopedUpdate && updateTurnId == null && !hasHostTurnReservation) {
         // ACP updates are streamed inside a prompt turn. Never manufacture a
         // local owner from sessionId or messageId: that reattaches late data
         // to the next prompt and recreates the duplicate-conversation bug.
@@ -247,14 +359,6 @@ class AgentEventReducer {
         runtime.acpSessionInfo = Map<String, dynamic>.from(update)
           ..remove('sessionUpdate');
       }
-      if ((sessionUpdate == 'state_change' ||
-              sessionUpdate == 'state_update') &&
-          update != null) {
-        final usage = _asStringMap(update['usage']);
-        if (usage != null) {
-          _applyAcpUsage(runtime, _acpStandardUsage(usage));
-        }
-      }
       if (hasRawAcpUpdate && update != null && !renderableRawAcpUpdate) {
         _rememberAcpExtensionUpdate(runtime, update);
         return AgentReduceResult(
@@ -272,10 +376,6 @@ class AgentEventReducer {
       // A turn-scoped ACP update without a turn id is not attributable. Do
       // not guess from itemId or threadId: doing so is how late tool output
       // gets attached to the next prompt.
-      final projected = _projectAcpSessionUpdate(
-        event: event,
-        params: _renderableAcpParams(params),
-      );
       if (projected == null) {
         return AgentReduceResult(handled: true, method: method);
       }
@@ -305,6 +405,12 @@ class AgentEventReducer {
       event['task_id'],
       event['runId'],
       event['run_id'],
+      message['turnId'],
+      message['turn_id'],
+      message['taskId'],
+      message['task_id'],
+      message['runId'],
+      message['run_id'],
       params['turnId'],
       params['turn_id'],
       params['taskId'],
@@ -326,19 +432,18 @@ class AgentEventReducer {
       params['id'],
     ]);
 
-    final canSafelyFinalizeUnidentifiedTurn =
-        turnId == null &&
-        _canSafelyFinalizeUnidentifiedTurn(runtime, method, params);
+    final hasHostTurnReservation =
+        turnId == null && _canUseHostTurnReservation(runtime, event);
     if (_requiresAcpTurnIdentity(method, params) &&
         turnId == null &&
-        !canSafelyFinalizeUnidentifiedTurn) {
+        !hasHostTurnReservation) {
       final shouldWarnUser = runtime.rememberAcpCompatibilityDiagnostic(
         reason: 'turn_id_missing',
         method: method,
         sessionId: sessionId,
         itemId: itemId,
         messageId: acpEventMessageId(event),
-        legacy: _isLegacyAgentEvent(event),
+        legacy: _acpLegacyEventAdapter.isLegacy(event),
       );
       // An item or terminal event without a turn cannot be safely assigned to
       // the active run. Guessing here lets a delayed old Harness event mutate
@@ -374,6 +479,7 @@ class AgentEventReducer {
     final isTurnAdmission =
         method == 'turn/started' ||
         (turnId != null &&
+            acpEventAllowsImplicitTurnAdmission(event) &&
             admittedAcpTurnId == null &&
             runtime.isAiResponding &&
             runtime.currentDispatchTurnId != null &&
@@ -400,7 +506,7 @@ class AgentEventReducer {
     // streamMeta/cardData for protocol correlation. This prevents a provider
     // turn id arriving after the prompt from renaming the visible run.
     final parentTaskId =
-        runtime.resolveRunId(
+        runtime.resolveAcpEventRunId(
           sessionId: sessionId,
           turnId: turnId,
           fallback: _firstString([
@@ -435,7 +541,12 @@ class AgentEventReducer {
     }
 
     if (method == 'turn/started') {
-      runtime.activeAcpTurnId = turnId ?? parentTaskId;
+      // A missing wire turn id is a compatibility shape, not permission to
+      // promote the local render/run id into ACP identity space. Keep the
+      // local reservation active and wait for an official id-bearing event.
+      if (turnId != null) {
+        runtime.activeAcpTurnId = turnId;
+      }
       _touchActiveTurn(runtime, parentTaskId);
       return AgentReduceResult(
         handled: true,
@@ -473,16 +584,6 @@ class AgentEventReducer {
       );
     }
 
-    if (method == 'turn/completed' || method == 'thread/closed') {
-      _completeTurn(runtime, parentTaskId, acpTurnId: turnId);
-      return AgentReduceResult(
-        handled: true,
-        method: method,
-        threadId: threadId,
-        turnId: turnId,
-      );
-    }
-
     // ACP v2 can stream tool content independently from the tool lifecycle.
     // Keep that stream on the same card identity instead of turning it into a
     // provider-specific event or dropping it as an unknown extension.
@@ -503,48 +604,6 @@ class AgentEventReducer {
         content: params['content'],
         raw: params,
       );
-      return AgentReduceResult(
-        handled: true,
-        method: method,
-        threadId: threadId,
-        turnId: turnId,
-      );
-    }
-
-    if (method == 'thread/started' || method == 'thread/status/changed') {
-      final status = _statusType([
-        params['status'],
-        params['state'],
-        _asStringMap(params['thread'])?['status'],
-        _asStringMap(params['thread'])?['state'],
-      ]);
-      if (_statusIsActive(status)) {
-        _touchActiveTurn(runtime, parentTaskId);
-      } else if (method == 'thread/status/changed' &&
-          _statusIsInactive(status)) {
-        final taskId =
-            turnId ??
-            runtime.currentDispatchTurnId ??
-            runtime.lastAgentTurnId ??
-            parentTaskId;
-        final statusDetail = _turnFailureDetail(params);
-        final statusIsFailure =
-            status == 'failed' || status == 'systemerror' || status == 'error';
-        if (statusIsFailure && statusDetail != null) {
-          _recordTurnFailure(
-            runtime,
-            taskId: taskId,
-            detail: statusDetail,
-            params: params,
-          );
-        }
-        _completeTurn(
-          runtime,
-          taskId,
-          acpTurnId: turnId,
-          appendCancelIfEmpty: !statusIsFailure && _statusIsCancelled(status),
-        );
-      }
       return AgentReduceResult(
         handled: true,
         method: method,
@@ -1386,53 +1445,6 @@ class AgentEventReducer {
       );
     }
 
-    if (method == 'turn/failed') {
-      _recordTurnFailure(
-        runtime,
-        taskId: parentTaskId,
-        detail: _turnFailureDetail(params, fallbackToPayload: true)!,
-        params: params,
-      );
-      final completionTaskId =
-          turnId ??
-          runtime.currentDispatchTurnId ??
-          runtime.lastAgentTurnId ??
-          parentTaskId;
-      _completeTurn(runtime, completionTaskId, appendCancelIfEmpty: false);
-      return AgentReduceResult(
-        handled: true,
-        method: method,
-        threadId: threadId,
-        turnId: turnId,
-      );
-    }
-
-    if (method == 'codex/disconnected') {
-      // A remote bridge can disappear before it has a chance to send the
-      // normal turn/failed notification. Finalize the one active host turn
-      // here; otherwise the chat remains in "thinking" forever and the next
-      // prompt is rejected as a second active turn.
-      final taskId =
-          runtime.currentDispatchTurnId ??
-          runtime.lastAgentTurnId ??
-          runtime.activeRunId;
-      if (runtime.isAiResponding && taskId != null && taskId.isNotEmpty) {
-        _recordTurnFailure(
-          runtime,
-          taskId: taskId,
-          detail: 'Remote ACP bridge disconnected.',
-          params: params,
-        );
-        _completeTurn(runtime, taskId, appendCancelIfEmpty: false);
-      }
-      return AgentReduceResult(
-        handled: true,
-        method: method,
-        threadId: threadId,
-        turnId: turnId,
-      );
-    }
-
     if (method == 'account/updated' ||
         method == 'account/login/completed' ||
         method == 'account/rateLimits/updated' ||
@@ -1475,54 +1487,6 @@ class AgentEventReducer {
       );
     }
 
-    if (method == 'error') {
-      final rawDetail =
-          _extractText(params['message']) ??
-          _extractText(params['error']) ??
-          _safeJson(params);
-      final detail = formatAgentRuntimeErrorForUser(rawDetail);
-      final cardId = '$parentTaskId-agent-status';
-      _upsertToolCard(
-        runtime,
-        cardId: cardId,
-        taskId: parentTaskId,
-        toolType: 'status',
-        title: method,
-        status: 'error',
-        summary: detail,
-        progress: detail,
-        raw: params,
-        streamMeta: _streamMeta(
-          runtime,
-          parentTaskId: parentTaskId,
-          entryId: cardId,
-          kind: 'error',
-          isFinal: true,
-        ),
-        touchTurn: false,
-      );
-      // ACP emits the top-level `error` notification when a turn fails
-      // terminally (network, rate-limit, server error). When
-      // willRetry=false the server will NOT follow up with turn/completed,
-      // so we must finalize the turn ourselves — otherwise runtime stays
-      // isAiResponding=true forever.
-      final willRetry = params['willRetry'] == true;
-      if (!willRetry) {
-        final completionTaskId =
-            turnId ??
-            runtime.currentDispatchTurnId ??
-            runtime.lastAgentTurnId ??
-            parentTaskId;
-        _completeTurn(runtime, completionTaskId, appendCancelIfEmpty: false);
-      }
-      return AgentReduceResult(
-        handled: true,
-        method: method,
-        threadId: threadId,
-        turnId: turnId,
-      );
-    }
-
     return AgentReduceResult(
       handled: false,
       method: method,
@@ -1552,7 +1516,10 @@ class AgentEventReducer {
     }
     final retry = _asStringMap(presentation['retry']);
     if (retry != null) {
-      _touchActiveTurn(runtime, parentTaskId);
+      // Retry is optional adapter presentation metadata.  It can annotate
+      // output from an already-admitted prompt, but it must not resurrect or
+      // create an ACP turn; official session updates and PromptResponse own
+      // that lifecycle.
       if (_hasAgentMessage(runtime, entryId)) {
         _upsertAcpRetryPresentation(runtime, entryId: entryId, retry: retry);
       } else {
@@ -1600,15 +1567,6 @@ class AgentEventReducer {
           value: clarification,
         );
       }
-    }
-    final compaction = _asStringMap(presentation['compaction']);
-    if (compaction != null) {
-      _touchActiveTurn(runtime, parentTaskId);
-      _upsertAcpContextCompactionCard(
-        runtime,
-        taskId: parentTaskId,
-        compaction: compaction,
-      );
     }
   }
 
@@ -1841,11 +1799,6 @@ class AgentEventReducer {
       content['agentErrorText'] = error;
     }
     content['agentRetryable'] = recovery['retryable'] == true;
-    content['agentContinueable'] = recovery['continueable'] == true;
-    final resumeMode = recovery['resumeMode'] ?? recovery['continueResumeMode'];
-    if (resumeMode != null) {
-      content['agentContinueResumeMode'] = resumeMode;
-    }
     final persistAsError = recovery['persistAsError'];
     runtime.messages[index] = existing.copyWith(
       content: content,
@@ -1882,86 +1835,15 @@ class AgentEventReducer {
     runtime.messages[index] = existing.copyWith(content: content);
   }
 
-  void _upsertAcpContextCompactionCard(
-    ChatConversationRuntimeState runtime, {
-    required String taskId,
-    required Map<String, dynamic> compaction,
-  }) {
-    final status = (_extractText(compaction['status']) ?? 'completed').trim();
-    final markerId =
-        runtime.activeContextCompactionMarkerId ??
-        '$taskId-context-compaction-${runtime.agentNextEntrySequence++}';
-    runtime.activeContextCompactionMarkerId = status == 'compressing'
-        ? markerId
-        : null;
-    runtime.isContextCompressing = status == 'compressing';
-    final index = runtime.messages.indexWhere(
-      (message) => message.id == markerId,
-    );
-    final existing = index == -1 ? null : runtime.messages[index];
-    final existingCardData = existing?.cardData ?? const <String, dynamic>{};
-    final startTime =
-        _asInt(existingCardData['startTime']) ??
-        DateTime.now().millisecondsSinceEpoch;
-    final cardData = <String, dynamic>{
-      'type': 'context_compaction_marker',
-      'status': status,
-      'label': _acpContextCompactionLabel(status),
-      'trigger': _extractText(compaction['trigger']) ?? 'auto',
-      'startTime': startTime,
-      'endTime': status == 'compressing'
-          ? null
-          : DateTime.now().millisecondsSinceEpoch,
-      'latestPromptTokens': _asInt(compaction['latestPromptTokens']),
-      'promptTokenThreshold': _asInt(compaction['promptTokenThreshold']),
-    };
-    final message = ChatMessageModel(
-      id: markerId,
-      type: 2,
-      user: 3,
-      content: {'cardData': cardData, 'id': markerId},
-      createAt: DateTime.fromMillisecondsSinceEpoch(startTime),
-    );
-    if (index == -1) {
-      runtime.messages.insert(0, message);
-    } else {
-      runtime.messages[index] = existing!.copyWith(
-        content: {'cardData': cardData, 'id': markerId},
-      );
-    }
-  }
-
-  String _acpContextCompactionLabel(String status) {
-    return switch (status) {
-      'compressing' => '正在压缩',
-      'noop' => '无需压缩',
-      'failed' => '压缩失败',
-      _ => '已压缩',
-    };
-  }
-
   void _touchActiveTurn(
     ChatConversationRuntimeState runtime,
     String parentTaskId,
   ) {
     runtime.completedAgentTurnIds.remove(parentTaskId);
     runtime.isAiResponding = true;
-    if (runtime.activeAcpTurnId == null && parentTaskId.trim().isNotEmpty) {
-      // The first official session/update can be the admission boundary for
-      // adapters that do not expose a separate turn/started notification.
-      runtime.activeAcpTurnId = parentTaskId;
-    }
     runtime.activeRunId ??= parentTaskId;
-    // currentDispatchTurnId/lastAgentTurnId are compatibility names used by
-    // older page state. Their value is now always the stable run id, never an
-    // ACP turn id.
-    runtime.currentDispatchTurnId ??= runtime.activeRunId;
-    // Keep the old field observable for native/page compatibility. The UI
-    // active-id getter above uses activeRunId, so this protocol alias cannot
-    // create a second visible run.
-    if (runtime.activeAcpTurnId != null) {
-      runtime.currentDispatchTurnId = runtime.activeAcpTurnId;
-    }
+    // currentDispatchTurnId is now only a compatibility alias for activeRunId
+    // and therefore must not be overwritten with the official ACP turn id.
     runtime.lastAgentTurnId = runtime.activeRunId;
     runtime.currentThinkingStage = ThinkingStage.thinking.value;
   }
@@ -3182,8 +3064,7 @@ class AgentEventReducer {
     }
     if (itemType == 'reasoning') {
       // Keep the thinking card streaming until the entire turn ends.
-      // _completeTurn() will call _finalizeThinkingCardsForTask() once
-      // turn/completed (or thread/closed/inactive) arrives.
+      // The owning prompt response finalizes thinking after all item updates.
       final cardId =
           _string(item['entryId']) ?? '${itemId ?? taskId}-agent-thinking';
       _markThinkingItemCompleted(runtime, taskId, cardId);
@@ -3518,10 +3399,11 @@ class AgentEventReducer {
     ChatConversationRuntimeState runtime,
     String taskId, {
     String? acpTurnId,
-    // A normal ACP turn/completed is successful even when the turn only
-    // produced reasoning or tool activity. Cancellation is represented by an
-    // explicit cancelled thread status, not by an empty assistant message.
+    // Only the owning prompt response supplies cancellation; an empty
+    // assistant message or a session notification cannot imply it.
     bool appendCancelIfEmpty = false,
+    bool cancelled = false,
+    String? promptStopReason,
   }) {
     final wasActive = runtime.activeAgentTurnIds.contains(taskId);
     // The UI primes a local render task before ACP has emitted its official
@@ -3557,7 +3439,6 @@ class AgentEventReducer {
       _markAssistantMessagesFinalForTask(runtime, taskId);
       _clearAcpRetryPresentationForTask(runtime, taskId);
       _finalizeThinkingCardsForTask(runtime, taskId);
-      _markToolCardsCompleteForTask(runtime, taskId);
       runtime.currentThinkingMessages.remove(taskId);
       if (wasActive) {
         runtime.completedAgentTurnIds.add(taskId);
@@ -3580,6 +3461,44 @@ class AgentEventReducer {
       );
       _cancelThinkingCardsForTask(runtime, ownerTaskId);
     }
+    // Display metadata belongs to the existing prompt completion owner, not
+    // a timer or an item-completed notification. Persist it with the last reply.
+    final startedAt = runtime.agentEntryStartTimes.remove(
+      'prompt:$ownerTaskId',
+    );
+    // Messages are stored newest first. The first matching reply is the
+    // final prose, while the last may be folded into the earlier process.
+    final replyIndex = runtime.messages.indexWhere(
+      (message) =>
+          message.type == 1 &&
+          message.user == 2 &&
+          message.streamMeta?['parentTaskId'] == ownerTaskId,
+    );
+    if (startedAt != null && replyIndex >= 0) {
+      final endedAt = DateTime.now().millisecondsSinceEpoch;
+      final reply = runtime.messages[replyIndex];
+      runtime.messages[replyIndex] = reply.copyWith(
+        turnUsage: {
+          ...?reply.turnUsage,
+          'endedAt': endedAt,
+          if (endedAt >= startedAt) 'durationMs': endedAt - startedAt,
+        },
+      );
+    }
+    // Persist the owning PromptResponse with its existing items. A finished
+    // transport is not proof of successful completion, especially after cancel.
+    if (promptStopReason != null) {
+      for (var index = 0; index < runtime.messages.length; index++) {
+        final message = runtime.messages[index];
+        if (message.user != 1 &&
+            message.streamMeta?['parentTaskId'] == ownerTaskId) {
+          runtime.messages[index] = message.copyWith(streamMeta: {
+            ...?message.streamMeta,
+            'stopReason': promptStopReason,
+          });
+        }
+      }
+    }
     runtime.isAiResponding = false;
     runtime.isExecutingTask = false;
     runtime.isCheckingExecutableTask = false;
@@ -3601,13 +3520,14 @@ class AgentEventReducer {
     runtime.deepThinkingContent = '';
     runtime.isDeepThinking = false;
     runtime.activeThinkingCardId = null;
-    runtime.currentThinkingStage = ThinkingStage.complete.value;
+    runtime.currentThinkingStage = cancelled
+        ? ThinkingStage.cancelled.value
+        : ThinkingStage.complete.value;
     _markAssistantMessagesFinalForTask(runtime, ownerTaskId);
     _clearAcpRetryPresentationForTask(runtime, ownerTaskId);
     if (!isManualCancel) {
       _finalizeThinkingCardsForTask(runtime, ownerTaskId);
     }
-    _markToolCardsCompleteForTask(runtime, ownerTaskId);
     if (wasActive || ownerWasActive) {
       runtime.completedAgentTurnIds.add(taskId);
       if (completedOfficialTurn != null && completedOfficialTurn.isNotEmpty) {
@@ -3618,11 +3538,6 @@ class AgentEventReducer {
       }
       if (ownerTaskId != taskId) {
         runtime.completedAgentTurnIds.add(ownerTaskId);
-      }
-      if (runtime.completedAgentTurnIds.length > 128) {
-        runtime.completedAgentTurnIds.remove(
-          runtime.completedAgentTurnIds.first,
-        );
       }
     }
   }
@@ -3669,7 +3584,7 @@ class AgentEventReducer {
       cardId: cardId,
       taskId: taskId,
       toolType: 'status',
-      title: 'turn/failed',
+      title: '本轮执行失败',
       status: 'error',
       summary: detail,
       progress: detail,
@@ -3683,23 +3598,6 @@ class AgentEventReducer {
       ),
       touchTurn: false,
     );
-  }
-
-  String? _turnFailureDetail(
-    Map<String, dynamic> params, {
-    bool fallbackToPayload = false,
-  }) {
-    final detail =
-        _extractText(_asStringMap(params['error'])?['message']) ??
-        _extractText(params['message']) ??
-        _extractText(params['reason']) ??
-        _extractText(params['error']);
-    if (detail != null && detail.trim().isNotEmpty) {
-      return formatAgentRuntimeErrorForUser(detail.trim());
-    }
-    return fallbackToPayload
-        ? formatAgentRuntimeErrorForUser(_safeJson(params))
-        : null;
   }
 
   bool _hasVisibleAssistantTextForTask(
@@ -3783,6 +3681,7 @@ class AgentEventReducer {
               parentTaskId: parentTaskId,
               entryId: cardId,
               kind: 'tool_completed',
+              isFinal: true,
               existingMessage: existing,
             ),
     );
@@ -4121,35 +4020,6 @@ class AgentEventReducer {
         _string(message.cardData?['taskID']) ??
         _string(message.streamMeta?['parentTaskId']);
     return cardTaskId == parentTaskId;
-  }
-
-  void _markToolCardsCompleteForTask(
-    ChatConversationRuntimeState runtime,
-    String parentTaskId,
-  ) {
-    final cardIds = runtime.messages
-        .where((message) {
-          final cardData = message.cardData;
-          if (cardData?['type'] != 'agent_tool_summary') {
-            return false;
-          }
-          final cardTaskId =
-              _string(cardData?['taskId']) ??
-              _string(message.streamMeta?['parentTaskId']);
-          if (cardTaskId != parentTaskId) {
-            return false;
-          }
-          final status = _string(cardData?['status'])?.toLowerCase();
-          return status == null ||
-              status == 'running' ||
-              status == 'pending' ||
-              status == 'progress';
-        })
-        .map((message) => message.id)
-        .toList(growable: false);
-    for (final cardId in cardIds) {
-      _markToolCardComplete(runtime, cardId);
-    }
   }
 
   Map<String, dynamic>? _toolCardData(
@@ -5128,9 +4998,14 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
 }) {
   final update = _asStringMap(params['update']);
   if (update == null) return null;
+  final message = _asStringMap(event['message']);
   final sessionId = _firstString([
     event['sessionId'],
     event['session_id'],
+    message?['sessionId'],
+    message?['session_id'],
+    message?['threadId'],
+    message?['thread_id'],
     params['sessionId'],
     params['session_id'],
     event['threadId'],
@@ -5143,6 +5018,12 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
   final turnId = _firstString([
     event['turnId'],
     event['turn_id'],
+    message?['turnId'],
+    message?['turn_id'],
+    message?['taskId'],
+    message?['task_id'],
+    message?['runId'],
+    message?['run_id'],
     params['turnId'],
     params['turn_id'],
     update['turnId'],
@@ -5202,6 +5083,8 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
       if (sessionId != null) 'sessionId': sessionId,
       if (sessionId != null) 'threadId': sessionId,
       if (turnId != null) 'turnId': turnId,
+      if (acpEventAllowsImplicitTurnAdmission(event))
+        'allowImplicitTurnAdmission': true,
     };
   }
 
@@ -5441,39 +5324,6 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
       return <String, dynamic>{
         'method': 'thread/name/updated',
         'params': projectedParams(<String, dynamic>{'name': update['title']}),
-      };
-    case 'state_change':
-    case 'state_update':
-      final state = _normalizeStatus(
-        _string(update['state'] ?? update['status']) ?? 'idle',
-      );
-      final stopReason = _normalizeStatus(
-        _string(update['stopReason'] ?? update['stop_reason']) ?? '',
-      );
-      final status = switch (state) {
-        'running' || 'active' || 'busy' => 'running',
-        // ACP has no extra lifecycle state here. A provider-specific
-        // requires-action alias is only an in-progress interaction.
-        'requiresaction' => 'running',
-        'idle' || 'complete' || 'completed' => switch (stopReason) {
-          'cancelled' ||
-          'canceled' ||
-          'interrupted' ||
-          'aborted' => 'cancelled',
-          'error' || 'failed' || 'failure' => 'failed',
-          _ => 'idle',
-        },
-        _ => state,
-      };
-      return <String, dynamic>{
-        'method': 'thread/status/changed',
-        'params': projectedParams(<String, dynamic>{
-          'status': status,
-          'state': state,
-          if (stopReason.isNotEmpty) 'stopReason': stopReason,
-          if (update['usage'] != null) 'usage': update['usage'],
-          if (update['error'] != null) 'error': update['error'],
-        }),
       };
     default:
       // Usage, commands, and future ACP update kinds do not affect the chat
@@ -6051,9 +5901,6 @@ void _rememberAcpExtensionUpdate(
   Map<String, dynamic> update,
 ) {
   runtime.acpExtensionUpdates.add(Map<String, dynamic>.from(update));
-  if (runtime.acpExtensionUpdates.length > 64) {
-    runtime.acpExtensionUpdates.removeAt(0);
-  }
 }
 
 /// Retain extension namespaces even when they do not have a Card projector
@@ -6421,9 +6268,6 @@ bool _requiresAcpTurnIdentity(String method, Map<String, dynamic> params) {
     return false;
   }
   if (method == 'turn/started' ||
-      method == 'turn/completed' ||
-      method == 'turn/failed' ||
-      (method == 'error' && params['willRetry'] != true) ||
       method == 'turn/plan/updated' ||
       method == 'turn/plan/removed' ||
       method == 'turn/diff/updated' ||
@@ -6457,206 +6301,205 @@ bool _requiresAcpTurnIdentity(String method, Map<String, dynamic> params) {
       }.contains(sessionUpdate);
 }
 
-bool _canSafelyFinalizeUnidentifiedTurn(
-  ChatConversationRuntimeState runtime,
-  String method,
-  Map<String, dynamic> params,
-) {
-  if (!_isTerminalAgentEventMethod(method)) return false;
-  if (method == 'error' && params['willRetry'] == true) return false;
+class AcpLegacyEventAdapter {
+  const AcpLegacyEventAdapter();
 
-  // A missing protocol id is recoverable only before ACP has admitted an
-  // official turn. At that point there is exactly one local dispatch owner,
-  // so _completeTurn can close that placeholder without attaching content to
-  // an arbitrary run. Once an official id exists, an id-less terminal event
-  // is ambiguous (it may be a delayed older Harness event) and is quarantined.
-  return runtime.isAiResponding &&
-      runtime.activeAcpTurnId == null &&
-      runtime.currentDispatchTurnId?.trim().isNotEmpty == true;
-}
-
-bool _isLegacyAgentEvent(Map<String, dynamic> event) {
-  return event['legacyCompatibility'] == true ||
-      event.containsKey('taskId') ||
-      event.containsKey('task_id') ||
-      event.containsKey('streamKind') ||
-      event.containsKey('eventKind') ||
-      event.containsKey('kind') &&
-          _resolveAgentEventMethod(event: event, message: event).isEmpty;
-}
-
-/// Converts the removed `AgentStreamEvent` data shape into official ACP item
-/// notifications. This is deliberately an in-process import adapter: old
-/// clients must still enter through the ACP runtime/bridge, and no legacy
-/// method channel or stream endpoint is revived.
-Map<String, dynamic> _normalizeLegacyAgentEvent(Map<String, dynamic> source) {
-  if (_resolveAgentEventMethod(event: source, message: source).isNotEmpty) {
-    return source;
-  }
-  final kind = _string(
-    source['kind'] ?? source['streamKind'] ?? source['eventKind'],
-  )?.toLowerCase();
-  if (kind == null || kind.isEmpty) {
-    return source;
+  bool isLegacy(Map<String, dynamic> event) {
+    return event['legacyCompatibility'] == true ||
+        event.containsKey('taskId') ||
+        event.containsKey('task_id') ||
+        event.containsKey('streamKind') ||
+        event.containsKey('eventKind') ||
+        event.containsKey('kind') &&
+            _resolveAgentEventMethod(event: event, message: event).isEmpty;
   }
 
-  final taskId = _firstString([
-    source['taskId'],
-    source['task_id'],
-    source['turnId'],
-    source['turn_id'],
-    source['runId'],
-    source['run_id'],
-  ]);
-  final entryId = _firstString([
-    source['entryId'],
-    source['entry_id'],
-    source['messageId'],
-    source['message_id'],
-    source['itemId'],
-    source['item_id'],
-    source['callId'],
-    source['call_id'],
-  ]);
-  final sessionId = _firstString([
-    source['sessionId'],
-    source['session_id'],
-    source['threadId'],
-    source['thread_id'],
-  ]);
-  final requestId =
-      source['requestId'] ??
-      source['request_id'] ??
-      source['requestID'] ??
-      source['id'];
-  final sequence = _firstString([source['seq'], source['sequence']]);
-  final eventId =
-      _firstString([source['eventId'], source['hostEventId']]) ??
-      (taskId != null && sequence != null ? 'legacy:$taskId:$sequence' : null);
-  final common = <String, dynamic>{
-    if (sessionId != null) 'sessionId': sessionId,
-    if (taskId != null) 'turnId': taskId,
-    if (requestId is String && requestId.trim().isNotEmpty)
-      'requestId': requestId.trim(),
-    if (requestId is num) 'requestId': requestId,
-    if (eventId != null) 'eventId': eventId,
-    'legacyCompatibility': true,
-  };
-  final text = source['text'] ?? source['content'];
-  final thinking = source['thinking'] ?? source['reasoning'];
-  final toolName = _firstString([
-    source['toolName'],
-    source['tool_name'],
-    source['displayName'],
-  ]);
-  final item = <String, dynamic>{
-    if (entryId != null) 'id': entryId,
-    if (entryId != null) 'itemId': entryId,
-    if (toolName != null) 'toolName': toolName,
-    if (source['toolType'] != null) 'toolType': source['toolType'],
-    if (source['status'] != null) 'status': source['status'],
-    if (source['summary'] != null) 'summary': source['summary'],
-    if (source['error'] != null) 'error': source['error'],
-    if (source['rawOutput'] != null) 'rawOutput': source['rawOutput'],
-    if (source['result'] != null) 'rawOutput': source['result'],
-  };
+  /// Converts the removed `AgentStreamEvent` data shape into official ACP item
+  /// notifications. This is deliberately an in-process import adapter: old
+  /// clients must still enter through the ACP runtime/bridge, and no legacy
+  /// method channel or stream endpoint is revived.
+  Map<String, dynamic> normalize(Map<String, dynamic> source) {
+    if (_resolveAgentEventMethod(event: source, message: source).isNotEmpty) {
+      return source;
+    }
+    final kind = _string(
+      source['kind'] ?? source['streamKind'] ?? source['eventKind'],
+    )?.toLowerCase();
+    if (kind == null || kind.isEmpty) {
+      return source;
+    }
 
-  Map<String, dynamic> eventWith(String method, Map<String, dynamic> params) {
-    return <String, dynamic>{
-      ...common,
-      'method': method,
-      'params': <String, dynamic>{
-        ...common,
-        ...params,
-        '_compatibility': <String, dynamic>{
-          'source': 'legacy_agent_stream',
-          'kind': kind,
-        },
-      },
+    final taskId = _firstString([
+      source['taskId'],
+      source['task_id'],
+      source['turnId'],
+      source['turn_id'],
+      source['runId'],
+      source['run_id'],
+    ]);
+    final entryId = _firstString([
+      source['entryId'],
+      source['entry_id'],
+      source['messageId'],
+      source['message_id'],
+      source['itemId'],
+      source['item_id'],
+      source['callId'],
+      source['call_id'],
+    ]);
+    final sessionId = _firstString([
+      source['sessionId'],
+      source['session_id'],
+      source['threadId'],
+      source['thread_id'],
+    ]);
+    final requestId =
+        source['requestId'] ??
+        source['request_id'] ??
+        source['requestID'] ??
+        source['id'];
+    final sequence = _firstString([source['seq'], source['sequence']]);
+    final eventId =
+        _firstString([source['eventId'], source['hostEventId']]) ??
+        (taskId != null && sequence != null
+            ? 'legacy:$taskId:$sequence'
+            : null);
+    final common = <String, dynamic>{
+      if (sessionId != null) 'sessionId': sessionId,
+      if (taskId != null) 'turnId': taskId,
+      if (requestId is String && requestId.trim().isNotEmpty)
+        'requestId': requestId.trim(),
+      if (requestId is num) 'requestId': requestId,
+      if (eventId != null) 'eventId': eventId,
+      'legacyCompatibility': true,
     };
-  }
+    final text = source['text'] ?? source['content'];
+    final thinking = source['thinking'] ?? source['reasoning'];
+    final toolName = _firstString([
+      source['toolName'],
+      source['tool_name'],
+      source['displayName'],
+    ]);
+    final item = <String, dynamic>{
+      if (entryId != null) 'id': entryId,
+      if (entryId != null) 'itemId': entryId,
+      if (toolName != null) 'toolName': toolName,
+      if (source['toolType'] != null) 'toolType': source['toolType'],
+      if (source['status'] != null) 'status': source['status'],
+      if (source['summary'] != null) 'summary': source['summary'],
+      if (source['error'] != null) 'error': source['error'],
+      if (source['rawOutput'] != null) 'rawOutput': source['rawOutput'],
+      if (source['result'] != null) 'rawOutput': source['result'],
+    };
 
-  switch (kind) {
-    case 'thinking_started':
-    case 'thinking_snapshot':
-    case 'thinking':
-      return eventWith('item/reasoning/delta', {
-        if (entryId != null) 'itemId': entryId,
-        'delta': thinking ?? text ?? '',
-      });
-    case 'text_snapshot':
-    case 'assistant_message':
-    case 'message':
-    case 'text':
-      return eventWith('item/agentMessage/delta', {
-        if (entryId != null) 'itemId': entryId,
-        'delta': text ?? '',
-      });
-    case 'tool_started':
-      return eventWith('item/started', {
-        'item': <String, dynamic>{
-          ...item,
-          'type': source['itemType'] ?? 'dynamicToolCall',
-          'status': source['status'] ?? 'in_progress',
-        },
-      });
-    case 'tool_progress':
-      return eventWith('item/updated', {
-        'item': <String, dynamic>{...item, 'type': 'dynamicToolCall'},
-      });
-    case 'tool_completed':
-      return eventWith('item/completed', {
-        'item': <String, dynamic>{
-          ...item,
-          'type': source['itemType'] ?? 'dynamicToolCall',
-          'status': source['status'] ?? 'completed',
-        },
-      });
-    case 'permission_required':
-      return eventWith('item/started', {
-        'item': <String, dynamic>{
-          ...item,
-          'id': entryId ?? 'legacy-permission',
-          'type': 'requestApproval',
-        },
-      });
-    case 'clarify_required':
-      return eventWith('item/started', {
-        'item': <String, dynamic>{
-          ...item,
-          'id': entryId ?? 'legacy-clarification',
-          'type': 'requestUserInput',
-          'question': source['question'] ?? text ?? '',
-          'missingFields':
-              source['missingFields'] ?? source['missing'] ?? const <dynamic>[],
-        },
-      });
-    case 'completed':
-      return eventWith('turn/completed', const <String, dynamic>{});
-    case 'error':
-      return eventWith('turn/failed', {
-        'error': source['error'] ?? source['message'] ?? text ?? '',
-      });
-    case 'retrying':
-      return eventWith('item/agentMessage/delta', {
-        if (entryId != null) 'itemId': entryId,
-        'delta': '',
-        'acpPresentation': <String, dynamic>{
-          'retry': <String, dynamic>{
-            if (source['retryCount'] != null) 'count': source['retryCount'],
-            if (source['maxRetries'] != null)
-              'maxRetries': source['maxRetries'],
-            'message': source['message'] ?? '正在重试…',
-            if (source['reason'] != null) 'reason': source['reason'],
+    Map<String, dynamic> eventWith(String method, Map<String, dynamic> params) {
+      return <String, dynamic>{
+        ...common,
+        'method': method,
+        'params': <String, dynamic>{
+          ...common,
+          ...params,
+          '_compatibility': <String, dynamic>{
+            'source': 'legacy_agent_stream',
+            'kind': kind,
           },
         },
-      });
-    default:
-      // Unknown legacy kinds are retained for diagnostics instead of being
-      // guessed into a visible card. Future ACP extensions can add a real
-      // session/update projection without modifying this adapter.
-      return <String, dynamic>{...source, 'legacyCompatibility': true};
+      };
+    }
+
+    switch (kind) {
+      case 'thinking_started':
+      case 'thinking_snapshot':
+      case 'thinking':
+        return eventWith('item/reasoning/delta', {
+          if (entryId != null) 'itemId': entryId,
+          'delta': thinking ?? text ?? '',
+        });
+      case 'text_snapshot':
+      case 'assistant_message':
+      case 'message':
+      case 'text':
+        return eventWith('item/agentMessage/delta', {
+          if (entryId != null) 'itemId': entryId,
+          'delta': text ?? '',
+        });
+      case 'tool_started':
+        return eventWith('item/started', {
+          'item': <String, dynamic>{
+            ...item,
+            'type': source['itemType'] ?? 'dynamicToolCall',
+            'status': source['status'] ?? 'in_progress',
+          },
+        });
+      case 'tool_progress':
+        return eventWith('item/updated', {
+          'item': <String, dynamic>{...item, 'type': 'dynamicToolCall'},
+        });
+      case 'tool_completed':
+        return eventWith('item/completed', {
+          'item': <String, dynamic>{
+            ...item,
+            'type': source['itemType'] ?? 'dynamicToolCall',
+            'status': source['status'] ?? 'completed',
+          },
+        });
+      case 'permission_required':
+        return eventWith('item/started', {
+          'item': <String, dynamic>{
+            ...item,
+            'id': entryId ?? 'legacy-permission',
+            'type': 'requestApproval',
+          },
+        });
+      case 'clarify_required':
+        return eventWith('item/started', {
+          'item': <String, dynamic>{
+            ...item,
+            'id': entryId ?? 'legacy-clarification',
+            'type': 'requestUserInput',
+            'question': source['question'] ?? text ?? '',
+            'missingFields':
+                source['missingFields'] ??
+                source['missing'] ??
+                const <dynamic>[],
+          },
+        });
+      case 'retrying':
+        return eventWith('item/agentMessage/delta', {
+          if (entryId != null) 'itemId': entryId,
+          'delta': '',
+          'acpPresentation': <String, dynamic>{
+            'retry': <String, dynamic>{
+              if (source['retryCount'] != null) 'count': source['retryCount'],
+              if (source['maxRetries'] != null)
+                'maxRetries': source['maxRetries'],
+              'message': source['message'] ?? '正在重试…',
+              if (source['reason'] != null) 'reason': source['reason'],
+            },
+          },
+        });
+      default:
+        // Unknown legacy kinds are retained for diagnostics instead of being
+        // guessed into a visible card. Future ACP extensions can add a real
+        // session/update projection without modifying this adapter.
+        return <String, dynamic>{...source, 'legacyCompatibility': true};
+    }
   }
+}
+
+const _acpLegacyEventAdapter = AcpLegacyEventAdapter();
+
+bool _canUseHostTurnReservation(
+  ChatConversationRuntimeState runtime,
+  Map<String, dynamic> event,
+) {
+  // ACP v1 session/update is session-scoped and may have no wire turn id.
+  // Only the host's active prompt reservation can attribute that update; an
+  // arbitrary provider id or a stale text snapshot is not sufficient.
+  return acpEventAllowsImplicitTurnAdmission(event) &&
+      runtime.isAiResponding &&
+      runtime.activeAcpTurnId == null &&
+      runtime.currentDispatchTurnId?.trim().isNotEmpty == true;
 }
 
 String _resolveAgentEventMethod({
@@ -7093,66 +6936,6 @@ String? _firstString(Iterable<dynamic> values) {
   return null;
 }
 
-String? _statusType(Iterable<dynamic> values) {
-  for (final value in values) {
-    final text = _statusText(value);
-    if (text != null && text.isNotEmpty) {
-      return _normalizeStatus(text);
-    }
-  }
-  return null;
-}
-
-String? _statusText(dynamic value) {
-  if (value == null) return null;
-  if (value is String || value is num || value is bool) {
-    return value.toString();
-  }
-  final map = _asStringMap(value);
-  if (map != null) {
-    return _firstString([
-      map['type'],
-      map['status'],
-      map['state'],
-      map['value'],
-      map['name'],
-    ]);
-  }
-  return null;
-}
-
-String _normalizeStatus(String status) =>
-    status.trim().toLowerCase().replaceAll(RegExp(r'[^a-z0-9]+'), '');
-
-bool _statusIsActive(String? status) {
-  return status == 'running' ||
-      status == 'active' ||
-      status == 'busy' ||
-      status == 'requiresaction' ||
-      status == 'inprogress' ||
-      status == 'inflight' ||
-      status == 'executing';
-}
-
-bool _statusIsInactive(String? status) {
-  return status == 'idle' ||
-      status == 'closed' ||
-      status == 'completed' ||
-      status == 'complete' ||
-      status == 'notloaded' ||
-      status == 'systemerror' ||
-      status == 'failed' ||
-      status == 'cancelled' ||
-      status == 'canceled' ||
-      status == 'interrupted';
-}
-
-bool _statusIsCancelled(String? status) {
-  return status == 'cancelled' ||
-      status == 'canceled' ||
-      status == 'interrupted';
-}
-
 String? _collaborationModeFromThreadSettings(Map<String, dynamic> params) {
   final settings =
       _asStringMap(params['threadSettings']) ??
@@ -7208,15 +6991,5 @@ String _accountSummary(Map<String, dynamic> params) {
 }
 
 String _trimTerminalOutput(String value) {
-  const maxChars = 64 * 1024;
-  const maxLines = 600;
-  var text = value;
-  if (text.length > maxChars) {
-    text = text.substring(text.length - maxChars);
-  }
-  final lines = text.split('\n');
-  if (lines.length > maxLines) {
-    text = lines.sublist(lines.length - maxLines).join('\n');
-  }
-  return text;
+  return value;
 }

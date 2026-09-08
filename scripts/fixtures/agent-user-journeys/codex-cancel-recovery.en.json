@@ -1,0 +1,54 @@
+{
+  "name": "Codex cancellation, follow-up and restart",
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_CODEX_HOLD_CANCEL"
+    },
+    {
+      "action": "expect",
+      "text": "Stop",
+      "timeoutMs": 15000
+    },
+    {
+      "action": "tap",
+      "label": "Stop"
+    },
+    {
+      "action": "expect",
+      "text": "Cancelled",
+      "timeoutMs": 30000
+    },
+    {
+      "action": "expect",
+      "text": "Send",
+      "timeoutMs": 30000
+    },
+    {
+      "action": "send",
+      "marker": "OOB_CODEX_DEFAULT_RECOVERY"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_CODEX_DEFAULT_RECOVERY_DONE",
+      "timeoutMs": 60000
+    },
+    {
+      "action": "send",
+      "marker": "OOB_CODEX_DEFAULT_FOLLOWUP"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_CODEX_DEFAULT_FOLLOWUP_DONE",
+      "timeoutMs": 60000
+    },
+    {
+      "action": "restart"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_CODEX_DEFAULT_FOLLOWUP_DONE",
+      "timeoutMs": 30000
+    }
+  ]
+}

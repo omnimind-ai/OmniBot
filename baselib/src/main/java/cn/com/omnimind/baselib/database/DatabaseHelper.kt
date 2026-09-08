@@ -1,5 +1,7 @@
 package cn.com.omnimind.baselib.database
 
+import androidx.room.withTransaction
+
 import android.content.Context
 import androidx.room.Room
 import androidx.room.migration.Migration
@@ -264,6 +266,20 @@ object DatabaseHelper {
 
     private val MIGRATION_15_16 = object : Migration(15, 16) {
         override fun migrate(database: SupportSQLiteDatabase) {
+            // Some early 10 -> 11 upgrade paths created this table without
+            // isLocal. Preserve those records as the historical default (0)
+            // before the existing migration removes local-only usage rows.
+            val hasLocalFlag = database.query("PRAGMA table_info(`token_usage_records`)").use { cursor ->
+                val nameIndex = cursor.getColumnIndexOrThrow("name")
+                var found = false
+                while (cursor.moveToNext()) {
+                    if (cursor.getString(nameIndex) == "isLocal") found = true
+                }
+                found
+            }
+            if (!hasLocalFlag) {
+                database.execSQL("ALTER TABLE token_usage_records ADD COLUMN isLocal INTEGER NOT NULL DEFAULT 0")
+            }
             database.execSQL(
                 """
                 CREATE TABLE IF NOT EXISTS `token_usage_records_new` (
@@ -377,6 +393,9 @@ object DatabaseHelper {
 
     }
 
+    suspend fun <T> withTransaction(block: suspend () -> T): T =
+        getDatabase().withTransaction(block)
+
     fun getDatabase(): AppDatabase {
         return database ?: throw IllegalStateException("Database not initialized")
     }
@@ -457,7 +476,11 @@ object DatabaseHelper {
     }
 
     suspend fun updateConversation(conversation: Conversation) {
-        getDatabase().conversationDao().update(conversation)
+        getDatabase().conversationDao().updatePreservingCheckpoint(conversation)
+    }
+
+    suspend fun clearConversationContextCheckpoint(id: Long) {
+        getDatabase().conversationDao().clearContextCheckpoint(id)
     }
 
     suspend fun deleteConversation(conversation: Conversation) {
@@ -510,20 +533,6 @@ object DatabaseHelper {
         )
     }
 
-    suspend fun getAgentConversationEntriesAscSafe(
-        conversationId: Long,
-        conversationMode: String,
-        payloadLimit: Int,
-        summaryLimit: Int
-    ): List<AgentConversationEntryRecord> {
-        return getDatabase().agentConversationEntryDao().getThreadEntriesAscSafe(
-            conversationId = conversationId,
-            conversationMode = conversationMode,
-            payloadLimit = payloadLimit,
-            summaryLimit = summaryLimit
-        )
-    }
-
     suspend fun getAgentConversationEntriesDesc(
         conversationId: Long,
         conversationMode: String
@@ -531,20 +540,6 @@ object DatabaseHelper {
         return getDatabase().agentConversationEntryDao().getThreadEntriesDesc(
             conversationId = conversationId,
             conversationMode = conversationMode
-        )
-    }
-
-    suspend fun getAgentConversationEntriesDescSafe(
-        conversationId: Long,
-        conversationMode: String,
-        payloadLimit: Int,
-        summaryLimit: Int
-    ): List<AgentConversationEntryRecord> {
-        return getDatabase().agentConversationEntryDao().getThreadEntriesDescSafe(
-            conversationId = conversationId,
-            conversationMode = conversationMode,
-            payloadLimit = payloadLimit,
-            summaryLimit = summaryLimit
         )
     }
 
@@ -557,22 +552,6 @@ object DatabaseHelper {
             conversationId = conversationId,
             conversationMode = conversationMode,
             entryId = entryId
-        )
-    }
-
-    suspend fun getAgentConversationEntryByThreadAndIdSafe(
-        conversationId: Long,
-        conversationMode: String,
-        entryId: String,
-        payloadLimit: Int,
-        summaryLimit: Int
-    ): AgentConversationEntryRecord? {
-        return getDatabase().agentConversationEntryDao().getByThreadAndEntryIdSafe(
-            conversationId = conversationId,
-            conversationMode = conversationMode,
-            entryId = entryId,
-            payloadLimit = payloadLimit,
-            summaryLimit = summaryLimit
         )
     }
 
@@ -649,24 +628,6 @@ object DatabaseHelper {
             conversationMode = conversationMode,
             limit = limit,
             offset = offset
-        )
-    }
-
-    suspend fun getAgentConversationEntriesDescPagedSafe(
-        conversationId: Long,
-        conversationMode: String,
-        limit: Int,
-        offset: Int,
-        payloadLimit: Int,
-        summaryLimit: Int
-    ): List<AgentConversationEntryRecord> {
-        return getDatabase().agentConversationEntryDao().getThreadEntriesDescPagedSafe(
-            conversationId = conversationId,
-            conversationMode = conversationMode,
-            limit = limit,
-            offset = offset,
-            payloadLimit = payloadLimit,
-            summaryLimit = summaryLimit
         )
     }
 

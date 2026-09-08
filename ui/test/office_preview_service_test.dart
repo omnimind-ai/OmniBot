@@ -1,19 +1,75 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui';
 
 import 'package:archive/archive.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ui/services/office_preview_service.dart';
+import 'package:ui/l10n/legacy_text_localizer.dart';
 
 void main() {
   late Directory tempDir;
 
   setUp(() {
+    LegacyTextLocalizer.setResolvedLocale(const Locale('zh', 'CN'));
     tempDir = Directory.systemTemp.createTempSync('office-preview-test-');
   });
 
   tearDown(() {
     tempDir.deleteSync(recursive: true);
+  });
+
+  test('long Word paragraphs and the final paragraph remain complete', () async {
+    final paragraphs = List.generate(30, (i) => '$i:${'正文' * 200}:END-$i');
+    final path = await _writeArchiveFile(tempDir, 'long.docx', {
+      'word/document.xml':
+          '<document><body>${paragraphs.map((p) => '<p><r><t>$p</t></r></p>').join()}</body></document>',
+    });
+    final preview = await OmnibotOfficePreviewService.loadPreview(
+      path: path,
+      previewKind: 'office_word',
+    );
+    expect(preview.sections.single.lines, paragraphs);
+    expect(preview.truncated, isFalse);
+  });
+
+  test('every worksheet row column and long cell remains complete', () async {
+    final cell = '${'数据' * 80}:END';
+    final path = await _writeArchiveFile(tempDir, 'long.xlsx', {
+      'xl/workbook.xml':
+          '<workbook><sheets>${List.generate(5, (i) => '<sheet name="Sheet$i" id="r$i"/>').join()}</sheets></workbook>',
+      'xl/_rels/workbook.xml.rels':
+          '<Relationships>${List.generate(5, (i) => '<Relationship Id="r$i" Target="worksheets/sheet$i.xml"/>').join()}</Relationships>',
+      for (var i = 0; i < 5; i++)
+        'xl/worksheets/sheet$i.xml':
+            '<worksheet><sheetData>${List.generate(25, (r) => '<row>${List.generate(12, (c) => '<c r="${String.fromCharCode(65 + c)}${r + 1}" t="inlineStr"><is><t>$cell</t></is></c>').join()}</row>').join()}</sheetData></worksheet>',
+    });
+    final preview = await OmnibotOfficePreviewService.loadPreview(
+      path: path,
+      previewKind: 'office_sheet',
+    );
+    expect(preview.sections, hasLength(5));
+    for (final section in preview.sections) {
+      expect(section.tableRows, hasLength(25));
+      expect(section.tableRows.last, List.filled(12, cell));
+    }
+    expect(preview.truncated, isFalse);
+  });
+
+  test('every slide and long text line remains complete', () async {
+    final lines = List.generate(12, (i) => '$i:${'幻灯片' * 100}:END-$i');
+    final path = await _writeArchiveFile(tempDir, 'long.pptx', {
+      for (var i = 1; i <= 10; i++)
+        'ppt/slides/slide$i.xml':
+            '<sld>${lines.map((p) => '<p><r><t>$p</t></r></p>').join()}</sld>',
+    });
+    final preview = await OmnibotOfficePreviewService.loadPreview(
+      path: path,
+      previewKind: 'office_slide',
+    );
+    expect(preview.sections, hasLength(10));
+    expect(preview.sections.last.lines, lines);
+    expect(preview.truncated, isFalse);
   });
 
   test('parses docx body text into preview sections', () async {

@@ -26,7 +26,7 @@ class AgentRunTimelineEntry {
 /// header on a persisted `isFinal` boolean instead used to mean that one lost
 /// bit removed the agent avatar, the "processed" label, and the fold all at
 /// once.
-enum AgentRunStatus { running, finished }
+enum AgentRunStatus { running, finished, failed, cancelled }
 
 /// One chronological slice of a turn: either a message that stays in the
 /// conversation, or a contiguous run of process cards that folds as a unit.
@@ -582,13 +582,21 @@ AgentRunTimelineGroup? _buildTimelineGroup(
   // answer never grouped, and therefore never showed an agent avatar once it
   // came back from the database.
   final segments = _buildSegments(taskMessages);
-  if (!segments.any((segment) => !segment.isProcess) && !isActive) {
+  if (!segments.any((segment) => !segment.isProcess) &&
+      !isActive &&
+      !taskMessages.any(_isCancelledTurnItem)) {
     return null;
   }
 
   return AgentRunTimelineGroup(
     taskId: taskId,
-    status: isActive ? AgentRunStatus.running : AgentRunStatus.finished,
+    status: isActive
+        ? AgentRunStatus.running
+        : taskMessages.any(isAgentTurnFailureMessage)
+        ? AgentRunStatus.failed
+        : taskMessages.any(_isCancelledTurnItem)
+        ? AgentRunStatus.cancelled
+        : AgentRunStatus.finished,
     agentId: resolveAgentRunAgentId(
       turnMessages: taskMessages,
       conversationAgentId: conversationAgentId,
@@ -762,13 +770,28 @@ List<AgentRunTimelineSegment> _buildSegments(
   return List<AgentRunTimelineSegment>.unmodifiable(segments);
 }
 
+bool _isCancelledTurnItem(ChatMessageModel message) =>
+    const {'cancelled', 'canceled'}.contains(message.streamMeta?['stopReason']);
+
+/// Only the owning runtime's terminal failure card denotes a failed turn.
+/// An individual tool error may be recovered within the same prompt.
+bool isAgentTurnFailureMessage(ChatMessageModel message) {
+  final card = message.cardData;
+  return card?['type'] == 'agent_tool_summary' &&
+      card?['toolType'] == 'status' &&
+      card?['status'] == 'error' &&
+      agentRunKind(message) == 'error';
+}
+
 bool _isProcessMessage(ChatMessageModel message) {
   final type = _cardType(message);
   // A plan is a live ACP snapshot, not disposable tool activity. Keeping it
   // visible outside the fold lets later plan_update events replace the same
   // card in place and leaves the final plan readable after the run closes.
   return type == 'deep_thinking' ||
-      (type == 'agent_tool_summary' && !isAgentPlanMessage(message));
+      (type == 'agent_tool_summary' &&
+          !isAgentPlanMessage(message) &&
+          !isAgentTurnFailureMessage(message));
 }
 
 /// The one rule for "which agent produced this turn".

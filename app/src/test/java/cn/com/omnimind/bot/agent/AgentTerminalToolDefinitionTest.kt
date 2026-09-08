@@ -32,7 +32,7 @@ class AgentTerminalToolDefinitionTest {
         val text = terminalDefinitionsText(TerminalDistribution.ubuntu)
 
         assertTrue(text.contains("Ubuntu"))
-        assertTrue(text.contains("prootDistro=ubuntu"))
+        assertDistroParameter(TerminalDistribution.ubuntu, "ubuntu", "Ubuntu")
         assertFalse(text.contains("Alpine"))
         assertFalse(text.contains("OMNIBOT_TERMINAL_DISTRIBUTION"))
         assertFalse(text.contains("terminal environment"))
@@ -43,10 +43,22 @@ class AgentTerminalToolDefinitionTest {
         val text = terminalDefinitionsText(TerminalDistribution.alpine)
 
         assertTrue(text.contains("Alpine"))
-        assertTrue(text.contains("prootDistro=alpine"))
+        assertDistroParameter(TerminalDistribution.alpine, "alpine", "Alpine")
         assertFalse(text.contains("Ubuntu"))
         assertFalse(text.contains("OMNIBOT_TERMINAL_DISTRIBUTION"))
         assertFalse(text.contains("terminal environment"))
+    }
+
+    private fun assertDistroParameter(distribution: TerminalDistribution.Spec, id: String, label: String) {
+        val execute = AgentToolDefinitions.staticTools(PromptLocale.EN_US, distribution)
+            .map { it["function"] as JsonObject }
+            .single { it["name"]?.jsonPrimitive?.content == "terminal_execute" }
+        val properties = (execute["parameters"] as JsonObject)["properties"] as JsonObject
+        val distro = properties["prootDistro"] as JsonObject
+        val description = distro["description"]!!.jsonPrimitive.content
+        assertTrue(description, description.contains(id))
+        assertTrue(description, description.contains(label))
+        assertFalse(execute.containsKey("postToolRule"))
     }
 
     private fun terminalDefinitionsText(distribution: TerminalDistribution.Spec): String {

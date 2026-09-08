@@ -31,6 +31,7 @@ class DebugModelProviderConfigReceiver : BroadcastReceiver() {
                 val result = runCatching {
                     when (operation) {
                         OPERATION_QUERY -> queryState()
+                        "verify_bound_provider" -> verifyBoundProvider()
                         OPERATION_CONFIGURE -> configure(appContext, intent)
                         OPERATION_BIND_EXISTING -> bindExisting(intent)
                         else -> error("unsupported operation: $operation")
@@ -141,6 +142,29 @@ class DebugModelProviderConfigReceiver : BroadcastReceiver() {
         "profiles" to ModelProviderConfigStore.listProfiles().map { it.toSafePayload() },
         "sceneBindings" to SceneModelBindingStore.getBindingEntries().map { it.toPayload() },
     )
+
+    /** Uses the existing binding and credentials in-process; never exports a key. */
+    private suspend fun verifyBoundProvider(): Map<String, Any?> {
+        val binding = checkNotNull(SceneModelBindingStore.getBinding("scene.dispatch.model"))
+        val profile = checkNotNull(ModelProviderConfigStore.getProfile(binding.providerProfileId))
+        val results = listOf("chat_completions", "responses", "anthropic").map { wire ->
+            val base = if (wire == "anthropic")
+                cn.com.omnimind.bot.agent.runtime.normalizeClaudeCodeBaseUrl(profile.baseUrl)
+                else profile.baseUrl
+            val result = cn.com.omnimind.assists.controller.http.HttpController.checkProviderModelAvailability(
+                model = binding.modelId, apiBase = base, apiKey = profile.apiKey,
+                customHeaders = profile.customHeaders,
+                protocolType = if (wire == "anthropic") "anthropic" else "openai_compatible",
+                wireApi = wire,
+            )
+            mapOf("wire" to wire, "available" to result.available, "code" to result.code,
+                "message" to cn.com.omnimind.bot.agent.AgentRuntimeErrorSupport.safeDiagnosticMessage(
+                    IllegalStateException(result.message)))
+        }
+        return mapOf("success" to true, "profileId" to profile.id,
+            "modelId" to binding.modelId, "checks" to results,
+            "harnessAcceptance" to false)
+    }
 
     private fun seedFlutterManualModelId(context: Context, profileId: String, modelId: String) {
         val preferences = context.getSharedPreferences(

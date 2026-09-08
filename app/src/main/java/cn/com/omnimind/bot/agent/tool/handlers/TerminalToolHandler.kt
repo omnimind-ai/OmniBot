@@ -50,7 +50,7 @@ class TerminalToolHandler(
         val executionMode: String,
         val prootDistro: String?,
         val workingDirectory: String?,
-        val timeoutSeconds: Int
+        val timeoutSeconds: Int?
     )
 
     data class TerminalSessionStartArgs(
@@ -61,13 +61,11 @@ class TerminalToolHandler(
     data class TerminalSessionExecArgs(
         val sessionId: String,
         val command: String,
-        val workingDirectory: String?,
-        val timeoutSeconds: Int
+        val workingDirectory: String?
     )
 
     data class TerminalSessionReadArgs(
-        val sessionId: String,
-        val maxChars: Int
+        val sessionId: String
     )
 
     data class DirectTerminalSessionSnapshot(
@@ -97,7 +95,13 @@ class TerminalToolHandler(
         toolHandle: AgentToolExecutionHandle
     ): ToolExecutionResult {
         return when (toolCall.function.name) {
-            "terminal_execute", "bash" -> executeTerminalTool(args, env.workspaceDescriptor, env.terminalEnvironment, callback, toolHandle)
+            "terminal_execute", "bash" -> executeTerminalTool(
+                args,
+                env.workspaceDescriptor,
+                env.terminalEnvironment,
+                callback,
+                toolHandle,
+            )
             "terminal_session_start" -> executeTerminalSessionStart(args, env.workspaceDescriptor, env.terminalEnvironment, callback)
             "terminal_session_exec" -> executeTerminalSessionExec(args, env.workspaceDescriptor, env.terminalEnvironment, callback, toolHandle)
             "terminal_session_read" -> executeTerminalSessionRead(args, env.workspaceDescriptor, callback)
@@ -313,7 +317,6 @@ class TerminalToolHandler(
                 sessionId = sessionId,
                 command = parsedArgs.command,
                 workingDirectory = shellWorkingDirectory,
-                timeoutSeconds = parsedArgs.timeoutSeconds,
                 environment = terminalEnvironment,
                 onLiveUpdate = { update ->
                     val summary = update.summary.ifBlank { "终端输出更新中" }
@@ -348,11 +351,8 @@ class TerminalToolHandler(
                 "logPath" to logArtifact.workspacePath,
                 "androidLogPath" to logArtifact.androidPath,
                 "logUri" to logArtifact.uri,
-                "stdout" to helper.truncateTerminalTail(result.output, 12000),
-                "terminalOutput" to helper.truncateTerminalTail(
-                    if (result.completed) result.output else result.transcript,
-                    12000
-                ),
+                "stdout" to result.output,
+                "terminalOutput" to if (result.completed) result.output else result.transcript,
                 "success" to (result.completed && result.success && result.errorMessage == null),
                 "errorMessage" to result.errorMessage,
                 "terminalStreamState" to terminalStreamState
@@ -401,11 +401,8 @@ class TerminalToolHandler(
             }
             val readResult = EmbeddedTerminalRuntime.readSession(helper.context, sessionId)
             val artifact = persistTerminalSessionTranscript(workspace, sessionId, readResult.transcript, toolName)
-            val content = helper.truncateTerminalTail(
-                EmbeddedTerminalRuntime.trimTerminalOutput(
-                    EmbeddedTerminalRuntime.sanitizeTerminalNoise(readResult.transcript)
-                ),
-                parsedArgs.maxChars
+            val content = EmbeddedTerminalRuntime.trimTerminalOutput(
+                EmbeddedTerminalRuntime.sanitizeTerminalNoise(readResult.transcript)
             )
             val payload = linkedMapOf<String, Any?>(
                 "sessionId" to sessionId,
@@ -523,7 +520,7 @@ class TerminalToolHandler(
     private suspend fun executeDirectTerminalCommand(
         command: String,
         workingDirectory: String?,
-        timeoutSeconds: Int,
+        timeoutSeconds: Int?,
         environment: Map<String, String>,
         onLiveUpdate: suspend (sessionId: String, outputDelta: String, streamState: String) -> Unit = { _, _, _ -> }
     ): TermuxCommandResult {
@@ -616,7 +613,7 @@ class TerminalToolHandler(
                         manager = manager,
                         sessionId = session.id,
                         command = setupCommand,
-                        timeoutSeconds = 30
+                        timeoutSeconds = null
                     )
                 }
                 if (!setupResult.completed || setupResult.timedOut || !setupResult.errorMessage.isNullOrBlank()) {
@@ -640,7 +637,7 @@ class TerminalToolHandler(
         sessionId: String,
         command: String,
         workingDirectory: String?,
-        timeoutSeconds: Int,
+        timeoutSeconds: Int?,
         environment: Map<String, String>,
         onLiveUpdate: suspend (String) -> Unit = {}
     ): DirectTerminalCommandResult {
@@ -705,7 +702,7 @@ class TerminalToolHandler(
         manager: TerminalManager,
         sessionId: String,
         command: String,
-        timeoutSeconds: Int,
+        timeoutSeconds: Int?,
         onLiveOutput: suspend (String) -> Unit = {}
     ): DirectTerminalCommandResult = coroutineScope {
         val session = findTerminalSession(manager, sessionId)
@@ -750,7 +747,9 @@ class TerminalToolHandler(
         collectorReady.await()
         manager.sendCommandToSession(sessionId = sessionId, command = command, commandId = commandId)
 
-        val completedOutput = withTimeoutOrNull(timeoutSeconds * 1000L) {
+        val completedOutput = if (timeoutSeconds != null) {
+            withTimeoutOrNull(timeoutSeconds * 1000L) { completionOutput.await() }
+        } else {
             completionOutput.await()
         }
         collectorJob.cancelAndJoin()
@@ -879,8 +878,7 @@ class TerminalToolHandler(
         workspace: AgentWorkspaceDescriptor,
         sourceTool: String
     ): ToolExecutionResult.TerminalResult {
-        val previewMap = buildTerminalResultMap(args, result, outputLimit = 2000)
-        val rawResultMap = buildTerminalResultMap(args, result, outputLimit = 12000)
+        val resultMap = buildTerminalResultMap(args, result)
         val artifacts = buildTerminalArtifacts(
             workspace = workspace,
             sourceTool = sourceTool,
@@ -889,8 +887,8 @@ class TerminalToolHandler(
         return ToolExecutionResult.TerminalResult(
             toolName = toolName,
             summaryText = buildTerminalSummary(result),
-            previewJson = helper.encodeLocalizedPayload(previewMap),
-            rawResultJson = helper.encodeLocalizedPayload(rawResultMap),
+            previewJson = helper.encodeLocalizedPayload(resultMap),
+            rawResultJson = helper.encodeLocalizedPayload(resultMap),
             success = result.success,
             timedOut = result.timedOut,
             terminalOutput = result.terminalOutput,
@@ -901,7 +899,7 @@ class TerminalToolHandler(
         )
     }
 
-    private fun buildTerminalResultMap(args: TerminalExecuteArgs, result: TermuxCommandResult, outputLimit: Int): Map<String, Any?> {
+    private fun buildTerminalResultMap(args: TerminalExecuteArgs, result: TermuxCommandResult): Map<String, Any?> {
         return linkedMapOf(
             "executionMode" to args.executionMode,
             "prootDistro" to args.prootDistro,
@@ -913,16 +911,16 @@ class TerminalToolHandler(
             "resultCode" to result.resultCode,
             "errorCode" to result.errorCode,
             "errorMessage" to result.errorMessage,
-            "stdout" to helper.truncateText(result.stdout, outputLimit),
-            "stderr" to helper.truncateText(result.stderr, outputLimit),
+            "stdout" to result.stdout,
+            "stderr" to result.stderr,
             "stdoutLength" to result.stdout.length,
             "stderrLength" to result.stderr.length,
-            "terminalOutput" to helper.truncateText(result.terminalOutput, outputLimit),
+            "terminalOutput" to result.terminalOutput,
             "terminalOutputLength" to result.terminalOutput.length,
             "liveSessionId" to result.liveSessionId,
             "liveStreamState" to result.liveStreamState,
             "liveFallbackReason" to result.liveFallbackReason,
-            "rawExtras" to sanitizeTerminalRawExtras(result.rawExtras, outputLimit)
+            "rawExtras" to sanitizeTerminalRawExtras(result.rawExtras)
         )
     }
 
@@ -961,7 +959,7 @@ class TerminalToolHandler(
     }
 
     private fun buildTerminalArtifacts(workspace: AgentWorkspaceDescriptor, sourceTool: String, terminalOutput: String): List<ArtifactRef> {
-        if (terminalOutput.length <= 4000) return emptyList()
+        if (terminalOutput.isBlank()) return emptyList()
         return try {
             listOf(workspaceManager.writeOffload(agentRunId = workspace.id, extension = "log", content = terminalOutput).copy(sourceTool = sourceTool))
         } catch (_: Exception) {
@@ -969,20 +967,22 @@ class TerminalToolHandler(
         }
     }
 
-    private fun sanitizeTerminalRawExtras(rawExtras: Map<String, Any?>, outputLimit: Int): Map<String, Any?> {
+    private fun sanitizeTerminalRawExtras(rawExtras: Map<String, Any?>): Map<String, Any?> {
         if (rawExtras.isEmpty()) return emptyMap()
         return rawExtras.entries.associate { (key, value) ->
             key to when (value) {
-                is String -> helper.truncateText(EmbeddedTerminalRuntime.sanitizeTerminalNoise(value), outputLimit)
+                is String -> EmbeddedTerminalRuntime.sanitizeTerminalNoise(value)
                 is List<*> -> value.map { item ->
-                    if (item is String) helper.truncateText(EmbeddedTerminalRuntime.sanitizeTerminalNoise(item), outputLimit) else item
+                    if (item is String) EmbeddedTerminalRuntime.sanitizeTerminalNoise(item) else item
                 }
                 else -> value
             }
         }
     }
 
-    private fun parseTerminalExecuteArgs(args: JsonObject): TerminalExecuteArgs {
+    private fun parseTerminalExecuteArgs(
+        args: JsonObject,
+    ): TerminalExecuteArgs {
         val command = args["command"]?.jsonPrimitive?.content?.trim().orEmpty()
         require(command.isNotEmpty()) { "terminal_execute 缺少 command" }
         val requestedMode = args["executionMode"]?.jsonPrimitive?.contentOrNull?.trim()?.lowercase()?.takeIf { it.isNotEmpty() }
@@ -991,10 +991,14 @@ class TerminalToolHandler(
                 "executionMode 仅支持 termux 或 proot"
             }
         }
-        val executionMode = TermuxCommandSpec.EXECUTION_MODE_PROOT
-        val prootDistro = helper.terminalDistribution.id
+        val executionMode = requestedMode ?: TermuxCommandSpec.EXECUTION_MODE_TERMUX
+        val prootDistro = if (executionMode == TermuxCommandSpec.EXECUTION_MODE_PROOT) {
+            helper.terminalDistribution.id
+        } else {
+            null
+        }
         val workingDirectory = args["workingDirectory"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
-        val timeoutSeconds = args["timeoutSeconds"]?.jsonPrimitive?.intOrNull?.coerceIn(5, 300) ?: TermuxCommandSpec.DEFAULT_TIMEOUT_SECONDS
+        val timeoutSeconds = args["timeoutSeconds"]?.jsonPrimitive?.intOrNull?.takeIf { it > 0 }
         return TerminalExecuteArgs(command = command, executionMode = executionMode, prootDistro = prootDistro, workingDirectory = workingDirectory, timeoutSeconds = timeoutSeconds)
     }
 
@@ -1013,17 +1017,17 @@ class TerminalToolHandler(
         return TerminalSessionExecArgs(
             sessionId = sessionId,
             command = command,
-            workingDirectory = args["workingDirectory"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() },
-            timeoutSeconds = args["timeoutSeconds"]?.jsonPrimitive?.intOrNull?.coerceIn(5, 600) ?: 120
+            workingDirectory = args["workingDirectory"]?.jsonPrimitive?.contentOrNull?.trim()?.takeIf { it.isNotEmpty() }
         )
     }
 
-    private fun parseTerminalSessionReadArgs(args: JsonObject): TerminalSessionReadArgs {
+    private fun parseTerminalSessionReadArgs(
+        args: JsonObject,
+    ): TerminalSessionReadArgs {
         val sessionId = args["sessionId"]?.jsonPrimitive?.content?.trim().orEmpty()
         require(sessionId.isNotEmpty()) { "缺少 sessionId" }
         return TerminalSessionReadArgs(
-            sessionId = sessionId,
-            maxChars = args["maxChars"]?.jsonPrimitive?.intOrNull?.coerceIn(256, 64_000) ?: SharedHelper.DEFAULT_TERMINAL_SESSION_READ_MAX_CHARS
+            sessionId = sessionId
         )
     }
 }

@@ -34,8 +34,14 @@ data class CalendarEventListRequest(
     val startAt: String?,
     val endAt: String?,
     val query: String?,
-    val limit: Int
+    val limit: Int?
 )
+
+/** An omitted limit means that the Android calendar provider decides the result size. */
+internal fun resolveCalendarListLimit(raw: Int?): Int? {
+    require(raw == null || raw > 0) { "limit 必须大于 0" }
+    return raw
+}
 
 data class CalendarEventUpdateRequest(
     val eventId: String,
@@ -52,10 +58,6 @@ data class CalendarEventUpdateRequest(
 class AgentCalendarToolService(
     private val context: Context
 ) {
-    companion object {
-        private const val DEFAULT_LIST_LIMIT = 50
-        private const val MAX_LIST_LIMIT = 200
-    }
 
     private data class EventSnapshot(
         val eventId: Long,
@@ -212,7 +214,7 @@ class AgentCalendarToolService(
     }
 
     fun listEvents(request: CalendarEventListRequest): Map<String, Any?> {
-        val limit = request.limit.coerceIn(1, MAX_LIST_LIMIT)
+        val limit = resolveCalendarListLimit(request.limit)
         val defaultZone = ZoneId.systemDefault()
         val now = ZonedDateTime.now(defaultZone)
 
@@ -274,7 +276,7 @@ class AgentCalendarToolService(
         )
 
         cursor?.use {
-            while (it.moveToNext() && items.size < limit) {
+            while (it.moveToNext() && (limit == null || items.size < limit)) {
                 val eventId = it.getLong(0)
                 val calendarId = it.getLong(1)
                 val title = it.getString(2).orEmpty()
@@ -393,10 +395,6 @@ class AgentCalendarToolService(
             "eventId" to eventId.toString(),
             "summary" to "已删除日程“${snapshot.title}”"
         )
-    }
-
-    fun normalizeListLimit(raw: Int?): Int {
-        return raw?.coerceIn(1, MAX_LIST_LIMIT) ?: DEFAULT_LIST_LIMIT
     }
 
     private fun loadEventSnapshot(eventId: Long): EventSnapshot? {

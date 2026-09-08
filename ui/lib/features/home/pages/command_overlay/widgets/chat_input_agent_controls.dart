@@ -38,10 +38,12 @@ extension _ChatInputAgentControls on _ChatInputAreaStateBase {
         child: Listener(
           behavior: HitTestBehavior.opaque,
           onPointerDown: (_) => settings.onPointerDown?.call(),
-      child: Tooltip(
-        message: modelId.isEmpty
+          child: Tooltip(
+            message: modelId.isEmpty
                 ? (english ? 'Select Provider / model' : '选择 Provider / 模型')
-                : modelId,
+                : (english
+                      ? 'Switch Provider / model: $modelId'
+                      : '切换服务商 / 模型：$modelId'),
             waitDuration: const Duration(milliseconds: 400),
             child: InkWell(
               key: const ValueKey('chat-input-model-picker-button'),

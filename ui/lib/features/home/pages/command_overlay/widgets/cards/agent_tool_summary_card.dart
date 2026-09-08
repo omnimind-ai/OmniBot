@@ -62,7 +62,10 @@ class _AgentToolSummaryCardState extends State<AgentToolSummaryCard> {
     }
 
     final status = (cardData['status'] ?? 'running').toString();
-    final title = resolveAgentToolTitle(cardData);
+    final title = resolveAgentToolProgressTitle(
+      cardData,
+      isEnglish: LegacyTextLocalizer.isEnglish,
+    );
     final statusLabel = resolveAgentToolStatusLabel(cardData);
     final preview = resolveAgentToolPreview(cardData);
     final typeLabel = resolveAgentToolTypeLabel(cardData);
@@ -830,7 +833,10 @@ class _InlineToolCallCardState extends State<_InlineToolCallCard> {
   Widget build(BuildContext context) {
     final cardData = widget.cardData;
     final palette = context.omniPalette;
-    final title = resolveAgentToolTitle(cardData);
+    final title = resolveAgentToolProgressTitle(
+      cardData,
+      isEnglish: LegacyTextLocalizer.isEnglish,
+    );
     final status = (cardData['status'] ?? 'running').toString();
     final toolType = (cardData['toolType'] ?? '').toString().trim();
     final isFileTool = _isInlineFileTool(cardData);
@@ -851,9 +857,7 @@ class _InlineToolCallCardState extends State<_InlineToolCallCard> {
         ? _resolveInlineFilePath(cardData, diffSummary)
         : '';
     final fileName = isFileTool ? _lastPathSegment(filePath) : '';
-    final trailingLabel = isFileTool
-        ? ''
-        : _inlineToolTrailingLabel(cardData, status: status);
+    final trailingLabel = _inlineToolTrailingLabel(cardData, status: status);
     final useLightProfile =
         !context.isDarkTheme && widget.visualProfile.usesLightText;
     final titleColor = context.isDarkTheme
