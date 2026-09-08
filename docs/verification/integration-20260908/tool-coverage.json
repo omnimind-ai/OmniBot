@@ -80,8 +80,8 @@
     },
     {
       "name": "context_time_now",
-      "deviceEvidence": null,
-      "deviceStatus": "not executed in this integration run"
+      "deviceEvidence": "session-tools.json / session-tools-provider.jsonl",
+      "deviceStatus": "passed on emulator with deterministic provider"
     },
     {
       "name": "file_edit",
@@ -175,13 +175,13 @@
     },
     {
       "name": "skills_list",
-      "deviceEvidence": null,
-      "deviceStatus": "not executed in this integration run"
+      "deviceEvidence": "session-tools.json / session-tools-provider.jsonl",
+      "deviceStatus": "passed on emulator with deterministic provider"
     },
     {
       "name": "skills_read",
-      "deviceEvidence": null,
-      "deviceStatus": "not executed in this integration run"
+      "deviceEvidence": "session-tools.json / session-tools-provider.jsonl",
+      "deviceStatus": "passed on emulator with deterministic provider"
     },
     {
       "name": "subagent_dispatch",
@@ -195,28 +195,28 @@
     },
     {
       "name": "terminal_session_exec",
-      "deviceEvidence": null,
-      "deviceStatus": "not executed in this integration run"
+      "deviceEvidence": "session-tools.json / session-tools-provider.jsonl",
+      "deviceStatus": "passed on emulator with deterministic provider"
     },
     {
       "name": "terminal_session_read",
-      "deviceEvidence": null,
-      "deviceStatus": "not executed in this integration run"
+      "deviceEvidence": "session-tools.json / session-tools-provider.jsonl",
+      "deviceStatus": "passed on emulator with deterministic provider"
     },
     {
       "name": "terminal_session_start",
-      "deviceEvidence": null,
-      "deviceStatus": "not executed in this integration run"
+      "deviceEvidence": "session-tools.json / session-tools-provider.jsonl",
+      "deviceStatus": "passed on emulator with deterministic provider"
     },
     {
       "name": "terminal_session_stop",
-      "deviceEvidence": null,
-      "deviceStatus": "not executed in this integration run"
+      "deviceEvidence": "session-tools.json / session-tools-provider.jsonl",
+      "deviceStatus": "passed on emulator with deterministic provider"
     },
     {
       "name": "tools_search",
-      "deviceEvidence": null,
-      "deviceStatus": "not executed in this integration run"
+      "deviceEvidence": "session-tools-provider.jsonl",
+      "deviceStatus": "not advertised by current Xiaowan; deliberate legacy call rejected and task recovered"
     },
     {
       "name": "vlm_task",

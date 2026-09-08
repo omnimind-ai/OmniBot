@@ -72,6 +72,7 @@ run_step() {
 run_step "Node protocol/provider tests" \
   node --test \
     scripts/agent-ui-xml.test.mjs \
+    scripts/fixtures/xiaowan-session-scenarios.test.mjs \
     scripts/agent-provider-observer.test.mjs \
     scripts/install-dev-shell.test.mjs \
     scripts/skill-install-shell.test.mjs \

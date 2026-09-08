@@ -1,0 +1,47 @@
+{
+  "name": "Native session lifecycle and tool discovery",
+  "serial": "emulator-5560",
+  "runId": "1788858403341",
+  "kind": "emulator-user-interface",
+  "passed": true,
+  "steps": [
+    {
+      "index": 1,
+      "action": "send",
+      "marker": "OOB_SESSION_LIFECYCLE_1788858403341",
+      "passed": true,
+      "elapsedMs": 19662
+    },
+    {
+      "index": 2,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 2950
+    },
+    {
+      "index": 3,
+      "action": "send",
+      "marker": "OOB_SESSION_DISCOVERY_1788858403341",
+      "passed": true,
+      "elapsedMs": 18358
+    },
+    {
+      "index": 4,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 2985
+    },
+    {
+      "index": 5,
+      "action": "restart",
+      "passed": true,
+      "elapsedMs": 2604
+    },
+    {
+      "index": 6,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 5893
+    }
+  ]
+}

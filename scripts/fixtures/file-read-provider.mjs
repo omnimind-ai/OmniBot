@@ -1,6 +1,7 @@
 // Local deterministic provider; see docs/testing/file-read-memory-2026-09-07.md.
 // OOB_FILE_TEST_DIR=/tmp/oob-file-repro node scripts/fixtures/file-read-provider.mjs
 import http from 'node:http';
+import {respondXiaowanSession} from './xiaowan-session-scenarios.mjs';
 import {respondXiaowanFailure} from './xiaowan-failure-scenarios.mjs';
 import {createHash} from 'node:crypto';
 import assert from 'node:assert/strict';
@@ -38,6 +39,7 @@ http.createServer(async (request, response) => {
     const raw = Buffer.concat(chunks);
     const body = JSON.parse(raw);
     if (respondXiaowanFailure(request, response, body)) return;
+    if (respondXiaowanSession(response, body)) return;
     const messages = body.messages;
     const textContent = message => typeof message?.content === 'string' ? message.content
       : (message?.content || []).filter(part => part.type === 'text').map(part => part.text).join('\n');

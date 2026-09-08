@@ -1,0 +1,45 @@
+{
+  "name": "Native session lifecycle and tool discovery",
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_SESSION_LIFECYCLE"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_SESSION_LIFECYCLE_DONE",
+      "timeoutMs": 120000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_SESSION_LIFECYCLE",
+      "expected": "done"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_SESSION_DISCOVERY"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_SESSION_DISCOVERY_DONE",
+      "timeoutMs": 120000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_SESSION_DISCOVERY",
+      "expected": "done"
+    },
+    {
+      "action": "restart"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_SESSION_DISCOVERY_DONE"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_SESSION_DISCOVERY",
+      "expected": "done"
+    }
+  ]
+}
