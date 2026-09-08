@@ -1,15 +1,20 @@
 import 'dart:convert';
+
 import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:ui/features/home/pages/chat/chat_page.dart';
+
 import 'go_router_config.dart';
+
 import 'package:flutter/foundation.dart';
+
 import 'logging_observer.dart';
+
 import 'package:ui/services/method_channel_service.dart';
 import 'package:ui/constants/storage_keys.dart';
 import 'package:ui/services/storage_service.dart';
-import 'package:ui/widgets/predictive_back_gesture_wrapper.dart';
+import 'package:ui/widgets/predictive_back_route.dart';
 
 class RouteOptions {
   final bool noAnim;
@@ -98,23 +103,12 @@ class GoRouterManager {
         },
       );
     } else {
-      return CustomTransitionPage(
+      return PredictiveBackPage(
         key: key,
         child: child,
         name: name,
-        transitionDuration: const Duration(milliseconds: 250),
-        reverseTransitionDuration: const Duration(milliseconds: 250),
-        transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          // 开关开启时统一为全宽滑动手势转场，关闭时回退为原有 Fade 转场。
-          return PredictiveBackGestureWrapper(
-            animation: animation,
-            secondaryAnimation: secondaryAnimation,
-            transitionBuilder:
-                (context, animation, secondaryAnimation, child) =>
-                    FadeTransition(opacity: animation, child: child),
-            child: child,
-          );
-        },
+        fallbackBuilder: (context, animation, secondaryAnimation, child) =>
+            FadeTransition(opacity: animation, child: child),
       );
     }
   }
@@ -127,29 +121,18 @@ class GoRouterManager {
     required Widget child,
     String? name,
   }) {
-    const duration = Duration(milliseconds: 300);
-
-    return CustomTransitionPage(
+    return PredictiveBackPage(
       key: key,
       child: child,
       name: name,
-      maintainState: true,
-      transitionDuration: duration,
-      reverseTransitionDuration: duration,
-      transitionsBuilder: (context, animation, secondaryAnimation, child) {
-        return PredictiveBackGestureWrapper(
-          animation: animation,
-          secondaryAnimation: secondaryAnimation,
-          transitionBuilder: (context, animation, secondaryAnimation, child) =>
-              CupertinoPageTransition(
-                primaryRouteAnimation: animation,
-                secondaryRouteAnimation: secondaryAnimation,
-                linearTransition: false,
-                child: child,
-              ),
-          child: child,
-        );
-      },
+      fallbackDuration: const Duration(milliseconds: 300),
+      fallbackBuilder: (context, animation, secondaryAnimation, child) =>
+          CupertinoPageTransition(
+            primaryRouteAnimation: animation,
+            secondaryRouteAnimation: secondaryAnimation,
+            linearTransition: false,
+            child: child,
+          ),
     );
   }
 

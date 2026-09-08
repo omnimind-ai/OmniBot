@@ -8,6 +8,7 @@ plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.serialization)
 }
 
 val gitCommitHash: Provider<String> =
@@ -80,8 +81,9 @@ android {
 
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
+        // Miuix 0.9.4's public Compose DSL contains JVM 21 inline functions.
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
     }
 
     buildFeatures {
@@ -97,8 +99,9 @@ android {
 }
 
 kotlin {
+    jvmToolchain(21)
     compilerOptions {
-        jvmTarget.set(JvmTarget.JVM_17)
+        jvmTarget.set(JvmTarget.JVM_21)
     }
 }
 
@@ -303,6 +306,8 @@ dependencies {
     api(libs.ui.graphics)
     api(libs.material3)
     api(libs.navigation.compose)
+    implementation(libs.miuix.nav)
+    implementation(libs.kotlinx.serialization.json)
     api(project(":core:terminal-view"))
     api(project(":core:terminal-emulator"))
     api(libs.utilcode)
@@ -313,7 +318,7 @@ dependencies {
     api(libs.accompanist.systemuicontroller)
     testImplementation(libs.junit)
     testImplementation("org.json:json:20250517")
-    testImplementation("com.squareup.okhttp3:mockwebserver:4.9.0")
+    testImplementation("com.squareup.okhttp3:mockwebserver:${libs.versions.okhttp.get()}")
 //    api(libs.termux.shared)
 
     api(project(":core:resources"))

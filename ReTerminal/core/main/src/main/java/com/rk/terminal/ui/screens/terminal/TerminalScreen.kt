@@ -72,7 +72,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
 import androidx.core.view.WindowCompat
 import androidx.core.widget.doOnTextChanged
-import androidx.navigation.NavController
+import top.yukonga.miuix.kmp.nav.core.NavController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.vectorResource
 import com.rk.components.compose.preferences.base.PreferenceGroup
@@ -317,7 +317,9 @@ fun TerminalScreen(
                             Row {
                                 val keyboardController = LocalSoftwareKeyboardController.current
                                 IconButton(onClick = {
-                                    navController.navigate(MainActivityRoutes.Settings.route)
+                                    if (navController.backStack.lastOrNull() != MainActivityRoutes.Settings) {
+                                        navController.push(MainActivityRoutes.Settings)
+                                    }
                                     keyboardController?.hide()
                                 }) {
                                     Icon(

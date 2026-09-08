@@ -1,3 +1,5 @@
+import 'package:ui/widgets/predictive_back_route.dart';
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -261,7 +263,7 @@ class _RemoteCodexSettingPageState extends State<RemoteCodexSettingPage> {
 
   Future<void> _scanQr() async {
     final result = await Navigator.of(context).push<CodexBridgeQrScanResult>(
-      MaterialPageRoute(
+      PredictiveBackMaterialPageRoute(
         builder: (_) => const CodexBridgeQrScannerPage(),
         fullscreenDialog: true,
       ),
