@@ -14,7 +14,7 @@ permissions:
   contents: read
 
 env:
-  JAVA_VERSION: '17'
+  JAVA_VERSION: '21'
   NODE_VERSION: '22'
   PNPM_VERSION: '10.28.0'
   FLUTTER_VERSION: '3.47.2'
@@ -45,7 +45,7 @@ jobs:
         if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
         run: echo "Skipping gitleaks for fork PRs because repository secrets are not available to pull_request workflows from forks."
 
-      - name: Set up JDK 17
+      - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin

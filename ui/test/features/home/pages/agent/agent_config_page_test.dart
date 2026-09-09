@@ -1,4 +1,3 @@
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -9,31 +8,7 @@ import 'package:ui/services/model_provider_config_service.dart';
 import 'package:ui/services/storage_service.dart';
 import 'package:ui/theme/app_theme.dart';
 import 'package:ui/widgets/predictive_back_gesture_wrapper.dart';
-
-class _PredictiveAgentConfigRoute extends PageRouteBuilder<void> {
-  _PredictiveAgentConfigRoute({required String agentId})
-    : super(
-        transitionDuration: const Duration(milliseconds: 300),
-        reverseTransitionDuration: const Duration(milliseconds: 300),
-        pageBuilder: (context, animation, secondaryAnimation) =>
-            AgentConfigPage(agentId: agentId),
-        transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          return PredictiveBackGestureWrapper(
-            animation: animation,
-            secondaryAnimation: secondaryAnimation,
-            transitionBuilder:
-                (context, animation, secondaryAnimation, child) =>
-                    CupertinoPageTransition(
-                      primaryRouteAnimation: animation,
-                      secondaryRouteAnimation: secondaryAnimation,
-                      linearTransition: false,
-                      child: child,
-                    ),
-            child: child,
-          );
-        },
-      );
-}
+import 'package:ui/widgets/predictive_back_route.dart';
 
 Future<void> _sendBackGesture(
   WidgetTester tester,
@@ -286,16 +261,22 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
-          theme: AppTheme.lightTheme,
+          theme: AppTheme.lightTheme.copyWith(
+            pageTransitionsTheme: const PageTransitionsTheme(
+              builders: {TargetPlatform.android: MiuixPageTransitionsBuilder()},
+            ),
+          ),
           localizationsDelegates: AppLocalizations.localizationsDelegates,
           supportedLocales: AppLocalizations.supportedLocales,
           locale: const Locale('zh'),
           home: Scaffold(
             body: Builder(
               builder: (context) => TextButton(
-                onPressed: () => Navigator.of(
-                  context,
-                ).push(_PredictiveAgentConfigRoute(agentId: 'codex-acp')),
+                onPressed: () => Navigator.of(context).push(
+                  PredictiveBackMaterialPageRoute<void>(
+                    builder: (_) => const AgentConfigPage(agentId: 'codex-acp'),
+                  ),
+                ),
                 child: const Text('open config'),
               ),
             ),
@@ -318,21 +299,30 @@ void main() {
       await tester.pump();
 
       expect(route.popGestureInProgress, isTrue);
-      expect(
-        tester
-            .widget<PredictiveBackPageTransition>(
-              find.ancestor(
-                of: find.byType(AgentConfigPage),
-                matching: find.byType(PredictiveBackPageTransition),
-              ),
-            )
-            .isGestureDriven(),
-        isTrue,
+      await _sendBackGesture(
+        tester,
+        'updateBackGestureProgress',
+        <String, dynamic>{
+          'touchOffset': <double>[400.0, 300.0],
+          'progress': 0.4,
+          'swipeEdge': 0,
+        },
       );
+      await tester.pump();
+      expect(route.animation!.value, closeTo(0.6, 0.001));
+      final transition = tester.widget<PredictiveBackPageTransition>(
+        find.ancestor(
+          of: find.byType(AgentConfigPage),
+          matching: find.byType(PredictiveBackPageTransition),
+        ),
+      );
+      expect(transition.animation.value, closeTo(0.6, 0.001));
 
       await _sendBackGesture(tester, 'cancelBackGesture');
       await tester.pumpAndSettle();
       expect(find.byType(AgentConfigPage), findsOneWidget);
+      expect(route.animation!.value, 1);
+      expect(route.popGestureInProgress, isFalse);
     },
     variant: TargetPlatformVariant.only(TargetPlatform.android),
   );
