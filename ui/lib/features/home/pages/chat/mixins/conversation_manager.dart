@@ -381,8 +381,9 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
           // from what was actually received so a partial response cannot
           // create a gap before the next page.
           messageOffset = savedMessages.length;
-          messages.clear();
-          messages.addAll(savedMessages);
+          // `messages` may be the shared runtime's live list. Deliver the
+          // snapshot to onConversationLoaded below; its coordinator owns
+          // reconciliation and must see the current items before any mutation.
         });
       }
       onConversationLoaded(

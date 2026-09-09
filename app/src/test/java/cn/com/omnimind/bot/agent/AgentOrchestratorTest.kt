@@ -1999,8 +1999,10 @@ class AgentOrchestratorTest {
         )
 
         assertTrue(result is AgentResult.Error)
+        assertEquals(503, ((result as AgentResult.Error).exception as? AgentStreamRequestException)?.statusCode)
+        assertEquals("chat completion stream request failed(503): upstream temporarily unavailable", result.exception?.message)
         assertEquals(1, llmClient.requests.size)
-        assertEquals("HTTP 503: upstream temporarily unavailable", callback.errors.single())
+        assertEquals("模型服务商暂时不可用，请稍后再试或更换模型连接。", callback.errors.single())
         assertTrue(callback.lastErrorRetryable)
         assertTrue(callback.finalChatMessages().isEmpty())
     }
@@ -2053,8 +2055,10 @@ class AgentOrchestratorTest {
         )
 
         assertTrue(result is AgentResult.Error)
+        assertEquals(500, ((result as AgentResult.Error).exception as? AgentStreamRequestException)?.statusCode)
+        assertEquals("chat completion stream request failed(500): internal server error", result.exception?.message)
         assertEquals(1, llmClient.requests.size)
-        assertEquals("HTTP 500: internal server error", callback.errors.single())
+        assertEquals("模型服务商暂时不可用，请稍后再试或更换模型连接。", callback.errors.single())
         org.junit.Assert.assertSame(originalFailure, (result as AgentResult.Error).exception)
         assertTrue(callback.lastErrorRetryable)
     }
@@ -2082,8 +2086,10 @@ class AgentOrchestratorTest {
         )
 
         assertTrue(result is AgentResult.Error)
+        assertEquals(429, ((result as AgentResult.Error).exception as? AgentStreamRequestException)?.statusCode)
+        assertEquals("chat completion stream request failed(429): request rejected", result.exception?.message)
         assertEquals(1, llmClient.requests.size)
-        assertEquals("HTTP 429: request rejected", callback.errors.single())
+        assertEquals("模型服务商额度不足，请检查账户余额或配额后再试。", callback.errors.single())
         assertTrue(callback.lastErrorRetryable)
     }
 
@@ -2113,9 +2119,11 @@ class AgentOrchestratorTest {
         )
 
         assertTrue(result is AgentResult.Error)
+        assertEquals(503, ((result as AgentResult.Error).exception as? AgentStreamRequestException)?.statusCode)
+        assertEquals("chat completion stream request failed(503): upstream temporarily unavailable", result.exception?.message)
         assertEquals(1, llmClient.requests.size)
         assertEquals(
-            "HTTP 503: upstream temporarily unavailable",
+            "模型服务商暂时不可用，请稍后再试或更换模型连接。",
             callback.errors.single()
         )
         assertTrue(callback.lastErrorRetryable)
@@ -2123,7 +2131,7 @@ class AgentOrchestratorTest {
     }
 
     @Test
-    fun `surfaces non transient api error as manually resumable terminal error`() = runBlocking {
+    fun `surfaces non transient api error without claiming execution resume`() = runBlocking {
         val llmClient = FakeLlmClient(
             turns = emptyList(),
             failures = listOf(
@@ -2148,7 +2156,9 @@ class AgentOrchestratorTest {
         )
 
         assertTrue(result is AgentResult.Error)
-        assertEquals("HTTP 400: invalid request payload", callback.errors.single())
+        assertEquals(400, ((result as AgentResult.Error).exception as? AgentStreamRequestException)?.statusCode)
+        assertEquals("chat completion stream request failed(400): invalid request payload", result.exception?.message)
+        assertEquals("模型服务商拒绝了本次请求，请检查模型及请求配置。", callback.errors.single())
         assertTrue(callback.lastErrorRetryable)
         assertTrue(callback.finalChatMessages().isEmpty())
     }

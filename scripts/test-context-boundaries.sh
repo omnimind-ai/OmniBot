@@ -6,7 +6,9 @@ cd "$(dirname "$0")/.."
   --tests 'cn.com.omnimind.bot.agent.AgentSystemPromptTest' \
   --tests '*Memory*Test' \
   --tests 'cn.com.omnimind.bot.agent.AgentContextBudgetTest' \
+  --tests 'cn.com.omnimind.bot.agent.AgentContextOverflowTest' \
   --tests 'cn.com.omnimind.bot.agent.AgentConversationContextCompactorTest' \
+  --tests 'cn.com.omnimind.bot.agent.AgentToolOutputMetadataTest' \
   --tests 'cn.com.omnimind.bot.agent.AgentOrchestratorTest' \
   --tests 'cn.com.omnimind.bot.agent.AgentConversationHistory*Test' \
   --tests 'cn.com.omnimind.bot.agent.AgentFileReadSupportTest' \

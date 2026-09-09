@@ -8,6 +8,15 @@ void main() {
     expect(advertisedPlanMode(['default', 'Plan']), 'Plan');
   });
 
+  test('unadvertised pause and resume never resolve to execution controls', () {
+    for (var attempt = 0; attempt < 20; attempt++) {
+      for (final command in ['/pause', '/resume', '/PAUSE', '/resume task']) {
+        expect(resolveAgentSlashSubmitIntent(command).kind,
+            AgentSlashSubmitKind.unsupported);
+      }
+    }
+  });
+
   test('routes codex model command intents', () {
     expect(
       resolveAgentSlashSubmitIntent('/model').kind,

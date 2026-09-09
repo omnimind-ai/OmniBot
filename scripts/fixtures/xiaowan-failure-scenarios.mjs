@@ -5,14 +5,39 @@ export function respondXiaowanFailure(request, response, body, log = console.log
   const text = m => typeof m?.content === 'string' ? m.content : (m?.content || []).filter(p => p.type === 'text').map(p => p.text).join('\n');
   const messages = body.messages || [];
   const lastUser = messages.findLastIndex(m => m.role === 'user');
-  const marker = text(messages[lastUser]).match(/OOB_FAILURE_([A-Z]+)_\d+/);
+  const marker = text(messages[lastUser]).match(/OOB_FAILURE_([A-Z]+)(?:_\d+)+/);
   if (!marker) return false;
   const kind = marker[1], id = marker[0];
   log(JSON.stringify({marker:id, failureScenario:kind, phase:'request'}));
   const event = (delta, finish = null) => `data: ${JSON.stringify({choices:[{index:0,delta,finish_reason:finish}]})}\n\n`;
   const success = content => {response.writeHead(200,{'content-type':'text/event-stream'}); response.end(event({content},'stop')+'data: [DONE]\n\n');};
   const status = {AUTH:401, QUOTA:429, RATE:429, SERVER:503}[kind];
-  if (status) {
+  if (kind === 'WAIT') {
+    response.writeHead(200, {'content-type':'text/event-stream'});
+    response.write(event({content:`${id}_WAITING`}));
+    const timer = setTimeout(() => response.destroy(), 180000);
+    timer.unref();
+    response.once('close', () => {
+      clearTimeout(timer);
+      log(JSON.stringify({marker:id, failureScenario:kind, phase:'response-closed', completed:response.writableEnded}));
+    });
+  } else if (['STREAMERROR','STREAMTOOL','STREAMRATE','STREAMLIMIT','STREAMAUTH','STREAMSERVICE','STREAMREJECT','STREAMMODEL'].includes(kind)) {
+    response.writeHead(200, {'content-type':'text/event-stream'});
+    response.write(event(kind !== 'STREAMTOOL'
+      ? {content:`${id}_PARTIAL`}
+      : {tool_calls:[{index:0,id:`call_${id}`,type:'function',function:{name:'file_write',arguments:JSON.stringify({path:`/workspace/${id}-must-not-exist.txt`,content:'must not execute'})}}]}));
+    const [errorStatus,errorCode]= {
+      STREAMAUTH:[401,'unknown'], STREAMSERVICE:[503,'server_error'],
+      STREAMREJECT:[403,'permission_denied'], STREAMMODEL:[404,'model_not_found'],
+      STREAMRATE:[429,'rate_limit_exceeded'], STREAMLIMIT:[429,'request_limited'],
+    }[kind] || [429,'insufficient_quota'];
+    response.write(`data: ${JSON.stringify({error:{code:errorCode,message:`${id} synthetic failure`},status_code:errorStatus})}\n\n`);
+
+    // Deliberately no DONE/EOF: the explicit error must settle the request.
+    const timer=setTimeout(()=>response.destroy(),180000); timer.unref();
+    response.once('close',()=>{clearTimeout(timer);log(JSON.stringify({marker:id,failureScenario:kind,phase:'response-closed',completed:response.writableEnded}));});
+  } else if (kind === 'OK') success(`${id}_DONE`);
+  else if (status) {
     response.writeHead(status,{'content-type':'application/json'});
     response.end(JSON.stringify({error:{code:kind==='QUOTA'?'insufficient_quota':kind==='RATE'?'rate_limit_exceeded':kind.toLowerCase(),message:`${id} synthetic ${kind.toLowerCase()} failure`}}));
   } else if (kind === 'BEFORE') response.destroy();

@@ -31,6 +31,69 @@ void main() {
     messenger.setMockMethodCallHandler(speechChannel, null);
   });
 
+  for (final permission in [true, false]) {
+    testWidgets(
+      '${permission ? "permission" : "run settings"} popup owns system back without changing configuration',
+      (tester) async {
+        var changes = 0;
+        await tester.pumpWidget(
+          _buildTestApp(
+            useRouter: true,
+            contextUsageRatio: null,
+            useLargeComposerStyle: true,
+            agentPermissionMode: permission
+                ? AgentPermissionMode.defaultMode
+                : null,
+            onAgentPermissionModeChanged: permission
+                ? (_) {
+                    changes++;
+                  }
+                : null,
+            agentRunSettings: permission
+                ? null
+                : const AgentRunSettings(
+                    agentName: 'Codex',
+                    modelId: 'test-model',
+                    reasoningEffort: 'high',
+                    modelOptions: ['test-model'],
+                    reasoningEffortOptions: ['high'],
+                  ),
+            onAgentRunSettingsChanged: permission
+                ? null
+                : ({modelId, reasoningEffort}) {
+                    changes++;
+                  },
+          ),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 500));
+        final button = find.byKey(
+          ValueKey(
+            permission
+                ? 'chat-input-agent-permission-button'
+                : 'chat-input-agent-run-settings-button',
+          ),
+        );
+        final route = ModalRoute.of(tester.element(button))!;
+        await tester.tap(button);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 500));
+        expect(
+          route.popDisposition,
+          RoutePopDisposition.doNotPop,
+          reason: 'Android must know the popup consumes back at the root',
+        );
+        await tester.binding.handlePopRoute();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 500));
+        expect(find.byType(GlassPopupOverlayContent), findsNothing);
+        expect(button, findsOneWidget);
+        expect(route.popDisposition, RoutePopDisposition.bubble);
+        expect(changes, 0);
+      },
+    );
+  }
+
   testWidgets('does not render context usage ring when ratio is absent', (
     tester,
   ) async {
@@ -83,10 +146,7 @@ void main() {
         expect(find.text('?'), findsNothing);
         await tester.tap(control);
         await tester.pump(const Duration(milliseconds: 300));
-        expect(
-          find.text('0%\nLong press to adjust threshold'),
-          findsOneWidget,
-        );
+        expect(find.text('0%\nLong press to adjust threshold'), findsOneWidget);
         await tester.pump(const Duration(seconds: 4));
         await tester.longPress(control);
         await tester.pump();
@@ -959,6 +1019,61 @@ void main() {
     await tester.pump();
 
     expect(sendCount, 1);
+  });
+
+  testWidgets('keyboard edits remove hidden selection handles above Send', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(411, 891);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    var sends = 0;
+    final focus = FocusNode();
+    addTearDown(focus.dispose);
+    await tester.pumpWidget(
+      _buildTestApp(
+        contextUsageRatio: 0,
+        focusNode: focus,
+        useLargeComposerStyle: true,
+        initialText: 'Reply OOB_FILE_TEXT_AFTERRATE_178889267859',
+        onSendMessage: () => sends++,
+      ),
+    );
+    focus.requestFocus();
+    await tester.pump(const Duration(milliseconds: 300));
+    final editable = tester.state<EditableTextState>(find.byType(EditableText));
+    for (var round = 0; round < 3; round++) {
+      editable.renderEditable.selectPositionAt(
+        from:
+            tester.getBottomRight(find.byType(TextField)) - const Offset(8, 8),
+        cause: SelectionChangedCause.tap,
+      );
+      await tester.pump();
+      editable.selectionOverlay?.showHandles();
+      await tester.enterText(
+        find.byType(TextField),
+        'Reply OOB_FILE_TEXT_AFTERRATE_178889267859$round',
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(
+        find.byType(CompositedTransformFollower),
+        findsNothing,
+        reason: 'Keyboard input must remove stale handle overlays, not only fade them out',
+      );
+      final send = find.byKey(const ValueKey('chat-input-send-or-stop-button'));
+      await tester.tap(send);
+      await tester.pump();
+      expect(
+        sends,
+        round + 1,
+        reason: 'Invisible selection handle must not swallow Send',
+      );
+      await tester.longPress(find.byType(TextField));
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(editable.selectionOverlay?.handlesAreVisible, isTrue);
+      expect(find.textContaining(RegExp(r'^(Copy|复制)$')), findsOneWidget);
+    }
   });
 
   testWidgets('large composer enables send after text input', (tester) async {

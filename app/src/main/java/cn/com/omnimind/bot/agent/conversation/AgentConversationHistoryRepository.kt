@@ -54,7 +54,10 @@ class AgentConversationHistoryRepository(
             return incoming.toMutableMap().apply {
                 listOf("toolCallId", "sessionId", "turnId", "modelToolCallId",
                     "modelAssistantMessageJson", "modelToolResultMessageJson").forEach { key ->
-                    existing[key]?.let { put(key, it) }
+                    // Presentation snapshots may have empty placeholders before
+                    // the canonical tool messages arrive. Only retain real values.
+                    existing[key]?.takeIf { it.toString().isNotBlank() }
+                        ?.let { put(key, it) }
                 }
             }
         }
@@ -702,7 +705,7 @@ class AgentConversationHistoryRepository(
             entryType == ENTRY_TYPE_UI_CARD &&
             existing?.entryType == ENTRY_TYPE_UI_CARD
         ) {
-            AgentConversationHistorySupport.preserveDeepThinkingContent(
+            AgentConversationHistorySupport.mergeUiCardPayload(
                 existingPayload = AgentConversationHistorySupport.readMap(
                     existing.payloadJson
                 ),

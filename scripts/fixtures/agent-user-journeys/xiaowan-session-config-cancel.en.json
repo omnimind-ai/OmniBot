@@ -1,0 +1,127 @@
+{
+  "name": "Xiaowan configuration before a cancelled turn and after cleanup",
+  "requireClockSync": true,
+  "steps": [
+    {
+      "action": "expect",
+      "text": "Model & settings",
+      "timeoutMs": 30000
+    },
+    {
+      "action": "tap",
+      "label": "Model & settings"
+    },
+    {
+      "action": "tap",
+      "label": "Reasoning effort"
+    },
+    {
+      "action": "tap",
+      "label": "Off"
+    },
+    {
+      "action": "dismiss-settings"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_TERMINAL_CHILD",
+      "scenario": "xiaowan-terminal-child.json",
+      "timeoutMs": 240000
+    },
+    {
+      "action": "terminal-child",
+      "marker": "OOB_LIVE_TERMINAL_CHILD",
+      "state": "started"
+    },
+    {
+      "action": "session-config",
+      "marker": "OOB_LIVE_TERMINAL_CHILD",
+      "effort": "none"
+    },
+    {
+      "action": "tap",
+      "label": "Stop"
+    },
+    {
+      "action": "terminal-child",
+      "marker": "OOB_LIVE_TERMINAL_CHILD",
+      "state": "stopped"
+    },
+    {
+      "action": "expect",
+      "text": "Send",
+      "timeoutMs": 60000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_TERMINAL_CHILD",
+      "expected": "cancelled"
+    },
+    {
+      "action": "tap",
+      "label": "Model & settings"
+    },
+    {
+      "action": "tap",
+      "label": "Reasoning effort"
+    },
+    {
+      "action": "tap",
+      "label": "Model default"
+    },
+    {
+      "action": "dismiss-settings"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_TERMINAL_RECOVERY",
+      "timeoutMs": 180000,
+      "scenario": "xiaowan-terminal-recovery.json"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_TERMINAL_RECOVERY_DONE",
+      "timeoutMs": 180000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_TERMINAL_RECOVERY",
+      "expected": "done"
+    },
+    {
+      "action": "session-config",
+      "marker": "OOB_LIVE_TERMINAL_RECOVERY",
+      "effort": "default"
+    },
+    {
+      "action": "restart"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_TERMINAL_CHILD",
+      "expected": "cancelled"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_TERMINAL_RECOVERY",
+      "expected": "done"
+    },
+    {
+      "action": "session-config",
+      "marker": "OOB_LIVE_TERMINAL_RECOVERY",
+      "effort": "default"
+    },
+    {
+      "action": "tap",
+      "label": "Model & settings"
+    },
+    {
+      "action": "expect",
+      "text": "Model default",
+      "timeoutMs": 10000
+    },
+    {
+      "action": "dismiss-settings"
+    }
+  ]
+}

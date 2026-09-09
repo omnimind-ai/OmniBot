@@ -1285,7 +1285,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       return;
     }
     if (command == '/init') {
-      await _executeAgentInitCommand();
+      await _sendMessage(text: '/init');
       return;
     }
     if (command == '/plan') {
@@ -1334,7 +1334,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       case AgentSlashSubmitKind.startInit:
         _messageController.clear();
         _hideSlashCommandPanel();
-        await _executeAgentInitCommand();
+        await _executeAgentInitCommand(attachments: attachments);
         return true;
       case AgentSlashSubmitKind.togglePlan:
         await _toggleAgentPlanMode();
@@ -1365,10 +1365,13 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
   }
 
   @override
-  Future<void> _executeAgentInitCommand() async {
+  Future<void> _executeAgentInitCommand({
+    List<Map<String, dynamic>> attachments = const [],
+  }) async {
     await _startAgentTurnCommand(
       displayText: '/init',
       actualText: _kAgentInitPrompt,
+      attachments: attachments,
     );
   }
 
@@ -1508,6 +1511,9 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     _messageController.clear();
     _hideSlashCommandPanel();
     final messageIds = addUserMessage(displayText, attachments: attachments);
+    setState(() {
+      _modeState(_activeMode).consumeMessageAttachments(attachments);
+    });
     await _sendAgentMessage(
       messageIds.aiMessageId,
       actualText,
@@ -2182,6 +2188,9 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       );
     } catch (error) {
       debugPrint('Agent interrupt failed: $error');
+      if (mounted) {
+        showToast(formatAgentRuntimeErrorForUser(error), type: ToastType.error);
+      }
     }
   }
 

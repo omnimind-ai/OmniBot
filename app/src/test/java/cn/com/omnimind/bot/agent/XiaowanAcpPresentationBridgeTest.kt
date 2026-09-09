@@ -30,6 +30,24 @@ import kotlinx.serialization.json.JsonElement
 
 class XiaowanAcpPresentationBridgeTest {
     @Test
+    fun `tool progress is output and never replaces model input`() = runBlocking {
+        val updates = mutableListOf<SessionUpdate>()
+        val bridge = XiaowanAcpEventBridge(updates::add)
+        val input = Json.parseToJsonElement("""{"action":"shell.exec","arguments":{"command":"id","confirmed":false}}""").jsonObject
+        bridge.onToolCallStart("permission-tool", "android_privileged_action", input, "command")
+        repeat(3) { index ->
+            bridge.onToolCallProgress("permission-tool", "android_privileged_action", "running",
+                mapOf("backend" to "ROOT", "terminalOutputDelta" to "line-$index"))
+        }
+        assertEquals(input, (updates.first() as SessionUpdate.ToolCall).rawInput)
+        updates.filterIsInstance<SessionUpdate.ToolCallUpdate>().forEachIndexed { index, update ->
+            assertTrue(update.rawInput == null || update.rawInput == kotlinx.serialization.json.JsonNull)
+            assertEquals("line-$index", update.rawOutput!!.jsonObject["terminalOutputDelta"]!!.jsonPrimitive.content)
+            assertEquals(ToolCallStatus.IN_PROGRESS, update.status)
+        }
+    }
+
+    @Test
     fun `streamed tool input updates one official card without claiming execution`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
         val bridge = XiaowanAcpEventBridge { updates += it }

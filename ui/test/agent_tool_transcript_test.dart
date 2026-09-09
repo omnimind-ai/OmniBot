@@ -4,6 +4,19 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ui/features/home/pages/command_overlay/widgets/cards/agent_tool_transcript.dart';
 
 void main() {
+  test('old terminal card displays stored ACP exit detail without migration', () {
+    final transcript = buildAgentToolTranscript({
+      'toolType': 'terminal',
+      'status': 'error',
+      'summary': '',
+      'rawResultJson': jsonEncode({
+        'type': 'commandExecution',
+        'rawOutput': {'formatted_output': '', 'exit_code': 182},
+      }),
+    });
+    expect(transcript.outputText, 'Command exited with code 182');
+  });
+
   test(
     'buildAgentToolTranscript renders non-terminal tool as pseudo command',
     () {

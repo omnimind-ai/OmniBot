@@ -69,6 +69,17 @@ AgentToolCallInfo normalizeAgentToolCall(
       _firstString([raw['displayName'], raw['display_name'], raw['name']]) ??
       title;
   final serverName = _firstString([raw['serverName'], raw['server']]);
+  // Live ACP and restored tool events share this parser. Read result details
+  // without promoting nested status/identity into the owning lifecycle.
+  final storedResult = toolType == 'terminal'
+      ? _asStringMap(raw['rawResultJson'])
+      : null;
+  final commandResult = toolType == 'terminal'
+      ? _asStringMap(raw['rawOutput'] ?? storedResult?['rawOutput'])
+      : null;
+  final exitCode = _asInt(raw['exitCode'] ?? raw['exit_code'] ??
+      commandResult?['exitCode'] ?? commandResult?['exit_code'] ??
+      storedResult?['exitCode'] ?? storedResult?['exit_code']);
   final terminalOutput = _firstOutputString([
     raw['terminalOutput'],
     raw['aggregatedOutput'],
@@ -77,15 +88,23 @@ AgentToolCallInfo normalizeAgentToolCall(
     raw['stdout'],
     _asStringMap(raw['result'])?['stdout'],
     _asStringMap(raw['result'])?['output'],
+    commandResult?['terminalOutput'],
+    commandResult?['formatted_output'],
+    storedResult?['terminalOutput'],
   ]);
   final summary =
       _firstString([
         raw['summary'],
         raw['message'],
         raw['description'],
-        if (type != 'commandExecution') raw['status'],
+        if (type != 'commandExecution' &&
+            !(toolType == 'terminal' && exitCode != null)) raw['status'],
       ]) ??
-      '';
+      (toolType == 'terminal' &&
+              const {'success', 'error'}.contains(status) &&
+              exitCode != null
+          ? 'Command exited with code $exitCode'
+          : '');
   final progress =
       _firstString([raw['progress'], raw['message'], raw['delta']]) ?? '';
 

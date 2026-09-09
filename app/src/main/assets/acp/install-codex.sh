@@ -14,11 +14,12 @@ if (pkg.version !== '1.10.0') throw Error('Unsupported Codex ACP completion patc
 const file = path.join(root, 'dist/index.js');
 let source = fs.readFileSync(file, 'utf8');
 const marker = '// OOB Codex completed message projection v1';
-if (source.includes(marker)) process.exit(0);
+
 function replaceOnce(before, after) {
   if (source.split(before).length !== 2) throw Error('Codex ACP completion patch source mismatch');
   source = source.replace(before, after);
 }
+if (!source.includes(marker)) {
 replaceOnce('  agentMessagePhases = /* @__PURE__ */ new Map();',
   `  ${marker}\n  agentMessageTextByItem = new Map();\n  agentMessagePhases = /* @__PURE__ */ new Map();`);
 replaceOnce('  async createTextEvent(event) {\n',
@@ -39,5 +40,13 @@ replaceOnce(`      case "agentMessage":
         return createAgentTextMessageChunk(text.slice(emitted.length), event.item.id, createCodexMessagePhaseMeta(event.item.phase));
       }
       case "plan": {`);
+}
+// Upstream 1.10.0 overrides the configured Provider model for title generation.
+// Inherit the ephemeral thread's configured model instead; retain its official
+// title lifecycle and output schema, with no host-side fallback request.
+const titleMarker = '// OOB Codex title inherits configured model v1';
+if (!source.includes(titleMarker)) {
+  replaceOnce('      model: TITLE_MODEL', `      ${titleMarker}`);
+}
 fs.writeFileSync(file, source);
 OOB_CODEX_PATCH

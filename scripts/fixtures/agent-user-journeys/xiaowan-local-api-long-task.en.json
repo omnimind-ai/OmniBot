@@ -13,6 +13,11 @@
       "timeoutMs": 600000
     },
     {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_FILES",
+      "expected": "done"
+    },
+    {
       "action": "live-task",
       "marker": "OOB_LIVE_FILES",
       "phase": "files"
@@ -29,6 +34,11 @@
       "timeoutMs": 600000
     },
     {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_LONG",
+      "expected": "done"
+    },
+    {
       "action": "live-task",
       "marker": "OOB_LIVE_LONG",
       "phase": "long"
@@ -39,6 +49,11 @@
     {
       "action": "reply",
       "text": "OOB_LIVE_LONG_DONE"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_LONG",
+      "expected": "done"
     },
     {
       "action": "send",
@@ -52,9 +67,15 @@
       "timeoutMs": 600000
     },
     {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_RECOVERY",
+      "expected": "done"
+    },
+    {
       "action": "live-task",
       "marker": "OOB_LIVE_RECOVERY",
       "phase": "recovery"
     }
-  ]
+  ],
+  "requireClockSync": true
 }

@@ -79,7 +79,7 @@ extension ChatRuntimePersistenceSupport on ChatConversationRuntimeCoordinator {
     if (runtime.messages.isEmpty && !(persistMessages && allowHistoryRemoval))
       return;
 
-    final snapshotMessages = List<ChatMessageModel>.from(runtime.messages);
+    var snapshotMessages = List<ChatMessageModel>.from(runtime.messages);
     final snapshotConversation = runtime.conversation;
     final conversationMode = _conversationModeFromRuntimeMode(
       mode,
@@ -138,6 +138,14 @@ extension ChatRuntimePersistenceSupport on ChatConversationRuntimeCoordinator {
       preserveLatestMetadata: true,
     );
     if (persistMessages) {
+      // Metadata I/O can overlap streamed chunks and PromptResponse. Capture
+      // message content at the write boundary, not before that await. Keep the
+      // admitted snapshot if this runtime was replaced/reset in the meantime.
+      if (identical(runtimeFor(conversationId: conversationId, mode: mode), runtime) &&
+          runtime.persistenceGeneration == persistenceGeneration) {
+        _flushRuntimeStreamingText(runtime);
+        snapshotMessages = List<ChatMessageModel>.from(runtime.messages);
+      }
       // replaceConversationMessages is echoed back to Flutter as
       // messages_replaced. The runtime already owns this exact snapshot; if
       // the page reloads it while the completed run is folding, every row is

@@ -1,0 +1,39 @@
+{
+  "name": "Configured local API negative checks and recovery after restart",
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_RECOVERY",
+      "scenario": "xiaowan-live-recovery.json",
+      "timeoutMs": 240000
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_RECOVERY_DONE",
+      "timeoutMs": 600000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_RECOVERY",
+      "expected": "done"
+    },
+    {
+      "action": "live-task",
+      "marker": "OOB_LIVE_RECOVERY",
+      "phase": "recovery"
+    },
+    {
+      "action": "restart"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_RECOVERY_DONE"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_RECOVERY",
+      "expected": "done"
+    }
+  ],
+  "requireClockSync": true
+}

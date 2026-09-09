@@ -20,6 +20,25 @@ import java.io.File
 
 class AgentConversationHistorySupportTest {
     @Test
+    fun `permission response patch preserves canonical metadata across repeated updates`() {
+        val metadata = mapOf("sessionId" to "session", "turnId" to "turn",
+            "entryId" to "approval", "kind" to "permission_required", "seq" to 3)
+        var stored = mapOf<String, Any?>("id" to "approval", "streamMeta" to metadata,
+            "content" to mapOf("cardData" to mapOf("type" to "agent_request", "status" to "pending")))
+        for (status in listOf("accepted", "accepted")) {
+            val patch = AgentConversationHistorySupport.buildCardMessagePayload(
+                messageId = "approval", cardData = mapOf("type" to "agent_request", "status" to status),
+                isError = false, streamMeta = null, createdAt = 1L)
+            stored = AgentConversationHistorySupport.mergeUiCardPayload(stored, patch)
+            org.junit.Assert.assertEquals(metadata, stored["streamMeta"])
+            org.junit.Assert.assertEquals(status, ((stored["content"] as Map<*, *>)["cardData"] as Map<*, *>)["status"])
+        }
+        val terminalMeta = metadata + mapOf("stopReason" to "end_turn")
+        val terminal = AgentConversationHistorySupport.mergeUiCardPayload(stored, stored + ("streamMeta" to terminalMeta))
+        org.junit.Assert.assertEquals(terminalMeta, terminal["streamMeta"])
+    }
+
+    @Test
     fun `turn failure display card is never replayed as a model tool call`() {
         val status = AgentConversationEntry(
             id = 1, conversationId = 5, conversationMode = "agent",

@@ -74,6 +74,42 @@ class HttpAgentLlmClientTest {
     }
 
     @Test
+    fun `empty completed responses fail once and do not poison the next request`() = runBlocking {
+        val scope = CoroutineScope(Job() + Dispatchers.Default)
+        var attempts = 0
+        try {
+            val client = HttpAgentLlmClient(
+                scope = scope,
+                modelOverride = testOverride(),
+                streamRequestOp = { _, _, listener, _, _, _, _, _, _, _ ->
+                    attempts++
+                    val source = dummyEventSource()
+                    listener.onOpen(source, okResponse())
+                    val content = if (attempts % 2 == 0) "recovered" else ""
+                    listener.onEvent(source, null, "message",
+                        """{"choices":[{"delta":{"content":"$content"},"finish_reason":"stop"}]}""")
+                    listener.onEvent(source, null, "message", "[DONE]")
+                    source
+                },
+                maxTransientStreamRetries = 2,
+                transientStreamRetryDelayMs = 0,
+                json = json,
+            )
+            repeat(20) { index ->
+                val error = runCatching {
+                    withTimeout(2_000) { client.streamTurn(simpleRequest()) }
+                }.exceptionOrNull()
+                assertTrue("Expected empty-response failure, got $error",
+                    error?.message.orEmpty().contains("neither content nor tool_calls"))
+                assertEquals(index * 2 + 1, attempts)
+                val next = withTimeout(2_000) { client.streamTurn(simpleRequest()) }
+                assertEquals("recovered", next.message.contentText())
+                assertEquals(index * 2 + 2, attempts)
+            }
+        } finally { scope.cancel() }
+    }
+
+    @Test
     fun `platform image input uses catalog vision model`() = runBlocking {
         val scope = CoroutineScope(Job() + Dispatchers.Default)
         val requestedModels = mutableListOf<String>()
@@ -1002,6 +1038,31 @@ class HttpAgentLlmClientTest {
         } finally {
             scope.cancel()
         }
+    }
+
+    @Test
+    fun `in band provider error after output settles without close and without replay`() = runBlocking {
+        val scope = CoroutineScope(Job() + Dispatchers.Default)
+        var requests = 0
+        try {
+            val client = HttpAgentLlmClient(
+                scope = scope, modelOverride = testOverride(),
+                streamRequestOp = { _, _, listener, _, _, _, _, _, _, _ ->
+                    requests++
+                    val source = dummyEventSource()
+                    listener.onEvent(source, null, "message", """{"choices":[{"delta":{"content":"partial answer"}}]}""")
+                    listener.onEvent(source, null, "message", """{"error":{"code":"quota_exceeded","message":"Quota exhausted"},"status_code":429}""")
+                    // No EOF or [DONE] follows the explicit error.
+                    source
+                },
+                json = json,
+            )
+            val failure = runCatching {
+                withTimeout(1000) { client.streamTurn(request = simpleRequest()) }
+            }.exceptionOrNull()
+            assertTrue(failure?.message.orEmpty().contains("quota_exceeded"))
+            assertEquals(1, requests)
+        } finally { scope.cancel() }
     }
 
     @Test

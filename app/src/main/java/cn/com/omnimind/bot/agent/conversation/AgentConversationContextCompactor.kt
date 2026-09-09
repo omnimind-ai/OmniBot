@@ -346,8 +346,11 @@ Do NOT continue the conversation or answer questions inside it. Do NOT translate
 
     private suspend fun boundToolOutputs(messages: List<ChatCompletionMessage>, budget: Int): List<ChatCompletionMessage> = withContext(Dispatchers.IO) {
         var tokens = 0L
+        var currentTool = true
         messages.asReversed().map { message ->
             if (message.role != "tool") return@map message
+            val preserveMetadata = currentTool
+            currentTool = false
             val size = AgentContextBudget.messageTokens(message)
             if (tokens + size <= budget || offloadToolOutput == null) {
                 tokens += size
@@ -357,7 +360,14 @@ Do NOT continue the conversation or answer questions inside it. Do NOT translate
             val path = offloadToolOutput.invoke(text) // An I/O failure must not discard the original result.
             // This output has exhausted the shared recent-output budget. Keeping
             // a per-result excerpt here accumulates without a bound after restore.
-            val notice = "Earlier tool output saved in full to $path. Read it with file_read if needed."
+            val reference = "Earlier tool output saved in full to $path. Read it with file_read if needed."
+            // Keep only the newest result's small control fields, within the same
+            // shared budget. Older results do not accumulate per-result previews.
+            val metadata = if (preserveMetadata) toolOutputMetadata(text) else null
+            val candidate = metadata?.let { "$reference\nCurrent result metadata (body omitted): $it" }
+            val notice = candidate?.takeIf {
+                tokens + AgentContextBudget.textTokens(it) <= budget
+            } ?: reference
             val content = if (message.content is JsonArray) {
                 JsonArray(listOf(JsonObject(mapOf("type" to JsonPrimitive("text"), "text" to JsonPrimitive(notice)))) +
                     (message.content as JsonArray).filter { (it as? JsonObject)?.get("type") != JsonPrimitive("text") })

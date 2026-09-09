@@ -1,0 +1,84 @@
+{
+  "name": "Real permission wait cancellation followed by approved operation and restart",
+  "requireClockSync": true,
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_PERMISSION_STOP",
+      "scenario": "xiaowan-live-permission.json",
+      "timeoutMs": 180000
+    },
+    {
+      "action": "expect",
+      "text": "Run privileged shell command",
+      "timeoutMs": 120000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_PERMISSION_STOP",
+      "expected": "permission-pending"
+    },
+    {
+      "action": "tap",
+      "label": "Stop"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_PERMISSION_STOP",
+      "expected": "cancelled"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_PERMISSION_ALLOW",
+      "scenario": "xiaowan-live-permission.json",
+      "timeoutMs": 180000
+    },
+    {
+      "action": "expect",
+      "text": "Run privileged shell command",
+      "timeoutMs": 120000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_PERMISSION_ALLOW",
+      "expected": "permission-pending"
+    },
+    {
+      "action": "tap",
+      "label": "\u5141\u8bb8"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_PERMISSION_ALLOW_DONE",
+      "timeoutMs": 120000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_PERMISSION_ALLOW",
+      "expected": "done"
+    },
+    {
+      "action": "live-task",
+      "marker": "OOB_LIVE_PERMISSION_ALLOW",
+      "phase": "permission-allowed"
+    },
+    {
+      "action": "restart"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_PERMISSION_STOP",
+      "expected": "cancelled"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_PERMISSION_ALLOW",
+      "expected": "done"
+    },
+    {
+      "action": "live-task",
+      "marker": "OOB_LIVE_PERMISSION_ALLOW",
+      "phase": "permission-allowed"
+    }
+  ]
+}

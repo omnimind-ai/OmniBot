@@ -8,3 +8,12 @@ export function uiXmlField(node, key) {
       ? parseInt(entity.slice(2),16) : parseInt(entity.slice(1),10));
   });
 }
+
+// Floating text-selection controls can consume an outside tap even while Send is enabled.
+export function hasComposerSelectionToolbar(nodes) {
+  if (!nodes.some(n => uiXmlField(n, 'class') === 'android.widget.EditText' && uiXmlField(n, 'focused') === 'true')) return false;
+  const labels = nodes.filter(n => uiXmlField(n,'clickable') === 'true' && uiXmlField(n,'enabled') === 'true')
+    .map(n => uiXmlField(n,'content-desc') || uiXmlField(n,'text'));
+  return labels.some(label => ['Select all','全选'].includes(label)) &&
+    labels.some(label => ['Paste','粘贴','Copy','复制','Cut','剪切'].includes(label));
+}

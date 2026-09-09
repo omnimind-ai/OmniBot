@@ -1,0 +1,3 @@
+{
+  "prompt": "Use file_search on /workspace/oob-content-search-regression three times: query cross_boundary_needle, then tail_needle, then absent_content_needle. Use caseSensitive true. Report actual counts. Do not use terminal or read the whole file."
+}

@@ -42,12 +42,16 @@ for (const harness of filter.split(',')) {
   const origin = `http://127.0.0.1:${observer.address().port}`;
   let client;
   const check = async (name, task) => {
-    try { const detail = await task(); report.cases.push({name, passed: true, ...detail}); }
+    try {
+      const detail = await task(); report.cases.push({name, passed: true, ...detail});
+      console.log(JSON.stringify({harness, case: name, passed: true}));
+    }
     catch (error) {
       // Error payloads from official CLIs may contain credentials or conversation text.
       report.cases.push({name, passed: false, errorType: error.name,
         method: error.method, rpcCode: error.rpcCode,
         assertionSite: error.stack?.split('\n').find(line => /^\s+at /.test(line) && line.includes('verify-live-harness-conversations.mjs'))?.trim()});
+      console.log(JSON.stringify({harness, case: name, passed: false, errorType: error.name}));
       if (error.name !== 'AssertionError') throw error;
     }
   };
@@ -180,7 +184,12 @@ for (const harness of filter.split(',')) {
     await check('official_reasoning_setting', async () => {
       const option = configOptions(session).find(o => o.category === 'thought_level');
       if (!option) return {supported: false, reason: 'Official session declares no reasoning option'};
-      const target = choices(option).find(o => o.value !== option.currentValue); assert(target);
+      // Provider default and off may both omit wire parameters. Exercise an
+      // explicit thinking level, then off, rather than assuming any UI change
+      // must change the request.
+      const target = choices(option).find(o => o.value === 'high' && o.value !== option.currentValue)
+        ?? choices(option).find(o => ['medium', 'low', 'max'].includes(o.value) && o.value !== option.currentValue);
+      assert(target, 'No alternate explicit reasoning level declared');
       const reasoningWire = request => JSON.stringify([request?.effort ?? null,
         request?.thinkingType ?? null, request?.thinkingBudget ?? null]);
       const before = report.requests.findLast(r => r.phase === 'request' && r.model === secondModel);
@@ -194,7 +203,20 @@ for (const harness of filter.split(',')) {
       // can remove reasoning_effort rather than send the string "off".
       assert(before && after.length && after.some(r => reasoningWire(r) !== reasoningWire(before)),
         'Official setting changed but actual reasoning request configuration did not');
-      return {supported: true, selected: target.value, before: reasoningWire(before), after: reasoningWire(after.at(-1))};
+      const off = choices(option).find(o => o.value === 'off');
+      let disabled;
+      if (off) {
+        const restored = await client.call('session/set_config_option', {sessionId, configId: option.id, value: off.value});
+        assert.equal(configOptions(restored).find(o => o.id === option.id)?.currentValue, off.value);
+        const offOffset = report.requests.length;
+        const reply = await client.prompt(sessionId, 'Reply REASONING_OFF_OK only. Do not use tools.');
+        assert.equal(reply.text.trim(), 'REASONING_OFF_OK');
+        disabled = report.requests.slice(offOffset).findLast(r => r.phase === 'request' && r.model === secondModel);
+        assert(disabled && reasoningWire(disabled) !== reasoningWire(after.at(-1)),
+          'Disabling explicit reasoning did not change the actual request');
+      }
+      return {supported: true, selected: target.value, before: reasoningWire(before),
+        after: reasoningWire(after.at(-1)), ...(disabled ? {off: reasoningWire(disabled)} : {})};
     });
     await check('process_restart_session_restore', async () => {
       if (!initialized.agentCapabilities?.loadSession) return {supported: false, reason: 'Official ACP session/load is unsupported'};

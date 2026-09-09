@@ -956,6 +956,47 @@ object EmbeddedTerminalRuntime {
         )
     }
 
+    internal data class PersistentSessionSnapshot(
+        val transcript: String,
+        val running: Boolean,
+        val exitCode: Int? = null,
+    )
+
+    internal suspend fun awaitSessionCommandTranscript(
+        token: String,
+        transcriptStart: Int,
+        readSnapshot: suspend () -> PersistentSessionSnapshot?,
+        onLiveOutput: suspend (String) -> Unit = {},
+    ): String {
+        var completionTranscript: String? = null
+        var previousVisibleOutput = ""
+        while (completionTranscript == null) {
+            val snapshot = readSnapshot()
+                ?: throw IllegalStateException("终端会话在命令完成前已关闭或被替换")
+            val currentTranscript = snapshot.transcript
+            val liveOutput = buildSessionLiveOutputUpdate(
+                previousVisibleOutput = previousVisibleOutput,
+                rawOutput = currentTranscript.safeSubstring(transcriptStart),
+                token = token
+            )
+            if (liveOutput.visibleOutput != previousVisibleOutput) {
+                previousVisibleOutput = liveOutput.visibleOutput
+            }
+            if (liveOutput.outputDelta.isNotBlank()) {
+                onLiveOutput(liveOutput.outputDelta)
+            }
+            if (liveOutput.exitCode != null) {
+                completionTranscript = currentTranscript
+                continue
+            }
+            if (!snapshot.running) {
+                throw IllegalStateException("终端进程在命令完成前已退出（exit=${snapshot.exitCode ?: "unknown"}）")
+            }
+            delay(150)
+        }
+        return requireNotNull(completionTranscript)
+    }
+
     private suspend fun sendSessionCommandAndAwait(
         context: Context,
         handle: SessionHandle,
@@ -984,37 +1025,26 @@ object EmbeddedTerminalRuntime {
             )
         )
 
-        var completionTranscript: String? = null
-        var previousVisibleOutput = ""
-        while (completionTranscript == null) {
-            val currentTranscript = ReTerminalSessionBridge.getSession(
-                context = context,
-                sessionId = handle.externalSessionId
-            )?.getTranscriptText().orEmpty()
-            val liveOutput = buildSessionLiveOutputUpdate(
-                previousVisibleOutput = previousVisibleOutput,
-                rawOutput = currentTranscript.safeSubstring(transcriptStart),
-                token = token
-            )
-            if (liveOutput.visibleOutput != previousVisibleOutput) {
-                previousVisibleOutput = liveOutput.visibleOutput
-            }
-            if (liveOutput.outputDelta.isNotBlank()) {
-                onLiveUpdate(
-                    TermuxLiveUpdate(
-                        sessionId = handle.externalSessionId,
-                        summary = summarizeLiveTerminalChunk(liveOutput.outputDelta),
-                        outputDelta = liveOutput.outputDelta,
-                        streamState = "running"
-                    )
-                )
-            }
-            if (liveOutput.exitCode != null) {
-                completionTranscript = currentTranscript
-                continue
-            }
-            delay(150)
-        }
+        val completionTranscript = awaitSessionCommandTranscript(
+            token = token,
+            transcriptStart = transcriptStart,
+            readSnapshot = {
+                val current = ReTerminalSessionBridge.getSession(context, handle.externalSessionId)
+                if (current !== sessionAccess.session) null else {
+                    val running = current.isRunning
+                    PersistentSessionSnapshot(current.getTranscriptText(), running,
+                        if (running) null else current.exitStatus)
+                }
+            },
+            onLiveOutput = { delta ->
+                onLiveUpdate(TermuxLiveUpdate(
+                    sessionId = handle.externalSessionId,
+                    summary = summarizeLiveTerminalChunk(delta),
+                    outputDelta = delta,
+                    streamState = "running",
+                ))
+            },
+        )
         val snapshot = readSession(context, handle.externalSessionId)
         val completedTranscript = requireNotNull(completionTranscript)
 

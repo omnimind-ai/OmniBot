@@ -18,6 +18,23 @@ class AgentLlmStreamAccumulatorTest {
         assertEquals(listOf("{\"content\":\"<html>", "{\"path\":"), accumulator.currentToolCalls().map { it.function.arguments })
     }
 
+    @Test
+    fun `provider error after partial payload cannot become a successful turn`() {
+        for (payload in listOf(
+            """{"choices":[{"delta":{"content":"partial answer"}}]}""",
+            """{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"write-1","function":{"name":"file_write","arguments":"{}"}}]}}]}"""
+        )) {
+            val accumulator = AgentLlmStreamAccumulator(json = Json)
+            accumulator.consume(payload)
+            val terminal = accumulator.consume("""{"error":{"code":"quota_exceeded","message":"Quota exhausted"},"status_code":429}""")
+            accumulator.consume("[DONE]")
+            val failure = runCatching { accumulator.buildTurn() }.exceptionOrNull()
+            assertNotNull("Partial output concealed the provider error", failure)
+            assertTrue(failure?.message.orEmpty().contains("quota_exceeded"))
+            assertTrue("An explicit provider error must settle without waiting for EOF", terminal)
+        }
+    }
+
     private val json = Json {
         ignoreUnknownKeys = true
         isLenient = true

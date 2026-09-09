@@ -15,6 +15,29 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AgentRuntimeProtocolPayloadTest {
+    @Test
+    fun disconnectedTransportDoesNotHideAnAvailableAgent() {
+        val status = mergeLocalRuntimeStatus(
+            mapOf("ready" to true, "connected" to false, "error" to null),
+            mapOf("ready" to false, "connected" to false, "activeAgentId" to "xiaowan-acp"),
+        )
+        assertEquals(true, status["ready"])
+        assertEquals(false, status["connected"])
+        assertEquals("xiaowan-acp", status["activeAgentId"])
+    }
+
+    @Test
+    fun transportCannotOverrideHostDistributionOrAvailabilityChecks() {
+        val status = mergeLocalRuntimeStatus(
+            mapOf("ready" to false, "connected" to false, "error" to "Unavailable"),
+            mapOf("ready" to true, "connected" to true, "protocol" to "acp"),
+        )
+        assertEquals(false, status["ready"])
+        assertEquals(false, status["connected"])
+        assertEquals("Unavailable", status["error"])
+        assertEquals("acp", status["protocol"])
+    }
+
     private fun officialCatalogAgents(): List<AcpAgentProfile> =
         AcpAgentCatalog.parse(File("src/main/assets/acp/agents.json").readText()).agents
 
@@ -469,21 +492,34 @@ class AgentRuntimeProtocolPayloadTest {
     }
 
     @Test
-    fun permissionRequestUsesOfficialToolCallUpdateShape() {
-        val toolCall = standardAcpPermissionToolCallPayload(
-            toolCallId = "tool-1",
-            title = "Run command",
-            optionNames = listOf("Allow once", "Reject"),
+    fun permissionRequestPreservesTheOfficialOperationAndDetails() {
+        val operation = Json.decodeFromString(
+            com.agentclientprotocol.model.SessionUpdate.ToolCallUpdate.serializer(),
+            """{
+              "toolCallId":"tool-1", "title":"Run command", "status":"pending",
+              "kind":"execute", "rawInput":{"command":"printf hello","cwd":"/workspace"},
+              "content":[{"type":"content","content":{"type":"text","text":"Execute printf hello in /workspace"}}],
+              "locations":[{"path":"/workspace/report.txt","line":3}]
+            }""",
         )
+        val payload = standardAcpPermissionToolCallPayload(operation)
+        assertEquals("tool-1", payload["toolCallId"])
+        assertEquals("pending", payload["status"])
+        assertEquals("execute", payload["kind"])
+        assertEquals("printf hello", (payload["rawInput"] as Map<*, *>)["command"])
+        assertEquals("Execute printf hello in /workspace",
+            (((payload["content"] as List<*>).single() as Map<*, *>)["content"] as Map<*, *>)["text"])
+        assertEquals("/workspace/report.txt", ((payload["locations"] as List<*>).single() as Map<*, *>)["path"])
+        assertFalse(payload.containsKey("detail"))
+    }
 
-        assertEquals("tool-1", toolCall["toolCallId"])
-        assertEquals("in_progress", toolCall["status"])
-        assertFalse(toolCall.containsKey("detail"))
-        assertEquals(
-            "Allow once\nReject",
-            ((toolCall["content"] as List<*>).single() as Map<*, *>)
-                .let { it["content"] as Map<*, *> }["text"]
+    @Test
+    fun permissionRequestDoesNotInventMissingOperationFields() {
+        val operation = Json.decodeFromString(
+            com.agentclientprotocol.model.SessionUpdate.ToolCallUpdate.serializer(),
+            """{"toolCallId":"minimal"}""",
         )
+        assertEquals(mapOf("toolCallId" to "minimal"), standardAcpPermissionToolCallPayload(operation))
     }
 
     @Test
@@ -563,6 +599,27 @@ class AgentRuntimeProtocolPayloadTest {
             codexRuntime.preparationRevision == bridgeRevision ||
                 codexRuntime.preparationRevision?.startsWith("$bridgeRevision-") == true,
         )
+        // The title fix must invalidate persisted readiness from the previous APK.
+        assertFalse(shouldReuseManagedAcpPreparation(
+            healthStatus = "online",
+            installed = true,
+            preparationRevision = "codex-acp-1.10.0-message-completion-1",
+            requiredRevision = codexRuntime.preparationRevision,
+        ))
+        assertTrue(shouldPrepareManagedAcpAdapter(
+            agentId = codex.id,
+            commandAvailable = true,
+            allPackagesReady = true,
+            adapterHealthy = true,
+            preparationRevision = "codex-acp-1.10.0-message-completion-1",
+            requiredRevision = codexRuntime.preparationRevision,
+        ))
+        assertTrue(shouldReuseManagedAcpPreparation(
+            healthStatus = "online",
+            installed = true,
+            preparationRevision = codexRuntime.preparationRevision,
+            requiredRevision = codexRuntime.preparationRevision,
+        ))
         val xiaowan = officialCatalogAgents().first {
             it.id == AcpAgentProfileStore.XIAOWAN_AGENT_ID
         }

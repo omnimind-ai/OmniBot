@@ -205,6 +205,19 @@ internal object AgentConversationHistorySupport {
         ).filterValues { it != null }
     }
 
+    fun mergeUiCardPayload(
+        existingPayload: Map<String, Any?>,
+        incomingPayload: Map<String, Any?>
+    ): Map<String, Any?> {
+        // Card-only writes (for example an acknowledged permission choice)
+        // omit message metadata; omission is not an instruction to erase it.
+        val updated = LinkedHashMap(incomingPayload)
+        if (incomingPayload["streamMeta"] == null) {
+            existingPayload["streamMeta"]?.let { updated["streamMeta"] = it }
+        }
+        return preserveDeepThinkingContent(existingPayload, updated)
+    }
+
     fun preserveDeepThinkingContent(
         existingPayload: Map<String, Any?>,
         incomingPayload: Map<String, Any?>

@@ -1,0 +1,3 @@
+{
+  "prompt": "Test one permission request. Call android_privileged_action with action shell.exec and arguments command id, confirmed false. Wait for my permission choice. If denied, report denial without retrying. Then finish."
+}

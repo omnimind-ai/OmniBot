@@ -135,6 +135,14 @@ internal suspend fun fetchAgentProviderModels(
     }
 }
 
+/** Availability and distribution-scoped connectivity are owned by the host probe. */
+internal fun mergeLocalRuntimeStatus(
+    hostStatus: Map<String, Any?>,
+    transportStatus: Map<String, Any?>,
+): Map<String, Any?> = hostStatus + transportStatus.filterKeys {
+    it != "ready" && it != "connected"
+}
+
 /**
  * Decide transport ownership from request/session identity, never from the
  * last runtime that happened to connect. This keeps local ACP and the remote
@@ -186,25 +194,6 @@ internal fun standardAcpSessionWireParams(
     args["_meta"]?.let { put("_meta", it) }
 }
 
-/** Standard ToolCallUpdate payload used by RequestPermissionRequest. */
-internal fun standardAcpPermissionToolCallPayload(
-    toolCallId: String,
-    title: String,
-    optionNames: List<String>,
-): Map<String, Any?> = mapOf(
-    "toolCallId" to toolCallId,
-    "title" to title,
-    "status" to "in_progress",
-    "content" to listOf(
-        mapOf(
-            "type" to "content",
-            "content" to mapOf(
-                "type" to "text",
-                "text" to optionNames.joinToString("\n"),
-            ),
-        ),
-    ),
-)
 
 class AgentRuntimeManager private constructor(
     private val context: Context
@@ -530,7 +519,7 @@ class AgentRuntimeManager private constructor(
             "remoteUptimeMs" to probe.details["uptimeMs"]
         ).apply {
             if (runtime.kind == AgentRuntimeKind.LOCAL) {
-                putAll(selectedLocalRuntime?.statusPayload().orEmpty())
+                putAll(mergeLocalRuntimeStatus(this, selectedLocalRuntime?.statusPayload().orEmpty()))
             } else {
                 put("protocol", "acp")
             }

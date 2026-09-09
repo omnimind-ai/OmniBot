@@ -1,0 +1,96 @@
+{
+  "name": "Xiaowan unsupported lifecycle commands before and after restart",
+  "steps": [
+    {
+      "action": "expect",
+      "text": "命令",
+      "timeoutMs": 30000
+    },
+    {
+      "action": "tap",
+      "label": "命令"
+    },
+    {
+      "action": "expect",
+      "text": "compact"
+    },
+    {
+      "action": "expect",
+      "text": "init"
+    },
+    {
+      "action": "assertAbsent",
+      "label": "plan"
+    },
+    {
+      "action": "assertAbsent",
+      "label": "review"
+    },
+    {
+      "action": "assertAbsent",
+      "label": "pause"
+    },
+    {
+      "action": "assertAbsent",
+      "label": "resume"
+    },
+    {
+      "action": "clear-command-draft"
+    },
+    {
+      "action": "unsupported-command",
+      "command": "/pause"
+    },
+    {
+      "action": "unsupported-command",
+      "command": "/resume"
+    },
+    {
+      "action": "restart"
+    },
+    {
+      "action": "expect",
+      "text": "命令",
+      "timeoutMs": 30000
+    },
+    {
+      "action": "tap",
+      "label": "命令"
+    },
+    {
+      "action": "expect",
+      "text": "compact"
+    },
+    {
+      "action": "expect",
+      "text": "init"
+    },
+    {
+      "action": "assertAbsent",
+      "label": "plan"
+    },
+    {
+      "action": "assertAbsent",
+      "label": "review"
+    },
+    {
+      "action": "assertAbsent",
+      "label": "pause"
+    },
+    {
+      "action": "assertAbsent",
+      "label": "resume"
+    },
+    {
+      "action": "clear-command-draft"
+    },
+    {
+      "action": "unsupported-command",
+      "command": "/pause"
+    },
+    {
+      "action": "unsupported-command",
+      "command": "/resume"
+    }
+  ]
+}

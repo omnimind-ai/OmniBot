@@ -1,0 +1,89 @@
+{
+  "name": "Provider limit categories survive recovery and restart",
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_FAILURE_STREAMERROR"
+    },
+    {
+      "action": "expect",
+      "text": "Failed",
+      "timeoutMs": 45000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_STREAMERROR",
+      "expected": "error",
+      "summary": "模型服务商额度不足，请检查账户余额或配额后再试。"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_FAILURE_STREAMRATE"
+    },
+    {
+      "action": "expect",
+      "text": "Failed",
+      "timeoutMs": 45000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_STREAMRATE",
+      "expected": "error",
+      "summary": "模型服务商限制了请求频率，请稍后再试。"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_FAILURE_STREAMLIMIT"
+    },
+    {
+      "action": "expect",
+      "text": "Failed",
+      "timeoutMs": 45000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_STREAMLIMIT",
+      "expected": "error",
+      "summary": "模型服务商限制了本次请求，请检查额度和请求频率后再试。"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_FAILURE_OK"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_FAILURE_OK_DONE"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_OK",
+      "expected": "done"
+    },
+    {
+      "action": "restart"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_STREAMERROR",
+      "expected": "error",
+      "summary": "模型服务商额度不足，请检查账户余额或配额后再试。"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_STREAMRATE",
+      "expected": "error",
+      "summary": "模型服务商限制了请求频率，请稍后再试。"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_STREAMLIMIT",
+      "expected": "error",
+      "summary": "模型服务商限制了本次请求，请检查额度和请求频率后再试。"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_OK",
+      "expected": "done"
+    }
+  ]
+}

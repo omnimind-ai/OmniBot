@@ -37,7 +37,12 @@ const run = (cmd, argv) => {
 const report = {version:req('./package.json').version, platform:process.platform,
   arch:process.arch, bash:run('/bin/bash',['-c','printf OOB_DSH_BASH_OK']),
   landlock:{launcher:launch, verdict:landlock.probe(), ...run(launch,['--probe'])},
-  bwrap:run('bwrap',['--version']), modes:{}};
+  bwrap:run('bwrap',['--version']),
+  // Exact read-only startup probe from the installed official sandbox-local
+  // defaultProbeBwrap; keep diagnostics its stdio:'ignore' would discard.
+  // This does not replace the provider's own confine/probe below.
+  bwrapProfileProbe:run('bwrap',['--ro-bind','/','/','--dev','/dev',
+    '--unshare-pid','--proc','/proc','--die-with-parent','--','true']), modes:{}};
 const provider = new LocalSandboxProvider(new Context(), {
   runnerCommand:[], runnerFailureSignatures:[], probeTimeoutMs:5000});
 for (const mode of ['read-only','workspace-write']) {

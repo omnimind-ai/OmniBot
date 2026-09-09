@@ -48,6 +48,13 @@ class ChatPageModeState {
   bool isLoadingMore = false;
   bool messageListInputFocused = false;
 
+  /// Consume only references already attached to an admitted user message.
+  /// Commands that only change settings or are rejected do not call this.
+  void consumeMessageAttachments(List<Map<String, dynamic>> attachments) {
+    final ids = attachments.map((item) => item['id']).whereType<String>().toSet();
+    pendingAttachments.removeWhere((item) => ids.contains(item.id));
+  }
+
   /// Clears the same conversation-scoped fields that the page historically
   /// reset while retaining view preferences such as expansion state.
   void resetConversation() {

@@ -1576,6 +1576,9 @@ abstract class _ChatPageStateBase extends State<ChatPage>
       );
     } catch (error) {
       debugPrint('ACP cancellation failed: $error');
+      if (mounted) {
+        showToast(formatAgentRuntimeErrorForUser(error), type: ToastType.error);
+      }
     }
   }
 
@@ -1860,7 +1863,9 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     List<Map<String, dynamic>> attachments = const [],
   });
 
-  Future<void> _executeAgentInitCommand();
+  Future<void> _executeAgentInitCommand({
+    List<Map<String, dynamic>> attachments = const [],
+  });
 
   Future<void> _startAgentReviewCommand();
 

@@ -69,7 +69,7 @@
         "usesSharedProvider": true,
         "terminalPackageId": "codex",
         "managedInstallCommandAsset": "acp/install-codex.sh",
-        "preparationRevision": "codex-acp-1.10.0-message-completion-1"
+        "preparationRevision": "codex-acp-1.10.0-message-completion-1-title-model-1"
       }
     },
     {

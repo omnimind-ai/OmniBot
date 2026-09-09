@@ -1,0 +1,36 @@
+{
+  "name": "Selection overlay does not intercept one Send after a failed turn",
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_FAILURE_RATE"
+    },
+    {
+      "action": "expect",
+      "text": "Failed",
+      "timeoutMs": 60000
+    },
+    {
+      "action": "expect",
+      "text": "Send"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_RATE",
+      "expected": "error"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_FILE_TEXT_AFTERRATE"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_FILE_TEXT_AFTERRATE_DONE"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FILE_TEXT_AFTERRATE",
+      "expected": "done"
+    }
+  ]
+}

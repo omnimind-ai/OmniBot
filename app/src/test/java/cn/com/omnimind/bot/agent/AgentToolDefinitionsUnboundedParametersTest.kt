@@ -9,12 +9,20 @@ import org.junit.Test
 
 class AgentToolDefinitionsUnboundedParametersTest {
     @Test
-    fun `tools do not advertise application character truncation`() {
+    fun `tools preserve complete output with optional file continuation pages`() {
         for (locale in listOf(PromptLocale.ZH_CN, PromptLocale.EN_US)) {
             for (tool in AgentToolDefinitions.staticTools(locale)) {
                 val function = tool["function"] as JsonObject
                 val properties = (function["parameters"] as? JsonObject)?.get("properties") as? JsonObject
-                assertFalse("${function["name"]} exposes maxChars", properties?.containsKey("maxChars") == true)
+                if (function["name"]?.jsonPrimitive?.content == "file_read") {
+                    assertTrue(properties?.containsKey("offset") == true)
+                    val pageSize = properties?.get("maxChars") as JsonObject
+                    assertTrue(pageSize["description"]!!.jsonPrimitive.content.contains("nextOffset"))
+                    val required = (function["parameters"] as JsonObject)["required"].toString()
+                    assertFalse("Page size must remain optional", required.contains("maxChars"))
+                } else {
+                    assertFalse("${function["name"]} exposes maxChars", properties?.containsKey("maxChars") == true)
+                }
             }
         }
     }

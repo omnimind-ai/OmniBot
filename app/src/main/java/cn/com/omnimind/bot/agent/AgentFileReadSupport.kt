@@ -40,7 +40,9 @@ internal object AgentFileReadSupport {
         }
     }
 
-    fun read(file: File, offset: Long = 0, lineStart: Int? = null, lineCount: Int? = null): TextPage {
+    fun read(file: File, offset: Long = 0, lineStart: Int? = null, lineCount: Int? = null,
+        maxChars: Int = PAGE_CHARS): TextPage {
+        require(maxChars in 2..PAGE_CHARS) { "maxChars must be between 2 and $PAGE_CHARS" }
         val input = file.inputStream().buffered()
         input.mark(2)
         val first = input.read()
@@ -50,7 +52,7 @@ internal object AgentFileReadSupport {
             first == 0xfe && second == 0xff -> Charsets.UTF_16BE
             else -> { input.reset(); Charsets.UTF_8 }
         }
-        return input.reader(charset).use { readPage(it, offset, lineStart, lineCount) }
+        return input.reader(charset).use { readPage(it, offset, lineStart, lineCount, maxChars) }
     }
 
     private fun hasUtf16Bom(bytes: ByteArray): Boolean = bytes.size >= 2 &&

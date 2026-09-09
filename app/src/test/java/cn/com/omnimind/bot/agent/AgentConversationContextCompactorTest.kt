@@ -3,6 +3,8 @@ package cn.com.omnimind.bot.agent
 import cn.com.omnimind.assists.controller.http.HttpController
 import cn.com.omnimind.baselib.llm.ChatCompletionMessage
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.Json
+import org.junit.Assert.assertFalse
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.After
@@ -215,6 +217,98 @@ class AgentConversationContextCompactorTest {
         assertTrue(AgentContextBudget.estimate(compacted) < 9952)
         assertEquals(1, compacted.count { it.role == "user" })
         assertTrue(org.mockito.Mockito.mockingDetails(repo).invocations.none { it.method.name == "updateContextSummary" })
+    }
+
+    @Test
+    fun repeatedStructuredOutputsKeepCurrentCursorWithinSharedBudget() = kotlinx.coroutines.runBlocking {
+        var offloads = 0
+        val compactor = object : AgentConversationContextCompactor(
+            org.mockito.Mockito.mock(AgentConversationHistoryRepository::class.java),
+            offloadToolOutput = { "/workspace/offloads/${++offloads}.txt" }) {
+            override suspend fun requestCompactedSummary(messages: List<Map<String, Any>>, maxOutputTokens: Int): String =
+                "Earlier pages were inspected; continue the current request."
+        }
+        var messages = listOf(ChatCompletionMessage(role="user", content=JsonPrimitive("inspect pages")))
+        repeat(60) { index ->
+            val id="page-$index"
+            val body=JsonObject(mapOf("content" to JsonPrimitive("x".repeat(65536)),
+                "nextCursor" to JsonPrimitive("cursor-$index"))).toString()
+            val wire=AgentEventAdapter(Json).toolResultContent(
+                AgentToolRegistry.RuntimeToolDescriptor("custom_page", "Read", "context"),
+                ToolExecutionResult.ContextResult("custom_page","Read",body,body))
+            val call=cn.com.omnimind.baselib.llm.AssistantToolCall(id=id,type="function",
+                function=cn.com.omnimind.baselib.llm.AssistantToolCallFunction(name="custom_page",arguments="{}"))
+            messages=compactor.compactIfNeeded(null,"agent",null,messages + listOf(
+                ChatCompletionMessage(role="assistant",toolCalls=listOf(call)),
+                ChatCompletionMessage(role="tool",toolCallId=id,content=JsonPrimitive(wire))),
+                50000,32000,null,requestOverheadTokens=10000)
+            assertTrue(messages.last().content.toString().contains("cursor-$index"))
+            assertTrue(AgentContextBudget.estimate(messages,toolTokens=10000) <= 27904)
+            assertEquals("inspect pages",(messages.single { it.role=="user" }.content as JsonPrimitive).content)
+        }
+        assertTrue(offloads >= 60)
+    }
+
+    @Test
+    fun smallerOriginalPagesRemainReadableAfterLargeResultOffload() = kotlinx.coroutines.runBlocking {
+        for (name in listOf("file_read", "plugin_document")) {
+            val saved = mutableListOf<String>()
+            val compactor = object : AgentConversationContextCompactor(
+                org.mockito.Mockito.mock(AgentConversationHistoryRepository::class.java),
+                offloadToolOutput = { saved += it; "/workspace/offloads/result-${saved.size}.txt" }) {
+                override suspend fun requestCompactedSummary(messages: List<Map<String, Any>>, maxOutputTokens: Int): String =
+                    "Earlier large result is stored; inspect the current original page."
+            }
+            fun message(id: String, text: String): List<ChatCompletionMessage> {
+                val body = JsonObject(mapOf("content" to JsonPrimitive(text),
+                    "nextOffset" to JsonPrimitive(text.length))).toString()
+                val wire = AgentEventAdapter(Json).toolResultContent(
+                    AgentToolRegistry.RuntimeToolDescriptor(name, "Read", "context"),
+                    ToolExecutionResult.ContextResult(name, "Read", body, body))
+                val call = cn.com.omnimind.baselib.llm.AssistantToolCall(id=id,type="function",
+                    function=cn.com.omnimind.baselib.llm.AssistantToolCallFunction(name=name,arguments="{}"))
+                return listOf(ChatCompletionMessage(role="assistant",toolCalls=listOf(call)),
+                    ChatCompletionMessage(role="tool",toolCallId=id,content=JsonPrimitive(wire)))
+            }
+            var history = listOf(ChatCompletionMessage(role="user",content=JsonPrimitive("Inspect original body"))) +
+                message("large", "x".repeat(65536))
+            history = compactor.compactIfNeeded(null,"agent",null,history,50000,32000,null,requestOverheadTokens=10000)
+            assertEquals(1,saved.size)
+            for ((index, text) in listOf("body-value-7391" + "x".repeat(2000),
+                "中文正文值7391" + "汉字".repeat(240)).withIndex()) {
+                val latest = message("small-$index",text)
+                history = compactor.compactIfNeeded(null,"agent",null,history + message("pressure-$index", "x".repeat(65536)) + latest,50000,32000,null,requestOverheadTokens=10000)
+                assertEquals("Small original body was unnecessarily offloaded",latest.last(),history.last())
+                assertTrue(AgentContextBudget.estimate(history,toolTokens=10000) <= 27904)
+                assertEquals("Inspect original body",(history.single { it.role=="user" }.content as JsonPrimitive).content)
+            }
+        }
+    }
+
+    @Test
+    fun offloadedCurrentResultKeepsPagingMetadataAcrossToolNames() = kotlinx.coroutines.runBlocking {
+        for (name in listOf("file_read", "plugin_document", "browser_result")) {
+            val body = JsonObject(mapOf("path" to JsonPrimitive("/workspace/test.html"),
+                "content" to JsonPrimitive("x".repeat(65536)), "nextOffset" to JsonPrimitive(65536),
+                "hasMore" to JsonPrimitive(true), "cursor" to JsonPrimitive("page-2"))).toString()
+            val result = ToolExecutionResult.ContextResult(name, "Read", body, body)
+            val wire = AgentEventAdapter(Json).toolResultContent(
+                AgentToolRegistry.RuntimeToolDescriptor(name, "Read", "context"), result)
+            val saved = mutableListOf<String>()
+            val compactor = AgentConversationContextCompactor(
+                org.mockito.Mockito.mock(AgentConversationHistoryRepository::class.java),
+                offloadToolOutput = { saved += it; "/workspace/offloads/full.txt" })
+            val messages = listOf(ChatCompletionMessage(role="user", content=JsonPrimitive("continue reading")),
+                ChatCompletionMessage(role="tool", toolCallId="page", content=JsonPrimitive(wire)))
+            val compacted = compactor.compactIfNeeded(null,"agent",null,messages,50000,32000,null,
+                requestOverheadTokens=10000)
+            val projected = (compacted.last().content as JsonPrimitive).content
+            assertTrue("Paging cursor lost for $name", projected.contains("nextOffset") && projected.contains("65536"))
+            assertTrue(projected.contains("page-2"))
+            assertFalse(projected.contains("x".repeat(1024)))
+            assertEquals(listOf(wire), saved)
+            assertTrue(AgentContextBudget.estimate(compacted,toolTokens=10000) < 28000)
+        }
     }
 
     @Test

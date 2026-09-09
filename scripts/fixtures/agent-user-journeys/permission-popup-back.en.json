@@ -1,0 +1,17 @@
+{
+  "name":"Permission popup system back repeatedly and after restart",
+  "steps":[
+    {"action":"expect","text":"Send","timeoutMs":30000},
+    {"action":"tap","label":"Agent permissions"},
+    {"action":"expect","text":"Read only"},
+    {"action":"dismiss-permissions"},
+    {"action":"tap","label":"Agent permissions"},
+    {"action":"expect","text":"Read only"},
+    {"action":"dismiss-permissions"},
+    {"action":"restart"},
+    {"action":"expect","text":"Agent permissions","timeoutMs":30000},
+    {"action":"tap","label":"Agent permissions"},
+    {"action":"expect","text":"Read only"},
+    {"action":"dismiss-permissions"}
+  ]
+}

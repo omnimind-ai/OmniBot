@@ -8,6 +8,7 @@ import cn.com.omnimind.bot.agent.AgentToolRegistry
 import cn.com.omnimind.bot.agent.AgentWorkspaceManager
 import cn.com.omnimind.bot.agent.ToolExecutionResult
 import kotlinx.coroutines.CancellationException
+import java.io.IOException
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
@@ -255,7 +256,10 @@ class FileToolHandler(
                     metadata["contentAvailable"] = false
                     metadata["message"] = "二进制文件未作为文本解码。原文件可通过附件预览或打开；如需内容，请使用相应解析工具提取文本。"
                 } else {
-                    val page = AgentFileReadSupport.read(file, offset, lineStart, lineCount)
+                    val maxChars = args["maxChars"]?.let {
+                        requireNotNull(it.jsonPrimitive.intOrNull) { "maxChars 必须为整数" }
+                    } ?: AgentFileReadSupport.PAGE_CHARS
+                    val page = AgentFileReadSupport.read(file, offset, lineStart, lineCount, maxChars)
                     metadata.putAll(page.toPayload())
                     if (page.nextOffset != null) {
                         metadata["continuation"] = "使用 file_read(path, offset=nextOffset) 继续读取，不要同时传入 lineStart；原文件保持完整。"
@@ -428,16 +432,7 @@ class FileToolHandler(
             val recursive = args["recursive"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
             val maxDepth = args["maxDepth"]?.jsonPrimitive?.intOrNull?.takeIf { it > 0 }
             val limit = args["limit"]?.jsonPrimitive?.intOrNull?.takeIf { it > 0 }
-            val files = if (recursive) {
-                val walked = directory.walkTopDown()
-                val depthLimited = if (maxDepth != null) walked.maxDepth(maxDepth) else walked
-                val result = if (limit != null) depthLimited.take(limit) else depthLimited
-                result.drop(1).toList()
-            } else {
-                val entries = directory.listFiles()?.sortedBy { it.name.lowercase() }
-                    ?: emptyList()
-                if (limit != null) entries.take(limit) else entries
-            }
+            val files = listWorkspaceFiles(directory, recursive, maxDepth, limit)
             val payload = linkedMapOf<String, Any?>(
                 "path" to (workspaceManager.shellPathForAndroid(directory) ?: directory.absolutePath),
                 "androidPath" to directory.absolutePath,
@@ -492,44 +487,29 @@ class FileToolHandler(
             val caseSensitive = args["caseSensitive"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
             val maxResults = args["maxResults"]?.jsonPrimitive?.intOrNull?.takeIf { it > 0 }
             val searchNeedle = if (caseSensitive) query else query.lowercase()
-            val results = mutableListOf<Map<String, Any?>>()
-            directory.walkTopDown().forEach { file ->
-                if (maxResults != null && results.size >= maxResults) return@forEach
-                if (!file.isFile) return@forEach
+            val results = collectFileSearchMatches(directory.walkTopDown(), maxResults) { file ->
+                if (!file.isFile) return@collectFileSearchMatches null
                 val normalizedName = if (caseSensitive) file.name else file.name.lowercase()
                 if (normalizedName.contains(searchNeedle)) {
-                    results.add(
-                        mapOf(
-                            "path" to (workspaceManager.shellPathForAndroid(file) ?: file.absolutePath),
-                            "androidPath" to file.absolutePath,
-                            "matchType" to "file_name",
-                            "snippet" to file.name
-                        )
-                    )
-                    return@forEach
-                }
-                val matchingLine = runCatching {
-                    file.bufferedReader().useLines { lines ->
-                        lines.firstOrNull { line ->
-                            val haystack = if (caseSensitive) line else line.lowercase()
-                            haystack.contains(searchNeedle)
-                        }
-                    }
-                }.getOrNull() ?: return@forEach
-                val haystack = if (caseSensitive) matchingLine else matchingLine.lowercase()
-                val index = haystack.indexOf(searchNeedle)
-                if (index >= 0) {
-                    val start = (index - 40).coerceAtLeast(0)
-                    val end = (index + query.length + 120).coerceAtMost(matchingLine.length)
-                    results.add(
-                        mapOf(
-                            "path" to (workspaceManager.shellPathForAndroid(file) ?: file.absolutePath),
-                            "androidPath" to file.absolutePath,
-                            "matchType" to "content",
-                            "snippet" to matchingLine.substring(start, end)
-                        )
+                    return@collectFileSearchMatches mapOf(
+                        "path" to (workspaceManager.shellPathForAndroid(file) ?: file.absolutePath),
+                        "androidPath" to file.absolutePath,
+                        "matchType" to "file_name",
+                        "snippet" to file.name
                     )
                 }
+                val snippet = try {
+                    file.reader().use { findFileContentSnippet(it, query, caseSensitive) }
+                } catch (_: IOException) {
+                    // A disappearing/unreadable entry may be skipped; cancellation and VM errors may not.
+                    null
+                } ?: return@collectFileSearchMatches null
+                mapOf(
+                    "path" to (workspaceManager.shellPathForAndroid(file) ?: file.absolutePath),
+                    "androidPath" to file.absolutePath,
+                    "matchType" to "content",
+                    "snippet" to snippet
+                )
             }
             val payload = linkedMapOf<String, Any?>(
                 "query" to query,

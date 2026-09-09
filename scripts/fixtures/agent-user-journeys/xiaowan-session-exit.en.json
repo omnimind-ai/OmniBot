@@ -1,0 +1,40 @@
+{
+  "name": "Persistent shell exit failure followed by fresh session and restart",
+  "requireClockSync": true,
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_SESSION_EXIT",
+      "scenario": "xiaowan-session-exit.json",
+      "timeoutMs": 180000
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_SESSION_EXIT_DONE",
+      "timeoutMs": 60000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_SESSION_EXIT",
+      "expected": "done"
+    },
+    {
+      "action": "live-task",
+      "marker": "OOB_LIVE_SESSION_EXIT",
+      "phase": "session-exit"
+    },
+    {
+      "action": "restart"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_SESSION_EXIT",
+      "expected": "done"
+    },
+    {
+      "action": "live-task",
+      "marker": "OOB_LIVE_SESSION_EXIT",
+      "phase": "session-exit"
+    }
+  ]
+}

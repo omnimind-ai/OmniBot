@@ -1,0 +1,119 @@
+{
+  "name": "Configured SSE MCP cancellation, denial and next call with restart",
+  "requireClockSync": true,
+  "steps": [
+    {
+      "action": "mcp-fixture",
+      "phase": "baseline"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_MCP_WAIT",
+      "scenario": "xiaowan-mcp-wait.json"
+    },
+    {
+      "action": "mcp-fixture",
+      "phase": "pending"
+    },
+    {
+      "action": "tap",
+      "label": "Stop"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_MCP_WAIT",
+      "expected": "cancelled"
+    },
+    {
+      "action": "mcp-fixture",
+      "phase": "cancelled"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_MCP_ECHO",
+      "scenario": "xiaowan-mcp-echo.json"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_MCP_ECHO_DONE",
+      "timeoutMs": 120000
+    },
+    {
+      "action": "mcp-fixture",
+      "phase": "echo"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_MCP_ECHO",
+      "expected": "done"
+    },
+    {
+      "action": "restart"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_MCP_WAIT",
+      "expected": "cancelled"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_MCP_ECHO",
+      "expected": "done"
+    },
+    {
+      "action": "mcp-fixture",
+      "phase": "baseline"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_MCP_DENIED",
+      "scenario": "xiaowan-mcp-denied.json"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_MCP_DENIED_DONE",
+      "timeoutMs": 120000
+    },
+    {
+      "action": "mcp-fixture",
+      "phase": "denied"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_MCP_DENIED",
+      "expected": "done"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_MCP_RECOVER",
+      "scenario": "xiaowan-mcp-echo.json"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_MCP_RECOVER_DONE",
+      "timeoutMs": 120000
+    },
+    {
+      "action": "mcp-fixture",
+      "phase": "denied-recovery"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_MCP_RECOVER",
+      "expected": "done"
+    },
+    {
+      "action": "restart"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_MCP_DENIED",
+      "expected": "done"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_MCP_RECOVER",
+      "expected": "done"
+    }
+  ]
+}

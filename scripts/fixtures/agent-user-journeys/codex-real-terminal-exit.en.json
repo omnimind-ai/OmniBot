@@ -1,0 +1,19 @@
+{
+  "name": "Codex terminal failure followed by conversation recovery",
+  "requireClockSync": true,
+  "steps": [
+    {"action":"expect","text":"Send","timeoutMs":30000},
+    {"action":"tap","label":"Agent permissions"},
+    {"action":"expect","text":"Read only","timeoutMs":10000},
+    {"action":"dismiss-permissions"},
+    {"action":"send","marker":"OOB_LIVE_CODEX_EXIT","scenario":"codex-terminal-exit.json","timeoutMs":240000},
+    {"action":"reply","text":"OOB_LIVE_CODEX_EXIT_DONE","timeoutMs":180000},
+    {"action":"turn-outcome","marker":"OOB_LIVE_CODEX_EXIT","expected":"done"},
+    {"action":"send","marker":"OOB_LIVE_CODEX_AFTER_EXIT","scenario":"xiaowan-switch-reply.json","timeoutMs":180000},
+    {"action":"reply","text":"OOB_LIVE_CODEX_AFTER_EXIT_DONE","timeoutMs":180000},
+    {"action":"turn-outcome","marker":"OOB_LIVE_CODEX_AFTER_EXIT","expected":"done"},
+    {"action":"restart"},
+    {"action":"turn-outcome","marker":"OOB_LIVE_CODEX_EXIT","expected":"done"},
+    {"action":"turn-outcome","marker":"OOB_LIVE_CODEX_AFTER_EXIT","expected":"done"}
+  ]
+}

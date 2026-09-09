@@ -2,10 +2,56 @@ package cn.com.omnimind.bot.agent
 
 import java.io.File
 import java.io.Reader
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
+import cn.com.omnimind.baselib.i18n.PromptLocale
 import org.junit.Assert.*
 import org.junit.Test
 
 class AgentFileReadSupportTest {
+    @Test
+    fun `file read exposes bounded page size in both model locales`() {
+        for (locale in listOf(PromptLocale.ZH_CN, PromptLocale.EN_US)) {
+            val function = AgentToolDefinitions.staticTools(locale)
+                .map { it.getValue("function").jsonObject }
+                .single { it.getValue("name").jsonPrimitive.content == "file_read" }
+            val size = function.getValue("parameters").jsonObject
+                .getValue("properties").jsonObject.getValue("maxChars").jsonObject
+            assertEquals("integer", size.getValue("type").jsonPrimitive.content)
+            assertEquals("2", size.getValue("minimum").jsonPrimitive.content)
+            assertEquals("65536", size.getValue("maximum").jsonPrimitive.content)
+        }
+    }
+
+    @Test
+    fun `small file pages recover single line body with unicode across reopen`() {
+        val file = File.createTempFile("file-read-small-", ".html")
+        try {
+            val original = "<html>" + "body😀".repeat(15000) + "</html>"
+            file.writeText(original)
+            val first = AgentFileReadSupport.read(file, maxChars = 2048)
+            assertTrue(first.content.length <= 2048)
+            val body = StringBuilder(first.content)
+            var offset = first.nextOffset
+            while (offset != null) {
+                // Reopen the original file, as a later tool call does.
+                val page = AgentFileReadSupport.read(File(file.path), offset, maxChars = 2048)
+                assertTrue(page.content.length <= 2048)
+                assertFalse(page.content.lastOrNull()?.isHighSurrogate() == true)
+                body.append(page.content)
+                offset = page.nextOffset
+            }
+            assertEquals(original, body.toString())
+            assertEquals(original, file.readText())
+            for (invalid in listOf(-1, 0, 1, 65537, Int.MAX_VALUE)) {
+                try {
+                    AgentFileReadSupport.read(file, maxChars = invalid)
+                    fail("Accepted invalid maxChars: $invalid")
+                } catch (_: IllegalArgumentException) { }
+            }
+        } finally { file.delete() }
+    }
+
     @Test
     fun `one enormous HTML line reads only a bounded page`() {
         var consumed = 0

@@ -164,6 +164,10 @@ const _agentUserErrors = <String, ({String zh, String en})>{
     zh: '模型服务商额度不足，请检查账户余额或配额后再试。',
     en: 'The model provider quota is exhausted. Check your balance or quota before retrying.',
   ),
+  'requestLimited': (
+    zh: '模型服务商限制了本次请求，请检查额度和请求频率后再试。',
+    en: 'The model provider limited this request. Check your quota and request rate before retrying.',
+  ),
   'rateLimit': (
     zh: '模型服务商限制了请求频率，请稍后再试。',
     en: 'The model provider is rate limiting requests. Try again later.',
@@ -215,12 +219,20 @@ String formatAgentRuntimeErrorForUser(
     r'(?:chat completion stream|responses|anthropic) request failed\((\d{3})\)',
   ).firstMatch(raw);
   final httpStatus = int.tryParse(httpMatch?.group(1) ?? '');
+  if (failureKind == 'provider_service_unavailable') return text('serviceUnavailable');
+  if (failureKind == 'provider_request_rejected') return text('requestRejected');
+  if (failureKind == 'provider_quota_exceeded') return text('quota');
+  if (failureKind == 'provider_rate_limited') return text('rateLimit');
+  if (failureKind == 'provider_request_limited') return text('requestLimited');
   if (httpStatus == 401) return text('credentials');
   if (httpStatus == 429) {
-    return text(raw.contains('insufficient_quota') ||
-            raw.contains('quota exhausted') || raw.contains('quota_exhausted') ||
-            raw.contains('额度不足') || raw.contains('余额不足')
-        ? 'quota' : 'rateLimit');
+    if (raw.contains('insufficient_quota') || raw.contains('quota_exceeded') ||
+        raw.contains('quota exhausted') || raw.contains('quota_exhausted') ||
+        raw.contains('额度不足') || raw.contains('余额不足')) return text('quota');
+    if (raw.contains('rate_limit_exceeded') || raw.contains('rate_limit_error')) {
+      return text('rateLimit');
+    }
+    return text('requestLimited');
   }
   if (httpStatus != null && httpStatus >= 500) {
     return text('serviceUnavailable');
@@ -1440,6 +1452,19 @@ class AgentRuntimeService {
         'terminalEnvironment': terminalEnvironment,
       'text': text,
       if (attachments.isNotEmpty) 'attachments': attachments,
+    }).then((response) {
+      final failureKind = response['failureKind'];
+      if (failureKind is String && response['error'] is String) {
+        return <String, dynamic>{
+          ...response,
+          'error': formatAgentRuntimeErrorForUser(PlatformException(
+            code: 'AGENT_RUNTIME_CALL_FAILED',
+            message: response['error'] as String,
+            details: <String, dynamic>{'failureKind': failureKind},
+          )),
+        };
+      }
+      return response;
     });
   }
 

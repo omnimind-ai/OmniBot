@@ -24,6 +24,12 @@ internal class AgentIncompleteToolCallException(
     val toolCallIndex: Int
 ) : IllegalStateException("tool_call[$toolCallIndex] missing function.name")
 
+internal class AgentProviderStreamException(
+    val statusCode: Int?,
+    val providerCode: String?,
+    message: String,
+) : IllegalStateException(message)
+
 class AgentLlmStreamAccumulator(
     private val json: Json,
     private val includeReasoningInAssistantMessage: Boolean = false,
@@ -98,6 +104,9 @@ class AgentLlmStreamAccumulator(
 
         extractProviderError(root)?.let { error ->
             providerError = error
+            // An explicit upstream failure terminates this response even if
+            // partial text/tool inputs were already emitted and EOF never arrives.
+            return true
         }
         usage = decodeUsage(root["usage"]) ?: usage
         decodeTokensPerSecond = decodeTimings(root["timings"]) ?: decodeTokensPerSecond
@@ -259,6 +268,9 @@ class AgentLlmStreamAccumulator(
         if (!seenChunk) {
             throw IllegalStateException("chat completion stream ended without chunks")
         }
+        providerError?.let { error ->
+            throw AgentProviderStreamException(error.statusCode, error.code, buildProviderErrorMessage(error))
+        }
         flushInlineTextBuffer(final = true)
         reconcileMisindexedToolCallArguments()
         discardDanglingToolCallPlaceholders()
@@ -285,9 +297,6 @@ class AgentLlmStreamAccumulator(
             )
         }
         if (content.isBlank() && toolCalls.isEmpty()) {
-            providerError?.let { error ->
-                throw IllegalStateException(buildProviderErrorMessage(error))
-            }
             throw IllegalStateException(
                 "assistant turn has neither content nor tool_calls; finish_reason=${finishReason.orEmpty()}, last_chunk=$lastChunkPreview"
             )

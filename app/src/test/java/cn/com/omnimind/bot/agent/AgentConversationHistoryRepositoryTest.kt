@@ -11,6 +11,18 @@ import org.junit.Test
 
 class AgentConversationHistoryRepositoryTest {
     @Test
+    fun emptyPresentationPlaceholdersDoNotEraseLaterCanonicalToolMessages() {
+        val keys = listOf("toolCallId", "sessionId", "turnId", "modelToolCallId",
+            "modelAssistantMessageJson", "modelToolResultMessageJson")
+        for (placeholder in listOf("", "  ")) {
+            val existing = keys.associateWith { placeholder }
+            val canonical = keys.associateWith { "canonical-$it" }
+            assertEquals(canonical, AgentConversationHistoryRepository.preserveFullToolPayload(existing, canonical))
+            assertEquals(canonical, AgentConversationHistoryRepository.preserveFullToolPayload(canonical, existing))
+        }
+    }
+
+    @Test
     fun displaySnapshotCannotReplaceFullToolHistoryButLiveResultCanUpdateIt() {
         val body = "x".repeat(600_000)
         val original = mapOf<String, Any?>("toolCallId" to "call", "rawResultJson" to body, "status" to "success")

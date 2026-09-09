@@ -1,0 +1,17 @@
+{
+  "name": "Installed Codex real API conversation and restart",
+  "requireClockSync": true,
+  "steps": [
+    {"action":"expect","text":"Hi 👋, I'm Codex","timeoutMs":30000},
+    {"action":"send","marker":"OOB_LIVE_CODEX_FIRST","scenario":"xiaowan-switch-reply.json","timeoutMs":180000},
+    {"action":"reply","text":"OOB_LIVE_CODEX_FIRST_DONE","timeoutMs":180000},
+    {"action":"turn-outcome","marker":"OOB_LIVE_CODEX_FIRST","expected":"done"},
+    {"action":"send","marker":"OOB_LIVE_CODEX_FOLLOWUP","scenario":"xiaowan-switch-reply.json","timeoutMs":180000},
+    {"action":"reply","text":"OOB_LIVE_CODEX_FOLLOWUP_DONE","timeoutMs":180000},
+    {"action":"turn-outcome","marker":"OOB_LIVE_CODEX_FOLLOWUP","expected":"done"},
+    {"action":"restart"},
+    {"action":"turn-outcome","marker":"OOB_LIVE_CODEX_FIRST","expected":"done"},
+    {"action":"turn-outcome","marker":"OOB_LIVE_CODEX_FOLLOWUP","expected":"done"},
+    {"action":"reply","text":"OOB_LIVE_CODEX_FOLLOWUP_DONE","timeoutMs":30000}
+  ]
+}

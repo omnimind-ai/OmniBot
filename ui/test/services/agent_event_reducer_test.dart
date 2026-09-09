@@ -26,81 +26,131 @@ void main() {
     runtime.dispose();
   });
 
-  test('compact Xiaowan result keeps file content through replay and history', () {
-    final body = '正文😀' * 16000;
-    final event = <String, dynamic>{
-      'method': 'session/update',
-      'turnId': 'compact-turn',
-      'params': {
-        'sessionId': 'compact-session',
-        'update': {
-          'sessionUpdate': 'tool_call_update',
-          'toolCallId': 'compact-read',
-          'kind': 'read',
-          'title': 'Read document',
-          'status': 'completed',
-          'rawInput': {'path': '/workspace/data.json'},
-          'rawOutput': {
-            'toolName': 'custom_document_tool',
-            'toolType': 'context',
-            'summary': 'Read document',
-            'success': true,
-            'result': {'content': body, 'hasMore': true, 'nextOffset': 64000},
-          },
-        },
+  for (final reason in ['cancelled', 'error', 'end_turn']) {
+    test(
+      'official $reason settles only unresolved requests owned by that turn',
+      () {
+        runtime.currentDispatchTurnId = 'turn-1';
+        runtime.activeAcpTurnId = 'turn-1';
+        runtime.isAiResponding = true;
+        for (final entry in {
+          'waiting': 'pending',
+          'answered': 'accepted',
+          'other-turn': 'pending',
+        }.entries) {
+          runtime.messages.add(
+            ChatMessageModel(
+              id: entry.key,
+              type: 2,
+              user: 3,
+              content: {
+                'cardData': {
+                  'type': 'agent_request',
+                  'requestId': entry.key,
+                  'status': entry.value,
+                },
+              },
+              streamMeta: {
+                'parentTaskId': entry.key == 'other-turn' ? 'turn-2' : 'turn-1',
+              },
+            ),
+          );
+        }
+        reducer.reducePromptResponse(
+          runtime: runtime,
+          sessionId: null,
+          turnId: 'turn-1',
+          stopReason: reason,
+          error: reason == 'error' ? 'Transport failed' : null,
+        );
+        final byId = {
+          for (final message in runtime.messages) message.id: message,
+        };
+        expect(byId['waiting']!.cardData!['status'], 'cancelled');
+        expect(byId['answered']!.cardData!['status'], 'accepted');
+        expect(byId['other-turn']!.cardData!['status'], 'pending');
       },
-    };
-    reducer.reduce(runtime: runtime, event: event);
-    reducer.reduce(runtime: runtime, event: event);
-    final card = runtime.messages.single.cardData!;
-    expect(card['toolCallId'], 'compact-read');
-    expect(card['toolType'], 'workspace');
-    expect(card['status'], 'success');
-    final preview = jsonDecode(card['resultPreviewJson'] as String);
-    expect(preview['content'], body);
-    expect(preview['nextOffset'], 64000);
-    final restored = ChatMessageModel.fromJson(
-      jsonDecode(jsonEncode(runtime.messages.single.toJson())),
     );
-    expect(restored.cardData!['resultPreviewJson'], card['resultPreviewJson']);
-  });
+  }
 
   test(
-    'partial HTML input stays current on the same card and survives serialization',
+    'compact Xiaowan result keeps file content through replay and history',
     () {
-      const partials = ['{"content":"<html>', '{"content":"<html>正在生成正文'];
-      for (var index = 0; index < partials.length; index++) {
-        reducer.reduce(
-          runtime: runtime,
-          event: {
-            'method': 'session/update',
-            'turnId': 'html-turn',
-            'params': {
-              'sessionId': 'html-session',
-              'update': {
-                'sessionUpdate': index == 0 ? 'tool_call' : 'tool_call_update',
-                'toolCallId': 'html-input',
-                if (index == 0) ...{
-                  'title': '写入文件',
-                  'kind': 'edit',
-                  'status': 'pending',
-                },
-                'rawInput': partials[index],
-              },
+      final body = '正文😀' * 16000;
+      final event = <String, dynamic>{
+        'method': 'session/update',
+        'turnId': 'compact-turn',
+        'params': {
+          'sessionId': 'compact-session',
+          'update': {
+            'sessionUpdate': 'tool_call_update',
+            'toolCallId': 'compact-read',
+            'kind': 'read',
+            'title': 'Read document',
+            'status': 'completed',
+            'rawInput': {'path': '/workspace/data.json'},
+            'rawOutput': {
+              'toolName': 'custom_document_tool',
+              'toolType': 'context',
+              'summary': 'Read document',
+              'success': true,
+              'result': {'content': body, 'hasMore': true, 'nextOffset': 64000},
             },
           },
-        );
-        final card = runtime.messages.single.cardData!;
-        expect(card['status'], 'pending');
-        expect(card['argsJson'], partials[index]);
-        expect(card['toolCallId'], 'html-input');
-        final restored = ChatMessageModel.fromJson(
-          jsonDecode(jsonEncode(runtime.messages.single.toJson())),
-        );
-        expect(restored.cardData!['argsJson'], partials[index]);
-      }
+        },
+      };
+      reducer.reduce(runtime: runtime, event: event);
+      reducer.reduce(runtime: runtime, event: event);
+      final card = runtime.messages.single.cardData!;
+      expect(card['toolCallId'], 'compact-read');
+      expect(card['toolType'], 'workspace');
+      expect(card['status'], 'success');
+      final preview = jsonDecode(card['resultPreviewJson'] as String);
+      expect(preview['content'], body);
+      expect(preview['nextOffset'], 64000);
+      final restored = ChatMessageModel.fromJson(
+        jsonDecode(jsonEncode(runtime.messages.single.toJson())),
+      );
+      expect(
+        restored.cardData!['resultPreviewJson'],
+        card['resultPreviewJson'],
+      );
     },
   );
+
+  test('partial HTML input stays current on the same card and survives serialization', () {
+    const partials = ['{"content":"<html>', '{"content":"<html>正在生成正文'];
+    for (var index = 0; index < partials.length; index++) {
+      reducer.reduce(
+        runtime: runtime,
+        event: {
+          'method': 'session/update',
+          'turnId': 'html-turn',
+          'params': {
+            'sessionId': 'html-session',
+            'update': {
+              'sessionUpdate': index == 0 ? 'tool_call' : 'tool_call_update',
+              'toolCallId': 'html-input',
+              if (index == 0) ...{
+                'title': '写入文件',
+                'kind': 'edit',
+                'status': 'pending',
+              },
+              'rawInput': partials[index],
+            },
+          },
+        },
+      );
+      final card = runtime.messages.single.cardData!;
+      expect(card['status'], 'pending');
+      expect(card['argsJson'], partials[index]);
+      expect(card['toolCallId'], 'html-input');
+      final restored = ChatMessageModel.fromJson(
+        jsonDecode(jsonEncode(runtime.messages.single.toJson())),
+      );
+      expect(restored.cardData!['argsJson'], partials[index]);
+    }
+  });
 
   for (final stopReason in ['cancelled', 'error', 'end_turn']) {
     test(
@@ -1332,46 +1382,43 @@ void main() {
     expect(message.streamMeta?['runId'], 'local-run-1');
   });
 
-  test(
-    'ACP admits a turn from the first session update when no turn started exists',
-    () {
-      runtime
-        ..currentDispatchTurnId = 'request-1-ai'
-        ..lastAgentTurnId = 'request-1-ai'
-        ..isAiResponding = true;
+  test('ACP admits a turn from the first session update when no turn started exists', () {
+    runtime
+      ..currentDispatchTurnId = 'request-1-ai'
+      ..lastAgentTurnId = 'request-1-ai'
+      ..isAiResponding = true;
 
-      reducer.reduce(
-        runtime: runtime,
-        event: {
-          'method': 'session/update',
-          'allowImplicitTurnAdmission': true,
-          'params': {
-            'sessionId': 'session-1',
-            'turnId': 'acp-turn-1',
-            'update': {
-              'sessionUpdate': 'agent_message_chunk',
-              'messageId': 'message-1',
-              'content': {'text': 'OpenCode response'},
-            },
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'allowImplicitTurnAdmission': true,
+        'params': {
+          'sessionId': 'session-1',
+          'turnId': 'acp-turn-1',
+          'update': {
+            'sessionUpdate': 'agent_message_chunk',
+            'messageId': 'message-1',
+            'content': {'text': 'OpenCode response'},
           },
         },
-      );
+      },
+    );
 
-      expect(runtime.activeAcpTurnId, 'acp-turn-1');
-      expect(runtime.messages.single.text, 'OpenCode response');
+    expect(runtime.activeAcpTurnId, 'acp-turn-1');
+    expect(runtime.messages.single.text, 'OpenCode response');
 
-      reducer.reducePromptResponse(
-        runtime: runtime,
-        sessionId: 'session-1',
-        turnId: 'acp-turn-1',
-        stopReason: 'end_turn',
-      );
+    reducer.reducePromptResponse(
+      runtime: runtime,
+      sessionId: 'session-1',
+      turnId: 'acp-turn-1',
+      stopReason: 'end_turn',
+    );
 
-      expect(runtime.isAiResponding, isFalse);
-      expect(runtime.currentDispatchTurnId, isNull);
-      expect(runtime.activeAcpTurnId, isNull);
-    },
-  );
+    expect(runtime.isAiResponding, isFalse);
+    expect(runtime.currentDispatchTurnId, isNull);
+    expect(runtime.activeAcpTurnId, isNull);
+  });
 
   test('does not admit an untrusted first event as the active turn', () {
     runtime
@@ -3192,6 +3239,59 @@ void main() {
     );
   });
 
+  for (final output in ['', 'command stderr\n']) {
+    test('preserves ACP command exit detail with output ${output.isNotEmpty}', () {
+      reducer.reduce(runtime: runtime, event: {
+        'method': 'session/update',
+        'turnId': 'turn-exit-detail',
+        'params': {
+          'sessionId': 'session-exit-detail',
+          'update': {
+            'sessionUpdate': 'tool_call_update',
+            'toolCallId': 'exit-detail',
+            'kind': 'execute',
+            'title': 'printf test; exit 182',
+            'status': 'failed',
+            'rawOutput': {'formatted_output': output, 'exit_code': 182},
+          },
+        },
+      });
+      final card = runtime.messages.single.cardData!;
+      expect(card['status'], 'error');
+      expect(card['summary'], 'Command exited with code 182');
+      expect(card['terminalOutput'] ?? '', output);
+      expect(runtime.messages, hasLength(1));
+    });
+  }
+
+  for (final sample in [
+    ('in_progress', <String, dynamic>{'exit_code': 182}, 'running', ''),
+    ('completed', <String, dynamic>{'exit_code': 0}, 'success', 'Command exited with code 0'),
+    ('failed', <String, dynamic>{'exit_code': 182, 'summary': 'Backend unavailable'}, 'error', 'Backend unavailable'),
+    ('failed', <String, dynamic>{}, 'error', ''),
+  ]) {
+    test('command exit fallback preserves ACP state and explicit detail $sample', () {
+      reducer.reduce(runtime: runtime, event: {
+        'method': 'session/update',
+        'turnId': 'turn-exit-state',
+        'params': {
+          'sessionId': 'session-exit-state',
+          'update': {
+            'sessionUpdate': 'tool_call_update',
+            'toolCallId': 'exit-state',
+            'kind': 'execute',
+            'title': 'command',
+            'status': sample.$1,
+            'rawOutput': sample.$2,
+          },
+        },
+      });
+      final card = runtime.messages.single.cardData!;
+      expect(card['status'], sample.$3);
+      expect(card['summary'], sample.$4);
+    });
+  }
+
   test('projects legacy tool-result details from ACP rawOutput', () {
     reducer.reduce(
       runtime: runtime,
@@ -3261,6 +3361,51 @@ void main() {
 
     final card = runtime.messages.single.cardData!;
     expect(card['status'], 'pending');
+  });
+
+  test('ACP progress output preserves original tool arguments in history', () {
+    const original = {'command': 'id', 'timeoutSeconds': 60};
+    void apply(Map<String, dynamic> update) => reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'method': 'session/update',
+          'turnId': 'turn-progress-input',
+          'params': {'sessionId': 'session-progress-input', 'update': update},
+        },
+      },
+    );
+    apply({
+      'sessionUpdate': 'tool_call',
+      'toolCallId': 'call-progress-input',
+      'title': 'terminal_execute',
+      'kind': 'execute',
+      'status': 'in_progress',
+      'rawInput': original,
+    });
+    for (var index = 0; index < 3; index++) {
+      apply({
+        'sessionUpdate': 'tool_call_update',
+        'toolCallId': 'call-progress-input',
+        'status': 'in_progress',
+        'rawInput': null,
+        'rawOutput': {'terminalOutput': 'line-$index'},
+      });
+      final card = runtime.messages.single.cardData!;
+      expect(jsonDecode(card['argsJson'] as String), original);
+      expect(card['terminalOutput'], 'line-$index');
+    }
+    apply({
+      'sessionUpdate': 'tool_call_update',
+      'toolCallId': 'call-progress-input',
+      'status': 'completed',
+      'rawOutput': {'success': true, 'terminalOutput': 'finished'},
+    });
+    final restored = ChatMessageModel.fromJson(
+      runtime.messages.single.toJson(),
+    );
+    expect(jsonDecode(restored.cardData!['argsJson'] as String), original);
+    expect(restored.cardData!['status'], 'success');
   });
 
   test(
@@ -4137,8 +4282,7 @@ void main() {
               'name': 'exec_command',
               'call_id': 'call-cmd-1',
               'arguments': jsonEncode({
-                'cmd':
-                    'cd ui && flutter test test/services/agent_event_reducer_test.dart',
+                'cmd': 'cd ui && flutter test test/services/agent_event_reducer_test.dart',
               }),
             },
           },
@@ -5480,20 +5624,21 @@ diff --git a/lib/main.dart b/lib/main.dart
       final now = DateTime.fromMillisecondsSinceEpoch(1700000000000);
       final merged = mergeRemoteCodexSnapshotMessagesForTesting(
         snapshotMessages: [
-          ChatMessageModel.cardMessage({
-            'type': 'deep_thinking',
-            'taskID': 'turn-1',
-            'cardId': 'reason-2-agent-thinking',
-            'isLoading': true,
-            'isCollapsible': false,
-            'stage': ThinkingStage.thinking.value,
-            'thinkingContent': 'latest',
-            'startTime': now
-                .add(const Duration(seconds: 2))
-                .millisecondsSinceEpoch,
-          }, id: 'reason-2-agent-thinking').copyWith(
-            createAt: now.add(const Duration(seconds: 2)),
-          ),
+          ChatMessageModel.cardMessage(
+            {
+              'type': 'deep_thinking',
+              'taskID': 'turn-1',
+              'cardId': 'reason-2-agent-thinking',
+              'isLoading': true,
+              'isCollapsible': false,
+              'stage': ThinkingStage.thinking.value,
+              'thinkingContent': 'latest',
+              'startTime': now
+                  .add(const Duration(seconds: 2))
+                  .millisecondsSinceEpoch,
+            },
+            id: 'reason-2-agent-thinking',
+          ).copyWith(createAt: now.add(const Duration(seconds: 2))),
         ],
         existingMessages: [
           ChatMessageModel.cardMessage({
@@ -6023,7 +6168,8 @@ diff --git a/lib/main.dart b/lib/main.dart
     expect(runtime.isAiResponding, isTrue);
   });
 
-  test('keeps submitted request user input status during event replay', () {
+  for (final settledStatus in ['submitted', 'cancelled', 'interrupted', 'failed']) {
+  test('keeps $settledStatus request user input status during event replay', () {
     final requestEvent = {
       'message': {
         'id': 'request-1',
@@ -6045,15 +6191,17 @@ diff --git a/lib/main.dart b/lib/main.dart
     reducer.reduce(runtime: runtime, event: requestEvent);
     final existing = runtime.messages.single;
     final submittedCardData = Map<String, dynamic>.from(existing.cardData!)
-      ..['status'] = 'submitted';
+      ..['status'] = settledStatus;
     runtime.messages[0] = existing.copyWith(
       content: {'cardData': submittedCardData, 'id': existing.id},
     );
 
     reducer.reduce(runtime: runtime, event: requestEvent);
 
-    expect(runtime.messages.single.cardData!['status'], 'submitted');
+    expect(runtime.messages.single.cardData!['status'], settledStatus);
   });
+
+  }
 
   test('hydrates historical request user input as submitted request card', () {
     final messages = remoteCodexMessagesFromThreadResponseForTesting({
@@ -6565,10 +6713,7 @@ diff --git a/lib/main.dart b/lib/main.dart
     final statusCard = runtime.messages.firstWhere(
       (message) => message.cardData?['toolType'] == 'status',
     );
-    expect(
-      statusCard.cardData?['summary'],
-      '助手暂时无法完成操作，请重试。',
-    );
+    expect(statusCard.cardData?['summary'], '助手暂时无法完成操作，请重试。');
     expect(statusCard.cardData?['summary'], isNot(contains('{"error"')));
   });
 
@@ -6686,59 +6831,56 @@ diff --git a/lib/main.dart b/lib/main.dart
     },
   );
 
-  test(
-    'item/started commandExecution with commandActions read uses workspace card and keeps deltas',
-    () {
-      reducer.reduce(
-        runtime: runtime,
-        event: {
-          'message': {
-            'method': 'item/started',
-            'params': {
-              'threadId': 'thread-1',
-              'turnId': 'turn-1',
-              'item': {
-                'id': 'read-2',
-                'type': 'commandExecution',
-                'command': 'sed -n 1,200p AGENTS.md',
-                'cwd': '/repo',
-                'status': 'in_progress',
-                'commandActions': <Map<String, dynamic>>[
-                  {
-                    'type': 'read',
-                    'command': 'sed -n 1,200p AGENTS.md',
-                    'name': 'AGENTS.md',
-                    'path': '/repo/AGENTS.md',
-                  },
-                ],
-              },
+  test('item/started commandExecution with commandActions read uses workspace card and keeps deltas', () {
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'method': 'item/started',
+          'params': {
+            'threadId': 'thread-1',
+            'turnId': 'turn-1',
+            'item': {
+              'id': 'read-2',
+              'type': 'commandExecution',
+              'command': 'sed -n 1,200p AGENTS.md',
+              'cwd': '/repo',
+              'status': 'in_progress',
+              'commandActions': <Map<String, dynamic>>[
+                {
+                  'type': 'read',
+                  'command': 'sed -n 1,200p AGENTS.md',
+                  'name': 'AGENTS.md',
+                  'path': '/repo/AGENTS.md',
+                },
+              ],
             },
           },
         },
-      );
-      reducer.reduce(
-        runtime: runtime,
-        event: {
-          'message': {
-            'method': 'item/commandExecution/outputDelta',
-            'params': {
-              'threadId': 'thread-1',
-              'turnId': 'turn-1',
-              'itemId': 'read-2',
-              'delta': '# Project AGENTS.md\n',
-            },
+      },
+    );
+    reducer.reduce(
+      runtime: runtime,
+      event: {
+        'message': {
+          'method': 'item/commandExecution/outputDelta',
+          'params': {
+            'threadId': 'thread-1',
+            'turnId': 'turn-1',
+            'itemId': 'read-2',
+            'delta': '# Project AGENTS.md\n',
           },
         },
-      );
+      },
+    );
 
-      expect(runtime.messages, hasLength(1));
-      final cardData = runtime.messages.single.cardData!;
-      expect(cardData['toolType'], 'workspace');
-      expect(cardData['toolTitle'], 'Read AGENTS.md');
-      expect(cardData['terminalOutput'], contains('Project AGENTS.md'));
-      expect(cardData['status'], 'running');
-    },
-  );
+    expect(runtime.messages, hasLength(1));
+    final cardData = runtime.messages.single.cardData!;
+    expect(cardData['toolType'], 'workspace');
+    expect(cardData['toolTitle'], 'Read AGENTS.md');
+    expect(cardData['terminalOutput'], contains('Project AGENTS.md'));
+    expect(cardData['status'], 'running');
+  });
 
   test('parsed_cmd list_files at item/started becomes workspace List card', () {
     reducer.reduce(

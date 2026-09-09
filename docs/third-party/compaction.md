@@ -36,3 +36,17 @@ checkpoint. Only lightweight headers and matching records are loaded for this ch
 running placeholders are not committed results. The wait is bounded to 30 seconds and
 fails without claiming a durable summary on timeout. It is a journal barrier, not a
 second Agent retry or a timing-based cutoff.
+
+2026-09-09: Android tool-result projection additionally retains bounded small metadata
+for the newest result when its body is offloaded. This is a host adaptation, not
+an upstream summarization algorithm: parse the existing AgentEventAdapter JSON
+envelope, keep exact scalar values such as provider-owned cursors, and omit long
+strings/arrays. It is independent of tool names and file extensions. Input parsing
+is capped at 512 Ki characters, structural depth at 3, fields at 64 per object,
+and metadata at 4096 characters; oversized cursor strings are omitted, never
+truncated into a different cursor. The metadata must fit the same remaining
+recent-output token budget. Original output storage and ACP identities are unchanged.
+Other and oversized/unstructured outputs retain the complete-file reference.
+This fixes the reproduced loss of inline nextOffset after a 64 KiB file page
+was replaced by a generic reference. Device and real-provider acceptance is
+recorded separately in the conversation regression index.

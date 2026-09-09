@@ -1,0 +1,1 @@
+{"prompt":"Do not call tools. Reply only with {{MARKER}}_DONE."}

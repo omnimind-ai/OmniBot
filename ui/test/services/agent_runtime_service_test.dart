@@ -9,6 +9,25 @@ void main() {
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
 
+  test('failed cancellation reaches caller without retrying the logical turn', () async {
+    final calls = <MethodCall>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      if (calls.length == 1) {
+        throw PlatformException(code: 'AGENT_RUNTIME_CALL_FAILED', message: 'Cancel transport failed');
+      }
+      return {'ok': true};
+    });
+    await expectLater(
+      AgentRuntimeService.cancelPrompt(conversationId: 42, sessionId: 'session', promptId: 'turn'),
+      throwsA(isA<PlatformException>().having((error) => error.message, 'message', 'Cancel transport failed')),
+    );
+    expect(calls, hasLength(1));
+    await AgentRuntimeService.cancelPrompt(conversationId: 42, sessionId: 'session', promptId: 'turn');
+    expect(calls.map((call) => call.method), ['session/cancel', 'session/cancel']);
+    expect(calls[0].arguments, calls[1].arguments);
+  });
+
   tearDown(() {
     messenger.setMockMethodCallHandler(channel, null);
   });
@@ -188,6 +207,19 @@ void main() {
       });
     },
   );
+
+  test('prompt failures retain structured classification across the shared service', () async {
+    messenger.setMockMethodCallHandler(channel, (call) async => <String, dynamic>{
+      'status': 'error', 'stopReason': 'error', 'completed': true,
+      'error': '测试失败', 'failureKind': 'provider_authentication_failed',
+      'sessionId': 'session-1', 'turnId': 'turn-1',
+    });
+    final response = await AgentRuntimeService.promptSession(sessionId: 'session-1', text: 'test');
+    expect(response['error'], '模型连接验证失败，请在模型设置中检查接口地址和密钥。');
+    expect(response['status'], 'error');
+    expect(response['turnId'], 'turn-1');
+    expect(response['completed'], true);
+  });
 
   test('promptSession forwards ACP permission payload', () async {
     MethodCall? capturedCall;
@@ -954,12 +986,29 @@ void main() {
     );
   });
 
+  test('structured provider limit kinds remain distinct without raw payloads', () {
+    const cases = {
+      'provider_quota_exceeded': '额度不足',
+      'provider_rate_limited': '请求频率',
+      'provider_request_limited': '检查额度和请求频率',
+    };
+    for (final entry in cases.entries) {
+      final error = PlatformException(code: 'agent_error', message: 'opaque diagnostic', details: {'failureKind': entry.key});
+      final message = formatAgentRuntimeErrorForUser(error);
+      expect(message, contains(entry.value));
+      expect(message, isNot(contains('opaque')));
+      expect(formatAgentRuntimeErrorForUser(message), message);
+      expect(formatAgentRuntimeErrorForUser(error, english: true), isNot(message));
+    }
+  });
+
   test('ACP provider HTTP failures retain actionable categories without payloads', () {
     const cases = {
       '401': '验证失败',
       '429): insufficient_quota': '额度不足',
       '429): 平台额度不足，请充值或切换 BYOK': '额度不足',
-      '429': '请求频率',
+      '429': '检查额度和请求频率',
+      '429): rate_limit_exceeded': '限制了请求频率',
       '503': '暂时不可用',
       '400': '拒绝了本次请求',
     };

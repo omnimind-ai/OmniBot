@@ -1,0 +1,73 @@
+{
+  "name": "Codex actual command failure details and next-turn recovery; not sandbox acceptance",
+  "requireClockSync": true,
+  "steps": [
+    {
+      "action": "expect",
+      "text": "Hi \ud83d\udc4b, I'm Codex",
+      "timeoutMs": 30000
+    },
+    {
+      "action": "expect",
+      "text": "Send",
+      "timeoutMs": 30000
+    },
+    {
+      "action": "tap",
+      "label": "Agent permissions"
+    },
+    {
+      "action": "expect",
+      "text": "Read only",
+      "timeoutMs": 10000
+    },
+    {
+      "action": "dismiss-permissions"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_CODEX_DETAIL",
+      "scenario": "codex-terminal-exit.json",
+      "timeoutMs": 240000
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_CODEX_DETAIL_DONE",
+      "timeoutMs": 180000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_CODEX_DETAIL",
+      "expected": "done"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_CODEX_AFTER_DETAIL",
+      "scenario": "xiaowan-switch-reply.json",
+      "timeoutMs": 180000
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_CODEX_AFTER_DETAIL_DONE",
+      "timeoutMs": 180000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_CODEX_AFTER_DETAIL",
+      "expected": "done"
+    },
+    {
+      "action": "restart"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_CODEX_DETAIL",
+      "expected": "done"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_CODEX_AFTER_DETAIL",
+      "expected": "done"
+    }
+  ]
+}

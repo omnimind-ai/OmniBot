@@ -1,0 +1,3 @@
+{
+  "prompt": "Use file_write to create /workspace/{{MARKER}}/first.txt containing first and /workspace/{{MARKER}}/second.txt containing second. Then call file_list on /workspace/{{MARKER}} with recursive true three times: limit 1, limit 2, then omit limit. Use these exact tools, no terminal. Report each actual count. Do not delete the test files."
+}
