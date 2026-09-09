@@ -1,8 +1,11 @@
+import 'package:ui/widgets/predictive_back_route.dart';
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ui/utils/popup_menu_anchor_position.dart';
+
 import '../features/home/pages/edit_profile/edit_profile_page.dart';
 import '../features/memory/pages/memory_center/memory_center_page.dart';
 import '../features/home/widgets/conversation_mode_badge.dart';
@@ -11,6 +14,7 @@ import '../models/conversation_thread_target.dart';
 import '../services/assists_core_service.dart';
 import '../services/conversation_service.dart';
 import '../services/conversation_history_service.dart';
+
 import 'package:ui/core/router/go_router_manager.dart';
 import 'package:ui/l10n/legacy_text_localizer.dart';
 
@@ -117,7 +121,7 @@ class _SidebarDrawerState extends State<SidebarDrawer> {
         onTap: () {
           Navigator.push(
             context,
-            MaterialPageRoute(
+            PredictiveBackMaterialPageRoute(
               builder: (context) => EditProfilePage(
                 initialAvatarIndex: avatarIndex,
                 initialNickname: nickname,
@@ -217,7 +221,7 @@ class _SidebarDrawerState extends State<SidebarDrawer> {
               onTap: () {
                 Navigator.push(
                   context,
-                  MaterialPageRoute(
+                  PredictiveBackMaterialPageRoute(
                     builder: (context) => const MemoryCenterPage(),
                   ),
                 );

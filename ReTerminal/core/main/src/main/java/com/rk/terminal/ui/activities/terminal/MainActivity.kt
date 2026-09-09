@@ -29,8 +29,7 @@ import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
-import androidx.navigation.compose.currentBackStackEntryAsState
-import androidx.navigation.compose.rememberNavController
+import top.yukonga.miuix.kmp.nav.core.rememberNavController
 import com.rk.terminal.service.SessionService
 import com.rk.libcommons.OMNIBOT_SETUP_SESSION_ID
 import com.rk.terminal.ui.navHosts.MainActivityNavHost
@@ -58,16 +57,16 @@ class MainActivity : ComponentActivity() {
                 setContent {
                     KarbonTheme {
                         Surface {
-                            val navController = rememberNavController()
+                            val navController = rememberNavController<MainActivityRoutes>(MainActivityRoutes.MainScreen)
                             MainActivityNavHost(navController = navController, mainActivity = this@MainActivity)
 
-                            val backStackEntry by navController.currentBackStackEntryAsState()
+                            val currentRoute = navController.backStack.lastOrNull()
 
                             val focusManager = LocalFocusManager.current
                             val keyboardController = LocalSoftwareKeyboardController.current
 
-                            LaunchedEffect(backStackEntry?.destination?.route) {
-                                if (backStackEntry?.destination?.route != MainActivityRoutes.MainScreen.route) {
+                            LaunchedEffect(currentRoute) {
+                                if (currentRoute != MainActivityRoutes.MainScreen) {
                                     // 1️⃣ Clear Compose focus
                                     focusManager.clearFocus(force = true)
 

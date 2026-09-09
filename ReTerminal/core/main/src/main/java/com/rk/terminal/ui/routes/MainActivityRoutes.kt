@@ -1,7 +1,14 @@
 package com.rk.terminal.ui.routes
 
-sealed class MainActivityRoutes(val route: String) {
-    data object Settings : MainActivityRoutes("settings")
-    data object Customization : MainActivityRoutes("customization")
-    data object MainScreen : MainActivityRoutes("main")
+import kotlinx.serialization.Serializable
+import top.yukonga.miuix.kmp.nav.core.NavKey
+
+@Serializable
+sealed interface MainActivityRoutes : NavKey {
+    @Serializable
+    data object Settings : MainActivityRoutes
+    @Serializable
+    data object Customization : MainActivityRoutes
+    @Serializable
+    data object MainScreen : MainActivityRoutes
 }

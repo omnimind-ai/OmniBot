@@ -1,3 +1,5 @@
+import 'package:ui/widgets/predictive_back_route.dart';
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -170,16 +172,11 @@ class _MyAppState extends ConsumerState<MyApp> {
     final themeMode = ref.watch(appThemeModeProvider).materialThemeMode;
     final resolvedLocale = ref.watch(appResolvedLocaleProvider);
     final predictiveBackEnabled = ref.watch(predictiveBackEnabledProvider);
-    // 预测性返回开关作用于主题转场(仅影响少数 MaterialPageRoute 页面;
-    // GoRouter 自定义转场路由由 PredictiveBackGestureWrapper 处理):
-    // 开启时用官方 PredictiveBackPageTransitionsBuilder(手势预览+FadeForwards
-    // 普通转场);关闭时用 FadeForwardsPageTransitionsBuilder —— 无手势预览,
-    // 普通转场与本特性接入前(Flutter 3.38 默认回退)完全一致(旧版行为)。
-    // 只覆盖 Android,其他平台(iOS/macOS 的 Cupertino 等)不受影响。
+    // Imperative Material routes share the GoRouter motion and geometry.
     final pageTransitionsTheme = PageTransitionsTheme(
       builders: {
         TargetPlatform.android: predictiveBackEnabled
-            ? const PredictiveBackPageTransitionsBuilder()
+            ? const MiuixPageTransitionsBuilder()
             : const FadeForwardsPageTransitionsBuilder(),
       },
     );

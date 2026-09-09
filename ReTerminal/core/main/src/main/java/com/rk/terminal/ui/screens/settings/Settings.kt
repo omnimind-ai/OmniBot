@@ -21,7 +21,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.unit.dp
-import androidx.navigation.NavController
+import top.yukonga.miuix.kmp.nav.core.NavController
 import com.rk.components.compose.preferences.base.LocalOmniPaletteExtras
 import com.rk.components.compose.preferences.base.PreferenceGroup
 import com.rk.components.compose.preferences.base.PreferenceLayout
@@ -334,7 +334,9 @@ fun Settings(modifier: Modifier = Modifier,navController: NavController,mainActi
                 showSwitch = false,
                 default = false,
                 sideEffect = {
-                   navController.navigate(MainActivityRoutes.Customization.route)
+                   if (navController.backStack.lastOrNull() != MainActivityRoutes.Customization) {
+                       navController.push(MainActivityRoutes.Customization)
+                   }
             }, endWidget = {
                 Icon(
                     imageVector = ImageVector.vectorResource(drawables.ic_lucide_chevron_right),

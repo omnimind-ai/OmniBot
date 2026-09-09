@@ -19,14 +19,21 @@ import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.navigation.NavHostController
-import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.navigationevent.compose.LocalNavigationEventDispatcherOwner
+import androidx.navigationevent.NavigationEventDispatcher
+import androidx.navigationevent.NavigationEventDispatcherOwner
+import top.yukonga.miuix.kmp.nav.core.NavController
+import top.yukonga.miuix.kmp.nav.core.NavDisplay
+import top.yukonga.miuix.kmp.nav.core.NavDisplayEffects
+import top.yukonga.miuix.kmp.nav.core.rememberNavSystemCornerRadius
+import top.yukonga.miuix.kmp.nav.transition.NavTransitions
 import com.rk.settings.Settings
 import com.rk.terminal.ui.activities.terminal.MainActivity
 import com.rk.terminal.ui.animations.NavigationAnimationTransitions
-import com.rk.terminal.ui.components.PhysicalScreenCornerClip
-import com.rk.terminal.ui.components.rememberScreenCornerRadii
 import com.rk.terminal.ui.routes.MainActivityRoutes
 import com.rk.terminal.ui.screens.customization.Customization
 import com.rk.terminal.ui.screens.downloader.Downloader
@@ -98,55 +105,66 @@ fun UpdateStatusBar(mainActivityActivity: MainActivity,show: Boolean = true){
 }
 
 @Composable
-fun MainActivityNavHost(modifier: Modifier = Modifier,navController: NavHostController,mainActivity: MainActivity) {
+fun MainActivityNavHost(
+    modifier: Modifier = Modifier,
+    navController: NavController,
+    mainActivity: MainActivity,
+) {
     val predictiveBack = rememberPredictiveBackEnabled()
-    val screenCornerRadii = rememberScreenCornerRadii()
-    NavHost(
-        navController = navController,
-        startDestination = MainActivityRoutes.MainScreen.route,
-        modifier = modifier,
-        enterTransition = { NavigationAnimationTransitions.enterTransition(predictiveBack) },
-        exitTransition = { NavigationAnimationTransitions.exitTransition(predictiveBack) },
-        popEnterTransition = { NavigationAnimationTransitions.popEnterTransition(predictiveBack) },
-        popExitTransition = { NavigationAnimationTransitions.popExitTransition(predictiveBack) },
-    ) {
+    val screenCornerRadius = rememberNavSystemCornerRadius()
+    val dispatcherOwner = LocalNavigationEventDispatcherOwner.current
+    val detachedOwner = remember {
+        object : NavigationEventDispatcherOwner {
+            override val navigationEventDispatcher = NavigationEventDispatcher()
+        }
+    }
+    DisposableEffect(detachedOwner) {
+        onDispose { detachedOwner.navigationEventDispatcher.dispose() }
+    }
+    val background = MaterialTheme.colorScheme.background
 
-        composable(MainActivityRoutes.MainScreen.route) {
-            PhysicalScreenCornerClip(
-                enabled = predictiveBack,
-                screenCorners = screenCornerRadii,
-            ) {
-                if (Rootfs.isDownloaded.value){
+    // Keep a single saved back stack across toggle/configuration changes.
+    // When disabled, only the discrete BackHandler below receives navigation;
+    // no predictive preview is dispatched to the Miuix host.
+    CompositionLocalProvider(
+        LocalNavigationEventDispatcherOwner provides
+            if (predictiveBack) dispatcherOwner ?: detachedOwner else detachedOwner,
+    ) {
+        NavDisplay(
+            navController = navController,
+            modifier = modifier.background(background),
+            transition = if (predictiveBack) NavTransitions.MiuixDefault
+                else NavigationAnimationTransitions.LegacyFade,
+            effects = if (predictiveBack) NavDisplayEffects(
+                cornerClipRadius = screenCornerRadius,
+                dimAmount = 0.5f,
+                backdropColor = background,
+            ) else NavDisplayEffects.None,
+        ) {
+            entry<MainActivityRoutes.MainScreen> {
+                if (Rootfs.isDownloaded.value) {
                     val config = LocalConfiguration.current
-                    if (Configuration.ORIENTATION_LANDSCAPE == config.orientation){
+                    if (Configuration.ORIENTATION_LANDSCAPE == config.orientation) {
                         UpdateStatusBar(mainActivity, show = horizontal_statusBar.value)
-                    }else{
+                    } else {
                         UpdateStatusBar(mainActivity, show = showStatusBar.value)
                     }
-
                     TerminalScreen(mainActivityActivity = mainActivity, navController = navController)
-                }else{
+                } else {
                     Downloader(mainActivity = mainActivity, navController = navController)
                 }
             }
-        }
-        composable(MainActivityRoutes.Settings.route) {
-            PhysicalScreenCornerClip(
-                enabled = predictiveBack,
-                screenCorners = screenCornerRadii,
-            ) {
-                UpdateStatusBar(mainActivity,show = true)
+            entry<MainActivityRoutes.Settings> {
+                UpdateStatusBar(mainActivity, show = true)
                 Settings(navController = navController, mainActivity = mainActivity)
             }
-        }
-        composable(MainActivityRoutes.Customization.route){
-            PhysicalScreenCornerClip(
-                enabled = predictiveBack,
-                screenCorners = screenCornerRadii,
-            ) {
-                UpdateStatusBar(mainActivity,show = true)
+            entry<MainActivityRoutes.Customization> {
+                UpdateStatusBar(mainActivity, show = true)
                 Customization()
             }
         }
+    }
+    BackHandler(enabled = !predictiveBack && navController.backStack.size > 1) {
+        navController.pop()
     }
 }
