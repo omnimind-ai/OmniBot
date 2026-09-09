@@ -1937,17 +1937,16 @@ class OmnibotInlineLinkBuilder extends MarkdownElementBuilder {
         ),
       );
     }
-    return Text.rich(
-      WidgetSpan(
-        alignment: PlaceholderAlignment.middle,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 4),
-          child: OmnibotInlineResourceEmbed(
-            metadata: metadata,
-            plainStyle: inlineResourcePlainStyle,
-            onOpen: onResourceOpen,
-          ),
-        ),
+    // Resource previews are real boxes, not text glyphs. Returning Text.rich
+    // lets Markdown merge this into a paragraph whose forced strut height can
+    // collapse a tall preview to one line and paint it over adjacent prose.
+    // A non-text child keeps its measured height in Markdown's inline Wrap.
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: OmnibotInlineResourceEmbed(
+        metadata: metadata,
+        plainStyle: inlineResourcePlainStyle,
+        onOpen: onResourceOpen,
       ),
     );
   }
