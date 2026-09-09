@@ -49,6 +49,17 @@ void main() {
     expect(actions, isNot(contains('setManualModelContextThreshold')));
   });
 
+  test('history avatar shares conversation identity instead of connected process', () {
+    final page = File('$chatRoot/chat_page.dart').readAsStringSync();
+    expect(page, contains('String? get _appBarActiveAcpAgentId => _activeAcpAgentId;'));
+    final committed = page.split('String? get _committedAcpAgentId {').last
+        .split('String get _activeAcpAgentDisplayName').first;
+    expect(committed.indexOf('_resolvedThreadTarget?.agentId'),
+        lessThan(committed.indexOf('_agentRuntimeStatus.activeAgentId')));
+    expect(committed.indexOf('_conversationBoundAcpAgentId'),
+        lessThan(committed.indexOf('_agentRuntimeStatus.activeAgentId')));
+  });
+
   test('rollback identity never uses the optimistic Harness label', () {
     final page = File('$chatRoot/chat_page.dart').readAsStringSync();
     final committed = page
