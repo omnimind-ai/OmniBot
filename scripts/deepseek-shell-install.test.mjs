@@ -1,4 +1,5 @@
 import test from 'node:test';
+import * as requireFs from 'node:fs';
 import assert from 'node:assert/strict';
 import {mkdtempSync, readFileSync, writeFileSync, rmSync, existsSync} from 'node:fs';
 import {tmpdir} from 'node:os';
@@ -59,4 +60,35 @@ test('DSH health rejects a profile with no working bash', () => {
     put('bash', 'exit 7');
     assert.notEqual(execute(shellCheck).status, 0);
   });
+});
+
+const referenceScript = installer.split("node <<'OMNIBOT_DSH_PLUGIN_REFERENCE'\n")[1]
+  .split('\nOMNIBOT_DSH_PLUGIN_REFERENCE')[0];
+test('fresh and repeated preparation exposes installed official plugin docs without rewriting user profiles', () => {
+  const root = mkdtempSync(join(tmpdir(), 'oob-dsh-reference-'));
+  try {
+    const packageRoot = join(root, 'package');
+    const home = join(root, 'home');
+    // Build source docs rather than simulating a successful DSH launch.
+    const fs = requireFs;
+    fs.mkdirSync(join(packageRoot, 'node_modules/@deepseek-ai/dsh-tool-cordis'), {recursive:true});
+    fs.mkdirSync(home, {recursive:true});
+    writeFileSync(join(packageRoot, 'package.json'), JSON.stringify({version:'0.1.2-rc.1'}));
+    writeFileSync(join(packageRoot, 'README.md'), '---\ndescription: upstream\n---\n# CLI\ndsh plugin --profile acp add\n');
+    const toolDoc = join(packageRoot, 'node_modules/@deepseek-ai/dsh-tool-cordis/README.md');
+    writeFileSync(toolDoc, '# Dynamic\ncordis_define cordis_run cordis_stop\n');
+    writeFileSync(join(home, 'cordis.patch.yml'), 'USER_PROFILE');
+    const run = () => spawnSync(process.execPath, ['-e', referenceScript], {
+      encoding:'utf8', env:{...process.env, DSH_PACKAGE_ROOT:packageRoot, DSH_HOME:home},
+    });
+    for (let i=0;i<2;i++) assert.equal(run().status, 0);
+    const skill = readFileSync(join(home, 'omnibot-bundled-skills/dsh-plugins/SKILL.md'), 'utf8');
+    assert.match(skill, /name: dsh-plugins/);
+    assert.match(skill, /0\.1\.2-rc\.1/);
+    assert.match(skill, /dsh plugin --profile acp add/);
+    assert.match(skill, /cordis_define cordis_run cordis_stop/);
+    assert.equal(readFileSync(join(home, 'cordis.patch.yml'), 'utf8'), 'USER_PROFILE');
+    rmSync(toolDoc);
+    assert.notEqual(run().status, 0, 'missing upstream documentation must fail preparation');
+  } finally { rmSync(root, {recursive:true, force:true}); }
 });

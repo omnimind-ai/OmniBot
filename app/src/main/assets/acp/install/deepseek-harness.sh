@@ -64,6 +64,28 @@ if (!source.includes(marker)) {
   fs.writeFileSync(path, source.slice(0, start) + updated + source.slice(end));
 }
 OMNIBOT_DSH_BROWSER_NAVIGATION
+# Expose the installed upstream documentation through DSH's own skill provider.
+# Keep generated references outside user skills and never replace profile patches.
+export DSH_PACKAGE_ROOT
+node <<'OMNIBOT_DSH_PLUGIN_REFERENCE'
+const fs = require('node:fs');
+const path = require('node:path');
+const root = process.env.DSH_PACKAGE_ROOT;
+const skill = path.join(process.env.DSH_HOME, 'omnibot-bundled-skills', 'dsh-plugins');
+const sources = [
+  ['DSH CLI and persistent profile packages', path.join(root, 'README.md')],
+  ['Dynamic Cordis plugins (process-local)', path.join(root, 'node_modules/@deepseek-ai/dsh-tool-cordis/README.md')],
+];
+const version = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version;
+const body = sources.map(([title, source]) =>
+  `## ${title}\n\nSource: ${source}\n\n` +
+  fs.readFileSync(source, 'utf8').replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '')
+).join('\n\n');
+fs.mkdirSync(skill, {recursive: true});
+fs.writeFileSync(path.join(skill, 'SKILL.md'),
+  '---\nname: dsh-plugins\ndescription: Official DSH plugin documentation. Read when asked to create, install, enable, stop, or inspect DSH / Cordis plugins; these are distinct from host MCP tools and OmniFlow functions.\n---\n\n' +
+  `Installed upstream version: ${version}.\n\n` + body);
+OMNIBOT_DSH_PLUGIN_REFERENCE
 # Some Android npm builds install the package but skip creating its bin
 # shim. Recreate the vendor-declared executable from the installed package
 # before invoking the official DSH profile; this is still the
@@ -78,6 +100,7 @@ test -x /root/.npm-global/bin/dsh
 # this flag, so publish a tiny launcher that passes it as a CLI argument
 # while still executing the vendor's official lib/bin.js entrypoint.
 printf '%s\n' '#!/bin/sh' \
+  'export DSH_BUNDLED_SKILL_DIR="${DSH_BUNDLED_SKILL_DIR:-$DSH_HOME/omnibot-bundled-skills}"' \
   'exec node --expose-internals /root/.npm-global/lib/node_modules/@deepseek-ai/dsh/lib/bin.js "$@"' \
   > /root/.npm-global/bin/dsh-acp-android
 chmod 755 /root/.npm-global/bin/dsh-acp-android
