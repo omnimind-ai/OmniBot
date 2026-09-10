@@ -71,6 +71,7 @@ run_step() {
 
 run_step "Node protocol/provider tests" \
   node --test \
+    scripts/source-packaging.test.mjs \
     scripts/agent-ui-xml.test.mjs \
     scripts/verify-agent-user-journey.test.mjs \
     scripts/send-agent-test-message.test.mjs \
