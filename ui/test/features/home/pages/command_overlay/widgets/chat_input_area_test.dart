@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -28,6 +29,44 @@ void main() {
 
   tearDown(() {
     messenger.setMockMethodCallHandler(speechChannel, null);
+  });
+
+  testWidgets('flow border ticks do not repaint the surrounding chat surface', (
+    tester,
+  ) async {
+    final controller = TextEditingController();
+    final focusNode = FocusNode();
+    addTearDown(controller.dispose);
+    addTearDown(focusNode.dispose);
+    var surfacePaints = 0;
+    await tester.pumpWidget(
+      DefaultAssetBundle(
+        bundle: _TestAssetBundle(),
+        child: MaterialApp(
+          home: Scaffold(
+            body: _PaintProbe(
+              onPaint: () => surfacePaints++,
+              child: ChatInputArea(
+                controller: controller,
+                focusNode: focusNode,
+                isProcessing: false,
+                onSendMessage: () {},
+                onCancelTask: () {},
+                useLargeComposerStyle: true,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    final settledPaints = surfacePaints;
+    expect(settledPaints, greaterThan(0));
+    for (var frame = 0; frame < 10; frame++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    expect(surfacePaints, settledPaints);
   });
 
   testWidgets('does not render context usage ring when ratio is absent', (
@@ -1245,5 +1284,27 @@ class _OpaqueTestTapTarget extends StatelessWidget {
       onTap: () {},
       child: const SizedBox.expand(),
     );
+  }
+}
+
+class _PaintProbe extends SingleChildRenderObjectWidget {
+  const _PaintProbe({required this.onPaint, required super.child});
+
+  final VoidCallback onPaint;
+
+  @override
+  RenderObject createRenderObject(BuildContext context) =>
+      _PaintProbeRenderObject(onPaint);
+}
+
+class _PaintProbeRenderObject extends RenderProxyBox {
+  _PaintProbeRenderObject(this.onPaint);
+
+  final VoidCallback onPaint;
+
+  @override
+  void paint(PaintingContext context, Offset offset) {
+    onPaint();
+    super.paint(context, offset);
   }
 }
