@@ -28,7 +28,12 @@ import {spawnSync} from 'node:child_process';
 const req = createRequire('/root/.npm-global/lib/node_modules/@deepseek-ai/dsh/package.json');
 const {Context} = await import(req.resolve('@deepseek-ai/cordis'));
 const {LocalSandboxProvider} = await import(req.resolve('@deepseek-ai/dsh-sandbox-local'));
-const landlock = await import(req.resolve('@deepseek-ai/node-addon-landlock-run'));
+let landlock;
+try { landlock = await import(req.resolve('@deepseek-ai/node-addon-system/landlock-run')); }
+catch (error) {
+  if (error.code !== 'MODULE_NOT_FOUND') throw error;
+  landlock = await import(req.resolve('@deepseek-ai/node-addon-landlock-run'));
+}
 const launch = landlock.launcherPath();
 const run = (cmd, argv) => {
   const r = spawnSync(cmd, argv, {encoding:'utf8', timeout:10000});

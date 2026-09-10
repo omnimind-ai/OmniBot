@@ -21,7 +21,7 @@ npm config set prefix /root/.npm-global
 # A previous Android npm run may leave a seemingly installed package with
 # an incomplete dependency tree. Keep this preflight structural and let
 # the authoritative native/import checks run later in this script.
-if ! node -e "const p=require('$DSH_PACKAGE_ROOT/package.json'); if(p.version !== '0.1.2-rc.1') process.exit(1)" >/dev/null 2>&1 ||
+if ! node -e "const p=require('$DSH_PACKAGE_ROOT/package.json'); if(p.version !== '0.1.5-rc.1') process.exit(1)" >/dev/null 2>&1 ||
     [ ! -f "$DSH_PACKAGE_ROOT/node_modules/@deepseek-ai/dsh-acp-app/cordis.patch.yml" ] || \
     [ ! -f "$DSH_PACKAGE_ROOT/lib/bin.js" ] || \
     { [ ! -f "$DSH_PACKAGE_ROOT/node_modules/node-pty/prebuilds/linux-arm64/pty.node" ] && \
@@ -34,7 +34,7 @@ if ! node -e "const p=require('$DSH_PACKAGE_ROOT/package.json'); if(p.version !=
       --fetch-retry-mintimeout=1000 --fetch-retry-maxtimeout=15000 \
       --fetch-timeout=120000 --loglevel=notice \
       --registry="$registry" \
-      @deepseek-ai/dsh@0.1.2-rc.1
+      @deepseek-ai/dsh@0.1.5-rc.1
   }
   if ! install_dsh_runtime "$NPM_PRIMARY_REGISTRY"; then
     install_dsh_runtime "https://registry.npmjs.org"

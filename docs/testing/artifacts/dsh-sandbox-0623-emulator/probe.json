@@ -1,0 +1,47 @@
+{
+  "version": "0.1.2-rc.1",
+  "platform": "linux",
+  "arch": "arm64",
+  "bash": {
+    "status": 0,
+    "stdout": "OOB_DSH_BASH_OK",
+    "stderr": ""
+  },
+  "landlock": {
+    "launcher": "/root/.npm-global/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/node-addon-landlock-run-linux-arm64/bin/landlock-run",
+    "verdict": "unusable",
+    "status": 125,
+    "stdout": "",
+    "stderr": "landlock-run: landlock is not enforced by this kernel (ABI unsupported or disabled)\n"
+  },
+  "bwrap": {
+    "status": null,
+    "error": "ENOENT"
+  },
+  "bwrapProfileProbe": {
+    "status": null,
+    "error": "ENOENT"
+  },
+  "modes": {
+    "read-only": {
+      "ready": false,
+      "code": "SANDBOX_UNAVAILABLE",
+      "message": "sandbox mode \"read-only\" is requested but no sandbox backend is usable on this host; refusing to run the command unconfined. Install bubblewrap or run a Landlock-enforcing kernel (Linux), ensure sandbox-exec is usable (macOS), or ensure the ACL restricted-token runner can start (Windows) — otherwise switch the consumer to danger-full-access."
+    },
+    "workspace-write": {
+      "ready": false,
+      "code": "SANDBOX_UNAVAILABLE",
+      "message": "sandbox mode \"workspace-write\" is requested but no sandbox backend is usable on this host; refusing to run the command unconfined. Install bubblewrap or run a Landlock-enforcing kernel (Linux), ensure sandbox-exec is usable (macOS), or ensure the ACL restricted-token runner can start (Windows) — otherwise switch the consumer to danger-full-access."
+    }
+  },
+  "device": "emulator-5554",
+  "apkSha256": "e86dacad874feee7d299dcb1dc0828cc230e5a3295bc943830d2a31ff7bfc3d5",
+  "kernel": "5.15.119-android13-8-00034-gd34029c8258b-ab10871489",
+  "landlockOutsideProot": {
+    "status": 125,
+    "stdout": "",
+    "stderr": "landlock-run: landlock is not enforced by this kernel (ABI unsupported or disabled)"
+  },
+  "ready": false,
+  "acceptanceScope": "Backend readiness only; full UI and isolation acceptance still required if ready."
+}

@@ -1,0 +1,9 @@
+# Explicit opt-in: dynamic host code is not a workspace security boundary.
+# Merge into the selected DSH profile; never overwrite existing user rows.
+- insert:
+    - id: omnibot-cordis-host-runner
+      name: '@deepseek-ai/dsh-cordis-host-runner'
+      config:
+        vmTimeoutMs: 5000
+    - id: omnibot-tool-cordis
+      name: '@deepseek-ai/dsh-tool-cordis'

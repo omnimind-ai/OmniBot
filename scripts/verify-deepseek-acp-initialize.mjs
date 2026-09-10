@@ -3,7 +3,8 @@
 import {execFileSync, spawn} from 'node:child_process';
 import assert from 'node:assert/strict';
 const serial = process.argv[2];
-assert(process.argv.slice(3).every(arg => ['--managed-patch', '--disable-link2symlink', '--filesystem-compat', '--app-meta', '--app-capabilities', '--shared-test-key'].includes(arg)), 'Unknown probe option');
+assert(process.argv.slice(3).every(arg => ['--alpine', '--managed-patch', '--disable-link2symlink', '--filesystem-compat', '--app-meta', '--app-capabilities', '--shared-test-key'].includes(arg)), 'Unknown probe option');
+const distribution = process.argv.includes('--alpine') ? 'alpine' : 'ubuntu';
 const managedPatch = process.argv.includes('--managed-patch');
 const disableLink2symlink = process.argv.includes('--disable-link2symlink');
 const filesystemCompat = process.argv.includes('--filesystem-compat');
@@ -25,12 +26,12 @@ const prefix = `/data/user/0/${pkg}`;
 const command = `set -eu
 ${sharedTestKey ? 'IFS= read -r OMNIBOT_DSH_API_KEY; export OMNIBOT_DSH_API_KEY' : ''}
 cd ${prefix}
-test -f local/ubuntu/.omnibot-rootfs-ready
+test -f local/${distribution}/.omnibot-rootfs-ready
 probe_dir=$(mktemp -d cache/oob-dsh-initialize.XXXXXX)
 export PREFIX=${prefix} HOME=/root LINKER=/system/bin/linker64
 export LD_LIBRARY_PATH=$PREFIX/local/lib PROOT_LOADER=${nativeDir}/libproot-loader.so
 export PROOT_TMP_DIR=$PREFIX/$probe_dir TMPDIR=$PREFIX/tmp
-export OMNIBOT_TERMINAL_DISTRIBUTION=ubuntu OMNIBOT_HEADLESS=1
+export OMNIBOT_TERMINAL_DISTRIBUTION=${distribution} OMNIBOT_HEADLESS=1
 export OMNIBOT_DISABLE_PROOT_LINK2SYMLINK=${disableLink2symlink ? '1' : '0'}
 ${filesystemCompat ? 'export NODE_OPTIONS="--require /root/.omnibot/acp-fs-compat.cjs"' : ''}
 exec /system/bin/sh "$PREFIX/local/bin/init-host" /bin/sh -lc ${quote(
