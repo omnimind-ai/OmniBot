@@ -4,6 +4,33 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ui/features/home/pages/chat/chat_page_models.dart';
 
 void main() {
+  test('queued sends keep waiting when another switch starts before resumption', () async {
+    for (var round = 0; round < 20; round++) {
+      final barrier = HarnessSwitchSendBarrier();
+      final first = barrier.begin();
+      final released = <bool>[];
+      final sends = List.generate(2, (_) => barrier.waitUntilIdle().then(released.add));
+      barrier.finish(first);
+      final second = barrier.begin();
+      await Future<void>.delayed(Duration.zero);
+      expect(released, isEmpty, reason: 'round $round released during a new switch');
+      barrier.finish(second);
+      await Future.wait(sends);
+      expect(released, [true, true]);
+    }
+  });
+
+  test('a failed switch cannot revive queued sends when a new switch succeeds', () async {
+    final barrier = HarnessSwitchSendBarrier();
+    final first = barrier.begin();
+    final waiting = barrier.waitUntilIdle();
+    barrier.finish(first, succeeded: false);
+    final second = barrier.begin();
+    barrier.finish(second);
+    expect(await waiting, isFalse);
+    expect(await barrier.waitUntilIdle(), isTrue);
+  });
+
   test('idle sends are admitted', () async {
     expect(await HarnessSwitchSendBarrier().waitUntilIdle(), isTrue);
   });

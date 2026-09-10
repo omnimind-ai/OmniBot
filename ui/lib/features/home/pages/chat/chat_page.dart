@@ -516,39 +516,9 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     return options;
   }
 
-  /// The app-bar identity is presentation-only and has one source of truth:
-  /// the Harness that is being switched to, or the Harness currently
-  /// connected by the ACP runtime. A conversation binding describes history;
-  /// it must not make the top-right control oscillate between an old session
-  /// owner and the live process during asynchronous restore/switch work.
-  String? get _appBarActiveAcpAgentId {
-    final optimisticId = _optimisticAcpAgentId?.trim() ?? '';
-    if (_isAcpAgentSwitching && optimisticId.isNotEmpty) {
-      return optimisticId;
-    }
-
-    final runtimeId =
-        _activeMode == ChatPageMode.agent && _agentRuntimeStatus.connected
-        ? (_agentRuntimeStatus.runtime == 'remote' ||
-                  _agentRuntimeStatus.remoteEnabled
-              ? _kRemoteCodexModeAgentId
-              : (_agentRuntimeStatus.activeAgentId?.trim() ?? ''))
-        : '';
-    final activeId = runtimeId.isNotEmpty
-        ? runtimeId
-        : (_activeAcpAgentId?.trim() ?? '');
-    if (activeId.isEmpty) return null;
-
-    // A connected runtime is authoritative even while the catalog request is
-    // still in flight. The brand icon can render from the stable agent id,
-    // and the next catalog refresh will fill in the menu metadata.
-    if (runtimeId.isNotEmpty) return runtimeId;
-
-    final isVisible = _chatAcpAgentModeOptions.any(
-      (agent) => agent.id == activeId && agent.isAvailable,
-    );
-    return isVisible ? activeId : null;
-  }
+  /// Chrome follows the visible Conversation owner, just like prompt routing.
+  /// A connected process may belong to another conversation or a stale restore.
+  String? get _appBarActiveAcpAgentId => _activeAcpAgentId;
 
   ConversationMode _conversationModeForPageMode(ChatPageMode mode) {
     if (mode == ChatPageMode.agent) {
@@ -1576,6 +1546,9 @@ abstract class _ChatPageStateBase extends State<ChatPage>
       );
     } catch (error) {
       debugPrint('ACP cancellation failed: $error');
+      if (mounted) {
+        showToast(formatAgentRuntimeErrorForUser(error), type: ToastType.error);
+      }
     }
   }
 
@@ -1830,6 +1803,8 @@ abstract class _ChatPageStateBase extends State<ChatPage>
 
   Future<void> _loadAgentModelOptions({bool force = false});
 
+  Map<String, dynamic>? _availableAcpCommandForText(String text);
+
   Future<void> _loadAgentCollaborationModes({bool force = false});
 
   Future<void> _selectAgentModel(String modelId, {bool clearComposer = true});
@@ -1858,7 +1833,9 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     List<Map<String, dynamic>> attachments = const [],
   });
 
-  Future<void> _executeAgentInitCommand();
+  Future<void> _executeAgentInitCommand({
+    List<Map<String, dynamic>> attachments = const [],
+  });
 
   Future<void> _startAgentReviewCommand();
 

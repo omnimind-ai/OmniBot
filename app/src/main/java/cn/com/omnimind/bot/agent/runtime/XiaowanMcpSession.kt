@@ -22,11 +22,11 @@ import java.io.BufferedReader
 import java.io.BufferedWriter
 import java.nio.charset.StandardCharsets
 import java.util.UUID
-import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.Channel
@@ -35,7 +35,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -59,9 +58,18 @@ internal class XiaowanMcpSession private constructor(
     private val connections: List<XiaowanMcpServerConnection>,
 ) {
     suspend fun close() {
+        var failure: Exception? = null
         connections.forEach { connection ->
-            runCatching { connection.close() }
+            try {
+                connection.close()
+            } catch (error: Exception) {
+                // Try the remaining resources, but never acknowledge a failed
+                // cleanup as success to the owning ACP session.
+                if (failure == null) failure = error
+                else if (failure !== error) failure?.addSuppressed(error)
+            }
         }
+        failure?.let { throw it }
     }
 
     companion object {
@@ -420,16 +428,11 @@ private class XiaowanStdioMcpConnection(
             stdoutLines = null
             val active = process
             process = null
-            runCatching { writer?.close() }
-            runCatching { reader?.close() }
+            withContext(Dispatchers.IO + NonCancellable) {
+                closeMcpProcess(active, reader, writer)
+            }
             writer = null
             reader = null
-            if (active != null) {
-                runCatching { active.destroy() }
-                val exited = runCatching { active.waitFor(500, TimeUnit.MILLISECONDS) }
-                    .getOrDefault(false)
-                if (!exited) runCatching { active.destroyForcibly() }
-            }
         }
     }
 
@@ -442,7 +445,7 @@ private class XiaowanStdioMcpConnection(
             put("params", params)
         }
         return requestMutex.withLock {
-            withTimeout<JsonElement>(RPC_TIMEOUT_MS) {
+            withMcpRequestTimeout<JsonElement>(RPC_TIMEOUT_MS, method) {
                 val activeWriter = writer ?: error("MCP stdio writer is closed")
                 val activeLines = stdoutLines ?: error("MCP stdio reader is closed")
                 withContext(Dispatchers.IO) {

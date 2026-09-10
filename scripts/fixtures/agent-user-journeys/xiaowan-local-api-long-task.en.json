@@ -1,0 +1,81 @@
+{
+  "name": "Configured local API real multi-tool tasks and restart",
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_FILES",
+      "scenario": "xiaowan-live-files.json",
+      "timeoutMs": 240000
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_FILES_DONE",
+      "timeoutMs": 600000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_FILES",
+      "expected": "done"
+    },
+    {
+      "action": "live-task",
+      "marker": "OOB_LIVE_FILES",
+      "phase": "files"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_LONG",
+      "scenario": "xiaowan-live-long-read.json",
+      "timeoutMs": 240000
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_LONG_DONE",
+      "timeoutMs": 600000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_LONG",
+      "expected": "done"
+    },
+    {
+      "action": "live-task",
+      "marker": "OOB_LIVE_LONG",
+      "phase": "long"
+    },
+    {
+      "action": "restart"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_LONG_DONE"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_LONG",
+      "expected": "done"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_RECOVERY",
+      "scenario": "xiaowan-live-recovery.json",
+      "timeoutMs": 240000
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_RECOVERY_DONE",
+      "timeoutMs": 600000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_RECOVERY",
+      "expected": "done"
+    },
+    {
+      "action": "live-task",
+      "marker": "OOB_LIVE_RECOVERY",
+      "phase": "recovery"
+    }
+  ],
+  "requireClockSync": true
+}

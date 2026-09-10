@@ -170,9 +170,15 @@ extension _HomeDrawerConversationList on HomeDrawerState {
           : _buildEmptySearchResult();
     }
     return SlidableAutoCloseBehavior(
-      child: ListView(
+      child: ListView.builder(
         padding: EdgeInsets.zero,
-        children: _buildSearchResultChildren(results),
+        itemCount: results.length + 1,
+        itemBuilder: (context, index) => index == 0
+            ? _buildSearchResultHeader(results.length)
+            : _buildSwipeConversationItem(
+                results[index - 1],
+                showDivider: index != results.length,
+              ),
       ),
     );
   }
@@ -197,7 +203,7 @@ extension _HomeDrawerConversationList on HomeDrawerState {
     final sections = <Widget>[];
     void addSection(Widget section) {
       if (sections.isNotEmpty) {
-        sections.add(const SizedBox(height: 12));
+        sections.add(const SliverToBoxAdapter(child: SizedBox(height: 12)));
       }
       sections.add(section);
     }
@@ -238,7 +244,7 @@ extension _HomeDrawerConversationList on HomeDrawerState {
     }
     // 所有区块共用同一个滚动列表：任何区块展开条目过多时整体滚动，不再溢出。
     return SlidableAutoCloseBehavior(
-      child: ListView(padding: EdgeInsets.zero, children: sections),
+      child: CustomScrollView(slivers: sections),
     );
   }
 
@@ -385,55 +391,41 @@ extension _HomeDrawerConversationList on HomeDrawerState {
     );
   }
 
-  List<Widget> _buildSearchResultChildren(
-    List<_ConversationSearchResult> results,
-  ) {
+  Widget _buildSearchResultHeader(int count) {
     final palette = context.omniPalette;
-    final children = <Widget>[
-      Padding(
-        padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
-        child: Row(
-          children: [
-            Icon(
-              Icons.manage_search_rounded,
-              size: 16,
-              color: palette.textSecondary,
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 0, 4, 8),
+      child: Row(
+        children: [
+          Icon(
+            Icons.manage_search_rounded,
+            size: 16,
+            color: palette.textSecondary,
+          ),
+          const SizedBox(width: 6),
+          Text(
+            context.l10n.homeDrawerSearchResults,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 0.6,
+              color: palette.textTertiary,
+              fontFamily: 'PingFang SC',
             ),
-            const SizedBox(width: 6),
-            Text(
-              context.l10n.homeDrawerSearchResults,
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-                letterSpacing: 0.6,
-                color: palette.textTertiary,
-                fontFamily: 'PingFang SC',
-              ),
+          ),
+          const Spacer(),
+          Text(
+            '$count ${context.l10n.homeDrawerResultCount}',
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w500,
+              color: palette.textTertiary,
+              fontFamily: 'PingFang SC',
             ),
-            const Spacer(),
-            Text(
-              '${results.length} ${context.l10n.homeDrawerResultCount}',
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w500,
-                color: palette.textTertiary,
-                fontFamily: 'PingFang SC',
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
-    ];
-
-    for (int index = 0; index < results.length; index++) {
-      children.add(
-        _buildSwipeConversationItem(
-          results[index],
-          showDivider: index != results.length - 1,
-        ),
-      );
-    }
-    return children;
+    );
   }
 
   List<Widget> _buildConversationDateSectionChildren(
@@ -446,7 +438,7 @@ extension _HomeDrawerConversationList on HomeDrawerState {
     for (int sectionIndex = 0; sectionIndex < sections.length; sectionIndex++) {
       final section = sections[sectionIndex];
       if (children.isNotEmpty || sectionIndex > 0) {
-        children.add(const SizedBox(height: 14));
+        children.add(const SliverToBoxAdapter(child: SizedBox(height: 14)));
       }
       children.add(
         _buildConversationDateSection(
@@ -584,11 +576,13 @@ extension _HomeDrawerConversationList on HomeDrawerState {
       iconAssetPath: 'assets/home/pin_icon.svg',
       childrenLeadingInset: _kPromotedConversationItemTitleInset,
       children: [
-        for (int itemIndex = 0; itemIndex < results.length; itemIndex++)
-          _buildSwipeConversationItem(
-            results[itemIndex],
-            showDivider: itemIndex != results.length - 1,
+        SliverList.builder(
+          itemCount: results.length,
+          itemBuilder: (context, index) => _buildSwipeConversationItem(
+            results[index],
+            showDivider: index != results.length - 1,
           ),
+        ),
       ],
     );
   }
@@ -640,16 +634,16 @@ extension _HomeDrawerConversationList on HomeDrawerState {
     required String dateSectionNamespace,
     required List<_ConversationSearchResult> results,
   }) {
-    return Padding(
-      padding: const EdgeInsets.only(left: _kModeSectionTimelineLeadingInset),
-      child: Column(
-        children: [
-          const SizedBox(height: 2),
-          ..._buildConversationDateSectionChildren(
-            results,
-            namespace: dateSectionNamespace,
-          ),
-        ],
+    return SliverPadding(
+      padding: const EdgeInsets.only(
+        left: _kModeSectionTimelineLeadingInset,
+        top: 2,
+      ),
+      sliver: SliverMainAxisGroup(
+        slivers: _buildConversationDateSectionChildren(
+          results,
+          namespace: dateSectionNamespace,
+        ),
       ),
     );
   }
@@ -663,50 +657,25 @@ extension _HomeDrawerConversationList on HomeDrawerState {
     required List<Widget> children,
   }) {
     final expanded = _isConversationSectionExpanded(sectionKey);
-    final items = Padding(
-      padding: EdgeInsets.only(left: childrenLeadingInset),
-      child: Column(children: [const SizedBox(height: 2), ...children]),
-    );
-    return Column(
-      children: [
-        _buildConversationSectionHeader(
-          label,
-          expanded: expanded,
-          itemCount: itemCount,
-          onTap: () => _toggleConversationSection(sectionKey),
-          iconAssetPath: iconAssetPath,
-          iconKey: ValueKey('home-drawer-section-icon-$sectionKey'),
-          leadingSlotWidth: _kConversationSectionHeaderLeadingSlotWidth,
-        ),
-        _buildCollapsibleSectionBody(expanded: expanded, child: items),
-      ],
-    );
-  }
-
-  Widget _buildCollapsibleSectionBody({
-    required bool expanded,
-    required Widget child,
-  }) {
-    return TweenAnimationBuilder<double>(
-      tween: Tween<double>(begin: expanded ? 1 : 0, end: expanded ? 1 : 0),
-      duration: HomeDrawerState._sectionToggleDuration,
-      curve: Curves.easeInOutCubicEmphasized,
-      builder: (context, value, animatedChild) {
-        return ClipRect(
-          child: Align(
-            alignment: Alignment.topCenter,
-            heightFactor: value,
-            child: Opacity(
-              opacity: value.clamp(0.0, 1.0).toDouble(),
-              child: IgnorePointer(
-                ignoring: value < 0.99,
-                child: animatedChild,
-              ),
-            ),
+    return SliverMainAxisGroup(
+      slivers: [
+        SliverToBoxAdapter(
+          child: _buildConversationSectionHeader(
+            label,
+            expanded: expanded,
+            itemCount: itemCount,
+            onTap: () => _toggleConversationSection(sectionKey),
+            iconAssetPath: iconAssetPath,
+            iconKey: ValueKey('home-drawer-section-icon-$sectionKey'),
+            leadingSlotWidth: _kConversationSectionHeaderLeadingSlotWidth,
           ),
-        );
-      },
-      child: child,
+        ),
+        if (expanded)
+          SliverPadding(
+            padding: EdgeInsets.only(left: childrenLeadingInset, top: 2),
+            sliver: SliverMainAxisGroup(slivers: children),
+          ),
+      ],
     );
   }
 
@@ -718,29 +687,25 @@ extension _HomeDrawerConversationList on HomeDrawerState {
       group.parent,
     );
     final expanded = _isConversationSectionExpanded(parentSectionKey);
-    final children = Column(
-      children: [
-        for (
-          int childIndex = 0;
-          childIndex < group.children.length;
-          childIndex++
-        )
-          _buildScheduledChildConversationItem(
-            group.children[childIndex],
-            showDivider: childIndex != group.children.length - 1,
+    return SliverMainAxisGroup(
+      slivers: [
+        SliverToBoxAdapter(
+          child: _buildScheduledParentConversationRow(
+            group,
+            expanded: expanded,
+            onToggle: () => _toggleConversationSection(parentSectionKey),
           ),
-      ],
-    );
-
-    return Column(
-      children: [
-        _buildScheduledParentConversationRow(
-          group,
-          expanded: expanded,
-          onToggle: () => _toggleConversationSection(parentSectionKey),
         ),
-        _buildCollapsibleSectionBody(expanded: expanded, child: children),
-        if (showDivider) const SizedBox(height: 6),
+        if (expanded)
+          SliverList.builder(
+            itemCount: group.children.length,
+            itemBuilder: (context, index) =>
+                _buildScheduledChildConversationItem(
+                  group.children[index],
+                  showDivider: index != group.children.length - 1,
+                ),
+          ),
+        if (showDivider) const SliverToBoxAdapter(child: SizedBox(height: 6)),
       ],
     );
   }
@@ -883,29 +848,29 @@ extension _HomeDrawerConversationList on HomeDrawerState {
     required String iconAssetPath,
   }) {
     final expanded = _isConversationSectionExpanded(section.sectionKey);
-    // 会话标题不再相对日期行缩进：条目与日期分组行共用同一左缘。
-    final items = Column(
-      children: [
-        const SizedBox(height: 4),
-        for (int itemIndex = 0; itemIndex < section.results.length; itemIndex++)
-          _buildSwipeConversationItem(
-            section.results[itemIndex],
-            showDivider: itemIndex != section.results.length - 1,
+    return SliverMainAxisGroup(
+      slivers: [
+        SliverToBoxAdapter(
+          child: _buildConversationSectionHeader(
+            section.label,
+            expanded: expanded,
+            itemCount: section.results.length,
+            onTap: () => _toggleConversationSection(section.sectionKey),
+            iconAssetPath: iconAssetPath,
+            leadingSlotWidth: _kConversationSectionHeaderLeadingSlotWidth,
           ),
-      ],
-    );
-
-    return Column(
-      children: [
-        _buildConversationSectionHeader(
-          section.label,
-          expanded: expanded,
-          itemCount: section.results.length,
-          onTap: () => _toggleConversationSection(section.sectionKey),
-          iconAssetPath: iconAssetPath,
-          leadingSlotWidth: _kConversationSectionHeaderLeadingSlotWidth,
         ),
-        _buildCollapsibleSectionBody(expanded: expanded, child: items),
+        if (expanded)
+          SliverPadding(
+            padding: const EdgeInsets.only(top: 4),
+            sliver: SliverList.builder(
+              itemCount: section.results.length,
+              itemBuilder: (context, index) => _buildSwipeConversationItem(
+                section.results[index],
+                showDivider: index != section.results.length - 1,
+              ),
+            ),
+          ),
       ],
     );
   }
@@ -1048,6 +1013,7 @@ extension _HomeDrawerConversationList on HomeDrawerState {
     final isEditing = _editingThreadKey == conversation.threadKey;
 
     return ConversationSlidable(
+      key: ValueKey(conversation.threadKey),
       itemKey: conversation.threadKey,
       groupTag: 'home-drawer-conversations',
       isBusy: isBusy,

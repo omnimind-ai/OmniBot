@@ -1,0 +1,27 @@
+{
+  "name": "Local API next unread page after auto-compaction and restart",
+  "requireClockSync": true,
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_AUTO_RESUME",
+      "scenario": "xiaowan-live-auto-resume.json",
+      "timeoutMs": 240000
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_AUTO_RESUME_DONE",
+      "timeoutMs": 180000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_AUTO_RESUME",
+      "expected": "done"
+    },
+    {
+      "action": "live-task",
+      "marker": "OOB_LIVE_AUTO_RESUME",
+      "phase": "auto-next-60"
+    }
+  ]
+}

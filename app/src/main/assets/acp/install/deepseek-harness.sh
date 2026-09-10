@@ -1,4 +1,17 @@
 set -eu
+# DSH's bash tool spawns bash by name; Alpine's BusyBox sh is insufficient.
+# Check this even when the npm package and ACP profile are already installed.
+if ! command -v bash >/dev/null 2>&1; then
+  if command -v apk >/dev/null 2>&1; then
+    apk add --no-cache bash
+  elif command -v apt-get >/dev/null 2>&1; then
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends bash
+  else
+    printf '%s\n' 'DeepSeek Harness requires bash; no supported package manager found' >&2
+    exit 1
+  fi
+fi
+bash --noprofile --norc -c ':'
 export PATH="/root/.npm-global/bin:$PATH"
 export DSH_HOME="/root/.dsh/omnibot-acp"
 DSH_PACKAGE_ROOT="/root/.npm-global/lib/node_modules/@deepseek-ai/dsh"
@@ -8,7 +21,7 @@ npm config set prefix /root/.npm-global
 # A previous Android npm run may leave a seemingly installed package with
 # an incomplete dependency tree. Keep this preflight structural and let
 # the authoritative native/import checks run later in this script.
-if ! node -e "const p=require('$DSH_PACKAGE_ROOT/package.json'); if(p.version !== '0.1.2-rc.1') process.exit(1)" >/dev/null 2>&1 ||
+if ! node -e "const p=require('$DSH_PACKAGE_ROOT/package.json'); if(p.version !== '0.1.5-rc.1') process.exit(1)" >/dev/null 2>&1 ||
     [ ! -f "$DSH_PACKAGE_ROOT/node_modules/@deepseek-ai/dsh-acp-app/cordis.patch.yml" ] || \
     [ ! -f "$DSH_PACKAGE_ROOT/lib/bin.js" ] || \
     { [ ! -f "$DSH_PACKAGE_ROOT/node_modules/node-pty/prebuilds/linux-arm64/pty.node" ] && \
@@ -21,7 +34,7 @@ if ! node -e "const p=require('$DSH_PACKAGE_ROOT/package.json'); if(p.version !=
       --fetch-retry-mintimeout=1000 --fetch-retry-maxtimeout=15000 \
       --fetch-timeout=120000 --loglevel=notice \
       --registry="$registry" \
-      @deepseek-ai/dsh@0.1.2-rc.1
+      @deepseek-ai/dsh@0.1.5-rc.1
   }
   if ! install_dsh_runtime "$NPM_PRIMARY_REGISTRY"; then
     install_dsh_runtime "https://registry.npmjs.org"
@@ -51,6 +64,28 @@ if (!source.includes(marker)) {
   fs.writeFileSync(path, source.slice(0, start) + updated + source.slice(end));
 }
 OMNIBOT_DSH_BROWSER_NAVIGATION
+# Expose the installed upstream documentation through DSH's own skill provider.
+# Keep generated references outside user skills and never replace profile patches.
+export DSH_PACKAGE_ROOT
+node <<'OMNIBOT_DSH_PLUGIN_REFERENCE'
+const fs = require('node:fs');
+const path = require('node:path');
+const root = process.env.DSH_PACKAGE_ROOT;
+const skill = path.join(process.env.DSH_HOME, 'omnibot-bundled-skills', 'dsh-plugins');
+const sources = [
+  ['DSH CLI and persistent profile packages', path.join(root, 'README.md')],
+  ['Dynamic Cordis plugins (process-local)', path.join(root, 'node_modules/@deepseek-ai/dsh-tool-cordis/README.md')],
+];
+const version = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version;
+const body = sources.map(([title, source]) =>
+  `## ${title}\n\nSource: ${source}\n\n` +
+  fs.readFileSync(source, 'utf8').replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, '')
+).join('\n\n');
+fs.mkdirSync(skill, {recursive: true});
+fs.writeFileSync(path.join(skill, 'SKILL.md'),
+  '---\nname: dsh-plugins\ndescription: Official DSH plugin documentation. Read when asked to create, install, enable, stop, or inspect DSH / Cordis plugins; these are distinct from host MCP tools and OmniFlow functions.\n---\n\n' +
+  `Installed upstream version: ${version}.\n\n` + body);
+OMNIBOT_DSH_PLUGIN_REFERENCE
 # Some Android npm builds install the package but skip creating its bin
 # shim. Recreate the vendor-declared executable from the installed package
 # before invoking the official DSH profile; this is still the
@@ -65,6 +100,7 @@ test -x /root/.npm-global/bin/dsh
 # this flag, so publish a tiny launcher that passes it as a CLI argument
 # while still executing the vendor's official lib/bin.js entrypoint.
 printf '%s\n' '#!/bin/sh' \
+  'export DSH_BUNDLED_SKILL_DIR="${DSH_BUNDLED_SKILL_DIR:-$DSH_HOME/omnibot-bundled-skills}"' \
   'exec node --expose-internals /root/.npm-global/lib/node_modules/@deepseek-ai/dsh/lib/bin.js "$@"' \
   > /root/.npm-global/bin/dsh-acp-android
 chmod 755 /root/.npm-global/bin/dsh-acp-android

@@ -10,12 +10,18 @@ const installer = await readFile(new URL('../app/src/main/assets/acp/install-cod
 const patch = installer.split("<<'OOB_CODEX_PATCH'\n")[1]?.split('\nOOB_CODEX_PATCH')[0];
 assert(patch, 'Missing shipped Codex completion patch');
 const root = resolve(cliDirectory, 'node_modules/@agentclientprotocol/codex-acp');
-// Repeat installation to verify it cannot duplicate the projection patch.
+// Repeat installation to verify projection and title patches are idempotent.
+let firstPatchedSource;
 for (let i = 0; i < 2; i++) {
   const result = spawnSync(process.execPath, ['-', root], {input: patch, encoding: 'utf8'});
   assert.equal(result.status, 0, result.stderr);
+  const source = await readFile(resolve(root, 'dist/index.js'), 'utf8');
+  assert.equal(source.split('// OOB Codex title inherits configured model v1').length, 2);
+  assert(!source.includes('model: TITLE_MODEL'), 'Title generator still overrides the configured model');
+  if (i === 0) firstPatchedSource = source;
+  else assert.equal(source, firstPatchedSource, 'Repeated installation changed the patched source');
 }
-for (const scenario of ['completed-text-only', 'partial-text', 'success', 'failure']) {
+for (const scenario of ['completed-text-only', 'partial-text', 'success', 'failure', 'plan']) {
   const result = spawnSync(process.execPath, [
     new URL('./verify-installed-harness-adapters.mjs', import.meta.url).pathname,
     cliDirectory, fixtureDirectory, 'codex', scenario,

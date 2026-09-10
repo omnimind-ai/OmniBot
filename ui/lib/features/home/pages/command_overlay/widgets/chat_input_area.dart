@@ -235,6 +235,9 @@ abstract class _ChatInputAreaStateBase extends State<ChatInputArea>
   OverlayGlassPopupHandle<AgentPermissionMode>? _agentPermissionMenuHandle;
 
   final ScrollController _textFieldScrollController = ScrollController();
+  final GlobalKey _textFieldKey = GlobalKey(
+    debugLabel: 'chat-composer-text-field',
+  );
 
   bool get isPopupVisible =>
       _composerStateMachine.value.isPopupOpen(ChatComposerPopup.legacyActions);

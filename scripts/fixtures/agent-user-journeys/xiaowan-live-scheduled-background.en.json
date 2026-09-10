@@ -1,0 +1,32 @@
+{
+  "name": "Real provider scheduled background file execution",
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_SCHEDULE",
+      "scenario": "xiaowan-live-scheduled-file.json",
+      "timeoutMs": 150000
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_SCHEDULE_DONE",
+      "timeoutMs": 180000
+    },
+    {
+      "action": "background",
+      "marker": "OOB_LIVE_SCHEDULE"
+    },
+    {
+      "action": "scheduled-file",
+      "marker": "OOB_LIVE_SCHEDULE",
+      "timeoutMs": 240000
+    },
+    {
+      "action": "foreground"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_SCHEDULE_DONE"
+    }
+  ]
+}

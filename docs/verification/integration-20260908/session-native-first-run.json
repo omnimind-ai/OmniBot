@@ -1,0 +1,56 @@
+[
+  {
+    "tool": "terminal_session_start",
+    "success": true,
+    "exitCode": null,
+    "sessionId": "session_8d79d831"
+  },
+  {
+    "tool": "terminal_session_exec",
+    "success": true,
+    "exitCode": 0,
+    "sessionId": "session_8d79d831"
+  },
+  {
+    "tool": "terminal_session_exec",
+    "success": true,
+    "exitCode": 0,
+    "sessionId": "session_8d79d831"
+  },
+  {
+    "tool": "terminal_session_read",
+    "success": true,
+    "exitCode": null,
+    "sessionId": "session_8d79d831"
+  },
+  {
+    "tool": "terminal_session_exec",
+    "success": false,
+    "exitCode": 7,
+    "sessionId": "session_8d79d831"
+  },
+  {
+    "tool": "terminal_session_exec",
+    "success": true,
+    "exitCode": 0,
+    "sessionId": "session_8d79d831"
+  },
+  {
+    "tool": "terminal_session_stop",
+    "success": true,
+    "exitCode": null,
+    "sessionId": "session_8d79d831"
+  },
+  {
+    "tool": "terminal_session_read",
+    "success": false,
+    "exitCode": null,
+    "sessionId": "fe245cb9-f045-435f-975d-406f87ea0000"
+  },
+  {
+    "tool": "terminal_session_stop",
+    "success": false,
+    "exitCode": null,
+    "sessionId": "session_8d79d831"
+  }
+]

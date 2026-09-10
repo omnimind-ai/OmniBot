@@ -1,0 +1,3 @@
+{
+  "prompt": "Read /workspace/oob-small-page-body.html with file_read maxChars=2048, then read its nextOffset with the same maxChars. No other tools. Report the verification_value found in the second page."
+}

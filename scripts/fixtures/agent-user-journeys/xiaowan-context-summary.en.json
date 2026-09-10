@@ -1,0 +1,12 @@
+{
+  "name": "Xiaowan same-task automatic summary and durable restart",
+  "steps": [
+    {"action": "send", "marker": "OOB_FILE_CONTEXT_SUMMARY_LONG"},
+    {"action": "reply", "text": "OOB_FILE_CONTEXT_SUMMARY_LONG_DONE", "timeoutMs": 180000},
+    {"action": "turn-outcome", "marker": "OOB_FILE_CONTEXT_SUMMARY_LONG", "expected": "done"},
+    {"action": "checkpoint", "marker": "OOB_FILE_CONTEXT_SUMMARY_LONG"},
+    {"action": "restart"},
+    {"action": "reply", "text": "OOB_FILE_CONTEXT_SUMMARY_LONG_DONE"},
+    {"action": "checkpoint", "marker": "OOB_FILE_CONTEXT_SUMMARY_LONG"}
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "name": "User budget survives model selection and restart",
+  "steps": [
+    {"action":"long-press","label":"No context usage data yet"},
+    {"action":"tap","label":"32k"},
+    {"action":"expect","text":"32,000"},
+    {"action":"tap","label":"64k"},
+    {"action":"expect","text":"64,000"},
+    {"action":"tap","label":"Scrim"},
+    {"action":"tap","label":"Model & settings"},
+    {"action":"tap","label":"Model"},
+    {"action":"tap","label":"gpt-4o"},
+    {"action":"long-press","label":"No context usage data yet"},
+    {"action":"expect","text":"64,000"},
+    {"action":"tap","label":"Scrim"},
+    {"action":"restart"},
+    {"action":"long-press","label":"No context usage data yet"},
+    {"action":"expect","text":"64,000"},
+    {"action":"tap","label":"128k"},
+    {"action":"tap","label":"Scrim"}
+  ]
+}

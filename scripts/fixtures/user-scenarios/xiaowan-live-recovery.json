@@ -1,0 +1,3 @@
+{
+  "prompt": "Continue the previous test in /workspace/oob-live-integration. Read the saved reports and confirm what was completed. Try reading /workspace/oob-live-integration/missing-intentional.txt and report that expected failure. Execute a terminal command that exits with code 7 and report its real exit status. Then run a successful echo command. Do not claim the entire task failed merely because an expected negative check failed."
+}

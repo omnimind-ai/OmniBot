@@ -1,6 +1,16 @@
 {
   "skills": [
     {
+      "id": "install-acp-agent",
+      "name": "install-acp-agent",
+      "description": "在当前 Android 设备安装、升级或修复 DSH、Codex、Claude Code、Kimi、OpenCode 等 ACP 助手；用户提供安装命令、要求自主安装或反馈安装未完成时使用。",
+      "assetPath": "builtin_skills/install-acp-agent",
+      "hasScripts": true,
+      "hasReferences": false,
+      "hasAssets": false,
+      "hasEvals": false
+    },
+    {
       "id": "self-improving-agent",
       "name": "self-improving-agent",
       "description": "Built-in self-improvement loop for Omnibot agents. Use to record non-trivial failures, user corrections, outdated assumptions, and reusable best practices into structured workspace learnings, then promote stable rules into memory.",

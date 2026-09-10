@@ -410,9 +410,9 @@ class PrivilegedToolHandler(
         val preview = command?.lineSequence()?.firstOrNull()?.trim()?.takeIf { it.isNotEmpty() }?.let { if (it.length <= 120) it else it.take(120) + "..." }
         val target = preview ?: action
         val suffix = if (helper.isEnglishLocale) {
-            " It has not run yet. Reply \"confirm\" to run it once, or \"cancel\" to stop."
+            " It has not run yet. Choose an allow or reject option in this permission request."
         } else {
-            "当前尚未执行。请回复“确认”执行一次，或回复“取消”停止。"
+            "当前尚未执行。请在本次授权请求中选择允许或拒绝。"
         }
         return when (PrivilegedActionPolicy.normalizeAction(action)) {
             PrivilegedActionPolicy.ACTION_SHELL_EXEC -> if (helper.isEnglishLocale) "The privileged shell command `$target` requires your confirmation.$suffix" else "高权限 shell 命令“$target”需要你的确认。$suffix"

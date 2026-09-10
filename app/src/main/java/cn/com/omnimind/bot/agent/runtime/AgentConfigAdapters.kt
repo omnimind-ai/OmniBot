@@ -55,6 +55,7 @@ internal data class AgentProviderMappingInput(
     val model: String?,
     val harnessAdapter: AcpHarnessAdapter = AcpHarnessAdapters.standard,
     val deepSeekConfig: DeepSeekHarnessConfig = DeepSeekHarnessConfig(),
+    val rawHarnessConfig: String? = null,
 )
 
 internal data class AgentProviderMapping(

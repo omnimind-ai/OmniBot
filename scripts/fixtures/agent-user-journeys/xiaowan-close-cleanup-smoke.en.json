@@ -1,0 +1,60 @@
+{
+  "name": "Xiaowan real API stop then next turn after close cleanup change",
+  "requireClockSync": true,
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_CLOSE_SMOKE_WAIT",
+      "scenario": "xiaowan-list-refresh.json",
+      "timeoutMs": 180000
+    },
+    {
+      "action": "expect",
+      "text": "Stop",
+      "timeoutMs": 30000
+    },
+    {
+      "action": "tap",
+      "label": "Stop"
+    },
+    {
+      "action": "expect",
+      "text": "Send",
+      "timeoutMs": 60000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_CLOSE_SMOKE_WAIT",
+      "expected": "cancelled"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_CLOSE_SMOKE_RECOVERY",
+      "timeoutMs": 180000,
+      "scenario": "xiaowan-switch-reply.json"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_CLOSE_SMOKE_RECOVERY_DONE",
+      "timeoutMs": 180000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_CLOSE_SMOKE_RECOVERY",
+      "expected": "done"
+    },
+    {
+      "action": "restart"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_CLOSE_SMOKE_WAIT",
+      "expected": "cancelled"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_CLOSE_SMOKE_RECOVERY",
+      "expected": "done"
+    }
+  ]
+}

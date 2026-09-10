@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:go_router/go_router.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:ui/features/home/pages/command_overlay/widgets/chat_input_area.dart';
 import 'package:ui/widgets/glass_popup.dart';
@@ -29,6 +30,69 @@ void main() {
   tearDown(() {
     messenger.setMockMethodCallHandler(speechChannel, null);
   });
+
+  for (final permission in [true, false]) {
+    testWidgets(
+      '${permission ? "permission" : "run settings"} popup owns system back without changing configuration',
+      (tester) async {
+        var changes = 0;
+        await tester.pumpWidget(
+          _buildTestApp(
+            useRouter: true,
+            contextUsageRatio: null,
+            useLargeComposerStyle: true,
+            agentPermissionMode: permission
+                ? AgentPermissionMode.defaultMode
+                : null,
+            onAgentPermissionModeChanged: permission
+                ? (_) {
+                    changes++;
+                  }
+                : null,
+            agentRunSettings: permission
+                ? null
+                : const AgentRunSettings(
+                    agentName: 'Codex',
+                    modelId: 'test-model',
+                    reasoningEffort: 'high',
+                    modelOptions: ['test-model'],
+                    reasoningEffortOptions: ['high'],
+                  ),
+            onAgentRunSettingsChanged: permission
+                ? null
+                : ({modelId, reasoningEffort}) {
+                    changes++;
+                  },
+          ),
+        );
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 500));
+        final button = find.byKey(
+          ValueKey(
+            permission
+                ? 'chat-input-agent-permission-button'
+                : 'chat-input-agent-run-settings-button',
+          ),
+        );
+        final route = ModalRoute.of(tester.element(button))!;
+        await tester.tap(button);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 500));
+        expect(
+          route.popDisposition,
+          RoutePopDisposition.doNotPop,
+          reason: 'Android must know the popup consumes back at the root',
+        );
+        await tester.binding.handlePopRoute();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 500));
+        expect(find.byType(GlassPopupOverlayContent), findsNothing);
+        expect(button, findsOneWidget);
+        expect(route.popDisposition, RoutePopDisposition.bubble);
+        expect(changes, 0);
+      },
+    );
+  }
 
   testWidgets('does not render context usage ring when ratio is absent', (
     tester,
@@ -61,6 +125,51 @@ void main() {
       findsOneWidget,
     );
   });
+
+  for (final large in [false, true]) {
+    testWidgets(
+      'context threshold stays adjustable without usage, large=$large',
+      (tester) async {
+        var opened = 0;
+        await tester.pumpWidget(
+          _buildTestApp(
+            contextUsageRatio: null,
+            useLargeComposerStyle: large,
+            useRouter: true,
+            onLongPressContextUsageRing: () => opened++,
+          ),
+        );
+        await tester.pump();
+
+        final control = find.byKey(const ValueKey('chat-input-context-usage'));
+        expect(control, findsOneWidget);
+        expect(find.text('?'), findsNothing);
+        await tester.tap(control);
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(find.text('0%\nLong press to adjust threshold'), findsOneWidget);
+        await tester.pump(const Duration(seconds: 4));
+        await tester.longPress(control);
+        await tester.pump();
+        expect(opened, 1);
+
+        await tester.pumpWidget(
+          _buildTestApp(
+            contextUsageRatio: 0,
+            useLargeComposerStyle: large,
+            useRouter: true,
+            onLongPressContextUsageRing: () => opened++,
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(control, findsOneWidget);
+        expect(find.text('?'), findsNothing);
+        await tester.longPress(control);
+        await tester.pump();
+        expect(opened, 2);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
 
   testWidgets('long pressing context usage ring triggers callback', (
     tester,
@@ -586,21 +695,35 @@ void main() {
   });
 
   for (final large in [false, true]) {
-    testWidgets('session settings is the single chat model entry (large=$large)', (tester) async {
-      var opened = false;
-      await tester.pumpWidget(_buildTestApp(
-        contextUsageRatio: null, useLargeComposerStyle: large,
-        runtimeConfigButton: IconButton(
-          key: const ValueKey('combined-model-panel'),
-          onPressed: () => opened = true, icon: const Icon(Icons.tune)),
-      ));
-      await tester.pump();
-      expect(find.byKey(const ValueKey('chat-input-model-picker-button')), findsNothing);
-      expect(find.byKey(const ValueKey('combined-model-panel')), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('combined-model-panel')));
-      await tester.pump();
-      expect(opened, isTrue);
-    });
+    testWidgets(
+      'session settings is the single chat model entry (large=$large)',
+      (tester) async {
+        var opened = false;
+        await tester.pumpWidget(
+          _buildTestApp(
+            contextUsageRatio: null,
+            useLargeComposerStyle: large,
+            runtimeConfigButton: IconButton(
+              key: const ValueKey('combined-model-panel'),
+              onPressed: () => opened = true,
+              icon: const Icon(Icons.tune),
+            ),
+          ),
+        );
+        await tester.pump();
+        expect(
+          find.byKey(const ValueKey('chat-input-model-picker-button')),
+          findsNothing,
+        );
+        expect(
+          find.byKey(const ValueKey('combined-model-panel')),
+          findsOneWidget,
+        );
+        await tester.tap(find.byKey(const ValueKey('combined-model-panel')));
+        await tester.pump();
+        expect(opened, isTrue);
+      },
+    );
   }
 
   testWidgets('normal chat model picker renders inside input actions', (
@@ -898,6 +1021,61 @@ void main() {
     expect(sendCount, 1);
   });
 
+  testWidgets('keyboard edits remove hidden selection handles above Send', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(411, 891);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    var sends = 0;
+    final focus = FocusNode();
+    addTearDown(focus.dispose);
+    await tester.pumpWidget(
+      _buildTestApp(
+        contextUsageRatio: 0,
+        focusNode: focus,
+        useLargeComposerStyle: true,
+        initialText: 'Reply OOB_FILE_TEXT_AFTERRATE_178889267859',
+        onSendMessage: () => sends++,
+      ),
+    );
+    focus.requestFocus();
+    await tester.pump(const Duration(milliseconds: 300));
+    final editable = tester.state<EditableTextState>(find.byType(EditableText));
+    for (var round = 0; round < 3; round++) {
+      editable.renderEditable.selectPositionAt(
+        from:
+            tester.getBottomRight(find.byType(TextField)) - const Offset(8, 8),
+        cause: SelectionChangedCause.tap,
+      );
+      await tester.pump();
+      editable.selectionOverlay?.showHandles();
+      await tester.enterText(
+        find.byType(TextField),
+        'Reply OOB_FILE_TEXT_AFTERRATE_178889267859$round',
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(
+        find.byType(CompositedTransformFollower),
+        findsNothing,
+        reason: 'Keyboard input must remove stale handle overlays, not only fade them out',
+      );
+      final send = find.byKey(const ValueKey('chat-input-send-or-stop-button'));
+      await tester.tap(send);
+      await tester.pump();
+      expect(
+        sends,
+        round + 1,
+        reason: 'Invisible selection handle must not swallow Send',
+      );
+      await tester.longPress(find.byType(TextField));
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(editable.selectionOverlay?.handlesAreVisible, isTrue);
+      expect(find.textContaining(RegExp(r'^(Copy|复制)$')), findsOneWidget);
+    }
+  });
+
   testWidgets('large composer enables send after text input', (tester) async {
     var sendCount = 0;
     final controller = TextEditingController();
@@ -1176,6 +1354,7 @@ Widget _buildTestApp({
   VoidCallback? onLongPressContextUsageRing,
   VoidCallback? onTriggerSlashCommand,
   bool useLargeComposerStyle = false,
+  bool useRouter = false,
   AgentPermissionMode? agentPermissionMode,
   List<AgentPermissionMode> agentPermissionModes = AgentPermissionMode.values,
   ValueChanged<AgentPermissionMode>? onAgentPermissionModeChanged,
@@ -1188,31 +1367,38 @@ Widget _buildTestApp({
   bool hasExternalSendPayload = false,
   VoidCallback? onSendMessage,
 }) {
+  final content = Scaffold(
+    body: ChatInputArea(
+      controller: TextEditingController(text: initialText),
+      focusNode: focusNode ?? FocusNode(),
+      isProcessing: false,
+      onSendMessage: onSendMessage ?? () {},
+      onCancelTask: () {},
+      useLargeComposerStyle: useLargeComposerStyle,
+      hasExternalSendPayload: hasExternalSendPayload,
+      contextUsageRatio: contextUsageRatio,
+      onLongPressContextUsageRing: onLongPressContextUsageRing,
+      onTriggerSlashCommand: onTriggerSlashCommand,
+      modelPickerSettings: modelPickerSettings,
+      runtimeConfigButton: runtimeConfigButton,
+      agentRunSettings: agentRunSettings,
+      onAgentRunSettingsChanged: onAgentRunSettingsChanged,
+      agentPermissionMode: agentPermissionMode,
+      agentPermissionModes: agentPermissionModes,
+      onAgentPermissionModeChanged: onAgentPermissionModeChanged,
+    ),
+  );
+  final router = useRouter
+      ? GoRouter(
+          routes: [GoRoute(path: '/', builder: (_, _) => content)],
+        )
+      : null;
+  if (router != null) addTearDown(router.dispose);
   return DefaultAssetBundle(
     bundle: _TestAssetBundle(),
-    child: MaterialApp(
-      home: Scaffold(
-        body: ChatInputArea(
-          controller: TextEditingController(text: initialText),
-          focusNode: focusNode ?? FocusNode(),
-          isProcessing: false,
-          onSendMessage: onSendMessage ?? () {},
-          onCancelTask: () {},
-          useLargeComposerStyle: useLargeComposerStyle,
-          hasExternalSendPayload: hasExternalSendPayload,
-          contextUsageRatio: contextUsageRatio,
-          onLongPressContextUsageRing: onLongPressContextUsageRing,
-          onTriggerSlashCommand: onTriggerSlashCommand,
-          modelPickerSettings: modelPickerSettings,
-          runtimeConfigButton: runtimeConfigButton,
-          agentRunSettings: agentRunSettings,
-          onAgentRunSettingsChanged: onAgentRunSettingsChanged,
-          agentPermissionMode: agentPermissionMode,
-          agentPermissionModes: agentPermissionModes,
-          onAgentPermissionModeChanged: onAgentPermissionModeChanged,
-        ),
-      ),
-    ),
+    child: router == null
+        ? MaterialApp(home: content)
+        : MaterialApp.router(routerConfig: router),
   );
 }
 

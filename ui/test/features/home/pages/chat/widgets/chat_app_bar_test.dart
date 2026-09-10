@@ -393,6 +393,33 @@ void _setTestViewport(WidgetTester tester, Size size) {
 }
 
 void main() {
+  testWidgets('history navigation updates the Harness avatar repeatedly', (tester) async {
+    Future<void> showOwner(String id) async {
+      await tester.pumpWidget(MaterialApp(home: DefaultAssetBundle(
+        bundle: _SvgTestAssetBundle(),
+        child: Scaffold(body: ChatAppBar(
+          onMenuTap: () {},
+          activeAcpAgentId: id,
+          isAgentSelected: true,
+          activeMode: ChatSurfaceMode.normal,
+          onModeChanged: (_) {},
+          onDisplayLayerChanged: (_) {},
+          onTerminalEnvironmentTap: (_) {},
+          onTerminalTap: () {},
+          onBrowserTap: () {},
+        )),
+      )));
+      await tester.pumpAndSettle();
+    }
+    for (final id in ['deepseek-harness-acp', 'codex-acp', 'deepseek-harness-acp']) {
+      await showOwner(id);
+      expect(find.byKey(ValueKey('chat-app-bar-active-agent-icon-$id')), findsOneWidget);
+    }
+    await tester.pumpWidget(const SizedBox.shrink());
+    await showOwner('deepseek-harness-acp');
+    expect(find.byKey(const ValueKey('chat-app-bar-active-agent-icon-deepseek-harness-acp')), findsOneWidget);
+  });
+
   testWidgets('keeps dynamic island free of model text in normal chat', (
     tester,
   ) async {

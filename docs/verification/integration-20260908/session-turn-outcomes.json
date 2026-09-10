@@ -1,0 +1,14 @@
+[
+  {
+    "marker": "OOB_SESSION_LIFECYCLE_1788858403341",
+    "expected": "done",
+    "passed": true,
+    "entries": 16
+  },
+  {
+    "marker": "OOB_SESSION_DISCOVERY_1788858403341",
+    "expected": "done",
+    "passed": true,
+    "entries": 7
+  }
+]

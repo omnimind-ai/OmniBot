@@ -14,6 +14,7 @@ import cn.com.omnimind.baselib.llm.OmniOfficialProvider
 import cn.com.omnimind.baselib.llm.PlatformAiProvisioner
 import cn.com.omnimind.baselib.llm.ReasoningStreamUpdatePolicy
 import cn.com.omnimind.baselib.llm.contentText
+import cn.com.omnimind.baselib.llm.encodeRequestToString
 import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.media.PlatformMediaProtocol
 import kotlinx.coroutines.CompletableDeferred
@@ -22,8 +23,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.channels.Channel
-import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.encodeToJsonElement
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -65,7 +66,7 @@ class AgentStreamIdleTimeoutException(
 class HttpAgentLlmClient(
     private val scope: CoroutineScope,
     modelOverride: AgentModelOverride? = null,
-    private val streamRequestOp: suspend (
+    private val streamRequestOp: (suspend (
         model: String,
         requestBodyJson: String,
         event: EventSourceListener,
@@ -76,20 +77,7 @@ class HttpAgentLlmClient(
         explicitProtocolType: String?,
         explicitWireApi: String?,
         forceHttp1: Boolean
-    ) -> EventSource = { model, requestBodyJson, event, explicitApiBase, explicitApiKey, explicitCustomHeaders, explicitModel, explicitProtocolType, explicitWireApi, forceHttp1 ->
-        HttpController.postChatCompletionsStreamRequest(
-            model = model,
-            requestBodyJson = requestBodyJson,
-            event = event,
-            explicitApiBase = explicitApiBase,
-            explicitApiKey = explicitApiKey,
-            explicitCustomHeaders = explicitCustomHeaders,
-            explicitModel = explicitModel,
-            explicitProtocolType = explicitProtocolType,
-            explicitWireApi = explicitWireApi,
-            forceHttp1 = forceHttp1
-        )
-    },
+    ) -> EventSource)? = null,
     private val resolveRouteInfoOp: (
         modelOrScene: String,
         explicitApiBase: String?,
@@ -261,7 +249,7 @@ class HttpAgentLlmClient(
         val wireRequest = namePlan?.encodeRequest(request) ?: request
         val turn = streamTurnWithPlatformAuthRetry(
             model = request.model,
-            requestJson = json.encodeToString(wireRequest),
+            requestJson = json.encodeToJsonElement(wireRequest).jsonObject,
             explicitModel = effectiveExplicitModel,
             platformRoute = AiRequestTransportPolicy.isPlatformRoute(routeInfo.routeTag),
             onReasoningUpdate = onReasoningUpdate,
@@ -277,7 +265,7 @@ class HttpAgentLlmClient(
 
     private suspend fun streamTurnWithPlatformAuthRetry(
         model: String,
-        requestJson: String,
+        requestJson: JsonObject,
         explicitModel: String?,
         platformRoute: Boolean,
         onReasoningUpdate: (suspend (String) -> Unit)?,
@@ -325,7 +313,7 @@ class HttpAgentLlmClient(
 
     private suspend fun streamTurnOnce(
         model: String,
-        requestJson: String,
+        requestJson: JsonObject,
         explicitModel: String?,
         onReasoningUpdate: (suspend (String) -> Unit)?,
         onContentUpdate: (suspend (String) -> Unit)?,
@@ -417,7 +405,7 @@ class HttpAgentLlmClient(
 
     private suspend fun doStreamTurnOnce(
         model: String,
-        requestJson: String,
+        requestJson: JsonObject,
         explicitModel: String?,
         onReasoningUpdate: (suspend (String) -> Unit)?,
         onContentUpdate: (suspend (String) -> Unit)?,
@@ -747,9 +735,9 @@ class HttpAgentLlmClient(
         }
 
         try {
-            eventSource = streamRequestOp(
+            eventSource = streamRequestOp?.invoke(
                 model,
-                requestJson,
+                json.encodeRequestToString(requestJson),
                 listener,
                 modelOverride?.apiBase,
                 modelOverride?.apiKey,
@@ -758,6 +746,17 @@ class HttpAgentLlmClient(
                 modelOverride?.protocolType,
                 modelOverride?.wireApi,
                 forceHttp1
+            ) ?: HttpController.postChatCompletionsStreamRequest(
+                model = model,
+                requestBody = requestJson,
+                event = listener,
+                explicitApiBase = modelOverride?.apiBase,
+                explicitApiKey = modelOverride?.apiKey,
+                explicitCustomHeaders = modelOverride?.customHeaders,
+                explicitModel = explicitModel,
+                explicitProtocolType = modelOverride?.protocolType,
+                explicitWireApi = modelOverride?.wireApi,
+                forceHttp1 = forceHttp1,
             )
             OmniLog.i(
                 tag,

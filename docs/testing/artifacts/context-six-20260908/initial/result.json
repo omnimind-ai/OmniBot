@@ -1,0 +1,68 @@
+{
+  "name": "Xiaowan bounded context across twenty file reads and restart",
+  "serial": "emulator-5560",
+  "runId": "1788866753316",
+  "kind": "emulator-user-interface",
+  "passed": true,
+  "steps": [
+    {
+      "index": 1,
+      "action": "send",
+      "marker": "OOB_FILE_CONTEXT_FIRST_1788866753316",
+      "passed": true,
+      "elapsedMs": 15940
+    },
+    {
+      "index": 2,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 2142
+    },
+    {
+      "index": 3,
+      "action": "turn-outcome",
+      "marker": "OOB_FILE_CONTEXT_FIRST_1788866753316",
+      "passed": true,
+      "elapsedMs": 4960
+    },
+    {
+      "index": 4,
+      "action": "restart",
+      "passed": true,
+      "elapsedMs": 2308
+    },
+    {
+      "index": 5,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 5585
+    },
+    {
+      "index": 6,
+      "action": "turn-outcome",
+      "marker": "OOB_FILE_CONTEXT_FIRST_1788866753316",
+      "passed": true,
+      "elapsedMs": 4749
+    },
+    {
+      "index": 7,
+      "action": "send",
+      "marker": "OOB_FILE_CONTEXT_REPEAT_1788866753316",
+      "passed": true,
+      "elapsedMs": 16448
+    },
+    {
+      "index": 8,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 2176
+    },
+    {
+      "index": 9,
+      "action": "turn-outcome",
+      "marker": "OOB_FILE_CONTEXT_REPEAT_1788866753316",
+      "passed": true,
+      "elapsedMs": 4841
+    }
+  ]
+}

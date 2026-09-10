@@ -22,11 +22,9 @@ internal fun readAgentAttachmentBytes(file: File): ByteArray {
     // Do not impose an application-defined attachment quota here. The byte
     // array still naturally fails if the process cannot allocate it, and the
     // downstream ACP/Provider transport remains the owner of its limits.
-    val output = ByteArrayOutputStream()
-    file.inputStream().use { input ->
-        copyAttachmentStream(input, output)
-    }
-    return output.toByteArray()
+    // File.readBytes allocates from the file length, avoiding the growing
+    // ByteArrayOutputStream plus its final full-size copy for ordinary files.
+    return file.readBytes()
 }
 
 private fun copyAttachmentStream(input: InputStream, output: java.io.OutputStream): Long {

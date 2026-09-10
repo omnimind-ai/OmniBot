@@ -28,7 +28,7 @@ class AgentEventAdapterTest {
                 )).jsonObject
 
                 assertEquals(raw, payload["rawResultJson"]?.jsonPrimitive?.content)
-                assertEquals(raw, payload["previewJson"]?.jsonPrimitive?.content)
+                assertFalse(payload.containsKey("previewJson"))
                 assertEquals(raw, payload["summary"]?.jsonPrimitive?.content)
                 assertFalse(payload.containsKey("outputTruncated"))
             }

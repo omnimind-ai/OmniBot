@@ -1,0 +1,3 @@
+{
+  "prompt": "Start a terminal_session. Execute exactly exit 7 using terminal_session_exec. After its failure, start a new terminal_session, execute printf {{MARKER}}_OK there, then stop the new session. Use terminal_session_start/exec/stop only. Do not retry exit or substitute terminal_execute."
+}

@@ -25,7 +25,6 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
-import java.security.MessageDigest
 
 class AgentOrchestrator(
     private val llmClient: AgentLlmClient,
@@ -41,14 +40,18 @@ class AgentOrchestrator(
      */
     private val ownsToolRouter: Boolean = true
 ) {
-    data class Input(
+    class Input(
         val callback: AgentCallback,
-        val initialMessages: List<ChatCompletionMessage>,
+        initialMessages: List<ChatCompletionMessage>,
         val executionEnv: AgentExecutionEnvironment,
         val conversationId: Long? = null,
         val promptCacheKey: String? = null,
         val contextCompactor: AgentContextCompactionController? = null,
-    )
+    ) {
+        // One owner for the mutable request context. Retaining the initial list
+        // here would pin all restored payloads after compaction replaces them.
+        internal val memory: AgentChatMemory = MutableListChatMemory(initialMessages)
+    }
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -67,37 +70,6 @@ class AgentOrchestrator(
 
     private fun t(zh: String, en: String): String {
         return if (AppLocaleManager.isEnglish()) en else zh
-    }
-
-    private fun logPromptCacheFingerprints(
-        messages: List<ChatCompletionMessage>,
-        tools: List<ChatCompletionTool>
-    ) {
-        val latestIndex = messages.lastIndex
-        fun encodedMessage(index: Int): String {
-            return messages.getOrNull(index)?.let { json.encodeToString(it) }.orEmpty()
-        }
-        val history = messages
-            .drop(2)
-            .dropLast(if (messages.size > 2) 1 else 0)
-            .joinToString(separator = "\u001e") { json.encodeToString(it) }
-        logInfo(
-            tag,
-            "cache_prefix_fingerprint " +
-                "system=${shortFingerprint(encodedMessage(0))} " +
-                "time=${shortFingerprint(encodedMessage(1))} " +
-                "tools=${shortFingerprint(json.encodeToString(tools))} " +
-                "history=${shortFingerprint(history)} " +
-                "latest=${shortFingerprint(encodedMessage(latestIndex))} " +
-                "messages=${messages.size} tools_count=${tools.size}"
-        )
-    }
-
-    private fun shortFingerprint(value: String): String {
-        return MessageDigest.getInstance("SHA-256")
-            .digest(value.toByteArray(Charsets.UTF_8))
-            .joinToString(separator = "") { byte -> "%02x".format(byte) }
-            .take(12)
     }
 
     private fun resolveTurnUsage(turn: ChatCompletionTurn): TurnUsage {
@@ -132,14 +104,13 @@ class AgentOrchestrator(
 
     suspend fun run(input: Input): AgentResult {
         val callback = input.callback
-        val memory: AgentChatMemory = MutableListChatMemory(input.initialMessages)
+        val memory = input.memory
         // Keep this as an explicit loop instead of the inline `mapTo` call.
         // This code runs inside the ACP request coroutine and can be resumed
         // while a counterpart sends $/cancelRequest.  The generated inline
         // collection bridge is needlessly fragile on Android/R8 in that
         // cancellation path; the mutable set is also clearer about the
         // de-duplication contract used by tool-choice recovery.
-        val executedTools = mutableListOf<ToolExecutionResult>()
         var outputKind = AgentOutputKind.NONE
         var hasUserFacingOutput = false
         var lastAssistantContent = ""
@@ -151,6 +122,15 @@ class AgentOrchestrator(
         var lastDecodeTokensPerSecond: Double? = null
         var completedModelRounds = 0
         var terminated = false
+        var usageMessageCount = 0
+        var usageContextTokens: Int? = null
+        // A provider may reject a prompt even when the local token estimate is
+        // below the configured threshold (providers do not share one length
+        // unit).  Allow exactly one pre-output recovery through the canonical
+        // compactor; never replay a round after visible model output.
+        var contextOverflowRecoveryAttempted = false
+        val toolBudget = AgentContextBudget.textTokens(json.encodeToString(toolRegistry.toolsForModel))
+            .coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
 
         try {
             roundLoop@ while (true) {
@@ -162,11 +142,23 @@ class AgentOrchestrator(
                     tag,
                     "round=$round request_tools=${toolRegistry.toolsForModel.size}"
                 )
-                val requestMessages = memory.snapshot()
-                logPromptCacheFingerprints(
-                    messages = requestMessages,
-                    tools = toolRegistry.toolsForModel
-                )
+                val before = memory.snapshot()
+                val estimatedContext = AgentContextBudget.estimate(before, usageContextTokens, usageMessageCount, toolBudget)
+                val requestMessages = input.contextCompactor?.compactIfNeeded(
+                    conversationId = input.conversationId,
+                    conversationMode = input.executionEnv.conversationMode,
+                    promptTokens = latestPromptTokens,
+                    messages = before,
+                    contextTokens = estimatedContext,
+                    requestOverheadTokens = toolBudget,
+                    callback = callback,
+                ) ?: before
+                if (requestMessages != before) {
+                    memory.replaceAll(requestMessages)
+                    usageContextTokens = null
+                    usageMessageCount = 0
+                }
+
                 // ACP/Xiaowan uses the shared vocabulary where `none` is the
                 // normal no-thinking value.  Treat all no-thinking aliases as
                 // an explicit wire-level disable; checking only `no` leaves
@@ -180,36 +172,65 @@ class AgentOrchestrator(
                     "off",
                     "disabled",
                 )
-                val turn = streamTurn(
-                    callback = callback,
-                    request = ChatCompletionRequest(
-                        messages = requestMessages,
-                        model = model,
-                        maxCompletionTokens = null,
-                        stream = true,
-                        streamOptions = ChatCompletionStreamOptions(includeUsage = true),
-                        enableThinking = if (disableThinking) false else null,
-                        reasoningEffort = if (disableThinking) null else input.executionEnv.reasoningEffort,
-                        thinking = if (disableThinking) {
-                            cn.com.omnimind.baselib.llm.ChatCompletionThinking(type = "disabled")
-                        } else {
-                            null
-                        },
-                        promptCacheKey = input.promptCacheKey,
-                        tools = toolRegistry.toolsForModel,
-                        // These optional controls belong to the active
-                        // Harness/Provider. The shared loop supplies the
-                        // tool surface and preserves all tool results,
-                        // without overriding the provider's own defaults.
-                        toolChoice = null,
-                        // The configured Harness/Provider owns whether
-                        // independent tool calls may run in parallel.
-                        // Omitting this optional OpenAI-compatible field
-                        // keeps the shared ACP loop free of a local policy.
-                        parallelToolCalls = null
-                    ),
-                    assistantContentPrefix = assistantContentPrefix
-                )
+                val turn = try {
+                    streamTurn(
+                        callback = callback,
+                        request = ChatCompletionRequest(
+                            messages = requestMessages,
+                            model = model,
+                            maxCompletionTokens = input.contextCompactor?.resolveOutputTokenBudget(input.conversationId),
+                            stream = true,
+                            streamOptions = ChatCompletionStreamOptions(includeUsage = true),
+                            enableThinking = if (disableThinking) false else null,
+                            reasoningEffort = if (disableThinking) null else input.executionEnv.reasoningEffort,
+                            thinking = if (disableThinking) {
+                                cn.com.omnimind.baselib.llm.ChatCompletionThinking(type = "disabled")
+                            } else {
+                                null
+                            },
+                            promptCacheKey = input.promptCacheKey,
+                            tools = toolRegistry.toolsForModel,
+                            // These optional controls belong to the active
+                            // Harness/Provider. The shared loop supplies the
+                            // tool surface and preserves all tool results,
+                            // without overriding the provider's own defaults.
+                            toolChoice = null,
+                            // The configured Harness/Provider owns whether
+                            // independent tool calls may run in parallel.
+                            // Omitting this optional OpenAI-compatible field
+                            // keeps the shared ACP loop free of a local policy.
+                            parallelToolCalls = null
+                        ),
+                        assistantContentPrefix = assistantContentPrefix
+                    )
+                } catch (error: AgentStreamRequestException) {
+                    if (
+                        !contextOverflowRecoveryAttempted &&
+                        !error.responseStarted &&
+                        input.contextCompactor != null &&
+                        AgentContextOverflow.isOverflow(error)
+                    ) {
+                        contextOverflowRecoveryAttempted = true
+                        val recovered = input.contextCompactor.compactIfNeeded(
+                            conversationId = input.conversationId,
+                            conversationMode = input.executionEnv.conversationMode,
+                            promptTokens = latestPromptTokens,
+                            messages = memory.snapshot(),
+                            // Provider rejection is a trigger, not token usage.
+                            force = true,
+                            requestOverheadTokens = toolBudget,
+                            callback = callback,
+                        )
+                        check(recovered != memory.snapshot()) {
+                            "Provider rejected the prompt as too large, but no safe compaction boundary was available."
+                        }
+                        memory.replaceAll(recovered)
+                        usageContextTokens = null
+                        usageMessageCount = 0
+                        continue@roundLoop
+                    }
+                    throw error
+                }
                 val turnUsage = resolveTurnUsage(turn)
                 lastTurnUsage = turnUsage
                 lastFinishReason = turn.finishReason
@@ -248,21 +269,10 @@ class AgentOrchestrator(
                     )
                 }
 
-                // Context maintenance stays inside Xiaowan's existing prompt.
-                // It neither resends a completed request nor creates a new ACP turn.
-                input.contextCompactor?.let { compactor ->
-                    val compacted = compactor.compactIfNeeded(
-                        conversationId = input.conversationId,
-                        conversationMode = input.executionEnv.conversationMode,
-                        promptTokens = latestPromptTokens,
-                        messages = memory.snapshot(),
-                        contextTokens = AgentConversationContextCompactor.resolveReportedContextTokens(
-                            turnUsage.promptTokens, turnUsage.completionTokens, turnUsage.totalTokens,
-                        ),
-                        callback = callback,
-                    )
-                    memory.replaceAll(compacted)
-                }
+                usageContextTokens = AgentConversationContextCompactor.resolveReportedContextTokens(
+                    turnUsage.promptTokens, turnUsage.completionTokens, turnUsage.totalTokens,
+                )
+                usageMessageCount = memory.snapshot().size
 
                 if (toolCalls.isEmpty()) {
                     val fallbackMessage = lastAssistantContent.ifBlank {
@@ -274,7 +284,6 @@ class AgentOrchestrator(
                         lastPrefillTokensPerSecond,
                         lastDecodeTokensPerSecond
                     )
-                    executedTools.add(ToolExecutionResult.ChatMessage(fallbackMessage))
                     outputKind = AgentOutputKind.CHAT_MESSAGE
                     hasUserFacingOutput = true
                     terminated = true
@@ -302,7 +311,6 @@ class AgentOrchestrator(
                             toolCall.function.name,
                             error.message ?: "Invalid tool arguments JSON"
                         )
-                        executedTools.add(result)
                         callback.onToolCallStart(
                             toolCall.id,
                             toolCall.function.name,
@@ -347,7 +355,6 @@ class AgentOrchestrator(
                             toolCall.function.name,
                             validationError.message ?: "Tool arguments validation failed"
                         )
-                        executedTools.add(result)
                         callback.onToolCallStart(
                             toolCall.id,
                             toolCall.function.name,
@@ -408,7 +415,6 @@ class AgentOrchestrator(
                             call.function.name,
                             result
                         )
-                        executedTools.add(result)
                         appendToolResultMessage(
                             memory = memory,
                             env = input.executionEnv,
@@ -504,7 +510,6 @@ class AgentOrchestrator(
                 lastPrefillTokensPerSecond,
                 lastDecodeTokensPerSecond
             )
-            executedTools.add(ToolExecutionResult.ChatMessage(fallbackMessage))
             outputKind = AgentOutputKind.CHAT_MESSAGE
             hasUserFacingOutput = true
         }
@@ -520,7 +525,6 @@ class AgentOrchestrator(
                 cacheCreationTokens = lastTurnUsage?.cacheCreationTokens,
                 totalTokens = lastTurnUsage?.totalTokens
             ),
-            executedTools = executedTools,
             outputKind = outputKind.value,
             hasUserVisibleOutput = hasUserFacingOutput,
             latestPromptTokens = latestPromptTokens,

@@ -120,11 +120,13 @@ class HarnessSwitchSendBarrier {
   }
 
   Future<bool> waitUntilIdle() async {
-    final pending = _pending;
-    if (pending != null) {
-      return await pending.future;
+    while (true) {
+      final pending = _pending;
+      if (pending == null) return true;
+      if (!await pending.future) return false;
+      // A newer selection may begin before this continuation resumes. Its
+      // target must settle too; a previous success cannot release that wait.
     }
-    return true;
   }
 
   void finish(int generation, {bool succeeded = true}) {

@@ -8,6 +8,7 @@ extension ChatRuntimePersistenceSupport on ChatConversationRuntimeCoordinator {
     bool markComplete = false,
     bool persistMessages = false,
     bool allowEphemeralPersistence = false,
+    bool allowHistoryRemoval = false,
   }) async {
     _cancelPendingPersistence(conversationId: conversationId, mode: mode);
     if (isEphemeralRuntime(conversationId: conversationId, mode: mode) &&
@@ -31,6 +32,7 @@ extension ChatRuntimePersistenceSupport on ChatConversationRuntimeCoordinator {
             generateSummary: generateSummary,
             markComplete: markComplete,
             persistMessages: persistMessages,
+            allowHistoryRemoval: allowHistoryRemoval,
           ),
         );
     _persistenceTails[key] = operation;
@@ -58,6 +60,7 @@ extension ChatRuntimePersistenceSupport on ChatConversationRuntimeCoordinator {
     bool generateSummary = false,
     bool markComplete = false,
     bool persistMessages = false,
+    bool allowHistoryRemoval = false,
   }) async {
     final runtime =
         expectedRuntime ??
@@ -71,14 +74,12 @@ extension ChatRuntimePersistenceSupport on ChatConversationRuntimeCoordinator {
     }
     final persistenceGeneration = runtime.persistenceGeneration;
     _flushRuntimeStreamingText(runtime);
-    // `persistMessages: true` means this caller owns the complete durable
-    // snapshot. An empty list is therefore a valid clear operation; dropping
-    // it resurrects deleted history on the next reload. Callers that merely
-    // update conversation metadata keep the old guard by leaving the flag
-    // false.
-    if (runtime.messages.isEmpty && !persistMessages) return;
+    // Completion/disposal may observe an empty projection. It is not a user
+    // instruction to erase committed history. Only explicit replacement owns clear.
+    if (runtime.messages.isEmpty && !(persistMessages && allowHistoryRemoval))
+      return;
 
-    final snapshotMessages = List<ChatMessageModel>.from(runtime.messages);
+    var snapshotMessages = List<ChatMessageModel>.from(runtime.messages);
     final snapshotConversation = runtime.conversation;
     final conversationMode = _conversationModeFromRuntimeMode(
       mode,
@@ -137,6 +138,14 @@ extension ChatRuntimePersistenceSupport on ChatConversationRuntimeCoordinator {
       preserveLatestMetadata: true,
     );
     if (persistMessages) {
+      // Metadata I/O can overlap streamed chunks and PromptResponse. Capture
+      // message content at the write boundary, not before that await. Keep the
+      // admitted snapshot if this runtime was replaced/reset in the meantime.
+      if (identical(runtimeFor(conversationId: conversationId, mode: mode), runtime) &&
+          runtime.persistenceGeneration == persistenceGeneration) {
+        _flushRuntimeStreamingText(runtime);
+        snapshotMessages = List<ChatMessageModel>.from(runtime.messages);
+      }
       // replaceConversationMessages is echoed back to Flutter as
       // messages_replaced. The runtime already owns this exact snapshot; if
       // the page reloads it while the completed run is folding, every row is
@@ -146,6 +155,7 @@ extension ChatRuntimePersistenceSupport on ChatConversationRuntimeCoordinator {
         conversationId,
         snapshotMessages,
         mode: conversationMode,
+        allowHistoryRemoval: allowHistoryRemoval,
       );
     }
     // A page switch may dispose this runtime while the durable write is
@@ -181,24 +191,30 @@ extension ChatRuntimePersistenceSupport on ChatConversationRuntimeCoordinator {
       return;
     }
     final previous = _pendingPersistence[key];
-    previous?.timer.cancel();
+    // Continuous ACP chunks must not keep moving the journal write into the
+    // future. Merge this batch into its original timer; urgent writes may
+    // advance it. The existing ordered persistence tail remains the owner.
+    if (delay == Duration.zero) previous?.timer.cancel();
     final nextGenerateSummary =
         generateSummary || (previous?.generateSummary ?? false);
     final nextMarkComplete = markComplete || (previous?.markComplete ?? false);
     final nextPersistMessages =
         persistMessages || (previous?.persistMessages ?? false);
-    final timer = Timer(delay, () {
-      _pendingPersistence.remove(key);
-      unawaited(
-        persistRuntimeConversation(
-          conversationId: conversationId,
-          mode: mode,
-          generateSummary: nextGenerateSummary,
-          markComplete: nextMarkComplete,
-          persistMessages: nextPersistMessages,
-        ),
-      );
-    });
+    final timer =
+        (delay != Duration.zero ? previous?.timer : null) ??
+        Timer(delay, () {
+          final request = _pendingPersistence.remove(key);
+          if (request == null) return;
+          unawaited(
+            persistRuntimeConversation(
+              conversationId: conversationId,
+              mode: mode,
+              generateSummary: request.generateSummary,
+              markComplete: request.markComplete,
+              persistMessages: request.persistMessages,
+            ),
+          );
+        });
     _pendingPersistence[key] = _PendingPersistenceRequest(
       conversationId: conversationId,
       mode: mode,

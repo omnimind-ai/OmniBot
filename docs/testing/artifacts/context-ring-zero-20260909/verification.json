@@ -1,0 +1,15 @@
+{
+  "device": "emulator-5560",
+  "versionName": "0.6.2.2",
+  "versionCode": 14,
+  "buildKind": "debug compatibility baseline f07a09841 plus request notice and zero ring fixes",
+  "apkSha256": "eda987e1ff23d095d92e698eb3b75fedead45140b4693dc4bec81db521766c4a",
+  "widgetTestsPassed": 45,
+  "dataPreservingInstall": true,
+  "zeroRingVisuallyChecked": true,
+  "afterInstallAndRestartUsageLabel": "0 / 128,000 tokens",
+  "longPressThresholdDialog": true,
+  "thresholdChanged": false,
+  "mainToolchainBuild": "not verified",
+  "physicalDeviceAcceptance": "pending"
+}

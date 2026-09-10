@@ -135,6 +135,14 @@ internal suspend fun fetchAgentProviderModels(
     }
 }
 
+/** Availability and distribution-scoped connectivity are owned by the host probe. */
+internal fun mergeLocalRuntimeStatus(
+    hostStatus: Map<String, Any?>,
+    transportStatus: Map<String, Any?>,
+): Map<String, Any?> = hostStatus + transportStatus.filterKeys {
+    it != "ready" && it != "connected"
+}
+
 /**
  * Decide transport ownership from request/session identity, never from the
  * last runtime that happened to connect. This keeps local ACP and the remote
@@ -186,25 +194,6 @@ internal fun standardAcpSessionWireParams(
     args["_meta"]?.let { put("_meta", it) }
 }
 
-/** Standard ToolCallUpdate payload used by RequestPermissionRequest. */
-internal fun standardAcpPermissionToolCallPayload(
-    toolCallId: String,
-    title: String,
-    optionNames: List<String>,
-): Map<String, Any?> = mapOf(
-    "toolCallId" to toolCallId,
-    "title" to title,
-    "status" to "in_progress",
-    "content" to listOf(
-        mapOf(
-            "type" to "content",
-            "content" to mapOf(
-                "type" to "text",
-                "text" to optionNames.joinToString("\n"),
-            ),
-        ),
-    ),
-)
 
 class AgentRuntimeManager private constructor(
     private val context: Context
@@ -237,7 +226,7 @@ class AgentRuntimeManager private constructor(
     }
     private val xiaowanScheduleToolBridge = object : AgentScheduleToolBridge {
         override suspend fun createTask(arguments: Map<String, Any?>): Map<String, Any?> =
-            scheduledTaskScheduler.upsertTask(arguments)
+            scheduledTaskScheduler.createTask(arguments)
 
         override suspend fun listTasks(): List<Map<String, Any?>> =
             scheduledTaskScheduler.listTasks()
@@ -245,13 +234,16 @@ class AgentRuntimeManager private constructor(
         override suspend fun updateTask(arguments: Map<String, Any?>): Map<String, Any?> =
             scheduledTaskScheduler.updateTask(arguments)
 
-        override suspend fun deleteTask(arguments: Map<String, Any?>): Map<String, Any?> =
-            mapOf(
-                "deleted" to scheduledTaskScheduler.deleteTask(
-                    arguments["taskId"]?.toString()
-                        ?: arguments["id"]?.toString().orEmpty()
-                )
+        override suspend fun deleteTask(arguments: Map<String, Any?>): Map<String, Any?> {
+            val deleted = scheduledTaskScheduler.deleteTask(
+                arguments["taskId"]?.toString() ?: arguments["id"]?.toString().orEmpty()
             )
+            return mapOf(
+                "deleted" to deleted,
+                "success" to deleted,
+                "summary" to if (deleted) "定时任务已删除" else "未找到要删除的定时任务"
+            )
+        }
     }
     // Local ACP profiles are separate executables, so each profile needs its
     // own transport and session registry. Instances are created lazily: using
@@ -527,7 +519,7 @@ class AgentRuntimeManager private constructor(
             "remoteUptimeMs" to probe.details["uptimeMs"]
         ).apply {
             if (runtime.kind == AgentRuntimeKind.LOCAL) {
-                putAll(selectedLocalRuntime?.statusPayload().orEmpty())
+                putAll(mergeLocalRuntimeStatus(this, selectedLocalRuntime?.statusPayload().orEmpty()))
             } else {
                 put("protocol", "acp")
             }
@@ -2038,6 +2030,7 @@ class AgentRuntimeManager private constructor(
                 provider = sharedProvider,
                 model = resolvedModel,
                 harnessAdapter = harnessAdapter,
+                rawHarnessConfig = existingHarnessConfig,
             )
         )
         val existingAdapterConfig = mapping.launchConfigPath?.let { path ->

@@ -1,0 +1,30 @@
+{
+  "name": "Small original file pages remain readable after app restart",
+  "requireClockSync": true,
+  "steps": [
+    {
+      "action": "restart"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_SMALL_BODY",
+      "scenario": "xiaowan-small-page-body.json",
+      "timeoutMs": 240000
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_SMALL_BODY_DONE",
+      "timeoutMs": 180000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_SMALL_BODY",
+      "expected": "done"
+    },
+    {
+      "action": "live-task",
+      "marker": "OOB_LIVE_SMALL_BODY",
+      "phase": "small-page-body"
+    }
+  ]
+}

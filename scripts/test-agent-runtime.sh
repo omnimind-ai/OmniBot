@@ -71,6 +71,14 @@ run_step() {
 
 run_step "Node protocol/provider tests" \
   node --test \
+    scripts/source-packaging.test.mjs \
+    scripts/agent-ui-xml.test.mjs \
+    scripts/verify-agent-user-journey.test.mjs \
+    scripts/send-agent-test-message.test.mjs \
+    scripts/verify-xiaowan-context-suite.test.mjs \
+    scripts/fixtures/xiaowan-session-scenarios.test.mjs \
+    scripts/fixtures/xiaowan-failure-scenarios.test.mjs \
+    scripts/fixtures/xiaowan-schedule-scenarios.test.mjs \
     scripts/agent-provider-observer.test.mjs \
     scripts/install-dev-shell.test.mjs \
     scripts/skill-install-shell.test.mjs \
@@ -79,13 +87,37 @@ run_step "Node protocol/provider tests" \
     scripts/agent_runtime_capability_contract.test.mjs \
     scripts/sync_models_dev_catalog.test.mjs
 
+run_step "Turn-scoped journal verifier tests" \
+  python3 -m unittest discover -s scripts -p test_agent_turn_outcome.py
+  python3 scripts/test-agent-init-assertions.py
+python3 scripts/test-agent-context-checkpoint.py
+python3 scripts/test-terminal-child-state.py
+python3 scripts/test-terminal-host-stop.py
+
 if [[ "$RUN_GRADLE" == "1" ]]; then
+  run_step "Shizuku binding lifecycle tests" \
+    ./gradlew --no-daemon --no-parallel :baselib:testDebugUnitTest \
+      --tests 'cn.com.omnimind.baselib.shizuku.ShizukuServiceBindingTest'
   run_step "Android Agent/ACP JVM tests" \
     ./gradlew --no-daemon --no-parallel \
       -Dkotlin.incremental=false \
       -Dkotlin.compiler.execution.strategy=in-process \
       :app:testDevelopStandardDebugUnitTest \
+      --tests 'cn.com.omnimind.bot.agent.WorkspaceScheduledTaskContractTest' \
       --tests 'cn.com.omnimind.bot.agent.AgentOrchestratorTest' \
+      --tests 'cn.com.omnimind.bot.agent.AgentContextOverflowTest' \
+      --tests 'cn.com.omnimind.bot.agent.AgentConversationContextCompactorTest' \
+      --tests 'cn.com.omnimind.bot.agent.AgentContextBudgetTest' \
+      --tests 'cn.com.omnimind.bot.agent.AgentFileReadSupportTest' \
+      --tests 'cn.com.omnimind.bot.agent.AgentToolOutputMetadataTest' \
+      --tests 'cn.com.omnimind.bot.terminal.PersistentSessionCommandTest' \
+      --tests 'cn.com.omnimind.bot.terminal.EmbeddedTerminalRuntimeTest' \
+      --tests 'cn.com.omnimind.bot.agent.tool.handlers.FileContentSearchTest' \
+      --tests 'cn.com.omnimind.bot.agent.tool.handlers.FileSearchTraversalTest' \
+      --tests 'cn.com.omnimind.bot.agent.tool.handlers.FileListTraversalTest' \
+      --tests 'cn.com.omnimind.bot.agent.runtime.XiaowanPromptWorkerTest' \
+      --tests 'cn.com.omnimind.bot.agent.runtime.McpRequestTimeoutTest' \
+      --tests 'cn.com.omnimind.bot.agent.runtime.McpProcessCleanupTest' \
       --tests 'cn.com.omnimind.bot.agent.AgentEventAdapterTest' \
       --tests 'cn.com.omnimind.bot.agent.AgentConversationModePolicyTest' \
       --tests 'cn.com.omnimind.bot.agent.AgentSystemPromptTest' \
@@ -116,6 +148,14 @@ if [[ "$RUN_GRADLE" == "1" ]]; then
     --tests 'cn.com.omnimind.bot.agent.BrowserUseRequestTest' \
       --tests 'cn.com.omnimind.bot.agent.AgentRuntimeContextQueryTest' \
       --tests 'cn.com.omnimind.bot.agent.runtime.LocalAcpRuntimeTest' \
+      --tests 'cn.com.omnimind.bot.agent.runtime.LocalAcpSessionListStateTest' \
+      --tests 'cn.com.omnimind.bot.agent.runtime.LocalAcpCancellationFailureTest' \
+      --tests 'cn.com.omnimind.bot.agent.runtime.LocalAcpSessionCloseTest' \
+      --tests 'cn.com.omnimind.bot.agent.runtime.XiaowanSessionCloseCleanupTest' \
+      --tests 'cn.com.omnimind.bot.agent.runtime.XiaowanSessionDeleteCleanupTest' \
+      --tests 'cn.com.omnimind.bot.agent.runtime.XiaowanSessionAdmissionTest' \
+      --tests 'cn.com.omnimind.bot.agent.runtime.LocalAcpSessionDeleteTest' \
+      --tests 'cn.com.omnimind.bot.agent.runtime.AgentSessionBindingMetadataTest' \
       --tests 'cn.com.omnimind.bot.agent.runtime.LocalAcpRuntimeConfigTest' \
       --tests 'cn.com.omnimind.bot.agent.runtime.LocalAcpRuntimeInitializationTest' \
       --tests 'cn.com.omnimind.bot.agent.runtime.AcpAgentProfileStoreTest' \
@@ -136,6 +176,7 @@ if [[ "$RUN_GRADLE" == "1" ]]; then
       --tests 'cn.com.omnimind.bot.agent.AgentImageAttachmentSupportTest' \
       --tests 'cn.com.omnimind.bot.agent.AgentWorkspaceAttachmentSupportTest' \
       --tests 'cn.com.omnimind.bot.mcp.RemoteMcpClientInteropTest' \
+      --tests 'cn.com.omnimind.bot.mcp.RemoteMcpSseCancellationTest' \
       --tests 'cn.com.omnimind.bot.mcp.McpFileInboxTest' \
       --tests 'com.ai.assistance.operit.terminal.setup.EnvironmentInstallExecutionTest' \
       --tests 'com.ai.assistance.operit.terminal.setup.EnvironmentSetupLogicTest'
@@ -158,9 +199,12 @@ if [[ "$RUN_FLUTTER" == "1" ]]; then
       test/agent_tool_summary_card_test.dart \\
       test/office_preview_service_test.dart \\
       test/widgets/streaming_text_test.dart \\
+      test/widgets/glass_popup_back_test.dart \\
       test/widgets/message_bubble_timing_test.dart \\
       test/widgets/omnibot_markdown_body_math_test.dart \\
       test/agent_tool_transcript_test.dart \\
+      test/features/home/pages/chat/state/chat_page_mode_state_test.dart \\
+      test/features/home/pages/chat/harness_switch_send_barrier_test.dart \\
       test/features/home/pages/chat/chat_architecture_test.dart \\
       test/features/home/pages/chat/acp_config_button_test.dart \\
       test/features/home/pages/chat/widgets/chat_message_list_test.dart \\
@@ -172,8 +216,13 @@ if [[ "$RUN_FLUTTER" == "1" ]]; then
       test/features/home/pages/model_provider_setting/model_provider_setting_page_test.dart \\
       test/features/home/pages/agent/agent_mode_setting_page_test.dart \\
       test/features/home/pages/agent/agent_config_page_test.dart \\
+      test/features/home/pages/agent/agent_sessions_page_test.dart \\
+      test/features/home/pages/agent/agent_sessions_refresh_test.dart \\
+      test/features/home/pages/chat/utils/agent_slash_commands_test.dart \\
+      test/features/home/pages/command_overlay/chat_bot_sheet_close_test.dart \\
       test/features/home/pages/command_overlay/chat_bot_sheet_acp_test.dart \\
       test/features/home/pages/command_overlay/widgets/chat_input_area_test.dart \\
+      test/services/scheduled_task_scheduler_service_test.dart \\
       test/services/agent_runtime_service_test.dart \\
       test/services/workspace_memory_service_test.dart \\
       test/features/memory/services/mem0_memory_service_test.dart \\

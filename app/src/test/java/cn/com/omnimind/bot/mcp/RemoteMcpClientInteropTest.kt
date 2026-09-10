@@ -1,6 +1,7 @@
 package cn.com.omnimind.bot.mcp
 
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.*
+import java.util.concurrent.TimeUnit
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
@@ -44,6 +45,8 @@ class RemoteMcpClientInteropTest {
                 val response = MockResponse()
                     .setResponseCode(plan.code)
                     .setBody(body)
+                    .setHeadersDelay(plan.headersDelayMs, TimeUnit.MILLISECONDS)
+                    .setBodyDelay(plan.bodyDelayMs, TimeUnit.MILLISECONDS)
                 plan.headers.forEach { (name, value) -> response.setHeader(name, value) }
                 return response
             }
@@ -391,6 +394,136 @@ class RemoteMcpClientInteropTest {
     }
 
     @Test
+    fun `cancelling stalled HTTP headers or body releases caller and next call succeeds`() = runBlocking {
+        enqueueModernDiscover()
+        enqueueModernToolList("Region")
+        RemoteMcpClient.listTools(config)
+        repeat(2) { server.takeRequest(2, TimeUnit.SECONDS) }
+        for (stallBody in listOf(false, true)) {
+            responsePlans += ResponsePlan(
+                code = 200,
+                body = """{"jsonrpc":"2.0","result":{"resultType":"complete","content":[{"type":"text","text":"late"}]}}""",
+                headers = mapOf("Content-Type" to "application/json"),
+                echoRequestId = true,
+                headersDelayMs = if (stallBody) 0 else 5000,
+                bodyDelayMs = if (stallBody) 5000 else 0,
+            )
+            val call = launch(Dispatchers.Default) {
+                RemoteMcpClient.callTool(config, "weather", emptyMap())
+            }
+            assertNotNull(server.takeRequest(2, TimeUnit.SECONDS))
+            // Allow headers to arrive in the body case; the delayed body remains unread.
+            if (stallBody) delay(150)
+            withTimeout(1500) { call.cancelAndJoin() }
+            assertTrue(call.isCancelled)
+            enqueueJson("""{"jsonrpc":"2.0","result":{"resultType":"complete","content":[{"type":"text","text":"next"}]}}""")
+            assertEquals("next", RemoteMcpClient.callTool(config, "weather", emptyMap()).summaryText)
+            assertEquals("tools/call", server.takeRequest(2, TimeUnit.SECONDS)!!.getHeader("Mcp-Method"))
+        }
+        assertEquals("No hidden replay or rediscovery", 6, server.requestCount)
+    }
+
+    @Test
+    fun `SSE endpoint wait is cancellable and later denial remains an error`() = runBlocking {
+        val sseConfig = config.copy(transport = RemoteMcpTransport.SSE)
+        repeat(2) {
+            responsePlans += ResponsePlan(
+                code = 200,
+                body = "event: endpoint\ndata: /messages\n\n",
+                headers = mapOf("Content-Type" to "text/event-stream"),
+                bodyDelayMs = 5000,
+            )
+            val call = launch(Dispatchers.Default) { RemoteMcpClient.listTools(sseConfig) }
+            assertEquals("GET", server.takeRequest(2, TimeUnit.SECONDS)!!.method)
+            delay(150)
+            withTimeout(1500) { call.cancelAndJoin() }
+            enqueueStatus(401)
+            val failure = runCatching { RemoteMcpClient.listTools(sseConfig) }.exceptionOrNull()
+            assertNotNull(failure)
+            assertFalse(failure is CancellationException)
+            assertTrue(failure!!.message.orEmpty().contains("HTTP 401"))
+            assertEquals("GET", server.takeRequest(2, TimeUnit.SECONDS)!!.method)
+        }
+        assertEquals("No hidden retries", 4, server.requestCount)
+    }
+
+    @Test
+    fun `HTTP rejection does not replay tools and next call remains usable`() = runBlocking {
+        enqueueModernDiscover()
+        enqueueModernToolList("Region")
+        RemoteMcpClient.listTools(config)
+        repeat(2) { server.takeRequest(2, TimeUnit.SECONDS) }
+        for (code in listOf(401, 403, 429)) {
+            enqueueStatus(code)
+            val failure = runCatching { RemoteMcpClient.callTool(config, "weather", emptyMap()) }.exceptionOrNull()
+            assertNotNull(failure)
+            assertFalse(failure is CancellationException)
+            assertTrue(failure!!.message.orEmpty().contains("HTTP $code"))
+            server.takeRequest(2, TimeUnit.SECONDS)
+            enqueueJson("""{"jsonrpc":"2.0","result":{"resultType":"complete","content":[{"type":"text","text":"next"}]}}""")
+            assertEquals("next", RemoteMcpClient.callTool(config, "weather", emptyMap()).summaryText)
+            server.takeRequest(2, TimeUnit.SECONDS)
+        }
+        assertEquals("No hidden retries or session recreation", 8, server.requestCount)
+    }
+
+    @Test
+    fun `legacy HTTP cancellation notifies the original request once and session remains usable`() = runBlocking {
+        enqueueLegacyProbeFailure()
+        enqueueLegacyInitialize("legacy-cancel-session")
+        enqueueJson("""{"jsonrpc":"2.0","result":{"tools":[{"name":"echo","inputSchema":{"type":"object"}}]}}""")
+        RemoteMcpClient.listTools(config)
+        val admission = (0 until 4).map { server.takeRequest(2, TimeUnit.SECONDS)!! }
+        assertNull("initialized is a notification", Json.parseToJsonElement(admission[2].body.readUtf8()).jsonObject["id"])
+        repeat(2) { attempt ->
+            responsePlans += ResponsePlan(
+                code = 200,
+                body = """{"jsonrpc":"2.0","result":{"content":[]}}""",
+                headers = mapOf("Content-Type" to "application/json"),
+                echoRequestId = true,
+                bodyDelayMs = 5000,
+            )
+            responsePlans += ResponsePlan(code = 202, headersDelayMs = if (attempt == 0) 0 else 5000)
+            val call = launch(Dispatchers.Default) { RemoteMcpClient.callTool(config, "echo", emptyMap()) }
+            val original = server.takeRequest(2, TimeUnit.SECONDS)!!
+            val originalId = Json.parseToJsonElement(original.body.readUtf8()).jsonObject["id"]
+            delay(150)
+            withTimeout(2500) { call.cancelAndJoin() }
+            val notification = server.takeRequest(2, TimeUnit.SECONDS)
+            assertNotNull("remote must receive cancellation", notification)
+            val body = Json.parseToJsonElement(notification!!.body.readUtf8()).jsonObject
+            assertEquals("notifications/cancelled", body["method"]!!.jsonPrimitive.content)
+            assertNull(body["id"])
+            assertEquals(originalId, body["params"]!!.jsonObject["requestId"])
+            assertEquals("legacy-cancel-session", notification.getHeader("Mcp-Session-Id"))
+            enqueueJson("""{"jsonrpc":"2.0","result":{"content":[{"type":"text","text":"next"}]}}""")
+            assertEquals("next", RemoteMcpClient.callTool(config, "echo", emptyMap()).summaryText)
+            server.takeRequest(2, TimeUnit.SECONDS)
+        }
+        assertEquals(10, server.requestCount)
+    }
+
+    @Test
+    fun `stopping legacy initialization does not send cancellation notification`() = runBlocking {
+        enqueueLegacyProbeFailure()
+        responsePlans += ResponsePlan(
+            code = 200,
+            body = """{"jsonrpc":"2.0","result":{"protocolVersion":"2025-11-25","capabilities":{},"serverInfo":{"name":"slow","version":"1"}}}""",
+            headers = mapOf("Content-Type" to "application/json"),
+            echoRequestId = true,
+            bodyDelayMs = 5000,
+        )
+        val call = launch(Dispatchers.Default) { RemoteMcpClient.listTools(config) }
+        server.takeRequest(2, TimeUnit.SECONDS)
+        val initialization = server.takeRequest(2, TimeUnit.SECONDS)!!
+        assertEquals("initialize", Json.parseToJsonElement(initialization.body.readUtf8()).jsonObject["method"]!!.jsonPrimitive.content)
+        delay(150)
+        withTimeout(1500) { call.cancelAndJoin() }
+        assertNull(server.takeRequest(300, TimeUnit.MILLISECONDS))
+        assertEquals(2, server.requestCount)
+    }
+
+    @Test
     fun `modern MCP name header uses the required base64 sentinel`() {
         val encoded = RemoteMcpClient.encodeMcpHeaderValue("天气 查询")
 
@@ -470,5 +603,7 @@ class RemoteMcpClientInteropTest {
         val body: String = "",
         val headers: Map<String, String> = emptyMap(),
         val echoRequestId: Boolean = false,
+        val headersDelayMs: Long = 0,
+        val bodyDelayMs: Long = 0,
     )
 }

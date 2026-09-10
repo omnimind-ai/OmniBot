@@ -1,0 +1,203 @@
+{
+  "name": "Provider failures remain terminal and allow a new user turn",
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_FAILURE_AUTH"
+    },
+    {
+      "action": "expect",
+      "text": "Failed",
+      "timeoutMs": 60000
+    },
+    {
+      "action": "expect",
+      "text": "Send"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_AUTH",
+      "expected": "error"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_FILE_TEXT_AFTERAUTH"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_FILE_TEXT_AFTERAUTH_DONE"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FILE_TEXT_AFTERAUTH",
+      "expected": "done"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_FAILURE_QUOTA"
+    },
+    {
+      "action": "expect",
+      "text": "Failed",
+      "timeoutMs": 60000
+    },
+    {
+      "action": "expect",
+      "text": "Send"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_QUOTA",
+      "expected": "error"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_FILE_TEXT_AFTERQUOTA"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_FILE_TEXT_AFTERQUOTA_DONE"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FILE_TEXT_AFTERQUOTA",
+      "expected": "done"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_FAILURE_RATE"
+    },
+    {
+      "action": "expect",
+      "text": "Failed",
+      "timeoutMs": 60000
+    },
+    {
+      "action": "expect",
+      "text": "Send"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_RATE",
+      "expected": "error"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_FILE_TEXT_AFTERRATE"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_FILE_TEXT_AFTERRATE_DONE"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FILE_TEXT_AFTERRATE",
+      "expected": "done"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_FAILURE_SERVER"
+    },
+    {
+      "action": "expect",
+      "text": "Failed",
+      "timeoutMs": 60000
+    },
+    {
+      "action": "expect",
+      "text": "Send"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_SERVER",
+      "expected": "error"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_FILE_TEXT_AFTERSERVER"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_FILE_TEXT_AFTERSERVER_DONE"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FILE_TEXT_AFTERSERVER",
+      "expected": "done"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_FAILURE_BEFORE"
+    },
+    {
+      "action": "expect",
+      "text": "Failed",
+      "timeoutMs": 60000
+    },
+    {
+      "action": "expect",
+      "text": "Send"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_BEFORE",
+      "expected": "error"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_FILE_TEXT_AFTERBEFORE"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_FILE_TEXT_AFTERBEFORE_DONE"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FILE_TEXT_AFTERBEFORE",
+      "expected": "done"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_FAILURE_PARTIAL"
+    },
+    {
+      "action": "expect",
+      "text": "Failed",
+      "timeoutMs": 60000
+    },
+    {
+      "action": "expect",
+      "text": "Send"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_PARTIAL",
+      "expected": "error"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_FILE_TEXT_AFTERPARTIAL"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_FILE_TEXT_AFTERPARTIAL_DONE"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FILE_TEXT_AFTERPARTIAL",
+      "expected": "done"
+    },
+    {
+      "action": "restart"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_FILE_TEXT_AFTERPARTIAL_DONE"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FILE_TEXT_AFTERPARTIAL",
+      "expected": "done"
+    }
+  ]
+}

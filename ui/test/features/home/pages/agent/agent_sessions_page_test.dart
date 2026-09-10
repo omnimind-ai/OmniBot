@@ -2,6 +2,22 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ui/features/home/pages/agent/agent_sessions_page.dart';
 
 void main() {
+  test('projects local ACP host ownership without treating history as loaded', () {
+    final sessions = extractAgentSessionSummariesForTesting([
+      {'sessions': [
+        {'sessionId': 'running', 'loaded': true, 'active': true},
+        {'sessionId': 'idle', 'loaded': true, 'active': false},
+        {'sessionId': 'history', 'loaded': false, 'active': false},
+      ]},
+    ]);
+    expect(sessions, hasLength(3));
+    final byId = {for (final session in sessions) session['threadId']: session};
+    expect(byId['running']!['active'], isTrue);
+    expect(byId['idle']!['active'], isFalse);
+    expect(byId['idle']!['loaded'], isTrue);
+    expect(byId['history']!['loaded'], isFalse);
+  });
+
   test('extracts remote codex session metadata for the dashboard', () {
     final sessions = extractAgentSessionSummariesForTesting([
       {

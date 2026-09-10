@@ -205,6 +205,19 @@ internal object AgentConversationHistorySupport {
         ).filterValues { it != null }
     }
 
+    fun mergeUiCardPayload(
+        existingPayload: Map<String, Any?>,
+        incomingPayload: Map<String, Any?>
+    ): Map<String, Any?> {
+        // Card-only writes (for example an acknowledged permission choice)
+        // omit message metadata; omission is not an instruction to erase it.
+        val updated = LinkedHashMap(incomingPayload)
+        if (incomingPayload["streamMeta"] == null) {
+            existingPayload["streamMeta"]?.let { updated["streamMeta"] = it }
+        }
+        return preserveDeepThinkingContent(existingPayload, updated)
+    }
+
     fun preserveDeepThinkingContent(
         existingPayload: Map<String, Any?>,
         incomingPayload: Map<String, Any?>
@@ -639,7 +652,11 @@ internal object AgentConversationHistorySupport {
         val reasoningContent = readReasoningContent(incoming) ?: readReasoningContent(existing)
 
         return linkedMapOf<String, Any?>(
+            "payloadCompacted" to chooseAny("payloadCompacted"),
             "taskId" to chooseAny("taskId"),
+            "toolCallId" to chooseAny("toolCallId"),
+            "sessionId" to chooseAny("sessionId"),
+            "turnId" to chooseAny("turnId"),
             "streamMeta" to chooseAny("streamMeta"),
             "agentId" to chooseText("agentId"),
             "agentName" to chooseText("agentName"),
@@ -864,23 +881,23 @@ internal object AgentConversationHistorySupport {
         val argsJson = payload["argsJson"]?.toString().orEmpty()
         val resultPreviewJson = payload["resultPreviewJson"]?.toString().orEmpty()
         val rawResultJson = payload["rawResultJson"]?.toString().orEmpty()
-        // These values are the user-visible projection of the canonical tool
-        // item. Keep their complete content; only labels/summaries below may
-        // use presentation shortening.
-        val safeArgsJson = AgentTextSanitizer.sanitizeUtf16(argsJson).trim()
-        val safeResultPreviewJson = AgentTextSanitizer.sanitizeUtf16(resultPreviewJson).trim()
-        val safeRawResultJson = AgentTextSanitizer.sanitizeUtf16(rawResultJson).trim()
-        val safeTerminalOutput = AgentTextSanitizer.sanitizeUtf16(terminalOutput).trim()
-        val safeReasoningContent = readReasoningContent(payload)
-            ?.trim()
-            ?.takeIf { it.isNotBlank() }
-        val payloadCompacted = false
+        // History owns full payloads. The display page only owns a bounded
+        // preview; its repository attaches a file artifact for the complete record.
+        val safeArgsJson = compactJsonText(argsJson, MAX_DISPLAY_TOOL_JSON_CHARS)
+        val safeResultPreviewJson = compactJsonText(resultPreviewJson, MAX_DISPLAY_TOOL_JSON_CHARS)
+        val safeRawResultJson = compactJsonText(rawResultJson, MAX_DISPLAY_TOOL_JSON_CHARS)
+        val safeTerminalOutput = trimTailText(terminalOutput, MAX_DISPLAY_TOOL_TERMINAL_CHARS)
+        val safeReasoningContent = trimTailText(readReasoningContent(payload).orEmpty(), MAX_DISPLAY_THINKING_CHARS)
+        val payloadCompacted = true
 
         return linkedMapOf<String, Any?>(
             "type" to "agent_tool_summary",
             "uiStyle" to "agent_tool",
             "agentId" to payload["agentId"]?.toString()?.trim()?.takeIf { it.isNotEmpty() },
             "agentName" to payload["agentName"]?.toString()?.trim()?.takeIf { it.isNotEmpty() },
+            "toolCallId" to payload["toolCallId"],
+            "sessionId" to payload["sessionId"],
+            "turnId" to payload["turnId"],
             "taskId" to payload["taskId"],
             "cardId" to payload["cardId"]?.toString().orEmpty().ifEmpty { messageId },
             "toolName" to canonicalAgentToolName(payload["toolName"]?.toString().orEmpty()),
@@ -911,8 +928,8 @@ internal object AgentConversationHistorySupport {
             "interruptionReason" to payload["interruptionReason"]?.toString().orEmpty(),
             "timedOut" to parseBoolean(payload["timedOut"], default = false),
             "workspaceId" to payload["workspaceId"],
-            "artifacts" to toListOfStringAnyMap(payload["artifacts"]),
-            "actions" to toListOfStringAnyMap(payload["actions"]),
+            "artifacts" to compactDisplayList(payload["artifacts"]),
+            "actions" to compactDisplayList(payload["actions"]),
             "success" to (
                 payload["success"]
                     ?: (status == AgentConversationHistoryRepository.STATUS_SUCCESS)
@@ -920,7 +937,7 @@ internal object AgentConversationHistorySupport {
             "showScheduleAction" to (toolType == "schedule"),
             "showAlarmAction" to (toolType == "alarm"),
             "isHistorical" to true,
-            "historyRenderMode" to "full",
+            "historyRenderMode" to "preview",
             "payloadCompacted" to payloadCompacted,
             "argsJsonOriginalLength" to originalLengthIfCompacted(argsJson, safeArgsJson),
             "resultPreviewJsonOriginalLength" to originalLengthIfCompacted(
@@ -1004,6 +1021,10 @@ internal object AgentConversationHistorySupport {
         )
 
         val rawPayload = linkedMapOf<String, Any?>(
+            "payloadCompacted" to cardData["payloadCompacted"],
+            "toolCallId" to cardData["toolCallId"],
+            "sessionId" to (cardData["sessionId"] ?: streamMeta["sessionId"]),
+            "turnId" to (cardData["turnId"] ?: streamMeta["turnId"]),
             "taskId" to cardData["taskId"]?.toString()?.trim()?.takeIf { it.isNotEmpty() },
             "streamMeta" to streamMeta.takeIf { it.isNotEmpty() },
             "agentId" to agentId,
@@ -1225,6 +1246,9 @@ internal object AgentConversationHistorySupport {
         ).trim().takeIf { it.isNotBlank() }
         val safePayload = linkedMapOf<String, Any?>(
             "taskId" to compactDisplayScalar(payload["taskId"]),
+            "toolCallId" to compactDisplayScalar(payload["toolCallId"]),
+            "sessionId" to compactDisplayScalar(payload["sessionId"]),
+            "turnId" to compactDisplayScalar(payload["turnId"]),
             "streamMeta" to compactDisplayStreamMeta(payload["streamMeta"]),
             "agentId" to compactDisplayScalar(payload["agentId"]),
             "agentName" to compactDisplayScalar(payload["agentName"]),

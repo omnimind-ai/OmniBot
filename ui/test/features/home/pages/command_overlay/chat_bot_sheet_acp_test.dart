@@ -11,6 +11,7 @@ import 'package:ui/features/home/pages/command_overlay/widgets/chat_input_area.d
 import 'package:ui/features/home/pages/command_overlay/widgets/message_bubble.dart';
 import 'package:ui/l10n/generated/app_localizations.dart';
 import 'package:ui/services/storage_service.dart';
+import 'package:ui/services/screen_dialog_service.dart';
 import 'package:ui/theme/app_theme.dart';
 
 void main() {
@@ -266,12 +267,12 @@ void main() {
       // Keep one app/event-channel lifetime while the user closes and reopens the
       // sheet. Only the conversation projection resets between scenarios.
       const scenarios = [
-        (stop: false, closeBeforePrompt: false, result: 'end_turn'),
-        (stop: false, closeBeforePrompt: false, result: 'error'),
-        (stop: true, closeBeforePrompt: false, result: 'cancelled'),
-        (stop: true, closeBeforePrompt: true, result: 'cancelled'),
-        (stop: true, closeBeforePrompt: true, result: 'end_turn'),
-        (stop: true, closeBeforePrompt: true, result: 'error'),
+        (stop: false, cancelFails: false, result: 'end_turn'),
+        (stop: false, cancelFails: false, result: 'error'),
+        (stop: true, cancelFails: false, result: 'cancelled'),
+        (stop: true, cancelFails: true, result: 'cancelled'),
+        (stop: true, cancelFails: true, result: 'end_turn'),
+        (stop: true, cancelFails: true, result: 'error'),
       ];
       for (final scenario in scenarios) {
         coordinator.resetForTest();
@@ -305,6 +306,9 @@ void main() {
                   ? prompt.future
                   : followup.future;
             case 'session/cancel':
+              if (scenario.cancelFails && requests.where((c) => c.method == 'session/cancel').length == 1) {
+                throw PlatformException(code: 'cancel_failed', message: 'Cancel transport failed');
+              }
               return <String, dynamic>{'ok': true, 'cancelled': true};
             case 'session/close':
               return close.future;
@@ -358,7 +362,7 @@ void main() {
             );
             expect(
               requests.where((call) => call.method == 'session/close'),
-              hasLength(1),
+              isEmpty,
             );
             expect(prompt.isCompleted, isFalse);
             expect(
@@ -366,11 +370,18 @@ void main() {
               isTrue,
               reason: 'A cancellation acknowledgement is not PromptResponse.',
             );
-            if (scenario.closeBeforePrompt) {
-              close.complete(<String, dynamic>{'closed': true});
+            expect(runtime.messages.singleWhere((m) => m.cardData?['toolCallId'] == 'read-document').cardData?['status'], 'running');
+            if (scenario.cancelFails) {
+              // A failed request stays on the same live prompt. Only an
+              // explicit second stop attempts cancellation again.
+              await tester.tap(find.byKey(const ValueKey('chat-input-send-or-stop-button')));
               await tester.pump();
+              expect(requests.where((c) => c.method == 'session/cancel'), hasLength(2));
               expect(runtime.isAiResponding, isTrue);
             }
+            await tester.tap(find.byKey(const ValueKey('chat-input-send-or-stop-button')));
+            await tester.pump();
+            expect(requests.where((c) => c.method == 'session/cancel'), hasLength(scenario.cancelFails ? 2 : 1));
           }
 
           await emitUpdate(<String, dynamic>{
@@ -448,7 +459,7 @@ void main() {
           );
           expect(
             requests.where((call) => call.method == 'session/cancel'),
-            hasLength(scenario.stop ? 1 : 0),
+            hasLength(scenario.stop ? (scenario.cancelFails ? 2 : 1) : 0),
           );
           // The next user send is a new prompt, not an automatic replay of
           // the cancelled/failed request. Exercise the actual composer again.

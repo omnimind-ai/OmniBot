@@ -1,0 +1,227 @@
+{
+  "inventorySource": "AgentToolDefinitions",
+  "count": 44,
+  "note": "Definitions are not proof of runtime availability. Only explicitly executed tools are marked device-tested; external accounts, calendars, scheduling, GUI automation and remaining tool families are not claimed as device acceptance.",
+  "tools": [
+    {
+      "name": "alarm_reminder_create",
+      "deviceEvidence": null,
+      "deviceStatus": "not executed in this integration run"
+    },
+    {
+      "name": "alarm_reminder_delete",
+      "deviceEvidence": null,
+      "deviceStatus": "not executed in this integration run"
+    },
+    {
+      "name": "alarm_reminder_list",
+      "deviceEvidence": null,
+      "deviceStatus": "not executed in this integration run"
+    },
+    {
+      "name": "android_privileged_action",
+      "deviceEvidence": null,
+      "deviceStatus": "not executed in this integration run"
+    },
+    {
+      "name": "android_privileged_session_exec",
+      "deviceEvidence": null,
+      "deviceStatus": "not executed in this integration run"
+    },
+    {
+      "name": "android_privileged_session_read",
+      "deviceEvidence": null,
+      "deviceStatus": "not executed in this integration run"
+    },
+    {
+      "name": "android_privileged_session_start",
+      "deviceEvidence": null,
+      "deviceStatus": "not executed in this integration run"
+    },
+    {
+      "name": "android_privileged_session_stop",
+      "deviceEvidence": null,
+      "deviceStatus": "not executed in this integration run"
+    },
+    {
+      "name": "browser_use",
+      "deviceEvidence": null,
+      "deviceStatus": "not executed in this integration run"
+    },
+    {
+      "name": "calendar_event_create",
+      "deviceEvidence": null,
+      "deviceStatus": "not executed in this integration run"
+    },
+    {
+      "name": "calendar_event_delete",
+      "deviceEvidence": null,
+      "deviceStatus": "not executed in this integration run"
+    },
+    {
+      "name": "calendar_event_list",
+      "deviceEvidence": null,
+      "deviceStatus": "not executed in this integration run"
+    },
+    {
+      "name": "calendar_event_update",
+      "deviceEvidence": null,
+      "deviceStatus": "not executed in this integration run"
+    },
+    {
+      "name": "calendar_list",
+      "deviceEvidence": null,
+      "deviceStatus": "not executed in this integration run"
+    },
+    {
+      "name": "context_apps_query",
+      "deviceEvidence": null,
+      "deviceStatus": "not executed in this integration run"
+    },
+    {
+      "name": "context_time_now",
+      "deviceEvidence": "session-tools.json / session-tools-provider.jsonl",
+      "deviceStatus": "passed on emulator with deterministic provider"
+    },
+    {
+      "name": "file_edit",
+      "deviceEvidence": "real-api-files/long/recovery",
+      "deviceStatus": "passed relevant scenarios"
+    },
+    {
+      "name": "file_list",
+      "deviceEvidence": "real-api-files/long/recovery",
+      "deviceStatus": "passed relevant scenarios"
+    },
+    {
+      "name": "file_move",
+      "deviceEvidence": "real-api-files/long/recovery",
+      "deviceStatus": "passed relevant scenarios"
+    },
+    {
+      "name": "file_read",
+      "deviceEvidence": "real-api-files/long/recovery",
+      "deviceStatus": "passed relevant scenarios"
+    },
+    {
+      "name": "file_search",
+      "deviceEvidence": "real-api-files/long/recovery",
+      "deviceStatus": "passed relevant scenarios"
+    },
+    {
+      "name": "file_stat",
+      "deviceEvidence": "real-api-files/long/recovery",
+      "deviceStatus": "passed relevant scenarios"
+    },
+    {
+      "name": "file_write",
+      "deviceEvidence": "real-api-files/long/recovery",
+      "deviceStatus": "passed relevant scenarios"
+    },
+    {
+      "name": "image_generate",
+      "deviceEvidence": null,
+      "deviceStatus": "not executed in this integration run"
+    },
+    {
+      "name": "memory_load",
+      "deviceEvidence": "memory.json",
+      "deviceStatus": "passed on emulator with deterministic provider"
+    },
+    {
+      "name": "memory_rollup_day",
+      "deviceEvidence": null,
+      "deviceStatus": "not executed in this integration run"
+    },
+    {
+      "name": "memory_search",
+      "deviceEvidence": "memory.json",
+      "deviceStatus": "passed on emulator with deterministic provider"
+    },
+    {
+      "name": "memory_upsert_longterm",
+      "deviceEvidence": "memory.json",
+      "deviceStatus": "passed on emulator with deterministic provider"
+    },
+    {
+      "name": "memory_write_daily",
+      "deviceEvidence": "memory.json",
+      "deviceStatus": "passed on emulator with deterministic provider"
+    },
+    {
+      "name": "music_playback_control",
+      "deviceEvidence": null,
+      "deviceStatus": "not executed in this integration run"
+    },
+    {
+      "name": "schedule_task_create",
+      "deviceEvidence": "schedule-complete.json / schedule-turn-outcomes.json",
+      "deviceStatus": "disabled-task CRUD, restart and missing-ID recovery passed; scheduled background firing not verified"
+    },
+    {
+      "name": "schedule_task_delete",
+      "deviceEvidence": "schedule-complete.json / schedule-turn-outcomes.json",
+      "deviceStatus": "disabled-task CRUD, restart and missing-ID recovery passed; scheduled background firing not verified"
+    },
+    {
+      "name": "schedule_task_list",
+      "deviceEvidence": "schedule-complete.json / schedule-turn-outcomes.json",
+      "deviceStatus": "disabled-task CRUD, restart and missing-ID recovery passed; scheduled background firing not verified"
+    },
+    {
+      "name": "schedule_task_update",
+      "deviceEvidence": "schedule-complete.json / schedule-turn-outcomes.json",
+      "deviceStatus": "disabled-task CRUD, restart and missing-ID recovery passed; scheduled background firing not verified"
+    },
+    {
+      "name": "skills_list",
+      "deviceEvidence": "session-tools.json / session-tools-provider.jsonl",
+      "deviceStatus": "passed on emulator with deterministic provider"
+    },
+    {
+      "name": "skills_read",
+      "deviceEvidence": "session-tools.json / session-tools-provider.jsonl",
+      "deviceStatus": "passed on emulator with deterministic provider"
+    },
+    {
+      "name": "subagent_dispatch",
+      "deviceEvidence": null,
+      "deviceStatus": "not executed in this integration run"
+    },
+    {
+      "name": "terminal_execute",
+      "deviceEvidence": "real-api-files/long/recovery",
+      "deviceStatus": "passed relevant scenarios"
+    },
+    {
+      "name": "terminal_session_exec",
+      "deviceEvidence": "session-tools.json / session-tools-provider.jsonl",
+      "deviceStatus": "passed on emulator with deterministic provider"
+    },
+    {
+      "name": "terminal_session_read",
+      "deviceEvidence": "session-tools.json / session-tools-provider.jsonl",
+      "deviceStatus": "passed on emulator with deterministic provider"
+    },
+    {
+      "name": "terminal_session_start",
+      "deviceEvidence": "session-tools.json / session-tools-provider.jsonl",
+      "deviceStatus": "passed on emulator with deterministic provider"
+    },
+    {
+      "name": "terminal_session_stop",
+      "deviceEvidence": "session-tools.json / session-tools-provider.jsonl",
+      "deviceStatus": "passed on emulator with deterministic provider"
+    },
+    {
+      "name": "tools_search",
+      "deviceEvidence": "session-tools-provider.jsonl",
+      "deviceStatus": "not advertised by current Xiaowan; deliberate legacy call rejected and task recovered"
+    },
+    {
+      "name": "vlm_task",
+      "deviceEvidence": null,
+      "deviceStatus": "not executed in this integration run"
+    }
+  ]
+}

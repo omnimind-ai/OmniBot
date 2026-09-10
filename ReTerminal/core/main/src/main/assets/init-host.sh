@@ -15,7 +15,9 @@ mkdir -p "$ROOTFS_DIR"
 
 terminate_active_child() {
     if [ -n "$ACTIVE_CHILD_PID" ]; then
-        kill "$ACTIVE_CHILD_PID" 2>/dev/null || true
+        # PRoot ignores TERM/INT. QUIT invokes its own tracee cleanup;
+        # killing only the tracer leaves descendants holding our stdio open.
+        kill -QUIT "$ACTIVE_CHILD_PID" 2>/dev/null || true
         wait "$ACTIVE_CHILD_PID" 2>/dev/null || true
         ACTIVE_CHILD_PID=
     fi
@@ -27,13 +29,13 @@ handle_termination() {
 }
 
 run_child() {
-    "$@" &
+    "$@" <&3 3<&- &
     ACTIVE_CHILD_PID=$!
     wait "$ACTIVE_CHILD_PID"
     child_status=$?
     ACTIVE_CHILD_PID=
     return "$child_status"
-}
+} 3<&0
 
 rootfs_entry_exists() {
     [ -e "$1" ] || [ -L "$1" ]
@@ -240,10 +242,9 @@ fi
 ARGS="$ARGS --sysvipc"
 ARGS="$ARGS -L"
 
-# The final runtime must stay attached to the caller's stdio.  In a
-# non-interactive shell an asynchronously executed command gets /dev/null as
-# stdin, which makes stdio services such as ACP observe EOF and exit before
-# initialization.  Replacing the host shell also lets Process.destroy() target
-# proot directly; --kill-on-exit remains responsible for its descendants.
-trap - HUP INT TERM
-exec "$LINKER" "$PREFIX/local/bin/proot" $ARGS /bin/sh "$PREFIX/local/bin/init" "$@"
+# Keep a host owner that translates Process.destroy()'s TERM to PRoot's
+# cleanup signal. Save stdin on a separate fd before backgrounding: Android
+# mksh replaces fd 0 before applying an async command's redirections. The child
+# restores fd 0 from fd 3, then closes the extra descriptor (ACP uses stdio).
+run_child "$LINKER" "$PREFIX/local/bin/proot" $ARGS /bin/sh "$PREFIX/local/bin/init" "$@"
+exit $?

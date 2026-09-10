@@ -1,0 +1,7 @@
+{
+  "marker": "OOB_FILE_CONTEXT_REPEAT_1788869368670",
+  "expected": "done",
+  "passed": true,
+  "entries": 41,
+  "note": "Same read-only assertion passed on the next snapshot without resending the user prompt."
+}

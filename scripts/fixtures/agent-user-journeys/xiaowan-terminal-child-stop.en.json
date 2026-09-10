@@ -1,0 +1,65 @@
+{
+  "name": "Stopping a real terminal command terminates its known child",
+  "requireClockSync": true,
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_TERMINAL_CHILD",
+      "scenario": "xiaowan-terminal-child.json",
+      "timeoutMs": 240000
+    },
+    {
+      "action": "terminal-child",
+      "marker": "OOB_LIVE_TERMINAL_CHILD",
+      "state": "started"
+    },
+    {
+      "action": "tap",
+      "label": "Stop"
+    },
+    {
+      "action": "terminal-child",
+      "marker": "OOB_LIVE_TERMINAL_CHILD",
+      "state": "stopped"
+    },
+    {
+      "action": "expect",
+      "text": "Send",
+      "timeoutMs": 60000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_TERMINAL_CHILD",
+      "expected": "cancelled"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_TERMINAL_RECOVERY",
+      "timeoutMs": 180000,
+      "scenario": "xiaowan-terminal-recovery.json"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_TERMINAL_RECOVERY_DONE",
+      "timeoutMs": 180000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_TERMINAL_RECOVERY",
+      "expected": "done"
+    },
+    {
+      "action": "restart"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_TERMINAL_CHILD",
+      "expected": "cancelled"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_TERMINAL_RECOVERY",
+      "expected": "done"
+    }
+  ]
+}

@@ -1,0 +1,3 @@
+{
+  "prompt": "Run terminal_execute once with this exact command and wait for it: sleep 173 & echo $! > /workspace/{{MARKER}}.pid; wait"
+}

@@ -72,8 +72,6 @@ class AcpSessionUpdateMapperTest {
         assertEquals("# Plan\n1. inspect", plan["content"])
     }
 
-
-
     @Test
     fun promptResponseUsageBecomesSharedTurnUsagePresentation() {
         val update = PromptResponse(

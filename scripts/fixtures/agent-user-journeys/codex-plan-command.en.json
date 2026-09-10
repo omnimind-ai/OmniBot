@@ -1,0 +1,23 @@
+{
+  "name": "Plan command changes the official Codex session mode",
+  "steps": [
+    {"action":"tap","label":"命令"},
+    {"action":"expect","text":"Plan mode is off"},
+    {"action":"tap","label":"plan"},
+    {"action":"expect","text":"Plan mode is active"},
+    {"action":"clear-command-draft"},
+    {"action":"send","marker":"OOB_CODEX_PLAN_SHORTCUT"},
+    {"action":"expect","text":"Implement this plan?"},
+    {"action":"expect","text":"OOB_CODEX_PLAN_SHORTCUT_DONE"},
+    {"action":"tap","label":"拒绝"},
+    {"action":"expect","text":"Processed"},
+    {"action":"tap","label":"Processed"},
+    {"action":"reply","text":"OOB_CODEX_PLAN_SHORTCUT_DONE"},
+    {"action":"tap","label":"命令"},
+    {"action":"tap","label":"plan"},
+    {"action":"expect","text":"Plan mode is off"},
+    {"action":"clear-command-draft"},
+    {"action":"send","marker":"OOB_CODEX_DEFAULT_SHORTCUT"},
+    {"action":"reply","text":"OOB_CODEX_DEFAULT_SHORTCUT_DONE"}
+  ]
+}

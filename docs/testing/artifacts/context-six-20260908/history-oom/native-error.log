@@ -1,0 +1,74 @@
+09-08 19:53:56.132 15735 15799 I om.omnimind.bot: Alloc concurrent copying GC freed 17(2848B) AllocSpace objects, 2(764KB) LOS objects, 0% free, 190MB/192MB, paused 6us,7us total 7.022ms
+09-08 19:53:56.133 15735 15799 W om.omnimind.bot: Throwing OutOfMemoryError "Failed to allocate a 1056264 byte allocation with 1793360 free bytes and 1751KB until OOM, target footprint 201326592, growth limit 201326592" (VmSize 20039632 kB)
+09-08 19:53:56.133 15735 15799 I om.omnimind.bot: Starting a blocking GC Alloc
+09-08 19:53:56.135 15735 15799 I om.omnimind.bot: Forcing collection of SoftReferences for 525KB allocation
+09-08 19:53:56.135 15735 15799 I om.omnimind.bot: Starting a blocking GC Alloc
+09-08 19:53:56.143 15735 15799 I om.omnimind.bot: Clamp target GC heap from 215MB to 192MB
+09-08 19:53:56.143 15735 15799 I om.omnimind.bot: Alloc concurrent copying GC freed 7(312B) AllocSpace objects, 1(516KB) LOS objects, 0% free, 191MB/192MB, paused 5us,7us total 7.865ms
+09-08 19:53:56.143 15735 15799 W om.omnimind.bot: Throwing OutOfMemoryError "Failed to allocate a 537992 byte allocation with 1011248 free bytes and 987KB until OOM, target footprint 201326592, growth limit 201326592" (VmSize 20039632 kB)
+09-08 19:53:56.143 15735 15799 I om.omnimind.bot: Starting a blocking GC Alloc
+09-08 19:53:56.145 15735 15799 I om.omnimind.bot: Forcing collection of SoftReferences for 105KB allocation
+09-08 19:53:56.145 15735 15799 I om.omnimind.bot: Starting a blocking GC Alloc
+09-08 19:53:56.151 15735 15799 I om.omnimind.bot: Clamp target GC heap from 213MB to 192MB
+09-08 19:53:56.151 15735 15799 I om.omnimind.bot: Alloc concurrent copying GC freed 291(1291KB) AllocSpace objects, 3(596KB) LOS objects, 1% free, 189MB/192MB, paused 17us,4us total 6.380ms
+09-08 19:53:56.152 15735 15799 I om.omnimind.bot: Starting a blocking GC Alloc
+09-08 19:53:56.154 15735 15799 I om.omnimind.bot: Forcing collection of SoftReferences for 105KB allocation
+09-08 19:53:56.154 15735 15799 I om.omnimind.bot: Starting a blocking GC Alloc
+09-08 19:53:56.162 15735 15799 I om.omnimind.bot: Clamp target GC heap from 213MB to 192MB
+09-08 19:53:56.162 15735 15799 I om.omnimind.bot: Alloc concurrent copying GC freed 239(11KB) AllocSpace objects, 4(796KB) LOS objects, 1% free, 189MB/192MB, paused 5us,6us total 7.386ms
+09-08 19:53:56.162 15735 15778 I om.omnimind.bot: WaitForGcToComplete blocked Background on Alloc for 9.156ms
+09-08 19:53:56.163 15735 15799 I om.omnimind.bot: Waiting for a blocking GC Alloc
+09-08 19:53:56.164 15735 15799 I om.omnimind.bot: Starting a blocking GC Alloc
+09-08 19:53:56.165 15735 15799 I om.omnimind.bot: Starting a blocking GC Alloc
+09-08 19:53:56.173 15735 15799 I om.omnimind.bot: Clamp target GC heap from 214MB to 192MB
+09-08 19:53:56.173 15735 15799 I om.omnimind.bot: Alloc concurrent copying GC freed 64(33KB) AllocSpace objects, 6(732KB) LOS objects, 0% free, 190MB/192MB, paused 11us,5us total 8.487ms
+09-08 19:53:56.173 15735 15799 I om.omnimind.bot: Forcing collection of SoftReferences for 515KB allocation
+09-08 19:53:56.173 15735 15799 I om.omnimind.bot: Starting a blocking GC Alloc
+09-08 19:53:56.180 15735 15799 I om.omnimind.bot: Clamp target GC heap from 214MB to 192MB
+09-08 19:53:56.180 15735 15799 I om.omnimind.bot: Alloc concurrent copying GC freed 9(2328B) AllocSpace objects, 0(0B) LOS objects, 0% free, 190MB/192MB, paused 7us,5us total 6.803ms
+09-08 19:53:56.180 15735 15799 W om.omnimind.bot: Throwing OutOfMemoryError "Failed to allocate a 528136 byte allocation with 1268656 free bytes and 1238KB until OOM, target footprint 201326592, growth limit 201326592" (VmSize 20039632 kB)
+09-08 19:53:56.181 15735 15799 I om.omnimind.bot: Starting a blocking GC Alloc
+09-08 19:53:56.182 15735 15799 I om.omnimind.bot: Forcing collection of SoftReferences for 1031KB allocation
+09-08 19:53:56.182 15735 15799 I om.omnimind.bot: Starting a blocking GC Alloc
+09-08 19:53:56.190 15735 15799 I om.omnimind.bot: Clamp target GC heap from 215MB to 192MB
+09-08 19:53:56.190 15735 15799 I om.omnimind.bot: Alloc concurrent copying GC freed 2(48B) AllocSpace objects, 1(260KB) LOS objects, 0% free, 191MB/192MB, paused 17us,5us total 7.566ms
+09-08 19:53:56.190 15735 15799 W om.omnimind.bot: Throwing OutOfMemoryError "Failed to allocate a 1056264 byte allocation with 748440 free bytes and 730KB until OOM, target footprint 201326592, growth limit 201326592" (VmSize 20039632 kB)
+09-08 19:53:56.190 15735 15799 I om.omnimind.bot: Starting a blocking GC Alloc
+09-08 19:53:56.192 15735 15799 I om.omnimind.bot: Forcing collection of SoftReferences for 1031KB allocation
+09-08 19:53:56.192 15735 15799 I om.omnimind.bot: Starting a blocking GC Alloc
+09-08 19:53:56.199 15735 15799 I om.omnimind.bot: Clamp target GC heap from 215MB to 192MB
+09-08 19:53:56.199 15735 15799 I om.omnimind.bot: Alloc concurrent copying GC freed 3(72B) AllocSpace objects, 0(0B) LOS objects, 0% free, 191MB/192MB, paused 18us,4us total 6.543ms
+09-08 19:53:56.199 15735 15799 W om.omnimind.bot: Throwing OutOfMemoryError "Failed to allocate a 1056264 byte allocation with 748440 free bytes and 730KB until OOM, target footprint 201326592, growth limit 201326592" (VmSize 20039632 kB)
+09-08 19:53:56.217 15735 15799 E XiaowanAcpConnection: Loopback ACP server failed
+09-08 19:53:56.217 15735 15799 E XiaowanAcpConnection: java.lang.OutOfMemoryError: Failed to allocate a 1056264 byte allocation with 748440 free bytes and 730KB until OOM, target footprint 201326592, growth limit 201326592
+09-08 19:53:56.217 15735 15799 E XiaowanAcpConnection: 	at java.util.Arrays.copyOf(Arrays.java:3766)
+09-08 19:53:56.217 15735 15799 E XiaowanAcpConnection: 	at java.lang.AbstractStringBuilder.ensureCapacityInternal(AbstractStringBuilder.java:125)
+09-08 19:53:56.217 15735 15799 E XiaowanAcpConnection: 	at java.lang.AbstractStringBuilder.append(AbstractStringBuilder.java:542)
+09-08 19:53:56.217 15735 15799 E XiaowanAcpConnection: 	at java.lang.StringBuilder.append(StringBuilder.java:176)
+09-08 19:53:56.217 15735 15799 E XiaowanAcpConnection: 	at java.lang.StringBuilder.append(StringBuilder.java:77)
+09-08 19:53:56.217 15735 15799 E XiaowanAcpConnection: 	at com.google.gson.internal.Streams$AppendableWriter.write(Streams.java:119)
+09-08 19:53:56.217 15735 15799 E XiaowanAcpConnection: 	at com.google.gson.stream.JsonWriter.string(JsonWriter.java:764)
+09-08 19:53:56.217 15735 15799 E XiaowanAcpConnection: 	at com.google.gson.stream.JsonWriter.value(JsonWriter.java:533)
+09-08 19:53:56.217 15735 15799 E XiaowanAcpConnection: 	at com.google.gson.internal.bind.TypeAdapters$16.write(TypeAdapters.java:571)
+09-08 19:53:56.217 15735 15799 E XiaowanAcpConnection: 	at com.google.gson.internal.bind.TypeAdapters$16.write(TypeAdapters.java:554)
+09-08 19:53:56.217 15735 15799 E XiaowanAcpConnection: 	at com.google.gson.internal.bind.TypeAdapterRuntimeTypeWrapper.write(TypeAdapterRuntimeTypeWrapper.java:73)
+09-08 19:53:56.217 15735 15799 E XiaowanAcpConnection: 	at com.google.gson.internal.bind.MapTypeAdapterFactory$Adapter.write(MapTypeAdapterFactory.java:225)
+09-08 19:53:56.217 15735 15799 E XiaowanAcpConnection: 	at com.google.gson.internal.bind.MapTypeAdapterFactory$Adapter.write(MapTypeAdapterFactory.java:161)
+09-08 19:53:56.217 15735 15799 E XiaowanAcpConnection: 	at com.google.gson.Gson.toJson(Gson.java:665)
+09-08 19:53:56.217 15735 15799 E XiaowanAcpConnection: 	at com.google.gson.Gson.toJson(Gson.java:620)
+09-08 19:53:56.217 15735 15799 E XiaowanAcpConnection: 	at com.google.gson.Gson.toJson(Gson.java:569)
+09-08 19:53:56.217 15735 15799 E XiaowanAcpConnection: 	at com.google.gson.Gson.toJson(Gson.java:546)
+09-08 19:53:56.217 15735 15799 E XiaowanAcpConnection: 	at cn.com.omnimind.bot.agent.AgentConversationHistorySupport.buildCompactToolReplayContent(AgentConversationHistorySupport.kt:845)
+09-08 19:53:56.217 15735 15799 E XiaowanAcpConnection: 	at cn.com.omnimind.bot.agent.AgentConversationHistorySupport.buildToolReplayMessages(AgentConversationHistorySupport.kt:762)
+09-08 19:53:56.217 15735 15799 E XiaowanAcpConnection: 	at cn.com.omnimind.bot.agent.AgentConversationHistorySupport.buildPromptRelevantMessages(AgentConversationHistorySupport.kt:341)
+09-08 19:53:56.217 15735 15799 E XiaowanAcpConnection: 	at cn.com.omnimind.bot.agent.AgentConversationHistorySupport.buildPromptSeedFromEntries(AgentConversationHistorySupport.kt:278)
+09-08 19:53:56.217 15735 15799 E XiaowanAcpConnection: 	at cn.com.omnimind.bot.agent.AgentConversationHistoryRepository$buildPromptSeed$2.invokeSuspend(AgentConversationHistoryRepository.kt:535)
+09-08 19:53:56.217 15735 15799 E XiaowanAcpConnection: 	at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:34)
+09-08 19:53:56.217 15735 15799 E XiaowanAcpConnection: 	at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:100)
+09-08 19:53:56.217 15735 15799 E XiaowanAcpConnection: 	at kotlinx.coroutines.internal.LimitedDispatcher$Worker.run(LimitedDispatcher.kt:124)
+09-08 19:53:56.217 15735 15799 E XiaowanAcpConnection: 	at kotlinx.coroutines.scheduling.TaskImpl.run(Tasks.kt:89)
+09-08 19:53:56.217 15735 15799 E XiaowanAcpConnection: 	at kotlinx.coroutines.scheduling.CoroutineScheduler.runSafely(CoroutineScheduler.kt:586)
+09-08 19:53:56.217 15735 15799 E XiaowanAcpConnection: 	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.executeTask(CoroutineScheduler.kt:798)
+09-08 19:53:56.217 15735 15799 E XiaowanAcpConnection: 	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.runWorker(CoroutineScheduler.kt:717)
+09-08 19:53:56.217 15735 15799 E XiaowanAcpConnection: 	at kotlinx.coroutines.scheduling.CoroutineScheduler$Worker.run(CoroutineScheduler.kt:704)
+09-08 19:53:57.125 15735 15832 D EGL_emulation: app_time_stats: avg=2.55ms min=2.13ms max=3.93ms count=60

@@ -757,18 +757,6 @@ class _ChatBotSheetState extends State<ChatBotSheet>
     }
     if (_acpCloseStarted) return;
     _acpCloseStarted = true;
-    if (_hasLiveAcpTurn) {
-      try {
-        await AgentRuntimeService.cancelPrompt(
-          sessionId: sessionId,
-          conversationId: conversationId,
-          promptId: _acpPromptId,
-          runId: _currentDispatchTurnId,
-        );
-      } catch (error) {
-        debugPrint('ACP 取消请求失败: $error');
-      }
-    }
     if (sessionId != null && sessionId.isNotEmpty) {
       try {
         await AgentRuntimeService.closeSession(
@@ -776,7 +764,11 @@ class _ChatBotSheetState extends State<ChatBotSheet>
           conversationId: conversationId,
         );
       } catch (error) {
+        _acpCloseStarted = false;
         debugPrint('关闭 ACP 会话失败: $error');
+        if (mounted && !_closeRequested) {
+          showToast(formatAgentRuntimeErrorForUser(error), type: ToastType.error);
+        }
       }
     }
   }
@@ -785,7 +777,21 @@ class _ChatBotSheetState extends State<ChatBotSheet>
   /// coordinator projection. The original prompt response owns the terminal
   /// state; the cancellation acknowledgement cannot end the turn.
   Future<void> _finishAcpCancellationPresentation() async {
-    await _closeAcpLifecycle();
+    try {
+      await AgentRuntimeService.cancelPrompt(
+        sessionId: _acpSessionId,
+        conversationId: _currentConversationId,
+        promptId: _acpPromptId,
+        runId: _currentDispatchTurnId,
+      );
+    } catch (error) {
+      _cancelRequested = false;
+      debugPrint('ACP cancellation failed: $error');
+      if (mounted) {
+        showToast(formatAgentRuntimeErrorForUser(error), type: ToastType.error);
+      }
+      return;
+    }
     if (!mounted) return;
     final conversationId = _currentConversationId;
     final runtime = conversationId == null
@@ -1781,59 +1787,22 @@ class _ChatBotSheetState extends State<ChatBotSheet>
   }
 
   void _onCancelTask() {
-    try {
-      _cancelRequested = true;
-      // 检查是否有任何正在进行的活动
-      if (_currentDispatchTurnId != null ||
-          _currentAiMessages.isNotEmpty ||
-          _isCheckingExecutableTask ||
-          _isExecutingTask) {
-        final conversationId = _currentConversationId;
-        if (conversationId != null) {
-          _runtimeCoordinator.interruptActiveToolCard(
-            conversationId: conversationId,
-            mode: _runtimeMode,
-          );
-        }
-        // ACP owns cancellation through the original prompt response. Keep
-        // the task reservation and loading projection until that response is
-        // reduced; otherwise the event is dropped by the current-turn guard
-        // and the native session can continue after this sheet looks idle.
-        unawaited(_finishAcpCancellationPresentation());
-      } else {
-        unawaited(_finishAcpCancellationPresentation());
-      }
-      debugPrint('ACP cancellation requested');
-    } catch (e) {
-      debugPrint('onCancelTask error: $e');
-    }
+    if (_cancelRequested) return;
+    _cancelRequested = true;
+    unawaited(_finishAcpCancellationPresentation());
   }
 
   void _onCancelTaskFromCard(String taskId) {
-    try {
-      _cancelRequested = true;
-      final conversationId = _currentConversationId;
-      if (conversationId == null ||
-          !_runtimeCoordinator.isTaskActive(
-            taskId: taskId,
-            conversationId: conversationId,
-            mode: _runtimeMode,
-          )) {
-        // A stale card cannot own the current session. Refuse the request
-        // instead of cancelling a newer prompt through shared session state.
-        return;
-      }
-      _runtimeCoordinator.interruptActiveToolCard(
-        conversationId: conversationId,
-        mode: _runtimeMode,
-      );
-      // Keep the official ACP turn alive until its prompt response is
-      // projected by the shared reducer. `taskId` remains the card identity;
-      // the cancellation request itself uses the reserved session/turn.
-      unawaited(_finishAcpCancellationPresentation());
-    } catch (e) {
-      debugPrint('onCancelTaskFromCard error: $e');
+    final conversationId = _currentConversationId;
+    if (conversationId == null ||
+        !_runtimeCoordinator.isTaskActive(
+          taskId: taskId,
+          conversationId: conversationId,
+          mode: _runtimeMode,
+        )) {
+      return;
     }
+    _onCancelTask();
   }
 
   void _onPopupVisibilityChanged(bool visible) {

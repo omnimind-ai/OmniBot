@@ -69,7 +69,7 @@
         "usesSharedProvider": true,
         "terminalPackageId": "codex",
         "managedInstallCommandAsset": "acp/install-codex.sh",
-        "preparationRevision": "codex-acp-1.10.0-message-completion-1"
+        "preparationRevision": "codex-acp-1.10.0-message-completion-1-title-model-1"
       }
     },
     {
@@ -99,15 +99,15 @@
       "builtIn": true,
       "runtime": {
         "discoveryCommand": "dsh",
-        "managedAdapterPackages": ["@deepseek-ai/dsh@0.1.2-rc.1"],
+        "managedAdapterPackages": ["@deepseek-ai/dsh@0.1.5-rc.1"],
         "requiresNativeBuildTools": true,
         "configAdapterId": "deepseek-harness",
         "usesSharedProvider": true,
         "terminalPackageId": "deepseek_harness",
         "managedInstallScriptPath": "/root/.dsh/omnibot-acp/install-dsh-runtime.sh",
         "managedInstallCommandAsset": "acp/install/deepseek-harness.sh",
-        "managedAdapterHealthCommand": "export DSH_HOME=/root/.dsh/omnibot-acp; export PATH=/root/.npm-global/bin:$PATH; command -v dsh >/dev/null 2>&1 && command -v dsh-acp-android >/dev/null 2>&1 && test -f \"$DSH_HOME/profiles/acp/package.json\" && test -f \"$DSH_HOME/profiles/acp/cordis.patch.yml\" && node -e \"const fs=require('fs'); const profile=JSON.parse(fs.readFileSync(process.env.DSH_HOME + '/profiles/acp/package.json','utf8')); const bundles=profile?.dsh?.profile?.bundles; if (!Array.isArray(bundles) || !bundles.includes('@deepseek-ai/dsh-acp-app')) process.exit(1)\" >/dev/null 2>&1 && test -f /root/.npm-global/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-acp-app/cordis.patch.yml && node -e \"require('/root/.npm-global/lib/node_modules/@deepseek-ai/dsh/node_modules/node-pty')\" >/dev/null 2>&1",
-        "preparationRevision": "deepseek-official-acp-profile-0.1.2-rc.1-browser-nav-v2",
+        "managedAdapterHealthCommand": "export DSH_HOME=/root/.dsh/omnibot-acp; export PATH=/root/.npm-global/bin:$PATH; command -v dsh >/dev/null 2>&1 && command -v dsh-acp-android >/dev/null 2>&1 && bash --noprofile --norc -c ':' >/dev/null 2>&1 && test -f \"$DSH_HOME/profiles/acp/package.json\" && test -f \"$DSH_HOME/profiles/acp/cordis.patch.yml\" && node -e \"const fs=require('fs'); const profile=JSON.parse(fs.readFileSync(process.env.DSH_HOME + '/profiles/acp/package.json','utf8')); const bundles=profile?.dsh?.profile?.bundles; if (!Array.isArray(bundles) || !bundles.includes('@deepseek-ai/dsh-acp-app')) process.exit(1)\" >/dev/null 2>&1 && test -f /root/.npm-global/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-acp-app/cordis.patch.yml && node -e \"require('/root/.npm-global/lib/node_modules/@deepseek-ai/dsh/node_modules/node-pty')\" >/dev/null 2>&1",
+        "preparationRevision": "deepseek-official-acp-profile-0.1.5-rc.1-plugin-reference-v4",
         "declaredCapabilities": {
           "plugin": {
             "supported": true,

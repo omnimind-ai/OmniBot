@@ -1,0 +1,3 @@
+{
+  "prompt": "Work only in /workspace/oob-live-integration. Create that test directory if needed. Create three small text files describing a triangle, a square and a circle. Use file_list, file_read, file_search and file_stat to verify them. Edit one file and move another. Run a terminal command to count the files. Write a short verification report in that directory. Do not change other files. Report any tool error accurately."
+}

@@ -2932,7 +2932,10 @@ class AgentEventReducer {
   bool _isTerminalRequestStatus(String? status) {
     return status == 'submitted' ||
         status == 'accepted' ||
-        status == 'declined';
+        status == 'declined' ||
+        status == 'cancelled' ||
+        status == 'interrupted' ||
+        status == 'failed';
   }
 
   String? _deduplicateReplayDelta(
@@ -3492,10 +3495,25 @@ class AgentEventReducer {
         final message = runtime.messages[index];
         if (message.user != 1 &&
             message.streamMeta?['parentTaskId'] == ownerTaskId) {
-          runtime.messages[index] = message.copyWith(streamMeta: {
-            ...?message.streamMeta,
-            'stopReason': promptStopReason,
-          });
+          final card = message.cardData;
+          // Once the owning prompt ends, its unanswered requests can no longer
+          // be acted on. Preserve answers already committed by that request.
+          final settleRequest =
+              card?['type'] == 'agent_request' &&
+              !_isTerminalRequestStatus(card?['status']?.toString());
+          runtime.messages[index] = message.copyWith(
+            content: settleRequest
+                ? {
+                    ...?message.content,
+                    'cardData': {...?card, 'status': 'cancelled'},
+                  }
+                : message.content,
+            isLoading: settleRequest ? false : message.isLoading,
+            streamMeta: {
+              ...?message.streamMeta,
+              'stopReason': promptStopReason,
+            },
+          );
         }
       }
     }

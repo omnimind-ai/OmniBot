@@ -1,0 +1,20 @@
+{
+  "device": "emulator-45562",
+  "versionName": "0.6.2.2",
+  "versionCode": 14,
+  "apkSha256": "20d43f96dbedf90156afde229a3a295f757acff23ea6e10380580bbe581fccbe",
+  "widgetRegression": {
+    "fixtureConversations": 300,
+    "beforeMountedRows": 300,
+    "afterMountedRowsUpperBoundExclusive": 30,
+    "lastRowReachable": true
+  },
+  "flutterTestsPassed": 1187,
+  "deviceSmoke": {
+    "oob-drawer": true,
+    "oob-drawer-repeat": true,
+    "oob-drawer-restart": true
+  },
+  "largeHistoryDevicePerformance": "not measured",
+  "physicalDeviceAcceptance": "pending"
+}

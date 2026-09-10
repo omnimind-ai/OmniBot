@@ -1,0 +1,23 @@
+{
+  "name": "Xiaowan bounded context across twenty file reads and restart",
+  "serial": "emulator-5560",
+  "runId": "1788867444507",
+  "kind": "emulator-user-interface",
+  "passed": false,
+  "steps": [
+    {
+      "index": 1,
+      "action": "send",
+      "marker": "OOB_FILE_CONTEXT_FIRST_1788867444507",
+      "passed": true,
+      "elapsedMs": 12674
+    },
+    {
+      "index": 2,
+      "passed": false,
+      "errorType": "AssertionError",
+      "code": "ERR_ASSERTION",
+      "assertionSite": "at file:///Users/wuzewen/Projects/Omni/OpenOmniBot-integration/scripts/verify-agent-user-journey.mjs:131:7"
+    }
+  ]
+}

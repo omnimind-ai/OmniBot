@@ -3078,7 +3078,8 @@ class AssistsCoreManager(private val context: Context) {
                 conversationDomainService.replaceConversationMessages(
                     conversationId = conversationId,
                     conversationMode = mode,
-                    messages = messages
+                    messages = messages,
+                    allowHistoryRemoval = call.argument<Boolean>("allowHistoryRemoval") == true
                 )
                 withContext(Dispatchers.Main) {
                     result.success("SUCCESS")

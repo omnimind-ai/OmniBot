@@ -65,7 +65,17 @@ test("request forwarding and prompt completion do not invent variants or tool ou
 test("file skill and terminal tools never apply application character truncation", async () => {
   for (const file of ["FileToolHandler", "SkillsToolHandler", "TerminalToolHandler", "PrivilegedToolHandler", "SharedHelper"]) {
     const content = await source(`app/src/main/java/cn/com/omnimind/bot/agent/tool/handlers/${file}.kt`);
-    assert.doesNotMatch(content, /maxChars|truncateText|truncateTerminalTail/, file);
+    assert.doesNotMatch(content, /truncateText|truncateTerminalTail/, file);
+    if (file === "FileToolHandler") {
+      // A caller-selected page size is not destructive output truncation.
+      // Original-body reconstruction is covered by AgentFileReadSupportTest.
+      assert.match(content, /args\["maxChars"\]/);
+      assert.match(content, /AgentFileReadSupport\.read\(file, offset, lineStart, lineCount, maxChars\)/);
+      assert.match(content, /metadata\.putAll\(page\.toPayload\(\)\)/);
+      assert.match(content, /page\.nextOffset/);
+    } else {
+      assert.doesNotMatch(content, /maxChars/, file);
+    }
   }
 });
 
@@ -427,7 +437,7 @@ test("official ACP bridge upgrades remain declarative and require an explicit pr
     assert.ok(match, `Bridge package must declare its installed version: ${spec}`);
     const [, name, version] = match;
     if (name === 'codex-acp') {
-      assert.equal(runtime.preparationRevision, `${name}-${version}-message-completion-1`);
+      assert.equal(runtime.preparationRevision, `${name}-${version}-message-completion-1-title-model-1`);
       assert.equal(runtime.managedInstallCommandAsset, 'acp/install-codex.sh');
       const installer = await source(`app/src/main/assets/${runtime.managedInstallCommandAsset}`);
       assert.ok(installer.includes(spec), 'Installer must install the catalog-pinned bridge');

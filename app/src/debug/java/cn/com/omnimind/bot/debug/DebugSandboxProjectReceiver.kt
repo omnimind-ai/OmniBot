@@ -195,7 +195,9 @@ class DebugSandboxProjectReceiver : BroadcastReceiver() {
             "message" to message,
             "elapsedMs" to (System.currentTimeMillis() - startedAt),
             "events" to events,
-            "result" to result.toDebugPayload(),
+            "result" to (result.toDebugPayload() + mapOf(
+                "executedTools" to events.filter { it["type"] == "tool_complete" }.map { it["result"] }
+            )),
         )
     }
 
@@ -266,7 +268,6 @@ class DebugSandboxProjectReceiver : BroadcastReceiver() {
             "completionTokens" to completionTokens,
             "cachedTokens" to cachedTokens,
             "totalTokens" to totalTokens,
-            "executedTools" to executedTools.map { it.toDebugPayload() },
         )
         is AgentResult.Error -> mapOf(
             "type" to "error",

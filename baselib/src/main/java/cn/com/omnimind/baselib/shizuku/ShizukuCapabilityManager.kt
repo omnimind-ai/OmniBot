@@ -480,13 +480,13 @@ class ShizukuCapabilityManager private constructor(
                     }
                 }
             }
-            val result = withTimeoutOrNull(3_000) {
-                connected.await()
+            try {
+                awaitShizukuUserService(connected)
+            } finally {
+                if (pendingBind === connected) {
+                    pendingBind = null
+                }
             }
-            if (pendingBind === connected) {
-                pendingBind = null
-            }
-            result
         }
     }
 

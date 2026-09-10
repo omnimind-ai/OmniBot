@@ -1,0 +1,11 @@
+{
+  "name": "Xiaowan init creation or update and restart repeat",
+  "requireClockSync": true,
+  "steps": [
+    {"action": "expect", "text": "命令", "timeoutMs": 30000},
+    {"action": "init", "timeoutMs": 600000},
+    {"action": "restart"},
+    {"action": "expect", "text": "命令", "timeoutMs": 30000},
+    {"action": "init", "timeoutMs": 600000}
+  ]
+}

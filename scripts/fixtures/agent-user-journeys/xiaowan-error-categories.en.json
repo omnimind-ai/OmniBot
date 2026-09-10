@@ -1,0 +1,90 @@
+{
+  "name": "Provider error categories persist with exact task identity",
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_FAILURE_AUTH"
+    },
+    {
+      "action": "expect",
+      "text": "Failed"
+    },
+    {
+      "action": "expect",
+      "text": "Send"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_AUTH",
+      "expected": "error",
+      "summary": "模型连接验证失败，请在模型设置中检查接口地址和密钥。"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_FAILURE_QUOTA"
+    },
+    {
+      "action": "expect",
+      "text": "Failed"
+    },
+    {
+      "action": "expect",
+      "text": "Send"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_QUOTA",
+      "expected": "error",
+      "summary": "模型服务商额度不足，请检查账户余额或配额后再试。"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_FAILURE_RATE"
+    },
+    {
+      "action": "expect",
+      "text": "Failed"
+    },
+    {
+      "action": "expect",
+      "text": "Send"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_RATE",
+      "expected": "error",
+      "summary": "模型服务商限制了请求频率，请稍后再试。"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_FAILURE_SERVER"
+    },
+    {
+      "action": "expect",
+      "text": "Failed"
+    },
+    {
+      "action": "expect",
+      "text": "Send"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_SERVER",
+      "expected": "error",
+      "summary": "模型服务商暂时不可用，请稍后再试或更换模型连接。"
+    },
+    {
+      "action": "restart"
+    },
+    {
+      "action": "expect",
+      "text": "Send"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_SERVER",
+      "expected": "error",
+      "summary": "模型服务商暂时不可用，请稍后再试或更换模型连接。"
+    }
+  ]
+}

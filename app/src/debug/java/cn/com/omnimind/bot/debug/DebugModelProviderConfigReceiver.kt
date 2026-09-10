@@ -31,7 +31,7 @@ class DebugModelProviderConfigReceiver : BroadcastReceiver() {
                 val result = runCatching {
                     when (operation) {
                         OPERATION_QUERY -> queryState()
-                        "verify_bound_provider" -> verifyBoundProvider()
+                        "verify_bound_provider" -> verifyBoundProvider(intent)
                         OPERATION_CONFIGURE -> configure(appContext, intent)
                         OPERATION_BIND_EXISTING -> bindExisting(intent)
                         else -> error("unsupported operation: $operation")
@@ -144,15 +144,18 @@ class DebugModelProviderConfigReceiver : BroadcastReceiver() {
     )
 
     /** Uses the existing binding and credentials in-process; never exports a key. */
-    private suspend fun verifyBoundProvider(): Map<String, Any?> {
-        val binding = checkNotNull(SceneModelBindingStore.getBinding("scene.dispatch.model"))
-        val profile = checkNotNull(ModelProviderConfigStore.getProfile(binding.providerProfileId))
+    private suspend fun verifyBoundProvider(intent: Intent?): Map<String, Any?> {
+        val binding = SceneModelBindingStore.getBinding("scene.dispatch.model")
+        val profileId = intent.stringExtra("profileId").ifBlank { binding?.providerProfileId.orEmpty() }
+        val modelId = intent.stringExtra("modelId").ifBlank { binding?.modelId.orEmpty() }
+        require(profileId.isNotBlank() && modelId.isNotBlank()) { "Provider and model required" }
+        val profile = checkNotNull(ModelProviderConfigStore.getProfile(profileId))
         val results = listOf("chat_completions", "responses", "anthropic").map { wire ->
             val base = if (wire == "anthropic")
                 cn.com.omnimind.bot.agent.runtime.normalizeClaudeCodeBaseUrl(profile.baseUrl)
                 else profile.baseUrl
             val result = cn.com.omnimind.assists.controller.http.HttpController.checkProviderModelAvailability(
-                model = binding.modelId, apiBase = base, apiKey = profile.apiKey,
+                model = modelId, apiBase = base, apiKey = profile.apiKey,
                 customHeaders = profile.customHeaders,
                 protocolType = if (wire == "anthropic") "anthropic" else "openai_compatible",
                 wireApi = wire,
@@ -162,7 +165,7 @@ class DebugModelProviderConfigReceiver : BroadcastReceiver() {
                     IllegalStateException(result.message)))
         }
         return mapOf("success" to true, "profileId" to profile.id,
-            "modelId" to binding.modelId, "checks" to results,
+            "modelId" to modelId, "checks" to results,
             "harnessAcceptance" to false)
     }
 

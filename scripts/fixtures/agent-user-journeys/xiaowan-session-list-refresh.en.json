@@ -1,0 +1,62 @@
+{
+  "name": "Local list observes task completion without leaving or manual refresh",
+  "requireClockSync": true,
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_LIST_REFRESH",
+      "scenario": "xiaowan-list-refresh.json",
+      "timeoutMs": 180000
+    },
+    {
+      "action": "open-xiaowan-session-list"
+    },
+    {
+      "action": "session-counters",
+      "running": 1,
+      "loaded": 0
+    },
+    {
+      "action": "session-counters",
+      "running": 0,
+      "loaded": 1,
+      "timeoutMs": 150000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_LIST_REFRESH",
+      "expected": "done"
+    },
+    {
+      "action": "live-task",
+      "marker": "OOB_LIVE_LIST_REFRESH",
+      "phase": "list-refresh"
+    },
+    {
+      "action": "restart"
+    },
+    {
+      "action": "expect",
+      "text": "命令",
+      "timeoutMs": 30000
+    },
+    {
+      "action": "open-xiaowan-session-list"
+    },
+    {
+      "action": "session-counters",
+      "running": 0,
+      "loaded": 1
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_LIST_REFRESH",
+      "expected": "done"
+    },
+    {
+      "action": "live-task",
+      "marker": "OOB_LIVE_LIST_REFRESH",
+      "phase": "list-refresh"
+    }
+  ]
+}

@@ -420,7 +420,8 @@ private class RecordingCallFactory(vararg responses: StubResponse) : Call.Factor
 private class StubCall(
     private val originalRequest: Request,
     private val stub: StubResponse,
-) : Call {
+) : Call by okhttp3.OkHttpClient().newCall(originalRequest) {
+    // Delegate new Call metadata APIs; execution stays entirely in this fixture.
     private var executed = false
     private var canceled = false
 

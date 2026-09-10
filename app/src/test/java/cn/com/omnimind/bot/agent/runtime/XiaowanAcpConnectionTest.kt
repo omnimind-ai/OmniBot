@@ -5,6 +5,7 @@ import cn.com.omnimind.bot.mcp.RemoteMcpToolDescriptor
 import com.agentclientprotocol.model.ContentBlock
 import com.agentclientprotocol.model.SessionUpdate
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
@@ -17,6 +18,35 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class XiaowanAcpConnectionTest {
+
+    @Test
+    fun `fatal loopback server error closes transport and signals the existing runtime owner`() = runBlocking {
+        val directory = java.nio.file.Files.createTempDirectory("acp-server-failure").toFile()
+        val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.Default)
+        val connection = XiaowanAcpConnection(
+            context = acpProfileStoreTestContext(directory), scope = scope,
+            scheduleToolBridge = org.mockito.Mockito.mock(cn.com.omnimind.bot.agent.AgentScheduleToolBridge::class.java),
+        )
+        try {
+            val transport = connection.createTransport(scope)
+            transport.start()
+            assertTrue(connection.isRunning)
+            val serverScope = connection.javaClass.getDeclaredField("serverProtocolScope").run {
+                isAccessible = true
+                get(connection) as kotlinx.coroutines.CoroutineScope
+            }
+            val failure = serverScope.launch { throw OutOfMemoryError("history restore fixture") }
+            kotlinx.coroutines.withTimeout(5_000) {
+                assertEquals(1, connection.exitSignal.await())
+                failure.join()
+            }
+            assertFalse(connection.isRunning)
+        } finally {
+            connection.close()
+            scope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
+            directory.deleteRecursively()
+        }
+    }
 
     @Test
     fun `xiaowan advertises only the ACP lifecycle and MCP transports it implements`() {
