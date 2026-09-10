@@ -649,7 +649,7 @@ class AgentRuntimeProtocolPayloadTest {
         assertEquals(listOf("--profile", "acp", "--patch", DEEPSEEK_HARNESS_SETTINGS_PATH), deepSeek.arguments)
         val deepSeekRuntime = AcpAgentProfileStore.officialRuntime(deepSeek)
         assertEquals("dsh", deepSeekRuntime?.discoveryCommand)
-        assertEquals(listOf("@deepseek-ai/dsh@0.1.2-rc.1"), deepSeekRuntime?.managedAdapterPackages)
+        assertEquals(listOf("@deepseek-ai/dsh@0.1.5-rc.1"), deepSeekRuntime?.managedAdapterPackages)
         assertTrue(deepSeekRuntime?.requiresNativeBuildTools == true)
         assertTrue(deepSeekRuntime?.managedAdapterHealthCommand.orEmpty().contains("command -v dsh-acp-android"))
         // Official DSH now ships the ACP profile; do not reinstall the removed third-party plugin.
