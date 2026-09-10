@@ -12,6 +12,32 @@ import org.junit.Test
 
 class AgentConfigAdaptersTest {
     @Test
+    fun deepSeekLaunchRereadsSavedPermissionsAndReasoningWithProviderPatch() {
+        for (mode in listOf("danger-full-access", "read-only", "workspace-write")) {
+            val input = AgentProviderMappingInput(
+                agentId = "deepseek-harness-acp",
+                provider = AgentProviderCredentials("https://gateway.example/v1", "current-key"),
+                model = "current-model",
+                harnessAdapter = AcpHarnessAdapters.deepSeekHarness,
+                rawHarnessConfig = buildDeepSeekHarnessConfigJson(
+                    DeepSeekHarnessConfig(
+                        apiKey = "old-key", model = "old-model",
+                        permissionMode = mode, reasoningEffort = "high",
+                    ),
+                ),
+            )
+            val mapping = AgentConfigAdapterRegistry.map(input)
+            val writes = AgentConfigAdapterRegistry.launchConfigWrites(input, mapping, emptyList(), "")
+            assertEquals(mode, mapping.environment["DSH_PERMISSION_MODE"])
+            assertEquals("high", mapping.environment["DSH_REASONING_EFFORT"])
+            assertEquals("current-key", mapping.environment["OMNIBOT_DSH_API_KEY"])
+            assertTrue(writes.single().content.contains("\"reasoning\":\"high\""))
+            assertFalse(writes.single().content.contains("old-key"))
+            assertFalse(writes.single().content.contains("old-model"))
+        }
+    }
+
+    @Test
     fun harnessModelSelectionUsesAdvertisedValuesWithoutLosingModelNamespace() {
         assertEquals("omnibot/org/model", AcpHarnessAdapters.openCode.resolveModelValue(
             "org/model", listOf("omnibot/org/model")))

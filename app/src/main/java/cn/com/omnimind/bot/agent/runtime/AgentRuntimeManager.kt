@@ -2030,6 +2030,7 @@ class AgentRuntimeManager private constructor(
                 provider = sharedProvider,
                 model = resolvedModel,
                 harnessAdapter = harnessAdapter,
+                rawHarnessConfig = existingHarnessConfig,
             )
         )
         val existingAdapterConfig = mapping.launchConfigPath?.let { path ->

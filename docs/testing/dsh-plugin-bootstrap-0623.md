@@ -39,3 +39,15 @@ python3 scripts/verify-dsh-sandbox.py emulator-5554 OUTPUT.json
 证据见 artifacts/dsh-015-0623。仅模拟器连接，**待真机验证**。
 
 新版 App 内真实模型回合已尝试，官方 ACP 返回 `Internal error: turn failed: Connection error.`；没有执行到本轮工具验收。因此新版完整模型/工具链验收未通过，不能用 initialize 成功替代。
+
+## 2026-09-10 保存配置启动回归
+
+确认独立缺陷：启动准备已读取用户保存的 harness JSON，但未传入 Provider mapping；DSH 在生成启动环境时因此回退到默认权限和思考强度。现在由现有 AgentRuntimeManager 将保存内容传给 DeepSeekHarnessConfigAdapter，再同步当前 Provider。没有修改 ACP 生命周期或默认权限。此缺陷不能解释之前模型连接失败的全部原因。
+
+可执行回归：AgentConfigAdaptersTest.deepSeekLaunchRereadsSavedPermissionsAndReasoningWithProviderPatch，覆盖三种保存权限、high 思考强度、当前 Provider 替换旧凭据和模型，以及生成的启动 patch。运行 `JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' ./gradlew --no-daemon --no-parallel :app:testDevelopStandardDebugUnitTest --tests '*AgentConfigAdaptersTest' :app:assembleDevelopStandardDebug -Ptarget=lib/main_standard.dart`：55 项通过，构建成功。上述两个 Node 测试入口合计 7 项通过。测试覆盖配置重读边界，不代表真实进程重启验收。
+
+模拟器 emulator-5554 / Android 13 arm64，覆盖安装 0.6.2.3 / code 15 返回 Success。设备 base.apk 与构建产物 SHA-256 均为 `f6d4f629b5ff5a68c838e583d67b5b35f2ea461de88c4ef93f804eba4efbfb63`，未卸载或清除数据。
+
+当前环境仍阻塞：Alpine 基础包未完成；主机通过本机代理访问官方 APKINDEX 返回 HTTP 200，但 App UID 下临时代理探测失败，apk update 在 45 秒内未完成。临时 adb reverse 已移除，没有持久化代理或关闭 TLS 校验。未把未经证实的镜像切换改动纳入发布修复。
+
+未通过：App 内修改配置并验证实际 DSH 进程、模型工具调用、持久插件安装和执行、App/Agent 重启后重复执行。只有模拟器连接，**待真机验证**。整个 DSH 修复尚未完成验收。

@@ -9,7 +9,8 @@ import cn.com.omnimind.bot.plugin.official.agentweb.buildDeepSeekProviderPatch
 internal object DeepSeekHarnessConfigAdapter : AgentConfigAdapter {
     override fun map(input: AgentProviderMappingInput): AgentProviderMapping {
         val config = syncAgentProviderCredentials(
-            config = input.deepSeekConfig,
+            config = input.rawHarnessConfig?.let(::parseDeepSeekHarnessConfig)
+                ?: input.deepSeekConfig,
             sharedProvider = input.provider,
             sharedModel = input.model
         )
