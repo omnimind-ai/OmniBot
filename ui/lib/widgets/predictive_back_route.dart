@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:ui/widgets/predictive_back_motion.dart';
 import 'package:ui/widgets/predictive_back_gesture_wrapper.dart';
@@ -13,6 +14,7 @@ mixin PredictiveBackRouteMotion<T> on PageRoute<T> {
   double? _releaseVelocity;
   bool _disposed = false;
   int _gestureGeneration = 0;
+  int? _gestureFrameCallback;
   PredictiveBackRouteMotion<dynamic>? _leavingNext;
   Simulation? _joinedSimulation;
 
@@ -117,6 +119,7 @@ mixin PredictiveBackRouteMotion<T> on PageRoute<T> {
   @override
   void handleStartBackGesture({double progress = 0}) {
     _gestureGeneration++;
+    _stopGestureFrames();
     _stopJoinedMotion();
     if (_gestureNavigator == null) {
       _gestureNavigator = navigator;
@@ -126,6 +129,29 @@ mixin PredictiveBackRouteMotion<T> on PageRoute<T> {
       // counter twice. The same route retains its one gesture reservation.
       controller!.value = progress.clamp(0.0, 1.0);
     }
+    _scheduleGestureFrame();
+  }
+
+  // Platform back progress arrives outside Flutter's frame callbacks. When
+  // neither page is animating, requesting a frame only after each update can
+  // miss alternating vsyncs (120 Hz input becomes 60 Hz motion). Keep the next
+  // frame reserved while dragging; the existing route controller still owns
+  // position, and its animation takes over as soon as the finger is released.
+  void _scheduleGestureFrame() {
+    _gestureFrameCallback = SchedulerBinding.instance.scheduleFrameCallback((_) {
+      _gestureFrameCallback = null;
+      if (!_disposed && _gestureNavigator != null && isCurrent) {
+        _scheduleGestureFrame();
+      }
+    });
+  }
+
+  void _stopGestureFrames() {
+    final callback = _gestureFrameCallback;
+    _gestureFrameCallback = null;
+    if (callback != null) {
+      SchedulerBinding.instance.cancelFrameCallbackWithId(callback);
+    }
   }
 
   @override
@@ -134,6 +160,7 @@ mixin PredictiveBackRouteMotion<T> on PageRoute<T> {
   }
 
   void _commitGesture(double velocity) {
+    _stopGestureFrames();
     if (!isCurrent) {
       handleCancelBackGesture();
       return;
@@ -151,6 +178,7 @@ mixin PredictiveBackRouteMotion<T> on PageRoute<T> {
 
   @override
   void handleCancelBackGesture() {
+    _stopGestureFrames();
     if (_disposed) return;
     final animation = controller!;
     final generation = _gestureGeneration;
@@ -169,6 +197,7 @@ mixin PredictiveBackRouteMotion<T> on PageRoute<T> {
   }
 
   void _releaseGesture() {
+    _stopGestureFrames();
     final owner = _gestureNavigator;
     _gestureNavigator = null;
     if (owner != null && owner.mounted) owner.didStopUserGesture();
@@ -177,6 +206,7 @@ mixin PredictiveBackRouteMotion<T> on PageRoute<T> {
   @override
   void dispose() {
     _disposed = true;
+    _stopGestureFrames();
     WidgetsBinding.instance.removeObserver(_backObserver!);
     final owner = _gestureNavigator;
     _gestureNavigator = null;
