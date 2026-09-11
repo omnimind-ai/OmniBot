@@ -137,7 +137,8 @@ jobs:
 
       - name: Gradle unit tests, lint and debug APK
         run: >-
-          ./gradlew --no-daemon --parallel --build-cache
+          ./gradlew --no-daemon --parallel --build-cache --max-workers=2
+          -Dorg.gradle.jvmargs="-Xmx4g -Dfile.encoding=UTF-8 --enable-native-access=ALL-UNNAMED"
           :app:testDevelopStandardDebugUnitTest
           :app:lintDevelopStandardDebug
           :app:assembleDevelopStandardDebug

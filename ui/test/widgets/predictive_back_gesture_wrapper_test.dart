@@ -145,6 +145,40 @@ void main() {
   );
 
   testWidgets(
+    'static pages reserve the next frame only while tracking back progress',
+    (tester) async {
+      final route = (await bootstrap(tester))!;
+      expect(tester.binding.hasScheduledFrame, isFalse);
+
+      await _startBackGesture(tester, 0);
+      await _updateBackGesture(tester, 0.4);
+      // No animated content is present. Frames must remain scheduled between
+      // platform messages without advancing the finger-controlled position.
+      for (var i = 0; i < 4; i++) {
+        await tester.pump(const Duration(microseconds: 8333));
+        expect(tester.binding.hasScheduledFrame, isTrue);
+        expect(route.animation!.value, closeTo(0.6, 0.001));
+      }
+
+      await _sendBackGesture(tester, 'cancelBackGesture');
+      await tester.pumpAndSettle();
+      expect(tester.binding.hasScheduledFrame, isFalse);
+      expect(tester.binding.transientCallbackCount, 0);
+      expect(route.animation!.value, 1);
+
+      await _startBackGesture(tester, 0);
+      await _updateBackGesture(tester, 0.5);
+      await tester.pump(const Duration(microseconds: 8333));
+      await _sendBackGesture(tester, 'commitBackGesture');
+      await tester.pumpAndSettle();
+      expect(find.text('second'), findsNothing);
+      expect(tester.binding.hasScheduledFrame, isFalse);
+      expect(tester.binding.transientCallbackCount, 0);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.android),
+  );
+
+  testWidgets(
     'gesture drives route controller, slide transition and corner clip; '
     'cancel restores the page',
     (tester) async {
@@ -528,6 +562,8 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(navigator.userGestureInProgress, isFalse);
+    expect(tester.binding.hasScheduledFrame, isFalse);
+    expect(tester.binding.transientCallbackCount, 0);
     await tester.tap(find.text('push'));
     await tester.pumpAndSettle();
     expect(find.text('second'), findsOneWidget);

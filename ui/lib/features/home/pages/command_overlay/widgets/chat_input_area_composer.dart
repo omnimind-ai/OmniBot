@@ -496,6 +496,7 @@ mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(innerRadius),
                     child: BackdropFilter(
+                      enabled: useFrostedGlass,
                       filter: ImageFilter.blur(
                         sigmaX: useFrostedGlass ? 8 : 0,
                         sigmaY: useFrostedGlass ? 8 : 0,
@@ -521,17 +522,21 @@ mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
                 ),
                 Positioned.fill(
                   child: IgnorePointer(
-                    child: CustomPaint(
-                      painter: _ComposerFlowBorderPainter(
-                        progress: _composerFlowController,
-                        interactive: shouldGlowStrong,
-                        focused: focused,
-                        forceStrong: false,
-                        radius: shellRadius,
-                        strokeWidth: 1.5,
-                        gradientColors: context.isDarkTheme
-                            ? _kDarkComposerFlowGradientColors
-                            : _kLightComposerFlowGradientColors,
+                    // Only the border changes on each tick. Keep it from
+                    // repainting the shell and chat page under the drawer.
+                    child: RepaintBoundary(
+                      child: CustomPaint(
+                        painter: _ComposerFlowBorderPainter(
+                          progress: _composerFlowController,
+                          interactive: shouldGlowStrong,
+                          focused: focused,
+                          forceStrong: false,
+                          radius: shellRadius,
+                          strokeWidth: 1.5,
+                          gradientColors: context.isDarkTheme
+                              ? _kDarkComposerFlowGradientColors
+                              : _kLightComposerFlowGradientColors,
+                        ),
                       ),
                     ),
                   ),
