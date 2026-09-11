@@ -129,8 +129,8 @@ Choose the LAN address and token mode in the terminal setup UI, then scan the pr
 
 ### Requirements
 
-- Flutter SDK `3.9.2+`
-- JDK `11+`
+- Flutter SDK `3.47.2+`
+- JDK `17+`
 - Node.js `20.19+` or `22.12+` and pnpm `10.28.0` (for WebUI development)
 
 ### Get the code
