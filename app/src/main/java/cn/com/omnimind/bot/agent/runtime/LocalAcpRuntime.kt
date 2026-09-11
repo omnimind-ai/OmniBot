@@ -5,6 +5,7 @@ package cn.com.omnimind.bot.agent.runtime
 import android.content.Context
 import android.util.Base64
 import android.util.Log
+import cn.com.omnimind.bot.agent.AgentRuntimeErrorSupport
 import cn.com.omnimind.bot.BuildConfig
 import cn.com.omnimind.bot.agent.readAgentAttachmentBytes
 import cn.com.omnimind.bot.agent.AgentWorkspaceManager
@@ -1382,34 +1383,28 @@ internal class LocalAcpRuntime(
         return mapOf("configOptions" to result["configOptions"])
     }
 
+    private suspend fun closeLoadedSession(sessionId: String) {
+        val session = sessions[sessionId] ?: return
+        // Match the SDK: a rejected/failed close does not detach the session.
+        session.close()
+        if (sessions.remove(sessionId, session)) {
+            sessionCwds.remove(sessionId)
+            sessionPermissionBehaviors.remove(sessionId)
+        }
+    }
+
     /** Official ACP session close. Closing a session must not archive its local history. */
     private suspend fun closeAcpSession(args: Map<String, Any?>): Map<String, Any?> {
         val sessionId = args.stringValue("sessionId")
             ?: args.stringValue("threadId")
             ?: throw IllegalArgumentException("sessionId is required")
         turnOwnership.activeTurnId(sessionId)?.let { turnId ->
-            runCatching {
-                interruptTurn(mapOf("threadId" to sessionId, "turnId" to turnId))
-            }.onFailure { error ->
-                // Closing is a lifecycle boundary even when the Agent does
-                // not answer the cancellation request. Otherwise the closed
-                // session keeps its host turn reservation and every later
-                // prompt is rejected as already running.
-                Log.w(
-                    TAG,
-                    "ACP session close could not interrupt turn=$turnId; " +
-                        "finalizing it locally",
-                    error,
-                )
-                if (turnOwnership.activeTurnId(sessionId) == turnId) {
-                    finishTurn(sessionId, turnId, status = "cancelled")
-                }
-            }
+            // A failed cancellation request is not a terminal prompt response.
+            // Keep the active reservation and let the caller see the failure.
+            interruptTurn(mapOf("threadId" to sessionId, "turnId" to turnId))
         }
         cancelPendingPermissionRequests(sessionId)
-        sessions.remove(sessionId)?.close()
-        sessionCwds.remove(sessionId)
-        sessionPermissionBehaviors.remove(sessionId)
+        closeLoadedSession(sessionId)
         return mapOf(
             "ok" to true,
             "closed" to true,
@@ -1419,12 +1414,7 @@ internal class LocalAcpRuntime(
         )
     }
 
-    /**
-     * ACP v1 exposes session/delete in the wire schema even though older JVM
-     * SDKs do not yet have a typed Client method. Send it through the typed
-     * protocol transport and only detach the local binding after the Agent
-     * confirms success. Detaching never removes the Room conversation.
-     */
+    /** Delete through the SDK; preserve local Conversation history after acknowledgement. */
     private suspend fun deleteAcpSession(args: Map<String, Any?>): Map<String, Any?> {
         val sessionId = args.stringValue("sessionId")
             ?: args.stringValue("threadId")
@@ -1432,25 +1422,23 @@ internal class LocalAcpRuntime(
         check(turnOwnership.activeTurnId(sessionId) == null) {
             "ACP session $sessionId is running; cancel the turn before deleting it."
         }
-        cancelPendingPermissionRequests(sessionId)
-        // Xiaowan owns no external persisted session state, so its delete
-        // operation is the same ACP lifecycle transition as local detachment.
-        // External Harnesses receive the official wire request through the
-        // typed ACP protocol transport and are detached only after success.
-        val response = if (activeAgentId() == AcpAgentProfileStore.XIAOWAN_AGENT_ID) {
-            emptyMap()
-        } else {
-            sendRawAgentRequest(
-                method = "session/delete",
-                params = mapOf("sessionId" to sessionId)
-            )
+        check(requireAgentInfo().capabilities.sessionCapabilities.delete != null) {
+            "The Agent does not advertise session/delete."
         }
-        sessions.remove(sessionId)?.close()
+        val boundConversationId = bindingRepository.getBindingByThreadId(sessionId)?.conversationId
+        val deleted = requireClient().deleteSession(SessionId(sessionId))
+        @Suppress("UNCHECKED_CAST")
+        val response = jsonToAny(Json.encodeToJsonElement(
+            com.agentclientprotocol.model.DeleteSessionResponse.serializer(), deleted
+        )) as? Map<String, Any?> ?: emptyMap()
+        // Delete is the acknowledged operation. A follow-up close can fail
+        // because the Agent has already removed that session.
+        sessions.remove(sessionId)
         sessionCwds.remove(sessionId)
         sessionPermissionBehaviors.remove(sessionId)
         pendingHandoffConversationIds.remove(sessionId)
         profileStore.unbindSession(sessionId)
-        val conversationId = bindingRepository.detachThread(sessionId)
+        val conversationId = bindingRepository.detachThread(sessionId) ?: boundConversationId
         return LinkedHashMap(response).apply {
             put("sessionId", sessionId)
             put("conversationId", conversationId)
@@ -2246,7 +2234,19 @@ internal class LocalAcpRuntime(
         // The app bridge exposes an opaque cursor only when the caller asks
         // for one. Keep the snapshot order deterministic so an explicit page
         // retry cannot reshuffle entries from ConcurrentHashMap/Agent output.
-        val orderedEntries = allEntries.sortedBy { entry ->
+        val orderedEntries = allEntries.map { entry ->
+            val sessionId = entry["threadId"].toString()
+            val activeTurnId = turnOwnership.activeTurnId(sessionId)
+            // Host projection only: use the existing ACP session/turn owners.
+            // A persisted SessionInfo alone cannot prove a loaded/running session.
+            entry + mapOf(
+                // Archive belongs to the local Conversation, not ACP SessionInfo.
+                "archived" to (bindingRepository.getConversationByThreadId(sessionId)?.isArchived == true),
+                "loaded" to sessions.containsKey(sessionId),
+                "active" to (activeTurnId != null),
+                "activeTurnId" to activeTurnId,
+            )
+        }.sortedBy { entry ->
             entry["sessionId"]?.toString()
                 ?: entry["threadId"]?.toString()
                 ?: entry["id"]?.toString().orEmpty()
@@ -2276,9 +2276,7 @@ internal class LocalAcpRuntime(
             "ACP session $threadId is running; cancel the turn before archiving it."
         }
         if (archived && requireAgentInfo().capabilities.sessionCapabilities.close != null) {
-            sessions.remove(threadId)?.close()
-            sessionCwds.remove(threadId)
-            sessionPermissionBehaviors.remove(threadId)
+            closeLoadedSession(threadId)
         }
         bindingRepository.setArchived(threadId, archived)
         return mapOf(
@@ -2753,6 +2751,7 @@ internal class LocalAcpRuntime(
                         "status" to status,
                         "stopReason" to stopReason,
                         "error" to failure?.let { it.message ?: it.javaClass.simpleName },
+                        "failureKind" to failure?.let(AgentRuntimeErrorSupport::failureKind),
                         "completed" to true
                     ).filterValues { it != null }
                 )
@@ -2912,25 +2911,8 @@ internal class LocalAcpRuntime(
         val execution = promptExecutions[threadId]
         val promptStarted = execution?.requestCancellation() == true
         if (promptStarted) {
-            withTimeoutOrNull(CANCEL_REQUEST_TIMEOUT_MS) {
-                try {
-                    session.cancel()
-                    true
-                } catch (error: CancellationException) {
-                    // session/cancel is a protocol lifecycle request. A
-                    // prompt may finish by cancelling its coroutine, but that
-                    // normal terminal condition must not escape the JSON-RPC
-                    // dispatcher and abort the host process.
-                    Log.d(
-                        TAG,
-                        "ACP session cancellation observed for session=$threadId",
-                        error,
-                    )
-                    false
-                } catch (error: Throwable) {
-                    Log.w(TAG, "ACP session cancellation request failed", error)
-                    false
-                }
+            withTimeout(CANCEL_REQUEST_TIMEOUT_MS) {
+                session.cancel()
             }
         }
 
@@ -3546,15 +3528,9 @@ internal class LocalAcpRuntime(
                     "turnId" to activeTurnId,
                     "params" to mapOf(
                         "sessionId" to threadId,
-                        // RequestPermissionRequest.toolCall is the standard
-                        // ToolCallUpdate shape. Keep the explanation in
-                        // official content blocks instead of the old
-                        // host-only `detail` field.
-                        "toolCall" to standardAcpPermissionToolCallPayload(
-                            toolCallId = toolCall.toolCallId.value,
-                            title = toolCall.title ?: "Permission required",
-                            optionNames = permissions.map { it.name },
-                        ),
+                        // Forward the official ToolCallUpdate unchanged:
+                        // operation details must not be replaced by option labels.
+                        "toolCall" to standardAcpPermissionToolCallPayload(toolCall),
                         "options" to permissions.map {
                             mapOf(
                                 "optionId" to it.optionId.value,
@@ -4979,3 +4955,10 @@ internal object AgentHandoffContext {
         }
     }
 }
+
+/** Keep the negotiated ACP permission operation intact; options are separate fields. */
+internal fun standardAcpPermissionToolCallPayload(
+    toolCall: SessionUpdate.ToolCallUpdate,
+): Map<String, Any?> = Json.encodeToJsonElement(
+    SessionUpdate.ToolCallUpdate.serializer(), toolCall,
+).jsonObject.mapValues { (_, value) -> jsonToAny(value) }

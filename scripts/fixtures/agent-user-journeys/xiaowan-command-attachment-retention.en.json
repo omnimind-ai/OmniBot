@@ -1,0 +1,12 @@
+{
+  "name": "Xiaowan rejected lifecycle commands preserve the selected test attachment",
+  "steps": [
+    {"action":"expect","text":"oob-attachment-admission.txt","timeoutMs":30000},
+    {"action":"unsupported-command","command":"/pause"},
+    {"action":"expect","text":"oob-attachment-admission.txt","timeoutMs":10000},
+    {"action":"unsupported-command","command":"/resume"},
+    {"action":"expect","text":"oob-attachment-admission.txt","timeoutMs":10000},
+    {"action":"unsupported-command","command":"/pause"},
+    {"action":"expect","text":"oob-attachment-admission.txt","timeoutMs":10000}
+  ]
+}

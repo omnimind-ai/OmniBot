@@ -98,7 +98,9 @@ class ScheduledTask {
       countdownMinutes: json['countdownMinutes'] as int?,
       repeatDaily: json['repeatDaily'] as bool? ?? false,
       isEnabled: json['isEnabled'] as bool? ?? true,
-      createdAt: json['createdAt'] as int,
+      // Older native-created tasks omitted this field. Preserve those tasks
+      // with a stable unknown timestamp instead of dropping the entire list.
+      createdAt: (json['createdAt'] as num?)?.toInt() ?? 0,
       nextExecutionTime: json['nextExecutionTime'] as int?,
     );
   }

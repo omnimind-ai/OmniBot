@@ -1,0 +1,55 @@
+{
+  "name": "Xiaowan same-task automatic summary and durable restart",
+  "serial": "emulator-5560",
+  "runId": "1788870774454",
+  "kind": "emulator-user-interface",
+  "passed": true,
+  "steps": [
+    {
+      "index": 1,
+      "action": "send",
+      "marker": "OOB_FILE_CONTEXT_SUMMARY_LONG_1788870774454",
+      "passed": true,
+      "elapsedMs": 14351
+    },
+    {
+      "index": 2,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 29784
+    },
+    {
+      "index": 3,
+      "action": "turn-outcome",
+      "marker": "OOB_FILE_CONTEXT_SUMMARY_LONG_1788870774454",
+      "passed": true,
+      "elapsedMs": 27990
+    },
+    {
+      "index": 4,
+      "action": "checkpoint",
+      "marker": "OOB_FILE_CONTEXT_SUMMARY_LONG_1788870774454",
+      "passed": true,
+      "elapsedMs": 13976
+    },
+    {
+      "index": 5,
+      "action": "restart",
+      "passed": true,
+      "elapsedMs": 2841
+    },
+    {
+      "index": 6,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 6036
+    },
+    {
+      "index": 7,
+      "action": "checkpoint",
+      "marker": "OOB_FILE_CONTEXT_SUMMARY_LONG_1788870774454",
+      "passed": true,
+      "elapsedMs": 12194
+    }
+  ]
+}

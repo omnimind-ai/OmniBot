@@ -1,0 +1,3 @@
+{
+  "prompt": "Run exactly this shell command once: `printf '{{MARKER}}_STDOUT\\n'; printf '{{MARKER}}_STDERR\\n' >&2; exit 7`. Report the actual result. Do not retry, change permissions, or request an unsandboxed rerun."
+}

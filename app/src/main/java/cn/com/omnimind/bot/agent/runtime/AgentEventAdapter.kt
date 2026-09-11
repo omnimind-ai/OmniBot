@@ -173,6 +173,12 @@ class AgentEventAdapter(
         if (extras.isNotEmpty()) {
             enriched.putAll(extras)
         }
+        // Xiaowan's model needs the complete raw result once. A distinct
+        // preview remains useful, but an identical copy adds no information.
+        val rawResult = enriched["rawResultJson"]
+        if (rawResult != null && enriched["previewJson"] == rawResult) {
+            enriched.remove("previewJson")
+        }
         return json.encodeToString(mapToJsonElement(enriched))
     }
 

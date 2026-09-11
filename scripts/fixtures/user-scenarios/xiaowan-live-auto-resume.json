@@ -1,0 +1,3 @@
+{
+  "prompt": "Continue the last 60-page task: file_read exactly one next unread page of the same original file, using its prior nextOffset. No shell. Do not restart from zero."
+}

@@ -1,0 +1,61 @@
+{
+  "name": "Configured MCP permission denial and recovery with restart",
+  "requireClockSync": true,
+  "steps": [
+    {
+      "action": "mcp-fixture",
+      "phase": "baseline"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_MCP_DENIED",
+      "scenario": "xiaowan-mcp-denied.json"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_MCP_DENIED_DONE",
+      "timeoutMs": 120000
+    },
+    {
+      "action": "mcp-fixture",
+      "phase": "denied"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_MCP_DENIED",
+      "expected": "done"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_MCP_RECOVER",
+      "scenario": "xiaowan-mcp-echo.json"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_MCP_RECOVER_DONE",
+      "timeoutMs": 120000
+    },
+    {
+      "action": "mcp-fixture",
+      "phase": "denied-recovery"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_MCP_RECOVER",
+      "expected": "done"
+    },
+    {
+      "action": "restart"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_MCP_DENIED",
+      "expected": "done"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_MCP_RECOVER",
+      "expected": "done"
+    }
+  ]
+}

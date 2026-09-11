@@ -299,6 +299,14 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
     }
     final operationMode = mode ?? activeConversationModeValue;
     try {
+      final conversations = await ConversationService.getAllConversations(
+        includeArchived: true,
+      );
+      if (!_isConversationOperationCurrent(token)) {
+        return;
+      }
+      // Metadata I/O may overlap ACP updates or completion. Read the owning
+      // runtime after the await, never reinstall its pre-request snapshot.
       final inMemoryConversation = preferInMemory
           ? getInMemoryConversationForConversation(
               conversationId,
@@ -308,12 +316,6 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
       final inMemoryMessages = preferInMemory
           ? getInMemoryMessagesForConversation(conversationId, operationMode)
           : null;
-      final conversations = await ConversationService.getAllConversations(
-        includeArchived: true,
-      );
-      if (!_isConversationOperationCurrent(token)) {
-        return;
-      }
       ConversationModel? conversation;
       try {
         conversation = conversations.firstWhere(
@@ -367,15 +369,21 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
         if (!_isConversationOperationCurrent(token)) {
           return;
         }
-        savedMessages = pagedResult.messages;
+        final latestRuntimeMessages = preferInMemory
+            ? getInMemoryMessagesForConversation(conversationId, operationMode)
+            : null;
+        savedMessages = latestRuntimeMessages != null
+            ? List<ChatMessageModel>.from(latestRuntimeMessages)
+            : pagedResult.messages;
         setState(() {
-          hasMoreMessages = pagedResult.hasMore;
+          hasMoreMessages = latestRuntimeMessages == null && pagedResult.hasMore;
           // The history provider is allowed to return a short page. Advance
           // from what was actually received so a partial response cannot
           // create a gap before the next page.
           messageOffset = savedMessages.length;
-          messages.clear();
-          messages.addAll(savedMessages);
+          // `messages` may be the shared runtime's live list. Deliver the
+          // snapshot to onConversationLoaded below; its coordinator owns
+          // reconciliation and must see the current items before any mutation.
         });
       }
       onConversationLoaded(

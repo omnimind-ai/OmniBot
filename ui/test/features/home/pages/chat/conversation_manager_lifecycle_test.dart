@@ -46,6 +46,30 @@ void main() {
     },
   );
 
+  testWidgets('forced history refresh must reach the runtime owner before mutating its list', (tester) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final page = Completer<Map<String, dynamic>>();
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'getConversations') return [_conversationJson(id: 1, title: 'active')];
+      if (call.method == 'getConversationMessagesPaged') return page.future;
+      return 'SUCCESS';
+    });
+    final key = GlobalKey<_ConversationManagerHarnessState>();
+    await tester.pumpWidget(MaterialApp(home: _ConversationManagerHarness(key)));
+    final state = key.currentState!..sharedRuntimeList = true;
+    state.seedInMemoryConversation(1, [ChatMessageModel.assistantMessage('partial', id: 'reply')]);
+    final loading = state.loadConversation(1, preferInMemory: false);
+    await tester.pump();
+    // ACP advances while a card-triggered database refresh is in flight.
+    final completed = ChatMessageModel.assistantMessage('complete response', id: 'reply');
+    state.seedInMemoryConversation(1, [completed]);
+    page.complete({'messages': [_assistantMessageJson(id: 'reply', text: 'partial')], 'hasMore': false});
+    await loading;
+    expect(state.runtimeBeforeLoadCallback, [completed]);
+    expect(state.loadedSnapshots.single.single.text, 'partial');
+    expect(state.messages, [completed]);
+  });
+
   testWidgets('stale loadConversation result does not overwrite new thread', (
     tester,
   ) async {
@@ -163,6 +187,48 @@ void main() {
       expect(key.currentState!.loadedSnapshots.single, [persistedMessage]);
     },
   );
+
+  testWidgets('metadata refresh cannot reinstall a pre-completion runtime snapshot', (tester) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final metadata = Completer<List<Map<String, dynamic>>>();
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'getConversations') return metadata.future;
+      throw StateError('Populated runtime must not reload history: ${call.method}');
+    });
+    final key = GlobalKey<_ConversationManagerHarnessState>();
+    await tester.pumpWidget(MaterialApp(home: _ConversationManagerHarness(key)));
+    final user = ChatMessageModel.userMessage('continue', id: 'current-user');
+    final answer = ChatMessageModel.assistantMessage('finished', id: 'current-answer');
+    key.currentState!.seedInMemoryConversation(1, [user]);
+    final loading = key.currentState!.loadConversation(1);
+    await tester.pump();
+    // The same ACP turn completes while the metadata request is in flight.
+    key.currentState!.seedInMemoryConversation(1, [user, answer]);
+    metadata.complete([_conversationJson(id: 1, title: 'existing thread')]);
+    await loading;
+    expect(key.currentState!.loadedSnapshots.single, [user, answer]);
+  });
+
+  testWidgets('history read cannot overwrite a runtime admitted while awaiting the page', (tester) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final page = Completer<Map<String, dynamic>>();
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'getConversations') return [_conversationJson(id: 1, title: 'existing thread')];
+      if (call.method == 'getConversationMessagesPaged') return page.future;
+      return 'SUCCESS';
+    });
+    final key = GlobalKey<_ConversationManagerHarnessState>();
+    await tester.pumpWidget(MaterialApp(home: _ConversationManagerHarness(key)));
+    final loading = key.currentState!.loadConversation(1);
+    await tester.pump();
+    final user = ChatMessageModel.userMessage('current request', id: 'current-user');
+    final answer = ChatMessageModel.assistantMessage('completed', id: 'current-answer');
+    key.currentState!.seedInMemoryConversation(1, [user, answer]);
+    page.complete({'messages': <Map<String, dynamic>>[], 'hasMore': false});
+    await loading;
+    expect(key.currentState!.loadedSnapshots.single, [user, answer]);
+    expect(key.currentState!.messages, [user, answer]);
+  });
 
   testWidgets(
     'a conversation with more than one visible page remains fully reachable',
@@ -291,6 +357,8 @@ class _ConversationManagerHarnessState
   int _messageOffset = 0;
   int _lifecycleToken = 0;
   int loadedConversationCount = 0;
+  bool sharedRuntimeList = false;
+  List<ChatMessageModel>? runtimeBeforeLoadCallback;
   final List<int> persistedConversationIds = <int>[];
   final Map<int, List<ChatMessageModel>> _inMemorySnapshots =
       <int, List<ChatMessageModel>>{};
@@ -298,7 +366,8 @@ class _ConversationManagerHarnessState
       <List<ChatMessageModel>>[];
 
   @override
-  List<ChatMessageModel> get messages => _messages;
+  List<ChatMessageModel> get messages => sharedRuntimeList
+      ? (_inMemorySnapshots[_currentConversationId] ?? _messages) : _messages;
 
   @override
   int? get currentConversationId => _currentConversationId;
@@ -370,8 +439,14 @@ class _ConversationManagerHarnessState
     ConversationModel? conversation,
     List<ChatMessageModel> messages,
   ) {
+    runtimeBeforeLoadCallback = List<ChatMessageModel>.from(this.messages);
     loadedConversationCount += 1;
     loadedSnapshots.add(messages);
+    // Model the page callback: the runtime owner decides whether to install
+    // the snapshot. A live/shared projection keeps its newer items.
+    if (!sharedRuntimeList) {
+      _messages..clear()..addAll(messages);
+    }
   }
 
   @override

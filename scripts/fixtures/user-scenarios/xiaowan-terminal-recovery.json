@@ -1,0 +1,3 @@
+{
+  "prompt": "Run terminal_execute once with command: echo {{MARKER}}_DONE"
+}

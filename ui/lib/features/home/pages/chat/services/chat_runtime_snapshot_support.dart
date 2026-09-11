@@ -30,7 +30,7 @@ extension ChatRuntimeSnapshotSupport on ChatConversationRuntimeCoordinator {
     ChatBrowserSessionSnapshot? browserSessionSnapshot,
     bool preserveLiveStreamingState = false,
   }) {
-    final normalizedMessages = _normalizeIdleAgentRequestCards(
+    var normalizedMessages = _normalizeIdleAgentRequestCards(
       _normalizeIdleThinkingCards(
         _dedupeEquivalentAgentUserMessages(messages),
         isAiResponding: isAiResponding,
@@ -44,24 +44,6 @@ extension ChatRuntimeSnapshotSupport on ChatConversationRuntimeCoordinator {
       mode: mode,
       conversation: conversation,
     );
-    // When the caller is polling a remote codex thread while reducer push
-    // events are still actively streaming into this runtime, we MUST NOT
-    // blow away the push-driven streaming state. Otherwise the chat list
-    // collapses for a single frame between each poll tick — the symptom
-    // the user calls "codex 输出时自动折叠了一下又展开"。
-    //
-    // In that mode we only refresh the visible message list and conversation
-    // metadata; everything else (isAiResponding, currentAiMessages,
-    // currentThinkingMessages, currentDispatchTurnId, …) stays exactly as
-    // the reducer left it.
-    if (preserveLiveStreamingState) {
-      _replaceRuntimeMessagesIfChanged(runtime, normalizedMessages);
-      runtime.conversation = conversation ?? runtime.conversation;
-      _pruneAgentReplayDeltaOffsets(runtime, normalizedMessages);
-      notifyListeners();
-      return;
-    }
-    final hadInFlightTask = runtime.hasInFlightTask;
     final hasBoundLiveTask = _taskBindings.entries.any((entry) {
       final binding = entry.value;
       if (binding.conversationId != conversationId || binding.mode != mode) {
@@ -72,30 +54,56 @@ extension ChatRuntimeSnapshotSupport on ChatConversationRuntimeCoordinator {
           runtime.currentDispatchTurnId == taskId ||
           runtime.lastAgentTurnId == taskId;
     });
-    final snapshotHasLiveWork =
-        isAiResponding || isCheckingExecutableTask || isExecutingTask;
-    if (hasBoundLiveTask && !snapshotHasLiveWork) {
-      // A history/poll snapshot has no turn identity. Once this runtime has
-      // admitted a new logical turn, an idle snapshot is necessarily older or
-      // incomplete and must not demote the live ACP lifecycle. Merge only
-      // messages that are not already present; terminal ACP events (or the
-      // explicit unregister path) are the sole owners allowed to end the
-      // active turn.
-      final incomingById = <String, ChatMessageModel>{
-        for (final message in normalizedMessages) message.id: message,
-      };
-      final mergedMessages = runtime.messages
-          .map((message) => incomingById.remove(message.id) ?? message)
-          .toList();
-      if (incomingById.isNotEmpty) {
-        mergedMessages.addAll(incomingById.values);
-      }
+    // When the caller is polling a remote codex thread while reducer push
+    // events are still actively streaming into this runtime, we MUST NOT
+    // blow away the push-driven streaming state. Otherwise the chat list
+    // collapses for a single frame between each poll tick — the symptom
+    // the user calls "codex 输出时自动折叠了一下又展开"。
+    //
+    // In that mode we only refresh the visible message list and conversation
+    // metadata; everything else (isAiResponding, currentAiMessages,
+    // currentThinkingMessages, currentDispatchTurnId, …) stays exactly as
+    // the reducer left it.
+    if (preserveLiveStreamingState || hasBoundLiveTask) {
+      // A snapshot's render flags cannot re-admit a live turn or clear its
+      // official ACP identity. Keep reducer-owned items and add genuinely new
+      // history/user items by identity; stale copies cannot roll back updates.
+      final knownIds = runtime.messages.map((message) => message.id).toSet();
+      final mergedMessages = <ChatMessageModel>[
+        ..._normalizeIdleAgentRequestCards(
+          runtime.messages,
+          isAiResponding: true,
+          preserveLiveStreamingState: true,
+        ),
+        ...normalizedMessages.where((message) => knownIds.add(message.id)),
+      ];
       _replaceRuntimeMessagesIfChanged(runtime, mergedMessages);
       runtime.conversation = conversation ?? runtime.conversation;
       _pruneAgentReplayDeltaOffsets(runtime, mergedMessages);
       notifyListeners();
       return;
     }
+    // History reads can finish after PromptResponse. Preserve a committed
+    // item when the same item in an older snapshot lacks its official terminal
+    // result. Completed history may still enrich it (for example with usage).
+    final committedItems = <String, ChatMessageModel>{
+      for (final message in _normalizeIdleAgentRequestCards(
+        runtime.messages,
+        isAiResponding: true,
+        preserveLiveStreamingState: true,
+      ))
+        if (message.streamMeta?['stopReason']?.toString().trim().isNotEmpty == true)
+          message.id: message,
+    };
+    normalizedMessages = normalizedMessages.map((message) {
+      if (message.streamMeta?['stopReason']?.toString().trim().isNotEmpty != true) {
+        return committedItems[message.id] ?? message;
+      }
+      return message;
+    }).toList();
+    final hadInFlightTask = runtime.hasInFlightTask;
+    final snapshotHasLiveWork =
+        isAiResponding || isCheckingExecutableTask || isExecutingTask;
     // Page projection refreshes must not discard the admitted prompt's clock.
     // Only the matching live request may retain it; a restored snapshot cannot
     // manufacture timing for another request.
@@ -194,6 +202,7 @@ extension ChatRuntimeSnapshotSupport on ChatConversationRuntimeCoordinator {
     required String mode,
     required List<ChatMessageModel> messages,
     ConversationModel? conversation,
+    bool allowHistoryRemoval = false,
   }) async {
     final runtime = ensureRuntime(
       conversationId: conversationId,
@@ -201,7 +210,7 @@ extension ChatRuntimeSnapshotSupport on ChatConversationRuntimeCoordinator {
       conversation: conversation,
     );
     final incoming = List<ChatMessageModel>.from(messages);
-    if (runtime.hasInFlightTask) {
+    if (runtime.hasInFlightTask || !allowHistoryRemoval) {
       final incomingById = <String, ChatMessageModel>{
         for (final message in incoming) message.id: message,
       };
@@ -222,6 +231,7 @@ extension ChatRuntimeSnapshotSupport on ChatConversationRuntimeCoordinator {
       mode: mode,
       persistMessages: true,
       allowEphemeralPersistence: true,
+      allowHistoryRemoval: allowHistoryRemoval,
     );
   }
 
@@ -268,9 +278,6 @@ extension ChatRuntimeSnapshotSupport on ChatConversationRuntimeCoordinator {
     required bool isAiResponding,
     required bool preserveLiveStreamingState,
   }) {
-    if (isAiResponding || preserveLiveStreamingState) {
-      return messages;
-    }
     return messages
         .map((message) {
           final existingCardData = message.cardData;
@@ -282,12 +289,19 @@ extension ChatRuntimeSnapshotSupport on ChatConversationRuntimeCoordinator {
               existingCardData?['interactionUnavailable'] == true) {
             return message;
           }
+          final hasPromptOutcome = message.streamMeta?['stopReason']
+                  ?.toString().trim().isNotEmpty == true;
+          if (!hasPromptOutcome && (isAiResponding || preserveLiveStreamingState)) {
+            return message;
+          }
           final cardData = Map<String, dynamic>.from(existingCardData!);
-          cardData['status'] = 'expired';
+          // A persisted PromptResponse owns this old request even while a
+          // different prompt is active. Do not infer the new prompt's state.
+          cardData['status'] = hasPromptOutcome ? 'cancelled' : 'expired';
           cardData['interactionUnavailable'] = true;
           cardData['interactionUnavailableReason'] = 'session_ended';
           return message.copyWith(
-            content: <String, dynamic>{'cardData': cardData, 'id': message.id},
+            content: <String, dynamic>{...?message.content, 'cardData': cardData, 'id': message.id},
           );
         })
         .toList(growable: false);

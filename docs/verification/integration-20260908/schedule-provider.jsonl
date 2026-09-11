@@ -1,0 +1,16 @@
+{"marker":"OOB_SCHEDULE_REPRO_1788858741230","completed":0,"nextTool":"schedule_task_create","verified":true}
+{"marker":"OOB_SCHEDULE_REPRO_1788858741230","completed":1,"nextTool":"schedule_task_delete","verified":true}
+{"marker":"OOB_SCHEDULE_REPRO_1788858741230","completed":2,"nextTool":null,"verified":true}
+{"marker":"OOB_SCHEDULE_CREATE_1788858932855","completed":0,"nextTool":"schedule_task_create","verified":true}
+{"marker":"OOB_SCHEDULE_CREATE_1788858932855","completed":1,"nextTool":null,"verified":true}
+{"marker":"OOB_SCHEDULE_CLEAN_1788858932855","completed":0,"nextTool":"schedule_task_list","verified":true}
+{"error":"Disabled test task not preserved"}
+{"marker":"OOB_SCHEDULE_CREATE_1788859323181","completed":0,"nextTool":"schedule_task_create","verified":true}
+{"marker":"OOB_SCHEDULE_CREATE_1788859323181","completed":1,"nextTool":null,"verified":true}
+{"marker":"OOB_SCHEDULE_CLEAN_1788859323181","completed":0,"nextTool":"schedule_task_list","verified":true}
+{"marker":"OOB_SCHEDULE_CLEAN_1788859323181","completed":1,"nextTool":"schedule_task_update","verified":true}
+{"marker":"OOB_SCHEDULE_CLEAN_1788859323181","completed":2,"nextTool":"schedule_task_delete","verified":true}
+{"marker":"OOB_SCHEDULE_CLEAN_1788859323181","completed":3,"nextTool":"schedule_task_delete","verified":true}
+{"marker":"OOB_SCHEDULE_CLEAN_1788859323181","completed":4,"nextTool":"schedule_task_update","verified":true}
+{"marker":"OOB_SCHEDULE_CLEAN_1788859323181","completed":5,"nextTool":"schedule_task_list","verified":true}
+{"marker":"OOB_SCHEDULE_CLEAN_1788859323181","completed":6,"nextTool":null,"verified":true}

@@ -1,0 +1,21 @@
+{
+  "name": "Xiaowan file reads and history on isolated emulator",
+  "steps": [
+    {"action": "send", "marker": "OOB_FILE_HTML_FIRST"},
+    {"action": "reply", "text": "OOB_FILE_HTML_FIRST_DONE"},
+    {"action": "send", "marker": "OOB_FILE_HTML_REPEAT"},
+    {"action": "reply", "text": "OOB_FILE_HTML_REPEAT_DONE"},
+    {"action": "send", "marker": "OOB_FILE_IMAGE_LARGE"},
+    {"action": "reply", "text": "OOB_FILE_IMAGE_LARGE_DONE"},
+    {"action": "send", "marker": "OOB_FILE_PDF_BINARY"},
+    {"action": "reply", "text": "OOB_FILE_PDF_BINARY_DONE"},
+    {"action": "send", "marker": "OOB_FILE_CANCEL_STOP"},
+    {"action": "expect", "text": "OOB_FILE_CANCEL_STOP_WAITING"},
+    {"action": "tap", "label": "Stop"},
+    {"action": "expect", "text": "Send"},
+    {"action": "send", "marker": "OOB_FILE_TEXT_RECOVER"},
+    {"action": "reply", "text": "OOB_FILE_TEXT_RECOVER_DONE"},
+    {"action": "restart"},
+    {"action": "reply", "text": "OOB_FILE_TEXT_RECOVER_DONE"}
+  ]
+}

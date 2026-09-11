@@ -1,0 +1,28 @@
+{
+  "name": "Xiaowan commands follow advertised capabilities",
+  "steps": [
+    {
+      "action": "tap",
+      "label": "\u547d\u4ee4"
+    },
+    {
+      "action": "expect",
+      "text": "compact"
+    },
+    {
+      "action": "expect",
+      "text": "init"
+    },
+    {
+      "action": "assertAbsent",
+      "label": "plan"
+    },
+    {
+      "action": "assertAbsent",
+      "label": "review"
+    },
+    {
+      "action": "clear-command-draft"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "name": "Xiaowan bounded context across twenty file reads and restart",
+  "steps": [
+    {"action": "send", "marker": "OOB_FILE_CONTEXT_FIRST"},
+    {"action": "reply", "text": "OOB_FILE_CONTEXT_FIRST_DONE", "timeoutMs": 180000},
+    {"action": "turn-outcome", "marker": "OOB_FILE_CONTEXT_FIRST", "expected": "done"},
+    {"action": "restart"},
+    {"action": "reply", "text": "OOB_FILE_CONTEXT_FIRST_DONE"},
+    {"action": "turn-outcome", "marker": "OOB_FILE_CONTEXT_FIRST", "expected": "done"},
+    {"action": "send", "marker": "OOB_FILE_CONTEXT_REPEAT"},
+    {"action": "reply", "text": "OOB_FILE_CONTEXT_REPEAT_DONE", "timeoutMs": 180000},
+    {"action": "turn-outcome", "marker": "OOB_FILE_CONTEXT_REPEAT", "expected": "done"},
+    {"action": "send", "marker": "OOB_FILE_CONTEXT_THIRD"},
+    {"action": "reply", "text": "OOB_FILE_CONTEXT_THIRD_DONE", "timeoutMs": 180000},
+    {"action": "turn-outcome", "marker": "OOB_FILE_CONTEXT_THIRD", "expected": "done"},
+    {"action": "send", "marker": "OOB_FILE_TEXT_AFTERCONTEXT"},
+    {"action": "reply", "text": "OOB_FILE_TEXT_AFTERCONTEXT_DONE"},
+    {"action": "turn-outcome", "marker": "OOB_FILE_TEXT_AFTERCONTEXT", "expected": "done"},
+    {"action": "restart"},
+    {"action": "reply", "text": "OOB_FILE_TEXT_AFTERCONTEXT_DONE"}
+  ]
+}

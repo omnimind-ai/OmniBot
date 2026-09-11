@@ -20,6 +20,25 @@ import java.io.File
 
 class AgentConversationHistorySupportTest {
     @Test
+    fun `permission response patch preserves canonical metadata across repeated updates`() {
+        val metadata = mapOf("sessionId" to "session", "turnId" to "turn",
+            "entryId" to "approval", "kind" to "permission_required", "seq" to 3)
+        var stored = mapOf<String, Any?>("id" to "approval", "streamMeta" to metadata,
+            "content" to mapOf("cardData" to mapOf("type" to "agent_request", "status" to "pending")))
+        for (status in listOf("accepted", "accepted")) {
+            val patch = AgentConversationHistorySupport.buildCardMessagePayload(
+                messageId = "approval", cardData = mapOf("type" to "agent_request", "status" to status),
+                isError = false, streamMeta = null, createdAt = 1L)
+            stored = AgentConversationHistorySupport.mergeUiCardPayload(stored, patch)
+            org.junit.Assert.assertEquals(metadata, stored["streamMeta"])
+            org.junit.Assert.assertEquals(status, ((stored["content"] as Map<*, *>)["cardData"] as Map<*, *>)["status"])
+        }
+        val terminalMeta = metadata + mapOf("stopReason" to "end_turn")
+        val terminal = AgentConversationHistorySupport.mergeUiCardPayload(stored, stored + ("streamMeta" to terminalMeta))
+        org.junit.Assert.assertEquals(terminalMeta, terminal["streamMeta"])
+    }
+
+    @Test
     fun `turn failure display card is never replayed as a model tool call`() {
         val status = AgentConversationEntry(
             id = 1, conversationId = 5, conversationMode = "agent",
@@ -782,19 +801,16 @@ class AgentConversationHistorySupportTest {
         assertEquals("Claude Code", cardData["agentName"])
         assertEquals("agent.terminal_execute", cardData["toolName"])
         assertEquals(true, cardData["isHistorical"])
-        assertEquals("full", cardData["historyRenderMode"])
+        assertEquals("preview", cardData["historyRenderMode"])
         assertEquals("", cardData["terminalOutputDelta"])
-        assertEquals(false, cardData["payloadCompacted"])
-        assertTrue((cardData["argsJson"] as String).length > 2 * 1024)
-        assertTrue((cardData["argsJson"] as String).length > longScript.length)
-        assertTrue((cardData["rawResultJson"] as String).length > longRaw.length)
-        assertTrue((cardData["rawResultJson"] as String).contains(longRaw))
-        assertEquals(longTerminal, cardData["terminalOutput"])
-        assertEquals(20, (cardData["artifacts"] as List<*>).size)
-        assertTrue(
-            ((cardData["artifacts"] as List<*>).last() as Map<*, *>)
-                .get("content").toString().contains("x".repeat(2000))
-        )
+        assertEquals(true, cardData["payloadCompacted"])
+        assertTrue((cardData["argsJson"] as String).length <= 2 * 1024)
+        assertTrue((cardData["rawResultJson"] as String).length <= 2 * 1024)
+        assertTrue((cardData["terminalOutput"] as String).length <= 8 * 1024)
+        assertTrue((payload["rawResultJson"] as String).contains(longRaw))
+        assertEquals(longTerminal, payload["terminalOutput"])
+        assertEquals(20, (payload["artifacts"] as List<*>).size)
+
     }
 
     @Test

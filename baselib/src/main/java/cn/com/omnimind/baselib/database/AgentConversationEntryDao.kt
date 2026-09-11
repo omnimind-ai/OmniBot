@@ -10,6 +10,17 @@ import java.io.ByteArrayOutputStream
 
 @Dao
 interface AgentConversationEntryDao {
+    @Query("""
+        SELECT id, conversationId, conversationMode, entryId, entryType, status,
+               '' AS summary, createdAt, updatedAt
+        FROM agent_conversation_entries
+        WHERE conversationId = :conversationId AND id > :afterEntryId
+          AND entryType = 'tool_event'
+        ORDER BY id ASC
+    """)
+    fun observeToolHeadersAfter(conversationId: Long, afterEntryId: Long):
+        kotlinx.coroutines.flow.Flow<List<AgentConversationEntryHeader>>
+
     companion object {
         const val CHUNKED_ENTRY_PROJECTION = """id, conversationId, conversationMode, entryId, entryType, status,
             CASE WHEN length(CAST(summary AS BLOB)) > 32768 THEN '' ELSE summary END AS summary,
@@ -221,6 +232,15 @@ interface AgentConversationEntryDao {
         WHERE conversationId = :conversationId
           AND conversationMode = :conversationMode
           AND entryType != 'stream_event'
+          AND id > :afterEntryId
+          AND (:afterEntryId = 0 OR NOT EXISTS (
+            SELECT 1 FROM agent_conversation_entries AS preferred
+            WHERE preferred.conversationId = :conversationId
+              AND preferred.entryId = agent_conversation_entries.entryId
+              AND preferred.entryType != 'stream_event'
+              AND ((:conversationMode = 'codex' AND preferred.conversationMode = 'agent')
+                OR (:conversationMode = 'normal' AND preferred.conversationMode IN ('agent', 'codex')))
+          ))
         ORDER BY createdAt DESC, id DESC
         LIMIT :limit OFFSET :offset
         """
@@ -229,7 +249,8 @@ interface AgentConversationEntryDao {
         conversationId: Long,
         conversationMode: String,
         limit: Int,
-        offset: Int
+        offset: Int,
+        afterEntryId: Long = 0
     ): List<AgentConversationEntrySlice>
 
     @Query(
@@ -308,14 +329,36 @@ interface AgentConversationEntryDao {
     ): AgentConversationEntry? =
         getByThreadAndEntryIdSlices(conversationId, conversationMode, entryId)?.let { hydrate(it) }
 
+    @Query("""
+        SELECT $CHUNKED_ENTRY_PROJECTION FROM agent_conversation_entries
+        WHERE conversationId = :conversationId AND conversationMode IN (:modes)
+          AND entryType != 'stream_event'
+          AND NOT EXISTS (
+            SELECT 1 FROM agent_conversation_entries AS preferred
+            WHERE preferred.conversationId = :conversationId
+              AND preferred.entryId = agent_conversation_entries.entryId
+              AND preferred.conversationMode IN (:modes)
+              AND preferred.entryType != 'stream_event'
+              AND (CASE preferred.conversationMode WHEN 'agent' THEN 0 WHEN 'codex' THEN 1 ELSE 2 END)
+                < (CASE agent_conversation_entries.conversationMode WHEN 'agent' THEN 0 WHEN 'codex' THEN 1 ELSE 2 END)
+          )
+        ORDER BY createdAt DESC, id DESC LIMIT :limit OFFSET :offset
+    """)
+    suspend fun getLogicalThreadPageSlices(conversationId: Long, modes: List<String>, limit: Int, offset: Int): List<AgentConversationEntrySlice>
+
+    @Transaction
+    suspend fun getLogicalThreadPage(conversationId: Long, modes: List<String>, limit: Int, offset: Int): List<AgentConversationEntry> =
+        getLogicalThreadPageSlices(conversationId, modes, limit, offset).map { hydrate(it) }
+
     @Transaction
     suspend fun getThreadEntriesDescPaged(
         conversationId: Long,
         conversationMode: String,
         limit: Int,
-        offset: Int
+        offset: Int,
+        afterEntryId: Long = 0
     ): List<AgentConversationEntry> =
-        getThreadEntriesDescPagedSlices(conversationId, conversationMode, limit, offset).map { hydrate(it) }
+        getThreadEntriesDescPagedSlices(conversationId, conversationMode, limit, offset, afterEntryId).map { hydrate(it) }
 
     @Query("SELECT substr(CASE WHEN :summary THEN CAST(summary AS BLOB) ELSE CAST(payloadJson AS BLOB) END, :offset, 32768) FROM agent_conversation_entries WHERE id = :id")
     suspend fun readEntryChunk(id: Long, summary: Boolean, offset: Long): ByteArray?

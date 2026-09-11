@@ -2,6 +2,21 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ui/features/home/pages/chat/utils/agent_slash_commands.dart';
 
 void main() {
+  test('Plan shortcut requires an exact advertised value', () {
+    expect(advertisedPlanMode(const []), isNull);
+    expect(advertisedPlanMode(['default', 'explain', 'planning_disabled']), isNull);
+    expect(advertisedPlanMode(['default', 'Plan']), 'Plan');
+  });
+
+  test('unadvertised pause and resume never resolve to execution controls', () {
+    for (var attempt = 0; attempt < 20; attempt++) {
+      for (final command in ['/pause', '/resume', '/PAUSE', '/resume task']) {
+        expect(resolveAgentSlashSubmitIntent(command).kind,
+            AgentSlashSubmitKind.unsupported);
+      }
+    }
+  });
+
   test('routes codex model command intents', () {
     expect(
       resolveAgentSlashSubmitIntent('/model').kind,

@@ -1,0 +1,40 @@
+{
+  "name": "Real large single-line HTML search and restart",
+  "requireClockSync": true,
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_CONTENT_SEARCH",
+      "scenario": "xiaowan-content-search.json",
+      "timeoutMs": 180000
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_CONTENT_SEARCH_DONE",
+      "timeoutMs": 180000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_CONTENT_SEARCH",
+      "expected": "done"
+    },
+    {
+      "action": "live-task",
+      "marker": "OOB_LIVE_CONTENT_SEARCH",
+      "phase": "content-search"
+    },
+    {
+      "action": "restart"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_CONTENT_SEARCH",
+      "expected": "done"
+    },
+    {
+      "action": "live-task",
+      "marker": "OOB_LIVE_CONTENT_SEARCH",
+      "phase": "content-search"
+    }
+  ]
+}

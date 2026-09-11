@@ -1,0 +1,213 @@
+{
+  "name": "Provider failures remain terminal and allow a new user turn",
+  "serial": "emulator-5560",
+  "runId": "1788851966935",
+  "kind": "emulator-user-interface",
+  "passed": true,
+  "steps": [
+    {
+      "index": 1,
+      "action": "send",
+      "marker": "OOB_FAILURE_AUTH_1788851966935",
+      "passed": true,
+      "elapsedMs": 19422
+    },
+    {
+      "index": 2,
+      "action": "expect",
+      "passed": true,
+      "elapsedMs": 2875
+    },
+    {
+      "index": 3,
+      "action": "expect",
+      "passed": true,
+      "elapsedMs": 3572
+    },
+    {
+      "index": 4,
+      "action": "send",
+      "marker": "OOB_FILE_TEXT_AFTERAUTH_1788851966935",
+      "passed": true,
+      "elapsedMs": 28820
+    },
+    {
+      "index": 5,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 4425
+    },
+    {
+      "index": 6,
+      "action": "send",
+      "marker": "OOB_FAILURE_QUOTA_1788851966935",
+      "passed": true,
+      "elapsedMs": 17889
+    },
+    {
+      "index": 7,
+      "action": "expect",
+      "passed": true,
+      "elapsedMs": 2783
+    },
+    {
+      "index": 8,
+      "action": "expect",
+      "passed": true,
+      "elapsedMs": 2587
+    },
+    {
+      "index": 9,
+      "action": "send",
+      "marker": "OOB_FILE_TEXT_AFTERQUOTA_1788851966935",
+      "passed": true,
+      "elapsedMs": 18872
+    },
+    {
+      "index": 10,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 3611
+    },
+    {
+      "index": 11,
+      "action": "send",
+      "marker": "OOB_FAILURE_RATE_1788851966935",
+      "passed": true,
+      "elapsedMs": 18972
+    },
+    {
+      "index": 12,
+      "action": "expect",
+      "passed": true,
+      "elapsedMs": 3226
+    },
+    {
+      "index": 13,
+      "action": "expect",
+      "passed": true,
+      "elapsedMs": 3025
+    },
+    {
+      "index": 14,
+      "action": "send",
+      "marker": "OOB_FILE_TEXT_AFTERRATE_1788851966935",
+      "passed": true,
+      "elapsedMs": 20189
+    },
+    {
+      "index": 15,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 3697
+    },
+    {
+      "index": 16,
+      "action": "send",
+      "marker": "OOB_FAILURE_SERVER_1788851966935",
+      "passed": true,
+      "elapsedMs": 17397
+    },
+    {
+      "index": 17,
+      "action": "expect",
+      "passed": true,
+      "elapsedMs": 2791
+    },
+    {
+      "index": 18,
+      "action": "expect",
+      "passed": true,
+      "elapsedMs": 3241
+    },
+    {
+      "index": 19,
+      "action": "send",
+      "marker": "OOB_FILE_TEXT_AFTERSERVER_1788851966935",
+      "passed": true,
+      "elapsedMs": 20610
+    },
+    {
+      "index": 20,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 2824
+    },
+    {
+      "index": 21,
+      "action": "send",
+      "marker": "OOB_FAILURE_BEFORE_1788851966935",
+      "passed": true,
+      "elapsedMs": 16831
+    },
+    {
+      "index": 22,
+      "action": "expect",
+      "passed": true,
+      "elapsedMs": 2863
+    },
+    {
+      "index": 23,
+      "action": "expect",
+      "passed": true,
+      "elapsedMs": 2936
+    },
+    {
+      "index": 24,
+      "action": "send",
+      "marker": "OOB_FILE_TEXT_AFTERBEFORE_1788851966935",
+      "passed": true,
+      "elapsedMs": 19983
+    },
+    {
+      "index": 25,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 3282
+    },
+    {
+      "index": 26,
+      "action": "send",
+      "marker": "OOB_FAILURE_PARTIAL_1788851966935",
+      "passed": true,
+      "elapsedMs": 23512
+    },
+    {
+      "index": 27,
+      "action": "expect",
+      "passed": true,
+      "elapsedMs": 4289
+    },
+    {
+      "index": 28,
+      "action": "expect",
+      "passed": true,
+      "elapsedMs": 4534
+    },
+    {
+      "index": 29,
+      "action": "send",
+      "marker": "OOB_FILE_TEXT_AFTERPARTIAL_1788851966935",
+      "passed": true,
+      "elapsedMs": 24545
+    },
+    {
+      "index": 30,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 4556
+    },
+    {
+      "index": 31,
+      "action": "restart",
+      "passed": true,
+      "elapsedMs": 4753
+    },
+    {
+      "index": 32,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 14883
+    }
+  ]
+}

@@ -191,7 +191,8 @@ mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
 
     final contextUsageRatio = widget.contextUsageRatio;
     final rightActions = <Widget>[
-      if (contextUsageRatio != null) ...[
+      if (contextUsageRatio != null ||
+          widget.onLongPressContextUsageRing != null) ...[
         _ContextUsageRingButton(
           ratio: contextUsageRatio,
           tooltipMessage: widget.contextUsageTooltipMessage,
@@ -566,7 +567,8 @@ mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
           ),
           const SizedBox(width: 2),
         ],
-        if (contextUsageRatio != null) ...[
+        if (contextUsageRatio != null ||
+            widget.onLongPressContextUsageRing != null) ...[
           _ContextUsageRingButton(
             ratio: contextUsageRatio,
             tooltipMessage: widget.contextUsageTooltipMessage,

@@ -1,8 +1,9 @@
 package cn.com.omnimind.bot.agent
 
-import android.util.Base64
 import cn.com.omnimind.baselib.util.OmniLog
+import okio.Buffer
 import java.io.File
+import java.util.Base64
 import java.util.Locale
 
 internal object AgentImageAttachmentSupport {
@@ -30,11 +31,7 @@ internal object AgentImageAttachmentSupport {
             }
             return runCatching {
                 val mimeType = normalizeImageMimeType(mimeTypeHint, file.name)
-                val encoded = Base64.encodeToString(
-                    readAgentAttachmentBytes(file),
-                    Base64.NO_WRAP
-                )
-                "data:$mimeType;base64,$encoded"
+                readImageDataUrl(file, mimeType)
             }.onFailure { error ->
                 OmniLog.w(TAG, "read image file failed: ${file.absolutePath}: ${error.message}")
             }.getOrNull()
@@ -47,6 +44,16 @@ internal object AgentImageAttachmentSupport {
 
     internal fun resetBackendForTests() {
         backend = RealBackend
+    }
+
+    internal fun readImageDataUrl(file: File, mimeType: String): String = Buffer().use { buffer ->
+        buffer.writeUtf8("data:$mimeType;base64,")
+        // Stream the original bytes directly into segmented base64 storage.
+        // Closing the encoder writes its final padding; Buffer remains readable.
+        Base64.getEncoder().wrap(buffer.outputStream()).use { encoded ->
+            file.inputStream().use { input -> input.copyTo(encoded) }
+        }
+        buffer.readUtf8()
     }
 
     fun prepareAttachments(rawAttachments: List<Map<String, Any?>>): PreparedAttachments {
@@ -382,7 +389,17 @@ internal object AgentImageAttachmentSupport {
         if (!header.startsWith("data:", ignoreCase = true) || !header.contains(";base64", ignoreCase = true)) {
             return trimmed
         }
-        val payload = trimmed.substring(separatorIndex + 1).filterNot(Char::isWhitespace)
-        return "$header,$payload"
+        // NO_WRAP output is already normalized. Keep the same large string
+        // instead of making a substring, growing a filter buffer and joining it.
+        if ((separatorIndex + 1 until trimmed.length).none { trimmed[it].isWhitespace() }) {
+            return trimmed
+        }
+        return buildString(trimmed.length) {
+            append(trimmed, 0, separatorIndex + 1)
+            for (index in separatorIndex + 1 until trimmed.length) {
+                val character = trimmed[index]
+                if (!character.isWhitespace()) append(character)
+            }
+        }
     }
 }

@@ -1,0 +1,33 @@
+{
+  "name": "Resolved Codex plan approval stays resolved after restart",
+  "serial": "emulator-5560",
+  "runId": "1788856082542",
+  "kind": "emulator-user-interface",
+  "passed": true,
+  "steps": [
+    {
+      "index": 1,
+      "action": "restart",
+      "passed": true,
+      "elapsedMs": 5104
+    },
+    {
+      "index": 2,
+      "action": "expect",
+      "passed": true,
+      "elapsedMs": 6956
+    },
+    {
+      "index": 3,
+      "action": "assertAbsent",
+      "passed": true,
+      "elapsedMs": 2964
+    },
+    {
+      "index": 4,
+      "action": "assertAbsent",
+      "passed": true,
+      "elapsedMs": 2580
+    }
+  ]
+}

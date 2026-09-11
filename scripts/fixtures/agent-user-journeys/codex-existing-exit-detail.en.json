@@ -1,0 +1,50 @@
+{
+  "name": "Restore existing synthetic Codex failure details twice without replaying command",
+  "precondition": "Select conversation 7 containing synthetic run 1788953461021; no active turn. Read-only history acceptance; does not claim sandbox command success.",
+  "steps": [
+    {
+      "action": "restart"
+    },
+    {
+      "action": "expect",
+      "text": "Send",
+      "timeoutMs": 30000
+    },
+    {
+      "action": "tap",
+      "label": "Processed"
+    },
+    {
+      "action": "tap",
+      "label": "printf 'OOB_LIVE_CODEX_EXIT_1788953461021_STDOUT...",
+      "parentLabel": "The command produced no visible captured output and the process reported exit code 182 (not the expected 7). The shell environment appears to have intercepted the "
+    },
+    {
+      "action": "expect",
+      "text": "Command exited with code 182",
+      "timeoutMs": 15000
+    },
+    {
+      "action": "restart"
+    },
+    {
+      "action": "expect",
+      "text": "Send",
+      "timeoutMs": 30000
+    },
+    {
+      "action": "tap",
+      "label": "Processed"
+    },
+    {
+      "action": "tap",
+      "label": "printf 'OOB_LIVE_CODEX_EXIT_1788953461021_STDOUT...",
+      "parentLabel": "The command produced no visible captured output and the process reported exit code 182 (not the expected 7). The shell environment appears to have intercepted the "
+    },
+    {
+      "action": "expect",
+      "text": "Command exited with code 182",
+      "timeoutMs": 15000
+    }
+  ]
+}

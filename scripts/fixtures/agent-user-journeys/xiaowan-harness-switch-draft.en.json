@@ -1,0 +1,58 @@
+{
+  "name": "Preserve draft across DSH and Xiaowan selection, then send once",
+  "requireClockSync": true,
+  "steps": [
+    {
+      "action": "prepare-draft",
+      "marker": "OOB_LIVE_SWITCH_DRAFT",
+      "scenario": "xiaowan-switch-reply.json",
+      "timeoutMs": 180000
+    },
+    {
+      "action": "tap",
+      "label": "Switch chat mode"
+    },
+    {
+      "action": "tap",
+      "label": "DeepSeek Harness"
+    },
+    {
+      "action": "assert-draft",
+      "marker": "OOB_LIVE_SWITCH_DRAFT",
+      "scenario": "xiaowan-switch-reply.json",
+      "agentId": "deepseek-harness-acp"
+    },
+    {
+      "action": "tap",
+      "label": "Switch chat mode"
+    },
+    {
+      "action": "tap",
+      "label": "小万"
+    },
+    {
+      "action": "assert-draft",
+      "marker": "OOB_LIVE_SWITCH_DRAFT",
+      "scenario": "xiaowan-switch-reply.json",
+      "agentId": "xiaowan-acp"
+    },
+    {
+      "action": "tap",
+      "label": "Send"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_SWITCH_DRAFT",
+      "expected": "done",
+      "timeoutMs": 180000
+    },
+    {
+      "action": "restart"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_SWITCH_DRAFT",
+      "expected": "done"
+    }
+  ]
+}

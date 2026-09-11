@@ -312,13 +312,9 @@ class ConversationDomainService(
         conversationId: Long,
         promptTokenThreshold: Int
     ): Map<String, Any?> {
-        val existing = DatabaseHelper.getConversationById(conversationId)
+        DatabaseHelper.updateConversationPromptThreshold(conversationId, promptTokenThreshold)
+        val updated = DatabaseHelper.getConversationById(conversationId)
             ?: throw IllegalArgumentException("Conversation not found")
-        val updated = existing.copy(
-            promptTokenThreshold = promptTokenThreshold.coerceAtLeast(1),
-            updatedAt = System.currentTimeMillis()
-        )
-        DatabaseHelper.updateConversation(updated)
         publishConversationEvent("conversation_updated", updated)
         return conversationToPayload(updated)
     }
@@ -412,13 +408,15 @@ class ConversationDomainService(
     suspend fun replaceConversationMessages(
         conversationId: Long,
         conversationMode: String,
-        messages: List<Map<String, Any?>>
+        messages: List<Map<String, Any?>>,
+        allowHistoryRemoval: Boolean = false
     ) {
         val normalizedMode = normalizeConversationMode(conversationMode)
         historyRepository.replaceThreadMessagesFromUiSnapshot(
             conversationId = conversationId,
             conversationMode = normalizedMode,
-            messages = messages
+            messages = messages,
+            allowHistoryRemoval = allowHistoryRemoval
         )
         publishMessagesReplaced(conversationId, normalizedMode)
     }

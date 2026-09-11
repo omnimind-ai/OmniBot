@@ -5,6 +5,61 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   const chatRoot = 'lib/features/home/pages/chat';
 
+  test('init shares submit admission and preserves attachment references', () {
+    final source = File('$chatRoot/chat_page_agent.dart').readAsStringSync();
+    final card = source.split("if (command == '/init') {").last.split('return;').first;
+    expect(card, contains("_sendMessage(text: '/init')"));
+    expect(card, isNot(contains('_executeAgentInitCommand')));
+    final submit = source.split('case AgentSlashSubmitKind.startInit:').last
+        .split('return true;').first;
+    expect(submit, contains('_executeAgentInitCommand(attachments: attachments)'));
+    final init = source.split('Future<void> _executeAgentInitCommand(').last
+        .split('Future<void> _startAgentReviewCommand').first;
+    expect(init, contains('attachments: attachments'));
+    expect(init, contains('_startAgentTurnCommand('));
+  });
+
+  test('attachments are consumed at message admission, never before command routing', () {
+    final flow = File('$chatRoot/chat_page_conversation_flow.dart').readAsStringSync();
+    final send = flow.split('Future<void> _sendMessage(').last
+        .split('Future<void> _startManualRecordingCommand').first;
+    expect(send, isNot(contains('_pendingAttachments.clear()')));
+    expect(send, isNot(contains('consumeMessageAttachments')));
+    final dispatch = flow.split('Future<void> _dispatchUserMessage(').last
+        .split('void _syncUserMessageLinkPreviews').first;
+    expect(dispatch.indexOf('consumeMessageAttachments'),
+        greaterThan(dispatch.indexOf('messageIds = addUserMessage')));
+    final agent = File('$chatRoot/chat_page_agent.dart').readAsStringSync();
+    final turn = agent.split('Future<void> _startAgentTurnCommand(').last
+        .split('String? _readAgentPreference').first;
+    expect(turn.indexOf('consumeMessageAttachments'),
+        greaterThan(turn.indexOf('final messageIds = addUserMessage')));
+  });
+
+  test('model refresh and user budgets have separate write owners', () {
+    final models = File(
+      '$chatRoot/chat_page_model_context.dart',
+    ).readAsStringSync();
+    final actions = File(
+      '$chatRoot/chat_page_user_message_actions.dart',
+    ).readAsStringSync();
+    expect(models, isNot(contains('updateConversationPromptTokenThreshold')));
+    expect(models, isNot(contains('getManualModelContextThreshold')));
+    expect(actions, contains('updateConversationPromptTokenThreshold'));
+    expect(actions, isNot(contains('setManualModelContextThreshold')));
+  });
+
+  test('history avatar shares conversation identity instead of connected process', () {
+    final page = File('$chatRoot/chat_page.dart').readAsStringSync();
+    expect(page, contains('String? get _appBarActiveAcpAgentId => _activeAcpAgentId;'));
+    final committed = page.split('String? get _committedAcpAgentId {').last
+        .split('String get _activeAcpAgentDisplayName').first;
+    expect(committed.indexOf('_resolvedThreadTarget?.agentId'),
+        lessThan(committed.indexOf('_agentRuntimeStatus.activeAgentId')));
+    expect(committed.indexOf('_conversationBoundAcpAgentId'),
+        lessThan(committed.indexOf('_agentRuntimeStatus.activeAgentId')));
+  });
+
   test('rollback identity never uses the optimistic Harness label', () {
     final page = File('$chatRoot/chat_page.dart').readAsStringSync();
     final committed = page
@@ -39,8 +94,10 @@ void main() {
         lifecycle,
         contains('effectiveTarget.isNewConversation && !preserveComposer'),
       );
-      expect(lifecycle.indexOf('_resetLocalConversationState(targetMode);'),
-          lessThan(lifecycle.indexOf('draftMessage = composerValue.text')));
+      expect(
+        lifecycle.indexOf('_resetLocalConversationState(targetMode);'),
+        lessThan(lifecycle.indexOf('draftMessage = composerValue.text')),
+      );
       final flow = File(
         '$chatRoot/chat_page_conversation_flow.dart',
       ).readAsStringSync();

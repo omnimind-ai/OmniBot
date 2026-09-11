@@ -1,0 +1,42 @@
+{
+  "name": "Local API automatic compaction continuous reads",
+  "requireClockSync": true,
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_AUTO_COMPACT",
+      "scenario": "xiaowan-live-auto-compact.json",
+      "timeoutMs": 240000
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_AUTO_COMPACT_DONE",
+      "timeoutMs": 600000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_AUTO_COMPACT",
+      "expected": "done"
+    },
+    {
+      "action": "checkpoint",
+      "marker": "OOB_LIVE_AUTO_COMPACT"
+    },
+    {
+      "action": "restart"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_AUTO_COMPACT_DONE"
+    },
+    {
+      "action": "checkpoint",
+      "marker": "OOB_LIVE_AUTO_COMPACT"
+    },
+    {
+      "action": "live-task",
+      "marker": "OOB_LIVE_AUTO_COMPACT",
+      "phase": "auto-pages"
+    }
+  ]
+}

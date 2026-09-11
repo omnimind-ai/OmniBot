@@ -69,6 +69,7 @@ extension _ChatInputActionSupport on _ChatInputAreaStateBase {
       child: AbsorbPointer(
         absorbing: !widget.focusNode.hasFocus,
         child: TextField(
+          key: _textFieldKey,
           controller: widget.controller,
           focusNode: widget.focusNode,
           scrollController: _textFieldScrollController,
@@ -78,6 +79,16 @@ extension _ChatInputActionSupport on _ChatInputAreaStateBase {
           maxLines: maxLines,
           scrollPhysics: const ClampingScrollPhysics(),
           onTap: () => widget.onRequestFocus?.call(),
+          onChanged: (_) {
+            // Flutter fades selection handles after keyboard edits, but their
+            // overlay can still intercept neighbouring composer controls.
+            // Remove the old overlay through the public selection delegate;
+            // later taps/long presses create normal selection handles again.
+            final Object? state = _textFieldKey.currentState;
+            if (state is TextSelectionGestureDetectorBuilderDelegate) {
+              state.editableTextKey.currentState?.hideToolbar();
+            }
+          },
           onSubmitted: useKeyboardNewline
               ? null
               : (_) {

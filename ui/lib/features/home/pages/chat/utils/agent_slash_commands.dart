@@ -59,3 +59,11 @@ AgentSlashSubmitIntent resolveAgentSlashSubmitIntent(String messageText) {
 
   return const AgentSlashSubmitIntent(AgentSlashSubmitKind.unsupported);
 }
+
+/// A UI shortcut may select only a value advertised by the active ACP session.
+String? advertisedPlanMode(Iterable<String> modes) {
+  for (final mode in modes) {
+    if (mode.trim().toLowerCase() == 'plan') return mode;
+  }
+  return null;
+}

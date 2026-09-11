@@ -1,0 +1,3 @@
+{
+  "prompt": "Use file_read on /workspace/oob-file-repro/large.html for 60 consecutive pages (limit 65536), following nextOffset. No shell, no manual compact. Report progress every 5 pages."
+}

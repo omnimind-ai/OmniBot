@@ -1,0 +1,1 @@
+{"name":"Xiaowan init keeps selected attachment through cancellation","steps":[{"action":"expect","text":"oob-attachment-admission.txt","timeoutMs":30000},{"action":"init-attachment-cancel","timeoutMs":180000},{"action":"restart"}]}

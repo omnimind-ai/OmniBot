@@ -4,6 +4,15 @@ import cn.com.omnimind.baselib.util.OmniLog
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -11,6 +20,7 @@ import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.BufferedReader
 import java.io.IOException
@@ -202,12 +212,9 @@ object RemoteMcpClient {
         callToolOnce(config, toolName, arguments, meta)
     } catch (error: HttpStatusException) {
         val hasStatefulSession = sessions[config.id]?.sessionId != null
-        if (error.code !in setOf(401, 403) && !(error.code == 404 && hasStatefulSession)) {
-            throw error
-        }
-        // The local OmniLink gateway may restart independently of Omnibot.
-        // Drop the stale MCP session and perform one bounded re-initialize so
-        // background plugin polling recovers without user interaction.
+        if (error.code != 404 || !hasStatefulSession) throw error
+        // MCP identifies an expired stateful session with HTTP 404. Recreate
+        // only that session; authorization failures must not replay the tool.
         invalidateSession(config.id)
         callToolOnce(config, toolName, arguments, meta)
     } catch (error: RpcErrorException) {
@@ -310,18 +317,21 @@ object RemoteMcpClient {
         params: Map<String, Any?>
     ): Any? {
         val requestId = UUID.randomUUID().toString()
-        val body = mapOf(
-            "jsonrpc" to "2.0",
-            "id" to requestId,
-            "method" to method,
-            "params" to params
-        )
         val expectResponse = !method.startsWith("notifications/") && !method.startsWith("$/")
+        val body = buildMap<String, Any?> {
+            put("jsonrpc", "2.0")
+            if (expectResponse) put("id", requestId)
+            put("method", method)
+            put("params", params)
+        }
         val responseBody = executeRpcRequest(
             config = config,
             payload = gson.toJson(body),
             requestId = requestId,
-            expectResponse = expectResponse
+            expectResponse = expectResponse,
+            onCancelled = if (expectResponse && method != "initialize" && !usesSseTransport(config)) {
+                { notifyLegacyHttpCancellation(config, requestId) }
+            } else null,
         )
         if (!expectResponse) {
             return emptyMap<String, Any?>()
@@ -351,17 +361,43 @@ object RemoteMcpClient {
         return responseMap["result"]
     }
 
+    private suspend fun notifyLegacyHttpCancellation(
+        config: RemoteMcpServerConfig,
+        requestId: String,
+        endpointUrl: String = config.endpointUrl,
+    ) {
+        // Best effort on the existing endpoint/session, never reinitialize or
+        // retry. A dead cancellation endpoint must not hold the ACP stop path.
+        withContext(NonCancellable) {
+            runCatching {
+                withTimeoutOrNull(1000) {
+                    executeHttpRpc(
+                        config, endpointUrl,
+                        gson.toJson(mapOf(
+                            "jsonrpc" to "2.0",
+                            "method" to "notifications/cancelled",
+                            "params" to mapOf("requestId" to requestId),
+                        )),
+                        requestId = "",
+                        expectResponse = false,
+                    )
+                }
+            }
+        }
+    }
+
     private suspend fun executeRpcRequest(
         config: RemoteMcpServerConfig,
         payload: String,
         requestId: String,
         expectResponse: Boolean,
+        onCancelled: (suspend () -> Unit)? = null,
     ): String {
         if (usesSseTransport(config)) {
             return executeSseRpc(config, payload, requestId, expectResponse)
         }
         return runCatching {
-            executeHttpRpc(config, config.endpointUrl, payload, requestId, expectResponse)
+            executeHttpRpc(config, config.endpointUrl, payload, requestId, expectResponse, onCancelled)
         }.getOrElse { throwable ->
             if (shouldTryLegacySseFallback(config, throwable)) {
                 val response = executeSseRpc(config, payload, requestId, expectResponse)
@@ -375,10 +411,46 @@ object RemoteMcpClient {
         }
     }
 
+    // Keep cancellation attached through response-body/SSE consumption, not
+    // only until the HTTP headers arrive. This is transport cleanup owned by
+    // the caller's coroutine; it never retries or creates an Agent turn.
+    private suspend fun <T> executeRemoteMcpRequest(
+        request: Request,
+        onCancelled: (suspend () -> Unit)? = null,
+        consume: suspend (Response) -> T,
+    ): T {
+        val call = client.newCall(request)
+        try {
+            return coroutineScope {
+                val cancellation = launch(start = CoroutineStart.UNDISPATCHED) {
+                    try {
+                        awaitCancellation()
+                    } finally {
+                        call.cancel()
+                    }
+                }
+                try {
+                    call.execute().use { response -> consume(response) }
+                } finally {
+                    cancellation.cancel()
+                }
+            }
+        } catch (error: Exception) {
+            // Also catch cancellation while coroutineScope joins its cleanup
+            // child, after the response consumer has returned.
+            if (!currentCoroutineContext().isActive && call.isExecuted()) {
+                onCancelled?.invoke()
+            }
+            currentCoroutineContext().ensureActive()
+            throw error
+        }
+    }
+
     private suspend fun executeHttpJson(
         config: RemoteMcpServerConfig,
         url: String,
         payload: String,
+        onCancelled: (suspend () -> Unit)? = null,
     ): HttpJsonResponse = withContext(Dispatchers.IO) {
         val requestBuilder = Request.Builder()
             .url(url)
@@ -389,7 +461,7 @@ object RemoteMcpClient {
         applyMcpSessionHeaders(config, requestBuilder)
         applyConfiguredHeaders(config, requestBuilder)
 
-        client.newCall(requestBuilder.build()).execute().use { response ->
+        executeRemoteMcpRequest(requestBuilder.build(), onCancelled) { response ->
             val responseBody = response.body?.string().orEmpty().trim()
             val contentType = response.header("Content-Type")
             val sessionId = response.header(SESSION_ID_HEADER)?.trim()?.takeIf { it.isNotEmpty() }
@@ -419,7 +491,7 @@ object RemoteMcpClient {
             .header("Accept", "application/json, text/event-stream")
         applyMcpSessionHeaders(config, requestBuilder)
         applyConfiguredHeaders(config, requestBuilder)
-        client.newCall(requestBuilder.build()).execute().use { response ->
+        executeRemoteMcpRequest(requestBuilder.build()) { response ->
             if (!response.isSuccessful && response.code !in setOf(404, 405)) {
                 val body = response.body?.string().orEmpty()
                 throw HttpStatusException(
@@ -437,6 +509,7 @@ object RemoteMcpClient {
         payload: String,
         requestId: String,
         expectResponse: Boolean,
+        onCancelled: (suspend () -> Unit)? = null,
     ): String = withContext(Dispatchers.IO) {
         val requestBuilder = Request.Builder()
             .url(url)
@@ -447,7 +520,7 @@ object RemoteMcpClient {
         applyMcpSessionHeaders(config, requestBuilder)
         applyConfiguredHeaders(config, requestBuilder)
 
-        client.newCall(requestBuilder.build()).execute().use { response ->
+        executeRemoteMcpRequest(requestBuilder.build(), onCancelled) { response ->
             val contentType = response.header("Content-Type")
             val sessionId = response.header(SESSION_ID_HEADER)?.trim()?.takeIf { it.isNotEmpty() }
             updateSession(config.id, sessionId = sessionId)
@@ -461,20 +534,20 @@ object RemoteMcpClient {
                 )
             }
             if (!expectResponse) {
-                return@withContext "{}"
+                return@executeRemoteMcpRequest "{}"
             }
 
             val body = response.body ?: throw IllegalStateException("MCP response body is empty")
             if (isEventStream(contentType)) {
-                return@withContext readSseJsonResponse(body.charStream().buffered(), requestId)
+                return@executeRemoteMcpRequest readSseJsonResponse(body.charStream().buffered(), requestId)
             }
 
             val responseBody = body.string().orEmpty().trim()
             if (responseBody.isBlank()) {
-                return@withContext "{}"
+                return@executeRemoteMcpRequest "{}"
             }
             if (looksLikeSseBody(responseBody)) {
-                return@withContext parseSseJsonResponseBody(responseBody, requestId)
+                return@executeRemoteMcpRequest parseSseJsonResponseBody(responseBody, requestId)
             }
             responseBody
         }
@@ -494,7 +567,11 @@ object RemoteMcpClient {
 
         applyConfiguredHeaders(config, sseRequestBuilder)
 
-        client.newCall(sseRequestBuilder.build()).execute().use { sseResponse ->
+        var cancelPendingRequest: (suspend () -> Unit)? = null
+        executeRemoteMcpRequest(
+            sseRequestBuilder.build(),
+            onCancelled = { cancelPendingRequest?.invoke() },
+        ) { sseResponse ->
             if (!sseResponse.isSuccessful) {
                 val errorBody = sseResponse.body?.string().orEmpty()
                 throw HttpStatusException(
@@ -508,16 +585,22 @@ object RemoteMcpClient {
             val endpointData = readEndpointEvent(reader)
             val messageUrl = resolveAgainstBase(config.endpointUrl, endpointData)
 
-            val postResponse = executeHttpJson(config, messageUrl, payload)
+            val requestMethod = parseJsonMap(payload)["method"]?.toString()
+            val cancelRequest: (suspend () -> Unit)? = if (expectResponse && requestMethod != "initialize") {
+                { notifyLegacyHttpCancellation(config, requestId, messageUrl) }
+            } else null
+            val postResponse = executeHttpJson(config, messageUrl, payload,
+                onCancelled = { cancelPendingRequest = cancelRequest })
+            cancelPendingRequest = cancelRequest
             if (!expectResponse) {
-                return@withContext "{}"
+                return@executeRemoteMcpRequest "{}"
             }
 
             // Some servers may return JSON directly in HTTP body instead of SSE push.
             if (postResponse.code in 200..299 && postResponse.body.startsWith("{")) {
-                return@withContext postResponse.body
+                return@executeRemoteMcpRequest postResponse.body
             }
-            return@withContext readSseJsonResponse(reader, requestId)
+            return@executeRemoteMcpRequest readSseJsonResponse(reader, requestId)
         }
     }
 
@@ -534,7 +617,11 @@ object RemoteMcpClient {
 
         applyConfiguredHeaders(config, sseRequestBuilder)
 
-        client.newCall(sseRequestBuilder.build()).execute().use { sseResponse ->
+        var cancelPendingRequest: (suspend () -> Unit)? = null
+        executeRemoteMcpRequest(
+            sseRequestBuilder.build(),
+            onCancelled = { cancelPendingRequest?.invoke() },
+        ) { sseResponse ->
             if (!sseResponse.isSuccessful) {
                 val errorBody = sseResponse.body?.string().orEmpty()
                 throw HttpStatusException(
@@ -594,16 +681,26 @@ object RemoteMcpClient {
                     "params" to params,
                 )
             )
-            executeHttpJson(config, messageUrl, requestPayload)
+            val cancelRequest: (suspend () -> Unit)? = if (method != "initialize") {
+                { notifyLegacyHttpCancellation(config, requestId, messageUrl) }
+            } else null
+            // The POST and the SSE read belong to one request. Record a POST
+            // cancelled after execution, or a successfully submitted request;
+            // only the outer stream owner sends its cancellation notification.
+            executeHttpJson(config, messageUrl, requestPayload,
+                onCancelled = { cancelPendingRequest = cancelRequest })
+            cancelPendingRequest = cancelRequest
 
-            val responseMap = parseJsonMap(readSseJsonResponse(reader, requestId))
+            val responseText = readSseJsonResponse(reader, requestId)
+            cancelPendingRequest = null
+            val responseMap = parseJsonMap(responseText)
             val errorMap = deepStringMap(responseMap["error"])
             if (errorMap != null) {
                 val errorMessage = errorMap["message"]?.toString()?.takeIf { it.isNotBlank() }
                     ?: "Unknown MCP error"
                 throw IllegalStateException(errorMessage)
             }
-            return@withContext responseMap["result"]
+            return@executeRemoteMcpRequest responseMap["result"]
         }
     }
 
@@ -819,12 +916,12 @@ object RemoteMcpClient {
         }
         applyConfiguredHeaders(config, requestBuilder)
 
-        client.newCall(requestBuilder.build()).execute().use { response ->
+        executeRemoteMcpRequest(requestBuilder.build()) { response ->
             val contentType = response.header("Content-Type")
             val responseBody = response.body?.string().orEmpty().trim()
             if (!response.isSuccessful) {
                 if (response.code == 400 && isJsonRpcErrorForRequest(responseBody, requestId)) {
-                    return@withContext responseBody
+                    return@executeRemoteMcpRequest responseBody
                 }
                 throw HttpStatusException(
                     code = response.code,
@@ -832,9 +929,9 @@ object RemoteMcpClient {
                     message = "HTTP ${response.code}: ${response.message}",
                 )
             }
-            if (responseBody.isBlank()) return@withContext "{}"
+            if (responseBody.isBlank()) return@executeRemoteMcpRequest "{}"
             if (isEventStream(contentType) || looksLikeSseBody(responseBody)) {
-                return@withContext parseSseJsonResponseBody(responseBody, requestId)
+                return@executeRemoteMcpRequest parseSseJsonResponseBody(responseBody, requestId)
             }
             responseBody
         }

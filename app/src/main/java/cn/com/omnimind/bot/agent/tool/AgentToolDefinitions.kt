@@ -1213,7 +1213,7 @@ object AgentToolDefinitions {
             put("name", "file_read")
             put("displayName", "读取文件")
             put("toolType", "workspace")
-            put("description", "读取 workspace 或 Omnibot 白名单目录中的文件内容。自动支持图片/截图，图片会返回元数据与可视预览。")
+            put("description", "读取 workspace 或 Omnibot 白名单目录中的文件。文本默认每次返回最多 65536 个字符，可用 maxChars 缩小读取量（例如 2048），适用于长单行文件或上下文预算较小时；hasMore=true 时用 nextOffset 作为 offset 继续，不要同时传 lineStart，原文件不截断。图片返回元数据与可视预览；PDF、音视频、压缩包等二进制文件返回文件信息，请用相应解析工具提取内容。")
             putJsonObject("parameters") {
                 put("type", "object")
                 putJsonObject("properties") {
@@ -1224,6 +1224,12 @@ object AgentToolDefinitions {
                     putJsonObject("offset") {
                         put("type", "integer")
                         put("description", "可选，从指定字符偏移开始读取。")
+                    }
+                    putJsonObject("maxChars") {
+                        put("type", "integer")
+                        put("minimum", 2)
+                        put("maximum", 65536)
+                        put("description", "可选，单次返回的字符上限，默认 65536。正文被外存时可缩小此值读取原文件；继续使用 nextOffset 分页。")
                     }
                     putJsonObject("lineStart") {
                         put("type", "integer")
@@ -1593,6 +1599,7 @@ object AgentToolDefinitions {
                 }
                 putJsonArray("required") {
                     add("title")
+                    add("subagentPrompt")
                     add("targetKind")
                     add("scheduleType")
                     add("repeatDaily")

@@ -1,0 +1,8 @@
+{
+  "device": "emulator-5554",
+  "upstream": "0.1.2-rc.1",
+  "passed": true,
+  "scope": "fresh isolated home and repeated official skill discovery; no model calls, no permission change",
+  "installerSha256": "ee0610896dfef27b64b1bdfe04c85aeda5a70bb0ae6e6e51aea3156627007b1d",
+  "apkSha256": "6031828e59525ba55208d8c6f5205f772ece0619daf3a63b64395c2a29316de9"
+}

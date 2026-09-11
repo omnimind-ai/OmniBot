@@ -1,22 +1,5 @@
 part of '../chat_page.dart';
 
-List<String> _extractAgentOptionIds(
-  Map<String, dynamic> response,
-  List<String> listKeys,
-) {
-  final rawItems = _collectAgentListItems(response, listKeys);
-  final seen = <String>{};
-  final result = <String>[];
-  for (final item in rawItems) {
-    final id = _remoteCodexOptionId(item);
-    if (id == null || !seen.add(id)) {
-      continue;
-    }
-    result.add(id);
-  }
-  return result;
-}
-
 List<String> _mergeAgentOptionIds({
   String? current,
   String? preferred,
@@ -38,6 +21,7 @@ List<String> _mergeAgentOptionIds({
       orElse: () => '',
     );
   }
+
   void add(String? value) {
     final verified = verifiedMatch(value);
     if (verified == null || verified.isEmpty || !seen.add(verified)) {
@@ -386,23 +370,11 @@ String? _remoteCodexOptionId(dynamic item) {
   return text.isEmpty ? null : text;
 }
 
-String _resolveAgentPlanMode(List<String> modes) {
-  for (final mode in modes) {
-    if (mode.toLowerCase() == 'plan') {
-      return mode;
-    }
-  }
-  for (final mode in modes) {
-    if (_isAgentPlanMode(mode)) {
-      return mode;
-    }
-  }
-  return 'plan';
-}
+String? _resolveAgentPlanMode(List<String> modes) => advertisedPlanMode(modes);
 
 bool _isAgentPlanMode(String? mode) {
   final normalized = mode?.trim().toLowerCase() ?? '';
-  return normalized == 'plan' || normalized.contains('plan');
+  return normalized == 'plan';
 }
 
 class _AgentRunSettingsSnapshot {

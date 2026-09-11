@@ -1,0 +1,10 @@
+{
+  "marker": "OOB_LIVE_LONG_1788854493360",
+  "phase": "long",
+  "passed": true,
+  "toolCalls": 21,
+  "tools": [
+    "file_read",
+    "file_write"
+  ]
+}

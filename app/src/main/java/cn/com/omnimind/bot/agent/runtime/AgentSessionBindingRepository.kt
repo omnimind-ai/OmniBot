@@ -25,6 +25,11 @@ internal class AgentSessionBindingRepository(
         return DatabaseHelper.getAgentSessionBindingByThreadId(threadId)
     }
 
+    suspend fun getConversationByThreadId(threadId: String): Conversation? {
+        val binding = getBindingByThreadId(threadId) ?: return null
+        return DatabaseHelper.getConversationById(binding.conversationId)
+    }
+
     suspend fun ensureBinding(
         threadId: String,
         conversationId: Long? = null,
@@ -101,20 +106,23 @@ internal class AgentSessionBindingRepository(
                 DatabaseHelper.updateConversation(updatedConversation)
                 publishConversationEvent("conversation_updated", updatedConversation)
             }
-            DatabaseHelper.upsertAgentSessionBinding(
-                existingBinding.copy(
-                    cwd = cwd.ifBlank { existingBinding.cwd },
-                    updatedAt = now
+            val resolvedCwd = cwd.ifBlank { existingBinding.cwd }
+            if (resolvedCwd != existingBinding.cwd) {
+                DatabaseHelper.upsertAgentSessionBinding(
+                    existingBinding.copy(cwd = resolvedCwd, updatedAt = now)
                 )
-            )
+            }
             return existingBinding.conversationId
         }
 
         val targetConversation = conversationId
             ?.let { DatabaseHelper.getConversationById(it) }
             ?.let {
-                val updated = it.copy(
-                    mode = normalizeConversationMode(conversationMode),
+                val updated = buildUpdatedConversation(
+                    conversation = it,
+                    title = null,
+                    archived = null,
+                    conversationMode = conversationMode,
                     updatedAt = now
                 )
                 if (updated != it) {
@@ -249,7 +257,7 @@ internal class AgentSessionBindingRepository(
         return inserted
     }
 
-    private fun buildUpdatedConversation(
+    internal fun buildUpdatedConversation(
         conversation: Conversation,
         title: String?,
         archived: Boolean?,
@@ -257,12 +265,13 @@ internal class AgentSessionBindingRepository(
         updatedAt: Long
     ): Conversation {
         val normalizedTitle = title?.trim().orEmpty()
-        return conversation.copy(
+        val updated = conversation.copy(
             mode = normalizeConversationMode(conversationMode),
             title = normalizedTitle.ifEmpty { conversation.title },
             isArchived = archived ?: conversation.isArchived,
-            updatedAt = updatedAt
         )
+        // Listing/rebinding an unchanged session is observation, not activity.
+        return if (updated == conversation) conversation else updated.copy(updatedAt = updatedAt)
     }
 
     private fun publishConversationEvent(eventName: String, conversation: Conversation) {

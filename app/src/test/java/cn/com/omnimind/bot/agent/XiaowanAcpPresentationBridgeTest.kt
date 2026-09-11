@@ -19,6 +19,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.double
+import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -28,6 +29,24 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 
 class XiaowanAcpPresentationBridgeTest {
+    @Test
+    fun `tool progress is output and never replaces model input`() = runBlocking {
+        val updates = mutableListOf<SessionUpdate>()
+        val bridge = XiaowanAcpEventBridge(updates::add)
+        val input = Json.parseToJsonElement("""{"action":"shell.exec","arguments":{"command":"id","confirmed":false}}""").jsonObject
+        bridge.onToolCallStart("permission-tool", "android_privileged_action", input, "command")
+        repeat(3) { index ->
+            bridge.onToolCallProgress("permission-tool", "android_privileged_action", "running",
+                mapOf("backend" to "ROOT", "terminalOutputDelta" to "line-$index"))
+        }
+        assertEquals(input, (updates.first() as SessionUpdate.ToolCall).rawInput)
+        updates.filterIsInstance<SessionUpdate.ToolCallUpdate>().forEachIndexed { index, update ->
+            assertTrue(update.rawInput == null || update.rawInput == kotlinx.serialization.json.JsonNull)
+            assertEquals("line-$index", update.rawOutput!!.jsonObject["terminalOutputDelta"]!!.jsonPrimitive.content)
+            assertEquals(ToolCallStatus.IN_PROGRESS, update.status)
+        }
+    }
+
     @Test
     fun `streamed tool input updates one official card without claiming execution`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
@@ -537,7 +556,6 @@ class XiaowanAcpPresentationBridgeTest {
         bridge.onComplete(
             AgentResult.Success(
                 response = AgentFinalResponse(content = "已完成"),
-                executedTools = emptyList(),
                 latestPromptTokens = 100,
                 promptTokenThreshold = 128000,
                 completionTokens = 20,
@@ -562,7 +580,6 @@ class XiaowanAcpPresentationBridgeTest {
     fun `ACP prompt response does not count cached input twice`() {
         val success = AgentResult.Success(
             response = AgentFinalResponse(content = "已完成"),
-            executedTools = emptyList(),
             latestPromptTokens = 2_057,
             completionTokens = 5,
             cachedTokens = 2_048,
@@ -601,7 +618,6 @@ class XiaowanAcpPresentationBridgeTest {
         bridge.onComplete(
             AgentResult.Success(
                 response = AgentFinalResponse(content = "已完成"),
-                executedTools = emptyList(),
                 completionTokens = 20,
             )
         )
@@ -635,7 +651,6 @@ class XiaowanAcpPresentationBridgeTest {
         bridge.onComplete(
             AgentResult.Success(
                 response = AgentFinalResponse(content = ""),
-                executedTools = emptyList(),
                 outputKind = "none",
                 hasUserVisibleOutput = false,
             )
@@ -749,7 +764,7 @@ class XiaowanAcpPresentationBridgeTest {
         assertEquals("Command completed", rawOutput["summary"]?.jsonPrimitive?.content)
         assertEquals("hello", rawOutput["terminalOutput"]?.jsonPrimitive?.content)
         assertEquals("shell-1", rawOutput["terminalSessionId"]?.jsonPrimitive?.content)
-        assertEquals("{\"exitCode\":0}", rawOutput["previewJson"]?.jsonPrimitive?.content)
+        assertEquals(null, rawOutput["previewJson"])
         assertEquals("{\"stdout\":\"hello\"}", rawOutput["rawResultJson"]?.jsonPrimitive?.content)
         assertEquals("0", (rawOutput["result"] as JsonObject)["exitCode"]?.jsonPrimitive?.content)
     }
@@ -779,7 +794,8 @@ class XiaowanAcpPresentationBridgeTest {
         assertEquals(rawResult, rawOutput["rawResultJson"]?.jsonPrimitive?.content)
         assertEquals(
             stdout,
-            (rawOutput["rawResult"] as JsonObject)["stdout"]?.jsonPrimitive?.content,
+            Json.parseToJsonElement(rawOutput["rawResultJson"]!!.jsonPrimitive.content)
+                .jsonObject["stdout"]?.jsonPrimitive?.content,
         )
         assertEquals(stdout, rawOutput["terminalOutput"]?.jsonPrimitive?.content)
     }

@@ -1,0 +1,188 @@
+{
+  "name": "Repeated user cancellation preserves ACP completion and permits the next turn",
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_FAILURE_WAIT_1"
+    },
+    {
+      "action": "expect",
+      "text": "OOB_FAILURE_WAIT_1_WAITING"
+    },
+    {
+      "action": "tap",
+      "label": "Stop"
+    },
+    {
+      "action": "expect",
+      "text": "Send"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_WAIT_1",
+      "expected": "cancelled"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_FAILURE_OK_1"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_FAILURE_OK_1_DONE"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_OK_1",
+      "expected": "done"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_FAILURE_WAIT_2"
+    },
+    {
+      "action": "expect",
+      "text": "OOB_FAILURE_WAIT_2_WAITING"
+    },
+    {
+      "action": "tap",
+      "label": "Stop"
+    },
+    {
+      "action": "expect",
+      "text": "Send"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_WAIT_2",
+      "expected": "cancelled"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_FAILURE_OK_2"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_FAILURE_OK_2_DONE"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_OK_2",
+      "expected": "done"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_FAILURE_WAIT_3"
+    },
+    {
+      "action": "expect",
+      "text": "OOB_FAILURE_WAIT_3_WAITING"
+    },
+    {
+      "action": "tap",
+      "label": "Stop"
+    },
+    {
+      "action": "expect",
+      "text": "Send"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_WAIT_3",
+      "expected": "cancelled"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_FAILURE_OK_3"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_FAILURE_OK_3_DONE"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_OK_3",
+      "expected": "done"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_FAILURE_WAIT_4"
+    },
+    {
+      "action": "expect",
+      "text": "OOB_FAILURE_WAIT_4_WAITING"
+    },
+    {
+      "action": "tap",
+      "label": "Stop"
+    },
+    {
+      "action": "expect",
+      "text": "Send"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_WAIT_4",
+      "expected": "cancelled"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_FAILURE_OK_4"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_FAILURE_OK_4_DONE"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_OK_4",
+      "expected": "done"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_FAILURE_WAIT_5"
+    },
+    {
+      "action": "expect",
+      "text": "OOB_FAILURE_WAIT_5_WAITING"
+    },
+    {
+      "action": "tap",
+      "label": "Stop"
+    },
+    {
+      "action": "expect",
+      "text": "Send"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_WAIT_5",
+      "expected": "cancelled"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_FAILURE_OK_5"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_FAILURE_OK_5_DONE"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_OK_5",
+      "expected": "done"
+    },
+    {
+      "action": "restart"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_WAIT_5",
+      "expected": "cancelled"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_OK_5",
+      "expected": "done"
+    }
+  ]
+}

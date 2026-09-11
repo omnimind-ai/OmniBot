@@ -13,6 +13,7 @@ import cn.com.omnimind.bot.terminal.EmbeddedTerminalSessionRegistry
 import cn.com.omnimind.bot.termux.TermuxCommandResult
 import cn.com.omnimind.bot.termux.TermuxCommandSpec
 import cn.com.omnimind.bot.termux.TermuxCommandRunner
+import com.ai.assistance.operit.terminal.terminateHiddenExecProcess
 import com.ai.assistance.operit.terminal.TerminalManager
 import com.ai.assistance.operit.terminal.data.TerminalSessionData
 import com.ai.assistance.operit.terminal.provider.type.TerminalType
@@ -128,7 +129,7 @@ class TerminalToolHandler(
         return try {
             var runningProcess: Process? = null
             toolHandle.bindStopAction {
-                runCatching { runningProcess?.destroyForcibly() }
+                runningProcess?.let(::terminateHiddenExecProcess)
             }
             helper.reportToolProgress(
                 callback,
@@ -159,7 +160,7 @@ class TerminalToolHandler(
                 onProcessStarted = { process ->
                     runningProcess = process
                     if (toolHandle.isManualStopRequested()) {
-                        runCatching { process.destroyForcibly() }
+                        terminateHiddenExecProcess(process)
                     }
                 },
                 onLiveUpdate = { update ->

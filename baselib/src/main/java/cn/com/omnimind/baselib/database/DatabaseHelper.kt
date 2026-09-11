@@ -479,6 +479,21 @@ object DatabaseHelper {
         getDatabase().conversationDao().updatePreservingCheckpoint(conversation)
     }
 
+    fun observeAgentToolHeadersAfter(conversationId: Long, afterEntryId: Long):
+        kotlinx.coroutines.flow.Flow<List<AgentConversationEntryHeader>> =
+        getDatabase().agentConversationEntryDao().observeToolHeadersAfter(conversationId, afterEntryId)
+
+    suspend fun updateConversationPromptThreshold(id: Long, threshold: Int, at: Long = System.currentTimeMillis()) {
+        getDatabase().conversationDao().updatePromptThreshold(id, threshold.coerceAtLeast(1), at)
+    }
+
+    suspend fun updateConversationPromptUsage(id: Long, tokens: Int, at: Long) {
+        getDatabase().conversationDao().updatePromptUsage(id, tokens.coerceAtLeast(0), at)
+    }
+
+    suspend fun commitConversationContextCheckpoint(id: Long, summary: String, cutoff: Long, expectedRevision: Long, at: Long): Boolean =
+        getDatabase().conversationDao().commitContextCheckpoint(id, summary, cutoff, expectedRevision, at) == 1
+
     suspend fun clearConversationContextCheckpoint(id: Long) {
         getDatabase().conversationDao().clearContextCheckpoint(id)
     }
@@ -617,17 +632,22 @@ object DatabaseHelper {
         return getDatabase().agentConversationEntryDao().deleteStreamEvents()
     }
 
+    suspend fun getLogicalAgentConversationPage(conversationId: Long, modes: List<String>, limit: Int, offset: Int): List<AgentConversationEntry> =
+        getDatabase().agentConversationEntryDao().getLogicalThreadPage(conversationId, modes, limit, offset)
+
     suspend fun getAgentConversationEntriesDescPaged(
         conversationId: Long,
         conversationMode: String,
         limit: Int,
-        offset: Int
+        offset: Int,
+        afterEntryId: Long = 0
     ): List<AgentConversationEntry> {
         return getDatabase().agentConversationEntryDao().getThreadEntriesDescPaged(
             conversationId = conversationId,
             conversationMode = conversationMode,
             limit = limit,
-            offset = offset
+            offset = offset,
+            afterEntryId = afterEntryId
         )
     }
 

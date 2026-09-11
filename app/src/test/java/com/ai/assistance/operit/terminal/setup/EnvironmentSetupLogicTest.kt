@@ -231,7 +231,7 @@ class EnvironmentSetupLogicTest {
                 "deepseek_harness" to File("src/main/assets/acp/install/deepseek-harness.sh").readText(),
             ),
         )
-        val install = commands.first { it.contains("@deepseek-ai/dsh@0.1.2-rc.1") }
+        val install = commands.first { it.contains("@deepseek-ai/dsh@0.1.5-rc.1") }
         assertTrue(install.contains("@deepseek-ai/dsh-acp-app/cordis.patch.yml"))
         assertTrue(install.contains("dsh-acp-android --profile acp --help"))
         assertTrue(install.contains("profiles/acp/package.json"))

@@ -1,0 +1,3 @@
+{
+  "prompt": "Create exactly one enabled one-shot countdown scheduled task, 1 minute from now, title {{MARKER}}, targetKind subagent, repeatDaily false, notificationEnabled false. Its subagentPrompt must be: Write a file /workspace/oob-live-scheduled/{{MARKER}}.txt containing exactly {{MARKER}}_FIRED using file_write, then reply {{MARKER}}_CHILD_DONE. Do not write that file yourself now. Only call schedule_task_create and report its returned taskId. Do not create a replacement if a task was already created."
+}

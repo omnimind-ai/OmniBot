@@ -1,0 +1,120 @@
+{
+  "name": "Xiaowan bounded context across twenty file reads and restart",
+  "serial": "emulator-5560",
+  "runId": "1788871111434",
+  "kind": "emulator-user-interface",
+  "passed": true,
+  "steps": [
+    {
+      "index": 1,
+      "action": "send",
+      "marker": "OOB_FILE_CONTEXT_FIRST_1788871111434",
+      "passed": true,
+      "elapsedMs": 13045
+    },
+    {
+      "index": 2,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 11021
+    },
+    {
+      "index": 3,
+      "action": "turn-outcome",
+      "marker": "OOB_FILE_CONTEXT_FIRST_1788871111434",
+      "passed": true,
+      "elapsedMs": 35181
+    },
+    {
+      "index": 4,
+      "action": "restart",
+      "passed": true,
+      "elapsedMs": 2856
+    },
+    {
+      "index": 5,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 6143
+    },
+    {
+      "index": 6,
+      "action": "turn-outcome",
+      "marker": "OOB_FILE_CONTEXT_FIRST_1788871111434",
+      "passed": true,
+      "elapsedMs": 16738
+    },
+    {
+      "index": 7,
+      "action": "send",
+      "marker": "OOB_FILE_CONTEXT_REPEAT_1788871111434",
+      "passed": true,
+      "elapsedMs": 15763
+    },
+    {
+      "index": 8,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 19591
+    },
+    {
+      "index": 9,
+      "action": "turn-outcome",
+      "marker": "OOB_FILE_CONTEXT_REPEAT_1788871111434",
+      "passed": true,
+      "elapsedMs": 33353
+    },
+    {
+      "index": 10,
+      "action": "send",
+      "marker": "OOB_FILE_CONTEXT_THIRD_1788871111434",
+      "passed": true,
+      "elapsedMs": 13743
+    },
+    {
+      "index": 11,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 18625
+    },
+    {
+      "index": 12,
+      "action": "turn-outcome",
+      "marker": "OOB_FILE_CONTEXT_THIRD_1788871111434",
+      "passed": true,
+      "elapsedMs": 30203
+    },
+    {
+      "index": 13,
+      "action": "send",
+      "marker": "OOB_FILE_TEXT_AFTERCONTEXT_1788871111434",
+      "passed": true,
+      "elapsedMs": 13329
+    },
+    {
+      "index": 14,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 41702
+    },
+    {
+      "index": 15,
+      "action": "turn-outcome",
+      "marker": "OOB_FILE_TEXT_AFTERCONTEXT_1788871111434",
+      "passed": true,
+      "elapsedMs": 18453
+    },
+    {
+      "index": 16,
+      "action": "restart",
+      "passed": true,
+      "elapsedMs": 2487
+    },
+    {
+      "index": 17,
+      "action": "reply",
+      "passed": true,
+      "elapsedMs": 5414
+    }
+  ]
+}

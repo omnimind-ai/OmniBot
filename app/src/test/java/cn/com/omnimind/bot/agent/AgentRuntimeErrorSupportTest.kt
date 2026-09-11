@@ -8,6 +8,46 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AgentRuntimeErrorSupportTest {
+    @Test fun `structured provider failures do not depend on message language`() {
+        for ((status, code, kind) in listOf(
+            Triple(401, "unknown", "provider_authentication_failed"),
+            Triple(403, "permission_denied", "provider_request_rejected"),
+            Triple(503, "server_error", "provider_service_unavailable"),
+            Triple(404, "model_not_found", "provider_model_unavailable"),
+        )) {
+            for (failure in listOf(
+                AgentProviderStreamException(status, code, "测试失败"),
+                AgentStreamRequestException(status, "测试失败", """{"error":{"code":"$code"}}"""),
+            )) {
+                assertEquals(kind, AgentRuntimeErrorSupport.failureKind(failure))
+                val outgoing = AgentRuntimeErrorSupport.acpPromptFailure("测试失败", failure)
+                val incoming = com.agentclientprotocol.protocol.JsonRpcException(outgoing.code, outgoing.message,
+                    kotlinx.serialization.json.Json.parseToJsonElement(outgoing.data.toString()))
+                assertEquals(kind, AgentRuntimeErrorSupport.failureKind(incoming))
+                assertEquals("测试失败", incoming.message)
+                assertEquals(setOf("failureKind"), (incoming.data as kotlinx.serialization.json.JsonObject).keys)
+            }
+        }
+    }
+
+    @Test
+    fun `provider quota rate and unspecified request limits stay distinct`() {
+        for ((code, expected) in listOf(
+            "insufficient_quota" to "provider_quota_exceeded",
+            "rate_limit_exceeded" to "provider_rate_limited",
+            "unknown" to "provider_request_limited",
+        )) {
+            val http = AgentStreamRequestException(429, "limited", """{"error":{"code":"$code","message":"limited"}}""")
+            assertEquals(expected, AgentRuntimeErrorSupport.failureKind(http))
+            val accumulator = AgentLlmStreamAccumulator(json = kotlinx.serialization.json.Json)
+            accumulator.consume("""{"error":{"code":"$code","message":"limited"},"status_code":429}""")
+            val failure = runCatching { accumulator.buildTurn() }.exceptionOrNull()!!
+            assertEquals(expected, AgentRuntimeErrorSupport.failureKind(IllegalStateException("outer", failure)))
+            assertTrue(AgentRuntimeErrorSupport.userFacingMessage(failure) != null)
+        }
+        assertNull(AgentRuntimeErrorSupport.failureKind(IllegalStateException("A file mentions insufficient_quota")))
+    }
+
     @Test
     fun requestTimeoutDoesNotClaimMissingCredentialsOrEmptyModels() {
         val error = IllegalStateException("model fetch failed", java.net.SocketTimeoutException("timeout"))

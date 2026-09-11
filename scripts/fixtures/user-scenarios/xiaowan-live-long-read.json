@@ -1,0 +1,3 @@
+{
+  "prompt": "Read /workspace/oob-file-repro/large.html using file_read in twenty consecutive pages of 65536 characters. Start at offset zero and use the returned nextOffset each time. Do not replace the requested reads with shell commands. Give brief progress after every five pages. Verify continuity and write the final count and offsets to /workspace/oob-live-integration/read-report.txt. If a tool fails, explain the actual failure and recover only when justified."
+}

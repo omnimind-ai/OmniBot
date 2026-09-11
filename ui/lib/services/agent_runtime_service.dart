@@ -160,6 +160,26 @@ const _agentUserErrors = <String, ({String zh, String en})>{
     zh: '助手尚未安装完成，请在助手设置中重新安装。',
     en: 'The assistant is not fully installed. Reinstall it in assistant settings.',
   ),
+  'quota': (
+    zh: '模型服务商额度不足，请检查账户余额或配额后再试。',
+    en: 'The model provider quota is exhausted. Check your balance or quota before retrying.',
+  ),
+  'requestLimited': (
+    zh: '模型服务商限制了本次请求，请检查额度和请求频率后再试。',
+    en: 'The model provider limited this request. Check your quota and request rate before retrying.',
+  ),
+  'rateLimit': (
+    zh: '模型服务商限制了请求频率，请稍后再试。',
+    en: 'The model provider is rate limiting requests. Try again later.',
+  ),
+  'serviceUnavailable': (
+    zh: '模型服务商暂时不可用，请稍后再试或更换模型连接。',
+    en: 'The model provider is temporarily unavailable. Try later or choose another connection.',
+  ),
+  'requestRejected': (
+    zh: '模型服务商拒绝了本次请求，请检查模型及请求配置。',
+    en: 'The model provider rejected this request. Check the model and request configuration.',
+  ),
   'unknown': (
     zh: '助手暂时无法完成操作，请重试。',
     en: 'The assistant could not complete this action. Please try again.',
@@ -192,6 +212,33 @@ String formatAgentRuntimeErrorForUser(
     if (rawMessage == message.zh || rawMessage == message.en) {
       return english ? message.en : message.zh;
     }
+  }
+  // ACP error messages can arrive without PlatformException.details. Match
+  // our transport's HTTP envelope, not arbitrary numbers in tool output.
+  final httpMatch = RegExp(
+    r'(?:chat completion stream|responses|anthropic) request failed\((\d{3})\)',
+  ).firstMatch(raw);
+  final httpStatus = int.tryParse(httpMatch?.group(1) ?? '');
+  if (failureKind == 'provider_service_unavailable') return text('serviceUnavailable');
+  if (failureKind == 'provider_request_rejected') return text('requestRejected');
+  if (failureKind == 'provider_quota_exceeded') return text('quota');
+  if (failureKind == 'provider_rate_limited') return text('rateLimit');
+  if (failureKind == 'provider_request_limited') return text('requestLimited');
+  if (httpStatus == 401) return text('credentials');
+  if (httpStatus == 429) {
+    if (raw.contains('insufficient_quota') || raw.contains('quota_exceeded') ||
+        raw.contains('quota exhausted') || raw.contains('quota_exhausted') ||
+        raw.contains('额度不足') || raw.contains('余额不足')) return text('quota');
+    if (raw.contains('rate_limit_exceeded') || raw.contains('rate_limit_error')) {
+      return text('rateLimit');
+    }
+    return text('requestLimited');
+  }
+  if (httpStatus != null && httpStatus >= 500) {
+    return text('serviceUnavailable');
+  }
+  if (httpStatus == 400 || httpStatus == 403 || httpStatus == 422) {
+    return text('requestRejected');
   }
   if (failureKind == 'provider_not_bound' ||
       (raw.contains('dispatch model') &&
@@ -1405,6 +1452,19 @@ class AgentRuntimeService {
         'terminalEnvironment': terminalEnvironment,
       'text': text,
       if (attachments.isNotEmpty) 'attachments': attachments,
+    }).then((response) {
+      final failureKind = response['failureKind'];
+      if (failureKind is String && response['error'] is String) {
+        return <String, dynamic>{
+          ...response,
+          'error': formatAgentRuntimeErrorForUser(PlatformException(
+            code: 'AGENT_RUNTIME_CALL_FAILED',
+            message: response['error'] as String,
+            details: <String, dynamic>{'failureKind': failureKind},
+          )),
+        };
+      }
+      return response;
     });
   }
 

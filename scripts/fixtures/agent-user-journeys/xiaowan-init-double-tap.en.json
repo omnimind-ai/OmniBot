@@ -1,0 +1,1 @@
+{"name":"Xiaowan init double tap admits one turn before and after restart","steps":[{"action":"expect","text":"命令","timeoutMs":30000},{"action":"init-double-tap-cancel","timeoutMs":180000},{"action":"restart"},{"action":"expect","text":"命令","timeoutMs":30000},{"action":"init-double-tap-cancel","timeoutMs":180000}]}

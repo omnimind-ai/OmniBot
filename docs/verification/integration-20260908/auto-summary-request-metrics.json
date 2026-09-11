@@ -1,0 +1,43 @@
+{
+  "summaryCalls": 6,
+  "maxRequestChars": 157052,
+  "completedTasks": 2,
+  "summaries": [
+    {
+      "marker": "OOB_FILE_CONTEXT_SUMMARY_FIRST_1788853667001",
+      "summary": true,
+      "completedReads": 4,
+      "requestChars": 69601
+    },
+    {
+      "marker": "OOB_FILE_CONTEXT_SUMMARY_FIRST_1788853667001",
+      "summary": true,
+      "completedReads": 8,
+      "requestChars": 64339
+    },
+    {
+      "marker": "OOB_FILE_CONTEXT_SUMMARY_FIRST_1788853667001",
+      "summary": true,
+      "completedReads": 12,
+      "requestChars": 64339
+    },
+    {
+      "marker": "OOB_FILE_CONTEXT_SUMMARY_REPEAT_1788853667001",
+      "summary": true,
+      "completedReads": 4,
+      "requestChars": 70645
+    },
+    {
+      "marker": "OOB_FILE_CONTEXT_SUMMARY_REPEAT_1788853667001",
+      "summary": true,
+      "completedReads": 8,
+      "requestChars": 64349
+    },
+    {
+      "marker": "OOB_FILE_CONTEXT_SUMMARY_REPEAT_1788853667001",
+      "summary": true,
+      "completedReads": 12,
+      "requestChars": 64349
+    }
+  ]
+}

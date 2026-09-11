@@ -325,6 +325,14 @@ String _buildTerminalOutputText(Map<String, dynamic> cardData) {
   if (status == 'running' && _isGenericTerminalProgressMessage(fallback)) {
     return '';
   }
+  if (fallback.isEmpty) {
+    // Persisted cards can predate current ACP projection. Reuse the same
+    // result parser without rewriting their history or lifecycle status.
+    final restored = normalizeAgentToolCall(cardData);
+    return restored.terminalOutput.isNotEmpty
+        ? restored.terminalOutput.trimRight()
+        : restored.summary;
+  }
   return fallback;
 }
 

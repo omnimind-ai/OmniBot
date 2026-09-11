@@ -1,0 +1,80 @@
+{
+  "name": "In-band provider errors settle without EOF and allow next turn",
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_FAILURE_STREAMERROR"
+    },
+    {
+      "action": "expect",
+      "text": "Failed",
+      "timeoutMs": 45000
+    },
+    {
+      "action": "expect",
+      "text": "Send"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_STREAMERROR",
+      "expected": "error"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_FAILURE_STREAMTOOL"
+    },
+    {
+      "action": "expect",
+      "text": "Failed",
+      "timeoutMs": 45000
+    },
+    {
+      "action": "expect",
+      "text": "Send"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_STREAMTOOL",
+      "expected": "error"
+    },
+    {
+      "action": "workspace-file-absent",
+      "marker": "OOB_FAILURE_STREAMTOOL"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_FAILURE_OK"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_FAILURE_OK_DONE"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_OK",
+      "expected": "done"
+    },
+    {
+      "action": "restart"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_STREAMERROR",
+      "expected": "error"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_STREAMTOOL",
+      "expected": "error"
+    },
+    {
+      "action": "workspace-file-absent",
+      "marker": "OOB_FAILURE_STREAMTOOL"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_FAILURE_OK",
+      "expected": "done"
+    }
+  ]
+}

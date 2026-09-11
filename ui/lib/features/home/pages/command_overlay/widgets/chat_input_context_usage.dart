@@ -57,7 +57,7 @@ class _ContextUsageRingButton extends StatefulWidget {
     this.onLongPress,
   });
 
-  final double ratio;
+  final double? ratio;
   final String? tooltipMessage;
   final VoidCallback? onLongPress;
 
@@ -124,25 +124,47 @@ class _ContextUsageRingButtonState extends State<_ContextUsageRingButton> {
 
   @override
   Widget build(BuildContext context) {
+    final english = Localizations.localeOf(context).languageCode == 'en';
+    final hasUsage = widget.ratio?.isFinite == true;
     final ring = SizedBox(
       width: 22,
       height: 22,
-      child: Center(child: _ContextUsageRing(ratio: widget.ratio)),
+      child: Center(
+        child: _ContextUsageRing(ratio: hasUsage ? widget.ratio! : 0),
+      ),
     );
-    final tooltip = widget.tooltipMessage?.trim() ?? '';
+    final suppliedTooltip = widget.tooltipMessage?.trim() ?? '';
+    final tooltip = suppliedTooltip.isNotEmpty
+        ? suppliedTooltip
+        : !hasUsage
+        ? '0%' +
+              (widget.onLongPress == null
+                  ? ''
+                  : english
+                  ? '\nLong press to adjust threshold'
+                  : '\n长按可调整阈值')
+        : '';
     final hasTooltip = tooltip.isEmpty == false;
     if (!hasTooltip && widget.onLongPress == null) {
       return ring;
     }
-    return Builder(
-      builder: (anchorContext) {
-        return GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: hasTooltip ? () => _showTooltip(anchorContext, tooltip) : null,
-          onLongPress: widget.onLongPress,
-          child: ring,
-        );
-      },
+    return Semantics(
+      key: const ValueKey('chat-input-context-usage'),
+      button: true,
+      label: english ? 'Context usage' : '上下文用量',
+      value: tooltip,
+      child: Builder(
+        builder: (anchorContext) {
+          return GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: hasTooltip
+                ? () => _showTooltip(anchorContext, tooltip)
+                : null,
+            onLongPress: widget.onLongPress,
+            child: ExcludeSemantics(child: ring),
+          );
+        },
+      ),
     );
   }
 }

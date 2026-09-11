@@ -249,26 +249,6 @@ class OmniAgentExecutor(
                     it.toolDefinitions
                 },
             )
-            val initialMessages = buildInitialMessages(
-                promptSeed = historyRepository.buildPromptSeed(
-                    conversationId = conversationId,
-                    conversationMode = conversationMode
-                ),
-                userMessage = userMessage,
-                attachments = attachments,
-                continueMode = continueMode,
-                workspaceDescriptor = workspaceDescriptor,
-                installedSkills = installedSkills,
-                skillsRootShellPath = workspaceManager.shellPathForAndroid(workspaceManager.skillsRoot())
-                    ?: workspaceManager.skillsRoot().absolutePath,
-                skillsRootAndroidPath = workspaceManager.skillsRoot().absolutePath,
-                resolvedSkills = resolvedSkills,
-                memoryContext = promptIdentityContext,
-                terminalDistribution = terminalDistribution,
-                conversationMode = conversationMode,
-                historyMessagesOverride = historyMessagesOverride
-            )
-
             val llmClient = HttpAgentLlmClient(
                 scope = scope,
                 json = json,
@@ -293,6 +273,18 @@ class OmniAgentExecutor(
             // immediately after the router is constructed.
             val routerRef = AtomicReference<AgentToolExecutor?>()
             val catalogRef = AtomicReference<AgentToolCatalog?>(toolRegistry)
+            val contextCompactorFactory = {
+                AgentConversationContextCompactor(
+                    historyRepository = historyRepository,
+                    modelScene = agentModelScene,
+                    modelOverride = modelOverride,
+                    reasoningEffort = reasoningEffort,
+                    promptCacheKey = promptCacheKey,
+                    offloadToolOutput = { text ->
+                        workspaceManager.writeOffload(workspaceDescriptor.id, "txt", text).workspacePath
+                    },
+                )
+            }
             val subagentDispatcher = SubagentDispatcher(
                 llmClient = llmClient,
                 toolExecutorProvider = {
@@ -303,7 +295,8 @@ class OmniAgentExecutor(
                 },
                 eventAdapter = eventAdapter,
                 model = agentModelScene,
-                toolImageContinuationPolicy = toolImageContinuationPolicy
+                toolImageContinuationPolicy = toolImageContinuationPolicy,
+                contextCompactorFactory = contextCompactorFactory,
             )
             toolRouter = AgentToolRouter(
                 context = context,
@@ -334,16 +327,28 @@ class OmniAgentExecutor(
             orchestrator.run(
                 AgentOrchestrator.Input(
                     callback = callback,
-                    initialMessages = initialMessages,
+                    initialMessages = buildInitialMessages(
+                        promptSeed = historyRepository.buildPromptSeed(
+                            conversationId = conversationId,
+                            conversationMode = conversationMode
+                        ),
+                        userMessage = userMessage,
+                        attachments = attachments,
+                        continueMode = continueMode,
+                        workspaceDescriptor = workspaceDescriptor,
+                        installedSkills = installedSkills,
+                        skillsRootShellPath = workspaceManager.shellPathForAndroid(workspaceManager.skillsRoot())
+                            ?: workspaceManager.skillsRoot().absolutePath,
+                        skillsRootAndroidPath = workspaceManager.skillsRoot().absolutePath,
+                        resolvedSkills = resolvedSkills,
+                        memoryContext = promptIdentityContext,
+                        terminalDistribution = terminalDistribution,
+                        conversationMode = conversationMode,
+                        historyMessagesOverride = historyMessagesOverride
+                    ),
                     conversationId = conversationId,
                     promptCacheKey = promptCacheKey,
-                    contextCompactor = AgentConversationContextCompactor(
-                        historyRepository = historyRepository,
-                        modelScene = agentModelScene,
-                        modelOverride = modelOverride,
-                        reasoningEffort = reasoningEffort,
-                        promptCacheKey = promptCacheKey,
-                    ),
+                    contextCompactor = contextCompactorFactory(),
                     executionEnv = DefaultAgentExecutionEnvironment(
                         agentRunId = agentRunId,
                         userMessage = userMessage,

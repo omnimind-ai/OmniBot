@@ -1,0 +1,40 @@
+{
+  "name": "Real recursive file list limits and history survive restart",
+  "requireClockSync": true,
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_FILE_LIST",
+      "scenario": "xiaowan-file-list-limits.json",
+      "timeoutMs": 180000
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_FILE_LIST_DONE",
+      "timeoutMs": 180000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_FILE_LIST",
+      "expected": "done"
+    },
+    {
+      "action": "live-task",
+      "marker": "OOB_LIVE_FILE_LIST",
+      "phase": "file-list-limits"
+    },
+    {
+      "action": "restart"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_FILE_LIST",
+      "expected": "done"
+    },
+    {
+      "action": "live-task",
+      "marker": "OOB_LIVE_FILE_LIST",
+      "phase": "file-list-limits"
+    }
+  ]
+}

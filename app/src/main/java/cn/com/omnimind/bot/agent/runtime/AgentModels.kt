@@ -30,7 +30,6 @@ data class AgentFinalResponse(
 sealed class AgentResult {
     data class Success(
         val response: AgentFinalResponse,
-        val executedTools: List<ToolExecutionResult>,
         val outputKind: String = AgentOutputKind.NONE.value,
         val hasUserVisibleOutput: Boolean = false,
         val latestPromptTokens: Int? = null,

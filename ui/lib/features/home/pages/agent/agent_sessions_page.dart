@@ -31,20 +31,18 @@ class _AgentSessionsPageState extends State<AgentSessionsPage> {
   bool _isSwitchingWorkspace = false;
   String? _openingThreadId;
   _AgentSessionFilter _filter = _AgentSessionFilter.all;
-  StreamSubscription<Map<String, dynamic>>? _agentEventSubscription;
-  Timer? _remotePollTimer;
-  Timer? _eventRefreshDebounce;
+  Timer? _sessionPollTimer;
+  bool _isRefreshing = false;
 
   bool get _isEnglish => Localizations.localeOf(context).languageCode == 'en';
 
   @override
   void initState() {
     super.initState();
-    _agentEventSubscription = AgentRuntimeService.events.listen(
-      _handleAgentEvent,
-    );
-    _remotePollTimer = Timer.periodic(const Duration(seconds: 3), (_) {
-      if (!mounted || !_isRemoteRuntime) {
+    // All harnesses expose the same session/list snapshot. Prompt completion
+    // is a response, not a stream event; refresh without guessing from items.
+    _sessionPollTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      if (!mounted || ModalRoute.of(context)?.isCurrent == false) {
         return;
       }
       unawaited(_loadSessions(showLoading: false));
@@ -54,46 +52,16 @@ class _AgentSessionsPageState extends State<AgentSessionsPage> {
 
   @override
   void dispose() {
-    _agentEventSubscription?.cancel();
-    _remotePollTimer?.cancel();
-    _eventRefreshDebounce?.cancel();
+    _sessionPollTimer?.cancel();
     super.dispose();
   }
 
   bool get _isRemoteRuntime =>
       _status.runtime == 'remote' || _status.remoteEnabled;
 
-  void _handleAgentEvent(Map<String, dynamic> event) {
-    final method =
-        (event['method'] ??
-                (event['message'] is Map
-                    ? (event['message'] as Map)['method']
-                    : null) ??
-                event['type'] ??
-                (event['message'] is Map
-                    ? (event['message'] as Map)['type']
-                    : null))
-            ?.toString()
-            .replaceAll('.', '/')
-            .trim() ??
-        '';
-    if (method.isEmpty || !_isRemoteRuntime) {
-      return;
-    }
-    if (!method.startsWith('thread/') &&
-        !method.startsWith('turn/') &&
-        !method.startsWith('item/') &&
-        !method.startsWith('rawResponseItem/')) {
-      return;
-    }
-    _eventRefreshDebounce?.cancel();
-    _eventRefreshDebounce = Timer(const Duration(milliseconds: 450), () {
-      if (!mounted) return;
-      unawaited(_loadSessions(showLoading: false));
-    });
-  }
-
   Future<void> _loadSessions({bool showLoading = true}) async {
+    if (!mounted || _isRefreshing) return;
+    _isRefreshing = true;
     if (mounted && showLoading) {
       setState(() {
         _isLoading = true;
@@ -123,12 +91,6 @@ class _AgentSessionsPageState extends State<AgentSessionsPage> {
         return;
       }
       final payloads = <Map<String, dynamic>>[];
-      if (status.runtime == 'remote' || status.remoteEnabled) {
-        final loadedPayload = await _listLoadedThreadsIfSupported();
-        if (loadedPayload != null) {
-          payloads.add(loadedPayload);
-        }
-      }
       String? cursor;
       final seenCursors = <String>{};
       while (true) {
@@ -180,15 +142,8 @@ class _AgentSessionsPageState extends State<AgentSessionsPage> {
         _isLoading = false;
         _error = error.toString();
       });
-    }
-  }
-
-  Future<Map<String, dynamic>?> _listLoadedThreadsIfSupported() async {
-    try {
-      return await AgentRuntimeService.listLoadedSessions();
-    } catch (error) {
-      debugPrint('Codex loaded thread list unavailable: $error');
-      return null;
+    } finally {
+      _isRefreshing = false;
     }
   }
 
@@ -2020,7 +1975,7 @@ String? _threadEntryId(
   String? parentKey,
 ) {
   final direct = _stringValue(
-    map['threadId'] ?? map['thread_id'] ?? threadMap?['id'],
+    map['sessionId'] ?? map['threadId'] ?? map['thread_id'] ?? threadMap?['id'],
   );
   if (direct != null) {
     return direct;

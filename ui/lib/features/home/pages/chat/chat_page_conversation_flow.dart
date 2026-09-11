@@ -586,16 +586,6 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       if (!await _ensureNormalChatModelConfigurationForSend()) return;
 
       final attachments = inputAttachments.map((item) => item.toMap()).toList();
-      if (attachments.isNotEmpty && mounted) {
-        setState(() {
-          if (submittedAttachments == null) {
-            _pendingAttachments.clear();
-          } else {
-            _pendingAttachments.removeWhere(submittedAttachments.contains);
-          }
-        });
-      }
-
       await _dispatchUserMessage(
         messageText,
         attachments: attachments,
@@ -733,6 +723,9 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       );
     } else {
       messageIds = addUserMessage(messageText, attachments: attachments);
+      setState(() {
+        _modeState(_activeMode).consumeMessageAttachments(attachments);
+      });
       _syncUserMessageLinkPreviews(messageIds.userMessageId);
     }
     if (restoreInputValue != null && mounted) {
@@ -1300,7 +1293,6 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
         // manufacture a cancelled message here: doing so makes the event
         // reducer reject the real turn/completed notification and leaves the
         // native turn running behind a reset Flutter projection.
-        interruptActiveToolCard();
         unawaited(_interruptAgentTurn());
         return;
       }
@@ -1310,7 +1302,6 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
         // Keep the host reservation alive until the official cancel result.
         // The shared reducer then finalizes cards, history, and the spinner
         // exactly once.
-        interruptActiveToolCard();
         unawaited(
           cancelAcpPromptForMode(
             mode: ChatPageMode.normal,
@@ -1370,7 +1361,6 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
             ?.activeRunIdentity
             ?.normalizedTurnId ??
         _normalAcpTurnId?.trim();
-    interruptActiveToolCard();
     if (_activeConversationMode == ChatPageMode.normal &&
         activeConversationModeValue != ConversationMode.chatOnly) {
       unawaited(
@@ -1388,6 +1378,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       unawaited(_interruptAgentTurn());
       return;
     }
+    interruptActiveToolCard();
     if (!(_activeConversationMode == ChatPageMode.normal &&
         activeConversationModeValue != ConversationMode.chatOnly)) {
       unawaited(
@@ -1444,7 +1435,6 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
         // turn. Its terminal event is already fenced by the shared runtime.
         return;
       }
-      interruptActiveToolCard();
       if (_activeConversationMode == ChatPageMode.normal &&
           activeConversationModeValue != ConversationMode.chatOnly) {
         unawaited(
@@ -1460,6 +1450,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
         unawaited(_interruptAgentTurn());
         return;
       }
+      interruptActiveToolCard();
       if (!(_activeConversationMode == ChatPageMode.normal &&
           activeConversationModeValue != ConversationMode.chatOnly)) {
         unawaited(
