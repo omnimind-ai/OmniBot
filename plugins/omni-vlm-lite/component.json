@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "com.omnimind.omni-vlm-lite",
-  "version": "2.1.8",
+  "version": "2.2.12",
   "name": "OmniFlow",
   "kind": "runtime_component",
   "interfaceVersion": 1,
@@ -26,9 +26,6 @@
     "sitePackages": "vendor/site-packages"
   },
   "runtime": {
-    "manifest": "scripts/runtime/runtime.properties",
-    "pythonSource": "scripts/runtime/python",
-    "sitePackages": "vendor/site-packages",
-    "omnitransferRoot": "scripts/runtime/.runtime/omnitransfer"
+    "manifest": "host.json"
   }
 }

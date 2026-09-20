@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:ui/l10n/l10n.dart';
 import 'package:ui/models/omni_plugin_item.dart';
@@ -30,6 +31,7 @@ class _PluginDetailPageState extends State<PluginDetailPage> {
   bool _loading = true;
   bool _busy = false;
   bool _changed = false;
+  String? _actionError;
 
   @override
   void initState() {
@@ -110,6 +112,42 @@ class _PluginDetailPageState extends State<PluginDetailPage> {
     }
   }
 
+  String _appText(String zh, String en) =>
+      Localizations.localeOf(context).languageCode == 'zh' ? zh : en;
+
+  Future<void> _openApp({bool pin = false}) async {
+    final plugin = _plugin;
+    if (plugin == null || _busy || !plugin.enabled) return;
+    setState(() => _busy = true);
+    try {
+      if (pin) {
+        final result = await OmniPluginService.pinToHome(plugin.id);
+        if (!mounted) return;
+        final status = result['status'];
+        showToast(
+          status == 'requested'
+              ? _appText('请在系统弹窗中确认添加', 'Confirm in the system dialog')
+              : status == 'updated'
+              ? _appText('桌面快捷方式已更新', 'Shortcut updated')
+              : _appText(
+                  '当前桌面无法添加快捷方式',
+                  'The launcher cannot add this shortcut',
+                ),
+        );
+      } else {
+        await OmniPluginService.openApp(plugin.id);
+      }
+    } catch (error) {
+      if (mounted)
+        showToast(
+          _appText('无法打开或添加 App：$error', 'Unable to open or pin App: $error'),
+          type: ToastType.error,
+        );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Future<void> _runStateAction(
     Future<OmniPluginItem> Function() action, {
     required String successMessage,
@@ -123,10 +161,18 @@ class _PluginDetailPageState extends State<PluginDetailPage> {
       setState(() {
         _plugin = updated;
         _changed = true;
+        _actionError = null;
       });
       showToast(successMessage, type: ToastType.success);
-    } catch (_) {
-      if (mounted) showToast(failureMessage, type: ToastType.error);
+    } catch (error) {
+      if (!mounted) return;
+      final detail = error is PlatformException ? error.message : null;
+      setState(() {
+        _actionError = detail?.trim().isNotEmpty == true
+            ? '$failureMessage：${detail!.trim()}'
+            : failureMessage;
+      });
+      showToast(_actionError!, type: ToastType.error);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -327,7 +373,9 @@ class _PluginDetailPageState extends State<PluginDetailPage> {
               _localized(item['description']),
             ),
           ),
-          if (plugin.installed && plugin.enabled) ...[
+          if (plugin.installed &&
+              plugin.enabled &&
+              _map(plugin.presentation['ready']).isNotEmpty) ...[
             const SizedBox(height: 24),
             _buildReadmeHeading(_text('开始使用', 'Get started')),
             const SizedBox(height: 12),
@@ -372,14 +420,14 @@ class _PluginDetailPageState extends State<PluginDetailPage> {
             ],
           ),
         ),
-        if (!plugin.compatible ||
+        if (_actionError != null || !plugin.compatible ||
             plugin.errorMessage?.trim().isNotEmpty == true)
           Padding(
             padding: const EdgeInsets.only(top: 18),
             child: Text(
-              !plugin.compatible
+              _actionError ?? (!plugin.compatible
                   ? context.l10n.pluginIncompatible
-                  : plugin.errorMessage!.trim(),
+                  : plugin.errorMessage!.trim()),
               style: const TextStyle(
                 color: AppColors.alertRed,
                 fontSize: 12,
@@ -710,6 +758,24 @@ class _PluginDetailPageState extends State<PluginDetailPage> {
                     if (!plugin.required) const SizedBox(height: 8),
                     Row(
                       children: [
+                        if (plugin.presentation['hasApp'] == true) ...[
+                          Expanded(
+                            child: FilledButton.icon(
+                              onPressed: _busy || !plugin.enabled
+                                  ? null
+                                  : () => _openApp(),
+                              icon: const Icon(Icons.open_in_new),
+                              label: Text(_appText('打开 App', 'Open App')),
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: _appText('添加到桌面', 'Add to Home Screen'),
+                            onPressed: _busy || !plugin.enabled
+                                ? null
+                                : () => _openApp(pin: true),
+                            icon: const Icon(Icons.add_to_home_screen),
+                          ),
+                        ],
                         if (installedAction.isNotEmpty) ...[
                           Expanded(
                             child: FilledButton.tonalIcon(
@@ -813,10 +879,11 @@ class _PluginDetailPageState extends State<PluginDetailPage> {
   List<Object?> _list(Object? value) =>
       value is List ? List<Object?>.from(value) : const <Object?>[];
 
-  List<Map<String, dynamic>> _mapList(Object? value) => _list(value)
-      .whereType<Map>()
-      .map((item) => Map<String, dynamic>.from(item))
-      .toList(growable: false);
+  List<Map<String, dynamic>> _mapList(Object? value) =>
+      _list(value)
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList(growable: false);
 
   String _localized(Object? value, {String fallback = ''}) {
     if (value is String) return value.trim().isEmpty ? fallback : value.trim();

@@ -11,6 +11,7 @@ import { spawn, execFile } from 'node:child_process';
 import { once } from 'node:events';
 import { createRequire } from 'node:module';
 import { WebSocketServer } from 'ws';
+import { publicBridgeUrl } from './connection-url.mjs';
 
 const require = createRequire(import.meta.url);
 const qrcode = require('qrcode-terminal');
@@ -34,17 +35,20 @@ Options:
   --host <host>           Listen host. Defaults to 0.0.0.0.
   --port <port>           Listen port. Defaults to 17321.
   --public-host <host>    Host/IP printed in the QR code.
+  --public-url <url>      Phone-reachable ws:// or wss:// URL printed in the QR code.
   --acp-bin <path>        ACP agent executable. Defaults to codex-acp.
   --codex-home <path>     Optional CODEX_HOME override.
   --config <path>         Bridge config path for remembered manual token.
   --forget-token          Clear the remembered manual token before setup.
   --interactive           Force terminal setup prompts.
   --no-interactive        Start immediately without terminal prompts.
+  --show-pairing          Print credential-bearing pairing URL and QR (explicit opt-in).
   -h, --help              Show this help.
 
 Environment variables with the same meaning are also supported:
   OMNIBOT_BRIDGE_CWD, OMNIBOT_BRIDGE_TOKEN, OMNIBOT_BRIDGE_HOST,
-  OMNIBOT_BRIDGE_PORT, OMNIBOT_BRIDGE_PUBLIC_HOST, CODEX_ACP_BIN, CODEX_HOME,
+  OMNIBOT_BRIDGE_PORT, OMNIBOT_BRIDGE_PUBLIC_HOST, OMNIBOT_BRIDGE_PUBLIC_URL,
+  CODEX_ACP_BIN, CODEX_HOME,
   OMNIBOT_BRIDGE_INTERACTIVE, OMNIBOT_BRIDGE_CONFIG`);
 }
 
@@ -81,6 +85,10 @@ function parseCliArgs(args) {
       options.interactive = false;
       continue;
     }
+    if (arg === '--show-pairing') {
+      options.showPairing = true;
+      continue;
+    }
     if (arg === '--forget-token') {
       options.forgetToken = true;
       continue;
@@ -91,6 +99,7 @@ function parseCliArgs(args) {
       '--host': 'host',
       '--port': 'port',
       '--public-host': 'publicHost',
+      '--public-url': 'publicUrl',
       '--acp-bin': 'codexBin',
       '--codex-home': 'codexHome',
       '--config': 'configPath',
@@ -150,8 +159,10 @@ function hasExplicitNetworkConfig(options) {
   return (
     hasText(options.host) ||
     hasText(options.publicHost) ||
+    hasText(options.publicUrl) ||
     hasText(envOption('OMNIBOT_BRIDGE_HOST')) ||
-    hasText(envOption('OMNIBOT_BRIDGE_PUBLIC_HOST'))
+    hasText(envOption('OMNIBOT_BRIDGE_PUBLIC_HOST')) ||
+    hasText(envOption('OMNIBOT_BRIDGE_PUBLIC_URL'))
   );
 }
 
@@ -818,6 +829,13 @@ const publicHost =
   cliOptions.publicHost ||
   process.env.OMNIBOT_BRIDGE_PUBLIC_HOST ||
   '';
+let publicUrl;
+try {
+  publicUrl = publicBridgeUrl(cliOptions.publicUrl ?? process.env.OMNIBOT_BRIDGE_PUBLIC_URL);
+} catch (error) {
+  console.error(error.message);
+  process.exit(1);
+}
 const token = resolveToken(
   Object.prototype.hasOwnProperty.call(interactiveOptions, 'token')
     ? interactiveOptions.token
@@ -1498,6 +1516,8 @@ wss.on('connection', async (ws, req) => {
   let codex = null;
   let initialized = false;
   let connectionCounted = true;
+  const promptRequests = new Set();
+  const clientRequests = new Set();
   activeConnections += 1;
 
   function send(type, extra = {}) {
@@ -1538,7 +1558,20 @@ wss.on('connection', async (ws, req) => {
       const lines = combined.split(/\r?\n/);
       const tail = lines.pop() || '';
       for (const line of lines) {
-        if (line.trim()) send(type, { line });
+        if (line.trim()) {
+          if (type === 'stdout') {
+            try {
+              const rpc = JSON.parse(line);
+              if (rpc.id != null && !rpc.method) promptRequests.delete(rpc.id);
+              if (rpc.id != null && rpc.method) {
+                if (connectionCounted) clientRequests.add(rpc.id);
+                else rejectDetachedRequest(rpc.id);
+              }
+            } catch { /* Leave malformed output to the existing ACP peer. */ }
+          }
+          send(type, { line });
+          if (!connectionCounted && promptRequests.size === 0) closeCodex();
+        }
       }
       return tail;
     };
@@ -1600,7 +1633,13 @@ wss.on('connection', async (ws, req) => {
         send('error', { message: 'ACP agent is not running' });
         return;
       }
-      codex.stdin.write(`${String(message.line || '')}\n`);
+      const line = String(message.line || '');
+      try {
+        const rpc = JSON.parse(line);
+        if (rpc.id != null && rpc.method === 'session/prompt') promptRequests.add(rpc.id);
+        if (rpc.id != null && !rpc.method) clientRequests.delete(rpc.id);
+      } catch { /* The ACP peer owns validation. */ }
+      codex.stdin.write(`${line}\n`);
       return;
     }
 
@@ -1616,12 +1655,24 @@ wss.on('connection', async (ws, req) => {
     });
   });
 
+  function rejectDetachedRequest(id) {
+    if (codex?.stdin.writable) {
+      codex.stdin.write(JSON.stringify({ jsonrpc: '2.0', id,
+        error: { code: -32000, message: 'Client disconnected; input or permission unavailable' },
+      }) + '\n');
+    }
+  }
+
   function closeConnection() {
     if (connectionCounted) {
       connectionCounted = false;
       activeConnections = Math.max(0, activeConnections - 1);
     }
-    closeCodex();
+    for (const id of clientRequests) rejectDetachedRequest(id);
+    clientRequests.clear();
+    // A socket is a transport, not the owner of a running ACP prompt. Drain
+    // the official response before teardown; never replay on a new socket.
+    if (promptRequests.size === 0) closeCodex();
   }
 
   ws.on('close', closeConnection);
@@ -1631,8 +1682,12 @@ wss.on('connection', async (ws, req) => {
 server.listen(port, host);
 await once(server, 'listening');
 const advertised = advertisedHosts();
-const primaryBridgeUrl = bridgeWebSocketUrl(advertised[0].address);
-const payload = quickConnectPayload(primaryBridgeUrl);
+const primaryBridgeUrl = publicUrl || bridgeWebSocketUrl(advertised[0].address);
+// Service logs must not become a second credential store. Pairing output is
+// available in an interactive terminal or through an explicit opt-in.
+const showPairing = cliOptions.showPairing === true ||
+  (process.stdin.isTTY === true && process.stdout.isTTY === true &&
+    cliOptions.interactive !== false && envInteractiveEnabled() !== false);
 console.log(`\n${color.heading('Omnibot Codex bridge')}`);
 logField('Bridge version', bridgePackage.version || 'unknown', color.accent);
 logField('Listening', `ws://${host}:${port}/codex`, color.green);
@@ -1651,10 +1706,10 @@ if (startupCodexVersion.ok) {
 }
 if (token) {
   logField('Token auth', 'enabled', color.warn);
-  logField('Bridge token', token, color.warn);
+  if (showPairing) logField('Bridge token', token, color.warn);
 }
 logField('Quick connect URL', primaryBridgeUrl, color.green);
-if (advertised.length > 1) {
+if (!publicUrl && advertised.length > 1) {
   console.log(
     `${color.label('Other LAN addresses:')} ${color.dim(advertised
       .slice(1)
@@ -1662,13 +1717,18 @@ if (advertised.length > 1) {
       .join(', '))}`
   );
 }
-if (!publicHost.trim() && isWildcardHost(host)) {
+if (!publicUrl && !publicHost.trim() && isWildcardHost(host)) {
   console.log(color.warn('Set OMNIBOT_BRIDGE_PUBLIC_HOST to override the QR address if this IP is not reachable from your phone.'));
 }
-if (!publicHost.trim() && isLoopbackHost(host)) {
+if (!publicUrl && !publicHost.trim() && isLoopbackHost(host)) {
   console.log(color.warn('OMNIBOT_BRIDGE_HOST is loopback; phones can only connect through adb reverse, a tunnel, or another forwarded network path.'));
 }
-logField('Quick connect payload', payload, color.dim);
-qrcode.generate(payload, { small: true }, (qr) => {
-  console.log(qr);
-});
+if (showPairing) {
+  const payload = quickConnectPayload(primaryBridgeUrl);
+  logField('Quick connect payload', payload, color.dim);
+  qrcode.generate(payload, { small: true }, (qr) => {
+    console.log(qr);
+  });
+} else {
+  console.log('Pairing credentials hidden. Use --show-pairing in a private terminal to display them.');
+}

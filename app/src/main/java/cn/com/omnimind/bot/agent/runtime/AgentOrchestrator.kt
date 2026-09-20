@@ -38,7 +38,10 @@ class AgentOrchestrator(
      * A child orchestrator may borrow a parent's router. Only the owner may
      * release the handlers and their process/session resources.
      */
-    private val ownsToolRouter: Boolean = true
+    private val ownsToolRouter: Boolean = true,
+    private val performanceSink: (JsonObject) -> Unit = { record ->
+        runCatching { OmniLog.i("AgentPerformance", record.toString()) }
+    },
 ) {
     class Input(
         val callback: AgentCallback,
@@ -103,6 +106,7 @@ class AgentOrchestrator(
     }
 
     suspend fun run(input: Input): AgentResult {
+        val runStarted = System.nanoTime()
         val callback = input.callback
         val memory = input.memory
         // Keep this as an explicit loop instead of the inline `mapTo` call.
@@ -142,6 +146,7 @@ class AgentOrchestrator(
                     tag,
                     "round=$round request_tools=${toolRegistry.toolsForModel.size}"
                 )
+                val contextStarted = System.nanoTime()
                 val before = memory.snapshot()
                 val estimatedContext = AgentContextBudget.estimate(before, usageContextTokens, usageMessageCount, toolBudget)
                 val requestMessages = input.contextCompactor?.compactIfNeeded(
@@ -164,6 +169,11 @@ class AgentOrchestrator(
                 // an explicit wire-level disable; checking only `no` leaves
                 // GLM-style providers free to enable their default reasoning
                 // path, which can delay the first token for a simple greeting.
+                recordPerformance(input, "context", round, contextStarted, details = buildJsonObject {
+                    put("estimatedTokens", estimatedContext)
+                    put("messages", requestMessages.size)
+                    put("tools", toolRegistry.toolsForModel.size)
+                })
                 val normalizedReasoningEffort =
                     input.executionEnv.reasoningEffort?.trim()?.lowercase()
                 val disableThinking = normalizedReasoningEffort in setOf(
@@ -173,7 +183,7 @@ class AgentOrchestrator(
                     "disabled",
                 )
                 val turn = try {
-                    streamTurn(
+                    timed(input, "model", round) { streamTurn(
                         callback = callback,
                         request = ChatCompletionRequest(
                             messages = requestMessages,
@@ -190,19 +200,20 @@ class AgentOrchestrator(
                             },
                             promptCacheKey = input.promptCacheKey,
                             tools = toolRegistry.toolsForModel,
-                            // These optional controls belong to the active
-                            // Harness/Provider. The shared loop supplies the
-                            // tool surface and preserves all tool results,
-                            // without overriding the provider's own defaults.
+                            // Keep tool selection with the model; the Provider
+                            // adapter owns protocol compatibility.
                             toolChoice = null,
-                            // The configured Harness/Provider owns whether
-                            // independent tool calls may run in parallel.
-                            // Omitting this optional OpenAI-compatible field
-                            // keeps the shared ACP loop free of a local policy.
-                            parallelToolCalls = null
+                            // Advertise standard multi-call generation only when the
+                            // catalog has opted-in reads. This does not run writes in
+                            // parallel. The existing Provider adapter owns compatibility.
+                            parallelToolCalls = true.takeIf {
+                                toolRegistry.toolsForModel.any {
+                                    toolRegistry.runtimeDescriptor(it.function.name).parallelSafe
+                                }
+                            }
                         ),
                         assistantContentPrefix = assistantContentPrefix
-                    )
+                    ) }
                 } catch (error: AgentStreamRequestException) {
                     if (
                         !contextOverflowRecoveryAttempted &&
@@ -230,6 +241,12 @@ class AgentOrchestrator(
                         continue@roundLoop
                     }
                     throw error
+                }
+                // Pi resets overflow recovery after a successful assistant response.
+                // A later request with new tool results is a new compaction boundary;
+                // consecutive rejected requests still get only one recovery attempt.
+                if (turn.finishReason !in setOf("error", "length", "max_tokens", "max_output_tokens")) {
+                    contextOverflowRecoveryAttempted = false
                 }
                 val turnUsage = resolveTurnUsage(turn)
                 lastTurnUsage = turnUsage
@@ -389,69 +406,86 @@ class AgentOrchestrator(
                     validatedCalls.add(toolCall)
                 }
 
-                // Phase B — execute the calls in the model's declared order.
-                // The runtime does not add a second tool scheduler: a tool
-                // result is committed before the next model-selected call so
-                // identity, cancellation, and user-visible activity stay in
-                // one straightforward ACP prompt loop.
                 if (!advanceToNextRound && validatedCalls.isNotEmpty()) {
                     logInfo(
                         tag,
                         "round=$round model_tool_calls=${validatedCalls.size}"
                     )
 
-                    for (call in validatedCalls) {
-                        val desc = descriptorMap.getValue(call.id)
-                        val args = parsedArgsMap.getValue(call.id)
-                        val result = executeSingleTool(
-                            env = input.executionEnv,
-                            callback = callback,
-                            toolCall = call,
-                            descriptor = desc,
-                            parsedArgs = args
-                        )
-                        callback.onToolCallComplete(
-                            call.id,
-                            call.function.name,
-                            result
-                        )
-                        appendToolResultMessage(
-                            memory = memory,
-                            env = input.executionEnv,
-                            callback = callback,
-                            assistantMessage = assistantMessageForMemory,
-                            toolCall = call,
-                            descriptor = desc,
-                            result = result
-                        )
-                        writtenToolCallIds += call.id
+                    // Contiguous opt-in reads may overlap. Writes, GUI, terminal,
+                    // and unclassified tools are barriers. No extra Agent lifecycle.
+                    var cursor = 0
+                    while (cursor < validatedCalls.size && !terminated) {
+                        val first = validatedCalls[cursor]
+                        val batch = if (descriptorMap.getValue(first.id).parallelSafe) {
+                            validatedCalls.asSequence().drop(cursor).takeWhile {
+                                descriptorMap.getValue(it.id).parallelSafe
+                            }.toList()
+                        } else listOf(first)
+                        coroutineScope {
+                            val pending = batch.map { call ->
+                                async {
+                                    timed(input, "tool", round, call.id) {
+                                        executeSingleTool(input.executionEnv, callback, call,
+                                            descriptorMap.getValue(call.id), parsedArgsMap.getValue(call.id))
+                                    }
+                                }
+                            }
+                            try {
+                                for ((index, call) in batch.withIndex()) {
+                                    val desc = descriptorMap.getValue(call.id)
+                                    // Commit in the model's declared order, through the existing
+                                    // callback and history owner. Completion speed is not identity.
+                                    val result = pending[index].await()
+                                    timed(input, "projection", round, call.id) {
+                                        callback.onToolCallComplete(
+                                            call.id,
+                                            call.function.name,
+                                            result
+                                        )
+                                        appendToolResultMessage(
+                                            memory = memory,
+                                            env = input.executionEnv,
+                                            callback = callback,
+                                            assistantMessage = assistantMessageForMemory,
+                                            toolCall = call,
+                                            descriptor = desc,
+                                            result = result
+                                        )
+                                        writtenToolCallIds += call.id
+                                    }
 
-                        if (!terminated && !advanceToNextRound && eventAdapter.hasUserVisibleOutput(result)) {
-                            hasUserFacingOutput = true
-                        }
-                        if (!terminated && !advanceToNextRound) {
-                            val mappedKind = eventAdapter.mapOutputKind(result)
-                            if (mappedKind != AgentOutputKind.NONE) {
-                                outputKind = mappedKind
+                                    if (!terminated && !advanceToNextRound && eventAdapter.hasUserVisibleOutput(result)) {
+                                        hasUserFacingOutput = true
+                                    }
+                                    if (!terminated && !advanceToNextRound) {
+                                        val mappedKind = eventAdapter.mapOutputKind(result)
+                                        if (mappedKind != AgentOutputKind.NONE) {
+                                            outputKind = mappedKind
+                                        }
+                                    }
+                                    if (!terminated && isUserStoppedVlmTask(call.function.name, result)) {
+                                        terminated = true
+                                        pendingToolCallBackfillReason = t(
+                                            "GUI 任务已被用户停止，当前 assistant 消息中的剩余 tool_call 未继续处理。",
+                                            "The GUI task was stopped by the user, so the remaining tool calls in this assistant message were not processed."
+                                        )
+                                    }
+                                    if (!terminated && eventAdapter.isConversationStoppingResult(result)) {
+                                        terminated = true
+                                        pendingToolCallBackfillReason = t(
+                                            "工具 ${call.function.name} 的结果已结束当前对话，当前 assistant 消息中的剩余 tool_call 未继续处理。",
+                                            "The result of tool ${call.function.name} ended the conversation, so the remaining tool calls in this assistant message were not processed."
+                                        )
+                                    }
+                                    // Already-started reads must commit their actual results.
+                                    // The next batch remains blocked after a stopping result.
+                                }
+                            } finally {
+                                pending.forEach { if (!it.isCompleted) it.cancel() }
                             }
                         }
-                        if (!terminated && isUserStoppedVlmTask(call.function.name, result)) {
-                            terminated = true
-                            pendingToolCallBackfillReason = t(
-                                "GUI 任务已被用户停止，当前 assistant 消息中的剩余 tool_call 未继续处理。",
-                                "The GUI task was stopped by the user, so the remaining tool calls in this assistant message were not processed."
-                            )
-                        }
-                        if (!terminated && eventAdapter.isConversationStoppingResult(result)) {
-                            terminated = true
-                            pendingToolCallBackfillReason = t(
-                                "工具 ${call.function.name} 的结果已结束当前对话，当前 assistant 消息中的剩余 tool_call 未继续处理。",
-                                "The result of tool ${call.function.name} ended the conversation, so the remaining tool calls in this assistant message were not processed."
-                            )
-                        }
-                        if (terminated) {
-                            break
-                        }
+                        cursor += batch.size
                     }
                 }
 
@@ -492,6 +526,7 @@ class AgentOrchestrator(
             callback.onError(message, retryable = true)
             return AgentResult.Error(message, e)
         } finally {
+            recordPerformance(input, "turn", completedModelRounds, runStarted)
             if (ownsToolRouter) {
                 runCatching { toolRouter.dispose() }
             }
@@ -921,6 +956,37 @@ class AgentOrchestrator(
             }
         }
         return normalizedPrefix + normalizedContent
+    }
+
+    private suspend fun <T> timed(
+        input: Input, stage: String, round: Int, toolCallId: String? = null,
+        block: suspend () -> T,
+    ): T {
+        val started = System.nanoTime()
+        var outcome = "returned"
+        try { return block() }
+        catch (error: CancellationException) { outcome = "cancelled"; throw error }
+        catch (error: Throwable) { outcome = "error"; throw error }
+        finally { recordPerformance(input, stage, round, started, toolCallId,
+            buildJsonObject { put("outcome", outcome) }) }
+    }
+
+    private fun recordPerformance(
+        input: Input, stage: String, round: Int, started: Long, toolCallId: String? = null,
+        details: JsonObject = JsonObject(emptyMap()),
+    ) {
+        // Diagnostic measurements only: never raw prompts, tool arguments, or
+        // results. Logging cannot change ACP admission, completion, or retries.
+        runCatching { performanceSink(buildJsonObject {
+            put("stage", stage)
+            put("agentRunId", input.executionEnv.agentRunId)
+            input.conversationId?.let { put("conversationId", it) }
+            put("round", round)
+            put("startedMs", started / 1_000_000)
+            put("elapsedMs", (System.nanoTime() - started) / 1_000_000)
+            toolCallId?.let { put("toolCallId", it) }
+            details.forEach { (key, value) -> put(key, value) }
+        }) }
     }
 
     private fun logInfo(tag: String, message: String) {

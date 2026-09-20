@@ -18,6 +18,64 @@ void main() {
   final coordinator = ChatConversationRuntimeCoordinator.instance;
   final recordedMethodCalls = <MethodCall>[];
 
+  test('observing a v2 session replays multiple turns without starting a prompt', () {
+    const id = 99158;
+    final runtime = coordinator.ensureRuntime(conversationId: id, mode: kChatRuntimeModeAgent);
+    expect(coordinator.bindConversationAcpSession(conversationId: id,
+      mode: kChatRuntimeModeAgent, sessionId: 'observed'), isTrue);
+    void update(String turn, Map<String, dynamic> value) => coordinator.applyAgentEvent(
+      conversationId: id, mode: kChatRuntimeModeAgent, event: {
+        'method': 'session/update', 'protocolVersion': 2, 'turnId': turn,
+        'allowImplicitTurnAdmission': value['state'] == 'running',
+        'params': {'sessionId': 'observed', 'turnId': turn, 'update': value},
+      });
+    for (final turn in ['old-a', 'old-b']) {
+      update(turn, {'sessionUpdate': 'user_message', 'messageId': 'user-$turn',
+        'content': [{'type': 'text', 'text': 'question $turn'}]});
+      update(turn, {'sessionUpdate': 'agent_message', 'messageId': 'answer-$turn',
+        'content': [{'type': 'text', 'text': 'answer $turn'}]});
+    }
+    expect(runtime.messages, hasLength(4));
+    expect(runtime.isAiResponding, isFalse);
+    expect(runtime.activeAcpTurnId, isNull);
+    update('current', {'sessionUpdate': 'state_update', 'state': 'running'});
+    expect(runtime.isAiResponding, isTrue);
+    update('old-b', {'sessionUpdate': 'agent_message', 'messageId': 'answer-old-b',
+      'content': [{'type': 'text', 'text': 'answer old-b restored'}]});
+    expect(runtime.messages, hasLength(4));
+    expect(runtime.messages.where((m) => m.text == 'answer old-b restored'), hasLength(1));
+    expect(runtime.activeAcpTurnId, 'current');
+    update('current', {'sessionUpdate': 'state_update', 'state': 'idle', 'stopReason': 'end_turn'});
+    expect(runtime.isAiResponding, isFalse);
+  });
+
+  test('v2 external turn completes through session state and rejects late old state', () {
+    const conversationId = 99108;
+    final runtime = coordinator.ensureRuntime(conversationId: conversationId, mode: kChatRuntimeModeAgent);
+    void state(String turn, String value) => coordinator.applyAgentEvent(
+      conversationId: conversationId,
+      mode: kChatRuntimeModeAgent,
+      event: {
+        'protocolVersion': 2, 'turnId': turn,
+        'allowImplicitTurnAdmission': value == 'running',
+        'message': {'method': 'session/update', 'params': {
+          'sessionId': 'v2-shared', 'turnId': turn,
+          'update': {'sessionUpdate': 'state_update', 'state': value, if (value == 'idle') 'stopReason': 'end_turn'},
+        }},
+      },
+    );
+    state('external-a', 'running');
+    expect(runtime.isAiResponding, isTrue);
+    state('external-a', 'idle');
+    expect(runtime.isAiResponding, isFalse);
+    state('external-b', 'running');
+    expect(runtime.isAiResponding, isTrue);
+    state('external-a', 'idle');
+    expect(runtime.isAiResponding, isTrue);
+    state('external-b', 'idle');
+    expect(runtime.isAiResponding, isFalse);
+  });
+
   test('compaction observations cannot overwrite the saved user threshold', () {
     final runtime = coordinator.ensureRuntime(
       conversationId: 99109,
@@ -673,6 +731,135 @@ void main() {
     expect(runtime.hasInFlightTask, isTrue);
   });
 
+  for (final staleRunningFlag in [false, true]) {
+    test('lifecycle audit: late history after completion running=$staleRunningFlag', () {
+      const id = 20052;
+      const turn = 'history-race';
+      applyAcp(id, 'turn/started', turnId: turn);
+      final runtime = coordinator.runtimeFor(conversationId: id, mode: kChatRuntimeModeAgent)!;
+      final query = ChatMessageModel.userMessage('keep my request', id: 'history-race-user');
+      runtime.messages.add(query);
+      final historyBeforeReply = List<ChatMessageModel>.from(runtime.messages);
+      applyAcp(id, 'session/update', turnId: turn, params: {
+        'update': {'sessionUpdate': 'agent_message_chunk', 'messageId': 'answer',
+          'content': {'text': 'completed answer'}},
+      });
+      completePrompt(id, turnId: turn);
+      expect(runtime.hasInFlightTask, isFalse);
+      final completedMessages = List<ChatMessageModel>.from(runtime.messages);
+      coordinator.replaceConversationSnapshot(
+        conversationId: id, mode: kChatRuntimeModeAgent,
+        messages: staleRunningFlag ? completedMessages : historyBeforeReply,
+        isAiResponding: staleRunningFlag,
+        currentDispatchTurnId: staleRunningFlag ? turn : null,
+      );
+      expect(runtime.hasInFlightTask, isFalse,
+        reason: 'A render snapshot cannot resurrect the completed ACP prompt');
+      expect(runtime.messages.map((m) => m.text), contains('completed answer'),
+        reason: 'History fetched before completion cannot erase the committed answer');
+    });
+  }
+
+  test('history restore cannot create work and partial pages preserve user messages', () async {
+    const id = 20053;
+    final query = ChatMessageModel.userMessage('new query', id: 'new-query');
+    final older = ChatMessageModel.userMessage('older history', id: 'older');
+    final runtime = coordinator.ensureRuntime(conversationId: id, mode: kChatRuntimeModeAgent);
+    runtime.messages.add(query);
+    for (var attempt = 0; attempt < 2; attempt++) {
+      coordinator.replaceConversationSnapshot(
+        conversationId: id, mode: kChatRuntimeModeAgent, messages: [older],
+        isAiResponding: true, isExecutingTask: true, isCheckingExecutableTask: true,
+        isContextCompressing: true, isDeepThinking: true,
+        currentDispatchTurnId: 'unowned', preserveLiveStreamingState: true,
+      );
+      expect(runtime.hasInFlightTask, isFalse);
+      expect(runtime.isContextCompressing, isFalse);
+      expect(runtime.isDeepThinking, isFalse);
+      expect(runtime.activeRunId, isNull);
+      expect(runtime.messages.map((m) => m.id), ['older', 'new-query']);
+    }
+    await coordinator.persistConversationMessageSnapshot(
+      conversationId: id, mode: kChatRuntimeModeAgent,
+      messages: [], allowHistoryRemoval: true,
+    );
+    expect(runtime.messages, isEmpty);
+  });
+
+  for (final lateSource in ['history load', 'page save']) {
+    test('deletion audit: late $lateSource must not restore a removed message', () async {
+      const id = 20054;
+      final removed = ChatMessageModel.userMessage('removed request', id: 'removed-request');
+      final retained = ChatMessageModel.userMessage('retained request', id: 'retained-request');
+      final runtime = coordinator.ensureRuntime(conversationId: id, mode: kChatRuntimeModeAgent);
+      runtime.messages.addAll([retained, removed]);
+      final stale = List<ChatMessageModel>.from(runtime.messages);
+      await coordinator.persistConversationMessageSnapshot(
+        conversationId: id, mode: kChatRuntimeModeAgent,
+        messages: [retained], allowHistoryRemoval: true,
+      );
+      expect(runtime.messages.map((m) => m.id), ['retained-request']);
+      if (lateSource == 'history load') {
+        coordinator.replaceConversationSnapshot(
+          conversationId: id, mode: kChatRuntimeModeAgent, messages: stale,
+        );
+      } else {
+        await coordinator.persistConversationMessageSnapshot(
+          conversationId: id, mode: kChatRuntimeModeAgent, messages: stale,
+        );
+      }
+      expect(runtime.messages.map((m) => m.id), ['retained-request'],
+        reason: 'An asynchronous snapshot captured before deletion must not undo it');
+    });
+  }
+
+  test('deletion commits before display, rejects concurrent admission and preserves history on failure', () async {
+    const id = 20055;
+    final runtime = coordinator.ensureRuntime(conversationId: id, mode: kChatRuntimeModeAgent);
+    final message = ChatMessageModel.userMessage('keep on failure', id: 'keep');
+    runtime.messages.add(message);
+    final write = Completer<void>();
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(methodChannel, (call) async {
+      if (call.method == 'replaceConversationMessages' && call.arguments['deleteMessageIds'] != null) {
+        expect(call.arguments['deleteMessageIds'], ['keep']);
+        await write.future;
+        throw PlatformException(code: 'storage_failed');
+      }
+      return 'SUCCESS';
+    });
+    final deleting = coordinator.deleteConversationMessageIds(conversationId: id, mode: kChatRuntimeModeAgent, messageIds: {'keep'});
+    final failure = expectLater(deleting, throwsA(isA<PlatformException>()));
+    await Future<void>.delayed(Duration.zero);
+    expect(runtime.messages.single, same(message));
+    expect(runtime.historyEditPending, isTrue);
+    expect(() => coordinator.beginAcpTurn(taskId: 'blocked', conversationId: id, mode: kChatRuntimeModeAgent), throwsStateError);
+    write.complete();
+    await failure;
+    expect(runtime.messages.single, same(message));
+    expect(runtime.historyEditPending, isFalse);
+    expect(runtime.hasInFlightTask, isFalse);
+  });
+
+  test('fresh partial history and scoped previews work after deletion without restoring old callbacks', () async {
+    const id = 20056;
+    final runtime = coordinator.ensureRuntime(conversationId: id, mode: kChatRuntimeModeAgent);
+    runtime.messages.addAll([
+      ChatMessageModel.userMessage('remove', id: 'remove'),
+      ChatMessageModel.userMessage('keep', id: 'keep'),
+    ]);
+    final before = runtime.historyRevision;
+    await coordinator.deleteConversationMessageIds(conversationId: id, mode: kChatRuntimeModeAgent, messageIds: {'remove'});
+    await coordinator.updateConversationLinkPreviews(conversationId: id, mode: kChatRuntimeModeAgent,
+      messageId: 'remove', expectedHistoryRevision: before, previews: [{'title': 'stale'}]);
+    await coordinator.updateConversationLinkPreviews(conversationId: id, mode: kChatRuntimeModeAgent,
+      messageId: 'keep', expectedHistoryRevision: runtime.historyRevision, previews: [{'title': 'fresh'}]);
+    expect(runtime.messages.single.content?['linkPreviews'], [{'title': 'fresh'}]);
+    coordinator.replaceConversationSnapshot(conversationId: id, mode: kChatRuntimeModeAgent,
+      expectedHistoryRevision: runtime.historyRevision,
+      messages: [ChatMessageModel.userMessage('older page', id: 'older')]);
+    expect(runtime.messages.map((m) => m.id), ['older', 'keep']);
+  });
+
   test('an authoritative idle snapshot can finish only its matching turn', () {
     const conversationId = 2008;
     final runtime = coordinator.ensureRuntime(
@@ -760,6 +947,7 @@ void main() {
   for (final preserveLive in [false, true]) {
     test('terminal historical requests stay closed during active restore $preserveLive', () {
       final runtime = coordinator.ensureRuntime(conversationId: 2018, mode: kChatRuntimeModeAgent);
+      coordinator.beginAcpTurn(taskId: 'new-turn', conversationId: 2018, mode: kChatRuntimeModeAgent);
       coordinator.replaceConversationSnapshot(
         conversationId: 2018, mode: kChatRuntimeModeAgent,
         isAiResponding: true, preserveLiveStreamingState: preserveLive,
@@ -805,6 +993,8 @@ void main() {
       conversationId: conversationId,
       mode: kChatRuntimeModeAgent,
     );
+
+    coordinator.beginAcpTurn(taskId: 'live-request', conversationId: conversationId, mode: kChatRuntimeModeAgent);
 
     coordinator.replaceConversationSnapshot(
       conversationId: conversationId,
@@ -1974,6 +2164,141 @@ void main() {
       isTrue,
     );
   });
+
+  test(
+    'stale page save never briefly rolls back a streaming Xiaowan reply',
+    () async {
+      const id = 99112;
+      final runtime = coordinator.ensureRuntime(
+        conversationId: id,
+        mode: kChatRuntimeModeAgent,
+      );
+      void chunk(String text) => applyAcp(
+        id,
+        'session/update',
+        turnId: 'live-preview',
+        params: {
+          'update': {
+            'sessionUpdate': 'agent_message_chunk',
+            'messageId': 'reply',
+            'content': {'text': text},
+          },
+        },
+      );
+      chunk('First ');
+      final stale = List<ChatMessageModel>.from(runtime.messages);
+      chunk('second');
+      expect(runtime.hasInFlightTask, isTrue);
+      final current = runtime.messages.firstWhere(
+        (m) => m.user == 2 && m.type == 1,
+      );
+      final observed = <String>[];
+      void observe() {
+        observed.add(
+          runtime.messages.firstWhere((m) => m.id == current.id).text ?? '',
+        );
+      }
+
+      coordinator.addListener(observe);
+      try {
+        await coordinator.persistConversationMessageSnapshot(
+          conversationId: id,
+          mode: kChatRuntimeModeAgent,
+          messages: stale,
+        );
+        expect(observed, isNotEmpty);
+        expect(observed, everyElement('First second'));
+        chunk(' third');
+        expect(runtime.currentAiMessages[current.id], 'First second third');
+      } finally {
+        coordinator.removeListener(observe);
+      }
+    },
+  );
+
+  for (final updateType in ['agent_message_chunk', 'agent_thought_chunk']) {
+    test(
+      'stale page enrichment preserves $updateType through completion',
+      () async {
+        const id = 99113;
+        const turnId = 'page-enrichment';
+        final runtime = coordinator.ensureRuntime(
+          conversationId: id,
+          mode: kChatRuntimeModeAgent,
+        );
+        void chunk(String text) => applyAcp(
+          id,
+          'session/update',
+          turnId: turnId,
+          params: {
+            'update': {
+              'sessionUpdate': updateType,
+              'messageId': 'item',
+              'content': {'text': text},
+            },
+          },
+        );
+        applyAcp(id, 'turn/started', turnId: turnId);
+        chunk('First ');
+        final stale = runtime.messages
+            .map(
+              (m) => m.copyWith(
+                content: {
+                  ...?m.content,
+                  'linkPreviews': [
+                    {'url': 'https://example.com', 'title': 'Example'},
+                  ],
+                },
+              ),
+            )
+            .toList();
+        chunk('second');
+        final latest = {for (final m in runtime.messages) m.id: m};
+        final external = ChatMessageModel.userMessage('external message');
+        await coordinator.persistConversationMessageSnapshot(
+          conversationId: id,
+          mode: kChatRuntimeModeAgent,
+          messages: [...stale, external],
+        );
+        for (final entry in latest.entries) {
+          final actual = runtime.messages.firstWhere((m) => m.id == entry.key);
+          expect(actual.text, entry.value.text);
+          expect(actual.cardData, entry.value.cardData);
+          expect(actual.streamMeta, entry.value.streamMeta);
+          expect(
+            actual.content?['linkPreviews'],
+            stale.firstWhere((m) => m.id == entry.key).content?['linkPreviews'],
+          );
+        }
+        expect(
+          runtime.messages.where((m) => m.id == external.id),
+          hasLength(1),
+        );
+        completePrompt(id, turnId: turnId);
+        expect(runtime.hasInFlightTask, isFalse);
+        Map<String, dynamic> canonical(ChatMessageModel message) {
+          final json = message.toJson();
+          json['content'] = Map<String, dynamic>.from(message.content ?? {})
+            ..remove('linkPreviews');
+          return json;
+        }
+        final completed = runtime.messages.map(canonical).toList();
+        await coordinator.persistConversationMessageSnapshot(
+          conversationId: id,
+          mode: kChatRuntimeModeAgent,
+          messages: stale,
+        );
+        expect(runtime.messages.map(canonical).toList(), completed);
+        await coordinator.persistConversationMessageSnapshot(
+          conversationId: id,
+          mode: kChatRuntimeModeAgent,
+          messages: [external],
+          allowHistoryRemoval: true,
+        );
+        expect(runtime.messages.map((m) => m.id), [external.id]);
+      },
+    );
+  }
 
   test('partial idle page updates preserve committed messages', () async {
     final runtime = coordinator.ensureRuntime(

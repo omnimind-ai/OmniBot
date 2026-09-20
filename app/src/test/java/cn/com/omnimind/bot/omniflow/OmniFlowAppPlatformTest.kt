@@ -11,49 +11,13 @@ import org.junit.Test
 
 class OmniFlowAppPlatformTest {
     @Test
-    fun `alpine python preparation reinstalls only numpy when missing`() {
-        val command = buildOmniFlowPythonPrepareCommand("3.12")
-
-        assertTrue(command.contains("command -v python3"))
-        assertTrue(command.contains("reason=python_missing"))
-        assertTrue(command.contains("reason=python_version_mismatch"))
-        assertTrue(command.contains("if ! python3 -c 'import numpy'"))
-        assertTrue(command.contains("apk --no-check-certificate add --no-cache py3-numpy"))
-        assertTrue(command.contains("OMNIFLOW_PYTHON_STAGE=repair_index_refresh"))
-        assertTrue(
-            command.indexOf("apk --no-check-certificate add --no-cache py3-numpy") <
-                command.indexOf("apk --no-check-certificate update")
+    fun `json completion reads standard json content without tool calls`() {
+        val response = SceneChatCompletionResponse(
+            success = true, code = "200", message = "success",
+            parser = ModelSceneRegistry.ResponseParser.TEXT_CONTENT,
+            content = """{"functions":[]}""",
         )
-        assertTrue(command.contains("python3 -c 'import numpy'"))
-        assertTrue(command.contains("OMNIFLOW_PYTHON_STAGE=repair_start package=python-numpy"))
-        assertTrue(command.contains("OMNIFLOW_PYTHON_STAGE=probe_ready source=environment"))
-        assertTrue(command.contains("/etc/omnibot-python-environment"))
-        assertTrue(command.contains("alpine-python3.12-numpy-v1"))
-        assertFalse(command.contains("apt-get"))
-        assertFalse(command.contains("py3-pip"))
-        assertFalse(command.contains("printf '%s\\\\n'"))
-        assertFalse(command.contains("command -v uv"))
-        assertFalse(command.contains("uv sync"))
-        assertTrue(command.trimEnd().endsWith("OMNIFLOW_PYTHON_STAGE=ready'"))
-        assertFalse(command.contains("nodejs"))
-    }
-
-    @Test
-    fun `ubuntu python preparation reinstalls only numpy without apt update`() {
-        val command = buildOmniFlowPythonPrepareCommand(
-            expectedVersion = "3.12",
-            distributionId = "ubuntu",
-        )
-
-        assertTrue(command.contains("apt-get install -y --no-install-recommends python3-numpy"))
-        assertTrue(command.contains("python3-numpy"))
-        assertTrue(command.contains("ubuntu-python3.12-numpy-v1"))
-        assertTrue(command.contains("apt-get update"))
-        assertTrue(command.contains("OMNIFLOW_PYTHON_STAGE=repair_index_refresh"))
-        assertFalse(command.contains("--reinstall"))
-        assertFalse(command.contains("python3-pip"))
-        assertFalse(command.contains("setup-ubuntu-repository"))
-        assertFalse(command.contains("apk --wait"))
+        assertEquals(response.content, resolveOmniFlowJsonCompletion(response))
     }
 
     @Test

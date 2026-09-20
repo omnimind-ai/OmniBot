@@ -45,7 +45,7 @@ class SandboxRuntimeBundleAdapter(
     override suspend fun remove() = skillManager.reclaim()
 
     override fun open(): OmniPlugin = object : OmniPlugin {
-        override fun contribution(): OmniPluginContribution = OmniPluginContribution(
+        override suspend fun contribution(): OmniPluginContribution = OmniPluginContribution(
             toolGroups = listOf(
                 OmniPluginToolGroup(
                     definitions = bundle.tools.map(SandboxBundleTool::definition),

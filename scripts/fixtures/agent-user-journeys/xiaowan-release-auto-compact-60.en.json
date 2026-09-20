@@ -1,0 +1,44 @@
+{
+  "name": "Release real 60-page automatic compaction and restart",
+  "requireClockSync": true,
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_AUTO_COMPACT",
+      "scenario": "xiaowan-release-auto-compact-60.json",
+      "timeoutMs": 240000
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_AUTO_COMPACT_DONE",
+      "timeoutMs": 3600000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_AUTO_COMPACT",
+      "expected": "done"
+    },
+    {
+      "action": "checkpoint",
+      "marker": "OOB_LIVE_AUTO_COMPACT"
+    },
+    {
+      "action": "restart"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_AUTO_COMPACT_DONE"
+    },
+    {
+      "action": "checkpoint",
+      "marker": "OOB_LIVE_AUTO_COMPACT"
+    },
+    {
+      "action": "live-task",
+      "marker": "OOB_LIVE_AUTO_COMPACT",
+      "phase": "auto-pages-60",
+      "path": "/workspace/oob-auto-context-release-fixture/large.html"
+    }
+  ],
+  "preconditions": "Run prepare-auto-context-fixture.py first; new idle local chat and real Provider. Observation allows 60 minutes based on the previous ~48-minute real run; exact 60-page, official completion and checkpoint assertions remain mandatory. Observation expiry is not task cancellation."
+}

@@ -1,0 +1,3 @@
+{
+  "prompt": "Continue the cancelled OmniInfer installation. The APK is already built: read /root/.local/share/omniinfer-phone/build-result.json; do NOT rebuild. Stop the old artifact terminal session session_f4955391. Start a fresh persistent terminal session, run phone.py serve in the background with stdout/stderr redirected to a unique ordinary log file, save its PID, then read that log with cat. NEVER cat /proc/PID/fd/1 or use tail -f: that blocked the previous turn. Use the actual artifact URL to download and install through Android UI, start the host, load its model and verify real local inference. Stop the temporary server/session after download. Continue until verified or a specific system confirmation is needed."
+}

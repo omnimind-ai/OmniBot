@@ -1,0 +1,44 @@
+{
+  "name": "Actual PDF attachment text and read after restart",
+  "preconditions": "Idle real-device chat with chat-upload-invoice.pdf attached through Android picker. Real provider required.",
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_UPLOAD_PDF",
+      "scenario": "chat-upload-pdf.json"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_UPLOAD_PDF_DONE",
+      "timeoutMs": 120000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_UPLOAD_PDF",
+      "expected": "done"
+    },
+    {
+      "action": "restart"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_UPLOAD_PDF_DONE",
+      "timeoutMs": 30000
+    },
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_REOPEN_PDF",
+      "scenario": "chat-upload-pdf-restart.json"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_REOPEN_PDF_DONE",
+      "timeoutMs": 120000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_REOPEN_PDF",
+      "expected": "done"
+    }
+  ]
+}

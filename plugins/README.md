@@ -53,7 +53,7 @@ and are not bundled into the APK.
 
 ## Vibe Builder and generated plugins
 
-`com.omnimind.vibe-project-builder` is a hidden core runtime plugin backed by a
+`com.omnimind.vibe-project-builder` is an optional runtime plugin in both main and investor builds, backed by a
 packaged Skill and the generic `sandbox_bundle` adapter. It contributes no
 capability until installed and enabled.
 

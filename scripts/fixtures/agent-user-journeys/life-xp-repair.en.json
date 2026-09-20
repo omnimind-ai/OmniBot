@@ -1,0 +1,1 @@
+{"name": "Repair Life XP after actual check-in failure", "steps": [{"action": "send", "marker": "OOB_LIVE_LIFE_XP_REPAIR", "scenario": "life-xp-repair.json", "timeoutMs": 300000}, {"action": "turn-outcome", "marker": "OOB_LIVE_LIFE_XP_REPAIR", "expected": "done"}]}

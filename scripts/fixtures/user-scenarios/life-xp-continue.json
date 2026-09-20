@@ -1,0 +1,1 @@
+{"prompt": "The previous turn failed before any tool ran because the provider omitted a tool name. Continue the Life XP request now: first load vibe-project-builder Skill, then build, check and publish life-xp-demo. Use complete named tool calls. Unicode escapes in the request denote Chinese labels. Do the work."}

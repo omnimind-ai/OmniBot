@@ -4,6 +4,7 @@ import cn.com.omnimind.bot.manager.SpecialPermissionManager
 import cn.com.omnimind.bot.terminal.EmbeddedTerminalInitCoordinator
 import android.annotation.SuppressLint
 import android.content.Context
+import cn.com.omnimind.bot.notification.NotificationAccess
 import android.os.Handler
 import android.os.Looper
 import io.flutter.embedding.engine.FlutterEngine
@@ -13,6 +14,7 @@ import io.flutter.plugin.common.MethodChannel
 class SpecialPermissionChannel {
     @SuppressLint("StaticFieldLeak")
     var specialPermissionManager: SpecialPermissionManager? = null
+    private lateinit var appContext: Context
     private  val CHANNEL = "cn.com.omnimind.bot/SpecialPermissionEvent"
     private  val EVENT_CHANNEL = "cn.com.omnimind.bot/SpecialPermissionEvents"
     private var methodChannel: MethodChannel? = null
@@ -21,6 +23,7 @@ class SpecialPermissionChannel {
     private var embeddedTerminalInitListener: ((Map<String, Any?>) -> Unit)? = null
 
     fun onCreate(context: Context) {
+        appContext = context.applicationContext
         specialPermissionManager = SpecialPermissionManager(context)
     }
 
@@ -52,6 +55,21 @@ class SpecialPermissionChannel {
         }
         methodChannel?.setMethodCallHandler { call, result ->
                 when (call.method) {
+                    "getNotificationAccessSettings", "openNotificationAccessSettings", "setNotificationAppAllowed", "setAllNotificationAppsAllowed" -> {
+                        try {
+                            when (call.method) {
+                                "setAllNotificationAppsAllowed" -> NotificationAccess.setAllAllowed(appContext,
+                                    requireNotNull(call.argument<Boolean>("allowed")))
+                                "openNotificationAccessSettings" -> NotificationAccess.openSettings(appContext)
+                                "setNotificationAppAllowed" -> NotificationAccess.setAllowed(appContext,
+                                    requireNotNull(call.argument<String>("applicationId")),
+                                    requireNotNull(call.argument<Boolean>("allowed")))
+                            }
+                            result.success(NotificationAccess.settings(appContext))
+                        } catch (e: Exception) {
+                            result.error("NOTIFICATION_ACCESS_ERROR", e.message, null)
+                        }
+                    }
                     "isIgnoringBatteryOptimizations" -> specialPermissionManager!!.isIgnoringBatteryOptimizations(
                         result
                     )

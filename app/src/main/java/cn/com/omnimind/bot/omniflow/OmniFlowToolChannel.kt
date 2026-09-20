@@ -8,6 +8,7 @@ import cn.com.omnimind.baselib.runlog.InternalRunLogStore
 import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.agent.HttpAgentLlmClient
 import cn.com.omnimind.bot.manager.buildManualRecordingFinalizedPayload
+import cn.com.omnimind.bot.util.TaskRuntimeSettings
 import cn.com.omnimind.uikit.loader.ManualRecordingControlOverlay
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -44,31 +45,23 @@ class OmniFlowToolChannel(context: Context) {
             runCatching {
                 val modelClient = if (OmniFlowPluginRuntime.isEnabled()) {
                         HttpAgentLlmClient(CoroutineScope(currentCoroutineContext()))
-                            .asOmniFlowModelClient()
+                            .asOmniFlowModelClient(appContext)
                     } else {
                         null
                     }
-                if (
-                    name == TOOL_SAVE_FUNCTION &&
-                    arguments["function"] == null &&
-                    arguments["functions"] == null &&
-                    arguments["run_log"] == null &&
-                    arguments["enhance"] != true
-                ) {
-                    OmniFlowFunctionRegistration.saveRunLog(
-                        context = appContext,
-                        runId = arguments["run_id"]?.toString().orEmpty(),
-                        agentVisible = arguments["agent_visible"] != false,
-                        modelClient = modelClient,
-                    )
-                } else {
-                    OmniFlow.callTool(
-                        context = appContext,
-                        toolCall = OmniFlow.ToolCall(name, arguments),
-                        goal = goal.ifBlank { name },
-                        modelClient = modelClient,
-                    ).payload
-                }
+                var preparedInteractivePage = false
+                OmniFlow.callTool(
+                    context = appContext,
+                    toolCall = OmniFlow.ToolCall(name, arguments),
+                    goal = goal.ifBlank { name },
+                    modelClient = modelClient,
+                    hooks = OmniFlow.Hooks(beforeOperation = {
+                        if (!preparedInteractivePage) {
+                            TaskRuntimeSettings.leaveForegroundForGui()
+                            preparedInteractivePage = true
+                        }
+                    }),
+                ).payload
             }.onSuccess { response ->
                 withContext(Dispatchers.Main.immediate) { result.success(response) }
             }.onFailure { error ->
@@ -188,7 +181,7 @@ class OmniFlowToolChannel(context: Context) {
                     agentVisible = true,
                     modelClient = if (OmniFlowPluginRuntime.isEnabled()) {
                         HttpAgentLlmClient(CoroutineScope(currentCoroutineContext()))
-                            .asOmniFlowModelClient()
+                            .asOmniFlowModelClient(appContext)
                     } else {
                         null
                     },
@@ -238,6 +231,5 @@ class OmniFlowToolChannel(context: Context) {
         const val TAG = "OmniFlowToolChannel"
         const val METHOD_CALL_TOOL = "tools/call"
         const val METHOD_START_HUMAN_TRAJECTORY_LEARNING = "startHumanTrajectoryLearning"
-        const val TOOL_SAVE_FUNCTION = "save_function"
     }
 }

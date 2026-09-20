@@ -62,15 +62,18 @@ extension _ChatPageRemoteCodexSupport on _ChatPageStateBase {
   Future<Map<String, dynamic>> _readRemoteCodexThreadSnapshot(
     String threadId,
   ) async {
+    final runtimeId = _ensureRemoteCodexRuntimeForThread(threadId);
     try {
       return await AgentRuntimeService.readSession(
         sessionId: threadId,
+        conversationId: runtimeId,
         conversationMode: ConversationMode.agent.storageValue,
       );
     } catch (error) {
       debugPrint('Agent thread/read failed, falling back to resume: $error');
       return AgentRuntimeService.loadSession(
         sessionId: threadId,
+        conversationId: runtimeId,
         conversationMode: ConversationMode.agent.storageValue,
       );
     }
@@ -91,12 +94,36 @@ extension _ChatPageRemoteCodexSupport on _ChatPageStateBase {
     if (resolvedThreadId.isEmpty) {
       return;
     }
-    final runtimeId =
-        fallbackRuntimeId ?? _remoteCodexRuntimeId(resolvedThreadId);
+    final runtimeId = fallbackRuntimeId ??
+        _runtimeCoordinator.conversationIdForAcpEvent(sessionId: resolvedThreadId) ??
+        _remoteCodexRuntimeId(resolvedThreadId);
     final runtime = _runtimeCoordinator.runtimeFor(
       conversationId: runtimeId,
       mode: kChatRuntimeModeAgent,
     );
+    if (response['protocolVersion'] == 2) {
+      // session/resume already replays official ACP items through the shared
+      // reducer. Parsing the diagnostic Codex snapshot again gives those same
+      // messages different ids and races live updates.
+      final conversation = (fallbackConversation ??
+          _remoteCodexConversationFromResponse(runtimeId: runtimeId, response: response))
+          .copyWith(messageCount: runtime?.messages.length ?? 0);
+      setState(() {
+        _activeRemoteCodexRuntimeId = runtimeId;
+        _activeAgentThreadId = resolvedThreadId;
+        if (status != null) _agentRuntimeStatus = status;
+        final state = _modeState(ChatPageMode.agent);
+        state.currentConversationId = runtimeId;
+        state.currentConversation = conversation;
+        if (runtime != null) {
+          final messages = List<ChatMessageModel>.from(runtime.messages);
+          state.messages..clear()..addAll(messages);
+        }
+        state.hasMoreMessages = false;
+        state.messageOffset = state.messages.length;
+      });
+      return;
+    }
     final previousActive = runtime?.isAiResponding ?? false;
     // Floor the one-time hydration result against the reducer's runtime state.
     // The event reducer is the live lifecycle owner; a history snapshot must
@@ -183,6 +210,7 @@ extension _ChatPageRemoteCodexSupport on _ChatPageStateBase {
       initialChatIslandDisplayLayer: ChatIslandDisplayLayer.mode,
     );
     _runtimeCoordinator.replaceConversationSnapshot(
+      expectedHistoryRevision: runtime?.historyRevision ?? 0,
       conversationId: runtimeId,
       mode: kChatRuntimeModeAgent,
       messages: messages,
@@ -256,7 +284,9 @@ extension _ChatPageRemoteCodexSupport on _ChatPageStateBase {
 
   int _ensureRemoteCodexRuntimeForThread(String threadId) {
     final normalizedThreadId = threadId.trim();
-    final runtimeId = _remoteCodexRuntimeId(normalizedThreadId);
+    final runtimeId = _runtimeCoordinator.conversationIdForAcpEvent(
+          sessionId: normalizedThreadId,
+        ) ?? _remoteCodexRuntimeId(normalizedThreadId);
     final now = DateTime.now().millisecondsSinceEpoch;
     _runtimeCoordinator.ensureEphemeralRuntime(
       conversationId: runtimeId,
@@ -279,6 +309,10 @@ extension _ChatPageRemoteCodexSupport on _ChatPageStateBase {
             updatedAt: now,
           ),
       initialChatIslandDisplayLayer: ChatIslandDisplayLayer.mode,
+    );
+    _runtimeCoordinator.bindConversationAcpSession(
+      conversationId: runtimeId, mode: kChatRuntimeModeAgent,
+      sessionId: normalizedThreadId,
     );
     return runtimeId;
   }
@@ -313,7 +347,8 @@ extension _ChatPageRemoteCodexSupport on _ChatPageStateBase {
     _activeRemoteCodexRuntimeId = runtimeId;
     _activeAgentThreadId = normalizedThreadId;
     _modeState(ChatPageMode.agent).currentConversationId = runtimeId;
-    _startRemoteCodexSessionSync(normalizedThreadId);
+    // This session is already admitted and subscribed. Selecting its existing
+    // Conversation must not load/replay it again while its first turn runs.
     return runtimeId;
   }
 

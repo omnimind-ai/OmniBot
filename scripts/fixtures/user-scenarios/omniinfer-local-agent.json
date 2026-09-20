@@ -1,0 +1,3 @@
+{
+  "prompt": "Use your terminal tool to compute sum(i*i for i in range(1,101)) with Python, write the integer and a newline to /workspace/{{MARKER}}.txt, then read that file back with a file or terminal tool. Use only this isolated test file, do not install packages. Report the actual file path and the value you read. Do not claim you executed a tool unless it actually returned."
+}

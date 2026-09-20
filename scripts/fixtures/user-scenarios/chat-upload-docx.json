@@ -1,0 +1,3 @@
+{
+  "prompt": "Read the attached DOCX file using file_read. First line: {{MARKER}}_OFFICE: <invoice code>, <total>. Read the actual file and do not guess."
+}

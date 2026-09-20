@@ -192,6 +192,33 @@ void main() {
     },
   );
 
+  test('implicit discovery stays on resolved provider after editor switches', () async {
+    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    final a = <String, dynamic>{
+      'id': 'provider-a', 'name': 'A', 'baseUrl': 'https://provider.example/v1',
+      'revision': 9, 'hasApiKey': true,
+    };
+    final b = <String, dynamic>{...a, 'id': 'provider-b', 'name': 'B', 'hasApiKey': false};
+    Map<dynamic, dynamic>? fetchArgs;
+    messenger.setMockMethodCallHandler(assistCoreChannel, (call) async {
+      switch (call.method) {
+        case 'getModelProviderConfig': return a;
+        // Simulate the editor changing while discovery awaits the snapshot.
+        case 'listModelProviderProfiles':
+          return {'profiles': [a, b], 'editingProfileId': 'provider-b'};
+        case 'fetchProviderModels':
+          fetchArgs = call.arguments as Map;
+          return <Map<String, dynamic>>[];
+      }
+      return null;
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(assistCoreChannel, null));
+    await ModelProviderConfigService.fetchModels();
+    expect(fetchArgs?['profileId'], 'provider-a');
+    expect(fetchArgs?['expectedProfileRevision'], 9);
+    expect(fetchArgs?.containsKey('apiKey'), false);
+  });
+
   test('builds request urls from root base url', () {
     expect(
       ModelProviderConfigService.buildModelsRequestUrl(

@@ -116,6 +116,8 @@ void main() {
     await expectEntryIcon('场景模型配置', LucideIcons.fileBox);
     await expectEntryIcon('Workspace 记忆配置', LucideIcons.database);
     await expectEntryIcon('Agent 模式', LucideIcons.bot);
+    expect(find.text('执行中心'), findsNothing);
+    expect(find.text('手动录制、执行已保存的操作、查看结果'), findsNothing);
     await expectEntryIcon('本机服务', LucideIcons.monitorSmartphone);
     await expectEntryIcon('MCP 工具', LucideIcons.hammer);
     await expectEntryIcon('外观设置', LucideIcons.palette);

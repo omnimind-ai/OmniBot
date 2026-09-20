@@ -9,8 +9,8 @@ import org.junit.Test
 
 class OmniFlowDeveloperOverrideTest {
     @Test
-    fun `paths remain inside the omniflow Python package`() {
-        assertEquals("omniflow/vlm/planner.py", normalizedPythonPath("vlm/planner.py"))
+    fun `paths remain inside the declared package source root`() {
+        assertEquals("omniflow/vlm/planner.py", normalizedPythonPath("omniflow/vlm/planner.py"))
         assertEquals("omniflow/runtime/engine.py", normalizedPythonPath("./omniflow/runtime/engine.py"))
         assertThrows(IllegalArgumentException::class.java) {
             normalizedPythonPath("../omnitransfer/runtime.py")
@@ -38,10 +38,10 @@ class OmniFlowDeveloperOverrideTest {
         }
         val store = OmniFlowDeveloperOverrideStore(temporary.resolve("override"))
 
-        store.apply(base, "runtime-v1", "vlm/planner.py", "VALUE = 'edited'\n")
+        store.apply(base, "runtime-v1", "omniflow/vlm/planner.py", "VALUE = 'edited'\n")
 
-        assertEquals("VALUE = 'edited'\n", store.read("vlm/planner.py"))
-        assertEquals("ENGINE = 'stable'\n", store.read("runtime/engine.py"))
+        assertEquals("VALUE = 'edited'\n", store.read("omniflow/vlm/planner.py"))
+        assertEquals("ENGINE = 'stable'\n", store.read("omniflow/runtime/engine.py"))
         assertEquals(
             "{\"tools\":[]}",
             temporary.resolve("override/python/schemas/oob/oob_canonical_actions.v1.json")
@@ -71,12 +71,12 @@ class OmniFlowDeveloperOverrideTest {
             }
         }
         val store = OmniFlowDeveloperOverrideStore(temporary.resolve("override"))
-        store.apply(baseV1, "runtime-v1", "vlm/planner.py", "PLANNER = 99\n")
+        store.apply(baseV1, "runtime-v1", "omniflow/vlm/planner.py", "PLANNER = 99\n")
 
         store.rebaseIfPresent(baseV2, "runtime-v2")
 
-        assertEquals("PLANNER = 99\n", store.read("vlm/planner.py"))
-        assertEquals("ENGINE = 2\n", store.read("runtime/engine.py"))
+        assertEquals("PLANNER = 99\n", store.read("omniflow/vlm/planner.py"))
+        assertEquals("ENGINE = 2\n", store.read("omniflow/runtime/engine.py"))
         assertEquals(
             listOf("omniflow/vlm/planner.py"),
             store.status("runtime-v2").modifiedFiles,
@@ -93,11 +93,11 @@ class OmniFlowDeveloperOverrideTest {
         }
         val store = OmniFlowDeveloperOverrideStore(temporary.resolve("override"))
         val stable = base.resolve("omniflow/vlm/planner.py").readText()
-        store.apply(base, "runtime-v1", "vlm/planner.py", "not valid Python")
+        store.apply(base, "runtime-v1", "omniflow/vlm/planner.py", "not valid Python")
 
-        store.restore("vlm/planner.py", stable, keepModified = false)
+        store.restore("omniflow/vlm/planner.py", stable, keepModified = false)
 
-        assertEquals(stable, store.read("vlm/planner.py"))
+        assertEquals(stable, store.read("omniflow/vlm/planner.py"))
         assertTrue(store.status("runtime-v1").modifiedFiles.isEmpty())
         assertFalse(store.status("runtime-v1").enabled)
     }

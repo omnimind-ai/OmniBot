@@ -8,6 +8,14 @@ import java.io.Reader
 internal object AgentFileReadSupport {
     const val PAGE_CHARS = 64 * 1024
 
+    fun unavailableContent(): Map<String, Any?> = mapOf(
+        "kind" to "binary",
+        "contentAvailable" to false,
+        "errorCode" to "document_parser_required",
+        "message" to "仅获取文件信息，未解析正文。需要相应解析工具；原文件保留。不能声称已读懂内容。",
+        "nextAction" to "检查当前工具或终端中是否有可用解析器，提取成功后再读取结果。若不可用、失败或需要 OCR，向用户明确说明原因；不要重复调用 file_read 读取同一二进制文件。"
+    )
+
     data class TextPage(
         val content: String,
         val offset: Long,

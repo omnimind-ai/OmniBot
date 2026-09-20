@@ -1,0 +1,21 @@
+{
+  "name": "OmniInfer source build and local inference on physical Android",
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_OMNIINFER_PHONE_INSTALL",
+      "scenario": "omniinfer-phone-install.json",
+      "timeoutMs": 600000
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_OMNIINFER_PHONE_INSTALL_DONE",
+      "timeoutMs": 3600000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_OMNIINFER_PHONE_INSTALL",
+      "expected": "done"
+    }
+  ]
+}

@@ -1,0 +1,3 @@
+{
+  "prompt": "Fix Life XP history. Run node /workspace/acceptance-audits/life-xp-history.cjs /workspace/life-xp-demo/app.js; do not edit the audit. Fix chronological cumulative XP within each day, preserve calendar dates across timezones, and show every crossed level milestone. Preserve all 4 habits and 4 check-ins (75 XP). Run the existing life-xp-production.cjs audit too, then republish valid files. Test actual production code, not copied formulas."
+}

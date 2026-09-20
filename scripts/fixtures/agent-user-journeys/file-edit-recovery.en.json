@@ -1,0 +1,29 @@
+{
+  "name": "Remote remains enabled while local file edit failure recovers and persists",
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_FILE_EDIT_RECOVERY",
+      "scenario": "file-edit-recovery.json",
+      "timeoutMs": 300000
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_FILE_EDIT_RECOVERY_DONE",
+      "timeoutMs": 600000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_FILE_EDIT_RECOVERY",
+      "expected": "done"
+    },
+    {
+      "action": "restart"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_FILE_EDIT_RECOVERY_DONE",
+      "timeoutMs": 60000
+    }
+  ]
+}

@@ -9,6 +9,19 @@ import org.junit.Test
 
 class AgentLlmStreamAccumulatorTest {
     @Test
+    fun `arguments arriving before another tool name stay at their declared index`() {
+        val accumulator = AgentLlmStreamAccumulator(json = Json)
+        accumulator.consume("""{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"read-a","function":{"name":"file_read","arguments":"{\"path\":\"/workspace/a\"}"}}]}}]}""")
+        accumulator.consume("""{"choices":[{"delta":{"tool_calls":[{"index":1,"function":{"arguments":"{\"path\":\"/workspace/b\",\"content\":\"b\"}"}}]}}]}""")
+        accumulator.consume("""{"choices":[{"delta":{"tool_calls":[{"index":1,"id":"write-b","function":{"name":"file_write","arguments":""}}]},"finish_reason":"tool_calls"}]}""")
+
+        val calls = requireNotNull(accumulator.buildTurn().message.toolCalls)
+        assertEquals(listOf("read-a", "write-b"), calls.map { it.id })
+        assertEquals("""{"path":"/workspace/a"}""", calls[0].function.arguments)
+        assertEquals("""{"path":"/workspace/b","content":"b"}""", calls[1].function.arguments)
+    }
+
+    @Test
     fun `partial parallel inputs retain provider ids and exact content without invented cards`() {
         val accumulator = AgentLlmStreamAccumulator(json = Json)
         accumulator.consume("""{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"a","function":{"name":"file_write","arguments":"{"}},{"index":1,"function":{"name":"file_write","arguments":"{"}},{"index":2,"id":"unnamed","function":{"arguments":"{"}}]}}]}""")
@@ -115,7 +128,7 @@ class AgentLlmStreamAccumulatorTest {
     }
 
     @Test
-    fun `reconciles OmniMind arguments streamed under the next tool index`() {
+    fun `rejects OmniMind arguments streamed under a different unnamed index`() {
         val accumulator = AgentLlmStreamAccumulator(json = json)
 
         accumulator.consume(
@@ -125,18 +138,14 @@ class AgentLlmStreamAccumulatorTest {
             """{"choices":[{"delta":{"tool_calls":[{"function":{"arguments":"{\"goal\":\"打开蓝牙\",\"tool_title\":\"打开蓝牙\"}"},"index":1}]},"finish_reason":"tool_calls"}]}"""
         )
 
-        val toolCall = requireNotNull(accumulator.buildTurn().message.toolCalls).single()
-
-        assertEquals("call_vlm", toolCall.id)
-        assertEquals("vlm_task", toolCall.function.name)
-        assertEquals(
-            """{"goal":"打开蓝牙","tool_title":"打开蓝牙"}""",
-            toolCall.function.arguments,
-        )
+        val error = runCatching { accumulator.buildTurn() }.exceptionOrNull()
+        assertTrue(error is AgentIncompleteToolCallException)
+        assertEquals("tool_call[1] missing function.name", error?.message)
+        assertEquals("", accumulator.currentToolCalls().single().function.arguments)
     }
 
     @Test
-    fun `reconciles multiple OmniMind calls sharing the arguments index`() {
+    fun `does not assign a nameless arguments stream across multiple named calls`() {
         val accumulator = AgentLlmStreamAccumulator(json = json)
 
         accumulator.consume(
@@ -153,14 +162,10 @@ class AgentLlmStreamAccumulatorTest {
         )
         accumulator.consume("""{"choices":[{"delta":{},"finish_reason":"tool_calls"}]}""")
 
-        val toolCalls = requireNotNull(accumulator.buildTurn().message.toolCalls)
-
-        assertEquals(listOf("file_list", "skills_read"), toolCalls.map { it.function.name })
-        assertEquals("""{"path":"/workspace"}""", toolCalls[0].function.arguments)
-        assertEquals(
-            """{"skillId":"vibe-project-builder"}""",
-            toolCalls[1].function.arguments,
-        )
+        val error = runCatching { accumulator.buildTurn() }.exceptionOrNull()
+        assertTrue(error is AgentIncompleteToolCallException)
+        assertEquals("tool_call[1] missing function.name", error?.message)
+        assertEquals(listOf("", ""), accumulator.currentToolCalls().map { it.function.arguments })
     }
 
     @Test

@@ -148,6 +148,44 @@ class AgentConversationHistoryRepository(
 
     private val gson = Gson()
 
+    suspend fun restorePromptAttachmentReferences(args: Map<String, Any?>): Map<String, Any?> {
+        val conversationId = (args["conversationId"] as? Number)?.toLong() ?: return args
+        val messageId = (args["_meta"] as? Map<*, *>)
+            ?.get("dev.omnimind/clientMessageId")?.toString()?.takeIf { it.isNotBlank() }
+            ?: return args
+        val incoming = attachmentMaps(args["attachments"])
+        if (incoming.isEmpty()) return args
+        val mode = args["conversationMode"]?.toString() ?: "agent"
+        val entry = loadThreadEntryByIdSafe(conversationId, mode, messageId) ?: return args
+        if (entry.entryType != ENTRY_TYPE_USER_MESSAGE) return args
+        val content = AgentConversationHistorySupport.readMap(entry.payloadJson)["content"] as? Map<*, *>
+        val restored = persistConversationAttachments(incoming, attachmentMaps(content?.get("attachments"))) { it }
+        return args + ("attachments" to restored)
+    }
+
+    private fun durableAttachments(
+        conversationId: Long,
+        attachments: List<Map<String, Any?>>,
+        existing: List<Map<String, Any?>> = emptyList(),
+    ): List<Map<String, Any?>> = persistConversationAttachments(attachments, existing) { selected ->
+        try {
+            AgentWorkspaceAttachmentSupport.prepareAttachmentsForRuntime(
+                context, "conversation-$conversationId", selected,
+            )
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
+        } catch (_: AgentAttachmentPreparationException) {
+            // Keep the committed user message even when a source is already
+            // missing. The prompt boundary reports that attachment failure.
+            selected
+        }
+    }
+
+    private fun attachmentMaps(value: Any?): List<Map<String, Any?>> =
+        (value as? List<*>)?.mapNotNull { item ->
+            (item as? Map<*, *>)?.entries?.associate { it.key.toString() to it.value }
+        }.orEmpty()
+
     suspend fun upsertUserMessage(
         conversationId: Long,
         conversationMode: String,
@@ -158,11 +196,18 @@ class AgentConversationHistoryRepository(
         turnUsage: Map<String, Any?>? = null,
         createdAt: Long = System.currentTimeMillis()
     ) {
+        val existing = loadThreadEntryByIdSafe(conversationId, conversationMode, entryId)
+        val previousContent = existing?.let {
+            AgentConversationHistorySupport.readMap(it.payloadJson)["content"] as? Map<*, *>
+        }
+        val persistedAttachments = durableAttachments(
+            conversationId, attachments, attachmentMaps(previousContent?.get("attachments")),
+        )
         val payload = AgentConversationHistorySupport.buildTextMessagePayload(
             messageId = entryId,
             user = 1,
             text = text,
-            attachments = attachments,
+            attachments = persistedAttachments,
             agentId = streamMeta?.get("agentId")?.toString(),
             agentName = streamMeta?.get("agentName")?.toString(),
             isError = false,
@@ -361,6 +406,21 @@ class AgentConversationHistoryRepository(
         )
     }
 
+    suspend fun deleteMessageIds(conversationId: Long, conversationMode: String, entryIds: List<String>) =
+        DatabaseHelper.withTransaction {
+            if (entryIds.isEmpty()) return@withTransaction
+            val mode = resolveConversationMode(conversationId, conversationMode)
+            val removed = DatabaseHelper.deleteAgentConversationMessageIds(
+                conversationId, conversationModeCandidates(mode), entryIds
+            )
+            if (removed > 0) {
+                // A summary may include a removed turn. Invalidate its checkpoint
+                // atomically with deletion so subsequent prompts cannot reuse it.
+                resetContextSummary(conversationId)
+                refreshConversationMetadata(conversationId)
+            }
+        }
+
     suspend fun replaceThreadMessagesFromUiSnapshot(
         conversationId: Long,
         conversationMode: String,
@@ -436,7 +496,20 @@ class AgentConversationHistoryRepository(
                     gson.toJson(preserveFullToolPayload(existingToolPayload, restoredToolPayload))
                 }
             } else {
-                gson.toJson(message)
+                val content = (message["content"] as? Map<*, *>)
+                    ?.entries?.associate { it.key.toString() to it.value }.orEmpty()
+                val attachments = attachmentMaps(content["attachments"])
+                if (type == ENTRY_TYPE_USER_MESSAGE && attachments.isNotEmpty()) {
+                    val prior = existingEntry?.let {
+                        AgentConversationHistorySupport.readMap(it.payloadJson)["content"] as? Map<*, *>
+                    }
+                    val durable = durableAttachments(
+                        conversationId, attachments, attachmentMaps(prior?.get("attachments")),
+                    )
+                    gson.toJson(message + ("content" to (content + ("attachments" to durable))))
+                } else {
+                    gson.toJson(message)
+                }
             }
             val insertedId = upsertEntry(
                 AgentConversationEntry(

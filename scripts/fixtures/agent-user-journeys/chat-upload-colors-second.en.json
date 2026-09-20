@@ -1,0 +1,14 @@
+{
+  "name": "Chat image upload reads actual pixels and survives restart",
+  "preconditions": "Idle Xiaowan chat, GLM-4.6V selected via Model & settings, synthetic image attached using prepare-chat-image.py SERIAL chat-upload-colors-second.png. Real configured Provider required.",
+  "steps": [
+    {"action":"send","marker":"OOB_LIVE_CHAT_IMAGE_SECOND","scenario":"chat-upload-colors.json"},
+    {"action":"reply","text":"OOB_LIVE_CHAT_IMAGE_SECOND_COLORS: green, yellow","timeoutMs":120000},
+    {"action":"turn-outcome","marker":"OOB_LIVE_CHAT_IMAGE_SECOND","expected":"done"},
+    {"action":"restart"},
+    {"action":"reply","text":"OOB_LIVE_CHAT_IMAGE_SECOND_COLORS: green, yellow","timeoutMs":30000},
+    {"action":"tap","label":"Model & settings"},
+    {"action":"expect","text":"GLM-4.6V","timeoutMs":30000},
+    {"action":"dismiss-settings"}
+  ]
+}

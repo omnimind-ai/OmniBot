@@ -1,0 +1,16 @@
+{
+  "name": "Notification memory recall after app restart",
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_NOTIFICATION_RECALL",
+      "scenario": "notification-memory-recall.json",
+      "timeoutMs": 120000
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_NOTIFICATION_RECALL_DONE",
+      "timeoutMs": 180000
+    }
+  ]
+}

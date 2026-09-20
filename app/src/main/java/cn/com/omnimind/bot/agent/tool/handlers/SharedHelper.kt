@@ -77,6 +77,10 @@ class SharedHelper(
         "缺少 sessionId" to "Missing sessionId",
         "结束终端会话失败" to "Failed to stop terminal session",
         "读取文件失败" to "Failed to read file",
+        "仅获取文件信息，未解析正文。需要相应解析工具；原文件保留。不能声称已读懂内容。" to
+            "Only file metadata was retrieved; document content was not parsed. An appropriate parser is required. The original file is retained. Do not claim its contents were understood.",
+        "检查当前工具或终端中是否有可用解析器，提取成功后再读取结果。若不可用、失败或需要 OCR，向用户明确说明原因；不要重复调用 file_read 读取同一二进制文件。" to
+            "Check available tools or the terminal for a parser, then read its successfully extracted output. If unavailable, failed, or requiring OCR, explain this to the user. Do not repeatedly call file_read on the same binary file.",
         "正在写入文件" to "Writing file",
         "缺少 content" to "Missing content",
         "写入文件失败" to "Failed to write file",
@@ -224,6 +228,8 @@ class SharedHelper(
                 return "Target is not a file: ${text.removePrefix("目标不是文件：")}"
             text.startsWith("已读取文件：") ->
                 return "Read file: ${text.removePrefix("已读取文件：")}"
+            text.startsWith("未解析文件正文，需要解析工具：") ->
+                return "Document content unavailable; parser required: ${text.removePrefix("未解析文件正文，需要解析工具：")}"
             text.startsWith("已追加写入文件：") ->
                 return "Appended to file: ${text.removePrefix("已追加写入文件：")}"
             text.startsWith("已写入文件：") ->

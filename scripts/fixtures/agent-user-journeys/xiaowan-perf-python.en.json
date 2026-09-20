@@ -1,0 +1,74 @@
+{
+  "name": "Python standard-library bulk task without automatic venv, reasoning off, restart and restore",
+  "requireClockSync": true,
+  "steps": [
+    {
+      "action": "tap",
+      "label": "Model & settings"
+    },
+    {
+      "action": "tap",
+      "label": "Reasoning effort"
+    },
+    {
+      "action": "tap",
+      "label": "Off"
+    },
+    {
+      "action": "dismiss-settings"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_PERF_BULK",
+      "scenario": "xiaowan-perf-python.json",
+      "timeoutMs": 180000
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_PERF_BULK_DONE",
+      "timeoutMs": 360000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_PERF_BULK",
+      "expected": "done"
+    },
+    {
+      "action": "restart"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_PERF_BULK_DONE"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_PERF_BULK",
+      "expected": "done"
+    },
+    {
+      "action": "session-config",
+      "marker": "OOB_LIVE_PERF_BULK",
+      "effort": "none"
+    },
+    {
+      "action": "tap",
+      "label": "Model & settings"
+    },
+    {
+      "action": "tap",
+      "label": "Reasoning effort"
+    },
+    {
+      "action": "tap",
+      "label": "Model default"
+    },
+    {
+      "action": "dismiss-settings"
+    },
+    {
+      "action": "session-config",
+      "marker": "OOB_LIVE_PERF_BULK",
+      "effort": "default"
+    }
+  ]
+}

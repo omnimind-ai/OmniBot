@@ -1,0 +1,21 @@
+{
+  "name": "Fresh local Agent repairs actual Life XP production history",
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_LIFE_XP_HISTORY_FRESH",
+      "scenario": "life-xp-history-fresh.json",
+      "timeoutMs": 300000
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_LIFE_XP_HISTORY_FRESH_DONE",
+      "timeoutMs": 1800000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_LIFE_XP_HISTORY_FRESH",
+      "expected": "done"
+    }
+  ]
+}

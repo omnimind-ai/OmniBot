@@ -1,0 +1,1 @@
+{"name":"Real model creates and publishes a Vibe notes App","steps":[{"action":"send","marker":"OOB_LIVE_VIBE_BUILD","scenario":"vibe-build-notes.json","timeoutMs":180000},{"action":"reply","text":"OOB_LIVE_VIBE_BUILD_DONE","timeoutMs":600000},{"action":"turn-outcome","marker":"OOB_LIVE_VIBE_BUILD","expected":"done"}]}

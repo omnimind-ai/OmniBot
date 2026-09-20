@@ -1,0 +1,3 @@
+{
+  "prompt": "Load Vibe Builder. Repair the EXISTING project identified in /workspace/oob-life-xp-repair-acceptance.md; read that complete acceptance contract first. Preserve its saved water10. Previous attempt was cancelled after a path typo; use the exact path from the contract and inspect directories instead of repeating missing-file calls. Run the supplied independent production audit in both timezones, fix all failures and complete the remaining contract. Use your actual tools for tests and publication, preserve raw results, and do not report failed/unexecuted checks as passed. Work through repair and verification, not just a plan."
+}

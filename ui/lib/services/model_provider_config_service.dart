@@ -660,8 +660,9 @@ class ModelProviderConfigService {
           if (customHeaders != null)
             'customHeaders': normalizeCustomHeaders(customHeaders),
           if (customHeaders != null) 'useProvidedCustomHeaders': true,
-          if (profileId != null && profileId.trim().isNotEmpty)
-            'profileId': profileId.trim(),
+          // Pin credential lookup to the same identity as the snapshot.
+          // The active editor may change during either await above.
+          if (targetProfileId != null) 'profileId': targetProfileId,
           if (capability != null && capability.trim().isNotEmpty)
             'capability': capability.trim(),
           if (forceRefresh) 'forceRefresh': true,

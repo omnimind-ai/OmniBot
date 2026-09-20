@@ -16,6 +16,66 @@ import java.util.Locale
 
 class AgentConversationContextCompactorTest {
     @Test
+    fun forcedSummaryRetainsCompletedPrefixCursorBeforeTailOffloading() = kotlinx.coroutines.runBlocking {
+        var summaries = 0
+        val compactor = object : AgentConversationContextCompactor(
+            org.mockito.Mockito.mock(AgentConversationHistoryRepository::class.java),
+            modelOverride = AgentModelOverride(providerProfileId = "test",
+                apiBase = "https://example.invalid/v1", apiKey = "fixture",
+                modelId = "test", contextLimit = 128000),
+            offloadToolOutput = { "/workspace/offloads/result.txt" }) {
+            override suspend fun requestCompactedSummary(messages: List<Map<String, Any>>, maxOutputTokens: Int): String {
+                summaries++
+                val completed = messages.single { it["role"] == "tool" && it["tool_call_id"] == "prefix" }
+                assertTrue("Summary lost the completed prefix cursor", completed.toString().contains("completed-prefix-cursor"))
+                assertFalse("Summary input must remain bounded", completed.toString().contains("x".repeat(10000)))
+                return "Prefix completed; retain its cursor and continue with the newer result."
+            }
+        }
+        fun group(id: String, size: Int, cursor: String): List<ChatCompletionMessage> {
+            val call = cn.com.omnimind.baselib.llm.AssistantToolCall(id = id,
+                function = cn.com.omnimind.baselib.llm.AssistantToolCallFunction(name = "custom_page", arguments = "{}"))
+            val body = JsonObject(mapOf("content" to JsonPrimitive("x".repeat(size)),
+                "success" to JsonPrimitive(true), "nextCursor" to JsonPrimitive(cursor))).toString()
+            return listOf(ChatCompletionMessage(role = "assistant", toolCalls = listOf(call)),
+                ChatCompletionMessage(role = "tool", toolCallId = id, content = JsonPrimitive(body)))
+        }
+        val history = listOf(ChatCompletionMessage(role = "user", content = JsonPrimitive("Finish the requested pages"))) +
+            group("prefix", 200000, "completed-prefix-cursor") + group("tail", 40000, "newest-tail-cursor")
+        val result = compactor.compactIfNeeded(null, "agent", null, history, force = true)
+        assertEquals(1, summaries)
+        assertEquals("tail", result.last().toolCallId)
+        assertTrue(result.last().content.toString().contains("newest-tail-cursor"))
+    }
+
+    @Test
+    fun providerOverflowRequiresSummaryEvenWhenOffloadingFitsLocalEstimate() = kotlinx.coroutines.runBlocking {
+        var summaries = 0
+        val offloads = mutableListOf<String>()
+        val compactor = object : AgentConversationContextCompactor(
+            org.mockito.Mockito.mock(AgentConversationHistoryRepository::class.java),
+            offloadToolOutput = { offloads += it; "/workspace/offloads/original.txt" }) {
+            override suspend fun requestCompactedSummary(messages: List<Map<String, Any>>, maxOutputTokens: Int): String {
+                summaries++
+                assertTrue(messages.toString().contains("/workspace/offloads/original.txt"))
+                return "Read page one; its full contents are saved at /workspace/offloads/original.txt."
+            }
+        }
+        val call = cn.com.omnimind.baselib.llm.AssistantToolCall(id = "page-one",
+            function = cn.com.omnimind.baselib.llm.AssistantToolCallFunction(name = "file_read", arguments = "{}"))
+        val body = "x".repeat(200000)
+        val messages = listOf(ChatCompletionMessage(role = "user", content = JsonPrimitive("read all pages")),
+            ChatCompletionMessage(role = "assistant", toolCalls = listOf(call)),
+            ChatCompletionMessage(role = "tool", toolCallId = call.id, content = JsonPrimitive(body)))
+        val result = compactor.compactIfNeeded(null, "agent", null, messages, force = true)
+        assertEquals(listOf(body), offloads)
+        assertEquals(1, summaries)
+        assertTrue(result.any(AgentConversationHistorySupport::isContextSummaryMessage))
+        assertEquals("read all pages", (result.last().content as JsonPrimitive).content)
+        assertEquals(body, (messages.last().content as JsonPrimitive).content)
+    }
+
+    @Test
     fun lowUserTriggerDoesNotBecomeSummaryModelCapacity() = kotlinx.coroutines.runBlocking {
         val repo = org.mockito.Mockito.mock(AgentConversationHistoryRepository::class.java)
         var summaries = 0

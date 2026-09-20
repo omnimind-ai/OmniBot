@@ -9,6 +9,10 @@ import com.google.gson.JsonParser
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.withContext
@@ -22,7 +26,9 @@ import java.util.UUID
 internal class RemoteCodexAppServerSession(
     private val scope: CoroutineScope,
     private val onServerMessage: suspend (Map<String, Any?>) -> Unit,
-    private val connectionFactory: () -> RemoteCodexAppServerConnection
+    private val connectionFactory: () -> RemoteCodexAppServerConnection,
+    private val restoreSessions: suspend (RemoteCodexAppServerSession) -> Unit = {},
+    private val reconnectDelays: List<Long> = listOf(500L, 1_000L, 2_000L, 4_000L, 8_000L, 15_000L),
 ) {
     private val gson = Gson()
     /** Identity of this app-server transport instance, not an ACP session id. */
@@ -34,30 +40,53 @@ internal class RemoteCodexAppServerSession(
     @Volatile
     private var initializeResult: Map<String, Any?> = emptyMap()
 
+    val protocolVersion: Int
+        get() = (initializeResult["protocolVersion"] as? Number)?.toInt() ?: 1
+
     @Volatile
     private var connection: RemoteCodexAppServerConnection? = null
 
+    @Volatile
+    private var initialized = false
+
+    private var clientVersion = ""
+    @Volatile private var connectionWanted = false
+    @Volatile private var recovery: Deferred<Unit>? = null
+    val isRecovering: Boolean get() = recovery?.isActive == true
+
+    suspend fun awaitRecovery() { recovery?.await() }
+
     val isRunning: Boolean
-        get() = connection?.isRunning == true
+        get() = initialized && connection?.isRunning == true
 
     suspend fun start(clientVersion: String) {
+        this.clientVersion = clientVersion
+        connectionWanted = true
+        if (isRecovering) { awaitRecovery(); return }
+        openConnection(clientVersion)
+        publishConnected()
+    }
+
+    private suspend fun openConnection(clientVersion: String) {
         if (isRunning) {
             return
         }
         val startedConnection = createConnection()
         connection = startedConnection
-        startedConnection.start(
-            onStdoutLine = ::handleStdoutLine,
-            onStderrLine = { line ->
-                // The bridge stderr is diagnostic output, not an Agent event.
-                // Keep it out of the ACP session stream.
-            },
-            onExit = { exitCode ->
-                handleConnectionExit(startedConnection, exitCode)
-            }
-        )
-
+        initialized = false
         try {
+            startedConnection.start(
+                onStdoutLine = { line ->
+                    if (connection === startedConnection) handleStdoutLine(line)
+                },
+                onStderrLine = { _ ->
+                    // Diagnostics are not ACP session events.
+                },
+                onExit = { exitCode ->
+                    handleConnectionExit(startedConnection, exitCode)
+                }
+            )
+
             withTimeout(INITIALIZE_TIMEOUT_MS) {
                 val response = sendRequest(
                     method = "initialize",
@@ -69,14 +98,12 @@ internal class RemoteCodexAppServerSession(
                     .associate { (key, value) -> key.toString() to value }
             }
             sendNotification("initialized", null)
-            onServerMessage(
-                mapOf(
-                    "method" to "codex/connected",
-                    "params" to mapOf("clientVersion" to clientVersion),
-                )
-            )
+            check(connection === startedConnection && startedConnection.isRunning) {
+                "Remote ACP agent disconnected during initialize."
+            }
+            initialized = true
         } catch (error: Throwable) {
-            disconnect()
+            withContext(NonCancellable) { closeConnection() }
             if (error is TimeoutCancellationException) {
                 throw IllegalStateException(
                     "Remote ACP agent did not respond to initialize.",
@@ -100,16 +127,17 @@ internal class RemoteCodexAppServerSession(
         val message = linkedMapOf<String, Any?>(
             "id" to id,
             "method" to method,
-            "params" to params
+            "params" to remoteAcpRequestParams(method, params, protocolVersion)
         )
+        var writeAttempted = false
         try {
-            writeJsonLine(message)
             return withTimeout(timeoutMs) {
+                writeJsonLine(message, currentConnection) { writeAttempted = true }
                 deferred.await()
             }
         } catch (error: Throwable) {
             pending.remove(id)
-            if (error is TimeoutCancellationException || error is CancellationException) {
+            if (writeAttempted && error is CancellationException) {
                 cancelInFlightRequest(currentConnection, id)
             }
             throw error
@@ -123,10 +151,13 @@ internal class RemoteCodexAppServerSession(
         withContext(NonCancellable) {
             if (connection !== requestConnection || !requestConnection.isRunning) return@withContext
             runCatching {
-                sendNotification(
-                    "$/cancel_request",
-                    mapOf("requestId" to requestId),
-                )
+                // Cancellation is best effort, and must not hang behind a blocked write.
+                withTimeout(CANCEL_NOTIFICATION_TIMEOUT_MS) {
+                    writeJsonLine(mapOf(
+                        "method" to "$/cancel_request",
+                        "params" to mapOf("requestId" to requestId),
+                    ), requestConnection)
+                }
             }
         }
     }
@@ -149,13 +180,21 @@ internal class RemoteCodexAppServerSession(
     }
 
     suspend fun disconnect() {
+        connectionWanted = false
+        recovery?.cancel()
+        recovery = null
+        closeConnection()
+    }
+
+    private suspend fun closeConnection() {
         val currentConnection = connection
         connection = null
+        initialized = false
+        initializeResult = emptyMap()
         pending.forEach { (_, deferred) ->
             deferred.completeExceptionally(IllegalStateException("Remote ACP agent disconnected."))
         }
         pending.clear()
-        initializeResult = emptyMap()
         currentConnection?.close()
     }
 
@@ -168,13 +207,55 @@ internal class RemoteCodexAppServerSession(
         if (connection !== exitedConnection) {
             return
         }
+        val canRestore = initialized && protocolVersion == 2 && connectionWanted
         connection = null
+        initialized = false
+        initializeResult = emptyMap()
         pending.forEach { (_, deferred) ->
             deferred.completeExceptionally(
                 IllegalStateException("Remote ACP agent exited.")
             )
         }
         pending.clear()
+        if (isRecovering) return
+        if (canRestore) {
+            // Reconnect only the transport. The session owner restores ACP
+            // subscriptions/history; no pending request or prompt is replayed.
+            val job = scope.async(start = CoroutineStart.LAZY) {
+                onServerMessage(mapOf(
+                    "method" to "codex/disconnected",
+                    "_remoteConnectionToken" to connectionToken,
+                    "params" to mapOf("recovering" to true),
+                ))
+                for (backoff in reconnectDelays) {
+                    delay(backoff)
+                    if (!connectionWanted) return@async
+                    try {
+                        openConnection(clientVersion)
+                        check(protocolVersion == 2) { "ACP version changed during recovery" }
+                        restoreSessions(this@RemoteCodexAppServerSession)
+                        publishConnected()
+                        return@async
+                    } catch (error: Exception) {
+                        if (error is CancellationException && error !is TimeoutCancellationException) throw error
+                        closeConnection()
+                    }
+                }
+                publishDisconnected(exitCode)
+            }
+            recovery = job
+            job.start()
+            return
+        }
+        publishDisconnected(exitCode)
+    }
+
+    private suspend fun publishConnected() {
+        onServerMessage(mapOf("method" to "codex/connected",
+            "params" to mapOf("clientVersion" to clientVersion)))
+    }
+
+    private suspend fun publishDisconnected(exitCode: Int?) {
         onServerMessage(
             mapOf(
                 "method" to "codex/disconnected",
@@ -208,15 +289,21 @@ internal class RemoteCodexAppServerSession(
             pending.remove(responseId)?.complete(message)
             return
         }
-        onServerMessage(message)
+        onServerMessage(normalizeRemoteAcpNotification(message, protocolVersion))
     }
 
-    private suspend fun writeJsonLine(message: Map<String, Any?>) {
-        val line = gson.toJson(toJsonElement(message)) + "\n"
-        val currentConnection = connection
-            ?: throw IllegalStateException("Remote ACP agent stdin is closed.")
+    private suspend fun writeJsonLine(
+        message: Map<String, Any?>,
+        expectedConnection: RemoteCodexAppServerConnection? = connection,
+        beforeWrite: () -> Unit = {},
+    ) {
+        val line = gson.toJson(toJsonElement(message + ("jsonrpc" to "2.0"))) + "\n"
         writeMutex.withLock {
-            currentConnection.writeLine(line)
+            check(expectedConnection != null && connection === expectedConnection && expectedConnection.isRunning) {
+                "Remote ACP connection changed before the request could be sent."
+            }
+            beforeWrite()
+            expectedConnection.writeLine(line)
         }
     }
 
@@ -226,7 +313,9 @@ internal class RemoteCodexAppServerSession(
 
     private fun buildInitializeParams(clientVersion: String): Map<String, Any?> {
         return mapOf(
-            "protocolVersion" to 1,
+            "protocolVersion" to 2,
+            "info" to mapOf("name" to "omnibot_android", "version" to clientVersion),
+            "capabilities" to emptyMap<String, Any?>(),
             "clientInfo" to mapOf(
                 "name" to "omnibot_android",
                 "title" to "Omnibot",
@@ -292,5 +381,6 @@ internal class RemoteCodexAppServerSession(
         const val DEFAULT_WORKSPACE_ID = "default"
         private const val INITIALIZE_TIMEOUT_MS = 15_000L
         private const val REQUEST_TIMEOUT_MS = 300_000L
+        private const val CANCEL_NOTIFICATION_TIMEOUT_MS = 1_000L
     }
 }

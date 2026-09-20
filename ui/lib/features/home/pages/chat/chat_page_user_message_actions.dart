@@ -484,31 +484,30 @@ extension _ChatPageUserMessageActions on _ChatPageStateBase {
     );
     if (removeCount <= 0) return false;
 
+    final removedIds = _messages.take(removeCount).map((item) => item.id).toSet();
+    final conversationId = _currentConversationId;
+    if (conversationId != null &&
+        !isEphemeralConversation(conversationId, activeConversationModeValue)) {
+      try {
+        await _runtimeCoordinator.deleteConversationMessageIds(
+          conversationId: conversationId, mode: _modeKey(_activeMode),
+          messageIds: removedIds,
+        );
+      } catch (error) {
+        if (mounted) showToast('删除失败，请重试', type: ToastType.warning);
+        return false;
+      }
+      if (!mounted || _currentConversationId != conversationId) return false;
+    }
     final shouldClearEditState = _editingUserMessageId == message.id;
     setState(() {
-      if (shouldClearEditState) {
-        _editingUserMessageId = null;
-      }
-      _messages.removeRange(0, removeCount);
+      if (shouldClearEditState) _editingUserMessageId = null;
+      _messages.removeWhere((item) => removedIds.contains(item.id));
     });
     if (shouldClearEditState) {
       _modeState(_activeMode).draftMessage = '';
       _messageController.clear();
     }
-
-    final conversationId = _currentConversationId;
-    if (conversationId == null) return true;
-    if (isEphemeralConversation(conversationId, activeConversationModeValue)) {
-      return true;
-    }
-
-    await _runtimeCoordinator.persistConversationMessageSnapshot(
-      allowHistoryRemoval: true,
-      conversationId: conversationId,
-      mode: _modeKey(_activeMode),
-      messages: List<ChatMessageModel>.from(_messages),
-      conversation: _currentConversation,
-    );
     return true;
   }
 

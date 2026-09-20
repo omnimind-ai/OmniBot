@@ -53,15 +53,18 @@ class OmniVlmLiteProvider(
     override fun open(): OmniPlugin {
         OmniFlowPluginRuntime.install(platform, runtimeProvider)
         return object : OmniPlugin {
-            override fun contribution(): OmniPluginContribution =
-                OmniPluginContribution(
+            override suspend fun contribution(): OmniPluginContribution {
+                val runtime = runtimeProvider.install(appContext, platform)
+                val tools = runtime.manifest.tools.filter { it.agentVisible }
+                return OmniPluginContribution(
                     toolGroups = listOf(
                         OmniPluginToolGroup(
-                            definitions = OmniFlowManagementTools.definitions(),
-                            handlerFactory = { OmniFlowManagementToolHandler(appContext) },
+                            definitions = tools.map(::runtimeToolDefinition),
+                            handlerFactory = { OmniFlowManagementToolHandler(appContext, tools) },
                         ),
-                    )
+                    ),
                 )
+            }
 
             override suspend fun onEnable() {
                 OmniFlowPluginRuntime.enable(appContext)

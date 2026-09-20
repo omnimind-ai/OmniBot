@@ -1,6 +1,7 @@
 package cn.com.omnimind.bot.agent.tool
 
 import android.content.Context
+import cn.com.omnimind.bot.agent.tool.handlers.NotificationToolHandler
 import cn.com.omnimind.bot.agent.AgentScheduleToolBridge
 import cn.com.omnimind.bot.agent.AgentWorkspaceManager
 import cn.com.omnimind.bot.agent.SubagentDispatcher
@@ -28,6 +29,8 @@ data class AgentCapabilityToolDefinition(
     val parameters: JsonObject,
     val toolType: String,
     val serverName: String? = null,
+    /** Only independent, concurrency-safe reads may opt in. */
+    val parallelSafe: Boolean = false,
 )
 
 interface AgentCapabilityModule {
@@ -64,7 +67,11 @@ class BuiltInAgentCapabilityModule(
         terminalHandler,
     )
 
+    companion object { val definitions = listOf(NotificationToolHandler.definition, NotificationToolHandler.waitDefinition) }
+    override val toolDefinitions = definitions
+
     override val handlers: List<ToolHandler> = listOfNotNull(
+        NotificationToolHandler(context, helper),
         ContextToolHandler(helper),
         VlmToolHandler(context).takeIf { includeVlmTool },
         privilegedHandler,

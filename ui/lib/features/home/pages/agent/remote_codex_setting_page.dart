@@ -7,6 +7,8 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:ui/features/home/pages/agent/codex_bridge_qr_scanner_page.dart';
 import 'package:ui/features/home/pages/agent/codex_remote_directory_picker.dart';
 import 'package:ui/services/agent_runtime_service.dart';
+import 'package:ui/core/router/go_router_manager.dart';
+import 'package:ui/models/conversation_thread_target.dart';
 import 'package:ui/theme/theme_context.dart';
 import 'package:ui/utils/ui.dart';
 import 'package:ui/widgets/common_app_bar.dart';
@@ -277,6 +279,19 @@ class _RemoteCodexSettingPageState extends State<RemoteCodexSettingPage> {
       _enabled = true;
     } finally {
       _syncing = false;
+    }
+    if (result.sessionId != null) {
+      _saveDebounce?.cancel();
+      if (!await _save() || !mounted) return;
+      GoRouterManager.push(
+        '/home/chat',
+        extra: ConversationThreadTarget.agentSession(
+          sessionId: result.sessionId!,
+          runtime: 'remote',
+          requestKey: DateTime.now().microsecondsSinceEpoch.toString(),
+        ),
+      );
+      return;
     }
     _handleEdited();
   }

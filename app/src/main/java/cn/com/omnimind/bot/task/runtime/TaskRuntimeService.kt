@@ -24,6 +24,7 @@ class TaskRuntimeService : Service() {
     companion object {
         private const val TAG = "TaskRuntimeService"
         const val ACTION_START = "cn.com.omnimind.bot.task.runtime.START"
+        const val ACTION_RECONCILE = "cn.com.omnimind.bot.task.runtime.RECONCILE"
 
         private const val CHANNEL_ID = "task_runtime_execution"
         private const val CHANNEL_NAME = "任务执行"
@@ -46,8 +47,11 @@ class TaskRuntimeService : Service() {
             stopSelf(startId)
             return START_NOT_STICKY
         }
-        if (intent.action == ACTION_START) {
-            updateNotification()
+        if (intent.action == ACTION_START || intent.action == ACTION_RECONCILE) {
+            // Each startForegroundService request needs a foreground acknowledgement,
+            // including a new start delivered to an already-created service instance.
+            startForeground(NOTIFICATION_ID, buildNotification())
+            if (!TaskRuntime.hasActiveTasks()) stopSelf(startId)
         } else {
             OmniLog.w(TAG, "Ignoring unknown task runtime action=${intent.action}")
         }
@@ -60,10 +64,6 @@ class TaskRuntimeService : Service() {
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
-
-    private fun updateNotification() {
-        notificationManager.notify(NOTIFICATION_ID, buildNotification())
-    }
 
     private fun buildNotification(): Notification {
         val openAppIntent = Intent(this, MainActivity::class.java).apply {

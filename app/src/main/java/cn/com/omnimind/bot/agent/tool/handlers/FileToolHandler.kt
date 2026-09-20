@@ -7,6 +7,8 @@ import cn.com.omnimind.bot.agent.AgentToolExecutionHandle
 import cn.com.omnimind.bot.agent.AgentToolRegistry
 import cn.com.omnimind.bot.agent.AgentWorkspaceManager
 import cn.com.omnimind.bot.agent.ToolExecutionResult
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CancellationException
 import java.io.IOException
 import kotlinx.serialization.json.JsonObject
@@ -18,6 +20,17 @@ import kotlinx.serialization.json.jsonPrimitive
 import java.io.File
 import java.util.Base64
 import java.util.Locale
+
+internal fun applyFileTextEdit(file: File, oldText: String, newText: String, replaceAll: Boolean) {
+    val original = file.readText()
+    require(original.contains(oldText)) { "文件中未找到 oldText" }
+    val updated = if (replaceAll) original.replace(oldText, newText)
+        else original.replaceFirst(oldText, newText)
+    require(updated != original) {
+        "文件未变化：oldText 与 newText 没有产生实际修改。请检查替换内容；不要把本次调用视为修复成功。"
+    }
+    file.writeText(updated)
+}
 
 internal fun decodeImageWriteContentForFileName(fileName: String, content: String): ByteArray? {
     if (!isBinaryImageFileName(fileName)) {
@@ -65,7 +78,7 @@ internal fun normalizeSvgWriteContentForFileName(fileName: String, content: Stri
 private fun inlineSimpleSvgClassStyles(svg: String): String {
     val classStyles = mutableMapOf<String, Map<String, String>>()
     val styleRegex = Regex("""<style\b[^>]*>([\s\S]*?)</style>""", RegexOption.IGNORE_CASE)
-    val classRuleRegex = Regex("""\.([A-Za-z_][A-Za-z0-9_-]*)\s*\{([^}]*)}""")
+    val classRuleRegex = Regex("""\.([A-Za-z_][A-Za-z0-9_-]*)\s*\{([^}]*)\}""")
     styleRegex.findAll(svg).forEach { styleMatch ->
         classRuleRegex.findAll(styleMatch.groups[1]?.value.orEmpty()).forEach { ruleMatch ->
             val className = ruleMatch.groups[1]?.value.orEmpty()
@@ -180,8 +193,8 @@ class FileToolHandler(
         env: AgentExecutionEnvironment,
         callback: AgentCallback,
         toolHandle: AgentToolExecutionHandle
-    ): ToolExecutionResult {
-        return when (toolCall.function.name) {
+    ): ToolExecutionResult = withContext(Dispatchers.IO) {
+        when (toolCall.function.name) {
             "file_read", "read" -> executeFileRead(
                 args,
                 env.workspaceDescriptor,
@@ -251,10 +264,18 @@ class FileToolHandler(
                     "size" to file.length(),
                     "mimeType" to mimeType
                 )
-                if (AgentFileReadSupport.isBinary(file, mimeType)) {
-                    metadata["kind"] = "binary"
-                    metadata["contentAvailable"] = false
-                    metadata["message"] = "二进制文件未作为文本解码。原文件可通过附件预览或打开；如需内容，请使用相应解析工具提取文本。"
+                if (AgentPdfReadSupport.accepts(file, mimeType)) {
+                    val maxChars = args["maxChars"]?.let {
+                        requireNotNull(it.jsonPrimitive.intOrNull) { "maxChars 必须为整数" }
+                    } ?: AgentFileReadSupport.PAGE_CHARS
+                    metadata.putAll(AgentPdfReadSupport.read(helper.context, file, offset, lineStart, lineCount, maxChars))
+                } else if (AgentOfficeReadSupport.accepts(file)) {
+                    val maxChars = args["maxChars"]?.let {
+                        requireNotNull(it.jsonPrimitive.intOrNull) { "maxChars 必须为整数" }
+                    } ?: AgentFileReadSupport.PAGE_CHARS
+                    metadata.putAll(AgentOfficeReadSupport.read(file, offset, lineStart, lineCount, maxChars))
+                } else if (AgentFileReadSupport.isBinary(file, mimeType)) {
+                    metadata.putAll(AgentFileReadSupport.unavailableContent())
                 } else {
                     val maxChars = args["maxChars"]?.let {
                         requireNotNull(it.jsonPrimitive.intOrNull) { "maxChars 必须为整数" }
@@ -268,12 +289,14 @@ class FileToolHandler(
                 metadata
             }
             val encodedPayload = helper.encodeLocalizedPayload(payload)
+            val contentAvailable = payload["contentAvailable"] != false
             ToolExecutionResult.ContextResult(
                 toolName = toolName,
-                summaryText = helper.localized("已读取文件：${file.name}"),
+                summaryText = helper.localized(if (contentAvailable) "已读取文件：${file.name}"
+                    else "${payload["message"] ?: "未解析文件正文，需要解析工具"}：${file.name}"),
                 previewJson = encodedPayload,
                 rawResultJson = encodedPayload,
-                success = true,
+                success = contentAvailable,
                 imageDataUrl = imageReadResult?.imageDataUrl,
                 artifacts = listOf(artifact),
                 workspaceId = workspace.id
@@ -381,14 +404,7 @@ class FileToolHandler(
             val oldText = args["oldText"]?.jsonPrimitive?.content ?: throw IllegalArgumentException("缺少 oldText")
             val newText = args["newText"]?.jsonPrimitive?.content ?: ""
             val replaceAll = args["replaceAll"]?.jsonPrimitive?.contentOrNull?.toBooleanStrictOrNull() ?: false
-            val original = file.readText()
-            require(original.contains(oldText)) { "文件中未找到 oldText" }
-            val updated = if (replaceAll) {
-                original.replace(oldText, newText)
-            } else {
-                original.replaceFirst(oldText, newText)
-            }
-            file.writeText(updated)
+            applyFileTextEdit(file, oldText, newText, replaceAll)
             val artifact = workspaceManager.buildArtifactForFile(file, toolName)
             val payload = linkedMapOf<String, Any?>(
                 "path" to (workspaceManager.shellPathForAndroid(file) ?: file.absolutePath),

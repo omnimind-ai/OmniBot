@@ -22,31 +22,6 @@ class OmniFlowRuntimeProviderTest {
     }
 
     @Test
-    fun `runtime upgrade preserves function store and removes stale temp file`() {
-        val storeDirectory = Files.createTempDirectory("omniflow-store-test").toFile()
-        val store = storeDirectory.resolve("omniflow.json").apply {
-            writeText("{\"schema_version\":\"omniflow.store.v2\"}")
-        }
-        val staleTemp = storeDirectory.resolve("omniflow.json.tmp").apply {
-            writeText("partial")
-        }
-
-        alignOmniFlowStoreWithRuntime(storeDirectory, "runtime-fingerprint")
-
-        assertTrue(store.isFile)
-        assertEquals(
-            "{\"schema_version\":\"omniflow.store.v2\"}",
-            store.readText(),
-        )
-        assertFalse(staleTemp.exists())
-        assertEquals(
-            "runtime-fingerprint",
-            storeDirectory.resolve(".runtime_fingerprint").readText(),
-        )
-        storeDirectory.deleteRecursively()
-    }
-
-    @Test
     fun `bridge contract mismatch triggers packaged runtime recovery`() {
         assertTrue(
             isOmniFlowRuntimeCompatibilityFailure(
@@ -60,41 +35,6 @@ class OmniFlowRuntimeProviderTest {
         )
     }
 
-    @Test
-    fun `runtime completeness uses package owned runlog module`() {
-        val manifest = OmniFlowRuntimeManifest(
-            version = "test",
-            protocol = "test",
-            capabilities = setOf("initialize"),
-            bridgeContractSha256 = "0".repeat(64),
-            pythonVersion = "3.12",
-            omniFlowCommit = "flow",
-            omniFlowSourceSha256 = "1".repeat(64),
-            omniTransferCommit = "transfer",
-            omniTransferSourceSha256 = "2".repeat(64),
-            omniTransferCheckpoint = "checkpoints/v9.npz",
-            numpyVersion = "numpy",
-            jsonRepairVersion = "json-repair",
-        )
-
-        val required = OmniFlowRuntimeProvider().requiredOmniFlowRuntimePaths(manifest)
-
-        assertTrue("scripts/runtime/python/omniflow/runlog.py" in required)
-        assertTrue(
-            "scripts/runtime/.runtime/omnitransfer/src/omnitransfer/page_embedding.py" in required
-        )
-        assertTrue(
-            "scripts/runtime/.runtime/omnitransfer/src/omnitransfer/unified_alignment.py" in required
-        )
-        assertTrue(
-            "scripts/runtime/.runtime/omnitransfer/src/omnitransfer/visual_descriptor.py" in required
-        )
-        assertFalse(
-            "scripts/runtime/.runtime/omnitransfer/src/omnitransfer/numpy_matcher.py" in required
-        )
-        assertFalse("scripts/runtime/python/src/integrations/runlog.py" in required)
-    }
-
     private class RefreshRecordingPlatform : OmniFlowPlatform {
         val refreshRequests = mutableListOf<Boolean>()
 
@@ -104,7 +44,7 @@ class OmniFlowRuntimeProviderTest {
             environment: Map<String, String>,
         ): Process = error("not used")
 
-        override suspend fun ensurePython(context: Context, expectedVersion: String) = Unit
+        override suspend fun prepareEnvironment(context: Context, command: String) = Unit
 
         override suspend fun resolveRuntimeSkill(
             context: Context,

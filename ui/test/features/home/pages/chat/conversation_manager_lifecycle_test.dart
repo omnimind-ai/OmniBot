@@ -70,6 +70,26 @@ void main() {
     expect(state.messages, [completed]);
   });
 
+  testWidgets('history mutation invalidates an in-flight forced history load', (tester) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final page = Completer<Map<String, dynamic>>();
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'getConversations') return [_conversationJson(id: 1, title: 'active')];
+      if (call.method == 'getConversationMessagesPaged') return page.future;
+      return 'SUCCESS';
+    });
+    final key = GlobalKey<_ConversationManagerHarnessState>();
+    await tester.pumpWidget(MaterialApp(home: _ConversationManagerHarness(key)));
+    final state = key.currentState!;
+    final loading = state.loadConversation(1, preferInMemory: false);
+    await tester.pump();
+    state.historyRevision++;
+    page.complete({'messages': [_assistantMessageJson(id: 'deleted', text: 'old')], 'hasMore': false});
+    await loading;
+    expect(state.loadedSnapshots, isEmpty);
+    expect(state.messages, isEmpty);
+  });
+
   testWidgets('stale loadConversation result does not overwrite new thread', (
     tester,
   ) async {
@@ -358,6 +378,10 @@ class _ConversationManagerHarnessState
   int _lifecycleToken = 0;
   int loadedConversationCount = 0;
   bool sharedRuntimeList = false;
+  int historyRevision = 0;
+  @override
+  int conversationHistoryRevision(int conversationId, ConversationMode mode) => historyRevision;
+
   List<ChatMessageModel>? runtimeBeforeLoadCallback;
   final List<int> persistedConversationIds = <int>[];
   final Map<int, List<ChatMessageModel>> _inMemorySnapshots =

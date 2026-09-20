@@ -10,6 +10,7 @@ import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.util.Log
 import android.view.Display
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityNodeInfo
@@ -86,6 +87,9 @@ internal class AccessibilityAndroidGuiPlatform(
     override suspend fun observe(captureScreenshot: Boolean): AndroidGuiPlatformState = coroutineScope {
         val service = awaitService()
         val display = displaySize()
+        // A rate-limited screenshot may wait briefly. Read the tree afterwards
+        // so the returned XML does not describe the page before that wait.
+        val screenshot = if (captureScreenshot) captureScreenshot(service) else null
         val roots = withContext(Dispatchers.Main.immediate) {
             val activeRoot = service.rootInActiveWindow
             val seenWindowIds = mutableSetOf<Int>()
@@ -101,11 +105,6 @@ internal class AccessibilityAndroidGuiPlatform(
         // accessibility windows.  The active root contains only one pane;
         // serialize every visible window into the single observation graph.
         val xmlDeferred = async(Dispatchers.Default) { AndroidGuiXml.serialize(roots) }
-        val screenshotDeferred = if (captureScreenshot) {
-            async { captureScreenshot(service) }
-        } else {
-            null
-        }
         val xml = xmlDeferred.await()
         AndroidGuiPlatformState(
             packageName = rootPackage(xml).ifBlank { service.lastPackageName },
@@ -113,7 +112,7 @@ internal class AccessibilityAndroidGuiPlatform(
             displayWidth = display.first,
             displayHeight = display.second,
             xml = xml,
-            screenshotJpeg = screenshotDeferred?.await(),
+            screenshotJpeg = screenshot,
         )
     }
 
@@ -375,10 +374,25 @@ internal class AccessibilityAndroidGuiPlatform(
 
     private suspend fun captureScreenshot(
         service: AssistsService,
-    ): ByteArray? =
+    ): ByteArray? {
+        val first = captureScreenshotOnce(service)
+        if (first.errorCode != AccessibilityService.ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT) {
+            return first.bytes
+        }
+        // Android rejects screenshots taken too close together. Retry only
+        // that read, once; never repeat the recorded gesture or reuse its image.
+        delay(350L)
+        return captureScreenshotOnce(service).bytes
+    }
+
+    private data class ScreenshotCapture(val bytes: ByteArray?, val errorCode: Int? = null)
+
+    private suspend fun captureScreenshotOnce(
+        service: AssistsService,
+    ): ScreenshotCapture =
         suspendCancellableCoroutine { continuation ->
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
-                continuation.resume(null)
+                continuation.resume(ScreenshotCapture(null))
                 return@suspendCancellableCoroutine
             }
             val callback = object : AccessibilityService.TakeScreenshotCallback {
@@ -393,11 +407,12 @@ internal class AccessibilityAndroidGuiPlatform(
                             output.toByteArray()
                         }.also { image.recycle() }
                     }
-                    if (continuation.isActive) continuation.resume(bytes)
+                    if (continuation.isActive) continuation.resume(ScreenshotCapture(bytes))
                 }
 
                 override fun onFailure(errorCode: Int) {
-                    if (continuation.isActive) continuation.resume(null)
+                    Log.w("AndroidGuiPlatform", "Screenshot failed: errorCode=$errorCode")
+                    if (continuation.isActive) continuation.resume(ScreenshotCapture(null, errorCode))
                 }
             }
             service.takeScreenshot(

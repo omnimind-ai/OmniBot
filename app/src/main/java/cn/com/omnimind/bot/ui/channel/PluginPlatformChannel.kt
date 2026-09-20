@@ -1,6 +1,11 @@
 package cn.com.omnimind.bot.ui.channel
 
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import cn.com.omnimind.bot.activity.PluginAppActivity
+import cn.com.omnimind.bot.plugin.sandbox.SandboxPluginAppLaunchSpec
+import cn.com.omnimind.bot.plugin.sandbox.SandboxPluginShortcutManager
 import cn.com.omnimind.baselib.llm.ModelProviderConfigStore
 import cn.com.omnimind.baselib.llm.OfficialVlmOperationConfigStore
 import cn.com.omnimind.baselib.llm.OfficialVlmOperationRouteResolver
@@ -80,6 +85,18 @@ class PluginPlatformChannel {
                         args = call.argument<Map<*, *>>("arguments").toJsonObject(),
                     ).toPlatformValue()
                     "getVlmReadiness" -> vlmReadiness()
+                    "openApp" -> {
+                        val pluginId = call.requirePluginId()
+                        val state = host.list().firstOrNull { it.descriptor.id == pluginId }
+                        require(state?.installed == true && state.enabled) { "Plugin must be installed and enabled" }
+                        safeContext.startActivity(Intent(safeContext, PluginAppActivity::class.java).apply {
+                            data = Uri.parse(SandboxPluginAppLaunchSpec.uri(pluginId))
+                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        })
+                        true
+                    }
+                    "pinToHome" -> SandboxPluginShortcutManager(safeContext)
+                        .pinOrUpdate(call.requirePluginId()).toMap()
                     "sandboxInvoke" -> {
                         val pluginId = call.requirePluginId()
                         SandboxPluginBridgeRuntime(safeContext).invoke(
@@ -91,6 +108,7 @@ class PluginPlatformChannel {
                     "uninstall" -> {
                         val pluginId = call.requirePluginId()
                         host.uninstall(pluginId)
+                        SandboxPluginShortcutManager(safeContext).disable(pluginId)
                         true
                     }
                     else -> throw NotImplementedError(call.method)

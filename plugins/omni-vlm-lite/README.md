@@ -1,22 +1,25 @@
 # OmniFlow Runtime Component
 
-This GitHub Release ZIP is a self-contained, versioned OmniFlow plugin. OpenOmniBot downloads it
-from the plugin market and runs it directly with the app's Alpine Python environment.
+This versioned ZIP contains the OmniFlow runtime. OpenOmniBot loads its public `host.json`
+contract and launches the package's prepare/start entrypoints in the embedded Linux environment.
+Version 2.2.0 is currently bundled locally; no new public download endpoint is claimed.
 
 ## Contents
 
-- `component.json`: component identity, SemVer, runtime paths, and host MCP contract.
+- `component.json`: component identity and SemVer.
+- `host.json`: interface version, start/prepare entrypoints, editable source root and tool declarations.
+- `host/`: package-owned dependency preparation, worker startup and build-time tool export.
 - `SKILL.md`: agent-facing usage and safety guidance.
 - `vendor/site-packages/`: the small pure-Python dependency needed by the mobile runtime.
 - `scripts/runtime/python/`: pinned OmniFlow sources plus OOB schemas.
-- `scripts/runtime/.runtime/omnitransfer/`: canonical OmniTransfer v9 source and checkpoint.
+- `scripts/runtime/.runtime/omnitransfer/`: canonical OmniTransfer V10 source and checkpoint.
 - `INSTALL_DIR.json`: Android and shell installation paths.
 
 ## Installation
 
 Install or update this complete ZIP through the OpenOmniBot plugin market. The Host verifies the
-Release SHA-256 and extracts it atomically. NumPy comes from Alpine; the remaining pure-Python
-dependency is already in the component, so mobile installation does not create a venv or run uv.
+archive SHA-256 and extracts it atomically. The package prepares Python, NumPy and Pillow for
+Ubuntu or Alpine; the pure-Python dependency is bundled. No mobile venv or uv is required.
 See `INSTALL_DIR.json` for the resolved directory contract.
 
 ## Quick Start
@@ -53,10 +56,10 @@ permissions, screenshots, gestures, lifecycle, and the bridge.
 ### Standard MCP Hosts
 
 Enable OpenOmniBot's built-in MCP service and register its Streamable HTTP `/mcp` URL and token in
-any standard MCP host. The public OmniFlow surface contains only `run_gui`, `run_function`,
-`list_functions`, and `register_function`. Observation, action, model, RunLog persistence, and
-destructive Function management remain internal to OpenOmniBot. The phone does not install a
-second Python MCP server or MCP SDK.
+any standard MCP host. App tool registration consumes the package's generated declarations;
+the existing public Android MCP endpoint keeps its own exposure policy. Host observation,
+action, model access and RunLog persistence remain Android capabilities. The phone does not
+install a second Python MCP server or MCP SDK.
 
 GitHub Release distributes the versioned plugin asset. The Skill explains how to use it. The MCP
 endpoint exposes capabilities. Harness tests verify the published asset and MCP tool contract.
@@ -67,7 +70,7 @@ without replacing the APK or changing the standard MCP interface.
 
 Use these official Agent tools in order:
 
-1. `get_omniflow_python_override` to inspect status or read one `omniflow/**/*.py` file.
+1. `get_omniflow_python_override` to inspect status or read a Python file relative to `sourceRoot`.
 2. `apply_omniflow_python_override` to validate, save, and hot reload a complete Python file.
 3. `reload_omniflow_python_override` to restart the worker without changing source.
 4. `clear_omniflow_python_override` with `confirm=true` to return to the pinned runtime.

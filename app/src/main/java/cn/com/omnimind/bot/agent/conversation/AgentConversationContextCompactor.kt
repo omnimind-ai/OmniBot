@@ -311,18 +311,30 @@ Do NOT continue the conversation or answer questions inside it. Do NOT translate
         try {
             // Gemini CLI chatCompressionService: budget recent tool outputs, keep
             // complete offloaded text retrievable. Original Conversation rows are untouched.
-            val bounded = boundToolOutputs(messages, minOf(50_000, messageBudget / 3).coerceAtLeast(1))
-            if (bounded != messages && AgentContextBudget.estimate(bounded) <= messageBudget) return bounded
+            val outputBudget = minOf(50_000, messageBudget / 3).coerceAtLeast(1)
+            // A forced summary must see the completed prefix before the continuing
+            // tail's output budget removes that prefix's result metadata.
+            val bounded = if (force) messages else boundToolOutputs(messages, outputBudget)
+            // An actual provider rejection has disproved the local estimate.
+            // Overflow recovery must reach the existing summary/checkpoint path,
+            // rather than spending its recovery attempt on offloading alone.
+            if (!force && bounded != messages && AgentContextBudget.estimate(bounded) <= messageBudget) return bounded
             val keepRecent = minOf(20_000, messageBudget / 2).coerceAtLeast(1)
-            val cut = AgentContextBudget.cutPoint(bounded, keepRecent)
+            // Offloading preserves message positions, but shrinks their estimates.
+            // For provider overflow, choose the existing cut boundary from the
+            // rejected input before replacing its bodies with small references.
+            val cut = AgentContextBudget.cutPoint(if (force) messages else bounded, keepRecent)
                 ?: error("上下文超过预算，当前输入没有可安全压缩的已完成片段。请减小本次输入。")
-            val prefix = bounded.take(cut).filter { it.role != "system" &&
+            val prefix = messages.take(cut).filter { it.role != "system" &&
                 !AgentConversationHistorySupport.isContextSummaryMessage(it) }
             check(prefix.isNotEmpty()) { "上下文没有可压缩内容；未发送超限请求。" }
             val previousSummary = bounded.firstOrNull(AgentConversationHistorySupport::isContextSummaryMessage)
                 ?.let(AgentConversationHistorySupport::extractContextSummaryText)
             val summary = summarizeWithinBudget(previousSummary, prefix, capacity)
-            val rebuilt = AgentContextBudget.rebuild(bounded, cut, summary)
+            // Summary input and continuing history have separate existing budgets.
+            // Let each retain its own newest result's completion/cursor metadata.
+            val keptTail = boundToolOutputs(bounded.drop(cut), outputBudget)
+            val rebuilt = AgentContextBudget.rebuild(bounded.take(cut) + keptTail, cut, summary)
             check(AgentContextBudget.estimate(rebuilt) <= messageBudget) {
                 "压缩后上下文仍超过预算；原始历史已保留，未发送超限请求。"
             }

@@ -57,7 +57,15 @@ if (expectedHarness) {
   'Requested Harness welcome page is not ready; no message entered');
 }
 const initial = input(initialNodes);
-assert.equal(field(initial, 'text'), '', 'Preserve an existing draft');
+const initialDraft = field(initial, 'text');
+const resumeDraft = process.env.OOB_RESUME_DRAFT_ONLY === '1';
+if (resumeDraft) {
+  assert.equal(process.env.OOB_PREPARE_DRAFT_ONLY, '1', 'Draft recovery must never dispatch a send');
+  assert(initialDraft.length > 0 && userText.startsWith(initialDraft),
+    'Existing draft is not an exact prefix of this synthetic task; preserve it');
+} else {
+  assert.equal(initialDraft, '', 'Preserve an existing draft');
+}
 tap(initial);
 // Focusing may briefly rebuild Flutter semantics. Retry only observation;
 // the tap above must remain a single action and typing has not started.
@@ -69,10 +77,12 @@ do {
   await new Promise(resolve => setTimeout(resolve, 250));
 } while (Date.now() < focusDeadline);
 assert.equal(field(input(focusedNodes), 'focused'), 'true', 'Composer did not gain focus');
+// End alone is the current line boundary in Flutter's multiline editor.
+if (resumeDraft) adb('shell', 'input', 'keycombination', '113', '123');
 // Android input text emits a whole string without waiting for Flutter frames.
 // Separate commands avoid losing edge characters on a loaded software-GPU AVD.
 // This types once; the exact draft gate below still rejects any dropped input.
-for (const character of userText) {
+for (const character of userText.slice(resumeDraft ? initialDraft.length : 0)) {
   adb('shell', 'input', 'text', shellQuote(character === ' ' ? '%s' : character));
 }
 // Keep the IME as the user left it. Android Back can leave the activity when

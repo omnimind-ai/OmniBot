@@ -1,0 +1,21 @@
+{
+  "name": "Life XP supervisor evidence challenge",
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_LIFE_XP_AUDIT",
+      "scenario": "life-xp-self-validation-audit.json",
+      "timeoutMs": 300000
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_LIFE_XP_AUDIT_DONE",
+      "timeoutMs": 1800000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_LIFE_XP_AUDIT",
+      "expected": "done"
+    }
+  ]
+}

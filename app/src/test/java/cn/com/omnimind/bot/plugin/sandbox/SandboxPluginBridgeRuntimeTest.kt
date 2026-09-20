@@ -203,8 +203,10 @@ class SandboxPluginBridgeRuntimeTest {
             where: Map<String, Any?>,
             orderBy: String?,
             limit: Int,
+            offset: Int,
         ): List<Map<String, Any?>> = rows
             .filter { row -> where.all { (key, value) -> row[key] == value } }
+            .drop(offset)
             .take(limit)
 
         override fun update(table: String, id: Any, values: Map<String, Any?>): Int = 0

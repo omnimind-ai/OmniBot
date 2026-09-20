@@ -105,7 +105,7 @@ class SandboxBundleDefinitionTest {
         assertTrue(workflowValidation.contains("AI event lifecycle"))
         assertTrue(workflowValidation.contains("Capability-source alignment"))
         assertTrue(workflowValidation.contains("No-Mock Audit"))
-        assertEquals("vibe-project-builder-contract-v11", marker)
+        assertEquals("vibe-project-builder-contract-v12", marker)
     }
 
     @Test(expected = IllegalArgumentException::class)

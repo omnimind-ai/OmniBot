@@ -16,6 +16,73 @@ The remote Agent speaks ACP directly: `initialize`, `session/new`, `session/prom
 
 ## Run
 
+### Agent tool: connect a running session (source checkout, acceptance pending)
+
+The optional `session-connect-mcp.mjs` uses the official MCP SDK. It registers
+`connect_session_to_xiaowan(sessionId)`, checks the configured Codex backend's
+official `thread/loaded/list`, and reads only matching session metadata. It
+creates a private PNG QR carrying the existing Bridge connection plus the
+selected session ID. The updated Android scanner opens that session through
+the existing chat route without listing all sessions or sending a prompt.
+
+Create a mode0600 JSON configuration outside the repository:
+
+```json
+{
+  "publicUrl": "wss://bridge.example.com/codex",
+  "backendUrl": "ws+unix:///absolute/path/to/app-server-control.sock:/",
+  "tokenFile": "/absolute/path/to/bridge-token",
+  "outputDir": "/absolute/path/to/private-pairing-output"
+}
+```
+
+`backendUrl` must identify the same running backend used by the Bridge adapter.
+For an authenticated WebSocket backend, optionally provide `backendTokenFile`.
+The token in `tokenFile` is the Bridge credential, not the backend credential.
+No credentials are returned as text by the tool; the resulting QR PNG itself
+contains the credential and must remain private. This is an existing-credential
+connection invitation, not an expiring or session-scoped authorization grant.
+
+Register using the absolute paths for your installation:
+
+```bash
+codex mcp add xiaowan-session-connect \
+  --env OMNIBOT_CONNECT_CONFIG=/absolute/path/to/private-config.json \
+  -- node /absolute/path/to/tools/codex-bridge/session-connect-mcp.mjs
+```
+
+Ask the agent to connect the current session; it must supply the actual session
+ID from host context. If the session is not loaded on the configured backend,
+the tool returns `SESSION_NOT_LOADED_ON_BACKEND`. It never resumes it to test
+ownership, starts another Codex, or copies its history. Registering the tool
+does not make an unrelated native desktop app-server accessible. Current native
+desktop sharing and physical QR-to-selected-session acceptance remain pending.
+
+### Bring your own public tunnel (source checkout)
+
+Cloudflare Tunnel, FRP or an existing reverse proxy can forward to the same
+Bridge. Configure the tunnel to reach `http://127.0.0.1:17321`, including
+`/codex` WebSocket upgrades, `/health` and `/fs/`. Then advertise its public
+address instead of the local listen address:
+
+```bash
+node tools/codex-bridge/server.mjs --host 127.0.0.1 --cwd /path/to/project \
+  --public-url wss://bridge.example.com/codex
+```
+
+Select a remembered token or create one in the existing setup. Scan the printed
+QR in Xiaowan's Remote PC Bridge settings: the public URL, token and working
+directory are imported together. `OMNIBOT_BRIDGE_PUBLIC_URL` is equivalent to
+`--public-url`. This option is currently in this source checkout; do not assume
+the published npm version includes it. It does not create a tunnel, change DNS,
+or attach a separately started native Codex app to this backend.
+
+Use a fixed tunnel for a saved connection. Cloudflare Quick Tunnel URLs and
+`--token auto` credentials change across launches and require re-pairing. QR
+codes contain the Bridge access credential: only share them with the intended
+phone. A shared public hostname is not multi-user isolation; each deployment
+must route to the correct user's authenticated Bridge.
+
 Recommended startup:
 
 ```bash

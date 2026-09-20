@@ -570,6 +570,9 @@ object DatabaseHelper {
         )
     }
 
+    suspend fun deleteAgentConversationMessageIds(conversationId: Long, modes: List<String>, entryIds: List<String>): Int =
+        getDatabase().agentConversationEntryDao().deleteMessageEntries(conversationId, modes, entryIds)
+
     suspend fun deleteAgentConversationThread(
         conversationId: Long,
         conversationMode: String

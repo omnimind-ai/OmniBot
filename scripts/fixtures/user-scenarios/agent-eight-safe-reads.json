@@ -1,0 +1,3 @@
+{
+  "prompt": "In one tool-call batch, issue eight independent file_search calls in /workspace/recording-recovery-demo, one query each: Record_, 2026-09-17, 5b17c6e510bce824f9d850dff297e4be, .mp4, oob_absent_a, oob_absent_b, oob_absent_c, oob_absent_d. Report each match count. Use file_search directly, without terminal or subagents."
+}

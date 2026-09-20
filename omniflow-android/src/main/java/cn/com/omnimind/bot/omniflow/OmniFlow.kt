@@ -168,6 +168,7 @@ object OmniFlow {
                             executionUi.awaitRunning()
                             ensureRunning(stopped, hooks)
                             hooks.beforeOperation()
+                            executionUi.awaitRunning()
                             ensureRunning(stopped, hooks)
                         }
                         val host = OmniFlowDeviceDispatcher(
@@ -237,11 +238,13 @@ object OmniFlow {
         hooks: Hooks = Hooks(),
     ): Result {
         require(toolCall.name.isNotBlank()) { "tool_call_name_required" }
-        if (toolCall.name in NON_INTERACTIVE_TOOL_NAMES) {
+        check(OmniFlowPluginRuntime.isEnabled()) { "gui_plugin_disabled" }
+        if (!OmniFlowPythonRuntime.toolDefinition(context, toolCall.name).interactive) {
             return Result(
                 payload = OmniFlowDeviceDispatcher(
                     context = context,
                     modelClient = modelClient,
+                    deviceControlAllowed = false,
                 ).call(
                     operation = "tools/call",
                     payload = mapOf(
@@ -264,7 +267,7 @@ object OmniFlow {
                 title = goal.ifBlank { toolCall.name },
                 operationDescription = "Tool: ${toolCall.name}",
                 startedAtMs = startedAtMs,
-                cancelledDoneReason = "function_stopped",
+                cancelledDoneReason = "cancelled",
                 stoppedErrorCode = "FUNCTION_CALL_STOPPED",
                 failedErrorCode = "FUNCTION_CALL_FAILED",
             ),
@@ -309,16 +312,7 @@ object OmniFlow {
         else -> "任务执行失败"
     }
 
-    private val NON_INTERACTIVE_TOOL_NAMES = setOf(
-        "list_functions",
-        "get_function",
-        "delete_function",
-        "clear_functions",
-        "list_run_logs",
-        "get_run_log",
-        "get_run_log_state",
-        "save_function",
-    )
+
 }
 
 internal class GuiDisplayOffCancellationException : CancellationException(
@@ -327,6 +321,7 @@ internal class GuiDisplayOffCancellationException : CancellationException(
 
 class OmniFlowDeviceDispatcher internal constructor(
     context: Context,
+    private val deviceControlAllowed: Boolean = true,
     private val request: ExecutionRequest? = null,
     private val runFinished: AtomicBoolean = AtomicBoolean(false),
     modelClient: OmniFlowModelClient? = null,
@@ -410,7 +405,7 @@ class OmniFlowDeviceDispatcher internal constructor(
                 "android_gui_run_id_mismatch"
             }
             finishRun(result)
-            applyPostRunActions(result)
+            result
         } catch (error: ManualCompletionRequested) {
             throw error
         } catch (error: AndroidGuiDisplayOffException) {
@@ -450,7 +445,6 @@ class OmniFlowDeviceDispatcher internal constructor(
             "finish_run" -> finishExternalRun(payload)
             "model_turn" -> modelTurn(payload)
             "complete_json" -> completeJson(payload)
-            "schedule_operation" -> schedule(payload)
             "update_run_log_diagnostics" -> updateDiagnostics(payload)
             "request_input" -> error("request_input_must_be_deferred")
             else -> error("unsupported_host_call:$method")
@@ -458,7 +452,10 @@ class OmniFlowDeviceDispatcher internal constructor(
 
     private suspend fun observe(payload: Map<String, Any?>): Map<String, Any?> {
         beforeOperation()
-        val captureScreenshot = payload["screenshot"] != false
+        val includeImage = payload["screenshot"] != false
+        // Lightweight planner observations still need durable visual evidence
+        // for the user's run history; do not send those bytes unless requested.
+        val captureScreenshot = includeImage || request != null
         val waitToStabilize = payload["wait_to_stabilize"] == true
         val suppressOverlay = shouldSuppressOverlayForScreenshot(
             captureScreenshot = captureScreenshot,
@@ -472,13 +469,14 @@ class OmniFlowDeviceDispatcher internal constructor(
             ).also {
                 currentStateId = it.state.stateId
                 currentState = it.state
-            }.state.asHostMap(includeImage = captureScreenshot)
+            }.state.asHostMap(includeImage = includeImage)
         } finally {
             if (suppressOverlay) afterScreenshot()
         }
     }
 
     private suspend fun act(payload: Map<String, Any?>): Map<String, Any?> {
+        check(deviceControlAllowed) { "device_control_requires_interactive_call" }
         beforeOperation()
         onPhase(ExecutionPhase.AUTOMATIC)
         val action = Action.fromMap(mapValue(payload["action"]))
@@ -523,6 +521,7 @@ class OmniFlowDeviceDispatcher internal constructor(
             val result = environment.act(
                 action = action,
                 awaitStabilization = payload["await_stabilization"] != false,
+                beforeDispatch = beforeOperation,
             )
             if (result.success) previousActionTool = action.tool
             linkedMapOf<String, Any?>(
@@ -598,6 +597,11 @@ class OmniFlowDeviceDispatcher internal constructor(
     private fun finishExternalRun(payload: Map<String, Any?>): Map<String, Any?> {
         val runId = firstText(payload["run_id"])
         require(runId.isNotEmpty()) { "run_id_required" }
+        if (request != null) {
+            require(runId == request.id) { "android_gui_run_id_mismatch" }
+            finishRun(payload)
+            return mapOf("finished" to true, "run_id" to runId)
+        }
         externalRunWriters.remove(runId)
         InternalRunLogStore.finishRun(
             context = appContext,
@@ -638,14 +642,6 @@ class OmniFlowDeviceDispatcher internal constructor(
             modelOverride = OmniVlmPlugin.MODEL_SCENE,
         ) ?: OmniFlowModelHost.completeJson(payload)
     }
-
-    private fun schedule(payload: Map<String, Any?>): Map<String, Any?> =
-        OmniFlowPythonRuntime.schedule(
-            context = appContext,
-            operation = firstText(payload["operation"]),
-            payload = mapValue(payload["payload"]),
-            hostCall = hostCall,
-        )
 
     private fun updateDiagnostics(payload: Map<String, Any?>): Map<String, Any?> {
         val requestedRunId = firstText(payload["run_id"])
@@ -697,62 +693,12 @@ class OmniFlowDeviceDispatcher internal constructor(
         )
     }
 
-    private suspend fun applyPostRunActions(
-        result: Map<String, Any?>,
-    ): Map<String, Any?> {
-        val actions = (result["post_run_actions"] as? List<*>).orEmpty()
-            .mapNotNull { it as? Map<*, *> }
-        if (actions.isEmpty()) return result
-        var merged = result - "post_run_actions"
-        actions.forEach { rawAction ->
-            val action = rawAction.entries.associate { (key, value) -> key.toString() to value }
-            val name = firstText(action["name"])
-            if (name != "save_function") return@forEach
-            val arguments = mapValue(action["arguments"])
-            val registration = runCatching {
-                call(
-                    "tools/call",
-                    mapOf(
-                        "name" to name,
-                        "arguments" to arguments,
-                    ),
-                )
-            }.fold(
-                onSuccess = { conversion ->
-                    linkedMapOf<String, Any?>(
-                        "auto_registered" to (
-                            conversion["success"] == true &&
-                                conversion["registered"] == true
-                            ),
-                        "registered_function_id" to conversion["function_id"],
-                        "registration_status" to conversion["status"],
-                        "registration_error" to firstText(
-                            conversion["error_message"],
-                            conversion["error_code"],
-                            conversion["error"],
-                        ).takeIf(String::isNotEmpty),
-                    ).filterValues { it != null }
-                },
-                onFailure = { error ->
-                    mapOf(
-                        "auto_registered" to false,
-                        "registration_error" to error.message.orEmpty().ifBlank {
-                            error.javaClass.simpleName
-                        },
-                    )
-                },
-            )
-            merged += registration
-        }
-        return merged
-    }
-
     private fun failure(activeRun: ExecutionRequest, error: Exception): Map<String, Any?> {
         val stopped = stopRequested()
         val finishedAtMs = System.currentTimeMillis()
         return linkedMapOf<String, Any?>(
             "success" to false,
-            "status" to "failed",
+            "status" to if (stopped) "cancelled" else "failed",
             "run_id" to activeRun.id,
             "function_id" to activeRun.toolCall.name.takeIf(String::isNotEmpty),
             "source" to activeRun.source,

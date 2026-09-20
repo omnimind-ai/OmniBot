@@ -405,6 +405,12 @@ class ConversationDomainService(
         return mapOf("messages" to messages, "hasMore" to hasMore)
     }
 
+    suspend fun deleteMessageIds(conversationId: Long, conversationMode: String, entryIds: List<String>) {
+        val mode = normalizeConversationMode(conversationMode)
+        historyRepository.deleteMessageIds(conversationId, mode, entryIds)
+        publishMessagesReplaced(conversationId, mode)
+    }
+
     suspend fun replaceConversationMessages(
         conversationId: Long,
         conversationMode: String,

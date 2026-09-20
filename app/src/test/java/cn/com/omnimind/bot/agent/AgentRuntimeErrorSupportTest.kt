@@ -8,6 +8,35 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AgentRuntimeErrorSupportTest {
+    @org.junit.Test
+    fun `confirmed context rejection survives ACP without blaming credentials or generic configuration`() {
+        val error = AgentStreamRequestException(400,
+            "OpenAIException - Prompt exceeds max length Error happened to model=GLM-4.6V", null)
+        assertEquals("provider_context_exceeded", AgentRuntimeErrorSupport.failureKind(error))
+        val message = AgentRuntimeErrorSupport.userFacingMessage(error)!!
+        assertTrue(message.contains("上下文") && message.contains("历史记录已保留"))
+        val wire = AgentRuntimeErrorSupport.acpPromptFailure(message, error)
+        assertEquals("provider_context_exceeded", AgentRuntimeErrorSupport.failureKind(wire))
+        assertEquals("provider_request_rejected", AgentRuntimeErrorSupport.failureKind(
+            AgentStreamRequestException(400, "unsupported parameter", null)))
+        assertEquals("provider_service_unavailable", AgentRuntimeErrorSupport.failureKind(
+            AgentStreamRequestException(503, "Prompt exceeds max length", null)))
+    }
+
+    @Test fun `image rejection keeps capability guidance across ACP and preserves auth classification`() {
+        val failure = AgentStreamRequestException(400, "gateway fallback timeout", null, imageInput = true)
+        assertEquals(AgentRuntimeErrorSupport.PROVIDER_IMAGE_REQUEST_REJECTED,
+            AgentRuntimeErrorSupport.failureKind(failure))
+        val wire = AgentRuntimeErrorSupport.acpPromptFailure("image rejected", failure)
+        assertEquals(AgentRuntimeErrorSupport.PROVIDER_IMAGE_REQUEST_REJECTED,
+            AgentRuntimeErrorSupport.failureKind(wire))
+        assertTrue(AgentRuntimeErrorSupport.userFacingMessage(wire)!!.contains("支持图片"))
+        assertEquals(AgentRuntimeErrorSupport.PROVIDER_AUTHENTICATION_FAILED,
+            AgentRuntimeErrorSupport.failureKind(AgentStreamRequestException(401, "bad key", null, imageInput = true)))
+        assertEquals(AgentRuntimeErrorSupport.PROVIDER_REQUEST_REJECTED,
+            AgentRuntimeErrorSupport.failureKind(AgentStreamRequestException(400, "image in error text", null)))
+    }
+
     @Test fun `structured provider failures do not depend on message language`() {
         for ((status, code, kind) in listOf(
             Triple(401, "unknown", "provider_authentication_failed"),

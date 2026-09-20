@@ -1,5 +1,7 @@
 import 'package:go_router/go_router.dart';
-import 'pages/execution_history/omniflow_execution_center_page.dart';
+
+import 'pages/execution_history/execution_center_page.dart';
+import 'execution/omniflow_execution_backend.dart';
 import 'pages/execution_history/run_log_detail_page.dart';
 import 'pages/scheduled_tasks/scheduled_task_list_page.dart';
 import 'pages/usage_statistics/usage_statistics_page.dart';
@@ -22,7 +24,8 @@ List<GoRoute> taskRoutes = [
   GoRoute(
     path: '/task/omniflow',
     name: 'task/omniflow',
-    builder: (context, state) => OmniFlowExecutionCenterPage(
+    builder: (context, state) => ExecutionCenterPage(
+      backend: const OmniFlowExecutionBackend(),
       initialTab: state.uri.queryParameters['tab'],
       initialFunctionId: state.uri.queryParameters['functionId'],
     ),
@@ -35,7 +38,9 @@ List<GoRoute> taskRoutes = [
   GoRoute(
     path: '/task/run_log/:runId',
     name: 'task/run_log',
-    builder: (context, state) =>
-        RunLogDetailPage(runId: state.pathParameters['runId']!),
+    builder: (context, state) => RunLogDetailPage(
+      runId: state.pathParameters['runId']!,
+      backend: const OmniFlowExecutionBackend(),
+    ),
   ),
 ];

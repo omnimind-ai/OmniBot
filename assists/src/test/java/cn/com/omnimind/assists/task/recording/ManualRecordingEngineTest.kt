@@ -15,6 +15,27 @@ import org.junit.Test
 
 class ManualRecordingEngineTest {
     @Test
+    fun `missing screenshot on either side cannot count as complete replay evidence`() = runBlocking {
+        for (missingStage in listOf("before", "after")) {
+            val journal = ManualRecordingJournal()
+            val engine = ManualRecordingEngine(
+                journal = journal,
+                observe = { stage, _ ->
+                    val captured = observation("<page/>")
+                    if (stage.endsWith(missingStage)) captured.copy(
+                        state = captured.state?.copy(screenshotPath = null),
+                    ) else captured
+                },
+                execute = { AndroidGuiActionResult(true, "ok") },
+            )
+            val result = engine.perform(action("click", 100L))
+            assertTrue(result.recorded) // Preserve the actual action, including incomplete evidence.
+            assertFalse(journal.lastOrNull()!!.evidenceComplete)
+            assertEquals("state_evidence_incomplete", journal.lastOrNull()!!.evidenceError)
+        }
+    }
+
+    @Test
     fun `manual back is a target independent canonical key`() {
         assertEquals(
             mapOf("key" to "back"),
@@ -231,6 +252,7 @@ class ManualRecordingEngineTest {
             displayWidth = 1080,
             displayHeight = 1920,
             xml = xml,
+            screenshotPath = "recording-evidence.jpg",
         ),
     )
 }

@@ -10,6 +10,10 @@
   },
   "files": [
     "README.md",
+    "connection-url.mjs",
+    "shared-session-owner.mjs",
+    "session-connect.mjs",
+    "session-connect-mcp.mjs",
     "server.mjs"
   ],
   "keywords": [
@@ -32,10 +36,13 @@
   "scripts": {
     "start": "node server.mjs",
     "check": "node --check server.mjs",
+    "test": "node --test connection-url.test.mjs session-connect.test.mjs",
     "pack:dry": "npm pack --dry-run"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "qrcode": "1.5.4",
     "qrcode-terminal": "^0.12.0",
-    "ws": "^8.18.0"
+    "ws": "8.21.3"
   }
 }

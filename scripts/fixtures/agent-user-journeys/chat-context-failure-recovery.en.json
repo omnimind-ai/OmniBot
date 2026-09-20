@@ -1,0 +1,11 @@
+{
+  "name": "New user task after a real long-context Provider failure",
+  "preconditions": "The original failed long-context chat is open and idle; do not start another conversation.",
+  "steps": [
+    {"action":"send","marker":"OOB_LIVE_CONTEXT_NEXT","scenario":"chat-after-context-failure.json"},
+    {"action":"reply","text":"OOB_LIVE_CONTEXT_NEXT_DONE","timeoutMs":180000},
+    {"action":"turn-outcome","marker":"OOB_LIVE_CONTEXT_NEXT","expected":"done"},
+    {"action":"restart"},
+    {"action":"reply","text":"OOB_LIVE_CONTEXT_NEXT_DONE"}
+  ]
+}

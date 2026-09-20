@@ -327,8 +327,10 @@ test("no chat path can reintroduce automatic context compaction or a second turn
   assert.doesNotMatch(orchestrator, /(?:repeat|take)\(\s*16\s*\)/);
   assert.doesNotMatch(orchestrator, /toolChoiceForRound|JsonPrimitive\("auto"\)/);
   assert.match(orchestrator, /toolChoice\s*=\s*null/);
-  assert.doesNotMatch(orchestrator, /parallelToolCalls\s*=\s*true/);
-  assert.match(orchestrator, /parallelToolCalls\s*=\s*null/);
+  // No unconditional scheduling policy: only explicitly safe catalog reads
+  // advertise multi-call generation; the executable Kotlin test checks both paths.
+  assert.match(orchestrator, /parallelToolCalls\s*=\s*true\.takeIf/);
+  assert.match(orchestrator, /runtimeDescriptor\(it\.function\.name\)\.parallelSafe/);
 });
 
 test("terminal Agent failures do not use a host retryability guess", async () => {
@@ -354,12 +356,14 @@ test("the local ACP bridge has no private automatic-retry callback or presentati
   assert.doesNotMatch(connection, /"retry" to mapOf\(/);
 });
 
-test("the local Agent loop does not add an unreachable tool batch scheduler", async () => {
+test("the local Agent loop owns bounded opt-in reads without a second scheduler", async () => {
   const orchestrator = await source(
     "app/src/main/java/cn/com/omnimind/bot/agent/runtime/AgentOrchestrator.kt",
   );
 
-  assert.match(orchestrator, /for \(call in validatedCalls\) \{/);
+  assert.match(orchestrator, /descriptorMap\.getValue\(first\.id\)\.parallelSafe/);
+  assert.match(orchestrator, /take\(4\)/);
+  assert.match(orchestrator, /pending\[index\]\.await\(\)/);
   assert.match(orchestrator, /round=\$round model_tool_calls=\$\{validatedCalls\.size}/);
   assert.doesNotMatch(orchestrator, /ToolBatch|batch\.parallel|awaitAll\(\)/);
 });
@@ -497,7 +501,7 @@ test("model discovery leaves catalog size to the active harness", async () => {
   assert.doesNotMatch(runtimeManager, /args\.ifEmpty \{ mapOf\("limit" to \d+\) \}/);
 });
 
-test("session discovery follows official cursors without a client-side page ceiling", async () => {
+test("session discovery uses official cursors and loads additional pages on demand", async () => {
   const [runtimeService, sessionsPage] = await Promise.all([
     source("ui/lib/services/agent_runtime_service.dart"),
     source("ui/lib/features/home/pages/agent/agent_sessions_page.dart"),
@@ -505,8 +509,10 @@ test("session discovery follows official cursors without a client-side page ceil
 
   assert.match(runtimeService, /static Future<Map<String, dynamic>> listSessions\(\{\s*int\? limit,/);
   assert.match(runtimeService, /if \(limit != null\) 'limit': limit,/);
-  assert.match(sessionsPage, /final seenCursors = <String>\{\};\s*while \(true\)/);
-  assert.match(sessionsPage, /nextCursor == null \|\| !seenCursors\.add\(nextCursor\)/);
+  assert.match(sessionsPage, /final cursor = loadMore \? _nextCursor : null/);
+  assert.match(sessionsPage, /if \(loadMore && cursor == null\) return/);
+  assert.match(sessionsPage, /_nextCursor = nextCursor == cursor \? null : nextCursor/);
+  assert.doesNotMatch(sessionsPage, /while \(true\)/);
   assert.doesNotMatch(sessionsPage, /for \(var page = 0; page < \d+; page\+\+\)/);
   assert.doesNotMatch(sessionsPage, /listSessions\(\s*limit:/);
 });

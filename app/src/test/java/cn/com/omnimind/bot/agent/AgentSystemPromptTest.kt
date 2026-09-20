@@ -33,6 +33,11 @@ class AgentSystemPromptTest {
             terminalDistribution = TerminalDistribution.alpine
         )
 
+        // User-requested rollback: do not reintroduce the plan-only prompt workaround.
+        assertTrue(!prompt.contains("当轮执行约定"))
+        assertTrue(prompt.contains("确定性的批量文件工作"))
+        assertTrue(prompt.contains("普通并行 I/O 在当前 Agent 内完成"))
+        assertTrue(prompt.contains("未核验的结果标为未核验"))
         assertTrue(prompt.contains(".venv"))
         assertTrue(prompt.contains("uv"))
         assertTrue(prompt.contains("--copies"))
@@ -43,7 +48,7 @@ class AgentSystemPromptTest {
         assertTrue(prompt.contains("工作区文件与产物"))
         assertTrue(prompt.contains("手机和 Android 原生操作"))
         assertTrue(prompt.contains("设备原生能力"))
-        assertTrue(prompt.contains("当前工具列表中已经注入"))
+        assertTrue(prompt.contains("单项操作使用对应文件工具"))
         assertTrue(prompt.contains("只有用户明确要求分派或并行"))
         assertTrue(prompt.contains("完整、自足的 instruction"))
         assertTrue(prompt.contains("仅当用户明确要求持久化信息"))
@@ -91,6 +96,10 @@ class AgentSystemPromptTest {
         )
 
         assertTrue(prompt.contains("You are an AI Agent operating inside the Alpine environment"))
+        assertTrue(!prompt.contains("Execution within this turn"))
+        assertTrue(prompt.contains("deterministic bulk file work"))
+        assertTrue(prompt.contains("do not start subagents for ordinary parallel I/O"))
+        assertTrue(prompt.contains("mark unchecked results as unverified"))
         assertTrue(prompt.contains("File and artifact rules"))
         assertTrue(prompt.contains("Skills:"))
         assertTrue(!prompt.contains("tools_search"))

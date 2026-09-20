@@ -85,7 +85,7 @@ class OmniLinkAgentProvider(
     override fun open(): OmniPlugin = object : OmniPlugin {
         private var poller: OmniLinkAgentEventPoller? = null
 
-        override fun contribution(): OmniPluginContribution = OmniPluginContribution(
+        override suspend fun contribution(): OmniPluginContribution = OmniPluginContribution(
             toolGroups = listOf(
                 OmniPluginToolGroup(
                     definitions = OmniLinkAgentTools.definitions(),

@@ -1,0 +1,12 @@
+{
+  "name": "Delayed second tool identity preserves both argument streams",
+  "preconditions": "Release emulator local chat uses isolated ToolIndexAudit synthetic Provider on port 18879; this is protocol fault injection, not live model acceptance.",
+  "steps": [
+    {"action":"send","marker":"OOB_FAILURE_INDEX"},
+    {"action":"reply","text":"OOB_FAILURE_INDEX_DONE","timeoutMs":90000},
+    {"action":"turn-outcome","marker":"OOB_FAILURE_INDEX","expected":"done"},
+    {"action":"restart"},
+    {"action":"reply","text":"OOB_FAILURE_INDEX_DONE"},
+    {"action":"turn-outcome","marker":"OOB_FAILURE_INDEX","expected":"done"}
+  ]
+}

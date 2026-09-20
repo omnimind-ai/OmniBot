@@ -4,6 +4,27 @@ import {mkdtempSync,writeFileSync,readFileSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {spawnSync} from 'node:child_process';
+for (const sample of [
+ {draft:'Reply OOB_',prepare:'0',error:/Draft recovery must never dispatch a send/},
+ {draft:'unrelated user draft',prepare:'1',error:/not an exact prefix/},
+]) test('draft recovery preserves unsafe input: '+sample.draft,()=>{
+ const root=mkdtempSync(join(tmpdir(),'oob-draft-recovery-'));
+ try {
+  const adb=join(root,'adb'),calls=join(root,'calls');
+  const xml='<node package="cn.com.omnimind.bot" class="android.widget.EditText" text="'+sample.draft+'" />';
+  writeFileSync(adb,`#!/usr/bin/env node
+const fs=require('node:fs'),args=process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(calls)},JSON.stringify(args)+'\\n');
+if(args.includes('dump'))process.stdout.write('UI hierchary dumped to: test');
+else if(args.includes('cat'))process.stdout.write(${JSON.stringify(xml)});
+else process.exit(9);
+`,{mode:0o700});
+  const result=spawnSync(process.execPath,['scripts/send-agent-test-message.mjs','emulator-1234','OOB_RESUME'],
+   {env:{...process.env,ADB:adb,OOB_RESUME_DRAFT_ONLY:'1',OOB_PREPARE_DRAFT_ONLY:sample.prepare},encoding:'utf8',timeout:10000});
+  assert.equal(result.status,1);assert.match(result.stderr,sample.error);
+  assert(!readFileSync(calls,'utf8').trim().split('\n').map(JSON.parse).some(a=>a.includes('input')));
+ }finally{rmSync(root,{recursive:true,force:true});}
+});
 test('empty initial UI observation is retried before touching an existing draft',()=>{
  const root=mkdtempSync(join(tmpdir(),'oob-send-readiness-'));
  try {

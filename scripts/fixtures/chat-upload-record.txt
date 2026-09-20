@@ -1,0 +1,4 @@
+Synthetic attachment acceptance record
+record_code: cedar-7391-kite
+item_count: 37
+recovery_code: maple-8264-river

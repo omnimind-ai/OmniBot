@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import {uiXmlField as field} from './agent-ui-xml.mjs';
+import {uiXmlField as field, hasAssistantReplyMarker} from './agent-ui-xml.mjs';
 import {assertMcpFixturePhase} from './mcp-fixture-observation.mjs';
 // Execute a maintained UI journey on an isolated Android emulator.
 // Every action uses current accessibility bounds. No ACP calls, DB writes,
@@ -53,6 +53,14 @@ const report = {name: journey.name, serial, runId,
 let index = 0;
 let mcpBaseline;
 try {
+  // Shared emulator: never compete with another journey's taps or UIAutomator.
+  // This is a read-only admission guard, not a retry of a user action.
+  const owners = execFileSync('ps', ['-axo', 'pid=,command='], {encoding:'utf8'})
+    .split('\n').map(line => line.match(/^\s*(\d+)\s+(.+)$/)).filter(Boolean)
+    .filter(([,pid,command]) => Number(pid) !== process.pid &&
+      /^(?:\S*\/)?node\s+\S*verify-agent-user-journey\.mjs\s/.test(command) &&
+      command.split(/\s+/)[2] === serial).map(([,pid]) => Number(pid));
+  assert(owners.length === 0, `Another UI journey owns ${serial} (PID ${owners.join(',')}); wait for it to finish`);
   if (journey.requireClockSync) {
     const deviceSeconds = Number(adb('shell', 'date', '+%s').toString().trim());
     assert(Number.isFinite(deviceSeconds) && Math.abs(deviceSeconds - Date.now() / 1000) < 300,
@@ -246,6 +254,12 @@ try {
       }
       assert(verified.passed, 'Canonical turn did not complete');
       writeFileSync(resolve(out, `${index}-turn-outcome.json`), JSON.stringify(verified, null, 2));
+    } else if (step.action === 'omniinfer-local-task') {
+      const evidence = resolve(out, `${index}-omniinfer-local-task.json`);
+      const verified = JSON.parse(execFileSync('python3', [resolve(scripts, 'verify-omniinfer-agent-task.py'),
+        serial, step.marker, evidence, ...(step.model ? ['--model', step.model] : []), ...(step.inApp ? ['--in-app'] : []),
+        ...(step.historyOnly ? ['--history-only'] : [])], {encoding: 'utf8', timeout: 90000, stdio: ['ignore', 'pipe', 'pipe']}));
+      assert(verified.passed, 'Local OmniInfer Agent task evidence did not pass');
     } else if (step.action === 'workspace-file-absent') {
       assert(/^OOB_FAILURE_STREAMTOOL_\d+$/.test(step.marker), 'Only synthetic failed-tool output may be checked');
       adb('shell','run-as','cn.com.omnimind.bot','test','-d','workspace');
@@ -259,8 +273,15 @@ try {
       const record = resolve(out, `${step.marker}-child.json`);
       const verified = JSON.parse(execFileSync('python3', [resolve(scripts, 'assert-terminal-child-state.py'), serial, step.marker, step.state, record], {encoding:'utf8',timeout:90000}));
       writeFileSync(resolve(out, `${index}-terminal-child.json`), JSON.stringify(verified));
+    } else if (step.action === 'read-batch') {
+      const log = process.env.OOB_AGENT_PERFORMANCE_LOG
+        ? readFileSync(process.env.OOB_AGENT_PERFORMANCE_LOG, 'utf8')
+        : adb('logcat', '-d', '-v', 'threadtime', '[Omni]AgentPerformance:I', '*:S').toString();
+      const verified = JSON.parse(execFileSync('python3', [resolve(scripts, 'assert-harness-read-batch.py'), serial, step.marker, '-'],
+        {input: log, encoding: 'utf8', timeout: 60000}));
+      writeFileSync(resolve(out, `${index}-read-batch.json`), JSON.stringify(verified, null, 2));
     } else if (step.action === 'live-task') {
-      const verified = JSON.parse(execFileSync('python3', [resolve(scripts, 'assert-xiaowan-live-task.py'), serial, step.marker, step.phase], {encoding: 'utf8', timeout: 60000}));
+      const verified = JSON.parse(execFileSync('python3', [resolve(scripts, 'assert-xiaowan-live-task.py'), serial, step.marker, step.phase, ...(step.path ? [step.path] : [])], {encoding: 'utf8', timeout: 60000}));
       writeFileSync(resolve(out, `${index}-live-task.json`), JSON.stringify(verified, null, 2));
     } else if (step.action === 'checkpoint') {
       const checkpoint = JSON.parse(execFileSync('python3', [resolve(scripts, 'assert-agent-context-checkpoint.py'), serial, step.marker], {encoding: 'utf8', timeout: 30000}));
@@ -284,7 +305,34 @@ try {
       const deadline = Date.now() + (step.timeoutMs || 120000);
       let found = false;
       let snapshotFailures = 0;
+      let lastTerminalProbe = 0;
+      let completedWithoutRequiredMarker = false;
+      let canonicallyCompleted = false;
+      const replyMarker = step.action === 'reply'
+        ? step.marker || [...markers.values()].find(marker => step.text.startsWith(marker)) : null;
+      assert(!replyMarker || /^OOB_[A-Z0-9_]+$/.test(replyMarker), 'Synthetic observation marker required');
       do {
+        if (replyMarker && Date.now() - lastTerminalProbe >= 5000) {
+          lastTerminalProbe = Date.now();
+          let terminal;
+          try {
+            terminal = JSON.parse(execFileSync('python3', [resolve(scripts, 'assert-agent-turn-outcome.py'),
+              serial, replyMarker, 'terminal-failure', step.text], {encoding:'utf8', timeout:30000, stdio:['ignore','pipe','pipe']}));
+          } catch { /* An unavailable observation is not a terminal outcome. */ }
+          if (terminal?.failed) {
+            writeFileSync(resolve(out, `${index}-terminal-failure.json`), JSON.stringify(terminal,null,2));
+            assert.fail(`Owning turn terminated with ${terminal.reason}: ${terminal.summary || 'cancelled'}`);
+          }
+          completedWithoutRequiredMarker = terminal?.completedWithoutRequiredMarker === true;
+          canonicallyCompleted = terminal?.completed === true;
+        }
+        // UIAutomator can suppress the accessibility service the agent itself
+        // needs for UI testing. Observe only its journal until PromptResponse;
+        // final visible-result acceptance still uses a fresh real UI snapshot.
+        if (replyMarker && !canonicallyCompleted) {
+          await new Promise(r => setTimeout(r, 750));
+          continue;
+        }
         let nodes;
         try {
           nodes = snapshot();
@@ -295,13 +343,21 @@ try {
           await new Promise(r => setTimeout(r, 750));
           continue;
         }
-        // A user bubble says "Reply MARKER". Only a separate exact line in
-        // an assistant item qualifies, and the Send control must be idle.
-        const matching = nodes.filter(n => label(n).split('\n').includes(step.text) &&
-          !label(n).includes(`Reply ${step.text}`));
+        // Observe the assistant marker even when Markdown folds its preceding
+        // newline. The later turn-outcome assertion still requires canonical completion.
+        const matching = nodes.filter(n => step.action === 'reply'
+          ? hasAssistantReplyMarker(n, step.text)
+          : label(n).split('\n').includes(step.text) && !label(n).includes(`Reply ${step.text}`));
         const running = nodes.some(n => /^(Stop|停止|停止生成)(\n|$)/.test(label(n)));
         found = matching.length > 0 && (step.action !== 'reply' || !running);
         if (found) break;
+        if (!running && completedWithoutRequiredMarker) {
+          writeFileSync(resolve(out, `${index}-incomplete-task.json`), JSON.stringify({
+            marker:replyMarker, expected:step.text, passed:false,
+            reason:'Canonical completed turn lacks the required synthetic result marker',
+          },null,2));
+          assert.fail('Owning turn completed without the required result; do not wait or replay the task');
+        }
         await new Promise(r => setTimeout(r, 750));
       } while (Date.now() < deadline);
       assert(found, `Expected visible result did not appear before deadline (${snapshotFailures} unavailable snapshots)`);

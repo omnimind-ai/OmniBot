@@ -62,6 +62,14 @@ rootfs_has_legacy_layout() {
     esac
 }
 
+rootfs_needs_extraction() {
+    if [ -f "$ROOTFS_READY_MARKER" ]; then
+        ! rootfs_has_minimum_layout
+    else
+        ! rootfs_has_legacy_layout
+    fi
+}
+
 clear_incomplete_rootfs() {
     clear_status=0
     for entry in "$ROOTFS_DIR"/* "$ROOTFS_DIR"/.[!.]* "$ROOTFS_DIR"/..?*; do
@@ -96,13 +104,49 @@ install_runtime_file() {
     cp "$src" "$tmp" && chmod "$mode" "$tmp" && mv -f "$tmp" "$dest"
 }
 
-install_runtime_file "$PREFIX/files/proot" "$PREFIX/local/bin/proot" 755
+if ! install_runtime_file "$PREFIX/files/proot" "$PREFIX/local/bin/proot" 755; then
+    echo "Failed to install the bundled PRoot runtime." >&2
+    exit 1
+fi
 
 for sofile in "$PREFIX/files/"*.so.2; do
     [ -e "$sofile" ] || continue
     dest="$PREFIX/local/lib/$(basename "$sofile")"
-    install_runtime_file "$sofile" "$dest" 644
+    if ! install_runtime_file "$sofile" "$dest" 644; then
+        echo "Failed to install PRoot dependency: $(basename "$sofile")" >&2
+        exit 1
+    fi
 done
+
+# Resolve the loader at the shared host boundary, after caller environment
+# overrides. Never let a missing/stale value fall back to Termux's compiled-in
+# path or a loader extracted into writable app storage. Both UI and tool
+# launches use this script; Android installs the loader in nativeLibraryDir.
+if [ -n "${NATIVE_LIB_DIR:-}" ]; then
+    PROOT_LOADER="$NATIVE_LIB_DIR/libproot-loader.so"
+    export PROOT_LOADER
+fi
+if [ -z "${PROOT_LOADER:-}" ] || [ ! -r "$PROOT_LOADER" ] || [ ! -x "$PROOT_LOADER" ]; then
+    echo "PRoot loader missing or not executable; check the installed APK native libraries (libproot-loader.so)." >&2
+    exit 1
+fi
+
+# Check execution before removing an incomplete installation. An execve error
+# here is a host runtime failure, not a corrupt Ubuntu archive. Keep PRoot's
+# original stderr, including errno, visible to the calling tool.
+if rootfs_needs_extraction; then
+    if [ ! -f "$ROOTFS_ARCHIVE" ]; then
+        echo "Missing $TERMINAL_DISTRIBUTION rootfs archive: $ROOTFS_ARCHIVE" >&2
+        exit 1
+    fi
+    run_child "$LINKER" "$PREFIX/local/bin/proot" --link2symlink \
+        /system/bin/tar --help >/dev/null
+    runtime_status=$?
+    if [ "$runtime_status" -ne 0 ]; then
+        echo "Rootfs initialization stopped: PRoot cannot start Android tar (exit $runtime_status); existing files were preserved." >&2
+        exit "$runtime_status"
+    fi
+fi
 
 if [ -f "$ROOTFS_READY_MARKER" ]; then
     if ! rootfs_has_minimum_layout; then

@@ -107,7 +107,7 @@ class VlmToolHandler(context: Context) : ToolHandler {
                 modelClient = HttpAgentLlmClient(
                     scope = CoroutineScope(currentCoroutineContext()),
                 )
-                    .asOmniFlowModelClient(),
+                    .asOmniFlowModelClient(helper.context),
                 hooks = OmniVlmPlugin.Hooks(
                     beforeOperation = {
                         helper.ensureRunActive()

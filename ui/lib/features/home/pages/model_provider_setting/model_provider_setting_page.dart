@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
+import 'package:flutter/services.dart';
 import 'package:ui/l10n/l10n.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
@@ -182,10 +184,12 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
   String? _modelFetchError;
   bool _obscureApiKey = true;
   bool _isSyncingControllers = false;
-  bool _isSavingProfile = false;
+  Future<bool>? _pendingProfileSave;
   bool _saveQueued = false;
   bool _isSwitchingProfile = false;
   bool _apiKeyDirty = false;
+  int _apiKeyEditRevision = 0;
+  int _customHeadersEditRevision = 0;
   bool _customHeadersDirty = false;
   String _selectedSourceType = BuiltinOfficialProviderCatalog.customKey;
   String _selectedProtocolType = 'openai_compatible';
@@ -356,9 +360,8 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
     }
     final entries = groups.entries.toList()
       ..sort((a, b) {
-        final orderCompare = ModelVendorCatalog.orderOf(
-          a.key,
-        ).compareTo(ModelVendorCatalog.orderOf(b.key));
+        final orderCompare = ModelVendorCatalog.orderOf(a.key)
+            .compareTo(ModelVendorCatalog.orderOf(b.key));
         if (orderCompare != 0) return orderCompare;
         return a.key.compareTo(b.key);
       });
@@ -459,6 +462,7 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
   void _onApiKeyChanged() {
     if (!_isSyncingControllers) {
       _apiKeyDirty = true;
+      _apiKeyEditRevision++;
     }
     _onProfileChanged();
   }
@@ -479,6 +483,7 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
       return;
     }
     _customHeadersDirty = true;
+    _customHeadersEditRevision++;
     _updateCustomHeadersError();
     if (_hasAnyProfileFieldFocus) {
       _autoSaveTimer?.cancel();
@@ -510,15 +515,10 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
         ModelProviderConfigService.normalizeApiBase(current.baseUrl) ?? '';
     final nextBaseUrl = normalizedBaseUrl ?? '';
     final nextCustomHeaders = _validatedCustomHeadersDraft();
+    // Profile summaries redact credentials/headers. An empty summary is not
+    // proof that deleting the last configured header is a no-op.
     final hasCustomHeaderChanges =
-        _customHeadersDirty &&
-        nextCustomHeaders != null &&
-        !_stringMapsEqual(
-          nextCustomHeaders,
-          ModelProviderConfigService.normalizeCustomHeaders(
-            current.customHeaders,
-          ),
-        );
+        _customHeadersDirty && nextCustomHeaders != null;
     return _nameController.text.trim() != current.name ||
         nextBaseUrl != currentBaseUrl ||
         _apiKeyDirty ||
@@ -544,6 +544,21 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
   }
 
   Future<bool> _persistProfileDraft() async {
+    final pending = _pendingProfileSave;
+    if (pending != null) {
+      _saveQueued = true;
+      return pending;
+    }
+    final save = _saveProfileDraft();
+    _pendingProfileSave = save;
+    try {
+      return await save;
+    } finally {
+      _pendingProfileSave = null;
+    }
+  }
+
+  Future<bool> _saveProfileDraft() async {
     final current = _currentProfile;
     if (current == null || current.readOnly) {
       return true;
@@ -551,12 +566,9 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
     _autoSaveTimer?.cancel();
     _autoSaveTimer = null;
 
-    if (_isSavingProfile) {
-      _saveQueued = true;
-      return false;
-    }
-
     do {
+      final current = _currentProfile;
+      if (current == null || current.readOnly) return true;
       _saveQueued = false;
       final nextName = _nameController.text.trim();
       final rawBaseUrl = _baseUrlController.text.trim();
@@ -571,12 +583,14 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
         }
         return false;
       }
+      final apiKeyRevision = _apiKeyEditRevision;
+      final customHeadersRevision = _customHeadersEditRevision;
       final nextApiKey = _apiKeyController.text.trim();
-      final nextCustomHeaders =
-          _validatedCustomHeadersDraft() ??
-          ModelProviderConfigService.normalizeCustomHeaders(
-            current.customHeaders,
-          );
+      final nextCustomHeaders = _validatedCustomHeadersDraft();
+      if (nextCustomHeaders == null) {
+        _updateCustomHeadersError();
+        return false;
+      }
       final currentBaseUrl =
           ModelProviderConfigService.normalizeApiBase(current.baseUrl) ?? '';
 
@@ -590,7 +604,6 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
         return true;
       }
 
-      _isSavingProfile = true;
       try {
         final saved = await ModelProviderConfigService.saveProfile(
           id: current.id,
@@ -609,8 +622,12 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
               .toList();
           _editingProfileId = saved.id;
         });
-        _apiKeyDirty = false;
-        _customHeadersDirty = false;
+        // Only acknowledge the edits included in this save. A user can type
+        // another credential while the platform persistence call is pending.
+        if (_apiKeyEditRevision == apiKeyRevision) _apiKeyDirty = false;
+        if (_customHeadersEditRevision == customHeadersRevision) {
+          _customHeadersDirty = false;
+        }
       } catch (_) {
         if (mounted) {
           showToast(
@@ -619,8 +636,6 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
           );
         }
         return false;
-      } finally {
-        _isSavingProfile = false;
       }
     } while (_saveQueued && mounted);
     return true;
@@ -929,7 +944,7 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
       entry.dispose();
       _customHeadersErrorText = _computeCustomHeadersValidationError();
     });
-    _scheduleAutoSave();
+    _onCustomHeadersChanged();
   }
 
   void _updateCustomHeadersError() {
@@ -963,6 +978,15 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
       final normalized = ModelProviderConfigService.normalizeCustomHeaderName(
         name,
       );
+      if ((normalized == 'authorization' ||
+              normalized == 'x-api-key' ||
+              normalized == 'api-key') &&
+          value.trim().isEmpty) {
+        return _headerText(
+          '$name 不能为空，请填写或删除该请求头',
+          '$name cannot be empty. Enter a value or remove this header.',
+        );
+      }
       if (!seen.add(normalized)) {
         return _headerText(
           '请求头名称不能重复（大小写不敏感）',
@@ -986,18 +1010,6 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
       normalized[name] = entry.valueController.text;
     }
     return ModelProviderConfigService.normalizeCustomHeaders(normalized);
-  }
-
-  bool _stringMapsEqual(Map<String, String> left, Map<String, String> right) {
-    if (left.length != right.length) {
-      return false;
-    }
-    for (final entry in left.entries) {
-      if (right[entry.key] != entry.value) {
-        return false;
-      }
-    }
-    return true;
   }
 
   Future<void> _switchToProfile(String profileId) async {
@@ -1159,11 +1171,31 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
     try {
       // Discovery must describe the saved Provider revision. Otherwise a
       // later autosave invalidates the just-fetched list on page exit.
-      if (_shouldAutoSaveDraft && !await _persistProfileDraft()) return;
+      if ((_shouldAutoSaveDraft || _pendingProfileSave != null) &&
+          !await _persistProfileDraft()) {
+        if (mounted) {
+          setState(
+            () => _modelFetchError = _headerText(
+              '配置未保存，请检查输入后重试',
+              'Configuration was not saved. Check your input and try again.',
+            ),
+          );
+        }
+        return;
+      }
       if (!mounted) return;
       final savedProfile = _currentProfile;
       if (savedProfile == null || savedProfile.id != current.id) return;
       requestedRevision = savedProfile.revision;
+      if (savedProfile.needsPresetCredentials) {
+        setState(
+          () => _modelFetchError = _headerText(
+            '服务商“${savedProfile.name}”尚未配置 API Key，请在上方填写后重试',
+            'Provider "${savedProfile.name}" has no API key. Enter it above and retry.',
+          ),
+        );
+        return;
+      }
       final models = await ModelProviderConfigService.fetchModels(
         profileId: savedProfile.id,
         providerName: savedProfile.name,
@@ -1776,12 +1808,16 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
   Widget _buildCustomHeadersEditor() {
     final readOnly = _currentProfile?.readOnly ?? false;
     final hasHeaders = _customHeaderEntries.isNotEmpty;
+    final hasSavedHeaders =
+        _currentProfile?.hasCustomHeaders == true && !_customHeadersDirty;
     final headerCount = _customHeaderEntries
         .where((e) => e.nameController.text.trim().isNotEmpty)
         .length;
     final palette = context.omniPalette;
     final subtitle = headerCount > 0
         ? _headerText('已配置 $headerCount 项', '$headerCount configured')
+        : hasSavedHeaders
+        ? _headerText('已保存', 'Saved')
         : _headerText('点击展开配置', 'Tap to configure');
 
     return Column(
@@ -1883,6 +1919,15 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
                 ),
               ),
               const SizedBox(height: 10),
+              if (!readOnly && hasSavedHeaders && !hasHeaders)
+                TextButton.icon(
+                  onPressed: () {
+                    setState(() => _replaceCustomHeaderEntries(const {}));
+                    _onCustomHeadersChanged();
+                  },
+                  icon: const Icon(LucideIcons.trash2, size: 16),
+                  label: Text(_headerText('清除已保存的请求头', 'Clear saved headers')),
+                ),
               if (!readOnly)
                 Align(
                   alignment: Alignment.centerRight,
@@ -1912,7 +1957,15 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
                     ),
                   ),
                   child: Text(
-                    _headerText('暂未配置自定义请求头', 'No custom headers configured'),
+                    hasSavedHeaders
+                        ? _headerText(
+                            '已保存请求头（内容已隐藏）',
+                            'Saved headers (values hidden)',
+                          )
+                        : _headerText(
+                            '暂未配置自定义请求头',
+                            'No custom headers configured',
+                          ),
                     style: TextStyle(
                       color: _secondaryTextColor,
                       fontSize: 12,
@@ -2988,6 +3041,37 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
                   const EdgeInsets.fromLTRB(18, 12, 18, 24),
                 ),
                 children: [
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                      key: const ValueKey('install-omniinfer'),
+                      style: TextButton.styleFrom(
+                        foregroundColor: _secondaryTextColor,
+                        textStyle: const TextStyle(fontSize: 12),
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        minimumSize: const Size(0, 32),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      onPressed: () async {
+                        try {
+                          await const MethodChannel(
+                            'cn.com.omnimind.bot/AssistCoreEvent',
+                          ).invokeMethod<void>('openLocalModelService');
+                        } on PlatformException catch (error) {
+                          if (context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(error.message ?? '无法打开本地模型服务'),
+                              ),
+                            );
+                          }
+                        }
+                      },
+                      child: Text(
+                        _headerText('使用本地模型服务', 'Use local model service'),
+                      ),
+                    ),
+                  ),
                   SettingsSectionTitle(
                     label: context.l10n.modelProviderConfigTitle,
                     subtitle: context.l10n.modelProviderConfigDesc,
@@ -3233,7 +3317,8 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
                                         ),
                                         const SizedBox(height: 10),
                                         Text(
-                                          _modelFetchError ?? context.l10n.modelAddPrompt,
+                                          _modelFetchError ??
+                                              context.l10n.modelAddPrompt,
                                           textAlign: TextAlign.center,
                                           style: TextStyle(
                                             color: _secondaryTextColor,
@@ -3245,8 +3330,12 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
                                         if (_modelFetchError != null) ...[
                                           const SizedBox(height: 8),
                                           TextButton(
-                                            onPressed: _isFetchingModels ? null : _fetchModelsLocalized,
-                                            child: Text(_headerText('重试', 'Retry')),
+                                            onPressed: _isFetchingModels
+                                                ? null
+                                                : _fetchModelsLocalized,
+                                            child: Text(
+                                              _headerText('重试', 'Retry'),
+                                            ),
                                           ),
                                         ],
                                       ],

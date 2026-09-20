@@ -1,0 +1,3 @@
+{
+  "prompt": "Overlay and accessibility permissions are now enabled. Continue installing /sdcard/Download/OmniInfer-local.apk through the system UI, start the local host and verify inference. Also stop artifact session session_355cafc2: killing its wrapper PID did not stop the Python child. Do not rebuild."
+}

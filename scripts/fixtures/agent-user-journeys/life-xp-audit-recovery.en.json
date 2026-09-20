@@ -1,0 +1,21 @@
+{
+  "name": "Life XP audit continuation after terminal transport error",
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_LIFE_XP_AUDIT_RECOVERY",
+      "scenario": "life-xp-audit-recovery.json",
+      "timeoutMs": 300000
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_LIFE_XP_AUDIT_RECOVERY_DONE",
+      "timeoutMs": 1800000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_LIFE_XP_AUDIT_RECOVERY",
+      "expected": "done"
+    }
+  ]
+}

@@ -1,0 +1,41 @@
+{
+  "name": "Formal local OmniInfer Agent task with tool, local Provider and artifact checks before and after restart; requires a fresh conversation with local model selected",
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_OMNIINFER_AGENT",
+      "scenario": "omniinfer-local-agent.json",
+      "timeoutMs": 180000
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_OMNIINFER_AGENT_DONE",
+      "timeoutMs": 600000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_OMNIINFER_AGENT",
+      "expected": "done"
+    },
+    {
+      "action": "omniinfer-local-task",
+      "marker": "OOB_LIVE_OMNIINFER_AGENT"
+    },
+    {
+      "action": "restart"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_OMNIINFER_AGENT_DONE"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_OMNIINFER_AGENT",
+      "expected": "done"
+    },
+    {
+      "action": "omniinfer-local-task",
+      "marker": "OOB_LIVE_OMNIINFER_AGENT"
+    }
+  ]
+}

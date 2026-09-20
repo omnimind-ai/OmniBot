@@ -2,7 +2,10 @@
 """Assert synthetic real-provider work from the canonical journal, read-only."""
 import json, re, sys
 from agent_test_database import agent_database_snapshot
-serial, marker, phase = sys.argv[1:]
+serial, marker, phase, *paths = sys.argv[1:]
+assert len(paths)<=1
+expected_file = paths[0] if paths else '/workspace/oob-file-repro/large.html'
+assert expected_file in ('/workspace/oob-file-repro/large.html', '/workspace/oob-auto-context-release-fixture/large.html')
 assert re.fullmatch(r'emulator-\d+', serial)
 assert re.fullmatch(r'OOB_LIVE_[A-Z0-9_]+', marker)
 assert phase in ('files', 'long', 'recovery', 'permission-denied', 'permission-allowed', 'file-list-limits', 'content-search', 'session-exit', 'list-refresh', 'auto-pages', 'auto-pages-60', 'auto-next-60', 'small-page-body')
@@ -45,12 +48,12 @@ if phase == 'small-page-body':
     assert any('OOB_BODY_RIVER_7391' in json.loads(payload).get('content',{}).get('text','') for payload in payloads), 'Model did not report value from file body'
 elif phase == 'auto-next-60':
     assert len(rows)==1 and rows[0]['tool']=='file_read' and rows[0]['success']==1, 'Expected one successful continuation read'
-    assert rows[0]['args'].get('path')=='/workspace/oob-file-repro/large.html', 'Wrong file after restart'
+    assert rows[0]['args'].get('path')==expected_file, 'Wrong file after restart'
     assert rows[0]['args'].get('offset')==60*65536, 'Next unread page was not restored'
 elif phase in ('auto-pages', 'auto-pages-60'):
     expected_pages = 60 if phase == 'auto-pages-60' else 20
     assert len(rows)==expected_pages, f'Expected exactly {expected_pages} reads; duplicate or offload detours occurred'
-    assert all(r['tool']=='file_read' and r['success']==1 and r['args'].get('path')=='/workspace/oob-file-repro/large.html' for r in rows), 'Unexpected tool or file path during sequential reads'
+    assert all(r['tool']=='file_read' and r['success']==1 and r['args'].get('path')==expected_file for r in rows), 'Unexpected tool or file path during sequential reads'
     assert [r['args'].get('offset',0) for r in rows]==[i*65536 for i in range(expected_pages)], 'Page continuity lost'
 elif phase == 'files':
     required = {'file_write','file_list','file_read','file_search','file_stat','file_edit','file_move','terminal_execute'}

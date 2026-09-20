@@ -1,0 +1,3 @@
+{
+  "prompt": "Life XP acceptance still FAILED: installed UI shows XP 0. Actual app.js still calls _limit:1000 twice; changing toolkit defaults did not change callers. core-issue-test.js tests copied formulas and marks preservation PASSED without reading data. Repair the actual project and tests yourself, preserve all rows. Use project_contract for new pagination. Use tools_search for life_xp_demo_get_check_ins and call real discovered tools. Import production calculation code in tests; never copy formulas or require Agent tools as Node modules. Republish, verify real 75 XP and history, and report any unexecuted UI tests honestly."
+}

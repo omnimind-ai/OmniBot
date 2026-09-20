@@ -1,0 +1,21 @@
+{
+  "name": "Life XP resume after Provider failure",
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_LIFE_XP_RESUME",
+      "scenario": "life-xp-resume-validation.json",
+      "timeoutMs": 300000
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_LIFE_XP_RESUME_DONE",
+      "timeoutMs": 1800000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_LIFE_XP_RESUME",
+      "expected": "done"
+    }
+  ]
+}

@@ -222,7 +222,7 @@ internal object AndroidDeviceMcpServer {
         name: String,
         arguments: Map<String, JsonElement>,
     ): CallToolResult {
-        val modelClient = HttpAgentLlmClient(scope).asOmniFlowModelClient()
+        val modelClient = HttpAgentLlmClient(scope).asOmniFlowModelClient(context)
         val tool = omniFlowTools.firstOrNull { it.name == name }
             ?: return errorResult(IllegalArgumentException("Unknown MCP tool: $name"))
         return runCatching {
@@ -245,7 +245,7 @@ internal object AndroidDeviceMcpServer {
         context: Context,
         scope: CoroutineScope,
     ): Server {
-        val modelClient = HttpAgentLlmClient(scope).asOmniFlowModelClient()
+        val modelClient = HttpAgentLlmClient(scope).asOmniFlowModelClient(context)
         return Server(
             serverInfo = Implementation(
                 // Keep the MCP server identity identical across ACP adapters,

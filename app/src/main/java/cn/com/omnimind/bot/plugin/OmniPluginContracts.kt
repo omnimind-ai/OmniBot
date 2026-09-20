@@ -35,7 +35,9 @@ data class OmniPluginToolDefinition(
     val displayName: String,
     val description: String,
     val parameters: JsonObject,
-    val ownerPluginId: String? = null
+    val ownerPluginId: String? = null,
+    /** Only independent reads with no shared mutable execution state may opt in. */
+    val parallelSafe: Boolean = false,
 )
 
 data class OmniPluginToolGroup(
@@ -79,7 +81,7 @@ data class OmniPluginContribution(
 )
 
 interface OmniPlugin {
-    fun contribution(): OmniPluginContribution = OmniPluginContribution()
+    suspend fun contribution(): OmniPluginContribution = OmniPluginContribution()
 
     suspend fun onEnable() = Unit
 

@@ -16,6 +16,7 @@ RUN_WEBCHAT=1
 RUN_LIVE="${OMNIBOT_LIVE_PROVIDER_TEST:-0}"
 HARNESS_CLI_DIR=""
 DSH_DEPS_DIR=""
+BRIDGE_DEPS_DIR=""
 RUN_LIVE_HARNESSES=0
 
 usage() {
@@ -28,6 +29,7 @@ Options:
   --skip-gradle   Skip Android/JVM tests.
   --skip-flutter  Skip Flutter tests.
   --skip-webchat  Skip WebChat conversation reconciliation tests.
+  --bridge DIR    Run detached Bridge transport regressions using DIR/node_modules.
   --dsh DIR       Run DSH thinking wire regressions with installed Pi dependencies.
   --harnesses DIR Run required Codex/Claude Code output regressions with a
                   disposable installed CLI directory (no real Provider calls).
@@ -51,6 +53,7 @@ while [[ $# -gt 0 ]]; do
     --skip-gradle) RUN_GRADLE=0 ;;
     --skip-flutter) RUN_FLUTTER=0 ;;
     --skip-webchat) RUN_WEBCHAT=0 ;;
+    --bridge) [[ $# -ge 2 && -d "$2/node_modules" ]] || { echo '--bridge requires an installed dependency directory' >&2; exit 2; }; BRIDGE_DEPS_DIR="$(cd "$2" && pwd)"; shift ;;
     --dsh) [[ $# -ge 2 && -d "$2/node_modules" ]] || { echo '--dsh requires an installed dependency directory' >&2; exit 2; }; DSH_DEPS_DIR="$(cd "$2" && pwd)"; shift ;;
     --harnesses) [[ $# -ge 2 && -d "$2/node_modules" ]] || { echo '--harnesses requires an installed CLI directory' >&2; exit 2; }; HARNESS_CLI_DIR="$2"; shift ;;
     --live-harnesses) [[ $# -ge 2 && -d "$2/node_modules" ]] || { echo '--live-harnesses requires an installed CLI directory' >&2; exit 2; }; HARNESS_CLI_DIR="$2"; RUN_LIVE=1; RUN_LIVE_HARNESSES=1; shift ;;
@@ -72,6 +75,13 @@ run_step() {
   "$@"
 }
 
+if [[ -n "$BRIDGE_DEPS_DIR" ]]; then
+  run_step "Bridge ingress verifier regressions (local WebSocket fixture)" \
+    env NODE_PATH="$BRIDGE_DEPS_DIR/node_modules" node --test scripts/verify-bridge-ingress.test.cjs scripts/verify-shared-external-send.test.cjs
+  run_step "Bridge disconnect transport regression (fake ACP peer)" \
+    env NODE_PATH="$BRIDGE_DEPS_DIR/node_modules" node scripts/verify-bridge-detached-prompt.cjs
+fi
+
 run_step "Node protocol/provider tests" \
   node --test \
     scripts/source-packaging.test.mjs \
@@ -86,16 +96,20 @@ run_step "Node protocol/provider tests" \
     scripts/install-dev-shell.test.mjs \
     scripts/skill-install-shell.test.mjs \
     scripts/agent_provider_smoke.test.mjs \
+    scripts/provider-recovery.test.mjs \
     scripts/agent_memory_unbounded.test.mjs \
     scripts/agent_runtime_capability_contract.test.mjs \
     scripts/sync_models_dev_catalog.test.mjs
 
 run_step "Turn-scoped journal verifier tests" \
   python3 -m unittest discover -s scripts -p test_agent_turn_outcome.py
+run_step "Harness performance summary tests" \
+  python3 -m unittest discover -s scripts -p test_agent_performance_summary.py
   python3 scripts/test-agent-init-assertions.py
 python3 scripts/test-agent-context-checkpoint.py
 python3 scripts/test-terminal-child-state.py
 python3 scripts/test-terminal-host-stop.py
+python3 scripts/test-rootfs-bootstrap.py
 
 if [[ "$RUN_GRADLE" == "1" ]]; then
   run_step "Shizuku binding lifecycle tests" \
@@ -147,6 +161,8 @@ if [[ "$RUN_GRADLE" == "1" ]]; then
     --tests 'cn.com.omnimind.bot.agent.AgentToolDefinitionsSubagentTest' \
       --tests 'cn.com.omnimind.bot.agent.AgentToolDefinitionsUnboundedParametersTest' \
       --tests 'cn.com.omnimind.bot.agent.SkillRuntimeBehaviorTest' \
+      --tests 'cn.com.omnimind.bot.agent.BuiltinSkillAssetsTest' \
+      --tests 'cn.com.omnimind.bot.agent.ProviderFailureJournalTest' \
       --tests 'cn.com.omnimind.bot.agent.CalendarListLimitTest' \
     --tests 'cn.com.omnimind.bot.agent.BrowserUseRequestTest' \
       --tests 'cn.com.omnimind.bot.agent.AgentRuntimeContextQueryTest' \
@@ -165,6 +181,7 @@ if [[ "$RUN_GRADLE" == "1" ]]; then
       --tests 'cn.com.omnimind.bot.agent.runtime.XiaowanSessionConfigTest' \
       --tests 'cn.com.omnimind.bot.agent.runtime.XiaowanAcpConnectionTest' \
       --tests 'cn.com.omnimind.bot.agent.runtime.RemoteCodexBridgeConnectionTest' \
+      --tests 'cn.com.omnimind.bot.agent.runtime.RemoteCodexAppServerSessionTest' \
       --tests 'cn.com.omnimind.bot.agent.runtime.AgentRuntimeProtocolPayloadTest' \
       --tests 'cn.com.omnimind.bot.agent.runtime.XiaowanAcpPresentationBridgeTest' \
       --tests 'cn.com.omnimind.bot.agent.runtime.AgentRuntimeManagerConfigTest' \
@@ -220,6 +237,8 @@ if [[ "$RUN_FLUTTER" == "1" ]]; then
       test/features/home/pages/agent/agent_mode_setting_page_test.dart \\
       test/features/home/pages/agent/agent_config_page_test.dart \\
       test/features/home/pages/agent/agent_sessions_page_test.dart \\
+      test/features/home/pages/agent/remote_codex_harness_selection_test.dart \\
+      test/features/home/widgets/home_drawer_test.dart \\
       test/features/home/pages/agent/agent_sessions_refresh_test.dart \\
       test/features/home/pages/chat/utils/agent_slash_commands_test.dart \\
       test/features/home/pages/command_overlay/chat_bot_sheet_close_test.dart \\

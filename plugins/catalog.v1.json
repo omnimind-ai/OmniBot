@@ -4,13 +4,13 @@
     {
       "id": "com.omnimind.omni-vlm-lite",
       "name": "OmniFlow",
-      "version": "2.1.8",
+      "version": "2.2.12",
       "interfaceVersion": 1,
       "description": "Android GUI automation powered by the OmniFlow VLM runtime.",
       "publisher": "OmniMind",
       "kind": "runtime_bundle",
-      "downloadSizeBytes": 2935511,
-      "required": true,
+      "downloadSizeBytes": 4832146,
+      "required": false,
       "installByDefault": true,
       "capabilities": [
         "Manual recording",
@@ -25,12 +25,9 @@
       "adapter": "omniflow_android_gui",
       "runtimeSkill": {
         "id": "omniflow-gui-runtime",
-        "packagedArchivePath": "runtime-components/omniflow-gui-runtime-2.1.8.zip",
-        "componentArchiveUrl": "https://github.com/omnimind-ai/OmniBotSkills/releases/download/omniflow-gui-runtime-v2.1.8/omniflow-gui-runtime-2.1.8.zip",
-        "componentArchiveSha256": "12439b1ad47e665002d8824be3f0125ee17f9f575be2d656f8e0c87c7a24836f",
-        "packagedArchiveSha256": "12439b1ad47e665002d8824be3f0125ee17f9f575be2d656f8e0c87c7a24836f",
-        "installTimeoutSeconds": 900,
-        "prebuiltRuntimeSha256": "12439b1ad47e665002d8824be3f0125ee17f9f575be2d656f8e0c87c7a24836f"
+        "packagedArchivePath": "runtime-components/omniflow-gui-runtime-2.2.12.zip",
+        "packagedArchiveSha256": "4601ebea93edcbacb37a7fc7b08501e15112d6e5285ed0bf0be07a5311b51b9f",
+        "installTimeoutSeconds": 900
       },
       "presentation": {
         "description": {
@@ -68,61 +65,18 @@
               "en": "Adds only a small baseline"
             },
             "description": {
-              "zh": "APK 只内置一个约 1 MB 的已验收基线 ZIP；录制、RunLog、Function、checker、重放和后续热更新仍由插件包提供。",
-              "en": "The APK embeds only an accepted baseline ZIP of about 1 MB; recording, RunLog, Function, checker, replay, and later hot updates still come from the plugin package."
+              "zh": "内置运行包让首次使用无需单独下载；操作流程的注册、复用和执行由可更新的 OmniFlow 插件提供。",
+              "en": "The bundled runtime avoids a separate first-use download. The updatable OmniFlow plugin handles registration, reuse, and execution of saved operations."
             }
           }
         ],
-        "ready": {
-          "key": "omniflow-ready-guide",
-          "title": {
-            "zh": "OmniFlow 自动化增强已启用",
-            "en": "OmniFlow automation is enabled"
-          },
-          "steps": [
-            {
-              "zh": "在线执行：回到聊天，直接说“打开蓝牙”或“新建联系人”。",
-              "en": "Online: return to chat and ask “Turn on Bluetooth” or “Create a contact”."
-            },
-            {
-              "zh": "录下操作：在聊天中发送“手动录制”，完成后会保存整个操作过程，方便以后再次使用。",
-              "en": "Record actions: send “Manual recording” in chat. The complete flow is saved for later reuse."
-            },
-            {
-              "zh": "自动复用：再次提出相似要求时，系统会找到已保存的流程，替换新的联系人、商品或地址后执行。",
-              "en": "Reuse automatically: for a similar request, the system finds a saved flow, substitutes the new contact, product, or address, and runs it."
-            }
-          ],
-          "actions": [
-            {
-              "route": "/home/chat",
-              "navigation": "go",
-              "icon": "chat",
-              "requiresReadiness": true,
-              "label": {
-                "zh": "去聊天试用",
-                "en": "Try in chat"
-              }
-            },
-            {
-              "route": "/task/omniflow",
-              "navigation": "push",
-              "icon": "route",
-              "requiresReadiness": false,
-              "label": {
-                "zh": "查看已保存操作",
-                "en": "View saved actions"
-              }
-            }
-          ]
-        },
         "installedAction": {
           "route": "/task/omniflow",
           "navigation": "push",
           "icon": "route",
           "label": {
-            "zh": "已保存操作与执行记录",
-            "en": "Saved actions & history"
+            "zh": "手动录制与复用指令",
+            "en": "Record & reuse actions"
           }
         },
         "dashboard": {
@@ -169,7 +123,7 @@
     {
       "id": "com.omnimind.vibe-project-builder",
       "name": "Vibe Builder",
-      "version": "0.2.1",
+      "version": "0.2.2",
       "interfaceVersion": 1,
       "description": "Build standalone phone-first Apps linked to Xiaowan, isolated data, and reusable backend connectors.",
       "publisher": "OmniMind",
@@ -186,6 +140,7 @@
       "settingsSchema": {},
       "adapter": "sandbox_bundle",
       "profiles": [
+        "main",
         "investor"
       ],
       "runtimeSkill": {

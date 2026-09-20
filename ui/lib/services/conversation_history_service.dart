@@ -17,9 +17,16 @@ class ConversationHistoryService {
   // Acknowledged write digests only; never a history source or content cache.
   // A fresh process submits its visible page once. Failed writes are not acknowledged.
   static final Map<String, Map<String, Digest>> _acknowledgedWrites = {};
+  static final Map<String, int> _historyMutationRevisions = {};
+  static int _historyMutationRevision(int id, ConversationMode mode) =>
+      _historyMutationRevisions['${mode.canonicalStorageValue}:$id'] ?? 0;
+
 
   @visibleForTesting
-  static void resetWriteAcknowledgements() => _acknowledgedWrites.clear();
+  static void resetWriteAcknowledgements() {
+    _acknowledgedWrites.clear();
+    _historyMutationRevisions.clear();
+  }
 
   static const MethodChannel _assistCore = MethodChannel(
     'cn.com.omnimind.bot/AssistCoreEvent',
@@ -343,6 +350,30 @@ class ConversationHistoryService {
     );
   }
 
+  static Future<void> deleteMessageIds(int conversationId, Set<String> ids, {
+    required ConversationMode mode,
+  }) {
+    final key = '${mode.canonicalStorageValue}:$conversationId';
+    _historyMutationRevisions[key] = (_historyMutationRevisions[key] ?? 0) + 1;
+    return _enqueueConversationMessageWrite(key, () async {
+      await _assistCore.invokeMethod('replaceConversationMessages', {
+        'conversationId': conversationId,
+        'mode': mode.canonicalStorageValue,
+        'deleteMessageIds': ids.toList(),
+      });
+      _acknowledgedWrites[key]?.removeWhere((id, _) => ids.contains(id));
+      // The native transaction has committed; cleanup failure must not turn
+      // that success into a false UI rollback.
+      try {
+        await _clearLegacyConversationMessages(conversationId, mode: mode);
+      } catch (error) {
+        debugPrint('Legacy history cleanup after deletion failed: $error');
+      } finally {
+        _historyMutationRevisions[key] = (_historyMutationRevisions[key] ?? 0) + 1;
+      }
+    });
+  }
+
   static Future<void> _enqueueConversationMessageWrite(
     String key,
     Future<void> Function() write,
@@ -460,6 +491,7 @@ class ConversationHistoryService {
     ConversationMode mode = ConversationMode.agent,
     int? expectedMessageCount,
   }) async {
+    final readRevision = _historyMutationRevision(conversationId, mode);
     try {
       final result = await _assistCore.invokeMethod<List<dynamic>>(
         'getConversationMessages',
@@ -470,6 +502,7 @@ class ConversationHistoryService {
         conversationId,
         mode: mode,
         nativeMessages: nativeMessages,
+        expectedRevision: readRevision,
         expectedMessageCount: expectedMessageCount,
       );
     } on PlatformException catch (e) {
@@ -494,6 +527,7 @@ class ConversationHistoryService {
     int offset = 0,
     int? expectedMessageCount,
   }) async {
+    final readRevision = _historyMutationRevision(conversationId, mode);
     try {
       final result = await _assistCore
           .invokeMethod<Map<dynamic, dynamic>>('getConversationMessagesPaged', {
@@ -519,6 +553,7 @@ class ConversationHistoryService {
           conversationId,
           mode: mode,
           nativeMessages: messages,
+          expectedRevision: readRevision,
           expectedMessageCount: expectedMessageCount,
         );
         final pageSize = limit <= 0 ? recoveredMessages.length : limit;
@@ -608,11 +643,14 @@ class ConversationHistoryService {
     required ConversationMode mode,
     required List<ChatMessageModel> nativeMessages,
     int? expectedMessageCount,
+    int? expectedRevision,
   }) async {
+    final revision = expectedRevision ?? _historyMutationRevision(conversationId, mode);
     final legacyMessages = await _readLegacyConversationMessages(
       conversationId,
       mode: mode,
     );
+    if (_historyMutationRevision(conversationId, mode) != revision) return nativeMessages;
     if (legacyMessages.isEmpty) {
       return nativeMessages;
     }
@@ -630,11 +668,12 @@ class ConversationHistoryService {
     final jsonList = recoveredMessages
         .map((message) => message.toJson())
         .toList();
-    final migrated = await _replaceNativeConversationMessages(
-      conversationId,
-      jsonList,
-      mode: mode,
-    );
+    var migrated = false;
+    final key = '${mode.canonicalStorageValue}:$conversationId';
+    await _enqueueConversationMessageWrite(key, () async {
+      if (_historyMutationRevision(conversationId, mode) != revision) return;
+      migrated = await _replaceNativeConversationMessages(conversationId, jsonList, mode: mode);
+    });
     if (migrated) {
       await _clearLegacyConversationMessages(conversationId, mode: mode);
     }

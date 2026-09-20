@@ -36,6 +36,24 @@ export function respondXiaowanFailure(request, response, body, log = console.log
     // Deliberately no DONE/EOF: the explicit error must settle the request.
     const timer=setTimeout(()=>response.destroy(),180000); timer.unref();
     response.once('close',()=>{clearTimeout(timer);log(JSON.stringify({marker:id,failureScenario:kind,phase:'response-closed',completed:response.writableEnded}));});
+  } else if (kind === 'INDEX') {
+    const results = messages.slice(lastUser + 1).filter(m => m.role === 'tool');
+    if (results.length) {
+      assert.equal(results.length, 2, 'Both distinct writes must execute exactly once');
+      for (let i = 0; i < 2; i++) {
+        const row = results.find(m => m.tool_call_id === `call_${id}_${i}`);
+        assert(row, 'Tool result must retain its original call identity');
+        assert.equal(JSON.parse(text(row)).success, true, 'Interleaved arguments must remain valid');
+      }
+      log(JSON.stringify({marker:id, failureScenario:kind, phase:'two-writes-observed'}));
+      success(`${id}_DONE`);
+    } else {
+      response.writeHead(200, {'content-type':'text/event-stream'});
+      const args = i => JSON.stringify({path:`/workspace/${id}-${i}.txt`, content:`${id}_VALUE_${i}`});
+      response.write(event({tool_calls:[{index:0,id:`call_${id}_0`,type:'function',function:{name:'file_write',arguments:args(0)}}]}));
+      response.write(event({tool_calls:[{index:1,function:{arguments:args(1)}}]}));
+      response.end(event({tool_calls:[{index:1,id:`call_${id}_1`,type:'function',function:{name:'file_write',arguments:''}}]},'tool_calls')+'data: [DONE]\n\n');
+    }
   } else if (kind === 'OK') success(`${id}_DONE`);
   else if (status) {
     response.writeHead(status,{'content-type':'application/json'});

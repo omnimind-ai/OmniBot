@@ -1,0 +1,16 @@
+{
+  "name": "Current installed build performs actual recording recheck",
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_ACTION_CURRENT",
+      "scenario": "agent-action-current-build.json",
+      "timeoutMs": 120000
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_ACTION_CURRENT_DONE",
+      "timeoutMs": 180000
+    }
+  ]
+}

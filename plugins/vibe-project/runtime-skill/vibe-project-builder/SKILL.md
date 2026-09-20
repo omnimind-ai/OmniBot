@@ -12,19 +12,63 @@ Build the project freely in the current workspace. Every project is a standalone
 
 Before writing code, read [references/product-writing.md](references/product-writing.md) and [references/workflow-validation.md](references/workflow-validation.md). Write the compact product contract and acceptance matrix they require. Treat this as the writing phase of the project: decide the real user outcome, truthful data source, complete interaction states, safety boundary, tool surface, and observable workflow evidence before implementing the dashboard.
 
-## Build Loop
+## Build, test, repair — owned by the builder
 
-1. Write the product contract from `references/product-writing.md` and the acceptance matrix from `references/workflow-validation.md`; do not code until every required line is concrete.
-2. Keep the v1 narrow and complete: one core workflow, a truthful source, useful read and write tools, one runtime-generated AI capability when it improves the outcome, and one clear visual result when a dashboard adds value.
-3. Write `skill/SKILL.md` so Xiaowan knows when to use the capability and what outcome to produce. Its frontmatter `name` must equal the project slug.
-4. Add `toolkit.json` with direct Xiaowan tools and reusable connector bindings. Prefer several narrow business tools over one vague mega-tool.
-5. Add scripts or references under `skill/` when the workflow needs deterministic logic or detailed guidance.
-6. Add the standalone HTML/CSS/JavaScript App and a hand-authored `icon.svg`. Never call an image-generation model and never use PNG/JPEG as the icon source. Add `schema.sql` only when the product benefits from durable local data.
-7. Audit Data / Tool / Display consistency: every business field and action must use the same name and source across storage, toolkit results, Skill instructions, and dashboard rendering.
-8. Execute the applicable workflows from `references/workflow-validation.md`. Capture tool sequence, real inputs, returned evidence, persisted evidence, and visible result in the working context. Fix every failed assertion before publishing.
-9. Call `project_check` with the completed directory and a small manifest.
-10. Fix every diagnostic at its reported Skill, tool, connector, or capability boundary.
-11. Call `project_publish` with the same path and manifest. Re-publishing updates the App, Skill, tools, and existing desktop shortcut while preserving connector-owned data. On first publish Android asks the user once to confirm “Add to Home Screen”; the host cannot bypass that system confirmation.
+You own implementation **and acceptance**. Do not ask the user or supervising
+agent to diagnose ordinary failures, click every button for you, or send a new
+"continue/fix it" prompt. Within the active task, run the available tests, inspect
+failures, make targeted repairs, and rerun them before reporting completion.
+A supervisor reviews evidence; it does not replace your test execution.
+
+1. Call `project_contract` before writing the toolkit. Read the product and
+   workflow references above once; record a short acceptance matrix and the
+   actual tools/commands available to execute each row. Missing UI/device access
+   is a blocked test, not a pass. Do not invent a testing tool.
+2. Build one complete core workflow. Keep business calculations testable with
+   the project's existing test runner (for plain JavaScript, `node --test` when Node is available).
+   Check the runner exists; reuse available tooling or mark execution blocked.
+   Persist executable tests alongside the project; a prose checklist is not a test.
+   Include the relevant regressions in the workflow reference, not just the happy path.
+3. Write the Skill, toolkit, local HTML/assets, hand-authored SVG icon, and optional
+   schema. Never call an image-generation model for icons. Audit Data / Tool / Display consistency:
+   tool arguments, database fields and displayed values must agree. Frontmatter
+   name equals the slug; database permission requires `schema_path`.
+4. Run the executable tests and `project_check`. Fix the reported boundary with
+   a small edit. Read the relevant file range or whole small file once; do not
+   repeatedly page through unchanged files or rewrite the project to fix one field.
+5. Call `project_publish` to make the candidate available for runtime testing.
+   **Publishing is installation, not acceptance or task completion.** Invoke its
+   actual published business tools and read back saved results. If the current tool
+   snapshot cannot discover them, follow the blocked-test rule in the workflow
+   reference; a subagent does not bypass that limit. Then run the real
+   UI/reopen workflows using available authorized device/test capabilities.
+6. On failure, save the input, expected/actual result and error; turn it into an
+   executable regression. Repair it yourself, republish if needed, and rerun the
+   failed case plus affected create/read/history/reopen cases. Keep existing data.
+   Do not reset the database, replace assertions, or insert fixtures to hide a failure.
+7. Finish only with evidence for every required row: passed, failed, blocked, or
+   not applicable with reason. Save commands, exit codes, tool results and UI/device
+   evidence under `test-results/`; refer to these paths in the final answer.
+   "All fixed", "ready to use", and "fully tested" are forbidden while a required
+   row is failed or unexecuted. State emulator vs physical device; without physical
+   bug-fix acceptance use **待真机验证**.
+
+For a repeated identical failure, change the hypothesis or inspect the owning
+contract instead of repeating the same write/check call. After three attempts with
+no new evidence, report the specific blocker and preserve the project and test
+results. A provider/runtime terminal error is owned by ACP: do not add a private
+retry loop, replay a completed turn, or claim a Skill can recover after that turn
+has already ended. A later explicitly admitted continuation uses saved evidence.
+
+If delegation is available and authorized, use one existing subagent for an
+independent review of the acceptance matrix and evidence. Give it the project
+path, requirements, test commands and failing results; it returns concrete missing
+checks and failures to you. You remain the repair owner. Only one agent controls
+one device at a time. Do not create another Agent runtime or assume subagents exist.
+
+Re-publishing preserves connector-owned data. Open the installed plugin detail
+page to use “Open App” or “Add to Home Screen”; shortcut pinning requires Android
+confirmation and is separate from publishing and acceptance.
 
 ## Real Data and AI Events
 
@@ -51,7 +95,7 @@ safe read-only `get` for declared public HTTPS data sources. If this contract is
 uncertain, call `project_contract` once. Do not search the repository or guess
 Connector, action, permission, or executor names.
 
-Do not pass source code through the publish tool. Use normal workspace file and terminal tools to build and iterate before linking once.
+Do not pass source code through the publish tool. Use normal workspace file and terminal tools to build, check and publish the candidate; republish after repairs.
 
 ## Minimal Project
 
@@ -205,7 +249,15 @@ const result = await window.omni.tools.call('list_workouts', {
   _order_by: 'created_at DESC',
   _limit: 50,
 });
+const rows = result.rows; // Query returns {rows, count}, NOT an array.
 ```
+
+SQLite insert arguments are the column values directly and its result is `{rowId}`.
+Query arguments are equality filters, except `_limit` and `_order_by`; declare
+these exact names in the tool parameter schema if used. Do not invent `limit`,
+`order_by`, `database_path`, or a config `columns/values` substitution mechanism.
+Render `result.rows`, not `result`; test an actual save and subsequent query before
+claiming the App works. `project_check` validates structure, not browser behavior.
 
 Use only the unprefixed `tools[].name` inside the Dashboard; the host binds it
 to the current plugin and rejects unknown tools or undeclared arguments. Never
@@ -223,7 +275,11 @@ Declare the `xiaowan` permission when the frontend invokes Xiaowan. The frontend
 
 Use `reasoningEffort: 'none'` by default. Choose `low` or `medium` only when the request genuinely needs multi-step tool selection or synthesis. Fast one-shot generation through `window.omni.ai.generate` always disables provider thinking so a small token budget cannot be consumed before visible output.
 
-Every AI action must have a visible status display. Register the event listener once. `send` returns immediately with a `runId`; render `working`, `text_snapshot`, `tool_started`, `tool_progress`, `tool_completed`, `completed`, and `error` events as they arrive. A `working` event means the model is analyzing, but intentionally contains no raw chain-of-thought. Show a short product-facing label such as “正在分析记录…” rather than model reasoning text. Keep a visible cancel action while a run is active.
+Every AI action must show loading immediately, disable repeated submission,
+await the supported Promise, and display success or the actual error before
+re-enabling controls. `window.omni.xiaowan.invoke` returns a Promise; do not invent
+`send`, `runId`, event listeners, stream events, or a cancellation API. Do not
+promise cancellation unless a declared available tool actually supports it.
 
 ```js
 const result = await window.omni.xiaowan.invoke({

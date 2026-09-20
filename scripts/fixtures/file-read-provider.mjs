@@ -128,7 +128,12 @@ http.createServer(async (request, response) => {
         : message.content.find(part => part.type === 'text')?.text;
       assert.equal(typeof text, 'string', 'Tool result must contain its text envelope');
       const outer = JSON.parse(restoredToolOutput(text));
-      assert.equal(outer.success, true);
+      assert.equal(outer.success, kind !== 'PDF');
+      if (kind === 'PDF') {
+        // generate-context-files.py deliberately writes a malformed PDF.
+        assert.equal(JSON.parse(outer.rawResultJson).errorCode, 'document_parse_failed');
+        assert.equal(JSON.parse(outer.rawResultJson).contentAvailable, false);
+      }
       assert(outer.previewJson === undefined || outer.previewJson !== outer.rawResultJson,
         'Identical preview must not duplicate the model tool result');
       return {...JSON.parse(outer.rawResultJson), offloaded: text.startsWith('Earlier tool output saved in full to ')};

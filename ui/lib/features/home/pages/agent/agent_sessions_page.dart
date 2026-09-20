@@ -13,36 +13,56 @@ import 'package:ui/services/agent_runtime_service.dart';
 import 'package:ui/theme/theme_context.dart';
 import 'package:ui/utils/ui.dart';
 import 'package:ui/widgets/common_app_bar.dart';
+import 'package:ui/features/home/widgets/drawer_conversation_row.dart';
+import 'package:ui/features/home/widgets/home_drawer_search_field.dart';
 import 'package:ui/widgets/settings_section_title.dart';
 
 class AgentSessionsPage extends StatefulWidget {
-  const AgentSessionsPage({super.key});
+  const AgentSessionsPage({
+    super.key,
+    this.embedded = false,
+    this.remoteOnly = false,
+    this.onSessionSelected,
+  });
+
+  final bool embedded;
+  final bool remoteOnly;
+  final ValueChanged<ConversationThreadTarget>? onSessionSelected;
 
   @override
   State<AgentSessionsPage> createState() => _AgentSessionsPageState();
 }
 
 class _AgentSessionsPageState extends State<AgentSessionsPage> {
+  final _searchController = TextEditingController();
+  final _searchFocus = FocusNode();
   List<_AgentSessionSummary> _sessions = const <_AgentSessionSummary>[];
   AgentRuntimeStatus _status = AgentRuntimeStatus.disconnected;
   String? _error;
   bool _isLoading = true;
+  bool _needsComputerConnection = false;
   bool _isStartingSession = false;
   bool _isSwitchingWorkspace = false;
   String? _openingThreadId;
   _AgentSessionFilter _filter = _AgentSessionFilter.all;
   Timer? _sessionPollTimer;
   bool _isRefreshing = false;
+  String? _nextCursor;
+  bool _hasLoadedMore = false;
 
   bool get _isEnglish => Localizations.localeOf(context).languageCode == 'en';
 
   @override
   void initState() {
     super.initState();
-    // All harnesses expose the same session/list snapshot. Prompt completion
-    // is a response, not a stream event; refresh without guessing from items.
+    _searchController.addListener(_searchChanged);
+    // Keep the small local status list fresh. Remote browsing is paginated and
+    // user-driven; active conversation updates belong to its ACP subscription.
     _sessionPollTimer = Timer.periodic(const Duration(seconds: 3), (_) {
-      if (!mounted || ModalRoute.of(context)?.isCurrent == false) {
+      if (!mounted ||
+          _isRemoteRuntime ||
+          _hasLoadedMore ||
+          ModalRoute.of(context)?.isCurrent == false) {
         return;
       }
       unawaited(_loadSessions(showLoading: false));
@@ -50,18 +70,30 @@ class _AgentSessionsPageState extends State<AgentSessionsPage> {
     unawaited(_loadSessions());
   }
 
+  void _searchChanged() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
+    _searchController.dispose();
+    _searchFocus.dispose();
     _sessionPollTimer?.cancel();
     super.dispose();
   }
 
   bool get _isRemoteRuntime =>
-      _status.runtime == 'remote' || _status.remoteEnabled;
+      widget.remoteOnly || _status.runtime == 'remote' || _status.remoteEnabled;
 
-  Future<void> _loadSessions({bool showLoading = true}) async {
+  Future<void> _loadSessions({
+    bool showLoading = true,
+    bool loadMore = false,
+  }) async {
     if (!mounted || _isRefreshing) return;
+    final cursor = loadMore ? _nextCursor : null;
+    if (loadMore && cursor == null) return;
     _isRefreshing = true;
+    if (loadMore) setState(() {});
     if (mounted && showLoading) {
       setState(() {
         _isLoading = true;
@@ -70,7 +102,25 @@ class _AgentSessionsPageState extends State<AgentSessionsPage> {
     }
     AgentRuntimeStatus? lastStatus;
     try {
-      var status = await AgentRuntimeService.status();
+      var status = loadMore || widget.remoteOnly
+          ? _status
+          : await AgentRuntimeService.status();
+      if (widget.remoteOnly && !loadMore) {
+        final config = await AgentRuntimeService.readRemoteBridgeConfig();
+        if (!mounted) return;
+        if (!config.remoteConfigured) {
+          setState(() {
+            _needsComputerConnection = true;
+            _sessions = const <_AgentSessionSummary>[];
+            _nextCursor = null;
+            _error = null;
+            _isLoading = false;
+          });
+          return;
+        }
+        _needsComputerConnection = false;
+        status = await AgentRuntimeService.activateRemoteCodex(config);
+      }
       lastStatus = status;
       if (status.ready && !status.connected) {
         status = await AgentRuntimeService.connect();
@@ -90,46 +140,41 @@ class _AgentSessionsPageState extends State<AgentSessionsPage> {
         });
         return;
       }
-      final payloads = <Map<String, dynamic>>[];
-      String? cursor;
-      final seenCursors = <String>{};
-      while (true) {
-        final payload = await AgentRuntimeService.listSessions(
-          cursor: cursor,
-        );
-        payloads.add(payload);
-        final nextCursor = _stringValue(
-          payload['nextCursor'] ??
-              payload['next_cursor'] ??
-              payload['nextPageCursor'] ??
-              payload['next_page_cursor'],
-        );
-        if (nextCursor == null || !seenCursors.add(nextCursor)) {
-          break;
-        }
-        cursor = nextCursor;
-      }
-      final sessions = _extractAgentSessions(payloads)
-        ..sort((a, b) {
-          if (a.active != b.active) {
-            return a.active ? -1 : 1;
-          }
-          if (a.loaded != b.loaded) {
-            return a.loaded ? -1 : 1;
-          }
-          if (a.archived != b.archived) {
-            return a.archived ? 1 : -1;
-          }
-          final byUpdatedAt = (b.updatedAtMs ?? 0).compareTo(
-            a.updatedAtMs ?? 0,
-          );
-          if (byUpdatedAt != 0) return byUpdatedAt;
-          return a.title.compareTo(b.title);
-        });
+      final payload = await AgentRuntimeService.listSessions(cursor: cursor);
+      final nextCursor = _stringValue(
+        payload['nextCursor'] ??
+            payload['next_cursor'] ??
+            payload['nextPageCursor'] ??
+            payload['next_page_cursor'],
+      );
+      final sessions =
+          <String, _AgentSessionSummary>{
+            if (loadMore)
+              for (final session in _sessions) session.threadId: session,
+            for (final session in _extractAgentSessions([payload]))
+              session.threadId: session,
+          }.values.toList()..sort((a, b) {
+            if (a.active != b.active) {
+              return a.active ? -1 : 1;
+            }
+            if (a.loaded != b.loaded) {
+              return a.loaded ? -1 : 1;
+            }
+            if (a.archived != b.archived) {
+              return a.archived ? 1 : -1;
+            }
+            final byUpdatedAt = (b.updatedAtMs ?? 0).compareTo(
+              a.updatedAtMs ?? 0,
+            );
+            if (byUpdatedAt != 0) return byUpdatedAt;
+            return a.title.compareTo(b.title);
+          });
       if (!mounted) return;
       setState(() {
         _status = status;
         _sessions = sessions;
+        _nextCursor = nextCursor == cursor ? null : nextCursor;
+        _hasLoadedMore = loadMore;
         _isLoading = false;
         _error = null;
       });
@@ -143,7 +188,11 @@ class _AgentSessionsPageState extends State<AgentSessionsPage> {
         _error = error.toString();
       });
     } finally {
-      _isRefreshing = false;
+      if (mounted) {
+        setState(() => _isRefreshing = false);
+      } else {
+        _isRefreshing = false;
+      }
     }
   }
 
@@ -157,15 +206,17 @@ class _AgentSessionsPageState extends State<AgentSessionsPage> {
     try {
       if (_status.runtime == 'remote' || _status.remoteEnabled) {
         if (!mounted) return;
-        GoRouterManager.push(
-          '/home/chat',
-          extra: ConversationThreadTarget.agentSession(
-            sessionId: session.threadId,
-            runtime: 'remote',
-            agentSessionActive: session.active,
-            requestKey: DateTime.now().microsecondsSinceEpoch.toString(),
-          ),
+        final target = ConversationThreadTarget.agentSession(
+          sessionId: session.threadId,
+          runtime: 'remote',
+          agentSessionActive: session.active,
+          requestKey: DateTime.now().microsecondsSinceEpoch.toString(),
         );
+        if (widget.onSessionSelected != null) {
+          widget.onSessionSelected!(target);
+        } else {
+          GoRouterManager.push('/home/chat', extra: target);
+        }
         return;
       }
       final response = await AgentRuntimeService.loadSession(
@@ -232,14 +283,16 @@ class _AgentSessionsPageState extends State<AgentSessionsPage> {
       setState(() {
         _status = status;
       });
-      GoRouterManager.push(
-        '/home/chat',
-        extra: ConversationThreadTarget.agentSession(
-          sessionId: threadId,
-          runtime: 'remote',
-          requestKey: DateTime.now().microsecondsSinceEpoch.toString(),
-        ),
+      final target = ConversationThreadTarget.agentSession(
+        sessionId: threadId,
+        runtime: 'remote',
+        requestKey: DateTime.now().microsecondsSinceEpoch.toString(),
       );
+      if (widget.onSessionSelected != null) {
+        widget.onSessionSelected!(target);
+      } else {
+        GoRouterManager.push('/home/chat', extra: target);
+      }
       unawaited(_loadSessions(showLoading: false));
     } catch (error) {
       if (!mounted) return;
@@ -666,13 +719,66 @@ class _AgentSessionsPageState extends State<AgentSessionsPage> {
     }
   }
 
-  String get _title => _status.runtime == 'remote'
+  String get _title => _isLoading && !widget.remoteOnly
+      ? (_isEnglish ? 'Sessions' : '会话')
+      : _isRemoteRuntime
       ? (_isEnglish ? 'Remote Codex Sessions' : '远程 Codex Sessions')
       : (_isEnglish ? 'Local Agent Sessions' : '本地 Agent Sessions');
 
   @override
   Widget build(BuildContext context) {
     final palette = context.omniPalette;
+    if (widget.embedded) {
+      return Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Row(
+              children: [
+                Expanded(
+                  child: HomeDrawerSearchField(
+                    controller: _searchController,
+                    focusNode: _searchFocus,
+                    isSearching: false,
+                    textColor: palette.textPrimary,
+                    hintText: _isEnglish ? 'Search title or folder' : '搜索标题或目录',
+                  ),
+                ),
+                if (_isRemoteRuntime)
+                  IconButton(
+                    key: const Key('computer-sessions-new'),
+                    tooltip: _isEnglish
+                        ? 'New computer conversation'
+                        : '新建电脑会话',
+                    onPressed:
+                        !_isLoading &&
+                            _error == null &&
+                            !_needsComputerConnection &&
+                            _status.ready &&
+                            !_isStartingSession
+                        ? () => unawaited(_startRemoteSession())
+                        : null,
+                    icon: _isStartingSession
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.add_rounded, size: 20),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          Expanded(
+            child: RefreshIndicator(
+              onRefresh: _loadSessions,
+              child: _buildBody(),
+            ),
+          ),
+        ],
+      );
+    }
     return Scaffold(
       backgroundColor: palette.pageBackground,
       appBar: CommonAppBar(title: _title, primary: true),
@@ -688,7 +794,23 @@ class _AgentSessionsPageState extends State<AgentSessionsPage> {
     if (_isLoading) {
       return const Center(child: CircularProgressIndicator.adaptive());
     }
-    if (_error != null && !_isRemoteRuntime && _sessions.isEmpty) {
+    if (_needsComputerConnection) {
+      return _AgentSessionsStateView(
+        icon: Icons.computer_outlined,
+        title: _isEnglish ? 'Connect your computer' : '连接你的电脑',
+        subtitle: _isEnglish
+            ? 'Continue your computer’s Codex conversations here.'
+            : '在这里查看和接续电脑上的 Codex 对话。',
+        actionLabel: _isEnglish ? 'Connect computer' : '连接电脑',
+        onAction: () async {
+          await GoRouterManager.pushForResult<void>(
+            '/home/remote_codex_setting',
+          );
+          if (mounted) await _loadSessions();
+        },
+      );
+    }
+    if (_error != null && _sessions.isEmpty) {
       return _AgentSessionsStateView(
         icon: Icons.error_outline_rounded,
         title: _isEnglish ? 'Unable to load sessions' : '无法加载 Sessions',
@@ -702,10 +824,12 @@ class _AgentSessionsPageState extends State<AgentSessionsPage> {
       physics: const AlwaysScrollableScrollPhysics(),
       padding: edgeToEdgeScrollPadding(
         context,
-        const EdgeInsets.fromLTRB(18, 12, 18, 32),
+        widget.embedded
+            ? const EdgeInsets.fromLTRB(16, 0, 16, 32)
+            : const EdgeInsets.fromLTRB(18, 12, 18, 32),
       ),
       children: [
-        _buildOverviewPanel(),
+        if (!widget.embedded) _buildOverviewPanel(),
         if (_error != null) ...[
           const SizedBox(height: 18),
           _buildInlineState(
@@ -716,9 +840,11 @@ class _AgentSessionsPageState extends State<AgentSessionsPage> {
             onAction: () => unawaited(_loadSessions()),
           ),
         ],
-        const SizedBox(height: 22),
-        _buildFilterBar(),
-        const SizedBox(height: 6),
+        if (!widget.embedded) ...[
+          const SizedBox(height: 22),
+          _buildFilterBar(),
+          const SizedBox(height: 6),
+        ],
         if (_sessions.isEmpty && _error == null)
           _buildInlineState(
             icon: Icons.history_rounded,
@@ -748,6 +874,20 @@ class _AgentSessionsPageState extends State<AgentSessionsPage> {
               isLast: index == visibleSessions.length - 1,
             ),
           ],
+        if (_nextCursor != null)
+          TextButton(
+            key: const Key('agent-sessions-load-more'),
+            onPressed: _isRefreshing
+                ? null
+                : () => unawaited(
+                    _loadSessions(showLoading: false, loadMore: true),
+                  ),
+            child: Text(
+              _isRefreshing
+                  ? (_isEnglish ? 'Loading…' : '加载中…')
+                  : (_isEnglish ? 'Load more sessions' : '加载更多会话'),
+            ),
+          ),
       ],
     );
   }
@@ -755,6 +895,14 @@ class _AgentSessionsPageState extends State<AgentSessionsPage> {
   List<_AgentSessionSummary> get _filteredSessions {
     return _sessions
         .where((session) {
+          if (widget.embedded &&
+              ![session.title, session.cwd].any(
+                (value) => value.toLowerCase().contains(
+                  _searchController.text.trim().toLowerCase(),
+                ),
+              )) {
+            return false;
+          }
           return switch (_filter) {
             _AgentSessionFilter.all => true,
             _AgentSessionFilter.active =>
@@ -1116,6 +1264,25 @@ class _AgentSessionsPageState extends State<AgentSessionsPage> {
     final palette = context.omniPalette;
     final opening = _openingThreadId == session.threadId;
     final statusColor = _statusColorForSession(session);
+    if (widget.embedded) {
+      return DrawerConversationRow(
+        onTap: opening ? null : () => unawaited(_openSession(session)),
+        onLongPress: () => unawaited(_showSessionActions(session)),
+        child: Row(
+          children: [
+            Expanded(child: DrawerConversationTitle(session.title)),
+            if (opening)
+              const SizedBox(
+                width: 14,
+                height: 14,
+                child: CircularProgressIndicator(strokeWidth: 1.5),
+              )
+            else if (session.active)
+              Icon(Icons.circle, size: 7, color: statusColor),
+          ],
+        ),
+      );
+    }
     return Column(
       children: [
         Material(
@@ -2151,7 +2318,8 @@ String _formatUptime(int? uptimeMs) {
 }
 
 String? _threadIdFromResponse(Map<String, dynamic> response) {
-  return _stringValue(response['threadId']) ??
+  return _stringValue(response['sessionId']) ??
+      _stringValue(response['threadId']) ??
       _stringValue(response['thread_id']) ??
       _stringValue(response['id']) ??
       _stringValue(_asStringMap(response['thread'])?['id']);
@@ -2170,9 +2338,9 @@ Map<String, dynamic>? _asStringMap(dynamic value) {
 List<Map<String, dynamic>> extractAgentSessionSummariesForTesting(
   List<dynamic> payloads,
 ) {
-  return _extractAgentSessions(
-    payloads,
-  ).map((session) => session.toDebugMap()).toList(growable: false);
+  return _extractAgentSessions(payloads)
+      .map((session) => session.toDebugMap())
+      .toList(growable: false);
 }
 
 const Set<String> _threadNestedSkipKeys = <String>{

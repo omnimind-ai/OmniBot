@@ -18,6 +18,9 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 
 object AgentToolDefinitions {
+    private const val FILE_READ_HINT_ZH = "\n文件解析提示（候选解析器，不代表已安装；先检查当前工具/终端能力）：\n| 类型 | 读取方式 |\n| TXT/CSV/代码 | file_read，按需分页 |\n| PDF | file_read 内置本地文字提取与分页；扫描件需 OCR，密码或损坏会返回明确错误 |\n| DOCX | file_read 内置正文段落与表格文字提取 |\n| XLSX | file_read 内置工作表与单元格文字；保留坐标，公式不计算，日期/百分比为原始值 |\n| 图片 | 视觉模型或 OCR；纯文本模型不能直接理解像素 |\n复杂格式可检查 MarkItDown/Docling 等外部解析器；旧 DOC/XLS 等格式先确认解析器支持。contentAvailable=false / document_parser_required 表示正文未读取：尝试可用解析器，失败或未配置时明确反馈用户，保留原附件；不得猜测正文或无效重复读取。"
+    private const val FILE_READ_HINT_EN = "\nDocument parsing hints (candidate parsers, NOT installed tools; check available tools/terminal first):\n| Type | Method |\n| TXT/CSV/code | file_read with pagination |\n| PDF | file_read extracts local text with pagination; scans need OCR; encrypted/corrupt files return explicit errors |\n| DOCX | file_read extracts body paragraphs and table text locally |\n| XLSX | file_read extracts sheets/cell locations; raw stored numbers and formula caches, no recalculation or date/percent formatting |\n| Images | Vision model or OCR; text-only models cannot understand pixels |\nFor complex formats check external MarkItDown/Docling; check parser support for legacy DOC/XLS. contentAvailable=false / document_parser_required means no document body was read: use an available parser, or explicitly tell the user why unavailable/failed. Keep the attachment; never invent content or repeatedly read the same unsupported binary."
+
 
     private fun currentLocale(): PromptLocale = AppLocaleManager.currentPromptLocale()
 
@@ -126,6 +129,8 @@ object AgentToolDefinitions {
     }
 
     private val englishStringMap: Map<String, String> = mapOf(
+        "读取 workspace 或 Omnibot 白名单目录中的文件。查找信息时优先搜索定位，再用 lineStart/lineCount 或较小 maxChars 读取所需片段；统计、筛选或格式转换等批量任务优先通过终端脚本完成。文本默认每次返回最多 65536 个字符，可用 maxChars 缩小读取量（例如 2048），适用于长单行文件或上下文预算较小时；hasMore=true 时用 nextOffset 作为 offset 继续，不要同时传 lineStart，原文件不截断。图片返回元数据与可视预览；PDF 提取文字层，DOCX/XLSX 提取正文与单元格文字，使用相同 offset 分页；音视频、压缩包等其他二进制文件返回文件信息，请用相应解析工具提取内容。" + FILE_READ_HINT_ZH to
+            "Read files from the workspace or allowlisted directories. Search first and read relevant lines or small excerpts; use terminal scripts for deterministic bulk counting, filtering, or conversion. Text pages default to at most 65536 characters; use maxChars (e.g. 2048) to reduce output. When hasMore is true, continue with nextOffset as offset and omit lineStart. Original files remain intact. Images return metadata and a visual preview; PDF text layers and DOCX/XLSX body/cell text are extracted locally with the same pagination; other binary files such as audio, video, and archives return metadata and require an appropriate parser." + FILE_READ_HINT_EN,
         "查询已安装应用" to "Query Installed Apps",
         "视觉执行" to "Vision Task",
         "操作 Android GUI" to "Operate Android GUI",
@@ -176,8 +181,8 @@ object AgentToolDefinitions {
             "Run a one-shot non-interactive command inside the app's built-in {{OMNIBOT_TERMINAL_DISTRIBUTION}} (proot) environment. This is the default {{OMNIBOT_TERMINAL_DISTRIBUTION}} tool for most CLI work such as file operations, scripts, network diagnostics, git, Python, and package management. It is not for phone UI actions or interactive TUIs. Only switch to `terminal_session_*` when you truly need to preserve cwd, environment, or background state across turns.",
         "terminal_execute 应单独占据当前 tool_calls。该工具会固定在 {{OMNIBOT_TERMINAL_DISTRIBUTION}} 中以 executionMode=proot（prootDistro={{OMNIBOT_TERMINAL_DISTRIBUTION_ID}}）执行，传入其他 executionMode 或 distro 会被忽略。若执行失败，可在下一轮基于 stdout/stderr/errorMessage 自行决定是否再次显式调用 terminal_execute；不要在同一个 tool_calls 中串联其他结果依赖型工具。" to
             "`terminal_execute` should occupy the current `tool_calls` by itself. It always runs in {{OMNIBOT_TERMINAL_DISTRIBUTION}} with `executionMode=proot` and `prootDistro={{OMNIBOT_TERMINAL_DISTRIBUTION_ID}}`; other execution modes or distros are ignored. If execution fails, inspect stdout, stderr, or errorMessage in the next turn and decide whether to call it again explicitly. Do not chain other result-dependent tools in the same `tool_calls`.",
-        "要执行的单次 shell 命令，必须非交互。" to
-            "Single shell command to execute. It must be non-interactive.",
+        "要执行的非交互 shell 命令或脚本；相关计算、产物写入和校验应尽量在同一次调用中完成，并检查失败退出状态。" to
+            "Non-interactive shell command or script. Combine related calculations, artifact writes, and verification in this call where possible, and check failure exit status.",
         "可选。兼容字段，当前固定在 proot {{OMNIBOT_TERMINAL_DISTRIBUTION}} 执行，传入 termux 也会被自动忽略。" to
             "Optional compatibility field. Execution is currently always in proot {{OMNIBOT_TERMINAL_DISTRIBUTION}}, and `termux` is ignored.",
         "可选。兼容字段，当前固定使用 {{OMNIBOT_TERMINAL_DISTRIBUTION_ID}}（{{OMNIBOT_TERMINAL_DISTRIBUTION}}），传入其他 distro 会被自动忽略。" to
@@ -562,7 +567,7 @@ object AgentToolDefinitions {
                 putJsonObject("properties") {
                     putJsonObject("command") {
                         put("type", "string")
-                        put("description", "要执行的单次 shell 命令，必须非交互。")
+                        put("description", "要执行的非交互 shell 命令或脚本；相关计算、产物写入和校验应尽量在同一次调用中完成，并检查失败退出状态。")
                     }
                     putJsonObject("executionMode") {
                         put("type", "string")
@@ -1211,9 +1216,10 @@ object AgentToolDefinitions {
         put("type", "function")
         putJsonObject("function") {
             put("name", "file_read")
+            put("parallelSafe", true)
             put("displayName", "读取文件")
             put("toolType", "workspace")
-            put("description", "读取 workspace 或 Omnibot 白名单目录中的文件。文本默认每次返回最多 65536 个字符，可用 maxChars 缩小读取量（例如 2048），适用于长单行文件或上下文预算较小时；hasMore=true 时用 nextOffset 作为 offset 继续，不要同时传 lineStart，原文件不截断。图片返回元数据与可视预览；PDF、音视频、压缩包等二进制文件返回文件信息，请用相应解析工具提取内容。")
+            put("description", "读取 workspace 或 Omnibot 白名单目录中的文件。查找信息时优先搜索定位，再用 lineStart/lineCount 或较小 maxChars 读取所需片段；统计、筛选或格式转换等批量任务优先通过终端脚本完成。文本默认每次返回最多 65536 个字符，可用 maxChars 缩小读取量（例如 2048），适用于长单行文件或上下文预算较小时；hasMore=true 时用 nextOffset 作为 offset 继续，不要同时传 lineStart，原文件不截断。图片返回元数据与可视预览；PDF 提取文字层，DOCX/XLSX 提取正文与单元格文字，使用相同 offset 分页；音视频、压缩包等其他二进制文件返回文件信息，请用相应解析工具提取内容。" + FILE_READ_HINT_ZH)
             putJsonObject("parameters") {
                 put("type", "object")
                 putJsonObject("properties") {
@@ -1397,6 +1403,7 @@ object AgentToolDefinitions {
         put("type", "function")
         putJsonObject("function") {
             put("name", "file_list")
+            put("parallelSafe", true)
             put("displayName", "列出文件")
             put("toolType", "workspace")
             put("description", "列出某个目录下的文件和子目录。")
@@ -1428,6 +1435,7 @@ object AgentToolDefinitions {
         put("type", "function")
         putJsonObject("function") {
             put("name", "file_search")
+            put("parallelSafe", true)
             put("displayName", "搜索文件")
             put("toolType", "workspace")
             put("description", "在目录中递归搜索文件名或文本内容。")
@@ -1462,6 +1470,7 @@ object AgentToolDefinitions {
         put("type", "function")
         putJsonObject("function") {
             put("name", "file_stat")
+            put("parallelSafe", true)
             put("displayName", "查看文件信息")
             put("toolType", "workspace")
             put("description", "查看文件或目录的元信息。")

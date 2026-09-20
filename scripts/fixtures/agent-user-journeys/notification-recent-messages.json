@@ -1,0 +1,16 @@
+{
+  "name": "Natural request for recent messages using real Agent",
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_NOTIFICATION_RECENT",
+      "scenario": "notification-recent-messages.json",
+      "timeoutMs": 120000
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_NOTIFICATION_RECENT_DONE",
+      "timeoutMs": 240000
+    }
+  ]
+}

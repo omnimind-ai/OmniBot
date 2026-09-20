@@ -1,9 +1,32 @@
+import 'dart:async';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ui/services/agent_runtime_service.dart';
 
 void main() {
+  test('context overflow remains actionable after ACP and history formatting', () {
+    final error = PlatformException(code: 'agent_error',
+      message: 'opaque transport error',
+      details: {'failureKind': 'provider_context_exceeded'});
+    const nativeMessage = '当前任务的上下文超出模型限制。本轮已停止，历史记录已保留；请减少输入内容或切换更大上下文的模型。';
+    expect(formatAgentRuntimeErrorForUser(error), nativeMessage);
+    expect(formatAgentRuntimeErrorForUser(nativeMessage), nativeMessage);
+    expect(formatAgentRuntimeErrorForUser(nativeMessage, english: true), contains('context limit'));
+    expect(formatAgentRuntimeErrorForUser(error, english: true), contains('history is preserved'));
+    expect(formatAgentRuntimeErrorForUser(PlatformException(code: 'agent_error',
+      details: {'failureKind': 'provider_request_rejected'})), contains('请求配置'));
+  });
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('image request rejection tells users to choose an image-capable chat model', () {
+    final error = PlatformException(code: 'ACP_ERROR', message: 'secret-provider-body',
+      details: {'failureKind': 'provider_image_request_rejected'});
+    final chinese = formatAgentRuntimeErrorForUser(error);
+    expect(chinese, contains('支持图片'));
+    expect(chinese, isNot(contains('secret-provider-body')));
+    expect(formatAgentRuntimeErrorForUser(error, english: true), contains('Model & settings'));
+    expect(formatAgentRuntimeErrorForUser(chinese, english: true), contains('image-capable'));
+  });
 
   const channel = MethodChannel('cn.com.omnimind.bot/AgentRuntime');
   final messenger =
@@ -30,6 +53,19 @@ void main() {
 
   tearDown(() {
     messenger.setMockMethodCallHandler(channel, null);
+  });
+
+  test('remote session admission preserves explicit harness despite conversation binding', () async {
+    final calls = <MethodCall>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      return {'sessionId': 'remote-session'};
+    });
+    expect(await AgentRuntimeService.ensureSession(
+      conversationId: 42, agentId: 'codex-remote',
+    ), 'remote-session');
+    expect(calls.single.method, 'session/new');
+    expect(calls.single.arguments['agentId'], 'codex-remote');
   });
 
   test(
@@ -232,6 +268,7 @@ void main() {
       conversationId: 42,
       sessionId: 'thread-1',
       text: 'hello',
+      clientMessageId: 'host-user-message',
       attachments: const <Map<String, dynamic>>[
         <String, dynamic>{
           'id': 'image-1',
@@ -259,6 +296,7 @@ void main() {
     expect(args['conversationId'], 42);
     expect(args['sessionId'], 'thread-1');
     expect(args['text'], 'hello');
+    expect(args['_meta'], {'dev.omnimind/clientMessageId': 'host-user-message'});
     expect(args['attachments'], const <Map<String, dynamic>>[
       <String, dynamic>{
         'id': 'image-1',
@@ -717,6 +755,26 @@ void main() {
       'sessionId': 'thread-1',
       'includeHistory': true,
     });
+  });
+
+  test('late remote read cannot undo a saved disabled sidebar mode', () async {
+    final pending = Completer<Map<String, dynamic>>();
+    final entered = Completer<void>();
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'config/remote/read') {
+        entered.complete();
+        return pending.future;
+      }
+      expect(call.method, 'config/remote/write');
+      return {'remoteEnabled': false};
+    });
+    AgentRuntimeService.remoteModeEnabled.value = true;
+    final reading = AgentRuntimeService.readRemoteBridgeConfig();
+    await entered.future;
+    await AgentRuntimeService.writeRemoteBridgeConfig(remoteEnabled: false);
+    pending.complete({'remoteEnabled': true});
+    await reading;
+    expect(AgentRuntimeService.remoteModeEnabled.value, isFalse);
   });
 
   test('reads and writes only remote bridge config', () async {

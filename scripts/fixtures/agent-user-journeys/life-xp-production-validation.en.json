@@ -1,0 +1,21 @@
+{
+  "name": "Life XP production validation with real tool discovery",
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_LIFE_XP_PRODUCTION",
+      "scenario": "life-xp-production-validation.json",
+      "timeoutMs": 300000
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIFE_XP_PRODUCTION_DONE",
+      "timeoutMs": 1800000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIFE_XP_PRODUCTION",
+      "expected": "done"
+    }
+  ]
+}

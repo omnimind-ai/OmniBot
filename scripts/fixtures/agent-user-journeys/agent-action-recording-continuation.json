@@ -1,0 +1,52 @@
+{
+  "name": "Real Agent executes recording request and corrections across consecutive turns and restart",
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_ACTION_FIND",
+      "scenario": "agent-action-recording-find.json",
+      "timeoutMs": 120000
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_ACTION_FIND_DONE",
+      "timeoutMs": 240000
+    },
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_ACTION_CORRECT",
+      "scenario": "agent-action-recording-correct.json",
+      "timeoutMs": 120000
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_ACTION_CORRECT_DONE",
+      "timeoutMs": 240000
+    },
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_ACTION_COPY",
+      "scenario": "agent-action-recording-copy.json",
+      "timeoutMs": 120000
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_ACTION_COPY_DONE",
+      "timeoutMs": 240000
+    },
+    {
+      "action": "restart"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_ACTION_RECHECK",
+      "scenario": "agent-action-recording-recheck.json",
+      "timeoutMs": 120000
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_ACTION_RECHECK_DONE",
+      "timeoutMs": 240000
+    }
+  ]
+}

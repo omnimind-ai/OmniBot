@@ -9,6 +9,40 @@ import org.junit.Test
 
 class SandboxConnectorContractTest {
     @Test
+    fun `source validation rejects ignored config inherited from SQLite connector`() {
+        val toolkit = SandboxProjectToolkit(
+            connectors = listOf(SandboxProjectConnector(
+                id = "store",
+                type = "sqlite",
+                config = JsonObject(mapOf(
+                    "table" to JsonPrimitive("habits"),
+                    "_limit" to JsonPrimitive(500),
+                )),
+            )),
+            tools = listOf(tool("store").copy(executor = SandboxProjectToolExecutorSpec(
+                connector = "store", action = "query",
+            ))),
+        )
+        val error = runCatching { SandboxProjectToolPolicy.validateSourceConfig(toolkit) }.exceptionOrNull()
+        assertTrue(error?.message.orEmpty().contains("_limit"))
+        assertTrue(error?.message.orEmpty().contains("tool arguments"))
+        SandboxProjectToolPolicy.validateSourceConfig(toolkit.copy(connectors = listOf(
+            toolkit.connectors.single().copy(config = JsonObject(mapOf("table" to JsonPrimitive("habits")))),
+        )))
+    }
+
+    @Test
+    fun `contract tells generated frontends the real SQLite arguments and result shape`() {
+        val contract = SandboxConnectorContract.payload()["sqliteContract"] as Map<*, *>
+        assertTrue(contract["query"].toString().contains("result.rows"))
+        assertTrue(contract["query"].toString().contains("_order_by"))
+        assertTrue(contract["query"].toString().contains("_offset"))
+        assertTrue(contract["query"].toString().contains("1..${SandboxQueryLimits.MAX}"))
+        assertTrue(contract["query"].toString().contains("not the total"))
+        assertTrue(contract["insert"].toString().contains("{rowId}"))
+        assertTrue(contract["manifest"].toString().contains("schema_path"))
+    }
+    @Test
     fun `contract exposes shared dashboard tool bridge`() {
         val dashboardBridge = SandboxConnectorContract.payload()["dashboardBridge"] as Map<*, *>
 

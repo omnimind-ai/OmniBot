@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'notification_access_page.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -380,6 +381,14 @@ class _SettingsPageState extends State<SettingsPage> {
             onTap: () {
               GoRouterManager.push('/home/authorize_setting');
             },
+          ),
+          _SettingItem(
+            icon: LucideIcons.bell,
+            title: context.trLegacy('通知访问'),
+            subtitle: context.trLegacy('选择允许小万读取通知的应用'),
+            onTap: () => Navigator.of(context).push(MaterialPageRoute<void>(
+              builder: (_) => const NotificationAccessPage(),
+            )),
           ),
           _SettingItem(
             icon: LucideIcons.hardDrive,

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
 import 'package:ui/services/acp_capabilities.dart';
 
 enum CodexLoginType {
@@ -180,6 +181,14 @@ const _agentUserErrors = <String, ({String zh, String en})>{
     zh: '模型服务商拒绝了本次请求，请检查模型及请求配置。',
     en: 'The model provider rejected this request. Check the model and request configuration.',
   ),
+  'contextExceeded': (
+    zh: '当前任务的上下文超出模型限制。本轮已停止，历史记录已保留；请减少输入内容或切换更大上下文的模型。',
+    en: 'This task exceeds the model’s context limit. The turn has stopped and history is preserved. Reduce the input or choose a model with a larger context window.',
+  ),
+  'imageRequestRejected': (
+    zh: '当前模型的图片请求被服务商拒绝。请在聊天的“模型与设置”中选择支持图片的模型后重试；若已使用视觉模型，请检查图片格式、大小及服务商状态。',
+    en: 'The provider rejected this image request. Select an image-capable model in Model & settings and retry. If already using a vision model, check the image format, size, and provider status.',
+  ),
   'unknown': (
     zh: '助手暂时无法完成操作，请重试。',
     en: 'The assistant could not complete this action. Please try again.',
@@ -219,17 +228,28 @@ String formatAgentRuntimeErrorForUser(
     r'(?:chat completion stream|responses|anthropic) request failed\((\d{3})\)',
   ).firstMatch(raw);
   final httpStatus = int.tryParse(httpMatch?.group(1) ?? '');
-  if (failureKind == 'provider_service_unavailable') return text('serviceUnavailable');
-  if (failureKind == 'provider_request_rejected') return text('requestRejected');
+  if (failureKind == 'provider_service_unavailable')
+    return text('serviceUnavailable');
+  if (failureKind == 'provider_request_rejected')
+    return text('requestRejected');
+  if (failureKind == 'provider_context_exceeded')
+    return text('contextExceeded');
+  if (failureKind == 'provider_image_request_rejected')
+    return text('imageRequestRejected');
   if (failureKind == 'provider_quota_exceeded') return text('quota');
   if (failureKind == 'provider_rate_limited') return text('rateLimit');
   if (failureKind == 'provider_request_limited') return text('requestLimited');
   if (httpStatus == 401) return text('credentials');
   if (httpStatus == 429) {
-    if (raw.contains('insufficient_quota') || raw.contains('quota_exceeded') ||
-        raw.contains('quota exhausted') || raw.contains('quota_exhausted') ||
-        raw.contains('额度不足') || raw.contains('余额不足')) return text('quota');
-    if (raw.contains('rate_limit_exceeded') || raw.contains('rate_limit_error')) {
+    if (raw.contains('insufficient_quota') ||
+        raw.contains('quota_exceeded') ||
+        raw.contains('quota exhausted') ||
+        raw.contains('quota_exhausted') ||
+        raw.contains('额度不足') ||
+        raw.contains('余额不足'))
+      return text('quota');
+    if (raw.contains('rate_limit_exceeded') ||
+        raw.contains('rate_limit_error')) {
       return text('rateLimit');
     }
     return text('requestLimited');
@@ -1110,6 +1130,7 @@ class AgentRuntimeService {
   // native compatibility adapter and are not exposed as a Dart service API.
   static Future<Map<String, dynamic>> newSession({
     int? conversationId,
+    String? agentId,
     String? cwd,
     String? model,
     String? effort,
@@ -1118,6 +1139,8 @@ class AgentRuntimeService {
     List<String> additionalDirectories = const <String>[],
   }) {
     return _invokeMap('session/new', {
+      if (agentId != null && agentId.trim().isNotEmpty)
+        'agentId': agentId.trim(),
       if (conversationId != null) 'conversationId': conversationId,
       if (cwd != null && cwd.trim().isNotEmpty) 'cwd': cwd.trim(),
       if (model != null && model.trim().isNotEmpty) 'model': model.trim(),
@@ -1140,6 +1163,7 @@ class AgentRuntimeService {
   /// an id; new lifecycle code should resolve it here first.
   static Future<String> ensureSession({
     String? sessionId,
+    String? agentId,
     int? conversationId,
     String? cwd,
     String? model,
@@ -1152,6 +1176,7 @@ class AgentRuntimeService {
     if (existing.isNotEmpty) return existing;
 
     final response = await newSession(
+      agentId: agentId,
       conversationId: conversationId,
       cwd: cwd,
       model: model,
@@ -1277,9 +1302,12 @@ class AgentRuntimeService {
   /// user's conversation history. Persistence remains owned by the host DB.
   static Future<Map<String, dynamic>> closeSession({
     String? sessionId,
+    String? agentId,
     int? conversationId,
   }) {
     return _invokeMap('session/close', {
+      if (agentId != null && agentId.trim().isNotEmpty)
+        'agentId': agentId.trim(),
       if (sessionId != null && sessionId.trim().isNotEmpty)
         'sessionId': sessionId.trim(),
       if (conversationId != null) 'conversationId': conversationId,
@@ -1416,6 +1444,7 @@ class AgentRuntimeService {
     String? sessionId,
     int? conversationId,
     String? requestId,
+    String? clientMessageId,
     String? agentId,
     required String text,
     List<Map<String, dynamic>> attachments = const [],
@@ -1430,6 +1459,8 @@ class AgentRuntimeService {
     Map<String, String>? terminalEnvironment,
   }) {
     return _invokeMap('session/prompt', {
+      if (clientMessageId?.trim().isNotEmpty == true)
+        '_meta': {'dev.omnimind/clientMessageId': clientMessageId!.trim()},
       if (sessionId != null) 'sessionId': sessionId,
       if (conversationId != null) 'conversationId': conversationId,
       if (requestId != null && requestId.trim().isNotEmpty)
@@ -1457,11 +1488,13 @@ class AgentRuntimeService {
       if (failureKind is String && response['error'] is String) {
         return <String, dynamic>{
           ...response,
-          'error': formatAgentRuntimeErrorForUser(PlatformException(
-            code: 'AGENT_RUNTIME_CALL_FAILED',
-            message: response['error'] as String,
-            details: <String, dynamic>{'failureKind': failureKind},
-          )),
+          'error': formatAgentRuntimeErrorForUser(
+            PlatformException(
+              code: 'AGENT_RUNTIME_CALL_FAILED',
+              message: response['error'] as String,
+              details: <String, dynamic>{'failureKind': failureKind},
+            ),
+          ),
         };
       }
       return response;
@@ -1607,9 +1640,18 @@ class AgentRuntimeService {
     });
   }
 
+  static final remoteModeEnabled = ValueNotifier<bool>(false);
+  static int _remoteConfigWriteRevision = 0;
+
   static Future<CodexRemoteBridgeConfig> readRemoteBridgeConfig() async {
+    final revision = _remoteConfigWriteRevision;
     final result = await _invokeMap('config/remote/read');
-    return CodexRemoteBridgeConfig.fromMap(result);
+    final config = CodexRemoteBridgeConfig.fromMap(result);
+    // A completed settings write supersedes reads already in flight.
+    if (revision == _remoteConfigWriteRevision) {
+      remoteModeEnabled.value = config.remoteEnabled;
+    }
+    return config;
   }
 
   static Future<CodexRemoteBridgeConfig> writeRemoteBridgeConfig({
@@ -1624,7 +1666,53 @@ class AgentRuntimeService {
       'remoteBridgeToken': remoteBridgeToken.trim(),
       'remoteCwd': remoteCwd.trim(),
     });
-    return CodexRemoteBridgeConfig.fromMap(result);
+    final config = CodexRemoteBridgeConfig.fromMap(result);
+    _remoteConfigWriteRevision++;
+    remoteModeEnabled.value = config.remoteEnabled;
+    return config;
+  }
+
+  /// Select the configured remote execution target. The caller owns the
+  /// existing Harness switch barrier and Conversation target application.
+  /// Do not rewrite an already-enabled configuration: native config writes
+  /// disconnect the transport, including any active remote prompt.
+  static Future<AgentRuntimeStatus> activateRemoteCodex(
+    CodexRemoteBridgeConfig config,
+  ) async {
+    if (!config.remoteConfigured ||
+        config.remoteBridgeUrl.trim().isEmpty ||
+        config.remoteCwd.trim().isEmpty) {
+      throw StateError('Remote Codex is not configured');
+    }
+    var changed = false;
+    try {
+      if (!config.remoteEnabled) {
+        await writeRemoteBridgeConfig(
+          remoteEnabled: true,
+          remoteBridgeUrl: config.remoteBridgeUrl,
+          remoteBridgeToken: config.remoteBridgeToken,
+          remoteCwd: config.remoteCwd,
+        );
+        changed = true;
+      }
+      // Native connect is idempotent and owns transport readiness. An enabled
+      // preference, or a connected local Agent, is not a remote connection.
+      final result = await connect();
+      if (!result.connected || result.runtime != 'remote') {
+        throw StateError(result.error ?? 'Remote Codex connection failed');
+      }
+      return result;
+    } catch (error, stack) {
+      if (changed) {
+        await writeRemoteBridgeConfig(
+          remoteEnabled: config.remoteEnabled,
+          remoteBridgeUrl: config.remoteBridgeUrl,
+          remoteBridgeToken: config.remoteBridgeToken,
+          remoteCwd: config.remoteCwd,
+        );
+      }
+      Error.throwWithStackTrace(error, stack);
+    }
   }
 
   static Future<Map<String, dynamic>> testRemoteConfig({

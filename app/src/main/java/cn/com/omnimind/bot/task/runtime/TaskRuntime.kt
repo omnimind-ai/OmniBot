@@ -16,6 +16,7 @@ object TaskRuntime {
     private const val TAG = "TaskRuntime"
     private val activeTaskIds = ConcurrentHashMap.newKeySet<String>()
 
+    @Synchronized
     fun start(context: Context, taskId: String): Boolean {
         val normalizedTaskId = taskId.trim()
         if (normalizedTaskId.isEmpty()) {
@@ -28,27 +29,32 @@ object TaskRuntime {
         }
     }
 
+    @Synchronized
     fun finish(context: Context, taskId: String): Boolean {
         val normalizedTaskId = taskId.trim()
         if (normalizedTaskId.isEmpty()) {
             OmniLog.w(TAG, "Ignoring task runtime finish with empty task id")
             return false
         }
-        activeTaskIds.remove(normalizedTaskId)
+        if (!activeTaskIds.remove(normalizedTaskId)) return true
         if (activeTaskIds.isNotEmpty()) return true
 
+        // Do not stop a service that Android has not yet promoted. A short/failed
+        // turn can finish before onCreate; stopService then crashes the whole app.
+        // Deliver reconciliation to the same service after its foreground handshake.
         return runCatching {
-            context.applicationContext.stopService(
-                Intent(context.applicationContext, TaskRuntimeService::class.java),
+            context.applicationContext.startService(
+                Intent(context.applicationContext, TaskRuntimeService::class.java).apply {
+                    action = TaskRuntimeService.ACTION_RECONCILE
+                },
             )
             true
         }.onFailure { error ->
-            OmniLog.w(
-                TAG,
-                "Unable to stop task runtime taskId=$normalizedTaskId: ${error.message}",
-            )
+            OmniLog.w(TAG, "Unable to reconcile task runtime: ${error.message}")
         }.getOrDefault(false)
     }
+
+    internal fun hasActiveTasks(): Boolean = activeTaskIds.isNotEmpty()
 
     private fun sendStartCommand(context: Context): Boolean {
         val intent = Intent(context.applicationContext, TaskRuntimeService::class.java).apply {

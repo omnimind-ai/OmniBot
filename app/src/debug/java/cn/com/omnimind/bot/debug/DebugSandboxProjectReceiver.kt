@@ -38,7 +38,8 @@ class DebugSandboxProjectReceiver : BroadcastReceiver() {
                     "publish" -> publish(appContext, intent)
                     "invoke" -> invoke(appContext, intent)
                     "agent" -> runAgent(appContext, intent)
-                    else -> error("operation must be publish, invoke, or agent")
+                    "plugin" -> plugin(appContext, intent)
+                    else -> error("operation must be publish, invoke, agent, or plugin")
                 }
             }.getOrElse { error ->
                 mapOf(
@@ -49,6 +50,30 @@ class DebugSandboxProjectReceiver : BroadcastReceiver() {
             }
             File(appContext.filesDir, RESULT_FILE).writeText(gson.toJson(payload))
             pendingResult.finish()
+        }
+    }
+
+    // Debug acceptance calls the same owner as the plugin settings page.
+    private suspend fun plugin(context: Context, intent: Intent): Map<String, Any?> {
+        val host = OmniPluginHost.get(context)
+        val id = intent.requiredExtra("pluginId")
+        when (intent.requiredExtra("action")) {
+            "enable" -> host.setEnabled(id, true)
+            "disable" -> host.setEnabled(id, false)
+            "install" -> host.install(id)
+            "update" -> host.update(id)
+            "uninstall" -> host.uninstall(id)
+            "status" -> Unit
+            else -> error("unsupported plugin action")
+        }
+        val state = host.list().single { it.descriptor.id == id }
+        val session = host.openSession()
+        return try {
+            mapOf("success" to true, "installed" to state.installed,
+                "enabled" to state.enabled, "version" to state.descriptor.version,
+                "tools" to session.toolDefinitions.filter { it.ownerPluginId == id }.map { it.name })
+        } finally {
+            session.closeSuspending()
         }
     }
 

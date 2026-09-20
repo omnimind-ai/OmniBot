@@ -306,6 +306,9 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
       conversationId: conversationId,
       mode: mode,
     );
+    if (existingRuntime?.historyEditPending == true) {
+      throw StateError('Conversation history edit is still being committed');
+    }
     final alreadyStarted =
         existingBinding?.conversationId == conversationId &&
         existingBinding?.mode == mode &&
@@ -348,6 +351,15 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
         )) {
       return false;
     }
+    return bindConversationAcpSession(conversationId: conversationId,
+        mode: mode, sessionId: normalizedSessionId);
+  }
+
+  /// Selecting an existing session establishes observation before any prompt.
+  bool bindConversationAcpSession({required int conversationId,
+      required String mode, required String sessionId}) {
+    final normalizedSessionId = sessionId.trim();
+    if (normalizedSessionId.isEmpty) return false;
     final runtime = runtimeFor(conversationId: conversationId, mode: mode);
     if (runtime == null) return false;
     final currentSessionId = runtime.activeAcpSessionId?.trim() ?? '';
@@ -602,6 +614,7 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
       sessionId: eventSessionId,
       turnId: eventTurnId,
       allowCompletedTurnMetadata: carriesFinalTurnUsage,
+      allowHistoryUpsert: acpEventIsItemUpsert(event),
       allowSessionAdmission: allowsHostSessionAdmission,
     )) {
       return const AgentReduceResult(handled: false, affectsActiveTurn: false);
@@ -620,9 +633,16 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
         : activeAcpTurnBefore.isEmpty
         ? runtime.isAiResponding && dispatchTurnBefore.isNotEmpty
         : activeAcpTurnBefore == eventTurnId;
+    final activeRunBeforeUpdate = runtime.activeRunId;
     final result = _agentEventReducer
         .reduce(runtime: runtime, event: event)
         .copyWith(affectsActiveTurn: affectsActiveTurn);
+    // A v2 state notification reaches the same completion owner as a v1
+    // PromptResponse. Release the corresponding dispatch binding as well.
+    if (result.handled && affectsActiveTurn && result.method == 'session/prompt' &&
+        activeRunBeforeUpdate != null && !runtime.isAiResponding) {
+      _taskBindings.remove(activeRunBeforeUpdate);
+    }
     if (result.handled) {
       _annotateAgentMessages(runtime, event, result);
       _notifyAcpVoicePlayback(runtime, event, result);

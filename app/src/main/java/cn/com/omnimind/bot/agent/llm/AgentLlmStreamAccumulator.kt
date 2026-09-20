@@ -56,7 +56,6 @@ class AgentLlmStreamAccumulator(
     private var lastChunkPreview: String = ""
     private var thinkSectionOpen = false
     private var autoInlineThinkTagMode = false
-    private var lastNamedToolCallIndex: Int? = null
     /**
      * Some OpenAI-compatible gateways send the same reasoning value through
      * multiple aliases in one SSE object (`reasoning_content`, `reasoning`,
@@ -272,7 +271,6 @@ class AgentLlmStreamAccumulator(
             throw AgentProviderStreamException(error.statusCode, error.code, buildProviderErrorMessage(error))
         }
         flushInlineTextBuffer(final = true)
-        reconcileMisindexedToolCallArguments()
         discardDanglingToolCallPlaceholders()
         val toolCalls = toolCallBuilders.entries.map { (index, builder) ->
             val name = builder.name?.trim().orEmpty()
@@ -371,31 +369,6 @@ class AgentLlmStreamAccumulator(
         }
     }
 
-    private fun reconcileMisindexedToolCallArguments() {
-        val orphanedArguments = toolCallBuilders.entries.filter { (_, builder) ->
-            builder.id.isNullOrBlank() &&
-                builder.name.isNullOrBlank() &&
-                builder.arguments.isNotEmpty()
-        }
-        if (orphanedArguments.size != 1) return
-
-        val namedWithoutArguments = toolCallBuilders.entries.filter { (_, builder) ->
-            !builder.name.isNullOrBlank() && builder.arguments.isEmpty()
-        }
-        if (namedWithoutArguments.size != 1) return
-
-        val (orphanIndex, orphanBuilder) = orphanedArguments.single()
-        val (namedIndex, namedBuilder) = namedWithoutArguments.single()
-        if (orphanIndex <= namedIndex) return
-
-        namedBuilder.arguments.append(orphanBuilder.arguments)
-        toolCallBuilders.remove(orphanIndex)
-        OmniLog.w(
-            TAG,
-            "reconciled misindexed tool arguments from index=$orphanIndex to index=$namedIndex",
-        )
-    }
-
     private data class MutableToolCallBuilder(
         var id: String? = null,
         var type: String? = null,
@@ -479,7 +452,7 @@ class AgentLlmStreamAccumulator(
     private fun mergeToolCalls(toolCalls: JsonArray, isDelta: Boolean) {
         toolCalls.forEachIndexed { arrayIndex, callElement ->
             val call = callElement as? JsonObject ?: return@forEachIndexed
-            val declaredIndex = call["index"]?.jsonPrimitive?.intOrNull ?: arrayIndex
+            val index = call["index"]?.jsonPrimitive?.intOrNull ?: arrayIndex
             val idPiece = call["id"]?.jsonPrimitive?.contentOrNull
             val typePiece = call["type"]?.jsonPrimitive?.contentOrNull
             val function = call["function"] as? JsonObject
@@ -492,25 +465,8 @@ class AgentLlmStreamAccumulator(
                 else -> json.encodeToString(JsonElement.serializer(), argumentsElement)
             }
 
-            val declaredBuilder = toolCallBuilders[declaredIndex]
-            val index = if (
-                isDelta &&
-                idPiece.isNullOrBlank() &&
-                namePiece.isNullOrBlank() &&
-                !argumentsPiece.isNullOrBlank() &&
-                declaredBuilder?.name.isNullOrBlank()
-            ) {
-                lastNamedToolCallIndex ?: declaredIndex
-            } else {
-                declaredIndex
-            }
-            if (index != declaredIndex) {
-                OmniLog.w(
-                    TAG,
-                    "redirected misindexed tool arguments from index=$declaredIndex to index=$index",
-                )
-            }
-
+            // A later delta can supply this index's identity or name. Never
+            // attach its arguments to a different, previously named tool.
             val builder = toolCallBuilders[index]
                 ?: if (
                     idPiece.isNullOrBlank() &&
@@ -526,7 +482,6 @@ class AgentLlmStreamAccumulator(
             typePiece?.takeIf { it.isNotBlank() }?.let { builder.type = it }
             namePiece?.let {
                 mergeToolName(builder, it, isDelta)
-                if (it.isNotBlank()) lastNamedToolCallIndex = index
             }
 
             if (!argumentsPiece.isNullOrEmpty()) {

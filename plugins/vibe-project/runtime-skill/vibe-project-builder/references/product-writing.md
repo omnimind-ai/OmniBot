@@ -18,5 +18,5 @@ do not add a separate README unless the product itself needs documentation.
 - Show provenance and freshness for externally fetched facts.
 - Keep credentials in host-managed Connectors, never HTML, JavaScript, Skill text, or `toolkit.json`.
 - Prefer a useful narrow product over a broad dashboard with dead controls.
-- Test one realistic end-to-end scenario and one failure/retry scenario before publishing.
+- Run executable logic tests before publishing; after installing the candidate, run one real end-to-end scenario and one failure/recovery scenario before claiming completion. Follow workflow-validation.md for evidence and blocked-test reporting.
 - For commerce-like products, use sandbox data or stop at search/browse; never use checkout or payment as acceptance testing.

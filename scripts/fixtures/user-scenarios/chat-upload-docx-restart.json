@@ -1,0 +1,3 @@
+{
+  "prompt": "Read the DOCX attachment from earlier again. First line: {{MARKER}}_RECOVERY: <recovery code>. Read the actual file and do not guess."
+}

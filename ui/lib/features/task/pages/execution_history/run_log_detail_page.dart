@@ -4,13 +4,18 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:ui/features/task/pages/execution_history/widgets/run_log_timeline_components.dart';
-import 'package:ui/features/task/run_log/omniflow_tool_client.dart';
+import 'package:ui/features/task/execution/execution_backend.dart';
 import 'package:ui/features/task/run_log/run_log_metrics.dart';
 
 class RunLogDetailPage extends StatefulWidget {
-  const RunLogDetailPage({super.key, required this.runId});
+  const RunLogDetailPage({
+    super.key,
+    required this.runId,
+    required this.backend,
+  });
 
   final String runId;
+  final ExecutionBackend backend;
 
   @override
   State<RunLogDetailPage> createState() => _RunLogDetailPageState();
@@ -37,12 +42,16 @@ class _RunLogDetailPageState extends State<RunLogDetailPage> {
     });
     try {
       final results = await Future.wait([
-        OmniFlowToolClient.getRunLog(widget.runId),
-        OmniFlowToolClient.listFunctions(),
+        widget.backend.getRunLog(widget.runId),
+        widget.backend.list(
+          ExecutionCollectionKind.functions,
+          limit: 100,
+          offset: 0,
+        ),
       ]);
-      final runLog = results[0];
-      final functions = _mapList(results[1]['functions']);
-      final linkedFunction = _linkedFunction(runLog, functions);
+      final runLog = results[0] as Map<String, dynamic>;
+      final functions = (results[1] as ExecutionPage).items;
+      final linkedFunction = linkedExecutionFunction(runLog, functions);
       if (!mounted) return;
       setState(() {
         _runLog = runLog;
@@ -63,15 +72,12 @@ class _RunLogDetailPageState extends State<RunLogDetailPage> {
     if (_converting) return;
     setState(() => _converting = true);
     try {
-      final registration = await OmniFlowToolClient.registerFunctionFromRunLog(
-        widget.runId,
-      );
+      final function = await widget.backend.register({
+        'run_id': widget.runId,
+        ...?_runLog,
+      });
       if (!mounted) return;
-      if (!registration.success) {
-        throw StateError(registration.errorMessage ?? '注册失败');
-      }
-      final function = registration.function!;
-      final functionId = registration.functionId;
+      final functionId = function['function_id'].toString();
       setState(() {
         _functionId = functionId;
         _functionName = function['name']?.toString();
@@ -106,7 +112,7 @@ class _RunLogDetailPageState extends State<RunLogDetailPage> {
   Future<void> _showState(String stateId, Map<String, dynamic> action) async {
     if (stateId.isEmpty) return;
     try {
-      final state = await OmniFlowToolClient.getRunLogState(stateId);
+      final state = await widget.backend.getRunLogState(stateId);
       if (!mounted) return;
       await showModalBottomSheet<void>(
         context: context,
@@ -115,9 +121,8 @@ class _RunLogDetailPageState extends State<RunLogDetailPage> {
       );
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(error.toString())));
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(error.toString())));
       }
     }
   }
@@ -249,23 +254,6 @@ class _RunLogDetailPageState extends State<RunLogDetailPage> {
   }
 }
 
-Map<String, dynamic>? _linkedFunction(
-  Map<String, dynamic> runLog,
-  List<Map<String, dynamic>> functions,
-) {
-  final runId = runLog['run_id']?.toString().trim() ?? '';
-  final executedFunctionId = runLog['function_id']?.toString().trim() ?? '';
-  for (final function in functions) {
-    final functionId = function['function_id']?.toString().trim() ?? '';
-    final sourceRunId = function['source_run_id']?.toString().trim() ?? '';
-    if ((executedFunctionId.isNotEmpty && functionId == executedFunctionId) ||
-        (runId.isNotEmpty && sourceRunId == runId)) {
-      return function;
-    }
-  }
-  return null;
-}
-
 class _StateSheet extends StatelessWidget {
   const _StateSheet({required this.state, required this.action});
 
@@ -294,22 +282,40 @@ class _StateSheet extends StatelessWidget {
             if (screenshotPath.isNotEmpty && screenshot.existsSync())
               ClipRRect(
                 borderRadius: BorderRadius.circular(12),
-                child: LayoutBuilder(
-                  builder: (context, constraints) => Stack(
-                    children: [
-                      Image.file(screenshot),
-                      if (_actionPoint(action) case final point?)
-                        Positioned(
-                          left: point.$1 - 10,
-                          top: point.$2 - 10,
-                          child: const Icon(
-                            Icons.my_location_rounded,
-                            color: Colors.redAccent,
-                            size: 22,
+                child: Stack(
+                  children: [
+                    Image.file(
+                      screenshot,
+                      width: double.infinity,
+                      fit: BoxFit.fitWidth,
+                      semanticLabel: _text(context, '记录的屏幕', 'Recorded screen'),
+                    ),
+                    if (_actionPoint(action) case final point?)
+                      Positioned.fill(
+                        child: LayoutBuilder(
+                          builder: (context, constraints) => Stack(
+                            children: [
+                              // The decoded point is a fraction of this screen,
+                              // independent of screenshot/display resolution.
+                              Positioned(
+                                left: constraints.maxWidth * point.$1 - 11,
+                                top: constraints.maxHeight * point.$2 - 11,
+                                child: Icon(
+                                  Icons.my_location_rounded,
+                                  color: Colors.redAccent,
+                                  size: 22,
+                                  semanticLabel: _text(
+                                    context,
+                                    '操作位置',
+                                    'Action location',
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                    ],
-                  ),
+                      ),
+                  ],
                 ),
               )
             else
@@ -327,11 +333,36 @@ class _StateSheet extends StatelessWidget {
   }
 
   (double, double)? _actionPoint(Map<String, dynamic> action) {
-    final args = (action['args'] as Map?)?.cast<String, dynamic>() ?? {};
+    final official = action.containsKey('action_type');
+    final args = official ? action : _map(action['args']);
     final x = double.tryParse('${args['x'] ?? ''}');
     final y = double.tryParse('${args['y'] ?? ''}');
-    if (x == null || y == null) return null;
-    return (x, y);
+    // InternalRunLogStore.externalActionPayload projects the official flat
+    // payload to display pixels. Legacy tool/args retains canonical 0..1000.
+    final display = _map(state['display']);
+    final width = official
+        ? double.tryParse('${display['width'] ?? ''}')
+        : 1000.0;
+    final height = official
+        ? double.tryParse('${display['height'] ?? ''}')
+        : 1000.0;
+    if (x == null ||
+        y == null ||
+        width == null ||
+        height == null ||
+        !width.isFinite ||
+        !height.isFinite ||
+        width <= 0 ||
+        height <= 0 ||
+        !x.isFinite ||
+        !y.isFinite ||
+        x < 0 ||
+        x > width ||
+        y < 0 ||
+        y > height) {
+      return null;
+    }
+    return (x / width, y / height);
   }
 }
 

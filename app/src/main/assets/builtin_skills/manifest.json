@@ -49,6 +49,16 @@
       "hasReferences": false,
       "hasAssets": false,
       "hasEvals": false
+    },
+    {
+      "id": "omniinfer-local",
+      "name": "omniinfer-local",
+      "description": "按需下载官方 OmniInfer 组件，在主 App 内启动本地模型；组件和模型独立下载，已有文件直接复用。",
+      "assetPath": "builtin_skills/omniinfer-local",
+      "hasScripts": true,
+      "hasReferences": true,
+      "hasAssets": true,
+      "hasEvals": false
     }
   ]
 }

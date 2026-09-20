@@ -1,0 +1,21 @@
+{
+  "name": "Create Life XP from zero with actual model",
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_LIFE_XP_BUILD",
+      "scenario": "life-xp-build.json",
+      "timeoutMs": 600000
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIFE_XP_BUILD_DONE",
+      "timeoutMs": 1200000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIFE_XP_BUILD",
+      "expected": "done"
+    }
+  ]
+}

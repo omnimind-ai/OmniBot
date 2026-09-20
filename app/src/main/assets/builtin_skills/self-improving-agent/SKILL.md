@@ -9,7 +9,7 @@ This built-in skill is fixed-injected for Omnibot agent runs.
 
 Use it to maintain a lightweight learning loop without interrupting the user's main task.
 
-The runtime may auto-read this skill after a tool failure and auto-record the failure into `data/ERRORS.md`. Repeated failures with the same signature are merged into one bounded entry. If an argument/schema failure is followed by a successful call to the same tool in the same Agent run, the runtime closes that pending entry and distills the verified recovery into short-term memory.
+The native ACP/GUI model boundary records recognized provider failures in `data/provider-diagnostic.json`, even when the model cannot answer. This is diagnostic evidence, not a new task state. Tool failures should be logged with the script below; do not assume every Harness automatically invokes the legacy tool-failure hook.
 
 ## When To Record
 
@@ -65,7 +65,7 @@ Do not invent Minis-only paths or tools such as `/var/minis/...` or `memory_writ
 
 ## Recall
 
-Recorded failures and lessons are indexed into memory retrieval. Before retrying a tool, command, or environment step that has failed before — or when the injected memory context mentions a related pitfall — trust that recall (or call `memory_search`) and apply the known fix instead of repeating the failed step.
+Before retrying a failed operation, inspect the saved diagnostics and search the learning log. Use memory_search when that tool is available; do not assume skill-local files were automatically indexed by every Harness.
 
 ## Command Patterns
 
@@ -89,3 +89,37 @@ If you need to refine an existing entry instead of appending a new one, use `rea
 - include the concrete command/tool/context that failed
 - include the corrected rule, not only the symptom
 - avoid logging secrets, tokens, and personal data
+
+
+## Provider self-check and recovery
+
+Use this workflow for GLM or other model errors, a failed GUI planner, or a request that appears stuck.
+
+1. Read `data/provider-diagnostic.json` and the original task error. The latest 20 safe failure records are retained under `data/provider-diagnostics/`; consult them for recurrence, but do not assume different records belong to the same Provider or conversation. Identify the configured Provider, model, protocol, and failing operation using the existing settings owner. A GLM HTTP 400 with a gateway fallback timeout does not prove the key is wrong, the model lacks vision, or the phone froze. Preserve both facts; do not silently switch providers.
+2. A model outage can prevent this skill from running. Native transport owns bounded pre-output recovery; after output/tool intent starts it must preserve the original failure. Never restart the full GUI task or replay taps to repair an HTTP request. Cancellation is not a failure to repair.
+3. For OpenAI chat-completions providers, run `node <scriptsDir>/check-provider.mjs` with a JSON object on stdin containing the exact configured `endpoint` (full chat/completions URL), `model`, and the configured optional `apiKey`/`headers`. Anonymous Providers do not require an invented key. Custom headers override generated headers, just as in the native client. Obtain credentials only through an already authorized configuration surface; do not ask the user to paste a key into chat or put one in command arguments/history. If unavailable, report that the probe could not run. Other wire protocols need their existing official client, not this probe.
+4. The probe makes one synthetic request with a 20-second timeout; set `probe` to `vision_tool` for a valid synthetic white PNG plus native tool-call verification, or omit it for text. It saves only a safe result in `data/provider-check.json`; no prompts, URLs, keys or response bodies are persisted. Passing proves text connectivity only. For GUI failures run `vision_tool`, then verify the actual operation with the existing GUI test path. Model listing alone is not an execution test.
+5. Diagnose authentication, quota/rate limits, unsupported request fields, TLS, and upstream service failures separately. For 400 inspect the failed request's schema/capability evidence before changing anything. Do not remove tools/images, disable TLS, invent a model ID, or repeatedly retry rejected requests. Service outages may require waiting or the user's choice of another configured model.
+6. Apply an evidenced configuration correction through the existing Provider/settings tool if available, then read it back. Never edit encrypted preferences, create a second provider store, or make temporary shell exports the durable repair. If no settings tool exists, explain the exact setting the user must change.
+7. Verify the originally failing operation, a subsequent request, and restart/reload with the saved configuration. Only then log the concrete change and evidence in `ERRORS.md` and a short reusable learning. A one-off successful retry is transient recovery, not proof of a permanent repair. Leave unverified cases pending. Preserve original failed turns/history.
+
+Builtin refresh and reinstall preserve this skill's `data/` directory. Keep observed failures separate from verified repairs; never mark a failure resolved solely because a text probe passed.
+
+
+### Recovery boundaries
+
+- Authentication or missing credentials: identify the selected Provider before
+  changing anything. Never copy a key from another Provider. Use its settings
+  page to save the correction, then refresh; empty authentication headers must
+  be filled or removed. A probe is not a credential repair.
+- Temporary transport failure: use only the existing bounded transport retry.
+  If it is exhausted, end the failed request normally and allow a subsequent
+  user request. Do not start a second retry loop from this skill.
+- Persist verified repairs using the existing learning log, including the
+  failing operation, concrete correction, verification result and restart check.
+  Never mark the diagnostic history itself as a completed task or erase the
+  original failure. If restart/original-operation verification is missing,
+  retain `pending` and state the missing check.
+- Diagnostic or learning-file failures must not prevent canonical prompt
+  cleanup or block another conversation. Report unavailable persistence;
+  never claim a repair was saved when its write failed.

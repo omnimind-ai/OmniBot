@@ -1,0 +1,23 @@
+{
+  "name": "Fresh Life XP autonomous builder turn; independent business acceptance required",
+  "requireClockSync": true,
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_LIFE_XP_AUTONOMOUS",
+      "scenario": "life-xp-autonomous.json",
+      "timeoutMs": 600000
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_LIFE_XP_AUTONOMOUS_DONE",
+      "timeoutMs": 2400000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_LIFE_XP_AUTONOMOUS",
+      "expected": "done"
+    }
+  ],
+  "preconditions": "Idle local Agent with Vibe Builder installed and real Provider. Completion of this journey proves the builder turn ended only, not business/UI acceptance. Independently inspect published project, tests and actual UI/data afterwards."
+}

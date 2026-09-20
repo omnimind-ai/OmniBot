@@ -511,7 +511,7 @@ class OmniPluginPlatformTest {
                     lifecycleEvents += "disable"
                 }
 
-                override fun contribution(): OmniPluginContribution {
+                override suspend fun contribution(): OmniPluginContribution {
                     return OmniPluginContribution(
                         toolGroups = listOf(
                             OmniPluginToolGroup(
@@ -571,7 +571,7 @@ class OmniPluginPlatformTest {
         )
 
         override fun create(): OmniPlugin = object : OmniPlugin {
-            override fun contribution() = OmniPluginContribution(
+            override suspend fun contribution() = OmniPluginContribution(
                 actionGroups = listOf(
                     OmniPluginActionGroup(
                         definitions = listOf(

@@ -47,6 +47,99 @@ class HttpAgentLlmClientTest {
     }
 
     @Test
+    fun `OmniInfer joins leading system instructions on wire without changing history`() = runBlocking {
+        val scope = CoroutineScope(Job() + Dispatchers.Default)
+        val input = ChatCompletionRequest(model = "Qwen3.5-0.8B-Q4_0.gguf", messages = listOf(
+            ChatCompletionMessage("system", JsonPrimitive("Agent instructions")),
+            ChatCompletionMessage("system", JsonPrimitive("Current environment")),
+            ChatCompletionMessage("user", JsonPrimitive("Run the local file task")),
+        ))
+        var body: JsonObject? = null
+        try {
+            val client = HttpAgentLlmClient(scope = scope, modelOverride = testOverride(),
+                resolveRouteInfoOp = { _, _, _, _, _, _, _ -> routeInfo(
+                    input.model, input.model, "openai_compatible", false,
+                    apiBase = "http://127.0.0.1:9099/v1") },
+                streamRequestOp = { _, requestJson, listener, _, _, _, _, _, _, _ ->
+                    body = json.parseToJsonElement(requestJson).jsonObject
+                    val source = dummyEventSource()
+                    listener.onOpen(source, okResponse())
+                    listener.onEvent(source, null, null,
+                        """{"choices":[{"index":0,"delta":{"content":"READY"},"finish_reason":null}]}""")
+                    listener.onEvent(source, null, null, "[DONE]")
+                    source
+                })
+            client.streamTurn(input)
+            val messages = body!!["messages"] as JsonArray
+            assertEquals(2, messages.size)
+            assertEquals("Agent instructions\n\nCurrent environment", messages[0].jsonObject["content"]!!.jsonPrimitive.content)
+            assertEquals("user", messages[1].jsonObject["role"]!!.jsonPrimitive.content)
+            assertEquals(3, input.messages.size)
+            assertEquals("Current environment", input.messages[1].content!!.jsonPrimitive.content)
+        } finally { scope.cancel() }
+    }
+
+    @Test
+    fun `GLM 400 with fallback timeout is not silently replayed`() = runBlocking {
+        val scope = CoroutineScope(Job() + Dispatchers.Default)
+        var attempts = 0
+        try {
+            val fixture = java.io.File("../docs/testing/fixtures/gui-lifecycle-20260916/agent-run.json")
+            val diagnostic = json.parseToJsonElement(fixture.readText()).jsonObject["error"]!!.jsonPrimitive.content
+            val client = HttpAgentLlmClient(
+                scope = scope, modelOverride = testOverride(),
+                transientStreamRetryDelayMs = 0,
+                streamRequestOp = { _, _, listener, _, _, _, _, _, _, _ ->
+                    attempts++
+                    val source = dummyEventSource()
+                    listener.onFailure(source, null, Response.Builder()
+                        .request(Request.Builder().url("https://example.com").build())
+                        .protocol(Protocol.HTTP_1_1).code(400).message("Bad Request")
+                        .body(json.encodeToString(JsonObject.serializer(), JsonObject(mapOf(
+                            "error" to JsonObject(mapOf("message" to JsonPrimitive(diagnostic)))
+                        ))).toResponseBody()).build())
+                    source
+                },
+            )
+            val error = runCatching { client.streamTurn(simpleRequest()) }.exceptionOrNull()
+            assertTrue(error is AgentStreamRequestException)
+            assertEquals(1, attempts)
+            assertEquals(AgentRuntimeErrorSupport.PROVIDER_REQUEST_REJECTED,
+                AgentRuntimeErrorSupport.failureKind(error!!))
+        } finally { scope.cancel() }
+    }
+
+    @Test
+    fun `default recovery retries once before output and keeps next request usable`() = runBlocking {
+        val scope = CoroutineScope(Job() + Dispatchers.Default)
+        var attempts = 0
+        try {
+            val client = HttpAgentLlmClient(
+                scope = scope,
+                modelOverride = testOverride(),
+                transientStreamRetryDelayMs = 0,
+                streamRequestOp = { _, _, listener, _, _, _, _, _, _, _ ->
+                    attempts++
+                    val source = dummyEventSource()
+                    if (attempts <= 2) {
+                        listener.onFailure(source, java.io.IOException("connection reset"), null)
+                    } else {
+                        listener.onOpen(source, okResponse())
+                        listener.onEvent(source, null, "message",
+                            """{"choices":[{"delta":{"content":"OK"},"finish_reason":"stop"}]}""")
+                        listener.onEvent(source, null, "message", "[DONE]")
+                    }
+                    source
+                },
+            )
+            assertNotNull(runCatching { client.streamTurn(simpleRequest()) }.exceptionOrNull())
+            assertEquals(2, attempts)
+            assertEquals("OK", client.streamTurn(simpleRequest()).message.contentText())
+            assertEquals(3, attempts)
+        } finally { scope.cancel() }
+    }
+
+    @Test
     fun `does not replay partial tool arguments after http2 reset`() = runBlocking {
         val scope = CoroutineScope(Job() + Dispatchers.Default)
         var attempts = 0
@@ -783,6 +876,8 @@ class HttpAgentLlmClientTest {
             assertTrue(error is AgentStreamRequestException)
             assertEquals(1, attempts)
             assertTrue(requestBodies.first().contains("image_url"))
+            assertEquals(AgentRuntimeErrorSupport.PROVIDER_IMAGE_REQUEST_REJECTED,
+                AgentRuntimeErrorSupport.failureKind(error!!))
         } finally {
             scope.cancel()
         }

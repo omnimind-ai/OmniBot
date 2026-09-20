@@ -68,6 +68,11 @@ void main() {
       final key = threadKey(conversationId, mode);
       switch (call.method) {
         case 'replaceConversationMessages':
+          if (args['deleteMessageIds'] is List) {
+            final ids = (args['deleteMessageIds'] as List).toSet();
+            nativeMessages[key]?.removeWhere((row) => ids.contains(row['id']));
+            return 'SUCCESS';
+          }
           final incoming = normalizeMessageList(args['messages']);
           if (args['allowHistoryRemoval'] == true) {
             nativeMessages[key] = incoming;
@@ -101,6 +106,19 @@ void main() {
           return null;
       }
     });
+  });
+
+  test('explicit id deletion keeps unloaded history and clears legacy import source', () async {
+    const id = 845;
+    final retained = ChatMessageModel.userMessage('unloaded', id: 'unloaded');
+    final removed = ChatMessageModel.userMessage('remove', id: 'remove');
+    nativeMessages[threadKey(id, ConversationMode.agent)] = [retained.toJson(), removed.toJson()];
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('conversation_messages_agent_845', jsonEncode([removed.toJson()]));
+    await ConversationHistoryService.deleteMessageIds(id, {'remove'}, mode: ConversationMode.agent);
+    final loaded = await ConversationHistoryService.readConversationHistory(id);
+    expect(loaded.map((m) => m.id), ['unloaded']);
+    expect(prefs.getString('conversation_messages_agent_845'), isNull);
   });
 
   tearDown(() async {
@@ -442,6 +460,37 @@ void main() {
 
     expect(restored, target);
     expect(restored.agentSessionActive, isTrue);
+  });
+
+  test('remote startup target survives storage without replacing local history selection', () async {
+    const local = ConversationThreadTarget.existing(
+      conversationId: 42,
+      mode: ConversationMode.agent,
+      agentId: 'xiaowan-acp',
+    );
+    const remote = ConversationThreadTarget.agentSession(
+      sessionId: 'remote-startup-regression',
+      agentId: 'codex-remote',
+      fromNativeRoute: true,
+      requestKey: 'one-time-open',
+    );
+    await ConversationHistoryService.saveCurrentConversationTarget(
+      local,
+      mode: ConversationMode.agent,
+    );
+    await ConversationHistoryService.saveLastVisibleThreadTarget(remote);
+
+    final restored = await ConversationHistoryService.getLastVisibleThreadTarget();
+    expect(restored?.agentSessionId, remote.agentSessionId);
+    expect(restored?.agentId, 'codex-remote');
+    expect(restored?.isRemoteCodexSessionTarget, isTrue);
+    expect(restored?.conversationId, isNull);
+    expect(restored?.fromNativeRoute, isFalse);
+    expect(restored?.requestKey, isNull);
+    expect(restored?.initialMessage, isNull);
+    expect(await ConversationHistoryService.getCurrentConversationTarget(
+      mode: ConversationMode.agent,
+    ), local);
   });
 
   test('round-trips local agent conversation target thread metadata', () async {

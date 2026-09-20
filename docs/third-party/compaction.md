@@ -50,3 +50,22 @@ Other and oversized/unstructured outputs retain the complete-file reference.
 This fixes the reproduced loss of inline nextOffset after a 64 KiB file page
 was replaced by a generic reference. Device and real-provider acceptance is
 recorded separately in the conversation regression index.
+
+
+2026-09-19: The existing overflow guard now matches the same pinned Pi
+`agent-session.ts` message-end rule: a successful assistant response resets
+`_overflowRecoveryAttempted`; consecutive failures still allow only one recovery.
+Verified source: https://raw.githubusercontent.com/badlogic/pi-mono/7d8ab31a477ecc07b36f56ffcae58c79307a68be/packages/coding-agent/src/core/agent-session.ts
+(lines 650–657 and 2014–2049). This corrects the host control flow; no upstream
+Agent loop or new compression algorithm is imported.
+
+An explicit overflow now reaches the existing summary/checkpoint path even when
+file offloading alone fits the local estimate. The existing cutPoint is applied
+to the rejected message sizes before offloading; the bounded messages retain the
+same positions and canonical identities. This avoids treating the substituted
+small file references as evidence that only the user question needs summarizing.
+Normal threshold offloading remains unchanged. Kotlin regressions verify both
+successful progress between overflows and an actual summary after offloading;
+Release/device acceptance is tracked separately.
+
+2026-09-19 host ordering correction: force-triggered compaction now submits the original completed prefix to the existing bounded summarizer before the continuing tail budget can replace its terminal tool metadata with an offload-only reference. The retained tail is bounded independently with the same existing routine; Pi cut/rebuild and checkpoint ownership are unchanged. A focused before/after regression proves the prefix cursor survives. This does not claim a new upstream dependency or guarantee model arithmetic; real task regression remains required.

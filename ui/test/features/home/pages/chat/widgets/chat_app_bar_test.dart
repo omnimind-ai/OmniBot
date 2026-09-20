@@ -124,6 +124,7 @@ class _PureChatToggleHarness extends StatefulWidget {
     this.locked = false,
     this.showOmniAiTapCount = false,
     this.includeAgent = true,
+    this.includeRemote = false,
     this.translucent = false,
     this.visualProfile = AppBackgroundVisualProfile.defaultProfile,
   });
@@ -132,6 +133,7 @@ class _PureChatToggleHarness extends StatefulWidget {
   final bool locked;
   final bool showOmniAiTapCount;
   final bool includeAgent;
+  final bool includeRemote;
   final bool translucent;
   final AppBackgroundVisualProfile visualProfile;
 
@@ -144,6 +146,8 @@ class _PureChatToggleHarnessState extends State<_PureChatToggleHarness> {
   late final bool _locked = widget.locked;
   int _toggleCount = 0;
   int _omniAiTapCount = 0;
+
+  String? _chosenAgent;
 
   @override
   Widget build(BuildContext context) {
@@ -168,12 +172,15 @@ class _PureChatToggleHarnessState extends State<_PureChatToggleHarness> {
                   });
                 },
                 onAgentTap: () {},
-                onAcpAgentTap: widget.includeAgent ? (_) {} : null,
-                acpAgentModes: widget.includeAgent
-                    ? const <ChatAcpAgentModeOption>[
-                        ChatAcpAgentModeOption(id: 'codex-acp', name: 'Codex'),
-                      ]
-                    : const <ChatAcpAgentModeOption>[],
+                onAcpAgentTap: widget.includeAgent || widget.includeRemote
+                    ? (id) => setState(() => _chosenAgent = id)
+                    : null,
+                acpAgentModes: [
+                  if (widget.includeAgent)
+                    const ChatAcpAgentModeOption(id: 'codex-acp', name: 'Codex'),
+                  if (widget.includeRemote)
+                    const ChatAcpAgentModeOption(id: 'codex-remote', name: 'Remote Codex', status: 'connect'),
+                ],
                 activeMode: ChatSurfaceMode.normal,
                 onModeChanged: (_) {},
                 displayLayer: ChatIslandDisplayLayer.mode,
@@ -188,6 +195,7 @@ class _PureChatToggleHarnessState extends State<_PureChatToggleHarness> {
                 visualProfile: widget.visualProfile,
               ),
               Text('selected:$_selected'),
+              if (_chosenAgent != null) Text('chosen:$_chosenAgent'),
               Text('locked:$_locked'),
               Text('toggles:$_toggleCount'),
               if (widget.showOmniAiTapCount)
@@ -1134,6 +1142,22 @@ void main() {
     expect(tester.getSize(capsuleFinder).width, 40);
     expect(capsule.borderRadius, BorderRadius.circular(20));
     expect(capsule.showTopHighlight, isFalse);
+  });
+
+  testWidgets('remote Harness is selectable without a local Codex installation', (tester) async {
+    await tester.pumpWidget(const _PureChatToggleHarness(includeAgent: false, includeRemote: true));
+    await tester.tap(find.byKey(const ValueKey('chat-app-bar-pure-chat-button')));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('Remote Codex'), findsOneWidget);
+    expect(
+      tester.widgetList<AgentBrandIcon>(find.byType(AgentBrandIcon))
+          .any((icon) => icon.agentId == 'codex-remote'),
+      isTrue,
+    );
+    expect(find.byKey(const ValueKey('chat-app-bar-mode-menu-acp-codex-acp')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('chat-app-bar-mode-menu-acp-codex-remote')));
+    await tester.pumpAndSettle();
+    expect(find.text('chosen:codex-remote'), findsOneWidget);
   });
 
   testWidgets('expands and collapses the mode menu as one anchored capsule', (

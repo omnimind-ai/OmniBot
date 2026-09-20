@@ -26,6 +26,80 @@ void main() {
     runtime.dispose();
   });
 
+  test('ACP v2 state owns completion and whole messages replace chunks', () {
+    runtime.messages.add(ChatMessageModel(id: 'old-history', type: 1, user: 1,
+      content: {'text': 'previous question'}));
+    void update(Map<String, dynamic> update) => reducer.reduce(
+      runtime: runtime,
+      event: {
+        'method': 'session/update',
+        'agentId': 'codex-acp',
+        'params': {'sessionId': 'session-v2', 'turnId': 'backend-turn-v2', 'update': update},
+        'protocolVersion': 2,
+        'turnId': 'backend-turn-v2',
+        'allowImplicitTurnAdmission': true,
+        'message': {
+          'method': 'session/update',
+          'params': {'sessionId': 'session-v2', 'turnId': 'backend-turn-v2', 'update': update},
+        },
+      },
+    );
+    update({'sessionUpdate': 'state_update', 'state': 'running'});
+    update({'sessionUpdate': 'user_message', 'messageId': 'backend-user-v2',
+      'content': [{'type': 'text', 'text': 'external question'}]});
+    expect(runtime.messages.first.text, 'external question');
+    for (final text in ['O', 'O', 'B']) {
+      update({'sessionUpdate': 'agent_message_chunk', 'messageId': 'backend-item-v2',
+        'content': {'type': 'text', 'text': text}});
+    }
+    expect(runtime.messages.where((m) => m.user == 2).single.text, 'OOB');
+    expect(runtime.isAiResponding, isTrue);
+    for (var i = 0; i < 2; i++) {
+      update({'sessionUpdate': 'agent_message', 'messageId': 'backend-item-v2',
+        'content': [{'type': 'text', 'text': 'OOB complete'}]});
+      expect(runtime.messages.where((m) => m.user == 2).single.text, 'OOB complete');
+    }
+    update({'sessionUpdate': 'agent_message', 'messageId': 'backend-item-v2', 'content': null});
+    expect(runtime.messages.where((m) => m.user == 2).single.text, '');
+    update({'sessionUpdate': 'agent_message', 'messageId': 'backend-item-v2',
+      'content': [{'type': 'text', 'text': 'OOB complete'}]});
+    update({'sessionUpdate': 'state_update', 'state': 'idle', 'stopReason': 'end_turn'});
+    expect(runtime.isAiResponding, isFalse);
+    expect(runtime.messages[1].text, 'external question');
+    expect(runtime.messages.last.text, 'previous question');
+    expect(runtime.messages.where((m) => m.user == 2).single.text, 'OOB complete');
+  });
+
+  test('ACP v2 thought replay replaces by identity and later chunks append', () {
+    void update(Map<String, dynamic> value) => reducer.reduce(runtime: runtime, event: {
+      'method': 'session/update', 'protocolVersion': 2,
+      'turnId': 'thought-turn', 'allowImplicitTurnAdmission': true,
+      'params': {'sessionId': 'thought-session', 'turnId': 'thought-turn', 'update': value},
+    });
+    String thought(String id) => runtime.messages.singleWhere(
+      (m) => m.id == 'thought-turn-$id-agent-thinking').cardData!['thinkingContent'] as String;
+    update({'sessionUpdate': 'state_update', 'state': 'running'});
+    update({'sessionUpdate': 'agent_thought_chunk', 'messageId': 'first',
+      'content': {'type': 'text', 'text': 'partial'}});
+    for (var i = 0; i < 2; i++) {
+      update({'sessionUpdate': 'agent_thought', 'messageId': 'first',
+        'content': [{'type': 'text', 'text': 'complete'}]});
+      expect(thought('first'), 'complete');
+    }
+    update({'sessionUpdate': 'agent_thought', 'messageId': 'second',
+      'content': [{'type': 'text', 'text': 'another item'}]});
+    expect(thought('first'), 'complete');
+    expect(thought('second'), 'another item');
+    update({'sessionUpdate': 'agent_thought', 'messageId': 'first'});
+    expect(thought('first'), 'complete');
+    update({'sessionUpdate': 'agent_thought', 'messageId': 'first', 'content': null});
+    expect(thought('first'), '');
+    update({'sessionUpdate': 'agent_thought_chunk', 'messageId': 'first',
+      'content': {'type': 'text', 'text': 'next'}});
+    expect(thought('first'), 'next');
+    expect(runtime.messages.where((m) => m.cardData?['type'] == 'deep_thinking'), hasLength(2));
+  });
+
   for (final reason in ['cancelled', 'error', 'end_turn']) {
     test(
       'official $reason settles only unresolved requests owned by that turn',
@@ -756,6 +830,31 @@ void main() {
 
     expect(hostRuntime.messages, hasLength(1));
     expect(hostRuntime.messages.single.id, 'turn-live-user-user');
+  });
+
+  test('v2 history reconciles a lost ACK by persisted client message identity', () {
+    runtime.activeAcpSessionId = 'shared-session';
+    runtime.messages.add(ChatMessageModel.userMessage('same input', id: 'host-user'));
+    runtime.messages.add(ChatMessageModel.userMessage('same input', id: 'other-user'));
+    // The failed transport already released its local dispatch reservation.
+    // Identity, not text or the currently active turn, must match the echo.
+    runtime.currentDispatchTurnId = null;
+    runtime.activeRunId = null;
+    final event = <String, dynamic>{
+      'protocolVersion': 2,
+      'method': 'session/update',
+      'turnId': 'backend-turn',
+      'params': {'sessionId': 'shared-session', 'update': {
+        'sessionUpdate': 'user_message', 'messageId': 'backend-user',
+        'content': [{'type': 'text', 'text': 'same input'}],
+        '_meta': {'codex': {'turnId': 'backend-turn', 'clientId': 'host-user'}},
+      }},
+    };
+    reducer.reduce(runtime: runtime, event: event);
+    reducer.reduce(runtime: runtime, event: event);
+    expect(runtime.messages.where((m) => m.user == 1), hasLength(2));
+    expect(runtime.messages.map((m) => m.id), containsAll(['host-user', 'other-user']));
+    expect(runtime.isAiResponding, isFalse);
   });
 
   test('maps ACP elicitation requests into the shared request card', () {
@@ -3913,7 +4012,29 @@ void main() {
     expect(runtime.messages.single.cardData?['type'], 'permission_section');
   });
 
-  test('deduplicates repeated committed ACP assistant blocks', () {
+  test('Bridge continuation preserves repeated leading token chunks', () {
+    for (final text in ['O', 'O', 'B_QR_CONTINUE_R']) {
+      reducer.reduce(
+        runtime: runtime,
+        event: {
+          'turnId': 'turn-1',
+          'message': {
+            'method': 'session/update',
+            'params': {
+              'sessionId': 'session-1',
+              'update': {
+                'sessionUpdate': 'agent_message_chunk',
+                'content': {'type': 'text', 'text': text},
+              },
+            },
+          },
+        },
+      );
+    }
+    expect(runtime.messages.single.text, 'OOB_QR_CONTINUE_R');
+  });
+
+  test('appends identical ACP chunks with the same message identity', () {
     final event = <String, dynamic>{
       'message': {
         'method': 'session/update',
@@ -3933,11 +4054,11 @@ void main() {
     reducer.reduce(runtime: runtime, event: event);
 
     expect(runtime.messages, hasLength(1));
-    expect(runtime.messages.single.text, '来自 DSH 的完整消息');
+    expect(runtime.messages.single.text, '来自 DSH 的完整消息来自 DSH 的完整消息');
   });
 
   test(
-    'accepts cumulative committed ACP assistant blocks without repetition',
+    'appends ACP chunks whose text starts with the current text',
     () {
       Map<String, dynamic> event(String text) => <String, dynamic>{
         'message': {
@@ -3957,7 +4078,7 @@ void main() {
       reducer.reduce(runtime: runtime, event: event('第一段'));
       reducer.reduce(runtime: runtime, event: event('第一段第二段'));
 
-      expect(runtime.messages.single.text, '第一段第二段');
+      expect(runtime.messages.single.text, '第一段第一段第二段');
     },
   );
 

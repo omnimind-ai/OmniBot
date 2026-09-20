@@ -1,35 +1,20 @@
 package cn.com.omnimind.bot.plugin.official
 
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
+import cn.com.omnimind.bot.omniflow.RuntimeTool
+import kotlinx.serialization.json.*
+import org.junit.Assert.*
 import org.junit.Test
 
 class OmniFlowManagementToolsTest {
-    @Test
-    fun `plugin exposes the complete Function and RunLog management surface`() {
-        val definitions = OmniFlowManagementTools.definitions()
-
-        assertEquals(OmniFlowManagementTools.TOOL_NAMES, definitions.mapTo(linkedSetOf()) { it.name })
-        assertEquals(OmniFlowManagementTools.TOOL_NAMES.size, definitions.size)
-        definitions.forEach { definition ->
-            assertFalse(definition.description.isBlank())
-            assertEquals("object", definition.parameters["type"]?.toString()?.trim('"'))
-        }
-    }
-
-    @Test
-    fun `enhancement uses the official save function contract`() {
-        val names = OmniFlowManagementTools.definitions().map { it.name }
-        assertFalse(names.contains("create_function"))
-        assertFalse(names.contains("update_function"))
-
-        val save = OmniFlowManagementTools.definitions()
-            .first { it.name == OmniFlowManagementTools.SAVE_FUNCTION }
-        val properties = save.parameters["properties"].toString()
-        assertTrue(properties.contains("functions"))
-        assertTrue(properties.contains("enhance"))
-        assertTrue(properties.contains("instruction"))
-        assertFalse(properties.contains("agent_visible"))
+    @Test fun `new package tool keeps its schema without a Kotlin registration branch`() {
+        val projected = runtimeToolDefinition(RuntimeTool(
+            name = "package_added_tool", description = "Provided by package",
+            inputSchema = mapOf("type" to "object", "required" to listOf("query"),
+                "properties" to mapOf("query" to mapOf("type" to "string"))),
+        ))
+        assertEquals("package_added_tool", projected.name)
+        assertEquals("Provided by package", projected.description)
+        assertEquals("query", projected.parameters["required"]!!.jsonArray.single().jsonPrimitive.content)
+        assertEquals("string", projected.parameters["properties"]!!.jsonObject["query"]!!.jsonObject["type"]!!.jsonPrimitive.content)
     }
 }

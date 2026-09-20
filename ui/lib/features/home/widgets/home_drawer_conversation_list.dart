@@ -1027,80 +1027,69 @@ extension _HomeDrawerConversationList on HomeDrawerState {
           : _archiveConversation(conversation),
       child: Column(
         children: [
-          Material(
-            color: Colors.transparent,
-            child: InkWell(
-              onTap: isEditing
-                  ? null
-                  : () => _openConversationFromDrawer(conversation),
-              onLongPress: isEditing
-                  ? null
-                  : () => _startEditingTitle(conversation),
-              borderRadius: BorderRadius.circular(14),
-              splashColor: context.omniPalette.accentPrimary.withValues(
-                alpha: 0.08,
-              ),
-              highlightColor: Colors.transparent,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(4, 9, 2, 9),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+          DrawerConversationRow(
+            onTap: isEditing
+                ? null
+                : () => _openConversationFromDrawer(conversation),
+            onLongPress: isEditing
+                ? null
+                : () => _startEditingTitle(conversation),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.center,
-                      children: [
-                        Expanded(
-                          child: _buildEditableConversationTitle(
-                            title: title,
-                            isEditing: isEditing,
-                          ),
-                        ),
-                        if (showArchivedBadge) ...[
-                          const SizedBox(width: 10),
-                          _buildArchivedBadge(),
-                        ],
-                        if (agentLabel != null && !isEditing) ...[
-                          const SizedBox(width: 10),
-                          _buildConversationAgentBadge(
-                            conversation: conversation,
-                            agentLabel: agentLabel,
-                            isExecuting: isExecuting,
-                            isCompleted: isCompleted,
-                          ),
-                        ],
-                        if (trailingLabel != null && !isEditing) ...[
-                          const SizedBox(width: 10),
-                          Text(
-                            trailingLabel,
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w400,
-                              color: context.omniPalette.textTertiary,
-                              fontFamily: 'PingFang SC',
-                            ),
-                          ),
-                        ],
-                      ],
+                    Expanded(
+                      child: _buildEditableConversationTitle(
+                        title: title,
+                        isEditing: isEditing,
+                      ),
                     ),
-                    _buildConversationImagePreviewStrip(conversation),
-                    if (_isSearchActive && result.matchedPreview != null) ...[
-                      const SizedBox(height: 4),
+                    if (showArchivedBadge) ...[
+                      const SizedBox(width: 10),
+                      _buildArchivedBadge(),
+                    ],
+                    if (agentLabel != null && !isEditing) ...[
+                      const SizedBox(width: 10),
+                      _buildConversationAgentBadge(
+                        conversation: conversation,
+                        agentLabel: agentLabel,
+                        isExecuting: isExecuting,
+                        isCompleted: isCompleted,
+                      ),
+                    ],
+                    if (trailingLabel != null && !isEditing) ...[
+                      const SizedBox(width: 10),
                       Text(
-                        result.matchedPreview!,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
+                        trailingLabel,
                         style: TextStyle(
-                          fontSize: 12,
+                          fontSize: 11,
                           fontWeight: FontWeight.w400,
-                          color: _drawerSecondaryTextColor,
-                          height: 1.4,
+                          color: context.omniPalette.textTertiary,
                           fontFamily: 'PingFang SC',
                         ),
                       ),
                     ],
                   ],
                 ),
-              ),
+                _buildConversationImagePreviewStrip(conversation),
+                if (_isSearchActive && result.matchedPreview != null) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    result.matchedPreview!,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w400,
+                      color: _drawerSecondaryTextColor,
+                      height: 1.4,
+                      fontFamily: 'PingFang SC',
+                    ),
+                  ),
+                ],
+              ],
             ),
           ),
           if (showDivider) const SizedBox(height: 2),
@@ -1246,17 +1235,10 @@ extension _HomeDrawerConversationList on HomeDrawerState {
       );
     }
 
-    return Text(
+    return DrawerConversationTitle(
       title,
-      maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-      style: TextStyle(
-        fontSize: 13,
-        fontWeight: fontWeight,
-        color: _drawerTextColor,
-        height: 1.35,
-        fontFamily: 'PingFang SC',
-      ),
+      color: _drawerTextColor,
+      fontWeight: fontWeight,
     );
   }
 

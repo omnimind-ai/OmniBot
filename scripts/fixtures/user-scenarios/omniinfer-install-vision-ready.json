@@ -1,0 +1,3 @@
+{
+  "prompt": "The GUI scene is now bound to GLM-4.6V, verified with real image input. Continue the system-UI installation of /sdcard/Download/OmniInfer-local.apk, then launch the local host, download/load its model and verify its loopback API. Do not rebuild or restart artifact serving."
+}

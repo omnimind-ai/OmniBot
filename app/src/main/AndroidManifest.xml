@@ -79,7 +79,10 @@
         <package android:name="com.omni.omnilink" />
     </queries>
 
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <application
+        android:appComponentFactory=".localmodel.InferenceComponentFactory"
+        tools:replace="android:appComponentFactory"
         android:name=".App"
         android:allowBackup="true"
         android:enableOnBackInvokedCallback="true"
@@ -92,6 +95,16 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.OmnibotApp">
         <!-- 启动页 Activity -->
+        <activity android:name=".localmodel.LocalModelActivity" android:exported="false" />
+        <service android:name="com.omniinfer.server.OmniInferService"
+            android:exported="false" android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Local AI inference server" />
+        </service>
+        <activity
+            android:name=".activity.PluginAppActivity"
+            android:exported="false"
+            android:theme="@style/Theme.AppCompat.Light.NoActionBar" />
         <activity
             android:name=".activity.LauncherActivity"
             android:exported="true"
@@ -184,6 +197,14 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/quick_log_widget_info" />
         </receiver>
+        <service android:name=".notification.OmniNotificationListener"
+            android:label="通知访问 · 小万"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
         <service
             android:name=".quicklog.QuickLogWidgetService"
             android:permission="android.permission.BIND_REMOTEVIEWS"

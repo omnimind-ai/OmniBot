@@ -32,7 +32,7 @@ if line.strip() == 'EXIT7':
 while True: time.sleep(.1)
 ''')
             linker.chmod(0o755)
-            process=subprocess.Popen(['/bin/sh',str(SCRIPT)],env={**os.environ,'PREFIX':directory,'LINKER':str(linker),'OMNIBOT_TERMINAL_DISTRIBUTION':'alpine','OMNIBOT_HOST_WORKSPACE':'','OMNIBOT_MT_STORAGE_HOST':''},stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,bufsize=1)
+            process=subprocess.Popen(['/bin/sh',str(SCRIPT)],env={**os.environ,'PREFIX':directory,'LINKER':str(linker),'NATIVE_LIB_DIR':'','PROOT_LOADER':str(linker),'OMNIBOT_TERMINAL_DISTRIBUTION':'alpine','OMNIBOT_HOST_WORKSPACE':'','OMNIBOT_MT_STORAGE_HOST':''},stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,bufsize=1)
             runtime=None
             def line():
                 with selectors.DefaultSelector() as ready:

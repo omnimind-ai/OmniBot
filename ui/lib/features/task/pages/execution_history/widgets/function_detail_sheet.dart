@@ -4,6 +4,8 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:ui/theme/theme_context.dart';
 
+import 'function_metadata_dialog.dart';
+
 class FunctionDetailSheet extends StatefulWidget {
   const FunctionDetailSheet({
     super.key,
@@ -12,6 +14,7 @@ class FunctionDetailSheet extends StatefulWidget {
     required this.onReplay,
     required this.onEnhance,
     required this.onDelete,
+    required this.onSaveMetadata,
     this.refreshOnOpen = true,
   });
 
@@ -20,6 +23,12 @@ class FunctionDetailSheet extends StatefulWidget {
   final ValueChanged<Map<String, dynamic>> onReplay;
   final ValueChanged<Map<String, dynamic>> onEnhance;
   final ValueChanged<Map<String, dynamic>> onDelete;
+  final Future<Map<String, dynamic>> Function(
+    String id,
+    String name,
+    String description,
+  )
+  onSaveMetadata;
   final bool refreshOnOpen;
 
   @override
@@ -72,6 +81,18 @@ class _FunctionDetailSheetState extends State<FunctionDetailSheet> {
   void _closeAndRun(ValueChanged<Map<String, dynamic>> action) {
     Navigator.of(context).pop();
     action(_function);
+  }
+
+  Future<void> _edit() async {
+    final saved = await showDialog<Map<String, dynamic>>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => FunctionMetadataDialog(
+        function: _function,
+        onSave: widget.onSaveMetadata,
+      ),
+    );
+    if (mounted && saved != null) setState(() => _function = saved);
   }
 
   @override
@@ -143,6 +164,14 @@ class _FunctionDetailSheetState extends State<FunctionDetailSheet> {
                           ),
                         ],
                       ),
+                    ),
+                    TextButton.icon(
+                      key: const ValueKey('function-detail-edit'),
+                      onPressed: _loading || _loadFailed || functionId.isEmpty
+                          ? null
+                          : _edit,
+                      icon: const Icon(Icons.edit_outlined, size: 18),
+                      label: Text(_text(context, '编辑', 'Edit')),
                     ),
                     IconButton(
                       tooltip: _text(context, '关闭', 'Close'),

@@ -1,0 +1,21 @@
+{
+  "name": "GLM-5.1 Life XP saved-project midnight follow-up and publication",
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_LIFE_XP_MIDNIGHT_FIX",
+      "scenario": "life-xp-midnight-followup.json",
+      "timeoutMs": 300000
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_LIFE_XP_MIDNIGHT_FIX_DONE",
+      "timeoutMs": 2400000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_LIFE_XP_MIDNIGHT_FIX",
+      "expected": "done"
+    }
+  ]
+}

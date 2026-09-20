@@ -10,7 +10,7 @@
 </p>
 
 <h3 align="center">
-Your On-Device AI Assistant
+Multiple AI Agents, Right in Your Pocket
 </h3>
 
 <div align="center">
@@ -32,17 +32,35 @@ Your On-Device AI Assistant
 |
 </p>
 
-> OmniBot runs directly on your Android device and combines chat, agent tools, local workspaces, and system integrations in one app.
-> 🎉 Our iOS & macOS version: [ViaVera](https://github.com/omnimind-ai/ViaVera)
+> Use Kimi Code / DeepSeek Harness WebUI on Android, switch between Agent Harnesses, and run multiple agents in parallel.
+> iOS & macOS: [ViaVera](https://github.com/omnimind-ai/ViaVera)
 
-OmniBot is an on-device AI agent built with native Android Kotlin and Flutter. Instead of stopping at chat, it focuses on the full loop of **understand -> decide -> execute -> reflect**.
+OpenOmniBot brings AI chat, agent runtimes, local workspaces, and Android system tools into one app. Choose an agent, delegate tasks, use tools, and collect results from your phone.
 
 <h2 id="core-capabilities">Core Capabilities</h2>
 
-- **Extensible tool ecosystem**: Skills, Alpine environment, browser access, MCP, and Android system-level tools.
-- **System-level actions**: Supports scheduled tasks, alarms, calendar creation/query/update, and audio playback control.
-- **Memory system**: Short-term and long-term memory with embedding support.
-- **Productivity tools**: Read and write files, browse the workspace, use the browser, and access the terminal.
+- **Kimi / DeepSeek WebUI integration**: Use Kimi Code Web and DeepSeek Harness Web on your phone. MCP/plugin tools launch the local services, check their status, and stop them.
+- **Switch between Harnesses**: Choose Xiaowan, Codex, Claude Code, OpenCode, Kimi Code, or DeepSeek Harness from a shared chat interface to suit the task.
+- **Multiple agents in parallel**: Explicitly request delegation or parallel work to run independent subtasks in subagents with isolated contexts, then combine their results.
+- **Tools and skills**: Extend agents with Skills, MCP, browser access, a terminal, local workspaces, and Android system tools.
+- **System integration and memory**: Scheduled tasks, alarms, calendar management, audio playback control, and short-term and long-term memory.
+- **Connect to Codex on your computer**: Access your computer's Codex from your phone through [codex-bridge](tools/codex-bridge/README.md).
+
+### Kimi / DeepSeek WebUI: an agent workspace on your phone
+
+Install the corresponding runtime components and configure a compatible Provider and model, then ask the assistant to “Open Kimi Code WebUI” or “Open DeepSeek Harness WebUI.” The built-in plugin starts the local Web service, opens its interface, and provides status and stop tools. Model connections use the Provider configured in the app.
+
+### Switch Harnesses to suit the task
+
+A Harness is the runtime in which an agent executes tasks. Use the Agent selector in chat to choose Xiaowan, Codex, Claude Code, OpenCode, Kimi Code, or DeepSeek Harness. Install the relevant components and configure a model first; available models and tools depend on the selected Harness and Provider.
+
+### Run agents in parallel, then bring the results together
+
+For example, ask an agent that supports subtask delegation:
+
+> Delegate three tasks in parallel: analyze the project structure, review test coverage, and identify documentation gaps. Combine the findings and recommend next steps.
+
+Subtasks run independently with isolated contexts, optional roles and concurrency settings, and aggregated results. This suits work that can be split into independent parts, such as code exploration, research organization, and option comparisons. Scheduling capabilities depend on the selected Harness.
 
 <p align="center">
   <img src="docs/tutorial/example.png" alt="Example" />

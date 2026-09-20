@@ -22,6 +22,30 @@ import org.junit.Test
 
 class OmniFlowModelHostTest {
     @Test
+    fun `python model turn always requests the stream consumed by the host`() = runBlocking {
+        val host = OmniFlowModelHost(
+            modelClient = object : OmniFlowModelClient {
+                override suspend fun streamTurn(
+                    request: ChatCompletionRequest,
+                    onReasoningUpdate: (suspend (String) -> Unit)?,
+                ): ChatCompletionTurn {
+                    assertEquals(true, request.stream)
+                    assertEquals("configured-model", request.model)
+                    return ChatCompletionTurn(message = ChatCompletionMessage(role = "assistant"))
+                }
+            },
+        )
+        for (stream in listOf(null, false, true)) {
+            val request = mutableMapOf<String, Any>(
+                "model" to "configured-model",
+                "messages" to listOf(mapOf("role" to "user", "content" to "author function")),
+            )
+            if (stream != null) request["stream"] = stream
+            host.modelTurn(mapOf("model" to "configured-model", "request" to request))
+        }
+    }
+
+    @Test
     fun `json completion accepts object content when provider omits tool call`() = runBlocking {
         val host = OmniFlowModelHost(
             modelClient = object : OmniFlowModelClient {
@@ -45,7 +69,7 @@ class OmniFlowModelHostTest {
     }
 
     @Test
-    fun `json completion uses streamed native submit json tool call`() = runBlocking {
+    fun `json completion requests standard json mode without forced tools`() = runBlocking {
         var receivedRequest: ChatCompletionRequest? = null
         val host = OmniFlowModelHost(
             modelClient = object : OmniFlowModelClient {
@@ -86,8 +110,9 @@ class OmniFlowModelHostTest {
         assertEquals(OmniVlmPlugin.MODEL_SCENE, receivedRequest?.model)
         assertEquals(321, receivedRequest?.maxCompletionTokens)
         assertEquals(0.0, receivedRequest?.temperature)
-        assertEquals("required", receivedRequest?.toolChoice?.jsonPrimitive?.content)
-        assertEquals("submit_json", receivedRequest?.tools?.single()?.function?.name)
+        assertEquals(null, receivedRequest?.toolChoice)
+        assertEquals(emptyList<Any>(), receivedRequest?.tools)
+        assertEquals("json_object", receivedRequest?.responseFormat?.get("type")?.jsonPrimitive?.content)
     }
 
     @Test
@@ -101,7 +126,7 @@ class OmniFlowModelHostTest {
                     environment: Map<String, String>,
                 ): Process = error("process_not_expected")
 
-                override suspend fun ensurePython(context: Context, expectedVersion: String) = Unit
+                override suspend fun prepareEnvironment(context: Context, command: String) = Unit
 
                 override suspend fun resolveRuntimeSkill(
                     context: Context,
@@ -136,9 +161,9 @@ class OmniFlowModelHostTest {
         assertEquals(OmniVlmPlugin.MODEL_SCENE, receivedRequest?.model)
         assertEquals(321, receivedRequest?.maxCompletionTokens)
         assertEquals(0.0, receivedRequest?.temperature)
-        assertEquals("required", receivedRequest?.toolChoice?.jsonPrimitive?.content)
-        assertEquals("submit_json", receivedRequest?.tools?.single()?.function?.name)
-        assertEquals(null, receivedRequest?.responseFormat)
+        assertEquals(null, receivedRequest?.toolChoice)
+        assertEquals(emptyList<Any>(), receivedRequest?.tools)
+        assertEquals("json_object", receivedRequest?.responseFormat?.get("type")?.jsonPrimitive?.content)
     }
 
     @Test
@@ -440,7 +465,7 @@ class OmniFlowModelHostTest {
                     environment: Map<String, String>,
                 ): Process = error("process_not_expected")
 
-                override suspend fun ensurePython(context: Context, expectedVersion: String) = Unit
+                override suspend fun prepareEnvironment(context: Context, command: String) = Unit
 
                 override suspend fun resolveRuntimeSkill(
                     context: Context,
@@ -474,8 +499,8 @@ class OmniFlowModelHostTest {
         assertEquals("scene.dispatch.model", receivedRequest?.model)
         assertEquals(321, receivedRequest?.maxCompletionTokens)
         assertEquals(0.0, receivedRequest?.temperature)
-        assertEquals("required", receivedRequest?.toolChoice?.jsonPrimitive?.content)
-        assertEquals("submit_json", receivedRequest?.tools?.single()?.function?.name)
-        assertEquals(null, receivedRequest?.responseFormat)
+        assertEquals(null, receivedRequest?.toolChoice)
+        assertEquals(emptyList<Any>(), receivedRequest?.tools)
+        assertEquals("json_object", receivedRequest?.responseFormat?.get("type")?.jsonPrimitive?.content)
     }
 }

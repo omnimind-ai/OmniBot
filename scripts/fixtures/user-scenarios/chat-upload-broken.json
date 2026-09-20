@@ -1,0 +1,3 @@
+{
+  "prompt": "Try reading the attached PDF using file_read. If the tool cannot extract its body, explain the error briefly and say UNREADABLE. Do not guess its contents or use another tool."
+}

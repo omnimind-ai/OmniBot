@@ -165,10 +165,12 @@ class RunLogTimelineStepCard extends StatelessWidget {
     final action = _map(step['action']);
     final result = _map(step['result']);
     final metadata = _map(step['metadata']);
-    final tool = _string(action['tool']).isEmpty
-        ? _string(action['type'])
-        : _string(action['tool']);
-    final args = _map(action['args']);
+    final tool = _firstText([
+      action['action_type'],
+      action['tool'],
+      action['type'],
+    ]);
+    final args = _actionArguments(action);
     final success = result['success'] != false;
     final stepNumber = fallbackIndex + 1;
     final title = _actionTitle(context, tool, args);
@@ -349,10 +351,12 @@ class RunLogStepDetailSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     final palette = context.omniPalette;
     final action = _map(step['action']);
-    final args = _map(action['args']);
-    final tool = _string(action['tool']).isEmpty
-        ? _string(action['type'])
-        : _string(action['tool']);
+    final args = _actionArguments(action);
+    final tool = _firstText([
+      action['action_type'],
+      action['tool'],
+      action['type'],
+    ]);
     // Official OmniFlow RunLog steps carry state ids in observation.auxiliaries;
     // keep accepting the old explicit fields for legacy stored payloads.
     final beforeStateId = _firstText([
@@ -762,21 +766,27 @@ String _actionTitle(
     'long_press' => _text(context, '长按', 'Long press'),
     'input_text' || 'type' => _text(context, '输入文本', 'Enter text'),
     'swipe' => _text(context, '滑动', 'Swipe'),
-    'press_key' => _text(context, '系统按键', 'Press key'),
+    'press_key' || 'keyboard_enter' => _text(context, '系统按键', 'Press key'),
     'wait' => _text(context, '等待', 'Wait'),
     _ => tool.isEmpty ? _text(context, '操作', 'Action') : tool,
   };
   final target = switch (tool) {
-    'open_app' => _string(args['package_name']),
+    'open_app' => _firstText([args['app_name'], args['package_name']]),
     'click' || 'long_press' => _coordinates(args),
     'input_text' || 'type' => _string(args['text']),
     'swipe' => _firstText([args['direction'], _coordinates(args)]),
-    'press_key' => _string(args['key']),
+    'press_key' ||
+    'keyboard_enter' => _firstText([args['keycode'], args['key']]),
     'wait' => args['duration_ms'] == null ? '' : '${args['duration_ms']} ms',
     _ => '',
   };
   return target.isEmpty ? action : '$action · $target';
 }
+
+// Official RunLogs carry flat action_type payloads. Legacy local records used
+// tool/args. This is display-only; retain the original action as raw evidence.
+Map<String, dynamic> _actionArguments(Map<String, dynamic> action) =>
+    action.containsKey('action_type') ? action : _map(action['args']);
 
 String _sourceLabel(BuildContext context, Map<String, dynamic> metadata) {
   return switch (_string(metadata['source']).toLowerCase()) {

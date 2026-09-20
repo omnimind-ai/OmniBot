@@ -159,6 +159,7 @@ internal fun shouldRouteLocalAcpRequest(
     if (!remoteEnabled) return false
     if (method !in LOCAL_ACP_METHODS && !isAcpExtensionMethod(method)) return false
     val owner = requestedAgentId ?: sessionAgentId ?: conversationAgentId
+    if (owner == "codex-remote") return false
     if (owner == AcpAgentProfileStore.CODEX_AGENT_ID) {
         return localCodexSessionOwned
     }
@@ -218,6 +219,9 @@ class AgentRuntimeManager private constructor(
      * in this registry for the lifetime of the connected bridge.
      */
     private val sessionConversationIds = ConcurrentHashMap<String, Long>()
+    // Official resume arguments for the sessions this host is observing.
+    // They survive a socket outage and are removed by session close/delete.
+    private val remoteSessionResumeParams = ConcurrentHashMap<String, Map<String, Any?>>()
     private val historyRepository = AgentConversationHistoryRepository(appContext)
     private val remoteConfigStore = CodexRemoteBridgeConfigStore(appContext)
     private val acpAgentProfileStore = AcpAgentProfileStore(appContext)
@@ -530,6 +534,10 @@ class AgentRuntimeManager private constructor(
         sessionMutex.withLock {
             invalidateLocalProbeCache()
             val runtime = resolveRuntime()
+            if (runtime.kind == AgentRuntimeKind.REMOTE && session?.isRecovering == true) {
+                session?.awaitRecovery()
+                if (session?.isRunning == true) return status()
+            }
             val localDistributionId = if (runtime.kind == AgentRuntimeKind.LOCAL) {
                 TerminalDistribution.selected().id
             } else {
@@ -577,6 +585,7 @@ class AgentRuntimeManager private constructor(
             }
             clearActiveTurns()
             sessionConversationIds.clear()
+            remoteSessionResumeParams.clear()
             val nextSession = RemoteCodexAppServerSession(
                 scope = scope,
                 onServerMessage = ::handleServerMessage,
@@ -585,7 +594,16 @@ class AgentRuntimeManager private constructor(
                         config = runtime.remoteConfig,
                         scope = scope
                     )
-                }
+                },
+                restoreSessions = { restored ->
+                    for ((sessionId, params) in remoteSessionResumeParams.toMap()) {
+                        if (remoteSessionResumeParams[sessionId] != params) continue
+                        val response = restored.sendRequest("session/resume",
+                            params + ("replayFrom" to mapOf("type" to "start")),
+                            timeoutMs = 30_000L)
+                        check(response["error"] == null) { "ACP session recovery failed for $sessionId" }
+                    }
+                },
             )
             session = nextSession
             activeRuntime = runtime.kind
@@ -623,6 +641,7 @@ class AgentRuntimeManager private constructor(
             }
             remotePromptExecutions.clear()
             sessionConversationIds.clear()
+            remoteSessionResumeParams.clear()
             invalidateLocalProbeCache()
             clearPendingEvents()
             allLocalRuntimes().forEach { it.disconnect() }
@@ -722,7 +741,10 @@ class AgentRuntimeManager private constructor(
         method: String,
         args: Map<String, Any?>,
     ): Any? {
-        val canonicalArgs = AcpSessionCompatibility.canonicalize(method, args)
+        val normalizedArgs = AcpSessionCompatibility.canonicalize(method, args)
+        val canonicalArgs = if (method == "session/prompt") {
+            historyRepository.restorePromptAttachmentReferences(normalizedArgs)
+        } else normalizedArgs
         if (method == "initialize") {
             return initializeAcp(canonicalArgs)
         }
@@ -969,6 +991,8 @@ class AgentRuntimeManager private constructor(
             )
         }
         bindSessionConversation(sessionId, args.longValue("conversationId"))
+        remoteSessionResumeParams[sessionId] = mapOf("sessionId" to sessionId,
+            "cwd" to cwd, "mcpServers" to emptyList<Any?>())
         return payload.withAcpSessionId().withLocalIds(
             threadId = sessionId,
             conversationId = conversationIdForSession(sessionId)
@@ -981,18 +1005,34 @@ class AgentRuntimeManager private constructor(
         val sessionId = args.stringValue("sessionId")
             ?: args.stringValue("threadId")
             ?: throw IllegalArgumentException("sessionId is required")
-        val params = linkedMapOf<String, Any?>("sessionId" to sessionId)
-        args.stringValue("cwd")?.let { params["cwd"] = it }
+        val params = linkedMapOf<String, Any?>(
+            "sessionId" to sessionId,
+            "cwd" to (sanitizeAgentRuntimeAbsolutePath(args.stringValue("cwd"))
+                ?: resolveDefaultCwd()),
+            "mcpServers" to emptyList<Any?>(),
+        )
         args["additionalDirectories"]?.let { params["additionalDirectories"] = it }
-        args["_meta"]?.let { params["_meta"] = it }
+        params["_meta"] = args.mapValue("_meta") +
+            ("dev.omnimind.codex/includeThreadSnapshot" to true)
+        val connected = ensureConnectedSession()
         bindSessionConversation(sessionId, args.longValue("conversationId"))
         return try {
-            (request("session/load", params) as? Map<String, Any?> ?: emptyMap())
+            val protocol = connected.protocolVersion
+            if (protocol == 2) params["replayFrom"] = mapOf("type" to "start")
+            (request(if (protocol == 2) "session/resume" else "session/load", params) as? Map<String, Any?> ?: emptyMap())
+                .let { payload ->
+                    remoteSessionResumeParams[sessionId] = params.toMap()
+                    val snapshot = payload.mapValue("_meta")
+                        .mapValue("dev.omnimind.codex/threadSnapshot")
+                    if (snapshot.stringValue("id") == sessionId) {
+                        payload + ("thread" to snapshot)
+                    } else payload
+                }
                 .withAcpSessionId()
                 .withLocalIds(
                     threadId = sessionId,
                     conversationId = conversationIdForSession(sessionId),
-                )
+                ) + ("protocolVersion" to protocol)
         } catch (error: Throwable) {
             if (!isUnsupportedRemoteAcpMethod(error)) throw error
             requestWithResolvedThread("thread/resume", args)
@@ -1048,6 +1088,7 @@ class AgentRuntimeManager private constructor(
 
     private fun unbindSessionConversation(sessionId: String) {
         sessionConversationIds.remove(sessionId.trim())
+        remoteSessionResumeParams.remove(sessionId.trim())
     }
 
     /** Forward optional ACP session methods with only their official fields. */
@@ -1127,6 +1168,9 @@ class AgentRuntimeManager private constructor(
             ?: startRemoteAcpSession(args)["sessionId"]?.toString()
             ?: throw IllegalStateException("ACP session/new did not return a session id.")
         bindSessionConversation(sessionId, args.longValue("conversationId"))
+        if (ensureConnectedSession().protocolVersion == 2) {
+            return promptRemoteAcpV2Session(sessionId, args)
+        }
         val requestId = args.stringValue("requestId")?.takeIf { it.isNotBlank() }
         requestId?.let { id ->
             remoteTurnOwnership.requestRecord(sessionId, id)?.let { known ->
@@ -1207,6 +1251,32 @@ class AgentRuntimeManager private constructor(
             throw error
         } finally {
             remotePromptExecutions.remove(sessionId, execution)
+        }
+    }
+
+    /** v2 acknowledges admission; state_update retains ownership after return. */
+    private suspend fun promptRemoteAcpV2Session(
+        sessionId: String,
+        args: Map<String, Any?>,
+    ): Map<String, Any?> {
+        check(pendingTurnThreads.add(sessionId)) { "ACP prompt admission is already pending." }
+        try {
+            val prompt = resolveInput(args, sessionId).map { block ->
+                block.filterKeys { it != "text_elements" }
+            }
+            val response = request("session/prompt", mapOf(
+                "sessionId" to sessionId, "prompt" to prompt,
+                "_meta" to args.mapValue("_meta"),
+            )) as? Map<String, Any?> ?: emptyMap()
+            val backendTurnId = response.mapValue("_meta").mapValue("codex").stringValue("turnId")
+                ?: remoteTurnOwnership.activeTurnId(sessionId)
+            return response + mapOf(
+                "sessionId" to sessionId, "threadId" to sessionId,
+                "conversationId" to conversationIdForSession(sessionId),
+                "turnId" to backendTurnId, "protocolVersion" to 2, "completed" to false,
+            )
+        } finally {
+            pendingTurnThreads.remove(sessionId)
         }
     }
 
@@ -2560,6 +2630,7 @@ class AgentRuntimeManager private constructor(
     }
 
     private suspend fun ensureConnectedSession(): RemoteCodexAppServerSession {
+        session?.takeIf { it.isRecovering }?.awaitRecovery()
         val runtime = resolveRuntime()
         val localDistributionId = if (runtime.kind == AgentRuntimeKind.LOCAL) {
             TerminalDistribution.selected().id
@@ -2615,6 +2686,7 @@ class AgentRuntimeManager private constructor(
                 )
                 return
             }
+            if (extractRemoteCodexServerParams(publicMessage)["recovering"] == true) return
             if (finishRemoteDisconnect()) return
         }
         val rawExtensionParams = publicMessage["params"]
@@ -2682,7 +2754,7 @@ class AgentRuntimeManager private constructor(
         // when the host itself supplied the attribution. Provider payloads
         // with an arbitrary turn id are not enough: they may be delayed data
         // from an older prompt.
-        val hostAssignedTurn = publicMessage["hostTurnId"] == true ||
+        var hostAssignedTurn = publicMessage["hostTurnId"] == true ||
             (sourceAgentId == null &&
                 remoteActiveTurnId != null &&
                 turnId == remoteActiveTurnId) ||
@@ -2733,6 +2805,11 @@ class AgentRuntimeManager private constructor(
                 protocolEventType == "task_started" ||
                 protocolEventType == "turn_started")) {
             admitRemoteTurn(threadId, turnId)
+        }
+        if (sourceAgentId == null && !threadId.isNullOrBlank() && !turnId.isNullOrBlank() &&
+            conversationIdForSession(threadId) != null && isAcpV2State(publicMessage, "running")) {
+            admitRemoteTurn(threadId, turnId)
+            hostAssignedTurn = true
         }
 
         val eventAgentId = if (sourceAgentId == null) {
@@ -2795,6 +2872,7 @@ class AgentRuntimeManager private constructor(
         emitEvent(
             linkedMapOf(
                 "method" to method,
+                "protocolVersion" to publicMessage["protocolVersion"],
                 "id" to message["id"],
                 "workspaceId" to RemoteCodexAppServerSession.DEFAULT_WORKSPACE_ID,
                 "threadId" to threadId,
@@ -2808,6 +2886,12 @@ class AgentRuntimeManager private constructor(
                 "message" to publicMessage
             )
         )
+
+        if (sourceAgentId == null && !threadId.isNullOrBlank() && !turnId.isNullOrBlank() &&
+            isAcpV2State(publicMessage, "idle")) {
+            val stopReason = params.mapValue("update").stringValue("stopReason") ?: "end_turn"
+            clearActiveTurn(threadId, turnId, terminalStatus = stopReason)
+        }
 
         if (method == "turn/completed" ||
             method == "turn/failed" ||

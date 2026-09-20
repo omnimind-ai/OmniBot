@@ -1,0 +1,3 @@
+{
+  "prompt": "Read the attached PDF with file_read. First line: {{MARKER}}_PDF: <invoice code>, <total>. Extract actual contents; do not guess."
+}

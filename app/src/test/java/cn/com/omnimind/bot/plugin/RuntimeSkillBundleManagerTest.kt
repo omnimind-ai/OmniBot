@@ -12,6 +12,13 @@ import org.junit.Assert.fail
 import org.junit.Test
 
 class RuntimeSkillBundleManagerTest {
+    @org.junit.Test fun `absent remote metadata cannot make an old packaged installation current`() {
+        org.junit.Assert.assertFalse(matchesRuntimeArchiveMarker(null, null))
+        org.junit.Assert.assertFalse(matchesRuntimeArchiveMarker("old", null))
+        org.junit.Assert.assertFalse(matchesRuntimeArchiveMarker("old", "new"))
+        org.junit.Assert.assertTrue(matchesRuntimeArchiveMarker("new\n", "new"))
+    }
+
     @Test
     fun `component archive requires a pinned sha256`() {
         val error = expectFailure {

@@ -94,3 +94,9 @@
 # Ktor's IntelliJ debugger detector probes these JVM-only management APIs.
 -dontwarn java.lang.management.ManagementFactory
 -dontwarn java.lang.management.RuntimeMXBean
+
+# PDFBox-Android 2.0.27.0 deliberately makes JPEG 2000 decoding optional.
+# JPXFilter checks Class.forName before using this class and reports a missing
+# image reader. Our attachment reader extracts the text layer, not JPX pixels.
+# https://github.com/TomRoush/PdfBox-Android#reading-jpx-images
+-dontwarn com.gemalto.jp2.JP2Decoder

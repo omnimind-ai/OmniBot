@@ -4,6 +4,26 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ui/features/home/pages/agent/codex_bridge_qr_scanner_page.dart';
 
 void main() {
+  test(
+    'selected session is carried separately from transport and credentials',
+    () {
+      final result = CodexBridgeQrScanResult.tryParse(
+        jsonEncode({
+          'type': 'omnibot.codex_bridge',
+          'bridgeUrl': 'wss://bridge.example.com/codex',
+          'token': 'fixture',
+          'cwd': '/project',
+          'sessionId': 'selected-session',
+        }),
+      );
+      expect(result?.sessionId, 'selected-session');
+      final plain = CodexBridgeQrScanResult.tryParse(
+        'wss://bridge.example.com/codex?sessionId=selected-session&token=fixture&cwd=%2Fproject',
+      );
+      expect(plain?.sessionId, 'selected-session');
+      expect(plain?.bridgeUrl, 'wss://bridge.example.com/codex');
+    },
+  );
   test('parses omnibot codex bridge QR payload', () {
     final payload = Uri(
       scheme: 'omnibot',

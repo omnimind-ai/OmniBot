@@ -51,6 +51,7 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
   set isLoadingMore(bool value);
   int get messageOffset;
   set messageOffset(int value);
+  int conversationHistoryRevision(int conversationId, ConversationMode mode) => 0;
   int captureConversationLifecycleToken();
   bool isConversationLifecycleTokenCurrent(int token);
   void invalidateConversationLifecycle();
@@ -298,11 +299,13 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
       return;
     }
     final operationMode = mode ?? activeConversationModeValue;
+    final historyRevision = conversationHistoryRevision(conversationId, operationMode);
     try {
       final conversations = await ConversationService.getAllConversations(
         includeArchived: true,
       );
-      if (!_isConversationOperationCurrent(token)) {
+      if (!_isConversationOperationCurrent(token) ||
+          conversationHistoryRevision(conversationId, operationMode) != historyRevision) {
         return;
       }
       // Metadata I/O may overlap ACP updates or completion. Read the owning
@@ -327,7 +330,8 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
       final resolvedConversation = inMemoryConversation ?? conversation;
 
       if (resolvedConversation != null) {
-        if (!_isConversationOperationCurrent(token)) {
+        if (!_isConversationOperationCurrent(token) ||
+          conversationHistoryRevision(conversationId, operationMode) != historyRevision) {
           return;
         }
         setState(() {
@@ -336,7 +340,8 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
           _hasSavedConversation = false;
         });
       } else {
-        if (!_isConversationOperationCurrent(token)) {
+        if (!_isConversationOperationCurrent(token) ||
+          conversationHistoryRevision(conversationId, operationMode) != historyRevision) {
           return;
         }
         setState(() {
@@ -366,7 +371,8 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
               offset: 0,
               expectedMessageCount: resolvedConversation?.messageCount,
             );
-        if (!_isConversationOperationCurrent(token)) {
+        if (!_isConversationOperationCurrent(token) ||
+          conversationHistoryRevision(conversationId, operationMode) != historyRevision) {
           return;
         }
         final latestRuntimeMessages = preferInMemory
@@ -416,6 +422,7 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
     if (conversationId == null) return;
     if (isEphemeralConversation(conversationId, operationMode)) return;
 
+    final historyRevision = conversationHistoryRevision(conversationId, operationMode);
     setState(() {
       isLoadingMore = true;
     });
@@ -429,6 +436,11 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
             offset: messageOffset,
             expectedMessageCount: currentConversation?.messageCount,
           );
+      if (_isConversationOperationCurrent(token) &&
+          conversationHistoryRevision(conversationId, operationMode) != historyRevision) {
+        setState(() { isLoadingMore = false; });
+        return;
+      }
       if (_isConversationOperationCurrent(token)) {
         setState(() {
           messages.addAll(pagedResult.messages);

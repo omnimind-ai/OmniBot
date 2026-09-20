@@ -83,7 +83,11 @@ internal class ManualRecordingEngine(
             val after = safeObserve(stage = "${sequence}_after", command = command)
             if (operationResult.success || command.persistOnFailure) {
                 val sourceStateRequired = command.action.tool in SOURCE_STATE_REQUIRED_TOOLS
-                val evidenceComplete = !sourceStateRequired || !before.state?.xml.isNullOrBlank()
+                val evidenceComplete = !sourceStateRequired || listOf(before, after).all {
+                    !it.state?.xml.isNullOrBlank() && !it.state?.screenshotPath.isNullOrBlank()
+                }
+                val evidenceError = if (evidenceComplete) null else
+                    before.captureError ?: after.captureError ?: "state_evidence_incomplete"
                 val action = ManualRecordedAction(
                     action = command.action,
                     title = command.title,
@@ -101,13 +105,13 @@ internal class ManualRecordingEngine(
                             operationResult.success
                         },
                         "evidence_complete" to evidenceComplete,
-                        "evidence_error" to before.captureError.takeUnless { evidenceComplete },
+                        "evidence_error" to evidenceError,
                     ).filterValues { it != null } + operationResult.diagnostics,
                     recordingBackend = command.source,
                     displayWidth = after.state?.displayWidth ?: before.state?.displayWidth ?: 0,
                     displayHeight = after.state?.displayHeight ?: before.state?.displayHeight ?: 0,
                     evidenceComplete = evidenceComplete,
-                    evidenceError = before.captureError.takeUnless { evidenceComplete },
+                    evidenceError = evidenceError,
                     operationSuccess = operationResult.success,
                     operationError = operationResult.message.takeUnless { operationResult.success },
                 )

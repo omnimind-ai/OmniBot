@@ -133,6 +133,37 @@ void main() {
     ModelsDevCatalogService.resetForTesting();
   });
 
+  testWidgets(
+    'small local model entry opens native on-demand service without an Agent turn',
+    (tester) async {
+      var opens = 0;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(assistCoreChannel, (call) async {
+            if (call.method == 'openLocalModelService') opens++;
+            if (call.method == 'listModelProviderProfiles')
+              return profilePayload();
+            return null;
+          });
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.lightTheme,
+          home: const ModelProviderSettingPage(),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final entry = find.byKey(const ValueKey('install-omniinfer'));
+      expect(tester.widget(entry), isA<TextButton>());
+      expect(tester.getSize(entry).height, lessThanOrEqualTo(36));
+      await tester.tap(entry);
+      await tester.pumpAndSettle();
+      expect(opens, 1);
+      expect(find.byType(ModelProviderSettingPage), findsOneWidget);
+      await tester.tap(entry);
+      await tester.pumpAndSettle();
+      expect(opens, 2);
+    },
+  );
+
   for (final fieldLabel in ['API Key', 'Base URL']) {
     testWidgets(
       'refresh persists the $fieldLabel draft and reopening queries again',
@@ -220,43 +251,60 @@ void main() {
     );
   }
 
-  testWidgets('model discovery TLS failure stays visible and explicit retry recovers', (tester) async {
-    tester.view.physicalSize = const Size(1080, 2200);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    var calls = 0;
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(assistCoreChannel, (call) async {
-      if (call.method == 'listModelProviderProfiles') return profilePayload();
-      if (call.method == 'fetchProviderModels') {
-        calls++;
-        if (calls == 1) {
-          throw PlatformException(
-            code: 'FETCH_PROVIDER_MODELS_ERROR',
-            message: 'Trust anchor for private-server not found',
-            details: {'failureKind': 'provider_tls_certificate_failure'},
-          );
-        }
-        return [{'id': 'gpt-4o', 'displayName': 'gpt-4o'}];
-      }
-      return null;
-    });
-    await tester.pumpWidget(MaterialApp(
-      theme: AppTheme.lightTheme,
-      home: const ModelProviderSettingPage(),
-    ));
-    await tester.pumpAndSettle();
-    await tester.pump(const Duration(seconds: 10));
-    expect(calls, 1);
-    expect(find.textContaining('Check whether your network requires sign-in'), findsOneWidget);
-    expect(find.textContaining('private-server'), findsNothing);
-    await tester.tap(find.text('Retry'));
-    await tester.pumpAndSettle();
-    expect(calls, 2);
-    expect(find.byKey(const ValueKey('provider-model-gpt-4o')), findsOneWidget);
-    expect(find.textContaining('Check whether your network requires sign-in'), findsNothing);
-  });
+  testWidgets(
+    'model discovery TLS failure stays visible and explicit retry recovers',
+    (tester) async {
+      tester.view.physicalSize = const Size(1080, 2200);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      var calls = 0;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(assistCoreChannel, (call) async {
+            if (call.method == 'listModelProviderProfiles')
+              return profilePayload();
+            if (call.method == 'fetchProviderModels') {
+              calls++;
+              if (calls == 1) {
+                throw PlatformException(
+                  code: 'FETCH_PROVIDER_MODELS_ERROR',
+                  message: 'Trust anchor for private-server not found',
+                  details: {'failureKind': 'provider_tls_certificate_failure'},
+                );
+              }
+              return [
+                {'id': 'gpt-4o', 'displayName': 'gpt-4o'},
+              ];
+            }
+            return null;
+          });
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.lightTheme,
+          home: const ModelProviderSettingPage(),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(seconds: 10));
+      expect(calls, 1);
+      expect(
+        find.textContaining('Check whether your network requires sign-in'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('private-server'), findsNothing);
+      await tester.tap(find.text('Retry'));
+      await tester.pumpAndSettle();
+      expect(calls, 2);
+      expect(
+        find.byKey(const ValueKey('provider-model-gpt-4o')),
+        findsOneWidget,
+      );
+      expect(
+        find.textContaining('Check whether your network requires sign-in'),
+        findsNothing,
+      );
+    },
+  );
 
   testWidgets('late refresh cannot display models for a changed draft', (
     tester,
@@ -404,18 +452,19 @@ void main() {
     messenger.setMockMethodCallHandler(assistCoreChannel, (call) async {
       if (call.method == 'listModelProviderProfiles') {
         final payload = profilePayload();
-        (payload['profiles'] as List<Map<String, dynamic>>)
-            .add(<String, dynamic>{
-              'id': 'omnibot-official-ai',
-              'name': 'OmniBot 官方 AI',
-              'baseUrl': 'https://official.example/ai',
-              'sourceType': 'omnibot_official',
-              'readOnly': true,
-              'ready': true,
-              'configured': true,
-              'protocolType': 'openai_compatible',
-              'wireApi': 'chat_completions',
-            });
+        (payload['profiles'] as List<Map<String, dynamic>>).add(
+          <String, dynamic>{
+            'id': 'omnibot-official-ai',
+            'name': 'OmniBot 官方 AI',
+            'baseUrl': 'https://official.example/ai',
+            'sourceType': 'omnibot_official',
+            'readOnly': true,
+            'ready': true,
+            'configured': true,
+            'protocolType': 'openai_compatible',
+            'wireApi': 'chat_completions',
+          },
+        );
         return payload;
       }
       return null;
@@ -840,6 +889,269 @@ void main() {
 
     expect(saveCalls, 1);
   });
+
+  testWidgets('editing API key during pending save preserves the newer key', (
+    tester,
+  ) async {
+    final pending = Completer<Map<String, dynamic>>();
+    final saves = <Map<dynamic, dynamic>>[];
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(assistCoreChannel, (call) async {
+      if (call.method == 'listModelProviderProfiles') return profilePayload();
+      if (call.method == 'saveModelProviderProfile') {
+        final args = Map<dynamic, dynamic>.from(call.arguments as Map);
+        saves.add(args);
+        if (saves.length == 1) return pending.future;
+        return savedProfileResponse(args);
+      }
+      return null;
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.lightTheme,
+        home: const ModelProviderSettingPage(),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    final field = find.byWidgetPredicate(
+      (widget) =>
+          widget is TextField && widget.decoration?.labelText == 'API Key',
+    );
+    await tester.enterText(field, '');
+    FocusManager.instance.primaryFocus?.unfocus();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 700));
+    expect(saves, hasLength(1));
+    expect(saves.first['apiKey'], '');
+    await tester.enterText(field, 'synthetic-new-key');
+    pending.complete(savedProfileResponse(saves.first));
+    await tester.pump();
+    FocusManager.instance.primaryFocus?.unfocus();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 700));
+    expect(saves, hasLength(2));
+    expect(saves.last['apiKey'], 'synthetic-new-key');
+  });
+
+  for (final source in ['deepseek', 'custom']) {
+    testWidgets('empty credentials discovery for $source', (tester) async {
+      tester.view.physicalSize = const Size(1080, 2200);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      var fetches = 0;
+      final payload = profilePayload(name: 'Provider B', sourceType: source);
+      (payload['profiles'] as List).single['apiKey'] = '';
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(assistCoreChannel, (call) async {
+            if (call.method == 'listModelProviderProfiles') return payload;
+            if (call.method == 'fetchProviderModels') {
+              fetches++;
+              return [];
+            }
+            return null;
+          });
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.lightTheme,
+          home: const ModelProviderSettingPage(),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byIcon(LucideIcons.arrowBigDown));
+      await tester.pumpAndSettle();
+      expect(fetches, source == 'custom' ? greaterThan(0) : 0);
+      if (source == 'deepseek') {
+        expect(
+          find.textContaining('Provider "Provider B" has no API key'),
+          findsOneWidget,
+        );
+      }
+    });
+  }
+
+  testWidgets('saved redacted headers remain visible and can be cleared', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1080, 3000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final payload = profilePayload();
+    (payload['profiles'] as List).single['hasCustomHeaders'] = true;
+    final saves = <Map>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(assistCoreChannel, (call) async {
+          if (call.method == 'listModelProviderProfiles') return payload;
+          if (call.method == 'saveModelProviderProfile') {
+            final args = call.arguments as Map;
+            saves.add(args);
+            return {...savedProfileResponse(args), 'hasCustomHeaders': false};
+          }
+          return null;
+        });
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.lightTheme,
+        home: const ModelProviderSettingPage(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Custom Headers'));
+    await tester.pumpAndSettle();
+    expect(find.text('Saved headers (values hidden)'), findsOneWidget);
+    expect(find.text('No custom headers configured'), findsNothing);
+    expect(saves, isEmpty);
+    await tester.tap(find.text('Clear saved headers'));
+    await tester.pumpAndSettle();
+    await tester.pump(const Duration(milliseconds: 700));
+    expect(saves, hasLength(1));
+    expect(saves.single['replaceCustomHeaders'], true);
+    expect(saves.single['customHeaders'], isEmpty);
+    expect(saves.single.containsKey('apiKey'), false);
+    expect(find.text('No custom headers configured'), findsOneWidget);
+  });
+
+  testWidgets('empty Authorization is rejected and correcting it recovers', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1080, 3000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    var fetches = 0;
+    final saves = <Map>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(assistCoreChannel, (call) async {
+          if (call.method == 'listModelProviderProfiles')
+            return profilePayload();
+          if (call.method == 'fetchProviderModels') {
+            fetches++;
+            return [];
+          }
+          if (call.method == 'saveModelProviderProfile') {
+            final args = call.arguments as Map;
+            saves.add(args);
+            return savedProfileResponse(args);
+          }
+          return null;
+        });
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.lightTheme,
+        home: const ModelProviderSettingPage(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    fetches = 0;
+    await tester.tap(find.text('Custom Headers'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(TextButton, 'Add'));
+    await tester.pumpAndSettle();
+    final name = find.byWidgetPredicate(
+      (w) => w is TextField && w.decoration?.labelText == 'Header Name',
+    );
+    final value = find.byWidgetPredicate(
+      (w) => w is TextField && w.decoration?.labelText == 'Header Value',
+    );
+    await tester.enterText(name, 'Authorization');
+    await tester.tap(find.byIcon(LucideIcons.arrowBigDown));
+    await tester.pumpAndSettle();
+    expect(fetches, 0);
+    expect(saves, isEmpty);
+    expect(
+      find.textContaining('Authorization cannot be empty'),
+      findsOneWidget,
+    );
+    await tester.enterText(value, 'Bearer synthetic-test-value');
+    await tester.tap(find.byIcon(LucideIcons.arrowBigDown));
+    await tester.pumpAndSettle();
+    expect(fetches, 1);
+    expect(
+      (saves.last['customHeaders'] as Map)['Authorization'],
+      'Bearer synthetic-test-value',
+    );
+    final savedCount = saves.length;
+    await tester.tap(find.byTooltip('Delete'));
+    await tester.pumpAndSettle();
+    expect(name, findsNothing);
+    expect(value, findsNothing);
+    await tester.pump(const Duration(milliseconds: 700));
+    expect(saves.length, savedCount + 1);
+    expect(saves.last['replaceCustomHeaders'], true);
+    expect(saves.last['customHeaders'], isEmpty);
+  });
+
+  for (final saveFails in [false, true]) {
+    testWidgets(
+      'refresh waits for in-flight credential save (failure=$saveFails)',
+      (tester) async {
+        tester.view.physicalSize = const Size(1080, 2200);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final pending = Completer<Map<String, dynamic>>();
+        var profile = Map<String, dynamic>.from(
+          (profilePayload()['profiles'] as List).single as Map,
+        );
+        var fetches = 0;
+        Map<dynamic, dynamic>? saved;
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(assistCoreChannel, (call) async {
+              if (call.method == 'listModelProviderProfiles') {
+                return {
+                  'profiles': [profile],
+                  'editingProfileId': 'provider-1',
+                };
+              }
+              if (call.method == 'saveModelProviderProfile') {
+                saved = call.arguments as Map;
+                return pending.future;
+              }
+              if (call.method == 'fetchProviderModels') {
+                fetches++;
+                return [];
+              }
+              return null;
+            });
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: AppTheme.lightTheme,
+            home: const ModelProviderSettingPage(),
+          ),
+        );
+        await tester.pumpAndSettle();
+        fetches = 0;
+        final field = find.byWidgetPredicate(
+          (w) => w is TextField && w.decoration?.labelText == 'API Key',
+        );
+        await tester.enterText(field, 'synthetic-replacement');
+        FocusManager.instance.primaryFocus?.unfocus();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 700));
+        expect(saved, isNotNull);
+        await tester.tap(find.byIcon(LucideIcons.arrowBigDown));
+        await tester.pump();
+        expect(fetches, 0);
+        profile = {...savedProfileResponse(saved!), 'revision': 1};
+        if (saveFails) {
+          pending.completeError(PlatformException(code: 'SAVE_FAILED'));
+        } else {
+          pending.complete(profile);
+        }
+        await tester.pumpAndSettle();
+        expect(fetches, saveFails ? 0 : 1);
+        if (saveFails) {
+          expect(
+            find.textContaining('Configuration was not saved'),
+            findsOneWidget,
+          );
+        }
+      },
+    );
+  }
 
   testWidgets('provider page saves focused draft when leaving', (tester) async {
     var saveCalls = 0;

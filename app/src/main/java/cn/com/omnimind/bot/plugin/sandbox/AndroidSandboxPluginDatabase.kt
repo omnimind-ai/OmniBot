@@ -38,6 +38,7 @@ private class AndroidSandboxPluginDatabase(
         where: Map<String, Any?>,
         orderBy: String?,
         limit: Int,
+        offset: Int,
     ): List<Map<String, Any?>> {
         val selection = where.entries.joinToString(" AND ") { (column, value) ->
             if (value == null) "$column IS NULL" else "$column = ?"
@@ -53,7 +54,7 @@ private class AndroidSandboxPluginDatabase(
             null,
             null,
             orderBy,
-            limit.toString(),
+            "$offset,$limit",
         ).use { cursor ->
             buildList {
                 while (cursor.moveToNext()) {

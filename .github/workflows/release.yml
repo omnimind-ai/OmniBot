@@ -294,6 +294,16 @@ jobs:
             ${{ steps.artifacts.outputs.dir }}/*.sha256
             ${{ steps.artifacts.outputs.dir }}/manifest.txt
 
+      - name: Resolve curated release notes
+        id: release_notes
+        env:
+          RELEASE_TAG_NAME: ${{ steps.release_ref.outputs.release_tag_name }}
+        run: |
+          notes_path="docs/releases/${RELEASE_TAG_NAME#v}.md"
+          if [[ -f "$notes_path" ]]; then
+            echo "path=$notes_path" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Create GitHub Release
         if: steps.release_ref.outputs.publish_release == 'true'
         uses: softprops/action-gh-release@v2
@@ -302,7 +312,8 @@ jobs:
           target_commitish: ${{ github.sha }}
           draft: ${{ steps.release_mode.outputs.draft == 'true' }}
           prerelease: ${{ steps.release_mode.outputs.prerelease == 'true' }}
-          generate_release_notes: true
+          body_path: ${{ steps.release_notes.outputs.path }}
+          generate_release_notes: ${{ steps.release_notes.outputs.path == '' }}
           fail_on_unmatched_files: true
           files: |
             ${{ steps.artifacts.outputs.dir }}/OpenOmniBot-${{ steps.release_ref.outputs.safe_ref_name }}-standard.apk
@@ -412,12 +423,13 @@ jobs:
               "prerelease": env_bool("RELEASE_PRERELEASE"),
               "publishedAt": int(time.time() * 1000),
               "releaseUrl": f"https://github.com/{github_repo}/releases/tag/{tag}",
-              # releaseNotes is intentionally omitted: the worker keeps the
-              # changelog curated in the admin console (/admin) across republishes.
               "assets": [
                   apk_asset("standard"),
               ],
           }
+          notes_path = Path("docs/releases") / f"{tag.removeprefix('v')}.md"
+          if notes_path.is_file():
+              payload["releaseNotes"] = notes_path.read_text(encoding="utf-8").strip()
           print(json.dumps(payload, ensure_ascii=False))
           PY
 

@@ -49,8 +49,13 @@ void main() {
         'list_functions',
         'list_run_logs',
         'save_function',
-        'function.demo',
+        'run_function',
       ]);
+      expect((calls.last.arguments as Map)['arguments'], {
+        'function_id': 'function.demo',
+        'arguments': {'query': 'ice'},
+        'goal': '演示指令\n参数: {"query":"ice"}',
+      });
       expect(
         ((calls[2].arguments as Map)['arguments'] as Map)['run_id'],
         'run-1',
@@ -96,6 +101,31 @@ void main() {
     expect(result.success, isFalse);
     expect(result.errorMessage, contains('function_id'));
   });
+
+  test(
+    'preserves canonical registration errors instead of hiding the cause',
+    () {
+      for (final error in <Map<String, dynamic>>[
+        {
+          'code': 'FUNCTIONS_REQUIRED',
+          'message': 'functions are required unless enhance=true',
+        },
+        {'code': 'MODEL_UNAVAILABLE', 'message': '  '},
+      ]) {
+        final result = OmniFlowFunctionRegistrationResult.fromPayload({
+          'success': false,
+          'error': error,
+        }, runId: 'recorded-run');
+        expect(result.success, isFalse);
+        expect(
+          result.errorMessage,
+          error['message'].toString().trim().isEmpty
+              ? error['code']
+              : error['message'],
+        );
+      }
+    },
+  );
 
   test('parses the official plural save_function response', () {
     final result = OmniFlowFunctionRegistrationResult.fromPayload(

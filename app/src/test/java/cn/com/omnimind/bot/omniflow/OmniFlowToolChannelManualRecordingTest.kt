@@ -44,6 +44,8 @@ class OmniFlowToolChannelManualRecordingTest {
 
         assertTrue(source.contains("val sourceRunLog = InternalRunLogStore.timelinePayload("))
         assertTrue(source.contains("\"run_log\" to sourceRunLog"))
+        // Authoring policy lives in the package; Android supplies immutable evidence.
+        assertTrue(!source.contains("\"enhance\" to true"))
         assertTrue(!source.contains("\"functions\" to listOf(function)"))
     }
 

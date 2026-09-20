@@ -149,6 +149,16 @@ object TaskRuntimeSettings {
         }
     }
 
+    /** Reveal the user's previous task before an execution-center GUI operation. */
+    suspend fun leaveForegroundForGui() = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main.immediate) {
+        if (!isAppInForeground) return@withContext
+        val activity = checkNotNull(currentActivityRef?.get()) { "gui_host_activity_unavailable" }
+        check(activity.moveTaskToBack(true)) { "gui_host_background_failed" }
+        kotlinx.coroutines.withTimeout(2_000L) {
+            while (isAppInForeground) kotlinx.coroutines.delay(16L)
+        }
+    }
+
     fun setVisibleConversation(
         context: Context,
         conversationId: Long?,

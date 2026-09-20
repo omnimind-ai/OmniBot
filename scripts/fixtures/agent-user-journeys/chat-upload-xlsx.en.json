@@ -1,0 +1,44 @@
+{
+  "name": "Actual XLSX body and read after restart",
+  "preconditions": "Idle real-device chat with chat-upload-office.xlsx attached through system picker. Real provider required.",
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_UPLOAD_XLSX",
+      "scenario": "chat-upload-xlsx.json"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_UPLOAD_XLSX_DONE",
+      "timeoutMs": 120000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_UPLOAD_XLSX",
+      "expected": "done"
+    },
+    {
+      "action": "restart"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_UPLOAD_XLSX_DONE",
+      "timeoutMs": 30000
+    },
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_REOPEN_XLSX",
+      "scenario": "chat-upload-xlsx-restart.json"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_REOPEN_XLSX_DONE",
+      "timeoutMs": 120000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_REOPEN_XLSX",
+      "expected": "done"
+    }
+  ]
+}

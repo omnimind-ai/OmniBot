@@ -1,0 +1,7 @@
+{
+  "name": "Eight direct safe reads in one actual model turn",
+  "steps": [
+    {"action":"send", "marker":"OOB_LIVE_EIGHT_READS", "scenario":"agent-eight-safe-reads.json", "timeoutMs":180000},
+    {"action":"reply", "text":"OOB_LIVE_EIGHT_READS_DONE", "timeoutMs":240000}
+  ]
+}

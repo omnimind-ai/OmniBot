@@ -231,11 +231,14 @@ reconnect/late-event behavior, and conversation switching. If a proposed
 convenience or safety rule changes what ACP considers active, complete,
 cancelled, or failed, reject it unless the ACP contract itself requires it.
 
-The plugin system is for MCP/tool capabilities. The standalone external App
-surface, WebView launcher, desktop shortcut, and `window.omni.app` bridge are
-removed. Do not reintroduce them; use an MCP/plugin tool instead. Provider and
-model resolution remains owned by the configured Provider, and ACP transport
-refactors must not modify long-term memory APIs or stored memory data.
+The plugin system is for MCP/tool capabilities. Per the user's 2026-09-17
+restoration request, Vibe Builder is available in main and investor profiles;
+generated local.project plugins may expose an isolated HTML App launcher and
+user-confirmed desktop shortcut. These frontends use the existing plugin tool
+and connector boundary. The removed `window.omni.app` session/event bridge must
+not be restored: do not add a second Agent loop or lifecycle. Provider and model
+resolution remains owned by the configured Provider, and ACP transport refactors
+must not modify long-term memory APIs or stored memory data.
 
 ### WebUI Verification Rules
 - Do not use the in-app Browser, Chrome automation, Playwright, or any other browser-based visual/interaction acceptance for WebUI changes unless the user explicitly requests browser verification.

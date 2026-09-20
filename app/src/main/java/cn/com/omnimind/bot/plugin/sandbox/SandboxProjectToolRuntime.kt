@@ -75,6 +75,12 @@ internal object SandboxConnectorContract {
             "legacyDatabaseBridge" to
                 "Rejected by project_check for new or republished source",
         ),
+        "sqliteContract" to mapOf(
+            "config" to "SQLite config accepts only table, naming a schema.sql table. Filters, values and pagination must be declared and passed as tool arguments, not config. Unsupported source config is rejected by project_check/project_publish. Database files are owned by the host, not database_path.",
+            "insert" to "Tool arguments are column values directly; returns {rowId}. No config columns/values substitution.",
+            "query" to "Arguments are equality filters except _limit, _offset and _order_by. _limit defaults to ${SandboxQueryLimits.DEFAULT}, allowed 1..${SandboxQueryLimits.MAX}; _offset defaults to 0 and must be nonnegative. Returns {rows: [...], count: N}, not an array; count is this page size, not the total. Render result.rows. To read all history, use the same filters and stable _order_by with a unique tie-breaker (e.g. id ASC) on every page, increment _offset by rows.length, and stop when count < _limit. Multiple pages are not a snapshot: avoid writes while loading. Declare these arguments in the tool schema.",
+            "manifest" to "database permission requires schema_path; skill/SKILL.md frontmatter name must equal the project slug.",
+        ),
         "minimalXiaowanExample" to MINIMAL_XIAOWAN_EXAMPLE,
     )
 
@@ -151,6 +157,22 @@ internal object SandboxProjectToolPolicy {
                 permissions = permissions,
                 schemaTables = schemaTables,
             )
+        }
+    }
+
+    // Source check/publish only: previously installed projects keep their load contract.
+    // The SQLite runtime consumes only config.table; accepting other keys silently
+    // discards the generated project's filters, values or pagination semantics.
+    fun validateSourceConfig(toolkit: SandboxProjectToolkit) {
+        toolkit.tools.forEach { tool ->
+            val executor = resolveExecutor(toolkit, tool)
+            if (executor.connectorType == "sqlite") {
+                val unsupported = executor.config.keys - setOf("table")
+                require(unsupported.isEmpty()) {
+                    "Project tool ${tool.name}: unsupported SQLite config ${unsupported.sorted().joinToString()}. " +
+                        "Only table is supported; declare and pass filters, values and pagination as tool arguments."
+                }
+            }
         }
     }
 
@@ -730,6 +752,15 @@ internal object SandboxProjectConnectorRegistry {
             ),
         ).requireSuccess().payload
 
+    private fun queryInteger(value: Any?, name: String, default: Int): Int {
+        if (value == null) return default
+        require(value is Number && value.toDouble().isFinite() &&
+            value.toDouble() == value.toInt().toDouble()) {
+            "$name must be an integer in the supported Int range"
+        }
+        return value.toInt()
+    }
+
     private fun query(
         pool: SandboxPluginPool,
         pluginId: String,
@@ -737,7 +768,8 @@ internal object SandboxProjectConnectorRegistry {
         args: JsonObject,
     ): Map<String, Any?> {
         val values = args.toNativeMap().toMutableMap()
-        val limit = (values.remove("_limit") as? Number)?.toInt() ?: 100
+        val limit = queryInteger(values.remove("_limit"), "_limit", SandboxQueryLimits.DEFAULT)
+        val offset = queryInteger(values.remove("_offset"), "_offset", 0)
         val orderBy = values.remove("_order_by")?.toString()?.trim()?.takeIf(String::isNotEmpty)
         return pool.execute(
             SandboxPluginCommand.Query(
@@ -746,6 +778,7 @@ internal object SandboxProjectConnectorRegistry {
                 where = values,
                 orderBy = orderBy,
                 limit = limit,
+                offset = offset,
             ),
         ).requireSuccess().payload
     }
@@ -789,22 +822,22 @@ internal object SandboxProjectConnectorRegistry {
         get(key)?.jsonPrimitive?.contentOrNull?.trim()?.takeIf(String::isNotEmpty)
             ?: throw IllegalArgumentException("Tool executor config requires $key")
 
-    private fun JsonObject.toNativeMap(): Map<String, Any?> =
-        entries.associate { (key, value) -> key to value.toNativeValue() }
+}
 
-    private fun JsonElement.toNativeValue(): Any? = when (this) {
-        JsonNull -> null
-        is JsonObject -> toNativeMap()
-        is JsonArray -> map { element -> element.toNativeValue() }
-        is JsonPrimitive -> when {
-            isString -> content
-            booleanOrNull != null -> booleanOrNull
-            longOrNull != null -> longOrNull
-            doubleOrNull != null -> doubleOrNull
-            else -> content
-        }
+internal fun JsonObject.toNativeMap(): Map<String, Any?> =
+    entries.associate { (key, value) -> key to value.toNativeValue() }
+
+private fun JsonElement.toNativeValue(): Any? = when (this) {
+    JsonNull -> null
+    is JsonObject -> toNativeMap()
+    is JsonArray -> map { element -> element.toNativeValue() }
+    is JsonPrimitive -> when {
+        isString -> content
+        booleanOrNull != null -> booleanOrNull
+        longOrNull != null -> longOrNull
+        doubleOrNull != null -> doubleOrNull
+        else -> content
     }
-
 }
 
 private fun Any?.toJsonElement(): JsonElement = when (this) {

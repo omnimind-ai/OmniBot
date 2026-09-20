@@ -15,7 +15,7 @@
     {
       "name": "project_check",
       "displayName": "Check Project Link",
-      "description": "Verify a completed project before publishing. Dashboard reads and writes must use window.omni.tools.call with a local tool declared in toolkit.json; direct window.omni.db calls are rejected. toolkit.json rule: executor.connector references connectors[].id, not a type. Supported types/actions: sqlite insert/query/update/delete; xiaowan invoke; http_json get. If uncertain, call project_contract once instead of guessing or searching source code.",
+      "description": "Verify a completed project before publishing. Dashboard reads and writes must use window.omni.tools.call with a local tool declared in toolkit.json; direct window.omni.db calls are rejected. toolkit.json rule: executor.connector references connectors[].id, not a type. Supported types/actions: sqlite insert/query/update/delete; xiaowan invoke; http_json get. If uncertain, call project_contract once instead of guessing or searching source code. This is structural validation only: it does not run business actions, click the App, or verify persistence. The builder must execute acceptance tests and repair failures before claiming completion.",
       "executor": "plugin.pool.check",
       "parameters": {
         "type": "object",
@@ -88,7 +88,7 @@
     {
       "name": "project_publish",
       "displayName": "Publish Linked Project",
-      "description": "Publish or update a checked project as an enabled plugin. Dashboard and Xiaowan must share the toolkit.json Tool Link through window.omni.tools.call; publication re-runs this check. toolkit.json rule: executor.connector references connectors[].id, not a type. Supported types/actions: sqlite insert/query/update/delete; xiaowan invoke; http_json get. Re-publishing preserves connector-owned data.",
+      "description": "Publish or update a checked project as an enabled plugin. Dashboard and Xiaowan must share the toolkit.json Tool Link through window.omni.tools.call; publication re-runs this check. toolkit.json rule: executor.connector references connectors[].id, not a type. Supported types/actions: sqlite insert/query/update/delete; xiaowan invoke; http_json get. Re-publishing preserves connector-owned data. Publishing installs a candidate for runtime testing, not a passed acceptance result. Continue with real write/read, UI and lifecycle tests using available capabilities; fix failures yourself and report blocked tests honestly.",
       "executor": "plugin.pool.publish",
       "parameters": {
         "type": "object",

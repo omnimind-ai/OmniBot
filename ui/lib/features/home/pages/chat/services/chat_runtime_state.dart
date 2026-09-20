@@ -124,6 +124,7 @@ class ChatConversationRuntimeState {
   /// lets the host route a background conversation's event without falling
   /// back to whichever conversation happens to be visible.
   final Set<String> knownAcpSessionIds = <String>{};
+  int acpProtocolVersion = 1;
 
   /// Sessions explicitly invalidated by a cancel/reset. Keep their identity
   /// for routing so a late event can be rejected by the owning runtime instead
@@ -142,6 +143,9 @@ class ChatConversationRuntimeState {
   /// Async persistence captures this value and must not apply terminal state
   /// from an older snapshot after a newer prompt has already started.
   int persistenceGeneration = 0;
+  // Invalidates reads and page saves captured before a user history edit.
+  int historyRevision = 0;
+  bool historyEditPending = false;
 
   /// ACP advertises commands at session scope. Keep the last declaration on
   /// the shared runtime so every Harness gets the same slash-command surface.
@@ -457,6 +461,7 @@ class ChatConversationRuntimeState {
     String? sessionId,
     String? turnId,
     bool allowCompletedTurnMetadata = false,
+    bool allowHistoryUpsert = false,
     bool allowSessionAdmission = false,
   }) {
     final incomingSessionId = sessionId?.trim() ?? '';
@@ -482,6 +487,8 @@ class ChatConversationRuntimeState {
     if (incomingSessionId.isNotEmpty) {
       knownAcpSessionIds.add(incomingSessionId);
     }
+    if (allowHistoryUpsert && incomingSessionId.isNotEmpty &&
+        activeAcpSessionId == incomingSessionId) return true;
     // A completed turn remains fenced even after its session becomes idle.
     // Without this check, a delayed event from the previous Harness can be
     // the first event seen after a Xiaowan/DSH switch and silently rebind the

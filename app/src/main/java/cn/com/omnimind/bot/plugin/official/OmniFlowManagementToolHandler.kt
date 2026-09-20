@@ -10,8 +10,6 @@ import cn.com.omnimind.bot.agent.HttpAgentLlmClient
 import cn.com.omnimind.bot.agent.ToolExecutionResult
 import cn.com.omnimind.bot.agent.tool.handlers.SharedHelper
 import cn.com.omnimind.bot.agent.tool.handlers.ToolHandler
-import cn.com.omnimind.baselib.runlog.CanonicalRunLogRecord
-import cn.com.omnimind.baselib.runlog.InternalRunLogStore
 import cn.com.omnimind.bot.omniflow.OmniFlow
 import cn.com.omnimind.bot.omniflow.OmniFlowPluginRuntime
 import cn.com.omnimind.bot.omniflow.OmniFlowPythonRuntime
@@ -30,7 +28,10 @@ import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 
-class OmniFlowManagementToolHandler(context: Context) : ToolHandler {
+class OmniFlowManagementToolHandler(
+    context: Context,
+    private val tools: List<cn.com.omnimind.bot.omniflow.RuntimeTool>,
+) : ToolHandler {
     private val helper = SharedHelper(
         context = context.applicationContext,
         json = Json {
@@ -39,7 +40,7 @@ class OmniFlowManagementToolHandler(context: Context) : ToolHandler {
         },
     )
 
-    override val toolNames: Set<String> = OmniFlowManagementTools.TOOL_NAMES
+    override val toolNames: Set<String> = tools.mapTo(linkedSetOf()) { it.name }
 
     override suspend fun execute(
         toolCall: AssistantToolCall,
@@ -56,26 +57,16 @@ class OmniFlowManagementToolHandler(context: Context) : ToolHandler {
         return try {
             helper.ensureRunActive()
             toolHandle.throwIfStopRequested()
-            val normalizedArguments = normalizeOmniFlowManagementArguments(toolName, args)
-            if (toolName in DEVELOPER_OVERRIDE_TOOLS) {
-                return developerOverrideResult(toolName, normalizedArguments)
+            val normalizedArguments = args.entries.associate { (key, value) ->
+                key to jsonElementToManagementValue(value)
             }
-            if (
-                toolName == OmniFlowManagementTools.SAVE_FUNCTION &&
-                normalizedArguments["run_id"]?.toString()?.isNotBlank() == true
-            ) {
-                val runId = normalizedArguments["run_id"]?.toString().orEmpty().trim()
-                val record = InternalRunLogStore.getRun(helper.context, runId)
-                if (!isRegisterableRunLog(record)) {
-                    return ToolExecutionResult.Error(
-                        toolName,
-                        "RUN_LOG_NOT_SUCCESSFUL: only a succeeded RunLog can become a Function",
-                    )
-                }
+            val definition = tools.first { it.name == toolName }
+            definition.hostAction?.let {
+                return developerOverrideResult(toolName, it, normalizedArguments)
             }
             val modelClient = if (OmniFlowPluginRuntime.isEnabled()) {
                     HttpAgentLlmClient(CoroutineScope(currentCoroutineContext()))
-                        .asOmniFlowModelClient()
+                        .asOmniFlowModelClient(helper.context)
                 } else {
                     null
                 }
@@ -85,22 +76,7 @@ class OmniFlowManagementToolHandler(context: Context) : ToolHandler {
                 modelClient = modelClient,
             ).payload
             val encoded = helper.mapToJsonElement(payload).toString()
-            if (payload["success"] == false) {
-                ToolExecutionResult.Error(
-                    toolName,
-                    payload["error_message"]?.toString()
-                        ?: payload["error_code"]?.toString()
-                        ?: "OmniFlow management tool failed",
-                )
-            } else {
-                ToolExecutionResult.ContextResult(
-                    toolName = toolName,
-                    summaryText = summary(toolName, payload),
-                    previewJson = encoded,
-                    rawResultJson = encoded,
-                    success = true,
-                )
-            }
+            managementToolResult(toolName, payload, encoded)
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
@@ -111,21 +87,13 @@ class OmniFlowManagementToolHandler(context: Context) : ToolHandler {
         }
     }
 
-    private fun summary(toolName: String, payload: Map<String, Any?>): String = when (toolName) {
-        OmniFlowManagementTools.LIST_FUNCTIONS ->
-            "已读取 ${payload["count"] ?: 0} 个复用指令"
-        OmniFlowManagementTools.LIST_RUN_LOGS ->
-            "已读取 ${payload["count"] ?: (payload["runs"] as? List<*>)?.size ?: 0} 个 RunLog"
-        OmniFlowManagementTools.SAVE_FUNCTION -> "RunLog 已注册为复用指令"
-        else -> "OmniFlow 操作已完成"
-    }
-
     private suspend fun developerOverrideResult(
         toolName: String,
+        action: String,
         arguments: Map<String, Any?>,
     ): ToolExecutionResult {
-        val payload = when (toolName) {
-            OmniFlowManagementTools.GET_PYTHON_OVERRIDE -> {
+        val payload = when (action) {
+            "source.read" -> {
                 val path = arguments["path"]?.toString()?.trim().orEmpty()
                 if (path.isEmpty()) {
                     val status = OmniFlowPythonRuntime.developerOverrideStatus(helper.context)
@@ -136,34 +104,34 @@ class OmniFlowManagementToolHandler(context: Context) : ToolHandler {
                         "shell_install_directory" to status.shellRoot,
                         "runtime_version" to status.runtimeVersion,
                         "modified_files" to status.modifiedFiles,
-                        "editable_glob" to "omniflow/**/*.py",
+                        "editable_glob" to "**/*.py",
                     )
                 } else {
                     OmniFlowPythonRuntime.readDeveloperOverride(helper.context, path) +
                         ("success" to true)
                 }
             }
-            OmniFlowManagementTools.APPLY_PYTHON_OVERRIDE ->
+            "source.apply" ->
                 OmniFlowPythonRuntime.applyDeveloperOverride(
                     helper.context,
                     arguments["path"]?.toString().orEmpty(),
                     arguments["content"]?.toString().orEmpty(),
                 )
-            OmniFlowManagementTools.CLEAR_PYTHON_OVERRIDE -> {
+            "source.clear" -> {
                 require(arguments["confirm"] == true) { "confirm_must_be_true" }
                 OmniFlowPythonRuntime.clearDeveloperOverride(helper.context)
             }
-            OmniFlowManagementTools.RELOAD_PYTHON_OVERRIDE ->
+            "source.reload" ->
                 OmniFlowPythonRuntime.reloadDeveloperOverride(helper.context)
             else -> error("unsupported_developer_override_tool:$toolName")
         }
         val encoded = helper.mapToJsonElement(payload).toString()
         return ToolExecutionResult.ContextResult(
             toolName = toolName,
-            summaryText = when (toolName) {
-                OmniFlowManagementTools.GET_PYTHON_OVERRIDE -> "已读取 OmniFlow Python 开发覆盖层"
-                OmniFlowManagementTools.APPLY_PYTHON_OVERRIDE -> "Python 修改已校验并热重载"
-                OmniFlowManagementTools.CLEAR_PYTHON_OVERRIDE -> "已恢复固定版本 OmniFlow runtime"
+            summaryText = when (action) {
+                "source.read" -> "已读取 OmniFlow Python 开发覆盖层"
+                "source.apply" -> "Python 修改已校验并热重载"
+                "source.clear" -> "已恢复固定版本 OmniFlow runtime"
                 else -> "OmniFlow Python worker 已重载"
             },
             previewJson = encoded,
@@ -172,33 +140,6 @@ class OmniFlowManagementToolHandler(context: Context) : ToolHandler {
         )
     }
 
-    companion object {
-        private val DEVELOPER_OVERRIDE_TOOLS = setOf(
-            OmniFlowManagementTools.GET_PYTHON_OVERRIDE,
-            OmniFlowManagementTools.APPLY_PYTHON_OVERRIDE,
-            OmniFlowManagementTools.CLEAR_PYTHON_OVERRIDE,
-            OmniFlowManagementTools.RELOAD_PYTHON_OVERRIDE,
-        )
-    }
-}
-
-internal fun isRegisterableRunLog(record: CanonicalRunLogRecord?): Boolean =
-    record?.success == true && record.status == "succeeded" && record.doneReason != "error"
-
-/**
- * A registered RunLog Function must be visible to the recall router unless the caller
- * explicitly asks for a hidden artifact.
- */
-internal fun normalizeOmniFlowManagementArguments(
-    toolName: String,
-    args: JsonObject,
-): Map<String, Any?> = buildMap {
-    // Keep the existing helper conversion semantics in the caller for all normal values.
-    // This map is intentionally assembled from the JsonObject below so the normalization
-    // remains independent of Android Context and is easy to regression-test.
-    args.entries.forEach { (key, value) ->
-        put(key, jsonElementToManagementValue(value))
-    }
 }
 
 private fun jsonElementToManagementValue(
@@ -216,4 +157,24 @@ private fun jsonElementToManagementValue(
         value.doubleOrNull != null -> value.doubleOrNull
         else -> value.content
     }
+}
+
+/** Keep failed compiler diagnostics in the same tool item and persisted history. */
+internal fun managementToolResult(
+    toolName: String,
+    payload: Map<String, Any?>,
+    encoded: String,
+): ToolExecutionResult.ContextResult {
+    val success = payload["success"] != false
+    val error = payload["error"] as? Map<*, *>
+    val summary = if (success) payload["summary"]?.toString() ?: "操作已完成" else
+        payload["error_message"]?.toString()
+            ?: error?.get("message")?.toString()
+            ?: payload["error_code"]?.toString()
+            ?: error?.get("code")?.toString()
+            ?: "OmniFlow management tool failed"
+    return ToolExecutionResult.ContextResult(
+        toolName = toolName, summaryText = summary,
+        previewJson = encoded, rawResultJson = encoded, success = success,
+    )
 }

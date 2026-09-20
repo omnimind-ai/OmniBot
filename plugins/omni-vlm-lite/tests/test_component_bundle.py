@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import zipfile
 from pathlib import Path
 import unittest
 
@@ -15,6 +17,16 @@ class OmniFlowComponentBundleTest(unittest.TestCase):
         "list_functions",
         "register_function",
     }
+
+    def test_catalog_archive_exists_and_matches_checksum(self) -> None:
+        catalog = json.loads((COMPONENT_ROOT.parent / "catalog.v1.json").read_text())
+        runtime = next(p for p in catalog["plugins"]
+                       if p["id"] == "com.omnimind.omni-vlm-lite")["runtimeSkill"]
+        archive = COMPONENT_ROOT.parents[1] / "artifacts" / Path(runtime["packagedArchivePath"]).name
+        self.assertTrue(archive.is_file(), f"Missing release input: {archive}")
+        self.assertEqual(hashlib.sha256(archive.read_bytes()).hexdigest(), runtime["packagedArchiveSha256"])
+        with zipfile.ZipFile(archive) as bundle:
+            self.assertIsNone(bundle.testzip())
 
     def test_component_contract_matches_current_runtime_layout(self) -> None:
         component = json.loads(

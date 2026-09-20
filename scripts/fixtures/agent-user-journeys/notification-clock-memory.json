@@ -1,0 +1,16 @@
+{
+  "name": "Real clock notification to Agent daily memory",
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_NOTIFICATION_CLOCK",
+      "scenario": "notification-clock-memory.json",
+      "timeoutMs": 180000
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_NOTIFICATION_CLOCK_DONE",
+      "timeoutMs": 360000
+    }
+  ]
+}

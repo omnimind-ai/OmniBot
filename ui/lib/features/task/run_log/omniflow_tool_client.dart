@@ -51,11 +51,18 @@ class OmniFlowFunctionRegistrationResult {
     required String runId,
   }) {
     if (payload['success'] == false) {
+      final error = payload['error'];
       return OmniFlowFunctionRegistrationResult(
         function: null,
         errorMessage:
             payload['error_message']?.toString().trim().nullIfEmpty ??
+            (error is Map
+                ? error['message']?.toString().trim().nullIfEmpty
+                : null) ??
             payload['error_code']?.toString().trim().nullIfEmpty ??
+            (error is Map
+                ? error['code']?.toString().trim().nullIfEmpty
+                : null) ??
             '注册失败',
       );
     }
@@ -122,6 +129,12 @@ class OmniFlowToolClient {
     return _call('save_function', {'run_id': runId});
   }
 
+  static Future<Map<String, dynamic>> saveFunction(
+    Map<String, dynamic> function,
+  ) {
+    return _call('save_function', {'function': function, 'enhance': false});
+  }
+
   static Future<OmniFlowFunctionRegistrationResult> registerFunctionFromRunLog(
     String runId,
   ) async {
@@ -162,7 +175,11 @@ class OmniFlowToolClient {
     Map<String, dynamic> arguments, {
     String? goal,
   }) {
-    return _call(functionId, arguments, goal: goal);
+    return _call('run_function', {
+      'function_id': functionId,
+      'arguments': arguments,
+      if (goal?.trim().isNotEmpty == true) 'goal': goal!.trim(),
+    }, goal: goal);
   }
 
   static Future<Map<String, dynamic>> _call(
@@ -170,12 +187,14 @@ class OmniFlowToolClient {
     Map<String, dynamic> arguments, {
     String? goal,
   }) async {
-    final result = await AssistsMessageService.assistCore
-        .invokeMethod<Object?>('tools/call', {
-          'name': name,
-          'arguments': arguments,
-          if (goal?.trim().isNotEmpty == true) 'goal': goal!.trim(),
-        });
+    final result = await AssistsMessageService.assistCore.invokeMethod<Object?>(
+      'tools/call',
+      {
+        'name': name,
+        'arguments': arguments,
+        if (goal?.trim().isNotEmpty == true) 'goal': goal!.trim(),
+      },
+    );
     if (result is! Map) {
       throw StateError('OmniFlow tool $name returned an invalid response');
     }

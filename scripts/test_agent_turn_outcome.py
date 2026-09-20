@@ -12,6 +12,38 @@ class TurnOutcomeTest(unittest.TestCase):
         self.db.execute('INSERT INTO agent_conversation_entries(conversationId,entryType,payloadJson) VALUES(?,?,?)',(conversation,kind,json.dumps(payload)))
     def user(self,marker): self.add('user_message',{'content':{'text':'Reply '+marker}})
     def error(self): self.add('tool_event',{'toolName':'agent.status','status':'error','streamMeta':{'sessionId':'s','turnId':'t','stopReason':'error'}})
+    def test_missing_required_result_is_only_terminal_after_canonical_completion(self):
+        marker='OOB_LIVE_AUTO_COMPACT_1';self.user(marker)
+        item={'content':{'text':'Only read six pages; textual tool fragment'},
+              'isLoading':True,'streamMeta':{'sessionId':'s','turnId':'t'}}
+        self.add('assistant_message',item)
+        self.assertFalse(outcome.verify(self.db,marker,'terminal-failure')['completed'])
+        self.assertFalse(outcome.verify(self.db,marker,'terminal-failure',marker+'_DONE')['completedWithoutRequiredMarker'])
+        self.db.execute("DELETE FROM agent_conversation_entries WHERE entryType='assistant_message'")
+        item['isLoading']=False;item['streamMeta']['stopReason']='end_turn'
+        self.add('assistant_message',item)
+        result=outcome.verify(self.db,marker,'terminal-failure',marker+'_DONE')
+        self.assertFalse(result['failed'])  # Task assertion failure does not rewrite runtime outcome.
+        self.assertTrue(result['completed'])
+        self.assertTrue(result['completedWithoutRequiredMarker'])
+        self.assertFalse(outcome.verify(self.db,marker,'terminal-failure','ordinary text')['completedWithoutRequiredMarker'])
+    def test_tool_index_rejects_swapped_arguments_even_when_reply_claims_done(self):
+        marker = 'OOB_FAILURE_INDEX_1'
+        self.user(marker)
+        self.add('assistant_message', {'content': {'text': marker+'_DONE'},
+            'streamMeta': {'sessionId':'s','turnId':'t','stopReason':'end_turn'}})
+        for swapped in (True, False):
+            self.db.execute("DELETE FROM agent_conversation_entries WHERE entryType='tool_event'")
+            for i in range(2):
+                source = 1-i if swapped else i
+                self.add('tool_event', {'toolName':'file_write', 'success':True,
+                    'argsJson':json.dumps({'path':f'/workspace/{marker}-{source}.txt',
+                                          'content':f'{marker}_VALUE_{source}'}),
+                    'streamMeta':{'sessionId':'s','turnId':'t'}})
+            if swapped:
+                with self.assertRaises(AssertionError): outcome.verify(self.db,marker,'done')
+            else:
+                self.assertTrue(outcome.verify(self.db,marker,'done')['passed'])
     def test_codex_command_rejects_startup_failure_and_missing_output(self):
         marker='OOB_LIVE_CODEX_EXIT_1';self.user(marker)
         self.add('assistant_message',{'content':{'text':marker+'_DONE'},'streamMeta':{'sessionId':'s','turnId':'t','stopReason':'end_turn'}})

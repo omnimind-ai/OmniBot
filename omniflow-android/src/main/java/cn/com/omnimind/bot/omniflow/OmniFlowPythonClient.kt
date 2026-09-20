@@ -27,6 +27,7 @@ fun interface OmniFlowPythonHostCall {
 class OmniFlowPythonClient(
     private val processStarter: suspend (command: String, environment: Map<String, String>) -> Process,
     private val bridgeCommand: String,
+    private val environment: Map<String, String> = emptyMap(),
     private val requestIdFactory: () -> String = { UUID.randomUUID().toString() },
 ) {
     private data class BridgeSession(
@@ -128,7 +129,7 @@ class OmniFlowPythonClient(
         session?.let { clearSession(it) }
         val process = processStarter(
             bridgeCommand,
-            mapOf("PYTHONUNBUFFERED" to "1", "OMNIBOT_HEADLESS" to "1"),
+            mapOf("PYTHONUNBUFFERED" to "1", "OMNIBOT_HEADLESS" to "1") + environment,
         )
         val stdout = Channel<String>(Channel.UNLIMITED)
         val stderr = StderrTail()
@@ -323,44 +324,6 @@ class OmniFlowPythonClient(
         .setObjectToNumberStrategy(ToNumberPolicy.LONG_OR_DOUBLE)
         .create()
         private val MAP_TYPE = object : TypeToken<Map<String, Any?>>() {}.type
-
-        fun bridgeCommand(
-            shellPythonSourcePath: String,
-            shellSitePackagesPath: String,
-            shellOmniTransferRoot: String,
-            shellOmniTransferCheckpointPath: String,
-            shellDeveloperOverridePath: String? = null,
-        ): String {
-            listOf(
-                shellPythonSourcePath,
-                shellSitePackagesPath,
-                shellOmniTransferRoot,
-                shellOmniTransferCheckpointPath,
-            ).forEach { path ->
-                require(path.matches(Regex("/[A-Za-z0-9_./-]+"))) {
-                    "omniflow_runtime_path_invalid"
-                }
-            }
-            shellDeveloperOverridePath?.let { path ->
-                require(path.matches(Regex("/[A-Za-z0-9_./-]+"))) {
-                    "omniflow_override_path_invalid"
-                }
-            }
-            val pythonPath = listOfNotNull(
-                shellDeveloperOverridePath,
-                shellPythonSourcePath,
-                shellSitePackagesPath,
-                "$shellOmniTransferRoot/src",
-            ).joinToString(":")
-            return """
-            export PYTHONPATH='$pythonPath'
-            export OMNITRANSFER_ROOT='$shellOmniTransferRoot'
-            export OMNITRANSFER_MATCHER_CHECKPOINT='$shellOmniTransferCheckpointPath'
-            python_bin="${'$'}(command -v python3 || true)"
-            if [ -z "${'$'}python_bin" ]; then echo 'omniflow_python_not_installed' >&2; exit 127; fi
-            exec "${'$'}python_bin" -u -m omniflow.bridge --store /workspace/.omnibot/omniflow/omniflow.json
-            """.trimIndent()
-        }
 
         fun defaultTimeoutMs(
             operation: String,

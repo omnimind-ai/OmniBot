@@ -13,11 +13,13 @@ class CodexBridgeQrScanResult {
     required this.bridgeUrl,
     this.token = '',
     this.cwd = '',
+    this.sessionId,
   });
 
   final String bridgeUrl;
   final String token;
   final String cwd;
+  final String? sessionId;
 
   static CodexBridgeQrScanResult? tryParse(String rawValue) {
     final raw = rawValue.trim();
@@ -49,6 +51,7 @@ class CodexBridgeQrScanResult {
             ]) ??
             '',
         cwd: _firstQueryValue(uri, const <String>['cwd', 'remoteCwd']) ?? '',
+        sessionId: _firstQueryValue(uri, const <String>['sessionId']),
       );
     }
 
@@ -63,6 +66,7 @@ class CodexBridgeQrScanResult {
             ]) ??
             '',
         cwd: _firstQueryValue(uri, const <String>['cwd', 'remoteCwd']) ?? '',
+        sessionId: _firstQueryValue(uri, const <String>['sessionId']),
       );
     }
     return null;
@@ -96,6 +100,7 @@ class CodexBridgeQrScanResult {
           ) ??
           '',
       cwd: _stringValue(map['cwd'] ?? map['remoteCwd']) ?? '',
+      sessionId: _stringValue(map['sessionId']),
     );
   }
 
@@ -142,6 +147,7 @@ class CodexBridgeQrScanResult {
         'remoteBridgeToken',
         'cwd',
         'remoteCwd',
+        'sessionId',
       }.contains(entry.key)) {
         continue;
       }

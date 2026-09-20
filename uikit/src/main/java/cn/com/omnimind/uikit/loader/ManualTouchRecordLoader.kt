@@ -501,7 +501,8 @@ object ManualTouchRecordLoader {
             }
             try {
                 delay(OVERLAY_UNLOCK_REPLAY_DELAY_MS)
-                val replayResult = HumanTrajectoryLearningSession.recordOverlayGesture(gesture) {
+                val replayResult = ManualRecordingControlOverlay.withoutRecordingControls {
+                  HumanTrajectoryLearningSession.recordOverlayGesture(gesture) {
                     withContext(Dispatchers.Main) {
                         synchronized(this@ManualTouchRecordLoader) {
                             endSyntheticReplaySuppressionLocked()
@@ -513,6 +514,7 @@ object ManualTouchRecordLoader {
                         }
                     }
                 }
+                  }
                 executed = replayResult.executed
                 recorded = replayResult.recorded
             } finally {

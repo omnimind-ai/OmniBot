@@ -60,7 +60,7 @@ private class AgentWebPlugin(context: Context) : OmniPlugin {
         configurationProvider = AndroidAgentWebConfigurationProvider(),
     )
 
-    override fun contribution() = OmniPluginContribution(
+    override suspend fun contribution() = OmniPluginContribution(
         toolGroups = listOf(
             OmniPluginToolGroup(
                 definitions = AgentWebTools.definitions(),

@@ -1,0 +1,3 @@
+{
+  "prompt": "Continue from saved Life XP files after the connection error. Fix the toolkit JSON syntax error, then rerun node /workspace/acceptance-audits/life-xp-production.cjs /workspace/life-xp-demo/app.js /workspace/life-xp-demo/toolkit.json until it passes. Do not edit the audit. Republish only valid files and preserve all existing data."
+}

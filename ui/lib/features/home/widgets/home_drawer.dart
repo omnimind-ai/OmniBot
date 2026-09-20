@@ -10,9 +10,11 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:ui/core/router/go_router_manager.dart';
 import 'package:ui/features/home/pages/chat/chat_page_models.dart';
+import 'package:ui/features/home/pages/agent/agent_sessions_page.dart';
 import 'package:ui/features/home/pages/chat/services/chat_conversation_runtime_coordinator.dart';
 import 'package:ui/features/home/widgets/conversation_slidable.dart';
 import 'package:ui/features/home/widgets/home_drawer_search_field.dart';
+import 'package:ui/features/home/widgets/drawer_conversation_row.dart';
 import 'package:ui/l10n/l10n.dart';
 import 'package:ui/l10n/legacy_text_localizer.dart';
 import 'package:ui/models/chat_message_model.dart';
@@ -20,6 +22,7 @@ import 'package:ui/models/conversation_model.dart';
 import 'package:ui/models/conversation_thread_target.dart';
 import 'package:ui/models/scheduled_task.dart';
 import 'package:ui/services/agent_web_action_presenter.dart';
+import 'package:ui/services/agent_runtime_service.dart';
 import 'package:ui/services/agent_web_status_service.dart';
 import 'package:ui/services/assists_core_service.dart';
 import 'package:ui/services/conversation_history_service.dart';
@@ -123,6 +126,8 @@ class HomeDrawer extends ConsumerStatefulWidget {
 }
 
 class HomeDrawerState extends ConsumerState<HomeDrawer> {
+  bool _showComputerSessions = false;
+  bool _hasOpenedComputerSessions = false;
   static const double _conversationActionIconSize = 18;
   static const Duration _searchDebounceDuration = Duration(milliseconds: 220);
   static const Duration _sectionToggleDuration = Duration(milliseconds: 260);
@@ -212,12 +217,17 @@ class HomeDrawerState extends ConsumerState<HomeDrawer> {
     _scheduledTasksChangedSubscription = ScheduledTaskStorageService
         .scheduledTasksChangedStream
         .listen(_handleScheduledTasksChanged);
+    AgentRuntimeService.remoteModeEnabled.addListener(_handleRemoteModeChanged);
+    unawaited(_readRemoteMode());
     _loadConversations();
     unawaited(_loadWebQuickActions());
   }
 
   @override
   void dispose() {
+    AgentRuntimeService.remoteModeEnabled.removeListener(
+      _handleRemoteModeChanged,
+    );
     _searchDebounceTimer?.cancel();
     _conversationListChangedSubscription?.cancel();
     _sidebarPolicyChangedSubscription?.cancel();
@@ -237,6 +247,24 @@ class HomeDrawerState extends ConsumerState<HomeDrawer> {
       ..dispose();
     _titleEditingController.dispose();
     super.dispose();
+  }
+
+  Future<void> _readRemoteMode() async {
+    try {
+      await AgentRuntimeService.readRemoteBridgeConfig();
+    } catch (error) {
+      debugPrint('[HomeDrawer] remote mode unavailable: $error');
+    }
+  }
+
+  void _handleRemoteModeChanged() {
+    if (!mounted) return;
+    setState(() {
+      if (!AgentRuntimeService.remoteModeEnabled.value) {
+        _showComputerSessions = false;
+        _hasOpenedComputerSessions = false;
+      }
+    });
   }
 
   void _handleRuntimeCoordinatorChanged() {
@@ -259,6 +287,8 @@ class HomeDrawerState extends ConsumerState<HomeDrawer> {
   }
 
   void reloadConversations() {
+    AgentRuntimeService.remoteModeEnabled.addListener(_handleRemoteModeChanged);
+    unawaited(_readRemoteMode());
     _loadConversations();
     unawaited(_loadWebQuickActions());
   }
@@ -361,7 +391,81 @@ class HomeDrawerState extends ConsumerState<HomeDrawer> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const SizedBox(height: 16),
-            Expanded(child: _buildConversationSection()),
+            if (AgentRuntimeService.remoteModeEnabled.value)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: SizedBox(
+                  height: 36,
+                  child: Row(
+                    children: [
+                      for (final computer in [false, true])
+                        Flexible(
+                          child: TextButton(
+                            style: TextButton.styleFrom(
+                              foregroundColor: _showComputerSessions == computer
+                                  ? _drawerTextColor
+                                  : _drawerSecondaryTextColor,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                              ),
+                              minimumSize: const Size(48, 36),
+                              textStyle: TextStyle(
+                                fontSize: 14,
+                                fontWeight: _showComputerSessions == computer
+                                    ? FontWeight.w600
+                                    : FontWeight.w400,
+                              ),
+                            ),
+                            onPressed: () => setState(() {
+                              _showComputerSessions = computer;
+                              if (computer) _hasOpenedComputerSessions = true;
+                            }),
+                            child: Text(
+                              Localizations.localeOf(context).languageCode ==
+                                      'en'
+                                  ? (computer ? 'Computer' : 'This phone')
+                                  : (computer ? '电脑' : '本机'),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ),
+                      const Spacer(),
+                      if (_showComputerSessions)
+                        IconButton(
+                          tooltip:
+                              Localizations.localeOf(context).languageCode ==
+                                  'en'
+                              ? 'Connect computer'
+                              : '连接电脑',
+                          icon: Icon(
+                            Icons.add,
+                            size: 20,
+                            color: _drawerSecondaryTextColor,
+                          ),
+                          onPressed: () =>
+                              _navigateTo('/home/remote_codex_setting'),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+            Expanded(
+              child: IndexedStack(
+                index: _showComputerSessions ? 1 : 0,
+                children: [
+                  _buildConversationSection(),
+                  if (_hasOpenedComputerSessions)
+                    AgentSessionsPage(
+                      embedded: true,
+                      remoteOnly: true,
+                      onSessionSelected: _openThreadTarget,
+                    )
+                  else
+                    const SizedBox.shrink(),
+                ],
+              ),
+            ),
             if (_webQuickActions.isNotEmpty) _buildWebQuickLaunchBar(),
             _buildFooterShortcutBar(),
             // Aligns this row's bottom edge with the chat composer's bottom

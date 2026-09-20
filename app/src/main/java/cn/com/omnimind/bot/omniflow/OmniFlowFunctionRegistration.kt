@@ -5,7 +5,6 @@ import cn.com.omnimind.baselib.runlog.InternalRunLogStore
 import cn.com.omnimind.baselib.util.OmniLog
 
 object OmniFlowFunctionRegistration {
-    @Suppress("UNUSED_PARAMETER")
     suspend fun saveRunLog(
         context: Context,
         runId: String,
@@ -15,10 +14,11 @@ object OmniFlowFunctionRegistration {
     ): Map<String, Any?> {
         val normalizedRunId = runId.trim()
         require(normalizedRunId.isNotEmpty()) { "run_id_required" }
-        val record = requireNotNull(
+        requireNotNull(
             InternalRunLogStore.getRun(context.applicationContext, normalizedRunId),
         ) { "run_log_not_found:$normalizedRunId" }
-        // Send the canonical RunLog snapshot with the Function draft.  The
+        // Ask the canonical compiler to author Functions from this snapshot.
+        // A recording contains evidence, not an already authored Function. The
         // Python compiler must freeze transfer_states.json from the same
         // evidence that produced this Function; resolving the RunLog again
         // through the Android host introduces a race with RunLog cleanup and
@@ -34,6 +34,7 @@ object OmniFlowFunctionRegistration {
                 arguments = mapOf(
                     "run_id" to normalizedRunId,
                     "run_log" to sourceRunLog,
+                    "agent_visible" to agentVisible,
                 ),
             ),
             source = source,

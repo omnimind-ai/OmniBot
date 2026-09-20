@@ -1,0 +1,3 @@
+{
+  "prompt": "Fix /workspace/life-xp-demo/app.js history: sort same-day records by time then id, compute lifetime cumulative XP across days, retain day strings, render every crossed level. Run immutable /workspace/acceptance-audits/life-xp-history.cjs with app.js and life-xp-production.cjs with app.js toolkit.json. Fix until both pass, then project_publish. Preserve existing 4 habits, 4 check-ins and 75 XP. Do not edit audits or claim success without passing them."
+}

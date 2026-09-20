@@ -18,6 +18,8 @@ internal object AgentRuntimeErrorSupport {
     const val PROVIDER_REQUEST_LIMITED = "provider_request_limited"
     const val PROVIDER_SERVICE_UNAVAILABLE = "provider_service_unavailable"
     const val PROVIDER_REQUEST_REJECTED = "provider_request_rejected"
+    const val PROVIDER_CONTEXT_EXCEEDED = "provider_context_exceeded"
+    const val PROVIDER_IMAGE_REQUEST_REJECTED = "provider_image_request_rejected"
     const val PROVIDER_UNAVAILABLE = "provider_unavailable"
     const val PROVIDER_MODEL_UNAVAILABLE = "provider_model_unavailable"
     const val PROVIDER_STREAM_INTERRUPTED = "provider_stream_interrupted"
@@ -41,6 +43,12 @@ internal object AgentRuntimeErrorSupport {
                 "模型服务商限制了本次请求，请检查额度和请求频率后再试。"
             PROVIDER_SERVICE_UNAVAILABLE -> "模型服务商暂时不可用，请稍后再试或更换模型连接。"
             PROVIDER_REQUEST_REJECTED -> "模型服务商拒绝了本次请求，请检查模型及请求配置。"
+            PROVIDER_CONTEXT_EXCEEDED ->
+                "当前任务的上下文超出模型限制。本轮已停止，历史记录已保留；" +
+                    "请减少输入内容或切换更大上下文的模型。"
+            PROVIDER_IMAGE_REQUEST_REJECTED ->
+                "当前模型的图片请求被服务商拒绝。请在聊天的“模型与设置”中选择支持图片的模型后重试；" +
+                    "若已使用视觉模型，请检查图片格式、大小及服务商状态。"
             PROVIDER_TLS_CERTIFICATE_FAILURE -> CERTIFICATE_ERROR_MESSAGE
             PROVIDER_AUTHENTICATION_FAILED ->
                 "服务商身份验证失败，请检查所选 Provider 的密钥和认证请求头。"
@@ -99,6 +107,8 @@ internal object AgentRuntimeErrorSupport {
     private val knownFailureKinds = setOf(
         PROVIDER_QUOTA_EXCEEDED, PROVIDER_RATE_LIMITED, PROVIDER_REQUEST_LIMITED,
         PROVIDER_AUTHENTICATION_FAILED, PROVIDER_SERVICE_UNAVAILABLE, PROVIDER_REQUEST_REJECTED,
+        PROVIDER_CONTEXT_EXCEEDED,
+        PROVIDER_IMAGE_REQUEST_REJECTED,
         PROVIDER_MODEL_UNAVAILABLE, PROVIDER_TLS_CERTIFICATE_FAILURE, PROVIDER_NOT_BOUND,
         PROVIDER_UNAVAILABLE, PROVIDER_STREAM_INTERRUPTED, PROVIDER_STREAM_IDLE_TIMEOUT,
         PROVIDER_REQUEST_TIMEOUT, PROVIDER_TOOL_CALL_INCOMPLETE,
@@ -120,6 +130,7 @@ internal object AgentRuntimeErrorSupport {
                     code = cause.providerCode
                 }
                 is AgentStreamRequestException -> {
+                    if (AgentContextOverflow.isOverflow(cause)) return PROVIDER_CONTEXT_EXCEEDED
                     status = cause.statusCode
                     code = runCatching {
                         val root = Json.parseToJsonElement(cause.responseBody.orEmpty()) as? JsonObject
@@ -138,7 +149,10 @@ internal object AgentRuntimeErrorSupport {
             when (status) {
                 401 -> return PROVIDER_AUTHENTICATION_FAILED
                 429 -> return PROVIDER_REQUEST_LIMITED
-                400, 403, 422 -> return PROVIDER_REQUEST_REJECTED
+                400, 422 -> return if (cause is AgentStreamRequestException && cause.imageInput) {
+                    PROVIDER_IMAGE_REQUEST_REJECTED
+                } else PROVIDER_REQUEST_REJECTED
+                403 -> return PROVIDER_REQUEST_REJECTED
                 in 500..599 -> return PROVIDER_SERVICE_UNAVAILABLE
             }
         }

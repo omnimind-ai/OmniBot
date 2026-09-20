@@ -1,9 +1,14 @@
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:ui/features/task/execution/omniflow_execution_backend.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ui/l10n/legacy_text_localizer.dart';
 import 'package:go_router/go_router.dart';
-import 'package:ui/features/task/pages/execution_history/omniflow_execution_center_page.dart';
+import 'package:ui/features/task/pages/execution_history/execution_center_page.dart';
 import 'package:ui/l10n/generated/app_localizations.dart';
 import 'package:ui/models/conversation_model.dart';
 import 'package:ui/models/conversation_thread_target.dart';
@@ -18,12 +23,24 @@ void main() {
     'cn.com.omnimind.bot/SpecialPermissionEvent',
   );
   final toolCalls = <Map<Object?, Object?>>[];
-  Map<String, Object?>? Function(String name, Map<Object?, Object?> call)?
+  final recordingCalls = <MethodCall>[];
+  Completer<Map<String, dynamic>>? recordingPending;
+  FutureOr<Map<String, Object?>?> Function(
+    String name,
+    Map<Object?, Object?> call,
+  )?
   toolResponseOverride;
 
   setUp(() {
     toolCalls.clear();
+    recordingCalls.clear();
+    recordingPending = null;
     toolResponseOverride = null;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          const MethodChannel('cn.com.omnimind.bot/ScreenDialogEvent'),
+          (call) async => true,
+        );
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(pluginChannel, (call) async {
           if (call.method != 'list') return null;
@@ -47,10 +64,18 @@ void main() {
         });
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(assistChannel, (call) async {
+          if (call.method == 'startHumanTrajectoryLearning') {
+            recordingCalls.add(call);
+            return recordingPending?.future ??
+                {
+                  'success': true,
+                  'function_ids': ['recorded'],
+                };
+          }
           if (call.method != 'tools/call') return null;
           final arguments = Map<Object?, Object?>.from(call.arguments as Map);
           toolCalls.add(arguments);
-          final override = toolResponseOverride?.call(
+          final override = await toolResponseOverride?.call(
             arguments['name'].toString(),
             arguments,
           );
@@ -151,7 +176,7 @@ void main() {
                 ],
               },
             },
-            'function.demo' => <String, Object?>{'success': true},
+            'run_function' => <String, Object?>{'success': true},
             'save_function' => <String, Object?>{
               'success': true,
               'function_id': 'function.demo',
@@ -161,7 +186,9 @@ void main() {
         });
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(specialPermissionChannel, (call) async {
-          if (call.method == 'isAndroidGuiAccessibilityReady') return true;
+          if (call.method == 'isAndroidGuiAccessibilityReady' ||
+              call.method == 'isOverlayPermission')
+            return true;
           return null;
         });
   });
@@ -175,6 +202,75 @@ void main() {
         .setMockMethodCallHandler(specialPermissionChannel, null);
   });
 
+  testWidgets('recording entry starts once and refreshes saved Functions', (
+    tester,
+  ) async {
+    recordingPending = Completer<Map<String, dynamic>>();
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: ExecutionCenterPage(backend: const OmniFlowExecutionBackend()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final record = find.byKey(const ValueKey('execution-center-record'));
+    expect(record.hitTestable(), findsOneWidget);
+    await tester.tap(find.text('Run Logs'));
+    await tester.pumpAndSettle();
+    expect(record.hitTestable(), findsOneWidget);
+    await tester.tap(record);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(recordingCalls, hasLength(1));
+    expect(tester.widget<FilledButton>(record).onPressed, isNull);
+    recordingPending!.complete({
+      'success': true,
+      'function_ids': ['recorded'],
+    });
+    await tester.pumpAndSettle();
+    expect(tester.widget<FilledButton>(record).onPressed, isNotNull);
+    expect(toolCalls.where((c) => c['name'] == 'list_functions'), hasLength(2));
+  });
+
+  testWidgets(
+    'required arguments show feedback and an in-flight run cannot repeat',
+    (tester) async {
+      final pending = Completer<Map<String, Object?>>();
+      toolResponseOverride = (name, call) =>
+          name == 'run_function' ? pending.future : null;
+      await tester.pumpWidget(
+        const MaterialApp(
+          locale: Locale('zh'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: ExecutionCenterPage(backend: const OmniFlowExecutionBackend()),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('function-run-function.demo')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('开始执行'));
+      await tester.pumpAndSettle();
+      expect(find.text('请填写此参数'), findsOneWidget);
+      expect(toolCalls.where((c) => c['name'] == 'run_function'), isEmpty);
+      await tester.enterText(find.byType(TextFormField), 'Battery');
+      await tester.tap(find.text('开始执行'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
+      final run = find.byKey(const ValueKey('function-run-function.demo'));
+      expect(tester.widget<FilledButton>(run).onPressed, isNull);
+      expect(toolCalls.where((c) => c['name'] == 'run_function'), hasLength(1));
+      pending.complete({
+        'success': false,
+        'error': {'message': 'Recorded target unavailable'},
+      });
+      await tester.pumpAndSettle();
+      expect(find.text('Recorded target unavailable'), findsOneWidget);
+      expect(tester.widget<FilledButton>(run).onPressed, isNotNull);
+    },
+  );
+
   testWidgets('loads only the active tab with a small first page', (
     tester,
   ) async {
@@ -183,7 +279,7 @@ void main() {
         locale: Locale('zh'),
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
-        home: OmniFlowExecutionCenterPage(),
+        home: ExecutionCenterPage(backend: const OmniFlowExecutionBackend()),
       ),
     );
     await tester.pumpAndSettle();
@@ -238,7 +334,7 @@ void main() {
         locale: Locale('zh'),
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
-        home: OmniFlowExecutionCenterPage(),
+        home: ExecutionCenterPage(backend: const OmniFlowExecutionBackend()),
       ),
     );
     await tester.pumpAndSettle();
@@ -291,7 +387,10 @@ void main() {
         locale: Locale('zh'),
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
-        home: OmniFlowExecutionCenterPage(initialTab: 'run_logs'),
+        home: ExecutionCenterPage(
+          backend: const OmniFlowExecutionBackend(),
+          initialTab: 'run_logs',
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -327,7 +426,9 @@ void main() {
       routes: [
         GoRoute(
           path: '/',
-          builder: (_, __) => const OmniFlowExecutionCenterPage(),
+          builder: (_, __) => const ExecutionCenterPage(
+            backend: const OmniFlowExecutionBackend(),
+          ),
         ),
         GoRoute(
           path: '/home/chat',
@@ -372,14 +473,19 @@ void main() {
     expect(
       openedTarget?.initialMessage,
       allOf(
-        contains('function_id: function.demo'),
+        contains('原 Function（仅作来源说明，不作为工具参数）：function.demo'),
         contains('source_run_id: run-1'),
         contains('get_function'),
         contains('save_function'),
-        contains('enhance=true'),
+        contains('"enhance":true'),
       ),
     );
     expect(toolCalls.any((call) => call['name'] == 'update_function'), isFalse);
+    final beforeReturn = toolCalls.where((c) => c['name'] == 'list_functions').length;
+    router.pop();
+    await tester.pumpAndSettle();
+    expect(toolCalls.where((c) => c['name'] == 'list_functions').length,
+        greaterThan(beforeReturn));
   });
 
   test('builds a complete Function enhancement Agent request', () {
@@ -392,13 +498,24 @@ void main() {
 
     expect(prompt, contains('get_function'));
     expect(prompt, contains('save_function'));
-    expect(prompt, contains('enhance=true'));
-    expect(prompt, contains('run_id=run-1'));
-    expect(prompt, contains('由 OmniFlow 内置的官方增强流程'));
+    expect(prompt, contains('"enhance":true'));
+    expect(prompt, contains('"run_id":"run-1"'));
+    final argumentsText = prompt.split('工具参数严格使用：')[1].split('。不要传')[0];
+    final arguments = jsonDecode(argumentsText) as Map<String, dynamic>;
+    expect(arguments.keys.toSet(), {'run_id', 'enhance', 'instruction'});
+    expect(arguments['instruction'], contains('task_parameter'));
+    expect(arguments['instruction'], contains('online_observation'));
+    expect(arguments['instruction'], contains('action/render bindings'));
+    expect(prompt, contains('由 OmniFlow 内置的官方 authoring 流程'));
     expect(prompt, contains('不要调用 list_run_logs/get_run_log/get_function'));
     expect(prompt, isNot(contains('"source_run_id":"run-1"')));
-    expect(prompt, contains('function_id: function.demo'));
+    expect(prompt, contains('原 Function（仅作来源说明，不作为工具参数）：function.demo'));
     expect(prompt, contains('不要执行 Function'));
+    expect(prompt, isNot(contains('functions=[')));
+    expect(prompt, isNot(contains('演示指令')));
+    expect(prompt, isNot(contains('"steps"')));
+    expect(prompt, contains('不要传 function、functions 或 arguments'));
+    expect(prompt, contains('可能生成多个 Function'));
   });
 
   testWidgets('opens the requested Function directly', (tester) async {
@@ -407,7 +524,10 @@ void main() {
         locale: Locale('zh'),
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
-        home: OmniFlowExecutionCenterPage(initialFunctionId: 'function.demo'),
+        home: ExecutionCenterPage(
+          backend: const OmniFlowExecutionBackend(),
+          initialFunctionId: 'function.demo',
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -430,7 +550,7 @@ void main() {
         locale: Locale('zh'),
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
-        home: OmniFlowExecutionCenterPage(),
+        home: ExecutionCenterPage(backend: const OmniFlowExecutionBackend()),
       ),
     );
     await tester.pumpAndSettle();
@@ -449,13 +569,14 @@ void main() {
     expect(
       toolCalls.any(
         (call) =>
-            call['name'] == 'function.demo' &&
-            (call['arguments'] as Map?)?['query'] == 'replay acceptance',
+            call['name'] == 'run_function' &&
+            ((call['arguments'] as Map?)?['arguments'] as Map?)?['query'] ==
+                'replay acceptance',
       ),
       isTrue,
     );
     final replayCall = toolCalls.lastWhere(
-      (call) => call['name'] == 'function.demo',
+      (call) => call['name'] == 'run_function',
     );
     expect(replayCall['goal'], contains('演示指令'));
     expect(replayCall['goal'], contains('复用已成功执行的轨迹'));
@@ -488,7 +609,7 @@ void main() {
     tester,
   ) async {
     toolResponseOverride = (name, call) {
-      if (name != 'function.demo') return null;
+      if (name != 'run_function') return null;
       return <String, Object?>{
         'success': false,
         'error_code': 'FUNCTION_CALL_FAILED',
@@ -501,7 +622,7 @@ void main() {
         locale: Locale('zh'),
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
-        home: OmniFlowExecutionCenterPage(),
+        home: ExecutionCenterPage(backend: const OmniFlowExecutionBackend()),
       ),
     );
     await tester.pumpAndSettle();
@@ -542,7 +663,10 @@ void main() {
         locale: Locale('zh'),
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
-        home: OmniFlowExecutionCenterPage(initialTab: 'run_logs'),
+        home: ExecutionCenterPage(
+          backend: const OmniFlowExecutionBackend(),
+          initialTab: 'run_logs',
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -598,7 +722,10 @@ void main() {
           locale: Locale('zh'),
           localizationsDelegates: AppLocalizations.localizationsDelegates,
           supportedLocales: AppLocalizations.supportedLocales,
-          home: OmniFlowExecutionCenterPage(initialTab: 'run_logs'),
+          home: ExecutionCenterPage(
+            backend: const OmniFlowExecutionBackend(),
+            initialTab: 'run_logs',
+          ),
         ),
       );
       await tester.pumpAndSettle();
@@ -631,7 +758,7 @@ void main() {
         locale: Locale('zh'),
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
-        home: OmniFlowExecutionCenterPage(),
+        home: ExecutionCenterPage(backend: const OmniFlowExecutionBackend()),
       ),
     );
     await tester.pumpAndSettle();
@@ -653,7 +780,10 @@ void main() {
         locale: Locale('zh'),
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
-        home: OmniFlowExecutionCenterPage(initialTab: 'run_logs'),
+        home: ExecutionCenterPage(
+          backend: const OmniFlowExecutionBackend(),
+          initialTab: 'run_logs',
+        ),
       ),
     );
     await tester.pumpAndSettle();
@@ -676,7 +806,7 @@ void main() {
         locale: Locale('en'),
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
-        home: OmniFlowExecutionCenterPage(),
+        home: ExecutionCenterPage(backend: const OmniFlowExecutionBackend()),
       ),
     );
     await tester.pumpAndSettle();

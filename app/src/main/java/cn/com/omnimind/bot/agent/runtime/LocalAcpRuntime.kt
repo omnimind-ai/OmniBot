@@ -8,6 +8,7 @@ import android.util.Log
 import cn.com.omnimind.bot.agent.AgentRuntimeErrorSupport
 import cn.com.omnimind.bot.BuildConfig
 import cn.com.omnimind.bot.agent.readAgentAttachmentBytes
+import cn.com.omnimind.bot.agent.validateOwnedWorkspaceAttachment
 import cn.com.omnimind.bot.agent.AgentWorkspaceManager
 import cn.com.omnimind.bot.agent.AgentWorkspaceAttachmentSupport
 import cn.com.omnimind.bot.agent.AgentScheduleToolBridge
@@ -2733,6 +2734,7 @@ internal class LocalAcpRuntime(
                 cancelled = true
             } catch (error: Throwable) {
                 Log.e(TAG, "ACP prompt failed", error)
+                cn.com.omnimind.bot.agent.ProviderFailureJournal.record(appContext, error)
                 failure = error
             } finally {
                 promptExecutions.remove(threadId, execution)
@@ -3374,6 +3376,12 @@ internal class LocalAcpRuntime(
         }
         val rawAttachments = args.listOfMaps("attachments")
         rawAttachments.forEach { attachment ->
+            // Validate locally owned durable files even when the Harness owns
+            // materialization; otherwise a missing image becomes ResourceLink.
+            validateOwnedWorkspaceAttachment(
+                attachment.stringValue("path").orEmpty(),
+                workspaceManager.attachmentsDirectory(),
+            )
             val name = attachment.stringValue("name")
                 ?: attachment.stringValue("fileName")
                 ?: "attachment"

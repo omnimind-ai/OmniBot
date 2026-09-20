@@ -1,0 +1,3 @@
+{
+  "prompt": "Use file_write to create /workspace/edit-recovery.txt with alpha. Call file_edit with oldText alpha and newText alpha; expect an explicit no-change failure. Then call file_edit alpha to beta and file_read to verify beta. Report the failure honestly and confirm the corrected edit succeeded."
+}

@@ -1,0 +1,16 @@
+{
+  "name": "omnibot-shared-codex-acp-probe",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Opt-in shared Codex ACP v2 integration; not production acceptance",
+  "dependencies": {
+    "@agentclientprotocol/codex-acp": "1.11.0",
+    "@agentclientprotocol/sdk": "1.4.0",
+    "ws": "8.21.3"
+  },
+  "scripts": {
+    "prepare:adapter": "python3 prepare-shared-acp.py node_modules/@agentclientprotocol/codex-acp codex-acp-v2-module.mjs --v2-module",
+    "test": "npm run prepare:adapter && node --test shared-history-cutover.test.mjs"
+  }
+}

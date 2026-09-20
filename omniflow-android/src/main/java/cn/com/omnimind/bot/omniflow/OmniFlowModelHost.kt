@@ -1,10 +1,9 @@
 package cn.com.omnimind.bot.omniflow
 
+import cn.com.omnimind.baselib.llm.AssistantToolCall
 import cn.com.omnimind.baselib.llm.ChatCompletionMessage
-import cn.com.omnimind.baselib.llm.ChatCompletionFunction
 import cn.com.omnimind.baselib.llm.ChatCompletionRequest
 import cn.com.omnimind.baselib.llm.ChatCompletionStreamOptions
-import cn.com.omnimind.baselib.llm.ChatCompletionTool
 import cn.com.omnimind.baselib.llm.ChatCompletionTurn
 import cn.com.omnimind.baselib.llm.contentText
 import cn.com.omnimind.baselib.util.ImageCompressor
@@ -48,6 +47,10 @@ class OmniFlowModelHost(
         require(request.model == requestedModel) { "model_turn_request_model_mismatch" }
         val rejectedAction = stalledPreviousAction(payload)
         var activeRequest = request.copy(
+            // Python supplies a completion payload, while this host consumes
+            // SSE through streamTurn. Omitted stream decodes to false and makes
+            // a valid HTTP 200 JSON response fail in the SSE client.
+            stream = true,
             messages = request.messages.map { message ->
                 message.copy(content = compressImages(message.content))
             },
@@ -115,7 +118,7 @@ class OmniFlowModelHost(
         // The provider/ACP stream owns its lifetime.  Do not synthesize a
         // failure merely because a model is slow before its next chunk.
         val turn = modelClient.streamTurn(request)
-        val content = submitJsonArguments(turn)
+        val content = jsonCompletionContent(turn.message.contentText(), turn.message.toolCalls.orEmpty())
         return mapOf("content" to content)
     }
 
@@ -299,24 +302,15 @@ class OmniFlowModelHost(
                 temperature = (payload["temperature"] as? Number)?.toDouble() ?: 0.1,
                 stream = true,
                 streamOptions = ChatCompletionStreamOptions(),
-                tools = listOf(
-                    ChatCompletionTool(
-                        function = ChatCompletionFunction(
-                            name = "submit_json",
-                            description = "Submit the requested JSON object.",
-                            parameters = buildJsonObject {
-                                put("type", JsonPrimitive("object"))
-                                put("additionalProperties", JsonPrimitive(true))
-                            },
-                        ),
-                    ),
-                ),
-                toolChoice = JsonPrimitive("required"),
-                parallelToolCalls = false,
+                // Authoring produces data, not a device/tool action. JSON mode
+                // avoids requiring forced tool calls unsupported by providers.
+                responseFormat = buildJsonObject {
+                    put("type", JsonPrimitive("json_object"))
+                },
             )
 
-        private fun submitJsonArguments(turn: ChatCompletionTurn): String {
-            val toolCall = turn.message.toolCalls.orEmpty().singleOrNull {
+        fun jsonCompletionContent(content: String, toolCalls: List<AssistantToolCall>): String {
+            val toolCall = toolCalls.singleOrNull {
                 it.function.name == "submit_json"
             }
             if (toolCall != null) {
@@ -324,12 +318,9 @@ class OmniFlowModelHost(
                     error("model_completion_submit_json_empty")
                 }
             }
-            // Some OpenAI-compatible providers ignore tool_choice=required and
-            // return the requested object as ordinary assistant content. Keep
-            // the structured tool path preferred, but accept a JSON object so
-            // offline Function enhancement remains usable with those providers.
-            val content = turn.message.contentText().trim()
-            val candidate = content
+            // Accept legacy submit_json responses as well as standard JSON mode.
+            // The canonical compiler owns schema validation of the proposal.
+            val candidate = content.trim()
                 .removePrefix("```")
                 .removePrefix("json")
                 .removeSuffix("```")

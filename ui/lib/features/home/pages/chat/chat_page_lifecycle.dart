@@ -287,7 +287,10 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     }
     _applyDraftForConversationMode(targetMode);
     if (effectiveTarget.isRemoteCodexSessionTarget) {
-      await _prepareRemoteCodexSessionTarget(effectiveTarget);
+      final loaded = await _prepareRemoteCodexSessionTarget(effectiveTarget);
+      // Failed session admission must not continue as an initialized chat.
+      // In particular, do not request configuration or dispatch initial input.
+      if (!loaded) return;
     } else {
       await initializeConversation(lifecycleToken: lifecycleToken);
     }
@@ -547,12 +550,14 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
       return;
     }
     _resolvedThreadTarget = visibleTarget;
+    // Startup navigation must remember remote session identity as well. Remote
+    // history remains owned by ACP; only the existing navigation target is saved.
+    await ConversationHistoryService.saveLastVisibleThreadTarget(visibleTarget);
     if (visibleTarget.isRemoteCodexSessionTarget ||
         (_activeConversationMode == ChatPageMode.agent &&
             _isRemoteCodexRuntimeActiveForMode(ChatPageMode.agent))) {
       return;
     }
-    await ConversationHistoryService.saveLastVisibleThreadTarget(visibleTarget);
     await ConversationHistoryService.saveCurrentConversationTarget(
       visibleTarget,
       mode: visibleTarget.mode,
@@ -764,7 +769,9 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
         _runtimeCoordinator.persistConversationMessageSnapshot(
           conversationId: conversationId,
           mode: _modeKey(_activeMode),
-          messages: List<ChatMessageModel>.from(_messages),
+          messages: [chatMessage],
+          expectedHistoryRevision: _runtimeCoordinator.runtimeFor(
+            conversationId: conversationId, mode: _modeKey(_activeMode))?.historyRevision ?? 0,
           conversation: _currentConversation,
         ),
       );

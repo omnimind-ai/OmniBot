@@ -21,7 +21,11 @@ extension _HomeDrawerActions on HomeDrawerState {
     GoRouterManager.push(
       '/home/chat',
       extra: target,
-      queryParams: _threadTargetQueryParams(target),
+      // Remote sessions carry their identity in the canonical target. A
+      // conversationId=new query overrides that target in the home router.
+      queryParams: target.isAgentSessionTarget
+          ? null
+          : _threadTargetQueryParams(target),
     );
   }
 

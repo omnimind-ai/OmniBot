@@ -1,3 +1,6 @@
+import 'dart:io';
+
+import 'package:ui/features/task/execution/omniflow_execution_backend.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -18,7 +21,7 @@ void main() {
               'functions': <Object?>[
                 <String, Object?>{
                   'function_id': 'function.settings',
-                  'source_run_id': 'run-1',
+                  'source_run_id': 'original-recording',
                   'name': '打开设置',
                 },
               ],
@@ -48,6 +51,7 @@ void main() {
               345,
             ).millisecondsSinceEpoch,
             'diagnostics': <String, Object?>{
+              'function_id': 'function.settings',
               'duration_ms': 2345,
               'token_usage': <String, Object?>{
                 'prompt_tokens': 1000,
@@ -96,6 +100,159 @@ void main() {
         .setMockMethodCallHandler(assistChannel, null);
   });
 
+  for (final official in [true, false]) {
+    for (final point in [
+      const Offset(500, 500),
+      const Offset(348.14814814814815, 274.58333333333337),
+      const Offset(
+        600,
+        1200,
+      ), // Out of the canonical range, not pixel fallback.
+    ]) {
+      testWidgets(
+        'screenshot shows ${official ? "official" : "legacy"} action point $point',
+        (tester) async {
+          final screenshot = File('test/fixtures/run_log_1200x2400.png');
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+              .setMockMethodCallHandler(assistChannel, (call) async {
+                final args = Map<Object?, Object?>.from(call.arguments as Map);
+                if (args['name'] == 'list_functions') {
+                  return {'success': true, 'functions': []};
+                }
+                if (args['name'] == 'get_run_log_state') {
+                  return {
+                    'success': true,
+                    'state_id': 'point-state',
+                    'screenshot_path': screenshot.path,
+                    'display': {'width': 1080, 'height': 2400},
+                  };
+                }
+                return {
+                  'run_id': 'point-run',
+                  'status': 'succeeded',
+                  'steps': [
+                    {
+                      'step_index': 0,
+                      'before_state_id': 'point-state',
+                      'action': official
+                          ? {
+                              'action_type': 'click',
+                              'x': point.dx * 1080 / 1000,
+                              'y': point.dy * 2400 / 1000,
+                            }
+                          : {
+                              'tool': 'click',
+                              'args': {'x': point.dx, 'y': point.dy},
+                            },
+                      'result': {'success': true},
+                    },
+                  ],
+                };
+              });
+          await tester.pumpWidget(
+            const MaterialApp(
+              locale: Locale('en'),
+              home: RunLogDetailPage(
+                runId: 'point-run',
+                backend: OmniFlowExecutionBackend(),
+              ),
+            ),
+          );
+          await tester.pumpAndSettle();
+          await tester.runAsync(() async {
+            await precacheImage(
+              FileImage(screenshot),
+              tester.element(find.byType(RunLogDetailPage)),
+            );
+          });
+          await tester.tap(find.textContaining('Tap · '));
+          await tester.pumpAndSettle();
+          await tester.tap(find.text('Action screenshot'));
+          await tester.pumpAndSettle();
+          if (point.dy > 1000) {
+            expect(find.byIcon(Icons.my_location_rounded), findsNothing);
+            return;
+          }
+          expect(find.byIcon(Icons.my_location_rounded), findsOneWidget);
+          final bounds = tester.getRect(find.byType(Image));
+          expect(bounds.width, lessThan(1200));
+          final marker = tester.getCenter(
+            find.byIcon(Icons.my_location_rounded),
+          );
+          expect(
+            marker.dx,
+            closeTo(bounds.left + bounds.width * point.dx / 1000, 0.01),
+          );
+          expect(
+            marker.dy,
+            closeTo(bounds.top + bounds.height * point.dy / 1000, 0.01),
+          );
+        },
+      );
+    }
+  }
+
+  testWidgets('renders official flat RunLog actions and keeps raw evidence', (
+    tester,
+  ) async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(assistChannel, (call) async {
+          final arguments = Map<Object?, Object?>.from(call.arguments as Map);
+          if (arguments['name'] == 'list_functions') {
+            return {'success': true, 'functions': <Object?>[]};
+          }
+          return {
+            'schema_version': 'omniflow.run_log.v1',
+            'run_id': 'official-run',
+            'goal': 'Search Settings',
+            'status': 'succeeded',
+            'success': true,
+            'steps': [
+              {
+                'step_index': 0,
+                'observation': {
+                  'auxiliaries': {'state_id': 'before-1'},
+                },
+                'action': {
+                  'action_type': 'input_text',
+                  'text': 'wifi',
+                  'x': 400,
+                  'y': 80,
+                },
+                'result': {'success': true},
+                'next_observation': {
+                  'auxiliaries': {'state_id': 'after-1'},
+                },
+              },
+              {
+                'step_index': 1,
+                'action': {
+                  'action_type': 'keyboard_enter',
+                  'keycode': 'KEYCODE_back',
+                },
+                'result': {'success': true},
+              },
+            ],
+          };
+        });
+    await tester.pumpWidget(
+      const MaterialApp(
+        locale: Locale('en'),
+        home: RunLogDetailPage(
+          runId: 'official-run',
+          backend: OmniFlowExecutionBackend(),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Enter text · wifi'), findsOneWidget);
+    expect(find.text('Press key · KEYCODE_back'), findsOneWidget);
+    await tester.tap(find.text('Enter text · wifi'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('"action_type": "input_text"'), findsOneWidget);
+    expect(find.text('Action screenshot'), findsOneWidget);
+  });
+
   testWidgets(
     'uses compact vlm-core timeline components for canonical RunLog',
     (tester) async {
@@ -107,7 +264,10 @@ void main() {
       await tester.pumpWidget(
         const MaterialApp(
           locale: Locale('en'),
-          home: RunLogDetailPage(runId: 'run-1'),
+          home: RunLogDetailPage(
+            runId: 'run-1',
+            backend: OmniFlowExecutionBackend(),
+          ),
         ),
       );
       await tester.pumpAndSettle();

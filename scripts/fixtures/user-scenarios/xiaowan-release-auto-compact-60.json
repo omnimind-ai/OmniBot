@@ -1,0 +1,3 @@
+{
+  "prompt": "Use file_read on /workspace/oob-auto-context-release-fixture/large.html for 60 consecutive pages with maxChars 65536, starting at offset 0 and following nextOffset. No shell, no manual compact. Report progress every 5 pages."
+}

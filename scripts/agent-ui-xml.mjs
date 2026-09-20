@@ -17,3 +17,17 @@ export function hasComposerSelectionToolbar(nodes) {
   return labels.some(label => ['Select all','全选'].includes(label)) &&
     labels.some(label => ['Paste','粘贴','Copy','复制','Cut','剪切'].includes(label));
 }
+
+// Markdown may fold a single newline into a space in accessibility text.
+// A unique final marker still counts, but never the composer or the test's user instruction.
+export function hasAssistantReplyMarker(node, marker) {
+  if (uiXmlField(node, 'class') === 'android.widget.EditText') return false;
+  const text = uiXmlField(node, 'content-desc') || uiXmlField(node, 'text');
+  if (text.includes(`Reply ${marker}`) || text.includes(`End your final reply with ${marker}`) ||
+      /^(编辑消息|Edit message)(\n|$)/.test(text)) return false;
+  return text.split('\n').some(line => {
+    const value = line.trimEnd();
+    return value.endsWith(marker) &&
+      (value.length === marker.length || /\s/.test(value[value.length - marker.length - 1]));
+  });
+}

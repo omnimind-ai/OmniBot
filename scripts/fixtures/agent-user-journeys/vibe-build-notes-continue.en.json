@@ -1,0 +1,1 @@
+{"name":"Continue real model Vibe App generation after SVG runtime fix","steps":[{"action":"send","marker":"OOB_LIVE_VIBE_CONTINUE","scenario":"vibe-build-notes-continue.json","timeoutMs":180000},{"action":"reply","text":"OOB_LIVE_VIBE_CONTINUE_DONE","timeoutMs":600000},{"action":"turn-outcome","marker":"OOB_LIVE_VIBE_CONTINUE","expected":"done"}]}

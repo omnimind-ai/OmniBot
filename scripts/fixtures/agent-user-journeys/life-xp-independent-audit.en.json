@@ -1,0 +1,21 @@
+{
+  "name": "Life XP independent production audit repair",
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_LIFE_XP_INDEPENDENT",
+      "scenario": "life-xp-independent-audit.json",
+      "timeoutMs": 300000
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_LIFE_XP_INDEPENDENT_DONE",
+      "timeoutMs": 1800000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_LIFE_XP_INDEPENDENT",
+      "expected": "done"
+    }
+  ]
+}

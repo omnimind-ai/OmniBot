@@ -1,6 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application>
+        <receiver android:name=".debug.DebugNotificationProbeReceiver"
+            android:permission="android.permission.DUMP"
+            android:exported="true" />
+        <receiver android:name=".debug.DebugAttachmentPersistenceReceiver"
+            android:exported="true" android:enabled="true" />
         <receiver
             android:name=".debug.DebugHumanRecordingReceiver"
             android:enabled="true"

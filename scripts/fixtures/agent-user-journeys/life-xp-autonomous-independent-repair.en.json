@@ -1,0 +1,23 @@
+{
+  "name": "Repair from executed independent production and real UI failures",
+  "requireClockSync": true,
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_LIFE_XP_AUDIT_REPAIR",
+      "scenario": "life-xp-autonomous-independent-repair.json",
+      "timeoutMs": 600000
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_LIFE_XP_AUDIT_REPAIR_DONE",
+      "timeoutMs": 2400000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_LIFE_XP_AUDIT_REPAIR",
+      "expected": "done"
+    }
+  ],
+  "preconditions": "Existing idle local conversation42 and project life-xp-autonomous-1789787755680; preserve data; official completion is not business acceptance."
+}

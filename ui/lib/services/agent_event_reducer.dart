@@ -168,6 +168,7 @@ class AgentEventReducer {
     }
 
     final params = _eventParams(event: event, message: message, method: method);
+    if (_isAcpV2(event)) runtime.acpProtocolVersion = 2;
     // An actionable request card must carry its owner at creation time. The
     // coordinator still annotates older messages, but response routing cannot
     // depend on that later pass when local ACP processes run in parallel or a
@@ -222,6 +223,17 @@ class AgentEventReducer {
     if (method == 'session/update') {
       final update = _asStringMap(params['update']);
       final sessionUpdate = _string(update?['sessionUpdate']);
+      if (_isAcpV2(event) && sessionUpdate == 'state_update' &&
+          update?['state'] == 'idle') {
+        final stateTurnId = _firstString([event['turnId'], params['turnId']]);
+        if (stateTurnId == null) return const AgentReduceResult(handled: true);
+        return reducePromptResponse(
+          runtime: runtime,
+          sessionId: _firstString([params['sessionId'], event['threadId']]),
+          turnId: stateTurnId,
+          stopReason: _string(update?['stopReason']) ?? 'end_turn',
+        );
+      }
       if (update != null) {
         _rememberAcpExtensionMetadata(runtime, update);
       }
@@ -379,7 +391,10 @@ class AgentEventReducer {
       if (projected == null) {
         return AgentReduceResult(handled: true, method: method);
       }
-      return reduce(runtime: runtime, event: projected);
+      return reduce(runtime: runtime, event: {
+        ...projected,
+        if (_isAcpV2(event)) 'protocolVersion': 2,
+      });
     }
     final threadId = _firstString([
       event['threadId'],
@@ -493,7 +508,8 @@ class AgentEventReducer {
         currentTurnId.isNotEmpty &&
         currentTurnId != turnId &&
         !isTurnAdmission &&
-        !_isTerminalAgentEventMethod(method)) {
+        !_isTerminalAgentEventMethod(method) &&
+        !acpEventIsItemUpsert(event)) {
       return AgentReduceResult(
         handled: true,
         method: method,
@@ -505,8 +521,9 @@ class AgentEventReducer {
     // stable local run id for grouping; the official ACP turn remains in
     // streamMeta/cardData for protocol correlation. This prevents a provider
     // turn id arriving after the prompt from renaming the visible run.
-    final parentTaskId =
-        runtime.resolveAcpEventRunId(
+    final parentTaskId = acpEventIsItemUpsert(event) && turnId != null
+        ? (runtime.resolveKnownRunId(sessionId: sessionId, turnId: turnId) ?? turnId)
+        : runtime.resolveAcpEventRunId(
           sessionId: sessionId,
           turnId: turnId,
           fallback: _firstString([
@@ -531,7 +548,7 @@ class AgentEventReducer {
     if (turnId != null &&
         method != 'turn/started' &&
         runtime.completedAgentTurnIds.contains(turnId) &&
-        !finalTurnUsagePresentation) {
+        !finalTurnUsagePresentation && !acpEventIsItemUpsert(event)) {
       return AgentReduceResult(
         handled: true,
         method: method,
@@ -547,7 +564,7 @@ class AgentEventReducer {
       if (turnId != null) {
         runtime.activeAcpTurnId = turnId;
       }
-      _touchActiveTurn(runtime, parentTaskId);
+      _touchActiveTurn(runtime, parentTaskId, stateUpdate: true);
       return AgentReduceResult(
         handled: true,
         method: method,
@@ -818,16 +835,19 @@ class AgentEventReducer {
           _string(params['entryId']) ??
           '${itemId ?? parentTaskId}-user-message';
       if (delta.isNotEmpty) {
-        final text = (runtime.currentAcpUserMessages[entryId] ?? '') + delta;
+        final text = params['replace'] == true ? delta
+            : (runtime.currentAcpUserMessages[entryId] ?? '') + delta;
         runtime.currentAcpUserMessages[entryId] = text;
-        final messageId = '$entryId-agent-user';
+        final clientMessageId = _string(params['clientMessageId'])?.trim();
+        final messageId = clientMessageId?.isNotEmpty == true
+            ? clientMessageId! : '$entryId-agent-user';
 
         // ChatPage inserts the user bubble before opening ACP. Live ACP user
         // echoes must converge on that bubble, not create a second one. The
         // local dispatch id is the only reliable bridge between the host
         // message and the official ACP turn; never deduplicate historical
         // prompts by text alone.
-        if (!isReplay) {
+        if (!isReplay && clientMessageId?.isNotEmpty != true) {
           final dispatchIds = <String>{
             if (runtime.currentDispatchTurnId?.trim().isNotEmpty == true)
               runtime.currentDispatchTurnId!.trim(),
@@ -867,7 +887,10 @@ class AgentEventReducer {
           id: messageId,
           type: 1,
           user: 1,
-          content: <String, dynamic>{'id': messageId, 'text': text},
+          content: <String, dynamic>{
+            if (existingIndex >= 0) ...?runtime.messages[existingIndex].content,
+            'id': messageId, 'text': text,
+          },
           createAt: existingIndex >= 0
               ? runtime.messages[existingIndex].createAt
               : DateTime.now(),
@@ -875,7 +898,9 @@ class AgentEventReducer {
         if (existingIndex >= 0) {
           runtime.messages[existingIndex] = message;
         } else {
-          runtime.messages.add(message);
+          // The shared conversation list is newest-first, including live
+          // user messages originating from another client of this session.
+          runtime.messages.insert(0, message);
         }
       }
       return AgentReduceResult(
@@ -895,7 +920,7 @@ class AgentEventReducer {
       final entryId =
           _string(params['entryId']) ??
           '${itemId ?? parentTaskId}-agent-message';
-      if (delta.isNotEmpty) {
+      if (delta.isNotEmpty || params['replace'] == true) {
         _finalizeActiveThinkingCardForTask(runtime, parentTaskId);
         _appendAssistantText(
           runtime,
@@ -903,6 +928,7 @@ class AgentEventReducer {
           entryId: entryId,
           delta: delta,
           isFinal: false,
+          replace: params['replace'] == true,
         );
       }
       _applyAcpPresentation(
@@ -951,7 +977,7 @@ class AgentEventReducer {
         parentTaskId: parentTaskId,
         entryId: entryId,
       );
-      if (text.isNotEmpty) {
+      if (text.isNotEmpty || params['replace'] == true) {
         final pendingReasoningCardData =
             runtime.pendingAcpReasoningCardData.remove(reasoningDataKey) ??
             const <String, dynamic>{};
@@ -976,6 +1002,8 @@ class AgentEventReducer {
           parentTaskId: parentTaskId,
           cardId: entryId,
           delta: text,
+          replace: params['replace'] == true,
+          exactIdentity: _isAcpV2(event),
           reasoningCardData: <String, dynamic>{
             ...pendingReasoningCardData,
             ...reasoningCardData,
@@ -1837,8 +1865,10 @@ class AgentEventReducer {
 
   void _touchActiveTurn(
     ChatConversationRuntimeState runtime,
-    String parentTaskId,
-  ) {
+    String parentTaskId, {
+    bool stateUpdate = false,
+  }) {
+    if (runtime.acpProtocolVersion == 2 && !stateUpdate) return;
     runtime.completedAgentTurnIds.remove(parentTaskId);
     runtime.isAiResponding = true;
     runtime.activeRunId ??= parentTaskId;
@@ -1878,7 +1908,9 @@ class AgentEventReducer {
     _touchActiveTurn(runtime, parentTaskId);
     final next = replace ? effectiveDelta : previous + effectiveDelta;
     runtime.agentReplayDeltaOffsets.remove(messageId);
-    runtime.currentAiMessages[messageId] = next;
+    final active = runtime.acpProtocolVersion != 2 ||
+        (runtime.isAiResponding && runtime.activeRunId == parentTaskId);
+    if (active) runtime.currentAiMessages[messageId] = next;
     if (next.isEmpty && index == -1) {
       return;
     }
@@ -1888,7 +1920,7 @@ class AgentEventReducer {
       parentTaskId: parentTaskId,
       entryId: messageId,
       kind: 'text_snapshot',
-      isFinal: isFinal,
+      isFinal: isFinal || !active,
       existingMessage: existing,
     );
     final content = <String, dynamic>{'text': next, 'id': messageId};
@@ -2024,11 +2056,13 @@ class AgentEventReducer {
     required String cardId,
     required String delta,
     Map<String, dynamic> reasoningCardData = const <String, dynamic>{},
+    bool replace = false,
+    bool exactIdentity = false,
   }) {
     // Merge chunks only while the same continuous reasoning segment is
     // active. Tool and output boundaries finalize that segment, so later
     // reasoning in the same ACP turn starts a separate timeline card.
-    cardId = _thinkingCardIdForTask(
+    if (!exactIdentity) cardId = _thinkingCardIdForTask(
       runtime,
       parentTaskId: parentTaskId,
       requestedCardId: cardId,
@@ -2044,7 +2078,7 @@ class AgentEventReducer {
         ? runtime.currentThinkingMessages[parentTaskId]
         : null;
     final baseContent = cachedThinking ?? existingContent;
-    final effectiveDelta = _deduplicateReplayDelta(
+    final effectiveDelta = (replace || exactIdentity) ? delta : _deduplicateReplayDelta(
       runtime,
       entryId: cardId,
       existingText: baseContent,
@@ -2055,26 +2089,34 @@ class AgentEventReducer {
       return;
     }
     _touchActiveTurn(runtime, parentTaskId);
-    runtime.isDeepThinking = true;
-    runtime.currentThinkingStage = ThinkingStage.thinking.value;
-    runtime.activeThinkingCardId = cardId;
-    final nextContent = baseContent + effectiveDelta;
+    final active = !exactIdentity ||
+        (runtime.isAiResponding && runtime.activeRunId == parentTaskId);
+    if (active) {
+      runtime.isDeepThinking = true;
+      runtime.currentThinkingStage = ThinkingStage.thinking.value;
+      runtime.activeThinkingCardId = cardId;
+    }
+    final nextContent = replace ? effectiveDelta : baseContent + effectiveDelta;
     runtime.agentReplayDeltaOffsets.remove(cardId);
-    runtime.currentThinkingMessages[parentTaskId] = nextContent;
-    runtime.deepThinkingContent = nextContent;
+    if (active) {
+      runtime.currentThinkingMessages[parentTaskId] = nextContent;
+      runtime.deepThinkingContent = nextContent;
+    }
     _upsertThinkingCard(
       runtime,
       taskId: parentTaskId,
       cardId: cardId,
       thinkingContent: nextContent,
-      isLoading: true,
-      stage: ThinkingStage.thinking.value,
+      replaceContent: replace,
+      isLoading: active,
+      stage: active ? ThinkingStage.thinking.value : ThinkingStage.complete.value,
       reasoningCardData: reasoningCardData,
       streamMeta: _streamMeta(
         runtime,
         parentTaskId: parentTaskId,
         entryId: cardId,
         kind: 'thinking_snapshot',
+        isFinal: !active,
         existingMessage: index == -1 ? null : runtime.messages[index],
       ),
     );
@@ -2085,6 +2127,7 @@ class AgentEventReducer {
     required String taskId,
     required String cardId,
     required String thinkingContent,
+    bool replaceContent = false,
     required bool isLoading,
     required int stage,
     Map<String, dynamic> reasoningCardData = const <String, dynamic>{},
@@ -2113,7 +2156,7 @@ class AgentEventReducer {
     final cardData = <String, dynamic>{
       'type': 'deep_thinking',
       'isLoading': isLoading,
-      'thinkingContent': thinkingContent.isNotEmpty
+      'thinkingContent': replaceContent || thinkingContent.isNotEmpty
           ? thinkingContent
           : (existingCardData['thinkingContent'] ?? '').toString(),
       'stage': stage,
@@ -2950,17 +2993,9 @@ class AgentEventReducer {
       return delta;
     }
     if (hasLiveCache) {
-      // Official DSH ACP emits committed assistant message blocks rather than
-      // token deltas. A reconnect/retry can deliver the same committed block
-      // again, or a provider can send a cumulative block for the same
-      // messageId. Keep the live stream idempotent without changing the ACP
-      // envelope or inventing a second event protocol.
-      if (delta == existingText) {
-        return null;
-      }
-      if (delta.startsWith(existingText)) {
-        return delta.substring(existingText.length);
-      }
+      // ACP chunks append, even when consecutive chunks contain identical
+      // text or one starts with the accumulated text. Text equality is not
+      // replay identity; dropping such chunks corrupts valid streamed output.
       runtime.agentReplayDeltaOffsets.remove(entryId);
       return delta;
     }
@@ -5010,6 +5045,26 @@ Map<String, dynamic> _renderableAcpParams(Map<String, dynamic> params) {
   };
 }
 
+bool _isAcpV2(Map<String, dynamic> event) =>
+    event['protocolVersion'] == 2 ||
+    _asStringMap(event['message'])?['protocolVersion'] == 2;
+
+bool acpEventIsItemUpsert(Map<String, dynamic> event) {
+  if (!_isAcpV2(event)) return false;
+  final params = _asStringMap(event['params']) ??
+      _asStringMap(_asStringMap(event['message'])?['params']) ?? const {};
+  final update = _asStringMap(params['update']);
+  if (update != null) return const {
+    'agent_message', 'agent_thought', 'user_message',
+    'tool_call_update', 'plan_update', 'plan_removed', 'terminal_update',
+  }.contains(update['sessionUpdate']);
+  if (const {'item/started', 'item/completed', 'turn/plan/updated',
+      'turn/plan/removed'}.contains(event['method'])) return true;
+  return params['replace'] == true && const {
+    'item/agentMessage/delta', 'item/userMessage/delta', 'item/reasoning/delta',
+  }.contains(event['method']);
+}
+
 Map<String, dynamic>? _projectAcpSessionUpdate({
   required Map<String, dynamic> event,
   required Map<String, dynamic> params,
@@ -5107,6 +5162,35 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
   }
 
   switch (sessionUpdate) {
+    case 'state_update':
+      if (!_isAcpV2(event) || update['state'] != 'running') return null;
+      return {'method': 'turn/started', 'params': projectedParams({})};
+    case 'agent_message':
+      if (!_isAcpV2(event) || !update.containsKey('content')) return null;
+      return {
+        'method': 'item/agentMessage/delta',
+        'params': projectedParams({
+          'itemId': scopedMessageId,
+          if (scopedEntryId != null) 'entryId': scopedEntryId,
+          'delta': _extractStreamingText(update['content']) ?? '',
+          'replace': true,
+        }),
+      };
+    case 'user_message':
+      if (!_isAcpV2(event) || !update.containsKey('content')) return null;
+      return {
+        'method': 'item/userMessage/delta',
+        'params': projectedParams({
+          'clientMessageId': _asStringMap(
+            _asStringMap(update['_meta'])?['codex'],
+          )?['clientId'],
+          'itemId': scopedMessageId,
+          if (scopedEntryId != null) 'entryId': scopedEntryId,
+          'delta': _extractStreamingText(update['content']) ?? '',
+          'replace': true,
+          'replay': update['replay'] == true || event['replay'] == true,
+        }),
+      };
     case 'agent_message_chunk':
       final presentationMedia = _acpPresentationMedia(presentation);
       final presentationArtifacts = _acpPresentationArtifacts(presentation);
@@ -5140,6 +5224,18 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
               _acpAssistantArtifacts(update['content']),
               presentationArtifacts,
             ),
+          if (presentation != null) 'acpPresentation': presentation,
+        }),
+      };
+    case 'agent_thought':
+      if (!_isAcpV2(event) || !update.containsKey('content')) return null;
+      return {
+        'method': 'item/reasoning/delta',
+        'params': projectedParams({
+          'itemId': scopedReasoningMessageId,
+          if (scopedReasoningEntryId != null) 'entryId': scopedReasoningEntryId,
+          'delta': _extractStreamingText(update['content']) ?? '',
+          'replace': true,
           if (presentation != null) 'acpPresentation': presentation,
         }),
       };

@@ -1,5 +1,80 @@
 # 对话驱动的长期回归测试索引
 
+## 2026-09-17：手动录制入口与插件详情简化
+
+去掉 OmniFlow “开始使用”卡片，底部入口明确为“手动录制与复用指令”。26 项 Flutter 回归通过；PJE110 真机确认卡片移除、入口跳转、两个标签页录制按钮显示。补充开始/暂停/取消流程未通过，失败保留；不宣称全流程已验收。入口 `scripts/verify-recording-entry.py`；见 [验证记录](recording-entry-20260917.md)。
+
+
+## 2026-09-17：Function 手动编辑名称与描述
+
+详情增加“编辑”，经统一 ExecutionBackend 复用 save_function，不调用模型。27 项 Flutter 回归通过；PJE110 真机空值、取消不保存、修改后详情/列表同步、保留数据重启、ID/来源/动作/参数不变通过。长期执行入口 `scripts/verify-function-metadata-edit.py --phase edit|restart`；测试输入驱动失败与最终证据均保留。见 [验收记录](function-metadata-edit-20260917.md)。
+
+
+## 2026-09-17：执行中心四项定向修复
+
+仅处理来源丢失、同 ID 覆盖、自动保存等待模型、取消与截图。PJE110 真机两次录制、重载/重装、真实增强工具成功、GUI 回放截图、动作前/后停止通过。canonical 117 项与 Android 74 项通过，组件 8 通过 / 2 跳过。自动保存约 2.1 秒；完整自然 GUI 收尾耗时补测受共享设备占用影响未完成，不宣称整轮固定耗时。可执行入口 `verify-execution-center-fixes.py`、`verify-execution-center-provenance.py` 及上游 compiler 测试；失败样本与尚未重跑的脚本分支保留。详见 [修复与真机证据](execution-center-four-fixes-20260917.md)。
+
+
+## 2026-09-17：按需 OmniInfer 本机推理 Skill
+
+按需 Skill，无常驻轮询。PJE110 手机源码构建、宿主安装、16K 本地模型真实 API 回复、流式取消、工具往返、停止/重启复用模型 PASS；12 项脚本回归及 39 项 Provider/插件市场/设置 Flutter 回归通过。新增安装按钮复用正式 ACP 对话，设置去掉执行中心；这两项 UI 变更待真机验证。正式 App 本地模型 Agent 任务、自然语言安装完整链路及离线尚未验收。详见 [验证记录](omniinfer-local-skill-2026-09-17.md)。
+
+模拟设备 emulator-5582 已实际点击入口完成源码构建，系统安装经操作者接管后成功，模型下载及真实 API/工具往返 PASS。正式 App 本地 Agent 文件任务在原生计算阶段长时间未输出，正常取消，未通过验收。发现宿主模板覆盖上游 CPU 多版本优化配置为 OFF；已移除覆盖、增加 APK 优化库检查及完整解包缓存重建回归，当前脚本 **16/16 PASS**，优化版正在模拟设备内重建。后续必须用 `verify-omniinfer-phone.py --allow-emulator --require-optimized-cpu --tools --restart` 核实实际加载库，再运行 `omniinfer-local-agent.en.json` 与正式任务 oracle；优化修复待真机验证。禁止将历史基础 CPU 版本的 API 成功当作优化版或正式 Agent 成功。
+
+
+## 2026-09-17：执行中心全操作真机扩展审计
+
+用户要求检测是否全部可用，继续 PJE110 真机。新增 `verify-execution-center-controls.py`、`verify-execution-center-arguments.py`、`verify-execution-center-provenance.py`，覆盖真实取消、参数拦截/绑定、回放结果、canonical Function 关联、删除及新录制不得覆盖原指令。关联 bug 已修复并两次真机验证，36 项 Flutter 通过。增强来源丢失、同 ID 覆盖已由真机回归复现为失败；Agent GUI 第二轮真实成功，收尾延迟、停止状态差异与截图缺失仍需处理。不是全部功能稳定验收；完整范围、未运行项及证据见 [扩展审计](execution-center-full-audit-20260917.md)。
+
+## 2026-09-17：Harness 性能与执行正确性
+
+需求：减少逐页模型往返、批量处理与按需读取、保留模型/思考配置、独立读取有限并发；不添加第二个 ACP 生命周期或自研压缩算法。新增执行器回归覆盖并发上限、写入边界、乱序完成按 toolCallId 提交、取消后子任务释放、失败不重试、权限结果后已启动读取的真实提交，以及诊断不含任务正文。旧实现并发测试 `peak=1` 失败已保留。
+
+执行入口：`AgentOrchestratorTest`、`AgentSystemPromptTest`、`python3 -m unittest discover -s scripts -p test_agent_performance_summary.py`；模拟器 UI 入口 `xiaowan-perf-bulk.en.json`、`xiaowan-perf-reads.en.json`，产物用 `assert-harness-performance.py` 对真实文件和哈希独立核验。原生全量 1108 项、并行改动定向 829 项、补 Python 修复后最终定向 835 项通过；GLM-5.1 同批三个真实读取、峰值并发 3 及重启恢复通过，GLM-4.6V 仍选择串行；首轮真实读取误走子 Agent 的失败保留，不以回复“完成”替代路径验收。最终设备结果和耗时见 [性能验收](harness-performance-20260917.md)。新增 `xiaowan-perf-python.en.json` 与 `assert-harness-performance.py --require-python` 覆盖标准库脚本不依赖 ensurepip、产物与重启；工具失败后模型最终误报“没有错误”的失败样本保留。用户指定模拟器，仍 **待真机验证**。
+
+## 2026-09-17：全功能审计，重点 Agent 执行
+
+用户指定模拟器，检查真实操作、错误处理、生命周期和模型误报。详见 [本轮审计](agent-full-audit-20260917.md)。复用既有 UI journey 与 canonical 历史断言，覆盖真实终端子进程取消、流式报错不关连接、半截工具不执行、工具失败/超时、连续五次取消、401/429/503/断流恢复、持久终端会话、技能发现、禁用定时任务创建/重启/更新/删除、命令菜单与权限面板返回。
+
+新增可执行回归：`verify-provider-check-runtime.py`（已安装 Ubuntu 中的自检结果成功→失败覆盖）、`verify-provider-header-ui.mjs`（真实设置编辑、删除、重开和原生实际请求头）、`verify-settings-entry-ui.mjs`（12 个设置页进入/返回，仅入口 smoke）；`xiaowan-live-long-recovery.en.json` 复用原长任务后半段，避免前一阶段失败导致它永远未执行。Flutter 页面回归覆盖删除最后一条请求头，以及已脱敏的保存状态和清除入口。失败及测试前置错误不删除、不冒充通过；真实模型误建目录、恢复后报告没有错误仍未解决。全部外部 Harness、所有页内操作以及物理设备不在已通过范围，仍**待真机验证**。
+
+## 2026-09-16：OmniFlow 包与薄注册层
+
+- 需求：App 不依赖 OmniFlow 内部目录、工具 schema、安装及注册策略；保留录制、注册、执行、重放。
+- 新回归：包迁移私有目录后启动与 Transfer ready、动态工具声明/默认可见性、空摘要缓存失效、无 AndroidWorld src 的 open_app、checkpoint 内容身份、标签几何、录制控件层级、截图证据、JSON authoring。执行入口与边界见 [omniflow-package-refactor-20260916.md](omniflow-package-refactor-20260916.md)。
+- 原生 1326、Flutter 1292、canonical OmniFlow 276、包 9 项通过。`scripts/test_omniflow_device_lifecycle.py` 在 emulator-5580 最终六例通过：手动录制/语义注册、目标执行/自动注册、模型选 Function 重放、接管/停止/重启、插件启停/更新/卸载重装、非法写入保护。设备回归是实际模型/运行时/Android 操作，不是模拟结果。
+- 用户指定模拟器范围，物理设备仍标为**待真机验证**。保留模型误报完成、作者提案被拒绝等此前失败证据；不把清理旧测试 Functions 后的一轮通过称为所有模型稳定可用。普通聊天和 RunLog 页面全部 UI 入口未完整自动化。
+
+## 2026-09-16：README 产品亮点同步
+
+需求：中英文 README 首屏突出 Kimi Code / DeepSeek Harness WebUI、Harness 切换与多智能体并行，并提供使用示例。执行入口：`node --test scripts/readme.test.mjs`。两个文档用例检查首屏关键能力与 Markdown 本地链接；2/2 通过。仅文档变更，无会话历史或生命周期变更；本次未运行功能真机验收，文档检查不代表运行时验收。
+
+
+## 2026-09-15：共享会话自动重连与被动历史
+
+补充：`scripts/verify-phone-lost-ack.cjs` 在真机丢弃真实 prompt ACK 后断开连接，T 暴露“后端一次、手机问题两份”的故障。复用官方 `clientUserMessageId` / `userMessage.clientId` 修复后，V 真机全程自动恢复、问答各一次、PID不变，PASS。增加相同文本不同身份不合并的 reducer 回归和适配器消息身份回归；388项相关 Flutter、3项适配器测试通过。官网和原生桌面仍是未完成验收项。
+
+详见 [真机记录](shared-session-acceptance-2026-09-15.md)。PJE110 安装 0.6.3/code16 远程候选包：原页面断开 SSH 测试转发、电脑后端完成新轮次、恢复后手机自动补齐且不重启，后端每条问答一次，PASS。入口 `scripts/verify-phone-remote-reconnect.cjs`，必须显式指定测试转发 label、设备和隔离会话。持续被动实时接收及 Bridge 切换系统托管后恢复也 PASS。官网 WSS、蜂窝网络、原生桌面 GUI 和丢失 ACK 的完整验收仍未通过，不代表全部交付。
+
+
+## 2026-09-14：官网 WSS 前置路由与4090中转
+
+[实际验收记录](website-wss-ingress-2026-09-14.md)。新增 ingress verifier 及5项可执行回归，复现 `/codex` 已通但 `/health` 404 的入口缺口后修复；既有 `/fs/` 路由、鉴权及适配器版本查询一并验证。4090隔离Nginx实际4/8条ACP连接通过；PJE110真机经4090/Nginx发送与被动接收K/L/M通过，后台每轮一次。正式官网未部署，WSS公网TLS和蜂窝网络待真机验证，不能推断用户容量或最大连接数。测试入口 `scripts/test-agent-runtime.sh --bridge DIR` 与 `scripts/verify-bridge-ingress.cjs`。
+
+
+## 2026-09-14：共享 Codex 的 ACP v2 候选与真机回归
+
+完整产品仍 NOT ACCEPTED。详见 [验收记录](shared-session-acceptance-2026-09-14.md)。
+
+- `ui/test/services/agent_event_reducer_test.dart`：真实 v2 状态、整条消息替换、重复/前缀 chunk、带历史时外部用户消息的最新在前顺序。顺序案例先失败后修复通过。
+- `ui/test/features/home/pages/chat/chat_conversation_runtime_coordinator_test.dart`：被动外部轮次结束，以及迟到旧轮次状态不结束新轮次。
+- `app/src/test/java/cn/com/omnimind/bot/agent/runtime/RemoteCodexAppServerSessionTest.kt`：v2 后端身份保留及 v1 兼容边界。
+- `scripts/verify-acp-shared-observation.cjs`，环境 `OOB_TEST_ACP_VERSION=2`、`OOB_TEST_SHARED_IDENTITIES=1`：两个真实适配器上的持续观察、问题+回复、真实身份、一次执行、回放、观察端发送后仍能观察。PASS。
+- `scripts/verify-shared-external-send.cjs SESSION MARKER` + `scripts/verify-phone-shared-history.cjs SERIAL SESSION MARKER`：PJE110 真机 G/I 自动收到外部问题和回复，未通过重开来刷新。PASS。
+- `scripts/verify-shared-interruption.cjs SESSION MARKER BRIDGE_PID`，环境 `OOB_TEST_PHONE_SERIAL=b49f281b`、`OOB_TEST_BRIDGE_PORT=17336`：实际手机发送 H 后生成中强制关闭 App，同一后端轮次继续且只执行一次；重新打开历史通过上述 phone verifier。PASS。
+- 自动网络重连订阅尚未实现；原生桌面 GUI、官网 WSS/蜂窝网、丢失提交 ACK 和其他待验项没有通过，不能用本地 USB 反向转发或单元测试替代。
+
+
 ## 2026-09-09：新请求错误详情验收与测试环境恢复
 
 最终：等待共用设备任务正式结束后进入新的 Codex 会话，以本地 GLM-5.1 实际运行 `1788960584626`，14/14 步通过：唯一命令的实际 182 失败及说明持久化、下一轮普通回复、重启复核。错误处理通过不等于沙箱通过；待真机验证。下方为此前环境恢复过程。
@@ -708,6 +783,634 @@ Codex Plan 补验：用户指定模拟器验收，实际 UI 27 步（计划、�
 - 证据 `artifacts/codex-terminal-exit-20260909/maintained-sandbox-probe.json`；完整说明见 [Codex 终端验收](codex-terminal-exit-20260909.md)。
 - 同一入口新增 `--native` 诊断并实际运行：直接原生二进制仍 status=182、signal=null，普通 bash 对照通过；记录 `maintained-native-probe.json`。排除当前 npm 包装层的信号转换，内部原因仍未确定。没有修改产品配置或权限。
 
+## 2026-09-11：远程 Codex Harness
+
+- 最终需求：前端不变，仅在现有 Harness 选择器选择“远程 Codex”，使用远端设备执行。
+- 先前独立“电脑 Codex”入口和连接页改版已撤回。历史记录见
+  [连接简化方案](computer-codex-connection-2026-09-11.md)，不能当作当前功能。
+- 可执行入口：`ui/test/features/home/pages/agent/remote_codex_harness_selection_test.dart`，
+  已加入 `scripts/test-agent-runtime.sh`；复用原聊天菜单、runtime service 和切换屏障测试。
+- 覆盖远程启用/连接顺序、重复选择不重写配置、失败恢复、不把本地连接当成远程、
+  发送等待切换、失败拒绝排队发送、保存配置恢复，以及无需本地安装的 Harness 入口。
+- 结果与边界见 [远程 Harness 选择](remote-codex-harness-selection-2026-09-11.md)。
+  **待真机验证**，不代表已接管官方桌面活动线程。
+
+## 2026-09-11 远程断线重连
+
+用户要求先修复断网重连，再测跨网。RemoteCodexAppServerSessionTest 新增初始化就绪、启动失败释放、断线请求终止/重连不重放及迟到事件隔离，已接入 scripts/test-agent-runtime.sh；聚焦 7 项通过、APK 构建成功，未连接手机，待真机验证。详情见 [重连验证记录](remote-reconnect-2026-09-11.md)。
+
+## 2026-09-12 跨设备会话管理与公网通道
+
+新增 scripts/verify-remote-bridge-session.cjs：真实 ACP 会话新建、首轮、断开后加载与继续，7 项本机检查通过；公网隧道连接失败，手机未连接，待真机验证。见 [验证记录](remote-session-wan-2026-09-12.md)。
+
+## 2026-09-13：小万输出暂时回退后恢复
+
+旧页面快照覆盖同 id ACP 消息已在可执行测试中复现并修正；新增三项覆盖通知瞬间正文、思考、预览元数据、官方完成后的迟到保存与显式删除。312 项通过，debug 构建成功；无真机连接，待真机验证。见 [验证记录](xiaowan-stream-rollback-2026-09-13.md)。
+
+## 2026-09-13：生命周期快照后续审计
+
+新增两项确定性失败回归：官方完成后旧历史遗漏回复、旧运行标志重新激活任务。相关全集 321 通过 / 2 失败；两项未修复，待真机验证。普通页面路径已有部分防护，不能据此断言真机必现。见 [审计记录](lifecycle-snapshot-audit-2026-09-13.md)。
+
+## 2026-09-13：快照生命周期边界修复
+
+用户同意后在既有 coordinator 修复历史遗漏新消息及旧运行标志重建任务，两项原失败已通过；新增重复部分历史/无绑定恢复/显式清空验证。相关 324 项通过，debug 构建成功。无真机连接，待真机验证。详见 [最终修复记录](lifecycle-snapshot-audit-2026-09-13.md)。
+
+## 2026-09-13：显式删除与迟到快照
+
+两个新增可执行回归失败：显式删除后旧历史加载/页面保存重新加入删除项。接口级复现，普通页面已有部分保护，真实并发可达性待验证。未修复、待真机验证；见 [记录](deletion-snapshot-audit-2026-09-13.md)。
+
+## 2026-09-13：明确删除与历史修改版本修复
+
+明确消息 id 删除经数据库事务提交后再更新 UI；旧读取/保存/预览回调失效，局部更新不携带整页。357 项 Flutter 通过，应用与数据库 instrumentation APK 编译成功；数据库重开用例未运行，无真机连接，待真机验证。实际下一轮模型上下文仍须真机验收。见 [最终记录](deletion-snapshot-audit-2026-09-13.md)。
+
+## 2026-09-13：原生 Codex 与手机共享会话
+
+双客户端连接同一官方 app-server 的真实模型测试通过，含双端输出、生成中断线与双端历史恢复，不重发 prompt。原生桌面和手机界面尚未接通；官网部署信息缺失，跨网未测，待真机验证。详见 [记录](native-codex-shared-session-2026-09-13.md)。
+
+## 2026-09-13：4090 反向 SSH 中继
+
+经真实 4090 SSH 链路的认证、双客户端输出和断线历史恢复通过；隧道进程退出后自动恢复。新增 `scripts/verify-codex-relay.cjs` 可重复验证认证与延迟。官网 WSS、原生桌面接入和手机真机尚未验收，见 [部署测试记录](codex-relay-4090-2026-09-13.md)。
+
+## 2026-09-13：手机已连接后的共享会话真机预检
+
+vivo V2502A / Android 16 / 小万 0.6.2.3：ADB 已连，远程配置关闭且旧地址 TCP 超时。`python3 scripts/verify-phone-remote-config.py ADB_SERIAL` 实机执行失败。双端同步、重连历史和不重复执行未验收，见 [真机记录](phone-shared-session-preflight-2026-09-13.md)。
+
+## 2026-09-13：新手机 PJE110 共享会话实测
+
+已安装 0.6.2.3，修复 JSON-RPC 版本字段、远程身份路由/传递和 load 必填字段。真实手机 A6 在电脑完成并有准确会话/turn ID，但手机历史更新仍被丢弃，双端显示未通过；另记录 Android 16 前台服务崩溃。见 [持续验收记录](shared-session-new-phone-2026-09-13.md)。
+
+### PJE110 后续验收更新
+
+同一会话手机发送、完整历史恢复、手机进程退出后电脑继续完成且不重复：真机通过。
+外部协议客户端发送 H：手机实时显示失败，重新加载后历史通过。原生桌面 UI 和公网仍未验收。
+Bridge 离线期间的完成、失败、已有权限请求、新权限请求共四个模拟 ACP 传输回归通过；
+执行 `NODE_PATH=依赖目录/node_modules node scripts/verify-bridge-detached-prompt.cjs`，
+或在现有 `scripts/test-agent-runtime.sh` 中追加 `--bridge 依赖目录`。
+此模拟测试补充此前真机结果，不代替权限交互的真机验收。
+
+
+- 2026-09-13 agent-operated cross-device tests: SSH child termination/recovery
+  regression `python3 scripts/verify-acp-relay-restart.py` PASS; phone PJE110
+  0.6.2.3/code15 fresh K through4090 after restart PASS, native API reads same
+  completed turn. Full native send FAILED (active writer); automatic live
+  native/phone sync and public WSS remain unpassed. See
+  `shared-session-new-phone-2026-09-13.md`, 19:20–19:27 entry. Failed local J
+  query preservation across remote hydration: dedicated regression NOT YET
+  IMPLEMENTED; screenshot evidence only, no acceptance claim.
+
+
+- 2026-09-13 official daemon Unix WebSocket: existing
+  verify-codex-shared-session.cjs and verify-shared-codex-acp.cjs PASS with
+  compression negotiation disabled. PJE1100.6.2.3/code15 true send/reply M PASS
+  through modified transport. Native send N FAILED active writer; native
+  backend switch, live synchronization and ACP v2 remain unimplemented.
+  See shared-session-new-phone-2026-09-13.md 21:07–21:14 entry and the daemon
+  regression commands in deploy/codex-relay/README.md.
+
+
+- 2026-09-13 full shared-session acceptance request, parameterized configuration:
+  added executable verify-acp-shared-observation.cjs against actual configured
+  agents. FAIL: sender receives, passive observer gets0 updates; backend runs
+  once and physical-phone explicit reload PASS. Native send Q FAIL active writer.
+  Website and native pixel gates BLOCKED; concurrency/lost-ack end-to-end cases
+  NOT RUN. Acceptance decision and exact evidence in
+  shared-session-acceptance-2026-09-13.md. No full acceptance claimed.
+
+
+- Mimi-style native SSH entry, 2026-09-13: verify-codex-shared-session.cjs now
+  accepts OOB_TEST_SSH_TARGET and optional OOB_TEST_SSH_CONFIG, reusing stock
+  SSH app-server proxy. Both temporary and installed-alias real-model runs
+  PASS; persistent-alias thread01a09b1e-2360-7841-bf1d-d3774a710e90.
+  Native desktop host registration/UI verification remains BLOCKED pending
+  user settings action; protocol success is not native acceptance. Deployment
+  and cleanup documented in deploy/codex-relay/README.md.
+
+- 2026-09-13 Bridge QR continuation R: actual PJE110 0.6.2.3/code15 send in existing session PASS; backend exact once PASS; phone first reply character missing FAIL. Reuses verify-phone-shared-history.cjs with OOB_QR_CONTINUE_R; executed and failed visible reply assertion. Screenshot and command in shared-session-acceptance-2026-09-13.md. Root cause and recovery verification pending.
+
+- 2026-09-13 full acceptance, reject custom complex rules: repeated-leading
+  token regression in agent_event_reducer_test.dart reproduced exact R failure
+  before removing live text equality/prefix deduplication. 320 focused tests
+  PASS, candidate built/installed PJE110 0.6.2.3/code15. Candidate physical live
+  verification PENDING UNLOCK. Native send active-writer FAIL; passive ACP
+  observer zero updates FAIL; website permissions BLOCKED. See full rerun in
+  shared-session-acceptance-2026-09-13.md; full acceptance NOT PASSED.
+
 ## 0.6.3 DSH thinking toggle and idle configuration restart
 
 See [DSH reasoning acceptance](dsh-reasoning-0.6.3.md). Executable coverage: `AgentWebRuntimeTest`, `LocalAcpRuntimeConfigTest`, `scripts/verify-dsh-reasoning-wire.mjs`, and `scripts/verify-dsh-phone-reasoning.py`. Wire on/off, physical generation, idle-edit restart, and post-restart Off/re-enabled High generation passed on PJE110 with final 0.6.3/code 16. A separately observed offline turn failed without automatic replay.
+
+## Public Bridge pairing and selective session browsing (2026-09-15)
+
+Public WSS live acceptance on installed PJE110 candidate `4d85943b...`: kept the existing session page open and sent `OOB_PUBLIC_LIVE_X` and `OOB_PUBLIC_LIVE_Y` from the same backend protocol. Both appeared on the actual phone exactly once; `verify-phone-shared-history.cjs` passed each. X exposed a verifier bug: an immediate `thread/read` snapshot reported interrupted, while the same turn later completed once. Fixed `verify-shared-external-send.cjs` to wait for official `turn/completed` before verifying persistence; `verify-shared-external-send.test.cjs` reproduces the premature persisted-state interpretation and is included in `test-agent-runtime.sh`. The corrected verifier passed Y against the live backend. Actual phone composer/send for `OOB_PHONE_PUBLIC_SEND_Z` passed backend/phone exact-one-query/reply checks.
+
+`scripts/verify-phone-public-reconnect.cjs` passed with `OOB_PUBLIC_RECONNECT_AA`: disabled real phone Wi-Fi, confirmed no default network, generated one backend turn, restored Wi-Fi and observed automatic visible catch-up without page reopening. App PID23480 unchanged; phone Wi-Fi state restored to1; no USB17321 network forward. This is public WSS over the existing Cloudflare/4090 route, not native desktop GUI acceptance. Requested native SSH-host send `OOB_NATIVE_DESKTOP_AB`; PENDING user action. Actual camera QR scan also remains PENDING. All these results are isolated-session evidence, not current-native-task migration.
+
+MCP connection entry continuation: `tools/codex-bridge/session-connect-mcp.mjs` uses official `@modelcontextprotocol/sdk`1.30.0 and `qrcode`1.5.4 (exact pins). `session-connect.test.mjs` drives an actual MCP stdio client/server against a synthetic backend and verifies tool discovery, ownership rejection, metadata-only reads, private PNG output and absence of prompts/resumes. Combined Bridge tests: four PASS. Existing QR parser suite plus selected-session case: four PASS. Android build/install passed on PJE110, 0.6.3/code16, APK SHA256 `4d85943b8a3010923fc244c57db1c6a5605f8964d9aa00ac8d3889cc44f26da5`; no data cleared. Real MCP invocation rejected the active native task with `SESSION_NOT_LOADED_ON_BACKEND`, then produced a private PNG for the already-loaded isolated test session. Registered `xiaowan-session-connect` via `codex mcp add`; configuration and QR credential artifacts are private and outside the repository. Physical camera scan -> selected-session routing is PENDING user scan; native current-task sharing is still NOT implemented. npm pack dry-run includes all required connection modules; nothing published. The invitation reuses the Bridge credential, not a new session-scoped or expiring authorization token.
+
+User requires bring-your-own Cloudflare/tunnel support and selecting a session without downloading all history. `tools/codex-bridge/connection-url.test.mjs` tests external WSS address validation and the running Bridge's real QR payload (three PASS); the npm dry-run package includes the endpoint module. `ui/test/features/home/pages/agent/agent_sessions_refresh_test.dart` tests a single remote page, no periodic remote scan, explicit pagination and identity deduplication, alongside existing local refresh lifecycle tests. The two session-page suites passed six tests. `scripts/verify-phone-session-pagination.py` passed on PJE110 b49f281b, 0.6.3/code16, APK SHA256 `83580c7c4485f2a850090c839c9f883b4083cb7f738b8ffc935190cd772acd5a`: first page25, explicit load-more50; actual pull-to-refresh restored25. Installed with data preserved.
+
+`scripts/verify-shared-backend-owner.mjs` checks official `thread/loaded/list` without resuming, sending or reading history. The current native task is absent from the configured daemon; exit2 is the expected mismatch result, not successful current-task sharing. MCP registration/current-native-task connection and session-specific sharing remain incomplete. Cloudflare public-phone marker `OOB_CLOUDFLARE_PASSIVE_W` passed the existing physical-history verifier before the new APK install; this proves displayed message agreement over the configured public route, not native desktop GUI operation. Cellular-specific acceptance was explicitly removed by the user.
+
+## 2026-09-15 — Sidebar device sessions and compact layout
+
+- User reports: remote sessions are hard to find; device switching is slow and the initial layout is too heavy. Earlier `1`/`2` first-send failures remain unresolved and are not covered by this UI delivery.
+- Reuse `AgentSessionsPage` inside `HomeDrawer`; phone/computer text tabs retain the mounted remote page and its pagination state. No new session/reducer/history protocol. One configured remote computer is supported.
+- Regression: sidebar remote navigation previously supplied `conversationId=new`, overriding the selected ACP session target. Remote targets now use their existing route payload without this conflicting query.
+- Executable checks: `cd ui && flutter test test/features/home/pages/agent/agent_sessions_refresh_test.dart test/features/home/widgets/home_drawer_test.dart`; 24 tests passed, including the retention test asserting one connect/list across repeated tab switches and preserving session identity. Targeted Dart analysis passed.
+- Physical entry: `OOB_ALLOW_PHYSICAL_DEVICE=1 python3 scripts/verify-phone-device-sidebar.py b49f281b 'OOB daemon shared M' '我在。需要我做什么'` (start with the drawer open).
+- Physical result: PASS on PJE110 / Android 16 / 0.6.3 code 16 debug, APK SHA256 `549fa933c9cba3059aa6a8574e649ebb550945d262298857ac69d11401253fac`. Repeated phone/computer switching and opening the selected remote history passed after installation/relaunch. No observed layout overflow. This does not validate native desktop shared-backend sending or first-send recovery. Cold-load latency is still network-dependent; no quantitative latency improvement claim.
+
+### Follow-up — same sidebar rows and click feedback
+
+- User reports all clicks fail and requests identical UI. Before the change, PJE110 device tabs and the isolated `OOB daemon shared M` row did respond; history appeared after loading. The exact user-reported nonresponsive target was not identified, so this is not evidence that all click failures are fixed.
+- Local and remote rows now share `DrawerConversationRow` and `DrawerConversationTitle` (existing 13px typography, 4/9/2/9 padding, Material/InkWell full-row action). Remote browsing reuses `HomeDrawerSearchField`; lifecycle and ACP routing are unchanged.
+- 24 focused Flutter tests and targeted Dart analysis passed. The physical regression now taps near the right edge of the selected remote row to exercise whitespace hit testing, not only its title.
+
+### 2026-09-15 — Slow click followed by generic assistant failure
+
+- Actual phone logs showed `session/load` rejection on native desktop sessions, followed by unsupported `config/read` and `model/list` requests. Read-only backend ownership inspection confirmed the selected active native session was not loaded on the configured Bridge backend. Listing history is not proof of shared-backend admission. The precise server rejection payload was not captured; do not attribute this instance to a specific lock error.
+- `_prepareRemoteCodexSessionTarget` now returns admission success/failure. The existing conversation-target owner stops subsequent configuration, staged input and initial-message processing on failure. Unknown load errors receive a contextual connection/session-access message. No replay, second lifecycle or backend migration is introduced.
+- Installed candidate: PJE110 `b49f281b`, Android 16, develop debug 0.6.3/code 16, APK SHA256 `477eec070dfb174f1edfaa3696e85aecaefd5113ab4a369246318ee8db57feb6`. Incremental install preserved app data. Build passed; 46 focused Flutter tests passed. Targeted Dart analysis reported no errors, with 5 warnings and 13 informational findings; it was not a clean analysis pass.
+- Executable physical failure regression: open the computer sidebar with an unavailable session visible, then run `ADB=/path/to/adb OOB_ALLOW_PHYSICAL_DEVICE=1 python3 scripts/verify-phone-remote-load-failure.py SERIAL TITLE`. It taps the actual row and requires the real load rejection; checks that no configuration/model requests follow during the subsequent 5 seconds and that the process remains alive. It does not replace successful shared-session acceptance or prove absence of all network traffic.
+- Physical results: PASS for the failure regression; PASS for `verify-phone-device-sidebar.py` both after install/relaunch and after the failed admission. Each sidebar run switched phone/computer twice, tapped the row's right edge, and verified the isolated session's existing history. No prompts were sent by these scripts. The initial failure-script attempt stopped before tapping because of Android shell date quoting; corrected execution passed.
+- Still unresolved: original native desktop session access and two-way native GUI acceptance. No claim that native sessions are now openable, that all latency is fixed, or that the feature is production-ready. Toast wording was not separately captured on device.
+
+#### Follow-up: exact backend rejection confirmed
+
+A direct authenticated ACP v2 `session/resume` against the running Bridge reproduced the same selected native-session failure without sending a prompt. The response was JSON-RPC `-32603`, `Internal error`, with `data.details` stating `thread <redacted-session-id> already has an active writer`. This resolves the earlier uncertainty about the underlying rejection. The installed desktop project inventory still contained no shared SSH project. Stock SSH access and `codex app-server proxy --help` succeeded, but those checks do not prove the desktop UI is attached to that daemon. The next required acceptance step remains enabling the prepared SSH host in the native desktop and selecting the isolated project from that host; repeated resume attempts, lock deletion or copied history are not fixes.
+
+#### SSH host enabled: actual native integration progress (2026-09-15)
+
+- User screenshot shows `omnibot-shared-local-test` enabled and connected. The app's `list_threads` now returns `remote-ssh-discovered:omnibot-shared-local-test`; `list_projects` still returns local projects only. Therefore an empty remote-project list alone is not a valid host-connection failure check.
+- Used the desktop's supported `send_message_to_thread` with that explicit host and the existing isolated `OOB daemon shared M` session. Marker `OOB_NATIVE_SSH_CONNECTED_AC` completed in turn `01a0a42f-c1ad-7ba2-a6b3-8d96e69d2ca3`; its exact reply appeared on the untouched physical phone. Direct daemon `thread/read` confirmed the same turn and reply. No writer conflict occurred.
+- The native tool's input is stored as `functionCallOutput` named `send_message_to_thread` in namespace `codex_app`, containing a delegation envelope, not a `userMessage`. The unchanged `verify-phone-shared-history.cjs` correctly failed its user-input assertion for this marker. Do not loosen normal user-message invariants or claim this is a manual desktop-composer test.
+- Sent `Reply only OOB_PHONE_NATIVE_SSH_AD. Do not use tools.` through the real phone composer/send control. Native `wait_threads` on the SSH host reported completed turn `01a0a430-f894-77d2-8ba0-c8a4efdb451d`; the same backend contained exactly one user input and one reply. Physical verifier passed after returning the app to foreground. A Back key intended to dismiss the keyboard had instead backgrounded the app, so the first visible-history assertion failed on the Android launcher. This run proves foreground restoration, not uninterrupted foreground rendering for AD.
+- The native `read_thread` tool returned the completed turn with empty items for both fresh turns, while raw daemon history contained the actual items. Native GUI text rendering remains UNVERIFIED. The supported navigation tool opened the isolated task for user inspection; GUI automation remains prohibited. The original calling task has not been migrated or validated for phone access.
+- Physical device remains PJE110 / Android16 / debug0.6.3 code16, candidate SHA256 `477eec070dfb174f1edfaa3696e85aecaefd5113ab4a369246318ee8db57feb6`. No new APK was built for this connection test, no existing prompts were replayed, and no locks were removed.
+
+#### Desktop open still reports another application owns the session
+
+User screenshot after supported desktop navigation showed the active-writer banner. The screenshot does not identify its session or host, so the exact UI route remains unproven. Official deep-link reference (`https://learn.chatgpt.com/docs/reference/commands#tasks`) documents `codex://threads/<id>` as local-only; the available navigation tool has no host parameter. Do not use either as proof of SSH GUI access.
+
+The existing connection helper now returns configured `desktopSshHost`, owner cwd and session ID together, with an explicit instruction to enter through that SSH connection. It does not invent a host-qualified deep link or claim that configured host identity verifies GUI routing. With no desktop host configured it reports that missing setup. Extended MCP integration test passed; the live helper returned the configured SSH alias and isolated session identity against the real daemon. This is a connection-guidance correction, not a fix to Codex's native router. No phone runtime code changed. Native GUI acceptance and original local-task migration remain pending.
+
+Native diagnostic logs now resolve the screenshot ambiguity: at `2026-09-15T08:36:00.802Z`, `maybe_resume_started` for the isolated shared test session explicitly recorded `hostId=local`; the visible owner route was `/local/<session-id>`. At `08:36:01.256Z`, that same session's `thread/resume` failed with `-32600` and `already has an active writer`. This proves the incorrect local admission path for the test session, rather than an inference from the generic banner.
+
+Executable routing gate: `node scripts/verify-native-shared-route.mjs LOG SESSION_ID EXPECTED_HOST`. Ran on the live native log with the isolated session and `remote-ssh-discovered:omnibot-shared-local-test`: **FAIL**, observed host `local`. It reads diagnostic logs only, selects the latest admission, and does not interact with the prohibited native UI. A future PASS will prove the logged route only; rendered messages still require separate acceptance. The remaining manual step is opening the isolated workspace from the SSH connection's folder control, rather than using the hostless task-navigation tool.
+
+### 2026-09-16 — Ubuntu bootstrap reports PRoot execve(tar)
+
+- User evidence: screenshot of Agent response to installing Node.js; response quotes `proot error: execve("/system/bin/tar")` and `Failed to extract ubuntu rootfs.`. Full errno, failing device model and installed version were not provided. This is not sufficient to establish the device-specific root cause.
+- Existing owner: shared `ReTerminal/core/main/src/main/assets/init-host.sh`, used by terminal UI and Agent terminal tools. No ACP lifecycle changes.
+- Corrected bootstrap weaknesses: resolve loader from current APK nativeLibraryDir after caller overrides; explicitly reject missing/unreadable/non-executable loaders; propagate runtime installation failures; probe PRoot/tar before resetting incomplete rootfs, retain original stderr and execution exit code. No automatic command replay or data clear.
+- Executable regression: `python3 scripts/test-rootfs-bootstrap.py` (integrated in `scripts/test-agent-runtime.sh`). Process fixture covers stale loader override, missing loader, exec failure preserving partial files and errno, extraction failure without ready marker, subsequent recovery, and restart preserving user files without extracting again.
+- Local result: 4 bootstrap tests PASS; `python3 scripts/test-terminal-host-stop.py` 2 tests PASS; shell syntax check PASS. These are host/process-fixture checks, not Android execution tests.
+- Real-device entry: `ADB=/path/to/adb node scripts/verify-rootfs-hardlinks.mjs SERIAL full` for isolated real archive/guest execution, plus actual first setup → install Node.js → node --version → close/reopen → repeat in the App. Verify failure/retry on isolated fixture; do not clear existing user rootfs.
+- Device status: `adb devices -l` and `adb mdns services` returned no devices. Device/installed version/actual setup outcome unavailable. **待真机验证**; screenshot incident is not claimed fixed or accepted.
+- Build result: `:app:assembleDevelopStandardDebug -Ptarget=lib/main_standard.dart` PASS (15s). Candidate APK `app/build/outputs/apk/developStandard/debug/app-develop-standard-debug.apk`, SHA256 `18818a8023207352ebf696270e0c857f2e1e31918b968dd0d2c60e93ab38f101`. ZIP inspection confirms updated `assets/init-host.sh` and `lib/arm64-v8a/libproot-loader.so` are packaged. Not installed; no device available.
+
+### 2026-09-16 — Alpine/Ubuntu installation boundary audit
+
+- User asks whether Alpine avoids the Ubuntu startup failure. Both use the same PRoot loader and host extraction script. Alpine rootfs is bundled; Ubuntu uses the verified download path. Offline Alpine packaging does not eliminate host execution failures.
+- Expanded `scripts/test-rootfs-bootstrap.py` to execute the production shell wrapper for both distributions (16 cases total): first boot/stale loader, restart, legacy install migration, missing loader, exec failure, corrupt archive/retry, incomplete extraction, missing archive, and invalid ready marker boundaries.
+- Reproduced before fix: missing archive cleaned partial files before reporting failure; invalid ready marker with missing layout bypassed execution preflight. Both failed for Alpine and Ubuntu (4 failures). Fixed shared extraction preconditions before any cleanup. After fix: 16/16 PASS; host signal/stdin tests 2/2 PASS.
+- Inspected packaged Alpine archive `assets/embedded-terminal-runtime/alpine.tar`: shell, busybox, OS metadata, env, apk and APK database/release entries present; zero tar hardlink members. This reduces exposure to the Ubuntu archive's hardlink-specific failure; it does not prove executable compatibility on Android.
+- No ADB device available. First setup, package installation/network interruption, upgrades, and App restart on real Alpine/Ubuntu installations remain **待真机验证**. No claim of complete installation acceptance.
+
+### 2026-09-16 — Fresh Android emulator Ubuntu setup (executed)
+
+- Dedicated new AVD: `OobUbuntuFresh20260916`, serial `emulator-5580`; created with Android 13 Google APIs ARM64 image, Pixel 6 profile, no snapshots. No existing App/rootfs data were reused or cleared from other devices.
+- APK: developStandard/debug 0.6.3, SHA256 `2c874d406f1338224420e026e16b9683cc8950966189877accae18fa93b26ad6`.
+- Agent-operated App UI: first onboarding page → Ubuntu → Node.js / Web → no extra harnesses → Start setup. Observed actual rootfs download (29,870,567 bytes), PRoot/system tar extraction, apt/dpkg installation, final `100%` / `Your development setup is ready`. Setup started approximately 13:57 and completed 14:02 CST (~5.5 minutes). No execve(tar) error reproduced.
+- Runtime verification entry (emulator only, restarts App): `ADB=/path/to/adb python3 scripts/verify-ubuntu-startup.py emulator-5580 /tmp/ubuntu-result.json`. Executes installed production init-host as App UID, validates ready marker, Ubuntu ID, apt, Node >=22, npm, real JS execution; writes a fixture file, force-stops/relaunches App, verifies persistence and Node in a new process, removes fixture.
+- Executed result: PASS. Ubuntu 24.04.4 LTS; apt 2.8.3 (arm64); Node v22.23.2; npm 10.9.8; `NODE_EXEC_OK` and `RESTART_NODE_OK`.
+- Raw current-run evidence: `/tmp/oob-ubuntu-20260916/setup-success.xml` and `/tmp/oob-ubuntu-20260916/runtime-result.json` (temporary local artifacts).
+- Non-blocking run-as warnings: sdcard permission and unavailable /proc/self/fd binds; Node and persisted file checks still passed. UI remained at 98%/Verifying while package installation was still running; this is a separate progress-display finding, not fixed in this test turn.
+- Scope: actual Android emulator UI and installed-runtime acceptance, not physical-device acceptance. Original screenshot device failure was not reproduced; its exact root cause and real-device fix remain **待真机验证**. Script covers post-setup runtime/restart; initial onboarding UI steps above were agent-operated, not automated by that script.
+
+### 2026-09-16 — Actual recording, registration and Agent GUI acceptance
+
+- Same fresh Android 13 ARM64 emulator `emulator-5580`, developStandard debug 0.6.3, APK SHA256 `2c874d406f1338224420e026e16b9683cc8950966189877accae18fa93b26ad6`. No physical device connected: **待真机验证**.
+- Actual UI: send `/record`, grant overlay/accessibility, open Settings home, Start recording, tap Battery, Finish. Run `human_1789540216954_b6ff1a9a` succeeded with one received/committed action, before/after state IDs, zero pending/failed/incomplete actions. Battery page visually observed. Only recording/persistence passed; no semantic Function compilation or replay claim.
+- Automatic registration and explicit `Register Function` both FAILED: `FUNCTIONS_REQUIRED: functions are required unless enhance=true`. `OmniFlowFunctionRegistration.saveRunLog` currently supplies only `run_id` and `run_log`; the installed runtime requires Function drafts or model enhancement. GUI replay BLOCKED by registration; not executed. Runtime additionally reported OmniTransfer backend unavailable, so mapping/replay acceptance remains unproven.
+- Sent normal Agent goal: `Open Android Settings and show Battery. Do not change any settings.` The Agent invoked GUI execution, but RunLog `gui-63a89521-9540-4a6d-8e6f-a22165016a23` FAILED with zero actions: VLM planner HTTP 400 from GLM-5.1, upstream fallback connection timeout. The error does not prove a transient outage; request/model compatibility still needs diagnosis.
+- Executable evidence gate: `python3 scripts/verify-gui-lifecycle-evidence.py docs/testing/fixtures/gui-lifecycle-20260916`. Actual result **1 PASS, 2 FAIL**, exit 1. Checked-in small real-run samples omit request/fallback identifiers. This gate checks exported runtime evidence; it does not automate the above UI operations, prove replay or replace live retesting. Full source screenshots/state bundles are not included in these small fixtures.
+- Test-tool interference: the first recording attempt `human_1789539895905_b5df9828` was invalidated by `uiautomator dump`, which attaches UiAutomation with flags=0 and suppresses accessibility services. Excluded that attempt. Subsequent active GUI checks used only ADB screenshots/input; do not use UIAutomator while recording/replaying unless accessibility suppression is explicitly disabled. Restart/resume, repeated replay and cross-device mapping remain NOT TESTED.
+
+#### Registration contract correction, still not accepted end to end
+
+- Updated the existing `OmniFlowFunctionRegistration.saveRunLog` request to pass `enhance=true` with the immutable RunLog. The installed Python bridge explicitly requires this when no authored Function drafts are supplied. No local action-to-Function compiler or coordinate replay was added.
+- Extended the existing `OmniFlowToolChannelManualRecordingTest`; focused Gradle test result 5/5 PASS. APK build PASS, installed successfully with `adb install -r` on emulator-5580. SHA256 `0ed51c2b0cdd5b0ff94f8858e382b239ebeb58ddebd76092b401a4a4f0f08094`.
+- Reopened the persisted source RunLog and pressed Register Function through the real UI. The request reached GLM-5.1; model stream failed after 23.5 seconds (HTTP response status 200 does not establish stream success). A second explicit attempt also failed after 27 seconds. The spinner cleared and the registration button returned; no registered Function was verified. Exact stream error still needs capture. Do not mark registration/replay PASS from the parameter fix.
+- Execution control review reached the existing `OmniFlow.execute` coroutine, `ExecutionControls`, and `ExecutionOverlay` pause/stop gates. This is source inspection only; actual takeover/resume/stop, no-late-action, and subsequent-run acceptance are still pending.
+
+#### Model transport diagnosis and error visibility
+
+- Found that the shared registration result parser discarded canonical nested `error.message`/`error.code`, replacing actionable failures with a generic registration failure. Fixed that boundary and added executable regression coverage; focused Flutter tool-client suite 5/5 PASS.
+- Real App registration capture `/tmp/oob-register-capture2/28.png` proves a separate failure: HTTP 200 returned an ordinary `chat.completion` JSON containing generated Function content, while the caller expected SSE. The Python `model_turn` payload omits `stream`; Kotlin `ChatCompletionRequest` defaults it to false. Corrected `OmniFlowModelHost` to set `stream=true` at its existing streaming-client boundary, without changing model selection or action coordinates.
+- `OmniFlowModelHostTest` now exercises absent/false/true stream inputs against the actual host and asserts the outgoing streaming request. Suite 9/9 PASS; APK build PASS. This explains the registration HTTP-200 failure, not the earlier GUI planner HTTP 400. Actual registration after this second fix remains pending.
+- Added `ExecutionRegistryTest` lifecycle coverage for repeated stop (one cancellation), stale cleanup after a new run begins, rejecting the old run's stop, and stopping the next run. Focused suite PASS. These unit checks do not establish real takeover/resume or no-late-action acceptance.
+- Installed stream-fix APK on emulator-5580 (SHA256 `fd6cda1136458cac1dee46e97f7ca76daaed22eb51bdb590c1f7170f56336991`) and repeated actual Register Function. At 14:58:01 the model stream completed normally after 51.4s, then canonical registration returned `RUN_LOG_COMPILE_FAILED: function_enhancement_split_arguments_incomplete`. This proves the SSE mismatch is removed for this operation, but registration remains FAIL. Installed `functions/assets.py` validates that the `arguments` map keys exactly equal generated Function IDs; no missing keys have been fabricated or validation bypassed. The installed runtime's authoring contract must be reconciled with the current canonical compiler before claiming the full pipeline works.
+- Packaging audit: the authoritative dependency used by `scripts/build-omniflow-component.py` is adjacent **OmniFlow-exp**, pinned in `runtime.properties` to `d453a47e55b6a2c30c99b54b56bbea9c4578de44` (runtime `2026.08.21.catalog.dc201798.d453a47e`). The separate OmniFlow checkout is not this App's package source. Current OmniFlow-exp uses `functions/compiler.py`; its bridge requires an existing Function when `enhance=true`, whereas the installed pin requires enhancement for RunLog-only input. A blind source copy/upgrade is therefore invalid; migration must wire model authoring through the canonical compiler and cover host contract compatibility.
+- Repeated ordinary Agent goal after the stream fix at 15:01. Run `gui-62d9067e-5c0c-4867-bf47-87ef8f6a695d` failed with zero actions and the same GLM-5.1 HTTP 400/upstream fallback timeout. Raw test RunLog: `/tmp/oob-gui-20260916/agent-run-after-stream-fix.json`. Controls appeared then disappeared on failure. The failure happened before a stop click was performed, so this attempt is **not** pause/stop acceptance. No inferred success or model-switch workaround was used.
+
+#### Actual planning-stage Stop and restart, 2026-09-16 15:06–15:14 CST
+
+- Device: emulator-5580, Android 13 ARM64; installed 0.6.3 debug APK SHA256 `fd6cda1136458cac1dee46e97f7ca76daaed22eb51bdb590c1f7170f56336991`. Physical device absent: **待真机验证**.
+- Sent `Use the GUI tool to open Android Settings. Do not use terminal commands.` Waited for a fresh GUI overlay, then clicked its actual Stop button during initial planning. Run `gui-c9f099e9-5901-4851-ac7a-8c5458269e6a` finished with `function_stopped`, zero dispatched steps. ACP returned `stopReason=cancelled`; chat showed `任务已取消`.
+- Observed the same stored RunLog/events again around 15:11, then force-stopped and relaunched App. Cancelled user/assistant history remained visible. Export after restart matched the pre-restart RunLog; one terminal event, no later events or committed actions. This only proves this planning-stage case over the observed interval, not cancellation of an in-flight physical gesture.
+- Evidence: `docs/testing/artifacts/gui-stop-2026-09-16/` contains actual before/after RunLogs, events and screenshots. Executable check: `python3 scripts/verify-gui-lifecycle-evidence.py docs/testing/artifacts/gui-stop-2026-09-16 GuiStopEvidence` — 1/1 PASS. It checks captured evidence, does not automate UI or replace a fresh live run.
+- Next GUI prompt after force-stop was gated by missing accessibility permission. System Settings showed Omnibot Off. Restored On through actual Settings UI. No new GUI overlay appeared before permission recovery, so takeover/resume was NOT tested. No automatic resume claimed; the permission card remained in chat.
+- Registration still FAIL (canonical split arguments validation), ordinary GUI execution still FAIL (model HTTP 400), replay BLOCKED. Full pipeline is not accepted.
+
+## 2026-09-16 GLM 自检查、有限恢复与学习持久化
+
+- 请求：模型错误后可诊断、有限恢复、修复经验跨重启保留。
+- 53 项 JVM / 4 项 Node 通过，入口及覆盖见 [provider-recovery-20260916.md](provider-recovery-20260916.md)。原 GLM GUI 400 fixture 已用于可执行的不重放测试；技能刷新删除学习数据的缺陷已修改。
+- 真实接口：GLM-5.1 文字/文字工具通过，有效图片请求 400＋gateway fallback timeout；GLM-4.6V 图片工具探针通过。未修改用户模型配置。
+- emulator-5580 / 0.6.3 两次实际启动保留学习数据、恢复打包脚本。仅为持久化验证；原 GUI 操作与失败后可继续发送的本轮端到端验收仍未完成，**待真机验证**。
+
+#### GUI physical-dispatch pause/cancellation boundary, 2026-09-16
+
+- Source trace found suspended work between the existing pause gate and physical dispatch: overlay avoidance/progress callbacks, accessibility readiness, and pre-action observation. Added `beforeDispatch` to the existing `AndroidGuiEnvironment.act` boundary and wired it to the same OmniFlow `beforeOperation` owner. It runs after readiness/observation and checks coroutine cancellation immediately before platform dispatch. The existing owner also rechecks overlay pause after its hook returns. No second lifecycle, retry loop or coordinate fallback was added.
+- Extended `AndroidGuiEnvironmentTest` with deterministic suspension tests: no physical dispatch while the gate waits; exactly one dispatch after release; cancellation while paused produces zero dispatches even when the gate is later released. Entire suite: 11 tests, 0 failures/errors. ExecutionRegistry/ExecutionFeedback focused suites and the APK build passed. These are JVM tests with a fake Android platform; they do not prove actual touch interruption or stale-screen recovery after manual takeover.
+- Built and installed developStandard debug APK SHA256 `4cf142251a9e08610cc3b063986af61466de9125adc82369a74acda956bb585f` on emulator-5580 using `install -r` (Success). Launch returned to accessibility permission flow; this new APK has not completed live takeover/resume acceptance. **待真机验证**. Registration, replay and model HTTP 400 blockers remain open.
+- Regression command: `JAVA_HOME='/Applications/Android Studio.app/Contents/jbr/Contents/Home' ./gradlew --no-daemon --no-parallel :androidgui:testDebugUnitTest --tests '*AndroidGuiEnvironmentTest'`.
+
+#### Revalidated configured GUI execution, 2026-09-16 15:21 CST
+
+- A concurrent user task, “修复GLM模型错误与自恢复”, persisted a dedicated GUI scene binding to GLM-4.6V through the existing debug configuration receiver and executed the normal GUI runtime through DebugVlmTaskReceiver. This task did not change that binding or claim authorship of the run. Avoid concurrent UI control while that task verifies chat attachments.
+- Independently read actual emulator RunLog `debug-vlm-450ce60b-7df5-4542-9a66-431c8865efa3`: success=true, status=succeeded, four actions, five successful model calls, resolved model GLM-4.6V. Actual screenshot showed Android Battery page. Source goal is read-only opening Settings/Battery. Two initial actions navigated the existing permission UI, followed by open_app Settings and click Battery. This is a debug-entry runtime test, not a fresh normal chat-entry acceptance.
+- Preserved exports at `docs/testing/artifacts/gui-configured-model-2026-09-16/`. Command `python3 scripts/verify-gui-lifecycle-evidence.py docs/testing/artifacts/gui-configured-model-2026-09-16 GuiLifecycleEvidence.test_goal_driven_gui_run_completes` PASS. The previous GLM-5.1 HTTP 400 samples remain valid failed runs; the new success proves this configured visual route, not a generic HTTP 400 repair or all model compatibility.
+- Repeated canonical registration of original manual recording using DebugOmniFlowToolReceiver, run_id `human_1789540216954_b6ff1a9a`, enhance=true and a read-only Battery-navigation instruction. This path resolves the RunLog through the host rather than exercising the UI snapshot wrapper. Started 15:22:29 CST; result pending at this checkpoint. Do not infer registration or replay success from GUI execution.
+
+- Registration terminal at 15:23:46 CST: success=false, RUN_LOG_COMPILE_FAILED / function_step_contract_invalid. Saved actual response as `registration-result.json` in the above artifact directory. The unchanged canonical parser rejects invalid Function step structure; registration and replay remain unaccepted.
+
+#### Canonical semantic-authoring transport integration (not deployed), 2026-09-16
+
+- Updated canonical adjacent OmniFlow-exp on branch `codex/oob-authoring-host-callback`, commit `40fb6fd6`, pushed to origin (main unchanged). Compiler accepts a host `complete_json` callback and retains its existing three-attempt semantic validation/materialization owner. Device Bridge accepts RunLog-only enhance=true and uses that callback; existing-Function enhancement remains unchanged. Rejected proposals return FUNCTION_AUTHORING_REJECTED and do not register the hidden evidence fallback as a successful Function.
+- Focused upstream validation: `.venv/bin/python -m pytest -q tests/test_device_runlog_compiler.py tests/test_function_render_binding.py` — 43 passed. New tests exercise invalid proposal feedback followed by compiler-owned action generation, and three invalid proposals with no Function published. These are Python tests with a fake host model, not real registration acceptance.
+- App runtime remains pinned to the older bundled commit; these changes are NOT yet packaged or installed. Migration inspection also found the current Bridge discards the temporary compiler transfer-state catalog while saving Function definitions. Source-state persistence must be fixed and tested before package migration/replay. No source-coordinate fallback is permitted. Existing on-device registration failure remains unresolved until a new package is actually validated; **待真机验证**.
+
+#### Registered source evidence persistence (upstream, not deployed), 2026-09-16
+
+- Canonical OmniFlow-exp commit `dccda921` on `codex/oob-authoring-host-callback` persists the compiler source catalog and copies referenced screenshots to content-addressed files before publishing Function definitions. Bridge source lookup first reads this Store-owned evidence, retaining the existing host path for older non-catalog sources. Conflicting content under the same state identity fails rather than overwriting source evidence. The aggregate catalog run_id identifies its Store; it does not claim to represent a single trajectory.
+- Python tests cover original screenshot deletion plus Bridge re-instantiation, preserving earlier states when registering another run, idempotent re-import, and rejection of conflicting state content without altering the existing catalog. Compiler/render-binding suite: 45 passed; invocation/single-tool/device-compiler suite: 25 passed. These use synthetic fixtures and a fake host, not actual device replay; **待真机验证**.
+- Not yet packaged in OOB. Current packaged properties still pin August OmniFlow/OmniTransfer and the old association checkpoint, whereas current OmniFlow requires canonical V10. Packaging must upgrade the compatible source/checkpoint/runtime dependency set together; copying just the new compiler into the old package would not be a valid acceptance build.
+
+## 2026-09-16 聊天上传图片：实际视觉模型、错误提示与重启
+
+- 用户明确是聊天上传图片。通过聊天模型选择器将当前模拟器 Provider 默认模型持久设为 GLM-4.6V，真实上传 PNG 得到正确颜色，未用 GUI 配置替代聊天配置。
+- 原图片 HTTP 400/422 增加受控 failureKind，经原 ACP/runtime 投影到可操作提示；不删除图片、不隐式切换 Provider、不重放已开始的 turn。
+- 60 JVM / 64 Flutter 通过；最终新 APK、emulator-5580 / 0.6.3，第二张不同颜色图片、唯一回复、正式完成、重启历史与模型选择共 8/8 步通过。首轮自动化失败与准备失败明确保留。
+- 可执行入口、原始证据和限制见 [chat-image-20260916.md](chat-image-20260916.md)。**待真机验证**；未覆盖全部图片格式、缓存清理及外部 Harness。
+
+## 2026-09-16 Provider API Key 输入期间保存竞态
+
+- 反馈：模型列表 401，服务端未收到 Authorization；是否填写时丢失。
+- 可执行用例：`ui/test/features/home/pages/model_provider_setting/model_provider_setting_page_test.dart` → `editing API key during pending save preserves the newer key`。
+- 旧代码复现失败；修复后 Provider 页面、配置和发现相关 41 项通过。
+- 证据与边界：`docs/testing/provider-key-save-20260916.md`。截图具体触发原因未确定；待真机验证。
+
+## 2026-09-16 模型列表请求固定 Provider 身份
+
+- 反馈：排查密钥填在 A、请求却使用 B，以及保存修复后的其他问题。
+- 可执行用例：`ui/test/services/model_provider_config_service_test.dart` → `implicit discovery stays on resolved provider after editor switches`。
+- 旧代码漏传解析后的 profileId；新代码固定快照身份。42 项 Provider 回归通过。
+- 证据：`docs/testing/provider-identity-20260916.md`。待真机验证。
+
+## 2026-09-16 Provider 设置轻量校验与保存等待
+
+- 要求：减少耦合，缺少凭据明确提示、空鉴权头拒绝、保存成功后刷新。
+- 测试：`model_provider_setting_page_test.dart` 的 empty credentials / empty Authorization / refresh waits for in-flight credential save 场景。
+- 47 项 Provider 测试通过；真机未连接，待真机验证。
+- 记录：`docs/testing/provider-settings-guards-20260916.md`。
+
+## 2026-09-16 自检鉴权一致性与持久化故障历史
+
+- 要求：增强既有 skill，失败可继续，修复经验可持久保存，避免额外耦合。
+- 可执行：`scripts/provider-recovery.test.mjs`、`ProviderFailureJournalTest`、`BuiltinSkillAssetsTest`、`HttpAgentLlmClientTest`。
+- 范围/结果：`docs/testing/self-recovery-history-20260916.md`；待真机验证。
+
+## 2026-09-17 聊天图片上传检查
+
+- 图片编码、工作区读取、选图及附件透传现有测试通过。
+- 新发现待验证边界：历史快照保留缓存路径后的清理/重发；失效工作区图片降为 ResourceLink。
+- 新边界端到端测试未实现、未运行，未宣称修复；待真机验证。
+- 记录：`docs/testing/chat-image-audit-20260917.md`。
+
+## 2026-09-17 文件传输持久化修复
+
+- 要求：修复聊天附件缓存失效、历史重发、失效本地文件的处理。
+- 新用例：`ConversationAttachmentPersistenceTest`，与图片/工作区附件测试一起运行。
+- 修复与证据边界：`docs/testing/file-transfer-20260917.md`。
+- 端到端 picker/Room/重发/模型收取与真机验收尚未完成；目标保持进行中。
+
+### 文件传输 Android/Room 集成补充
+
+- 入口：`python3 scripts/verify-attachment-persistence.py --serial DEVICE --output result.json`（已安装当前 Debug 包）。
+- 模拟器真实存储验证：PNG/文本、删除缓存、旧快照、重复 upsert、prompt 路径恢复、重启、清理均通过。
+- 新补修：重复原生 upsert 复用既有持久附件。实际选图到模型收取和真机验收仍未完成。
+
+### 2026-09-17 — Unsupported document feedback and persistent Agent hints
+
+See [document-parser-feedback-20260917.md](document-parser-feedback-20260917.md).
+Executable: AgentFileReadSupportTest and the existing PDF branch of
+file-read-provider.mjs / xiaowan-file-read-regression.en.json. Requires unsuccessful
+content-read status, document_parser_required, retained original artifact, and a
+bilingual parser table in the loaded file_read definition. Device journey for this
+change not run; 待真机验证.
+
+### 2026-09-17 — Restore Vibe Builder and generated App access
+
+See [vibe-app-restoration-20260917.md](vibe-app-restoration-20260917.md).
+Executable coverage: sandbox JVM suite, plugin_market_page_test.dart (open/pin,
+identity and disabled controls), scripts/verify-vibe-package.py (main APK assets).
+Device generation/open/shortcut/restart/update/data retention acceptance pending;
+待真机验证. Restore existing plugin capabilities without a second Agent lifecycle.
+
+### 2026-09-17 — Real Agent-created App acceptance
+
+[vibe-app-live-20260917.md](vibe-app-live-20260917.md): real chat/model build,
+failed Android SVG writes, model-generated SQLite UI mismatch, corrective publish,
+actual Save click, SQLite single-write assertion, republish data retention and
+force-stop/reopen. Entry points: vibe-build-notes.en.json, vibe-notes-repair.en.json,
+scripts/verify-vibe-notes-ui.py. Emulator final pass after repairs; 待真机验证.
+
+### 2026-09-17 — 执行中心统一接口、手动录制与 Function 回放
+
+- 反馈：`runtime_tool_not_declared:open_target_page`，缺手动录制按钮，页面耦合 OmniFlow，用户要求真机操作。
+- 入口：`ui/test/features/task/run_log/`、`manual_recording_flow_controller_test.dart`、`settings_page_test.dart`；34 项通过。
+- 真机脚本：`scripts/verify-execution-center-device.py`，使用真实已录制 Settings 搜索流程；UI 点击执行、读取 canonical RunLog、目标页面断言、强停后持久化。
+- PJE110 实际录制/保存/回放/运行详情通过；强停收回无障碍导致首次恢复失败，系统 UI 重新授权后再次回放通过。保留失败，不宣称免授权恢复。
+- 报告与已运行证据：[execution-center-20260917.md](execution-center-20260917.md)。自动生成标题泛化仍待改善；其他应用与所有参数类型未逐一真机验收。
+
+### 2026-09-17 个人记录 Demo 录屏
+- 请求：录制实际操作直到打开生成的 App 页面。
+- 执行：`python3 scripts/record-vibe-notes-demo.py emulator-5580 docs/testing/artifacts/vibe-demo-20260917`
+- 复用 `verify-vibe-notes-ui.py`：插件详情打开、真实输入和保存、SQLite 恰好一条、进程重启后再次打开并显示同一记录。
+- 结果：模拟器 0.6.3 (16) 通过，34 秒录屏；`artifacts/vibe-demo-20260917/result.json` 与 `personal-notes-demo.mp4`。本次录制已有模型生成 App 的使用流程，不包含生成过程。不涉及新增产品代码；相关修复仍待真机验证。
+
+### 2026-09-17 — DSH 流式大段空白反馈与模拟回放
+
+- 回归入口：`ui/test/features/home/pages/chat/widgets/dsh_streaming_layout_test.dart`；真机回放：`ui/test/device/dsh_streaming_layout_live.dart`。
+- 已复现并修正：完成后正文仍未完全显示；停顿后下一批逐字输出延迟增长。覆盖长思考、多段 Markdown、官方完成和历史重新加载，83 项相关测试通过。
+- PJE110 / Android 16 独立测试宿主：3 项模拟 DSH 事件回放连续两次通过（含 Dart VM 重启）；不等同于真实模型请求验收。
+- 不将这两个显示问题等同于用户所有“大段空白”场景；原应用完整链路待真机验证。详情：[dsh-streaming-layout-20260917.md](dsh-streaming-layout-20260917.md)。
+
+### 2026-09-17 人生经验值从零创建及全程录屏
+- 需求：真实发送创建请求，录制直到发布打开，并验收打卡、升级、经验历史、自定义习惯、重启保留。
+- 可执行输入：`scripts/fixtures/user-scenarios/life-xp-build.json`；入口 `scripts/verify-agent-user-journey.mjs`、`scripts/record-agent-demo.py`、`scripts/verify-life-xp-demo.py`。
+- 结果：一次生成失败；继续创建及两轮模型修正后，单日核心流程在模拟器实际通过。跨日/长期数据问题仍存在，待真机验证。详见 `life-xp-demo-20260917.md`，原速与加速视频、各次失败/通过结果均保留。
+
+### 2026-09-17 Builder owns tests and repairs; supervisor audits evidence
+- Persisted in Vibe Builder 0.2.2 Skill and workflow reference; covers actual Life XP failures, executable tests, real business/UI readback, explicit blocked tests and no fabricated completion.
+- Execution: `:app:syncPluginAssets`; `python3 scripts/verify-vibe-package.py app/build/generated/plugin_assets/main`. Compare all critical runtime files byte-for-byte and reject stale APKs.
+- Prior `life-xp-build` scenarios and `verify-life-xp-demo.py` remain behavioral regression; 0.2.2 live model behavior not yet run, no updated APK installed, 待真机验证. See `vibe-self-validation-20260917.md`.
+
+### 2026-09-17 — 小万读取外卖通知能力核验
+
+- 需求：通过通知访问权限读取其他 App 通知，不使用手机操控。
+- 真机 PJE110 / Android 16 / 0.6.3 (16)：发送通知权限已授权，但无通知监听服务及对应授权；该直接读取能力未实现，不能计为读取成功。
+- 执行入口：`scripts/verify-notification-read-capability.py`、`scripts/verify-notification-read-capability.test.py`（3 项通过）。记录：[notification-access-20260917.md](notification-access-20260917.md)。
+
+
+### Built-in notification reading — 2026-09-17
+- Request: read selected apps' delivery notifications directly through Android notification access.
+- Executable regressions: `NotificationAccessTest`, `ui/test/features/home/pages/settings/notification_access_page_test.dart`, `scripts/verify-notification-read-capability.test.py`, `scripts/verify-notification-read-device.py`.
+- Boundaries: default denial, app isolation/revocation, system revocation, notification replacement/removal, process restart, existing Agent catalog registration, settings resume.
+- Results: JVM 4, Flutter 3, audit parser 4 passed; physical synthetic lifecycle/restart/revocation passed on PJE110 b49f281b Android 16, app 0.6.3/code 16. Live model invocation and real food-delivery order not tested.
+- Details/artifacts: [notification access](notification-access-20260917.md), `artifacts/notification-access-20260917/{granted,restart,revoked}.json`.
+
+
+### Bulk notification consent and real Agent memory demo — 2026-09-17
+- Requests: 全部开启; real message source; live event listening; Agent writes and recalls memory without mocked provider/tool results.
+- Executable UI journeys: `notification-message-memory.json`, `notification-clock-memory.json`, `notification-memory-recall.json` under `scripts/fixtures/agent-user-journeys/`; canonical history assertion `scripts/assert-notification-agent-demo.py`.
+- Results: real Clock notification reached `notifications_wait`, then Agent daily memory write and recall passed on physical PJE110 b49f281b, conversation 87. SMS returned empty and timed out; SMS body is not verified. Bulk consent persisted across app restart. Native tests 6 passed, Flutter bulk test passed, focused analyze clean.
+- Boundaries: current installed apps only, system SMS included, future apps off; per-turn wait max 120 seconds, cancellation removes collector; no permanent background Agent subscription.
+- Evidence: [notification access report](notification-access-20260917.md).
+
+### Natural recent-message discovery — 2026-09-17
+- Input asks about recent messages without naming tools or apps.
+- Executable: `notification-recent-messages.json` UI journey plus `assert-notification-agent-demo.py` RECENT branch.
+- Physical conversation 89 passed: automatic app discovery and 12 actual notification reads, four sources with bodies. Evidence `notification-access-20260917/recent-messages-agent.json`.
+- Retained notifications only; group summaries count as records; zero notifications does not prove no unread/history messages. Agent wording overstated all-app coverage, so that semantic claim is not accepted.
+
+### Recent screen recording invisible to Agent — 2026-09-17
+- User report: just-created screen recording cannot be found.
+- Physical reproduction: actual MP4 exists, but app UID stat returns Permission denied; Agent terminal saw an empty Screenshots directory and incorrectly inferred absence.
+- Executable: `scripts/verify-recording-file-access.py SERIAL RECORDING OUTPUT_JSON`. Current test is failing as expected; permissions/product behavior not changed.
+- Details: [recording file access](recording-file-access-20260917.md).
+
+### Action ends after one planning response — 2026-09-17
+- Physical conversation89 user41104: plan text, zero tools, end_turn; prior continuation user41097 does execute a tool.
+- Executable `scripts/verify-agent-action-turn.py SERIAL USER_ENTRY_ID OUTPUT`; latest action fails, previous action passes.
+- Diagnosis status: runtime normal completion with no executed tool confirmed; model omission versus provider/parser loss not established, no fix claimed.
+- [Evidence and boundary](agent-plan-only-20260917.md).
+
+#### Plan-only action completion mitigation — subsequently reverted at user request
+- Raw provider logs confirmed two stop responses with zero tool calls, not parser loss.
+- Historical mitigation added a bilingual current-turn execution contract; user subsequently requested rollback. Those added blocks are now removed, lifecycle unchanged; earlier passes do not certify the reverted build.
+- Executable real-model journey `agent-action-recording-continuation.json`, checked by `assert-agent-action-recording.py`.
+- PJE110 b49f281b, original conversation89: four consecutive action/correction turns (including restart) passed with actual tools; copied recording hash matches source. Prompt tests7 and build passed.
+- Evidence: `artifacts/agent-plan-only-20260917/fixed-consecutive-turns.json` and `provider-fixed-contract.json`.
+
+- OmniInfer 默认预编译安装：`scripts/test-omniinfer-skill.py`（18 PASS）、Provider 设置页（26 PASS）；随附测试 APK 的准备/重复使用/校验失败拒绝/不触发源码构建。模拟器系统更新和优化 CPU API 验证 PASS，正式本地 Agent 与真机完整安装复用待结果。详见 `omniinfer-local-skill-2026-09-17.md`。
+
+- OmniInfer 远程 APK：固定 Release 资产、SHA-256、下载后原子发布、缓存复用、失败不回退构建；执行 `python3 scripts/test-omniinfer-skill.py`（18 PASS）。模拟器实际远程下载通过，真机下载与完整系统安装结果见 OmniInfer 当日报告。
+
+- User-requested prompt rollback / 0.6.3 (16) Release: added execution-contract blocks removed; 7 existing prompt tests pass with rollback guards; productionStandardRelease test-signed APK installed on PJE110 b49f281b, normal UI response and restart retention passed. Original plan-only defect is not certified fixed after rollback. See `agent-plan-only-20260917.md` and `rollback-release-*.json` evidence.
+
+- 本地 Provider 无法拉取模型：`scripts/verify-omniinfer-model-list-lifecycle.py SERIAL OUTPUT`；真实真机先宿主前台查 models，再切主 App 等 30 秒查 models。PJE110 前台 PASS、后台 timeout FAIL；2 秒即时切换通过。API 路径正确，后台可用性待修复。
+
+- PJE110 模型不显示根因确认为 OplusHans 厂商后台冻结。系统允许宿主后台行为后，30 秒后台 models 回归 PASS，真实 Provider UI 已显示 Qwen 模型；见 models-background-fix.json。安装 Skill 已加入后台权限与跨 App 验收；服务重启边界待当前对话结束。
+
+- 更正本地模型后台验收：30秒 PASS 不代表持久修复。默认120秒、核对前台App的受控真机回归 FAIL；正式对话仍无输出，旧CPU库采样显示注意力和点积计算。之前“已恢复”仅短时，不代表修复完成。
+
+- 0.6.3 Release physical Computer Sessions failure: reproducible DNS failure for expired/unavailable temporary Bridge tunnel; server cloudflared absent, normal-domain DNS works. `verify-session-list-visible.py` red on Computer, no error on Local. Remote recovery pending endpoint restoration/re-pairing. See `remote-session-endpoint-20260917.md`.
+
+- 2026-09-18 去掉固定4工具并发上限：连续parallelSafe组全部启动，顺序边界与取消机制保留。旧实现peak4红灯，新实现71项执行器测试通过、Release构建安装通过；真机实际8工具并发待验证，模型/可观测性未通过。详见 tool-parallel-no-fixed-cap-20260918.md。
+
+## 2026-09-18：OmniFlow Release 无法启用
+
+- 需求与证据：[Release 启用回归](omniflow-release-enable-20260918.md)。
+- 执行：`python3 scripts/verify-omniflow-release-enable.py --serial SERIAL --out OUTPUT`；实际 minified Release 真机启用、列表调用、强停恢复。
+- UI 失败反馈/重试：`ui/test/features/home/pages/plugin_market/plugin_market_page_test.dart` 中 `enable failure retains native reason and permits retry`。
+- PJE110 真机通过；64 项组件单测与12项页面测试通过。模型任务与跨设备迁移不在本次验收范围。
+
+## 2026-09-18：增强必须走 OmniFlow 完整 authoring
+
+- [完整 authoring 真机验收](omniflow-authoring-20260918.md)。入口只传 run_id/enhance，支持多个 Function，返回列表刷新。
+- 执行：`scripts/verify-omniflow-authoring-device.py --phase record|author|verify|replay|restart`（逐阶段执行，环境参数见文档）。复用现有 Journey，参数与绑定必须来自真实模型，不允许注入产物。
+- 上游回归：OmniFlow-exp `tests/test_device_runlog_compiler.py::test_enhancement_uses_frozen_screenshot_after_android_recaptures_state`，同时覆盖轻量增强和完整 authoring，拒绝源证据被重采样替换。
+- 真机完整链路通过，Release 换参数执行再次通过；15项页面测试、17项上游编译/bridge测试、10项运行包测试通过。
+
+## 2026-09-18 OmniFlow authoring 录屏复测
+
+- 入口：`scripts/verify-omniflow-authoring-device.py`（record / author / verify / replay）。
+- 实际真机新录制两次：第一次编译拒绝；第二次生成两份无参数 Function。参数化验收均失败，不能标记全链路通过。verify 在断言前持久化真实产物。
+- 之前已生成的参数化 Function 独立执行 wifi 通过；与本次新产物严格区分。
+- 录屏、原始输入、失败断言及结果：[复测证据](artifacts/omniflow-authoring-demo-20260918/README.md)。待修复：authoring 稳定性和 rejected_error 透出。
+
+- 2026-09-18：官方 OmniInfer AAR 按需下载、主 App 内加载、远程模型、同进程后台 120 秒、正式 Agent 任务与重启历史：见 [验收记录](omniinfer-downloadable-runtime-2026-09-18.md)。可执行入口 `scripts/verify-omniinfer-payload.py`、`scripts/verify-omniinfer-phone.py --in-app`、`scripts/verify-omniinfer-in-app-background.py`、`omniinfer-in-app-agent.en.json`。API/下载模拟器通过；正式 Agent 与真机状态以记录为准，不能用 API 成功替代。
+
+- 2026-09-18：OmniInfer HTP 真机重试；API 推理通过、完整 Agent 文件任务失败，见 [记录](omniinfer-htp-phone-2026-09-18.md)。
+
+## 2026-09-18 Codex Remote 连接与协同 demo
+
+[真实手机验收](codex-remote-demo-20260918.md)：复现远程关闭、临时域名失效、cwd 缺失、ACP v2 配置缺 type、临时 Conversation 被 hash runtime 替换。修复后 PJE110 真 UI 发送创建电脑文件并显示回复通过；电脑协议客户端同 session 发消息，手机被动同步通过。12项 Kotlin、137项 Flutter、真实 v2 配置回归及 LAN ingress 通过。长期执行入口 verify-remote-config-v2.py、verify-remote-chat-device.py、verify-shared-external-send.cjs。重启、原生桌面 GUI、公网/蜂窝待验，不宣称完整覆盖。
+
+## 2026-09-18 — 本地模型可选下载与自动 CPU / HTP
+
+- 需求：不使用本地模型不下载引擎/模型；启用后自动适配硬件，无需用户选择。
+- 可执行：`LocalInferenceBackendTest`（5 项通过），`scripts/verify-omniinfer-payload.py`（本次 APK 检查通过，新增模型/组件不得内置断言）。
+- 边界：失败回退只在 loadModel 启动阶段，成功选择按系统/组件/模型身份保存，不重放 Agent 请求。
+- 记录：[omniinfer-auto-backend-20260918.md](omniinfer-auto-backend-20260918.md)。无 ADB/无线真机，安装与启动/重启/失败恢复 **待真机验证**。
+
+## 2026-09-19 — authoring 编译拒绝原因不能丢失
+
+- 复现：完整 authoring 拒绝仅有通用错误，临时编译报告被删除，Android Error 投影再丢失详情。
+- 可执行回归：canonical `tests/test_device_runlog_compiler.py` 18 项通过；Android `OmniFlowManagementResultTest` 验证失败状态与原始诊断保留。
+- 持久化、写盘失败、无伪 Function 注册覆盖；不改变 Transfer、绑定或重试 owner。
+- [修复与剩余整体范围](authoring-feedback-20260919.md)。无设备，**待真机验证**。
+
+## 2026-09-19 — PDF 正文不能只读元信息
+
+- `AgentPdfReadSupportTest` 使用真实 PDFBox 与真实 PDF 测试文字分页、源文件保留、损坏/空白/密码、临时文件清理；3 项通过。
+- `AgentFileReadSupportTest` 同轮通过；旧故意损坏 PDF 的 Provider fixture 改为明确 parse_failed，不能误报正文读取。
+- [实现与边界](pdf-body-read-20260919.md)。Office 正文、OCR 未完成；上传/重启/失败后继续 **待真机验证**。
+
+PDF 本轮最终补充：新增真实上传 PDF 样本与重启回读 Journey；解析器回归增至 4 项，原文本 8 项通过，最终 APK 构建成功。设备 Journey 未运行；见上述记录。
+
+## 2026-09-19 — DOCX / XLSX 读取正文而非元信息
+
+- 沿用 file_read 接入本地 OOXML 文字提取，原附件保留，公式/缓存/原始值明确区分。
+- `AgentOfficeReadSupportTest` 覆盖真实Office样本、分页、工作表/坐标、共享字符串、错误索引、空文档、损坏和外部引用。
+- 实际上传与重启回读 Journey 已添加，未执行；**待真机验证**。见 [实现与执行入口](office-body-read-20260919.md)。
+
+## 2026-09-19 — Remote Codex 排队超时和断线后禁止旧请求写入
+
+- 新用例在旧实现实际2失败；修复后 RemoteCodexAppServerSessionTest 14项通过。
+- 原连接身份核验、排队纳入请求期限、未发送请求不发取消、取消通知限时；不重放Agent turn。
+- [复现和修复](remote-write-recovery-20260919.md)。用户现指定模拟器真实任务验收；设备网络恢复用例尚未完成。
+
+## 2026-09-19 — 实际附件上传：快速失败崩溃与 ACP 工作区路径
+
+- 模拟器通过系统选择器上传 PDF 实际触发 foreground 启动超时崩溃；TaskRuntime 同一服务握手后 reconciliation 修复。2 项 JVM 回归通过，覆盖安装后同类 46ms 失败不再退出 App。
+- 随后真实 ACP 任务暴露 `/workspace/...` 被当 Android 路径，历史持久文件存在仍误报丢失。沿用工作区映射修复，新增长期引用回归。
+- 完整正文/重启回读 Journey 仍在验证，不把失败轮次算通过。[证据与执行入口](attachment-runtime-20260919.md)。
+
+后续设备结果：同一 Debug APK，PDF 正文和正式完成通过，原首行格式断言失败保留；继续原会话的重启及真实回读 6 步通过。DOCX/XLSX 各 8 步真实模型 Journey 全通过，包含系统选取、解析正文、正确回答、重启和再次工具读取。文档断言新增同轮 parser/contentAvailable/content 校验，拒绝只有元信息的成功。详见上述报告；不代表最终 Release 或其余大功能已验收。
+
+## 2026-09-19 — 最新图片与损坏文件后的继续操作
+
+- 当前包实际 PNG 上传识图、正式完成、重启历史与模型选择保留：8/8 通过。Recent 列表未显示旧日期测试图的准备失败保留，不冒充模型失败。
+- 新增实际损坏 PDF 上传、单次 file_read 失败且没有正文、明确反馈、同会话下一任务成功且不重放工具、重启历史：8/8 通过。
+- 复用现有 Journey 和同轮状态断言；[执行入口、设备与证据](image-document-recovery-20260919.md)。
+
+## 2026-09-19 — Authoring 复用意图与完整回放复测
+
+- 增强入口使用已有 instruction 传递业务输入复用意图，15 项页面测试和 Debug 构建通过。
+- 英文模拟器真实录制两步、真实生成 search_term 绑定通过；完整 Function 被模型隐藏，单步片段从首页回放 yielded，整体验收失败。
+- 保留两次驱动准备失败及后续真实产物；确认 compiler 事实投影缺少动作归一化坐标与节点像素坐标的单位/尺寸说明，待进一步修复验证。[详情](authoring-intent-20260919.md)。
+
+## 2026-09-19 — 官方 authoring 坐标单位和显示尺寸
+
+- canonical compiler 补齐 source_ui 的显示尺寸/单位，保留原动作和节点；18项官方测试、9项实际APK组件测试通过，组件2.2.3已安装，设备文件哈希一致。
+- 重新真实录制通过；真实模型 authoring 返回缺失 search_term binding，注册失败，未宣称全流程成功。[验收与下一缺口](authoring-coordinate-20260919.md)。
+
+- 2026-09-19 OmniFlow authoring失败返工：canonical `tests/test_device_runlog_compiler.py` 覆盖反馈原始方案、未知/重复源索引、三次失败报告持久化；`scripts/verify-omniflow-authoring-device.py` record/author/verify/replay/restart复用真实UI链路。2.2.4模拟器真实增强仍失败，完整方案已保存；2.2.5后续结果见 `authoring-feedback-20260919.md`，未宣称全流程通过。
+
+- 2026-09-19 录制浮层污染/执行中心未离开：复用verify-omniflow-authoring-device.py的record与replay-source，非空canonical XML检查和真实两步回放两次通过；失败也保存replay-run。记录recording-page-20260919.md。参数化全流程仍未通过。
+
+- 2026-09-19 authoring参数化完整流程：recording-page-20260919的authoring-path与authoring-mode分别保留两份独立源的真实增强、battery→wifi两步回放、Function强停重启保存。最终2.2.12/Debug；历史拒绝和焦点驱动失败未删除。canonical device_runlog_compiler + function_render_binding共63项通过；脚本等待正式终态/输入焦点和实际字段值后提交。详细边界见recording-page-20260919.md。
+
+- 2026-09-19 Vibe 长历史：SandboxPluginPoolTest 增加 601 行跨页、已发布工具读取第二页并保留筛选、非法边界和整数溢出回归；与合同/Bridge 共 26 项通过，Debug 构建通过。模拟器安装与实际分页尚待执行。模型自修复仍出现复制计算和无条件成功的伪验收，保留失败证据，见 vibe-pagination-20260919.md；整体目标未完成。
+- Vibe分页后续设备验收：scripts/verify-vibe-pagination-device.py 真实发布隔离fixture，读取601行、非法查询后业务写入/独立读回、强停重启后读回通过；原始证据 artifacts/vibe-pagination-20260919/restart/result.json。Life XP模型自修复仍失败：已发布UI XP0、调用点仍1000，数据逐字段未丢；保持未通过状态。
+- Vibe发布验收入口：实际发布返回namespaced名称、局部名称和参数schema，明确runtimeValidation=not_run以及现有tools_search路径。14项单测通过；模拟器discovery-fixed再次覆盖真实工具、分页、重启通过。模型Life XP自主验收仍进行中。
+- 2026-09-19 真实GLM缺失function.name导致正式失败，Vibe production-validation未通过；保留turn-final与terminal-failure。Journey增加同轮终态失败及时退出，python3 -m unittest discover -s scripts -p test_agent_terminal_failure.py 4项通过，真实模拟器错误识别通过；不猜测工具、不重放任务。
+- 更正上条Vibe发布提示：当前运行时没有注册tools_search；旧判断只依据残留源码错误。已撤销该入口提示，使用current_request_catalog；14项单测与模拟器current-catalog真实发布/分页/恢复/重启通过。新模型验收current-catalog-resume仍待结果，先前两轮Provider错误不能计通过。
+- Life XP独立生产逻辑回归：node scripts/verify-life-xp-production.cjs APP_JS TOOLKIT_JSON，直接执行生产方法，601行统计/历史断言；当前实际失败500!=601及未声明_offset。快照与失败见vibe-self-validation-20260919/current-catalog-resume。合成桥接仅作逻辑测试，不是UI/持久化验收。
+- audit-recovery：生产601行统计/历史审查通过（脚本未变），模拟器实际发布页75XP/等级2及强停重开保持，4习惯4打卡逐字段未变。历史倒序累计/跨日里程碑仍待修复；最终模型伪工具文本仍为未解决反馈。
+- Release候选构建复现并修复PDFBox可选JP2Decoder的R8缺失类错误，ProductionStandardRelease测试签名构建及签名校验通过。候选尚未设备回归，不计最终Release验收；见release-candidate-20260919.md。
+
+- Bridge后台日志凭据回归：tools/codex-bridge下npm test，实际子进程合成token验证默认隐藏和显式配对兼容，共5项通过。模拟器通过真实设置更换测试端点并加载会话列表；模型任务/断线恢复尚待，见remote-write-recovery-20260919.md。
+
+- Remote执行中断线真实模拟器回归通过：verify-shared-interruption.cjs在原turn inProgress时停止专用Bridge，权威同turn完成一次；恢复Bridge后手机原页自动显示，实际文件正确。精确session/turn证据与UI观察失败保留于remote-recovery-20260919；公网/Release仍未验收。
+
+- Life XP实际renderHistory回归新增verify-life-xp-history.cjs：同日累计、跨时区日期、一次跨多个等级；三个时区真实旧生产代码均失败，baseline保存于vibe-history-20260919。已发起同聊天模型修复，未验收通过。
+
+- file_edit相同替换不再假报已更新：FileTextEditTest两项通过，验证磁盘内容/mtime和下一次真实修改。设备验收待执行。长Life XP会话触发压缩检查点失败且本轮工具历史缺失，权威日志保存，仍待修复。
+
+- file-edit-recovery.en.json模拟器fresh-local五步通过：真实无变化错误→正确修改→正文读回→正式完成→重启回复，额外独立磁盘beta/Remote开启核验通过。原Remote误选及长旧会话偏离后取消记录保留，不混作成功。
+
+- Life XP跨午夜checkInHabit生产逻辑回归：verify-life-xp-midnight.cjs，合成时钟推进后昨日打卡错误阻止次日打卡，旧实现失败；原始结果midnight-baseline.json。待修复及实际模拟器日期边界验收。
+
+- Life XP人工修复后的实际发布页/重启验收通过：verify-life-xp-history-device.py emulator-5580 OUTPUT baseline-records.json；四条累计75/60/40/10、等级2里程碑及原数据逐字段不变。三时区/601行/合成跨午夜审查通过，实际跨午夜与Release仍待；不计模型自主修复通过。
+
+- Life XP实际跨午夜通过：verify-life-xp-midnight-device.py，隔离副本真实UI第一天打卡→同页自然跨午夜→按钮恢复→第二天打卡→历史20XP；时钟/时区恢复、测试插件停用，attempt3证据见vibe-midnight-20260919.md。
+
+- 最终测试签名 Release（SHA256 bd53088f…ac04f0a）模拟器实际文件编辑恢复五步通过：明确无变化失败→正确编辑→正文回读→官方完成→重启保留。入口 file-edit-recovery.en.json，显式 OOB_TEST_RELEASE_READ=1 只读观察；首次路由转义准备错误保留。见 release-candidate-20260919.md。其他 Release 链路仍待。
+
+- 同一最终 Release 实际 PDF 上传/正文/重启/回读 8 步通过。入口 chat-upload-pdf.en.json，结果 release-final-20260919/pdf；文本层解析已验证，OCR 等不在本次范围。
+
+- 同一最终 Release Life XP 真实页面/历史累计/等级里程碑及原4习惯4打卡字段不变通过，release-final-20260919/vibe-history。verify-life-xp-history-device.py 复用只读一致快照，显式支持已root模拟器Release观察，路径受限；已移出本地忽略影响并列入可审查变更。模型自主返工仍未通过。
+
+- 最终Release Remote真实写文件→应用重启→侧栏重开原会话→继续写文件通过，宿主文件独立核对。自动回到原会话观察失败保留，不能计通过；执行入口verify-remote-chat-device.py，release-final-20260919/remote证据。
+
+- 最终Release实际OmniFlow回放发现CanonicalRunLogRecord缺少SerializedName，R8把status/success/steps等6个协议字段改名。新增序列化回归旧实现失败、修复后通过；实际新包验收待执行，见release-runlog-serialization-20260919.md。原无障碍引导和脚本IME观察失败均保留，不当作模型失败。
+
+- RunLog序列化修复实际Release 6e202535…135e1fa验证通过：强停后真实系统无障碍恢复、主流程两步改参wifi回放、新字段持久化、旧混淆快照从原事件恢复及新快照重启读取。证据release-runlog-fixed-20260919/accessibility-replay-verified、legacy-reopen-verified、new-reopen；单包其他大功能回归仍需完成。
+- 同次实际页面发现官方RunLog扁平action_type未被UI显示。新增旧实现失败的widget用例，修复后公共格式/旧格式2项通过、定向analyze无问题；新Release构建进行中，UI修复设备验收待执行。
+
+- 官方action_type展示修复已安装Release 953fd15c…aa05563，模拟器新旧日志强停重开均显示具体Tap/Press key/Enter text wifi，选定运行时间与原快照哈希核对通过。verify-run-log-reopen.py --expect-action-labels，证据release-runlog-ui-fixed-20260919；整体同包验收未完成。
+
+- 最新Release953fd15c图片实际红/蓝→绿/黄两轮各8步通过，含重启和GLM-4.6V保留。verify-chat-image-persistence.py独立验证两张已保存附件字节/会话/promptPath，2/2通过。prepare-chat-image.py增加实际Images分类选择，精确文件名仍为点击前提。
+- 自动压缩60页前置样本审计发现旧fixture不足；中止未发送驱动且确认无用户入库。prepare-auto-context-fixture.py复用原生成器创建独立16MiB输入，新Release journey执行中，不计通过。
+
+
+## 2026-09-19：工具流参数归属与长任务失败后恢复
+
+原工具流实现把后到名称的index=1参数拼进index=0，结束流时还会再次猜测归属。已删除两处跨index猜测，按服务商明确编号累计；最终缺名称仍明确失败。解析器25项、HTTP客户端35项、错误分类18项通过。新ProductionStandardRelease测试签名候选2aaade38…e0990a已安装emulator-5580（Android13），设备APK哈希一致。
+
+可执行复现：启动 `node scripts/fixtures/provider-failure-server.mjs`，在模拟器通过设置页配置独立ToolIndexAudit（adb reverse tcp:18879 tcp:18879，http://127.0.0.1:18879/v1，无真实凭据），新本地Agent会话选择其gpt-4o。运行 `OOB_TEST_RELEASE_READ=1 node scripts/verify-agent-user-journey.mjs emulator-5580 scripts/fixtures/agent-user-journeys/tool-index.en.json OUTPUT`，再运行 `python3 scripts/verify-tool-index-files.py emulator-5580 OUTPUT FILE_RESULT_JSON`。实际6步通过，两个真实文件内容、唯一调用、正式终态及重启保留通过。服务商为受控协议注入，不能冒充真实模型生成；证据 `artifacts/tool-index-20260919/device` 和 `persisted-files.json`。结束后聊天已切回真实GLM-4.6V。物理设备待验证。
+
+另：此前953fd15c候选真实60页任务在8次读取后HTTP400，未通过自动压缩检查点验收；原会话随后独立17+25任务、无旧工具重放和重启回复保留5步通过。`chat-context-failure-recovery.en.json`及 `artifacts/release-runlog-ui-fixed-20260919/context-failure-recovery` 为长期入口/结果，长任务400原因仍待定位。
+
+- 同一2aaade38候选真实GLM-4.6V的XLSX系统选择器上传、表格正文值核对、正式完成、重启保留及再次读取原附件8/8通过，证据 `artifacts/tool-index-20260919/xlsx/result.json`。本轮受控工具流6步、真实文件编辑5步、DOCX8步、XLSX8步共27步通过，范围见该目录summary.json；不是整包全部功能通过。
+
+- 真实GLM长任务HTTP400已捕获明确原因Prompt exceeds max length。现已修复成功响应后的恢复标记重置、强制摘要被offload提前返回和被替代消息大小误导的摘要边界，并增加明确上下文错误反馈。115项Kotlin、66项Flutter、3项观察工具回归通过；修复后Release模拟器验收仍待执行。原GLM地址已恢复并强停重开确认。详见[长任务恢复记录](context-recovery-20260919.md)，不把本次6页后文本伪工具调用的失败计为60页通过。
+
+- Remote自动启动恢复：保存导航目标的提前返回已修复，54项Flutter检查通过；verify-remote-chat-device.py新增--restart严格禁止手动重开/重发替代自动恢复。新3d6723f5测试签名Release已构建未安装；设备验收待当前60页任务结束。详见remote-startup-20260919.md。
+
+- RunLog动作截图：补齐官方flat action_type坐标读取，旧tool/args继续兼容，非法非有限坐标不渲染。run_log_detail_page_test.dart新增官方/旧格式实际点开截图并检查定位标记的widget案例，4项通过。新代码待打包和模拟器截图验收，不据widget测试宣称设备已修复；截图缩放坐标精度仍需检查。
+
+- RunLog截图缩放补充：截图与原始像素坐标现在同置FittedBox内缩放，标记按22px图标中心定位。1200×2400合成PNG的widget测试核对缩放后标记中心与图像中心相等，官方/旧格式均通过，合计4项。原夹具因异步图片加载未结束而停止，仅测试进程受影响；改用持久合成图并预加载后通过，未触碰设备任务。最新代码仍待模拟器实际截图验证。
+
+- Vibe从零自主验收新增独立输入life-xp-autonomous.json与journey life-xp-autonomous.en.json。以每次marker数字后缀创建新slug/目录，禁止覆盖现有Life XP，要求生产计算代码测试、实际业务工具与可用UI验收、自主修复及原始证据。输入2780字符，通过既有发送器3000字符边界；JSON/引用检查通过，但尚未实际发送。journey完成仅证明Agent回合结束，不能替代独立业务、数据和UI验收。
+
+- 长任务重启后续读：新增xiaowan-release-auto-resume.en.json复用既有不含路径/offset答案的真实用户输入，由断言独立核对Release新样本路径和60×65536偏移。保留旧样本入口；新入口待原60页及重启检查通过后在同一会话执行，当前尚未运行。
+
+- d989f74a测试签名Release / emulator-5580：Remote原B强停普通启动自动恢复通过；恢复后手机真实发送C、同一后端会话唯一执行、宿主文件正确且旧B保留通过；第二次强停普通启动自动恢复最新C也通过。证据artifacts/remote-startup-20260919/{automatic-restart,continued-real-task,continued-backend-files,second-automatic-restart}.json。自动恢复问题在本模拟器实际场景验收通过，待真机验证；不代表公网/TLS/NAT/休眠通过。
+
+- 摘要前缀游标丢失：forcedSummaryRetainsCompletedPrefixCursorBeforeTailOffloading旧实现红、新实现绿，相关99项通过，证据summary-prefix-20260919；源码修复未进行真实60页复测。Vibe自主新任务首次仅输入准备超时，marker1789786991049用户入库0；保留部分合成草稿和失败结果，不记为模型失败。后续输入等待上限改600秒，业务验收标准未变。
+
+- Vibe输入准备恢复曾因Android End仅到行尾导致文字插错位置，全文精确校验正确拒绝发送；原任务仍0次入库。驱动恢复仅允许prepare-only且精确前缀匹配，禁止修改外来草稿；修正为Ctrl+End（实际设备恢复路径尚未复测），4项驱动检查通过。新8a6ead35候选已安装，独立第二次准备使用1633字符同等业务/验收要求，修正动态slug和固定Skill名矛盾，600秒输入上限；设备模型任务尚未计通过。
+
+- Vibe独立第二次准备已在8a6ead35候选通过真实输入全文校验并提交，marker OOB_LIVE_LIFE_XP_AUTONOMOUS_1789787755680，输入阶段234877ms。首次未提交输入失败未算模型失败；第二次真实模型结果仍在等待，不能以发送通过替代自主业务验收。证据vibe-autonomous-20260919/second-attempt。
+
+- 真任务观察器：reply等待阶段先只读canonical journal，正式completed后才抓实际UI，避免UIAutomator压制Agent做UI验收所需的无障碍服务。继续观察支持明确marker，不重发prompt；终态oracle33项通过，Node语法检查通过。Vibe会话42任务1611只更换观察进程，未取消模型；continued-observation继续原任务，业务验收仍未通过。
+
+- Vibe 从零任务正式结束但业务未通过：实际 water 打卡因 check_in_date 非空约束失败且零新增记录，当前生产方法日期/历史累计两项独立测试仍失败。保存真实 UI、SQLite 和生产代码哈希；新增可重复打卡入口（仅语法检查，完整执行待模型修复）。原会话模型返工准备中。详见 vibe-autonomous-20260919.md。
+
+- 60页真实压缩复测观察上限从20分钟改为60分钟，依据此前约48分钟实际运行；严格60次顺序读取、正式终态、持久化检查点和重启断言未削弱。当前最新候选尚待复测，延长观察不是通过证据，也不改变模型任务生命周期。
+
+- Vibe SQLite ignored config：真实生成项目暴露 config 中筛选/分页未执行却通过检查。新增发布源检查只允许 table，保留已安装插件加载；旧实现回归失败，修复后三组单测通过，继承 config 补充回归10项通过。候选正在构建，实际模拟器验收待执行。见 vibe-config-validation-20260919.md。
+
+- Vibe自主返工后真实 water 打卡/本地日期/10XP/重复保护通过；同页下一项 exercise 仍被禁用，新增连续操作实际失败证据。独立历史累计、负时区日期显示、页面跨午夜刷新失败；模型终端测试exit1却声称完成，记录不计通过。新增独立测试输入到手机工作区，下一轮原会话返工不改生产数据。见 vibe-autonomous-20260919.md。
+
+- RunLog坐标单位回归：官方action_type是display像素，旧tool/args是0..1000，按各自单位投影到显示截图；8项widget通过。1742ecd7候选模拟器强停重开实际原日志/动作截图通过，原记录不变，实际红色图标中心与原点投影误差<1px。首次语义边界误判保留，后用真实绘制像素核验。见runlog-coordinate-units-20260919.md。
+
+- Vibe GLM-5.1独立新回归：`TZ=Asia/Shanghai node scripts/verify-generated-life-xp-logic.cjs SNAPSHOT/app.js`增加同页跨午夜直接打卡日期（保留真实write与reload，隔离时钟/DOM）。当前实际模型代码2934a7aa：原四项通过、新项失败，写入昨天；证据vibe-autonomous-20260919/glm51-local-repair/in-progress-source/independent-expanded.log。模型回合canonical网络error、未发布，补充测试7通过1失败，不计整体通过。后续可执行journey life-xp-midnight-followup.en.json；待模型修复及设备操作验收。
+
+- 最新1742ecd7 Release中，模型发布的Life XP实际连续reading→冥想、重复保护、历史85XP/等级2及强停重开数据不变通过；复用checkin-device与扩展history-device的optional slug入口，证据glm51-midnight-followup。模型UI步骤被无障碍缺失挡住，外部系统UI恢复后验证；不算全自主验收。新增verify-life-xp-progress-tool.cjs基于该真实回合业务工具输出，发现旧进度0与实际水10不一致，实际失败待修复。

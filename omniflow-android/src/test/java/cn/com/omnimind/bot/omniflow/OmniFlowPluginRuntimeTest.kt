@@ -72,7 +72,7 @@ class OmniFlowPluginRuntimeTest {
             environment: Map<String, String>,
         ): Process = error("not used")
 
-        override suspend fun ensurePython(context: Context, expectedVersion: String) = Unit
+        override suspend fun prepareEnvironment(context: Context, command: String) = Unit
 
         override suspend fun resolveRuntimeSkill(
             context: Context,

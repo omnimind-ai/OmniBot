@@ -15,6 +15,9 @@ import java.util.UUID
 internal class AgentAttachmentPreparationException(message: String) :
     IllegalArgumentException(message)
 
+internal fun resolveAgentAttachmentFile(path: String, workspaceManager: AgentWorkspaceManager): File =
+    workspaceManager.androidPathForShell(path) ?: File(path)
+
 internal fun readAgentAttachmentBytes(file: File): ByteArray {
     if (!file.exists() || !file.isFile) {
         throw AgentAttachmentPreparationException("附件文件不可读：${file.name}")
@@ -25,6 +28,17 @@ internal fun readAgentAttachmentBytes(file: File): ByteArray {
     // File.readBytes allocates from the file length, avoiding the growing
     // ByteArrayOutputStream plus its final full-size copy for ordinary files.
     return file.readBytes()
+}
+
+internal fun validateOwnedWorkspaceAttachment(path: String, attachmentsDirectory: File) {
+    if (path.isBlank()) return
+    val file = File(path.removePrefix("file://")).canonicalFile
+    val root = attachmentsDirectory.canonicalFile
+    // Remote Harness paths remain owned by that Harness. Validate only our
+    // materialized Android files, whose availability we can establish here.
+    if (file.toPath().startsWith(root.toPath()) && (!file.isFile || !file.canRead())) {
+        throw AgentAttachmentPreparationException("附件文件已丢失或不可读，请重新选择：${file.name}")
+    }
 }
 
 private fun copyAttachmentStream(input: InputStream, output: java.io.OutputStream): Long {
@@ -85,6 +99,10 @@ internal object AgentWorkspaceAttachmentSupport {
         val promptPath = attachment["promptPath"]?.toString()?.trim().orEmpty()
         val workspacePath = attachment["workspacePath"]?.toString()?.trim().orEmpty()
         if (promptPath.isNotEmpty() || workspacePath.isNotEmpty()) {
+            validateOwnedWorkspaceAttachment(
+                attachment["path"]?.toString().orEmpty(),
+                workspaceManager.attachmentsDirectory(),
+            )
             if (promptPath.isEmpty() && workspacePath.isNotEmpty()) {
                 attachment["promptPath"] = workspacePath
             }
@@ -124,8 +142,9 @@ internal object AgentWorkspaceAttachmentSupport {
 
         val source = when {
             sourceUri?.scheme.equals("file", ignoreCase = true) ->
-                sourceUri?.path?.let(::File)
-            else -> localPath.takeIf { it.isNotEmpty() }?.let(::File)
+                sourceUri?.path?.let { resolveAgentAttachmentFile(it, workspaceManager) }
+            else -> localPath.takeIf { it.isNotEmpty() }
+                ?.let { resolveAgentAttachmentFile(it, workspaceManager) }
         }
         if (source != null && source.exists() && source.isFile) {
             return copyIntoWorkspace(
@@ -133,20 +152,16 @@ internal object AgentWorkspaceAttachmentSupport {
                 batchDirectory = batchDirectory,
                 source = source,
                 attachment = attachment
-            ) ?: if (isImage) {
-                throw AgentAttachmentPreparationException(
-                    "无法读取图片附件，请重新选择后再试：${source.name}"
-                )
-            } else {
-                attachment
-            }
+            ) ?: throw AgentAttachmentPreparationException(
+                "无法读取附件，请重新选择后再试：${source.name}"
+            )
         }
 
         val dataUrl = extractDataUrl(attachment)
         if (dataUrl.isEmpty()) {
-            if (isImage && localPath.isNotEmpty()) {
+            if (localPath.isNotEmpty()) {
                 throw AgentAttachmentPreparationException(
-                    "图片附件不存在或已失去访问权限：${resolveAttachmentName(attachment, localPath)}"
+                    "附件不存在或已失去访问权限：${resolveAttachmentName(attachment, localPath)}"
                 )
             }
             return attachment

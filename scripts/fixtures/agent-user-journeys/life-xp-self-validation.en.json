@@ -1,0 +1,21 @@
+{
+  "name": "Existing Life XP autonomous repair and actual testing",
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_LIFE_XP_SELF_TEST",
+      "scenario": "life-xp-self-validation.json",
+      "timeoutMs": 300000
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_LIFE_XP_SELF_TEST_DONE",
+      "timeoutMs": 1800000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_LIFE_XP_SELF_TEST",
+      "expected": "done"
+    }
+  ]
+}

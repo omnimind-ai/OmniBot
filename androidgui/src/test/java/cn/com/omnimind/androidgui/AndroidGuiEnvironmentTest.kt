@@ -2,6 +2,8 @@ package cn.com.omnimind.androidgui
 
 import android.content.Intent
 import cn.com.omnimind.baselib.runlog.Action
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -10,6 +12,54 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AndroidGuiEnvironmentTest {
+    @Test
+    fun `takeover gate blocks physical dispatch after observation until resumed`() = runBlocking {
+        val platform = ReconnectingPlatform().apply { ready = true }
+        val environment = AndroidGuiEnvironment(appContext = null, platform = platform)
+        val atGate = CompletableDeferred<Unit>()
+        val resume = CompletableDeferred<Unit>()
+        val job = launch {
+            environment.act(
+                Action(tool = "click", args = mapOf("x" to 10, "y" to 20)),
+                beforeDispatch = {
+                    atGate.complete(Unit)
+                    resume.await()
+                },
+            )
+        }
+        atGate.await()
+        assertEquals(1, platform.observeCalls)
+        assertEquals(0, platform.dispatchCalls)
+        resume.complete(Unit)
+        // Let dispatch happen; cancel stabilization so the test does not wait on a static page.
+        platform.dispatched.await()
+        job.cancelAndJoin()
+        assertEquals(1, platform.dispatchCalls)
+    }
+
+    @Test
+    fun `stop while taken over cancels pending action without physical dispatch`() = runBlocking {
+        val platform = ReconnectingPlatform().apply { ready = true }
+        val environment = AndroidGuiEnvironment(appContext = null, platform = platform)
+        val atGate = CompletableDeferred<Unit>()
+        val resume = CompletableDeferred<Unit>()
+        val job = launch {
+            environment.act(
+                Action(tool = "click", args = mapOf("x" to 10, "y" to 20)),
+                beforeDispatch = {
+                    atGate.complete(Unit)
+                    resume.await()
+                },
+            )
+        }
+        atGate.await()
+        job.cancelAndJoin()
+        resume.complete(Unit)
+        assertTrue(job.isCancelled)
+        assertEquals(1, platform.observeCalls)
+        assertEquals(0, platform.dispatchCalls)
+    }
+
     @Test
     fun `input popup movement keeps click detection strict and input execution recoverable`() {
         assertEquals(false, InputNodeLookup.CLICK_TARGET.allowFallbackAfterCoordinateMiss)
@@ -129,6 +179,7 @@ class AndroidGuiEnvironmentTest {
         var ready: Boolean = false
         var observeCalls: Int = 0
         var dispatchCalls: Int = 0
+        val dispatched = CompletableDeferred<Unit>()
         val observedStates = ArrayDeque<AndroidGuiPlatformState>()
 
         override fun isAccessibilityEnabled(): Boolean = true
@@ -148,6 +199,7 @@ class AndroidGuiEnvironmentTest {
         override suspend fun dispatch(action: Action): AndroidGuiActionResult {
             check(ready) { "android_gui_accessibility_not_ready" }
             dispatchCalls += 1
+            dispatched.complete(Unit)
             return AndroidGuiActionResult(success = true, message = "ok")
         }
 

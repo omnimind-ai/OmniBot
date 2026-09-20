@@ -53,6 +53,7 @@ class AgentStreamRequestException(
     val responseBody: String?,
     val responseStarted: Boolean = false,
     cause: Throwable? = null,
+    val imageInput: Boolean = false,
 ) : RuntimeException(
     "chat completion stream request failed${
         statusCode?.let { "($it)" }.orEmpty()
@@ -246,7 +247,9 @@ class HttpAgentLlmClient(
         val namePlan = if (OpenAiWireApi.isResponses(routeInfo.wireApi)) {
             OpenAiResponsesFunctionNameCodec.planFor(request)
         } else null
-        val wireRequest = namePlan?.encodeRequest(request) ?: request
+        val wireRequest = namePlan?.encodeRequest(request) ?: OmniInferChatRequestAdapter.prepare(
+            request, routeInfo.apiBase, routeInfo.resolvedModel, routeInfo.wireApi,
+        )
         val turn = streamTurnWithPlatformAuthRetry(
             model = request.model,
             requestJson = json.encodeToJsonElement(wireRequest).jsonObject,
@@ -319,7 +322,7 @@ class HttpAgentLlmClient(
         onContentUpdate: (suspend (String) -> Unit)?,
         onToolCallInput: (suspend (AssistantToolCall) -> Unit)?,
     ): ChatCompletionTurn {
-        val retryCount = effectiveMaxTransientStreamRetries?.coerceAtLeast(0) ?: 0
+        val retryCount = effectiveMaxTransientStreamRetries?.coerceIn(0, 2) ?: 1
         var retriedIncompleteToolCall = false
         repeat(retryCount + 1) { attempt ->
             var attemptProducedOutput = false
@@ -363,12 +366,12 @@ class HttpAgentLlmClient(
                     attempt >= retryCount ||
                     !isTransientStreamFailure(error)
                 ) throw error
-                val delayMs = (effectiveTransientStreamRetryDelayMs ?: 0L)
+                val delayMs = (effectiveTransientStreamRetryDelayMs ?: 500L)
                     .coerceAtLeast(0L) * (attempt + 1L)
                 OmniLog.w(
                     tag,
                     "transient stream failure, retrying attempt=${attempt + 1}/$retryCount " +
-                        "delayMs=$delayMs reason=${error.reason}",
+                        "delayMs=$delayMs status=${error.statusCode}",
                 )
                 if (delayMs > 0L) delay(delayMs)
             } catch (error: AgentIncompleteToolCallException) {
@@ -729,6 +732,8 @@ class HttpAgentLlmClient(
                         responseBody = responseBody,
                         responseStarted = accumulator.hasAssistantPayload(),
                         cause = t,
+                        imageInput = requestJson["messages"].containsImageInput() ||
+                            requestJson["input"].containsImageInput(),
                     )
                 )
             }

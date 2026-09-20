@@ -14,7 +14,9 @@ import cn.com.omnimind.baselib.runlog.InternalRunLogStore
 import cn.com.omnimind.baselib.runlog.OobActionSchema
 import cn.com.omnimind.baselib.runlog.State
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.min
 
@@ -191,6 +193,7 @@ class AndroidGuiEnvironment internal constructor(
     suspend fun act(
         action: Action,
         awaitStabilization: Boolean = true,
+        beforeDispatch: suspend () -> Unit = {},
     ): AndroidGuiActionResult {
         if (!awaitReady()) {
             return AndroidGuiActionResult(
@@ -206,6 +209,9 @@ class AndroidGuiEnvironment internal constructor(
             } else {
                 null
             }
+            // Readiness and observation may suspend after the caller's pause check.
+            beforeDispatch()
+            currentCoroutineContext().ensureActive()
             val result = platform.dispatch(canonicalForDisplay(action))
             if (!result.success) return result
             if (!awaitStabilization) {

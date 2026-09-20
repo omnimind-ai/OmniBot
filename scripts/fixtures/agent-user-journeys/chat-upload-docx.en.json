@@ -1,0 +1,44 @@
+{
+  "name": "Actual DOCX body and read after restart",
+  "preconditions": "Idle real-device chat with chat-upload-office.docx attached through system picker. Real provider required.",
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_UPLOAD_DOCX",
+      "scenario": "chat-upload-docx.json"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_UPLOAD_DOCX_DONE",
+      "timeoutMs": 120000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_UPLOAD_DOCX",
+      "expected": "done"
+    },
+    {
+      "action": "restart"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_UPLOAD_DOCX_DONE",
+      "timeoutMs": 30000
+    },
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_REOPEN_DOCX",
+      "scenario": "chat-upload-docx-restart.json"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_REOPEN_DOCX_DONE",
+      "timeoutMs": 120000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_REOPEN_DOCX",
+      "expected": "done"
+    }
+  ]
+}

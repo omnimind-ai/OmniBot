@@ -1,0 +1,3 @@
+{
+  "prompt": "Run this independent production audit: node /workspace/acceptance-audits/life-xp-production.cjs /workspace/life-xp-demo/app.js /workspace/life-xp-demo/toolkit.json . Do not edit the audit. Fix the real project until it passes, then republish and verify actual tool results. Preserve data. This audit executes production methods; copied-formula tests do not count. Report UI checks honestly."
+}

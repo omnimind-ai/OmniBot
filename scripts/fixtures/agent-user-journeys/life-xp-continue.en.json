@@ -1,0 +1,1 @@
+{"name": "Life XP continuation after incomplete provider tool call", "steps": [{"action": "send", "marker": "OOB_LIVE_LIFE_XP_CONTINUE", "scenario": "life-xp-continue.json", "timeoutMs": 180000}, {"action": "reply", "text": "OOB_LIVE_LIFE_XP_CONTINUE_DONE", "timeoutMs": 1200000}, {"action": "turn-outcome", "marker": "OOB_LIVE_LIFE_XP_CONTINUE", "expected": "done"}]}

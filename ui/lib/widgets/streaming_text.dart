@@ -269,6 +269,7 @@ class _StreamingTextState extends State<StreamingText> {
             ? ValueKey('paced-${widget.fullText.hashCode}')
             : const ValueKey('omnibot-plain-reveal'),
         text: widget.fullText,
+        animate: !widget.isFinal,
         style: widget.style,
         trailing: widget.trailing,
         initialVisibleLength:
@@ -742,6 +743,7 @@ class OmnibotPacedRevealText extends StatefulWidget {
     super.key,
     required this.text,
     required this.style,
+    this.animate = true,
     this.trailing,
     this.initialVisibleLength,
     this.onRevealedLengthChanged,
@@ -750,6 +752,9 @@ class OmnibotPacedRevealText extends StatefulWidget {
 
   final String text;
   final TextStyle style;
+
+  /// Completed messages reveal their full content without an animation backlog.
+  final bool animate;
   final Widget? trailing;
 
   /// 初始可见字符数。
@@ -797,13 +802,14 @@ class _OmnibotPacedRevealTextState extends State<OmnibotPacedRevealText>
   @override
   void initState() {
     super.initState();
-    _visibleLength = (widget.initialVisibleLength ?? widget.text.length).clamp(
-      0,
-      widget.text.length,
-    );
+    _visibleLength =
+        (widget.animate
+                ? widget.initialVisibleLength ?? widget.text.length
+                : widget.text.length)
+            .clamp(0, widget.text.length);
     _ticker = createTicker(_onTick);
     if (_visibleLength < widget.text.length) {
-      _ticker.start();
+      _startTicker();
     }
   }
 
@@ -816,13 +822,22 @@ class _OmnibotPacedRevealTextState extends State<OmnibotPacedRevealText>
   @override
   void didUpdateWidget(OmnibotPacedRevealText oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!widget.animate) {
+      _ticker.stop();
+      _credit = 0;
+      if (_visibleLength != widget.text.length) {
+        _visibleLength = widget.text.length;
+        widget.onRevealedLengthChanged?.call(_visibleLength);
+      }
+      return;
+    }
     if (widget.text == oldWidget.text) return;
 
     if (widget.text.length > oldWidget.text.length &&
         widget.text.startsWith(oldWidget.text)) {
       // 前缀扩展：保持当前可见长度，让 ticker 追赶新目标
       if (!_ticker.isActive && _visibleLength < widget.text.length) {
-        _ticker.start();
+        _startTicker();
       }
     } else {
       // 文本回退或整体替换：
@@ -832,13 +847,22 @@ class _OmnibotPacedRevealTextState extends State<OmnibotPacedRevealText>
       _visibleLength = (widget.initialVisibleLength ?? widget.text.length)
           .clamp(0, widget.text.length);
       _credit = 0.0;
+      _ticker.stop();
       if (_visibleLength < widget.text.length) {
-        _ticker.start();
+        _startTicker();
       } else {
         _ticker.stop();
       }
       widget.onRevealedLengthChanged?.call(_visibleLength);
     }
+  }
+
+  void _startTicker() {
+    // Ticker elapsed starts at zero after every stop/start. Carrying the old
+    // elapsed time forward stalls later chunks until that old time is reached.
+    _lastTickTime = Duration.zero;
+    _credit = 0.0;
+    _ticker.start();
   }
 
   void _onTick(Duration elapsed) {

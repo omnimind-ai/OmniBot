@@ -1,0 +1,40 @@
+{
+  "name": "GLM-5.1 supervised repair of model-created Life XP with independent acceptance",
+  "requireClockSync": true,
+  "steps": [
+    {
+      "action": "expect",
+      "text": "Hi 👋, I'm 小万",
+      "timeoutMs": 15000
+    },
+    {
+      "action": "tap",
+      "label": "Model & settings"
+    },
+    {
+      "action": "expect",
+      "text": "GLM-5.1",
+      "timeoutMs": 15000
+    },
+    {
+      "action": "dismiss-settings"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_LIFE_XP_GLM51",
+      "scenario": "life-xp-glm51-repair.json",
+      "timeoutMs": 300000
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_LIFE_XP_GLM51_DONE",
+      "timeoutMs": 2400000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_LIFE_XP_GLM51",
+      "expected": "done"
+    }
+  ],
+  "preconditions": "Fresh local conversation with actual configured GLM-5.1 selected. Earlier failed GLM-4.6V turns retained. Official completion alone is not acceptance. Use the supported new conversation route with explicit agentId=xiaowan-acp; an unspecified Agent inherits the last Harness and may open Remote."
+}

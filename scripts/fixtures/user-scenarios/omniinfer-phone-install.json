@@ -1,0 +1,3 @@
+{
+  "prompt": "Use the installed omniinfer-local Skill to build OmniInfer from pinned source ON THIS PHONE, install the native inference host, download and load its local model, and verify a real reply from its loopback API. Use the existing Ubuntu terminal and Android installation tools or system installer. Reuse verified caches. Do not use a desktop-built APK or cloud inference. Do not change any existing Provider or conversation. Continue the authorized setup through actual installation and probe; report the endpoint only after probe succeeds. If any stage fails or needs a system confirmation, report that exact state honestly. Do not claim success from a build alone."
+}

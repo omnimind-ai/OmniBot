@@ -12,6 +12,13 @@ import 'package:ui/models/conversation_model.dart';
 import 'package:ui/models/conversation_thread_target.dart';
 import 'package:ui/services/agent_message_kinds.dart';
 
+/// Durable local Conversation ids are positive; remote-only projections use
+/// negative ids. A configured Bridge must never change an existing owner.
+bool usesRemoteCodexEventProjection({
+  required bool remoteConfigured,
+  required int? conversationId,
+}) => remoteConfigured && (conversationId == null || conversationId < 0);
+
 enum ThinkingStage {
   thinking(1),
   toolCall(2),

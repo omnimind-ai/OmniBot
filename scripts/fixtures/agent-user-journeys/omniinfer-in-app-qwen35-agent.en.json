@@ -1,0 +1,47 @@
+{
+  "name": "Formal local Agent with official downloadable OmniInfer and Qwen3.5 0.8B",
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_OMNIINFER_AGENT",
+      "scenario": "omniinfer-local-agent.json",
+      "timeoutMs": 180000
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_OMNIINFER_AGENT_DONE",
+      "timeoutMs": 600000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_OMNIINFER_AGENT",
+      "expected": "done"
+    },
+    {
+      "action": "omniinfer-local-task",
+      "marker": "OOB_LIVE_OMNIINFER_AGENT",
+      "inApp": true,
+      "historyOnly": false,
+      "model": "Qwen3.5-0.8B-Q4_0.gguf"
+    },
+    {
+      "action": "restart"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_OMNIINFER_AGENT_DONE"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_OMNIINFER_AGENT",
+      "expected": "done"
+    },
+    {
+      "action": "omniinfer-local-task",
+      "marker": "OOB_LIVE_OMNIINFER_AGENT",
+      "inApp": true,
+      "historyOnly": true,
+      "model": "Qwen3.5-0.8B-Q4_0.gguf"
+    }
+  ]
+}

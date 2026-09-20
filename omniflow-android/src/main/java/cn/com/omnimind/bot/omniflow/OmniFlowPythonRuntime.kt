@@ -49,16 +49,20 @@ object OmniFlowPythonRuntime {
         runtimeProvider = provider
     }
 
-    suspend fun shutdown() = prepareMutex.withLock {
+    suspend fun shutdown() {
+        // Warmup owns prepareMutex. Cancel it before waiting for the lock so
+        // disabling a plugin cannot wait for a stalled dependency installation.
         synchronized(warmupLock) {
             warmupDeferred?.cancel()
             warmupDeferred = null
         }
-        val activeClient = client
-        client = null
-        activeManifest = null
-        ready = false
-        activeClient?.close()
+        prepareMutex.withLock {
+            val activeClient = client
+            client = null
+            activeManifest = null
+            ready = false
+            activeClient?.close()
+        }
     }
 
     suspend fun developerOverrideStatus(context: Context): OmniFlowDeveloperOverrideStatus {
@@ -190,30 +194,12 @@ object OmniFlowPythonRuntime {
             .call(operation, payload, hostCall)
     }
 
+    suspend fun toolDefinition(context: Context, name: String): RuntimeTool =
+        prepareRuntime(context).manifest.tools.firstOrNull { it.name == name }
+            ?: error("runtime_tool_not_declared:$name")
+
     internal suspend fun completeJson(request: ChatCompletionRequest): String =
         requireNotNull(platform) { "omniflow_platform_not_configured" }.completeJson(request)
-
-    fun schedule(
-        context: Context,
-        operation: String,
-        payload: Map<String, Any?>,
-        hostCall: OmniFlowPythonHostCall,
-    ): Map<String, Any?> {
-        require(operation == "tools/call") { "background_operation_not_allowed:$operation" }
-        runtimeScope.launch {
-            runCatching {
-                call(context, operation, payload, hostCall)
-            }.onFailure { error ->
-                if (error !is CancellationException) {
-                    OmniLog.w(
-                        TAG,
-                        "background_operation_failed operation=$operation error=${error.message}",
-                    )
-                }
-            }
-        }
-        return mapOf("accepted" to true)
-    }
 
     private suspend fun ensureReady(context: Context): OmniFlowRuntimeManifest {
         if (ready && client != null) {
@@ -254,17 +240,15 @@ object OmniFlowPythonRuntime {
         developerOverride: Boolean,
     ): OmniFlowRuntimeManifest {
         val host = requireNotNull(platform) { "omniflow_platform_not_configured" }
+        host.prepareEnvironment(context, preparedRuntime.command(preparedRuntime.manifest.prepareEntrypoint))
         val candidate = OmniFlowPythonClient(
             processStarter = { command, environment ->
                 host.startProcess(context, command, environment)
             },
-            bridgeCommand = OmniFlowPythonClient.bridgeCommand(
-                preparedRuntime.shellPythonSourcePath,
-                preparedRuntime.shellSitePackagesPath,
-                preparedRuntime.shellOmniTransferRoot,
-                preparedRuntime.shellOmniTransferCheckpointPath,
-                if (developerOverride) OmniFlowDeveloperOverrideStore.SHELL_ROOT else null,
-            ),
+            bridgeCommand = preparedRuntime.command(preparedRuntime.manifest.entrypoint),
+            environment = if (developerOverride) mapOf(
+                "OMNIFLOW_SOURCE_OVERRIDE" to OmniFlowDeveloperOverrideStore.SHELL_ROOT,
+            ) else emptyMap(),
         )
         try {
             val initialization = candidate.initialize()

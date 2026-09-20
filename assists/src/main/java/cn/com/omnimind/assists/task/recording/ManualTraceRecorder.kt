@@ -254,7 +254,7 @@ class ManualTraceRecorder(
                 listOf(action.beforeState, action.afterState).count { !it?.screenshotPath.isNullOrBlank() }
             },
             debugScreenshotFailedCount = 0,
-            debugScreenshotSkippedCount = if (enableDebugScreenshots) 0 else actions.size * 2,
+            debugScreenshotSkippedCount = 0,
         )
     }
 
@@ -468,7 +468,10 @@ class ManualTraceRecorder(
     ): ManualRecordingObservation {
         return runCatching {
             ManualRecordingObservation(
-                state = environment.observe(captureScreenshot = enableDebugScreenshots),
+                // Screenshots are source evidence for canonical OmniTransfer,
+                // not optional diagnostic output. XML alone cannot preserve
+                // visual controls or the recorded image features.
+                state = environment.observe(captureScreenshot = true),
             )
         }.getOrElse { error ->
             OmniLog.w(TAG, "manual observation failed stage=$stage tool=${command.action.tool}: ${error.message}")

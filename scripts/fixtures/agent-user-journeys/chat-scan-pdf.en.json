@@ -1,0 +1,42 @@
+{
+  "name": "Actual scan PDF failure and restart recovery",
+  "preconditions": "Idle Release chat; matching PDF attached through Android picker; real provider.",
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_SCAN_FAILURE",
+      "scenario": "chat-upload-broken.json"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_SCAN_FAILURE_DONE",
+      "timeoutMs": 120000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_SCAN_FAILURE",
+      "expected": "done"
+    },
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_DOCUMENT_NEXT",
+      "scenario": "chat-after-broken.json"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_DOCUMENT_NEXT_DONE"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_DOCUMENT_NEXT",
+      "expected": "done"
+    },
+    {
+      "action": "restart"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_DOCUMENT_NEXT_DONE"
+    }
+  ]
+}

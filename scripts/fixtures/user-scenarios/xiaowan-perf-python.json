@@ -1,0 +1,3 @@
+{
+  "prompt": "Count characters and compute SHA-256 for /workspace/oob-file-repro/large.html. Save verified JSON with keys chars and sha256 to /workspace/{{MARKER}}.json. Use an efficient method and report any errors honestly. Use one python3 standard-library script for calculation, writing and verification; do not install packages."
+}

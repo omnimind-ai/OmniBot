@@ -10,6 +10,9 @@ import java.io.ByteArrayOutputStream
 
 @Dao
 interface AgentConversationEntryDao {
+    @Query("DELETE FROM agent_conversation_entries WHERE conversationId = :conversationId AND conversationMode IN (:modes) AND entryId IN (:entryIds)")
+    suspend fun deleteMessageEntries(conversationId: Long, modes: List<String>, entryIds: List<String>): Int
+
     @Query("""
         SELECT id, conversationId, conversationMode, entryId, entryType, status,
                '' AS summary, createdAt, updatedAt

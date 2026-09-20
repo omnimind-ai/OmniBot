@@ -1,60 +1,70 @@
 package cn.com.omnimind.bot.omniflow
 
+import com.google.gson.Gson
+import com.google.gson.JsonParser
 import java.io.File
 import java.io.InputStream
-import java.util.Properties
 
+/** Public package boundary; dependencies and internal data formats belong to the package. */
 data class OmniFlowRuntimeManifest(
+    val interfaceVersion: Int,
     val version: String,
     val protocol: String,
-    val capabilities: Set<String>,
-    val bridgeContractSha256: String,
-    val pythonVersion: String,
-    val omniFlowCommit: String,
-    val omniFlowSourceSha256: String,
-    val omniTransferCommit: String,
-    val omniTransferSourceSha256: String,
-    val omniTransferCheckpoint: String,
-    val numpyVersion: String,
-    val jsonRepairVersion: String,
+    val entrypoint: String,
+    val prepareEntrypoint: String,
+    val sourceRoot: String,
+    val tools: List<RuntimeTool>,
+)
+
+data class RuntimeTool(
+    val name: String,
+    val description: String,
+    val inputSchema: Map<String, Any?>,
+    val interactive: Boolean = false,
+    val agentVisible: Boolean = true,
+    val hostAction: String? = null,
 )
 
 fun parseOmniFlowRuntimeManifest(input: InputStream): OmniFlowRuntimeManifest {
-    val properties = Properties().apply { input.use(::load) }
-    fun required(name: String): String = properties.getProperty(name)
-        ?.trim()
-        ?.takeIf(String::isNotEmpty)
-        ?: error("omniflow_runtime_manifest_missing:$name")
-    val version = required("runtime.version")
-    require(version.matches(Regex("[A-Za-z0-9._-]+"))) { "omniflow_runtime_version_invalid" }
-    fun sourceSha256(name: String): String = required(name).lowercase().also { value ->
-        require(value.matches(Regex("[a-f0-9]{64}"))) {
-            "omniflow_runtime_source_sha256_invalid:$name"
+    val json = input.bufferedReader().use { JsonParser.parseReader(it) }
+    require(json.isJsonObject) { "runtime_manifest_invalid" }
+    val manifest = Gson().fromJson(json, OmniFlowRuntimeManifest::class.java)
+    require(manifest.interfaceVersion == 1) { "runtime_host_interface_unsupported" }
+    require(!manifest.version.isNullOrBlank() && !manifest.protocol.isNullOrBlank()) {
+        "runtime_identity_missing"
+    }
+    listOf(manifest.entrypoint, manifest.prepareEntrypoint, manifest.sourceRoot)
+        .forEach(::validateRuntimeRelativePath)
+    require(!manifest.tools.isNullOrEmpty()) { "runtime_tools_missing" }
+    require(manifest.tools.map { it.name }.distinct().size == manifest.tools.size) {
+        "runtime_tools_duplicate"
+    }
+    manifest.tools.forEachIndexed { index, tool ->
+        val schema = json.asJsonObject.getAsJsonArray("tools")[index].asJsonObject.get("inputSchema")
+        require(!tool.name.isNullOrBlank() && !tool.description.isNullOrBlank() && schema?.isJsonObject == true) {
+            "runtime_tool_invalid"
         }
     }
-    val capabilities = required("runtime.capabilities")
-        .split(',')
-        .map(String::trim)
-        .filter(String::isNotEmpty)
-        .toSet()
-    require(capabilities.isNotEmpty()) { "omniflow_runtime_capabilities_invalid" }
-    val omniTransferCheckpoint = required("omnitransfer.checkpoint")
-    require(
-        !omniTransferCheckpoint.startsWith('/') &&
-            ".." !in omniTransferCheckpoint.split('/'),
-    ) { "omniflow_runtime_checkpoint_path_invalid" }
-    return OmniFlowRuntimeManifest(
-        version = version,
-        protocol = required("runtime.protocol"),
-        capabilities = capabilities,
-        bridgeContractSha256 = sourceSha256("bridge.contract.sha256"),
-        pythonVersion = required("runtime.python"),
-        omniFlowCommit = required("omniflow.commit"),
-        omniFlowSourceSha256 = sourceSha256("omniflow.source.sha256"),
-        omniTransferCommit = required("omnitransfer.commit"),
-        omniTransferSourceSha256 = sourceSha256("omnitransfer.source.sha256"),
-        omniTransferCheckpoint = omniTransferCheckpoint,
-        numpyVersion = required("numpy.version"),
-        jsonRepairVersion = required("json_repair.version"),
-    )
+    // Gson bypasses Kotlin constructor defaults when a boolean field is absent.
+    return manifest.copy(tools = manifest.tools.mapIndexed { index, tool ->
+        val definition = json.asJsonObject.getAsJsonArray("tools")[index].asJsonObject
+        tool.copy(agentVisible = definition.get("agentVisible")?.asBoolean ?: true)
+    })
 }
+
+internal fun validateRuntimeRelativePath(value: String?) {
+    require(!value.isNullOrBlank() && !File(value).isAbsolute &&
+        value.matches(Regex("[A-Za-z0-9_./-]+")) &&
+        value.split('/').none { it.isEmpty() || it == "." || it == ".." }) {
+        "runtime_relative_path_invalid"
+    }
+}
+
+internal fun runtimeFile(root: File, path: String): File {
+    validateRuntimeRelativePath(path)
+    return File(root, path).canonicalFile.also {
+        require(it.path.startsWith(root.canonicalPath + File.separator)) { "runtime_path_escape" }
+    }
+}
+
+internal fun shellQuote(value: String): String = "'" + value.replace("'", "'\"'\"'") + "'"

@@ -116,6 +116,9 @@ data class RuntimeSkillLocation(
     val staged: Boolean = false,
 )
 
+internal fun matchesRuntimeArchiveMarker(marker: String?, expected: String?): Boolean =
+    !expected.isNullOrBlank() && marker?.trim() == expected
+
 internal fun packagedRuntimeSkillNeedsReplacement(
     refresh: Boolean,
     installedMarker: String?,
@@ -318,8 +321,10 @@ class RuntimeSkillBundleManager(
 
     private fun isCompleteMarketCandidate(candidate: SkillIndexEntry): Boolean {
         val root = File(candidate.rootPath)
-        return File(root, MARKET_MARKER).takeIf(File::isFile)?.readText()?.trim() ==
-            spec.componentArchiveSha256 && runCatching {
+        return matchesRuntimeArchiveMarker(
+            File(root, MARKET_MARKER).takeIf(File::isFile)?.readText(),
+            spec.componentArchiveSha256,
+        ) && runCatching {
             val install = readRuntimeComponentInstall(
                 root,
                 spec.componentId,

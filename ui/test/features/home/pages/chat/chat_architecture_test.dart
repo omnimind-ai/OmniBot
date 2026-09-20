@@ -247,14 +247,14 @@ void main() {
   });
 
   test(
-    'remote ACP snapshot sync is wired to every visible session admission',
+    'remote selection hydrates history but live admission does not replay it',
     () {
       final source =
           File('$chatRoot/chat_page_agent.dart').readAsStringSync() +
           File('$chatRoot/chat_page_remote_codex.dart').readAsStringSync();
 
       final prepareStart = source.indexOf(
-        'Future<void> _prepareRemoteCodexSessionTarget(',
+        'Future<bool> _prepareRemoteCodexSessionTarget(',
       );
       final prepareEnd = source.indexOf('\n  @override', prepareStart);
       expect(prepareStart, greaterThanOrEqualTo(0));
@@ -272,7 +272,7 @@ void main() {
       expect(activationStart, greaterThanOrEqualTo(0));
       expect(activationEnd, greaterThan(activationStart));
       final activationBody = source.substring(activationStart, activationEnd);
-      expect(activationBody, contains('_startRemoteCodexSessionSync('));
+      expect(activationBody, isNot(contains('_startRemoteCodexSessionSync(')));
     },
   );
 
@@ -281,7 +281,7 @@ void main() {
     () {
       final source = File('$chatRoot/chat_page_agent.dart').readAsStringSync();
       final flowStart = source.indexOf(
-        'Future<void> _prepareRemoteCodexSessionTarget(',
+        'Future<bool> _prepareRemoteCodexSessionTarget(',
       );
       final flowEnd = source.indexOf('\n  @override', flowStart);
       expect(flowStart, greaterThanOrEqualTo(0));

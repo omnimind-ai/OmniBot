@@ -20,6 +20,7 @@ import 'package:ui/models/conversation_thread_target.dart';
 import 'package:ui/models/habitual_hand.dart';
 import 'package:ui/services/scheduled_task_storage_service.dart';
 import 'package:ui/services/storage_service.dart';
+import 'package:ui/services/agent_runtime_service.dart';
 import 'package:ui/widgets/agent_brand_icon.dart';
 
 class _SvgTestAssetBundle extends CachingAssetBundle {
@@ -67,6 +68,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   setUp(() async {
+    AgentRuntimeService.remoteModeEnabled.value = false;
     SharedPreferences.setMockInitialValues(<String, Object>{});
     await StorageService.init();
     nativeConversations = <Map<String, Object?>>[];
@@ -98,6 +100,141 @@ void main() {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(pluginChannel, null);
   });
+
+  testWidgets('computer tab follows saved remote mode without connecting', (
+    tester,
+  ) async {
+    const runtimeChannel = MethodChannel('cn.com.omnimind.bot/AgentRuntime');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    var enabled = false;
+    final calls = <String>[];
+    messenger.setMockMethodCallHandler(runtimeChannel, (call) async {
+      calls.add(call.method);
+      if (call.method == 'config/remote/write') {
+        enabled = (call.arguments as Map)['remoteEnabled'] == true;
+      } else if (call.method != 'config/remote/read') {
+        throw StateError('Unexpected connection: ${call.method}');
+      }
+      return {
+        'remoteEnabled': enabled,
+        'remoteConfigured': true,
+        'remoteBridgeUrl': 'wss://fixture.example/codex',
+        'remoteCwd': '/fixture',
+      };
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(runtimeChannel, null));
+    await tester.pumpWidget(
+      MaterialApp(
+        home: DefaultAssetBundle(
+          bundle: _SvgTestAssetBundle(),
+          child: _buildProviderScope(
+            child: const Scaffold(body: HomeDrawer(embedded: true)),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('Computer'), findsNothing);
+    expect(find.text('This phone'), findsNothing);
+    expect(calls, ['config/remote/read']);
+    await AgentRuntimeService.writeRemoteBridgeConfig(remoteEnabled: true);
+    await tester.pumpAndSettle();
+    expect(find.text('Computer'), findsOneWidget);
+    await AgentRuntimeService.writeRemoteBridgeConfig(remoteEnabled: false);
+    await tester.pumpAndSettle();
+    expect(find.text('Computer'), findsNothing);
+    expect(calls, [
+      'config/remote/read',
+      'config/remote/write',
+      'config/remote/write',
+    ]);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets(
+    'device switch retains remote list and selects its session identity',
+    (tester) async {
+      const runtimeChannel = MethodChannel('cn.com.omnimind.bot/AgentRuntime');
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      var connects = 0;
+      var lists = 0;
+      ConversationThreadTarget? selected;
+      messenger.setMockMethodCallHandler(runtimeChannel, (call) async {
+        switch (call.method) {
+          case 'config/remote/read':
+            return {
+              'remoteConfigured': true,
+              'remoteEnabled': true,
+              'remoteBridgeUrl': 'wss://fixture.example/codex',
+              'remoteCwd': '/fixture',
+            };
+          case 'config/remote/write':
+            return {'remoteEnabled': false, 'remoteConfigured': true};
+          case 'connect':
+            connects++;
+            return {'ready': true, 'connected': true, 'runtime': 'remote'};
+          case 'session/list':
+            lists++;
+            return {
+              'sessions': [
+                {'sessionId': 'computer-session', 'title': 'Computer fixture'},
+              ],
+            };
+          default:
+            throw StateError('Unexpected runtime call: ${call.method}');
+        }
+      });
+      addTearDown(
+        () => messenger.setMockMethodCallHandler(runtimeChannel, null),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DefaultAssetBundle(
+            bundle: _SvgTestAssetBundle(),
+            child: _buildProviderScope(
+              child: Scaffold(
+                body: SizedBox(
+                  width: 360,
+                  height: 720,
+                  child: HomeDrawer(
+                    embedded: true,
+                    onThreadTargetSelected: (target) => selected = target,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      for (var i = 0; i < 2; i++) {
+        await tester.tap(find.text('Computer'));
+        await tester.pumpAndSettle();
+        expect(find.text('Computer fixture'), findsOneWidget);
+        await tester.tap(find.text('This phone'));
+        await tester.pumpAndSettle();
+        expect(find.text('Computer fixture'), findsNothing);
+      }
+      await tester.tap(find.text('Computer'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Computer fixture'));
+      await tester.pumpAndSettle();
+      expect(connects, 1);
+      expect(lists, 1);
+      expect(selected?.agentSessionId, 'computer-session');
+      expect(selected?.agentRuntime, 'remote');
+      expect(selected?.isNewConversation, isFalse);
+      await AgentRuntimeService.writeRemoteBridgeConfig(remoteEnabled: false);
+      await tester.pumpAndSettle();
+      expect(find.text('Computer'), findsNothing);
+      expect(find.text('Computer fixture'), findsNothing);
+      expect(connects, 1);
+      expect(lists, 1);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
 
   testWidgets('large conversation list builds only viewport rows', (
     tester,

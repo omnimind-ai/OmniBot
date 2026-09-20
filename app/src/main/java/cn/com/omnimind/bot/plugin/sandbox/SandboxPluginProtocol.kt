@@ -125,7 +125,8 @@ sealed interface SandboxPluginCommand {
         val table: String,
         val where: Map<String, Any?> = emptyMap(),
         val orderBy: String? = null,
-        val limit: Int = 100,
+        val limit: Int = SandboxQueryLimits.DEFAULT,
+        val offset: Int = 0,
     ) : SandboxPluginCommand
 
     data class Update(
@@ -177,9 +178,15 @@ interface SandboxPluginDatabase : AutoCloseable {
         where: Map<String, Any?>,
         orderBy: String?,
         limit: Int,
+        offset: Int = 0,
     ): List<Map<String, Any?>>
 
     fun update(table: String, id: Any, values: Map<String, Any?>): Int
 
     fun delete(table: String, id: Any): Int
+}
+
+internal object SandboxQueryLimits {
+    const val DEFAULT = 100
+    const val MAX = 500
 }

@@ -5,8 +5,24 @@ import java.io.RandomAccessFile
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Test
+import org.mockito.Mockito.mock
+import org.mockito.Mockito.`when`
 
 class AgentWorkspaceAttachmentSupportTest {
+    @Test
+    fun resolvesPersistedAcpWorkspaceReferenceBeforeReading() {
+        val directory = java.nio.file.Files.createTempDirectory("attachment-roundtrip").toFile()
+        try {
+            val source = File(directory, "invoice.pdf").apply { writeText("invoice-body") }
+            val workspace = mock(AgentWorkspaceManager::class.java)
+            val reference = "/workspace/.omnibot/attachments/invoice.pdf"
+            `when`(workspace.androidPathForShell(reference)).thenReturn(source)
+            assertEquals("invoice-body", resolveAgentAttachmentFile(reference, workspace).readText())
+            assertEquals(source, resolveAgentAttachmentFile(source.absolutePath, workspace))
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
     @Test
     fun readsSmallAttachment() {
         val file = File.createTempFile("agent-attachment", ".bin")

@@ -19,17 +19,23 @@ data class CanonicalRunLogRecord(
     val schemaVersion: String = CANONICAL_RUN_LOG_SCHEMA_VERSION,
     @SerializedName("run_id")
     val runId: String = "",
+    @SerializedName("goal")
     val goal: String = "",
+    @SerializedName("status")
     val status: String = "running",
+    @SerializedName("success")
     val success: Boolean = false,
+    @SerializedName("error")
     val error: String? = null,
     @SerializedName("started_at_ms")
     val startedAtMs: Long = System.currentTimeMillis(),
     @SerializedName("finished_at_ms")
     val finishedAtMs: Long? = null,
+    @SerializedName("steps")
     val steps: List<Map<String, Any?>> = emptyList(),
     @SerializedName("final_state_id")
     val finalStateId: String? = null,
+    @SerializedName("diagnostics")
     val diagnostics: Map<String, Any?> = emptyMap(),
 ) {
     val source: String get() = diagnostics["source"]?.toString()?.trim().orEmpty()
@@ -353,7 +359,7 @@ object InternalRunLogStore {
         )
         val finishedRecord = record.copy(
             status = when {
-                doneReason == "cancelled" -> "cancelled"
+                doneReason in setOf("cancelled", "function_stopped") -> "cancelled"
                 success -> "succeeded"
                 else -> "failed"
             },
@@ -480,7 +486,8 @@ object InternalRunLogStore {
             ).filterValues { it != null })
         }
         val success = record.success == true
-        val status = if (success) "succeeded" else "failed"
+        val status = if (record.status == "cancelled") "cancelled"
+            else if (success) "succeeded" else "failed"
         val payload = linkedMapOf<String, Any?>(
             // The on-device store uses an internal schema, while the Python
             // management tools consume the public OmniFlow RunLog contract.
@@ -1265,7 +1272,7 @@ object InternalRunLogStore {
                 )
                 "run_finished" -> record.copy(
                     status = when {
-                        textValue(payload["done_reason"]) == "cancelled" -> "cancelled"
+                        textValue(payload["done_reason"]) in setOf("cancelled", "function_stopped") -> "cancelled"
                         booleanValue(payload["success"]) == true -> "succeeded"
                         else -> "failed"
                     },

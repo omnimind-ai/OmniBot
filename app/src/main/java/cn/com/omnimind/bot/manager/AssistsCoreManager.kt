@@ -3075,12 +3075,17 @@ class AssistsCoreManager(private val context: Context) {
         }
         workJob.launch {
             try {
-                conversationDomainService.replaceConversationMessages(
-                    conversationId = conversationId,
-                    conversationMode = mode,
-                    messages = messages,
-                    allowHistoryRemoval = call.argument<Boolean>("allowHistoryRemoval") == true
-                )
+                val deletedIds = call.argument<List<String>>("deleteMessageIds")
+                if (deletedIds != null) {
+                    conversationDomainService.deleteMessageIds(conversationId, mode, deletedIds)
+                } else {
+                    conversationDomainService.replaceConversationMessages(
+                        conversationId = conversationId,
+                        conversationMode = mode,
+                        messages = messages,
+                        allowHistoryRemoval = call.argument<Boolean>("allowHistoryRemoval") == true
+                    )
+                }
                 withContext(Dispatchers.Main) {
                     result.success("SUCCESS")
                 }

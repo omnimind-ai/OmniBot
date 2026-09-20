@@ -175,6 +175,18 @@ class OmniPluginService {
     return Map<String, dynamic>.from(raw ?? const <dynamic, dynamic>{});
   }
 
+  static Future<void> openApp(String pluginId) async {
+    await _channel.invokeMethod<bool>('openApp', {'pluginId': pluginId});
+  }
+
+  static Future<Map<String, dynamic>> pinToHome(String pluginId) async {
+    final result = await _channel.invokeMapMethod<String, dynamic>(
+      'pinToHome',
+      {'pluginId': pluginId},
+    );
+    return result ?? <String, dynamic>{};
+  }
+
   static Future<void> uninstall(String pluginId) async {
     await _channel.invokeMethod<bool>('uninstall', <String, Object?>{
       'pluginId': pluginId,

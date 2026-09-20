@@ -26,6 +26,7 @@ import cn.com.omnimind.uikit.UIKit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -35,6 +36,23 @@ import kotlin.math.max
 import kotlin.math.min
 
 object ManualRecordingControlOverlay {
+    internal suspend fun <T> withoutRecordingControls(block: suspend () -> T): T {
+        val hidden = withContext(Dispatchers.Main.immediate) {
+            overlayView?.let { view ->
+                (view to view.visibility).also { view.visibility = View.INVISIBLE }
+            }
+        }
+        try {
+            if (hidden != null) delay(32L)
+            return block()
+        } finally {
+            withContext(NonCancellable + Dispatchers.Main.immediate) {
+                hidden?.let { (view, visibility) ->
+                    if (overlayView === view && view.isAttachedToWindow) view.visibility = visibility
+                }
+            }
+        }
+    }
     private const val TAG = "ManualRecordingControlOverlay"
 
     private var windowManager: WindowManager? = null
@@ -340,7 +358,20 @@ object ManualRecordingControlOverlay {
         val view = overlayView ?: return
         val manager = windowManager ?: return
         val params = overlayParams ?: return
-        if (!view.isAttachedToWindow) return
+        if (!view.isAttachedToWindow) {
+            // addView attaches asynchronously. A recording may start in the
+            // same main-thread turn, putting the full-screen touch recorder
+            // above these controls before this view has attached. Reorder
+            // after attachment too, otherwise Pause becomes a recorded tap.
+            view.post {
+                synchronized(this@ManualRecordingControlOverlay) {
+                    if (overlayView === view && view.isAttachedToWindow) {
+                        keepControlsAboveTouchRecorderLocked()
+                    }
+                }
+            }
+            return
+        }
         suppressUnexpectedDetach = true
         try {
             runCatching {
@@ -832,17 +863,19 @@ object ManualRecordingControlOverlay {
                 return@launch
             }
             val recorded = runCatching {
-                HumanTrajectoryLearningSession.recordManualInputText(text, inputTarget)
+                withoutRecordingControls {
+                    HumanTrajectoryLearningSession.recordManualInputText(text, inputTarget)
+                }
             }.getOrElse { error ->
                 OmniLog.e(TAG, "manual input_text action failed: ${error.message}", error)
                 false
             }
             val enterRecorded = if (recorded && pressEnter) {
                 runCatching {
-                    HumanTrajectoryLearningSession.recordManualPressKey(
+                    withoutRecordingControls { HumanTrajectoryLearningSession.recordManualPressKey(
                         key = "enter",
                         inputTarget = inputTarget,
-                    )
+                    ) }
                 }
                     .getOrElse { error ->
                         OmniLog.e(TAG, "manual enter action failed: ${error.message}", error)
@@ -904,10 +937,10 @@ object ManualRecordingControlOverlay {
                 return@launch
             }
             val recorded = runCatching {
-                HumanTrajectoryLearningSession.recordManualPressKey(
+                withoutRecordingControls { HumanTrajectoryLearningSession.recordManualPressKey(
                     key = key,
                     inputTarget = inputTarget,
-                )
+                ) }
             }.getOrElse { error ->
                 OmniLog.e(TAG, "manual press_key action failed: ${error.message}", error)
                 false
@@ -941,7 +974,7 @@ object ManualRecordingControlOverlay {
                 return@launch
             }
             val recorded = runCatching {
-                HumanTrajectoryLearningSession.recordManualWait(durationMs)
+                withoutRecordingControls { HumanTrajectoryLearningSession.recordManualWait(durationMs) }
             }.getOrElse { error ->
                 OmniLog.e(TAG, "manual wait action failed: ${error.message}", error)
                 false

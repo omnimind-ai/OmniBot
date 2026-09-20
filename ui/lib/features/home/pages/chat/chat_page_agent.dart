@@ -278,8 +278,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
           normalized == _committedAcpAgentId;
       final sameRuntimeAgent = selectsRemote
           ? _agentRuntimeStatus.connected &&
-                (_agentRuntimeStatus.runtime == 'remote' ||
-                    _agentRuntimeStatus.remoteEnabled)
+                _agentRuntimeStatus.runtime == 'remote'
           : _agentRuntimeStatus.connected && runtimeActiveAgentId == normalized;
       if (sameVisibleAgent && sameRuntimeAgent) {
         switchSucceeded = true;
@@ -439,15 +438,15 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
   }
 
   @override
-  Future<void> _prepareRemoteCodexSessionTarget(
+  Future<bool> _prepareRemoteCodexSessionTarget(
     ConversationThreadTarget target,
   ) async {
     final targetRequestId = _conversationTargetRequestId;
     final threadId = target.agentSessionId?.trim() ?? '';
     if (threadId.isEmpty) {
-      return;
+      return false;
     }
-    final runtimeId = _remoteCodexRuntimeId(threadId);
+    final runtimeId = _ensureRemoteCodexRuntimeForThread(threadId);
     _activeRemoteCodexRuntimeId = runtimeId;
     _activeAgentThreadId = threadId;
     _activeAgentTurnId = null;
@@ -460,9 +459,10 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       }
       final response = await AgentRuntimeService.loadSession(
         sessionId: threadId,
+        conversationId: runtimeId,
         conversationMode: ConversationMode.agent.storageValue,
       );
-      if (!_isConversationTargetRequestCurrent(targetRequestId)) return;
+      if (!_isConversationTargetRequestCurrent(targetRequestId)) return false;
       final resolvedThreadId =
           _asAgentString(response['threadId']) ??
           _asAgentString(_asAgentMap(response['thread'])?['id']) ??
@@ -478,17 +478,24 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         fallbackConversation: conversation,
         status: status,
       );
-      this._startRemoteCodexSessionSync(resolvedThreadId);
+      if (response['protocolVersion'] != 2) {
+        this._startRemoteCodexSessionSync(resolvedThreadId);
+      }
       _rememberRuntimeUiSnapshot(ChatPageMode.agent);
+      return true;
     } catch (error) {
-      if (!_isConversationTargetRequestCurrent(targetRequestId)) return;
+      if (!_isConversationTargetRequestCurrent(targetRequestId)) return false;
       showToast(
         formatAgentRuntimeErrorForUser(
           error,
           english: LegacyTextLocalizer.isEnglish,
+          fallback: LegacyTextLocalizer.isEnglish
+              ? 'Unable to open this computer session. Check the computer connection and whether the session is available for remote access.'
+              : '无法打开这条电脑会话，请检查电脑连接，以及该会话是否已接入远程服务。',
         ),
         type: ToastType.error,
       );
+      return false;
     }
   }
 
@@ -1001,35 +1008,20 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
   }
 
   Future<bool> _selectRemoteCodexRuntime() async {
-    final isRemote =
-        _agentRuntimeStatus.runtime == 'remote' ||
-        _agentRuntimeStatus.remoteEnabled;
-    if (isRemote) {
-      return true;
-    }
     try {
       final remote = await AgentRuntimeService.readRemoteBridgeConfig();
       if (!remote.remoteConfigured) {
         if (mounted) {
           _showSnackBar(
             LegacyTextLocalizer.isEnglish
-                ? 'Remote Agent Bridge is not configured'
-                : '远程 Agent Bridge 尚未配置',
+                ? 'Configure the remote Codex connection first'
+                : '请先配置远程 Codex 连接',
           );
           GoRouterManager.push('/home/remote_codex_setting');
         }
         return false;
       }
-      await AgentRuntimeService.writeRemoteBridgeConfig(
-        remoteEnabled: true,
-        remoteBridgeUrl: remote.remoteBridgeUrl,
-        remoteBridgeToken: remote.remoteBridgeToken,
-        remoteCwd: remote.remoteCwd,
-      );
-      var status = await AgentRuntimeService.status();
-      if (status.ready && !status.connected) {
-        status = await AgentRuntimeService.connect();
-      }
+      final status = await AgentRuntimeService.activateRemoteCodex(remote);
       if (!mounted) return false;
       setState(() {
         _agentRuntimeStatus = status;
@@ -1687,7 +1679,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         '${_agentEventDiagnosticCounter.entries.map((e) => '${e.key}:${e.value}').join(', ')}',
       );
     }
-    final remoteCodex = _isRemoteCodexConfigured();
+    final remoteConfigured = _isRemoteCodexConfigured();
     final eventThreadId = _remoteCodexEventThreadId(event);
     final explicitConversationId = _asAgentInt(event['conversationId']);
     final eventSessionId = acpEventSessionId(event);
@@ -1735,15 +1727,20 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
             turnId: eventTurnId,
           )
         : null;
+    final remoteCodex = usesRemoteCodexEventProjection(
+      remoteConfigured: remoteConfigured,
+      conversationId: explicitConversationId ?? identityConversationId,
+    );
     final mappedRemoteConversationId = remoteCodex && eventThreadId != null
-        ? _remoteCodexRuntimeId(eventThreadId)
+        ? (explicitConversationId ?? identityConversationId)
         : null;
     final shouldPromoteRemoteEvent =
         remoteCodex &&
         eventThreadId != null &&
+        mappedRemoteConversationId != null &&
         this._shouldPromoteRemoteCodexEventToVisibleThread(
           threadId: eventThreadId,
-          runtimeId: mappedRemoteConversationId!,
+          runtimeId: mappedRemoteConversationId,
         );
     final conversationId =
         explicitConversationId ??
@@ -2057,6 +2054,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
             dispatchLoadedModelSource == agentModelSourceKey(status),
       );
       final acpSessionId = await _prepareAcpSessionForTurn(
+        agentId: remoteCodex ? _kRemoteCodexModeAgentId : dispatchAgentId,
         runtimeCoordinator: _runtimeCoordinator,
         taskId: aiMessageId,
         conversationId: resolvedConversationId,
@@ -2084,7 +2082,8 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         // runtime uses it to return the original turn instead of replaying
         // tool calls.
         requestId: aiMessageId,
-        agentId: remoteCodex ? null : dispatchAgentId,
+        clientMessageId: userMessageId,
+        agentId: remoteCodex ? _kRemoteCodexModeAgentId : dispatchAgentId,
         text: messageText,
         attachments: attachments,
         approvalPolicy: dispatchPermissionMode.approvalPolicy,
@@ -2106,20 +2105,22 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         _activateRemoteCodexRuntimeForThread(resolvedThreadId);
       }
       final responseTurnId = _asAgentString(response['turnId']);
-      _runtimeCoordinator.applyAcpPromptResponse(
-        taskId: aiMessageId,
-        conversationId: resolvedConversationId,
-        mode: dispatchModeKey,
-        sessionId: _asAgentString(response['sessionId']) ?? acpSessionId,
-        turnId: responseTurnId,
-        stopReason:
-            _asAgentString(response['stopReason']) ??
-            _asAgentString(response['status']),
-        error: _asAgentString(response['error']),
-      );
-      if (isDispatchTargetCurrent()) {
-        _activeAgentThreadId = resolvedThreadId ?? acpSessionId;
-        _activeAgentTurnId = null;
+      if (response['protocolVersion'] != 2) {
+        _runtimeCoordinator.applyAcpPromptResponse(
+          taskId: aiMessageId,
+          conversationId: resolvedConversationId,
+          mode: dispatchModeKey,
+          sessionId: _asAgentString(response['sessionId']) ?? acpSessionId,
+          turnId: responseTurnId,
+          stopReason:
+              _asAgentString(response['stopReason']) ??
+              _asAgentString(response['status']),
+          error: _asAgentString(response['error']),
+        );
+        if (isDispatchTargetCurrent()) {
+          _activeAgentThreadId = resolvedThreadId ?? acpSessionId;
+          _activeAgentTurnId = null;
+        }
       }
       final localConversationId = _asAgentInt(response['conversationId']);
       if (isDispatchTargetCurrent() &&

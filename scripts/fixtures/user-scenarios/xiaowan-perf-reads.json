@@ -1,0 +1,3 @@
+{
+  "prompt": "Use one tool-call batch for three independent file_search calls in /workspace/oob-content-search-regression: cross_boundary_needle, tail_needle, absent_content_needle. Set caseSensitive true. Report the actual counts without terminal commands."
+}

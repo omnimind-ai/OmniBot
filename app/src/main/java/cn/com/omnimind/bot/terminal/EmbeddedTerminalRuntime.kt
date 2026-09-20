@@ -1428,7 +1428,13 @@ object EmbeddedTerminalRuntime {
             command python "${'$'}@"
             return ${'$'}?
           fi
-          __omni_prepare_python_env 1 || return ${'$'}?
+          # Running a script must not require venv/ensurepip. Activate an
+          # existing project environment; create one only for package tooling.
+          if [ "${'$'}1" = "-m" ] && [ "${'$'}2" = "pip" ]; then
+            __omni_prepare_python_env 1 || return ${'$'}?
+          else
+            __omni_prepare_python_env 0 || return ${'$'}?
+          fi
           command python "${'$'}@"
         }
 
@@ -1437,7 +1443,13 @@ object EmbeddedTerminalRuntime {
             command python3 "${'$'}@"
             return ${'$'}?
           fi
-          __omni_prepare_python_env 1 || return ${'$'}?
+          # Running a script must not require venv/ensurepip. Activate an
+          # existing project environment; create one only for package tooling.
+          if [ "${'$'}1" = "-m" ] && [ "${'$'}2" = "pip" ]; then
+            __omni_prepare_python_env 1 || return ${'$'}?
+          else
+            __omni_prepare_python_env 0 || return ${'$'}?
+          fi
           command python3 "${'$'}@"
         }
 

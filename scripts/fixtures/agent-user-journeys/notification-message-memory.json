@@ -1,0 +1,16 @@
+{
+  "name": "Real message notification to Agent daily memory",
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_NOTIFICATION_MEMORY",
+      "scenario": "notification-message-memory.json",
+      "timeoutMs": 240000
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_NOTIFICATION_MEMORY_DONE",
+      "timeoutMs": 480000
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "name":"Real chat text attachment read and reopen after process restart",
+  "preconditions":"Idle configured chat with chat-upload-record.txt attached through Android picker. Real Provider required.",
+  "steps":[
+    {"action":"send","marker":"OOB_LIVE_UPLOAD_FILE","scenario":"chat-upload-record.json"},
+    {"action":"reply","text":"OOB_LIVE_UPLOAD_FILE_FILE: cedar-7391-kite, 37","timeoutMs":120000},
+    {"action":"turn-outcome","marker":"OOB_LIVE_UPLOAD_FILE","expected":"done"},
+    {"action":"restart"},
+    {"action":"reply","text":"OOB_LIVE_UPLOAD_FILE_FILE: cedar-7391-kite, 37","timeoutMs":30000},
+    {"action":"send","marker":"OOB_LIVE_REOPEN_ATTACHMENT","scenario":"chat-upload-record-restart.json"},
+    {"action":"reply","text":"OOB_LIVE_REOPEN_ATTACHMENT_RECOVERY: maple-8264-river","timeoutMs":120000},
+    {"action":"turn-outcome","marker":"OOB_LIVE_REOPEN_ATTACHMENT","expected":"done"}
+  ]
+}

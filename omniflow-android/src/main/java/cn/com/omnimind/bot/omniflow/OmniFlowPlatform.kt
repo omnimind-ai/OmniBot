@@ -17,7 +17,7 @@ interface OmniFlowPlatform {
         environment: Map<String, String>,
     ): Process
 
-    suspend fun ensurePython(context: Context, expectedVersion: String)
+    suspend fun prepareEnvironment(context: Context, command: String)
 
     suspend fun resolveRuntimeSkill(
         context: Context,

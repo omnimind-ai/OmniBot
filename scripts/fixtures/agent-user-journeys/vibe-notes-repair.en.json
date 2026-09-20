@@ -1,0 +1,1 @@
+{"name":"Real model repairs generated notes App from observed UI failure","steps":[{"action":"send","marker":"OOB_LIVE_VIBE_REPAIR","scenario":"vibe-notes-repair.json","timeoutMs":180000},{"action":"reply","text":"OOB_LIVE_VIBE_REPAIR_DONE","timeoutMs":600000},{"action":"turn-outcome","marker":"OOB_LIVE_VIBE_REPAIR","expected":"done"}]}

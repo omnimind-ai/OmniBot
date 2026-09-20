@@ -19,12 +19,11 @@ class ManualRecordingFlowMessageIds {
 
 typedef ManualRecordingAuthorizer = Future<bool> Function(BuildContext context);
 
-typedef ManualRecordingNativeStarter =
-    Future<Map<String, dynamic>> Function({
-      required String name,
-      required String description,
-      required bool enableDebugScreenshots,
-    });
+typedef ManualRecordingNativeStarter = Future<Map<String, dynamic>> Function({
+  required String name,
+  required String description,
+  required bool enableDebugScreenshots,
+});
 
 class ManualRecordingFlowController {
   const ManualRecordingFlowController._();

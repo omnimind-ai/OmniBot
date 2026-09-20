@@ -45,6 +45,24 @@ test('quota, authentication and rate limiting remain distinct provider errors', 
   }
 });
 
+test('tool-index fixture sends second arguments before their own identity', async t => {
+  const {send} = await fixture(t);
+  const marker = 'OOB_FAILURE_INDEX_1789000000000';
+  const response = await send(marker);
+  const rows = (await response.text()).split('\n\n').filter(s => s.startsWith('data: {'))
+    .map(s => JSON.parse(s.slice(6)).choices[0]);
+  assert.equal(rows.length, 3);
+  const calls = rows.map(r => r.delta.tool_calls[0]);
+  assert.equal(calls[0].index, 0);
+  assert.equal(calls[1].index, 1);
+  assert.equal(calls[1].id, undefined);
+  assert.equal(calls[1].function.name, undefined);
+  assert.equal(JSON.parse(calls[1].function.arguments).content, marker+'_VALUE_1');
+  assert.equal(calls[2].index, 1);
+  assert.equal(calls[2].function.name, 'file_write');
+  assert.equal(rows[2].finish_reason, 'tool_calls');
+});
+
 test('in-band errors retain partial content or tool input and await client cancellation', async t => {
   const {send,logs}=await fixture(t);
   for(const kind of ['STREAMERROR','STREAMTOOL','STREAMRATE','STREAMLIMIT','STREAMAUTH','STREAMSERVICE','STREAMREJECT','STREAMMODEL']) {

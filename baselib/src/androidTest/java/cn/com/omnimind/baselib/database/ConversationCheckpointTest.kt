@@ -9,6 +9,28 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class ConversationCheckpointTest {
+    @Test fun explicitMessageDeletionPreservesUnloadedRowsAndSurvivesReopen() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val name = "message-delete-${System.nanoTime()}.db"
+        fun open() = Room.databaseBuilder(context, AppDatabase::class.java, name).build()
+        var db = open()
+        try {
+            val dao = db.agentConversationEntryDao()
+            for ((conversation, mode, id) in listOf(
+                Triple(1L, "agent", "remove"), Triple(1L, "codex", "remove"),
+                Triple(1L, "agent", "unloaded"), Triple(2L, "agent", "remove")
+            )) dao.upsert(AgentConversationEntry(conversationId = conversation,
+                conversationMode = mode, entryId = id, entryType = "user_message",
+                status = "success", summary = id, payloadJson = "{}"))
+            assertEquals(2, dao.deleteMessageEntries(1L, listOf("agent", "codex"), listOf("remove")))
+            assertEquals(0, dao.deleteMessageEntries(1L, listOf("agent", "codex"), listOf("remove")))
+            db.close()
+            db = open()
+            assertEquals(listOf("unloaded"), db.agentConversationEntryDao().getConversationEntriesAsc(1L).map { it.entryId })
+            assertEquals(listOf("remove"), db.agentConversationEntryDao().getConversationEntriesAsc(2L).map { it.entryId })
+        } finally { db.close(); context.deleteDatabase(name) }
+    }
+
     @Test fun lateSnapshotCannotResurrectExplicitlyClearedCheckpoint() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val name = "checkpoint-clear-${System.nanoTime()}.db"

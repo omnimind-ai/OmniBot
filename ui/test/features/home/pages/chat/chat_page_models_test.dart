@@ -1,11 +1,15 @@
 import 'dart:async';
 
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ui/features/home/pages/chat/chat_page_models.dart';
 import 'package:ui/features/home/pages/chat/services/chat_conversation_runtime_coordinator.dart';
 import 'package:ui/models/chat_message_model.dart';
+import 'package:ui/services/voice_playback_coordinator.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   test('model selector ignores repeated opens during a slow refresh', () async {
     final guard = ConversationModelSelectorOpeningGuard();
     final release = Completer<void>();
@@ -33,13 +37,26 @@ void main() {
   group('ChatConversationRuntimeCoordinator.replaceConversationSnapshot '
       'preserveLiveStreamingState', () {
     final coordinator = ChatConversationRuntimeCoordinator.instance;
+    const channel = MethodChannel('cn.com.omnimind.bot/AssistCoreEvent');
 
-    setUp(() {
+    setUp(() async {
       coordinator.resetForTest();
+      await VoicePlaybackCoordinator.instance.debugResetForTest();
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            if (call.method == 'getSceneModelBindings') return <Object>[];
+            if (call.method == 'getSceneVoiceConfig') {
+              return <String, Object>{'autoPlay': false};
+            }
+            return null;
+          });
     });
 
-    tearDown(() {
+    tearDown(() async {
       coordinator.resetForTest();
+      await VoicePlaybackCoordinator.instance.debugResetForTest();
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
     });
 
     test(
@@ -56,6 +73,11 @@ void main() {
           conversationId: conversationId,
           mode: mode,
         )!;
+        coordinator.registerTask(
+          taskId: 'turn-1',
+          conversationId: conversationId,
+          mode: mode,
+        );
         // Simulate reducer push-driven streaming state populated by
         // _touchActiveTurn + _appendAssistantText + _appendThinking.
         runtime.isAiResponding = true;

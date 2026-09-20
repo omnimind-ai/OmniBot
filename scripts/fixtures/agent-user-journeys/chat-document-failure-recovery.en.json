@@ -1,0 +1,14 @@
+{
+  "name": "Real malformed PDF feedback and next user turn",
+  "preconditions": "Idle real-provider chat with chat-upload-broken.pdf selected through Android picker.",
+  "steps": [
+    {"action":"send","marker":"OOB_LIVE_DOCUMENT_FAILURE","scenario":"chat-upload-broken.json"},
+    {"action":"reply","text":"OOB_LIVE_DOCUMENT_FAILURE_DONE"},
+    {"action":"turn-outcome","marker":"OOB_LIVE_DOCUMENT_FAILURE","expected":"done"},
+    {"action":"send","marker":"OOB_LIVE_DOCUMENT_NEXT","scenario":"chat-after-broken.json"},
+    {"action":"reply","text":"OOB_LIVE_DOCUMENT_NEXT_DONE"},
+    {"action":"turn-outcome","marker":"OOB_LIVE_DOCUMENT_NEXT","expected":"done"},
+    {"action":"restart"},
+    {"action":"reply","text":"OOB_LIVE_DOCUMENT_NEXT_DONE"}
+  ]
+}

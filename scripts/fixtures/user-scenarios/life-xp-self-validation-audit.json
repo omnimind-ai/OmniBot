@@ -1,0 +1,3 @@
+{
+  "prompt": "Acceptance FAILED. Real published App shows XP 0, but its preserved database has 4 habits, 4 check-ins, 75 XP. get_check_ins({_limit:1000}) fails: allowed limit is 1..500. Your tests simulate separate logic, still fail, and exit 0; ui-test-plan.md is not UI execution. currentDate still uses UTC. Repair these findings yourself. Test the actual production calculation code, return nonzero on test failure, run real published tools and available UI checks, preserve every existing row, republish and verify. If pagination is unavailable, report the limitation; do not claim unlimited history. Do not claim success until actual evidence passes."
+}

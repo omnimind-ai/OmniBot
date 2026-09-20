@@ -31,45 +31,6 @@ class OmniFlowPythonClientTest {
     }
 
     @Test
-    fun `skill bridge command uses isolated source dependencies and transfer`() {
-        val command = OmniFlowPythonClient.bridgeCommand(
-            "/workspace/.omnibot/skills/OmniBotSkills/omniflow-gui-runtime/scripts/runtime/python",
-            "/workspace/.omnibot/skills/OmniBotSkills/omniflow-gui-runtime/scripts/runtime/.runtime/site-packages",
-            "/workspace/.omnibot/skills/OmniBotSkills/omniflow-gui-runtime/scripts/runtime/.runtime/omnitransfer",
-            "/workspace/.omnibot/skills/OmniBotSkills/omniflow-gui-runtime/scripts/runtime/.runtime/omnitransfer/src/omnitransfer/checkpoints/matcher.npz",
-        )
-
-        assertTrue(command.contains("export PYTHONPATH="))
-        assertTrue(command.contains("scripts/runtime/python"))
-        assertTrue(command.contains("scripts/runtime/.runtime/site-packages"))
-        assertTrue(command.contains("scripts/runtime/.runtime/omnitransfer/src"))
-        assertTrue(command.contains("export OMNITRANSFER_ROOT="))
-        assertTrue(command.contains("export OMNITRANSFER_MATCHER_CHECKPOINT="))
-        assertTrue(command.contains("-m omniflow.bridge"))
-        assertFalse(command.contains("--catalog"))
-        assertFalse(command.contains("/workspace/.venv"))
-    }
-
-    @Test
-    fun `developer override is first on Python path`() {
-        val command = OmniFlowPythonClient.bridgeCommand(
-            "/workspace/runtime/python",
-            "/workspace/runtime/site-packages",
-            "/workspace/runtime/omnitransfer",
-            "/workspace/runtime/omnitransfer/checkpoint.npz",
-            "/workspace/.omnibot/omniflow-developer/python",
-        )
-
-        assertTrue(
-            command.contains(
-                "export PYTHONPATH='/workspace/.omnibot/omniflow-developer/python:" +
-                    "/workspace/runtime/python:/workspace/runtime/site-packages:" +
-                    "/workspace/runtime/omnitransfer/src'",
-            ),
-        )
-    }
-
-    @Test
     fun `initialize uses MCP handshake and keeps one process`() = runBlocking {
         val process = FakeProcess(
             stdout = """{"jsonrpc":"2.0","id":"request-1","result":{"protocolVersion":"2025-11-25"}}""" + "\n",

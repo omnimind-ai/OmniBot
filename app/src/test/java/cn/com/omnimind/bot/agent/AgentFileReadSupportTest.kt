@@ -10,6 +10,28 @@ import org.junit.Test
 
 class AgentFileReadSupportTest {
     @Test
+    fun `unsupported documents report unavailable content and recovery without inventing text`() {
+        val result = AgentFileReadSupport.unavailableContent()
+        assertEquals(false, result["contentAvailable"])
+        assertEquals("document_parser_required", result["errorCode"])
+        assertFalse(result.containsKey("content"))
+        assertTrue(result["nextAction"].toString().contains("不要重复"))
+    }
+
+    @Test
+    fun `file read loads parser hints in both model locales`() {
+        for (locale in listOf(PromptLocale.ZH_CN, PromptLocale.EN_US)) {
+            val function = AgentToolDefinitions.staticTools(locale)
+                .map { it.getValue("function").jsonObject }
+                .single { it.getValue("name").jsonPrimitive.content == "file_read" }
+            val description = function.getValue("description").jsonPrimitive.content
+            for (expected in listOf("PDF", "DOCX", "XLSX", "OCR", "MarkItDown/Docling", "document_parser_required")) {
+                assertTrue("Missing hint: $expected", description.contains(expected))
+            }
+            assertTrue(description.contains(if (locale == PromptLocale.EN_US) "NOT installed tools" else "不代表已安装"))
+        }
+    }
+    @Test
     fun `file read exposes bounded page size in both model locales`() {
         for (locale in listOf(PromptLocale.ZH_CN, PromptLocale.EN_US)) {
             val function = AgentToolDefinitions.staticTools(locale)

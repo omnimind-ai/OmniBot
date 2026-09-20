@@ -190,14 +190,13 @@ private class BuiltinSkillAssetStore(
 
     private fun installBuiltinInternal(builtin: BuiltinSkillAsset) {
         val targetDir = targetDirFor(builtin)
-        if (targetDir.exists()) {
-            targetDir.deleteRecursively()
+        refreshBuiltinSkillAssets(targetDir) {
+            copyAssetRecursively(
+                assetManager = context.assets,
+                assetPath = builtin.assetPath,
+                target = targetDir
+            )
         }
-        copyAssetRecursively(
-            assetManager = context.assets,
-            assetPath = builtin.assetPath,
-            target = targetDir
-        )
     }
 
     private fun looksLikeRetiredBundledCopy(targetDir: File, skillId: String): Boolean {

@@ -1,0 +1,45 @@
+{
+  "name": "Formal Agent task using downloadable official AAR in main App process",
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_OMNIINFER_AGENT",
+      "scenario": "omniinfer-local-agent.json",
+      "timeoutMs": 180000
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_OMNIINFER_AGENT_DONE",
+      "timeoutMs": 600000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_OMNIINFER_AGENT",
+      "expected": "done"
+    },
+    {
+      "action": "omniinfer-local-task",
+      "marker": "OOB_LIVE_OMNIINFER_AGENT",
+      "inApp": true,
+      "historyOnly": false
+    },
+    {
+      "action": "restart"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_OMNIINFER_AGENT_DONE"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_OMNIINFER_AGENT",
+      "expected": "done"
+    },
+    {
+      "action": "omniinfer-local-task",
+      "marker": "OOB_LIVE_OMNIINFER_AGENT",
+      "inApp": true,
+      "historyOnly": true
+    }
+  ]
+}

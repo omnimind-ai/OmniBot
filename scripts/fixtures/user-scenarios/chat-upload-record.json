@@ -1,0 +1,1 @@
+{"prompt":"Read the attached txt file. First line: {{MARKER}}_FILE: <record_code>, <item_count>. Read the actual file; do not guess."}

@@ -14,6 +14,7 @@ Future<String?> _prepareAcpSessionForTurn({
   required String mode,
   required String? existingSessionId,
   required bool Function() isTargetCurrent,
+  String? agentId,
   String? model,
   String? effort,
   String? collaborationMode,
@@ -30,6 +31,7 @@ Future<String?> _prepareAcpSessionForTurn({
 
   final hadExistingSession = existingSessionId?.trim().isNotEmpty == true;
   final sessionId = await AgentRuntimeService.ensureSession(
+    agentId: agentId,
     sessionId: existingSessionId,
     conversationId: conversationId,
     model: model,
@@ -41,6 +43,7 @@ Future<String?> _prepareAcpSessionForTurn({
     if (!hadExistingSession) {
       try {
         await AgentRuntimeService.closeSession(
+          agentId: agentId,
           sessionId: sessionId,
           conversationId: conversationId,
         );
@@ -59,6 +62,7 @@ Future<String?> _prepareAcpSessionForTurn({
     if (!hadExistingSession) {
       try {
         await AgentRuntimeService.closeSession(
+          agentId: agentId,
           sessionId: sessionId,
           conversationId: conversationId,
         );
@@ -108,6 +112,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       mode: _modeKey(mode),
     );
     _runtimeCoordinator.replaceConversationSnapshot(
+      expectedHistoryRevision: runtime?.historyRevision ?? 0,
       conversationId: conversationId,
       mode: _modeKey(mode),
       messages: List<ChatMessageModel>.from(
@@ -816,8 +821,15 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
     String messageId,
     String url,
   ) async {
+    final previewConversationId = _currentConversationId;
+    final previewMode = _modeKey(_activeMode);
+    final previewRevision = previewConversationId == null ? 0 :
+        (_runtimeCoordinator.runtimeFor(conversationId: previewConversationId, mode: previewMode)?.historyRevision ?? 0);
     final resolved = await LinkPreviewService.instance.loadPreview(url);
-    if (!mounted) {
+    if (!mounted || _currentConversationId != previewConversationId ||
+        _modeKey(_activeMode) != previewMode ||
+        (previewConversationId != null &&
+          _runtimeCoordinator.runtimeFor(conversationId: previewConversationId, mode: previewMode)?.historyRevision != previewRevision)) {
       return;
     }
 
@@ -865,11 +877,12 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
     final conversationId = _currentConversationId;
     if (conversationId != null &&
         !isEphemeralConversation(conversationId, activeConversationModeValue)) {
-      await _runtimeCoordinator.persistConversationMessageSnapshot(
-        conversationId: conversationId,
-        mode: _modeKey(_activeMode),
-        messages: List<ChatMessageModel>.from(_messages),
-        conversation: _currentConversation,
+      final index = _messages.indexWhere((message) => message.id == messageId);
+      if (index < 0) return;
+      await _runtimeCoordinator.updateConversationLinkPreviews(
+        conversationId: conversationId, mode: previewMode, messageId: messageId,
+        expectedHistoryRevision: previewRevision,
+        previews: _messages[index].content?['linkPreviews'] as List<dynamic>? ?? [],
       );
     }
   }

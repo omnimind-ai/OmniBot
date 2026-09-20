@@ -1,0 +1,43 @@
+{
+  "name": "Real model independent read batch preserves results and history",
+  "requireClockSync": true,
+  "steps": [
+    {
+      "action": "send",
+      "marker": "OOB_LIVE_PERF_READS",
+      "scenario": "xiaowan-perf-reads.json",
+      "timeoutMs": 180000
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_PERF_READS_DONE",
+      "timeoutMs": 240000
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_PERF_READS",
+      "expected": "done"
+    },
+    {
+      "action": "live-task",
+      "marker": "OOB_LIVE_PERF_READS",
+      "phase": "content-search"
+    },
+    {
+      "action": "read-batch",
+      "marker": "OOB_LIVE_PERF_READS"
+    },
+    {
+      "action": "restart"
+    },
+    {
+      "action": "reply",
+      "text": "OOB_LIVE_PERF_READS_DONE"
+    },
+    {
+      "action": "turn-outcome",
+      "marker": "OOB_LIVE_PERF_READS",
+      "expected": "done"
+    }
+  ]
+}

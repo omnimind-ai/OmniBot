@@ -81,6 +81,26 @@ class SandboxPluginPool(
             .toList()
     }
 
+    fun dashboard(pluginId: String): Map<String, Any?> {
+        val directory = requirePluginDirectory(pluginId)
+        val manifest = readManifest(directory)
+        val frontend = manifest.frontend
+            ?: throw IllegalArgumentException("Plugin $pluginId does not provide a dashboard")
+        ensureRuntimeCurrent(directory)
+        val entry = safeChild(directory, frontend.entry)
+        require(entry.isFile) { "Sandbox dashboard entry is missing: ${frontend.entry}" }
+        val icon = safeChild(directory, frontend.icon)
+        require(icon.isFile) { "Sandbox app icon is missing: ${frontend.icon}" }
+        return mapOf(
+            "pluginId" to manifest.id,
+            "title" to manifest.name,
+            "entryPath" to entry.absolutePath,
+            "iconPath" to icon.absolutePath,
+            "rootPath" to directory.absolutePath,
+            "permissions" to manifest.permissions,
+        )
+    }
+
     fun requirePermission(pluginId: String, permission: String) {
         require(permission in SandboxProjectPermission.supported) {
             "Unsupported sandbox permission: $permission"
@@ -310,6 +330,20 @@ class SandboxPluginPool(
                 put("skillId", manifest.skillId())
                 put("connectorCount", inspection.toolkit.connectors.size)
                 put("toolCount", inspection.toolkit.tools.size)
+                put("businessTools", inspection.toolkit.tools.map { tool ->
+                    mapOf(
+                        "name" to SandboxProjectToolPolicy.runtimeName(pluginId, tool),
+                        "dashboardName" to tool.name,
+                        "description" to tool.description,
+                        "parameters" to tool.parameters.toNativeMap(),
+                    )
+                })
+                put("runtimeValidation", mapOf(
+                    "status" to "not_run",
+                    "toolAvailability" to "current_request_catalog",
+                    "nextStep" to "Call a businessTools name directly only if that name and schema are in the current request tool catalog. Test actual reads/writes and compare the installed App. Publication is not acceptance. New tools may be unavailable until a subsequent user turn; report blocked in that case. Do not call an unadvertised discovery tool, fabricate a call, or restart the Agent session.",
+                    "executionBoundary" to "Agent tools are native tool calls, not Node modules. window.omni.tools.call is only available inside the installed App WebView. terminal_execute may test production modules but cannot require('vlm_task') or substitute copied calculations for actual tool/UI execution.",
+                ))
                 put("fileCount", inspection.fileCount)
                 put("sizeBytes", inspection.sizeBytes)
             }
@@ -339,15 +373,19 @@ class SandboxPluginPool(
         SandboxSqlPolicy.requireIdentifier(command.table, "table")
         command.where.keys.forEach { SandboxSqlPolicy.requireIdentifier(it, "where column") }
         SandboxSqlPolicy.validateOrderBy(command.orderBy)
-        require(command.limit in 1..MAX_QUERY_LIMIT) {
-            "Query limit must be between 1 and $MAX_QUERY_LIMIT"
+        require(command.limit in 1..SandboxQueryLimits.MAX) {
+            "Query limit must be between 1 and $SandboxQueryLimits.MAX"
+        }
+        require(command.offset >= 0) { "Query offset must be nonnegative" }
+        require(command.offset == 0 || !command.orderBy.isNullOrBlank()) {
+            "Paginated queries require _order_by with a unique tie-breaker such as id ASC"
         }
         val directory = requirePluginDirectory(command.pluginId)
         val manifest = readManifest(directory)
         ensureInstalled(directory, manifest)
         val databaseFile = databaseFile(command.pluginId)
         val rows = databaseFactory.open(databaseFile).use { database ->
-            database.query(command.table, command.where, command.orderBy, command.limit)
+            database.query(command.table, command.where, command.orderBy, command.limit, command.offset)
         }
         return mapOf("rows" to rows, "count" to rows.size)
     }
@@ -456,6 +494,7 @@ class SandboxPluginPool(
             permissions = manifest.permissions,
             schemaSql = schemaSql,
         )
+        SandboxProjectToolPolicy.validateSourceConfig(toolkit)
         validateCapabilityReferences(source, files, manifest.permissions)
         validateDashboardToolReferences(source, files, toolkit)
         return ProjectInspection(
@@ -790,6 +829,7 @@ class SandboxPluginPool(
             capabilities = manifest.capabilities,
             presentation = buildJsonObject {
                 put("visibility", manifest.visibility)
+                put("hasApp", manifest.frontend != null)
                 put("description", buildJsonObject {
                     put("zh", manifest.description)
                     put("en", manifest.description)
@@ -857,7 +897,7 @@ class SandboxPluginPool(
                 }
             } ?: return object : OmniPlugin {}
             return object : OmniPlugin {
-                override fun contribution(): OmniPluginContribution = OmniPluginContribution(
+                override suspend fun contribution(): OmniPluginContribution = OmniPluginContribution(
                     toolGroups = listOf(
                         OmniPluginToolGroup(
                             definitions = toolkit.tools.map { tool -> tool.definition(manifest.id) },
@@ -902,7 +942,6 @@ class SandboxPluginPool(
         const val MAX_ICON_BYTES = 256 * 1024L
         const val MAX_SKILL_BYTES = 512 * 1024L
         const val MAX_TOOLKIT_BYTES = 512 * 1024L
-        const val MAX_QUERY_LIMIT = 500
         val SLUG_PATTERN = Regex("^[a-z0-9]+(?:-[a-z0-9]+)*$")
         val VERSION_PATTERN = Regex("^[0-9]+(?:\\.[0-9]+){0,2}(?:[-+][A-Za-z0-9.-]+)?$")
         val PLUGIN_ID_PATTERN = Regex("^local\\.project\\.[a-z0-9]+(?:-[a-z0-9]+)*$")

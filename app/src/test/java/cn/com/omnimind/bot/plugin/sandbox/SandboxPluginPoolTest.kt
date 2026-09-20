@@ -12,6 +12,90 @@ import org.junit.Test
 
 class SandboxPluginPoolTest {
     @Test
+    fun `project check and publish reject SQLite configuration that runtime ignores`() {
+        for (field in listOf("_limit", "_order_by", "check_in_date", "sql", "values")) {
+            val source = projectSource()
+            val file = source.resolve("toolkit.json")
+            file.writeText(file.readText().replace(
+                "\"table\": \"workouts\"",
+                "\"table\": \"workouts\", \"$field\": \"ignored\"",
+            ))
+            val pool = SandboxPluginPool(
+                rootDirectory = Files.createTempDirectory("sandbox-invalid-config").toFile(),
+                databaseFactory = InMemoryDatabaseFactory(),
+            )
+            for (command in listOf(
+                SandboxPluginCommand.CheckProject(source, projectManifest()),
+                SandboxPluginCommand.PublishProject(source, projectManifest()),
+            )) {
+                val result = pool.execute(command)
+                assertFalse("Must reject ignored config $field", result.success)
+                assertTrue(result.errorMessage.orEmpty().contains(field))
+                assertTrue(result.errorMessage.orEmpty().contains("tool arguments"))
+            }
+        }
+    }
+
+    @Test
+    fun `installed SQLite projects remain loadable but invalid republish preserves their data`() = runBlocking {
+        val root = Files.createTempDirectory("sandbox-legacy-config").toFile()
+        val pool = SandboxPluginPool(rootDirectory = root, databaseFactory = InMemoryDatabaseFactory())
+        val source = projectSource()
+        val published = pool.execute(SandboxPluginCommand.PublishProject(source, projectManifest())).requireSuccess()
+        val id = published.payload.getValue("pluginId") as String
+        pool.execute(SandboxPluginCommand.Insert(id, "workouts", mapOf("exercise" to "walk", "weight" to 10))).requireSuccess()
+        // Simulate a project published before source validation was introduced.
+        val installed = root.resolve(id).resolve("toolkit.json")
+        installed.writeText(installed.readText().replace(
+            "\"table\": \"workouts\"", "\"table\": \"workouts\", \"_limit\": 500",
+        ))
+        assertTrue(pool.createProviders().single().create().contribution().toolGroups.isNotEmpty())
+        source.resolve("toolkit.json").writeText(installed.readText())
+        assertFalse(pool.execute(SandboxPluginCommand.PublishProject(source, projectManifest())).success)
+        val rows = pool.execute(SandboxPluginCommand.Query(id, "workouts")).requireSuccess().payload["rows"] as List<*>
+        assertEquals(1, rows.size)
+        assertEquals("walk", (rows.single() as Map<*, *>)["exercise"])
+    }
+
+    @Test
+    fun `history pagination reads beyond 500 without losing rows and rejects invalid bounds`() = runBlocking {
+        val pool = SandboxPluginPool(
+            rootDirectory = Files.createTempDirectory("sandbox-pagination").toFile(),
+            databaseFactory = InMemoryDatabaseFactory(),
+        )
+        val published = pool.execute(
+            SandboxPluginCommand.PublishProject(projectSource(), projectManifest()),
+        ).requireSuccess()
+        val id = published.payload.getValue("pluginId") as String
+        repeat(601) { index ->
+            pool.execute(SandboxPluginCommand.Insert(id, "workouts", mapOf("exercise" to "walk", "weight" to index))).requireSuccess()
+        }
+        fun query(limit: Int, offset: Int = 0, order: String? = "id ASC") =
+            pool.execute(SandboxPluginCommand.Query(id, "workouts", orderBy = order, limit = limit, offset = offset))
+        val first = query(500).requireSuccess().payload["rows"] as List<*>
+        val second = query(500, 500).requireSuccess().payload["rows"] as List<*>
+        assertEquals(500, first.size)
+        assertEquals(101, second.size)
+        val viaTool = pool.executeTool(id, "fitness_beast_list_workouts", JsonObject(mapOf(
+            "_limit" to JsonPrimitive(500), "_offset" to JsonPrimitive(500),
+            "_order_by" to JsonPrimitive("id ASC"), "exercise" to JsonPrimitive("walk"),
+        )))
+        assertEquals(second, viaTool["rows"])
+        val overflow = runCatching {
+            pool.executeTool(id, "fitness_beast_list_workouts", JsonObject(mapOf(
+                "_offset" to JsonPrimitive(4294967296L), "_order_by" to JsonPrimitive("id ASC"),
+            )))
+        }.exceptionOrNull()
+        assertTrue(overflow?.message.orEmpty().contains("_offset must be an integer"))
+        assertEquals((1L..601L).toList(), (first + second).map { (it as Map<*, *>)["id"] })
+        assertEquals(0, query(500, 601).requireSuccess().payload["count"])
+        assertFalse(query(501).success)
+        assertFalse(query(0).success)
+        assertFalse(query(100, -1).success)
+        assertFalse(query(100, 100, null).success)
+    }
+
+    @Test
     fun `vibe project without standalone app entry is rejected`() {
         val root = Files.createTempDirectory("sandbox-xiaowan-skill").toFile()
         val source = Files.createTempDirectory("xiaowan-skill-source").toFile().apply {
@@ -97,6 +181,17 @@ class SandboxPluginPoolTest {
         val pluginId = published.payload.getValue("pluginId") as String
 
         assertEquals("local.project.fitness-beast", pluginId)
+        val businessTools = published.payload["businessTools"] as List<*>
+        assertEquals(
+            listOf("fitness_beast_record_workout", "fitness_beast_list_workouts"),
+            businessTools.map { (it as Map<*, *>)["name"] },
+        )
+        assertEquals("record_workout", (businessTools.first() as Map<*, *>)["dashboardName"])
+        assertEquals("object", ((businessTools.first() as Map<*, *>)["parameters"] as Map<*, *>)["type"])
+        val validation = published.payload["runtimeValidation"] as Map<*, *>
+        assertEquals("not_run", validation["status"])
+        assertEquals("current_request_catalog", validation["toolAvailability"])
+        assertFalse(validation.containsKey("discoveryTool"))
         assertTrue((published.payload.getValue("entryPath") as String).endsWith("index.html"))
         assertTrue((published.payload.getValue("iconPath") as String).endsWith("icon.svg"))
         assertEquals(pluginId, pool.createProviders().single().descriptor.id)
@@ -127,6 +222,9 @@ class SandboxPluginPoolTest {
         assertFalse(installedBridge.contains("call('app.send'"))
         assertFalse(installedBridge.contains("call('app.cancel'"))
         assertFalse(installedBridge.contains("call('app.getState'"))
+        assertEquals(listOf(SandboxProjectPermission.DATABASE), pool.dashboard(pluginId)["permissions"])
+        assertEquals(root.resolve(pluginId).canonicalPath, pool.dashboard(pluginId)["rootPath"])
+        assertEquals("true", pool.createProviders().single().descriptor.presentation["hasApp"].toString())
 
         val inserted = pool.executeTool(
             pluginId = pluginId,
@@ -546,6 +644,7 @@ class SandboxPluginPoolTest {
                             "properties": {
                               "exercise": {"type": "string"},
                               "_limit": {"type": "integer", "minimum": 1, "maximum": 500},
+                              "_offset": {"type": "integer", "minimum": 0},
                               "_order_by": {"type": "string"}
                             },
                             "additionalProperties": false
@@ -630,10 +729,12 @@ class SandboxPluginPoolTest {
             where: Map<String, Any?>,
             orderBy: String?,
             limit: Int,
+            offset: Int,
         ): List<Map<String, Any?>> {
             check(initialized)
             return rows.getValue(table)
                 .filter { row -> where.all { (column, value) -> row[column] == value } }
+                .drop(offset)
                 .take(limit)
         }
 

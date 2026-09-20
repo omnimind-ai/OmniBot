@@ -1,5 +1,6 @@
 import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
+import java.security.MessageDigest
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -68,6 +69,13 @@ require(omniFlowPackagedArchivePath.startsWith("runtime-components/")) {
 val omniFlowBaselineArchive = rootProject.file(
     "artifacts/${File(omniFlowPackagedArchivePath).name}",
 )
+val omniFlowArchiveOverride = prop("OOB_OMNIFLOW_COMPONENT_ARCHIVE")
+val omniFlowArchiveOverrideSha256 = prop("OOB_OMNIFLOW_COMPONENT_ARCHIVE_SHA256").lowercase()
+require(omniFlowArchiveOverride.isBlank() == omniFlowArchiveOverrideSha256.isBlank()) {
+    "Provide both OOB_OMNIFLOW_COMPONENT_ARCHIVE and OOB_OMNIFLOW_COMPONENT_ARCHIVE_SHA256"
+}
+val omniFlowPackagedArchive = if (omniFlowArchiveOverride.isBlank()) omniFlowBaselineArchive
+    else rootProject.file(omniFlowArchiveOverride)
 val pluginAssetsRootDir = layout.buildDirectory.dir("generated/plugin_assets/$omnibotProfile")
     .get().asFile
 val webChatPackageJson = File(webChatSourceDir, "package.json")
@@ -126,18 +134,26 @@ val syncPluginAssets by tasks.registering(Sync::class) {
     group = "plugin packaging"
     description = "Generate the packaged plugin catalog for the selected build profile."
     inputs.file(pluginCatalogFile)
-    inputs.file(omniFlowBaselineArchive)
+    inputs.file(omniFlowPackagedArchive)
+    inputs.property("omniFlowArchiveOverrideSha256", omniFlowArchiveOverrideSha256)
     inputs.property("omnibotProfile", omnibotProfile)
     from(pluginSourceDir)
-    from(omniFlowBaselineArchive) {
+    from(omniFlowPackagedArchive) {
         into("runtime-components")
+        rename { File(omniFlowPackagedArchivePath).name }
     }
     into(pluginAssetsRootDir)
     exclude("catalog.v1.json")
     if (!isInvestorProfile) {
-        exclude("omni-vlm-lite/**", "vibe-project/**", "omnilink-agent/**")
+        exclude("omni-vlm-lite/**", "omnilink-agent/**")
     }
     doFirst {
+        if (omniFlowArchiveOverride.isNotBlank()) {
+            val digest = MessageDigest.getInstance("SHA-256")
+                .digest(omniFlowPackagedArchive.readBytes())
+                .joinToString("") { "%02x".format(it) }
+            require(digest == omniFlowArchiveOverrideSha256) { "OmniFlow component checksum mismatch" }
+        }
         delete(pluginAssetsRootDir)
     }
     doLast {
@@ -151,6 +167,14 @@ val syncPluginAssets by tasks.registering(Sync::class) {
             val profiles = plugin["profiles"] as? List<String>
                 ?: listOf("main", "investor")
             omnibotProfile in profiles
+        }.map { plugin ->
+            if (plugin["id"] != "com.omnimind.omni-vlm-lite" || omniFlowArchiveOverride.isBlank()) plugin
+            else LinkedHashMap(plugin).apply {
+                @Suppress("UNCHECKED_CAST")
+                val runtime = LinkedHashMap(plugin["runtimeSkill"] as Map<String, Any?>)
+                runtime["packagedArchiveSha256"] = omniFlowArchiveOverrideSha256
+                this["runtimeSkill"] = runtime
+            }
         }
         val profileCatalog = LinkedHashMap(source).apply {
             this["plugins"] = filteredPlugins
@@ -161,7 +185,19 @@ val syncPluginAssets by tasks.registering(Sync::class) {
     }
 }
 
+// JVM extraction tests use the same font resources shipped by the pinned Android parser.
+val pdfParserTestAssets by configurations.creating
+val unpackPdfParserTestAssets = tasks.register<Sync>("unpackPdfParserTestAssets") {
+    from({ zipTree(pdfParserTestAssets.singleFile) }) { include("assets/**") }
+    into(layout.buildDirectory.dir("generated/pdfParserTestAssets"))
+}
+
+tasks.matching { it.name.endsWith("UnitTestJavaRes") }.configureEach {
+    dependsOn(unpackPdfParserTestAssets)
+}
+
 android {
+    sourceSets.getByName("test").resources.srcDir(layout.buildDirectory.dir("generated/pdfParserTestAssets").get().asFile)
     namespace = "cn.com.omnimind.bot"
     compileSdk = 37
 
@@ -169,10 +205,10 @@ android {
         applicationId = "cn.com.omnimind.bot"
         minSdk = 29
         targetSdk = 36
-        // Release 0.6.1. Keep the Android version code monotonic so the APK
+        // Keep the Android version code monotonic so the APK
         // can be installed as an update over the previously tested build.
-        versionCode = 16
-        versionName = "0.6.3"
+        versionCode = 17
+        versionName = "0.6.3.1"
         buildConfigField("String", "IMAGE_BASE_URL", buildConfigString(omnibotImageBaseUrl))
         buildConfigField("String", "IMAGE_MODEL", buildConfigString(omnibotImageModel))
         buildConfigField("String", "IMAGE_API_KEY", buildConfigString(omnibotImageApiKey))
@@ -304,6 +340,7 @@ android {
     }
     testOptions {
         unitTests.isReturnDefaultValues = true
+        unitTests.all { it.dependsOn(unpackPdfParserTestAssets) }
     }
 
     packaging {
@@ -314,6 +351,7 @@ android {
             )
         }
         resources {
+            merges += setOf("META-INF/LICENSE.md", "META-INF/NOTICE.md")
             excludes += setOf(
                 "META-INF/INDEX.LIST",
                 "META-INF/io.netty.versions.properties",
@@ -372,6 +410,12 @@ dependencies {
 
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidsvg)
+    implementation("com.tom-roush:pdfbox-android:2.0.27.0") {
+        // Reuse the application's current BC family; the legacy family duplicates classes.
+        exclude(group = "org.bouncycastle")
+    }
+    implementation("org.bouncycastle:bcpkix-jdk18on:1.85")
+    pdfParserTestAssets("com.tom-roush:pdfbox-android:2.0.27.0@aar")
     implementation(libs.androidx.documentfile)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.livedata.ktx)
