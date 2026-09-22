@@ -15,11 +15,15 @@ internal class LegacyHomeNavigator(private val activity: Activity) {
             is LegacyDestination.Conversation -> Uri.Builder().path("/home/chat")
                 .appendQueryParameter("conversationId", destination.id.toString())
                 .appendQueryParameter("mode", destination.mode)
+                .apply { destination.agentId?.let { appendQueryParameter("agentId", it) } }
                 .appendQueryParameter("requestKey", UUID.randomUUID().toString()).build().toString()
             is LegacyDestination.NewConversation -> Uri.Builder().path("/home/chat")
                 .appendQueryParameter("conversationId", "new")
                 .appendQueryParameter("requestKey", UUID.randomUUID().toString())
                 .appendQueryParameter("nativeDraft", destination.draft).build().toString()
+            is LegacyDestination.TerminalPackage -> Uri.Builder().path("/home/termux_setting")
+                .apply { if (destination.packageId.isNotBlank()) appendQueryParameter("focus", destination.packageId) }
+                .build().toString()
             is Page -> when (destination) {
                 Page.Account -> "/my/account"
                 Page.ModelProviders -> "/home/model_provider_setting"
@@ -27,14 +31,12 @@ internal class LegacyHomeNavigator(private val activity: Activity) {
                 Page.WorkspaceMemory -> "/home/workspace_memory_setting"
                 Page.Agents -> "/home/agent_mode_setting"
                 Page.Terminal -> "/home/termux_setting"
-                Page.LocalService -> "/home/settings"
                 Page.McpTools -> "/home/mcp_tools"
                 Page.Appearance -> "/home/background_setting"
                 Page.Miscellaneous -> "/home/experience_misc_setting"
                 Page.Permissions -> "/home/authorize_setting"
                 Page.Storage -> "/home/storage_usage"
                 Page.About -> "/my/about"
-                Page.Archive -> "/home/archived_conversations"
                 Page.Memory -> "/memory/memory_center_page"
                 Page.Plugins -> "/home/plugin_market"
                 Page.Skills -> "/home/skill_store"

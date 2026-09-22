@@ -1,6 +1,6 @@
 # Icon attribution
 
-Except for `omni_menu.xml` and `omni_settings.xml` (existing OmniBot asset geometry), the `omni_*.xml` vector drawables reproduce Lucide 0.468.0 SVG geometry from https://github.com/lucide-icons/lucide/tree/0.468.0/icons . They use the same icon family as the Flutter UI.
+Except for `omni_menu.xml`, `omni_settings.xml`, and `omni_brand_*.xml` (existing OmniBot asset geometry), the `omni_*.xml` vector drawables reproduce Lucide 0.468.0 SVG geometry from https://github.com/lucide-icons/lucide/tree/0.468.0/icons . They use the same icon family as the Flutter UI.
 
 ISC License
 
@@ -17,3 +17,5 @@ ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
 WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
 ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
+The brand vectors preserve the existing `ui/assets/provider_icons/moonshot.svg` and `deepseek.svg` paths, attributed to Lobe Icons in `ui/lib/widgets/agent_brand_icon.dart` (https://github.com/lobehub/lobe-icons). They use the same blue tint as the Flutter widget.

@@ -5,6 +5,8 @@
 Preserve OmniBot's existing appearance and behavior while moving its UI to Kotlin
 and Jetpack Compose. Miuix provides navigation, gesture handling, popup hosting,
 and suitable controls; its default visual style does not replace OmniBot's design.
+Keep static appearance aligned with Flutter; use the library's native motion and
+gesture behavior rather than reproducing Flutter transition machinery.
 
 The first slice is **Home → Drawer → Settings**. `:native-ui` contains its UI and
 serializable `miuix-nav` routes. `app/ui/nativehome` adapts existing repositories
@@ -29,11 +31,13 @@ database migration, or new preference namespace is required.
 LauncherActivity
   └─ NativeHomeActivity
       ├─ NativeHomeViewModel → NativeHomeRepository
-      │   ├─ existing Room ConversationDao
+      │   ├─ ConversationDomainService + Room ConversationDao observation
       │   ├─ existing FlutterSharedPreferences (read compatibility)
+      │   ├─ WorkspaceScheduledTaskScheduler (sidebar task relationships)
       │   └─ existing McpServerManager
+      ├─ NativeWebActionRepository → OmniPluginHost (metadata-driven actions)
       ├─ :native-ui / NativeHomeApp
-      │   └─ one saved miuix-nav stack: Home → Settings
+      │   └─ one saved miuix-nav stack: Home → Settings / Archive
       └─ LegacyHomeNavigator → MainActivity → existing Flutter page
 ```
 
@@ -42,9 +46,18 @@ LauncherActivity
 - The Activity collects state with `collectAsStateWithLifecycle`; its ViewModel
   survives configuration changes. Room observes the existing history table.
   Preference observation unregisters its listener when collection ends.
-- Miuix owns page transition state, saved route state, and predictive back. The
-  existing predictive-back preference controls progress delivery as well as
-  transition choice. Drawer state is scoped to the home entry.
+- Miuix owns page transitions, saved route state, and predictive-back commit/cancel.
+  `NavDisplay` uses its default transition and dimming; `rememberNavSystemCornerRadius`
+  supplies the device corner radius. There is no custom animation, detached event
+  dispatcher, or Activity back gate in the native home.
+- Miuix 0.9.4 does not provide a side drawer. The existing AndroidX
+  `ModalDrawerSheet(drawerState = ...)` overload owns its own predictive-back
+  handling; do not add a second `BackHandler` around it. At the root, Android owns
+  back-to-home. Drawer state remains scoped to the home entry.
+- The legacy `flutter.predictive_back_enabled` preference continues to apply to
+  Flutter and the terminal during coexistence. Native home consistently uses
+  library/system back behavior, as requested for this migration. Do not delete or
+  rewrite the stored preference; retire its UI when its remaining consumers move.
 - Kotlin/JVM 21 is required for Miuix's public inline navigation DSL. Versions are
   centralized in the existing catalog; Miuix UI and nav are pinned to 0.9.4.
 - Android resources carry Chinese/English text and licensed Lucide vectors.
@@ -101,12 +114,13 @@ random greeting selection out of pixel comparisons.
   chat input. Full input/voice/attachments, agent selection, workspace switching,
   pet actions, backgrounds, greeting placement/rotation and prompt icons still need
   their owning feature migrated and compared.
-- Drawer currently supports the live list, pin ordering, title/last-message search,
-  selecting a conversation, archive entry and six footer destinations. Date/mode
-  sections, scheduled children expansion, message-content search, swipe actions,
-  image previews and Agent Web quick actions remain to be migrated.
-- Settings overview and MCP toggle are native. Detail pages, including the local
-  service detail sheet, still use the existing feature pages. Workspace-memory
+- Drawer supports the live list, scheduled-parent/child groups, pinned/date/mode
+  sections, persisted expansion, title/last-message search, selection with the
+  resolved Harness identity, archive/restore and Agent Web quick actions. Full
+  message-content search, image previews, rename/delete/copy menus and remaining
+  visual differences still need migration/acceptance.
+- Settings overview, MCP toggle and local-service detail sheet are native. Other
+  detail pages still use the existing feature pages. Workspace-memory
   status currently uses the same persisted initial-render cache as Flutter.
 - Native home must gain the launch/foreground behaviors currently owned by
   MainActivity (startup conversation preference, terminal auto-start, task/notification
@@ -117,6 +131,94 @@ random greeting selection out of pixel comparisons.
   owner. Remove Flutter bootstrap/channels/build tooling only after the last owner
   has moved.
 
+## Next migration batches
+
+Finish complete user flows and remove their compatibility mappings as they move.
+The order below follows the actual owners in this repository, not page size alone.
+
+| Order | Scope | Existing owner / prerequisite | Completion boundary |
+| --- | --- | --- | --- |
+| 1 | Finish Home → Drawer → Settings; migrate the local-service detail sheet | `HomeDrawer` currently lacks date/mode groups, scheduled-child expansion, swipe actions and Agent Web quick actions. `McpServerManager` already owns service state and token operations. | Complete real drawer actions and use Miuix `OverlayBottomSheet` for address/token/copy/refresh. Remove `Page.LocalService → /home/settings`; tapping the row must not open a second settings overview. |
+| 2 | About/update and permission pages | `AppUpdateManager`, `SpecialPermissionChannel`, and existing permission/platform helpers | Call native owners directly; extract platform operations from a channel where necessary. Use Miuix dialogs/sheets for confirmation and status. Keep update-source selection and permission-result refresh. |
+| 3 | Appearance, miscellaneous, and home preferences | `AppThemeController`, `AppLocaleController`, `HomeGreetingSettingsService`, `AppBackgroundService`, `TaskRuntimeSettings` | Establish one preferences owner with a temporary Flutter reader before enabling Kotlin writes. Migrate theme/language, home prompts, backgrounds and system settings together with their effects. |
+| 4 | Storage management, providers, scene models, MCP/plugin settings, Agent configuration | Storage analysis/cleanup currently lives inside `StorageUsageChannel`; provider/model resolution and plugin runtime already have native owners. | Extract storage operations into a reusable repository/service, leaving the channel as an adapter. Reuse configured provider resolution and plugin capabilities; do not duplicate them in page ViewModels. |
+| 5 | Chat, composer, tool/approval rendering and conversation runtime | The canonical ACP lifecycle and the single reducer/coordinator described above | Move projection ownership with history/identity/reconnect behavior intact. Do not retain a Dart reducer and add a second Kotlin reducer for the same session. |
+| 6 | Remove Flutter | All feature pages and lifecycle owners have migrated | Delete obsolete routes/channels, engine initialization and Flutter build dependencies. Enable the native entry by default only after the remaining launch behavior and visual checks are complete. |
+
+The bounded Goal below implements the core drawer actions and local-service
+bottom sheet from batch 1. Later rows are a roadmap, not authorization to keep
+working after this Goal's stopping condition.
+
+Before expanding the home surface, correct its provisional action wiring:
+`HomeScreen` currently opens a new chat for the pet button, opens Agent settings
+for the agent selector, and maps Workspace to `/home/chat`. These are navigation
+placeholders, not migrated feature behavior. Connect each to its real owner or
+keep the feature inside the compatibility screen until it is migrated.
+
+Preference migration needs special care: Flutter's `SharedPreferences` instance
+and Riverpod controllers retain in-memory state. Writing the same keys from
+Kotlin alone will not update that state. Make the compatibility entry refresh
+those existing readers from the chosen owner; do not add a general event bus or
+another settings store. Preserve values such as `language_option = zhHans`.
+
+Use Miuix controls before writing interactive components. Preserve OmniBot's
+palette, typography, assets and page spacing through parameters or small visual
+wrappers. Check geometry before replacing the remaining custom `CompactSwitch`:
+its Flutter reference is 32 × 18.67dp, while Miuix 0.9.4's switch is 49 × 28dp.
+Do not hide a visual mismatch behind a scaled gesture target, or copy Miuix's
+animation/gesture internals just to change dimensions.
+
+## Bounded Goal checkpoint and stop condition
+
+This Goal ends after the following source implementation and hand-off. It does
+not proceed into About, permissions, appearance, provider configuration or chat.
+
+- Drawer grouping projects existing Conversation identities; scheduled groups
+  use the scheduler's existing Flutter-compatible storage reader. Expansion keys
+  remain compatible with Flutter. Archive/restore has a native route, library swipe
+  handling and a long-press Miuix sheet; the legacy archive-page mapping is removed.
+- History archiving uses `ConversationDomainService.setConversationArchived`.
+  Its update now changes only archival metadata, preserving concurrent message
+  counts/checkpoints. **Native archiving changes history visibility; it does not
+  close or cancel ACP sessions.** The old Dart helper's best-effort legacy session
+  archival/selection cleanup is not reimplemented as another native lifecycle.
+- Web actions are discovered by placement metadata. Status and stop IDs are read
+  from each plugin definition. There is no polling loop, automatic start, automatic
+  stop or manufactured ACP turn. Missing runtime/provider/model results return to
+  the existing focused configuration page; URLs/tokens stay in the plugin host.
+- Local-service details use `OverlayBottomSheet` under Miuix `Scaffold`. The
+  manager owns enable/disable and token rotation. Token values remain in ephemeral
+  view state, are redacted from its string representation, and clipboard copies
+  are marked sensitive on supported Android versions. The old mapping back into
+  Flutter's settings overview is removed.
+- Only source/resource checks were performed in this Goal. Regression fixtures
+  were updated, but no build, test suite, emulator or device action was run. Full
+  functionality and visual 1:1 acceptance remain for the maintainer.
+
+Manual hand-off checklist:
+
+1. With scheduled parents/children, pinned threads and pure-chat records, verify
+   ordering, counts, folding, rotation/relaunch restoration and no duplicate rows.
+   Delete a schedule through the existing task page and verify its history remains
+   discoverable in the ordinary date groups.
+2. Archive/restore via swipe (both habitual-hand settings), long press and
+   accessibility actions. Check the native archive page, search, the seven-day
+   preference, and an actively running conversation. Archiving must not replay,
+   cancel or overwrite the running turn. Reopening must select the stored Harness.
+3. Verify Web actions only appear for enabled plugin capabilities. Check stopped,
+   starting/running, explicit long-press stop, failure feedback and the missing
+   runtime/provider/model configuration destinations. Returning from the browser
+   should refresh actual status.
+4. Enable the local service; open details, copy address/token, refresh the token,
+   and confirm the displayed/copied value against the service. Exercise busy and
+   failure states, sheet drag/back cancellation, rotation and light/dark themes.
+5. Compare the same fixtures with Flutter for typography, spacing, clipping,
+   scrolling, brand icons and system insets. This checkpoint does not certify
+   pixel equality or migrate unrelated home/composer controls.
+
+After this hand-off, mark the Goal complete and stop. Further migration requires
+another user instruction.
+
 ## Verification
 
 Current checkpoint (2026-09-22): the five focused Flutter router tests passed.
@@ -124,6 +226,10 @@ Full host compilation, native unit/instrumentation tests, and screenshot compari
 have **not completed**. Build/test processes and the emulator were stopped at the
 maintainer's request because of machine load; subsequent verification is manual.
 The commands below are provided for the maintainer, not a record of passed checks.
+The subsequent navigation simplification was inspected in source only; no build,
+test or emulator was started. Manual checks should cover drawer back cancel/commit,
+Settings back cancel/commit, toolbar back, root back-to-home, saved route restoration,
+and devices with both rounded and square screens.
 
 ```sh
 ./gradlew :native-ui:testDebugUnitTest

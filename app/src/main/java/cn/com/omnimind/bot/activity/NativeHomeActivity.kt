@@ -14,11 +14,10 @@ import androidx.compose.runtime.getValue
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.com.omnimind.bot.ui.nativehome.LegacyHomeNavigator
-import cn.com.omnimind.bot.ui.nativehome.NativeHomeRepository
 import cn.com.omnimind.bot.ui.nativehome.NativeHomeViewModel
 import cn.com.omnimind.bot.ui.nativehome.resolveNativeHomeLocale
-import cn.com.omnimind.bot.util.PredictiveBackGate
 import cn.com.omnimind.nativeui.NativeHomeApp
+import cn.com.omnimind.nativeui.NativeHomeActions
 import cn.com.omnimind.nativeui.ThemePreference
 
 /** Opt-in host for the first native slice. MainActivity still owns the Flutter compatibility pages. */
@@ -39,9 +38,17 @@ class NativeHomeActivity : ComponentActivity() {
         setTheme(StartupThemeResolver.resolveSplashTheme(this))
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        PredictiveBackGate.install(this)
-        viewModel = ViewModelProvider(this, NativeHomeViewModel.Factory(NativeHomeRepository(this)))[NativeHomeViewModel::class.java]
+        viewModel = ViewModelProvider(this, NativeHomeViewModel.Factory(this))[NativeHomeViewModel::class.java]
         val navigator = LegacyHomeNavigator(this)
+        val actions = NativeHomeActions(
+            open = navigator::open,
+            setLocalServiceEnabled = viewModel::setLocalServiceEnabled,
+            refreshLocalServiceToken = viewModel::refreshLocalServiceToken,
+            setArchived = viewModel::setArchived,
+            setSectionExpanded = viewModel::setSectionExpanded,
+            invokeWebAction = viewModel::invokeWebAction,
+            refresh = viewModel::refresh,
+        )
         setContent {
             val state by viewModel.state.collectAsStateWithLifecycle()
             val systemDark = isSystemInDarkTheme()
@@ -58,7 +65,13 @@ class NativeHomeActivity : ComponentActivity() {
             LaunchedEffect(state.error) {
                 state.error?.let { Toast.makeText(this@NativeHomeActivity, it, Toast.LENGTH_LONG).show() }
             }
-            NativeHomeApp(state, navigator::open, viewModel::setLocalServiceEnabled, viewModel::refresh)
+            LaunchedEffect(state.pendingDestination) {
+                state.pendingDestination?.let {
+                    viewModel.consumeDestination()
+                    navigator.open(it)
+                }
+            }
+            NativeHomeApp(state, actions)
         }
     }
 

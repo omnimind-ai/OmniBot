@@ -5,19 +5,16 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
-import android.util.Base64
 import cn.com.omnimind.baselib.database.Conversation
 import cn.com.omnimind.baselib.database.DatabaseHelper
+import cn.com.omnimind.baselib.util.LegacyFlutterPreferences
 import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.agent.runtime.AgentRuntimeManager
 import cn.com.omnimind.bot.webchat.WebAgentRunBridge
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.runBlocking
-import org.json.JSONArray
 import org.json.JSONObject
-import java.io.ByteArrayInputStream
-import java.io.ObjectInputStream
 import java.time.LocalDateTime
 import java.time.ZoneId
 
@@ -35,8 +32,6 @@ class WorkspaceScheduledTaskScheduler(
         private const val FLUTTER_PREFS_NAME = "FlutterSharedPreferences"
         private const val FLUTTER_PREF_PREFIX = "flutter."
         private const val FLUTTER_SCHEDULED_TASKS_KEY = "${FLUTTER_PREF_PREFIX}scheduled_tasks"
-        private const val LIST_PREFIX = "VGhpcyBpcyB0aGUgcHJlZml4IGZvciBhIGxpc3Qu"
-        private const val JSON_LIST_PREFIX = "$LIST_PREFIX!"
         private const val SUBAGENT_MODE = "subagent"
     }
 
@@ -370,16 +365,15 @@ class WorkspaceScheduledTaskScheduler(
         )
     }
 
+    /** Sidebar compatibility read; decoding stays with the existing scheduler storage adapter. */
+    fun listConversationTasks(): List<Map<String, Any?>> = loadFlutterScheduledTaskMaps().filter {
+        it["targetKind"] == SUBAGENT_MODE && !it["subagentPrompt"]?.toString().isNullOrBlank()
+    }
+
     private fun loadFlutterScheduledTaskMaps(): MutableList<MutableMap<String, Any?>> {
-        val flutterPrefs =
-            appContext.getSharedPreferences(FLUTTER_PREFS_NAME, Context.MODE_PRIVATE)
-        val raw = flutterPrefs.getString(FLUTTER_SCHEDULED_TASKS_KEY, null).orEmpty().trim()
-        if (raw.isEmpty()) {
-            val legacySet = flutterPrefs.getStringSet(FLUTTER_SCHEDULED_TASKS_KEY, null)
-            if (legacySet.isNullOrEmpty()) {
-                return mutableListOf()
-            }
-            return legacySet.mapNotNull { item ->
+        val flutterPrefs = appContext.getSharedPreferences(FLUTTER_PREFS_NAME, Context.MODE_PRIVATE)
+        return LegacyFlutterPreferences.readStringList(flutterPrefs, FLUTTER_SCHEDULED_TASKS_KEY)
+            .mapNotNull { item ->
                 runCatching { JSONObject(item) }.getOrNull()?.let { json ->
                     val map = mutableMapOf<String, Any?>()
                     json.keys().forEach { key ->
@@ -389,51 +383,13 @@ class WorkspaceScheduledTaskScheduler(
                     map
                 }
             }.toMutableList()
-        }
-
-        val encodedList = when {
-            raw.startsWith(JSON_LIST_PREFIX) -> {
-                val jsonPayload = raw.removePrefix(JSON_LIST_PREFIX)
-                val jsonArray = runCatching { JSONArray(jsonPayload) }.getOrElse { JSONArray() }
-                buildList {
-                    for (index in 0 until jsonArray.length()) {
-                        add(jsonArray.optString(index))
-                    }
-                }
-            }
-
-            raw.startsWith(LIST_PREFIX) -> decodeLegacyStringList(raw.removePrefix(LIST_PREFIX))
-            else -> emptyList()
-        }
-        return encodedList.mapNotNull { item ->
-            runCatching { JSONObject(item) }.getOrNull()?.let { json ->
-                val map = mutableMapOf<String, Any?>()
-                json.keys().forEach { key ->
-                    val value = json.opt(key)
-                    map[key] = if (value == JSONObject.NULL) null else value
-                }
-                map
-            }
-        }.toMutableList()
-    }
-
-    private fun decodeLegacyStringList(encoded: String): List<String> {
-        return runCatching {
-            ObjectInputStream(ByteArrayInputStream(Base64.decode(encoded, Base64.DEFAULT))).use {
-                @Suppress("UNCHECKED_CAST")
-                (it.readObject() as? List<Any?>).orEmpty().mapNotNull { item -> item?.toString() }
-            }
-        }.getOrElse {
-            OmniLog.w(TAG, "decode legacy flutter list failed: ${it.message}")
-            emptyList()
-        }
     }
 
     private fun writeFlutterScheduledTaskMaps(tasks: List<Map<String, Any?>>) {
         val flutterPrefs =
             appContext.getSharedPreferences(FLUTTER_PREFS_NAME, Context.MODE_PRIVATE)
         val rawList = tasks.map { task -> JSONObject(task).toString() }
-        val payload = JSON_LIST_PREFIX + JSONArray(rawList).toString()
+        val payload = LegacyFlutterPreferences.encodeStringList(rawList)
         flutterPrefs.edit().putString(FLUTTER_SCHEDULED_TASKS_KEY, payload).apply()
     }
 

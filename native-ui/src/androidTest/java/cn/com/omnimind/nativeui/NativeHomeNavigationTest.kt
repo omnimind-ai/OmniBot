@@ -21,7 +21,7 @@ class NativeHomeNavigationTest {
         val restoration = StateRestorationTester(compose)
         val state = mutableStateOf(NativeHomeState(loading = false))
         restoration.setContent {
-            NativeHomeApp(state.value, {}, { state.value = state.value.copy(localServiceEnabled = it) }, {})
+            NativeHomeApp(state.value, actions(setService = { state.value = state.value.copy(localServiceEnabled = it) }))
         }
         capture("home-light")
         compose.onNodeWithContentDescription(label(R.string.omni_open_drawer)).performClick()
@@ -43,13 +43,26 @@ class NativeHomeNavigationTest {
             NativeHomeApp(NativeHomeState(
                 loading = false,
                 conversations = listOf(ConversationSummary(42, "Saved thread", "", "agent", 1, false)),
-            ), opened::add, {}, {})
+            ), actions(open = { opened.add(it) }))
         }
         compose.onNodeWithContentDescription(label(R.string.omni_open_drawer)).performClick()
         compose.onNodeWithText("Saved thread").performClick()
         compose.waitForIdle()
         assertEquals(listOf(LegacyDestination.Conversation(42, "agent")), opened)
     }
+
+    private fun actions(
+        open: (LegacyDestination) -> Unit = {},
+        setService: (Boolean) -> Unit = {},
+    ) = NativeHomeActions(
+        open = open,
+        setLocalServiceEnabled = setService,
+        refreshLocalServiceToken = {},
+        setArchived = { _, _ -> },
+        setSectionExpanded = { _, _ -> },
+        invokeWebAction = { _, _ -> },
+        refresh = {},
+    )
 
     private fun capture(name: String) {
         compose.waitForIdle()

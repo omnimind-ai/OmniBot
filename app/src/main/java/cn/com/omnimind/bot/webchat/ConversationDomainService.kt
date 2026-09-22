@@ -323,13 +323,14 @@ class ConversationDomainService(
         conversationId: Long,
         archived: Boolean
     ): Map<String, Any?> {
-        val existing = DatabaseHelper.getConversationById(conversationId)
-            ?: throw IllegalArgumentException("Conversation not found")
-        val updated = existing.copy(
-            isArchived = archived,
-            updatedAt = System.currentTimeMillis()
+        // Change only archival metadata: a concurrently streaming turn still owns its items,
+        // counts and checkpoint. Archiving history is not an ACP terminal transition.
+        val changed = DatabaseHelper.getDatabase().conversationDao().setArchived(
+            conversationId, archived, System.currentTimeMillis()
         )
-        DatabaseHelper.updateConversation(updated)
+        require(changed > 0) { "Conversation not found" }
+        val updated = DatabaseHelper.getConversationById(conversationId)
+            ?: throw IllegalArgumentException("Conversation not found")
         publishConversationEvent("conversation_updated", updated)
         return conversationToPayload(updated)
     }
