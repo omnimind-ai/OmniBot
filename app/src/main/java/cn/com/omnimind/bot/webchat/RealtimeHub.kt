@@ -32,6 +32,19 @@ object RealtimeHub {
 
     fun stream(): SharedFlow<RealtimeEvent> = events.asSharedFlow()
 
+    /** Full mirror snapshots have no consumer while WebChat is disconnected.
+     * A new client loads its initial state through the conversation API; the
+     * event stream has no replay. Keep observed snapshots on the existing
+     * publication path so event ordering and wire payloads remain unchanged.
+     */
+    suspend fun publishSnapshot(
+        event: String,
+        data: suspend () -> Map<String, Any?>,
+    ) {
+        if (events.subscriptionCount.value == 0) return
+        publish(event, data())
+    }
+
     fun publish(
         event: String,
         data: Map<String, Any?> = emptyMap()

@@ -620,15 +620,13 @@ class ConversationDomainService(
         conversationMode: String,
         reason: String = "messages_replaced"
     ) {
-        val messages = listConversationMessages(conversationId, conversationMode)
-        RealtimeHub.publish(
-            "messages_replaced",
+        RealtimeHub.publishSnapshot("messages_replaced") {
             mapOf(
                 "conversationId" to conversationId,
                 "mode" to conversationMode,
-                "messages" to messages
+                "messages" to listConversationMessages(conversationId, conversationMode)
             )
-        )
+        }
         FlutterChatSyncBridge.dispatchConversationMessagesChanged(
             conversationId = conversationId,
             mode = conversationMode,
