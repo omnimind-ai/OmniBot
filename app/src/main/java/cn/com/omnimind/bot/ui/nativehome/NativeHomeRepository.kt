@@ -43,7 +43,7 @@ internal class NativeHomeRepository(context: Context) {
     }.conflate()
 
     private val history = combine(
-        DatabaseHelper.getDatabase().conversationDao().observeAll(), refreshRevision,
+        DatabaseHelper.observeConversations(), refreshRevision,
     ) { _, _ ->
         if (preferences.getBoolean("flutter.recent_conversations_only_enabled", false)) {
             conversations.archiveConversationsUpdatedBefore(System.currentTimeMillis() - 7L * 24 * 60 * 60 * 1000)

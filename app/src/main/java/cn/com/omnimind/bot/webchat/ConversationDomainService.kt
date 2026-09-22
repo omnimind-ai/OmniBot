@@ -325,7 +325,7 @@ class ConversationDomainService(
     ): Map<String, Any?> {
         // Change only archival metadata: a concurrently streaming turn still owns its items,
         // counts and checkpoint. Archiving history is not an ACP terminal transition.
-        val changed = DatabaseHelper.getDatabase().conversationDao().setArchived(
+        val changed = DatabaseHelper.setConversationArchived(
             conversationId, archived, System.currentTimeMillis()
         )
         require(changed > 0) { "Conversation not found" }

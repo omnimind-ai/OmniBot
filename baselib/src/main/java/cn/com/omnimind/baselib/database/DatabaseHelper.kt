@@ -514,6 +514,13 @@ object DatabaseHelper {
         return getDatabase().conversationDao().getAll()
     }
 
+    /** Expose history changes without requiring callers to depend on Room's database types. */
+    fun observeConversations(): kotlinx.coroutines.flow.Flow<List<Conversation>> =
+        getDatabase().conversationDao().observeAll()
+
+    suspend fun setConversationArchived(id: Long, archived: Boolean, at: Long): Int =
+        getDatabase().conversationDao().setArchived(id, archived, at)
+
     suspend fun getUnarchivedConversations(): List<Conversation> {
         return getDatabase().conversationDao().getUnarchived()
     }
