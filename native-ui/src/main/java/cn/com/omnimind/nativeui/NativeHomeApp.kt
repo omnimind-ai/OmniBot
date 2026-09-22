@@ -34,6 +34,8 @@ internal sealed interface HomeRoute : NavKey {
     @Serializable data object Home : HomeRoute
     @Serializable data object Settings : HomeRoute
     @Serializable data object Archive : HomeRoute
+    @Serializable data object About : HomeRoute
+    @Serializable data object Permissions : HomeRoute
 }
 
 /** Miuix owns the saved page stack, transitions, and predictive back; Android owns back-to-home. */
@@ -41,6 +43,8 @@ internal sealed interface HomeRoute : NavKey {
 fun NativeHomeApp(
     state: NativeHomeState,
     actions: NativeHomeActions,
+    about: @Composable (onBack: () -> Unit) -> Unit,
+    permissions: @Composable (onBack: () -> Unit) -> Unit,
 ) {
     OmniTheme(state.theme) {
         val palette = LocalOmniPalette.current
@@ -65,8 +69,14 @@ fun NativeHomeApp(
                 ConversationArchiveScreen(state, actions) { backStack.removeLastOrNull() }
             }
             entry<HomeRoute.Settings> {
-                SettingsScreen(state, { backStack.removeLastOrNull() }, actions)
+                SettingsScreen(
+                    state, { backStack.removeLastOrNull() }, actions,
+                    onAbout = { backStack.add(HomeRoute.About) },
+                    onPermissions = { backStack.add(HomeRoute.Permissions) },
+                )
             }
+            entry<HomeRoute.About> { about { backStack.removeLastOrNull() } }
+            entry<HomeRoute.Permissions> { permissions { backStack.removeLastOrNull() } }
         }
     }
 }

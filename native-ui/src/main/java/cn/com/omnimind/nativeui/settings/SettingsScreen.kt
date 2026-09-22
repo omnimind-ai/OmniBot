@@ -47,6 +47,8 @@ private data class SettingItem(
 private sealed interface SettingDestination {
     data class Legacy(val page: Page) : SettingDestination
     data object LocalService : SettingDestination
+    data object About : SettingDestination
+    data object Permissions : SettingDestination
 }
 
 private data class SettingSection(@StringRes val title: Int, val items: List<SettingItem>)
@@ -72,9 +74,9 @@ private val sections = listOf(
         SettingItem(R.drawable.omni_settings_2, R.string.omni_misc_title, R.string.omni_misc_subtitle, SettingDestination.Legacy(Page.Miscellaneous)),
     )),
     SettingSection(R.string.omni_settings_section_permission_info, listOf(
-        SettingItem(R.drawable.omni_shield_check, R.string.omni_authorize_page_title, R.string.omni_permissions_subtitle, SettingDestination.Legacy(Page.Permissions)),
+        SettingItem(R.drawable.omni_shield_check, R.string.omni_authorize_page_title, R.string.omni_permissions_subtitle, SettingDestination.Permissions),
         SettingItem(R.drawable.omni_hard_drive, R.string.omni_storage_usage_title, R.string.omni_storage_usage_subtitle, SettingDestination.Legacy(Page.Storage)),
-        SettingItem(R.drawable.omni_info, R.string.omni_settings_about_title, destination = SettingDestination.Legacy(Page.About)),
+        SettingItem(R.drawable.omni_info, R.string.omni_settings_about_title, destination = SettingDestination.About),
     )),
 )
 
@@ -83,6 +85,8 @@ internal fun SettingsScreen(
     state: NativeHomeState,
     onBack: () -> Unit,
     actions: NativeHomeActions,
+    onAbout: () -> Unit,
+    onPermissions: () -> Unit,
 ) {
     val palette = LocalOmniPalette.current
     var showLocalService by rememberSaveable { mutableStateOf(false) }
@@ -100,7 +104,7 @@ internal fun SettingsScreen(
                 Column {
                     SectionTitle(stringResource(section.title), Modifier.padding(start = 4.dp, end = 4.dp, bottom = 10.dp))
                     section.items.forEachIndexed { itemIndex, item ->
-                        SettingRow(item, itemIndex == section.items.lastIndex, state, actions) { showLocalService = true }
+                        SettingRow(item, itemIndex == section.items.lastIndex, state, actions, onAbout, onPermissions) { showLocalService = true }
                         if (itemIndex < section.items.lastIndex) {
                             Box(Modifier.padding(start = 30.dp).fillMaxWidth().height(1.dp)
                                 .background(palette.border.copy(alpha = if (palette.dark) .5f else .78f)))
@@ -124,6 +128,8 @@ private fun SettingRow(
     isLast: Boolean,
     state: NativeHomeState,
     actions: NativeHomeActions,
+    onAbout: () -> Unit,
+    onPermissions: () -> Unit,
     onLocalServiceDetails: () -> Unit,
 ) {
     val palette = LocalOmniPalette.current
@@ -138,6 +144,8 @@ private fun SettingRow(
             .then(if (canOpen) Modifier.clickable(role = Role.Button) {
                 when (val destination = item.destination) {
                     SettingDestination.LocalService -> onLocalServiceDetails()
+                    SettingDestination.About -> onAbout()
+                    SettingDestination.Permissions -> onPermissions()
                     is SettingDestination.Legacy -> actions.open(destination.page)
                 }
             } else Modifier)

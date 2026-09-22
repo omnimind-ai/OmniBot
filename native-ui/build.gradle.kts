@@ -32,6 +32,7 @@ dependencies {
     implementation(libs.androidx.compose.foundation)
     implementation(libs.androidx.material3) // Modal drawer gesture/semantics only.
     implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.miuix.ui)
     implementation(libs.miuix.nav)

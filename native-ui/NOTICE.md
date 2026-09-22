@@ -19,3 +19,5 @@ ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
 OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 The brand vectors preserve the existing `ui/assets/provider_icons/moonshot.svg` and `deepseek.svg` paths, attributed to Lobe Icons in `ui/lib/widgets/agent_brand_icon.dart` (https://github.com/lobehub/lobe-icons). They use the same blue tint as the Flutter widget.
+
+`omni_about_logo.png` is an unchanged copy of OmniBot's existing `ui/assets/my/about_icon.png`.

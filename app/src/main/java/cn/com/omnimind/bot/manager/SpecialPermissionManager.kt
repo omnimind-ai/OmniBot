@@ -8,7 +8,6 @@ import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.core.content.ContextCompat
-import cn.com.omnimind.androidgui.AndroidGuiEnvironment
 import cn.com.omnimind.baselib.permission.PermissionRequest
 import cn.com.omnimind.baselib.shizuku.ShizukuCapabilityManager
 import cn.com.omnimind.baselib.util.OmniLog
@@ -20,7 +19,6 @@ import cn.com.omnimind.bot.terminal.EmbeddedTerminalRuntime
 import cn.com.omnimind.bot.terminal.EmbeddedTerminalSetupManager
 import cn.com.omnimind.bot.termux.TermuxCommandRunner
 import cn.com.omnimind.bot.util.AssistsUtil
-import cn.com.omnimind.bot.workspace.PublicStorageAccess
 import cn.com.omnimind.bot.workspace.WorkspaceStorageAccess
 import com.rk.libcommons.OmnibotTerminalEnvironment
 import com.ai.assistance.operit.terminal.TerminalManager
@@ -40,10 +38,11 @@ class SpecialPermissionManager(private val context: Context) {
     private val embeddedTerminalSetupManager = EmbeddedTerminalSetupManager(context)
     private val embeddedTerminalAutoStartManager = EmbeddedTerminalAutoStartManager(context)
     private val shizukuCapabilityManager = ShizukuCapabilityManager.get(context)
+    private val permissionAccess = AppPermissionAccess(context)
 
     fun isIgnoringBatteryOptimizations(result: MethodChannel.Result) {
         try {
-            val value = AssistsUtil.Setting.isIgnoringBatteryOptimizations(context);
+            val value = permissionAccess.isIgnoringBatteryOptimizations()
             result.success(value)
         } catch (e: Exception) {
             OmniLog.e(TAG, "Error checking battery optimization", e)
@@ -53,7 +52,7 @@ class SpecialPermissionManager(private val context: Context) {
 
     fun isBackgroundRunAllowed(result: MethodChannel.Result) {
         try {
-            val value = AssistsUtil.Setting.isBackgroundRunAllowed(context)
+            val value = permissionAccess.isBackgroundRunAllowed()
             result.success(value)
         } catch (e: Exception) {
             OmniLog.e(TAG, "Error checking background run permission", e)
@@ -63,7 +62,7 @@ class SpecialPermissionManager(private val context: Context) {
 
     fun openBatteryOptimizationSettings(result: MethodChannel.Result) {
         try {
-            AssistsUtil.Setting.openBatteryOptimizationSettings(context)
+            permissionAccess.openBatterySettings(context)
             OmniLog.v(TAG, "Requesting to ignore battery optimizations.")
             result.success(null)
 
@@ -80,7 +79,7 @@ class SpecialPermissionManager(private val context: Context) {
 
     fun isOverlayPermission(result: MethodChannel.Result) {
         try {
-            val value = AssistsUtil.Setting.isOverlayPermission(context);
+            val value = permissionAccess.isOverlayAllowed()
             result.success(value)
         } catch (e: Exception) {
             OmniLog.e(TAG, "Error checking battery optimization", e)
@@ -90,7 +89,7 @@ class SpecialPermissionManager(private val context: Context) {
 
     fun openOverlaySettings(result: MethodChannel.Result) {
         try {
-            AssistsUtil.Setting.openOverlaySettings(context);
+            permissionAccess.openOverlaySettings(context)
             result.success(null)
             OmniLog.v(TAG, "Opening overlay settings.")
         } catch (e: Exception) {
@@ -105,7 +104,7 @@ class SpecialPermissionManager(private val context: Context) {
     }
 
     fun isAndroidGuiAccessibilityEnabled(result: MethodChannel.Result) {
-        runCatching { AndroidGuiEnvironment(context).isAccessibilityEnabled() }
+        runCatching { permissionAccess.isAccessibilityEnabled() }
             .onSuccess(result::success)
             .onFailure {
                 OmniLog.e(TAG, "Error checking Android GUI accessibility", it)
@@ -114,7 +113,7 @@ class SpecialPermissionManager(private val context: Context) {
     }
 
     fun isAndroidGuiAccessibilityReady(result: MethodChannel.Result) {
-        runCatching { AndroidGuiEnvironment(context).isReady() }
+        runCatching { permissionAccess.isAccessibilityReady() }
             .onSuccess(result::success)
             .onFailure {
                 OmniLog.e(TAG, "Error checking Android GUI accessibility readiness", it)
@@ -123,7 +122,7 @@ class SpecialPermissionManager(private val context: Context) {
     }
 
     fun openAndroidGuiAccessibilitySettings(result: MethodChannel.Result) {
-        runCatching { AndroidGuiEnvironment(context).openAccessibilitySettings() }
+        runCatching { permissionAccess.openAccessibilitySettings() }
             .onSuccess { result.success(null) }
             .onFailure {
                 OmniLog.e(TAG, "Error opening Android GUI accessibility settings", it)
@@ -133,7 +132,7 @@ class SpecialPermissionManager(private val context: Context) {
 
     fun isInstalledAppsPermissionGranted(result: MethodChannel.Result) {
         try {
-            val value = AssistsUtil.Setting.isInstalledAppsPermissionGranted(context)
+            val value = permissionAccess.isInstalledAppsAllowed()
             result.success(value)
         } catch (e: Exception) {
             OmniLog.e(TAG, "Error checking installed apps permission", e)
@@ -143,7 +142,7 @@ class SpecialPermissionManager(private val context: Context) {
 
     fun openInstalledAppsSettings(result: MethodChannel.Result) {
         try {
-            AssistsUtil.Setting.openInstalledAppsSettings(context)
+            permissionAccess.openInstalledAppsSettings(context)
             result.success(null)
             OmniLog.v(TAG, "Opening installed apps settings.")
         } catch (e: Exception) {
@@ -181,7 +180,7 @@ class SpecialPermissionManager(private val context: Context) {
 
     fun isShizukuInstalled(result: MethodChannel.Result) {
         try {
-            result.success(shizukuCapabilityManager.isShizukuInstalled())
+            result.success(permissionAccess.isShizukuInstalled())
         } catch (e: Exception) {
             OmniLog.e(TAG, "Error checking Shizuku installation", e)
             result.error("CHECK_FAILED", "Failed to check Shizuku installation.", e.message)
@@ -190,7 +189,7 @@ class SpecialPermissionManager(private val context: Context) {
 
     fun isShizukuRunning(result: MethodChannel.Result) {
         try {
-            result.success(shizukuCapabilityManager.getStatus().running)
+            result.success(permissionAccess.shizukuStatus().running)
         } catch (e: Exception) {
             OmniLog.e(TAG, "Error checking Shizuku running status", e)
             result.error("CHECK_FAILED", "Failed to check Shizuku running status.", e.message)
@@ -199,7 +198,7 @@ class SpecialPermissionManager(private val context: Context) {
 
     fun openShizukuDownloadOrApp(result: MethodChannel.Result) {
         try {
-            result.success(shizukuCapabilityManager.openShizukuDownloadOrApp())
+            result.success(permissionAccess.openShizuku())
         } catch (e: Exception) {
             OmniLog.e(TAG, "Error opening Shizuku app or website", e)
             result.error("INTENT_FAILED", "Failed to open Shizuku app or website.", e.message)
@@ -209,7 +208,7 @@ class SpecialPermissionManager(private val context: Context) {
     fun requestShizukuPermission(result: MethodChannel.Result) {
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                val status = shizukuCapabilityManager.requestPermission()
+                val status = permissionAccess.requestShizuku()
                 withContext(Dispatchers.Main) {
                     result.success(status.toMap())
                 }
@@ -224,7 +223,7 @@ class SpecialPermissionManager(private val context: Context) {
 
     fun getShizukuStatus(result: MethodChannel.Result) {
         try {
-            result.success(shizukuCapabilityManager.getStatus().toMap())
+            result.success(permissionAccess.shizukuStatus().toMap())
         } catch (e: Exception) {
             OmniLog.e(TAG, "Error reading Shizuku status", e)
             result.error("READ_FAILED", "Failed to read Shizuku status.", e.message)
@@ -320,14 +319,7 @@ class SpecialPermissionManager(private val context: Context) {
 
     fun isNotificationPermissionGranted(result: MethodChannel.Result) {
         try {
-            val granted = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-                true
-            } else {
-                ContextCompat.checkSelfPermission(
-                    context,
-                    Manifest.permission.POST_NOTIFICATIONS
-                ) == PackageManager.PERMISSION_GRANTED
-            }
+            val granted = permissionAccess.isNotificationGranted()
             result.success(granted)
         } catch (e: Exception) {
             OmniLog.e(TAG, "Error checking notification permission", e)
@@ -341,19 +333,7 @@ class SpecialPermissionManager(private val context: Context) {
 
     fun requestNotificationPermission(result: MethodChannel.Result) {
         try {
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-                result.success(true)
-                return
-            }
-            CoroutineScope(Dispatchers.Default).launch {
-                AssistsUtil.UI.closeChatBotDialog()
-            }
-            PermissionRequest.requestPermissions(
-                context,
-                arrayOf(Manifest.permission.POST_NOTIFICATIONS)
-            ) {
-                result.success(it[Manifest.permission.POST_NOTIFICATIONS] == true)
-            }
+            permissionAccess.requestNotificationPermission { result.success(it) }
         } catch (e: Exception) {
             OmniLog.e(TAG, "Error requesting notification permission", e)
             result.error(
@@ -379,7 +359,7 @@ class SpecialPermissionManager(private val context: Context) {
 
     fun isPublicStorageAccessGranted(result: MethodChannel.Result) {
         try {
-            result.success(PublicStorageAccess.isGranted())
+            result.success(permissionAccess.isPublicStorageAllowed())
         } catch (e: Exception) {
             OmniLog.e(TAG, "Error checking public storage access", e)
             result.error(
@@ -411,12 +391,7 @@ class SpecialPermissionManager(private val context: Context) {
 
     fun openPublicStorageSettings(result: MethodChannel.Result) {
         try {
-            val primaryIntent = PublicStorageAccess.buildSettingsIntent(context.packageName)
-            runCatching {
-                context.startActivity(primaryIntent)
-            }.recoverCatching {
-                context.startActivity(PublicStorageAccess.buildFallbackSettingsIntent())
-            }.getOrThrow()
+            permissionAccess.openPublicStorageSettings(context)
             result.success(true)
         } catch (e: Exception) {
             OmniLog.e(TAG, "请求打开公共文件访问设置页时发生异常。", e)

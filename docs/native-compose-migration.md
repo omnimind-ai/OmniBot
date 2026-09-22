@@ -36,8 +36,10 @@ LauncherActivity
       │   ├─ WorkspaceScheduledTaskScheduler (sidebar task relationships)
       │   └─ existing McpServerManager
       ├─ NativeWebActionRepository → OmniPluginHost (metadata-driven actions)
+      ├─ NativeAboutViewModel → NativeAboutRepository → AppUpdateManager
+      ├─ NativePermissionsViewModel → NativePermissionsRepository → AppPermissionAccess
       ├─ :native-ui / NativeHomeApp
-      │   └─ one saved miuix-nav stack: Home → Settings / Archive
+      │   └─ one saved miuix-nav stack: Home → Settings / Archive / About / Permissions
       └─ LegacyHomeNavigator → MainActivity → existing Flutter page
 ```
 
@@ -119,8 +121,8 @@ random greeting selection out of pixel comparisons.
   resolved Harness identity, archive/restore and Agent Web quick actions. Full
   message-content search, image previews, rename/delete/copy menus and remaining
   visual differences still need migration/acceptance.
-- Settings overview, MCP toggle and local-service detail sheet are native. Other
-  detail pages still use the existing feature pages. Workspace-memory
+- Settings overview, MCP toggle, local-service detail sheet, About/update and
+  permissions are native. Other detail pages still use the existing feature pages. Workspace-memory
   status currently uses the same persisted initial-render cache as Flutter.
 - Native home must gain the launch/foreground behaviors currently owned by
   MainActivity (startup conversation preference, terminal auto-start, task/notification
@@ -138,16 +140,15 @@ The order below follows the actual owners in this repository, not page size alon
 
 | Order | Scope | Existing owner / prerequisite | Completion boundary |
 | --- | --- | --- | --- |
-| 1 | Finish Home → Drawer → Settings; migrate the local-service detail sheet | `HomeDrawer` currently lacks date/mode groups, scheduled-child expansion, swipe actions and Agent Web quick actions. `McpServerManager` already owns service state and token operations. | Complete real drawer actions and use Miuix `OverlayBottomSheet` for address/token/copy/refresh. Remove `Page.LocalService → /home/settings`; tapping the row must not open a second settings overview. |
-| 2 | About/update and permission pages | `AppUpdateManager`, `SpecialPermissionChannel`, and existing permission/platform helpers | Call native owners directly; extract platform operations from a channel where necessary. Use Miuix dialogs/sheets for confirmation and status. Keep update-source selection and permission-result refresh. |
+| 1 | Core Home → Drawer → Settings and local-service sheet — source implemented | `ConversationDomainService`, scheduler storage, `OmniPluginHost`, `McpServerManager` | See the batch 1 checkpoint; runtime/visual acceptance remains manual. |
+| 2 | About/update and permission pages — source implemented | `AppUpdateManager`, `AppPermissionAccess` and existing platform helpers | See batch 2 below; logs and the guide remain explicit compatibility destinations. |
 | 3 | Appearance, miscellaneous, and home preferences | `AppThemeController`, `AppLocaleController`, `HomeGreetingSettingsService`, `AppBackgroundService`, `TaskRuntimeSettings` | Establish one preferences owner with a temporary Flutter reader before enabling Kotlin writes. Migrate theme/language, home prompts, backgrounds and system settings together with their effects. |
 | 4 | Storage management, providers, scene models, MCP/plugin settings, Agent configuration | Storage analysis/cleanup currently lives inside `StorageUsageChannel`; provider/model resolution and plugin runtime already have native owners. | Extract storage operations into a reusable repository/service, leaving the channel as an adapter. Reuse configured provider resolution and plugin capabilities; do not duplicate them in page ViewModels. |
 | 5 | Chat, composer, tool/approval rendering and conversation runtime | The canonical ACP lifecycle and the single reducer/coordinator described above | Move projection ownership with history/identity/reconnect behavior intact. Do not retain a Dart reducer and add a second Kotlin reducer for the same session. |
 | 6 | Remove Flutter | All feature pages and lifecycle owners have migrated | Delete obsolete routes/channels, engine initialization and Flutter build dependencies. Enable the native entry by default only after the remaining launch behavior and visual checks are complete. |
 
-The bounded Goal below implements the core drawer actions and local-service
-bottom sheet from batch 1. Later rows are a roadmap, not authorization to keep
-working after this Goal's stopping condition.
+The bounded checkpoints below implement batches 1 and 2. Later rows are a
+roadmap, not authorization to continue after a Goal's stopping condition.
 
 Before expanding the home surface, correct its provisional action wiring:
 `HomeScreen` currently opens a new chat for the pet button, opens Agent settings
@@ -168,10 +169,10 @@ its Flutter reference is 32 × 18.67dp, while Miuix 0.9.4's switch is 49 × 28dp
 Do not hide a visual mismatch behind a scaled gesture target, or copy Miuix's
 animation/gesture internals just to change dimensions.
 
-## Bounded Goal checkpoint and stop condition
+## Batch 1 checkpoint (completed)
 
-This Goal ends after the following source implementation and hand-off. It does
-not proceed into About, permissions, appearance, provider configuration or chat.
+This Goal ended after the following source implementation and hand-off. About
+and permissions were subsequently authorized as a separate bounded Goal.
 
 - Drawer grouping projects existing Conversation identities; scheduled groups
   use the scheduler's existing Flutter-compatible storage reader. Expansion keys
@@ -216,12 +217,80 @@ Manual hand-off checklist:
    scrolling, brand icons and system insets. This checkpoint does not certify
    pixel equality or migrate unrelated home/composer controls.
 
-After this hand-off, mark the Goal complete and stop. Further migration requires
-another user instruction.
+The batch 1 Goal was marked complete after this hand-off.
+
+## Batch 2: About/update and permissions (2026-09-23)
+
+Scope is limited to these two pages and their necessary shared adapters:
+
+- `AboutScreen` preserves the original logo asset, compact layout threshold,
+  version display, update hint, update confirmation, request/runtime logs, guide,
+  beta subscription and CNB/GitHub download-source selection. The native entry
+  reads cached status; explicit check/beta actions use `AppUpdateManager`. The
+  beta change retains the original follow-up check with cached-state fallback.
+- `UpdateConfirmation` displays current/latest version, publication date and
+  release notes in a Miuix dialog. Confirmation either opens the release page or
+  delegates to the existing notification-permission and APK-installer flow.
+  Notification denial does not block the download. Unknown-app-install access
+  remains owned by `ExternalApkInstaller`; the user must confirm again after
+  granting it. An installer-launch result is not presented as installation success.
+- `PermissionsScreen` keeps the four core grants (background, accessibility,
+  overlay, installed apps), optional all-files/Shizuku access, overview count and
+  application notification preference. `notification_enabled` remains the same
+  MMKV boolean; it is not Android's `POST_NOTIFICATIONS` grant.
+- `AppPermissionAccess` centralizes the platform operations previously wrapped
+  by `SpecialPermissionManager`. The Flutter wrapper now delegates to it as well.
+  It uses the existing OEM settings helpers, storage-access helper, accessibility
+  environment and Shizuku manager. Opening Settings never marks a grant successful.
+  Accessibility uses the environment's existing bounded readiness wait (4 seconds)
+  after return. Shizuku distinguishes installation, Binder/running state and grant.
+- Page ViewModels are separate from the home ViewModel and are Activity-scoped.
+  This preserves in-flight installation state across page navigation and configuration
+  changes; it does not create another downloader. UI collection and status refresh
+  follow the Miuix entry lifecycle using AndroidX lifecycle APIs. A process restart
+  reads persisted state and does not automatically repeat an installation or request.
+- `HomeRoute.About` and `HomeRoute.Permissions` replace their legacy destination
+  mappings. Logs still open the existing Flutter pages. The fixed
+  `/my/about/user-guide` route is shared by Flutter and native About, preserves
+  the localized documentation URL/back behavior, and avoids arbitrary URL extras.
+- Miuix owns component press states, switches, radio selection, progress indicators,
+  dialogs/sheets and predictive back. `PreferenceRow` is only a typography/spacing
+  wrapper over `BasicComponent`. Switches use Miuix's 49 × 28dp geometry with
+  OmniBot colors; the old Flutter switch dimensions are not reproduced with scaling
+  or another gesture implementation. Pixel equality still needs visual acceptance.
+
+Manual acceptance for this batch:
+
+1. Open both pages from native Settings, rotate, navigate back and repeat with
+   light/dark themes and large text. Check the compact About layout, long English
+   permission labels, source picker, modal dismissal and predictive back.
+2. Check cached/empty update state, explicit check, no update, new update and
+   network failure. Toggle beta, return from other pages, and verify the existing
+   stored preference/download source remains authoritative in both UI implementations.
+3. Confirm an update with and without a direct APK URL. Check notification denial,
+   install-source permission denial/grant, download failure, installer cancellation
+   and returning to About while an operation is running. Do not interpret opening
+   the installer as a completed installation.
+4. Verify request logs, runtime logs and both localized guide URLs; their back
+   action must return to native About through the existing compatibility host.
+5. Toggle the application notification preference independently of system permission.
+   For each core/optional permission, enter Settings, return both without granting
+   and after granting, and verify the displayed state/count comes from the platform.
+6. Exercise accessibility disabled/connecting/ready, denied settings navigation,
+   and cancel during the readiness check. Exercise Shizuku not installed, not
+   running, denied, adb/root granted and Binder loss, including a running Sui
+   backend without a Shizuku launcher. No shell health probe is part of page refresh.
+
+Stopping condition: finish this two-page source migration, inspect API/resource/
+route wiring, update this checklist and report unverified behavior; then complete
+the Goal and stop. Do not automatically proceed to appearance, miscellaneous,
+storage, model configuration or chat. No build, test, emulator/device interaction,
+actual update check/download/install, commit or push was run for this Goal.
 
 ## Verification
 
-Current checkpoint (2026-09-22): the five focused Flutter router tests passed.
+Historical baseline (2026-09-22): the five focused Flutter router tests passed.
+Those results do not validate the subsequent migration batches.
 Full host compilation, native unit/instrumentation tests, and screenshot comparison
 have **not completed**. Build/test processes and the emulator were stopped at the
 maintainer's request because of machine load; subsequent verification is manual.

@@ -16,6 +16,11 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.com.omnimind.bot.ui.nativehome.LegacyHomeNavigator
 import cn.com.omnimind.bot.ui.nativehome.NativeHomeViewModel
 import cn.com.omnimind.bot.ui.nativehome.resolveNativeHomeLocale
+import cn.com.omnimind.bot.manager.AppPermissionAccess
+import cn.com.omnimind.bot.ui.settings.NativeAboutRoute
+import cn.com.omnimind.bot.ui.settings.NativeAboutViewModel
+import cn.com.omnimind.bot.ui.settings.NativePermissionsRoute
+import cn.com.omnimind.bot.ui.settings.NativePermissionsViewModel
 import cn.com.omnimind.nativeui.NativeHomeApp
 import cn.com.omnimind.nativeui.NativeHomeActions
 import cn.com.omnimind.nativeui.ThemePreference
@@ -39,6 +44,9 @@ class NativeHomeActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         viewModel = ViewModelProvider(this, NativeHomeViewModel.Factory(this))[NativeHomeViewModel::class.java]
+        val about = ViewModelProvider(this, NativeAboutViewModel.Factory(this))[NativeAboutViewModel::class.java]
+        val permissions = ViewModelProvider(this, NativePermissionsViewModel.Factory(this))[NativePermissionsViewModel::class.java]
+        val permissionAccess = AppPermissionAccess(applicationContext)
         val navigator = LegacyHomeNavigator(this)
         val actions = NativeHomeActions(
             open = navigator::open,
@@ -71,7 +79,12 @@ class NativeHomeActivity : ComponentActivity() {
                     navigator.open(it)
                 }
             }
-            NativeHomeApp(state, actions)
+            NativeHomeApp(
+                state = state,
+                actions = actions,
+                about = { onBack -> NativeAboutRoute(about, this@NativeHomeActivity, navigator::open, onBack) },
+                permissions = { onBack -> NativePermissionsRoute(permissions, permissionAccess, this@NativeHomeActivity, onBack) },
+            )
         }
     }
 

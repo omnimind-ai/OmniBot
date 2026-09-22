@@ -1,3 +1,4 @@
+import 'package:ui/features/my/pages/about/user_guide_page.dart';
 import 'package:go_router/go_router.dart';
 import 'package:ui/core/router/go_router_manager.dart';
 import 'package:ui/features/my/pages/my/my_page.dart';
@@ -9,6 +10,12 @@ import 'package:ui/features/my/pages/account/account_page.dart';
 
 /// My模块路由配置
 List<GoRoute> myRoutes = [
+  // Native and Flutter About share the same documentation page.
+  GoRoute(
+    path: '/my/about/user-guide',
+    name: 'my/about/user-guide',
+    builder: (context, state) => const UserGuidePage(),
+  ),
   // My模块首页
   GoRoute(
     path: '/my/my_page',
