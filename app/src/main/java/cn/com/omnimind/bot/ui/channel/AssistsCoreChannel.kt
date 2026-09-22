@@ -251,6 +251,15 @@ class AssistsCoreChannel {
                 "getTokenUsageRecords" -> {
                     assistsCoreManager!!.getTokenUsageRecords(call, result)
                 }
+                "manageConversation" -> {
+                    assistsCoreManager!!.manageConversation(call, result)
+                }
+                "conversationSelection", "getConversationTranscript" -> {
+                    assistsCoreManager!!.handleConversationStorage(call, result)
+                }
+                "reconcileChatLinkPreviews", "loadChatLinkPreview" -> {
+                    assistsCoreManager!!.handleChatLinkPreview(call, result)
+                }
                 "getConversations" -> {
                     assistsCoreManager!!.getConversations(call, result)
                 }

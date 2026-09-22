@@ -1,7 +1,12 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ui/features/home/pages/chat/chat_page.dart';
+import 'package:ui/features/home/pages/chat/chat_page.dart'
+    hide remoteCodexMessagesFromThreadResponseForTesting;
+import 'package:ui/features/home/pages/chat/chat_page.dart'
+    as chat
+    show remoteCodexMessagesFromThreadResponseForTesting;
 import 'package:ui/features/home/pages/chat/chat_page_models.dart';
 import 'package:ui/features/home/pages/chat/services/chat_conversation_runtime_coordinator.dart';
 import 'package:ui/features/home/pages/chat/utils/agent_run_timeline.dart';
@@ -3240,56 +3245,78 @@ void main() {
   });
 
   for (final output in ['', 'command stderr\n']) {
-    test('preserves ACP command exit detail with output ${output.isNotEmpty}', () {
-      reducer.reduce(runtime: runtime, event: {
-        'method': 'session/update',
-        'turnId': 'turn-exit-detail',
-        'params': {
-          'sessionId': 'session-exit-detail',
-          'update': {
-            'sessionUpdate': 'tool_call_update',
-            'toolCallId': 'exit-detail',
-            'kind': 'execute',
-            'title': 'printf test; exit 182',
-            'status': 'failed',
-            'rawOutput': {'formatted_output': output, 'exit_code': 182},
+    test(
+      'preserves ACP command exit detail with output ${output.isNotEmpty}',
+      () {
+        reducer.reduce(
+          runtime: runtime,
+          event: {
+            'method': 'session/update',
+            'turnId': 'turn-exit-detail',
+            'params': {
+              'sessionId': 'session-exit-detail',
+              'update': {
+                'sessionUpdate': 'tool_call_update',
+                'toolCallId': 'exit-detail',
+                'kind': 'execute',
+                'title': 'printf test; exit 182',
+                'status': 'failed',
+                'rawOutput': {'formatted_output': output, 'exit_code': 182},
+              },
+            },
           },
-        },
-      });
-      final card = runtime.messages.single.cardData!;
-      expect(card['status'], 'error');
-      expect(card['summary'], 'Command exited with code 182');
-      expect(card['terminalOutput'] ?? '', output);
-      expect(runtime.messages, hasLength(1));
-    });
+        );
+        final card = runtime.messages.single.cardData!;
+        expect(card['status'], 'error');
+        expect(card['summary'], 'Command exited with code 182');
+        expect(card['terminalOutput'] ?? '', output);
+        expect(runtime.messages, hasLength(1));
+      },
+    );
   }
 
   for (final sample in [
     ('in_progress', <String, dynamic>{'exit_code': 182}, 'running', ''),
-    ('completed', <String, dynamic>{'exit_code': 0}, 'success', 'Command exited with code 0'),
-    ('failed', <String, dynamic>{'exit_code': 182, 'summary': 'Backend unavailable'}, 'error', 'Backend unavailable'),
+    (
+      'completed',
+      <String, dynamic>{'exit_code': 0},
+      'success',
+      'Command exited with code 0',
+    ),
+    (
+      'failed',
+      <String, dynamic>{'exit_code': 182, 'summary': 'Backend unavailable'},
+      'error',
+      'Backend unavailable',
+    ),
     ('failed', <String, dynamic>{}, 'error', ''),
   ]) {
-    test('command exit fallback preserves ACP state and explicit detail $sample', () {
-      reducer.reduce(runtime: runtime, event: {
-        'method': 'session/update',
-        'turnId': 'turn-exit-state',
-        'params': {
-          'sessionId': 'session-exit-state',
-          'update': {
-            'sessionUpdate': 'tool_call_update',
-            'toolCallId': 'exit-state',
-            'kind': 'execute',
-            'title': 'command',
-            'status': sample.$1,
-            'rawOutput': sample.$2,
+    test(
+      'command exit fallback preserves ACP state and explicit detail $sample',
+      () {
+        reducer.reduce(
+          runtime: runtime,
+          event: {
+            'method': 'session/update',
+            'turnId': 'turn-exit-state',
+            'params': {
+              'sessionId': 'session-exit-state',
+              'update': {
+                'sessionUpdate': 'tool_call_update',
+                'toolCallId': 'exit-state',
+                'kind': 'execute',
+                'title': 'command',
+                'status': sample.$1,
+                'rawOutput': sample.$2,
+              },
+            },
           },
-        },
-      });
-      final card = runtime.messages.single.cardData!;
-      expect(card['status'], sample.$3);
-      expect(card['summary'], sample.$4);
-    });
+        );
+        final card = runtime.messages.single.cardData!;
+        expect(card['status'], sample.$3);
+        expect(card['summary'], sample.$4);
+      },
+    );
   }
 
   test('projects legacy tool-result details from ACP rawOutput', () {
@@ -6168,39 +6195,46 @@ diff --git a/lib/main.dart b/lib/main.dart
     expect(runtime.isAiResponding, isTrue);
   });
 
-  for (final settledStatus in ['submitted', 'cancelled', 'interrupted', 'failed']) {
-  test('keeps $settledStatus request user input status during event replay', () {
-    final requestEvent = {
-      'message': {
-        'id': 'request-1',
-        'method': 'item/tool/requestUserInput',
-        'params': {
-          'questions': [
-            {
-              'id': 'choice',
-              'question': 'Choose one',
-              'options': [
-                {'label': 'Option A'},
+  for (final settledStatus in [
+    'submitted',
+    'cancelled',
+    'interrupted',
+    'failed',
+  ]) {
+    test(
+      'keeps $settledStatus request user input status during event replay',
+      () {
+        final requestEvent = {
+          'message': {
+            'id': 'request-1',
+            'method': 'item/tool/requestUserInput',
+            'params': {
+              'questions': [
+                {
+                  'id': 'choice',
+                  'question': 'Choose one',
+                  'options': [
+                    {'label': 'Option A'},
+                  ],
+                },
               ],
             },
-          ],
-        },
+          },
+        };
+
+        reducer.reduce(runtime: runtime, event: requestEvent);
+        final existing = runtime.messages.single;
+        final submittedCardData = Map<String, dynamic>.from(existing.cardData!)
+          ..['status'] = settledStatus;
+        runtime.messages[0] = existing.copyWith(
+          content: {'cardData': submittedCardData, 'id': existing.id},
+        );
+
+        reducer.reduce(runtime: runtime, event: requestEvent);
+
+        expect(runtime.messages.single.cardData!['status'], settledStatus);
       },
-    };
-
-    reducer.reduce(runtime: runtime, event: requestEvent);
-    final existing = runtime.messages.single;
-    final submittedCardData = Map<String, dynamic>.from(existing.cardData!)
-      ..['status'] = settledStatus;
-    runtime.messages[0] = existing.copyWith(
-      content: {'cardData': submittedCardData, 'id': existing.id},
     );
-
-    reducer.reduce(runtime: runtime, event: requestEvent);
-
-    expect(runtime.messages.single.cardData!['status'], settledStatus);
-  });
-
   }
 
   test('hydrates historical request user input as submitted request card', () {
@@ -7181,4 +7215,38 @@ diff --git a/lib/main.dart b/lib/main.dart
     expect(card['terminalOutput'], 'one\\ntwo\\n');
     expect(card['terminalSessionId'], 'terminal-1');
   });
+}
+
+// Shared with the Kotlin import regression tests. These expected items were
+// captured from the pre-migration Dart implementation, not regenerated by Kotlin.
+final _historyImportFixtures = (jsonDecode(
+  File('../app/src/test/resources/chat/remote-history-compatibility.json')
+      .readAsStringSync(),
+) as List).cast<Map>();
+
+List<ChatMessageModel> remoteCodexMessagesFromThreadResponseForTesting(
+  Map<String, dynamic> response, {
+  bool active = false,
+  String? activeTurnId,
+}) {
+  final thread = Map<String, dynamic>.from(
+    response['thread'] as Map? ?? response,
+  );
+  final turns = thread['turns'] as List?;
+  if (turns != null) {
+    thread['turns'] = turns.map((raw) {
+      final fixture = _historyImportFixtures.firstWhere(
+        (row) => jsonEncode(row['turn']) == jsonEncode(raw),
+      );
+      return {
+        ...Map<String, dynamic>.from(raw as Map),
+        'items': fixture['items'],
+      };
+    }).toList();
+  }
+  return chat.remoteCodexMessagesFromThreadResponseForTesting(
+    {...response, 'thread': thread},
+    active: active,
+    activeTurnId: activeTurnId,
+  );
 }

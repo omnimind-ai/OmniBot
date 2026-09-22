@@ -376,11 +376,11 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
             ? List<ChatMessageModel>.from(latestRuntimeMessages)
             : pagedResult.messages;
         setState(() {
-          hasMoreMessages = latestRuntimeMessages == null && pagedResult.hasMore;
-          // The history provider is allowed to return a short page. Advance
-          // from what was actually received so a partial response cannot
-          // create a gap before the next page.
-          messageOffset = savedMessages.length;
+          hasMoreMessages =
+              latestRuntimeMessages == null && pagedResult.hasMore;
+          messageOffset = latestRuntimeMessages == null
+              ? pagedResult.nextOffset
+              : savedMessages.length;
           // `messages` may be the shared runtime's live list. Deliver the
           // snapshot to onConversationLoaded below; its coordinator owns
           // reconciliation and must see the current items before any mutation.
@@ -433,7 +433,7 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
         setState(() {
           messages.addAll(pagedResult.messages);
           hasMoreMessages = pagedResult.hasMore;
-          messageOffset = messageOffset + pagedResult.messages.length;
+          messageOffset = pagedResult.nextOffset;
           isLoadingMore = false;
         });
       }

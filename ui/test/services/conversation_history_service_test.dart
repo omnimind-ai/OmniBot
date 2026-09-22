@@ -1,6 +1,6 @@
 import 'dart:async';
-import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -10,33 +10,6 @@ import 'package:ui/models/conversation_model.dart';
 import 'package:ui/services/conversation_history_service.dart';
 
 void main() {
-  test('builds readable chronological text when copying a conversation', () {
-    final text = ConversationHistoryService.buildConversationClipboardText([
-      ChatMessageModel(
-        id: 'assistant-1',
-        type: 1,
-        user: 2,
-        content: const {'text': '已经处理完成。'},
-      ),
-      ChatMessageModel(
-        id: 'tool-1',
-        type: 2,
-        user: 3,
-        content: const {
-          'cardData': {'type': 'agent_tool_summary'},
-        },
-      ),
-      ChatMessageModel(
-        id: 'user-1',
-        type: 1,
-        user: 1,
-        content: const {'text': '帮我检查一下。'},
-      ),
-    ]);
-
-    expect(text, '用户：\n帮我检查一下。\n\n助手：\n已经处理完成。');
-  });
-
   TestWidgetsFlutterBinding.ensureInitialized();
 
   const channel = MethodChannel('cn.com.omnimind.bot/AssistCoreEvent');
@@ -107,86 +80,73 @@ void main() {
     messenger.setMockMethodCallHandler(channel, null);
   });
 
-  test(
-    'repeated snapshots send only changed messages and explicit removal stays explicit',
-    () async {
-      final writes = <Map<String, dynamic>>[];
-      messenger.setMockMethodCallHandler(channel, (call) async {
-        if (call.method == 'replaceConversationMessages')
-          writes.add(Map<String, dynamic>.from(call.arguments));
-        return 'SUCCESS';
-      });
-      final old = ChatMessageModel(
-        id: 'old',
-        type: 1,
-        user: 1,
-        content: {'text': 'x' * 65536},
-      );
-      final reply = ChatMessageModel(
-        id: 'reply',
-        type: 1,
-        user: 2,
-        content: {'text': 'first'},
-      );
-      await ConversationHistoryService.saveConversationMessages(99112, [
-        old,
-        reply,
-      ]);
-      await ConversationHistoryService.saveConversationMessages(99112, [
-        old,
-        reply.copyWith(content: {'text': 'second'}),
-      ]);
-      expect((writes.last['messages'] as List).map((m) => m['id']), ['reply']);
-      expect(writes.last['allowHistoryRemoval'], false);
-      await ConversationHistoryService.saveConversationMessages(
-        99112,
-        [],
-        allowHistoryRemoval: true,
-      );
-      expect(writes.last['messages'], isEmpty);
-      expect(writes.last['allowHistoryRemoval'], true);
-    },
-  );
+  test('repeated snapshots send only changed messages and explicit removal stays explicit', () async {
+    final writes = <Map<String, dynamic>>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'replaceConversationMessages')
+        writes.add(Map<String, dynamic>.from(call.arguments));
+      return 'SUCCESS';
+    });
+    final old = ChatMessageModel(
+      id: 'old',
+      type: 1,
+      user: 1,
+      content: {'text': 'x' * 65536},
+    );
+    final reply = ChatMessageModel(
+      id: 'reply',
+      type: 1,
+      user: 2,
+      content: {'text': 'first'},
+    );
+    await ConversationHistoryService.saveConversationMessages(99112, [
+      old,
+      reply,
+    ]);
+    await ConversationHistoryService.saveConversationMessages(99112, [
+      old,
+      reply.copyWith(content: {'text': 'second'}),
+    ]);
+    expect((writes.last['messages'] as List).map((m) => m['id']), ['reply']);
+    expect(writes.last['allowHistoryRemoval'], false);
+    await ConversationHistoryService.saveConversationMessages(
+      99112,
+      [],
+      allowHistoryRemoval: true,
+    );
+    expect(writes.last['messages'], isEmpty);
+    expect(writes.last['allowHistoryRemoval'], true);
+  });
 
-  test(
-    'failed native writes are not acknowledged and clear invalidates acknowledgements',
-    () async {
-      var attempts = 0;
-      final writes = <List<dynamic>>[];
-      messenger.setMockMethodCallHandler(channel, (call) async {
-        if (call.method == 'replaceConversationMessages') {
-          attempts++;
-          writes.add(List<dynamic>.from(call.arguments['messages']));
-          if (attempts == 1)
-            throw PlatformException(code: 'fixture-write-failed');
-        }
-        return 'SUCCESS';
-      });
-      final message = ChatMessageModel.userMessage(
-        'retain this',
-      ).copyWith(id: 'retained');
-      await expectLater(
-        ConversationHistoryService.saveConversationMessages(99113, [message]),
-        throwsStateError,
-      );
-      final prefs = await SharedPreferences.getInstance();
-      expect(prefs.getKeys().where((key) => key.contains('99113')), isEmpty);
-      await ConversationHistoryService.saveConversationMessages(99113, [
-        message,
-      ]);
-      expect(attempts, 2);
-      expect(writes.every((rows) => rows.length == 1), true);
-      await ConversationHistoryService.saveConversationMessages(99113, [
-        message,
-      ]);
-      expect(attempts, 2);
-      await ConversationHistoryService.clearConversationMessages(99113);
-      await ConversationHistoryService.saveConversationMessages(99113, [
-        message,
-      ]);
-      expect(attempts, 3);
-    },
-  );
+  test('failed native writes are not acknowledged and clear invalidates acknowledgements', () async {
+    var attempts = 0;
+    final writes = <List<dynamic>>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'replaceConversationMessages') {
+        attempts++;
+        writes.add(List<dynamic>.from(call.arguments['messages']));
+        if (attempts == 1)
+          throw PlatformException(code: 'fixture-write-failed');
+      }
+      return 'SUCCESS';
+    });
+    final message = ChatMessageModel.userMessage('retain this')
+        .copyWith(id: 'retained');
+    await expectLater(
+      ConversationHistoryService.saveConversationMessages(99113, [message]),
+      throwsStateError,
+    );
+    final prefs = await SharedPreferences.getInstance();
+    expect(prefs.getKeys().where((key) => key.contains('99113')), isEmpty);
+    await ConversationHistoryService.saveConversationMessages(99113, [message]);
+    expect(attempts, 2);
+    expect(writes.every((rows) => rows.length == 1), true);
+    await ConversationHistoryService.saveConversationMessages(99113, [message]);
+    expect(attempts, 2);
+    await ConversationHistoryService.clearConversationMessages(99113);
+    await ConversationHistoryService.saveConversationMessages(99113, [message]);
+    expect(attempts, 3);
+  });
 
   test(
     'clear shares the write queue so an earlier write cannot resurrect history',
@@ -216,217 +176,63 @@ void main() {
     },
   );
 
-  test('stores current conversation ids independently per mode', () async {
-    await ConversationHistoryService.saveCurrentConversationId(
-      11,
-      mode: ConversationMode.normal,
+  test('ten thousand unchanged display rows are never serialized again on streaming updates', () async {
+    final page = List<ChatMessageModel>.generate(
+      10000,
+      (index) => _CountedMessage('$index', 'x' * 2048),
     );
-    await ConversationHistoryService.saveCurrentConversationId(
-      22,
-      mode: ConversationMode.openclaw,
-    );
-
-    expect(
-      await ConversationHistoryService.getCurrentConversationId(
-        mode: ConversationMode.normal,
-      ),
-      11,
-    );
-    expect(
-      await ConversationHistoryService.getCurrentConversationId(
-        mode: ConversationMode.openclaw,
-      ),
-      22,
+    var submitted = 0;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      if (call.method == 'replaceConversationMessages')
+        submitted += (call.arguments['messages'] as List).length;
+      return 'SUCCESS';
+    });
+    _CountedMessage.serializations = 0;
+    await ConversationHistoryService.saveConversationMessages(99199, page);
+    expect(_CountedMessage.serializations, 10000);
+    final timer = Stopwatch()..start();
+    for (var chunk = 0; chunk < 20; chunk++) {
+      page[0] = _CountedMessage('0', 'chunk $chunk');
+      await ConversationHistoryService.saveConversationMessages(99199, page);
+    }
+    timer.stop();
+    expect(_CountedMessage.serializations, 10020);
+    expect(submitted, 10020);
+    // Report timing without a machine-dependent threshold. The regression gate
+    // is the amount of data serialized and submitted, independent of CPU speed.
+    debugPrint(
+      '10000 rows, 20 updates: ${timer.elapsedMilliseconds} ms; 20 changed rows serialized',
     );
   });
 
   test(
-    'canonicalizes legacy normal thread targets while keeping mode keys',
+    'thread selection delegates to native storage and decodes its identity',
     () async {
-      const normalTarget = ConversationThreadTarget.newConversation(
-        mode: ConversationMode.normal,
-      );
-      const chatOnlyTarget = ConversationThreadTarget.newConversation(
-        mode: ConversationMode.chatOnly,
-      );
-      const openClawTarget = ConversationThreadTarget.existing(
-        conversationId: 22,
-        mode: ConversationMode.openclaw,
-      );
-
-      await ConversationHistoryService.saveCurrentConversationTarget(
-        normalTarget,
-        mode: ConversationMode.normal,
-      );
-      await ConversationHistoryService.saveCurrentConversationTarget(
-        chatOnlyTarget,
-        mode: ConversationMode.chatOnly,
-      );
-      await ConversationHistoryService.saveCurrentConversationTarget(
-        openClawTarget,
-        mode: ConversationMode.openclaw,
-      );
-
-      expect(
-        await ConversationHistoryService.getCurrentConversationTarget(
-          mode: ConversationMode.normal,
-        ),
-        const ConversationThreadTarget.newConversation(
-          mode: ConversationMode.agent,
-        ),
-      );
-      expect(
-        await ConversationHistoryService.getCurrentConversationTarget(
-          mode: ConversationMode.chatOnly,
-        ),
-        chatOnlyTarget,
-      );
-      expect(
-        await ConversationHistoryService.getCurrentConversationTarget(
-          mode: ConversationMode.openclaw,
-        ),
-        openClawTarget,
-      );
-      expect(
-        await ConversationHistoryService.getCurrentConversationId(
-          mode: ConversationMode.normal,
-        ),
-        isNull,
-      );
-    },
-  );
-
-  test(
-    'legacy normal target restores as Agent while retaining its mode key',
-    () async {
-      const normalTarget = ConversationThreadTarget.existing(
-        conversationId: 31,
-        mode: ConversationMode.normal,
-      );
-
-      await ConversationHistoryService.saveCurrentConversationTarget(
-        normalTarget,
-        mode: ConversationMode.normal,
-      );
-
-      final restored =
+      final calls = <MethodCall>[];
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        calls.add(call);
+        return {
+          'conversationId': 42,
+          'mode': 'agent',
+          'agentId': 'claude-code-acp',
+          'agentSessionId': 'session-42',
+          'agentRuntime': 'local',
+        };
+      });
+      final target =
           await ConversationHistoryService.getCurrentConversationTarget(
             mode: ConversationMode.normal,
           );
-
-      expect(restored?.conversationId, 31);
-      expect(restored?.mode, ConversationMode.agent);
-      expect(
-        ConversationHistoryService.conversationMessagesKey(
-          31,
-          mode: ConversationMode.normal,
-        ),
-        'conversation_messages_normal_31',
-      );
+      expect(calls.single.method, 'conversationSelection');
+      expect(calls.single.arguments, {
+        'operation': 'getTarget',
+        'mode': 'normal',
+      });
+      expect(target?.conversationId, 42);
+      expect(target?.agentSessionId, 'session-42');
+      expect(target?.agentId, 'claude-code-acp');
     },
   );
-
-  test('missing non-normal targets never fall back to normal', () async {
-    await ConversationHistoryService.saveCurrentConversationTarget(
-      const ConversationThreadTarget.existing(
-        conversationId: 41,
-        mode: ConversationMode.normal,
-      ),
-      mode: ConversationMode.normal,
-    );
-
-    expect(
-      await ConversationHistoryService.getCurrentConversationTarget(
-        mode: ConversationMode.openclaw,
-      ),
-      isNull,
-    );
-    expect(
-      await ConversationHistoryService.getCurrentConversationId(
-        mode: ConversationMode.openclaw,
-      ),
-      isNull,
-    );
-  });
-
-  test('clearing another mode does not clear normal conversation', () async {
-    await ConversationHistoryService.saveCurrentConversationTarget(
-      const ConversationThreadTarget.existing(
-        conversationId: 51,
-        mode: ConversationMode.normal,
-      ),
-      mode: ConversationMode.normal,
-    );
-    await ConversationHistoryService.saveCurrentConversationTarget(
-      const ConversationThreadTarget.existing(
-        conversationId: 52,
-        mode: ConversationMode.openclaw,
-      ),
-      mode: ConversationMode.openclaw,
-    );
-
-    await ConversationHistoryService.saveCurrentConversationTarget(
-      null,
-      mode: ConversationMode.openclaw,
-    );
-
-    expect(
-      await ConversationHistoryService.getCurrentConversationId(
-        mode: ConversationMode.normal,
-      ),
-      51,
-    );
-    expect(
-      await ConversationHistoryService.getCurrentConversationTarget(
-        mode: ConversationMode.openclaw,
-      ),
-      isNull,
-    );
-  });
-
-  test('clearing normal removes the pre-mode legacy id', () async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt('current_conversation_id', 61);
-
-    await ConversationHistoryService.saveCurrentConversationId(
-      null,
-      mode: ConversationMode.normal,
-    );
-
-    expect(
-      await ConversationHistoryService.getCurrentConversationId(
-        mode: ConversationMode.normal,
-      ),
-      isNull,
-    );
-  });
-
-  test('round-trips chat_only storage keys through parser', () {
-    final parsed = ConversationHistoryService.tryParseConversationMessagesKey(
-      ConversationHistoryService.conversationMessagesKey(
-        9,
-        mode: ConversationMode.chatOnly,
-      ),
-    );
-
-    expect(parsed, isNotNull);
-    expect(parsed!.conversationId, 9);
-    expect(parsed.mode, ConversationMode.chatOnly);
-    expect(parsed.threadKey, 'chat_only:9');
-  });
-
-  test('round-trips last visible thread target with mode metadata', () async {
-    const target = ConversationThreadTarget.existing(
-      conversationId: 42,
-      mode: ConversationMode.openclaw,
-    );
-
-    await ConversationHistoryService.saveLastVisibleThreadTarget(target);
-    final restored =
-        await ConversationHistoryService.getLastVisibleThreadTarget();
-
-    expect(restored, target);
-  });
 
   test('round-trips remote agent session metadata', () {
     const target = ConversationThreadTarget.agentSession(
@@ -443,54 +249,6 @@ void main() {
     expect(restored, target);
     expect(restored.agentSessionActive, isTrue);
   });
-
-  test('round-trips local agent conversation target thread metadata', () async {
-    const target = ConversationThreadTarget.existing(
-      conversationId: 42,
-      mode: ConversationMode.agent,
-      agentId: 'claude-code-acp',
-      agentSessionId: '019f12d6-16a0-7f01-9537-275ff25b9f79',
-      agentRuntime: 'local',
-    );
-
-    await ConversationHistoryService.saveCurrentConversationTarget(
-      target,
-      mode: ConversationMode.agent,
-    );
-    await ConversationHistoryService.saveLastVisibleThreadTarget(target);
-
-    expect(
-      await ConversationHistoryService.getCurrentConversationTarget(
-        mode: ConversationMode.agent,
-      ),
-      target,
-    );
-    expect(
-      await ConversationHistoryService.getLastVisibleThreadTarget(),
-      target,
-    );
-  });
-
-  test(
-    'falls back to current thread target when last visible is absent',
-    () async {
-      const target = ConversationThreadTarget.newConversation(
-        mode: ConversationMode.normal,
-      );
-
-      await ConversationHistoryService.saveCurrentConversationTarget(
-        target,
-        mode: ConversationMode.normal,
-      );
-
-      expect(
-        await ConversationHistoryService.getLastVisibleThreadTarget(),
-        const ConversationThreadTarget.newConversation(
-          mode: ConversationMode.agent,
-        ),
-      );
-    },
-  );
 
   test(
     'stores conversation messages independently per mode through native',
@@ -564,329 +322,114 @@ void main() {
     expect(persistedSnapshots.last.single['content']['text'], 'latest');
   });
 
-  test(
-    'canonicalizes legacy Agent tool metadata restored from storage',
-    () async {
-      nativeMessages['agent:12'] = <Map<String, dynamic>>[
-        ChatMessageModel.cardMessage(<String, dynamic>{
-          'type': 'agent_tool_summary',
-          'uiStyle': 'codex_tool',
-          'agentId': 'claude-code-acp',
-          'agentName': 'Claude Code',
-          'toolName': 'codex.tool',
-          'toolTitle': 'Read settings.json',
-          'status': 'success',
-        }, id: 'tool-12').toJson(),
-      ];
-
-      final restored = await ConversationHistoryService.getConversationMessages(
-        12,
-        mode: ConversationMode.agent,
-      );
-
-      expect(restored.single.cardData?['uiStyle'], 'agent_tool');
-      expect(restored.single.cardData?['toolName'], 'agent.tool');
-      expect(restored.single.agentId, 'claude-code-acp');
-      expect(restored.single.agentName, 'Claude Code');
-    },
-  );
-
-  test(
-    'migrates mode-scoped legacy messages when native storage is empty',
-    () async {
-      final prefs = await SharedPreferences.getInstance();
-      final legacyMessages = <ChatMessageModel>[
-        ChatMessageModel.userMessage('legacy normal thread'),
-      ];
-      await prefs.setString(
-        'conversation_messages_normal_3',
-        jsonEncode(legacyMessages.map((message) => message.toJson()).toList()),
-      );
-
-      final restored = await ConversationHistoryService.getConversationMessages(
-        3,
-        mode: ConversationMode.normal,
-      );
-
-      expect(restored.single.text, 'legacy normal thread');
-      expect(nativeMessages['agent:3']?.single['id'], restored.single.id);
-      expect(
-        prefs.getString(
-          ConversationHistoryService.conversationMessagesKey(
-            3,
-            mode: ConversationMode.normal,
-          ),
-        ),
-        isNull,
-      );
-    },
-  );
-
-  test('migrates pre-mode legacy normal messages', () async {
-    final prefs = await SharedPreferences.getInstance();
-    final legacyMessages = <ChatMessageModel>[
-      ChatMessageModel.userMessage('legacy before modes'),
+  test('decodes canonical Agent tool metadata supplied by Kotlin', () async {
+    nativeMessages['agent:12'] = <Map<String, dynamic>>[
+      ChatMessageModel.cardMessage(<String, dynamic>{
+        'type': 'agent_tool_summary',
+        'uiStyle': 'agent_tool',
+        'agentId': 'claude-code-acp',
+        'agentName': 'Claude Code',
+        'toolName': 'agent.tool',
+        'toolTitle': 'Read settings.json',
+        'status': 'success',
+      }, id: 'tool-12').toJson(),
     ];
-    await prefs.setString(
-      'conversation_messages_4',
-      jsonEncode(legacyMessages.map((message) => message.toJson()).toList()),
-    );
 
     final restored = await ConversationHistoryService.getConversationMessages(
-      4,
-      mode: ConversationMode.normal,
+      12,
+      mode: ConversationMode.agent,
     );
 
-    expect(restored.single.text, 'legacy before modes');
-    expect(nativeMessages['agent:4'], hasLength(1));
-    expect(prefs.getString('conversation_messages_4'), isNull);
+    expect(restored.single.cardData?['uiStyle'], 'agent_tool');
+    expect(restored.single.cardData?['toolName'], 'agent.tool');
+    expect(restored.single.agentId, 'claude-code-acp');
+    expect(restored.single.agentName, 'Claude Code');
   });
 
-  test('paged load restores first page from legacy storage', () async {
-    final prefs = await SharedPreferences.getInstance();
-    final legacyMessages = <ChatMessageModel>[
-      ChatMessageModel.userMessage('newest').copyWith(id: 'legacy-newest'),
-      ChatMessageModel.userMessage('middle').copyWith(id: 'legacy-middle'),
-      ChatMessageModel.userMessage('oldest').copyWith(id: 'legacy-oldest'),
-    ];
-    await prefs.setString(
-      ConversationHistoryService.conversationMessagesKey(
+  // Legacy bucket recovery now runs in Kotlin; its persistence and crash
+  // behavior is covered by LegacyConversationHistoryTest.
+  test('paged history only requests the current native page', () async {
+    final calls = <MethodCall>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      return {
+        'messages': [ChatMessageModel.userMessage('page', id: 'page').toJson()],
+        'hasMore': true,
+        'nextOffset': 1250,
+      };
+    });
+    final page = await ConversationHistoryService.getConversationMessagesPaged(
+      5,
+      limit: 50,
+      offset: 1200,
+      expectedMessageCount: 20000,
+    );
+    expect(calls.map((call) => call.method), ['getConversationMessagesPaged']);
+    expect(calls.single.arguments['offset'], 1200);
+    expect(calls.single.arguments['limit'], 50);
+    expect(page.messages.single.text, 'page');
+    expect(page.hasMore, isTrue);
+    expect(page.nextOffset, 1250);
+  });
+
+  test(
+    'native cursor advances past filtered legacy assistant placeholders',
+    () async {
+      messenger.setMockMethodCallHandler(
+        channel,
+        (call) async => {
+          'messages': [
+            ChatMessageModel.userMessage('visible', id: 'visible').toJson(),
+          ],
+          'hasMore': true,
+          'nextOffset': 52,
+        },
+      );
+      final page =
+          await ConversationHistoryService.getConversationMessagesPaged(
+            5,
+            offset: 50,
+          );
+      expect(page.messages.map((message) => message.id), ['visible']);
+      expect(page.nextOffset, 52);
+      expect(page.hasMore, isTrue);
+    },
+  );
+
+  test('history failure propagates without replacing the visible conversation with empty history', () async {
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      throw PlatformException(code: 'STORAGE_UNAVAILABLE');
+    });
+    await expectLater(
+      ConversationHistoryService.getConversationMessages(5),
+      throwsA(isA<PlatformException>()),
+    );
+    await expectLater(
+      ConversationHistoryService.getConversationMessagesPaged(5),
+      throwsA(isA<PlatformException>()),
+    );
+  });
+
+  test(
+    'Flutter does not parse or retire native-owned legacy snapshots',
+    () async {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        'conversation_messages_normal_5',
+        'native-owned legacy JSON',
+      );
+      nativeMessages['agent:5'] = [
+        ChatMessageModel.userMessage('native result').toJson(),
+      ];
+      final messages = await ConversationHistoryService.getConversationMessages(
         5,
-        mode: ConversationMode.chatOnly,
-      ),
-      jsonEncode(legacyMessages.map((message) => message.toJson()).toList()),
-    );
-
-    final restored =
-        await ConversationHistoryService.getConversationMessagesPaged(
-          5,
-          mode: ConversationMode.chatOnly,
-          limit: 2,
-          offset: 0,
-        );
-
-    expect(restored.messages.map((message) => message.text), [
-      'newest',
-      'middle',
-    ]);
-    expect(restored.hasMore, isTrue);
-    expect(nativeMessages['chat_only:5'], hasLength(3));
-  });
-
-  test(
-    'legacy paged fallback keeps every history page when native paging is unavailable',
-    () async {
-      final allMessages = List<ChatMessageModel>.generate(
-        123,
-        (index) => ChatMessageModel.userMessage(
-          'persisted message ${index + 1}',
-          id: 'persisted-${index + 1}',
-        ),
-      );
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(
-        ConversationHistoryService.conversationMessagesKey(
-          7,
-          mode: ConversationMode.agent,
-        ),
-        jsonEncode(allMessages.map((message) => message.toJson()).toList()),
-      );
-      messenger.setMockMethodCallHandler(channel, (call) async {
-        final args = Map<String, dynamic>.from(
-          (call.arguments as Map?) ?? const {},
-        );
-        final conversationId = (args['conversationId'] as num?)?.toInt() ?? 0;
-        final mode = ConversationMode.fromStorageValue(args['mode'] as String?);
-        final key = threadKey(conversationId, mode);
-        switch (call.method) {
-          case 'getConversationMessagesPaged':
-            return null;
-          case 'getConversationMessages':
-            return nativeMessages[key] ?? <Map<String, dynamic>>[];
-          case 'replaceConversationMessages':
-            nativeMessages[key] = normalizeMessageList(args['messages']);
-            return 'SUCCESS';
-          default:
-            return 'SUCCESS';
-        }
-      });
-
-      final first =
-          await ConversationHistoryService.getConversationMessagesPaged(
-            7,
-            mode: ConversationMode.agent,
-            limit: 50,
-          );
-      final second =
-          await ConversationHistoryService.getConversationMessagesPaged(
-            7,
-            mode: ConversationMode.agent,
-            limit: 50,
-            offset: first.messages.length,
-          );
-      final third =
-          await ConversationHistoryService.getConversationMessagesPaged(
-            7,
-            mode: ConversationMode.agent,
-            limit: 50,
-            offset: first.messages.length + second.messages.length,
-          );
-
-      expect(first.hasMore, isTrue);
-      expect(second.hasMore, isTrue);
-      expect(third.hasMore, isFalse);
-      expect(
-        [
-          ...first.messages,
-          ...second.messages,
-          ...third.messages,
-        ].map((message) => message.text),
-        unorderedEquals(allMessages.map((message) => message.text)),
-      );
-    },
-  );
-
-  test('merges partial native history with richer legacy snapshot', () async {
-    final prefs = await SharedPreferences.getInstance();
-    nativeMessages['agent:6'] = <Map<String, dynamic>>[
-      ChatMessageModel.userMessage(
-        'new native message',
-        id: 'native-new',
-      ).toJson(),
-    ];
-    final legacyMessages = <ChatMessageModel>[
-      ChatMessageModel.userMessage('legacy newest', id: 'legacy-newest'),
-      ChatMessageModel.userMessage('legacy oldest', id: 'legacy-oldest'),
-    ];
-    await prefs.setString(
-      'conversation_messages_normal_6',
-      jsonEncode(legacyMessages.map((message) => message.toJson()).toList()),
-    );
-
-    final restored = await ConversationHistoryService.getConversationMessages(
-      6,
-      mode: ConversationMode.normal,
-    );
-
-    expect(
-      restored.map((message) => message.text),
-      contains('new native message'),
-    );
-    expect(restored.map((message) => message.text), contains('legacy newest'));
-    expect(restored.map((message) => message.text), contains('legacy oldest'));
-    expect(nativeMessages['agent:6'], hasLength(3));
-    expect(
-      prefs.getString(
-        ConversationHistoryService.conversationMessagesKey(
-          6,
-          mode: ConversationMode.normal,
-        ),
-      ),
-      isNull,
-    );
-  });
-
-  test(
-    'preserves legacy messages when metadata incorrectly expects none',
-    () async {
-      final prefs = await SharedPreferences.getInstance();
-      final legacyMessages = <ChatMessageModel>[
-        ChatMessageModel.userMessage('stale cleared message'),
-      ];
-      await prefs.setString(
-        ConversationHistoryService.conversationMessagesKey(
-          8,
-          mode: ConversationMode.normal,
-        ),
-        jsonEncode(legacyMessages.map((message) => message.toJson()).toList()),
-      );
-
-      final restored = await ConversationHistoryService.getConversationMessages(
-        8,
-        mode: ConversationMode.normal,
         expectedMessageCount: 0,
       );
-
-      expect(restored.single.text, 'stale cleared message');
+      expect(messages.single.text, 'native result');
       expect(
-        nativeMessages['agent:8']?.single['content']['text'],
-        'stale cleared message',
+        prefs.getString('conversation_messages_normal_5'),
+        'native-owned legacy JSON',
       );
-      expect(
-        prefs.getString(
-          ConversationHistoryService.conversationMessagesKey(
-            8,
-            mode: ConversationMode.normal,
-          ),
-        ),
-        isNull,
-      );
-    },
-  );
-
-  test(
-    'reads legacy Agent history stored under the old agent mode alias',
-    () async {
-      final prefs = await SharedPreferences.getInstance();
-      final message = ChatMessageModel.userMessage('old Agent history');
-      await prefs.setString(
-        'conversation_messages_agent_9',
-        jsonEncode(<Map<String, dynamic>>[message.toJson()]),
-      );
-
-      final restored = await ConversationHistoryService.readConversationHistory(
-        9,
-        mode: ConversationMode.agent,
-      );
-
-      expect(restored.single.text, 'old Agent history');
-    },
-  );
-
-  test(
-    'agent history recovers snapshots stored under legacy normal and bare keys',
-    () async {
-      final prefs = await SharedPreferences.getInstance();
-      final normalMessage = ChatMessageModel.userMessage(
-        'old normal history',
-        id: 'old-normal',
-      );
-      final bareMessage = ChatMessageModel.userMessage(
-        'old bare history',
-        id: 'old-bare',
-      );
-      await prefs.setString(
-        ConversationHistoryService.conversationMessagesKey(
-          10,
-          mode: ConversationMode.normal,
-        ),
-        jsonEncode(<Map<String, dynamic>>[normalMessage.toJson()]),
-      );
-      await prefs.setString(
-        'conversation_messages_10',
-        jsonEncode(<Map<String, dynamic>>[bareMessage.toJson()]),
-      );
-
-      final restored = await ConversationHistoryService.getConversationMessages(
-        10,
-        mode: ConversationMode.agent,
-      );
-
-      expect(
-        restored.map((message) => message.text),
-        containsAll(<String>['old normal history', 'old bare history']),
-      );
-      expect(nativeMessages['agent:10'], hasLength(2));
-      expect(
-        prefs.getString(
-          ConversationHistoryService.conversationMessagesKey(
-            10,
-            mode: ConversationMode.normal,
-          ),
-        ),
-        isNull,
-      );
-      expect(prefs.getString('conversation_messages_10'), isNull);
     },
   );
 
@@ -896,15 +439,6 @@ void main() {
       <ChatMessageModel>[ChatMessageModel.userMessage('to be cleared')],
       mode: ConversationMode.subagent,
     );
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
-      ConversationHistoryService.conversationMessagesKey(
-        7,
-        mode: ConversationMode.subagent,
-      ),
-      '[]',
-    );
-
     await ConversationHistoryService.clearConversationMessages(
       7,
       mode: ConversationMode.subagent,
@@ -915,14 +449,16 @@ void main() {
       mode: ConversationMode.subagent,
     );
     expect(messages, isEmpty);
-    expect(
-      prefs.getString(
-        ConversationHistoryService.conversationMessagesKey(
-          7,
-          mode: ConversationMode.subagent,
-        ),
-      ),
-      isNull,
-    );
   });
+}
+
+class _CountedMessage extends ChatMessageModel {
+  _CountedMessage(String id, String text)
+    : super(id: id, type: 1, user: 2, content: {'text': text});
+  static int serializations = 0;
+  @override
+  Map<String, dynamic> toJson() {
+    serializations++;
+    return super.toJson();
+  }
 }

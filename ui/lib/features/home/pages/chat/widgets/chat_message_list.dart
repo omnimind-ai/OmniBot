@@ -684,11 +684,28 @@ class _ChatMessageListState extends State<ChatMessageList> {
     ObservableChatMessageList messages,
     String messageId,
   ) {
-    final index = messages.indexWhere((message) => message.id == messageId);
-    if (index == -1) {
+    final index = _messageIndexFor(messages, messageId);
+    if (index == null) {
       return null;
     }
     return messages.listenableAt(index);
+  }
+
+  ObservableChatMessageList? _indexedMessages;
+  int _indexedStructureRevision = -1;
+  final Map<String, int> _messageIndices = {};
+
+  int? _messageIndexFor(ObservableChatMessageList messages, String id) {
+    if (!identical(_indexedMessages, messages) ||
+        _indexedStructureRevision != messages.structureRevision) {
+      _messageIndices.clear();
+      for (var index = 0; index < messages.length; index++) {
+        _messageIndices.putIfAbsent(messages[index].id, () => index);
+      }
+      _indexedMessages = messages;
+      _indexedStructureRevision = messages.structureRevision;
+    }
+    return _messageIndices[id];
   }
 
   List<Listenable> _groupMessageListenablesFor(
@@ -751,7 +768,9 @@ class _ChatMessageListState extends State<ChatMessageList> {
     AgentRunTimelineGroup group,
   ) {
     return group.withRefreshedMessages(<String, ChatMessageModel>{
-      for (final message in messages) message.id: message,
+      for (final message in group.allMessagesOldestFirst)
+        if (_messageIndexFor(messages, message.id) case final int index)
+          message.id: messages[index],
     });
   }
 
@@ -892,6 +911,10 @@ class _ChatMessageListState extends State<ChatMessageList> {
     String? latestUserMessageId;
     final messageSource = _observableMessages ?? widget.messages;
     final timelineEntries = _resolveTimelineEntries(messageSource);
+    final rowIndices = <String, int>{
+      for (var index = 0; index < timelineEntries.length; index++)
+        timelineEntries[index].key: timelineEntries.length - 1 - index,
+    };
     _pruneEntryRowKeys(timelineEntries);
     for (final item in messageSource) {
       if (item.user == 1) {
@@ -915,10 +938,7 @@ class _ChatMessageListState extends State<ChatMessageList> {
           return null;
         }
         final entryKey = key.value.substring(_kListEntryKeyPrefix.length);
-        final dataIndex = timelineEntries.indexWhere(
-          (entry) => entry.key == entryKey,
-        );
-        return dataIndex == -1 ? null : timelineEntries.length - 1 - dataIndex;
+        return rowIndices[entryKey];
       },
       itemBuilder: (context, index) {
         final dataIndex = timelineEntries.length - 1 - index;

@@ -173,8 +173,21 @@ List<AgentRunTimelineEntry> buildAgentRunTimelineEntries(
       .toSet();
   final emittedTaskIds = <String>{};
   final entries = <AgentRunTimelineEntry>[];
-
+  // Index once: loading another history page must not rescan the entire
+  // transcript for every turn (including turns with no visible group).
+  final messagesByTask = <String, List<ChatMessageModel>>{};
+  final taskIds = <String?>[];
   for (final message in renderMessages) {
+    final taskId = agentRunId(message);
+    taskIds.add(taskId);
+    if (taskId != null) {
+      (messagesByTask[taskId] ??= []).add(message);
+    }
+  }
+  final groups = <String, AgentRunTimelineGroup?>{};
+
+  for (var index = 0; index < renderMessages.length; index++) {
+    final message = renderMessages[index];
     // Artifact metadata is already carried by the corresponding tool card and
     // powers the activity strip above the composer. Rendering the reducer's
     // standalone compatibility card as well puts a large duplicate file card
@@ -182,7 +195,7 @@ List<AgentRunTimelineEntry> buildAgentRunTimelineEntries(
     if (_cardType(message) == 'artifact_card') {
       continue;
     }
-    final taskId = agentRunId(message);
+    final taskId = taskIds[index];
     if (taskId == null) {
       entries.add(AgentRunTimelineEntry.message(message));
       continue;
@@ -194,11 +207,14 @@ List<AgentRunTimelineEntry> buildAgentRunTimelineEntries(
       continue;
     }
 
-    final group = _buildTimelineGroup(
-      renderMessages,
-      taskId: taskId,
-      isActive: normalizedActiveTaskIds.contains(taskId),
-      conversationAgentId: conversationAgentId,
+    final group = groups.putIfAbsent(
+      taskId,
+      () => _buildTimelineGroup(
+        messagesByTask[taskId]!,
+        taskId: taskId,
+        isActive: normalizedActiveTaskIds.contains(taskId),
+        conversationAgentId: conversationAgentId,
+      ),
     );
     if (group == null) {
       entries.add(AgentRunTimelineEntry.message(message));
@@ -568,10 +584,7 @@ AgentRunTimelineGroup? _buildTimelineGroup(
   String? conversationAgentId,
 }) {
   final taskMessages = _stabilizeTaskMessagesNewestFirst(
-    messages
-        .where((message) => agentRunId(message) == taskId)
-        .where(_isAgentRunCandidateMessage)
-        .toList(growable: false),
+    messages.where(_isAgentRunCandidateMessage).toList(growable: false),
   );
   if (taskMessages.isEmpty) {
     return null;

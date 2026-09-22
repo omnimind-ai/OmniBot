@@ -1,51 +1,6 @@
 part of 'chat_conversation_runtime_coordinator.dart';
 
 extension _ChatRuntimeInternalSupport on ChatConversationRuntimeCoordinator {
-  void _updateToolLayerState(
-    ChatConversationRuntimeState runtime,
-    AgentToolEventData event,
-  ) {
-    final toolType = event.toolType.trim();
-    if (toolType != 'terminal' && toolType != 'browser') {
-      return;
-    }
-    runtime.lastAgentToolType = toolType;
-    runtime.chatIslandDisplayLayer = ChatIslandDisplayLayer.tools;
-  }
-
-  void _updateBrowserSessionSnapshot(
-    ChatConversationRuntimeState runtime,
-    AgentToolEventData event,
-  ) {
-    if (event.toolType.trim() != 'browser') {
-      return;
-    }
-    final workspaceId = (event.workspaceId ?? '').trim();
-    if (!event.success || workspaceId.isEmpty) {
-      return;
-    }
-    final snapshot =
-        ChatBrowserSessionSnapshot.tryParseBrowserToolJson(
-          rawJson: event.rawResultJson,
-          workspaceId: workspaceId,
-        ) ??
-        ChatBrowserSessionSnapshot.tryParseBrowserToolJson(
-          rawJson: event.resultPreviewJson,
-          workspaceId: workspaceId,
-        );
-    if (snapshot == null) {
-      return;
-    }
-    runtime.browserSessionSnapshot = snapshot;
-  }
-
-  String _trimTerminalOutput(String value) {
-    // Keep the complete terminal result in the runtime projection. Any
-    // transport/provider failure is reported by its owner; the UI must not
-    // turn a successful tool result into a truncated one.
-    return value;
-  }
-
   String? _normalizeReasoningContent(String? value) {
     final normalized = value?.trim() ?? '';
     return normalized.isEmpty ? null : normalized;

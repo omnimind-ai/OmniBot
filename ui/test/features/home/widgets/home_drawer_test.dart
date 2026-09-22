@@ -79,8 +79,8 @@ void main() {
               return <String, Object?>{'content': ''};
             case 'agentSkillList':
               return <Object?>[];
-            case 'updateConversationTitle':
-              return 'SUCCESS';
+            case 'manageConversation':
+              return true;
             default:
               return null;
           }
@@ -1085,9 +1085,10 @@ void main() {
               return <String, Object?>{'content': ''};
             case 'agentSkillList':
               return <Object?>[];
-            case 'updateConversationTitle':
-              renamedTitle = (call.arguments as Map?)?['newTitle'] as String?;
-              return 'SUCCESS';
+            case 'manageConversation':
+              expect((call.arguments as Map)['action'], 'rename');
+              renamedTitle = (call.arguments as Map?)?['title'] as String?;
+              return true;
             default:
               return null;
           }

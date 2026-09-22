@@ -2975,6 +2975,72 @@ class AssistsCoreManager(private val context: Context) {
     /**
      * 获取所有对话列表
      */
+    fun manageConversation(call: MethodCall, result: MethodChannel.Result) {
+        workJob.launch {
+            try {
+                val action = call.argument<String>("action").orEmpty()
+                val id = requireNotNull(call.argument<Number>("conversationId")).toLong()
+                val success = conversationDomainService.manageFromUi(
+                    action, id, call.argument<String>("mode"), call.argument<String>("title").orEmpty(),
+                )
+                if (success && action in setOf("delete", "archive")) {
+                    val target = cn.com.omnimind.bot.agent.ChatConversationPreferences(context).lastTarget()
+                    currentConversationId = (target?.get("conversationId") as? Number)?.toLong()?.takeIf { it > 0 }
+                    currentConversationMode = target?.get("mode")?.toString() ?: "agent"
+                }
+                withContext(Dispatchers.Main) { result.success(success) }
+            } catch (error: Exception) {
+                withContext(Dispatchers.Main) { result.error("MANAGE_CONVERSATION_ERROR", error.message, null) }
+            }
+        }
+    }
+
+    fun handleConversationStorage(call: MethodCall, result: MethodChannel.Result) {
+        workJob.launch {
+            try {
+                val value = if (call.method == "conversationSelection") {
+                    cn.com.omnimind.bot.agent.ChatConversationPreferences(context).handle(
+                        call.argument<String>("operation").orEmpty(),
+                        call.arguments as? Map<*, *> ?: emptyMap<String, Any?>(),
+                    )
+                } else {
+                    val conversationId = requireNotNull(call.argument<Number>("conversationId")).toLong()
+                    require(conversationId > 0)
+                    val mode = normalizeConversationMode(call.argument<String>("mode"))
+                    val messages = conversationDomainService.listConversationMessages(conversationId, mode)
+                    if (call.argument<String>("format") == "text") {
+                        cn.com.omnimind.bot.agent.ConversationTranscript.clipboard(messages)
+                    } else {
+                        cn.com.omnimind.bot.agent.ConversationTranscript.export(conversationId, mode, messages)
+                    }
+                }
+                withContext(Dispatchers.Main) { result.success(value) }
+            } catch (error: Exception) {
+                withContext(Dispatchers.Main) { result.error("CONVERSATION_STORAGE_ERROR", error.message, null) }
+            }
+        }
+    }
+
+    fun handleChatLinkPreview(call: MethodCall, result: MethodChannel.Result) {
+        workJob.launch {
+            try {
+                val repository = cn.com.omnimind.bot.agent.ChatLinkPreviewRepository.shared
+                val value = if (call.method == "loadChatLinkPreview") {
+                    repository.load(call.argument<String>("url").orEmpty())
+                } else {
+                    repository.reconcile(
+                        call.argument<String>("text").orEmpty(),
+                        call.argument<Any?>("existing"),
+                        (call.argument<Number>("maxCount")?.toInt() ?: 3).coerceIn(0, 3),
+                    )
+                }
+                withContext(Dispatchers.Main) { result.success(value) }
+            } catch (error: Exception) {
+                withContext(Dispatchers.Main) { result.error("LINK_PREVIEW_ERROR", error.message, null) }
+            }
+        }
+    }
+
     fun getConversations(call: MethodCall, result: MethodChannel.Result) {
         OmniLog.d(TAG, "[getConversations] 开始获取对话列表...")
         val includeArchived = call.argument<Boolean>("includeArchived") ?: true
@@ -2989,11 +3055,12 @@ class AssistsCoreManager(private val context: Context) {
                 }
                 val jsonList = conversationDomainService.listConversationPayloads(
                     includeArchived = includeArchived,
-                    archivedOnly = archivedOnly
+                    archivedOnly = archivedOnly,
+                    mode = call.argument<String>("mode"),
+                    excludeHidden = true,
                 )
                 OmniLog.d(TAG, "[getConversations] 从数据库获取到 ${jsonList.size} 条对话记录")
                 withContext(Dispatchers.Main) {
-                    OmniLog.d(TAG, "[getConversations] 返回 Flutter: $jsonList")
                     result.success(jsonList)
                 }
             } catch (e: Exception) {
@@ -3204,14 +3271,14 @@ class AssistsCoreManager(private val context: Context) {
 
         workJob.launch {
             try {
-                val all = conversationDomainService.listConversationPayloads(
-                    includeArchived = true
+                val jsonList = conversationDomainService.listConversationPayloads(
+                    includeArchived = call.argument<Boolean>("includeArchived") ?: false,
+                    archivedOnly = call.argument<Boolean>("archivedOnly") ?: false,
+                    offset = offset,
+                    limit = limit,
+                    mode = call.argument<String>("mode"),
+                    excludeHidden = true,
                 )
-                val jsonList = if (offset >= all.size) {
-                    emptyList()
-                } else {
-                    all.subList(offset.coerceAtLeast(0), (offset + limit).coerceAtMost(all.size))
-                }
                 withContext(Dispatchers.Main) {
                     result.success(jsonList)
                 }
@@ -3271,7 +3338,8 @@ class AssistsCoreManager(private val context: Context) {
             try {
                 if (conversationMap != null) {
                     conversationDomainService.updateConversationFromPayload(
-                        conversationMap.mapValues { it.value }
+                        conversationMap.mapValues { it.value },
+                        preserveLatestMetadata = call.argument<Boolean>("preserveLatestMetadata") ?: false,
                     )
                     withContext(Dispatchers.Main) {
                         result.success("SUCCESS")

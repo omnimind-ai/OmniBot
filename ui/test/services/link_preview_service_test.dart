@@ -1,63 +1,53 @@
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ui/models/chat_link_preview.dart';
 import 'package:ui/services/link_preview_service.dart';
 
 void main() {
-  test('extractUrls ignores omnibot resource urls', () {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  const channel = MethodChannel('cn.com.omnimind.bot/AssistCoreEvent');
+  final messenger =
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+  tearDown(() => messenger.setMockMethodCallHandler(channel, null));
+
+  test('link data processing crosses the native boundary once', () async {
+    final calls = <MethodCall>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      if (call.method == 'reconcileChatLinkPreviews') {
+        return [
+          {'url': 'https://example.com', 'status': 'loading'},
+        ];
+      }
+      return {
+        'url': 'https://example.com',
+        'title': 'Native title',
+        'status': 'ready',
+      };
+    });
     final service = LinkPreviewService();
-
-    final urls = service.extractUrls(
-      '先看 omnibot://workspace/demo/index.html 再看 https://example.com/docs',
+    final rows = await service.reconcilePreviewMaps(
+      text: 'https://example.com',
     );
-
-    expect(urls, <String>['https://example.com/docs']);
-  });
-
-  test('reconcilePreviewMaps keeps only web previews', () {
-    final service = LinkPreviewService();
-
-    final previews = service.reconcilePreviewMaps(
-      text:
-          '资源 [报告](omnibot://workspace/demo/report.html) 和网页 https://example.com/news',
-    );
-
-    expect(previews, hasLength(1));
+    expect(rows!.single['status'], 'loading');
     expect(
-      ChatLinkPreview.fromJson(previews.single).url,
-      'https://example.com/news',
+      (await service.loadPreview(rows.single['url'] as String)).title,
+      'Native title',
     );
-  });
-
-  test('extractUrls ignores filenames inside markdown image syntax', () {
-    final service = LinkPreviewService();
-
-    final urls = service.extractUrls(
-      '![screenshot_tab_1_1777050057660_1e40e3cd.jpg](omnibot://browser/f6d26871-5b43-4ba0-af49-7c09396569a8/screenshot_tab_1_1777050057660_1e40e3cd.jpg)',
-    );
-
-    expect(urls, isEmpty);
-  });
-
-  test('extractUrls ignores dot commands without common domain suffixes', () {
-    final service = LinkPreviewService();
-
-    final urls = service.extractUrls(
-      '先执行 diagnostics.getprop 和 settings_control.get，再打开 github.com/docs',
-    );
-
-    expect(urls, <String>['https://github.com/docs']);
-  });
-
-  test('extractUrls keeps common multi-part domain suffixes', () {
-    final service = LinkPreviewService();
-
-    final urls = service.extractUrls(
-      '文档在 example.co.uk/guide 和 docs.github.io/reference',
-    );
-
-    expect(urls, <String>[
-      'https://example.co.uk/guide',
-      'https://docs.github.io/reference',
+    expect(calls.map((call) => call.method), [
+      'reconcileChatLinkPreviews',
+      'loadChatLinkPreview',
     ]);
+    expect(calls.first.arguments['text'], 'https://example.com');
+  });
+
+  test('unavailable native preview preserves the existing message', () async {
+    expect(
+      await LinkPreviewService().reconcilePreviewMaps(text: 'hello'),
+      isNull,
+    );
+    expect(
+      (await LinkPreviewService().loadPreview('https://example.com')).status,
+      'failed',
+    );
   });
 }

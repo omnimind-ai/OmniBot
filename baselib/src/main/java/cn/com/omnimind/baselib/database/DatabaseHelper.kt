@@ -366,6 +366,15 @@ object DatabaseHelper {
         }
     }
 
+    private val MIGRATION_18_19 = object : Migration(18, 19) {
+        override fun migrate(database: SupportSQLiteDatabase) {
+            database.execSQL(
+                "CREATE INDEX IF NOT EXISTS index_agent_conversation_entries_conversationId_createdAt_id " +
+                    "ON agent_conversation_entries (conversationId, createdAt, id)"
+            )
+        }
+    }
+
     internal val ALL_MIGRATIONS = arrayOf(
         MIGRATION_1_2,
         MIGRATION_2_3,
@@ -383,7 +392,8 @@ object DatabaseHelper {
         MIGRATION_14_15,
         MIGRATION_15_16,
         MIGRATION_16_17,
-        MIGRATION_17_18
+        MIGRATION_17_18,
+        MIGRATION_18_19
     )
 
     fun init(context: Context) {
@@ -475,9 +485,12 @@ object DatabaseHelper {
         return getDatabase().conversationDao().insert(conversation)
     }
 
-    suspend fun updateConversation(conversation: Conversation) {
-        getDatabase().conversationDao().updatePreservingCheckpoint(conversation)
+    suspend fun updateConversation(conversation: Conversation, preserveLatestMetadata: Boolean = false) {
+        getDatabase().conversationDao().updatePreservingCheckpoint(conversation, preserveLatestMetadata)
     }
+
+    suspend fun getConversationDisplayPage(offset: Int, limit: Int, includeArchived: Boolean, archivedOnly: Boolean, mode: String?) =
+        getDatabase().conversationDao().getDisplayPage(offset, limit, includeArchived, archivedOnly, mode)
 
     fun observeAgentToolHeadersAfter(conversationId: Long, afterEntryId: Long):
         kotlinx.coroutines.flow.Flow<List<AgentConversationEntryHeader>> =

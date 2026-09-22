@@ -12,7 +12,9 @@ import java.util.Date
             value = ["conversationId", "conversationMode", "entryId"],
             unique = true
         ),
-        Index(value = ["conversationId", "conversationMode", "updatedAt"])
+        Index(value = ["conversationId", "conversationMode", "updatedAt"]),
+        // One chronological index spans canonical and legacy mode buckets.
+        Index(value = ["conversationId", "createdAt", "id"])
     ]
 )
 data class AgentConversationEntry(
