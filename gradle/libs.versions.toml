@@ -51,10 +51,13 @@ navigationFragment = "2.10.0"
 navigationUi = "2.10.0"
 palette = "1.0.0"
 shizuku = "13.1.5"
-miuix = "0.9.4-rc01"
+miuix = "0.9.4"
 androidSvg = "1.4"
 [libraries]
 miuix-nav = { module = "top.yukonga.miuix.kmp:miuix-nav", version.ref = "miuix" }
+miuix-ui = { module = "top.yukonga.miuix.kmp:miuix-ui", version.ref = "miuix" }
+androidx-compose-foundation = { module = "androidx.compose.foundation:foundation" }
+androidx-lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-compose", version.ref = "lifecycleRuntimeKtx" }
 agent-client-protocol = { module = "com.agentclientprotocol:acp", version.ref = "agentClientProtocol" }
 accompanist-systemuicontroller = { module = "com.google.accompanist:accompanist-systemuicontroller", version.ref = "accompanistSystemuicontroller" }
 anrwatchdog = { module = "com.github.anrwatchdog:anrwatchdog", version.ref = "anrwatchdog" }

@@ -365,6 +365,21 @@ class GoRouterManager {
     }
   }
 
+  /// Temporary navigation boundary while the native home replaces Flutter pages.
+  /// A blank root gives both toolbar and system back a real route to pop. The
+  /// native caller closes its Flutter Activity after the pushed route completes.
+  static Future<void> openLegacyPage(String route) async {
+    await WidgetsBinding.instance.endOfFrame;
+    final context = _rootNavigatorKey.currentContext;
+    if (context == null || !context.mounted) {
+      throw StateError('The Flutter navigation host is not mounted');
+    }
+    final router = GoRouter.of(context);
+    router.go('/home/blank_page');
+    await WidgetsBinding.instance.endOfFrame;
+    await router.push<void>(route);
+  }
+
   /// 替换当前路由（先 pop 再 push），避免路由栈堆积
   static void pushReplacement(
     String route, {

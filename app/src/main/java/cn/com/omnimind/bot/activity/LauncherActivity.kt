@@ -5,13 +5,15 @@ import android.content.pm.ActivityInfo
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import cn.com.omnimind.baselib.util.OmniLog
+import cn.com.omnimind.bot.BuildConfig
 import cn.com.omnimind.bot.quicklog.QuickLogWidgetActionRouter
 import cn.com.omnimind.bot.util.PredictiveBackGate
 
 /**
  * 启动页 Activity
  *
- * OSS 版本：直接进入 MainActivity，不再依赖账号与在线协议流程。
+ * Chooses the opt-in Compose home or the existing Flutter entry point.
+ * Explicit routes retain their existing Activity owner during the migration.
  */
 class LauncherActivity : ComponentActivity() {
 
@@ -54,7 +56,11 @@ class LauncherActivity : ComponentActivity() {
 
 
     private fun startMainActivity() {
-        val intent = Intent(this, MainActivity::class.java).apply {
+        // Explicit native routes/notification intents continue to use their existing owner.
+        val hasRoutedIntent = intent.data != null || intent.extras?.isEmpty == false
+        val destination = if (BuildConfig.NATIVE_HOME_ENABLED && !hasRoutedIntent)
+            NativeHomeActivity::class.java else MainActivity::class.java
+        val intent = Intent(this, destination).apply {
             // 传递原始 Intent 的数据（用于 Deep Link 处理）
             data = this@LauncherActivity.intent.data
             action = this@LauncherActivity.intent.action

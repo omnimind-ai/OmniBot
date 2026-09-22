@@ -17,6 +17,7 @@ import cn.com.omnimind.bot.terminal.EmbeddedTerminalAutoStartManager
 import cn.com.omnimind.bot.quicklog.QuickLogWidgetActionRouter
 import cn.com.omnimind.bot.ui.channel.ChannelManager
 import cn.com.omnimind.bot.ui.channel.FileSaveChannel
+import cn.com.omnimind.bot.ui.nativehome.LegacyHomeNavigator
 import cn.com.omnimind.bot.ui.platformview.AgentBrowserPlatformViewFactory
 import cn.com.omnimind.bot.ui.platformview.EmbeddedTerminalPlatformViewFactory
 import cn.com.omnimind.bot.update.AppUpdateManager
@@ -32,6 +33,7 @@ class MainActivity : FlutterActivity() {
     }
 
     private var channelManager: ChannelManager = ChannelManager()
+    private var navigationRequestGeneration = 0
     private val embeddedTerminalAutoStartManager by lazy {
         EmbeddedTerminalAutoStartManager(this)
     }
@@ -70,7 +72,7 @@ class MainActivity : FlutterActivity() {
         channelManager.onCreate(this)
         OmniLog.d(TAG, "MainActivity channelManager.onCreate cost: ${System.currentTimeMillis() - channelStart}ms")
 
-        SchemeUtil.pushRoute(intent, channelManager, null)
+        navigateFromIntent()
 
         applyHideFromRecentsSetting()
         lifecycleScope.launch {
@@ -131,8 +133,21 @@ class MainActivity : FlutterActivity() {
             return
         }
 
-        SchemeUtil.pushRoute(intent, channelManager, null)
+        navigateFromIntent()
 
+    }
+
+    private fun navigateFromIntent() {
+        val generation = ++navigationRequestGeneration
+        val nativeDestination = intent.getStringExtra(LegacyHomeNavigator.EXTRA_NATIVE_DESTINATION)
+        if (nativeDestination.isNullOrBlank()) {
+            SchemeUtil.pushRoute(intent, channelManager, null)
+        } else {
+            channelManager.getUIRouterChannel().openLegacyPage(nativeDestination) {
+                // A notification/new Intent may have replaced this page while it was open.
+                if (generation == navigationRequestGeneration) finish()
+            }
+        }
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {

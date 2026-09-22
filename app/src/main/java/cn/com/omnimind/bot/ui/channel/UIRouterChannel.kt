@@ -22,6 +22,18 @@ class UIRouterChannel {
         channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, EVENT_CHANNEL)
     }
 
+    /** Completes when the compatibility page is popped; this is navigation only, never an ACP event. */
+    fun openLegacyPage(route: String, onClosed: () -> Unit) {
+        channel?.invokeMethod("openLegacyPage", mapOf("route" to route), object : MethodChannel.Result {
+            override fun success(result: Any?) = onClosed()
+            override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) {
+                OmniLog.e(TAG, "Unable to open native compatibility destination: $errorCode")
+                onClosed()
+            }
+            override fun notImplemented() = onClosed()
+        })
+    }
+
     fun setInitialRouteAndNavigate(route: String, options: RouteOptions = RouteOptions()) {
         val arguments = mapOf(
             "route" to route,

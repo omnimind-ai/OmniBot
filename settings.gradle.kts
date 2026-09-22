@@ -29,6 +29,7 @@ dependencyResolutionManagement {
 
 rootProject.name = "OmnibotApp"
 include(":app")
+include(":native-ui")
 include(":accessibility")
 include(":assists")
 include(":androidgui")

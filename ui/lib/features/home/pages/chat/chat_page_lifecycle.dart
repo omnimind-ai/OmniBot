@@ -78,6 +78,17 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     final bootstrapFuture = _bootstrapConversationThread();
     _conversationBootstrapFuture = bootstrapFuture;
     unawaited(bootstrapFuture);
+    final nativeDraft = widget.nativeDraft;
+    if (nativeDraft != null && nativeDraft.isNotEmpty) {
+      unawaited(
+        bootstrapFuture.then((_) {
+          // Filling input does not admit a turn. Only the existing send handler may do that.
+          if (mounted && _messageController.text.isEmpty) {
+            _messageController.text = nativeDraft;
+          }
+        }),
+      );
+    }
   }
 
   @override
@@ -400,9 +411,8 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
             agentSessionId: threadId.isEmpty ? null : threadId,
             agentRuntime: 'local',
           );
-          final conversation = _modeState(
-            ChatPageMode.agent,
-          ).currentConversation;
+          final conversation = _modeState(ChatPageMode.agent)
+              .currentConversation;
           if (conversation?.id == conversationId) {
             final updatedConversation = conversation!.copyWith(
               agentId: resolvedAgentId,

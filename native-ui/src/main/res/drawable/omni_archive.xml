@@ -1,0 +1,6 @@
+<!-- Lucide 0.468.0, ISC license; see native-ui/NOTICE.md. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:pathData="M3.0,3.0 H21.0 Q22.0,3.0 22.0,4.0 V7.0 Q22.0,8.0 21.0,8.0 H3.0 Q2.0,8.0 2.0,7.0 V4.0 Q2.0,3.0 3.0,3.0 Z" android:fillColor="@android:color/transparent" android:strokeColor="#FF000000" android:strokeWidth="2" android:strokeLineCap="round" android:strokeLineJoin="round" />
+    <path android:pathData="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8" android:fillColor="@android:color/transparent" android:strokeColor="#FF000000" android:strokeWidth="2" android:strokeLineCap="round" android:strokeLineJoin="round" />
+    <path android:pathData="M10 12h4" android:fillColor="@android:color/transparent" android:strokeColor="#FF000000" android:strokeWidth="2" android:strokeLineCap="round" android:strokeLineJoin="round" />
+</vector>

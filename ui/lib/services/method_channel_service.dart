@@ -14,6 +14,10 @@ class MethodChannelService {
   static Future<dynamic> _handleMethodCall(MethodCall call) async {
     try {
       switch (call.method) {
+        case 'openLegacyPage':
+          final route = (call.arguments as Map)['route'] as String;
+          await GoRouterManager.openLegacyPage(route);
+          return null;
         case 'setInitialRouteAndNavigate':
           return _handleSetInitialRouteAndNavigate(call.arguments);
         case 'go':

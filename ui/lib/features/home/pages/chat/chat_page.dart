@@ -119,8 +119,14 @@ const String _kXiaowanAcpAgentId = 'xiaowan-acp';
 class ChatPage extends StatefulWidget {
   final ConversationThreadTarget? threadTarget;
   final bool showFirstUseTour;
+  final String? nativeDraft;
 
-  const ChatPage({super.key, this.threadTarget, this.showFirstUseTour = false});
+  const ChatPage({
+    super.key,
+    this.threadTarget,
+    this.showFirstUseTour = false,
+    this.nativeDraft,
+  });
 
   @override
   State<ChatPage> createState() => _ChatPageState();

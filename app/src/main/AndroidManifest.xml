@@ -105,6 +105,12 @@
 
 
         <activity
+            android:name=".activity.NativeHomeActivity"
+            android:exported="false"
+            android:theme="@style/Theme.OmnibotApp.Splash"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity
             android:name=".activity.MainActivity"
             android:exported="true"
             android:label="@string/omni_app_name"

@@ -173,6 +173,13 @@ android {
         // can be installed as an update over the previously tested build.
         versionCode = 16
         versionName = "0.6.3"
+        // Opt in while feature and visual parity are verified against Flutter.
+        buildConfigField(
+            "boolean",
+            "NATIVE_HOME_ENABLED",
+            providers.gradleProperty("omnibot.nativeHome").orElse("false")
+                .map { it.toBooleanStrict().toString() }.get(),
+        )
         buildConfigField("String", "IMAGE_BASE_URL", buildConfigString(omnibotImageBaseUrl))
         buildConfigField("String", "IMAGE_MODEL", buildConfigString(omnibotImageModel))
         buildConfigField("String", "IMAGE_API_KEY", buildConfigString(omnibotImageApiKey))
@@ -359,6 +366,9 @@ tasks.named("preBuild").configure {
 dependencies {
     implementation(libs.agent.client.protocol)
     implementation(project(":flutter"))
+    implementation(project(":native-ui"))
+    implementation(libs.androidx.lifecycle.runtime.compose)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(project(":uikit"))
     implementation(project(":baselib"))
     implementation(project(":androidgui"))

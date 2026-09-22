@@ -1,0 +1,6 @@
+<!-- Geometry preserved from ui/assets/home/drawer_icon.svg. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="20dp" android:height="20dp" android:viewportWidth="20" android:viewportHeight="20">
+    <path android:pathData="M2.5 2.5H12.5V4.16667H2.5V2.5Z" android:fillColor="#FF000000" android:fillType="nonZero" />
+    <path android:pathData="M2.5 9.16699H17.5V10.8337H2.5V9.16699Z" android:fillColor="#FF000000" android:fillType="nonZero" />
+    <path android:pathData="M2.5 15.833H15.8333V17.4997H2.5V15.833Z" android:fillColor="#FF000000" android:fillType="nonZero" />
+</vector>

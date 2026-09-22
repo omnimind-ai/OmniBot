@@ -54,6 +54,10 @@ interface ConversationDao {
     @Query("SELECT * FROM conversations WHERE isArchived = 0 ORDER BY updatedAt DESC")
     suspend fun getUnarchived(): List<Conversation>
 
+    /** Native drawer observes the same history table as the Flutter compatibility UI. */
+    @Query("SELECT * FROM conversations WHERE isArchived = 0 ORDER BY updatedAt DESC")
+    fun observeUnarchived(): kotlinx.coroutines.flow.Flow<List<Conversation>>
+
     @Query("SELECT * FROM conversations WHERE isArchived = 1 ORDER BY updatedAt DESC")
     suspend fun getArchived(): List<Conversation>
 
