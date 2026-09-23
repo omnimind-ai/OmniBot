@@ -252,7 +252,7 @@ void main() {
         closeTo(controller.position.maxScrollExtent, 1),
       );
 
-      await tester.drag(find.byType(ListView), const Offset(0, 36));
+      await tester.drag(find.byType(CustomScrollView), const Offset(0, 36));
       await tester.pumpAndSettle();
 
       final movedOffset = controller.offset;
@@ -737,7 +737,7 @@ void main() {
       // layout/programmatic correction can put the list exactly back on the
       // latest edge without changing that flag; preview resolution must still
       // recognize that the footer is currently anchored there.
-      await tester.drag(find.byType(ListView), const Offset(0, 36));
+      await tester.drag(find.byType(CustomScrollView), const Offset(0, 36));
       await tester.pumpAndSettle();
       expect(controller.offset, lessThan(controller.position.maxScrollExtent));
       controller.jumpTo(controller.position.maxScrollExtent);
@@ -2173,6 +2173,107 @@ void main() {
     },
   );
 
+  for (final initialOffset in [0.0, 800.0]) {
+    testWidgets(
+      'prepending a page preserves visible pixels with bounded row builds at $initialOffset',
+      (tester) async {
+        final controller = ScrollController();
+        final navigator = ChatMessageListNavigator();
+        var messages = _buildSimpleAssistantMessages(50, prefix: '已有记录');
+        late StateSetter update;
+        await tester.pumpWidget(
+          _buildLocalizedApp(
+            child: StatefulBuilder(
+              builder: (context, setState) {
+                update = setState;
+                return SizedBox(
+                  width: 400,
+                  height: 520,
+                  child: ChatMessageList(
+                    messages: messages,
+                    scrollController: controller,
+                    navigator: navigator,
+                    onBeforeTaskExecute: () async {},
+                  ),
+                );
+              },
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        controller.jumpTo(initialOffset);
+        await tester.pumpAndSettle();
+        await tester.drag(find.byType(Scrollable).first, const Offset(0, 40));
+        await tester.pumpAndSettle();
+        final visible = find.byWidgetPredicate(
+          (w) =>
+              w.key is ValueKey<String> &&
+              (w.key as ValueKey<String>).value.startsWith(
+                'chat-timeline-entry:assistant-',
+              ),
+        );
+        final anchor = visible
+            .evaluate()
+            .firstWhere((e) {
+              final y = tester.getTopLeft(find.byWidget(e.widget)).dy;
+              return y >= 0 && y < 400;
+            })
+            .widget
+            .key!;
+        final textAnchor = find
+            .descendant(of: find.byKey(anchor), matching: find.byType(RichText))
+            .first;
+        final before = tester.getTopLeft(textAnchor);
+        var rowBuilds = 0;
+        final previousObserver = debugOnRebuildDirtyWidget;
+        debugOnRebuildDirtyWidget = (element, builtOnce) {
+          previousObserver?.call(element, builtOnce);
+          if (element.widget.runtimeType.toString() == '_ChatTimelineListRow') {
+            rowBuilds++;
+          }
+        };
+        try {
+          update(() {
+            messages = [
+              ...messages,
+              ..._buildSimpleAssistantMessages(
+                50,
+                prefix: '新增历史',
+                idPrefix: 'prepended',
+              ),
+            ];
+          });
+          await tester.pumpAndSettle();
+        } finally {
+          debugOnRebuildDirtyWidget = previousObserver;
+        }
+        expect(tester.getTopLeft(textAnchor).dy, closeTo(before.dy, 0.5));
+        expect(
+          rowBuilds,
+          lessThan(15),
+          reason: 'Only viewport rows may rebuild; not the 50 inserted rows',
+        );
+        for (final entryKey in ['prepended-40', 'assistant-0']) {
+          bool? arrived;
+          navigator.animateToEntry(entryKey).then((value) => arrived = value);
+          for (var tick = 0; tick < 120 && arrived == null; tick++) {
+            await tester.pump(const Duration(milliseconds: 16));
+          }
+          expect(
+            arrived,
+            isTrue,
+            reason: 'Navigate across both sides of the origin',
+          );
+          final row = find.byKey(ValueKey('chat-timeline-entry:$entryKey'));
+          expect(tester.getTopLeft(row).dy, inInclusiveRange(0.0, 520.0));
+        }
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+        controller.dispose();
+      },
+    );
+  }
+
   testWidgets('reaching top auto-loads older messages without jumping to top', (
     tester,
   ) async {
@@ -2219,14 +2320,14 @@ void main() {
     controller.jumpTo(24);
     await tester.pump();
 
-    await tester.drag(find.byType(ListView), const Offset(0, 120));
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, 120));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 16));
     await tester.pumpAndSettle();
 
     expect(loadMoreCalls, 1);
     expect(messages.length, 28);
-    expect(controller.offset, greaterThan(24));
+    expect(controller.position.minScrollExtent, lessThan(0));
     expect(tester.takeException(), isNull);
   });
 }

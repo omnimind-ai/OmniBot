@@ -2,8 +2,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ui/models/conversation_model.dart';
-import 'package:ui/models/conversation_thread_target.dart';
-import 'package:ui/services/conversation_history_service.dart';
 import 'package:ui/services/conversation_service.dart';
 import 'package:ui/services/storage_service.dart';
 
@@ -31,6 +29,14 @@ void main() {
         (call.arguments as Map?) ?? const {},
       );
       switch (call.method) {
+        case 'getConversationsByPage':
+          return nativeConversations
+              .where(
+                (row) => args['mode'] == null || row['mode'] == args['mode'],
+              )
+              .skip(args['offset'] as int)
+              .take(args['limit'] as int)
+              .toList();
         case 'getConversations':
           lastGetConversationsArguments = args;
           final archiveBefore = (args['archiveBefore'] as num?)?.toInt();
@@ -164,59 +170,56 @@ void main() {
     expect(conversations.single.title, 'openclaw hello');
   });
 
-  test(
-    'an explicitly enabled sidebar policy archives every conversation mode older than seven days',
-    () async {
-      await StorageService.setBool(
-        StorageService.kRecentConversationsOnlyEnabledKey,
-        true,
-      );
-      final now = DateTime.utc(2026, 8, 13, 12);
-      final cutoff = ConversationService.recentConversationCutoff(now: now);
-      nativeConversations = <Map<String, dynamic>>[
-        for (final entry in <(int, ConversationMode)>[
-          (1, ConversationMode.normal),
-          (2, ConversationMode.agent),
-          (3, ConversationMode.chatOnly),
-        ])
-          {
-            'id': entry.$1,
-            'title': 'old ${entry.$2.storageValue}',
-            'mode': entry.$2.storageValue,
-            'isArchived': false,
-            'status': 0,
-            'messageCount': 0,
-            'createdAt': cutoff - 1,
-            'updatedAt': cutoff - 1,
-          },
+  test('an explicitly enabled sidebar policy archives every conversation mode older than seven days', () async {
+    await StorageService.setBool(
+      StorageService.kRecentConversationsOnlyEnabledKey,
+      true,
+    );
+    final now = DateTime.utc(2026, 8, 13, 12);
+    final cutoff = ConversationService.recentConversationCutoff(now: now);
+    nativeConversations = <Map<String, dynamic>>[
+      for (final entry in <(int, ConversationMode)>[
+        (1, ConversationMode.normal),
+        (2, ConversationMode.agent),
+        (3, ConversationMode.chatOnly),
+      ])
         {
-          'id': 4,
-          'title': 'recent conversation',
-          'mode': ConversationMode.normal.storageValue,
+          'id': entry.$1,
+          'title': 'old ${entry.$2.storageValue}',
+          'mode': entry.$2.storageValue,
           'isArchived': false,
           'status': 0,
           'messageCount': 0,
-          'createdAt': cutoff,
-          'updatedAt': cutoff,
+          'createdAt': cutoff - 1,
+          'updatedAt': cutoff - 1,
         },
-      ];
+      {
+        'id': 4,
+        'title': 'recent conversation',
+        'mode': ConversationMode.normal.storageValue,
+        'isArchived': false,
+        'status': 0,
+        'messageCount': 0,
+        'createdAt': cutoff,
+        'updatedAt': cutoff,
+      },
+    ];
 
-      final conversations = await ConversationService.getSidebarConversations(
-        now: now,
-      );
+    final conversations = await ConversationService.getSidebarConversations(
+      now: now,
+    );
 
-      expect(conversations.map((conversation) => conversation.id), <int>[4]);
-      expect(
-        nativeConversations
-            .take(3)
-            .every((conversation) => conversation['isArchived'] == true),
-        isTrue,
-      );
-      expect(lastGetConversationsArguments['archiveBefore'], cutoff);
-      expect(lastGetConversationsArguments['includeArchived'], isFalse);
-      expect(lastGetConversationsArguments['archivedOnly'], isFalse);
-    },
-  );
+    expect(conversations.map((conversation) => conversation.id), <int>[4]);
+    expect(
+      nativeConversations
+          .take(3)
+          .every((conversation) => conversation['isArchived'] == true),
+      isTrue,
+    );
+    expect(lastGetConversationsArguments['archiveBefore'], cutoff);
+    expect(lastGetConversationsArguments['includeArchived'], isFalse);
+    expect(lastGetConversationsArguments['archivedOnly'], isFalse);
+  });
 
   test('sidebar snapshot applies the enabled seven-day window', () async {
     await StorageService.setBool(
@@ -405,122 +408,6 @@ void main() {
     },
   );
 
-  test(
-    'preserves latest pin state when updating a stale conversation snapshot',
-    () async {
-      nativeConversations = <Map<String, dynamic>>[
-        {
-          'id': 12,
-          'title': 'Pinned thread',
-          'mode': ConversationMode.normal.storageValue,
-          'summary': null,
-          'isPinned': true,
-          'status': 0,
-          'lastMessage': 'old message',
-          'messageCount': 1,
-          'createdAt': 1,
-          'updatedAt': 2,
-        },
-      ];
-
-      final staleSnapshot = ConversationModel(
-        id: 12,
-        title: 'Pinned thread',
-        isPinned: false,
-        status: 0,
-        lastMessage: 'new message',
-        messageCount: 2,
-        createdAt: 1,
-        updatedAt: 3,
-      );
-
-      final updated = await ConversationService.updateConversation(
-        staleSnapshot,
-        preserveLatestMetadata: true,
-      );
-
-      expect(updated, isTrue);
-      expect(nativeConversations.single['lastMessage'], 'new message');
-      expect(nativeConversations.single['messageCount'], 2);
-      expect(nativeConversations.single['isPinned'], isTrue);
-    },
-  );
-
-  test(
-    'deletes only the targeted thread metadata and keeps other modes intact',
-    () async {
-      nativeConversations = <Map<String, dynamic>>[
-        {
-          'id': 1,
-          'title': 'normal thread',
-          'mode': ConversationMode.normal.storageValue,
-          'summary': null,
-          'status': 0,
-          'lastMessage': null,
-          'messageCount': 0,
-          'createdAt': 1,
-          'updatedAt': 1,
-        },
-        {
-          'id': 2,
-          'title': 'openclaw thread',
-          'mode': ConversationMode.openclaw.storageValue,
-          'summary': null,
-          'status': 0,
-          'lastMessage': null,
-          'messageCount': 0,
-          'createdAt': 2,
-          'updatedAt': 2,
-        },
-      ];
-      await ConversationHistoryService.saveCurrentConversationId(
-        1,
-        mode: ConversationMode.normal,
-      );
-      await ConversationHistoryService.saveCurrentConversationId(
-        2,
-        mode: ConversationMode.openclaw,
-      );
-      await ConversationHistoryService.saveLastVisibleThreadTarget(
-        const ConversationThreadTarget.existing(
-          conversationId: 2,
-          mode: ConversationMode.openclaw,
-        ),
-      );
-
-      final deleted = await ConversationService.deleteConversation(
-        2,
-        mode: ConversationMode.openclaw,
-      );
-
-      expect(deleted, isTrue);
-      expect(
-        await ConversationHistoryService.getCurrentConversationId(
-          mode: ConversationMode.normal,
-        ),
-        1,
-      );
-      expect(
-        await ConversationHistoryService.getCurrentConversationId(
-          mode: ConversationMode.openclaw,
-        ),
-        isNull,
-      );
-      expect(
-        await ConversationHistoryService.getLastVisibleThreadTarget(),
-        const ConversationThreadTarget.existing(
-          conversationId: 1,
-          mode: ConversationMode.agent,
-        ),
-      );
-
-      final remaining = await ConversationService.getAllConversations();
-      expect(remaining, hasLength(1));
-      expect(remaining.single.id, 1);
-      expect(remaining.single.mode, ConversationMode.agent);
-    },
-  );
-
   test('creates conversations with chat_only mode', () async {
     final conversationId = await ConversationService.createConversation(
       title: '纯聊新线程',
@@ -576,70 +463,65 @@ void main() {
     },
   );
 
-  test(
-    'archives codex conversation locally when app-server archive fails',
-    () async {
-      nativeConversations = <Map<String, dynamic>>[
-        {
-          'id': 9,
-          'title': 'Codex thread',
-          'mode': ConversationMode.agent.storageValue,
-          'summary': null,
-          'isArchived': false,
-          'status': 0,
-          'lastMessage': 'hello',
-          'messageCount': 2,
-          'createdAt': 1,
-          'updatedAt': 2,
-        },
-      ];
-      agentRuntimeArchiveShouldThrow = true;
+  test('paging requests only the requested page from Kotlin', () async {
+    final calls = <MethodCall>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      return <Map<String, dynamic>>[];
+    });
+    await ConversationService.getConversationsByPage(
+      offset: 1000,
+      limit: 20,
+      archivedOnly: true,
+    );
+    expect(calls.single.method, 'getConversationsByPage');
+    expect(calls.single.arguments, {
+      'offset': 1000,
+      'limit': 20,
+      'includeArchived': false,
+      'archivedOnly': true,
+    });
+  });
 
-      final archived = await ConversationService.archiveConversation(
-        ConversationModel.fromJson(nativeConversations.single),
-      );
-
-      expect(archived, isTrue);
-      expect(agentRuntimeCalls.single.method, 'session/archive');
-      expect(nativeConversations.single['isArchived'], isTrue);
-    },
-  );
-
-  test(
-    'delete codex conversation hides it from future conversation loads',
-    () async {
-      nativeConversations = <Map<String, dynamic>>[
-        {
-          'id': 10,
-          'title': 'Codex stale binding',
-          'mode': ConversationMode.agent.storageValue,
-          'summary': null,
-          'isArchived': false,
-          'status': 0,
-          'lastMessage': 'hello',
-          'messageCount': 2,
-          'createdAt': 1,
-          'updatedAt': 2,
-        },
-      ];
-      agentRuntimeArchiveShouldThrow = true;
-
-      final deleted = await ConversationService.deleteConversation(
-        10,
+  test('management delegates to the native ACP and history owner', () async {
+    final calls = <MethodCall>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      return true;
+    });
+    expect(
+      await ConversationService.deleteConversation(
+        9,
         mode: ConversationMode.agent,
-      );
+      ),
+      isTrue,
+    );
+    expect(calls.single.method, 'manageConversation');
+    expect(calls.single.arguments, {
+      'action': 'delete',
+      'conversationId': 9,
+      'mode': 'agent',
+    });
+  });
 
-      expect(deleted, isTrue);
-      expect(agentRuntimeCalls.single.method, 'session/archive');
-      expect(nativeConversations.single['isArchived'], isTrue);
-
-      final visibleConversations =
-          await ConversationService.getAllConversations(includeArchived: true);
-      expect(visibleConversations, isEmpty);
-
-      final archivedConversations =
-          await ConversationService.getAllConversations(archivedOnly: true);
-      expect(archivedConversations, isEmpty);
-    },
-  );
+  test('metadata preservation is requested atomically without reading all conversations', () async {
+    final calls = <MethodCall>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      return 'SUCCESS';
+    });
+    await ConversationService.updateConversation(
+      ConversationModel(
+        id: 9,
+        title: 'Old',
+        status: 0,
+        messageCount: 0,
+        createdAt: 1,
+        updatedAt: 2,
+      ),
+      preserveLatestMetadata: true,
+    );
+    expect(calls.single.method, 'updateConversation');
+    expect(calls.single.arguments['preserveLatestMetadata'], isTrue);
+  });
 }

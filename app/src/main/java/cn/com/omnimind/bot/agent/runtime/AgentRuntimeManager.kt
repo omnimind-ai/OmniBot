@@ -42,6 +42,7 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.withContext
 import kotlin.coroutines.coroutineContext
 import java.io.File
 import java.util.UUID
@@ -698,13 +699,17 @@ class AgentRuntimeManager private constructor(
 
     suspend fun handleMethod(method: String, args: Map<String, Any?>): Any? {
         val compatibilityRequest = AcpLegacyCompatibilityAdapter.adapt(method, args)
-        return try { AcpLegacyCompatibilityAdapter.adaptResponse(
-            compatibilityRequest,
-            handleCanonicalMethod(
-                compatibilityRequest.method,
-                compatibilityRequest.args,
-            ),
-        ) } catch (error: Throwable) {
+        return try {
+            val response = AcpLegacyCompatibilityAdapter.adaptResponse(
+                compatibilityRequest,
+                handleCanonicalMethod(compatibilityRequest.method, compatibilityRequest.args),
+            )
+            if (compatibilityRequest.method in setOf("session/load", "session/resume") && response is Map<*, *>) {
+                withContext(Dispatchers.Default) {
+                    RemoteHistoryCompatibility.normalizeResponse(response.entries.associate { it.key.toString() to it.value })
+                }
+            } else response
+        } catch (error: Throwable) {
             if (error !is kotlinx.coroutines.CancellationException) {
                 Log.e("AgentRuntimeManager", "ACP request failed method=${compatibilityRequest.method} " +
                     "type=${error.javaClass.simpleName} at=${error.stackTrace.take(5).joinToString()}")

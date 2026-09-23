@@ -12,25 +12,6 @@ extension _ChatRuntimeStreamingSupport on ChatConversationRuntimeCoordinator {
     return runtime._streamingTextBatches[_streamingTextBatchKey(taskId, kind)];
   }
 
-  _StreamingTextBatchState _ensureStreamingTextBatch(
-    ChatConversationRuntimeState runtime,
-    String taskId,
-    _StreamingTextStreamKind kind, {
-    required String initialLatestText,
-    required String initialFlushedText,
-  }) {
-    final key = _streamingTextBatchKey(taskId, kind);
-    return runtime._streamingTextBatches.putIfAbsent(
-      key,
-      () => _StreamingTextBatchState(
-        taskId: taskId,
-        kind: kind,
-        latestText: initialLatestText,
-        lastFlushedText: initialFlushedText,
-      ),
-    );
-  }
-
   void _clearStreamingTextBatch(
     ChatConversationRuntimeState runtime,
     String taskId,
@@ -94,44 +75,6 @@ extension _ChatRuntimeStreamingSupport on ChatConversationRuntimeCoordinator {
     );
   }
 
-  bool _stageStreamingTextBatch(
-    ChatConversationRuntimeState runtime,
-    String taskId,
-    _StreamingTextStreamKind kind, {
-    required String nextText,
-    required String initialLatestText,
-    required String initialFlushedText,
-  }) {
-    if (nextText.isEmpty) {
-      return false;
-    }
-    final state = _ensureStreamingTextBatch(
-      runtime,
-      taskId,
-      kind,
-      initialLatestText: initialLatestText,
-      initialFlushedText: initialFlushedText,
-    );
-    if (nextText == state.latestText) {
-      return state.reachedFlushThreshold;
-    }
-    state.stage(nextText);
-    return state.reachedFlushThreshold || state.containsNewlineSinceFlush;
-  }
-
-  String _visiblePureChatReplyText(
-    ChatConversationRuntimeState runtime,
-    String taskId,
-  ) {
-    final index = runtime.messages.indexWhere(
-      (message) => message.id == taskId,
-    );
-    if (index == -1) {
-      return '';
-    }
-    return (runtime.messages[index].content?['text'] as String? ?? '');
-  }
-
   String? _latestAgentTextMessageId(
     ChatConversationRuntimeState runtime,
     String taskId,
@@ -168,41 +111,6 @@ extension _ChatRuntimeStreamingSupport on ChatConversationRuntimeCoordinator {
       return '';
     }
     return (runtime.messages[index].content?['text'] as String? ?? '');
-  }
-
-  String _visibleThinkingText(
-    ChatConversationRuntimeState runtime,
-    String taskId,
-  ) {
-    final thinkingCardId = _resolveThinkingCardId(runtime, taskId);
-    if (thinkingCardId == null) {
-      return runtime.deepThinkingContent;
-    }
-    final index = runtime.messages.indexWhere(
-      (message) => message.id == thinkingCardId,
-    );
-    if (index == -1) {
-      return runtime.deepThinkingContent;
-    }
-    return (runtime.messages[index].cardData?['thinkingContent'] as String? ??
-            runtime.deepThinkingContent)
-        .toString();
-  }
-
-  /// 返回已完成 Markdown 渲染的文本长度。
-  ///
-  /// - 无待刷新数据时返回 `null`（表示全量 Markdown 渲染）
-  /// - 有待刷新数据时返回上次 flush 的文本长度，前端据此分段渲染
-  int? _markdownRenderedLengthForBatch(
-    ChatConversationRuntimeState runtime,
-    String taskId,
-    _StreamingTextStreamKind kind,
-  ) {
-    final batch = _streamingTextBatchFor(runtime, taskId, kind);
-    if (batch == null || !batch.hasPendingFlush) {
-      return null;
-    }
-    return batch.lastFlushedText.length;
   }
 
   bool _applyPureChatReplyUpdate(

@@ -129,7 +129,8 @@ ConversationModel _remoteCodexConversationFromResponse({
     title: _truncateAgentText(title, 40),
     status: 0,
     lastMessage: _asAgentString(thread['preview']),
-    messageCount: _remoteCodexMessagesFromThreadResponse(response).length,
+    // The caller supplies the count from its already hydrated display snapshot.
+    messageCount: 0,
     createdAt: createdAt,
     updatedAt: updatedAt,
   );

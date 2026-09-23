@@ -12,15 +12,27 @@ interface ConversationDao {
     suspend fun update(conversation: Conversation)
 
     @Transaction
-    suspend fun updatePreservingCheckpoint(conversation: Conversation) {
+    suspend fun updatePreservingCheckpoint(conversation: Conversation, preserveLatestMetadata: Boolean = false) {
         val current = getById(conversation.id)
-        val updated = if (current != null) {
+        val candidate = if (current != null && preserveLatestMetadata) {
             conversation.copy(
+                title = current.title.ifEmpty { conversation.title },
+                summary = conversation.summary ?: current.summary,
+                isArchived = current.isArchived,
+                isPinned = current.isPinned,
+                parentConversationId = current.parentConversationId,
+                parentConversationMode = current.parentConversationMode,
+                scheduledTaskId = current.scheduledTaskId,
+                createdAt = current.createdAt,
+            )
+        } else conversation
+        val updated = if (current != null) {
+            candidate.copy(
                 contextSummary = current.contextSummary,
                 contextSummaryCutoffEntryDbId = current.contextSummaryCutoffEntryDbId,
                 contextSummaryUpdatedAt = current.contextSummaryUpdatedAt,
             )
-        } else conversation
+        } else candidate
         // Generic history snapshots do not own the user setting or usage clock.
         update(if (current == null) updated else updated.copy(
             promptTokenThreshold = current.promptTokenThreshold,
@@ -65,6 +77,17 @@ interface ConversationDao {
 
     @Query("SELECT * FROM conversations ORDER BY updatedAt DESC LIMIT :limit OFFSET :offset")
     suspend fun getConversationsByPage(offset: Int, limit: Int): List<Conversation>
+
+    @Query("""
+        SELECT * FROM conversations
+        WHERE (:archivedOnly = 0 OR isArchived = 1)
+          AND (:archivedOnly = 1 OR :includeArchived = 1 OR isArchived = 0)
+          AND (:mode IS NULL OR CASE WHEN mode IN ('normal','codex','acp','coding','') THEN 'agent' ELSE mode END = :mode)
+        ORDER BY updatedAt DESC, CASE WHEN mode = 'subagent' THEN 1 ELSE 0 END,
+                 createdAt DESC, id ASC
+        LIMIT :limit OFFSET :offset
+    """)
+    suspend fun getDisplayPage(offset: Int, limit: Int, includeArchived: Boolean, archivedOnly: Boolean, mode: String?): List<Conversation>
 
     @Query("SELECT COUNT(*) FROM conversations")
     suspend fun getConversationCount(): Int

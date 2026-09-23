@@ -772,8 +772,11 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
     }
   }
 
-  void _syncUserMessageLinkPreviews(String messageId) {
-    final index = _messages.indexWhere((msg) => msg.id == messageId);
+  Future<void> _syncUserMessageLinkPreviews(String messageId) async {
+    final conversationId = _currentConversationId;
+    final mode = activeConversationModeValue;
+    final targetRequestId = _conversationTargetRequestId;
+    var index = _messages.indexWhere((msg) => msg.id == messageId);
     if (index == -1) {
       return;
     }
@@ -784,10 +787,24 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
     }
 
     final content = Map<String, dynamic>.from(message.content ?? const {});
-    final nextPreviews = LinkPreviewService.instance.reconcilePreviewMaps(
+    final nextPreviews = await LinkPreviewService.instance.reconcilePreviewMaps(
       text: message.text ?? '',
       existing: content['linkPreviews'],
     );
+    if (nextPreviews == null ||
+        !mounted ||
+        (conversationId != null && _currentConversationId != conversationId) ||
+        !_isConversationTargetRequestCurrent(targetRequestId) ||
+        activeConversationModeValue != mode)
+      return;
+    index = _messages.indexWhere((msg) => msg.id == messageId);
+    if (index == -1) return;
+    if (!identical(_messages[index], message)) {
+      // Import/stream updates may replace the display object while native URL parsing runs.
+      // Reconcile against that object's fields so a stale result cannot erase an edit.
+      unawaited(_syncUserMessageLinkPreviews(messageId));
+      return;
+    }
     if (_previewMapListsEqual(content['linkPreviews'], nextPreviews)) {
       return;
     }
@@ -816,8 +833,15 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
     String messageId,
     String url,
   ) async {
+    final requestedConversationId = _currentConversationId;
+    final mode = activeConversationModeValue;
+    final targetRequestId = _conversationTargetRequestId;
     final resolved = await LinkPreviewService.instance.loadPreview(url);
-    if (!mounted) {
+    if (!mounted ||
+        (requestedConversationId != null &&
+            _currentConversationId != requestedConversationId) ||
+        !_isConversationTargetRequestCurrent(targetRequestId) ||
+        activeConversationModeValue != mode) {
       return;
     }
 

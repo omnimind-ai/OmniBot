@@ -767,7 +767,10 @@ class _ChatBotSheetState extends State<ChatBotSheet>
         _acpCloseStarted = false;
         debugPrint('关闭 ACP 会话失败: $error');
         if (mounted && !_closeRequested) {
-          showToast(formatAgentRuntimeErrorForUser(error), type: ToastType.error);
+          showToast(
+            formatAgentRuntimeErrorForUser(error),
+            type: ToastType.error,
+          );
         }
       }
     }
@@ -971,8 +974,10 @@ class _ChatBotSheetState extends State<ChatBotSheet>
   }
 
   // 悬浮聊天页也复用同一套 linkPreviews 字段，保证两种聊天入口表现一致。
-  void _syncMessageLinkPreviews(String taskId) {
-    final index = _messages.indexWhere((msg) => msg.id == taskId);
+  Future<void> _syncMessageLinkPreviews(String taskId) async {
+    final conversationId = _currentConversationId;
+    final mode = _runtimeMode;
+    var index = _messages.indexWhere((msg) => msg.id == taskId);
     if (index == -1) {
       return;
     }
@@ -987,10 +992,23 @@ class _ChatBotSheetState extends State<ChatBotSheet>
     }
 
     final content = Map<String, dynamic>.from(message.content ?? const {});
-    final nextPreviews = LinkPreviewService.instance.reconcilePreviewMaps(
+    final nextPreviews = await LinkPreviewService.instance.reconcilePreviewMaps(
       text: message.text ?? '',
       existing: content['linkPreviews'],
     );
+    if (nextPreviews == null ||
+        !mounted ||
+        (conversationId != null && _currentConversationId != conversationId) ||
+        _runtimeMode != mode)
+      return;
+    index = _messages.indexWhere((msg) => msg.id == taskId);
+    if (index == -1) return;
+    if (!identical(_messages[index], message)) {
+      // Import/stream updates may replace the display object while native URL parsing runs.
+      // Reconcile against that object's fields so a stale result cannot erase an edit.
+      unawaited(_syncMessageLinkPreviews(taskId));
+      return;
+    }
     final currentPreviews = content['linkPreviews'];
     var didUpdate = false;
     if (!_previewMapListsEqual(currentPreviews, nextPreviews)) {
@@ -999,7 +1017,7 @@ class _ChatBotSheetState extends State<ChatBotSheet>
       } else {
         content['linkPreviews'] = nextPreviews;
       }
-      _messages[index] = message.copyWith(content: content);
+      setState(() => _messages[index] = message.copyWith(content: content));
       didUpdate = true;
     }
     if (didUpdate &&
@@ -1033,8 +1051,13 @@ class _ChatBotSheetState extends State<ChatBotSheet>
   }
 
   Future<void> _resolveMessageLinkPreview(String taskId, String url) async {
+    final requestedConversationId = _currentConversationId;
+    final mode = _runtimeMode;
     final resolved = await LinkPreviewService.instance.loadPreview(url);
-    if (!mounted) {
+    if (!mounted ||
+        (requestedConversationId != null &&
+            _currentConversationId != requestedConversationId) ||
+        _runtimeMode != mode) {
       return;
     }
 

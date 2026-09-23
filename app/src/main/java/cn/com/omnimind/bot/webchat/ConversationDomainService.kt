@@ -1,6 +1,10 @@
 package cn.com.omnimind.bot.webchat
 
 import android.content.Context
+import cn.com.omnimind.bot.agent.ChatConversationPreferences
+import cn.com.omnimind.bot.agent.ConversationUiActions
+import cn.com.omnimind.bot.agent.visibleConversationPage
+import cn.com.omnimind.bot.agent.runtime.AgentRuntimeManager
 import cn.com.omnimind.baselib.database.Conversation
 import cn.com.omnimind.baselib.database.DatabaseHelper
 import cn.com.omnimind.bot.agent.AgentConversationContextCompactor
@@ -89,13 +93,20 @@ class ConversationDomainService(
 
     suspend fun listConversationPayloads(
         includeArchived: Boolean = true,
-        archivedOnly: Boolean = false
+        archivedOnly: Boolean = false,
+        offset: Int = 0,
+        limit: Int = Int.MAX_VALUE,
+        mode: String? = null,
+        excludeHidden: Boolean = false,
     ): List<Map<String, Any?>> {
-        val conversations = when {
-            archivedOnly -> DatabaseHelper.getArchivedConversations()
-            includeArchived -> DatabaseHelper.getAllConversations()
-            else -> DatabaseHelper.getUnarchivedConversations()
-        }
+        val hidden = if (excludeHidden) ChatConversationPreferences(context).hiddenIds() else emptySet()
+        val conversations = visibleConversationPage(
+            offset, limit, hidden.isNotEmpty(),
+            visible = { row: Conversation -> !isAgentMode(row.mode) || row.id !in hidden },
+            readPage = { start, count -> DatabaseHelper.getConversationDisplayPage(
+                start, count, includeArchived, archivedOnly, mode?.let(::normalizeConversationMode),
+            ) },
+        )
         val agentConversationIds = conversations
             .filter { isAgentMode(it.mode) }
             .map { it.id }
@@ -205,7 +216,8 @@ class ConversationDomainService(
     }
 
     suspend fun updateConversationFromPayload(
-        conversationMap: Map<String, Any?>
+        conversationMap: Map<String, Any?>,
+        preserveLatestMetadata: Boolean = false,
     ): Map<String, Any?> {
         val conversationId = conversationMap.readLong("id")
             ?: throw IllegalArgumentException("conversation.id is invalid")
@@ -265,10 +277,21 @@ class ConversationDomainService(
             createdAt = conversationMap.readLong("createdAt") ?: existing.createdAt,
             updatedAt = System.currentTimeMillis()
         )
-        DatabaseHelper.updateConversation(updated)
-        publishConversationEvent("conversation_updated", updated)
-        return conversationToPayload(updated)
+        DatabaseHelper.updateConversation(updated, preserveLatestMetadata)
+        val committed = DatabaseHelper.getConversationById(conversationId) ?: updated
+        publishConversationEvent("conversation_updated", committed)
+        return conversationToPayload(committed)
     }
+
+    suspend fun manageFromUi(action: String, conversationId: Long, mode: String?, title: String = ""): Boolean =
+        ConversationUiActions(
+            preferences = ChatConversationPreferences(context),
+            acp = { method, args -> AgentRuntimeManager.getInstance(context).handleMethod(method, args) },
+            get = ::getConversationPayload,
+            archive = { id, archived -> setConversationArchived(id, archived) },
+            delete = ::deleteConversation,
+            rename = { id, name -> updateConversationTitle(id, name) },
+        ).execute(action, conversationId, mode, title)
 
     suspend fun updateConversationTitle(
         conversationId: Long,
@@ -396,13 +419,13 @@ class ConversationDomainService(
         limit: Int,
         offset: Int
     ): Map<String, Any?> {
-        val (messages, hasMore) = historyRepository.listConversationMessagesPaged(
+        val page = historyRepository.listConversationMessagesPaged(
             conversationId = conversationId,
             conversationMode = normalizeConversationMode(conversationMode),
             limit = limit,
             offset = offset
         )
-        return mapOf("messages" to messages, "hasMore" to hasMore)
+        return mapOf("messages" to page.messages, "hasMore" to page.hasMore, "nextOffset" to page.nextOffset)
     }
 
     suspend fun replaceConversationMessages(
@@ -597,15 +620,13 @@ class ConversationDomainService(
         conversationMode: String,
         reason: String = "messages_replaced"
     ) {
-        val messages = listConversationMessages(conversationId, conversationMode)
-        RealtimeHub.publish(
-            "messages_replaced",
+        RealtimeHub.publishSnapshot("messages_replaced") {
             mapOf(
                 "conversationId" to conversationId,
                 "mode" to conversationMode,
-                "messages" to messages
+                "messages" to listConversationMessages(conversationId, conversationMode)
             )
-        )
+        }
         FlutterChatSyncBridge.dispatchConversationMessagesChanged(
             conversationId = conversationId,
             mode = conversationMode,

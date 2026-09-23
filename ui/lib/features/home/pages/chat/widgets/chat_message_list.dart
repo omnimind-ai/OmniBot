@@ -157,6 +157,8 @@ class _ChatMessageListState extends State<ChatMessageList> {
   int _navigatorJumpSerial = 0;
   bool _navigatorJumpUserInterrupted = false;
   static const String _kListEntryKeyPrefix = 'chat-timeline-entry:';
+  static const _forwardSliverKey = ValueKey('chat-timeline-forward');
+  String? _historyAnchorEntryKey;
 
   Set<String> get _expandedAgentRunTaskIds =>
       widget.expandedAgentRunTaskIds ?? _localExpandedAgentRunTaskIds;
@@ -192,6 +194,7 @@ class _ChatMessageListState extends State<ChatMessageList> {
     final scrollControllerChanged =
         oldWidget.scrollController != widget.scrollController;
     if (scrollControllerChanged) {
+      _historyAnchorEntryKey = null;
       _navigatorJumpSerial++;
       _autoStickToLatest = true;
       _outerScrollWasUserDriven = false;
@@ -431,30 +434,6 @@ class _ChatMessageListState extends State<ChatMessageList> {
     return (metrics.pixels - metrics.minScrollExtent).abs();
   }
 
-  ScrollPosition? _closestAttachedPosition({
-    required double pixels,
-    required double minScrollExtent,
-    required double maxScrollExtent,
-  }) {
-    final positions = _attachedPositions();
-    if (positions.isEmpty) {
-      return null;
-    }
-    ScrollPosition? bestMatch;
-    var bestScore = double.infinity;
-    for (final position in positions) {
-      final score =
-          (position.pixels - pixels).abs() +
-          (position.minScrollExtent - minScrollExtent).abs() +
-          (position.maxScrollExtent - maxScrollExtent).abs();
-      if (score < bestScore) {
-        bestScore = score;
-        bestMatch = position;
-      }
-    }
-    return bestMatch;
-  }
-
   void _maybeLoadOlderMessages(ScrollMetrics metrics) {
     if (_isAutoLoadingHistory || !widget.hasMore || widget.onLoadMore == null) {
       return;
@@ -463,47 +442,16 @@ class _ChatMessageListState extends State<ChatMessageList> {
       return;
     }
     _isAutoLoadingHistory = true;
-    unawaited(
-      _loadOlderMessagesAndPreserveViewport(
-        anchorPixels: metrics.pixels,
-        anchorMinScrollExtent: metrics.minScrollExtent,
-        anchorMaxScrollExtent: metrics.maxScrollExtent,
-      ),
-    );
+    unawaited(_loadOlderMessages());
   }
 
-  Future<void> _loadOlderMessagesAndPreserveViewport({
-    required double anchorPixels,
-    required double anchorMinScrollExtent,
-    required double anchorMaxScrollExtent,
-  }) async {
+  Future<void> _loadOlderMessages() async {
     try {
       await widget.onLoadMore!.call();
       if (!mounted) return;
+      // The leading sliver grows away from a stable origin, so pagination
+      // needs no extent estimate or post-layout jump to preserve the viewport.
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) {
-          _isAutoLoadingHistory = false;
-          return;
-        }
-        final position = _closestAttachedPosition(
-          pixels: anchorPixels,
-          minScrollExtent: anchorMinScrollExtent,
-          maxScrollExtent: anchorMaxScrollExtent,
-        );
-        if (position == null) {
-          _isAutoLoadingHistory = false;
-          return;
-        }
-        final extentDelta = position.maxScrollExtent - anchorMaxScrollExtent;
-        if (extentDelta.abs() >= 0.5) {
-          final targetOffset = (anchorPixels + extentDelta).clamp(
-            position.minScrollExtent,
-            position.maxScrollExtent,
-          );
-          if ((position.pixels - targetOffset).abs() >= 0.5) {
-            position.jumpTo(targetOffset);
-          }
-        }
         _isAutoLoadingHistory = false;
       });
     } catch (_) {
@@ -597,8 +545,8 @@ class _ChatMessageListState extends State<ChatMessageList> {
         duration: const Duration(milliseconds: 340),
         curve: _kJumpSettleCurve,
       );
-      // 落点校验：ensureVisible 中途被打断（历史分页的视口保持 jumpTo、
-      // 流式内容撑高行等）会停在半路，补一次短修正。
+      // 落点校验：流式内容撑高行等布局变化可能打断 ensureVisible，
+      // 导致动画停在半路，补一次短修正。
       if (!cancelled()) {
         await WidgetsBinding.instance.endOfFrame;
         final verifyContext = _entryRowKeys[entryKey]?.currentContext;
@@ -684,11 +632,28 @@ class _ChatMessageListState extends State<ChatMessageList> {
     ObservableChatMessageList messages,
     String messageId,
   ) {
-    final index = messages.indexWhere((message) => message.id == messageId);
-    if (index == -1) {
+    final index = _messageIndexFor(messages, messageId);
+    if (index == null) {
       return null;
     }
     return messages.listenableAt(index);
+  }
+
+  ObservableChatMessageList? _indexedMessages;
+  int _indexedStructureRevision = -1;
+  final Map<String, int> _messageIndices = {};
+
+  int? _messageIndexFor(ObservableChatMessageList messages, String id) {
+    if (!identical(_indexedMessages, messages) ||
+        _indexedStructureRevision != messages.structureRevision) {
+      _messageIndices.clear();
+      for (var index = 0; index < messages.length; index++) {
+        _messageIndices.putIfAbsent(messages[index].id, () => index);
+      }
+      _indexedMessages = messages;
+      _indexedStructureRevision = messages.structureRevision;
+    }
+    return _messageIndices[id];
   }
 
   List<Listenable> _groupMessageListenablesFor(
@@ -751,7 +716,9 @@ class _ChatMessageListState extends State<ChatMessageList> {
     AgentRunTimelineGroup group,
   ) {
     return group.withRefreshedMessages(<String, ChatMessageModel>{
-      for (final message in messages) message.id: message,
+      for (final message in group.allMessagesOldestFirst)
+        if (_messageIndexFor(messages, message.id) case final int index)
+          message.id: messages[index],
     });
   }
 
@@ -841,6 +808,7 @@ class _ChatMessageListState extends State<ChatMessageList> {
 
     final Widget content;
     if (widget.messages.isEmpty) {
+      _historyAnchorEntryKey = null;
       final usePaletteText =
           !widget.appearanceConfig.isActive &&
           widget.appearanceConfig.chatTextColorMode !=
@@ -892,6 +860,18 @@ class _ChatMessageListState extends State<ChatMessageList> {
     String? latestUserMessageId;
     final messageSource = _observableMessages ?? widget.messages;
     final timelineEntries = _resolveTimelineEntries(messageSource);
+    final rowIndices = <String, int>{
+      for (var index = 0; index < timelineEntries.length; index++)
+        timelineEntries[index].key: index,
+    };
+    // Keep the original oldest row at scroll offset zero. Newly fetched
+    // history grows upwards in its own lazy sliver instead of shifting every
+    // existing child index and forcing layout through the whole inserted page.
+    final anchorIndex =
+        rowIndices[_historyAnchorEntryKey] ?? (timelineEntries.length - 1);
+    _historyAnchorEntryKey = anchorIndex >= 0
+        ? timelineEntries[anchorIndex].key
+        : null;
     _pruneEntryRowKeys(timelineEntries);
     for (final item in messageSource) {
       if (item.user == 1) {
@@ -899,49 +879,70 @@ class _ChatMessageListState extends State<ChatMessageList> {
         break;
       }
     }
-    Widget listView = ListView.builder(
+    Widget buildTimelineRow(BuildContext context, int dataIndex) {
+      final entry = timelineEntries[dataIndex];
+      final needTopPadding =
+          dataIndex == timelineEntries.length - 1 && !entry.isUserMessage;
+      return KeyedSubtree(
+        key: _listKeyForEntry(entry.key),
+        child: KeyedSubtree(
+          key: _rowKeyForEntry(entry.key),
+          child: _buildTimelineListRow(
+            messageSource: messageSource,
+            entry: entry,
+            latestUserMessageId: latestUserMessageId,
+            padding: EdgeInsets.only(top: needTopPadding ? 24.0 : 0.0),
+          ),
+        ),
+      );
+    }
+
+    SliverChildBuilderDelegate delegate({required bool history}) {
+      int dataIndex(int index) =>
+          history ? anchorIndex + 1 + index : anchorIndex - index;
+      return SliverChildBuilderDelegate(
+        (context, index) => buildTimelineRow(context, dataIndex(index)),
+        childCount: history
+            ? timelineEntries.length - anchorIndex - 1
+            : anchorIndex + 1,
+        semanticIndexCallback: (_, index) =>
+            timelineEntries.length - 1 - dataIndex(index),
+        findChildIndexCallback: (key) {
+          if (key is! ValueKey<String> ||
+              !key.value.startsWith(_kListEntryKeyPrefix)) {
+            return null;
+          }
+          final index =
+              rowIndices[key.value.substring(_kListEntryKeyPrefix.length)];
+          if (index == null) return null;
+          if (history) {
+            return index > anchorIndex ? index - anchorIndex - 1 : null;
+          }
+          return index <= anchorIndex ? anchorIndex - index : null;
+        },
+      );
+    }
+
+    final listView = CustomScrollView(
       controller: widget.scrollController,
-      reverse: false,
+      center: _forwardSliverKey,
+      semanticChildCount: timelineEntries.length,
       physics: _ChatLatestEdgeScrollPhysics(
         shouldStickToLatest: () =>
             _autoStickToLatest && !_isAutoStickTemporarilySuppressed,
       ),
       clipBehavior: Clip.hardEdge,
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 0),
-      itemCount: timelineEntries.length,
-      findChildIndexCallback: (key) {
-        if (key is! ValueKey<String> ||
-            !key.value.startsWith(_kListEntryKeyPrefix)) {
-          return null;
-        }
-        final entryKey = key.value.substring(_kListEntryKeyPrefix.length);
-        final dataIndex = timelineEntries.indexWhere(
-          (entry) => entry.key == entryKey,
-        );
-        return dataIndex == -1 ? null : timelineEntries.length - 1 - dataIndex;
-      },
-      itemBuilder: (context, index) {
-        final dataIndex = timelineEntries.length - 1 - index;
-        final entry = timelineEntries[dataIndex];
-        final isOldestEntry = dataIndex == timelineEntries.length - 1;
-        final needTopPadding = isOldestEntry && !entry.isUserMessage;
-        // The list child uses a local ValueKey so sliver reordering does not
-        // reparent a GlobalKey during a live ACP shape change. The nested
-        // GlobalKey is only an already-laid-out scroll anchor; keeping those
-        // identities separate avoids the framework's child == _child race.
-        return KeyedSubtree(
-          key: _listKeyForEntry(entry.key),
-          child: KeyedSubtree(
-            key: _rowKeyForEntry(entry.key),
-            child: _buildTimelineListRow(
-              messageSource: messageSource,
-              entry: entry,
-              latestUserMessageId: latestUserMessageId,
-              padding: EdgeInsets.only(top: needTopPadding ? 24.0 : 0.0),
-            ),
-          ),
-        );
-      },
+      slivers: [
+        SliverPadding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          sliver: SliverList(delegate: delegate(history: true)),
+        ),
+        SliverPadding(
+          key: _forwardSliverKey,
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          sliver: SliverList(delegate: delegate(history: false)),
+        ),
+      ],
     );
     content = ClipRect(
       child: Align(

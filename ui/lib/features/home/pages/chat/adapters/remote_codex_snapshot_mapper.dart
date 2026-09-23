@@ -1,98 +1,5 @@
 part of '../chat_page.dart';
 
-String _remoteCodexThreadContentSignature(Map<String, dynamic> response) {
-  final thread = _asAgentMap(response['thread']) ?? response;
-  final turns = _remoteCodexTurnsFromThreadResponse(response);
-  final buffer = StringBuffer()
-    ..write(_asAgentString(thread['id'] ?? response['threadId']) ?? '')
-    ..write('|');
-  if (turns == null) {
-    buffer
-      ..write(
-        _remoteCodexTimeValueMs(thread['updatedAt'] ?? thread['updated_at']) ??
-            '',
-      )
-      ..write('|')
-      ..write(_asAgentString(thread['preview'] ?? response['preview']) ?? '');
-    return buffer.toString();
-  }
-  for (var turnIndex = 0; turnIndex < turns.length; turnIndex += 1) {
-    final turn = _asAgentMap(turns[turnIndex]);
-    if (turn == null) {
-      continue;
-    }
-    buffer
-      ..write(_remoteCodexTurnIdAt(turns, turnIndex) ?? '')
-      ..write(':')
-      ..write(_remoteCodexStatusText(turn['status'] ?? turn['state']) ?? '')
-      ..write(':')
-      ..write(
-        _remoteCodexTimeValueMs(turn['startedAt'] ?? turn['started_at']) ?? '',
-      )
-      ..write(':')
-      ..write(
-        _remoteCodexTimeValueMs(turn['completedAt'] ?? turn['completed_at']) ??
-            '',
-      )
-      ..write('|');
-    final rawItems = _remoteCodexHistoricalItemsFromTurn(turn);
-    for (var itemIndex = 0; itemIndex < rawItems.length; itemIndex += 1) {
-      final item = rawItems[itemIndex];
-      buffer
-        ..write(_asAgentString(item['id']) ?? '$turnIndex-$itemIndex')
-        ..write(',')
-        ..write(_asAgentString(item['type']) ?? '')
-        ..write(',')
-        ..write(_remoteCodexStatusText(item['status'] ?? item['state']) ?? '')
-        ..write(',')
-        ..write(
-          _remoteCodexExtractText(
-            item['summary'] ??
-                item['text'] ??
-                item['message'] ??
-                item['content'] ??
-                item['output'] ??
-                item['command'] ??
-                item['cmd'] ??
-                item['path'],
-          ).hashCode,
-        )
-        ..write(';');
-    }
-  }
-  return buffer.toString();
-}
-
-String _remoteCodexSnapshotSignature({
-  required String threadId,
-  required List<ChatMessageModel> messages,
-  required ConversationModel conversation,
-  required bool isAiResponding,
-  required String? activeTaskId,
-}) {
-  final buffer = StringBuffer()
-    ..write(threadId)
-    ..write('|')
-    ..write(conversation.updatedAt)
-    ..write('|')
-    ..write(isAiResponding ? '1' : '0')
-    ..write('|')
-    ..write(activeTaskId ?? '')
-    ..write('|')
-    ..write(messages.length);
-  for (final message in messages) {
-    final attachments = message.content?['attachments'];
-    buffer
-      ..write('|')
-      ..write(message.id)
-      ..write(':')
-      ..write(message.text?.hashCode ?? message.cardData?.hashCode ?? 0)
-      ..write(':')
-      ..write(attachments == null ? 0 : _safeAgentJson(attachments).hashCode);
-  }
-  return buffer.toString();
-}
-
 List<ChatMessageModel> _mergeRemoteCodexSnapshotMessages({
   required List<ChatMessageModel> snapshotMessages,
   required List<ChatMessageModel> existingMessages,
@@ -446,7 +353,10 @@ List<ChatMessageModel> _remoteCodexMessagesFromThreadResponse(
     final turnStartedAt =
         _remoteCodexTimeValueMs(turn['startedAt'] ?? turn['started_at']) ??
         DateTime.now().millisecondsSinceEpoch;
-    final rawItems = _remoteCodexHistoricalItemsFromTurn(turn);
+    final rawItems = (turn['items'] as List? ?? const [])
+        .map(_asAgentMap)
+        .whereType<Map<String, dynamic>>()
+        .toList(growable: false);
     if (rawItems.isEmpty) {
       continue;
     }
@@ -469,25 +379,15 @@ List<ChatMessageModel> _remoteCodexMessagesFromThreadResponse(
             itemIndex,
       );
       if (itemType == 'userMessage') {
-        final userContent = _remoteCodexExtractUserMessageContent(
-          item['content'] ??
-              item['text'] ??
-              item['message'] ??
-              item['input'] ??
-              item['text_elements'] ??
-              item['parts'],
-        );
-        if (userContent.text.trim().isEmpty &&
-            userContent.attachments.isEmpty) {
-          continue;
-        }
+        // The host session/load boundary already imported legacy content and images.
+        final text = item['content'] as String? ?? '';
+        final attachments = item['attachments'] as List? ?? const [];
+        if (text.trim().isEmpty && attachments.isEmpty) continue;
         final content = <String, dynamic>{
-          'text': userContent.text,
+          'text': text,
           'id': '$itemId-agent-user',
+          if (attachments.isNotEmpty) 'attachments': attachments,
         };
-        if (userContent.attachments.isNotEmpty) {
-          content['attachments'] = userContent.attachments;
-        }
         chronological.add(
           ChatMessageModel(
             id: '$itemId-agent-user',

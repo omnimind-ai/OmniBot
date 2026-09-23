@@ -104,7 +104,6 @@ part 'chat_page_ui.dart';
 part 'chat_page_user_message_actions.dart';
 part 'adapters/agent_runtime_config_parser.dart';
 part 'adapters/remote_codex_content_parser.dart';
-part 'adapters/remote_codex_history_items.dart';
 part 'adapters/remote_codex_snapshot_mapper.dart';
 part 'adapters/remote_codex_thread_identity.dart';
 part 'widgets/chat_page_overlays.dart';

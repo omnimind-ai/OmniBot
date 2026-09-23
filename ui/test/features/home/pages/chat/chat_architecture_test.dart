@@ -201,10 +201,10 @@ void main() {
         'chat_runtime_message_support.dart',
         'chat_runtime_streaming_support.dart',
         'chat_runtime_thinking_support.dart',
-        'chat_runtime_tool_support.dart',
       ]) {
         expect(runtimeSource, contains("part '$part';"));
       }
+      expect(runtimeSource, isNot(contains("part 'chat_runtime_tool_support.dart';")));
       for (final part in const <String>[
         'chat_app_bar.dart',
         'chat_input_wrapper.dart',

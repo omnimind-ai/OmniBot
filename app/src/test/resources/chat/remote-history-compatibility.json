@@ -1,0 +1,407 @@
+[
+  {
+    "turn": {
+      "id": "turn-1",
+      "items": [
+        {
+          "id": "call-1",
+          "type": "fileChange",
+          "status": "completed",
+          "changes": "{\"path\":\"/repo/lib/main.dart\",\"kind\":{\"type\":\"update\"},\"diff\":\"@@ -1,2 +1,2 @@\\n-old line\\n+new line\\n same line\\n\"}"
+        }
+      ]
+    },
+    "items": [
+      {
+        "id": "call-1",
+        "type": "fileChange",
+        "status": "completed",
+        "changes": "{\"path\":\"/repo/lib/main.dart\",\"kind\":{\"type\":\"update\"},\"diff\":\"@@ -1,2 +1,2 @@\\n-old line\\n+new line\\n same line\\n\"}"
+      }
+    ]
+  },
+  {
+    "turn": {
+      "id": "turn-1",
+      "items": [
+        {
+          "id": "search-1",
+          "type": "webSearch",
+          "query": "Codex app server protocol",
+          "status": "completed"
+        },
+        {
+          "id": "image-1",
+          "type": "imageView",
+          "path": "/tmp/screenshot.png",
+          "status": "completed"
+        },
+        {
+          "id": "tool-1",
+          "type": "mcpToolCall",
+          "tool": "mcp__filesystem__read_file",
+          "arguments": "{\"path\":\"README.md\"}",
+          "status": "completed"
+        },
+        {
+          "id": "sdk-read-1",
+          "type": "mcp_tool_call",
+          "server": "filesystem",
+          "tool": "read_file",
+          "arguments": {
+            "path": "AGENTS.md"
+          },
+          "status": "completed"
+        },
+        {
+          "id": "sdk-cmd-1",
+          "type": "command_execution",
+          "command": "flutter test",
+          "aggregated_output": "00:01 +1: All tests passed!",
+          "exit_code": 0,
+          "status": "completed"
+        },
+        {
+          "type": "function_call",
+          "name": "read_file",
+          "call_id": "raw-read-1",
+          "arguments": "{\"path\":\"lib/main.dart\"}"
+        },
+        {
+          "type": "local_shell_call",
+          "call_id": "raw-shell-1",
+          "status": "completed",
+          "action": {
+            "type": "exec",
+            "command": [
+              "git",
+              "status"
+            ]
+          }
+        }
+      ]
+    },
+    "items": [
+      {
+        "id": "search-1",
+        "type": "webSearch",
+        "query": "Codex app server protocol",
+        "status": "completed"
+      },
+      {
+        "id": "image-1",
+        "type": "imageView",
+        "path": "/tmp/screenshot.png",
+        "status": "completed"
+      },
+      {
+        "id": "tool-1",
+        "type": "mcpToolCall",
+        "tool": "mcp__filesystem__read_file",
+        "arguments": "{\"path\":\"README.md\"}",
+        "status": "completed"
+      },
+      {
+        "id": "sdk-read-1",
+        "type": "mcpToolCall",
+        "server": "filesystem",
+        "tool": "read_file",
+        "arguments": {
+          "path": "AGENTS.md"
+        },
+        "status": "completed"
+      },
+      {
+        "id": "sdk-cmd-1",
+        "type": "commandExecution",
+        "command": "flutter test",
+        "aggregated_output": "00:01 +1: All tests passed!",
+        "exit_code": 0,
+        "status": "completed"
+      },
+      {
+        "type": "function_call",
+        "name": "read_file",
+        "call_id": "raw-read-1",
+        "arguments": "{\"path\":\"lib/main.dart\"}"
+      },
+      {
+        "type": "local_shell_call",
+        "call_id": "raw-shell-1",
+        "status": "completed",
+        "action": {
+          "type": "exec",
+          "command": [
+            "git",
+            "status"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "turn": {
+      "id": "turn-1",
+      "items": [
+        {
+          "type": "function_call",
+          "name": "exec_command",
+          "call_id": "raw-cmd-1",
+          "arguments": "{\"cmd\":\"flutter test\"}"
+        },
+        {
+          "type": "function_call_output",
+          "call_id": "raw-cmd-1",
+          "output": "00:01 +1: All tests passed!"
+        }
+      ]
+    },
+    "items": [
+      {
+        "type": "function_call",
+        "name": "exec_command",
+        "call_id": "raw-cmd-1",
+        "arguments": "{\"cmd\":\"flutter test\"}"
+      },
+      {
+        "type": "function_call_output",
+        "call_id": "raw-cmd-1",
+        "output": "00:01 +1: All tests passed!"
+      }
+    ]
+  },
+  {
+    "turn": {
+      "id": "turn-1",
+      "items": [
+        {
+          "type": "function_call",
+          "name": "exec_command",
+          "call_id": "raw-cmd-long-output",
+          "arguments": "{\"cmd\":\"inspect\"}"
+        },
+        {
+          "type": "function_call_output",
+          "call_id": "raw-cmd-long-output",
+          "output": "first remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\ntail remote fact must survive"
+        }
+      ]
+    },
+    "items": [
+      {
+        "type": "function_call",
+        "name": "exec_command",
+        "call_id": "raw-cmd-long-output",
+        "arguments": "{\"cmd\":\"inspect\"}"
+      },
+      {
+        "type": "function_call_output",
+        "call_id": "raw-cmd-long-output",
+        "output": "first remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\nmiddle remote fact\ntail remote fact must survive"
+      }
+    ]
+  },
+  {
+    "turn": {
+      "id": "turn-1",
+      "items": [
+        {
+          "id": "user-1",
+          "type": "userMessage",
+          "content": [
+            {
+              "type": "text",
+              "text": "看这张图"
+            },
+            {
+              "type": "image",
+              "detail": null,
+              "url": "data:image/png;base64,AAAA"
+            }
+          ]
+        }
+      ]
+    },
+    "items": [
+      {
+        "id": "user-1",
+        "type": "userMessage",
+        "content": "看这张图",
+        "attachments": [
+          {
+            "id": "codex-image-0",
+            "name": "image.png",
+            "isImage": true,
+            "sendToModel": true,
+            "mimeType": "image/png",
+            "dataUrl": "data:image/png;base64,AAAA"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "turn": {
+      "id": "turn-1",
+      "status": "inProgress",
+      "items": [
+        {
+          "id": "user-1",
+          "type": "userMessage",
+          "content": [
+            {
+              "text": "hi"
+            }
+          ]
+        },
+        {
+          "id": "reasoning-1",
+          "type": "reasoning",
+          "summary": [
+            "thinking"
+          ],
+          "content": []
+        }
+      ]
+    },
+    "items": [
+      {
+        "id": "user-1",
+        "type": "userMessage",
+        "content": "hi",
+        "attachments": []
+      },
+      {
+        "id": "reasoning-1",
+        "type": "reasoning",
+        "summary": [
+          "thinking"
+        ],
+        "content": []
+      }
+    ]
+  },
+  {
+    "turn": {
+      "id": "turn-1",
+      "items": [
+        {
+          "id": "request-1",
+          "type": "requestUserInput",
+          "status": "completed",
+          "questions": [
+            {
+              "id": "choice",
+              "question": "Choose one",
+              "options": [
+                {
+                  "label": "Option A"
+                }
+              ]
+            }
+          ],
+          "answers": {
+            "choice": {
+              "answers": [
+                "Option A"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "items": [
+      {
+        "id": "request-1",
+        "type": "requestUserInput",
+        "status": "completed",
+        "questions": [
+          {
+            "id": "choice",
+            "question": "Choose one",
+            "options": [
+              {
+                "label": "Option A"
+              }
+            ]
+          }
+        ],
+        "answers": {
+          "choice": {
+            "answers": [
+              "Option A"
+            ]
+          }
+        }
+      }
+    ]
+  },
+  {
+    "turn": {
+      "id": "turn-1",
+      "status": "inProgress",
+      "items": [
+        {
+          "id": "reason-1",
+          "type": "reasoning",
+          "status": "completed",
+          "summary": [
+            "done reasoning"
+          ]
+        }
+      ]
+    },
+    "items": [
+      {
+        "id": "reason-1",
+        "type": "reasoning",
+        "status": "completed",
+        "summary": [
+          "done reasoning"
+        ]
+      }
+    ]
+  },
+  {
+    "turn": {
+      "id": "turn-1",
+      "status": "inProgress",
+      "items": [
+        {
+          "id": "reason-1",
+          "type": "reasoning",
+          "status": "completed",
+          "summary": [
+            "older reasoning"
+          ]
+        },
+        {
+          "id": "reason-2",
+          "type": "reasoning",
+          "status": "completed",
+          "summary": [
+            "latest reasoning"
+          ]
+        }
+      ]
+    },
+    "items": [
+      {
+        "id": "reason-1",
+        "type": "reasoning",
+        "status": "completed",
+        "summary": [
+          "older reasoning"
+        ]
+      },
+      {
+        "id": "reason-2",
+        "type": "reasoning",
+        "status": "completed",
+        "summary": [
+          "latest reasoning"
+        ]
+      }
+    ]
+  }
+]
