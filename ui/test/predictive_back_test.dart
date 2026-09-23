@@ -3,11 +3,15 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ui/features/home/state/predictive_back_controller.dart';
 import 'package:ui/services/storage_service.dart';
+import 'support/ui_preferences_channel.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  tearDown(clearUiPreferencesChannelFixture);
+
   setUp(() async {
+    installUiPreferencesChannelFixture();
     SharedPreferences.setMockInitialValues(<String, Object>{});
     await StorageService.init();
   });

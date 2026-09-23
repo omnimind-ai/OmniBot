@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_switch/flutter_switch.dart';
@@ -8,8 +10,8 @@ import 'package:ui/features/home/state/predictive_back_controller.dart';
 import 'package:ui/l10n/l10n.dart';
 import 'package:ui/models/chat_startup_behavior.dart';
 import 'package:ui/models/habitual_hand.dart';
-import 'package:ui/services/assists_core_service.dart';
 import 'package:ui/services/conversation_service.dart';
+import 'package:ui/services/app_state_service.dart';
 import 'package:ui/services/hide_from_recents_service.dart';
 import 'package:ui/services/special_permission.dart';
 import 'package:ui/services/storage_service.dart';
@@ -27,7 +29,8 @@ class ExperienceMiscSettingPage extends ConsumerStatefulWidget {
 }
 
 class _ExperienceMiscSettingPageState
-    extends ConsumerState<ExperienceMiscSettingPage> {
+    extends ConsumerState<ExperienceMiscSettingPage>
+    with WidgetsBindingObserver {
   bool _hideFromRecentsEnabled = false;
   bool _vibrationEnabled = true;
   bool _preventScreenSleepDuringTasksEnabled = true;
@@ -39,6 +42,7 @@ class _ExperienceMiscSettingPageState
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _preventScreenSleepDuringTasksEnabled =
         StorageService.getBool(
           StorageService.kPreventScreenSleepDuringTasksKey,
@@ -61,6 +65,39 @@ class _ExperienceMiscSettingPageState
     _loadHideFromRecentsState();
     _loadVibrationState();
     _loadRuntimeTaskState();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(_reloadVisibleSettings());
+    }
+  }
+
+  Future<void> _reloadVisibleSettings() async {
+    try {
+      await StorageService.reload();
+    } catch (error) {
+      debugPrint('Unable to reload miscellaneous settings: $error');
+      return;
+    }
+    if (!mounted) return;
+    setState(() {
+      _useIndependentChatSendButton =
+          StorageService.isIndependentChatSendButtonEnabled();
+      _recentConversationsOnlyEnabled =
+          ConversationService.isRecentConversationsOnlyEnabled();
+      _chatStartupBehavior = StorageService.getChatStartupBehavior();
+    });
+    await _loadHideFromRecentsState();
+    await _loadVibrationState();
+    await _loadRuntimeTaskState();
   }
 
   Future<void> _loadHideFromRecentsState() async {
@@ -94,29 +131,26 @@ class _ExperienceMiscSettingPageState
 
   Future<void> _loadRuntimeTaskState() async {
     try {
-      final preventSleep =
-          await StorageService.isPreventScreenSleepDuringTasksEnabled();
-      final notification =
-          await StorageService.isTaskCompletionNotificationEnabled();
+      final snapshot = await AppStateService.getMiscPreferences();
+      final preventSleep = snapshot['preventSleep'] == true;
+      final notification = snapshot['completionNotification'] == true;
       if (!mounted) return;
       setState(() {
         _preventScreenSleepDuringTasksEnabled = preventSleep;
         _taskCompletionNotificationEnabled = notification;
       });
-      await AssistsMessageService.setPreventScreenSleepDuringTasksEnabled(
-        preventSleep,
-      );
-      await AssistsMessageService.setTaskCompletionNotificationEnabled(
-        notification,
-      );
     } catch (e) {
       debugPrint('Error loading runtime task settings: $e');
     }
   }
 
   Future<void> _onVibrationChanged(bool value) async {
-    await CacheUtil.cacheBool('app_vibrate', value);
+    final saved = await StorageService.setVibrationEnabled(value);
     if (!mounted) return;
+    if (!saved) {
+      showToast(context.l10n.settingsSaveFailed, type: ToastType.error);
+      return;
+    }
     setState(() {
       _vibrationEnabled = value;
     });
@@ -140,13 +174,6 @@ class _ExperienceMiscSettingPageState
   Future<void> _onPreventScreenSleepDuringTasksChanged(bool value) async {
     try {
       await StorageService.setPreventScreenSleepDuringTasksEnabled(value);
-      final synced =
-          await AssistsMessageService.setPreventScreenSleepDuringTasksEnabled(
-            value,
-          );
-      if (!synced) {
-        throw Exception('native_sync_failed');
-      }
       if (!mounted) return;
       setState(() {
         _preventScreenSleepDuringTasksEnabled = value;
@@ -168,13 +195,6 @@ class _ExperienceMiscSettingPageState
         }
       }
       await StorageService.setTaskCompletionNotificationEnabled(value);
-      final synced =
-          await AssistsMessageService.setTaskCompletionNotificationEnabled(
-            value,
-          );
-      if (!synced) {
-        throw Exception('native_sync_failed');
-      }
       if (!mounted) return;
       setState(() {
         _taskCompletionNotificationEnabled = value;

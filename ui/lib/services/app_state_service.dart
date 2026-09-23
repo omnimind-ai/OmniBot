@@ -8,6 +8,26 @@ class AppStateService {
     'cn.com.omnimind.bot/app_state',
   );
 
+  static Future<Map<dynamic, dynamic>> getMiscPreferences() async {
+    final snapshot = await _channel.invokeMapMethod<dynamic, dynamic>(
+      'getMiscPreferences',
+    );
+    if (snapshot == null) throw StateError('Missing miscellaneous preferences');
+    return snapshot;
+  }
+
+  static Future<Map<dynamic, dynamic>> updateMiscPreferences(
+    String operation,
+    Object value,
+  ) async {
+    final snapshot = await _channel.invokeMapMethod<dynamic, dynamic>(
+      'updateMiscPreferences',
+      {'operation': operation, 'value': value},
+    );
+    if (snapshot == null) throw StateError('Missing miscellaneous preferences');
+    return snapshot;
+  }
+
   static Future<Map<dynamic, dynamic>> getUiPreferences() async {
     final snapshot = await _channel.invokeMapMethod<dynamic, dynamic>(
       'getUiPreferences',

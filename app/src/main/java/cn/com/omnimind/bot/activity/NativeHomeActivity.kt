@@ -17,6 +17,9 @@ import cn.com.omnimind.bot.ui.nativehome.LegacyHomeNavigator
 import cn.com.omnimind.bot.ui.nativehome.NativeHomeViewModel
 import cn.com.omnimind.bot.ui.nativehome.resolveNativeHomeLocale
 import cn.com.omnimind.bot.manager.AppPermissionAccess
+import cn.com.omnimind.bot.preferences.RecentTasksVisibility
+import cn.com.omnimind.bot.util.TaskRuntimeSettings
+import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.ui.settings.NativePreferencesViewModel
 import cn.com.omnimind.nativeui.settings.AppearanceScreen
 import cn.com.omnimind.nativeui.settings.HomePreferencesScreen
@@ -25,6 +28,8 @@ import cn.com.omnimind.bot.ui.settings.NativeAboutRoute
 import cn.com.omnimind.bot.ui.settings.NativeAboutViewModel
 import cn.com.omnimind.bot.ui.settings.NativePermissionsRoute
 import cn.com.omnimind.bot.ui.settings.NativePermissionsViewModel
+import cn.com.omnimind.bot.ui.settings.NativeMiscSettingsRoute
+import cn.com.omnimind.bot.ui.settings.NativeMiscSettingsViewModel
 import cn.com.omnimind.nativeui.NativeHomeApp
 import cn.com.omnimind.nativeui.NativeHomeActions
 import cn.com.omnimind.nativeui.ThemePreference
@@ -49,10 +54,14 @@ class NativeHomeActivity : ComponentActivity() {
         setTheme(StartupThemeResolver.resolveSplashTheme(this))
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        TaskRuntimeSettings.attachActivity(this)
+        runCatching { RecentTasksVisibility.applySaved(this) }
+            .onFailure { OmniLog.w("NativeHomeActivity", "Unable to apply recent-task visibility") }
         viewModel = ViewModelProvider(this, NativeHomeViewModel.Factory(this))[NativeHomeViewModel::class.java]
         val about = ViewModelProvider(this, NativeAboutViewModel.Factory(this))[NativeAboutViewModel::class.java]
         val permissions = ViewModelProvider(this, NativePermissionsViewModel.Factory(this))[NativePermissionsViewModel::class.java]
         val preferences = ViewModelProvider(this, NativePreferencesViewModel.Factory(this))[NativePreferencesViewModel::class.java]
+        val miscSettings = ViewModelProvider(this, NativeMiscSettingsViewModel.Factory(this))[NativeMiscSettingsViewModel::class.java]
         val permissionAccess = AppPermissionAccess(applicationContext)
         val navigator = LegacyHomeNavigator(this)
         val actions = NativeHomeActions(
@@ -101,6 +110,9 @@ class NativeHomeActivity : ComponentActivity() {
                 appearance = { onBack -> AppearanceScreen(savedPreferences, preferences.actions,
                     onBackground = { navigator.open(LegacyDestination.Page.AppearanceDetails) }, onBack = onBack) },
                 homePreferences = { onBack -> HomePreferencesScreen(savedPreferences, preferences.actions, onBack) },
+                miscellaneous = { onBack, onHomeSettings -> NativeMiscSettingsRoute(
+                    miscSettings, permissionAccess, navigator::open, onHomeSettings, onBack,
+                ) },
                 permissions = { onBack -> NativePermissionsRoute(permissions, permissionAccess, this@NativeHomeActivity, onBack) },
             )
         }
@@ -108,11 +120,22 @@ class NativeHomeActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        TaskRuntimeSettings.onActivityResumed(this)
         if (languageOption != readLanguage(this) || localeTag != resolveNativeHomeLocale(readLanguage(this)).toLanguageTag()) {
             recreate()
             return
         }
         viewModel.refresh()
+    }
+
+    override fun onPause() {
+        TaskRuntimeSettings.onActivityPaused(this)
+        super.onPause()
+    }
+
+    override fun onDestroy() {
+        TaskRuntimeSettings.detachActivity(this)
+        super.onDestroy()
     }
 
     private fun readLanguage(context: Context): String =

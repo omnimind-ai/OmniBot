@@ -1,6 +1,8 @@
 package cn.com.omnimind.bot.ui.channel
 
 import cn.com.omnimind.bot.preferences.UiPreferencesStore
+import cn.com.omnimind.bot.preferences.MiscPreferencesRepository
+import cn.com.omnimind.bot.preferences.MiscPreferenceKey
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -43,6 +45,28 @@ class AppStateChannel {
 
     private fun handleMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
+            "getMiscPreferences", "updateMiscPreferences" -> {
+                val appContext = context?.applicationContext
+                if (appContext == null) {
+                    result.error("INVALID_CONTEXT", "Context is null", null)
+                    return
+                }
+                scope.launch {
+                    try {
+                        val repository = MiscPreferencesRepository.get(appContext)
+                        val snapshot = if (call.method == "getMiscPreferences") {
+                            withContext(Dispatchers.IO) { repository.read() }
+                        } else {
+                            repository.update(MiscPreferenceKey.fromWire(call.argument<String>("operation")), call.argument<Any>("value"))
+                        }
+                        result.success(snapshot.toMap())
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        result.error("PREFERENCE_FAILED", "Unable to read or save miscellaneous preferences", null)
+                    }
+                }
+            }
             "getPendingShareDraft" -> {
                 val appContext = context?.applicationContext
                 if (appContext == null) {

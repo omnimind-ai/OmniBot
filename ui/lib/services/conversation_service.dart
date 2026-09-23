@@ -28,14 +28,16 @@ class ConversationService {
       StorageService.isRecentConversationsOnlyEnabled();
 
   static Future<bool> setRecentConversationsOnlyEnabled(bool enabled) async {
-    final saved = await StorageService.setBool(
-      StorageService.kRecentConversationsOnlyEnabledKey,
-      enabled,
-    );
+    final saved = await StorageService.setRecentConversationsOnlyEnabled(enabled);
     if (saved) {
       _sidebarPolicyChangedController.add(enabled);
     }
     return saved;
+  }
+
+  /** Reuse the existing sidebar listener when a native setting changes externally. */
+  static void notifySidebarPolicyChangedFromStorage() {
+    _sidebarPolicyChangedController.add(isRecentConversationsOnlyEnabled());
   }
 
   static int recentConversationCutoff({DateTime? now}) {

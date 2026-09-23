@@ -91,7 +91,7 @@ sealed interface LegacyDestination {
 
     enum class Page : LegacyDestination {
         Account, ModelProviders, SceneModels, WorkspaceMemory, Agents, Terminal,
-        McpTools, AppearanceDetails, Miscellaneous, Storage, RequestLogs, RuntimeLogs, UserGuide,
+        McpTools, AppearanceDetails, Chat, Alarm, OpenWith, QuickStart, Storage, RequestLogs, RuntimeLogs, UserGuide,
         Memory, Plugins, Skills, ExecutionHistory, ScheduledTasks, Workspace,
     }
 }

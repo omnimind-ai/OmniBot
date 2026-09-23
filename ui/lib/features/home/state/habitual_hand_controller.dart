@@ -12,6 +12,10 @@ class HabitualHandController extends StateNotifier<HabitualHand> {
   HabitualHandController({HabitualHand? initial})
     : super(initial ?? StorageService.getHabitualHand());
 
+  void restoreFromStorage() {
+    if (mounted) state = StorageService.getHabitualHand();
+  }
+
   Future<bool> setHabitualHand(HabitualHand hand) async {
     if (state == hand) {
       return true;

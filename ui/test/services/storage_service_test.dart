@@ -1,3 +1,5 @@
+import '../support/ui_preferences_channel.dart';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ui/models/chat_startup_behavior.dart';
@@ -6,7 +8,10 @@ import 'package:ui/services/storage_service.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  tearDown(clearUiPreferencesChannelFixture);
+
   setUp(() async {
+    installUiPreferencesChannelFixture();
     SharedPreferences.setMockInitialValues(<String, Object>{});
     await StorageService.init();
   });

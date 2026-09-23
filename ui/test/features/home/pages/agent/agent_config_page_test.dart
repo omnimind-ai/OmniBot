@@ -1,3 +1,5 @@
+import '../../../../support/ui_preferences_channel.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -34,11 +36,13 @@ void main() {
   );
 
   setUp(() async {
+    installUiPreferencesChannelFixture();
     SharedPreferences.setMockInitialValues(<String, Object>{});
     await StorageService.init();
   });
 
   tearDown(() {
+    clearUiPreferencesChannelFixture();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(agentRuntimeChannel, null);
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger

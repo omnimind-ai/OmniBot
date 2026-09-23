@@ -213,29 +213,28 @@ class StorageService {
   }
 
   static Future<bool> isPreventScreenSleepDuringTasksEnabled() async {
-    final enabled = getBool(
-      kPreventScreenSleepDuringTasksKey,
-      defaultValue: true,
-    );
-    return enabled ?? true;
+    final snapshot = await AppStateService.getMiscPreferences();
+    return snapshot['preventSleep'] == true;
   }
 
   static Future<void> setPreventScreenSleepDuringTasksEnabled(
     bool enabled,
   ) async {
-    await setBool(kPreventScreenSleepDuringTasksKey, enabled);
+    await AppStateService.updateMiscPreferences('preventSleep', enabled);
+    await reload();
   }
 
   static Future<bool> isTaskCompletionNotificationEnabled() async {
-    final enabled = getBool(
-      kTaskCompletionNotificationEnabledKey,
-      defaultValue: true,
-    );
-    return enabled ?? true;
+    final snapshot = await AppStateService.getMiscPreferences();
+    return snapshot['completionNotification'] == true;
   }
 
   static Future<void> setTaskCompletionNotificationEnabled(bool enabled) async {
-    await setBool(kTaskCompletionNotificationEnabledKey, enabled);
+    await AppStateService.updateMiscPreferences(
+      'completionNotification',
+      enabled,
+    );
+    await reload();
   }
 
   static String getPetOverlayImagePath() {
@@ -272,7 +271,7 @@ class StorageService {
   }
 
   static Future<bool> setIndependentChatSendButtonEnabled(bool enabled) {
-    return setBool(kUseIndependentChatSendButtonKey, enabled);
+    return _saveMisc('independentSend', enabled);
   }
 
   static bool isPredictiveBackEnabled() {
@@ -280,13 +279,22 @@ class StorageService {
   }
 
   static Future<bool> setPredictiveBackEnabled(bool enabled) {
-    return setBool(kPredictiveBackEnabledKey, enabled);
+    return _saveMisc('predictiveBack', enabled);
   }
 
   static bool isRecentConversationsOnlyEnabled() {
     return getBool(kRecentConversationsOnlyEnabledKey, defaultValue: false) ??
         false;
   }
+
+  static Future<bool> setRecentConversationsOnlyEnabled(bool enabled) =>
+      _saveMisc('recentOnly', enabled);
+
+  static Future<bool> setHideFromRecentsEnabled(bool enabled) =>
+      _saveMisc('hideFromRecents', enabled);
+
+  static Future<bool> setVibrationEnabled(bool enabled) =>
+      _saveMisc('vibration', enabled);
 
   static ChatStartupBehavior getChatStartupBehavior() {
     return ChatStartupBehavior.fromStorageValue(
@@ -298,7 +306,7 @@ class StorageService {
   }
 
   static Future<bool> setChatStartupBehavior(ChatStartupBehavior behavior) {
-    return setString(kChatStartupBehaviorKey, behavior.storageValue);
+    return _saveMisc('startup', behavior.storageValue);
   }
 
   static HabitualHand getHabitualHand() {
@@ -310,8 +318,18 @@ class StorageService {
     );
   }
 
-  static Future<bool> setHabitualHand(HabitualHand hand) async {
-    return setString(kHabitualHandKey, hand.storageValue);
+  static Future<bool> setHabitualHand(HabitualHand hand) {
+    return _saveMisc('habitualHand', hand.storageValue);
+  }
+
+  static Future<bool> _saveMisc(String operation, Object value) async {
+    try {
+      await AppStateService.updateMiscPreferences(operation, value);
+      await reload();
+      return true;
+    } catch (_) {
+      return false;
+    }
   }
 
   static AppThemeMode getThemeMode() {

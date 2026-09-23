@@ -39,8 +39,9 @@ LauncherActivity
       ├─ NativeAboutViewModel → NativeAboutRepository → AppUpdateManager
       ├─ NativePermissionsViewModel → NativePermissionsRepository → AppPermissionAccess
       ├─ NativePreferencesViewModel → UiPreferencesStore → existing FlutterSharedPreferences
+      ├─ NativeMiscSettingsViewModel → MiscPreferencesRepository → existing keys / platform owners
       ├─ :native-ui / NativeHomeApp
-      │   └─ one saved miuix-nav stack: Home → Settings / Archive / About / Permissions / Appearance / HomePreferences
+      │   └─ one saved miuix-nav stack: Home → Settings / Archive / About / Permissions / Appearance / HomePreferences / Miscellaneous
       └─ LegacyHomeNavigator → MainActivity → existing Flutter page
 ```
 
@@ -123,12 +124,16 @@ random greeting selection out of pixel comparisons.
   message-content search, image previews, rename/delete/copy menus and remaining
   visual differences still need migration/acceptance.
 - Settings overview, MCP toggle, local-service detail sheet, About/update and
-  permissions, theme/language and home preferences are native. Background/pet,
-  miscellaneous and other detail pages still use the existing feature pages. Workspace-memory
+  permissions, theme/language, home preferences and the miscellaneous overview
+  are native. Background/pet, alarm, open-with, quick-start and other detail pages
+  still use the existing feature pages. Workspace-memory
   status currently uses the same persisted initial-render cache as Flutter.
 - Native home must gain the launch/foreground behaviors currently owned by
-  MainActivity (startup conversation preference, terminal auto-start, task/notification
-  hooks, account refresh and app update checks) before becoming the default.
+  MainActivity (terminal auto-start, account refresh and app update checks)
+  before becoming the default. The generic native chat entry now delegates
+  startup conversation selection to the existing Flutter chat owner; the
+  launcher itself still presents native Home first. NativeHomeActivity
+  now attaches to the existing task wake-lock/notification foreground owner.
 - Validate tablet/foldable layouts, rotation, accessibility text scaling, TalkBack,
   theme/language changes on return, process recreation and predictive-back
   commit/cancel. Then migrate feature pages and finally the single chat projection
@@ -145,12 +150,13 @@ The order below follows the actual owners in this repository, not page size alon
 | 1 | Core Home → Drawer → Settings and local-service sheet — source implemented | `ConversationDomainService`, scheduler storage, `OmniPluginHost`, `McpServerManager` | See the batch 1 checkpoint; runtime/visual acceptance remains manual. |
 | 2 | About/update and permission pages — source implemented | `AppUpdateManager`, `AppPermissionAccess` and existing platform helpers | See batch 2 below; logs and the guide remain explicit compatibility destinations. |
 | 3a | Theme/language and home preferences — source implemented | `UiPreferencesStore`, existing `AppLocaleManager` and Flutter controllers/cache | One writer for the existing three keys, native controls, compatibility refresh; see batch 3a. |
-| 3b | Background/pet appearance and remaining miscellaneous preferences | `AppBackgroundService`, `TaskRuntimeSettings` and their existing side effects | A later bounded Goal must migrate these owners and their complete user flows. |
+| 3b-1 | Miscellaneous settings overview — source implemented | `MiscPreferencesRepository`, `TaskRuntimeSettings`, MMKV, existing Flutter preferences and platform helpers | One native page and shared writes/refresh; see batch 3b-1. |
+| 3b-2 | Background/pet appearance | `AppBackgroundService`, overlay/pet package operations and previews | Migrate this separate resource-heavy feature in a later bounded Goal. |
 | 4 | Storage management, providers, scene models, MCP/plugin settings, Agent configuration | Storage analysis/cleanup currently lives inside `StorageUsageChannel`; provider/model resolution and plugin runtime already have native owners. | Extract storage operations into a reusable repository/service, leaving the channel as an adapter. Reuse configured provider resolution and plugin capabilities; do not duplicate them in page ViewModels. |
 | 5 | Chat, composer, tool/approval rendering and conversation runtime | The canonical ACP lifecycle and the single reducer/coordinator described above | Move projection ownership with history/identity/reconnect behavior intact. Do not retain a Dart reducer and add a second Kotlin reducer for the same session. |
 | 6 | Remove Flutter | All feature pages and lifecycle owners have migrated | Delete obsolete routes/channels, engine initialization and Flutter build dependencies. Enable the native entry by default only after the remaining launch behavior and visual checks are complete. |
 
-The bounded checkpoints below implement batches 1, 2 and 3a. Later rows are a
+The bounded checkpoints below implement batches 1, 2, 3a and 3b-1. Later rows are a
 roadmap, not authorization to continue after a Goal's stopping condition.
 
 Before expanding the home surface, correct its provisional action wiring:
@@ -365,8 +371,86 @@ were adapted to the shared channel, and `ui_preferences_sync_test.dart` adds a
 regression case for restoring an already-cached host. These tests have **not run**.
 No compilation, emulator/device interaction, real preference mutation, commit or
 push was performed. The finite stopping condition is this source implementation,
-lightweight inspection and manual checklist; later batch 3b and other migration
+lightweight inspection and manual checklist; later batch 3b-1/3b-2 and other migration
 work require a new Goal.
+
+## Batch 3b-1 checkpoint: miscellaneous settings
+
+Settings → Miscellaneous now uses the same saved Miuix navigation stack. Its list
+keeps the Flutter order, titles, summaries, 18dp icon family and 18dp/24dp page
+spacing. Miuix `BasicComponent`, `Switch`, `RadioButton` and `OverlayDialog` own
+click, selection and dismissal behavior. The startup and dominant-hand choices use
+Miuix selection dialogs. The library switch is 49 × 28dp versus the old 32 ×
+18.67dp Flutter switch; this visible difference needs device review, not a scaled
+custom gesture implementation.
+
+The nine existing settings retain their actual owners:
+
+| Settings | Existing storage and effect owner |
+| --- | --- |
+| Startup behavior, recent-only, hide from Recents, independent send, predictive back, dominant hand | Their existing `flutter.*` keys in FlutterSharedPreferences; `MiscPreferencesRepository` serializes this page's writes. |
+| Vibration | MMKV `app_vibrate`, as consumed by `VibrationUtil` and other Flutter pages. |
+| Prevent sleep and completion notification | `TaskRuntimeSettings` in `OmnibotSettings`; its writes mirror the old FlutterSharedPreferences keys for Flutter cache refresh. The native Activity attaches to its existing foreground/wake-lock lifecycle. |
+| Hide from Recents | `RecentTasksVisibility` applies `ActivityManager.appTasks` and commits `flutter.hide_from_recents`. The old dedicated Flutter channel was removed; both Activities apply the saved preference at startup. |
+| Completion-notification permission | Existing `AppPermissionAccess` requests Android notification permission before enabling. A denial leaves the setting unchanged. |
+
+The existing `app_state` channel adapts reads and semantic updates. Flutter's
+`StorageService` and its Miscellaneous page use that shared entry. It no longer
+writes the task key once in Flutter and again through AssistsCore. Returning to a
+cached Flutter host reloads preferences, restores the dominant-hand/predictive-back
+controllers and notifies the existing conversation sidebar listener if recent-only
+changed. The native home observes that key and reruns the existing archive policy.
+
+The native launcher continues to show native Home. Its untargeted composer/voice
+entry opens the existing Flutter chat route without a conversation target, so
+`ChatPage` applies the stored resume-last/new-conversation choice. Selecting a
+specific conversation or quick prompt remains explicit and bypasses that choice.
+The native label explains that the preference takes effect when entering chat.
+
+Miscellaneous → Home Settings now opens the native page. Alarm Settings, Open
+with Omnibot and Quick Start are explicit typed compatibility destinations;
+their existing implementations remain responsible for those workflows. The
+Flutter Miscellaneous page is still used by the default Flutter launcher and
+refreshes its local values when the app resumes.
+
+Manual acceptance for this batch:
+
+1. Open Settings → Miscellaneous on the native launcher. Check all rows and
+   icons in Chinese/English, light/dark, narrow width, large text and rotation.
+   Check Miuix selection/dialog/back dismissal and return to Settings.
+2. Choose both startup options and enter chat from the native home composer
+   and voice entry. Confirm resume-last selects the existing thread and
+   new-conversation starts a new draft. Then open an explicit saved conversation
+   and quick prompt; neither should be redirected by the startup choice.
+3. Toggle recent-only and check that conversations older than seven days move to
+   Archive promptly; turn it off and confirm archived conversations are not
+   silently unarchived. Enter a cached Flutter sidebar and verify its policy.
+4. Toggle hide from Recents, inspect the system task list, restart and verify the
+   saved preference applies to both Activity entry points. Check failure leaves
+   the displayed switch at its last committed value.
+5. Toggle vibration, independent send and dominant hand. Verify MMKV-backed
+   vibration elsewhere, the chat keyboard Enter/send behavior and history swipe
+   direction after moving between native and Flutter pages.
+6. Toggle predictive back. Verify Flutter and terminal behavior when enabled and
+   disabled; native Miuix navigation continues to use its system gesture. Exercise
+   interrupted/cancelled back gestures on Settings and Miscellaneous.
+7. While a task runs, toggle prevent-sleep and check wake-lock/window flag updates
+   when native home or Flutter is foreground. Deny/grant Android notifications,
+   toggle completion notifications and verify the saved preference and actual
+   completion alert behavior.
+8. Open native Home Settings, Alarm Settings, Open with Omnibot and Quick Start
+   from Miscellaneous; verify their own state, return path and no duplicate Agent
+   request/turn.
+9. Open the old Flutter Miscellaneous page, change a setting, return to native,
+   change it again and return to the cached Flutter host. Confirm the same value
+   appears and that a failed save does not show a changed value.
+
+Source-only checks cover Dart formatter parsing, XML/resource names, route and
+key ownership, and `git diff --check`. The Flutter cache regression and native
+navigation tests were updated in source but **not run**. No build, emulator/device
+interaction, real task/notification/Recents setting change, commit or push was
+performed for this Goal. Stop after this bounded page; background/pet belongs to
+batch 3b-2, and storage, model and chat work belongs to later Goals.
 
 ## Verification
 

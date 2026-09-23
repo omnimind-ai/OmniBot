@@ -19,7 +19,9 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.conflate
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.withContext
@@ -42,11 +44,19 @@ internal class NativeHomeRepository(context: Context) {
         trySend(Unit)
         awaitClose { preferences.unregisterOnSharedPreferenceChangeListener(listener) }
     }.conflate()
+    private val recentOnlyChanges = callbackFlow {
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == null || key == "flutter.recent_conversations_only_enabled") trySend(Unit)
+        }
+        preferences.registerOnSharedPreferenceChangeListener(listener)
+        trySend(Unit)
+        awaitClose { preferences.unregisterOnSharedPreferenceChangeListener(listener) }
+    }.map { preferences.getBoolean("flutter.recent_conversations_only_enabled", false) }.distinctUntilChanged()
 
     private val history = combine(
-        DatabaseHelper.observeConversations(), refreshRevision,
-    ) { _, _ ->
-        if (preferences.getBoolean("flutter.recent_conversations_only_enabled", false)) {
+        DatabaseHelper.observeConversations(), refreshRevision, recentOnlyChanges,
+    ) { _, _, recentOnly ->
+        if (recentOnly) {
             conversations.archiveConversationsUpdatedBefore(System.currentTimeMillis() - 7L * 24 * 60 * 60 * 1000)
         }
         // This owner resolves legacy modes and each conversation's immutable Harness binding.

@@ -7,6 +7,9 @@ import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
+import cn.com.omnimind.nativeui.settings.MiscSettingsActions
+import cn.com.omnimind.nativeui.settings.MiscSettingsScreen
+import cn.com.omnimind.nativeui.settings.MiscSettingsState
 import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
@@ -21,7 +24,8 @@ class NativeHomeNavigationTest {
         val restoration = StateRestorationTester(compose)
         val state = mutableStateOf(NativeHomeState(loading = false))
         restoration.setContent {
-            NativeHomeApp(state.value, actions(setService = { state.value = state.value.copy(localServiceEnabled = it) }), about = {}, permissions = {}, appearance = {}, homePreferences = {})
+            NativeHomeApp(state.value, actions(setService = { state.value = state.value.copy(localServiceEnabled = it) }),
+                about = {}, permissions = {}, appearance = {}, homePreferences = {}, miscellaneous = { _, _ -> })
         }
         capture("home-light")
         compose.onNodeWithContentDescription(label(R.string.omni_open_drawer)).performClick()
@@ -43,13 +47,46 @@ class NativeHomeNavigationTest {
             NativeHomeApp(NativeHomeState(
                 loading = false,
                 conversations = listOf(ConversationSummary(42, "Saved thread", "", "agent", 1, false)),
-            ), actions(open = { opened.add(it) }), about = {}, permissions = {}, appearance = {}, homePreferences = {})
+            ), actions(open = { opened.add(it) }), about = {}, permissions = {}, appearance = {}, homePreferences = {},
+                miscellaneous = { _, _ -> })
         }
         compose.onNodeWithContentDescription(label(R.string.omni_open_drawer)).performClick()
         compose.onNodeWithText("Saved thread").performClick()
         compose.waitForIdle()
         assertEquals(listOf(LegacyDestination.Conversation(42, "agent")), opened)
     }
+
+    @Test fun settingsOpensNativeMiscAndReturnsToSettings() {
+        compose.setContent {
+            NativeHomeApp(NativeHomeState(loading = false), actions(), about = {}, permissions = {},
+                appearance = {}, homePreferences = {}, miscellaneous = { onBack, onHomeSettings ->
+                    MiscSettingsScreen(MiscSettingsState(loaded = true), miscActions(), onHomeSettings, {}, onBack)
+                })
+        }
+        compose.onNodeWithContentDescription(label(R.string.omni_open_drawer)).performClick()
+        compose.onNodeWithContentDescription(label(R.string.omni_settings_title)).performClick()
+        compose.onNodeWithText(label(R.string.omni_misc_title)).performClick()
+        compose.onNodeWithText(label(R.string.omni_misc_vibration_title)).assertIsDisplayed()
+        compose.onNodeWithContentDescription(label(R.string.omni_back)).performClick()
+        compose.onNodeWithText(label(R.string.omni_settings_title)).assertIsDisplayed()
+    }
+
+    @Test fun untargetedChatEntryLetsTheExistingChatOwnerChooseTheStartupThread() {
+        val opened = mutableListOf<LegacyDestination>()
+        compose.setContent {
+            NativeHomeApp(NativeHomeState(loading = false), actions(open = { opened.add(it) }),
+                about = {}, permissions = {}, appearance = {}, homePreferences = {}, miscellaneous = { _, _ -> })
+        }
+        compose.onNodeWithText(label(R.string.omni_composer_hint)).performClick()
+        compose.waitForIdle()
+        assertEquals(listOf(LegacyDestination.Page.Chat), opened)
+    }
+
+    private fun miscActions() = MiscSettingsActions(
+        refresh = {}, setStartup = {}, setRecentOnly = {}, setHideFromRecents = {},
+        setVibration = {}, setIndependentSend = {}, setPredictiveBack = {},
+        setPreventSleep = {}, setCompletionNotification = {}, setHabitualHand = {}, dismissNotice = {},
+    )
 
     private fun actions(
         open: (LegacyDestination) -> Unit = {},

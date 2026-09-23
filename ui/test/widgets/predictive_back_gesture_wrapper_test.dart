@@ -1,3 +1,5 @@
+import '../support/ui_preferences_channel.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/rendering.dart';
@@ -84,6 +86,7 @@ void main() {
   );
 
   setUp(() async {
+    installUiPreferencesChannelFixture();
     SharedPreferences.setMockInitialValues(<String, Object>{});
     await StorageService.init();
     DisplayGeometryService.resetForTesting();
@@ -99,6 +102,7 @@ void main() {
   });
 
   tearDown(() {
+    clearUiPreferencesChannelFixture();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(displayGeometryChannel, null);
     DisplayGeometryService.resetForTesting();

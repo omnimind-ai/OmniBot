@@ -16,6 +16,7 @@ import cn.com.omnimind.nativeui.settings.AboutScreen
 import cn.com.omnimind.nativeui.settings.PermissionSetting
 import cn.com.omnimind.nativeui.settings.PermissionsActions
 import cn.com.omnimind.nativeui.settings.PermissionsScreen
+import cn.com.omnimind.nativeui.settings.MiscSettingsScreen
 
 @Composable
 internal fun NativeAboutRoute(
@@ -79,4 +80,27 @@ internal fun NativePermissionsRoute(
         dismissPrompt = viewModel::dismissPrompt,
         confirmPrompt = viewModel::confirmPrompt,
     ), onBack)
+}
+
+@Composable
+internal fun NativeMiscSettingsRoute(
+    viewModel: NativeMiscSettingsViewModel,
+    access: AppPermissionAccess,
+    openLegacy: (LegacyDestination) -> Unit,
+    onHomeSettings: () -> Unit,
+    onBack: () -> Unit,
+) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refresh() }
+    val actions = viewModel.actions.copy(setCompletionNotification = { enabled ->
+        if (!enabled || access.isNotificationGranted()) {
+            viewModel.actions.setCompletionNotification(enabled)
+        } else {
+            access.requestNotificationPermission { granted ->
+                if (granted) viewModel.actions.setCompletionNotification(true)
+                else viewModel.notificationPermissionDenied()
+            }
+        }
+    })
+    MiscSettingsScreen(state, actions, onHomeSettings, openLegacy, onBack)
 }

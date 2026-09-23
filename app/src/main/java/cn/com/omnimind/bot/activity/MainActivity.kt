@@ -1,7 +1,5 @@
 package cn.com.omnimind.bot.activity
 
-import android.app.ActivityManager
-import android.content.Context
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.graphics.Color
@@ -15,6 +13,7 @@ import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.App
 import cn.com.omnimind.bot.terminal.EmbeddedTerminalAutoStartManager
 import cn.com.omnimind.bot.quicklog.QuickLogWidgetActionRouter
+import cn.com.omnimind.bot.preferences.RecentTasksVisibility
 import cn.com.omnimind.bot.ui.channel.ChannelManager
 import cn.com.omnimind.bot.ui.channel.FileSaveChannel
 import cn.com.omnimind.bot.ui.nativehome.LegacyHomeNavigator
@@ -190,31 +189,8 @@ class MainActivity : FlutterActivity() {
 
     private fun applyHideFromRecentsSetting() {
         lifecycleScope.launch {
-            try {
-                val prefs = getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
-                val hideFromRecents = prefs.getBoolean("flutter.hide_from_recents", false)
-                setExcludeFromRecents(hideFromRecents)
-                OmniLog.d(TAG, "启动时应用后台隐藏设置: $hideFromRecents")
-            } catch (e: Exception) {
-                OmniLog.e(TAG, "应用后台隐藏设置失败", e)
-            }
-        }
-    }
-
-    private fun setExcludeFromRecents(exclude: Boolean) {
-        try {
-            val activityManager = getSystemService(ACTIVITY_SERVICE) as? ActivityManager
-            if (activityManager != null) {
-                val appTasks = activityManager.appTasks
-                for (appTask in appTasks) {
-                    appTask.setExcludeFromRecents(exclude)
-                }
-                OmniLog.d(TAG, "设置应用从最近任务中排除: $exclude")
-            } else {
-                OmniLog.e(TAG, "无法获取ActivityManager")
-            }
-        } catch (e: Exception) {
-            OmniLog.e(TAG, "设置excludeFromRecents失败", e)
+            runCatching { RecentTasksVisibility.applySaved(this@MainActivity) }
+                .onFailure { OmniLog.e(TAG, "应用后台隐藏设置失败", it) }
         }
     }
 

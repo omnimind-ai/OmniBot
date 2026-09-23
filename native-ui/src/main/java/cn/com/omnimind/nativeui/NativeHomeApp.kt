@@ -37,6 +37,7 @@ internal sealed interface HomeRoute : NavKey {
     @Serializable data object About : HomeRoute
     @Serializable data object Appearance : HomeRoute
     @Serializable data object HomePreferences : HomeRoute
+    @Serializable data object Miscellaneous : HomeRoute
     @Serializable data object Permissions : HomeRoute
 }
 
@@ -49,6 +50,7 @@ fun NativeHomeApp(
     permissions: @Composable (onBack: () -> Unit) -> Unit,
     appearance: @Composable (onBack: () -> Unit) -> Unit,
     homePreferences: @Composable (onBack: () -> Unit) -> Unit,
+    miscellaneous: @Composable (onBack: () -> Unit, onHomeSettings: () -> Unit) -> Unit,
 ) {
     OmniTheme(state.theme) {
         val palette = LocalOmniPalette.current
@@ -79,10 +81,14 @@ fun NativeHomeApp(
                     onPermissions = { backStack.add(HomeRoute.Permissions) },
                     onAppearance = { backStack.add(HomeRoute.Appearance) },
                     onHomePreferences = { backStack.add(HomeRoute.HomePreferences) },
+                    onMiscellaneous = { backStack.add(HomeRoute.Miscellaneous) },
                 )
             }
             entry<HomeRoute.Appearance> { appearance { backStack.removeLastOrNull() } }
             entry<HomeRoute.HomePreferences> { homePreferences { backStack.removeLastOrNull() } }
+            entry<HomeRoute.Miscellaneous> { miscellaneous(
+                { backStack.removeLastOrNull() }, { backStack.add(HomeRoute.HomePreferences) },
+            ) }
             entry<HomeRoute.About> { about { backStack.removeLastOrNull() } }
             entry<HomeRoute.Permissions> { permissions { backStack.removeLastOrNull() } }
         }

@@ -13,6 +13,7 @@ import 'package:ui/services/storage_service.dart';
 import 'package:ui/theme/app_theme.dart';
 import 'package:ui/widgets/predictive_back_gesture_wrapper.dart';
 import 'package:ui/widgets/predictive_back_route.dart';
+import '../../../../support/ui_preferences_channel.dart';
 
 class _SvgTestAssetBundle extends CachingAssetBundle {
   static final Uint8List _svgBytes = Uint8List.fromList(
@@ -227,6 +228,7 @@ void main() {
   var plugins = <Map<String, Object?>>[];
 
   setUp(() {
+    installUiPreferencesChannelFixture();
     calls.clear();
     plugins = <Map<String, Object?>>[];
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -283,6 +285,7 @@ void main() {
   });
 
   tearDown(() {
+    clearUiPreferencesChannelFixture();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, null);
   });

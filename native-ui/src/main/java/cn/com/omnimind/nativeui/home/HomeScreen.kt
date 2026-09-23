@@ -35,7 +35,8 @@ internal fun HomeScreen(
     onOpen: (LegacyDestination) -> Unit,
 ) {
     val palette = LocalOmniPalette.current
-    val openChat = { onOpen(LegacyDestination.NewConversation()) }
+    // An untargeted entry lets the existing chat owner apply the startup preference.
+    val openChat = { onOpen(LegacyDestination.Page.Chat) }
     Scaffold(
         containerColor = palette.page,
         topBar = { HomeTopBar(onDrawer, onOpen) },

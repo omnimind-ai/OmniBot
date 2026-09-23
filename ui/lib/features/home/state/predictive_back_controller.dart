@@ -11,6 +11,10 @@ class PredictiveBackEnabledController extends StateNotifier<bool> {
   PredictiveBackEnabledController({bool? initial})
     : super(initial ?? StorageService.isPredictiveBackEnabled());
 
+  void restoreFromStorage() {
+    if (mounted) state = StorageService.isPredictiveBackEnabled();
+  }
+
   Future<bool> setEnabled(bool enabled) async {
     if (state == enabled) {
       return true;

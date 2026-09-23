@@ -91,22 +91,42 @@ object TaskRuntimeSettings {
     fun isPreventSleepEnabled(context: Context): Boolean =
         readBoolean(context, KEY_PREVENT_SLEEP, FLUTTER_KEY_PREVENT_SLEEP, true)
 
-    fun setPreventSleepEnabled(context: Context, enabled: Boolean): Boolean =
-        writeBoolean(context, KEY_PREVENT_SLEEP, enabled).also {
-            if (enabled && activeTaskCount.get() > 0) {
-                acquireWakeLock(context.applicationContext)
-                setKeepScreenOnFlag(true)
-            } else if (!enabled) {
-                releaseWakeLock()
-                setKeepScreenOnFlag(false)
-            }
+    fun setPreventSleepEnabled(context: Context, enabled: Boolean): Boolean {
+        val previous = isPreventSleepEnabled(context)
+        if (!writeBoolean(context, KEY_PREVENT_SLEEP, enabled)) return false
+        if (!mirrorFlutterPreference(context, FLUTTER_KEY_PREVENT_SLEEP, enabled)) {
+            writeBoolean(context, KEY_PREVENT_SLEEP, previous)
+            return false
         }
+        if (enabled && activeTaskCount.get() > 0) {
+            acquireWakeLock(context.applicationContext)
+            setKeepScreenOnFlag(true)
+        } else if (!enabled) {
+            releaseWakeLock()
+            setKeepScreenOnFlag(false)
+        }
+        return true
+    }
 
     fun isTaskCompletionNotificationEnabled(context: Context): Boolean =
         readBoolean(context, KEY_NOTIFY, FLUTTER_KEY_NOTIFY, true)
 
-    fun setTaskCompletionNotificationEnabled(context: Context, enabled: Boolean): Boolean =
-        writeBoolean(context, KEY_NOTIFY, enabled)
+    fun setTaskCompletionNotificationEnabled(context: Context, enabled: Boolean): Boolean {
+        val previous = isTaskCompletionNotificationEnabled(context)
+        if (!writeBoolean(context, KEY_NOTIFY, enabled)) return false
+        if (!mirrorFlutterPreference(context, FLUTTER_KEY_NOTIFY, enabled)) {
+            writeBoolean(context, KEY_NOTIFY, previous)
+            return false
+        }
+        return true
+    }
+
+    /** Flutter's existing cache sees the native owner's committed value on reload. */
+    private fun mirrorFlutterPreference(context: Context, key: String, enabled: Boolean): Boolean =
+        runCatching {
+            context.applicationContext.getSharedPreferences(FLUTTER_PREFS_NAME, Context.MODE_PRIVATE)
+                .edit().putBoolean(key, enabled).commit()
+        }.getOrDefault(false)
 
     fun onTaskStarted(context: Context) {
         if (activeTaskCount.incrementAndGet() == 1 && isPreventSleepEnabled(context)) {
