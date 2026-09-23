@@ -6,7 +6,8 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Embedded
-import java.io.ByteArrayOutputStream
+import java.io.OutputStream
+import okio.Buffer
 
 @Dao
 interface AgentConversationEntryDao {
@@ -363,19 +364,36 @@ interface AgentConversationEntryDao {
     @Query("SELECT substr(CASE WHEN :summary THEN CAST(summary AS BLOB) ELSE CAST(payloadJson AS BLOB) END, :offset, 32768) FROM agent_conversation_entries WHERE id = :id")
     suspend fun readEntryChunk(id: Long, summary: Boolean, offset: Long): ByteArray?
 
+    @Query("SELECT substr(summary, 1, 2048) FROM agent_conversation_entries WHERE id = :id")
+    suspend fun readSummaryPreview(id: Long): String?
+
+    // A display projection must never replace the complete stored payload.
+    @Query("""UPDATE agent_conversation_entries SET status = :status,
+        summary = CASE WHEN trim(summary) = '' THEN :summary ELSE summary END,
+        updatedAt = :updatedAt WHERE id = :id AND entryType = 'tool_event' AND status = 'running'
+        AND updatedAt = :expectedUpdatedAt""")
+    suspend fun updateInterruptedToolHeader(
+        id: Long, expectedUpdatedAt: Long, status: String, summary: String, updatedAt: Long,
+    ): Int
+
+    /** Caller owns the read transaction, so the size and all chunks share a snapshot. */
+    suspend fun copyEntryTextTo(slice: AgentConversationEntrySlice, summary: Boolean, output: OutputStream) {
+        val bytes = if (summary) slice.summaryBytes else slice.payloadBytes
+        val inline = if (summary) slice.entry.summary else slice.entry.payloadJson
+        copyConversationEntryText(bytes, inline, output) { offset ->
+            readEntryChunk(slice.entry.id, summary, offset)
+        }
+    }
+
     suspend fun hydrate(slice: AgentConversationEntrySlice): AgentConversationEntry {
         suspend fun fullText(summary: Boolean, bytes: Long, inline: String): String {
             if (bytes <= 32768) return inline
-            val output = ByteArrayOutputStream()
-            var offset = 1L
-            while (offset <= bytes) {
-                val chunk = readEntryChunk(slice.entry.id, summary, offset)
-                check(chunk != null && chunk.isNotEmpty()) { "Conversation entry disappeared while reading" }
-                output.write(chunk)
-                offset += chunk.size
+            // Full reads still serve mutation/export callers. Segments avoid the
+            // geometric, contiguous-array reallocations of ByteArrayOutputStream.
+            return Buffer().use { buffer ->
+                copyEntryTextTo(slice, summary, buffer.outputStream())
+                buffer.readUtf8()
             }
-            check(output.size().toLong() == bytes) { "Conversation entry length changed while reading" }
-            return output.toString("UTF-8")
         }
         return slice.entry.copy(
             summary = fullText(true, slice.summaryBytes, slice.entry.summary),

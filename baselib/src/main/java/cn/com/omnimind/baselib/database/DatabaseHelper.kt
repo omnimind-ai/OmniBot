@@ -648,6 +648,8 @@ object DatabaseHelper {
     suspend fun getLogicalAgentConversationPage(conversationId: Long, modes: List<String>, limit: Int, offset: Int): List<AgentConversationEntry> =
         getDatabase().agentConversationEntryDao().getLogicalThreadPage(conversationId, modes, limit, offset)
 
+    fun getAgentConversationEntryDao(): AgentConversationEntryDao = getDatabase().agentConversationEntryDao()
+
     suspend fun getAgentConversationEntriesDescPaged(
         conversationId: Long,
         conversationMode: String,
