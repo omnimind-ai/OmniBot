@@ -396,7 +396,7 @@ List<GoRoute> homeRoutes = [
     pageBuilder: (context, state) => GoRouterManager.buildActivitySlidePage(
       key: state.pageKey,
       name: 'home/background_setting',
-      child: const BackgroundSettingPage(),
+      child: BackgroundSettingPage(showBasicPreferences: state.uri.queryParameters['section'] != 'background'),
     ),
   ),
 

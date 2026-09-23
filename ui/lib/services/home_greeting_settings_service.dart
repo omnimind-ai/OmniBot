@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:ui/services/app_state_service.dart';
 import 'package:flutter/widgets.dart';
 import 'package:ui/l10n/legacy_text_localizer.dart';
 import 'package:ui/services/storage_service.dart';
@@ -123,11 +124,13 @@ class HomeGreetingSettings {
               .where((item) => item.id.trim().isNotEmpty)
               .toList(growable: false)
         : HomeGreetingSettingsService.defaultQuickPrompts;
+    final promptIds = prompts.map((item) => item.id).toSet();
     final rawPinnedIds = json['pinnedQuickPromptIds'];
     final pinnedIds = rawPinnedIds is List
         ? rawPinnedIds
               .map((item) => item.toString().trim())
-              .where((item) => item.isNotEmpty)
+              .where((item) => promptIds.contains(item))
+              .toSet()
               .take(2)
               .toList(growable: false)
         : const <String>[];
@@ -176,8 +179,7 @@ class HomeGreetingSettingsService {
       title: '帮我查一下',
       titleEn: 'Look Up',
       prompt: '请帮我查一下下面内容，并给出可靠来源和简明结论：',
-      promptEn:
-          'Please look up the following topic, then provide reliable sources and a concise conclusion:',
+      promptEn: 'Please look up the following topic, then provide reliable sources and a concise conclusion:',
       iconKey: 'search',
       builtIn: true,
     ),
@@ -195,8 +197,7 @@ class HomeGreetingSettingsService {
       title: '探索想法',
       titleEn: 'Explore',
       prompt: '我想探索一个想法，请先帮我梳理可能方向：',
-      promptEn:
-          'I want to explore an idea. Please help map possible directions first:',
+      promptEn: 'I want to explore an idea. Please help map possible directions first:',
       iconKey: 'explore',
       builtIn: true,
     ),
@@ -205,8 +206,7 @@ class HomeGreetingSettingsService {
       title: '安装技能',
       titleEn: 'Install Skills',
       prompt: '帮我安装这些skills：https://github.com/OpenMinis/MinisSkills',
-      promptEn:
-          'Help me install these skills: https://github.com/OpenMinis/MinisSkills',
+      promptEn: 'Help me install these skills: https://github.com/OpenMinis/MinisSkills',
       iconKey: 'install',
       builtIn: true,
     ),
@@ -217,8 +217,8 @@ class HomeGreetingSettingsService {
 
   static bool _loaded = false;
 
-  static Future<void> load() async {
-    if (_loaded) {
+  static Future<void> load({bool force = false}) async {
+    if (_loaded && !force) {
       return;
     }
     _loaded = true;
@@ -229,117 +229,53 @@ class HomeGreetingSettingsService {
     }
     try {
       final decoded = jsonDecode(raw);
-      if (decoded is Map<String, dynamic>) {
-        notifier.value = HomeGreetingSettings.fromJson(decoded);
-      } else if (decoded is Map) {
-        notifier.value = HomeGreetingSettings.fromJson(
-          Map<String, dynamic>.from(decoded),
-        );
-      }
+      notifier.value = decoded is Map
+          ? HomeGreetingSettings.fromJson(Map<String, dynamic>.from(decoded))
+          : HomeGreetingSettings.defaults;
     } catch (error) {
       debugPrint('Load home greeting settings failed: $error');
       notifier.value = HomeGreetingSettings.defaults;
     }
   }
 
-  static Future<bool> setGreetingEnabled(bool enabled) {
-    return _save(notifier.value.copyWith(greetingEnabled: enabled));
-  }
+  static Future<bool> setGreetingEnabled(bool enabled) =>
+      _update('greeting', {'enabled': enabled});
 
   static Future<bool> addQuickPrompt({
     required String title,
     required String prompt,
-  }) {
-    final normalizedTitle = title.trim();
-    final normalizedPrompt = prompt.trim();
-    if (normalizedTitle.isEmpty || normalizedPrompt.isEmpty) {
-      return Future.value(false);
-    }
-    final nextPrompt = HomeQuickPrompt(
-      id: 'custom_${DateTime.now().microsecondsSinceEpoch}',
-      title: normalizedTitle,
-      prompt: normalizedPrompt,
-      iconKey: 'spark',
-      builtIn: false,
-    );
-    return _save(
-      notifier.value.copyWith(
-        quickPrompts: [nextPrompt, ...notifier.value.quickPrompts],
-      ),
-    );
-  }
+  }) => _update('savePrompt', {'title': title, 'prompt': prompt});
 
-  static Future<bool> updateQuickPrompt(HomeQuickPrompt prompt) {
-    final nextPrompt = prompt.copyWith(
-      title: prompt.title.trim(),
-      prompt: prompt.prompt.trim(),
-    );
-    if (nextPrompt.title.isEmpty || nextPrompt.prompt.isEmpty) {
-      return Future.value(false);
-    }
-    final nextPrompts = notifier.value.quickPrompts
-        .map((item) => item.id == nextPrompt.id ? nextPrompt : item)
-        .toList(growable: false);
-    return _save(notifier.value.copyWith(quickPrompts: nextPrompts));
-  }
+  static Future<bool> updateQuickPrompt(HomeQuickPrompt prompt) => _update(
+    'savePrompt',
+    {'id': prompt.id, 'title': prompt.title, 'prompt': prompt.prompt},
+  );
 
-  static Future<bool> deleteQuickPrompt(String id) {
-    final nextPrompts = notifier.value.quickPrompts
-        .where((item) => item.id != id)
-        .toList(growable: false);
-    final nextPinnedIds = notifier.value.pinnedQuickPromptIds
-        .where((item) => item != id)
-        .toList(growable: false);
-    return _save(
-      notifier.value.copyWith(
-        quickPrompts: nextPrompts,
-        pinnedQuickPromptIds: nextPinnedIds,
-      ),
-    );
-  }
+  static Future<bool> deleteQuickPrompt(String id) =>
+      _update('deletePrompt', {'id': id});
+  static Future<bool> resetQuickPrompts() => _update('resetPrompts');
+  static Future<bool> togglePinnedQuickPrompt(String id) =>
+      _update('togglePinned', {'id': id});
 
-  static Future<bool> resetQuickPrompts() {
-    return _save(
-      notifier.value.copyWith(
-        quickPrompts: defaultQuickPrompts,
-        pinnedQuickPromptIds: const <String>[],
-      ),
-    );
-  }
-
-  static Future<bool> togglePinnedQuickPrompt(String id) {
-    final normalizedId = id.trim();
-    if (normalizedId.isEmpty) {
-      return Future.value(false);
+  // Semantic mutations operate on a fresh native snapshot, never this engine's cache.
+  static Future<bool> _update(
+    String operation, [
+    Map<String, dynamic> values = const {},
+  ]) async {
+    try {
+      final snapshot = await AppStateService.updateUiPreferences(
+        operation,
+        values,
+      );
+      notifier.value = HomeGreetingSettings.fromJson(
+        Map<String, dynamic>.from(snapshot['home'] as Map),
+      );
+      await StorageService.reload();
+      await load(force: true);
+      return true;
+    } catch (error) {
+      debugPrint('Unable to save home preferences: $error');
+      return false;
     }
-    final existingIds = notifier.value.quickPrompts
-        .map((prompt) => prompt.id)
-        .toSet();
-    if (!existingIds.contains(normalizedId)) {
-      return Future.value(false);
-    }
-    final currentPinnedIds = notifier.value.pinnedQuickPromptIds;
-    final nextPinnedIds = currentPinnedIds.contains(normalizedId)
-        ? currentPinnedIds
-              .where((item) => item != normalizedId)
-              .toList(growable: false)
-        : currentPinnedIds.length >= 2
-        ? null
-        : <String>[...currentPinnedIds, normalizedId];
-    if (nextPinnedIds == null) {
-      return Future.value(false);
-    }
-    return _save(notifier.value.copyWith(pinnedQuickPromptIds: nextPinnedIds));
-  }
-
-  static Future<bool> _save(HomeGreetingSettings settings) async {
-    final saved = await StorageService.setString(
-      kHomeGreetingSettingsStorageKey,
-      jsonEncode(settings.toJson()),
-    );
-    if (saved) {
-      notifier.value = settings;
-    }
-    return saved;
   }
 }

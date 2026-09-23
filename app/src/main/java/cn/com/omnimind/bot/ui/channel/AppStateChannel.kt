@@ -1,11 +1,16 @@
 package cn.com.omnimind.bot.ui.channel
 
+import cn.com.omnimind.bot.preferences.UiPreferencesStore
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import android.content.Context
-import cn.com.omnimind.baselib.i18n.AppLocaleManager
-import cn.com.omnimind.baselib.util.OmniLog
-import cn.com.omnimind.bot.agent.AgentWorkspaceManager
 import cn.com.omnimind.bot.activity.StartupThemeResolver
-import cn.com.omnimind.bot.quicklog.QuickLogWidgetUpdater
 import cn.com.omnimind.bot.share.SharedOpenDraftStore
 import cn.com.omnimind.bot.share.SharedOpenPreferenceStore
 import io.flutter.embedding.engine.FlutterEngine
@@ -17,9 +22,9 @@ import io.flutter.plugin.common.MethodChannel
  */
 class AppStateChannel {
 
-    private val TAG = "AppStateChannel"
     private val CHANNEL = "cn.com.omnimind.bot/app_state"
 
+    private var scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var context: Context? = null
     private var methodChannel: MethodChannel? = null
 
@@ -29,6 +34,7 @@ class AppStateChannel {
     }
 
     fun setChannel(flutterEngine: FlutterEngine) {
+        if (!scope.isActive) scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         methodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
         methodChannel?.setMethodCallHandler { call, result ->
             handleMethodCall(call, result)
@@ -85,24 +91,40 @@ class AppStateChannel {
                 }
                 result.success(saved)
             }
-            "applyLanguagePreference" -> {
+            "getUiPreferences", "updateUiPreferences", "applyLanguagePreference" -> {
                 val appContext = context?.applicationContext
                 if (appContext == null) {
                     result.error("INVALID_CONTEXT", "Context is null", null)
                     return
                 }
-                AppLocaleManager.applyAppLocale(appContext)
-                runCatching {
-                    AgentWorkspaceManager(appContext).ensureRuntimeDirectories()
-                }.onFailure {
-                    OmniLog.w(TAG, "Failed to refresh workspace defaults after language change: ${it.message}")
+                scope.launch {
+                    try {
+                        val store = UiPreferencesStore.get(appContext)
+                        if (call.method == "applyLanguagePreference") {
+                            store.applyLanguagePreference()
+                            result.success(true)
+                        } else {
+                            val snapshot = if (call.method == "getUiPreferences") {
+                                withContext(Dispatchers.IO) { store.read() }
+                            } else when (call.argument<String>("operation")) {
+                                "theme" -> store.setTheme(requireNotNull(call.argument<String>("value")))
+                                "language" -> store.setLanguage(requireNotNull(call.argument<String>("value")))
+                                "greeting" -> store.setGreetingEnabled(requireNotNull(call.argument<Boolean>("enabled")))
+                                "savePrompt" -> store.savePrompt(call.argument<String>("id"),
+                                    requireNotNull(call.argument<String>("title")), requireNotNull(call.argument<String>("prompt")))
+                                "deletePrompt" -> store.deletePrompt(requireNotNull(call.argument<String>("id")))
+                                "resetPrompts" -> store.resetPrompts()
+                                "togglePinned" -> store.togglePinned(requireNotNull(call.argument<String>("id")))
+                                else -> throw IllegalArgumentException("Unknown preference operation")
+                            }
+                            result.success(snapshot.toMap())
+                        }
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Exception) {
+                        result.error("PREFERENCE_FAILED", "Unable to read or save preferences", null)
+                    }
                 }
-                runCatching {
-                    QuickLogWidgetUpdater.updateAll(appContext)
-                }.onFailure {
-                    OmniLog.w(TAG, "Failed to refresh quick log widget language: ${it.message}")
-                }
-                result.success(true)
             }
             "applyThemeMode" -> {
                 val appContext = context?.applicationContext
@@ -125,6 +147,8 @@ class AppStateChannel {
     }
 
     fun clear() {
+        scope.cancel()
+        context = null
         methodChannel?.setMethodCallHandler(null)
         methodChannel = null
     }

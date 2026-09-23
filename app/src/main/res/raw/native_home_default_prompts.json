@@ -4,34 +4,44 @@
     "title": "总结一下",
     "titleEn": "Summarize",
     "prompt": "请帮我总结下面内容，并列出关键要点：",
-    "promptEn": "Please summarize the following content and list the key points:"
+    "promptEn": "Please summarize the following content and list the key points:",
+    "iconKey": "summarize",
+    "builtIn": true
   },
   {
     "id": "builtin_search",
     "title": "帮我查一下",
     "titleEn": "Look Up",
     "prompt": "请帮我查一下下面内容，并给出可靠来源和简明结论：",
-    "promptEn": "Please look up the following topic, then provide reliable sources and a concise conclusion:"
+    "promptEn": "Please look up the following topic, then provide reliable sources and a concise conclusion:",
+    "iconKey": "search",
+    "builtIn": true
   },
   {
     "id": "builtin_execute",
     "title": "执行任务",
     "titleEn": "Execute",
     "prompt": "请帮我执行这个任务：",
-    "promptEn": "Please help me execute this task:"
+    "promptEn": "Please help me execute this task:",
+    "iconKey": "execute",
+    "builtIn": true
   },
   {
     "id": "builtin_explore",
     "title": "探索想法",
     "titleEn": "Explore",
     "prompt": "我想探索一个想法，请先帮我梳理可能方向：",
-    "promptEn": "I want to explore an idea. Please help map possible directions first:"
+    "promptEn": "I want to explore an idea. Please help map possible directions first:",
+    "iconKey": "explore",
+    "builtIn": true
   },
   {
     "id": "builtin_install_minis_skills",
     "title": "安装技能",
     "titleEn": "Install Skills",
     "prompt": "帮我安装这些skills：https://github.com/OpenMinis/MinisSkills",
-    "promptEn": "Help me install these skills: https://github.com/OpenMinis/MinisSkills"
+    "promptEn": "Help me install these skills: https://github.com/OpenMinis/MinisSkills",
+    "iconKey": "install",
+    "builtIn": true
   }
 ]

@@ -47,6 +47,8 @@ private data class SettingItem(
 private sealed interface SettingDestination {
     data class Legacy(val page: Page) : SettingDestination
     data object LocalService : SettingDestination
+    data object Appearance : SettingDestination
+    data object HomePreferences : SettingDestination
     data object About : SettingDestination
     data object Permissions : SettingDestination
 }
@@ -70,7 +72,8 @@ private val sections = listOf(
         SettingItem(R.drawable.omni_hammer, R.string.omni_settings_mcp_tools_title, R.string.omni_settings_mcp_tools_subtitle, SettingDestination.Legacy(Page.McpTools)),
     )),
     SettingSection(R.string.omni_settings_section_experience_appearance, listOf(
-        SettingItem(R.drawable.omni_palette, R.string.omni_settings_appearance_title, R.string.omni_settings_appearance_subtitle, SettingDestination.Legacy(Page.Appearance)),
+        SettingItem(R.drawable.omni_palette, R.string.omni_settings_appearance_title, R.string.omni_settings_appearance_subtitle, SettingDestination.Appearance),
+        SettingItem(R.drawable.omni_sparkles, R.string.omni_pref_home, R.string.omni_pref_prompts, SettingDestination.HomePreferences),
         SettingItem(R.drawable.omni_settings_2, R.string.omni_misc_title, R.string.omni_misc_subtitle, SettingDestination.Legacy(Page.Miscellaneous)),
     )),
     SettingSection(R.string.omni_settings_section_permission_info, listOf(
@@ -87,6 +90,8 @@ internal fun SettingsScreen(
     actions: NativeHomeActions,
     onAbout: () -> Unit,
     onPermissions: () -> Unit,
+    onAppearance: () -> Unit,
+    onHomePreferences: () -> Unit,
 ) {
     val palette = LocalOmniPalette.current
     var showLocalService by rememberSaveable { mutableStateOf(false) }
@@ -104,7 +109,7 @@ internal fun SettingsScreen(
                 Column {
                     SectionTitle(stringResource(section.title), Modifier.padding(start = 4.dp, end = 4.dp, bottom = 10.dp))
                     section.items.forEachIndexed { itemIndex, item ->
-                        SettingRow(item, itemIndex == section.items.lastIndex, state, actions, onAbout, onPermissions) { showLocalService = true }
+                        SettingRow(item, itemIndex == section.items.lastIndex, state, actions, onAbout, onPermissions, onAppearance, onHomePreferences) { showLocalService = true }
                         if (itemIndex < section.items.lastIndex) {
                             Box(Modifier.padding(start = 30.dp).fillMaxWidth().height(1.dp)
                                 .background(palette.border.copy(alpha = if (palette.dark) .5f else .78f)))
@@ -130,6 +135,8 @@ private fun SettingRow(
     actions: NativeHomeActions,
     onAbout: () -> Unit,
     onPermissions: () -> Unit,
+    onAppearance: () -> Unit,
+    onHomePreferences: () -> Unit,
     onLocalServiceDetails: () -> Unit,
 ) {
     val palette = LocalOmniPalette.current
@@ -144,6 +151,8 @@ private fun SettingRow(
             .then(if (canOpen) Modifier.clickable(role = Role.Button) {
                 when (val destination = item.destination) {
                     SettingDestination.LocalService -> onLocalServiceDetails()
+                    SettingDestination.Appearance -> onAppearance()
+                    SettingDestination.HomePreferences -> onHomePreferences()
                     SettingDestination.About -> onAbout()
                     SettingDestination.Permissions -> onPermissions()
                     is SettingDestination.Legacy -> actions.open(destination.page)

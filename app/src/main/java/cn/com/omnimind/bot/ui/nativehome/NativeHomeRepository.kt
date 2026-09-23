@@ -1,5 +1,6 @@
 package cn.com.omnimind.bot.ui.nativehome
 
+import cn.com.omnimind.bot.preferences.UiPreferencesStore
 import android.content.Context
 import android.content.SharedPreferences
 import cn.com.omnimind.baselib.database.DatabaseHelper
@@ -107,35 +108,20 @@ internal class NativeHomeRepository(context: Context) {
     }
 
     fun readPreferences(): NativeHomeState {
-        val greeting = runCatching {
-            JSONObject(preferences.getString("flutter.home_greeting_settings", "{}").orEmpty())
-        }.getOrDefault(JSONObject())
-        val english = resolveNativeHomeLocale(
-            preferences.getString("flutter.language_option", "system"),
-            context.resources.configuration.locales[0],
-        ).language == "en"
-        val prompts = greeting.optJSONArray("quickPrompts") ?: org.json.JSONArray(
-            context.resources.openRawResource(cn.com.omnimind.bot.R.raw.native_home_default_prompts)
-                .bufferedReader().use { it.readText() },
-        )
-        val pinned = greeting.optJSONArray("pinnedQuickPromptIds")
-        val pinnedIds = (0 until (pinned?.length() ?: 0)).map { pinned!!.optString(it) }.take(2)
-        val quickPrompts = (0 until prompts.length()).mapNotNull { index ->
-            val prompt = prompts.optJSONObject(index) ?: return@mapNotNull null
-            val id = prompt.optString("id").takeIf(String::isNotBlank) ?: return@mapNotNull null
-            fun localized(key: String): String =
-                if (english) prompt.optString("${key}En").ifBlank { prompt.optString(key) }
-                else prompt.optString(key)
-            QuickPrompt(id, localized("title"), localized("prompt"))
-        }.sortedBy { pinnedIds.indexOf(it.id).takeIf { index -> index >= 0 } ?: Int.MAX_VALUE }
+        val saved = UiPreferencesStore.get(context).read()
+        val english = resolveNativeHomeLocale(saved.language).language == "en"
+        val quickPrompts = saved.home.prompts.map { prompt ->
+            QuickPrompt(prompt.id, if (english) prompt.titleEn ?: prompt.title else prompt.title,
+                if (english) prompt.promptEn ?: prompt.prompt else prompt.prompt)
+        }.sortedBy { saved.home.pinnedIds.indexOf(it.id).takeIf { index -> index >= 0 } ?: Int.MAX_VALUE }
         return NativeHomeState(
-            theme = when (preferences.getString("flutter.theme_option", "system")) {
+            theme = when (saved.theme) {
                 "light" -> ThemePreference.Light
                 "dark" -> ThemePreference.Dark
                 else -> ThemePreference.System
             },
             workspaceMemoryConfigured = preferences.getBoolean("flutter.workspace_memory_configured", false),
-            greetingEnabled = greeting.optBoolean("greetingEnabled", true),
+            greetingEnabled = saved.home.greetingEnabled,
             quickPrompts = quickPrompts,
             recentConversationsOnly = preferences.getBoolean("flutter.recent_conversations_only_enabled", false),
             leftHanded = preferences.getString("flutter.habitual_hand", "right") == "left",

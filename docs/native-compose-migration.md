@@ -38,8 +38,9 @@ LauncherActivity
       ├─ NativeWebActionRepository → OmniPluginHost (metadata-driven actions)
       ├─ NativeAboutViewModel → NativeAboutRepository → AppUpdateManager
       ├─ NativePermissionsViewModel → NativePermissionsRepository → AppPermissionAccess
+      ├─ NativePreferencesViewModel → UiPreferencesStore → existing FlutterSharedPreferences
       ├─ :native-ui / NativeHomeApp
-      │   └─ one saved miuix-nav stack: Home → Settings / Archive / About / Permissions
+      │   └─ one saved miuix-nav stack: Home → Settings / Archive / About / Permissions / Appearance / HomePreferences
       └─ LegacyHomeNavigator → MainActivity → existing Flutter page
 ```
 
@@ -122,7 +123,8 @@ random greeting selection out of pixel comparisons.
   message-content search, image previews, rename/delete/copy menus and remaining
   visual differences still need migration/acceptance.
 - Settings overview, MCP toggle, local-service detail sheet, About/update and
-  permissions are native. Other detail pages still use the existing feature pages. Workspace-memory
+  permissions, theme/language and home preferences are native. Background/pet,
+  miscellaneous and other detail pages still use the existing feature pages. Workspace-memory
   status currently uses the same persisted initial-render cache as Flutter.
 - Native home must gain the launch/foreground behaviors currently owned by
   MainActivity (startup conversation preference, terminal auto-start, task/notification
@@ -142,12 +144,13 @@ The order below follows the actual owners in this repository, not page size alon
 | --- | --- | --- | --- |
 | 1 | Core Home → Drawer → Settings and local-service sheet — source implemented | `ConversationDomainService`, scheduler storage, `OmniPluginHost`, `McpServerManager` | See the batch 1 checkpoint; runtime/visual acceptance remains manual. |
 | 2 | About/update and permission pages — source implemented | `AppUpdateManager`, `AppPermissionAccess` and existing platform helpers | See batch 2 below; logs and the guide remain explicit compatibility destinations. |
-| 3 | Appearance, miscellaneous, and home preferences | `AppThemeController`, `AppLocaleController`, `HomeGreetingSettingsService`, `AppBackgroundService`, `TaskRuntimeSettings` | Establish one preferences owner with a temporary Flutter reader before enabling Kotlin writes. Migrate theme/language, home prompts, backgrounds and system settings together with their effects. |
+| 3a | Theme/language and home preferences — source implemented | `UiPreferencesStore`, existing `AppLocaleManager` and Flutter controllers/cache | One writer for the existing three keys, native controls, compatibility refresh; see batch 3a. |
+| 3b | Background/pet appearance and remaining miscellaneous preferences | `AppBackgroundService`, `TaskRuntimeSettings` and their existing side effects | A later bounded Goal must migrate these owners and their complete user flows. |
 | 4 | Storage management, providers, scene models, MCP/plugin settings, Agent configuration | Storage analysis/cleanup currently lives inside `StorageUsageChannel`; provider/model resolution and plugin runtime already have native owners. | Extract storage operations into a reusable repository/service, leaving the channel as an adapter. Reuse configured provider resolution and plugin capabilities; do not duplicate them in page ViewModels. |
 | 5 | Chat, composer, tool/approval rendering and conversation runtime | The canonical ACP lifecycle and the single reducer/coordinator described above | Move projection ownership with history/identity/reconnect behavior intact. Do not retain a Dart reducer and add a second Kotlin reducer for the same session. |
 | 6 | Remove Flutter | All feature pages and lifecycle owners have migrated | Delete obsolete routes/channels, engine initialization and Flutter build dependencies. Enable the native entry by default only after the remaining launch behavior and visual checks are complete. |
 
-The bounded checkpoints below implement batches 1 and 2. Later rows are a
+The bounded checkpoints below implement batches 1, 2 and 3a. Later rows are a
 roadmap, not authorization to continue after a Goal's stopping condition.
 
 Before expanding the home surface, correct its provisional action wiring:
@@ -286,6 +289,84 @@ route wiring, update this checklist and report unverified behavior; then complet
 the Goal and stop. Do not automatically proceed to appearance, miscellaneous,
 storage, model configuration or chat. No build, test, emulator/device interaction,
 actual update check/download/install, commit or push was run for this Goal.
+
+## Batch 3a checkpoint: theme, language and home preferences
+
+The source implementation adds Settings → Appearance and Settings → Home Settings
+to the same saved Miuix navigation stack. Appearance contains theme and language
+selectors plus **Background & Pet**, which opens the existing Flutter page with
+`section=background`. That entry hides its duplicate basic selectors. The original
+Flutter appearance route still shows them for the default Flutter launcher.
+Background images, pet selection and the rest of miscellaneous settings are not
+migrated in this batch.
+
+| Existing key in FlutterSharedPreferences | Write owner | Presentation readers |
+| --- | --- | --- |
+| `flutter.theme_option` | `UiPreferencesStore.setTheme` | Native home/preferences and `AppThemeController` |
+| `flutter.language_option` | `UiPreferencesStore.setLanguage` → `AppLocaleManager`, workspace default refresh, widget refresh | Native localized Activity and `AppLocaleController`/`SystemLocaleController` |
+| `flutter.home_greeting_settings` | `UiPreferencesStore` semantic mutations under one mutex | Native home/preferences and `HomeGreetingSettingsService.notifier` |
+
+The existing `app_state` method channel adapts get/update operations to this owner.
+Flutter no longer writes full cached home snapshots or these theme/language keys
+itself. Each home mutation rereads current data and preserves unrelated root fields
+and prompt metadata. Reset restores the five built-ins, clears pins and preserves
+the greeting setting. Empty prompt lists remain empty; deleted or duplicate pins
+are filtered and at most two are retained. Built-ins can be removed but not edited.
+New/custom prompts require nonblank names/text and limits of 12/160 graphemes.
+
+`UiPreferencesSync` reloads the existing SharedPreferences cache, theme/language
+controllers and home notifier on Flutter startup/resume and before compatibility
+navigation. It does not repeat writes or language side effects. Device language
+comes from `AppLocaleManager.systemLocale()` through the same channel, rather than
+application resources that may already contain an explicit language override.
+Native language changes recreate the localized host; Miuix saves the route stack.
+The visible native host reuses `StartupThemeResolver` to apply the saved night mode.
+Flutter theme writes retain the existing policy of avoiding runtime application
+night-mode changes while its Activity is visible.
+
+Miuix `TabRowWithContour`, `Switch`, `TextField`, `IconButton`, `OverlayBottomSheet`
+and `OverlayDialog` own interactions. Existing palette, toolbar and list spacing
+are reused. Editor text is saveable; a successful save closes it, while a failed
+save retains the draft and shows an error. This is source alignment, not a claim
+of accepted pixel parity: library control geometry and prompt labels/icons still
+need comparison against the Flutter reference on a device.
+
+Manual acceptance for this batch:
+
+1. From native Settings, open Appearance and Home Settings. Check toolbar/system
+   back, predictive-back cancel/commit, sheet/dialog dismissal, rotation and
+   restoration with an editor draft. Repeat with Chinese/English, light/dark themes,
+   a narrow display, large text and the keyboard visible.
+2. Select light, dark and system themes; restart the app and enter/return from a
+   cached Flutter compatibility page. Change device theme while system mode is
+   selected. Check both content and system bars, including Android 10/11 and 12+.
+3. Select 简体中文, English and system language. Start with a device language that
+   differs from the explicit app language, then return to system. Check native
+   resources, Flutter controllers and tool/widget language. Change device language
+   while backgrounded and return; unsupported device languages fall back to English.
+4. Disable/re-enable the greeting. Add a custom prompt, edit it, and check that the
+   existing composer receives the saved text without sending it automatically.
+   Try empty/whitespace fields, 12/13 and 160/161 graphemes, and composed emoji.
+   Built-ins must have no edit action. Cancel an editor and repeat after rotation.
+5. Pin two prompts, try a third, unpin and pin another. Delete a pinned prompt and
+   verify pin cleanup. Delete every prompt and restart: the empty list must remain
+   empty. Restore defaults and confirm that only prompts/pins reset, not greeting.
+6. Alternate edits between the native page and Flutter Home Settings (accessible
+   through the remaining Miscellaneous page). Return to an already-created Flutter
+   host and check theme, language, greeting, custom text and pinned order. Confirm
+   that a newer edit is not overwritten by an older cached snapshot.
+7. Check failed saves: the draft must remain available, no success is displayed,
+   and retry must work. Open Background & Pet, verify its existing controls still
+   work, and return to the native appearance page without duplicate basic selectors.
+
+Source-only verification includes resource/JSON consistency, route and owner
+inspection, Dart formatting/parsing and `git diff --check`. Existing test fixtures
+were adapted to the shared channel, and `ui_preferences_sync_test.dart` adds a
+regression case for restoring an already-cached host. These tests have **not run**.
+No compilation, emulator/device interaction, real preference mutation, commit or
+push was performed. The finite stopping condition is this source implementation,
+lightweight inspection and manual checklist; later batch 3b and other migration
+work require a new Goal.
 
 ## Verification
 

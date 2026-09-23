@@ -73,7 +73,7 @@ internal class NativeWebActionRepository(context: Context) {
 
     private fun localized(action: OmniPluginActionDefinition, key: String): String {
         val preferences = context.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
-        val locale = resolveNativeHomeLocale(preferences.getString("flutter.language_option", "system"), context.resources.configuration.locales[0])
+        val locale = resolveNativeHomeLocale(preferences.getString("flutter.language_option", "system"))
         val value = action.presentation[key]
         return ((value as? JsonObject)?.text(locale.language) ?: (value as? JsonPrimitive)?.content)
             ?.takeIf(String::isNotBlank) ?: action.displayName

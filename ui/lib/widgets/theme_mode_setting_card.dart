@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ui/utils/ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:ui/l10n/l10n.dart';
@@ -49,8 +50,15 @@ class ThemeModeSettingCard extends ConsumerWidget {
               id: 'dark',
             ),
           ],
-          onChanged: (nextMode) {
-            ref.read(appThemeModeProvider.notifier).setThemeMode(nextMode);
+          onChanged: (nextMode) async {
+            try {
+              await ref
+                  .read(appThemeModeProvider.notifier)
+                  .setThemeMode(nextMode);
+            } catch (_) {
+              if (context.mounted)
+                showToast(context.trLegacy('设置失败'), type: ToastType.error);
+            }
           },
         ),
       ],

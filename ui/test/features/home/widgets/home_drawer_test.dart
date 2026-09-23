@@ -1,3 +1,4 @@
+import '../../../support/ui_preferences_channel.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
@@ -67,6 +68,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   setUp(() async {
+    installUiPreferencesChannelFixture();
     SharedPreferences.setMockInitialValues(<String, Object>{});
     await StorageService.init();
     nativeConversations = <Map<String, Object?>>[];
@@ -93,6 +95,7 @@ void main() {
   });
 
   tearDown(() {
+    clearUiPreferencesChannelFixture();
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(assistCoreChannel, null);
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger

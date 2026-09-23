@@ -93,7 +93,9 @@ const List<_AppearanceTextColorPreset> _kAppearanceTextColorPresets =
     ];
 
 class BackgroundSettingPage extends StatefulWidget {
-  const BackgroundSettingPage({super.key});
+  const BackgroundSettingPage({super.key, this.showBasicPreferences = true});
+
+  final bool showBasicPreferences;
 
   @override
   State<BackgroundSettingPage> createState() => _BackgroundSettingPageState();
@@ -524,10 +526,12 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
                   ),
                 ),
               ),
-              const ThemeModeSettingCard(),
-              const SizedBox(height: 18),
-              _buildLanguageSettingCard(),
-              const SizedBox(height: 18),
+              if (widget.showBasicPreferences) ...[
+                const ThemeModeSettingCard(),
+                const SizedBox(height: 18),
+                _buildLanguageSettingCard(),
+                const SizedBox(height: 18),
+              ],
               SettingsSectionTitle(
                 label: context.l10n.appearanceBackgroundSource,
               ),
@@ -629,10 +633,12 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
                   id: 'en',
                 ),
               ],
-              onChanged: (nextMode) {
-                ref
-                    .read(appLanguageModeProvider.notifier)
-                    .setLanguageMode(nextMode);
+              onChanged: (nextMode) async {
+                try {
+                  await ref.read(appLanguageModeProvider.notifier).setLanguageMode(nextMode);
+                } catch (_) {
+                  if (context.mounted) showToast(context.trLegacy('设置失败'), type: ToastType.error);
+                }
               },
             ),
           ],

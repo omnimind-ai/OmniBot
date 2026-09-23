@@ -1,9 +1,22 @@
+import '../../support/ui_preferences_channel.dart';
+
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:ui/services/storage_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:ui/core/router/go_router_manager.dart';
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  setUp(() async {
+    SharedPreferences.setMockInitialValues({});
+    await StorageService.init();
+    installUiPreferencesChannelFixture();
+  });
+  tearDown(clearUiPreferencesChannelFixture);
+
   testWidgets(
     'native compatibility page returns only when its route is popped',
     (tester) async {
@@ -27,7 +40,9 @@ void main() {
         ],
       );
       addTearDown(router.dispose);
-      await tester.pumpWidget(MaterialApp.router(routerConfig: router));
+      await tester.pumpWidget(
+        ProviderScope(child: MaterialApp.router(routerConfig: router)),
+      );
       var returned = false;
       final navigation = GoRouterManager.openLegacyPage('/settings')
           .then((_) => returned = true);

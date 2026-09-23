@@ -1,20 +1,18 @@
 import 'dart:convert';
 
+import 'package:ui/services/ui_preferences_sync.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:ui/features/home/pages/chat/chat_page.dart';
-
-import 'go_router_config.dart';
-
 import 'package:flutter/foundation.dart';
-
-import 'logging_observer.dart';
-
 import 'package:ui/services/method_channel_service.dart';
 import 'package:ui/constants/storage_keys.dart';
 import 'package:ui/services/storage_service.dart';
 import 'package:ui/widgets/predictive_back_route.dart';
+
+import 'go_router_config.dart';
+import 'logging_observer.dart';
 
 class RouteOptions {
   final bool noAnim;
@@ -374,6 +372,8 @@ class GoRouterManager {
     if (context == null || !context.mounted) {
       throw StateError('The Flutter navigation host is not mounted');
     }
+    await UiPreferencesSync.refresh(ProviderScope.containerOf(context, listen: false));
+    if (!context.mounted) throw StateError('The Flutter navigation host was disposed');
     final router = GoRouter.of(context);
     router.go('/home/blank_page');
     await WidgetsBinding.instance.endOfFrame;

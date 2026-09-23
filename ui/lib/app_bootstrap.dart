@@ -1,7 +1,7 @@
-import 'package:ui/widgets/predictive_back_route.dart';
-
 import 'dart:async';
 
+import 'package:ui/services/ui_preferences_sync.dart';
+import 'package:ui/widgets/predictive_back_route.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -135,7 +135,7 @@ class MyApp extends ConsumerStatefulWidget {
   ConsumerState<MyApp> createState() => _MyAppState();
 }
 
-class _MyAppState extends ConsumerState<MyApp> {
+class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
   late final GoRouter _router;
 
   @override
@@ -144,6 +144,7 @@ class _MyAppState extends ConsumerState<MyApp> {
 
     final initStart = DateTime.now();
     debugPrint('🎨 [FlutterStartup] MyApp initState start');
+    WidgetsBinding.instance.addObserver(this);
     _router = GoRouterManager.createRouter(ref);
     _initializeApp();
     debugPrint(
@@ -151,9 +152,25 @@ class _MyAppState extends ConsumerState<MyApp> {
     );
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed && mounted) {
+      UiPreferencesSync.refresh(ProviderScope.containerOf(context, listen: false))
+          .catchError((Object error) { debugPrint('Unable to refresh UI preferences: $error'); });
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
   Future<void> _initializeApp() async {
     final appInitStart = DateTime.now();
     try {
+      UiPreferencesSync.refresh(ProviderScope.containerOf(context, listen: false))
+          .catchError((Object error) { debugPrint('Unable to refresh UI preferences: $error'); });
       ref.read(eventListenerProvider);
       debugPrint(
         "⏱️  [FlutterStartup] eventListenerProvider init cost: ${DateTime.now().difference(appInitStart).inMilliseconds}ms",

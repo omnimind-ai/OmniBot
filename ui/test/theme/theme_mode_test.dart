@@ -1,3 +1,4 @@
+import '../support/ui_preferences_channel.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -13,7 +14,10 @@ import 'package:ui/widgets/common_app_bar.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  tearDown(clearUiPreferencesChannelFixture);
+
   setUp(() async {
+    installUiPreferencesChannelFixture();
     SharedPreferences.setMockInitialValues({});
     await StorageService.init();
   });

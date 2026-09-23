@@ -167,7 +167,7 @@ internal class NativeHomeViewModel(
 
     private fun showMessage(resource: Int) {
         val preferences = context.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
-        val locale = resolveNativeHomeLocale(preferences.getString("flutter.language_option", "system"), context.resources.configuration.locales[0])
+        val locale = resolveNativeHomeLocale(preferences.getString("flutter.language_option", "system"))
         val configuration = android.content.res.Configuration(context.resources.configuration).apply { setLocale(locale) }
         mutableState.update { it.copy(error = context.createConfigurationContext(configuration).getString(resource)) }
     }

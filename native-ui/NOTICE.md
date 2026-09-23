@@ -1,6 +1,6 @@
 # Icon attribution
 
-Except for `omni_menu.xml`, `omni_settings.xml`, and `omni_brand_*.xml` (existing OmniBot asset geometry), the `omni_*.xml` vector drawables reproduce Lucide 0.468.0 SVG geometry from https://github.com/lucide-icons/lucide/tree/0.468.0/icons . They use the same icon family as the Flutter UI.
+Except for `omni_menu.xml`, `omni_settings.xml`, and `omni_brand_*.xml` (existing OmniBot asset geometry), the `omni_*.xml` vector drawables reproduce Lucide 0.468.0 SVG geometry from https://github.com/lucide-icons/lucide/tree/0.468.0/icons . The preference actions also use pin, pin-off, pencil, sparkles, globe, play and notebook-pen from the same repository (main, retrieved 2026-09-23); trash-2 reuses the existing ReTerminal vector. They use the same icon family as the Flutter UI.
 
 ISC License
 

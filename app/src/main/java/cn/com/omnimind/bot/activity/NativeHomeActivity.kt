@@ -17,6 +17,10 @@ import cn.com.omnimind.bot.ui.nativehome.LegacyHomeNavigator
 import cn.com.omnimind.bot.ui.nativehome.NativeHomeViewModel
 import cn.com.omnimind.bot.ui.nativehome.resolveNativeHomeLocale
 import cn.com.omnimind.bot.manager.AppPermissionAccess
+import cn.com.omnimind.bot.ui.settings.NativePreferencesViewModel
+import cn.com.omnimind.nativeui.settings.AppearanceScreen
+import cn.com.omnimind.nativeui.settings.HomePreferencesScreen
+import cn.com.omnimind.nativeui.LegacyDestination
 import cn.com.omnimind.bot.ui.settings.NativeAboutRoute
 import cn.com.omnimind.bot.ui.settings.NativeAboutViewModel
 import cn.com.omnimind.bot.ui.settings.NativePermissionsRoute
@@ -29,10 +33,12 @@ import cn.com.omnimind.nativeui.ThemePreference
 class NativeHomeActivity : ComponentActivity() {
     private lateinit var viewModel: NativeHomeViewModel
     private var languageOption: String? = null
+    private var localeTag: String? = null
 
     override fun attachBaseContext(newBase: Context) {
         languageOption = readLanguage(newBase)
-        val locale = resolveNativeHomeLocale(languageOption, newBase.resources.configuration.locales[0])
+        val locale = resolveNativeHomeLocale(languageOption)
+        localeTag = locale.toLanguageTag()
         val localized = newBase.createConfigurationContext(
             Configuration(newBase.resources.configuration).apply { setLocale(locale) },
         )
@@ -46,6 +52,7 @@ class NativeHomeActivity : ComponentActivity() {
         viewModel = ViewModelProvider(this, NativeHomeViewModel.Factory(this))[NativeHomeViewModel::class.java]
         val about = ViewModelProvider(this, NativeAboutViewModel.Factory(this))[NativeAboutViewModel::class.java]
         val permissions = ViewModelProvider(this, NativePermissionsViewModel.Factory(this))[NativePermissionsViewModel::class.java]
+        val preferences = ViewModelProvider(this, NativePreferencesViewModel.Factory(this))[NativePreferencesViewModel::class.java]
         val permissionAccess = AppPermissionAccess(applicationContext)
         val navigator = LegacyHomeNavigator(this)
         val actions = NativeHomeActions(
@@ -59,8 +66,16 @@ class NativeHomeActivity : ComponentActivity() {
         )
         setContent {
             val state by viewModel.state.collectAsStateWithLifecycle()
+            val savedPreferences by preferences.state.collectAsStateWithLifecycle()
+            LaunchedEffect(savedPreferences.loaded, savedPreferences.theme, savedPreferences.language) {
+                if (savedPreferences.loaded) {
+                    if (languageOption != savedPreferences.language.storageValue) recreate()
+                    else StartupThemeResolver.applyApplicationNightMode(this@NativeHomeActivity, savedPreferences.theme.name.lowercase())
+                }
+            }
+            val theme = if (savedPreferences.loaded) savedPreferences.theme else state.theme
             val systemDark = isSystemInDarkTheme()
-            val dark = when (state.theme) {
+            val dark = when (theme) {
                 ThemePreference.System -> systemDark
                 ThemePreference.Light -> false
                 ThemePreference.Dark -> true
@@ -80,9 +95,12 @@ class NativeHomeActivity : ComponentActivity() {
                 }
             }
             NativeHomeApp(
-                state = state,
+                state = state.copy(theme = theme),
                 actions = actions,
                 about = { onBack -> NativeAboutRoute(about, this@NativeHomeActivity, navigator::open, onBack) },
+                appearance = { onBack -> AppearanceScreen(savedPreferences, preferences.actions,
+                    onBackground = { navigator.open(LegacyDestination.Page.AppearanceDetails) }, onBack = onBack) },
+                homePreferences = { onBack -> HomePreferencesScreen(savedPreferences, preferences.actions, onBack) },
                 permissions = { onBack -> NativePermissionsRoute(permissions, permissionAccess, this@NativeHomeActivity, onBack) },
             )
         }
@@ -90,14 +108,13 @@ class NativeHomeActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (languageOption != readLanguage(this)) {
+        if (languageOption != readLanguage(this) || localeTag != resolveNativeHomeLocale(readLanguage(this)).toLanguageTag()) {
             recreate()
             return
         }
         viewModel.refresh()
     }
 
-    private fun readLanguage(context: Context): String? = context.getSharedPreferences(
-        "FlutterSharedPreferences", MODE_PRIVATE,
-    ).getString("flutter.language_option", "system")
+    private fun readLanguage(context: Context): String =
+        cn.com.omnimind.baselib.i18n.AppLocaleManager.readStoredLanguageMode(context).storageValue
 }

@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:ui';
 
+import 'package:ui/services/app_state_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ui/l10n/app_language_mode.dart';
 import 'package:ui/models/chat_startup_behavior.dart';
@@ -15,6 +16,11 @@ class StorageService {
   /// 初始化 SharedPreferences
   static Future<void> init() async {
     _prefs = await SharedPreferences.getInstance();
+  }
+
+  static Future<void> reload() async {
+    if (_prefs == null) await init();
+    await _instance.reload();
   }
 
   static SharedPreferences get _instance {
@@ -318,7 +324,10 @@ class StorageService {
   }
 
   static Future<void> setThemeMode(AppThemeMode mode) async {
-    await setString(kThemeOptionKey, mode.storageValue);
+    await AppStateService.updateUiPreferences('theme', {
+      'value': mode.storageValue,
+    });
+    await reload();
   }
 
   static AppLanguageMode getLanguageMode() {
@@ -330,8 +339,14 @@ class StorageService {
     );
   }
 
-  static Future<void> setLanguageMode(AppLanguageMode mode) async {
-    await setString(kLanguageOptionKey, mode.storageValue);
+  static Future<Map<dynamic, dynamic>> setLanguageMode(
+    AppLanguageMode mode,
+  ) async {
+    final snapshot = await AppStateService.updateUiPreferences('language', {
+      'value': mode.storageValue,
+    });
+    await reload();
+    return snapshot;
   }
 
   static ResolvedAppLocale getResolvedAppLocale({Locale? systemLocale}) {

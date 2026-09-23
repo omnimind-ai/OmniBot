@@ -8,6 +8,27 @@ class AppStateService {
     'cn.com.omnimind.bot/app_state',
   );
 
+  static Future<Map<dynamic, dynamic>> getUiPreferences() async {
+    final snapshot = await _channel.invokeMapMethod<dynamic, dynamic>(
+      'getUiPreferences',
+    );
+    if (snapshot == null) throw StateError('Missing preferences snapshot');
+    return snapshot;
+  }
+
+  /// Android owns writes to the shared theme, language and home settings keys.
+  static Future<Map<dynamic, dynamic>> updateUiPreferences(
+    String operation, [
+    Map<String, dynamic> values = const {},
+  ]) async {
+    final snapshot = await _channel.invokeMapMethod<dynamic, dynamic>(
+      'updateUiPreferences',
+      {'operation': operation, ...values},
+    );
+    if (snapshot == null) throw StateError('Missing preferences snapshot');
+    return snapshot;
+  }
+
   static Future<Map<dynamic, dynamic>?> getPendingShareDraft() async {
     try {
       return await _channel.invokeMethod<Map<dynamic, dynamic>>(

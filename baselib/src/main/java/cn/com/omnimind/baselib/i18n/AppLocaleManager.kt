@@ -67,7 +67,7 @@ object AppLocaleManager {
     fun resolvePromptLocale(context: Context): PromptLocale {
         return resolvePromptLocale(
             mode = readStoredLanguageMode(context),
-            systemLocale = systemLocale(context)
+            systemLocale = systemLocale()
         )
     }
 
@@ -141,8 +141,9 @@ object AppLocaleManager {
         return context.createConfigurationContext(configuration)
     }
 
-    private fun systemLocale(context: Context): Locale {
-        val configuration = context.applicationContext.resources.configuration
+    fun systemLocale(): Locale {
+        // Application resources may already contain our explicit language override.
+        val configuration = android.content.res.Resources.getSystem().configuration
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             configuration.locales.takeIf { !it.isEmpty }?.get(0) ?: Locale.getDefault()
         } else {
