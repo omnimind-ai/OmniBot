@@ -3,9 +3,9 @@
    <style name="Theme.OmnibotApp.Splash" parent="android:Theme.Material.Light.NoActionBar">
        <!-- Android 12+ Splash Screen API 配置 -->
        <item name="android:windowSplashScreenBackground">#F4F7FB</item>
-       <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_logo</item>
+       <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_logo_animated</item>
        <item name="android:windowSplashScreenIconBackgroundColor">#F4F7FB</item>
-       <item name="android:windowSplashScreenAnimationDuration">200</item>
+       <item name="android:windowSplashScreenAnimationDuration">900</item>
       
        <!-- 主窗口：使用与低版本相同的背景 -->
        <item name="android:windowBackground">@drawable/splash_background</item>
@@ -19,9 +19,9 @@
 
    <style name="Theme.OmnibotApp.Splash.Dark" parent="android:Theme.Material.NoActionBar">
        <item name="android:windowSplashScreenBackground">#151617</item>
-       <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_logo_dark</item>
+       <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_logo_animated_dark</item>
        <item name="android:windowSplashScreenIconBackgroundColor">#151617</item>
-       <item name="android:windowSplashScreenAnimationDuration">200</item>
+       <item name="android:windowSplashScreenAnimationDuration">900</item>
        <item name="android:windowBackground">@drawable/splash_background_dark</item>
        <item name="android:statusBarColor">#151617</item>
        <item name="android:navigationBarColor">@android:color/transparent</item>

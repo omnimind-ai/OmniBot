@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Original 288dp bitmap canvas at 1.2x, matching the animated SVG scale. -->
+    <dimen name="splash_logo_static_size">345.6dp</dimen>
+</resources>

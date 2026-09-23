@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Generated from docs/design/splash-logo.svg. Run scripts/generate_splash_animation.py to update. -->
+<set xmlns:android="http://schemas.android.com/apk/res/android" android:ordering="together">
+    <objectAnimator android:duration="900" android:interpolator="@android:interpolator/linear">
+        <propertyValuesHolder android:propertyName="scaleY" android:valueType="floatType">
+            <keyframe android:fraction="0" android:value="1" android:interpolator="@android:interpolator/fast_out_slow_in" />
+            <keyframe android:fraction="0.16" android:value="1" android:interpolator="@android:interpolator/fast_out_slow_in" />
+            <keyframe android:fraction="0.3" android:value="0.48" android:interpolator="@android:interpolator/fast_out_slow_in" />
+            <keyframe android:fraction="0.36" android:value="0.48" android:interpolator="@android:interpolator/fast_out_slow_in" />
+            <keyframe android:fraction="0.65" android:value="1.04" android:interpolator="@android:interpolator/fast_out_slow_in" />
+            <keyframe android:fraction="0.83" android:value="1" android:interpolator="@android:interpolator/fast_out_slow_in" />
+            <keyframe android:fraction="1" android:value="1" android:interpolator="@android:interpolator/fast_out_slow_in" />
+        </propertyValuesHolder>
+    </objectAnimator>
+</set>

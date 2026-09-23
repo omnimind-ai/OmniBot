@@ -6,10 +6,13 @@
         </shape>
     </item>
 
-    <item android:gravity="center">
+    <item
+        android:width="@dimen/splash_logo_static_size"
+        android:height="@dimen/splash_logo_static_size"
+        android:gravity="center">
         <bitmap
             android:src="@drawable/splash_logo_dark"
-            android:gravity="center"
+            android:gravity="fill"
             android:filter="true"
             android:antialias="true" />
     </item>
